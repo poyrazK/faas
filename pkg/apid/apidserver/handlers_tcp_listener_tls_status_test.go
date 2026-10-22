@@ -15,11 +15,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type failingTLSObservationStore struct {
-	*state.MemStore
-	reads int
+	MemStore *state.MemStore
+	reads    int
 }
 
 func (s *failingTLSObservationStore) ListTCPListenerTLSObservations(context.Context, string) ([]state.TCPListenerTLSObservation, error) {
@@ -37,7 +38,7 @@ func TestTCPListenerTLSStatusStorageFailureAndOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &failingTLSObservationStore{MemStore: memory}
-	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+	srv := apidserver.NewServer(statetest.NewMem(store), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
 	request := func(account state.Account) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
 		r.SetPathValue("slug", app.Slug)

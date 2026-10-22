@@ -48,6 +48,18 @@ func (r *scenarioChaosMatchRecorder) ObserveTCPAttempt(runID, callerAppID, gener
 	r.observeID(runID, callerAppID, generation, chaos.TCPAttemptID(rule))
 }
 
+func (r *scenarioChaosMatchRecorder) ObserveRequestAttempt(runID, callerAppID, generation string, rule chaos.Rule, requestID string) {
+	if rule.CorrelationScope == "" {
+		return
+	}
+	r.observeID(runID, callerAppID, generation, chaos.CorrelationSupportID(rule))
+	slot, ok := chaos.RequestCorrelationSlot(runID, rule, requestID)
+	if !ok {
+		slot = 0
+	}
+	r.observeID(runID, callerAppID, generation, chaos.CorrelationCounterID(rule, slot))
+}
+
 func (r *scenarioChaosMatchRecorder) observeID(runID, callerAppID, generation, ruleID string) {
 	if r == nil || runID == "" || callerAppID == "" || generation == "" {
 		return

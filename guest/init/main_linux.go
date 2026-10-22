@@ -28,6 +28,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/extension"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
+	"github.com/onebox-faas/faas/pkg/overlaymetadata"
 	"golang.org/x/sys/unix"
 )
 
@@ -64,6 +66,7 @@ const (
 	modeJob
 	modeExecution
 	modeAppTask
+	modeDataRepair
 )
 
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
@@ -78,6 +81,17 @@ func main() {
 	// user, one process per standby stream.
 	if os.Getpid() != 1 && len(os.Args) == 2 && os.Args[1] == replicationBridgeCommand {
 		os.Exit(runReplicationBridge())
+	}
+	if os.Getenv(dependencyInputsHelperEnv) == publicBuildURLsHelperValue && os.Getpid() != 1 {
+		os.Exit(runPublicBuildURLs(os.Args[1:]))
+	}
+	// A re-executed copy-out child (ADR-1037) never boots.
+	if len(os.Args) > 0 && os.Args[0] == appTaskCopyOutHelperArg0 && os.Getpid() != 1 {
+		os.Exit(runCopyOutHelper(os.Args[1:]))
+	}
+	// Nor does the builder's dependency-cache check, run by the build shell.
+	if os.Getenv(dependencyInputsHelperEnv) == dependencyInputsHelperValue && os.Getpid() != 1 {
+		os.Exit(runDependencyCacheInputs(railpackFrontendRef, os.Args[1:], os.Stdout))
 	}
 	if err := boot(); err != nil {
 		fmt.Fprintf(os.Stderr, "guest-init: %v\n", err)
@@ -155,6 +169,9 @@ func boot() error {
 		return err
 	}
 	guestStage(fmt.Sprintf("mode-%d", mode))
+	if mode == modeDataRepair {
+		return runDataRepairGuest(slog.Default())
+	}
 	var extensionHooks *extensionLifecycle
 	var afterRestore atomic.Pointer[afterRestoreRuntime]
 	if mode == modeApp {
@@ -355,6 +372,13 @@ func boot() error {
 	if manifest.BeforeCheckpoint != nil {
 		beforeCheckpoint.Store(&beforeCheckpointRuntime{hook: *manifest.BeforeCheckpoint, port: manifest.EffectivePort()})
 	}
+	if functionlifetime.NativeQualificationBuild {
+		proxy, err := startFunctionExecutionProxy(lookupUID(manifest.EffectiveUser()))
+		if err != nil {
+			return fmt.Errorf("function lifetime proxy: %w", err)
+		}
+		functionExecutions.Store(proxy)
+	}
 	// Bind before starting the workload and grant only its configured group
 	// access to the local signal socket. The runner does not inherit root UID.
 	if err := startFrameworkReadyProxy(slog.Default(), lookupUID(manifest.EffectiveUser())); err != nil {
@@ -468,6 +492,9 @@ func boot() error {
 	// fails the deploy — that's worse than today's opaque "guest
 	// not ready after 30s" path).
 	go runCharacterizationForSup(supRef, manifest)
+	// ADR-1170: a watch-mode development server may listen on another port
+	// or on localhost only; bridge the runtime port to it.
+	go runDevWatchBridge(supRef.LastAppPID, manifest.EffectivePort(), slog.Default())
 	// M-2 / //code-review PR #1202 finding #7: a single boot-scoped
 	// cancellable context is shared between the HEALTHCHECK poll
 	// goroutine and the PID 1 signal-handler loop so both observe
@@ -593,6 +620,10 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		}
 	}
 	env = StampDevDebugEnv(env, preload)
+	// ADR-1170: a watch-mode developer image runs a development server that
+	// reloads patched files itself.
+	devWatchActive.Store(devDebugEnvValue(env, api.DevWatchEnv) == "1")
+	env = stampDevWatchEnv(env, devWatchActive.Load())
 	// exec.Command resolves a bare argv[0] immediately using guest-init's
 	// own PATH. Direct OCI images expect Docker semantics: resolution uses
 	// the image's PATH. Resolve against the mounted image after pivot_root,
@@ -671,6 +702,14 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	defer retireGeneration()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
+	}
+	if proxy := functionExecutions.Load(); proxy != nil {
+		if err := proxy.bind(cmd.Process.Pid); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return err
+		}
+		defer proxy.retire(cmd.Process.Pid)
 	}
 	outputPipe.closeWriter()
 	retireImageReadiness := installImageReadinessRuntime(cmd, m, func() []string {
@@ -773,6 +812,19 @@ func errorKind(err error) string {
 // fs.FS rejects absolute paths, and the real os.DirFS("/") used
 // at boot happily accepts the relative form on Linux.
 func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
+	if data, err := fs.ReadFile(fsys, dataRepairManifestRelativePath); err == nil {
+		if err = validateDataRepairManifest(data); err != nil {
+			return modeDataRepair, api.BuildManifest{}, err
+		}
+		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
+			if _, err = fs.Stat(fsys, other); !errors.Is(err, fs.ErrNotExist) {
+				return modeDataRepair, api.BuildManifest{}, errors.New("conflicting repair guest mode")
+			}
+		}
+		return modeDataRepair, api.BuildManifest{}, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return modeDataRepair, api.BuildManifest{}, err
+	}
 	if data, err := fs.ReadFile(fsys, appTaskManifestRelativePath); err == nil {
 		if markerErr := validateAppTaskManifest(data); markerErr != nil {
 			return modeAppTask, api.BuildManifest{}, fmt.Errorf("invalid app task manifest: %w", markerErr)
@@ -956,6 +1008,12 @@ func runBuild(m api.BuildManifest) error {
 // runBuildOnce executes one build attempt. It leaves the VM alive only when
 // the attempt succeeded and the manifest opted into the warm handoff.
 func runBuildOnce(m api.BuildManifest) error {
+	if !api.ValidBuildDependencyDigest(m.BuildDependencyDigest) {
+		return writeAndPoweroff(m, errors.New("invalid build dependency digest"), "")
+	}
+	if problem := api.ValidatePublicBuildURLs(m.PublicBuildURLs); problem != nil {
+		return writeAndPoweroff(m, fmt.Errorf("invalid public build URLs"), "")
+	}
 	if m.BuildContext == "" {
 		m.BuildContext = "/build/src"
 	}
@@ -978,6 +1036,9 @@ func runBuildOnce(m api.BuildManifest) error {
 	}
 	if err := os.MkdirAll(m.OutDir, 0o755); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mkdir outdir: %w", err), "")
+	}
+	if err := prepareBuildIssueSourceMaps(m); err != nil {
+		return writeAndPoweroff(m, err, "")
 	}
 	// BuildKit is launched rootless inside a user namespace. The build
 	// workspace is disposable VM-local state, and OCI-to-ext4 materialisation
@@ -1209,6 +1270,9 @@ func runBuildOnce(m api.BuildManifest) error {
 	}
 	guestStage("buildkit-ready")
 
+	if m.DevWatchCommand != "" && m.Framework == api.FrameworkDockerfile {
+		return finish(errDevWatchUnsupported("watch mode needs an app Gregale builds without a Dockerfile; write a development stage in your Dockerfile instead"), "")
+	}
 	if m.Framework != api.FrameworkDockerfile && strings.TrimSpace(m.RuntimeBaseRef) == "" {
 		return finish(fmt.Errorf("missing runtime_base_ref for %s build", m.Framework), "")
 	}
@@ -1295,6 +1359,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		case removed:
 			fmt.Fprintf(os.Stderr, "guest-init: dependency cache exceeded %d bytes and was discarded\n", api.MaxExportedLayerBytes)
 		}
+		finishDependencyCacheInputs(m.OutDir)
 	}
 	fmt.Printf("guest-init: build command finished, err=%v, output bytes=%d\n", err, buf.Len())
 	if buf.Len() > 0 {
@@ -1317,6 +1382,9 @@ func runBuildOnce(m api.BuildManifest) error {
 				err = errors.Join(err, fmt.Errorf("restore Railpack config: %w", restoreErr))
 			}
 		}
+	}
+	if err == nil {
+		err = exportBuildIssueSourceMaps(m)
 	}
 	if err == nil && m.KeepWarm {
 		// The direct ext4 mount is needed while BuildKit runs, but it must
@@ -1604,10 +1672,16 @@ func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
 			deploy["startCommand"] = "/bin/true"
 		}
 	}
+	if err := devWatchRailpackConfig(config, m); err != nil {
+		return nil, err
+	}
 	// Alpine runner bases and base-minimal cannot execute Railpack's default
 	// apt install phase. Preserve an explicit customer list, but make the
 	// platform default empty for musl runtimes and minimal scratch bases.
-	if isAlpineRuntime(m.Runtime) || m.Runtime == "" || strings.Contains(m.RuntimeBaseRef, "base-minimal") {
+	// A shared runner base ships the libraries Railpack's default apt step
+	// installs (libatomic1), and system packages outside /app keep an app
+	// off the /app-only layer (H10-140).
+	if isAlpineRuntime(m.Runtime) || m.Runtime == "" || m.SharedRuntime || strings.Contains(m.RuntimeBaseRef, "base-minimal") {
 		if _, ok := deploy["aptPackages"]; !ok {
 			deploy["aptPackages"] = []any{}
 		}
@@ -1748,8 +1822,24 @@ func buildArgv(m api.BuildManifest) []string {
 			"--local", "context=" + contextDir,
 			"--local", "dockerfile=" + m.Workdir,
 		}
+		if m.BuildDependencyDigest != "" {
+			argv = append(argv, "--no-cache")
+		}
 		if m.DockerfilePath != "" {
 			argv = append(argv, "--opt", "filename="+m.DockerfilePath)
+		}
+		if m.DockerfileBuild != nil && m.DockerfileBuild.Target != "" {
+			argv = append(argv, "--opt", "target="+m.DockerfileBuild.Target)
+		}
+		// Compose build arguments (ADR-20261019142544); a reviewed public
+		// build URL of the same name replaces the argument.
+		for _, key := range m.DockerfileBuild.ArgNames() {
+			if _, reviewed := m.PublicBuildURLs[key]; !reviewed {
+				argv = append(argv, "--opt", "build-arg:"+key+"="+m.DockerfileBuild.Args[key])
+			}
+		}
+		for _, key := range publicBuildURLKeys(m.PublicBuildURLs) {
+			argv = append(argv, "--opt", "build-arg:"+key+"="+m.PublicBuildURLs[key])
 		}
 		if m.DependencyCacheImport {
 			argv = append(argv, "--import-cache", "type=local,src=/build/cache")
@@ -1772,6 +1862,9 @@ func buildArgv(m api.BuildManifest) []string {
 		"--plan-out", shellQuote(planPath),
 		"--info-out", shellQuote(infoPath),
 	}, " ")
+	if len(m.PublicBuildURLs) > 0 || m.BuildDependencyDigest != "" {
+		prepare += " && " + dependencyInputsHelperEnv + "=" + publicBuildURLsHelperValue + " /proc/1/exe " + shellQuote(planPath)
+	}
 	build := strings.Join([]string{
 		"/usr/local/bin/buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build",
 		"--frontend", "gateway.v0",
@@ -1783,11 +1876,23 @@ func buildArgv(m api.BuildManifest) []string {
 	if m.DependencyCacheImport {
 		build += " --import-cache " + shellQuote("type=local,src=/build/cache")
 	}
-	if m.DependencyCache {
-		build += " --export-cache " + shellQuote("type=local,dest=/build/out/cache,mode=max")
+	output := " --output type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")) + " --progress plain"
+	if m.IssueSourceMaps != nil {
+		// Both exporters consume the same final LLB result; source directories
+		// and intermediate stages cannot describe the deployed bundle bytes.
+		output += " --output " + shellQuote("type=local,dest="+buildIssueSourceMapRootfs)
 	}
-	build += " --output type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")) + " --progress plain"
-	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build}
+	if !m.DependencyCache {
+		return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build + output}
+	}
+	// "$@" carries --export-cache. Once the plan exists, a re-executed
+	// guest-init (runDependencyCacheInputs) answers "keep" when the imported
+	// cache came from the same plan and install inputs; anything else exports.
+	check := dependencyInputsHelperEnv + "=" + dependencyInputsHelperValue + " /proc/1/exe " + strings.Join([]string{
+		shellQuote(planPath), shellQuote(m.Workdir), shellQuote("/build/cache"), shellQuote(m.OutDir),
+	}, " ")
+	choose := `case "$(` + check + `)" in keep) set -- ;; *) set -- --export-cache ` + shellQuote("type=local,dest=/build/out/cache,mode=max") + " ;; esac"
+	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && " + choose + " && exec " + build + ` "$@"` + output}
 }
 
 func manifestBuildContext(m api.BuildManifest) string {
@@ -2030,6 +2135,17 @@ func tailOf(data []byte, n int) string {
 	return string(data[len(data)-n:])
 }
 
+// dockerfileBuildAcknowledgement is the digest of the Compose build arguments
+// and target this guest applied (ADR-20261019142544). Only buildArgv's
+// Dockerfile branch applies them, so other builds acknowledge none and
+// builderd refuses an artifact built without options it sent.
+func dockerfileBuildAcknowledgement(m api.BuildManifest) string {
+	if m.Framework != api.FrameworkDockerfile {
+		return ""
+	}
+	return m.DockerfileBuild.SHA256()
+}
+
 // writeBuildDone writes /etc/faas/build-done.json (vmmd's Destroy loopback-
 // mounts the chroot drive1 to copy it out). Warm builders call this while the
 // guest remains alive; ordinary builders call it immediately before poweroff.
@@ -2050,7 +2166,17 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		RailpackVersion: railpackVersion,
 	}
 	if runErr == nil {
-		done.DevPatch = buildDevPatchSourceMap(m, readBuildPlan)
+		done.PublicBuildURLsSHA256 = api.PublicBuildURLsSHA256(m.PublicBuildURLs)
+		done.DockerfileBuildSHA256 = dockerfileBuildAcknowledgement(m)
+		done.BuildDependencyDigest = m.BuildDependencyDigest
+		done.DependencyCacheUnchanged = m.DependencyCache && dependencyCacheKept(m.OutDir)
+		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))
+		done.DevPatch = sourceMap
+		done.SharedRuntime = buildSharedRuntimeVerdict(m, readBuildPlan)
+		if watchErr != nil {
+			done.ExitCode, done.FailureClass = buildExitStatus(watchErr)
+			done.LogTail = tailOf([]byte(logTail+"\n"+watchErr.Error()+"\n"), m.LogTailBytes)
+		}
 	}
 	if data, mErr := json.Marshal(done); mErr == nil {
 		if f, openErr := os.OpenFile(api.BuildDonePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644); openErr != nil {
@@ -2180,7 +2306,16 @@ func assembleOverlay() (string, error) {
 			return "", err
 		}
 	}
-	opts := "lowerdir=/" +
+	lower, err := overlaymetadata.GuestLowerDirectory(layerMount+"/upper", "/", layerMount+"/empty-lower")
+	if err != nil {
+		return "", fmt.Errorf("inspect app root opacity: %w", err)
+	}
+	if lower != "/" {
+		if err := overlaymetadata.EnsureEmptyLowerDirectory(lower); err != nil {
+			return "", fmt.Errorf("prepare opaque root lower: %w", err)
+		}
+	}
+	opts := "lowerdir=" + lower +
 		",upperdir=" + layerMount + "/upper" +
 		",workdir=" + layerMount + "/work"
 	if err := syscall.Mount("overlay", newRoot, "overlay", 0, opts); err != nil {
@@ -2585,9 +2720,10 @@ func runCharacterizationForSup(sup *Supervisor, manifest api.AppManifest) {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	args := RunArgs{
-		Manifest:   manifest,
-		AppPID:     func() int { return sup.LastAppPID() },
-		ExitStatus: func() (int, bool) { return sup.LastExitStatus() },
+		Manifest:     manifest,
+		ProvenWorker: bootProvenWorker(),
+		AppPID:       func() int { return sup.LastAppPID() },
+		ExitStatus:   func() (int, bool) { return sup.LastExitStatus() },
 		RingBufferTail: func() string {
 			// Populated from the supervisor's ring buffer (Slice A
 			// PR-B). The buffer is allocated lazily on the first

@@ -265,6 +265,9 @@ func (j *nativeQualificationRestoreJournal) update(ctx context.Context, frame st
 		return r, err
 	}
 	defer func() { result = errors.Join(result, lock.Close()) }()
+	if err := j.incoming.owner.requireCheckpointWakeAbsent(frame.InstanceID); err != nil {
+		return r, err
+	}
 	if err := j.incoming.requireProfileAbsent(frame.InstanceID, false); err != nil {
 		return r, err
 	}
@@ -397,6 +400,9 @@ func (j *nativeQualificationRestoreJournal) recoverLease(ctx context.Context, in
 		return lease, false, err
 	}
 	defer func() { result = errors.Join(result, lock.Close()) }()
+	if err := j.incoming.owner.requireCheckpointWakeAbsent(instance); err != nil {
+		return lease, false, err
+	}
 	if err := j.incoming.requireProfileAbsent(instance, false); err != nil {
 		return lease, false, err
 	}

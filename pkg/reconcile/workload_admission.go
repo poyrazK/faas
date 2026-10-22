@@ -3,6 +3,8 @@ package reconcile
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -29,17 +31,22 @@ func validatePlatformTenantPolicy(plan api.Plan, workloads []reposcan.Workload) 
 	return nil
 }
 
-// ProjectImageLifecycleAdmissionReasons keeps background image workloads on
-// their worker/job lifecycle and applies the same plan gate as standalone apps.
+// ProjectImageLifecycleAdmissionReasons keeps background image workloads, and
+// built workers, on their worker/job lifecycle and applies the same plan gate
+// as standalone apps.
 func ProjectImageLifecycleAdmissionReasons(plan api.Plan, workloads []reposcan.Workload) []string {
 	var reasons []string
 	for _, workload := range workloads {
-		if workload.Image == "" {
+		mode := scanExecutionMode(workload)
+		if workload.Image == "" && mode == "" {
 			continue
 		}
-		manifest := api.AppManifest{ExecutionMode: projectImageExecutionMode(workload)}
+		manifest := api.AppManifest{ExecutionMode: mode}
 		if err := manifest.ValidateLifecyclePlan(plan); err != nil {
 			reasons = append(reasons, fmt.Sprintf("workload %q: %s", workload.Name, err))
+		}
+		if err := workload.ImageProcess.ValidatePlan(plan); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q: image process: %s", workload.Name, err))
 		}
 	}
 	return reasons
@@ -56,7 +63,7 @@ func WorkloadAdmissionReasons(workloads []reposcan.Workload, accountApps []state
 // WorkloadAdmissionReasonsWithManaged extends the project admission checks
 // with the Compose dependency graph. Denylisted stateful images remain external
 // managed resources and are not included in the deploy order.
-func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed []reposcan.Managed, accountApps []state.App, projectID string) []string {
+func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed []reposcan.Managed, accountApps []state.App, projectID string, references ...[]reposcan.Workload) []string {
 	if len(workloads) == 0 {
 		return []string{EmptyWorkloadPlanReason}
 	}
@@ -67,7 +74,13 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 	}
 	seen := make(map[string]string, len(workloads))
 	var reasons []string
-	for _, workload := range workloads {
+	for _, workload := range PreserveAppSlugs(workloads, accountApps, projectID) {
+		slug := AppSlug(workload)
+		for _, app := range accountApps {
+			if projectID != "" && app.ProjectID == projectID && app.WorkloadName == workload.Name && app.PreviewOfSlug == "" && app.Status != state.AppDeleted && app.Slug != slug {
+				reasons = append(reasons, fmt.Sprintf("workload %q already uses app slug %q; existing project members cannot be renamed during import", workload.Name, app.Slug))
+			}
+		}
 		if workload.DetectedBy.Detector == "serverless" {
 			reasons = append(reasons, fmt.Sprintf(
 				"workload %q is a Serverless function without an execution adapter; create a function app and deploy the handler explicitly",
@@ -80,45 +93,80 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 		if err := workload.ImageHealthcheck.Validate(); err != nil {
 			reasons = append(reasons, fmt.Sprintf("workload %q has an invalid image healthcheck: %s", workload.Name, err))
 		}
-		if api.IsReservedAppSlug(workload.Name) {
+		if err := workload.ImageProcess.Validate(); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q has an invalid image process: %s", workload.Name, err))
+		}
+		if err := workload.DockerfileBuild.Validate(); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q has invalid build options: %s", workload.Name, err))
+		}
+		if workload.Image != "" && !workload.DockerfileBuild.IsZero() {
+			reasons = append(reasons, fmt.Sprintf("workload %q is a prebuilt image; build options apply only to Dockerfile builds", workload.Name))
+		}
+		if api.IsReservedAppSlug(slug) {
 			// Do not strand a project that already owns a reserved collision:
 			// it must remain deployable while the operator migrates it. Only a
 			// fresh allocation (or a collision outside this exact member) is
 			// rejected.
-			app, exists := bySlug[workload.Name]
-			if !exists || projectID == "" || app.ProjectID != projectID || app.WorkloadName != workload.Name {
+			app, exists := bySlug[slug]
+			if !exists || projectID == "" || app.ProjectID != projectID || app.WorkloadName != workload.Name || app.PreviewOfSlug != "" {
 				reasons = append(reasons, fmt.Sprintf(
 					"workload %q uses app slug %q reserved for a Gregale service",
-					workload.Name, workload.Name))
+					workload.Name, slug))
 				continue
 			}
 		}
-		if !api.ValidAppSlug(workload.Name) {
+		if !api.ValidAppSlug(slug) {
 			reasons = append(reasons, fmt.Sprintf(
 				"workload %q has invalid app slug %q; use 3-40 lowercase letters, digits, or hyphens",
-				workload.Name, workload.Name))
+				workload.Name, slug))
 			continue
 		}
-		if firstRoot, duplicate := seen[workload.Name]; duplicate {
+		if firstRoot, duplicate := seen[slug]; duplicate {
 			reasons = append(reasons, fmt.Sprintf(
-				"workload %q produces a duplicate app slug for roots %q and %q; use distinct declared package names",
+				"workload %q produces a duplicate app slug for roots %q and %q; choose distinct app names",
 				workload.Name, firstRoot, workload.RootDir))
 			continue
 		}
-		seen[workload.Name] = workload.RootDir
-		if app, exists := bySlug[workload.Name]; exists &&
-			(projectID == "" || app.ProjectID != projectID || app.WorkloadName != workload.Name) {
+		seen[slug] = workload.RootDir
+		if app, exists := bySlug[slug]; exists &&
+			(projectID == "" || app.ProjectID != projectID || app.WorkloadName != workload.Name || app.PreviewOfSlug != "") {
 			reasons = append(reasons, fmt.Sprintf(
 				"workload %q conflicts with existing app slug %q outside this project member",
 				workload.Name, app.Slug))
 		}
 	}
-	reasons = append(reasons, reposcan.DependencyValidationReasons(workloads, managed)...)
+	reasons = append(reasons, reposcan.DependencyValidationReasons(workloads, managed, references...)...)
+	if len(references) > 0 {
+		scan := reposcan.Result{Workloads: workloads}
+		for _, group := range references {
+			scan.DependencyReferences = append(scan.DependencyReferences, group...)
+		}
+		referenceNames := workloadNameSet(scan.DependencyReferences)
+		available := availableServiceNames(scan, state.Project{ID: projectID, AccountID: projectAccountID(accountApps, projectID)}, accountApps)
+		for _, workload := range workloads {
+			for _, name := range slices.Sorted(maps.Keys(workload.DependsOnConditions)) {
+				condition := workload.DependsOnConditions[name]
+				_, reference := referenceNames[name]
+				if _, ok := available[name]; reference && condition == api.ComposeDependencyHealthy && !ok {
+					reasons = append(reasons, fmt.Sprintf("workload %q requires healthy dependency %q; select that dependency or migrate it to this project first", workload.Name, name))
+				}
+			}
+		}
+	}
 	return reasons
 }
 
-func validateWorkloadAdmissionWithManaged(workloads []reposcan.Workload, managed []reposcan.Managed, accountApps []state.App, projectID string) error {
-	reasons := WorkloadAdmissionReasonsWithManaged(workloads, managed, accountApps, projectID)
+func projectAccountID(apps []state.App, projectID string) string {
+	for _, app := range apps {
+		if projectID != "" && app.ProjectID == projectID {
+			return app.AccountID
+		}
+	}
+	return ""
+}
+
+func validateWorkloadAdmissionWithManaged(workloads []reposcan.Workload, managed []reposcan.Managed, accountApps []state.App, projectID string, references ...[]reposcan.Workload) error {
+	reasons := WorkloadAdmissionReasonsWithManaged(workloads, managed, accountApps, projectID, references...)
 	if len(reasons) == 0 {
 		return nil
 	}

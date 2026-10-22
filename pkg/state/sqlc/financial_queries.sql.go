@@ -190,6 +190,128 @@ func (q *Queries) FinancialEvidenceHead(ctx context.Context, db DBTX, arg Financ
 	return through_id, err
 }
 
+const financialLedgerDeliveredComputeMBSeconds = `-- name: FinancialLedgerDeliveredComputeMBSeconds :one
+SELECT coalesce(sum(mb_seconds), 0)::bigint AS mb_seconds
+FROM billing_usage_deliveries
+WHERE provider = $1::text AND account_id = $2::uuid
+  AND window_start >= $3::timestamptz AND window_start < $4::timestamptz
+`
+
+type FinancialLedgerDeliveredComputeMBSecondsParams struct {
+	Provider  string
+	AccountID pgtype.UUID
+	StartAt   pgtype.Timestamptz
+	EndAt     pgtype.Timestamptz
+}
+
+// ADR-20261019193600. Compute MB-seconds the pusher delivered to one provider for one
+// account in [start, end); the ledger dual run compares it with ledger evidence.
+func (q *Queries) FinancialLedgerDeliveredComputeMBSeconds(ctx context.Context, db DBTX, arg FinancialLedgerDeliveredComputeMBSecondsParams) (int64, error) {
+	row := db.QueryRow(ctx, financialLedgerDeliveredComputeMBSeconds,
+		arg.Provider,
+		arg.AccountID,
+		arg.StartAt,
+		arg.EndAt,
+	)
+	var mb_seconds int64
+	err := row.Scan(&mb_seconds)
+	return mb_seconds, err
+}
+
+const financialObjectStorageEstimateGet = `-- name: FinancialObjectStorageEstimateGet :one
+SELECT account_id, period_start, observed_at, usage_through, fresh, stored_byte_hours, request_count, egress_bytes, currency, storage_millicents_per_gib_month, requests_millicents_per_million, egress_millicents_per_gib, included_byte_hours, included_requests, included_egress_bytes FROM financial_object_storage_estimates
+WHERE account_id = $1::uuid AND period_start = $2::timestamptz
+`
+
+type FinancialObjectStorageEstimateGetParams struct {
+	AccountID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+}
+
+func (q *Queries) FinancialObjectStorageEstimateGet(ctx context.Context, db DBTX, arg FinancialObjectStorageEstimateGetParams) (FinancialObjectStorageEstimate, error) {
+	row := db.QueryRow(ctx, financialObjectStorageEstimateGet, arg.AccountID, arg.PeriodStart)
+	var i FinancialObjectStorageEstimate
+	err := row.Scan(
+		&i.AccountID,
+		&i.PeriodStart,
+		&i.ObservedAt,
+		&i.UsageThrough,
+		&i.Fresh,
+		&i.StoredByteHours,
+		&i.RequestCount,
+		&i.EgressBytes,
+		&i.Currency,
+		&i.StorageMillicentsPerGibMonth,
+		&i.RequestsMillicentsPerMillion,
+		&i.EgressMillicentsPerGib,
+		&i.IncludedByteHours,
+		&i.IncludedRequests,
+		&i.IncludedEgressBytes,
+	)
+	return i, err
+}
+
+const financialObjectStorageEstimatePut = `-- name: FinancialObjectStorageEstimatePut :exec
+INSERT INTO financial_object_storage_estimates(account_id, period_start, observed_at, usage_through, fresh,
+  stored_byte_hours, request_count, egress_bytes, currency, storage_millicents_per_gib_month,
+  requests_millicents_per_million, egress_millicents_per_gib, included_byte_hours, included_requests, included_egress_bytes)
+VALUES($1::uuid, $2::timestamptz, $3::timestamptz,
+  $4::timestamptz, $5::boolean, $6::bigint,
+  $7::bigint, $8::bigint, $9::text,
+  $10::bigint, $11::bigint,
+  $12::bigint, $13::bigint,
+  $14::bigint, $15::bigint)
+ON CONFLICT (account_id, period_start) DO UPDATE SET observed_at = EXCLUDED.observed_at,
+  usage_through = EXCLUDED.usage_through, fresh = EXCLUDED.fresh, stored_byte_hours = EXCLUDED.stored_byte_hours,
+  request_count = EXCLUDED.request_count, egress_bytes = EXCLUDED.egress_bytes, currency = EXCLUDED.currency,
+  storage_millicents_per_gib_month = EXCLUDED.storage_millicents_per_gib_month,
+  requests_millicents_per_million = EXCLUDED.requests_millicents_per_million,
+  egress_millicents_per_gib = EXCLUDED.egress_millicents_per_gib, included_byte_hours = EXCLUDED.included_byte_hours,
+  included_requests = EXCLUDED.included_requests, included_egress_bytes = EXCLUDED.included_egress_bytes
+WHERE financial_object_storage_estimates.observed_at <= EXCLUDED.observed_at
+`
+
+type FinancialObjectStorageEstimatePutParams struct {
+	AccountID                    pgtype.UUID
+	PeriodStart                  pgtype.Timestamptz
+	ObservedAt                   pgtype.Timestamptz
+	UsageThrough                 pgtype.Timestamptz
+	Fresh                        bool
+	StoredByteHours              int64
+	RequestCount                 int64
+	EgressBytes                  int64
+	Currency                     string
+	StorageMillicentsPerGibMonth int64
+	RequestsMillicentsPerMillion int64
+	EgressMillicentsPerGib       int64
+	IncludedByteHours            int64
+	IncludedRequests             int64
+	IncludedEgressBytes          int64
+}
+
+// ADR-20261020160000: apid's newest live object-storage estimate replaces
+// the month's row; an older observation never overwrites a newer one.
+func (q *Queries) FinancialObjectStorageEstimatePut(ctx context.Context, db DBTX, arg FinancialObjectStorageEstimatePutParams) error {
+	_, err := db.Exec(ctx, financialObjectStorageEstimatePut,
+		arg.AccountID,
+		arg.PeriodStart,
+		arg.ObservedAt,
+		arg.UsageThrough,
+		arg.Fresh,
+		arg.StoredByteHours,
+		arg.RequestCount,
+		arg.EgressBytes,
+		arg.Currency,
+		arg.StorageMillicentsPerGibMonth,
+		arg.RequestsMillicentsPerMillion,
+		arg.EgressMillicentsPerGib,
+		arg.IncludedByteHours,
+		arg.IncludedRequests,
+		arg.IncludedEgressBytes,
+	)
+	return err
+}
+
 const financialPriceSnapshotPut = `-- name: FinancialPriceSnapshotPut :one
 INSERT INTO financial_price_snapshots(account_id, period_start, period_end, meter, version, price, plan, effective_from, delivery_mode)
 VALUES($1::uuid, $2::timestamptz,

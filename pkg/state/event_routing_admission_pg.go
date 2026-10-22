@@ -173,6 +173,9 @@ func admitEventRecipientTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, clai
 	}
 	if scope == "" && controlReason == "" {
 		created, err = performEventAdmissionTx(ctx, tx, receipt, p)
+		if err == nil && p.matched && !p.cancel {
+			err = associateEventExecutionRootTx(ctx, q, tx, receipt, p)
+		}
 	}
 	if err != nil {
 		return eventAdmissionResult(p, PublishedEventRecipientProgress{}, false, false), admissionError(EventFanoutFailureCodeInvocationEnqueueFailed, true, err)

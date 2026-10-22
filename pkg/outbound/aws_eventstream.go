@@ -2,6 +2,8 @@ package outbound
 
 import (
 	"encoding/binary"
+	"encoding/json"
+	"hash/crc32"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -21,9 +23,13 @@ const (
 // The gateway forwards the bytes unchanged, so CRCs are not checked; a
 // message larger than the usage event bound is skipped.
 type awsEventStreamReader struct {
-	buf       []byte
-	skip      int64
+	buf  []byte
+	skip int64
+	// onPayload receives the payload of each event message.
 	onPayload func([]byte)
+	// onMessage receives every message with its :message-type and its
+	// :event-type (or :exception-type) header, for translation (ADR-995).
+	onMessage func(messageType, eventType string, payload []byte)
 }
 
 func (r *awsEventStreamReader) write(p []byte) {
@@ -72,68 +78,109 @@ func (r *awsEventStreamReader) finishMessage() {
 	headers := int(binary.BigEndian.Uint32(r.buf[4:8]))
 	start := awsEventStreamPreludeBytes + headers
 	end := total - awsEventStreamTrailerBytes
-	if r.onPayload != nil && start <= end && awsEventStreamIsEvent(r.buf[awsEventStreamPreludeBytes:start]) {
-		r.onPayload(r.buf[start:end])
+	if start <= end {
+		messageType, eventType := awsEventStreamTypes(r.buf[awsEventStreamPreludeBytes:start])
+		// A message without a :message-type header is treated as an event.
+		if r.onPayload != nil && (messageType == "" || messageType == "event") {
+			r.onPayload(r.buf[start:end])
+		}
+		if r.onMessage != nil {
+			r.onMessage(messageType, eventType, r.buf[start:end])
+		}
 	}
 	r.buf = r.buf[:0]
 }
 
-// awsEventStreamIsEvent reports whether the headers mark an event message.
-// Exceptions and errors carry no usage.
-func awsEventStreamIsEvent(headers []byte) bool {
+// awsEventStreamTypes reads the :message-type header and the :event-type
+// or :exception-type header. Parsing stops at a malformed header.
+func awsEventStreamTypes(headers []byte) (messageType, eventType string) {
 	for len(headers) > 0 {
 		nameLen := int(headers[0])
 		if len(headers) < 1+nameLen+1 {
-			return true
+			return messageType, eventType
 		}
 		name := string(headers[1 : 1+nameLen])
-		valueType := headers[1+nameLen]
-		rest := headers[2+nameLen:]
-		var value []byte
-		switch valueType {
-		case 0, 1: // bool true / false
-		case 2: // byte
-			if len(rest) < 1 {
-				return true
-			}
-			rest = rest[1:]
-		case 3: // short
-			if len(rest) < 2 {
-				return true
-			}
-			rest = rest[2:]
-		case 4: // int
-			if len(rest) < 4 {
-				return true
-			}
-			rest = rest[4:]
-		case 5, 8: // long, timestamp
-			if len(rest) < 8 {
-				return true
-			}
-			rest = rest[8:]
-		case 6, 7: // bytes, string
-			if len(rest) < 2 {
-				return true
-			}
-			valueLen := int(binary.BigEndian.Uint16(rest[0:2]))
-			if len(rest) < 2+valueLen {
-				return true
-			}
-			value = rest[2 : 2+valueLen]
-			rest = rest[2+valueLen:]
-		case 9: // uuid
-			if len(rest) < 16 {
-				return true
-			}
-			rest = rest[16:]
-		default:
-			return true
+		value, rest, ok := awsEventStreamHeaderValue(headers[1+nameLen], headers[2+nameLen:])
+		if !ok {
+			return messageType, eventType
 		}
-		if name == ":message-type" {
-			return string(value) == "event"
+		switch name {
+		case ":message-type":
+			messageType = string(value)
+		case ":event-type", ":exception-type":
+			eventType = string(value)
 		}
 		headers = rest
 	}
-	return true
+	return messageType, eventType
+}
+
+// awsEventStreamHeaderValue reads one header value of the given type and
+// returns the bytes after it. Only string and bytes values are kept.
+func awsEventStreamHeaderValue(valueType byte, rest []byte) (value, after []byte, ok bool) {
+	size := -1
+	switch valueType {
+	case 0, 1: // bool true / false
+		size = 0
+	case 2: // byte
+		size = 1
+	case 3: // short
+		size = 2
+	case 4: // int
+		size = 4
+	case 5, 8: // long, timestamp
+		size = 8
+	case 9: // uuid
+		size = 16
+	case 6, 7: // bytes, string
+	default:
+		return nil, nil, false
+	}
+	if size >= 0 {
+		if len(rest) < size {
+			return nil, nil, false
+		}
+		return nil, rest[size:], true
+	}
+	if len(rest) < 2 {
+		return nil, nil, false
+	}
+	valueLen := int(binary.BigEndian.Uint16(rest[0:2]))
+	if len(rest) < 2+valueLen {
+		return nil, nil, false
+	}
+	return rest[2 : 2+valueLen], rest[2+valueLen:], true
+}
+
+// encodeAWSEventMessage frames headers and a payload as one event-stream
+// message with its prelude and message CRCs, for a response check that
+// rewrites or ends a Bedrock stream (ADR-1435). Messages are bounded by
+// OutboundAIResponseCheckMaxBytes, so the lengths fit.
+func encodeAWSEventMessage(headers, payload []byte) []byte {
+	total := awsEventStreamPreludeBytes + len(headers) + len(payload) + awsEventStreamTrailerBytes
+	out := make([]byte, 0, total)
+	out = binary.BigEndian.AppendUint32(out, uint32(total))        //nolint:gosec // bounded by OutboundAIResponseCheckMaxBytes.
+	out = binary.BigEndian.AppendUint32(out, uint32(len(headers))) //nolint:gosec // bounded by OutboundAIResponseCheckMaxBytes.
+	out = binary.BigEndian.AppendUint32(out, crc32.ChecksumIEEE(out))
+	out = append(append(out, headers...), payload...)
+	return binary.BigEndian.AppendUint32(out, crc32.ChecksumIEEE(out))
+}
+
+// awsEventStreamStringHeader encodes one string header.
+func awsEventStreamStringHeader(name, value string) []byte {
+	out := append([]byte{byte(len(name))}, name...)
+	out = append(out, 7)
+	out = binary.BigEndian.AppendUint16(out, uint16(len(value))) //nolint:gosec // gateway-chosen short values.
+	return append(out, value...)
+}
+
+// awsGatewayException ends a Bedrock stream with an exception message that
+// AWS SDKs raise, naming the gateway's error code (ADR-1435).
+func awsGatewayException(code, message string) []byte {
+	var headers []byte
+	headers = append(headers, awsEventStreamStringHeader(":message-type", "exception")...)
+	headers = append(headers, awsEventStreamStringHeader(":exception-type", "validationException")...)
+	headers = append(headers, awsEventStreamStringHeader(":content-type", "application/json")...)
+	payload, _ := json.Marshal(map[string]string{"message": message, "code": code})
+	return encodeAWSEventMessage(headers, payload)
 }

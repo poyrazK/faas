@@ -14,6 +14,7 @@ from ..models.operation_workflow_readiness_completion_outcome import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_playbook_completion_outcome import OperationWorkflowPlaybookCompletionOutcome
     from ..models.operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
     from ..models.operation_workflow_readiness_completion_evidence import OperationWorkflowReadinessCompletionEvidence
     from ..models.operation_workflow_readiness_outcome_escalation_policy import (
@@ -49,6 +50,12 @@ class OperationWorkflowReadinessCompletion:
     evidence: OperationWorkflowReadinessCompletionEvidence
     """Server-observed advisory evidence before the revision-checked completion write. Workflow reports may change
     after this observation. Explicit boundaries never imply readiness."""
+    playbook_review_after_seconds: int | Unset = UNSET
+    """OperationWorkflowReadinessCompletion.playbook_review_after_seconds. Optional review window after business-
+    aware playbook completion; zero disables. Monitoring also ends with source inbox retention."""
+    playbook_outcome: OperationWorkflowPlaybookCompletionOutcome | Unset = UNSET
+    """OperationWorkflowPlaybookCompletionOutcome. Immutable human disposition and exact scoped advisory
+    application evidence observed before completion; neither establishes causation nor authorizes execution."""
     escalation_policy: OperationWorkflowReadinessOutcomeEscalationPolicy | Unset = UNSET
     """Opt-in deadline escalation policy frozen at completion. Requires an outcome watch and future outcome
     deadline. Schedules one assigned follow-up on the deadline notification; never executes business actions."""
@@ -89,6 +96,12 @@ class OperationWorkflowReadinessCompletion:
 
         evidence = self.evidence.to_dict()
 
+        playbook_review_after_seconds = self.playbook_review_after_seconds
+
+        playbook_outcome: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.playbook_outcome, Unset):
+            playbook_outcome = self.playbook_outcome.to_dict()
+
         escalation_policy: dict[str, Any] | Unset = UNSET
         if not isinstance(self.escalation_policy, Unset):
             escalation_policy = self.escalation_policy.to_dict()
@@ -119,6 +132,10 @@ class OperationWorkflowReadinessCompletion:
                 "evidence": evidence,
             }
         )
+        if playbook_review_after_seconds is not UNSET:
+            field_dict["playbook_review_after_seconds"] = playbook_review_after_seconds
+        if playbook_outcome is not UNSET:
+            field_dict["playbook_outcome"] = playbook_outcome
         if escalation_policy is not UNSET:
             field_dict["escalation_policy"] = escalation_policy
         if watch_outcome is not UNSET:
@@ -136,6 +153,7 @@ class OperationWorkflowReadinessCompletion:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_playbook_completion_outcome import OperationWorkflowPlaybookCompletionOutcome
         from ..models.operation_workflow_readiness_business_outcome import OperationWorkflowReadinessBusinessOutcome
         from ..models.operation_workflow_readiness_completion_evidence import (
             OperationWorkflowReadinessCompletionEvidence,
@@ -161,6 +179,15 @@ class OperationWorkflowReadinessCompletion:
         completed_by = d.pop("completed_by")
 
         evidence = OperationWorkflowReadinessCompletionEvidence.from_dict(d.pop("evidence"))
+
+        playbook_review_after_seconds = d.pop("playbook_review_after_seconds", UNSET)
+
+        _playbook_outcome = d.pop("playbook_outcome", UNSET)
+        playbook_outcome: OperationWorkflowPlaybookCompletionOutcome | Unset
+        if isinstance(_playbook_outcome, Unset):
+            playbook_outcome = UNSET
+        else:
+            playbook_outcome = OperationWorkflowPlaybookCompletionOutcome.from_dict(_playbook_outcome)
 
         _escalation_policy = d.pop("escalation_policy", UNSET)
         escalation_policy: OperationWorkflowReadinessOutcomeEscalationPolicy | Unset
@@ -196,6 +223,8 @@ class OperationWorkflowReadinessCompletion:
             completed_at=completed_at,
             completed_by=completed_by,
             evidence=evidence,
+            playbook_review_after_seconds=playbook_review_after_seconds,
+            playbook_outcome=playbook_outcome,
             escalation_policy=escalation_policy,
             watch_outcome=watch_outcome,
             outcome_deadline_at=outcome_deadline_at,

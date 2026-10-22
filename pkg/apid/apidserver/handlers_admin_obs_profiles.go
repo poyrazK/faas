@@ -54,62 +54,6 @@ func sortObsProfileLabels(labels []string) {
 	})
 }
 
-func obsInstanceIsLive(instance state.Instance) bool {
-	switch state.State(instance.State) {
-	case state.StateRunning, state.StateWaking, state.StateColdBooting:
-		return true
-	default:
-		return false
-	}
-}
-
-func buildObsCapacityProfiles(apps []state.App, instances []state.Instance) []api.ObsCapacityProfile {
-	profiles := make(map[string]*api.ObsCapacityProfile, len(api.ResourceProfiles)+1)
-	appShapes := make(map[string]obsProfileShape, len(apps))
-	for _, app := range apps {
-		if app.Status == state.AppDeleted {
-			continue
-		}
-		shape := obsProfileShapeForApp(app, true)
-		appShapes[app.ID] = shape
-		row := profiles[shape.label]
-		if row == nil {
-			row = &api.ObsCapacityProfile{
-				ResourceProfile: shape.label,
-				MemoryMB:        shape.memoryMB,
-				CPUMillicores:   shape.cpuMillicores,
-			}
-			profiles[shape.label] = row
-		}
-		row.Apps++
-		row.ReservedMemoryMB += int64(app.RAMMB)
-		row.ReservedCPUMillicores += int64(app.CPUMillicores)
-	}
-	for _, instance := range instances {
-		if !obsInstanceIsLive(instance) {
-			continue
-		}
-		shape, ok := appShapes[instance.AppID]
-		if !ok {
-			continue
-		}
-		row := profiles[shape.label]
-		if row != nil {
-			row.LiveInstances++
-		}
-	}
-	labels := make([]string, 0, len(profiles))
-	for label := range profiles {
-		labels = append(labels, label)
-	}
-	sortObsProfileLabels(labels)
-	out := make([]api.ObsCapacityProfile, 0, len(labels))
-	for _, label := range labels {
-		out = append(out, *profiles[label])
-	}
-	return out
-}
-
 type obsUsageProfileAccumulator struct {
 	profile   api.ObsTenantUsageProfile
 	mbSeconds int64

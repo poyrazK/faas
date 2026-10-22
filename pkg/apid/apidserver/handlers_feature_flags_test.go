@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/flags"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
@@ -34,6 +35,11 @@ func TestFeatureFlagCapabilityOnlyRequiredForEnabledSubjectRules(t *testing.T) {
 // cause.
 func TestFeatureFlagsDisabledNamesTheOperatorGate(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
+	// Project access resolves the addressed project first (#4882), so the gate
+	// is observed on a project the caller owns.
+	if _, err := (*e.Store()).CreateProject(t.Context(), state.Project{AccountID: (*e.Acct()).ID, Slug: "flags"}); err != nil {
+		t.Fatal(err)
+	}
 	res := e.Do(t, http.MethodGet, "/v1/projects/flags/environments/production/flags", nil, nil)
 	if res.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403: %s", res.Code, res.Body.String())
@@ -49,7 +55,7 @@ func TestFeatureFlagsDisabledNamesTheOperatorGate(t *testing.T) {
 
 func TestFeatureFlagsCustomerReleaseLifecycle(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
-	(*(*e.S()).FeatureFlagsEnabled()) = true
+	(*e.S()).EnablePlatformFlagForAll(platformflags.CustomerFlags)
 	ctx := context.Background()
 	project, err := (*e.Store()).CreateProject(ctx, state.Project{AccountID: (*e.Acct()).ID, Slug: "flags", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose})
 	if err != nil {
@@ -156,7 +162,7 @@ func TestFeatureFlagsCustomerReleaseLifecycle(t *testing.T) {
 }
 func TestFeatureFlagsRuntimeWorkloadScope(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
-	(*(*e.S()).FeatureFlagsEnabled()) = true
+	(*e.S()).EnablePlatformFlagForAll(platformflags.CustomerFlags)
 	ctx := context.Background()
 	project, err := (*e.Store()).CreateProject(ctx, state.Project{AccountID: (*e.Acct()).ID, Slug: "flags-runtime", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose})
 	if err != nil {

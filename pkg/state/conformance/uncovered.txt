@@ -29,7 +29,6 @@ AppWebhookDeliveryByID
 AppendBuilderUsage
 AppendComputeNodeHeartbeat
 AppendComputeNodeHeartbeatWithStats
-AppendDeploymentAudit
 AppendDeploymentLog
 AppendDeploymentStage
 AppendEventWithTrace
@@ -47,7 +46,6 @@ BuildByID
 BuildProvenanceByBuildID
 BumpFirst5xxCount
 BumpInstanceTailCount
-CancelDeploymentTx
 CancelInstanceMigration
 CancelInvocation
 CancelUploadSession
@@ -139,7 +137,6 @@ DeleteAppLogDrain
 DeleteAppOpenAPIDoc
 DeleteAppRegistryCredential
 DeleteAppSecret
-DeleteAppSecretInScope
 DeleteAppTrustedSigner
 DeleteAppWebhook
 DeleteComputeNode
@@ -218,7 +215,6 @@ GetWorkflowEventsForRun
 GetWorkflowRunByIdempotencyKey
 GitHubBindingForApp
 GitHubInstallForAccount
-GitHubInstallForAccountInstallation
 GithubInstallBindingForRepoBranch
 GithubInstallBindingForRepoBranchInstallation
 HasPaddleOverageMonth
@@ -241,21 +237,15 @@ InstallationIDForRepo
 InstanceListByNodeForRecovery
 IsMailSuppressed
 JobConcurrentByAccount
-JobCountByAccount
-JobGetByID
 JobGetByName
-JobListByAccount
 JobRunIncrementDeadLetter
 JobRunListByAccount
-JobRunListByJob
 JobRunReopenDeadLetter
-JobSoftDelete
 JobTaskCancel
 JobTaskClaimBatch
 JobTaskFindStuck
 JobTaskList
 JobTaskRequeue
-JobTaskRetry
 JobUpdate
 LatestBuilderHeartbeatStats
 LatestDeployment
@@ -279,7 +269,6 @@ ListAllApps
 ListAllCustomDomainsForDoctor
 ListAllDeployments
 ListAllEventsPaged
-ListAllInstances
 ListAppEnv
 ListAppEnvInScope
 ListAppErrorFingerprintsForPurge
@@ -301,7 +290,6 @@ ListAppWebhooksForApp
 ListApps
 ListAppsByNodeID
 ListAppsWithRecentTelemetry
-ListAuditLog
 ListBuildsAwaitingImage
 ListBuildsForAccount
 ListBuildsForAccountPaged
@@ -345,7 +333,6 @@ ListExpiredTriggerRecordsForReaper
 ListGdprRequestsForAccount
 ListGitHubInstallationsForAccount
 ListGithubInstallBindingsForAccount
-ListInstancesByNodeID
 ListInstancesByStatesOlderThan
 ListInstancesForAccount
 ListInstancesForAccountPaged
@@ -364,6 +351,7 @@ ListMirrorResults
 ListMirrorRules
 ListOIDCTrustPoliciesForAccount
 ListOpenStatusIncidents
+ListOperatorIncidents
 ListOperatorIntentsByTraceID
 ListOrgAPIKeys
 ListOrgInvitationsForOrg
@@ -407,7 +395,6 @@ MarkAccountEmailVerified
 MarkAllSnapshotsStaleByAppProtocol
 MarkAllSnapshotsStaleByFCVersion
 MarkAppRegistryCredentialUsed
-MarkBuildCancelled
 MarkComputeNodeInactive
 MarkDeploymentStageFailed
 MarkDomainVerified
@@ -439,7 +426,10 @@ NodeMarkRecovered
 OAuthLinkByProviderSubject
 OldestDoctorObservation
 OperatorActionTraceCompleteness
+OperatorAuditTraceCoverage
 OperatorIntentOutcomeMissingCounts
+OperatorOverviewActivity
+OperatorTenantCounts
 OrgByID
 OrgByPersonalAccount
 OrgBySlug
@@ -463,7 +453,6 @@ PutManagedPostgresSecret
 QueueDeadLetter
 QueuePeek
 QueueState
-QueuedBuildsCount
 ReadActiveInstanceForWakeID
 ReadMFASecret
 ReapExpiredUploadSessions
@@ -478,7 +467,6 @@ RecordGitHubBinding
 RecordMailSuppression
 RecordPaddleOverageMonth
 RecordRestart
-RecordScenarioTestChaosInjections
 RecordStripePushHour
 RecordUploadCommitOutcome
 RecordWebhookDelivery
@@ -498,7 +486,7 @@ RequestTelemetryAnalyticsTimeseriesGrouped
 RequestTelemetryBaselineP95ByRoute
 RequestTelemetryByDeployment
 RequestTelemetryCoverage
-RequeueBuild
+RequestTelemetryErrorsByRoute
 ResetAppWebhookDeliveryFromDead
 ResolveStaleRegressionObservations
 ResolveStatusIncident
@@ -511,8 +499,6 @@ RotateOrgAPIKey
 RotateOrgAPIKeyWithProvenance
 RunningInstanceForApp
 SafedeployListPendingRollouts
-SafedeployStampRollout
-ScenarioTestChaosMatchEvidence
 ScheduleWorkflowRun
 SetAccountEgressAllowlistExtra
 SetAccountKeyGraceWindow
@@ -540,7 +526,6 @@ SumOpenUploadSessionBytesByAccount
 SweepExpiredWebhookDeliveries
 SweepExpiredWorkflowEvents
 SweepExpiredWorkflowRuns
-SweepStuckRunningBuilds
 TenantSurfaceByHostname
 TouchConsumerKeyLastUsed
 TouchInstancesWithRequestDelta
@@ -558,7 +543,6 @@ UpdateAlertRule
 UpdateAppLogDrain
 UpdateAppWebhook
 UpdateBuildProvenanceSBOM
-UpdateBuildStatus
 UpdateCorsPreset
 UpdateCron
 UpdateCronWithOptions

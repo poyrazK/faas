@@ -59,6 +59,11 @@
     {{if eq .Data.Action "security_headers_enabled"}}<div class="flash ok" role="status">Security headers preset is enabled.</div>{{end}}
     {{if eq .Data.Action "mode_enforce"}}<div class="flash ok" role="status">Rule is now enforced.</div>{{end}}
     {{if eq .Data.Action "mode_log"}}<div class="flash ok" role="status">Rule is now in log mode: it is matched and counted but never acts.</div>{{end}}
+    {{if eq .Data.Action "recipe_log"}}<div class="flash ok" role="status">Recipe added in log mode. Watch its matches in the rules table, then choose Start enforcing.</div>{{end}}
+    {{if eq .Data.Action "recipe_enforce"}}<div class="flash ok" role="status">Recipe added and enforced.</div>{{end}}
+    {{if eq .Data.Action "recipe_log_alert"}}<div class="flash ok" role="status">Recipe added in log mode with a spike alert. Watch its matches in the rules table, then choose Start enforcing.</div>{{end}}
+    {{if eq .Data.Action "recipe_enforce_alert"}}<div class="flash ok" role="status">Recipe added and enforced, with a spike alert.</div>{{end}}
+    {{if eq .Data.Action "recipe_alert_failed"}}<div class="flash error" role="alert">Recipe added, but its alert could not be created. Check the webhook URL and secret, then add it with gregale alerts add --metric edge_rule_activity --edge-rule-id.</div>{{end}}
     {{if eq .Data.Action "error"}}<div class="flash error" role="alert">The edge-rule action could not be completed. Refresh and try again.</div>{{end}}
     {{if .Data.ErrorMessage}}<div class="flash error" role="alert">{{.Data.ErrorMessage}}</div>{{end}}
 
@@ -72,6 +77,92 @@
           <input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}">
           <button type="submit">Enable security headers</button>
         </form>
+      {{end}}
+    </section>
+
+    {{if .Data.Hosts}}
+    <section class="card" id="host-coverage" aria-labelledby="host-coverage-heading">
+      <h2 id="host-coverage-heading">Hosts</h2>
+      <p class="muted">Every hostname this app serves and how many enabled edge rules apply to it. Rules for "every app host" (match host <code>@app</code>) cover custom domains too, including ones added later.</p>
+      <ul>
+        {{range .Data.Hosts}}
+          <li><code>{{.Host}}</code>{{if .Custom}} <span class="muted">custom domain</span>{{end}} — {{if .Rules}}{{.Rules}} rule{{if ne .Rules 1}}s{{end}} apply{{else}}<strong>no edge rules apply</strong>{{end}}</li>
+        {{end}}
+      </ul>
+    </section>
+    {{end}}
+
+    {{if .Data.Suggestions}}
+    <section class="card" id="suggested-protections" aria-labelledby="suggested-protections-heading">
+      <h2 id="suggested-protections-heading">Suggested for this app</h2>
+      <p class="muted">Based on this app's recent requests. Each adds a protection recipe in log mode, so you can see what it would do before enforcing it.</p>
+      {{range .Data.Suggestions}}
+        <div class="suggestion">
+          <p><strong>{{.Title}}</strong> — {{.Reason}}</p>
+          {{if .Blocked}}
+            <p class="muted">{{.Blocked}}</p>
+          {{else}}
+            <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/recipes">
+              <input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">
+              <input type="hidden" name="recipe" value="{{.Recipe}}">
+              {{range .Hidden}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+              {{range .Inputs}}
+                <label>{{.Label}} (required) <input type="text" name="{{.Name}}" placeholder="{{.Placeholder}}" required></label>
+              {{end}}
+              <button type="submit">Add in log mode</button>
+            </form>
+          {{end}}
+          {{with .Alternative}}
+            {{if .Blocked}}
+              <p class="muted">Or {{.Title}}: {{.Blocked}}</p>
+            {{else}}
+              <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/recipes">
+                <input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">
+                <input type="hidden" name="recipe" value="{{.Recipe}}">
+                {{range .Hidden}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+                <button type="submit">Or: {{.Title}} (log mode)</button>
+              </form>
+            {{end}}
+          {{end}}
+        </div>
+      {{end}}
+    </section>
+    {{end}}
+
+    <section class="card" id="protection-recipes" aria-labelledby="protection-recipes-heading">
+      <h2 id="protection-recipes-heading">Protection recipes</h2>
+      <p class="muted">Each recipe adds one ordinary edge rule covering every host this app serves, custom domains included. It starts in log mode: it is matched and counted but never acts. Watch its matches and sample requests below, then choose <strong>Start enforcing</strong>.</p>
+      {{range .Data.Recipes}}
+        <details class="recipe">
+          <summary><strong>{{.Title}}</strong>{{if .Added}} <span class="muted">· added</span>{{end}}</summary>
+          <p>{{.Summary}}</p>
+          <p class="muted">{{.LogNote}}</p>
+          {{if .Blocked}}
+            <p class="muted">{{.Blocked}}</p>
+          {{else}}
+            <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/recipes">
+              <input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">
+              <input type="hidden" name="recipe" value="{{.ID}}">
+              {{range .Params}}
+                <label>{{.Label}}{{if .Required}} (required){{end}}
+                  <input type="text" name="{{.Name}}" value="{{.Default}}" placeholder="{{.Placeholder}}"{{if .Required}} required{{end}}>
+                </label>
+                <p class="muted">{{.Help}}</p>
+              {{end}}
+              <label><input type="checkbox" name="enforce" value="1"> Enforce immediately (skip log mode)</label>
+              {{if $.Data.RecipeAlerts}}
+                <fieldset>
+                  <legend><label><input type="checkbox" name="alert" value="1"> Alert me when this rule spikes</label></legend>
+                  <p class="muted">Sends a signed webhook when the rule matches more than the threshold in an hour, in log mode or enforced.</p>
+                  <label>Matches per hour <input type="number" name="alert_threshold" min="1" value="100"></label>
+                  <label>Webhook URL <input type="url" name="webhook_url" placeholder="https://hooks.example.com/gregale"></label>
+                  <label>Webhook secret <input type="password" name="webhook_secret" autocomplete="off"></label>
+                </fieldset>
+              {{end}}
+              <button type="submit">Add rule</button>
+            </form>
+          {{end}}
+        </details>
       {{end}}
     </section>
 
@@ -169,24 +260,49 @@
             {{if .Categories}}<p>Detections by category: {{range $i, $c := .Categories}}{{if $i}}, {{end}}{{$c.Name}} <strong>{{$c.Count}}</strong>{{end}}.</p>{{end}}
             {{if .TopRules}}<p>Top CRS rules: {{range $i, $c := .TopRules}}{{if $i}}, {{end}}<code>{{$c.Name}}</code> <strong>{{$c.Count}}</strong>{{end}}. Exclude a false positive with <code>exclude_rule_ids</code>.</p>{{end}}
           {{end}}{{end}}
+          {{with .Challenge}}{{if or .Issued .Solved .Rejected .Passed .Bypassed .Invalid}}
+            <p>Challenges: <strong>{{.Issued}}</strong> pages served, <strong>{{.Solved}}</strong> solved, <strong>{{.Rejected}}</strong> non-browser requests refused, <strong>{{.Passed}}</strong> let through on an earlier solve, <strong>{{.Bypassed}}</strong> verified API clients, <strong>{{.Invalid}}</strong> invalid solutions.</p>
+          {{end}}{{end}}
           <p class="muted">Get alerted on bursts with the <code>pre_auth_pressure</code>, <code>edge_validation_failures</code>, <code>edge_rejection_pressure</code>, and <code>edge_waf_detections</code> alert presets. CLI: <code>gregale edge-rules summary --app {{$.Data.App.Slug}} --range 24h</code>.</p>
         {{end}}
       {{end}}
     </section>
 
+    {{if .Data.Review}}
+    <section class="card" id="rule-review" aria-labelledby="rule-review-heading">
+      <h2 id="rule-review-heading">Rule review</h2>
+      <p class="muted">Log-mode rules are matched and counted but never act. Counts start at each rule's last change, so editing a rule restarts its evidence.</p>
+      <ul>
+        {{range .Data.Review}}
+          <li>
+            <strong>{{.Label}}</strong> <code>{{.Match}}</code><br>
+            {{if eq .Status "ready"}}
+              {{if .Matches}}Matched <strong>{{.Matches}}</strong> requests in log mode since {{.Since}} (about {{.PerDay}} a day). Enforcing applies its action to requests like these. <a href="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules?rule={{.ID}}&amp;outcome=logged&amp;since=7d#security-events">Review sampled requests</a>{{else}}No matches since {{.Since}}: enforcing it would not have changed any request so far.{{end}}
+              <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/{{.ID}}/mode"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><input type="hidden" name="mode" value="enforce"><button type="submit">Start enforcing</button></form>
+            {{else if eq .Status "collecting"}}
+              In log mode for {{.ObservedHours}} h. Give it a day of traffic before deciding.
+            {{else}}
+              No matches in 7 days. Check what it matches, or delete it if it is no longer needed.
+            {{end}}
+          </li>
+        {{end}}
+      </ul>
+    </section>
+    {{end}}
+
     <h2>Rules</h2>
     {{if .Data.Rules}}
       <table aria-label="Edge rules">
-        <thead><tr><th>Priority</th><th>Kind</th><th>Match</th><th>Methods</th><th>Status</th><th>Matches (24 h)</th><th>Action</th><th>Manage</th></tr></thead>
+        <thead><tr><th>Priority</th><th>Kind</th><th>Match</th><th>Methods</th><th>Status</th><th>Matches (24 h · 7 days)</th><th>Action</th><th>Manage</th></tr></thead>
         <tbody>
           {{range .Data.Rules}}
             <tr>
               <td>{{.Priority}}</td>
               <td>{{if .Name}}<strong>{{.Name}}</strong><br>{{end}}<strong>{{.Kind}}</strong>{{if .SecurityPreset}}<br><small class="muted">security preset</small>{{end}}<br><small class="muted"><code>{{.ID}}</code></small></td>
-              <td><code>{{.MatchHost}}{{.MatchPath}}</code></td>
+              <td>{{if .AppWide}}<em>every app host</em> <code>{{.MatchPath}}</code>{{else}}<code>{{.MatchHost}}{{.MatchPath}}</code>{{end}}</td>
               <td>{{if .MatchMethods}}{{.MatchMethods}}{{else}}any{{end}}</td>
               <td>{{if .Enabled}}<span class="enabled">enabled</span>{{else}}<span class="disabled">disabled</span>{{end}}{{if eq .Mode "log"}}<br><span class="muted">log mode</span>{{end}}</td>
-              <td>{{if eq .Mode "log"}}{{.Logged24h}} logged{{else}}{{.Matched24h}}{{end}}{{if or .Matched24h .Logged24h}}<br><a href="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules?rule={{.ID}}#security-events">events</a>{{end}}</td>
+              <td>{{if eq .Mode "log"}}{{.Logged24h}} logged{{else}}{{.Matched24h}}{{end}}{{if .SparkPoints}}<br><svg class="sparkline" width="84" height="20" viewBox="0 0 84 20" role="img" aria-label="{{.Matches7d}} matches in the last 7 days"><title>{{.Matches7d}} matches in the last 7 days</title><polyline points="{{.SparkPoints}}" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>{{end}}{{if or .Matched24h .Logged24h}}<br><a href="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules?rule={{.ID}}#security-events">events</a>{{end}}</td>
               <td><span class="muted">{{.ActionSummary}}</span><br><code class="rule-action">{{.ActionJSON}}</code></td>
               <td class="actions nowrap">
                 <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/{{.ID}}/mode"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">{{if eq .Mode "log"}}<input type="hidden" name="mode" value="enforce"><button type="submit">Start enforcing</button>{{else}}<input type="hidden" name="mode" value="log"><button type="submit">Log only</button>{{end}}</form>
@@ -207,7 +323,7 @@
           <select name="rule"><option value="">all rules</option>{{range .Data.Rules}}<option value="{{.ID}}" {{if eq .ID $.Data.Events.Rule}}selected{{end}}>{{if .Name}}{{.Name}}{{else}}{{.Kind}} {{.MatchHost}}{{.MatchPath}}{{end}}</option>{{end}}</select>
         </label>
         <label>Outcome
-          <select name="outcome"><option value="">any</option><option value="matched" {{if eq .Data.Events.Outcome "matched"}}selected{{end}}>matched (enforced)</option><option value="logged" {{if eq .Data.Events.Outcome "logged"}}selected{{end}}>logged (log mode)</option></select>
+          <select name="outcome"><option value="">any</option><option value="matched" {{if eq .Data.Events.Outcome "matched"}}selected{{end}}>matched (enforced)</option><option value="logged" {{if eq .Data.Events.Outcome "logged"}}selected{{end}}>logged (log mode)</option><option value="detected" {{if eq .Data.Events.Outcome "detected"}}selected{{end}}>WAF detected (sampled)</option><option value="warned" {{if eq .Data.Events.Outcome "warned"}}selected{{end}}>WAF warned</option><option value="blocked" {{if eq .Data.Events.Outcome "blocked"}}selected{{end}}>WAF blocked</option><option value="challenged" {{if eq .Data.Events.Outcome "challenged"}}selected{{end}}>challenge page served</option><option value="rejected" {{if eq .Data.Events.Outcome "rejected"}}selected{{end}}>challenge: non-browser refused</option><option value="solved" {{if eq .Data.Events.Outcome "solved"}}selected{{end}}>challenge solved</option><option value="failed" {{if eq .Data.Events.Outcome "failed"}}selected{{end}}>challenge solution refused</option></select>
         </label>
         <label>Since
           <select name="since"><option value="1h" {{if eq .Data.Events.Since "1h"}}selected{{end}}>1h</option><option value="24h" {{if eq .Data.Events.Since "24h"}}selected{{end}}>24h</option><option value="72h" {{if eq .Data.Events.Since "72h"}}selected{{end}}>72h</option><option value="7d" {{if eq .Data.Events.Since "7d"}}selected{{end}}>7d</option></select>
@@ -224,7 +340,7 @@
               <tr>
                 <td class="nowrap">{{.OccurredAt}}</td>
                 <td>{{.RuleLabel}}<br><small class="muted"><code>{{.RuleID}}</code></small></td>
-                <td>{{.Outcome}}</td>
+                <td>{{.Outcome}}{{if .WAF}}<br><small class="muted">{{.WAF}}</small>{{end}}</td>
                 <td><code>{{.Method}} {{.HostPath}}</code>{{if .RequestID}}<br><small class="muted"><code>{{.RequestID}}</code></small>{{end}}</td>
                 <td>{{if .ClientIP}}<code>{{.ClientIP}}</code>{{else}}<span class="muted">unknown</span>{{end}}{{if .Country}} · {{.Country}}{{end}}</td>
                 <td><small>{{.UserAgent}}</small></td>

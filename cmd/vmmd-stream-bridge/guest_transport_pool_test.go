@@ -226,6 +226,54 @@ func TestGuestTransportPoolFirstRequestWaitsForH2CPrewarm(t *testing.T) {
 	}
 }
 
+// ADR-1150/ADR-1180: a guest that answers once after a long run is waited for
+// as long as the request's X-Faas-Deadline-Ms allows; without it the bridge
+// keeps its default header wait. readHeaderTimeout stands in for the 30 s
+// default.
+func TestPersistentH1HandlerWaitsForTheRequestDeadline(t *testing.T) {
+	orig := readHeaderTimeout
+	readHeaderTimeout = 50 * time.Millisecond
+	defer func() { readHeaderTimeout = orig }()
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		_, _ = io.WriteString(w, "done")
+	}))
+	defer guest.Close()
+	_, portText, err := net.SplitHostPort(guest.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.ParseUint(portText, 10, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := newGuestTransportPool("127.0.0.1")
+	defer pool.closeIdleConnections()
+	handler := newHandlerWithPool("127.0.0.1", uint16(port), time.Now().Add(time.Minute), pool)
+
+	for _, tc := range []struct {
+		deadlineMs string
+		want       int
+	}{
+		{deadlineMs: "2000", want: http.StatusOK},
+		{want: http.StatusBadGateway},
+	} {
+		req := httptest.NewRequest(http.MethodPost, "http://unix/work", nil)
+		req.Header.Set(bridgeRequestMarkerHeader, "1")
+		req.Header.Set(bridgeRequestProtocolHeader, "h1")
+		req.Header.Set(bridgeRequestPortHeader, portText)
+		req.Header.Set(bridgeRequestHostHeader, "guest.test")
+		if tc.deadlineMs != "" {
+			req.Header.Set("X-Faas-Deadline-Ms", tc.deadlineMs)
+		}
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != tc.want {
+			t.Fatalf("deadline %q: status = %d, want %d (%s)", tc.deadlineMs, rr.Code, tc.want, rr.Body.String())
+		}
+	}
+}
+
 func TestPersistentH1HandlerReusesGuestConnection(t *testing.T) {
 	var connections atomic.Int32
 	guest := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

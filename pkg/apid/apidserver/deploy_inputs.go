@@ -20,6 +20,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -141,6 +142,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		rollbackOn5xx            *bool
 		disableStartupCPUBoost   *bool
 		mcpTaskMigrationOverride bool
+		overrideFreeze           string
 		healthcheck              *api.DeploymentHealthcheck
 		overrideEnv              map[string]string
 		overrideEnvSeen          bool
@@ -305,6 +307,13 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			mcpTaskMigrationOverride = value
+		case "override_freeze":
+			b, readErr := io.ReadAll(io.LimitReader(part, 4*api.ReleaseFreezeReasonMax+1))
+			if readErr != nil || len(b) > 4*api.ReleaseFreezeReasonMax {
+				api.WriteProblem(w, api.ErrValidation("override_freeze must be a reason of at most 200 characters"))
+				return
+			}
+			overrideFreeze = strings.TrimSpace(string(b))
 		case "healthcheck":
 			b, readErr := io.ReadAll(io.LimitReader(part, (64<<10)+1))
 			if readErr != nil || len(b) > 64<<10 || json.Unmarshal(b, &healthcheck) != nil {
@@ -366,7 +375,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, MCPTaskMigrationOverride: mcpTaskMigrationOverride, Sidecars: sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, MCPTaskMigrationOverride: mcpTaskMigrationOverride, OverrideFreeze: overrideFreeze, Sidecars: sidecars}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(healthcheck)
 	if len(overrideEnv) > 0 {
 		if rolloutReq.Overrides == nil {
@@ -389,6 +398,11 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
+	if prob := s.releaseFreezeProblem(r, acct, app, rolloutReq.Scope, rolloutReq.OverrideFreeze); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
 	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -479,7 +493,10 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	if !s.admitCanaryDeployment(w, r, rollout) {
 		return
 	}
-	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !noTriggers)
+	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !noTriggers)
+	if stagedManifest.cronIntent != nil {
+		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
+	}
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return
@@ -529,7 +546,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		// legacy hardcoded "image" diverged from Kind for tarball /
 		// dockerfile deploys and produced misleading split-by-source
 		// dashboards.
-		_, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
+		res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
 			OperationDefinitions:      sourceOperationSpecs(manifest),
 			OperationAdmissionEnabled: s.operation.OperationDefinitionsAdmission(app.AccountID, app.ID, rollout.Scope, sourceOperationSpecs(manifest)),
 			Activity:                  s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": string(kind), "scope": rollout.Scope}),
@@ -545,7 +562,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			FunctionRuntime:           functionRuntimeForApp(app),
 			LogSpool:                  spoolRoot(),
 			Log:                       s.log,
-			ActorUserID:               acct.ID,
+			ActorUserID:               actorAccount(r, acct).ID,
 			ActorVia:                  routeKindForRequest(r),
 			ActorFromIP:               middleware.ClientIP(r),
 			Workflows:                 marshalWorkflowDefinitions(workflows),
@@ -585,10 +602,9 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		sourceAccepted = true
 		uploadOutcome = "completed"
 		// Look up the durable deployment row to build the wire
-		// response. LatestDeployment returns the row we just
-		// inserted (state.Store.CreateDeployment is its own tx
-		// and the row is committed before Enqueue returns).
-		d, err := s.store.LatestDeployment(r.Context(), app.ID)
+		// response. Read the exact accepted ID so a concurrent newer
+		// deployment cannot replace this submission's identity.
+		d, err := s.store.DeploymentByID(r.Context(), res.DeploymentID)
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
 			return
@@ -919,7 +935,7 @@ func archiveLogicalRoot(path, sourceRoot string) (string, error) {
 // archiveEntryRelativeToRoot returns the slash-separated path of an archive
 // entry below logicalRoot. An empty logicalRoot means a flat archive root.
 func archiveEntryRelativeToRoot(name, logicalRoot string) (string, bool) {
-	name = strings.TrimPrefix(strings.TrimSuffix(name, "/"), "./")
+	name = strings.TrimSuffix(tarball.TrimLeadingDotSlash(name), "/")
 	if name == "" {
 		return "", false
 	}
@@ -973,7 +989,7 @@ func archiveHasSourceRoot(path, sourceRoot string) (bool, error) {
 			tar.TypeGNULongName, tar.TypeGNULongLink:
 			continue
 		}
-		name := strings.TrimPrefix(strings.TrimSuffix(hdr.Name, "/"), "./")
+		name := strings.TrimSuffix(tarball.TrimLeadingDotSlash(hdr.Name), "/")
 		if strings.HasPrefix(name, prefix) && strings.TrimPrefix(name, prefix) != "" {
 			return true, nil
 		}

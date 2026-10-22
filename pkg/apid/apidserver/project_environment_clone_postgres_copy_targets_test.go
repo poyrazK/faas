@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func (p *cloneSnapshotProvider) PrepareSnapshotCopyTarget(ctx context.Context, d managedpostgres.RestoreSourceDefinition, r managedpostgres.SnapshotCopyTargetRequest) (managedpostgres.SnapshotCopyTargetObservation, error) {
@@ -55,7 +56,7 @@ func (p *cloneSnapshotProvider) FindSnapshotCopyTarget(ctx context.Context, d ma
 }
 
 type cloneCopyTargetFailureStore struct {
-	*state.PgStore
+	PgStore                                 *state.PgStore
 	loseReservation, failRecord, loseRecord bool
 }
 
@@ -90,13 +91,13 @@ func cloneCopyTargetWorkerFixture(t *testing.T) (cloneCoordinatorFixture, *clone
 		t.Fatal(err)
 	}
 	store := &cloneCopyTargetFailureStore{PgStore: f.store.PgStore}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	p.beforeCopyCreate = func(ctx context.Context, r managedpostgres.SnapshotCopyTargetRequest) error {
-		target, err := store.ProjectEnvironmentClonePostgresCopyTargetForLease(ctx, f.lease, sourceID)
+		target, err := store.PgStore.ProjectEnvironmentClonePostgresCopyTargetForLease(ctx, f.lease, sourceID)
 		if err != nil {
 			return err
 		}
-		capture, err := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(ctx, f.lease, sourceID)
+		capture, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(ctx, f.lease, sourceID)
 		if err != nil {
 			return err
 		}
@@ -140,14 +141,14 @@ func TestPGClonePostgresSnapshotCopyTargetWorkerRecoversPrivateIndependentOwner(
 	if err == nil || p.copyCreates != 1 {
 		t.Fatalf("lost committed observation: %v", err)
 	}
-	target, err := store.ProjectEnvironmentClonePostgresCopyTargetForLease(t.Context(), f.lease, sourceID)
+	target, err := store.PgStore.ProjectEnvironmentClonePostgresCopyTargetForLease(t.Context(), f.lease, sourceID)
 	if err != nil || target.State != "prepared" || target.ProviderResourceID != p.copyActual.ProviderResourceID || p.copyDefinition.Spec.StorageLimitBytes == 123456 || p.copyDefinition.Spec.RestoreWindowSeconds == 0 {
 		t.Fatalf("frozen independent owner: %+v %v", target, err)
 	}
-	if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.lease, err = store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,16 +163,16 @@ func TestPGClonePostgresSnapshotCopyTargetWorkerRecoversPrivateIndependentOwner(
 	if _, err := f.srv.managedPostgres.Reconcile(t.Context(), f.lease.Operation.AccountID, target.TargetDatabaseID); !errors.Is(err, managedpostgres.ErrConflict) {
 		t.Fatalf("PITR provisioner claimed independent target: %v", err)
 	}
-	if _, err := store.ProjectEnvironmentBySlug(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.TargetEnvironment); !errors.Is(err, state.ErrNotFound) {
+	if _, err := store.PgStore.ProjectEnvironmentBySlug(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.TargetEnvironment); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("preparation published stage: %v", err)
 	}
 	op := f.lease.Operation
-	f.lease.Operation, err = store.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
+	f.lease.Operation, err = store.PgStore.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	p.copyDeletePending = true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
 	if !errors.Is(err, errCloneCompensationUnavailable) || p.forkDeletes != 0 || p.deletes != 0 {
 		t.Fatalf("active copy target lost immutable input: %v", err)
 	}
@@ -186,7 +187,7 @@ func TestPGClonePostgresSnapshotCopyTargetWorkerKeepsPendingProjectUnready(t *te
 	if err != nil || prepared || p.copyCreates != 1 {
 		t.Fatalf("pending preparation: %v %v", prepared, err)
 	}
-	target, err := store.ProjectEnvironmentClonePostgresCopyTargetForLease(t.Context(), f.lease, sourceID)
+	target, err := store.PgStore.ProjectEnvironmentClonePostgresCopyTargetForLease(t.Context(), f.lease, sourceID)
 	if err != nil || target.State != "preparing" || target.ProviderResourceID == "" {
 		t.Fatalf("pending project lost identity: %+v %v", target, err)
 	}

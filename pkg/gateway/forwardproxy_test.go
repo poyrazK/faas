@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"go.opentelemetry.io/otel/baggage"
@@ -226,6 +228,55 @@ func TestForwardingReverseProxy_ForwardsTheRequestHost(t *testing.T) {
 	}
 	if got := headerValue(stream.Sends[0].GetInit().GetHeaders(), "Host"); got != "h9-echo.gregale.dev" {
 		t.Fatalf("forwarded Host = %q, want the request host", got)
+	}
+}
+
+// adr: 1150 — the guest learns the request budget left at dispatch, and only
+// from the platform: a customer-supplied deadline header is dropped.
+func TestForwardingReverseProxy_SendsTheRemainingBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		budget   time.Duration
+		wantSent bool
+	}{
+		{name: "budgeted request", budget: 5 * time.Minute, wantSent: true},
+		{name: "no budget", wantSent: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stream := noContentHTTPStream()
+			proxy := gateway.ForwardingReverseProxy(&fakeNodeLookup{cli: &fakeVmmdClient{Stream: stream}}, nil)
+			ctx := context.Background()
+			if tc.budget > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel, _ = reqbudget.WithRemaining(ctx, tc.budget, tc.budget, "forward", "GET:/")
+				defer cancel()
+			}
+			r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", nil)
+			r.Header.Set("x-faas-instance", "i-test")
+			r.Header.Set(api.DeadlineHeader, "86400000") // a customer asking for a day
+			rec := httptest.NewRecorder()
+
+			proxy(gateway.Target{NodeID: "node-1", InstanceID: "i-test"}).ServeHTTP(rec, r)
+			var values []string
+			for _, h := range stream.Sends[0].GetInit().GetHeaders() {
+				if strings.EqualFold(h.GetName(), api.DeadlineHeader) {
+					values = append(values, h.GetValue())
+				}
+			}
+			if !tc.wantSent {
+				if len(values) != 0 {
+					t.Fatalf("deadline headers = %v, want none without a budget", values)
+				}
+				return
+			}
+			if len(values) != 1 {
+				t.Fatalf("deadline headers = %v, want exactly the platform's", values)
+			}
+			ms, err := strconv.ParseInt(values[0], 10, 64)
+			if err != nil || ms <= 0 || ms > tc.budget.Milliseconds() {
+				t.Fatalf("deadline = %q, want 0 < ms <= %d", values[0], tc.budget.Milliseconds())
+			}
+		})
 	}
 }
 
@@ -453,6 +504,10 @@ func (f *fakeVmmdClient) SyncDatabaseArchive(context.Context, *vmmdpb.SyncDataba
 	panic("SyncDatabaseArchive: not stubbed")
 }
 
+func (f *fakeVmmdClient) DatabaseArchiveHold(context.Context, *vmmdpb.DatabaseArchiveHoldRequest, ...grpc.CallOption) (*vmmdpb.DatabaseArchiveHoldResponse, error) {
+	panic("DatabaseArchiveHold: not stubbed")
+}
+
 func (f *fakeVmmdClient) DatabaseArchiveBytes(context.Context, *vmmdpb.DatabaseArchiveBytesRequest, ...grpc.CallOption) (*vmmdpb.DatabaseArchiveBytesResponse, error) {
 	panic("DatabaseArchiveBytes: not stubbed")
 }
@@ -503,6 +558,10 @@ func (f *fakeVmmdClient) RetireEnvironmentQualificationArtifacts(context.Context
 	panic("RetireEnvironmentQualificationArtifacts: not stubbed")
 }
 
+func (f *fakeVmmdClient) RetireManagedPostgresDrain(context.Context, *vmmdpb.RetireManagedPostgresDrainRequest, ...grpc.CallOption) (*vmmdpb.RetireManagedPostgresDrainResponse, error) {
+	panic("RetireManagedPostgresDrain: not stubbed")
+}
+
 func (f *fakeVmmdClient) CaptureEnvironmentQualification(context.Context, *vmmdpb.CaptureEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.CaptureEnvironmentQualificationResponse, error) {
 	panic("CaptureEnvironmentQualification: not stubbed")
 }
@@ -536,11 +595,18 @@ func (f *fakeVmmdClient) ExecuteAppTask(context.Context, *vmmdpb.ExecuteAppTaskR
 func (f *fakeVmmdClient) ExecuteAppTaskStream(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteAppTaskEvent], error) {
 	panic("ExecuteAppTaskStream: not stubbed")
 }
+func (f *fakeVmmdClient) AttachAppTask(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.AttachAppTaskRequest, vmmdpb.AttachAppTaskEvent], error) {
+	panic("AttachAppTask: not stubbed")
+}
 func (f *fakeVmmdClient) WaitJobExit(context.Context, *vmmdpb.WaitJobExitRequest, ...grpc.CallOption) (*vmmdpb.JobExitResponse, error) {
 	panic("WaitJobExit: not stubbed")
 }
 func (f *fakeVmmdClient) PauseAndSnapshot(context.Context, *vmmdpb.PauseAndSnapshotRequest, ...grpc.CallOption) (*vmmdpb.SnapshotResponse, error) {
 	panic("PauseAndSnapshot: not stubbed")
+}
+
+func (f *fakeVmmdClient) CaptureAdmittedRuntime(context.Context, *vmmdpb.CaptureAdmittedRuntimeRequest, ...grpc.CallOption) (*vmmdpb.CaptureAdmittedRuntimeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "admitted capture is not used by gateway tests")
 }
 
 // WaitBuilderReady and DeleteWarmSnapshot belong to builderd's warm-builder
@@ -563,6 +629,12 @@ func (f *fakeVmmdClient) WarmSnapshot(context.Context, *vmmdpb.WarmSnapshotReque
 }
 func (f *fakeVmmdClient) ResumeWarmInstance(context.Context, *vmmdpb.ResumeWarmInstanceRequest, ...grpc.CallOption) (*vmmdpb.ResumeWarmInstanceResponse, error) {
 	panic("ResumeWarmInstance: not stubbed")
+}
+func (f *fakeVmmdClient) FreezeInstance(context.Context, *vmmdpb.FreezeInstanceRequest, ...grpc.CallOption) (*vmmdpb.FreezeInstanceResponse, error) {
+	panic("FreezeInstance: not stubbed")
+}
+func (f *fakeVmmdClient) ThawInstance(context.Context, *vmmdpb.ThawInstanceRequest, ...grpc.CallOption) (*vmmdpb.ThawInstanceResponse, error) {
+	panic("ThawInstance: not stubbed")
 }
 func (f *fakeVmmdClient) Destroy(context.Context, *vmmdpb.DestroyRequest, ...grpc.CallOption) (*vmmdpb.DestroyResponse, error) {
 	panic("Destroy: not stubbed")
@@ -1371,64 +1443,6 @@ func TestForwardingReverseProxy_StreamOtherErrorIs502(t *testing.T) {
 	}
 }
 
-// TestStripHopByHop is a focused unit test for the header-stripping
-// function. It catches the easy mistake of forgetting a header (e.g.
-// Transfer-Encoding when the inbound used chunked) before a
-// real-world client trips over it.
-func TestStripHopByHop(t *testing.T) {
-	in := http.Header{}
-	in.Set("Connection", "close")
-	in.Set("Keep-Alive", "timeout=5")
-	in.Set("Transfer-Encoding", "chunked")
-	in.Set("Upgrade", "h2c")
-	in.Set("Proxy-Authenticate", "Basic realm=x")
-	in.Set("Proxy-Authorization", "Basic xyz")
-	in.Set("Te", "trailers")
-	in.Set("Trailers", "X-Some-Trailer")
-	in.Set("X-Custom", "keep")
-	in.Set("Authorization", "keep")
-
-	out := stripHopByHopTest(in)
-	for _, k := range []string{
-		"Connection", "Keep-Alive", "Transfer-Encoding", "Upgrade",
-		"Proxy-Authenticate", "Proxy-Authorization", "Te", "Trailers",
-	} {
-		if out.Get(k) != "" {
-			t.Errorf("hop-by-hop header %q leaked: %q", k, out.Get(k))
-		}
-	}
-	if out.Get("X-Custom") != "keep" {
-		t.Errorf("X-Custom lost")
-	}
-	if out.Get("Authorization") != "keep" {
-		t.Errorf("Authorization lost")
-	}
-}
-
-// stripHopByHopTest is a thin shim into the gateway package so we
-// can unit-test it without exporting the production symbol.
-func stripHopByHopTest(h http.Header) http.Header {
-	return stripHopByHopImpl(h)
-}
-
-// indirection so the package symbol isn't pulled into the test file
-// unless the production code re-exports it. For now we just take the
-// local copy; future refactors can swap to a public symbol without
-// changing the tests.
-//
-// (This keeps the test pass even if the gateway package decides to
-// keep stripHopByHop unexported forever.)
-func stripHopByHopImpl(h http.Header) http.Header {
-	out := h.Clone()
-	for _, k := range []string{
-		"Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
-		"Te", "Trailers", "Transfer-Encoding", "Upgrade",
-	} {
-		out.Del(k)
-	}
-	return out
-}
-
 // TestForwardingReverseProxyWithEvents_EmitsProxyFirstByte pins the
 // wake.proxy_first_byte emit (issue #517 / PR-C / ADR-064). The
 // forwarder is the customer-facing "how long until the upstream
@@ -1579,6 +1593,55 @@ func TestForwardingReverseProxyWithEvents_FirstByteOncePerWake(t *testing.T) {
 	countRows("wake-a", 1)
 	serve("wake-b", "req-4")
 	countRows("wake-b", 1)
+}
+
+// adr: 1151 — a frozen VM keeps its wake id across thaws, so first-byte
+// dedupe is per wake generation: each thaw emits its own row, while a
+// repeat in the same generation and a request without a claimed generation
+// (a cron synth on the cached target) do not.
+func TestForwardingReverseProxyWithEvents_FirstBytePerWakeGeneration(t *testing.T) {
+	store := state.NewMemStore()
+	platform := events.NewPlatform("gatewayd-internal", store, slog.Default(), wire.NewOpsMetrics("gatewayd-test"), nil)
+	serve := func(generation time.Time, requestID string) {
+		stream := &fakeBidiStream{Responses: []*vmmdpb.ForwardHTTPStreamResponse{
+			{Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{Init: &vmmdpb.ForwardHTTPResponseInit{Status: 200}}},
+		}}
+		proxy := gateway.ForwardingReverseProxyWithEvents(&fakeNodeLookup{cli: &fakeVmmdClient{Stream: stream}}, nil, platform)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		if !generation.IsZero() {
+			req = req.WithContext(gateway.WithWakeTimelineStart(req.Context(), generation))
+		}
+		req.Header.Set("x-faas-request-id", requestID)
+		rec := httptest.NewRecorder()
+		proxy(gateway.Target{AppID: "app-1", NodeID: "node-1", InstanceID: "inst-1", WakeID: "wake-frozen"}).ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+	}
+	rowsAfter := func(want int) {
+		t.Helper()
+		deadline := time.Now().Add(time.Second)
+		var rows []state.Event
+		for time.Now().Before(deadline) {
+			rows, _ = store.ListEventsByWakeID(context.Background(), "wake-frozen", time.Time{}, 0)
+			if len(rows) >= want {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		time.Sleep(20 * time.Millisecond) // let a wrongly queued duplicate land
+		if rows, _ = store.ListEventsByWakeID(context.Background(), "wake-frozen", time.Time{}, 0); len(rows) != want {
+			t.Fatalf("first-byte rows = %d, want %d", len(rows), want)
+		}
+	}
+	firstThaw, secondThaw := time.Unix(1_700_000_000, 0), time.Unix(1_700_000_090, 0)
+	serve(firstThaw, "req-1")
+	rowsAfter(1)
+	serve(firstThaw, "req-2")   // same generation
+	serve(time.Time{}, "req-3") // no claimed generation, cached wake id
+	rowsAfter(1)
+	serve(secondThaw, "req-4")
+	rowsAfter(2)
 }
 
 // keys is a small helper for diagnostics — keeps the test failure

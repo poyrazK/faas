@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/base64"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -40,13 +41,13 @@ func TestCmdRunSubmitJSON(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	oldJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = oldJSON })
-	out, _, restore := swapIO(t)
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = oldJSON })
+	out, _, restore := main.SwapIO(t)
 	defer restore()
 
-	if got := cmdRun([]string{"--runtime", "node24", "--source", "console.log(1)", "--input", `{"x":1}`, "--workflow-id", "agent-flow-1", "--step-label", "analyze"}); got != 0 {
+	if got := main.CmdRun([]string{"--runtime", "node24", "--source", "console.log(1)", "--input", `{"x":1}`, "--workflow-id", "agent-flow-1", "--step-label", "analyze"}); got != 0 {
 		t.Fatalf("cmdRun exit = %d", got)
 	}
 	var receipt map[string]any
@@ -81,13 +82,13 @@ func TestCmdRunsListJSON(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	oldJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = oldJSON })
-	out, _, restore := swapIO(t)
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = oldJSON })
+	out, _, restore := main.SwapIO(t)
 	defer restore()
 
-	if got := cmdRuns([]string{"list", "--limit", "2", "--offset", "4", "--status", "running", "--workflow-id", "agent-flow-42"}); got != 0 {
+	if got := main.CmdRuns([]string{"list", "--limit", "2", "--offset", "4", "--status", "running", "--workflow-id", "agent-flow-42"}); got != 0 {
 		t.Fatalf("cmdRuns list exit = %d", got)
 	}
 	var response api.ExecutionListResponse
@@ -110,12 +111,12 @@ func TestCmdRunsWorkflowJSON(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	oldJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = oldJSON })
-	out, _, restore := swapIO(t)
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = oldJSON })
+	out, _, restore := main.SwapIO(t)
 	defer restore()
-	if got := cmdRuns([]string{"workflow", "agent-flow-42"}); got != 0 {
+	if got := main.CmdRuns([]string{"workflow", "agent-flow-42"}); got != 0 {
 		t.Fatalf("cmdRuns workflow exit = %d", got)
 	}
 	var response api.ExecutionWorkflowResponse
@@ -130,9 +131,9 @@ func TestCmdRunsWorkflowJSON(t *testing.T) {
 func TestCmdRunsListRejectsInvalidStatus(t *testing.T) {
 	t.Setenv("FAAS_API", "http://127.0.0.1:1")
 	t.Setenv("FAAS_TOKEN", "test-token")
-	_, errOut, restore := swapIO(t)
+	_, errOut, restore := main.SwapIO(t)
 	defer restore()
-	if got := cmdRuns([]string{"list", "--status", "not-a-status"}); got == 0 {
+	if got := main.CmdRuns([]string{"list", "--status", "not-a-status"}); got == 0 {
 		t.Fatal("invalid status unexpectedly succeeded")
 	}
 	if !strings.Contains(errOut(), "usage: gregale runs list") {
@@ -150,10 +151,10 @@ func TestExecutionSourceRefusesSymlink(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	if _, err := executionSource("", link); err == nil || !strings.Contains(err.Error(), "symlink") {
+	if _, err := main.ExecutionSource("", link); err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("executionSource symlink error = %v", err)
 	}
-	if _, err := resolveExecutionInput("@" + link); err == nil || !strings.Contains(err.Error(), "symlink") {
+	if _, err := main.ResolveExecutionInput("@" + link); err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("resolveExecutionInput symlink error = %v", err)
 	}
 }
@@ -196,12 +197,12 @@ func TestCmdRunSubmitsDirectoryBundle(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	oldJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = oldJSON })
-	out, _, restore := swapIO(t)
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = oldJSON })
+	out, _, restore := main.SwapIO(t)
 	defer restore()
-	if got := cmdRun([]string{"--runtime", "node24", "--dir", dir, "--entrypoint", "src/main.mjs"}); got != 0 {
+	if got := main.CmdRun([]string{"--runtime", "node24", "--dir", dir, "--entrypoint", "src/main.mjs"}); got != 0 {
 		t.Fatalf("cmdRun exit = %d", got)
 	}
 	if !strings.Contains(out.String(), `"status": "queued"`) {
@@ -218,7 +219,7 @@ func TestExecutionBundleRefusesSymlink(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(dir, "link.txt")); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	if _, err := executionBundle(dir, "secret.txt"); err == nil || !strings.Contains(err.Error(), "symlink") {
+	if _, err := main.ExecutionBundle(dir, "secret.txt"); err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("executionBundle error = %v", err)
 	}
 }

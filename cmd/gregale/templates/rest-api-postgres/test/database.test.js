@@ -5,10 +5,11 @@ import { createDatabase, poolConfig } from "../database.js";
 
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 const tick = () => new Promise((resolve) => setImmediate(resolve));
-function fixture(options = {}) {
+async function fixture(options = {}) {
   const pools = [], logs = [];
-  const db = createDatabase(() => {
+  const db = createDatabase(config => {
     const pool = new EventEmitter();
+    pool.dsn = config.connectionString;
     pool.clients = []; pool.ended = 0;
     pool.connect = async () => {
       if (pool.pending) return pool.pending.promise;
@@ -20,13 +21,56 @@ function fixture(options = {}) {
       pool.clients.push(client); return client;
     };
     pool.end = async () => { pool.ended += 1; };
-    pools.push(pool); return pool;
-  }, { log: (code) => logs.push(code), ...options });
+    pools.push(pool); options.configurePool?.(pool, pools.length); return pool;
+  }, { env: {DATABASE_URL: "postgres://worker:fixture@db:5432/app?sslmode=disable"}, log: (code) => logs.push(code), ...options });
+  await db.start();
+  for (const pool of pools) pool.clients = [];
   return { db, pools, logs };
 }
 
+test("qualified functions register the shipped binding adapter before driver creation and retain it until retirement", async t => {
+  const key = Symbol.for("gregale.function.postgres.lifecycle.v1");
+  const resources = new Set();
+  Object.defineProperty(globalThis, key, {configurable: true, value: {version: 1, register(resource) {
+    resources.add(resource); return () => resources.delete(resource);
+  }}});
+  t.after(() => Reflect.deleteProperty(globalThis, key));
+  const {db, pools} = await fixture({shutdownTimeoutMS: 25, configurePool() {
+    assert.equal(resources.size, 1);
+  }});
+  const [resource] = resources;
+  await resource.beforeCheckpoint({});
+  assert.equal(db.diagnostics.state, "checkpointed");
+  assert.equal(pools[0].ended, 1);
+  await resource.afterRestore({});
+  assert.equal(db.generation, 1);
+  assert.equal(pools.length, 2);
+  const drained = deferred();
+  pools[1].end = () => drained.promise;
+  // A referenced timer keeps the test alive through AbortSignal.timeout.
+  const release = setTimeout(drained.resolve, 100);
+  t.after(() => { clearTimeout(release); drained.resolve(); });
+  await assert.rejects(db.close(), /database_cancelled/);
+  assert.equal(resources.size, 1);
+  drained.resolve(); await tick(); await tick();
+  assert.equal(resources.size, 0);
+});
+
+test("a full function registry refuses the shipped adapter before any driver factory effects", t => {
+  const key = Symbol.for("gregale.function.postgres.lifecycle.v1");
+  Object.defineProperty(globalThis, key, {configurable: true, value: {version: 1, register() {
+    throw new Error("private registry detail");
+  }}});
+  t.after(() => Reflect.deleteProperty(globalThis, key));
+  let created = 0;
+  assert.throws(() => createDatabase(() => { created++; }, {
+    env: {DATABASE_URL: "postgres://worker:fixture@db:5432/app?sslmode=disable"},
+  }), error => error.message === "database_unavailable");
+  assert.equal(created, 0);
+});
+
 test("idle SQL errors are handled without printing provider details", async () => {
-  const { db, pools, logs } = fixture();
+  const { db, pools, logs } = await fixture();
   pools[0].emit("error", new Error("password=secret provider.example"));
   assert.deepEqual(logs, ["database_idle_connection_lost"]);
   await db.query("SELECT 1"); await db.close();
@@ -46,7 +90,7 @@ test("managed SSL URLs preserve certificate verification instead of overriding i
 });
 
 test("active session errors are handled without committing or replaying a write", async () => {
-  const { db, pools, logs } = fixture();
+  const { db, pools, logs } = await fixture();
   pools[0].execute = async (sql) => {
     if (sql === "INSERT fixture") pools[0].clients[0].emit("error", new Error("secret SQL detail"));
     return { rows: [] };
@@ -61,7 +105,7 @@ test("active session errors are handled without committing or replaying a write"
 });
 
 test("restore coalesces concurrent callbacks, replaces the pool and only reads", async () => {
-  const { db, pools } = fixture();
+  const { db, pools } = await fixture();
   await db.query("SELECT 1");
   const first = db.restore(), second = db.restore();
   assert.equal(first, second);
@@ -75,7 +119,7 @@ test("restore coalesces concurrent callbacks, replaces the pool and only reads",
 });
 
 test("cancellation before commit destroys the session and never replays a write", async () => {
-  const { db, pools } = fixture(); const blocked = deferred(); const controller = new AbortController();
+  const { db, pools } = await fixture(); const blocked = deferred(); const controller = new AbortController();
   pools[0].execute = async (sql) => sql === "INSERT fixture" ? blocked.promise : { rows: [] };
   const result = db.query("INSERT fixture", [], { write: true, signal: controller.signal });
   await tick(); controller.abort();
@@ -88,15 +132,18 @@ test("cancellation before commit destroys the session and never replays a write"
 });
 
 test("a client acquired after cancellation is destroyed rather than leaked", async () => {
-  const { db, pools } = fixture(); const pending = deferred(); pools[0].pending = pending;
+  const { db, pools } = await fixture(); const pending = deferred(); pools[0].pending = pending;
   const controller = new AbortController(); const result = db.query("SELECT 1", [], { signal: controller.signal });
+  await tick(); // The driver has admitted connect before cancellation.
   controller.abort(); await assert.rejects(result, /database_cancelled/);
+  const closing = db.close(); await tick();
+  assert.equal(pools[0].ended, 0); // A pending driver connection still owns the lease.
   const releases = []; pending.resolve(Object.assign(new EventEmitter(), { release: (destroy) => releases.push(destroy) }));
-  await tick(); assert.deepEqual(releases, [true]); await db.close();
+  await closing; assert.deepEqual(releases, [true]); assert.equal(pools[0].ended, 1);
 });
 
 test("request deadlines and admission bound an unavailable database", async () => {
-  const { db, pools } = fixture({ timeoutMS: 30 }); pools[0].execute = () => new Promise(() => {});
+  const { db, pools } = await fixture({ timeoutMS: 30 }); pools[0].execute = () => new Promise(() => {});
   const requests = Array.from({ length: 16 }, () => assert.rejects(db.query("SELECT 1"), /database_cancelled/));
   await assert.rejects(db.query("SELECT 1"), /database_busy/);
   await Promise.all(requests);
@@ -105,16 +152,16 @@ test("request deadlines and admission bound an unavailable database", async () =
 });
 
 test("restore cancels captured work and a failed readiness probe stays closed", async () => {
-  const { db, pools } = fixture(); const blocked = deferred();
+  const { db, pools } = await fixture({configurePool: (pool, index) => {
+    if (index === 3) pool.execute = () => {throw new Error("secret");};
+  }}); const blocked = deferred();
   pools[0].execute = () => blocked.promise;
   const work = assert.rejects(db.query("SELECT 1"), /database_cancelled/);
   const restore = db.restore(); await tick();
   // Run another restore with a missing-schema error on the fresh pool.
   await restore; await work; blocked.resolve({ rows: [] });
   pools[1].execute = () => { throw new Error("secret provider detail"); };
-  // The replacement pool is created asynchronously so set its fault before connect.
   const next = db.restore();
-  queueMicrotask(() => { pools[2].execute = () => { throw new Error("secret"); }; });
   await assert.rejects(next, /database_unavailable/);
   assert.equal(db.generation, 1);
   await assert.rejects(db.query("SELECT 1"), /database_unavailable/);
@@ -122,7 +169,7 @@ test("restore cancels captured work and a failed readiness probe stays closed", 
 });
 
 test("close during restore prevents late readiness publication", async () => {
-  const { db } = fixture(); const restore = db.restore();
+  const { db } = await fixture(); const restore = db.restore();
   const failure = assert.rejects(restore, /database_unavailable/);
   await db.close(); await failure;
   assert.equal(db.generation, 0);
@@ -131,13 +178,187 @@ test("close during restore prevents late readiness publication", async () => {
 });
 
 test("shutdown aborts an already running readiness probe", async () => {
-  const { db, pools } = fixture();
+  const entered = deferred();
+  const { db, pools } = await fixture({configurePool: (pool, index) => {
+    if (index === 2) pool.execute = () => {entered.resolve(); return new Promise(() => {});};
+  }});
   const restore = db.restore();
-  queueMicrotask(() => { pools[1].execute = () => new Promise(() => {}); });
   const failure = assert.rejects(restore, /database_unavailable/);
-  await tick();
+  await entered.promise;
   assert.equal(pools[1].clients.length, 1);
   await db.close(); await failure;
   assert.equal(db.generation, 0);
   assert.deepEqual(pools[1].clients[0].releases, [true]);
+});
+
+test("checkpoint drains every session, refuses SQL until restore and is idempotent", async () => {
+  const { db, pools } = await fixture(); const blocked = deferred();
+  await db.query("SELECT 1"); assert.equal(db.diagnostics.state, "ready");
+  pools[0].execute = (sql) => sql === "SELECT pg_sleep" ? blocked.promise : { rows: [] };
+  const work = assert.rejects(db.query("SELECT pg_sleep"), /database_cancelled/);
+  await tick(); assert.equal(db.diagnostics.activeRequests, 1);
+  const first = db.checkpoint(), second = db.checkpoint();
+  assert.equal(first, second); assert.equal(db.diagnostics.state, "checkpointing");
+  await assert.rejects(db.query("SELECT 1"), /database_unavailable/);
+  await first; await work; blocked.resolve({ rows: [] });
+  assert.equal(pools[0].ended, 1); assert.equal(pools.length, 1);
+  assert.deepEqual(db.diagnostics, { state: "checkpointed", generation: 0, activeRequests: 0 });
+  await db.checkpoint(); assert.equal(pools[0].ended, 1); // A retried capture finds it drained.
+  await assert.rejects(db.reload(), /database_unavailable/); assert.equal(pools.length, 1);
+  await db.restore();
+  assert.deepEqual(db.diagnostics, { state: "ready", generation: 1, activeRequests: 0 });
+  await db.query("SELECT 1"); assert.equal(pools.length, 2);
+  await db.close(); assert.equal(db.diagnostics.state, "closed");
+});
+
+test("a failed checkpoint drain stays closed and drains again when retried", { timeout: 3000 }, async () => {
+  const ended = deferred();
+  const { db, pools, logs } = await fixture({ restoreTimeoutMS: 30 });
+  pools[0].end = () => ended.promise;
+  await assert.rejects(db.checkpoint(), /database_unavailable/);
+  assert.deepEqual(logs, ["database_checkpoint_drain_failed"]);
+  assert.equal(db.diagnostics.state, "unavailable");
+  await assert.rejects(db.query("SELECT 1"), /database_unavailable/);
+  const retry = db.checkpoint();
+  await assert.rejects(db.restore(), /database_busy/);
+  ended.resolve(); await retry; assert.equal(db.diagnostics.state, "checkpointed");
+  await db.restore(); await db.query("SELECT 1"); await db.close();
+});
+
+test("maxInFlight bounds admission", async () => {
+  const { db, pools } = await fixture({ maxInFlight: 1, timeoutMS: 30 }); pools[0].execute = () => new Promise(() => {});
+  const held = assert.rejects(db.query("SELECT 1"), /database_cancelled/);
+  await assert.rejects(db.query("SELECT 1"), /database_busy/);
+  await held; await db.close();
+});
+
+const managedURI = password => `postgres://worker:${password}@db:5432/app?sslmode=require`;
+async function managedFixture(t, options = {}) {
+  let raw = JSON.stringify({revision:'a'.repeat(64),secrets:{DATABASE_URL:managedURI('private-first')}});
+  const receipts = [];
+  const env = {DATABASE_URL: managedURI('private-stale-environment'), FAAS_SECRETS_SNAPSHOT_FILE:'/snapshot',
+    FAAS_SECRETS_RELOAD_READY_FILE:'/ready', FAAS_SECRETS_RELOAD_ACK_ENDPOINT:'http://metadata.test/ack',
+    FAAS_SECRETS_RELOAD_GENERATION:'e'.repeat(32)};
+  const f = await fixture({...options, env, io:{read:async()=>raw, ready:async()=>{}, fetch:async(_url, init)=>{
+    receipts.push(JSON.parse(init.body)); return new Response(null,{status:202});
+  }}});
+  t.after(()=>f.db.close());
+  return {...f, receipts, publish:(version, secrets={DATABASE_URL:managedURI('private-second')})=>{
+    raw=JSON.stringify({revision:version.repeat(64),secrets});
+  }, malformed:()=>{raw='private-invalid-json';}};
+}
+
+test('managed adoption validates schema before ACK and uses the snapshot instead of stale environment', async t => {
+  const entered=deferred(), finish=deferred();
+  const f=await managedFixture(t,{configurePool:(pool,index)=>{
+    if(index===2)pool.execute=async sql=>{
+      if(sql==='SELECT id FROM notes LIMIT 1'){entered.resolve();await finish.promise;}
+      return {rows:[]};
+    };
+  }});
+  assert.equal(f.pools[0].dsn,managedURI('private-first'));
+  f.publish('b');const reload=f.db.reload();
+  try{
+    await entered.promise;
+    assert.equal(f.receipts.length,1);
+    await assert.rejects(f.db.query('SELECT 1'),/database_unavailable/);
+  }finally{finish.resolve();}
+  await reload;
+  assert.equal(f.pools[1].dsn,managedURI('private-second'));
+  assert.deepEqual(f.receipts.map(r=>r.status),['applied','applied']);
+  assert.ok(f.receipts.every(r=>Object.keys(r).sort().join(',')==='generation,revision,status'));
+});
+
+test('rotation and revocation retain an admitted write until COMMIT and connection release', async t => {
+  const f=await managedFixture(t), entered=deferred(), finish=deferred();
+  f.pools[0].execute=async sql=>{
+    if(sql==='INSERT fixture'){entered.resolve();return finish.promise;}
+    return {rows:[]};
+  };
+  const write=f.db.query('INSERT fixture',[],{write:true});await entered.promise;
+  try{
+    f.publish('b');await f.db.reload();
+    assert.equal(f.pools[0].ended,0);
+    f.publish('c',{});await assert.rejects(f.db.reload(),/database_unavailable/);
+    await assert.rejects(f.db.query('SELECT 1'),/database_unavailable/);
+    assert.equal(f.pools[0].ended,0);
+  }finally{finish.resolve({rows:[{id:42}]});}
+  assert.equal((await write).rows[0].id,42);await tick();
+  assert.equal(f.pools[0].ended,1);
+  const client=f.pools[0].clients[0];
+  assert.equal(client.queries.filter(q=>q.sql==='INSERT fixture').length,1);
+  assert.equal(client.queries.at(-1).sql,'COMMIT');assert.deepEqual(client.releases,[false]);
+  assert.deepEqual(f.receipts.map(r=>r.status),['applied','applied','failed']);
+});
+
+test('failed or malformed adoption disables acquisitions, retires candidates, and can recover', async t => {
+  const f=await managedFixture(t,{configurePool:(pool,index)=>{
+    if(index===2)pool.execute=()=>{throw new Error(pool.dsn);};
+  }});
+  f.publish('b');await assert.rejects(f.db.reload(),error=>!error.message.includes('private-'));
+  await tick();assert.equal(f.pools[1].ended,1);
+  await assert.rejects(f.db.query('SELECT 1'),/database_unavailable/);
+  f.malformed();await assert.rejects(f.db.reload());assert.equal(f.pools.length,2);
+  assert.equal(f.receipts.length,2); // Malformed envelopes cannot identify a revision to ACK.
+  f.publish('c');await f.db.reload();await f.db.query('SELECT 1');
+  const built=f.pools.length;
+  f.publish('d',{DATABASE_URL:managedURI('private-second'),MIGRATION_DATABASE_URL:'private-migration'});
+  await assert.rejects(f.db.reload());assert.equal(f.pools.length,built);
+  await assert.rejects(f.db.query('SELECT 1'),/database_unavailable/);
+  assert.ok(!JSON.stringify(f.logs).includes('private-'));
+});
+
+test('restore cancellation fences a refresh queued behind rotation and rereads the latest snapshot on recovery', {timeout:3000}, async t => {
+  const entered=deferred(), finish=deferred();
+  const f=await managedFixture(t,{restoreTimeoutMS:30,configurePool:(pool,index)=>{
+    if(index===2)pool.execute=async sql=>{
+      if(sql==='SELECT id FROM notes LIMIT 1'){entered.resolve();await finish.promise;}
+      return {rows:[]};
+    };
+  }});
+  f.publish('b');const rotation=assert.rejects(f.db.reload());await entered.promise;
+  try{
+    await assert.rejects(f.db.restore(),/database_unavailable/);
+    assert.equal(f.db.generation,0);assert.equal(f.pools.length,2);
+  }finally{finish.resolve();}
+  await rotation;await tick();
+  assert.ok(!f.receipts.some(r=>r.revision==='b'.repeat(64)&&r.status==='applied'));
+  await assert.rejects(f.db.query('SELECT 1'),/database_unavailable/);
+  f.publish('c',{DATABASE_URL:managedURI('private-current')});await f.db.restore();
+  assert.equal(f.db.generation,1);assert.equal(f.pools.at(-1).dsn,managedURI('private-current'));
+  await f.db.query('SELECT 1');
+});
+
+test('restore timeout cancels active validation without a late publication or ACK', {timeout:3000}, async t => {
+  const entered=deferred(), finish=deferred();
+  const f=await managedFixture(t,{restoreTimeoutMS:30,configurePool:(pool,index)=>{
+    if(index===2)pool.execute=async sql=>{
+      if(sql==='SELECT id FROM notes LIMIT 1'){entered.resolve();await finish.promise;}
+      return {rows:[]};
+    };
+  }});
+  const restore=assert.rejects(f.db.restore(),/database_unavailable/);await entered.promise;
+  await restore;finish.resolve();await tick();
+  assert.equal(f.db.generation,0);assert.equal(f.pools[1].ended,1);assert.equal(f.receipts.length,1);
+  await assert.rejects(f.db.query('SELECT 1'),/database_unavailable/);
+  await f.db.restore();assert.equal(f.db.generation,1);
+});
+
+test('a rotation cannot build a pool while checkpointed; restore adopts the latest snapshot', async t => {
+  const f=await managedFixture(t);
+  await f.db.checkpoint();assert.equal(f.pools[0].ended,1);
+  f.publish('b');await assert.rejects(f.db.reload(),/database_unavailable/);
+  assert.equal(f.pools.length,1);
+  await f.db.restore();
+  assert.equal(f.pools.length,2);assert.equal(f.pools[1].dsn,managedURI('private-second'));
+  assert.equal(f.receipts.at(-1).status,'applied');assert.equal(f.receipts.at(-1).revision,'b'.repeat(64));
+  await f.db.query('SELECT 1');
+});
+
+test('partial guest contracts and serving migration credentials never downgrade to environment loading', async () => {
+  for(const extras of [{FAAS_SECRETS_SNAPSHOT_FILE:'/snapshot'},{FAAS_SECRETS_FILE:'/legacy'},{MIGRATION_DATABASE_URL:'private-migration'}]){
+    assert.throws(()=>createDatabase(()=>assert.fail('must not construct a pool'),{
+      env:{DATABASE_URL:managedURI('private-first'),...extras},
+    }));
+  }
 });

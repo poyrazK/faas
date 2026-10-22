@@ -1,5 +1,7 @@
 package oci
 
+// adr: 435
+
 import (
 	"context"
 	"crypto/sha256"
@@ -10,12 +12,31 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/imagechain"
 )
 
+func TestImageResolutionJSONExcludesPrivateEvidence(t *testing.T) {
+	result := ImageResolution{Digest: imagechain.Digest([]byte("manifest")), Evidence: &imagechain.Evidence{
+		SourceManifest: []byte("private manifest"), Config: []byte(`{"config":{"Env":["TOKEN=private-value"]}}`),
+	}}
+	body, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := fields["Evidence"]; exists || strings.Contains(string(body), "private-value") || strings.Contains(string(body), "source_manifest") {
+		t.Fatal("preflight JSON included private retained evidence")
+	}
+}
+
 func TestInspectImageMetadataOnly(t *testing.T) {
-	config := []byte(`{"os":"linux","architecture":"amd64","rootfs":{"type":"layers"},"config":{"Entrypoint":["node"],"Cmd":["server.js"],"User":"1000","WorkingDir":"/app","ExposedPorts":{"8080/tcp":{}},"Volumes":{"/data":{}}}}`)
+	config := []byte(`{"os":"linux","architecture":"amd64","rootfs":{"type":"layers","diff_ids":["sha256:` + strings.Repeat("b", 64) + `"]},"config":{"Entrypoint":["node"],"Cmd":["server.js"],"User":"1000","WorkingDir":"/app","ExposedPorts":{"8080/tcp":{}},"Volumes":{"/data":{}}}}`)
 	configDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(config))
-	manifest := fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"digest":%q},"layers":[{"digest":"sha256:%s"}]}`, configDigest, strings.Repeat("a", 64))
+	manifest := fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"digest":%q,"size":%d},"layers":[{"digest":"sha256:%s","size":123}]}`, configDigest, len(config), strings.Repeat("a", 64))
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(manifest)))
 	requests := []string{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

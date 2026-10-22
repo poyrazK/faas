@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -11,6 +11,11 @@ from ..models.event_backlog_consumer_consumer_kind import (
     EventBacklogConsumerConsumerKind,
     check_event_backlog_consumer_consumer_kind,
 )
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.event_backlog_consumer_pending_waiting_reasons import EventBacklogConsumerPendingWaitingReasons
+
 
 T = TypeVar("T", bound="EventBacklogConsumer")
 
@@ -34,6 +39,15 @@ class EventBacklogConsumer:
     ordering_waiting_recipients: int
     oldest_accepted_at: datetime.datetime
     oldest_age_seconds: float
+    pending_waiting_reasons: EventBacklogConsumerPendingWaitingReasons | Unset = UNSET
+    """Exact mutually exclusive effective waiting-reason counts over matching pending recipients, including zero
+    values for known reasons. Independent of recipient pagination."""
+    capacity_consumer_waiting_recipients: int | Unset = UNSET
+    """Complete count with effective capacity_consumer waiting reason."""
+    capacity_app_waiting_recipients: int | Unset = UNSET
+    """Complete count with effective capacity_app waiting reason."""
+    capacity_account_waiting_recipients: int | Unset = UNSET
+    """Complete count with effective capacity_account waiting reason."""
 
     def to_dict(self) -> dict[str, Any]:
         app_id = str(self.app_id)
@@ -60,6 +74,16 @@ class EventBacklogConsumer:
 
         oldest_age_seconds = self.oldest_age_seconds
 
+        pending_waiting_reasons: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.pending_waiting_reasons, Unset):
+            pending_waiting_reasons = self.pending_waiting_reasons.to_dict()
+
+        capacity_consumer_waiting_recipients = self.capacity_consumer_waiting_recipients
+
+        capacity_app_waiting_recipients = self.capacity_app_waiting_recipients
+
+        capacity_account_waiting_recipients = self.capacity_account_waiting_recipients
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -78,11 +102,21 @@ class EventBacklogConsumer:
                 "oldest_age_seconds": oldest_age_seconds,
             }
         )
+        if pending_waiting_reasons is not UNSET:
+            field_dict["pending_waiting_reasons"] = pending_waiting_reasons
+        if capacity_consumer_waiting_recipients is not UNSET:
+            field_dict["capacity_consumer_waiting_recipients"] = capacity_consumer_waiting_recipients
+        if capacity_app_waiting_recipients is not UNSET:
+            field_dict["capacity_app_waiting_recipients"] = capacity_app_waiting_recipients
+        if capacity_account_waiting_recipients is not UNSET:
+            field_dict["capacity_account_waiting_recipients"] = capacity_account_waiting_recipients
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.event_backlog_consumer_pending_waiting_reasons import EventBacklogConsumerPendingWaitingReasons
+
         d = dict(src_dict)
         app_id = UUID(d.pop("app_id"))
 
@@ -108,6 +142,19 @@ class EventBacklogConsumer:
 
         oldest_age_seconds = d.pop("oldest_age_seconds")
 
+        _pending_waiting_reasons = d.pop("pending_waiting_reasons", UNSET)
+        pending_waiting_reasons: EventBacklogConsumerPendingWaitingReasons | Unset
+        if isinstance(_pending_waiting_reasons, Unset):
+            pending_waiting_reasons = UNSET
+        else:
+            pending_waiting_reasons = EventBacklogConsumerPendingWaitingReasons.from_dict(_pending_waiting_reasons)
+
+        capacity_consumer_waiting_recipients = d.pop("capacity_consumer_waiting_recipients", UNSET)
+
+        capacity_app_waiting_recipients = d.pop("capacity_app_waiting_recipients", UNSET)
+
+        capacity_account_waiting_recipients = d.pop("capacity_account_waiting_recipients", UNSET)
+
         event_backlog_consumer = cls(
             app_id=app_id,
             app_slug=app_slug,
@@ -121,6 +168,10 @@ class EventBacklogConsumer:
             ordering_waiting_recipients=ordering_waiting_recipients,
             oldest_accepted_at=oldest_accepted_at,
             oldest_age_seconds=oldest_age_seconds,
+            pending_waiting_reasons=pending_waiting_reasons,
+            capacity_consumer_waiting_recipients=capacity_consumer_waiting_recipients,
+            capacity_app_waiting_recipients=capacity_app_waiting_recipients,
+            capacity_account_waiting_recipients=capacity_account_waiting_recipients,
         )
 
         return event_backlog_consumer

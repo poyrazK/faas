@@ -16,6 +16,26 @@ const BuildEntropyPath = "/etc/faas/entropy.seed"
 // removing the chroot.
 const BuildDonePath = "/etc/faas/build-done.json"
 
+// IssueSourceMapBuildConfigFile is read from the selected source root, before
+// customer build commands run. It opts a Node source build into publication.
+const IssueSourceMapBuildConfigFile = "gregale.issue-source-maps.json"
+
+// BuildIssueSourceMapsFile is a sanitized sidecar in the existing build export.
+const BuildIssueSourceMapsFile = "issue-source-maps.json"
+
+type IssueSourceMapBuildConfig struct {
+	Version   int    `json:"version"`
+	Directory string `json:"directory"`
+}
+
+type BuildIssueSourceMaps struct {
+	BuildID      string                        `json:"build_id"`
+	DeploymentID string                        `json:"deployment_id"`
+	SourceSHA256 string                        `json:"source_sha256"`
+	ImageSHA256  string                        `json:"image_sha256"`
+	Request      PublishIssueSourceMapsRequest `json:"request"`
+}
+
 // BuildFramework picks which in-VM build engine the builder VM invokes.
 // SchemaVersion'd for forward compat — additive enum slots only.
 type BuildFramework string
@@ -42,27 +62,43 @@ const (
 // cover everything guest-init needs to run one build to completion without
 // further host contact.
 type BuildManifest struct {
-	SchemaVersion  int            `json:"schema_version"`
-	BuildID        string         `json:"build_id"`
-	TenantID       string         `json:"tenant_id"`
-	DeploymentID   string         `json:"deployment_id"`
-	SourceTarPath  string         `json:"source_tar_path"`           // absolute path on drive1
-	BuildContext   string         `json:"build_context,omitempty"`   // extracted repository context
-	Workdir        string         `json:"workdir"`                   // default /build/src
-	DockerfilePath string         `json:"dockerfile_path,omitempty"` // relative to Workdir; empty = Dockerfile
-	OutDir         string         `json:"out_dir"`                   // default /build/out
-	Framework      BuildFramework `json:"framework"`
+	BuildDependencyDigest string            `json:"build_dependency_digest,omitempty"`
+	PublicBuildURLs       map[string]string `json:"public_build_urls,omitempty"`
+	SchemaVersion         int               `json:"schema_version"`
+	BuildID               string            `json:"build_id"`
+	TenantID              string            `json:"tenant_id"`
+	DeploymentID          string            `json:"deployment_id"`
+	SourceTarPath         string            `json:"source_tar_path"`           // absolute path on drive1
+	BuildContext          string            `json:"build_context,omitempty"`   // extracted repository context
+	Workdir               string            `json:"workdir"`                   // default /build/src
+	DockerfilePath        string            `json:"dockerfile_path,omitempty"` // relative to Workdir; empty = Dockerfile
+	// DockerfileBuild is the Compose build arguments and target stage
+	// (ADR-20261019142544). Only Dockerfile builds receive it, and the guest
+	// acknowledges its digest so an older guest cannot silently ignore it.
+	DockerfileBuild *DockerfileBuildOptions `json:"dockerfile_build,omitempty"`
+	OutDir          string                  `json:"out_dir"` // default /build/out
+	Framework       BuildFramework          `json:"framework"`
 	// Runtime and RuntimeBaseRef make the builder output reproducible with
 	// imaged's deployment layer. Railpack otherwise chooses its own mutable
 	// runtime base (currently railpack-runtime), which cannot be consumed by
 	// the pinned Gregale runner base used during image materialisation.
 	Runtime        string `json:"runtime,omitempty"`
 	RuntimeBaseRef string `json:"runtime_base_ref,omitempty"`
+	// Source-map publication uses a second, VM-local exporter of the SAME
+	// BuildKit result. Older guests omit the sidecar and fail the host's opt-in
+	// readiness check rather than silently publishing an unsymbolicated build.
+	IssueSourceMaps *IssueSourceMapBuildConfig `json:"issue_source_maps,omitempty"`
+	SourceSHA256    string                     `json:"source_sha256,omitempty"`
 	// Function identifies source builds whose public contract is a handler
 	// rather than a long-running process. The guest uses this bit to provide a
 	// deterministic copy-only plan for handler-only Node/Python sources that
 	// intentionally have no package manifest for Railpack to detect.
 	Function bool `json:"function,omitempty"`
+	// SharedRuntime marks a container app's source build on a shared runner
+	// base (docs/adr/20261017-shared-runtime-source-apps.md): Runtime and
+	// RuntimeBaseRef name that base, and the guest leaves system packages to
+	// it instead of running Railpack's default apt step.
+	SharedRuntime bool `json:"shared_runtime,omitempty"`
 	// DependencyCache enables the app-scoped BuildKit cache exporter. Import is
 	// set only when builderd successfully staged a prior cache into this
 	// otherwise-ephemeral builder VM.
@@ -71,9 +107,16 @@ type BuildManifest struct {
 	// KeepWarm leaves a successful builder guest alive in a host-controlled
 	// wait state so vmmd can capture a paused snapshot. Failed builds still
 	// power off immediately; the warm path is only a successful-build handoff.
-	KeepWarm     bool `json:"keep_warm,omitempty"`
-	TimeoutSec   int  `json:"timeout_sec"`
-	LogTailBytes int  `json:"log_tail_bytes"` // default 64 KiB
+	KeepWarm bool `json:"keep_warm,omitempty"`
+	// DevWatchCommand, when set, builds a watch-mode developer image
+	// (ADR-1170): no build step, source shipped unchanged, this command as the
+	// start command. Only builderd sets it, and only for developer apps.
+	DevWatchCommand string `json:"dev_watch_command,omitempty"`
+	// DevWatchHost is the developer app's public hostname, set with
+	// DevWatchCommand; the image exposes it as DevWatchHostEnv.
+	DevWatchHost string `json:"dev_watch_host,omitempty"`
+	TimeoutSec   int    `json:"timeout_sec"`
+	LogTailBytes int    `json:"log_tail_bytes"` // default 64 KiB
 }
 
 // BuildDone is the /etc/faas/build-done.json contract — what guest-init
@@ -91,12 +134,17 @@ type BuildManifest struct {
 // customer sees hint/why/fix from pkg/whycopy rather than the legacy
 // bare CodeDeployFailed.
 type BuildDone struct {
-	SchemaVersion int    `json:"schema_version"`
-	BuildID       string `json:"build_id"`
-	ExitCode      int    `json:"exit_code"`
-	OCIImagePath  string `json:"oci_image_path"` // path on drive1, typically /build/out/image.tar
-	LogTail       string `json:"log_tail"`
-	FailureClass  string `json:"failure_class,omitempty"`
+	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
+	PublicBuildURLsSHA256 string `json:"public_build_urls_sha256,omitempty"`
+	// DockerfileBuildSHA256 acknowledges the applied build arguments and
+	// target (ADR-20261019142544); empty when the manifest carried none.
+	DockerfileBuildSHA256 string `json:"dockerfile_build_sha256,omitempty"`
+	SchemaVersion         int    `json:"schema_version"`
+	BuildID               string `json:"build_id"`
+	ExitCode              int    `json:"exit_code"`
+	OCIImagePath          string `json:"oci_image_path"` // path on drive1, typically /build/out/image.tar
+	LogTail               string `json:"log_tail"`
+	FailureClass          string `json:"failure_class,omitempty"`
 	// FailureCode is the RFC 7807 code guest-init identified (e.g.
 	// "app_arch_mismatch" when the build VM's kernel returned
 	// ENOEXEC on the customer binary; "dep_install_failed" with a
@@ -114,4 +162,40 @@ type BuildDone struct {
 	// DevPatch records, for a successful build, whether its source reached
 	// the image unchanged (ADR-740). Older guests omit it.
 	DevPatch *DevPatchSourceMap `json:"dev_patch,omitempty"`
+	// DependencyCacheUnchanged reports that the build kept the imported
+	// dependency cache instead of exporting it: its plan and install inputs
+	// matched the ones that produced it. builderd keeps the stored cache.
+	DependencyCacheUnchanged bool `json:"dependency_cache_unchanged,omitempty"`
+	// SharedRuntime records, for a successful Node source build of an app,
+	// whether its runtime artifact could run on the shared runner base
+	// (docs/adr/1500-shared-runtime-source-apps.md). It is informational
+	// until imaged consumes it; older guests omit it.
+	SharedRuntime *SharedRuntimeVerdict `json:"shared_runtime,omitempty"`
+}
+
+// SharedRuntimeVerdict is the builder VM's classification of one Railpack
+// plan. An eligible build needs only its /app tree on top of the runner base:
+// Start is the resolved process argv and Env the plan's variables with
+// toolchain paths removed. An ineligible build names one Reason.
+type SharedRuntimeVerdict struct {
+	Eligible bool              `json:"eligible"`
+	Reason   string            `json:"reason,omitempty"`
+	Start    []string          `json:"start,omitempty"`
+	Env      map[string]string `json:"env,omitempty"`
+}
+
+// ValidBuildDependencyDigest accepts the optional internal cache partition.
+func ValidBuildDependencyDigest(value string) bool {
+	if value == "" {
+		return true
+	}
+	if len(value) != 64 {
+		return false
+	}
+	for _, c := range value {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }

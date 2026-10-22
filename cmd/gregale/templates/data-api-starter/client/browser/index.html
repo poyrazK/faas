@@ -12,16 +12,25 @@
 <h2>Create a note with tags</h2>
 <p>Use the session above to save. Ownership comes from your application token.</p>
 <form id="note-form" novalidate>
-<p><label>Note body <textarea name="body" aria-describedby="body-error"></textarea></label>
-<span id="body-error" role="alert"></span></p>
+<div id="create-fields"></div>
 <p><label>Tags, separated by commas <input name="tags" aria-describedby="tags-error"></label>
 <span id="tags-error" role="alert"></span></p>
 <button id="save-note">Save note</button>
-<button id="recover-note" type="button" hidden>Resolve pending save</button>
+<button id="recover-note" type="button" hidden>Check pending save</button>
+<button id="retry-note" type="button" hidden>Retry original save</button>
 </form>
 <p id="note-result" aria-live="polite"></p>
 <p>If a save cannot be confirmed, resolve it using the same signed-in user before
 closing or reloading this page. Recovery uses the original request and may complete
 a save that did not previously finish. It is safe only while the owner retains its
 receipt. This example keeps pending requests in memory.</p>
+<h2>Edit a note</h2>
+<p>Enter the note ID and version from a fresh read. Leave editable fields blank to keep their current values. If the note changed, reload it before saving.</p>
+<form id="edit-form" novalidate>
+<p><label>Note ID <input name="id" type="number" min="1" step="1" required></label></p>
+<p><label>Current version <input name="version" type="number" min="1" step="1" required></label></p>
+<div id="edit-fields"></div>
+<button>Save changes</button>
+</form>
+<p id="edit-result" aria-live="polite"></p>
 <script type="module" src="./client.js"></script></html>

@@ -163,6 +163,14 @@ func captureCloneWorkloadDB(ctx context.Context, tx pgx.Tx, op ProjectEnvironmen
 	if snapshot.Artifact.AppID != appID || snapshot.Artifact.Scope != scope {
 		return snapshot, ErrConflict
 	}
+	hasReleasePin, err := q.HasDeploymentReleaseEnvironmentSnapshot(ctx, tx, snapshot.Artifact.ID)
+	if err != nil {
+		return snapshot, err
+	}
+	if hasReleasePin {
+		return snapshot, ErrReleaseConfigurationTransferUnsupported
+	}
+
 	config, err := readCloneProjectConfigDB(ctx, tx, op.AccountID, op.ProjectID, op.SourceEnvironment)
 	if err != nil {
 		return snapshot, err
@@ -328,7 +336,7 @@ func attachCloneDeploymentTx(ctx context.Context, tx pgx.Tx, input projectEnviro
 		return ErrConflict
 	}
 	a := record.snapshot.Artifact
-	if err := q.SetProjectEnvironmentCloneDeploymentArtifact(ctx, tx, sqlc.SetProjectEnvironmentCloneDeploymentArtifactParams{DeploymentID: mustPgUUID(deployment.ID), RootfsPath: a.RootfsPath, RootfsKey: a.RootfsKey, RootfsBytes: a.RootfsBytes, SignalKnown: a.SecretReloadSignalKnown, Signal: a.SecretReloadSignal}); err != nil {
+	if err := q.SetProjectEnvironmentCloneDeploymentArtifact(ctx, tx, sqlc.SetProjectEnvironmentCloneDeploymentArtifactParams{DeploymentID: mustPgUUID(deployment.ID), RootfsPath: a.RootfsPath, RootfsKey: a.RootfsKey, RootfsBytes: a.RootfsBytes, SignalKnown: a.SecretReloadSignalKnown, Signal: a.SecretReloadSignal, RuntimeBase: a.RuntimeBase}); err != nil {
 		return mapErr(err)
 	}
 	for _, l := range record.snapshot.Layers {

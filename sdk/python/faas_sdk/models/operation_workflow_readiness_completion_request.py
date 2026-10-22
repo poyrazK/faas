@@ -11,6 +11,10 @@ from ..models.operation_workflow_readiness_completion_request_outcome import (
     OperationWorkflowReadinessCompletionRequestOutcome,
     check_operation_workflow_readiness_completion_request_outcome,
 )
+from ..models.operation_workflow_readiness_completion_request_playbook_resolution import (
+    OperationWorkflowReadinessCompletionRequestPlaybookResolution,
+    check_operation_workflow_readiness_completion_request_playbook_resolution,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -24,8 +28,8 @@ T = TypeVar("T", bound="OperationWorkflowReadinessCompletionRequest")
 
 @_attrs_define
 class OperationWorkflowReadinessCompletionRequest:
-    """An asserted coordination outcome with a required note; resolved requires at least one retained evidence Operation.
-    Closing does not prove business resolution.
+    """An asserted coordination outcome. Generic completion requires a note and resolved requires retained evidence;
+    playbook business completion captures its own current evidence. Closing does not prove business resolution.
 
     """
 
@@ -38,6 +42,14 @@ class OperationWorkflowReadinessCompletionRequest:
     evidence_operation_ids: list[UUID]
     """OperationWorkflowReadinessCompletionRequest.evidence_operation_ids. Retained follow-up completion value;
     never changes application evidence."""
+    playbook_review_after_seconds: int | Unset = UNSET
+    """OperationWorkflowReadinessCompletionRequest.playbook_review_after_seconds. Optional review window after
+    business-aware playbook completion; zero disables. Monitoring also ends with source inbox retention."""
+    playbook_resolution: OperationWorkflowReadinessCompletionRequestPlaybookResolution | Unset = UNSET
+    """OperationWorkflowReadinessCompletionRequest.playbook_resolution. Optional business disposition for assigned
+    playbook escalations. Expected or alternative resolutions require outcome resolved; canceled requires
+    no_longer_applicable. Uses the frozen expectation, permits empty note and evidence IDs, and excludes extra
+    outcome or verification watches."""
     escalation_policy: OperationWorkflowReadinessOutcomeEscalationPolicy | Unset = UNSET
     """Opt-in deadline escalation policy frozen at completion. Requires an outcome watch and future outcome
     deadline. Schedules one assigned follow-up on the deadline notification; never executes business actions."""
@@ -67,6 +79,12 @@ class OperationWorkflowReadinessCompletionRequest:
             evidence_operation_ids_item = str(evidence_operation_ids_item_data)
             evidence_operation_ids.append(evidence_operation_ids_item)
 
+        playbook_review_after_seconds = self.playbook_review_after_seconds
+
+        playbook_resolution: str | Unset = UNSET
+        if not isinstance(self.playbook_resolution, Unset):
+            playbook_resolution = self.playbook_resolution
+
         escalation_policy: dict[str, Any] | Unset = UNSET
         if not isinstance(self.escalation_policy, Unset):
             escalation_policy = self.escalation_policy.to_dict()
@@ -90,6 +108,10 @@ class OperationWorkflowReadinessCompletionRequest:
                 "evidence_operation_ids": evidence_operation_ids,
             }
         )
+        if playbook_review_after_seconds is not UNSET:
+            field_dict["playbook_review_after_seconds"] = playbook_review_after_seconds
+        if playbook_resolution is not UNSET:
+            field_dict["playbook_resolution"] = playbook_resolution
         if escalation_policy is not UNSET:
             field_dict["escalation_policy"] = escalation_policy
         if watch_outcome is not UNSET:
@@ -121,6 +143,17 @@ class OperationWorkflowReadinessCompletionRequest:
 
             evidence_operation_ids.append(evidence_operation_ids_item)
 
+        playbook_review_after_seconds = d.pop("playbook_review_after_seconds", UNSET)
+
+        _playbook_resolution = d.pop("playbook_resolution", UNSET)
+        playbook_resolution: OperationWorkflowReadinessCompletionRequestPlaybookResolution | Unset
+        if isinstance(_playbook_resolution, Unset):
+            playbook_resolution = UNSET
+        else:
+            playbook_resolution = check_operation_workflow_readiness_completion_request_playbook_resolution(
+                _playbook_resolution
+            )
+
         _escalation_policy = d.pop("escalation_policy", UNSET)
         escalation_policy: OperationWorkflowReadinessOutcomeEscalationPolicy | Unset
         if isinstance(_escalation_policy, Unset):
@@ -145,6 +178,8 @@ class OperationWorkflowReadinessCompletionRequest:
             outcome=outcome,
             note=note,
             evidence_operation_ids=evidence_operation_ids,
+            playbook_review_after_seconds=playbook_review_after_seconds,
+            playbook_resolution=playbook_resolution,
             escalation_policy=escalation_policy,
             watch_outcome=watch_outcome,
             outcome_deadline_at=outcome_deadline_at,

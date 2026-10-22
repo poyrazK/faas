@@ -48,19 +48,23 @@ from ..models.deployment_response_tag import DeploymentResponseTag, check_deploy
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.app_release_review import AppReleaseReview
     from ..models.build_plan import BuildPlan
+    from ..models.deployment_configuration_status import DeploymentConfigurationStatus
     from ..models.deployment_healthcheck import DeploymentHealthcheck
     from ..models.deployment_liveness_probe import DeploymentLivenessProbe
     from ..models.deployment_promotion_hold import DeploymentPromotionHold
     from ..models.deployment_readiness_probe import DeploymentReadinessProbe
+    from ..models.deployment_release import DeploymentRelease
     from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
     from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
-    from ..models.deployment_response_stage_state import DeploymentResponseStageState
+    from ..models.deployment_stage_state import DeploymentStageState
     from ..models.deployment_worker_drain_status import DeploymentWorkerDrainStatus
     from ..models.dev_patch_preview import DevPatchPreview
     from ..models.durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
     from ..models.log_excerpt import LogExcerpt
     from ..models.rollback_operation import RollbackOperation
+    from ..models.rollout_decision import RolloutDecision
     from ..models.scan_result import ScanResult
     from ..models.secret_scan_result import SecretScanResult
     from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
@@ -87,6 +91,11 @@ class DeploymentResponse:
     kind: str
     status: str
     created_at: datetime.datetime
+    configuration: DeploymentConfigurationStatus | Unset = UNSET
+    """Server-managed cron activation diagnostics. CLI-owned settings are additionally reflected in CLI receipt
+    configuration_complete. Reads never create builds or modify schedules."""
+    staged_review: AppReleaseReview | Unset = UNSET
+    """Atomic app configuration and serving-deployment identities used to fence release admission."""
     worker_drain: DeploymentWorkerDrainStatus | Unset = UNSET
     """Worker instance shutdown progress from the deployment audit timeline. Counts are instances, not application
     tasks. Overdue spans passed their deadline without a recorded outcome."""
@@ -94,14 +103,9 @@ class DeploymentResponse:
     """Compatibility hold and durable recovery progress for a deployment awaiting promotion."""
     durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset = UNSET
     """Observational validator readiness on deployment detail; not a reservation or code-purity attestation."""
-    stage_state: DeploymentResponseStageState | Unset = UNSET
-    """Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be
-    rebuilt. Optional hosting_verification records started_at, deadline_at, attempts, last_error_code,
-    retry_not_before and completed_at during unavailable candidate verification recovery (ADR-481, ADR-482).
-    last_error_code distinguishes publication, gateway, transport and candidate-evidence failures; a transport
-    failure does not attribute blame to the app or platform. retry_not_before is an eligibility floor, not a
-    promised delivery time; completed_at means the attempt finished, while the hosting receipt records its verdict.
-   """
+    stage_state: DeploymentStageState | Unset = UNSET
+    """Customer-visible deployment stage progress (ADR-117). `current` is the open stage, or an empty string once
+    the deployment is live, failed or cancelled and that stage has moved into `history`."""
     dev_patch: DevPatchPreview | Unset = UNSET
     """Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync could have
     been applied as a live source patch to the deployment that was live at upload time (ADR-740 phase 1). It is a
@@ -275,9 +279,19 @@ class DeploymentResponse:
     """Wall-clock timestamp at which the rollout was aborted."""
     rollout_aborted_reason: str | Unset = UNSET
     """Operator or orchestrator reason recorded when the rollout is aborted."""
+    rollout_decision: RolloutDecision | Unset = UNSET
+    """Evidence behind one decision about a rollout (ADR-1447): why a canary stage advanced, is held, or was
+    aborted. Aggregates only; no request payloads, routes, URLs or customer text."""
+    rollout_hold: RolloutDecision | Unset = UNSET
+    """Evidence behind one decision about a rollout (ADR-1447): why a canary stage advanced, is held, or was
+    aborted. Aggregates only; no request payloads, routes, URLs or customer text."""
+    release: DeploymentRelease | Unset = UNSET
+    """A deployment's release command run (ADR-1448)."""
     rollback_operation: RollbackOperation | Unset = UNSET
-    """Durable progress of a checked historical rollback. This receipt grants no authority to reuse binding
-    evidence or move traffic for another operation."""
+    """Durable progress of a rollback. A checked historical rollback reports its binding gates; a plain rollback
+    (manual, dashboard, alert, or first-wake 5xx auto-rollback, ADR-1446) reports preparing until its target serves
+    (complete, with recovery_ms) or fails. This receipt grants no authority to reuse binding evidence or move
+    traffic for another operation."""
     service_rollout_handoff: ServiceRolloutHandoffResponse | Unset = UNSET
     """Durable scheduler progress for a zero-downtime service rollout routing and request-drain handoff."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -302,6 +316,14 @@ class DeploymentResponse:
         status = self.status
 
         created_at = self.created_at.isoformat()
+
+        configuration: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.configuration, Unset):
+            configuration = self.configuration.to_dict()
+
+        staged_review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.staged_review, Unset):
+            staged_review = self.staged_review.to_dict()
 
         worker_drain: dict[str, Any] | Unset = UNSET
         if not isinstance(self.worker_drain, Unset):
@@ -604,6 +626,18 @@ class DeploymentResponse:
 
         rollout_aborted_reason = self.rollout_aborted_reason
 
+        rollout_decision: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.rollout_decision, Unset):
+            rollout_decision = self.rollout_decision.to_dict()
+
+        rollout_hold: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.rollout_hold, Unset):
+            rollout_hold = self.rollout_hold.to_dict()
+
+        release: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.release, Unset):
+            release = self.release.to_dict()
+
         rollback_operation: dict[str, Any] | Unset = UNSET
         if not isinstance(self.rollback_operation, Unset):
             rollback_operation = self.rollback_operation.to_dict()
@@ -624,6 +658,10 @@ class DeploymentResponse:
                 "created_at": created_at,
             }
         )
+        if configuration is not UNSET:
+            field_dict["configuration"] = configuration
+        if staged_review is not UNSET:
+            field_dict["staged_review"] = staged_review
         if worker_drain is not UNSET:
             field_dict["worker_drain"] = worker_drain
         if promotion_hold is not UNSET:
@@ -740,6 +778,12 @@ class DeploymentResponse:
             field_dict["rollout_aborted_at"] = rollout_aborted_at
         if rollout_aborted_reason is not UNSET:
             field_dict["rollout_aborted_reason"] = rollout_aborted_reason
+        if rollout_decision is not UNSET:
+            field_dict["rollout_decision"] = rollout_decision
+        if rollout_hold is not UNSET:
+            field_dict["rollout_hold"] = rollout_hold
+        if release is not UNSET:
+            field_dict["release"] = release
         if rollback_operation is not UNSET:
             field_dict["rollback_operation"] = rollback_operation
         if service_rollout_handoff is not UNSET:
@@ -749,19 +793,23 @@ class DeploymentResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.app_release_review import AppReleaseReview
         from ..models.build_plan import BuildPlan
+        from ..models.deployment_configuration_status import DeploymentConfigurationStatus
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
         from ..models.deployment_promotion_hold import DeploymentPromotionHold
         from ..models.deployment_readiness_probe import DeploymentReadinessProbe
+        from ..models.deployment_release import DeploymentRelease
         from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
         from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
-        from ..models.deployment_response_stage_state import DeploymentResponseStageState
+        from ..models.deployment_stage_state import DeploymentStageState
         from ..models.deployment_worker_drain_status import DeploymentWorkerDrainStatus
         from ..models.dev_patch_preview import DevPatchPreview
         from ..models.durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
         from ..models.log_excerpt import LogExcerpt
         from ..models.rollback_operation import RollbackOperation
+        from ..models.rollout_decision import RolloutDecision
         from ..models.scan_result import ScanResult
         from ..models.secret_scan_result import SecretScanResult
         from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
@@ -780,6 +828,20 @@ class DeploymentResponse:
         status = d.pop("status")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _configuration = d.pop("configuration", UNSET)
+        configuration: DeploymentConfigurationStatus | Unset
+        if isinstance(_configuration, Unset):
+            configuration = UNSET
+        else:
+            configuration = DeploymentConfigurationStatus.from_dict(_configuration)
+
+        _staged_review = d.pop("staged_review", UNSET)
+        staged_review: AppReleaseReview | Unset
+        if isinstance(_staged_review, Unset):
+            staged_review = UNSET
+        else:
+            staged_review = AppReleaseReview.from_dict(_staged_review)
 
         _worker_drain = d.pop("worker_drain", UNSET)
         worker_drain: DeploymentWorkerDrainStatus | Unset
@@ -803,11 +865,11 @@ class DeploymentResponse:
             durable_entity_validator = DurableEntityValidatorDeploymentInfo.from_dict(_durable_entity_validator)
 
         _stage_state = d.pop("stage_state", UNSET)
-        stage_state: DeploymentResponseStageState | Unset
+        stage_state: DeploymentStageState | Unset
         if isinstance(_stage_state, Unset):
             stage_state = UNSET
         else:
-            stage_state = DeploymentResponseStageState.from_dict(_stage_state)
+            stage_state = DeploymentStageState.from_dict(_stage_state)
 
         _dev_patch = d.pop("dev_patch", UNSET)
         dev_patch: DevPatchPreview | Unset
@@ -1332,6 +1394,27 @@ class DeploymentResponse:
 
         rollout_aborted_reason = d.pop("rollout_aborted_reason", UNSET)
 
+        _rollout_decision = d.pop("rollout_decision", UNSET)
+        rollout_decision: RolloutDecision | Unset
+        if isinstance(_rollout_decision, Unset):
+            rollout_decision = UNSET
+        else:
+            rollout_decision = RolloutDecision.from_dict(_rollout_decision)
+
+        _rollout_hold = d.pop("rollout_hold", UNSET)
+        rollout_hold: RolloutDecision | Unset
+        if isinstance(_rollout_hold, Unset):
+            rollout_hold = UNSET
+        else:
+            rollout_hold = RolloutDecision.from_dict(_rollout_hold)
+
+        _release = d.pop("release", UNSET)
+        release: DeploymentRelease | Unset
+        if isinstance(_release, Unset):
+            release = UNSET
+        else:
+            release = DeploymentRelease.from_dict(_release)
+
         _rollback_operation = d.pop("rollback_operation", UNSET)
         rollback_operation: RollbackOperation | Unset
         if isinstance(_rollback_operation, Unset):
@@ -1353,6 +1436,8 @@ class DeploymentResponse:
             kind=kind,
             status=status,
             created_at=created_at,
+            configuration=configuration,
+            staged_review=staged_review,
             worker_drain=worker_drain,
             promotion_hold=promotion_hold,
             durable_entity_validator=durable_entity_validator,
@@ -1411,6 +1496,9 @@ class DeploymentResponse:
             rollout_completed_at=rollout_completed_at,
             rollout_aborted_at=rollout_aborted_at,
             rollout_aborted_reason=rollout_aborted_reason,
+            rollout_decision=rollout_decision,
+            rollout_hold=rollout_hold,
+            release=release,
             rollback_operation=rollback_operation,
             service_rollout_handoff=service_rollout_handoff,
         )

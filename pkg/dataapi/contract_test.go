@@ -36,7 +36,7 @@ func TestContractResultRelationMetadata(t *testing.T) {
 	}{
 		{"computed", "", "", true},
 		{"legacy v2 rejects metadata", `"version":3`, `"version":2`, false},
-		{"future version", `"version":3`, `"version":4`, false},
+		{"future version", `"version":3`, `"version":5`, false},
 		{"unknown target", `"to":"invoices"`, `"to":"private"`, false},
 		{"unknown source", `"from":"orders"`, `"from":"private"`, false},
 		{"missing cardinality", `,"one_to_one":true`, ``, false},
@@ -88,7 +88,8 @@ func TestContractVersionsAndCompositeValidation(t *testing.T) {
 		{"missing v2 types", `{"version":2,` + root + `}`, false},
 		{"null v2 types", `{"version":2,` + root + `,"composites":null}`, false},
 		{"v1 cannot carry new metadata", `{"version":1,` + root + `,"composites":[]}`, false},
-		{"future version", `{"version":4,` + root + `,"composites":[]}`, false},
+		{"empty v4", `{"version":4,` + root + `,"composites":[]}`, true},
+		{"future version", `{"version":5,` + root + `,"composites":[]}`, false},
 		{"duplicate type", `{"version":2,` + root + `,"composites":[` + composite + `,` + composite + `]}`, false},
 		{"hidden schema", `{"version":2,` + root + `,"composites":[{"schema":"private","name":"hidden","fields":[]}]}`, false},
 		{"empty type", `{"version":2,` + root + `,"composites":[{"schema":"api","name":"empty","fields":[]}]}`, true},
@@ -114,4 +115,29 @@ func TestContractVersionsAndCompositeValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestContractRowMetadata(t *testing.T) {
+	base := Snapshot{Version: 4, Schemas: []string{"api"}, Tables: []Table{{Schema: "api", Name: "notes", Columns: []Column{{Name: "tenant", Type: "string"}, {Name: "id", Type: "number"}, {Name: "version", Type: "number"}}, Relationships: json.RawMessage(`[]`), PrimaryKey: &PrimaryKey{Columns: []string{"tenant", "id"}, Filterable: true}, Concurrency: &Concurrency{Column: "version", Kind: "integer_version"}}}, Functions: []Function{}, Enums: map[string][]string{}, Composites: []Composite{}}
+	check := func(snapshot Snapshot, valid bool) {
+		t.Helper()
+		raw, err := json.Marshal(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = Parse(wrapSnapshot(t, string(raw)))
+		if (err == nil) != valid {
+			t.Fatalf("valid=%v err=%v", valid, err)
+		}
+	}
+	check(base, true)
+	for _, modify := range []func(*Table){func(table *Table) { table.PrimaryKey.Columns = []string{"id", "id"} }, func(table *Table) { table.PrimaryKey.Columns = []string{"hidden"} }, func(table *Table) { table.View = true }, func(table *Table) { table.Concurrency.Column = "hidden" }, func(table *Table) { table.Concurrency.Column = "id" }, func(table *Table) { table.Concurrency.Kind = "guess" }, func(table *Table) { table.Columns[2].Nullable = true }} {
+		raw, _ := json.Marshal(base)
+		var changed Snapshot
+		_ = json.Unmarshal(raw, &changed)
+		modify(&changed.Tables[0])
+		check(changed, false)
+	}
+	base.Version = 3
+	check(base, false)
 }

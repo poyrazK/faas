@@ -26,6 +26,10 @@ class ManagedRealtimeRetainedMessageResponse:
     data_base64: str
     binary: bool
     created_at: datetime.datetime
+    expires_at: datetime.datetime | Unset = UNSET
+    """Original server-assigned delivery deadline when TTL is set."""
+    expired: bool | Unset = False
+    """Expired checkpoint entry; payload and metadata are suppressed."""
     metadata: ManagedRealtimeRetainedMessageResponseMetadata | Unset = UNSET
     """Exact-match routing metadata persisted with this channel message."""
     target_message_id: str | Unset = UNSET
@@ -42,6 +46,12 @@ class ManagedRealtimeRetainedMessageResponse:
         binary = self.binary
 
         created_at = self.created_at.isoformat()
+
+        expires_at: str | Unset = UNSET
+        if not isinstance(self.expires_at, Unset):
+            expires_at = self.expires_at.isoformat()
+
+        expired = self.expired
 
         metadata: dict[str, Any] | Unset = UNSET
         if not isinstance(self.metadata, Unset):
@@ -65,6 +75,10 @@ class ManagedRealtimeRetainedMessageResponse:
                 "created_at": created_at,
             }
         )
+        if expires_at is not UNSET:
+            field_dict["expires_at"] = expires_at
+        if expired is not UNSET:
+            field_dict["expired"] = expired
         if metadata is not UNSET:
             field_dict["metadata"] = metadata
         if target_message_id is not UNSET:
@@ -93,6 +107,15 @@ class ManagedRealtimeRetainedMessageResponse:
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
+        _expires_at = d.pop("expires_at", UNSET)
+        expires_at: datetime.datetime | Unset
+        if isinstance(_expires_at, Unset):
+            expires_at = UNSET
+        else:
+            expires_at = datetime.datetime.fromisoformat(_expires_at)
+
+        expired = d.pop("expired", UNSET)
+
         _metadata = d.pop("metadata", UNSET)
         metadata: ManagedRealtimeRetainedMessageResponseMetadata | Unset
         if isinstance(_metadata, Unset):
@@ -113,6 +136,8 @@ class ManagedRealtimeRetainedMessageResponse:
             data_base64=data_base64,
             binary=binary,
             created_at=created_at,
+            expires_at=expires_at,
+            expired=expired,
             metadata=metadata,
             target_message_id=target_message_id,
             version=version,

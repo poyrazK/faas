@@ -34,8 +34,8 @@ die() {
 # debugfs + mkfs.ext4 back imaged's ext4 assembly, tc the per-instance rate
 # limits, nft/iptables the tenant egress policy, gcc the race detector
 # (-race needs cgo), and pg_isready/psql the Postgres pre-flight below.
-for tool in debugfs e2fsck firecracker flock gcc ip iptables jailer make \
-  mkfs.ext4 nft pg_isready psql readlink systemctl systemd-run tar tc \
+for tool in debugfs e2fsck ethtool firecracker flock gcc ip iptables jailer make \
+  mkfs.ext4 nft pg_isready psql python3 readlink systemctl systemd-run tar tc \
   truncate; do
   command -v "${tool}" >/dev/null || die "required host tool is missing: ${tool}"
 done
@@ -64,6 +64,8 @@ fi
 stage_root="/srv/fc/acceptance/e2e-${FAAS_E2E_SOURCE_SHA}-${run_id}"
 guest_init="${stage_root}/faas-guest-init"
 active_services="${stage_root}/active-services"
+financial_provider_rc=125
+financial_native_rc=125
 cache_root="/var/cache/faas-native-e2e"
 # The suite drives the platform through its own per-test sockets, ports and
 # Postgres schema, but vmmd, jailer, cgroups, netns and the tenant IP leases
@@ -195,19 +197,35 @@ mkdir -p "${stage_root}" "${cache_root}/go-build" "${cache_root}/go-mod" \
 : > "${active_services}"
 
 
+sql_address_owned=0
+sql_proxy_ip=198.18.0.254
+
 cleanup() {
   local rc=$?
   local restore_failed=0
+  local leakcheck_rc=0
   trap - EXIT HUP INT TERM
   set +e
 
   # Before leakcheck, not after: leakcheck is the ASSERTION that the node is
   # clean. Reaping afterwards would make it permanently unable to fail.
   reap_test_microvms
+  if [[ "${sql_address_owned}" == 1 ]]; then
+    ip address del "${sql_proxy_ip}/32" dev lo || rc=1
+    sql_address_owned=0
+  fi
 
-  if ! bash "${repo_root}/deploy/scripts/leakcheck.sh"; then
+  bash "${repo_root}/deploy/scripts/leakcheck.sh"
+  leakcheck_rc=$?
+  if [[ "${leakcheck_rc}" -ne 0 ]]; then
     echo "native e2e: final leak check failed" >&2
     [[ "${rc}" -ne 0 ]] || rc=1
+  fi
+
+  if [[ "${FAAS_E2E_PHASE:-}" == project-progressive-http-only || "${FAAS_E2E_PHASE:-}" == project-concurrent-release-only || "${FAAS_E2E_PHASE:-}" == project-rollback-retention-only || "${FAAS_E2E_PHASE:-}" == project-release-secrets-only ]]; then
+    echo "native HTTP qualification: final_leakcheck_rc=${rc}"
+  elif [[ "${FAAS_E2E_PHASE:-}" == project-environment-promotion-only ]]; then
+    echo "native promotion qualification: final_leakcheck_rc=${rc} group=${FAAS_E2E_PROMOTION_GROUP:-missing}"
   fi
 
   while IFS= read -r service; do
@@ -220,6 +238,29 @@ cleanup() {
   if [[ "${restore_failed}" -ne 0 ]]; then
     [[ "${rc}" -ne 0 ]] || rc=1
   fi
+
+  if [[ "${FAAS_E2E_PHASE:-}" == project-progressive-http-only || "${FAAS_E2E_PHASE:-}" == project-concurrent-release-only || "${FAAS_E2E_PHASE:-}" == project-rollback-retention-only || "${FAAS_E2E_PHASE:-}" == project-release-secrets-only ]]; then
+    echo "native HTTP qualification: sha=${FAAS_E2E_SOURCE_SHA} final_rc=${rc}"
+  elif [[ "${FAAS_E2E_PHASE:-}" == project-environment-promotion-only ]]; then
+    echo "native promotion qualification: sha=${FAAS_E2E_SOURCE_SHA} final_rc=${rc} group=${FAAS_E2E_PROMOTION_GROUP:-missing}"
+  fi
+  # Only the dedicated cost lane claims full-daemon financial acceptance.
+  # Write its verdict after cleanup/restoration so test success alone cannot
+  # qualify a run that left native resources or services in a failed state.
+  case "${FAAS_E2E_PHASE:-}" in
+    financial|financial-system)
+      python3 "${repo_root}/scripts/ci/financial-system-verdict.py" \
+        --root "${repo_root}" --source-sha "${FAAS_E2E_SOURCE_SHA}" --run-id "${run_id}" \
+        --native-log "${e2e_log:-${transfer_root:-/var/tmp}/cmd-e2e-financial-system.log}" \
+        --native-exit "${financial_native_rc}" \
+        --provider-log "${transfer_root:-/var/tmp}/financial-system-provider.log" \
+        --provider-exit "${financial_provider_rc}" \
+        --leakcheck-exit "${leakcheck_rc}" --restore-exit "${restore_failed}" --runner-exit "${rc}" \
+        --binary-root "${stage_root}/bin" --guest-init "${guest_init}" --kernel "${kernel}" \
+        --output "${transfer_root:-/var/tmp}/financial-system-verdict-${run_id}.json"
+      if [[ "$?" -ne 0 ]]; then rc=1; fi
+      ;;
+  esac
 
   # In phase mode these are SHARED with the phases that follow: the transfer
   # root holds the source tree and the pinned Go toolchain, and the stage root
@@ -374,7 +415,7 @@ metal_test_count="$(printf '%s\n' "${metal_tests}" | wc -l | tr -d ' ')"
 # Every required test must be in the derived set. A required test that loses its
 # metal tag would otherwise silently stop being run AND stop being required.
 for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
-  printf '%s\n' "${metal_tests}" | grep -qx "${required}" ||
+  grep -qx "${required}" <<<"${metal_tests}" ||
     die "required test ${required} is not in the metal-tagged set; it lost its //go:build metal tag or was renamed"
 done
 
@@ -397,15 +438,20 @@ if [[ -n "${phase}" ]]; then
   # is selected only by an explicit dispatch input. See native-e2e-phases.sh.
   if native_e2e_is_lane "${phase}"; then
     native_e2e_assert_lanes "${repo_root}" || die "lane ${phase} names a test that is not in the metal suite"
-    RUN_REGEX="$(native_e2e_lane_regex "${phase}" "${repo_root}")"
-    run_count="$(native_e2e_lane_tests "${phase}" "${repo_root}" | grep -c . || true)"
+    promotion_group=all
+    if [[ "$phase" == project-environment-promotion-only ]]; then
+      promotion_group="${FAAS_E2E_PROMOTION_GROUP:?select promotion-core, promotion-controls, promotion-load, promotion-admission, promotion-migrations, promotion-publication, promotion-service-graph or promotion-coordinated}"
+      [[ "$promotion_group" != all ]] || die "promotion groups must run separately within their native budgets"
+    fi
+    RUN_REGEX="$(native_e2e_lane_regex "${phase}" "${repo_root}" "$promotion_group")"
+    run_count="$(native_e2e_lane_tests "${phase}" "${repo_root}" "$promotion_group" | grep -c . || true)"
   else
     RUN_REGEX="$(native_e2e_phase_regex "${phase}" "${repo_root}")"
     run_count="$(native_e2e_phase_tests "${phase}" "${repo_root}" | grep -c . || true)"
   fi
   echo "native e2e: phase ${phase} — ${run_count} of ${metal_test_count} metal tests"
   if native_e2e_is_lane "${phase}"; then
-    native_e2e_lane_tests "${phase}" "${repo_root}" | sed 's/^/  - /'
+    native_e2e_lane_tests "${phase}" "${repo_root}" "$promotion_group" | sed 's/^/  - /'
   else
     native_e2e_phase_tests "${phase}" "${repo_root}" | sed 's/^/  - /'
   fi
@@ -431,7 +477,8 @@ if [[ -n "${phase}" ]]; then
     #   panic: test timed out after 25m0s
     #     running tests: TestDeployOverridePortMetal (8m54s)
     # — killing the phase before its other tests ran at all.
-    deploy) phase_timeout=45m ;;
+    # Includes atomic-worker and progressive source builds plus real probe rounds.
+    deploy) phase_timeout=90m ;;
     # Keep all 100 real idle-reaper wake cycles. Their documented ~34m
     # runtime already exceeds the former whole-lane 20m budget, before
     # source deployment and the security probes. Individual readiness,
@@ -444,7 +491,22 @@ if [[ -n "${phase}" ]]; then
     managed-operation-only) phase_timeout=35m ;;
     customer-job-operations-only) phase_timeout=35m ;;
     customer-workflow-operations-only) phase_timeout=35m ;;
-    # Includes native workflow Operations image/guest/recovery scenarios.
+    # Eight native source builds plus real minute-spaced verification rounds.
+    # Individual build stalls, release deadlines and drain budgets still apply.
+    project-worker-release-only) phase_timeout=75m ;;
+    # Two scenarios, six real source builds each, production probe intervals.
+    project-environment-promotion-only) phase_timeout=210m; if [[ "${FAAS_E2E_PROMOTION_GROUP}" == promotion-admission || "${FAAS_E2E_PROMOTION_GROUP}" == promotion-migrations || "${FAAS_E2E_PROMOTION_GROUP}" == promotion-coordinated ]]; then phase_timeout=330m; fi ;;
+    project-progressive-release-only) phase_timeout=100m ;;
+    project-progressive-http-only) phase_timeout=210m ;;
+    project-concurrent-release-only) phase_timeout=180m ;;
+    project-rollback-retention-only) phase_timeout=120m ;;
+    project-release-secrets-only) phase_timeout=90m ;;
+    # Three native cleanup outcomes, including real 30-minute retention expiry.
+    project-migration-contract-only) phase_timeout=210m ;;
+    project-migration-sql-only) phase_timeout=150m ;;
+    customer-http-operations-only) phase_timeout=35m ;;
+    financial|financial-system) phase_timeout=35m ;;
+    # Includes native workflow and HTTP Operations image/guest/recovery scenarios.
     wake) phase_timeout=30m ;;
     twonode) phase_timeout=25m ;;
     *) phase_timeout=15m ;;
@@ -474,14 +536,56 @@ fi
 export FAAS_E2E_BIN_DIR="${stage_root}/bin"
 mkdir -p "${FAAS_E2E_BIN_DIR}"
 
+case "${phase}" in
+  financial|financial-system)
+    [[ -z "${FAAS_SKIP_PG_TESTS:-}" ]] || die "financial acceptance rejects FAAS_SKIP_PG_TESTS"
+    export FAAS_FINANCIAL_SYSTEM_ACCEPTANCE=1
+    export FAAS_FINANCIAL_EVIDENCE_DIR="${transfer_root:-/var/tmp}/financial-system-records"
+    # A real meterd child drives a loopback-only Polar contract fixture. The
+    # test validates clone/schema isolation before starting the child.
+    set +e
+    "${FAAS_E2E_GO}" test -race -p=1 -count=1 -timeout=15m -v \
+      ./pkg/e2etest/financialfixture 2>&1 | \
+      tee "${transfer_root:-/var/tmp}/financial-system-provider.log"
+    financial_provider_rc="${PIPESTATUS[0]}"
+    set -e
+    ;;
+esac
+
 # Distinct from the transient unit's own native-e2e.log: the unit already
 # appends this script's stdout there, and tee-ing into the same file would
 # interleave every line with itself and corrupt the tally greps below.
+export FAAS_METAL_TEST_TAGS=metal
+if [[ "${phase}" == project-environment-promotion-only ]]; then
+  FAAS_METAL_TEST_TAGS=metal,promotionacceptance
+  # Qualification access never shares a production catalog. Private clones
+  # also let APID independently verify its bootstrap mode's database boundary.
+  export FAAS_PGTEST_TEMPLATE_DATABASE=1
+  [[ "$(psql -XAtq -v ON_ERROR_STOP=1 -d "${database_url}" -c 'SELECT rolcreatedb OR rolsuper FROM pg_roles WHERE rolname=current_user')" == t ]] || die "promotion qualification requires CREATEDB for isolated test databases"
+fi
+if [[ "${phase}" == project-migration-contract-only ]]; then
+  FAAS_METAL_TEST_TAGS=metal,contractacceptance
+fi
+if [[ "${phase}" == project-migration-sql-only ]]; then
+  FAAS_METAL_TEST_TAGS=metal,contractacceptance,managed_postgres_contract
+fi
+if [[ "${phase}" == project-migration-sql-only || ( "${phase}" == project-environment-promotion-only && ( "${FAAS_E2E_PROMOTION_GROUP}" == promotion-migrations || "${FAAS_E2E_PROMOTION_GROUP}" == promotion-coordinated ) ) ]]; then
+  [[ -z "$(ip -4 address show to "${sql_proxy_ip}/32")" ]] || die "isolated SQL proxy address is already owned"
+  ip address add "${sql_proxy_ip}/32" dev lo
+  sql_address_owned=1
+  export GREGALE_POSTGRES_NATIVE_SQL_IP="${sql_proxy_ip}"
+fi
 set +e
 make GO="${FAAS_E2E_GO}" PKGS=./cmd/e2e/... \
   RUN_ARGS="-timeout=${phase_timeout} -v" test-metal 2>&1 | tee "${e2e_log}"
 e2e_rc="${PIPESTATUS[0]}"
 set -e
+case "${phase}" in
+  financial|financial-system)
+    financial_native_rc="${e2e_rc}"
+    if [[ "${financial_provider_rc}" -ne 0 ]]; then e2e_rc=1; fi
+    ;;
+esac
 
 # Tally + required-test contract. The rules live in native-e2e-verdict.sh so
 # run-native-e2e_test.sh can drive them with synthetic go-test output instead

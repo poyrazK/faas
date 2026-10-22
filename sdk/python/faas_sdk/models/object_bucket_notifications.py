@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
+
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.object_notification_rule import ObjectNotificationRule
@@ -20,6 +22,8 @@ class ObjectBucketNotifications:
     bucket_id: UUID
     revision: int
     rules: list[ObjectNotificationRule]
+    managed_rule_ids: list[str] | Unset = UNSET
+    """Rules owned by declarative compute reconciliation. Full manual replacement clears ownership."""
 
     def to_dict(self) -> dict[str, Any]:
         bucket_id = str(self.bucket_id)
@@ -31,6 +35,10 @@ class ObjectBucketNotifications:
             rules_item = rules_item_data.to_dict()
             rules.append(rules_item)
 
+        managed_rule_ids: list[str] | Unset = UNSET
+        if not isinstance(self.managed_rule_ids, Unset):
+            managed_rule_ids = self.managed_rule_ids
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -40,6 +48,8 @@ class ObjectBucketNotifications:
                 "rules": rules,
             }
         )
+        if managed_rule_ids is not UNSET:
+            field_dict["managed_rule_ids"] = managed_rule_ids
 
         return field_dict
 
@@ -59,10 +69,13 @@ class ObjectBucketNotifications:
 
             rules.append(rules_item)
 
+        managed_rule_ids = cast(list[str], d.pop("managed_rule_ids", UNSET))
+
         object_bucket_notifications = cls(
             bucket_id=bucket_id,
             revision=revision,
             rules=rules,
+            managed_rule_ids=managed_rule_ids,
         )
 
         return object_bucket_notifications

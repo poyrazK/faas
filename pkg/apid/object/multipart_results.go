@@ -38,7 +38,7 @@ func (s *Service) executeObjectMultipartResult(ctx context.Context, uploads stat
 		return bindErr
 	}
 	result, err := objectstorageactivity.ExecuteMultipart(ctx, s.Host.Store(), store, bucket, u, func(mutationCtx context.Context) (objectstorage.MultipartCompletionResult, error) {
-		return objectstorage.CompleteMultipartWithResult(mutationCtx, provider, bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
+		return objectstorage.CompleteMultipartWithResult(mutationCtx, provider, bucket.PhysicalName, objectstorage.MultipartCompleteRequest{Checksum: u.Checksum.Clone(),
 			Encryption: encryption, SessionID: u.ID, Key: u.Key, ProviderUploadID: u.ProviderUploadID, SizeBytes: u.SizeBytes, Parts: parts,
 			Recovering: u.CompletionDispatched, RecoveryCursor: u.CompletionRecoveryCursor,
 			BeforeRequest: func(ctx context.Context) error {
@@ -50,12 +50,13 @@ func (s *Service) executeObjectMultipartResult(ctx context.Context, uploads stat
 			},
 		}, u.CompletionConditions)
 	})
-	proof := state.ObjectMultipartCompletionResult{ETag: result.ETag, ProviderVersionID: result.ProviderVersionID, RecoveryCursor: result.RecoveryCursor, VersionsObserved: result.VersionsObserved, VerifiedProtection: result.VerifiedProtection, VerifiedEncryption: result.Encryption}
+	proof := state.ObjectMultipartCompletionResult{Checksum: result.Checksum, ETag: result.ETag, ProviderVersionID: result.ProviderVersionID, RecoveryCursor: result.RecoveryCursor, VersionsObserved: result.VersionsObserved, VerifiedProtection: result.VerifiedProtection, VerifiedEncryption: result.Encryption}
 	if err != nil {
 		return s.deferObjectMultipartResult(ctx, store, u, proof, err)
 	}
 	if err = finishObjectMultipartOperation(ctx, func(ctx context.Context) error {
-		_, e := store.FinishObjectMultipartCompletion(ctx, u, proof)
+		var e error
+		_, e = store.FinishObjectMultipartCompletion(ctx, u, proof)
 		return e
 	}); err != nil {
 		return s.deferObjectMultipartResult(ctx, store, u, proof, err)

@@ -17,17 +17,27 @@ var _ BindingReleasePolicyStore = (*PgStore)(nil)
 func decodeBindingReleasePolicy(body []byte, appID, scope string) (api.BindingReleasePolicy, error) {
 	p := defaultBindingReleasePolicy(appID, scope)
 	var row struct {
-		Mode                  string     `json:"mode"`
-		Revision              int64      `json:"revision"`
-		MaxAgeSeconds         int64      `json:"max_age_seconds"`
-		RequireApplicationAck bool       `json:"require_application_ack"`
-		UpdatedAt             *time.Time `json:"updated_at"`
-		Reason                string     `json:"reason"`
+		ObjectStorageRequirements map[string]string `json:"object_storage_requirements"`
+		QueueRequirements         map[string]string `json:"queue_requirements"`
+		Mode                      string            `json:"mode"`
+		Revision                  int64             `json:"revision"`
+		MaxAgeSeconds             int64             `json:"max_age_seconds"`
+		RequireApplicationAck     bool              `json:"require_application_ack"`
+		UpdatedAt                 *time.Time        `json:"updated_at"`
+		Reason                    string            `json:"reason"`
 	}
 	if err := json.Unmarshal(body, &row); err != nil {
 		return p, fmt.Errorf("decode binding release policy: %w", err)
 	}
+	if err := api.ValidateObjectStorageRequirements(row.ObjectStorageRequirements); err != nil {
+		return p, fmt.Errorf("decode storage release requirements: %w", err)
+	}
+	if err := api.ValidateQueueReleaseRequirements(row.QueueRequirements); err != nil {
+		return p, fmt.Errorf("decode queue release requirements: %w", err)
+	}
 	if row.Revision > 0 {
+		p.ObjectStorageRequirements = row.ObjectStorageRequirements
+		p.QueueRequirements = row.QueueRequirements
 		p.Mode, p.Revision, p.MaxVerificationAge, p.RequireApplicationAck, p.UpdatedAt, p.Reason = row.Mode, row.Revision, (time.Duration(row.MaxAgeSeconds) * time.Second).String(), row.RequireApplicationAck, row.UpdatedAt, row.Reason
 	}
 	return p, nil
@@ -54,12 +64,28 @@ func (s *PgStore) SetBindingReleasePolicy(ctx context.Context, accountID, appID,
 	if r.MaxVerificationAge != "" {
 		age, _ = time.ParseDuration(r.MaxVerificationAge)
 	}
+	requirements := r.ObjectStorageRequirements
+	if requirements == nil {
+		requirements = map[string]string{}
+	}
+	encoded, err := json.Marshal(requirements)
+	if err != nil {
+		return current, fmt.Errorf("encode storage release requirements: %w", err)
+	}
+	queues := r.QueueRequirements
+	if queues == nil {
+		queues = map[string]string{}
+	}
+	encodedQueues, err := json.Marshal(queues)
+	if err != nil {
+		return current, fmt.Errorf("encode queue release requirements: %w", err)
+	}
 	q := sqlc.New()
 	var body []byte
 	if *r.ExpectedRevision == 0 {
-		body, err = q.WriteBindingReleasePolicy(ctx, s.pool, sqlc.WriteBindingReleasePolicyParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Scope: normalizedDeploymentScope(scope), Mode: r.Mode, ExpectedRevision: *r.ExpectedRevision, MaxAgeSeconds: int64(age / time.Second), RequireApplicationAck: r.RequireApplicationAck, Reason: r.Reason})
+		body, err = q.WriteBindingReleasePolicy(ctx, s.pool, sqlc.WriteBindingReleasePolicyParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Scope: normalizedDeploymentScope(scope), Mode: r.Mode, ExpectedRevision: *r.ExpectedRevision, MaxAgeSeconds: int64(age / time.Second), RequireApplicationAck: r.RequireApplicationAck, Reason: r.Reason, ObjectStorageRequirements: encoded, QueueRequirements: encodedQueues})
 	} else {
-		body, err = q.UpdateBindingReleasePolicy(ctx, s.pool, sqlc.UpdateBindingReleasePolicyParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Scope: normalizedDeploymentScope(scope), Mode: r.Mode, ExpectedRevision: *r.ExpectedRevision, MaxAgeSeconds: int64(age / time.Second), RequireApplicationAck: r.RequireApplicationAck, Reason: r.Reason})
+		body, err = q.UpdateBindingReleasePolicy(ctx, s.pool, sqlc.UpdateBindingReleasePolicyParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Scope: normalizedDeploymentScope(scope), Mode: r.Mode, ExpectedRevision: *r.ExpectedRevision, MaxAgeSeconds: int64(age / time.Second), RequireApplicationAck: r.RequireApplicationAck, Reason: r.Reason, ObjectStorageRequirements: encoded, QueueRequirements: encodedQueues})
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return current, ErrBindingReleasePolicyRevision
@@ -78,21 +104,32 @@ func pgAuthorizeBindingRelease(ctx context.Context, tx pgx.Tx) error {
 	if len(fences) == 0 {
 		return nil
 	}
+	body, err := bindingReleaseFenceJSON(fences)
+	if err != nil {
+		return err
+	}
+	_, err = sqlc.New().AuthorizeBindingReleaseTraffic(ctx, tx, body)
+	return mapErr(err)
+}
+
+func bindingReleaseFenceJSON(fences []BindingPromotionFence) ([]byte, error) {
 	type grant struct {
-		AccountID             string     `json:"account_id"`
-		AppID                 string     `json:"app_id"`
-		DeploymentID          string     `json:"deployment_id"`
-		Scope                 string     `json:"scope"`
-		Revision              string     `json:"revision"`
-		ValidUntil            *time.Time `json:"valid_until"`
-		PolicyRevision        int64      `json:"policy_revision"`
-		MaxAgeSeconds         float64    `json:"max_age_seconds"`
-		AllowUnsupported      bool       `json:"allow_unsupported"`
-		RequireApplicationAck bool       `json:"require_application_ack"`
+		ObjectStorageRequirements map[string]string `json:"object_storage_requirements"`
+		QueueRequirements         map[string]string `json:"queue_requirements"`
+		AccountID                 string            `json:"account_id"`
+		AppID                     string            `json:"app_id"`
+		DeploymentID              string            `json:"deployment_id"`
+		Scope                     string            `json:"scope"`
+		Revision                  string            `json:"revision"`
+		ValidUntil                *time.Time        `json:"valid_until"`
+		PolicyRevision            int64             `json:"policy_revision"`
+		MaxAgeSeconds             float64           `json:"max_age_seconds"`
+		AllowUnsupported          bool              `json:"allow_unsupported"`
+		RequireApplicationAck     bool              `json:"require_application_ack"`
 	}
 	grants := make([]grant, 0, len(fences))
 	for _, f := range fences {
-		g := grant{AccountID: f.AccountID, AppID: f.AppID, DeploymentID: f.DeploymentID, Scope: f.Scope, Revision: f.Revision, PolicyRevision: f.PolicyRevision, MaxAgeSeconds: f.MaxVerificationAge.Seconds(), AllowUnsupported: f.AllowUnsupported, RequireApplicationAck: f.RequireApplicationAck}
+		g := grant{AccountID: f.AccountID, AppID: f.AppID, DeploymentID: f.DeploymentID, Scope: f.Scope, Revision: f.Revision, PolicyRevision: f.PolicyRevision, MaxAgeSeconds: f.MaxVerificationAge.Seconds(), AllowUnsupported: f.AllowUnsupported, RequireApplicationAck: f.RequireApplicationAck, ObjectStorageRequirements: f.ObjectStorageRequirements, QueueRequirements: f.QueueRequirements}
 		if !f.ValidUntil.IsZero() {
 			stamp := f.ValidUntil
 			g.ValidUntil = &stamp
@@ -101,8 +138,7 @@ func pgAuthorizeBindingRelease(ctx context.Context, tx pgx.Tx) error {
 	}
 	body, err := json.Marshal(grants)
 	if err != nil {
-		return fmt.Errorf("encode binding release fences: %w", err)
+		return nil, fmt.Errorf("encode binding release fences: %w", err)
 	}
-	_, err = sqlc.New().AuthorizeBindingReleaseTraffic(ctx, tx, body)
-	return mapErr(err)
+	return body, nil
 }

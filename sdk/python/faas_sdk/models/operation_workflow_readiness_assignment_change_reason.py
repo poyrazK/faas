@@ -1,10 +1,13 @@
 from typing import Literal
 
-OperationWorkflowReadinessAssignmentChangeReason = Literal["manual_assignment", "response_deadline_fallback"]
+OperationWorkflowReadinessAssignmentChangeReason = Literal[
+    "manual_assignment", "response_deadline_fallback", "step_assignment"
+]
 
 OPERATION_WORKFLOW_READINESS_ASSIGNMENT_CHANGE_REASON_VALUES: set[OperationWorkflowReadinessAssignmentChangeReason] = {
     "manual_assignment",
     "response_deadline_fallback",
+    "step_assignment",
 }
 
 

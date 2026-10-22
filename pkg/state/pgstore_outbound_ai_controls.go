@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -144,7 +145,8 @@ func (s *PgStore) ListOutboundAIBudgetAlerts(ctx context.Context, accountID, int
 		return nil, err
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, budget, app_id, period_start, threshold_percent, limit_value, used_value, crossed_at
+		SELECT id, budget, app_id, COALESCE(end_user, ''), period_start, threshold_percent, limit_value, used_value, crossed_at,
+		       COALESCE(tag, '')
 		  FROM outbound_ai_budget_alerts
 		 WHERE account_id = $1 AND integration_id = $2
 		 ORDER BY crossed_at DESC, threshold_percent DESC, id
@@ -158,7 +160,8 @@ func (s *PgStore) ListOutboundAIBudgetAlerts(ctx context.Context, accountID, int
 		var id, appID pgtype.UUID
 		var periodStart time.Time
 		alert := OutboundAIBudgetAlert{IntegrationID: integrationID}
-		if err := rows.Scan(&id, &alert.Budget, &appID, &periodStart, &alert.ThresholdPercent, &alert.Limit, &alert.Used, &alert.CrossedAt); err != nil {
+		if err := rows.Scan(&id, &alert.Budget, &appID, &alert.EndUser, &periodStart, &alert.ThresholdPercent, &alert.Limit, &alert.Used,
+			&alert.CrossedAt, &alert.Tag); err != nil {
 			return nil, mapErr(err)
 		}
 		alert.ID, alert.PeriodStart, alert.CrossedAt = pgUUIDString(id), periodStart.UTC(), alert.CrossedAt.UTC()
@@ -179,7 +182,9 @@ func (s *PgStore) ListOutboundAIRequestLog(ctx context.Context, accountID, integ
 	rows, err := s.pool.Query(ctx, `
 		SELECT log.id, log.created_at, log.caller, log.route_id, log.model, log.status, log.outcome,
 		       log.input_tokens, log.cached_input_tokens, log.cache_write_tokens, log.output_tokens,
-		       log.cost_millicents, log.duration_ms, log.ttfb_ms, log.attempts
+		       log.cost_millicents, log.duration_ms, log.ttfb_ms, log.attempts, COALESCE(log.end_user, ''),
+		       EXISTS (SELECT 1 FROM outbound_ai_request_content content WHERE content.log_id = log.id),
+		       COALESCE(log.tags, '{}'::text[])
 		  FROM outbound_ai_request_log log
 		 WHERE log.integration_id = $1 AND ($2::timestamptz IS NULL OR log.created_at < $2)
 		 ORDER BY log.created_at DESC, log.id DESC
@@ -197,7 +202,7 @@ func (s *PgStore) ListOutboundAIRequestLog(ctx context.Context, accountID, integ
 		var entry OutboundAIRequestLogEntry
 		if err := rows.Scan(&id, &entry.CreatedAt, &entry.Caller, &routeID, &entry.Model, &status, &entry.Outcome,
 			&entry.InputTokens, &entry.CachedInputTokens, &entry.CacheWriteTokens, &entry.OutputTokens,
-			&entry.CostMillicents, &duration, &ttfb, &attempts); err != nil {
+			&entry.CostMillicents, &duration, &ttfb, &attempts, &entry.EndUser, &entry.ContentCaptured, &entry.Tags); err != nil {
 			return nil, mapErr(err)
 		}
 		entry.ID, entry.CreatedAt = pgUUIDString(id), entry.CreatedAt.UTC()
@@ -212,4 +217,34 @@ func (s *PgStore) ListOutboundAIRequestLog(ctx context.Context, accountID, integ
 		entries = append(entries, entry)
 	}
 	return entries, mapErr(rows.Err())
+}
+
+var _ OutboundAIContentStore = (*PgStore)(nil)
+
+// GetOutboundAIRequestContent reads one logged call's captured bodies
+// (ADR-996). A call without a capture, or one outside the account's
+// integration, is not found.
+func (s *PgStore) GetOutboundAIRequestContent(ctx context.Context, accountID, integrationID, logID string) (OutboundAIRequestContent, error) {
+	if _, err := uuid.Parse(logID); err != nil {
+		return OutboundAIRequestContent{}, ErrNotFound
+	}
+	if err := s.outboundManagedIntegrationExists(ctx, accountID, integrationID); err != nil {
+		return OutboundAIRequestContent{}, err
+	}
+	content := OutboundAIRequestContent{LogID: logID}
+	err := s.pool.QueryRow(ctx, `
+		SELECT created_at, request_body, request_truncated, response_body, response_truncated,
+		       COALESCE(response_content_type, ''), COALESCE(request_path, '')
+		  FROM outbound_ai_request_content
+		 WHERE integration_id = $1 AND log_id = $2`, mustPgUUID(integrationID), mustPgUUID(logID)).
+		Scan(&content.CreatedAt, &content.RequestBody, &content.RequestTruncated, &content.ResponseBody,
+			&content.ResponseTruncated, &content.ResponseContentType, &content.RequestPath)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OutboundAIRequestContent{}, ErrNotFound
+	}
+	if err != nil {
+		return OutboundAIRequestContent{}, mapErr(err)
+	}
+	content.CreatedAt = content.CreatedAt.UTC()
+	return content, nil
 }

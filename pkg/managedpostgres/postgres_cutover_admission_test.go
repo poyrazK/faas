@@ -25,8 +25,13 @@ func admissionCutoverFixture(t *testing.T) (*PostgresStore, *state.PgStore, Cuto
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	source := postgresReadyDatabase(t, s, account, "source", now.Add(-time.Hour))
+	// Modern source fences require independently recorded dataset identity.
+	source.DataResourceID = "dataset-" + source.ID
+	if _, err := s.pool.Exec(ctx, `UPDATE managed_postgres_databases SET data_resource_id=$2 WHERE id=$1`, source.ID, source.DataResourceID); err != nil {
+		t.Fatal(err)
+	}
 	input := postgresTestDatabase(account, "restore", now.Add(-time.Hour))
-	input.RestoreSourceDatabaseID, input.RestoreSourceResourceID, input.RestorePointInTime = source.ID, source.ProviderResourceID, now.Add(-time.Minute)
+	input.RestoreSourceDatabaseID, input.RestoreSourceResourceID, input.RestorePointInTime = source.ID, source.DataResourceID, now.Add(-time.Minute)
 	target, _, err := s.Reserve(ctx, input, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -215,17 +220,26 @@ func TestPostgresCutoverAdmissionFencesOldTransactions(t *testing.T) {
 				_, insertErr := old.Exec(ctx, `INSERT INTO instances(app_id,state,ram_mb,node_id) VALUES($1,'cold_booting',256,$2)`, c.AppID, node.ID)
 				done <- insertErr
 			}()
-			waitForAdmissionLock(t, ctx, s, pid)
+			waiting, admissionErr := waitForAdmissionLockOrCompletion(t, ctx, s, pid, done)
 			if _, err = blocker.Exec(ctx, `UPDATE apps SET managed_postgres_admission_cutover_id=$2,managed_postgres_admission_fenced_at=clock_timestamp() WHERE id=$1`, c.AppID, c.ID); err != nil {
 				t.Fatal(err)
 			}
 			if err = blocker.Commit(ctx); err != nil {
 				t.Fatal(err)
 			}
-			err = <-done
+			if waiting {
+				admissionErr = <-done
+			}
+			err = admissionErr
 			var pgErr *pgconn.PgError
-			if !errors.As(err, &pgErr) || (pgErr.ConstraintName != "managed_postgres_cutover_admission_fenced" && pgErr.Code != "40001") {
+			if !errors.As(err, &pgErr) || (pgErr.ConstraintName != "managed_postgres_cutover_admission_fenced" && pgErr.Code != "40001" && !(!waiting && pgErr.Code == "55P03" && pgErr.ConstraintName == "application_standard_runtime_busy")) {
 				t.Fatalf("old transaction admitted a VM: %v", err)
+			}
+			// A NOWAIT standards guard may refuse before the cutover lock. A
+			// fresh transaction must still observe the committed cutover fence.
+			_, err = s.pool.Exec(ctx, `INSERT INTO instances(app_id,state,ram_mb,node_id) VALUES($1,'cold_booting',256,$2)`, c.AppID, node.ID)
+			if !errors.As(err, &pgErr) || pgErr.ConstraintName != "managed_postgres_cutover_admission_fenced" {
+				t.Fatalf("committed cutover did not fence fresh admission: %v", err)
 			}
 		})
 	}
@@ -338,15 +352,22 @@ func waitForAdmissionAppLock(t *testing.T, ctx context.Context, s *PostgresStore
 	}
 }
 
-func waitForAdmissionLock(t *testing.T, ctx context.Context, s *PostgresStore, pid uint32) {
+// A stricter admission trigger can reject an obsolete snapshot before reaching
+// the app lock. Preserve that result so the caller still verifies refusal.
+func waitForAdmissionLockOrCompletion(t *testing.T, ctx context.Context, s *PostgresStore, pid uint32, done <-chan error) (bool, error) {
 	t.Helper()
 	for {
+		select {
+		case err := <-done:
+			return false, err
+		default:
+		}
 		var waiting bool
 		if err := s.pool.QueryRow(ctx, `SELECT coalesce(wait_event_type='Lock',false) FROM pg_stat_activity WHERE pid=$1`, pid).Scan(&waiting); err != nil {
 			t.Fatal(err)
 		}
 		if waiting {
-			return
+			return true, nil
 		}
 		select {
 		case <-ctx.Done():
@@ -362,11 +383,13 @@ func cutoverMigrationStatements(t *testing.T, name string) (string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parts := strings.Split(string(migration), "-- +goose Down")
-	body := func(part string) string {
-		return strings.Split(strings.Split(part, "-- +goose StatementBegin")[1], "-- +goose StatementEnd")[0]
+	parts := strings.SplitN(string(migration), "-- +goose Down", 2)
+	if len(parts) != 2 {
+		t.Fatal("missing cutover migration downgrade")
 	}
-	return body(parts[0]), body(parts[1])
+	// Goose directives are SQL comments. Keep all statements surrounding and
+	// inside its blocks when exercising the actual upgrade/downgrade chain.
+	return parts[0], parts[1]
 }
 
 // adr: 568 — serving receipts prove the eligible source keys actually delivered.

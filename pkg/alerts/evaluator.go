@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/http"
 	"net/url"
 	"strconv"
 	"sync"
@@ -38,9 +39,11 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/audit"
+	"github.com/onebox-faas/faas/pkg/pagerduty"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/webhookout"
@@ -156,6 +159,7 @@ type Ops interface {
 // intentionally small so a future PR can add per-rule filtering or
 // per-account parallelism without reshaping the public surface.
 type Evaluator struct {
+	pagerDuty  *pagerduty.Client
 	store      Store
 	promQL     appmetrics.PromQL // nil = Prometheus unreachable; degraded path
 	audit      *audit.Auditor
@@ -181,6 +185,14 @@ type Evaluator struct {
 	now          func() time.Time
 	log          *slog.Logger
 	ops          Ops
+	// channels and its companions deliver to ADR-749 notification
+	// channels; nil disables channel delivery.
+	channels         ChannelSender
+	channelOutcome   func(kind, outcome string)
+	dashboardBaseURL string
+
+	// anomaly caches ADR-744 baselines per rule; see anomaly.go.
+	anomaly anomalyState
 }
 
 // SetActionExec (issue #976 / ADR-122 / SAFE-RELEASES-B) swaps
@@ -217,10 +229,11 @@ func (e *Evaluator) getActionExec() ActionExecutor {
 // EvaluatorOptions is the constructor input. Every field has a
 // non-zero default except store (the only required dependency).
 type EvaluatorOptions struct {
-	Store    Store
-	PromQL   appmetrics.PromQL
-	Audit    *audit.Auditor
-	Identity func() *age.X25519Identity
+	PagerDutyHTTPClient *http.Client
+	Store               Store
+	PromQL              appmetrics.PromQL
+	Audit               *audit.Auditor
+	Identity            func() *age.X25519Identity
 	// Identities is the rotation-overlap accessor (issue #316 /
 	// ADR-057): multi-identity slice from secretbox.LoadHostKeys(dir).
 	// Pre-rotation: length 1 (just the current). During the 30-day
@@ -241,6 +254,16 @@ type EvaluatorOptions struct {
 	Now        func() time.Time
 	Log        *slog.Logger
 	Ops        Ops
+	// Channels delivers to ADR-749 notification channels (Slack,
+	// PagerDuty, email); nil disables channel delivery.
+	Channels ChannelSender
+	// ChannelOutcome observes each channel delivery (kind, outcome) for
+	// the meterd_alert_channel_deliveries_total counter. Optional; called
+	// concurrently, so it must be safe for concurrent use.
+	ChannelOutcome func(kind, outcome string)
+	// DashboardBaseURL ("https://gregale.dev") links notifications to the
+	// app dashboard; empty omits the link.
+	DashboardBaseURL string
 }
 
 // NewEvaluator returns a wired Evaluator. nil-coerced dependencies
@@ -265,6 +288,7 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 		promQL:     o.PromQL,
 		audit:      o.Audit,
 		identity:   o.Identity,
+		pagerDuty:  pagerduty.New(o.PagerDutyHTTPClient),
 		identities: o.Identities,
 		dispatch:   o.Dispatcher,
 		dispatchMu: &sync.Mutex{},
@@ -272,6 +296,10 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 		now:        o.Now,
 		log:        o.Log,
 		ops:        o.Ops,
+
+		channels:         o.Channels,
+		channelOutcome:   o.ChannelOutcome,
+		dashboardBaseURL: o.DashboardBaseURL,
 	}
 	if o.ActionExec != nil {
 		e.actionExec = o.ActionExec
@@ -298,7 +326,7 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 type Stats struct {
 	Evaluated           int // rules walked this tick (enabled list)
 	Fired               int // rules that crossed the threshold
-	Delivered           int // rules whose dispatch returned 2xx/3xx
+	Delivered           int // rules whose dispatch returned 2xx
 	Failed              int // rules whose dispatch hit a terminal/retry-exhausted state
 	SkippedDegraded     int // rules skipped because Prometheus returned a degraded source
 	SkippedInsufficient int // target-signal rules without enough selected failures
@@ -349,6 +377,16 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 		}
 		e.evalRule(ctx, rule, now, &stats)
 	}
+	// Record every readiness observation before any readiness transport wait.
+	// Other evaluators can continue recording while this worker owns a lease.
+	for _, rule := range rules {
+		if string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
+			if err := ctx.Err(); err != nil {
+				return stats, err
+			}
+			e.retryMCPReadinessIncident(ctx, rule, e.now(), &stats)
+		}
+	}
 	return stats, nil
 }
 
@@ -361,6 +399,22 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 // cancellation — every other failure is observation, not load-
 // bearing for the next tick.
 func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time.Time, stats *Stats) {
+	var readiness []api.MCPReadinessMonitorStatus
+	if string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
+		ctx, readiness = e.withMCPReadiness(ctx, rule)
+	}
+	var health *api.MCPConnectionHealthSnapshot
+	if api.IsMCPConnectionHealthMetric(string(rule.Metric)) {
+		ctx, health = e.withMCPConnectionHealth(ctx, rule)
+	}
+	var catalog *api.MCPCatalogMonitorSignal
+	if api.IsMCPCatalogMonitorMetric(string(rule.Metric)) {
+		ctx, catalog = e.withMCPCatalogSignal(ctx, rule)
+	}
+	var convergence *api.MCPPolicyConvergenceSnapshot
+	if api.IsMCPPolicyConvergenceMetric(string(rule.Metric)) {
+		ctx, convergence = withMCPPolicyConvergenceSnapshot(ctx, e.store, rule)
+	}
 	observed, comparisonResult, skipReason := e.observe(ctx, rule)
 	if skipReason != "" {
 		switch skipReason {
@@ -394,18 +448,31 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		return
 	}
 
+	if string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
+		e.evalMCPReadinessIncident(ctx, rule, readiness, observed, comparisonResult, now, stats)
+		return
+	}
+
 	if !comparisonResult {
+		if health != nil {
+			e.recoverMCPConnectionHealth(ctx, rule, observed, health, now, stats)
+		}
 		// Healthy tick — comparison false. If we were firing,
 		// flip back to ok and emit audit.resolved.
 		if rule.State != state.AlertStateOk {
 			changed, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateOk, now)
 			if err != nil {
 				e.log.Warn("alerts: set state ok", "rule", rule.ID, "err", err)
-			} else if changed && rule.State == state.AlertStateFiring && e.audit != nil {
-				e.audit.Emit(ctx, "alert.resolved", &rule.AccountID, map[string]any{
-					"rule_id": rule.ID,
-					"rule":    rule.Name,
-				})
+			} else if changed && rule.State == state.AlertStateFiring {
+				if e.audit != nil && !api.IsMCPConnectionHealthMetric(string(rule.Metric)) {
+					e.audit.Emit(ctx, "alert.resolved", &rule.AccountID, map[string]any{
+						"rule_id": rule.ID,
+						"rule":    rule.Name,
+					})
+				}
+				// ADR-749: channels hear the recovery so PagerDuty can
+				// close the incident the fire opened.
+				e.notifyChannels(ctx, rule, alertchannels.EventResolve, observed, now)
 			}
 		}
 		if err := e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now); err != nil {
@@ -415,6 +482,11 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		return
 	}
 
+	if health != nil && e.sameMCPHealthIncident(ctx, rule, health) {
+		_, _ = e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateFiring, now)
+		_ = e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now)
+		return
+	}
 	// Comparison fires. Apply the cool-down, then build the dedupe key.
 	//
 	// The cool-down is a plain time gate on last_fired_at. The dedupe key
@@ -469,7 +541,14 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// takes the bytes directly; the same bytes are re-decoded later
 	// (webhookout's HTTP body) so we never re-serialise on the
 	// dispatch hot path.
-	payloadBytes, payloadMap, err := buildPayload(rule, observed, e.investigationPaths(ctx, rule))
+	paths := e.investigationPaths(ctx, rule)
+	paths.mcpCatalog = catalog
+	paths.mcpReadiness = readiness
+	paths.mcpHealth = health
+	if convergence != nil {
+		paths.mcpConvergence = convergence
+	}
+	payloadBytes, payloadMap, err := buildPayload(rule, observed, paths, e.anomalyPayload(rule, observed))
 	if err != nil {
 		e.log.Warn("alerts: marshal payload", "rule", rule.ID, "err", err)
 		return
@@ -519,6 +598,25 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		e.log.Warn("alerts: set state firing", "rule", rule.ID, "err", err)
 	}
 
+	// ADR-749: notification channels receive the fire independently of
+	// the webhook. A channel-only rule (no webhook URL) records its
+	// delivery from the channel outcome and skips the webhook path.
+	attempted, delivered := e.notifyChannels(ctx, rule, alertchannels.EventFire, observed, now)
+	if rule.WebhookURL == "" {
+		result := webhookout.Result{Attempts: 1, StatusCode: http.StatusOK}
+		if delivered == 0 {
+			result.StatusCode = 0
+			result.Err = fmt.Errorf("no notification channel accepted the alert (%d attempted)", attempted)
+		}
+		e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
+		e.dispatchMu.Lock()
+		e.runAction(ctx, rule, deliveryID, observed, now, stats)
+		e.dispatchMu.Unlock()
+		return
+	}
+	e.deliverAlert(ctx, rule, deliveryID, observed, payloadMap, now, stats)
+}
+func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, payloadMap map[string]any, now time.Time, stats *Stats) {
 	// Unseal the webhook secret. A nil identity or a namespace
 	// mismatch is a hard skip — we never dispatch without a valid
 	// signature, and we never re-open a future-namespace blob.
@@ -579,6 +677,12 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		RuleName:   rule.Name,
 		AppID:      rule.AppID, // "" for account-wide rules; customer keys off Payload.metric + threshold
 		Payload:    payloadMap,
+	}
+
+	if string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
+		if eventID, ok := payloadMap["event_id"].(string); ok {
+			evt.ID = eventID
+		}
 	}
 
 	// Serialise Dispatch calls. pkg/webhookout.Dispatcher is
@@ -726,6 +830,24 @@ const (
 // threshold verdict, skipReason is a fail-closed "we can't even
 // fetch" signal.
 func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
+	if string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
+		return e.observeMCPReadiness(ctx, rule)
+	}
+	if api.IsMCPProtocolMetric(string(rule.Metric)) {
+		return e.observeMCPProtocol(ctx, rule)
+	}
+	if api.IsAnomalyAlertComparison(string(rule.Comparison)) {
+		return e.observeAnomaly(ctx, rule)
+	}
+	if api.IsMCPConnectionHealthMetric(string(rule.Metric)) {
+		return e.observeMCPConnectionHealth(ctx, rule)
+	}
+	if api.IsMCPCatalogMonitorMetric(string(rule.Metric)) {
+		return e.observeMCPCatalogMonitor(ctx, rule)
+	}
+	if api.IsMCPPolicyConvergenceMetric(string(rule.Metric)) {
+		return e.observeMCPPolicyConvergence(ctx, rule)
+	}
 	if api.IsEventRetentionAlertMetric(string(rule.Metric)) {
 		return e.observeEventRetention(ctx, rule)
 	}
@@ -761,6 +883,10 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			value = snapshot.DueAgeSeconds
 		}
 		return value, compareFloat(value, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricEdgeRuleHits, state.AlertMetricEdgeRuleLogHits, state.AlertMetricEdgeRuleActivity:
+		return e.observeEdgeRuleHits(ctx, rule)
+	case state.AlertMetricRouteInsightsDetected:
+		return e.observeRouteInsights(ctx, rule)
 	case state.AlertMetricFailedInvocs:
 		// Postgres-backed. No Prometheus dependency; the
 		// per-rule source filter expands "any" to every alertable
@@ -812,10 +938,10 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricAccountSpendEUR:
 		// Postgres-backed MTD SUM. Issue #1233 / ADR-123.
-		// Threshold is EUR (not cents) per the catalog seed
+		// Threshold is whole billing-currency units (not cents) per the catalog seed
 		// (spend_eur_20 fires at gt 20). CLAUDE.md says "Floats
 		// near money fail review" — observed is int64 cents,
-		// compareCents rounds the EUR threshold to cents at the
+		// compareCents rounds the threshold to cents at the
 		// seam so the comparison is integer-aligned end-to-end.
 		cents, err := e.store.MTDSpendEurCents(ctx, rule.AccountID)
 		if err != nil {
@@ -965,6 +1091,12 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			observed = 1
 		}
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricCustomMetric:
+		return e.observeCustomMetric(ctx, rule)
+	case state.AlertMetricSLOBudgetBurn, state.AlertMetricSLOBudgetRemaining:
+		return e.observeCustomSLO(ctx, rule)
+	case state.AlertMetricSyntheticConsecutiveFailures, state.AlertMetricSyntheticLatencyP95:
+		return e.observeSyntheticCheck(ctx, rule)
 	case state.AlertMetricSLOBurnRate:
 		// PromQL-backed customer SLO signal. FetchSLOBurnRate folds
 		// the 1h/14.4x and 6h/6x windows into one effective value so
@@ -1070,9 +1202,9 @@ func compareFloat(observed float64, op state.AlertComparison, threshold float64)
 // monetary metrics (issue #1233 / ADR-123, account_spend_eur).
 // CLAUDE.md mandates "Floats near money fail review" — the
 // AccountSpend path stores cents (int64) and the catalog's
-// spend_eur_20 preset ships a threshold in EUR (20.0), so we convert
+// spend_eur_20 preset ships a threshold in whole billing-currency units (20.0), so we convert
 // thresholdEUR to cents ONCE at the seam (rounded half-to-even
-// avoids the 19.995 EUR phantom-fire at the month edge) and
+// avoids the 19.995 phantom-fire at the month edge) and
 // compare two integers. No further float math touches the value.
 func compareCents(observedCents int64, op state.AlertComparison, thresholdEUR float64) bool {
 	// math.Round(threshold*100)/100 then *100 keeps the float out
@@ -1104,6 +1236,10 @@ func compareCents(observedCents int64, op state.AlertComparison, thresholdEUR fl
 // scrape and the customer's webhook see the same envelope — one
 // source of truth, one marshal per firing.
 type investigationPaths struct {
+	mcpReadiness     []api.MCPReadinessMonitorStatus
+	mcpHealth        *api.MCPConnectionHealthSnapshot
+	mcpCatalog       *api.MCPCatalogMonitorSignal
+	mcpConvergence   *api.MCPPolicyConvergenceSnapshot
 	observations     string
 	dashboard        string
 	appID            string
@@ -1150,7 +1286,7 @@ func preAuthObservationMetric(metric state.AlertMetric) bool {
 	return false
 }
 
-func buildPayload(rule state.AlertRule, observed float64, paths investigationPaths) ([]byte, map[string]any, error) {
+func buildPayload(rule state.AlertRule, observed float64, paths investigationPaths, extra map[string]any) ([]byte, map[string]any, error) {
 	m := map[string]any{
 		"rule_id":    rule.ID,
 		"rule_name":  rule.Name,
@@ -1161,11 +1297,27 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 		"window":     string(rule.WindowSpec),
 		"fired_at":   time.Now().UTC().Format(time.RFC3339Nano),
 	}
+	if api.IsMCPProtocolMetric(string(rule.Metric)) {
+		m["app_id"] = rule.AppID
+		m["mcp_protocol"] = map[string]any{"min_calls": rule.MCPMinCalls, "for_minutes": rule.MCPForMinutes, "source": "starter_reported", "sample_interval_seconds": 30}
+	}
 	if rule.EventSubscriptionID != "" {
 		m["event_subscription_id"] = rule.EventSubscriptionID
 	}
 	if rule.FailureSource != "" {
 		m["failure_source"] = string(rule.FailureSource)
+	}
+	if rule.CustomMetricName != "" {
+		m["custom_metric_name"] = rule.CustomMetricName
+	}
+	if rule.SLOID != "" {
+		m["slo_id"] = rule.SLOID
+	}
+	if rule.SyntheticCheckID != "" {
+		m["synthetic_check_id"] = rule.SyntheticCheckID
+	}
+	if rule.EdgeRuleID != "" {
+		m["edge_rule_id"] = rule.EdgeRuleID
 	}
 	if paths.observations != "" {
 		m["observations_path"] = paths.observations
@@ -1178,6 +1330,38 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 		if paths.workflowDeadRuns != "" {
 			m["workflow_dead_runs_path"] = paths.workflowDeadRuns
 		}
+	}
+	for k, v := range extra { // ADR-744 baseline fields
+		m[k] = v
+	}
+	if paths.mcpHealth != nil {
+		m["mcp_connection_health"] = paths.mcpHealth
+		m["incident_id"] = paths.mcpHealth.Fingerprints[api.MCPConnectionHealthKind(string(rule.Metric))]
+		m["event"] = "alert.fired"
+	}
+	if string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
+		m["app_id"] = rule.AppID
+	}
+	if rule.MCPReadinessScope != "" {
+		m["mcp_readiness_scope"] = rule.MCPReadinessScope
+	}
+	if paths.mcpReadiness != nil {
+		m["mcp_readiness_coverage_fingerprint"] = readinessCoverageFingerprint(paths.mcpReadiness)
+		m["mcp_readiness_scopes"] = readinessEventScopes(paths.mcpReadiness)
+		monitors := append([]api.MCPReadinessMonitorStatus{}, paths.mcpReadiness...)
+		if len(monitors) > 50 {
+			monitors = monitors[:50]
+		}
+		for i := range monitors {
+			monitors[i].History = nil
+		}
+		m["mcp_readiness"] = monitors
+	}
+	if paths.mcpCatalog != nil {
+		m["mcp_catalog"] = paths.mcpCatalog
+	}
+	if paths.mcpConvergence != nil {
+		m["mcp_convergence"] = paths.mcpConvergence
 	}
 	b, err := json.Marshal(m)
 	if err != nil {

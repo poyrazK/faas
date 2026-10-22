@@ -1,3 +1,4 @@
+import datetime
 from http import HTTPStatus
 from typing import Any
 
@@ -12,6 +13,7 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
+    expected_accepted_at: datetime.datetime | Unset = UNSET,
     source: str,
     id: str,
     after: str | Unset = UNSET,
@@ -19,6 +21,11 @@ def _get_kwargs(
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
+
+    json_expected_accepted_at: str | Unset = UNSET
+    if not isinstance(expected_accepted_at, Unset):
+        json_expected_accepted_at = expected_accepted_at.isoformat()
+    params["expected_accepted_at"] = json_expected_accepted_at
 
     params["source"] = source
 
@@ -67,6 +74,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -97,6 +109,7 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient,
+    expected_accepted_at: datetime.datetime | Unset = UNSET,
     source: str,
     id: str,
     after: str | Unset = UNSET,
@@ -121,6 +134,7 @@ def sync_detailed(
     outcomes may change between requests.
 
     Args:
+        expected_accepted_at (datetime.datetime | Unset):
         source (str):
         id (str):
         after (str | Unset):
@@ -135,6 +149,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
+        expected_accepted_at=expected_accepted_at,
         source=source,
         id=id,
         after=after,
@@ -151,6 +166,7 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient,
+    expected_accepted_at: datetime.datetime | Unset = UNSET,
     source: str,
     id: str,
     after: str | Unset = UNSET,
@@ -175,6 +191,7 @@ def sync(
     outcomes may change between requests.
 
     Args:
+        expected_accepted_at (datetime.datetime | Unset):
         source (str):
         id (str):
         after (str | Unset):
@@ -190,6 +207,7 @@ def sync(
 
     return sync_detailed(
         client=client,
+        expected_accepted_at=expected_accepted_at,
         source=source,
         id=id,
         after=after,
@@ -200,6 +218,7 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
+    expected_accepted_at: datetime.datetime | Unset = UNSET,
     source: str,
     id: str,
     after: str | Unset = UNSET,
@@ -224,6 +243,7 @@ async def asyncio_detailed(
     outcomes may change between requests.
 
     Args:
+        expected_accepted_at (datetime.datetime | Unset):
         source (str):
         id (str):
         after (str | Unset):
@@ -238,6 +258,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
+        expected_accepted_at=expected_accepted_at,
         source=source,
         id=id,
         after=after,
@@ -252,6 +273,7 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient,
+    expected_accepted_at: datetime.datetime | Unset = UNSET,
     source: str,
     id: str,
     after: str | Unset = UNSET,
@@ -276,6 +298,7 @@ async def asyncio(
     outcomes may change between requests.
 
     Args:
+        expected_accepted_at (datetime.datetime | Unset):
         source (str):
         id (str):
         after (str | Unset):
@@ -292,6 +315,7 @@ async def asyncio(
     return (
         await asyncio_detailed(
             client=client,
+            expected_accepted_at=expected_accepted_at,
             source=source,
             id=id,
             after=after,

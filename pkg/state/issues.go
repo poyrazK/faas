@@ -17,6 +17,10 @@ type IssueStore interface {
 	RevokeIssueToken(context.Context, string, string) error
 	RecordIssue(context.Context, RecordIssueParams) (api.IssueEventResponse, error)
 	ListIssues(context.Context, string, IssueListFilter, IssueCursor) (api.ListIssuesResponse, error)
+	CreateIssueSplitRule(context.Context, string, string, string, api.IssueSplitMatcher, api.IssueLimits, time.Time) (api.IssueSplitRule, error)
+	SetIssueSplitRuleEnabled(context.Context, string, string, string, string, bool, time.Time) (api.IssueSplitRule, error)
+	UndoIssueSplitRule(context.Context, string, string, string, string, api.IssueSplitRuleUndoRequest, time.Time) (api.IssueSplitRule, error)
+	PreviewIssueSplit(context.Context, string, string, api.IssueSplitMatcher) (api.IssueSplitPreview, error)
 	GetIssueDetail(context.Context, string, string, time.Time, time.Time, IssueDetailCursors) (api.IssueDetail, error)
 	ActOnIssue(context.Context, string, string, string, api.IssueActionRequest, time.Time) (api.Issue, error)
 	GetIssueImpactAlertPolicy(context.Context, string) (api.IssueImpactAlertPolicy, error)
@@ -39,8 +43,10 @@ type RecordIssueParams struct {
 }
 
 type IssueCursor struct {
-	Time time.Time
-	ID   string
+	FilterHash string `json:"filter_hash,omitempty"`
+	Tag        string `json:"tag,omitempty"`
+	Time       time.Time
+	ID         string
 
 	// Impact fields are present only on list cursors whose query ranks or
 	// filters by the fixed 24-hour customer-impact window.
@@ -52,6 +58,8 @@ type IssueCursor struct {
 
 // IssueListFilter scopes an issue inbox without changing its pagination shape.
 type IssueListFilter struct {
+	TeamID            string `json:",omitempty"`
+	Tag               string
 	State             string
 	Environment       string
 	AssigneeAccountID string
@@ -61,6 +69,7 @@ type IssueListFilter struct {
 }
 
 var ErrIssueEventConflict = errors.New("issue event ID reused with another payload")
+var ErrIssueGroupingConflict = errors.New("issue group membership conflicts with requested action")
 var ErrIssueQuota = errors.New("issue storage quota exceeded")
 var ErrIssueRateLimited = errors.New("issue ingestion rate exceeded")
 
@@ -80,3 +89,13 @@ func (e *IssueLimitError) Unwrap() error {
 	}
 	return ErrIssueQuota
 }
+
+// IssueTeamStore keeps collaboration separate from the ingestion store boundary.
+type IssueTeamStore interface {
+	ListIssueTeams(context.Context, string, string) (api.ListIssueTeamsResponse, error)
+	GetIssueTeam(context.Context, string, string, string) (api.IssueTeam, error)
+	PutIssueTeam(context.Context, string, string, string, string, api.PutIssueTeamRequest, time.Time) (api.IssueTeam, error)
+	DeleteIssueTeam(context.Context, string, string, string) error
+}
+
+var ErrIssueTeamInUse = errors.New("issue team still owns issues or routing rules")

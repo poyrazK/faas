@@ -179,13 +179,13 @@ func TestSnapshotStateLocatorsKeepWarmGenerationPaired(t *testing.T) {
 			if hostPath != SnapDir()+"/"+strings.TrimPrefix(want, "snap/") {
 				t.Fatalf("wrong host path: %s", hostPath)
 			}
-			if node == e.defaultLocalNodeID {
-				if storageKey != "" {
-					t.Fatal("legacy local carrier changed")
-				}
-			} else if storageKey != want {
+			if storageKey != want {
 				t.Fatalf("mixed snapshot pair: %s %s", key, storageKey)
 			}
 		}
+	}
+	legacy := state.Snapshot{DeploymentID: "dep", StorageKey: state.SnapMemKey("dep")}
+	if _, key := e.snapshotStateLocators(e.defaultLocalNodeID, legacy); key != "" {
+		t.Fatal("legacy local host-path carrier changed")
 	}
 }

@@ -1,5 +1,5 @@
 // adr:383
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -29,11 +30,11 @@ func TestFOCUSCLIRefreshInvoice(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	stderr, restoreErr := captureStderr(t)
+	stderr, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
-	if code := cmdBilling([]string{"refresh-invoice", id}); code != 0 {
+	if code := main.CmdBilling([]string{"refresh-invoice", id}); code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr)
 	}
 	var result api.InvoiceRefreshResponse
@@ -41,7 +42,7 @@ func TestFOCUSCLIRefreshInvoice(t *testing.T) {
 		t.Fatalf("output=%s", stdout)
 	}
 	for _, args := range [][]string{{}, {id, "extra"}, {"--provider", "stripe", id}} {
-		if code := cmdBillingRefreshInvoice(args); code == 0 {
+		if code := main.CmdBillingRefreshInvoice(args); code == 0 {
 			t.Fatalf("accepted invalid args=%v", args)
 		}
 	}
@@ -50,7 +51,7 @@ func TestFOCUSCLIRefreshInvoice(t *testing.T) {
 	}
 	fail = true
 	before := stdout.String()
-	if code := cmdBillingRefreshInvoice([]string{id}); code == 0 || stdout.String() != before {
+	if code := main.CmdBillingRefreshInvoice([]string{id}); code == 0 || stdout.String() != before {
 		t.Fatal("failed refresh printed success")
 	}
 }

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -22,7 +23,7 @@ func TestFindLatestFailedDeploymentUsesAppScopedHistory(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	dep, err := findLatestFailedDeployment(NewClient(srv.URL, "fp_test"), "target-app", 5)
+	dep, err := main.FindLatestFailedDeployment(main.NewClient(srv.URL, "fp_test"), "target-app", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,12 +48,12 @@ func TestFindLatestFailedDeploymentUsesAppScopedHistory(t *testing.T) {
 // test runner returns false).
 func resetRenderCaches(t *testing.T) {
 	t.Helper()
-	resetNOColorCache()
-	resetStdoutTTYCache()
+	main.ResetNOColorCache()
+	main.ResetStdoutTTYCache()
 	on := true
-	testOnlyTTY = &on
+	(*main.TestOnlyTTY) = &on
 	t.Cleanup(func() {
-		testOnlyTTY = nil
+		(*main.TestOnlyTTY) = nil
 	})
 }
 
@@ -86,7 +87,7 @@ func TestRenderInspectErrorsHuman_LiftedFields(t *testing.T) {
 		},
 	}
 	var buf bytes.Buffer
-	renderInspectErrorsHuman(&buf, "test-app", dep)
+	main.RenderInspectErrorsHuman(&buf, "test-app", dep)
 	out := buf.String()
 	for _, want := range []string{"app_arch_mismatch", "ENOEXEC", "detected: node 22.11.0 (runtime node22) [app]", "start: npm run start", "port: 3000", "health: /healthz", "hint:", "why:", "fix:", "GOOS=linux", "exec format error", "app: test-app", "failed_at: 2026-08-18T10:00:00Z", "→"} {
 		if !strings.Contains(out, want) {
@@ -107,7 +108,7 @@ func TestRenderInspectErrorsHuman_NoFields(t *testing.T) {
 		ErrorCode: api.CodeBuildOOM,
 	}
 	var buf bytes.Buffer
-	renderInspectErrorsHuman(&buf, "test-app", dep)
+	main.RenderInspectErrorsHuman(&buf, "test-app", dep)
 	out := buf.String()
 	for _, want := range []string{"build_oom", "build failed", "→"} {
 		if !strings.Contains(out, want) {
@@ -129,10 +130,10 @@ func TestRenderInspectErrorsHuman_NoFields(t *testing.T) {
 // branches reject the other when both are set.
 func TestInspectUsage_PinsMutualExclusivity(t *testing.T) {
 	// Capture stderr to keep test output clean.
-	oldStderr := osStderr
+	oldStderr := (*main.OsStderr)
 	var buf bytes.Buffer
-	osStderr = &buf
-	defer func() { osStderr = oldStderr }()
+	(*main.OsStderr) = &buf
+	defer func() { (*main.OsStderr) = oldStderr }()
 	// Reproduce the dispatcher's gate manually (the dispatcher
 	// lives in cmdInspect, but the gate is the load-bearing
 	// piece — pin it here so the mutex is the only enforced
@@ -140,7 +141,7 @@ func TestInspectUsage_PinsMutualExclusivity(t *testing.T) {
 	upstreams := true
 	errorsFlag := true
 	if upstreams && errorsFlag {
-		fmt.Fprintln(osStderr, "Invalid flags: --upstreams and --errors are mutually exclusive")
+		fmt.Fprintln((*main.OsStderr), "Invalid flags: --upstreams and --errors are mutually exclusive")
 	}
 	if !strings.Contains(buf.String(), "--upstreams and --errors") {
 		t.Errorf("expected mutex error in stderr, got: %q", buf.String())

@@ -1,3 +1,4 @@
+// adr: 1529
 // adr: 568 — environment intent and runtime ownership contracts.
 package sched
 
@@ -10,6 +11,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -86,7 +88,7 @@ func TestRuntimeConfigMigrationUsesAcknowledgedRestoreOrColdInputs(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			harness := NewMigrationHarness(t.Context(), store, vmm, wire.NewOpsMetrics("schedd"), testLog(), destination.ID, engine.BuildAppSpecForMigration, NewNodeLedger(), nil)
+			harness := NewMigrationHarness(t.Context(), store, admissionTestVMM(store, vmm), wire.NewOpsMetrics("schedd"), testLog(), destination.ID, engine.BuildAppSpecForMigration, NewNodeLedger(), nil)
 			if err := harness.MigrateOne(t.Context(), original.ID, original.NodeID); err != nil {
 				t.Fatal(err)
 			}
@@ -117,21 +119,21 @@ func TestRuntimeConfigMigrationUsesAcknowledgedRestoreOrColdInputs(t *testing.T)
 func TestRuntimeConfigMigrationInputReadFailureDoesNotPauseSource(t *testing.T) {
 	store := runtimeEnvReadFailingStore{state.NewMemStore()}
 	_, app, dep := seedApp(t, store.MemStore, api.PlanHobby, 256, 3)
-	nodes, err := store.ListComputeNodes(t.Context(), true)
+	nodes, err := store.MemStore.ListComputeNodes(t.Context(), true)
 	if err != nil || len(nodes) == 0 {
 		t.Fatalf("source node: %v", err)
 	}
-	instance, err := store.CreateInstance(t.Context(), app.ID, dep.ID, string(state.StateRunning), 256, nodes[0].ID, uuid.NewString())
+	instance, err := store.MemStore.CreateInstance(t.Context(), app.ID, dep.ID, string(state.StateRunning), 256, nodes[0].ID, uuid.NewString())
 	if err != nil {
 		t.Fatal(err)
 	}
 	vmm := &fakeVMM{}
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
-	harness := NewMigrationHarness(t.Context(), store, vmm, wire.NewOpsMetrics("schedd"), testLog(), nodes[0].ID, engine.BuildAppSpecForMigration, NewNodeLedger(), nil)
+	engine := newEngine(t, statetest.NewMem(store), vmm, &fakeNotifier{}, "1.10.0")
+	harness := NewMigrationHarness(t.Context(), statetest.NewMem(store), vmm, wire.NewOpsMetrics("schedd"), testLog(), nodes[0].ID, engine.BuildAppSpecForMigration, NewNodeLedger(), nil)
 	if err := harness.MigrateOne(t.Context(), instance.ID, instance.NodeID); err == nil {
 		t.Fatal("migration silently discarded API inputs")
 	}
-	fresh, err := store.InstanceByID(t.Context(), instance.ID)
+	fresh, err := store.MemStore.InstanceByID(t.Context(), instance.ID)
 	if err != nil || fresh.State != string(state.StateRunning) || vmm.prepares != 0 || vmm.adopts != 0 {
 		t.Fatalf("input failure paused or moved the source: %+v prepares=%d adopts=%d %v", fresh, vmm.prepares, vmm.adopts, err)
 	}

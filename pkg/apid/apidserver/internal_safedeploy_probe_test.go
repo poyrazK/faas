@@ -9,9 +9,10 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
-type unavailableSafeDeployDB struct{ state.Store }
+type unavailableSafeDeployDB struct{ Store state.Store }
 
 func (unavailableSafeDeployDB) Ping(context.Context) error {
 	return errors.New("database unavailable")
@@ -20,7 +21,7 @@ func (unavailableSafeDeployDB) Ping(context.Context) error {
 func TestInternalSafeDeployProbeRejectsUnavailableDatabase(t *testing.T) {
 	const canaryToken = "canary-service-secret-0000000000000001"
 	const actionToken = "action-service-secret-0000000000000001"
-	s := &server{store: unavailableSafeDeployDB{Store: state.NewMemStore()}}
+	s := &server{store: statetest.NewStore(unavailableSafeDeployDB{Store: state.NewMemStore()})}
 	mux := http.NewServeMux()
 	if err := s.mountInternalSafeDeploy(mux, "127.0.0.1:9101", canaryToken, actionToken); err != nil {
 		t.Fatal(err)

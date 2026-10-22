@@ -161,6 +161,8 @@ func TestPgRuntimePublicationDoesNotWaitOnBlockedConfigTuple(t *testing.T) {
 			if err := hold.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&blocker); err != nil {
 				t.Fatal(err)
 			}
+			// Publication shares this parent fence; secret reports and mutations
+			// take their separate exclusive fence before their promotion writes.
 			query, key, prefix := `SELECT id FROM apps WHERE id=$1 FOR SHARE`, f.app.ID, "UPDATE app_envs%"
 			if kind == "sidecar" {
 				query, key, prefix = `SELECT id FROM deployments WHERE id=$1 FOR SHARE`, dep.ID, "UPDATE deployment_sidecar_layers%"
@@ -203,10 +205,17 @@ func TestPgRuntimePublicationDoesNotWaitOnBlockedConfigTuple(t *testing.T) {
 			}
 			published := make(chan error, 1)
 			go func() { _, err := store.PublishOwnedInstanceRuntime(ctx, p); published <- err }()
+			nativeBusy := false
 			select {
 			case err := <-published:
 				if err != nil {
-					t.Fatalf("publisher could not read committed capture: %v", err)
+					if kind != "sidecar" || !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
+						t.Fatalf("publisher could not read committed capture: %v", err)
+					}
+					// Native capture locks the artifact tuple NOWAIT. A blocked
+					// writer must produce a bounded refusal without publication.
+					nativeBusy = true
+					assertRuntimePublicationUnchanged(ctx, t, store, p)
 				}
 			case <-time.After(5 * time.Second):
 				t.Fatal("publisher waited on a tuple held by its blocked writer")
@@ -221,6 +230,13 @@ func TestPgRuntimePublicationDoesNotWaitOnBlockedConfigTuple(t *testing.T) {
 				}
 			case <-time.After(5 * time.Second):
 				t.Fatal("writer stuck after publication")
+			}
+			if nativeBusy {
+				if _, err := store.PublishOwnedInstanceRuntime(ctx, p); !errors.Is(err, state.ErrConflict) {
+					t.Fatalf("original capture survived the committed artifact edit: %v", err)
+				}
+				assertRuntimePublicationUnchanged(ctx, t, store, p)
+				return
 			}
 			stored, err := store.InstanceRuntimeConfigFence(ctx, f.account.ID, f.app.ID, p.InstanceID)
 			if err != nil || stored != p.ConfigFence {

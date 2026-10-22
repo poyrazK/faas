@@ -214,11 +214,15 @@ func cmdAIAlerts(args []string) int {
 		return 0
 	}
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "CROSSED\tBUDGET\tAPP\tPERIOD\tTHRESHOLD\tUSED\tLIMIT")
+	_, _ = fmt.Fprintln(tw, "CROSSED\tBUDGET\tAPP / END USER / TAG\tPERIOD\tTHRESHOLD\tUSED\tLIMIT")
 	for _, alert := range alerts.Items {
 		app := "-"
 		if alert.AppID != nil {
 			app = *alert.AppID
+		} else if alert.EndUser != nil {
+			app = *alert.EndUser
+		} else if alert.Tag != nil {
+			app = *alert.Tag
 		}
 		used, limitText := strconv.FormatInt(alert.Used, 10), strconv.FormatInt(alert.Limit, 10)
 		if strings.HasSuffix(alert.Budget, "_cost") {
@@ -231,9 +235,12 @@ func cmdAIAlerts(args []string) int {
 	return 0
 }
 
-const aiLogsUsage = "usage: gregale ai logs <integration-id> [--limit N] [--before RFC3339]"
+const aiLogsUsage = "usage: gregale ai logs <integration-id> [--limit N] [--before RFC3339] | gregale ai logs show <integration-id> <request-id>"
 
 func cmdAILogs(args []string) int {
+	if len(args) > 0 && args[0] == "show" {
+		return cmdAILogsShow(args[1:])
+	}
 	fs := newFlagSet("ai logs", flag.ContinueOnError)
 	limit := fs.Int("limit", 50, "calls to show, 1 to 200")
 	beforeText := fs.String("before", "", "show calls before this time (a previous page's next_before)")
@@ -264,15 +271,55 @@ func cmdAILogs(args []string) int {
 		return 0
 	}
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "TIME\tCALLER\tMODEL\tSTATUS\tIN\tOUT\tCOST\tMS\tTTFB\tATTEMPTS")
+	_, _ = fmt.Fprintln(tw, "TIME\tID\tCALLER\tEND USER\tMODEL\tSTATUS\tIN\tOUT\tCOST\tMS\tTTFB\tATTEMPTS\tCONTENT")
 	for _, entry := range page.Items {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%d\t%s\t%d\n", entry.CreatedAt.UTC().Format(time.RFC3339), entry.Caller, entry.Model,
-			entry.Status, entry.InputTokens, entry.OutputTokens, financialMoney(entry.CostMillicents), entry.DurationMS,
-			formatOptionalCount(entry.TimeToFirstByteMS), entry.Attempts)
+		endUser, content := "-", "-"
+		if entry.EndUser != nil {
+			endUser = *entry.EndUser
+		}
+		if entry.ContentCaptured {
+			content = "yes"
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%d\t%s\t%d\t%s\n", entry.CreatedAt.UTC().Format(time.RFC3339), entry.ID,
+			entry.Caller, endUser, entry.Model, entry.Status, entry.InputTokens, entry.OutputTokens, financialMoney(entry.CostMillicents),
+			entry.DurationMS, formatOptionalCount(entry.TimeToFirstByteMS), entry.Attempts, content)
 	}
 	_ = tw.Flush()
 	if page.NextBefore != nil {
 		_, _ = fmt.Fprintf(osStdout, "more: --before %s\n", page.NextBefore.UTC().Format(time.RFC3339Nano))
+	}
+	return 0
+}
+
+// cmdAILogsShow prints one logged call's captured bodies (ADR-996).
+func cmdAILogsShow(args []string) int {
+	fs := newFlagSet("ai logs show", flag.ContinueOnError)
+	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 2 {
+		return printErr("Invalid ai logs show arguments", errors.New(aiLogsUsage))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	content, err := client.GetOutboundAIRequestContent(context.Background(), fs.Arg(0), fs.Arg(1))
+	if err != nil {
+		return printErr("Could not read the captured content (capture it with gregale ai policy <integration-id> --request-log-content on)", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(content))
+	}
+	for _, part := range []struct {
+		name string
+		body api.OutboundAIContentBody
+	}{{"Request", content.Request}, {"Response", content.Response}} {
+		notes := []string{part.body.Encoding}
+		if part.body.ContentType != nil {
+			notes = append([]string{*part.body.ContentType}, notes...)
+		}
+		if part.body.Truncated {
+			notes = append(notes, "truncated")
+		}
+		_, _ = fmt.Fprintf(osStdout, "%s (%s)\n%s\n\n", part.name, strings.Join(notes, ", "), part.body.Body)
 	}
 	return 0
 }

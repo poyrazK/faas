@@ -2488,8 +2488,14 @@ type InstanceTelemetry struct {
 	// ADR-361 decision 9 flood drops and ceiling. Mirrors vmmd InstanceStats.
 	EgressFloodDropsPerMin      *wrapperspb.Int64Value `protobuf:"bytes,17,opt,name=egress_flood_drops_per_min,json=egressFloodDropsPerMin,proto3" json:"egress_flood_drops_per_min,omitempty"`
 	EgressFloodDropsLimitPerMin int64                  `protobuf:"varint,18,opt,name=egress_flood_drops_limit_per_min,json=egressFloodDropsLimitPerMin,proto3" json:"egress_flood_drops_limit_per_min,omitempty"`
-	unknownFields               protoimpl.UnknownFields
-	sizeCache                   protoimpl.SizeCache
+	// ADR-1151: vmmd holds the instance quiet-paused between requests. schedd's
+	// quiet pause admission leaves its vCPUs out of the node's active vCPU.
+	QuietPaused bool `protobuf:"varint,19,opt,name=quiet_paused,json=quietPaused,proto3" json:"quiet_paused,omitempty"`
+	// ADR-1151: vmmd holds the instance frozen (paused in place until schedd
+	// thaws or destroys it). Mirrors vmmd InstanceStats.frozen.
+	Frozen        bool `protobuf:"varint,20,opt,name=frozen,proto3" json:"frozen,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *InstanceTelemetry) Reset() {
@@ -2646,6 +2652,20 @@ func (x *InstanceTelemetry) GetEgressFloodDropsLimitPerMin() int64 {
 		return x.EgressFloodDropsLimitPerMin
 	}
 	return 0
+}
+
+func (x *InstanceTelemetry) GetQuietPaused() bool {
+	if x != nil {
+		return x.QuietPaused
+	}
+	return false
+}
+
+func (x *InstanceTelemetry) GetFrozen() bool {
+	if x != nil {
+		return x.Frozen
+	}
+	return false
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"
@@ -4754,7 +4774,8 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x15NodeInstanceInventory\x12\x1a\n" +
 	"\bcomplete\x18\x01 \x01(\bR\bcomplete\x12!\n" +
 	"\finstance_ids\x18\x02 \x03(\tR\vinstanceIds\x12%\n" +
-	"\x0enode_signature\x18\x03 \x01(\fR\rnodeSignature\"\xcc\t\n" +
+	"\x0enode_signature\x18\x03 \x01(\fR\rnodeSignature\"\x87\n" +
+	"\n" +
 	"\x11InstanceTelemetry\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12B\n" +
@@ -4779,7 +4800,9 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x1fegress_new_destinations_per_min\x18\x0f \x01(\v2\x1b.google.protobuf.Int64ValueR\x1begressNewDestinationsPerMin\x12O\n" +
 	"%egress_new_destinations_limit_per_min\x18\x10 \x01(\x03R egressNewDestinationsLimitPerMin\x12W\n" +
 	"\x1aegress_flood_drops_per_min\x18\x11 \x01(\v2\x1b.google.protobuf.Int64ValueR\x16egressFloodDropsPerMin\x12E\n" +
-	" egress_flood_drops_limit_per_min\x18\x12 \x01(\x03R\x1begressFloodDropsLimitPerMin\"\x13\n" +
+	" egress_flood_drops_limit_per_min\x18\x12 \x01(\x03R\x1begressFloodDropsLimitPerMin\x12!\n" +
+	"\fquiet_paused\x18\x13 \x01(\bR\vquietPaused\x12\x16\n" +
+	"\x06frozen\x18\x14 \x01(\bR\x06frozen\"\x13\n" +
 	"\x11ReportCapacityAck\"q\n" +
 	"\x11EnsureWakeRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12\x18\n" +

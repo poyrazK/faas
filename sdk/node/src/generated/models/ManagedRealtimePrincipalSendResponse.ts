@@ -6,6 +6,10 @@
  * Principal send outcome including fleet queueing and retained notification acceptance.
  */
 export type ManagedRealtimePrincipalSendResponse = {
+  /**
+   * Delivery deadline; independent of notification fallback and retention.
+   */
+  delivery_expires_at?: string;
   message_id?: string;
   sequence?: number;
   durable?: boolean;

@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/objectchecksum"
 )
 
 // Listings feed capacity reconciliation and verified cleanup. Missing fields
@@ -56,8 +57,12 @@ func multipartPartsPage(out *s3.ListPartsOutput, bucket string, r MultipartListP
 		if number <= last || number > api.MaxMultipartParts || !validUploadETag(etag) || size < 1 || size > api.MaxObjectSinglePutBytes {
 			return MultipartPartsPage{}, ErrUnavailable
 		}
+		d := objectchecksum.Digest{Policy: objectchecksum.Policy{Algorithm: string(out.ChecksumAlgorithm), Type: string(out.ChecksumType)}, Value: checksumValue(string(out.ChecksumAlgorithm), part.ChecksumCRC32, part.ChecksumCRC32C, part.ChecksumCRC64NVME, part.ChecksumSHA1, part.ChecksumSHA256)}
+		if !d.Empty() && (!d.Policy.Valid() || !objectchecksum.ValidPart(d.Algorithm, d.Value)) {
+			return MultipartPartsPage{}, ErrUnavailable
+		}
 		last = number
-		page.Items = append(page.Items, MultipartPart{PartNumber: number, ETag: etag, SizeBytes: size, LastModified: aws.ToTime(part.LastModified)})
+		page.Items = append(page.Items, MultipartPart{Checksum: d, PartNumber: number, ETag: etag, SizeBytes: size, LastModified: aws.ToTime(part.LastModified)})
 	}
 	if aws.ToBool(out.IsTruncated) {
 		next, err := strconv.ParseInt(aws.ToString(out.NextPartNumberMarker), 10, 32)

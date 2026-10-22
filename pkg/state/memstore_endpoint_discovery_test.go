@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // Coverage for the MemStore side of the deployment_openapi_docs
 // surface (ADR-122 / issue #975 item #1, slot 00330). Mirrors
@@ -29,21 +29,22 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // openAPIDocFixture stands up a fresh MemStore + one account +
 // one app, returning the IDs. Required for the FK floor — the
 // deployment row must exist before UpsertDeploymentOpenAPIDoc
 // can write a doc row.
-func openAPIDocFixture(t *testing.T) (m *MemStore, ctx context.Context, accountID, appID string) {
+func openAPIDocFixture(t *testing.T) (m *state.MemStore, ctx context.Context, accountID, appID string) {
 	t.Helper()
 	ctx = context.Background()
-	m = NewMemStore()
+	m = state.NewMemStore()
 	acct, err := m.CreateAccount(ctx, "openapi-"+uuid.NewString()+"@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := m.CreateApp(ctx, App{
+	app, err := m.CreateApp(ctx, state.App{
 		AccountID:      acct.ID,
 		Slug:           "openapi-" + strconv.Itoa(int(time.Now().UnixNano())),
 		RAMMB:          256,
@@ -59,12 +60,12 @@ func openAPIDocFixture(t *testing.T) (m *MemStore, ctx context.Context, accountI
 // seedDeployment creates a Deployment row under the app so the
 // FK floor for deployment_openapi_docs is satisfied. Returns the
 // deploymentID.
-func seedDeployment(t *testing.T, m *MemStore, ctx context.Context, accountID, appID string) string {
+func seedDeployment(t *testing.T, m *state.MemStore, ctx context.Context, accountID, appID string) string {
 	t.Helper()
-	dp, err := m.CreateDeployment(ctx, Deployment{
+	dp, err := m.CreateDeployment(ctx, state.Deployment{
 		AppID:       appID,
 		ImageDigest: "sha256:" + uuid.NewString(),
-		Kind:        DeploymentKindImage,
+		Kind:        state.DeploymentKindImage,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
@@ -78,7 +79,7 @@ func TestMemStore_OpenAPIDoc_RoundTrip(t *testing.T) {
 	depID := seedDeployment(t, m, ctx, acct, app)
 
 	doc := []byte(`{"openapi":"3.1.0","info":{"title":"rt"}}`)
-	if err := m.UpsertDeploymentOpenAPIDoc(ctx, depID, acct, app, doc, OpenAPIDocSourceColdBoot, false); err != nil {
+	if err := m.UpsertDeploymentOpenAPIDoc(ctx, depID, acct, app, doc, state.OpenAPIDocSourceColdBoot, false); err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
 	gotDoc, gotMeta, err := m.GetDeploymentOpenAPIDoc(ctx, depID, acct)
@@ -94,8 +95,8 @@ func TestMemStore_OpenAPIDoc_RoundTrip(t *testing.T) {
 	if gotMeta.AppID != app {
 		t.Errorf("Meta.AppID: got %q, want %q", gotMeta.AppID, app)
 	}
-	if gotMeta.Source != OpenAPIDocSourceColdBoot {
-		t.Errorf("Meta.Source: got %q, want %q", gotMeta.Source, OpenAPIDocSourceColdBoot)
+	if gotMeta.Source != state.OpenAPIDocSourceColdBoot {
+		t.Errorf("Meta.Source: got %q, want %q", gotMeta.Source, state.OpenAPIDocSourceColdBoot)
 	}
 	if gotMeta.ByteSize != len(doc) {
 		t.Errorf("Meta.ByteSize: got %d, want %d", gotMeta.ByteSize, len(doc))
@@ -115,7 +116,7 @@ func TestMemStore_OpenAPIDoc_RoundTrip(t *testing.T) {
 	if err := m.DeleteDeploymentOpenAPIDoc(ctx, depID, acct); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, _, err := m.GetDeploymentOpenAPIDoc(ctx, depID, acct); !errors.Is(err, ErrNotFound) {
+	if _, _, err := m.GetDeploymentOpenAPIDoc(ctx, depID, acct); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Get after Delete: got %v, want ErrNotFound", err)
 	}
 }
@@ -129,7 +130,7 @@ func TestMemStore_OpenAPIDoc_IdempotentOverwrite(t *testing.T) {
 	depID := seedDeployment(t, m, ctx, acct, app)
 
 	doc1 := []byte(`{"openapi":"3.1.0","info":{"title":"v1"}}`)
-	if err := m.UpsertDeploymentOpenAPIDoc(ctx, depID, acct, app, doc1, OpenAPIDocSourceColdBoot, false); err != nil {
+	if err := m.UpsertDeploymentOpenAPIDoc(ctx, depID, acct, app, doc1, state.OpenAPIDocSourceColdBoot, false); err != nil {
 		t.Fatalf("Upsert1: %v", err)
 	}
 	_, meta1, err := m.GetDeploymentOpenAPIDoc(ctx, depID, acct)
@@ -140,7 +141,7 @@ func TestMemStore_OpenAPIDoc_IdempotentOverwrite(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	doc2 := []byte(`{"openapi":"3.1.0","info":{"title":"v2"}}`)
-	if err := m.UpsertDeploymentOpenAPIDoc(ctx, depID, acct, app, doc2, OpenAPIDocSourceManualUpload, true); err != nil {
+	if err := m.UpsertDeploymentOpenAPIDoc(ctx, depID, acct, app, doc2, state.OpenAPIDocSourceManualUpload, true); err != nil {
 		t.Fatalf("Upsert2: %v", err)
 	}
 	_, meta2, err := m.GetDeploymentOpenAPIDoc(ctx, depID, acct)
@@ -153,8 +154,8 @@ func TestMemStore_OpenAPIDoc_IdempotentOverwrite(t *testing.T) {
 	if !meta2.UpdatedAt.After(meta1.UpdatedAt) {
 		t.Errorf("UpdatedAt did not advance: %v vs %v", meta1.UpdatedAt, meta2.UpdatedAt)
 	}
-	if string(meta2.Source) != OpenAPIDocSourceManualUpload {
-		t.Errorf("Source: got %q, want %q", meta2.Source, OpenAPIDocSourceManualUpload)
+	if string(meta2.Source) != state.OpenAPIDocSourceManualUpload {
+		t.Errorf("Source: got %q, want %q", meta2.Source, state.OpenAPIDocSourceManualUpload)
 	}
 	if !meta2.Truncated {
 		t.Errorf("Truncated: got false, want true")
@@ -169,15 +170,15 @@ func TestMemStore_OpenAPIDoc_IDOR(t *testing.T) {
 	depID := seedDeployment(t, m, ctx, acct, app)
 
 	doc := []byte(`{"openapi":"3.1.0"}`)
-	if err := m.UpsertDeploymentOpenAPIDoc(ctx, depID, acct, app, doc, OpenAPIDocSourceColdBoot, false); err != nil {
+	if err := m.UpsertDeploymentOpenAPIDoc(ctx, depID, acct, app, doc, state.OpenAPIDocSourceColdBoot, false); err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
 	// Foreign account.
 	foreignAcct := "00000000-0000-0000-0000-000000000000"
-	if _, _, err := m.GetDeploymentOpenAPIDoc(ctx, depID, foreignAcct); !errors.Is(err, ErrNotFound) {
+	if _, _, err := m.GetDeploymentOpenAPIDoc(ctx, depID, foreignAcct); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Get cross-account: got %v, want ErrNotFound", err)
 	}
-	if err := m.DeleteDeploymentOpenAPIDoc(ctx, depID, foreignAcct); !errors.Is(err, ErrNotFound) {
+	if err := m.DeleteDeploymentOpenAPIDoc(ctx, depID, foreignAcct); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Delete cross-account: got %v, want ErrNotFound", err)
 	}
 	// Same-account read still works (the cross-account probe
@@ -199,7 +200,7 @@ func TestMemStore_OpenAPIDoc_CountByAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	acct2 := acct2Acct.ID
-	app2App, err := m.CreateApp(ctx, App{
+	app2App, err := m.CreateApp(ctx, state.App{
 		AccountID:      acct2,
 		Slug:           "openapi-acct2-" + strconv.Itoa(int(time.Now().UnixNano())),
 		RAMMB:          256,
@@ -214,10 +215,10 @@ func TestMemStore_OpenAPIDoc_CountByAccount(t *testing.T) {
 	dep1 := seedDeployment(t, m, ctx, acct1, app1)
 	dep3 := seedDeployment(t, m, ctx, acct2, app2)
 
-	if err := m.UpsertDeploymentOpenAPIDoc(ctx, dep1, acct1, app1, []byte(`{"openapi":"3.1.0"}`), OpenAPIDocSourceColdBoot, false); err != nil {
+	if err := m.UpsertDeploymentOpenAPIDoc(ctx, dep1, acct1, app1, []byte(`{"openapi":"3.1.0"}`), state.OpenAPIDocSourceColdBoot, false); err != nil {
 		t.Fatalf("Upsert1: %v", err)
 	}
-	if err := m.UpsertDeploymentOpenAPIDoc(ctx, dep3, acct2, app2, []byte(`{"openapi":"3.1.0"}`), OpenAPIDocSourceColdBoot, false); err != nil {
+	if err := m.UpsertDeploymentOpenAPIDoc(ctx, dep3, acct2, app2, []byte(`{"openapi":"3.1.0"}`), state.OpenAPIDocSourceColdBoot, false); err != nil {
 		t.Fatalf("Upsert3: %v", err)
 	}
 	n1, err := m.CountOpenAPIDocsByAccount(ctx, acct1)
@@ -242,8 +243,8 @@ func TestMemStore_OpenAPIDoc_CountByAccount(t *testing.T) {
 func TestMemStore_OpenAPIDoc_ParentMissing(t *testing.T) {
 	m, ctx, acct, app := openAPIDocFixture(t)
 	ghostID := uuid.NewString()
-	err := m.UpsertDeploymentOpenAPIDoc(ctx, ghostID, acct, app, []byte(`{"openapi":"3.1.0"}`), OpenAPIDocSourceColdBoot, false)
-	if !errors.Is(err, ErrNotFound) {
+	err := m.UpsertDeploymentOpenAPIDoc(ctx, ghostID, acct, app, []byte(`{"openapi":"3.1.0"}`), state.OpenAPIDocSourceColdBoot, false)
+	if !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Upsert on missing parent: got %v, want ErrNotFound", err)
 	}
 }
@@ -253,7 +254,7 @@ func TestMemStore_OpenAPIDoc_ParentMissing(t *testing.T) {
 // and deploymentID had a row but in a different account.
 func TestMemStore_OpenAPIDoc_DeleteMissing(t *testing.T) {
 	m, ctx, acct, _ := openAPIDocFixture(t)
-	if err := m.DeleteDeploymentOpenAPIDoc(ctx, uuid.NewString(), acct); !errors.Is(err, ErrNotFound) {
+	if err := m.DeleteDeploymentOpenAPIDoc(ctx, uuid.NewString(), acct); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Delete never-existing: got %v, want ErrNotFound", err)
 	}
 }
@@ -266,7 +267,7 @@ func TestMemStore_OpenAPIDoc_DefensiveCopy(t *testing.T) {
 	depID := seedDeployment(t, m, ctx, acct, app)
 
 	doc := []byte(`{"openapi":"3.1.0","info":{"title":"orig"}}`)
-	if err := m.UpsertDeploymentOpenAPIDoc(ctx, depID, acct, app, doc, OpenAPIDocSourceColdBoot, false); err != nil {
+	if err := m.UpsertDeploymentOpenAPIDoc(ctx, depID, acct, app, doc, state.OpenAPIDocSourceColdBoot, false); err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
 	got1, _, err := m.GetDeploymentOpenAPIDoc(ctx, depID, acct)
@@ -294,21 +295,21 @@ func TestMemStore_OpenAPIDoc_MaxBytesAtCap(t *testing.T) {
 	m, ctx, acct, app := openAPIDocFixture(t)
 	depID := seedDeployment(t, m, ctx, acct, app)
 
-	doc := make([]byte, OpenAPIDocMaxBytes)
+	doc := make([]byte, state.OpenAPIDocMaxBytes)
 	for i := range doc {
 		doc[i] = 'x'
 	}
-	if err := m.UpsertDeploymentOpenAPIDoc(ctx, depID, acct, app, doc, OpenAPIDocSourceColdBoot, false); err != nil {
+	if err := m.UpsertDeploymentOpenAPIDoc(ctx, depID, acct, app, doc, state.OpenAPIDocSourceColdBoot, false); err != nil {
 		t.Fatalf("Upsert at cap: %v", err)
 	}
 	got, meta, err := m.GetDeploymentOpenAPIDoc(ctx, depID, acct)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if len(got) != OpenAPIDocMaxBytes {
-		t.Errorf("body length: got %d, want %d", len(got), OpenAPIDocMaxBytes)
+	if len(got) != state.OpenAPIDocMaxBytes {
+		t.Errorf("body length: got %d, want %d", len(got), state.OpenAPIDocMaxBytes)
 	}
-	if meta.ByteSize != OpenAPIDocMaxBytes {
-		t.Errorf("ByteSize: got %d, want %d", meta.ByteSize, OpenAPIDocMaxBytes)
+	if meta.ByteSize != state.OpenAPIDocMaxBytes {
+		t.Errorf("ByteSize: got %d, want %d", meta.ByteSize, state.OpenAPIDocMaxBytes)
 	}
 }

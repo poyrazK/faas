@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -30,7 +31,7 @@ func TestDeployHealthcheckFlagsBeforeNetwork(t *testing.T) {
 		{"--healthcheck-grpc", "--create-only"},
 		{"--repo", "owner/repo", "--ref", "main", "--app-protocol", "grpc", "--dry-run"},
 	} {
-		if code := cmdDeployTarball(args); code != 1 {
+		if code := main.CmdDeployTarball(args); code != 1 {
 			t.Errorf("args=%v code=%d want1", args, code)
 		}
 	}
@@ -49,9 +50,9 @@ func TestDeployHealthcheckSourceRefCLI(t *testing.T) {
 				defer srv.Close()
 				t.Setenv("FAAS_API", srv.URL)
 				t.Setenv("FAAS_TOKEN", "fp_live_x")
-				withResetJSONOutput(t, false)
+				main.WithResetJSONOutput(t, false)
 				args := []string{"--name", "hello", "--repo", "owner/repo", "--ref", "main", "--no-wait", "--app-protocol", "grpc", "--healthcheck-grpc", "--healthcheck-grpc-service", service}
-				if code := cmdDeployTarball(args); code != 0 {
+				if code := main.CmdDeployTarball(args); code != 0 {
 					t.Fatalf("code=%d", code)
 				}
 				protocol := sink.createRequest.AppProtocol
@@ -76,13 +77,13 @@ func TestDeployHealthcheckSourceRefCLI(t *testing.T) {
 
 // adr: 053 — changing probe semantics must not replay an older auto-keyed deployment.
 func TestDeployHealthcheckIdempotency(t *testing.T) {
-	base := deployIdempotencyIntent{Slug: "demo", SourceSHA256: "same-source"}
-	old, err := deployIdempotencyKey("", base)
+	base := main.DeployIdempotencyIntent{Slug: "demo", SourceSHA256: "same-source"}
+	old, err := main.DeployIdempotencyKey("", base)
 	if err != nil {
 		t.Fatal(err)
 	}
 	base.Healthcheck = &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{}}
-	next, err := deployIdempotencyKey("", base)
+	next, err := main.DeployIdempotencyKey("", base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +91,7 @@ func TestDeployHealthcheckIdempotency(t *testing.T) {
 		t.Fatal("startup probe missing from idempotency intent")
 	}
 	base.Healthcheck.GRPC.Service = "audit.Echo"
-	named, _ := deployIdempotencyKey("", base)
+	named, _ := main.DeployIdempotencyKey("", base)
 	if next == named {
 		t.Fatal("gRPC service missing from idempotency intent")
 	}
@@ -101,12 +102,12 @@ func TestDeployHealthcheckIdempotency(t *testing.T) {
 func TestDeployHealthcheckLocalCLITransports(t *testing.T) {
 	for _, transport := range []string{"resumable", "fallback", "traffic", "image"} {
 		t.Run(transport, func(t *testing.T) {
-			repo := initZeroConfigRepo(t)
-			mustGit(t, repo, "remote", "remove", "origin")
-			withCwd(t, repo)
+			repo := main.InitZeroConfigRepo(t)
+			main.MustGit(t, repo, "remote", "remove", "origin")
+			main.WithCwd(t, repo)
 			t.Setenv("XDG_STATE_HOME", t.TempDir())
 			var got *api.DeploymentHealthcheck
-			stub := newZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, _ *zeroConfigStubServer) {
+			stub := main.NewZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, _ *main.ZeroConfigStubServer) {
 				switch {
 				case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
 					_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "demo"})
@@ -153,9 +154,9 @@ func TestDeployHealthcheckLocalCLITransports(t *testing.T) {
 					http.NotFound(w, r)
 				}
 			})
-			t.Setenv("FAAS_API", stub.srv.URL)
+			t.Setenv("FAAS_API", (*stub.Srv()).URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
-			withResetJSONOutput(t, false)
+			main.WithResetJSONOutput(t, false)
 			args := []string{"--name", "demo", "--app", "--no-wait", "--healthcheck-grpc", "--healthcheck-grpc-service", "audit.Echo"}
 			if transport == "traffic" {
 				args = append(args, "--traffic-percent", "0")
@@ -163,7 +164,7 @@ func TestDeployHealthcheckLocalCLITransports(t *testing.T) {
 			if transport == "image" {
 				args = append(args, "--image", "registry.example.com/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 			}
-			if code := cmdDeployTarball(args); code != 0 {
+			if code := main.CmdDeployTarball(args); code != 0 {
 				t.Fatalf("code=%d", code)
 			}
 			want := &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{Service: "audit.Echo"}}

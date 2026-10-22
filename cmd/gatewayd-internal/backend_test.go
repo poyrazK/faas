@@ -1202,3 +1202,31 @@ func TestHandleInvalidation_AppDeleteAndAccountDeleted(t *testing.T) {
 		t.Fatalf("malformed app_delete + account_deleted: flush=%d responseCacheAll=%d, want 2 and 2", f.flushCnt, f.responseCacheAll)
 	}
 }
+
+type withdrawingInvalidator struct {
+	*fakeInvalidator
+	withdrawn map[string]string // instance_id -> app_id
+}
+
+func (w *withdrawingInvalidator) WithdrawInstance(appID, instanceID string) {
+	if w.withdrawn == nil {
+		w.withdrawn = map[string]string{}
+	}
+	w.withdrawn[instanceID] = appID
+}
+
+// ADR-1151: a frozen instance's route is withdrawn, not evicted, so the thaw
+// that returns the same instance ID is routable at once.
+func TestHandleInvalidationWithdrawsFrozenInstance(t *testing.T) {
+	inv := &withdrawingInvalidator{fakeInvalidator: &fakeInvalidator{}}
+	handleInvalidation(context.Background(), inv, db.Notification{Channel: db.NotifyInstanceChanged,
+		Payload: `{"instance_id":"i-1","app_id":"app-7","state":"frozen"}`}, testLogger())
+	if got := inv.withdrawn["i-1"]; got != "app-7" {
+		t.Fatalf("withdrawn[i-1] = %q, want app-7", got)
+	}
+	inv.mu.Lock()
+	defer inv.mu.Unlock()
+	if len(inv.evicted) != 0 {
+		t.Fatalf("frozen instance was evicted (quarantined): %v", inv.evicted)
+	}
+}

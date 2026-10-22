@@ -5,6 +5,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/db"
 )
 
 // MemoryStore is useful for unit tests and local wiring. Production adapters
@@ -12,8 +14,10 @@ import (
 type MemoryStore struct {
 	resizes                   map[string]ResizeOperation
 	cutovers                  map[string]Cutover
+	preflights                map[string]CutoverPreflight
 	health                    map[string]memoryHealthEntry
 	mu                        sync.Mutex
+	billingSubjects           map[string]string
 	databases                 map[string]Database
 	names                     map[string]string
 	bindings                  map[string]Binding
@@ -21,6 +25,7 @@ type MemoryStore struct {
 	usage                     map[usageKey]UsageRecord
 	restoreProofs             map[string]RestoreProof
 	creationReceipts          map[string]CreationReceipt
+	restoreVerifications      map[string]RestoreVerification
 	usageProgress             map[usageProgressKey]UsageProgress
 	usageImports              map[string]usageImportReceipt
 	accountingReconciliations map[string]accountingReconciliationReceipt
@@ -30,30 +35,38 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		resizes:                   map[string]ResizeOperation{},
 		cutovers:                  map[string]Cutover{},
+		preflights:                map[string]CutoverPreflight{},
 		health:                    map[string]memoryHealthEntry{},
 		databases:                 map[string]Database{},
+		billingSubjects:           map[string]string{},
 		names:                     map[string]string{},
 		bindings:                  map[string]Binding{},
 		targets:                   map[string]string{},
 		usage:                     map[usageKey]UsageRecord{},
 		restoreProofs:             map[string]RestoreProof{},
 		creationReceipts:          map[string]CreationReceipt{},
+		restoreVerifications:      map[string]RestoreVerification{},
 		usageProgress:             map[usageProgressKey]UsageProgress{},
 		usageImports:              map[string]usageImportReceipt{},
 		accountingReconciliations: map[string]accountingReconciliationReceipt{},
 	}
 }
 
-func (s *MemoryStore) Reserve(_ context.Context, database Database, limit int) (Database, bool, error) {
+func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int) (Database, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockIntent, intentErr := db.LockMemoryIntent(ctx)
+	if intentErr != nil {
+		return Database{}, false, intentErr
+	}
+	defer unlockIntent()
 	if limit < 1 || limit > 100 {
 		return Database{}, false, ErrInvalid
 	}
 	if database.EnvironmentCloneOperationID != "" || database.DataResourceID != "" {
 		return Database{}, false, ErrInvalid
 	}
-	key := database.AccountID + "\x00" + database.Name
+	key := databaseNameKey(database)
 	if id, ok := s.names[key]; ok {
 		if s.databases[id].EnvironmentCloneOperationID != "" {
 			return Database{}, false, ErrConflict
@@ -81,7 +94,7 @@ func (s *MemoryStore) Reserve(_ context.Context, database Database, limit int) (
 	}
 	active := 0
 	for _, existing := range s.databases {
-		if existing.AccountID == database.AccountID && existing.State != StateDeleted {
+		if s.sameQuotaOwner(ctx, existing, database) && existing.State != StateDeleted {
 			active++
 		}
 	}
@@ -89,36 +102,48 @@ func (s *MemoryStore) Reserve(_ context.Context, database Database, limit int) (
 		return Database{}, false, ErrQuotaExceeded
 	}
 	s.databases[database.ID] = cloneDatabase(database)
+	s.billingSubjects[database.ID] = PolicySubject(ctx, database.AccountID)
 	s.names[key] = database.ID
 	return cloneDatabase(database), true, nil
 }
 
-func (s *MemoryStore) FindByName(_ context.Context, accountID, name string) (Database, error) {
+func (s *MemoryStore) FindByName(ctx context.Context, accountID, name string) (Database, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id, ok := s.names[accountID+"\x00"+name]
+	if Organization(ctx) != "" {
+		id, ok = s.names[Organization(ctx)+"\x00"+name]
+		if !ok {
+			for _, d := range s.databases {
+				if d.Name == name && d.State != StateDeleted && inOwnershipScope(ctx, d, accountID) {
+					id, ok = d.ID, true
+					break
+				}
+			}
+		}
+	}
 	if !ok {
 		return Database{}, ErrNotFound
 	}
 	return cloneDatabase(s.databases[id]), nil
 }
 
-func (s *MemoryStore) Get(_ context.Context, accountID, databaseID string) (Database, error) {
+func (s *MemoryStore) Get(ctx context.Context, accountID, databaseID string) (Database, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	database, ok := s.databases[databaseID]
-	if !ok || database.AccountID != accountID {
+	if !ok || database.AccountID != accountID || !inOwnershipScope(ctx, database, accountID) {
 		return Database{}, ErrNotFound
 	}
 	return cloneDatabase(database), nil
 }
 
-func (s *MemoryStore) List(_ context.Context, accountID string) ([]Database, error) {
+func (s *MemoryStore) List(ctx context.Context, accountID string) ([]Database, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	items := make([]Database, 0)
 	for _, database := range s.databases {
-		if database.AccountID == accountID && database.State != StateDeleted {
+		if ((Organization(ctx) != "" && inOwnershipScope(ctx, database, accountID)) || Organization(ctx) == "" && database.AccountID == accountID) && database.State != StateDeleted {
 			items = append(items, cloneDatabase(database))
 		}
 	}
@@ -166,6 +191,11 @@ func (s *MemoryStore) Claim(ctx context.Context, accountID, databaseID, leaseTok
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockIntent, intentErr := db.LockMemoryIntent(ctx)
+	if intentErr != nil {
+		return Database{}, intentErr
+	}
+	defer unlockIntent()
 	database, ok := s.databases[databaseID]
 	if !ok || database.AccountID != accountID {
 		return Database{}, ErrNotFound
@@ -197,12 +227,17 @@ func (s *MemoryStore) Claim(ctx context.Context, accountID, databaseID, leaseTok
 	return cloneDatabase(database), nil
 }
 
-func (s *MemoryStore) ClaimDelete(_ context.Context, accountID, databaseID, leaseToken string, now, leaseUntil time.Time) (Database, error) {
+func (s *MemoryStore) ClaimDelete(ctx context.Context, accountID, databaseID, leaseToken string, now, leaseUntil time.Time) (Database, error) {
 	if leaseToken == "" || now.IsZero() || !leaseUntil.After(now) {
 		return Database{}, ErrInvalid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockIntent, intentErr := db.LockMemoryIntent(ctx)
+	if intentErr != nil {
+		return Database{}, intentErr
+	}
+	defer unlockIntent()
 	database, ok := s.databases[databaseID]
 	if !ok || database.AccountID != accountID {
 		return Database{}, ErrNotFound
@@ -245,6 +280,11 @@ func (s *MemoryStore) BeginAccounting(ctx context.Context, databaseID, leaseToke
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockIntent, intentErr := db.LockMemoryIntent(ctx)
+	if intentErr != nil {
+		return intentErr
+	}
+	defer unlockIntent()
 	database, ok := s.databases[databaseID]
 	if !ok || database.State != StateProvisioning || database.LeaseToken != leaseToken || !database.LeaseUntil.After(now) {
 		return ErrConflict
@@ -255,12 +295,17 @@ func (s *MemoryStore) BeginAccounting(ctx context.Context, databaseID, leaseToke
 	return nil
 }
 
-func (s *MemoryStore) RecordProviderResource(_ context.Context, databaseID, leaseToken, providerResourceID string, now time.Time) error {
+func (s *MemoryStore) RecordProviderResource(ctx context.Context, databaseID, leaseToken, providerResourceID string, now time.Time) error {
 	if databaseID == "" || leaseToken == "" || providerResourceID == "" || now.IsZero() {
 		return ErrInvalid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockIntent, intentErr := db.LockMemoryIntent(ctx)
+	if intentErr != nil {
+		return intentErr
+	}
+	defer unlockIntent()
 	database, ok := s.databases[databaseID]
 	if !ok {
 		return ErrNotFound
@@ -278,9 +323,14 @@ func (s *MemoryStore) RecordProviderResource(_ context.Context, databaseID, leas
 	return nil
 }
 
-func (s *MemoryStore) FinishProvision(_ context.Context, databaseID, leaseToken string, now time.Time) (Database, error) {
+func (s *MemoryStore) FinishProvision(ctx context.Context, databaseID, leaseToken string, now time.Time) (Database, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockIntent, intentErr := db.LockMemoryIntent(ctx)
+	if intentErr != nil {
+		return Database{}, intentErr
+	}
+	defer unlockIntent()
 	database, ok := s.databases[databaseID]
 	if !ok {
 		return Database{}, ErrNotFound
@@ -300,9 +350,14 @@ func (s *MemoryStore) FinishProvision(_ context.Context, databaseID, leaseToken 
 	return cloneDatabase(database), nil
 }
 
-func (s *MemoryStore) Release(_ context.Context, databaseID, leaseToken string, next State, errorCode string, now, retryAt time.Time) error {
+func (s *MemoryStore) Release(ctx context.Context, databaseID, leaseToken string, next State, errorCode string, now, retryAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockIntent, intentErr := db.LockMemoryIntent(ctx)
+	if intentErr != nil {
+		return intentErr
+	}
+	defer unlockIntent()
 	database, ok := s.databases[databaseID]
 	if !ok {
 		return ErrNotFound
@@ -323,9 +378,14 @@ func (s *MemoryStore) Release(_ context.Context, databaseID, leaseToken string, 
 	return nil
 }
 
-func (s *MemoryStore) FinishDelete(_ context.Context, databaseID, leaseToken string, now time.Time) (Database, error) {
+func (s *MemoryStore) FinishDelete(ctx context.Context, databaseID, leaseToken string, now time.Time) (Database, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockIntent, intentErr := db.LockMemoryIntent(ctx)
+	if intentErr != nil {
+		return Database{}, intentErr
+	}
+	defer unlockIntent()
 	database, ok := s.databases[databaseID]
 	if !ok {
 		return Database{}, ErrNotFound
@@ -351,7 +411,7 @@ func (s *MemoryStore) FinishDelete(_ context.Context, databaseID, leaseToken str
 	database.LeaseUntil = time.Time{}
 	database.UpdatedAt = now
 	database.DeletedAt = &now
-	delete(s.names, database.AccountID+"\x00"+database.Name)
+	delete(s.names, databaseNameKey(database))
 	s.databases[databaseID] = database
 	return cloneDatabase(database), nil
 }

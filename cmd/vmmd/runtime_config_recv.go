@@ -84,6 +84,7 @@ type runtimeConfigReceiver struct {
 	// never snapshots it; delivery also needs the operator flag.
 	diverged        *vmmdgrpc.DivergedInstances
 	devPatchEnabled bool
+	devPatchMetrics *devPatchMetrics
 }
 
 func (*runtimeConfigReceiver) Close() {}
@@ -529,8 +530,10 @@ func loadRuntimeConfig(ctx context.Context, store runtimeConfigStore, deployment
 	if snapshot.AccountID != accountID || snapshot.AppID != appID || snapshot.DeploymentID != deploymentID || api.ValidateScope(snapshot.Scope) != nil {
 		return runtimeConfigResponse{}, errors.New("runtime config store returned a mismatched deployment identity")
 	}
-	response := runtimeConfigResponse{Env: make(map[string]string, len(snapshot.Values))}
-	for _, row := range snapshot.Values {
+	response := runtimeConfigResponse{Env: make(map[string]string, len(snapshot.Inherited)+len(snapshot.Values))}
+	// ADR-1136: shared project configuration, below the app's own values (the
+	// store already left out the keys the app sets itself), as at boot.
+	for _, row := range append(append([]state.AppEnv(nil), snapshot.Inherited...), snapshot.Values...) {
 		if row.AccountID != accountID || row.AppID != appID || row.Scope != snapshot.Scope || api.ValidateEnvKey(row.Key) != nil {
 			return runtimeConfigResponse{}, errors.New("runtime config store returned a mismatched value identity")
 		}

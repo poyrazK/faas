@@ -15,7 +15,7 @@ import (
 // ReconcileWorkerPools reads demand separately for each captured environment.
 // An app-wide target cannot authorize changing a neighboring worker pool.
 func (e *Engine) ReconcileWorkerPools(ctx context.Context, appID, trigger string) error {
-	return e.reconcileWorkerScopes(ctx, appID, "", nil, trigger)
+	return e.reconcileWorkerScopesWithBusyRetry(ctx, appID, "", nil, trigger)
 }
 
 // ReconcileWorkerPoolForScope changes only this environment. Scope is required;
@@ -24,7 +24,38 @@ func (e *Engine) ReconcileWorkerPoolForScope(ctx context.Context, appID, scope s
 	if scope == "" || api.ValidateScope(scope) != nil || desired < 0 {
 		return state.ErrInvalidArgument
 	}
-	return e.reconcileWorkerScopes(ctx, appID, scope, &desired, trigger)
+	return e.reconcileWorkerScopesWithBusyRetry(ctx, appID, scope, &desired, trigger)
+}
+
+// Application-standard guards use NOWAIT row locks so a worker cannot enter
+// while its runtime inputs are being changed. A worker-pool pass may already
+// have completed earlier scopes or replicas when that guard reports a
+// transient busy error. Re-read and reconcile the full plan after a short
+// backoff; the failed insert was rolled back, and each pass derives its plan
+// from current durable state.
+func (e *Engine) reconcileWorkerScopesWithBusyRetry(ctx context.Context, appID, onlyScope string, override *int, trigger string) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(api.WorkerRecoveryAttemptTimeoutSeconds)*time.Second)
+	defer cancel()
+	const maxAttempts = 4
+	for attempt := 0; ; attempt++ {
+		err := e.reconcileWorkerScopes(ctx, appID, onlyScope, override, trigger)
+		if !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) || attempt+1 == maxAttempts {
+			return err
+		}
+		delay := time.Duration(10<<attempt) * time.Millisecond
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // WakeWorkerApp handles an explicit wake (`gregale wake`) of a worker app.
@@ -64,17 +95,23 @@ func (e *Engine) WakeWorkerApp(ctx context.Context, appID string) (bool, error) 
 }
 
 type workerScopePlan struct {
-	scope     string
-	app       state.App
-	target    string
-	desired   int
-	signal    string
-	cooldown  bool
-	queueHold bool
-	workers   []state.Instance
+	scope       string
+	app         state.App
+	target      string
+	desired     int
+	signal      string
+	cooldown    bool
+	queueHold   bool
+	pinned      bool
+	drainTarget string
+	workers     []state.Instance
+	// Includes residents already owned by a stop, for diagnostics only.
+	residents         map[string]bool
+	blockers          []api.WorkerAdmissionBlocker
+	admissionObserved bool
 }
 
-func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope string, override *int, trigger string) error {
+func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope string, override *int, trigger string) (resultErr error) {
 	if trigger == "" {
 		trigger = TriggerWorkerPool
 	}
@@ -92,7 +129,27 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 	if err != nil {
 		return err
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	attempt, proceed, err := e.beginWorkerRecovery(ctx, app, deployments, onlyScope)
+	if err != nil || !proceed {
+		return err
+	}
+	plansReady := false
+	plans := map[string]*workerScopePlan{}
+	defer func() {
+		// Capture the resulting fleet even when an admission/startup failed.
+		// Never publish a partial plan after a demand/dependency read failure.
+		if plansReady {
+			if err := e.observeWorkerRecoveryFleet(ctx, appID, plans, attempt); err != nil && resultErr == nil {
+				resultErr = err
+			}
+		}
+		e.completeWorkerRecovery(ctx, attempt, resultErr)
+	}()
+	// The loop below acts only on live worker rows, and the targets trigger
+	// reconciles every project worker app each second: read live rows, not
+	// the app's whole history (about 8 history reads a second on
+	// production-us after rc.285).
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return err
 	}
@@ -100,15 +157,18 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 	for _, dep := range deployments {
 		byDeployment[dep.ID] = dep
 	}
-	plans := map[string]*workerScopePlan{}
 	planFor := func(scope string) *workerScopePlan {
 		if plans[scope] == nil {
 			plans[scope] = &workerScopePlan{scope: scope, app: app}
 		}
 		return plans[scope]
 	}
+	targets, held, err := e.projectWorkerTargets(ctx, app, deployments)
+	if err != nil {
+		return err
+	}
 	if app.Status == state.AppActive {
-		for id := range workerDeploymentTargets(deployments) {
+		for id := range targets {
 			dep := byDeployment[id]
 			scope := normalizedDeploymentScope(dep.Scope)
 			if api.ValidateScope(scope) != nil {
@@ -127,9 +187,87 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 			}
 		}
 	}
+	pinnedPlans := map[string]*workerScopePlan{}
+	if app.Status == state.AppActive && app.ProjectID != "" && app.PreviewOfSlug == "" {
+		owner, ok := e.store.(state.ProjectPinnedWorkerStore)
+		if !ok {
+			return state.ErrConflict
+		}
+		pinned, err := owner.PinnedProjectReleaseWorkers(ctx, app.ID)
+		if err != nil {
+			return fmt.Errorf("read pinned worker generations: %w", err)
+		}
+		for _, id := range pinned {
+			if _, active := targets[id]; active {
+				continue
+			}
+			dep, exists := byDeployment[id]
+			if !exists || dep.AppID != app.ID || dep.Status != state.DeployLive {
+				return state.ErrConflict
+			}
+			scope := normalizedDeploymentScope(dep.Scope)
+			if api.ValidateScope(scope) != nil {
+				return state.ErrInvalidArgument
+			}
+			if onlyScope != "" && onlyScope != scope {
+				continue
+			}
+			deployed, err := state.ResolveAppForDeployment(ctx, e.store, app, dep)
+			if err != nil {
+				return fmt.Errorf("resolve pinned worker policy: %w", err)
+			}
+			if instanceModeForApp(deployed) != string(state.InstanceModeWorker) {
+				return state.ErrConflict
+			}
+			plan := &workerScopePlan{scope: scope, app: deployed, target: id, desired: api.ProjectPinnedWorkerReplicas, pinned: true}
+			for activeID := range targets {
+				if normalizedDeploymentScope(byDeployment[activeID].Scope) == scope {
+					plan.drainTarget = activeID
+				}
+			}
+			plans[scope+"\x00"+id] = plan
+			pinnedPlans[id] = plan
+		}
+	}
+	if app.Status == state.AppActive {
+		for id := range held {
+			if _, active := targets[id]; active || pinnedPlans[id] != nil {
+				continue
+			}
+			dep, exists := byDeployment[id]
+			if !exists || dep.AppID != app.ID {
+				return state.ErrConflict
+			}
+			if dep.Status != state.DeployLive {
+				continue
+			}
+			scope := normalizedDeploymentScope(dep.Scope)
+			if onlyScope != "" && onlyScope != scope {
+				continue
+			}
+			deployed, err := state.ResolveAppForDeployment(ctx, e.store, app, dep)
+			if err != nil {
+				return err
+			}
+			if instanceModeForApp(deployed) != string(state.InstanceModeWorker) {
+				return state.ErrConflict
+			}
+			plan := &workerScopePlan{scope: scope, app: deployed, target: id, desired: api.ProjectPinnedWorkerReplicas, pinned: true}
+			for activeID := range targets {
+				if normalizedDeploymentScope(byDeployment[activeID].Scope) == scope {
+					plan.drainTarget = activeID
+				}
+			}
+			plans[scope+"\x00"+id] = plan
+			pinnedPlans[id] = plan
+		}
+	}
 	// Resolve retired generations too, before authorizing any stop. Unknown
 	// deployment identity is a read failure, not permission to drain the row.
 	for _, ins := range instances {
+		if _, candidate := held[ins.DeploymentID]; candidate && pinnedPlans[ins.DeploymentID] == nil && app.Status == state.AppActive {
+			continue
+		}
 		if ins.Mode != string(state.InstanceModeWorker) || !state.State(ins.State).CountsForRAM() {
 			continue
 		}
@@ -149,23 +287,31 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 			if state.State(ins.State) == state.StateMigrating {
 				return fmt.Errorf("worker environment %s is migrating: %w", scope, state.ErrConflict)
 			}
+			plan := pinnedPlans[ins.DeploymentID]
+			if plan == nil {
+				plan = planFor(scope)
+			}
+			if plan.residents == nil {
+				plan.residents = make(map[string]bool)
+			}
+			plan.residents[ins.ID] = true
 			// A background stop already owns this worker. Leaving it out of
 			// the plan means it is neither kept nor stopped twice, while the
 			// account cap still counts it until teardown commits.
 			if e.workerStopping(ins.ID) {
 				continue
 			}
-			planFor(scope).workers = append(planFor(scope).workers, ins)
+			plan.workers = append(plan.workers, ins)
 		}
 	}
 	scopes := make([]string, 0, len(plans))
 	for scope, plan := range plans {
-		plan.queueHold, err = e.retiredQueueHasInFlightWork(ctx, plan.app, scope)
+		plan.queueHold, err = e.retiredQueueHasInFlightWork(ctx, plan.app, plan.scope)
 		if err != nil {
 			return fmt.Errorf("retired queue delivery for %s: %w", scope, err)
 		}
-		if plan.target != "" {
-			plan.desired, plan.signal, err = e.workerReplicaTargetForScope(ctx, plan.app, scope, len(plan.workers), override)
+		if plan.target != "" && !plan.pinned {
+			plan.desired, plan.signal, err = e.workerReplicaTargetForScope(ctx, plan.app, plan.scope, len(plan.workers), override)
 			if err != nil {
 				return fmt.Errorf("worker demand for %s: %w", scope, err)
 			}
@@ -183,7 +329,21 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 		}
 		scopes = append(scopes, scope)
 	}
-	sort.Strings(scopes)
+	// Recover already admitted work before ordinary scale-out consumes the
+	// shared account budget. Ordering stays deterministic across restarts.
+	sort.Slice(scopes, func(i, j int) bool {
+		if plans[scopes[i]].pinned != plans[scopes[j]].pinned {
+			return plans[scopes[i]].pinned
+		}
+		return scopes[i] < scopes[j]
+	})
+	plansReady = true
+	if len(plans) == 0 && !isWorkerApp(app) {
+		return nil
+	}
+	if len(deployments) == 0 && isWorkerApp(app) {
+		attempt.observe("waiting_dependency")
+	}
 	// Every demand read completes before the first mutation. Missing data must
 	// not be mistaken for an empty queue and collapse a healthy fleet.
 	for _, scope := range scopes {
@@ -192,9 +352,10 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 		// residents until previously admitted delivery leases have finished;
 		// the hold itself never authorizes another worker or a new generation.
 		if plan.queueHold {
+			attempt.observe("draining")
 			continue
 		}
-		if err := e.applyWorkerScopePlan(ctx, plan.app, plan, trigger); err != nil {
+		if err := e.applyWorkerScopePlan(ctx, plan.app, plan, trigger, attempt); err != nil {
 			return fmt.Errorf("reconcile worker environment %s: %w", scope, err)
 		}
 	}
@@ -221,7 +382,8 @@ func (e *Engine) retiredQueueHasInFlightWork(ctx context.Context, app state.App,
 	return false, nil
 }
 
-func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *workerScopePlan, trigger string) (resultErr error) {
+func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *workerScopePlan, trigger string, attempt *workerRecoveryAttempt) (resultErr error) {
+	plan.admissionObserved = true
 	admitted, atCapacity := false, false
 	defer func() {
 		if e.ops == nil || trigger != TriggerWorkerPool {
@@ -243,9 +405,10 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 	// Workers are kept in this order, so the tail is stopped first: settled
 	// before booting, busy before idle, then oldest first.
 	now := e.now()
+	leases := e.workerQueueLeases(ctx, app.ID, len(plan.workers) > plan.desired)
 	busy := make(map[string]int, len(plan.workers))
 	for _, ins := range plan.workers {
-		busy[ins.ID] = e.workerBusyRank(ins, now)
+		busy[ins.ID] = e.workerBusyRank(ins, now, leases)
 	}
 	sort.SliceStable(plan.workers, func(i, j int) bool {
 		left, right := workerStatePreference(plan.workers[i]), workerStatePreference(plan.workers[j])
@@ -262,11 +425,57 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 	})
 	kept := 0
 	var stopErr error
+	var frozen []state.Instance
 	for _, ins := range plan.workers {
-		if ins.DeploymentID == plan.target && kept < plan.desired && state.State(ins.State).CountsForConcurrency() {
+		current := state.State(ins.State)
+		if ins.DeploymentID == plan.target && kept < plan.desired && current.CountsForConcurrency() {
 			kept++
+			if current != state.StateRunning {
+				attempt.observe("starting")
+			}
 			continue
 		}
+		// ADR-20261019103000: the live generation's frozen workers wait to be
+		// thawed; FrozenTTL stops them. A surplus running worker freezes when
+		// it can and stops otherwise. A project app's surplus workers take the
+		// release drain claim and stop instead (ADR-20261019120012): the claim
+		// outlives a thaw, so a thawed worker would stay drained.
+		if app.ProjectID == "" {
+			if current == state.StateFrozen {
+				if ins.DeploymentID == plan.target {
+					frozen = append(frozen, ins)
+					continue
+				}
+				stopErr = errors.Join(stopErr, e.ParkFrozen(ctx, ins.ID, "superseded"))
+				continue
+			}
+			if current == state.StateRunning && ins.DeploymentID == plan.target && e.freezeSurplusWorker(ctx, app, ins, leases) {
+				continue
+			}
+		}
+		if app.ProjectID != "" {
+			owner, ok := e.store.(state.ProjectReleaseWorkerStore)
+			if !ok {
+				return state.ErrConflict
+			}
+			expectedTarget := plan.target
+			if plan.pinned {
+				expectedTarget = plan.drainTarget
+			}
+			claimed, err := owner.ClaimProjectWorkerDrain(ctx, app.ID, ins.ID, expectedTarget)
+			if err != nil {
+				return err
+			}
+			if !claimed {
+				return state.ErrConflict
+			}
+			// A worker frozen before its app joined a project.
+			if current == state.StateFrozen {
+				stopErr = errors.Join(stopErr, e.ParkFrozen(ctx, ins.ID, "superseded"))
+				continue
+			}
+		}
+		attempt.observe("draining")
 		stopErr = errors.Join(stopErr, e.beginWorkerStop(ctx, ins, e.workerStopOptions(app)))
 	}
 	if stopErr != nil {
@@ -274,14 +483,42 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 	}
 	// Other environments still count against the account budget. Only this
 	// plan's retained workers can be credited back to its available slots.
-	desired, err := e.capWorkerReplicasToAccount(ctx, app, plan.workers, plan.desired)
+	desired, blocker, err := e.capWorkerReplicasToAccount(ctx, app, plan.workers, plan.desired)
 	if err != nil {
 		return err
 	}
+	if desired < plan.desired && e.stopFrozenWorkersForSlots(ctx, app, plan.workers, plan.desired-desired) {
+		if desired, blocker, err = e.capWorkerReplicasToAccount(ctx, app, plan.workers, plan.desired); err != nil {
+			return err
+		}
+	}
 	if desired < plan.desired {
+		plan.observeAdmission(e.now(), *blocker)
+		attempt.observe("waiting_capacity")
 		atCapacity = true
 	}
+	// A frozen worker resumes in milliseconds; thaw the most recently frozen
+	// before booting new ones (ADR-20261019103000).
+	sort.SliceStable(frozen, func(i, j int) bool { return frozen[i].LastRequestAt.After(frozen[j].LastRequestAt) })
+	for _, ins := range frozen {
+		if kept >= desired {
+			break
+		}
+		if e.thawFrozenWorker(ctx, app, plan.target, ins) {
+			admitted = true
+			kept++
+		}
+	}
 	for kept < desired {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !attempt.allowAdmission(ctx, e.now()) {
+			plan.observeAdmissionHold(attempt)
+			attempt.observe("waiting_capacity")
+			atCapacity = true
+			break
+		}
 		dep, err := e.store.DeploymentByID(ctx, plan.target)
 		if err != nil {
 			return err
@@ -291,9 +528,23 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 		}
 		result, err := e.AdmitInstanceForDeployment(ctx, app.ID, dep.ID, plan.scope, trigger)
 		if err != nil {
+			var problem *api.Problem
+			if errors.Is(err, state.ErrNodeCapacity) || (errors.As(err, &problem) && problem.Code == api.CodeCapacity) {
+				plan.observeAdmission(e.now(), admissionBlockers(err)...)
+				attempt.observe("waiting_capacity")
+				atCapacity = true
+				break
+			}
+			attempt.observe("retrying_startup")
 			return err
 		}
 		if result.AtCapacity {
+			blockers := result.admissionBlockers
+			if len(blockers) == 0 {
+				blockers = []api.WorkerAdmissionBlocker{{Code: "admission_refused"}}
+			}
+			plan.observeAdmission(e.now(), blockers...)
+			attempt.observe("waiting_capacity")
 			atCapacity = true
 			break
 		}
@@ -341,7 +592,7 @@ func (p *workerScopePlan) applyCooldown(policy *state.ScalingPolicy, history sta
 }
 
 func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App, scope string, currentReplicas int, override *int) (int, string, error) {
-	account, err := e.store.AccountByID(ctx, app.AccountID)
+	account, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return 0, "", err
 	}
@@ -430,6 +681,9 @@ func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App,
 			}
 			stored := make(map[string]state.CustomMetric, len(rows))
 			for _, row := range rows {
+				if row.Kind == state.CustomMetricKindCounter {
+					continue // ADR-745: counters are never a backlog signal
+				}
 				stored[row.Name] = row
 			}
 			now := e.now()
@@ -533,7 +787,7 @@ func (e *Engine) mcpTasksObserverReady(ctx context.Context, worker state.App) (b
 	for _, deployment := range liveDeployments {
 		live[deployment.ID] = struct{}{}
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, observer.ID)
+	instances, err := e.liveInstancesForApp(ctx, observer.ID)
 	if err != nil {
 		return false, err
 	}
@@ -593,30 +847,36 @@ func (e *Engine) workerQueueDemandForScope(ctx context.Context, app state.App, s
 	return desired, nil
 }
 
-func (e *Engine) capWorkerReplicasToAccount(ctx context.Context, app state.App, current []state.Instance, desired int) (int, error) {
+func (e *Engine) capWorkerReplicasToAccount(ctx context.Context, app state.App, current []state.Instance, desired int) (int, *api.WorkerAdmissionBlocker, error) {
 	if desired <= 0 {
-		return desired, nil
+		return desired, nil, nil
 	}
-	account, err := e.store.AccountByID(ctx, app.AccountID)
+	account, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	limits, ok := api.LimitsFor(account.Plan)
 	if !ok || limits.WorkerReplicasMax <= 0 {
-		return 0, nil
+		// A plan change can arrive after demand planning. Usage has not
+		// been read here, so omit numeric evidence rather than assume zero.
+		b := api.WorkerAdmissionBlocker{Code: "account_worker_limit"}
+		return 0, &b, nil
 	}
-	all, err := e.store.ListInstancesForAccount(ctx, app.AccountID)
+	all, err := e.store.ListInstancesForAccount(ctx, account.ResourceOwnerID())
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	currentIDs := make(map[string]bool, len(current))
 	for _, ins := range current {
 		currentIDs[ins.ID] = true
 	}
-	otherWorkers := 0
+	otherWorkers, used := 0, 0
 	for _, ins := range all {
-		if ins.Mode == string(state.InstanceModeWorker) && state.State(ins.State).CountsForRAM() && !currentIDs[ins.ID] {
-			otherWorkers++
+		if ins.Mode == string(state.InstanceModeWorker) && state.State(ins.State).CountsForRAM() {
+			used++
+			if !currentIDs[ins.ID] {
+				otherWorkers++
+			}
 		}
 	}
 	available := limits.WorkerReplicasMax - otherWorkers
@@ -624,7 +884,8 @@ func (e *Engine) capWorkerReplicasToAccount(ctx context.Context, app state.App, 
 		available = 0
 	}
 	if desired > available {
-		desired = available
+		b := limitBlocker("account_worker_limit", "replicas", int64(used), int64(limits.WorkerReplicasMax))
+		return available, &b, nil
 	}
-	return desired, nil
+	return desired, nil, nil
 }

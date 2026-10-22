@@ -74,6 +74,15 @@ func (s *PgStore) appendCustomerPublishedEventResult(ctx context.Context, actor 
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := appendCustomerPublishedEventTx(ctx, tx, actor, accountID, tenantID, appID, payload, traceID, at, result); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// appendCustomerPublishedEventTx keeps storage accounting and subscription snapshot
+// capture in a caller-owned transaction. The caller alone commits or rolls back.
+func appendCustomerPublishedEventTx(ctx context.Context, tx pgx.Tx, actor, accountID, tenantID, appID string, payload []byte, traceID *string, at *time.Time, result *PublishedEventAcceptance) error {
 	q := sqlc.New()
 	id := mustPgUUID(accountID)
 	plan, err := q.EventStorageAccountPlan(ctx, tx, id)
@@ -111,7 +120,7 @@ func (s *PgStore) appendCustomerPublishedEventResult(ctx context.Context, actor 
 		if !existing {
 			return ErrConflict
 		}
-		return commitPublishedEventAcceptance(ctx, tx, q, accountID, identity, true, result)
+		return readPublishedEventAcceptanceTx(ctx, tx, q, accountID, identity, true, result)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
@@ -133,10 +142,10 @@ func (s *PgStore) appendCustomerPublishedEventResult(ctx context.Context, actor 
 	if err = eventStorageExceeded(limits.EventStorage, usage.RetainedEvents+1, usage.RetainedBytes+charge); err != nil {
 		return err
 	}
-	return commitPublishedEventAcceptance(ctx, tx, q, accountID, identity, false, result)
+	return readPublishedEventAcceptanceTx(ctx, tx, q, accountID, identity, false, result)
 }
 
-func commitPublishedEventAcceptance(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, accountID string, identity publishedEventIdentity, duplicate bool, result *PublishedEventAcceptance) error {
+func readPublishedEventAcceptanceTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, accountID string, identity publishedEventIdentity, duplicate bool, result *PublishedEventAcceptance) error {
 	if result != nil {
 		at, err := q.EventReceiptAcceptedAt(ctx, tx, sqlc.EventReceiptAcceptedAtParams{AccountID: mustPgUUID(accountID), EventSource: identity.Source, EventID: identity.ID})
 		if err != nil {
@@ -144,7 +153,7 @@ func commitPublishedEventAcceptance(ctx context.Context, tx pgx.Tx, q *sqlc.Quer
 		}
 		*result = PublishedEventAcceptance{AcceptedAt: timeFromPgtype(at), Duplicate: duplicate}
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 // lockTenantPublishedEventBinding serializes event acceptance with tenant

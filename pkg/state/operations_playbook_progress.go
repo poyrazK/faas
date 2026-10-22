@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -95,6 +96,13 @@ func startWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookPr
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	// Stable identity makes a retried start return the original checklist, never reset it.
 	r.Progress = api.OperationWorkflowPlaybookProgress{ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte(r.key()+"/"+op.DefinitionID+"/"+matched.Playbook.ID+"/"+fmt.Sprint(matched.Playbook.Version)+"/"+fmt.Sprint(matched.ContractVersion))).String(), Revision: 1, Disposition: "active", Playbook: matched.Playbook, ContractVersion: matched.ContractVersion, DefinitionID: op.DefinitionID, ReportingOperationID: op.ID, Items: []api.OperationWorkflowPlaybookProgressItem{}, History: []api.OperationWorkflowPlaybookProgressChange{}, CreatedAt: now, UpdatedAt: now, CreatedBy: actor}
+	if matched.Playbook.ExpectedOutcomeCode != "" && overview.Instance != nil && overview.Instance.State != nil {
+		r.Progress.StartStateRevision = overview.Instance.State.Revision
+	}
+	if matched.Playbook.OutcomeDeadline != nil {
+		due := now.Add(time.Duration(matched.Playbook.OutcomeDeadline.AfterSeconds) * time.Second)
+		r.Progress.OutcomeDeadlineAt = &due
+	}
 	for _, label := range matched.Playbook.RequiredEvidence {
 		r.Progress.Items = append(r.Progress.Items, api.OperationWorkflowPlaybookProgressItem{Label: label, Status: "pending", Evidence: []api.OperationWorkflowPlaybookEvidence{}})
 	}
@@ -111,6 +119,9 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 	}
 	id = parsed.String()
 	if actor == "" || req.Revision < 1 || req.Revision >= api.OperationWorkflowReadinessCoordinationRevisionMax || req.ItemIndex < 0 || (req.Status != "pending" && req.Status != "completed") || strings.TrimSpace(req.Note) == "" || len(req.Note) > api.OperationWorkflowReadinessFollowUpNoteMaxBytes || !utf8.ValidString(req.Note) || strings.IndexFunc(req.Note, unicode.IsControl) >= 0 || req.Evidence == nil || len(req.Evidence) > api.OperationWorkflowReadinessCompletionEvidenceMax {
+		return r.Progress, ErrInvalidArgument
+	}
+	if req.Owner != nil && (req.OutcomeCode == "" || len(*req.Owner) > api.OperationWorkflowReadinessFollowUpOwnerMaxBytes || !utf8.ValidString(*req.Owner) || strings.TrimSpace(*req.Owner) != *req.Owner || strings.IndexFunc(*req.Owner, unicode.IsControl) >= 0) {
 		return r.Progress, ErrInvalidArgument
 	}
 	rows, err := store.readPlaybookProgress(ctx, r)
@@ -132,21 +143,127 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 	if p.Revision != req.Revision || !workflowPlaybookProgressActive(*p) {
 		return *p, ErrConflict
 	}
-	if req.ItemIndex >= len(p.Items) {
+	items := &p.Items
+	followUpIndex := -1
+	newFollowUp := false
+	if req.OutcomeCode != "" {
+		if api.ValidateOperationWorkflowStateName(req.OutcomeCode) != nil {
+			return *p, ErrInvalidArgument
+		}
+		var steps []string
+		for _, guidance := range p.Playbook.OutcomeGuidance {
+			if guidance.OutcomeCode == req.OutcomeCode {
+				steps = guidance.FollowUpSteps
+				break
+			}
+		}
+		if len(steps) == 0 {
+			return *p, ErrInvalidArgument
+		}
+		for i := range p.OutcomeFollowUps {
+			if p.OutcomeFollowUps[i].OutcomeCode == req.OutcomeCode {
+				followUpIndex = i
+				break
+			}
+		}
+		if followUpIndex < 0 {
+			// Enrollment captures an advisory fresh exact-case observation before the revision-fenced write.
+			opts.AppID = r.App
+			overview, e := readPlaybookEvidenceWatchCase(ctx, store, r.Account, r.Tenant, opts, p.ID, operator)
+			if e != nil {
+				return *p, e
+			}
+			var observed *api.OperationWorkflowPlaybookBusinessOutcome
+			for _, row := range overview.PlaybookProgress {
+				if row.ID == p.ID {
+					observed = row.BusinessOutcome
+					break
+				}
+			}
+			if observed == nil || (observed.Status != "achieved" && observed.Status != "different_outcome") || observed.Evidence.ReportedOutcomeCode != req.OutcomeCode {
+				return *p, ErrConflict
+			}
+			follow := api.OperationWorkflowPlaybookOutcomeFollowUp{OutcomeCode: req.OutcomeCode, Observation: *observed, Items: []api.OperationWorkflowPlaybookProgressItem{}}
+			for _, label := range steps {
+				follow.Items = append(follow.Items, api.OperationWorkflowPlaybookProgressItem{Label: label, Status: "pending", Evidence: []api.OperationWorkflowPlaybookEvidence{}})
+			}
+			p.OutcomeFollowUps = append(p.OutcomeFollowUps, follow)
+			followUpIndex = len(p.OutcomeFollowUps) - 1
+			newFollowUp = true
+		}
+		items = &p.OutcomeFollowUps[followUpIndex].Items
+	}
+	if req.ItemIndex >= len(*items) {
 		return *p, ErrInvalidArgument
 	}
 	evidence, err := preparePlaybookProgressEvidence(ctx, store, r, req.Evidence)
 	if err != nil {
 		return *p, err
 	}
+	if req.Status == "completed" && followUpIndex >= 0 && playbookStepReadiness(*p, req.OutcomeCode, *items, req.ItemIndex).Status != "ready" {
+		return *p, ErrConflict
+	}
 	if req.Status == "completed" && len(evidence) == 0 {
 		return *p, ErrInvalidArgument
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	item := api.OperationWorkflowPlaybookProgressItem{Label: p.Items[req.ItemIndex].Label, Status: req.Status, Note: req.Note, Evidence: evidence, ReviewedBy: actor, ReviewedAt: &now}
-	p.Items[req.ItemIndex] = item
+	if newFollowUp {
+		for _, guidance := range p.Playbook.OutcomeGuidance {
+			if guidance.OutcomeCode != req.OutcomeCode {
+				continue
+			}
+			for _, policy := range guidance.FollowUpAssignments {
+				for i := range *items {
+					if (*items)[i].Label == policy.Label {
+						(*items)[i].Owner = policy.Owner
+						(*items)[i].ReviewImpact = policy.ReviewImpact
+					}
+				}
+			}
+		}
+	}
+	owner := (*items)[req.ItemIndex].Owner
+	if req.Owner != nil {
+		owner = *req.Owner
+	}
+	reopened := followUpIndex >= 0 && (*items)[req.ItemIndex].Status == "completed" && req.Status == "pending"
+	item := api.OperationWorkflowPlaybookProgressItem{ReviewImpact: (*items)[req.ItemIndex].ReviewImpact, Owner: owner, DueAt: (*items)[req.ItemIndex].DueAt, Label: (*items)[req.ItemIndex].Label, Status: req.Status, Note: req.Note, Evidence: evidence, ReviewedBy: actor, ReviewedAt: &now}
+	(*items)[req.ItemIndex] = item
 	p.Revision++
 	p.UpdatedAt = now
+	if followUpIndex >= 0 {
+		// Persist the obligation in the same revision-fenced write as the reopening.
+		// Recovery alone cannot validate work performed against the old prerequisites.
+		if reopened {
+			for i := range *items {
+				step := &(*items)[i]
+				if step.Status == "completed" && playbookStepDependsOn(*p, req.OutcomeCode, step.Label, item.Label) {
+					step.DependencyReviewRevision = p.Revision
+					step.DependencyReviewDueAt = nil
+					for _, guidance := range p.Playbook.OutcomeGuidance {
+						if guidance.OutcomeCode != req.OutcomeCode {
+							continue
+						}
+						for _, policy := range guidance.FollowUpAssignments {
+							if policy.Label == step.Label && policy.ReviewAfterSeconds > 0 {
+								due := now.Add(time.Duration(policy.ReviewAfterSeconds) * time.Second)
+								step.DependencyReviewDueAt = &due
+							}
+						}
+					}
+				}
+			}
+		}
+		activateReadyPlaybookStepDeadlines(p, followUpIndex, now)
+		follow := &p.OutcomeFollowUps[followUpIndex]
+		follow.CompletedCount = 0
+		for _, step := range follow.Items {
+			if step.Status == "completed" && step.DependencyReviewRevision == 0 {
+				follow.CompletedCount++
+			}
+		}
+		follow.ChecklistComplete = len(follow.Items) > 0 && follow.CompletedCount == len(follow.Items)
+	}
 	p.CompletedCount = 0
 	for _, i := range p.Items {
 		if i.Status == "completed" {
@@ -154,7 +271,7 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 		}
 	}
 	p.ChecklistComplete = len(p.Items) > 0 && p.CompletedCount == len(p.Items)
-	p.History = append(p.History, api.OperationWorkflowPlaybookProgressChange{Revision: p.Revision, ItemIndex: req.ItemIndex, Item: item, At: now, Actor: actor})
+	p.History = append(p.History, api.OperationWorkflowPlaybookProgressChange{OutcomeCode: req.OutcomeCode, Revision: p.Revision, ItemIndex: req.ItemIndex, Item: (*items)[req.ItemIndex], At: now, Actor: actor})
 	if len(p.History) > api.OperationWorkflowPlaybookProgressHistoryMax {
 		p.History = p.History[len(p.History)-api.OperationWorkflowPlaybookProgressHistoryMax:]
 		p.HistoryTruncated = true
@@ -162,6 +279,24 @@ func updateWorkflowPlaybookProgress(ctx context.Context, store workflowPlaybookP
 	return store.savePlaybookProgress(ctx, r, req.Revision)
 }
 func clonePlaybookProgress(p api.OperationWorkflowPlaybookProgress) api.OperationWorkflowPlaybookProgress {
+	p.BusinessOutcome = nil
+	p.Items = slices.Clone(p.Items)
+	for i := range p.Items {
+		p.Items[i].EvidenceCheck = nil
+		p.Items[i].Readiness = nil
+	}
+	p.History = slices.Clone(p.History)
+	for i := range p.History {
+		p.History[i].Item.EvidenceCheck = nil
+		p.History[i].Item.Readiness = nil
+	}
+	p.OutcomeFollowUps = slices.Clone(p.OutcomeFollowUps)
+	for i := range p.OutcomeFollowUps {
+		p.OutcomeFollowUps[i].Items = slices.Clone(p.OutcomeFollowUps[i].Items)
+		for j := range p.OutcomeFollowUps[i].Items {
+			p.OutcomeFollowUps[i].Items[j].Readiness = nil
+		}
+	}
 	raw, _ := json.Marshal(p)
 	var out api.OperationWorkflowPlaybookProgress
 	_ = json.Unmarshal(raw, &out)

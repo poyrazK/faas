@@ -8,12 +8,15 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/gitapproval"
+	"github.com/onebox-faas/faas/pkg/gitlabsource"
 )
 
 // CreateEnvironmentGitSourceRequest selects a definition in the project's
-// verified repository. Repository and installation identities come from the
-// server's GitHub connection, never from this request.
+// verified repository. GitHub identity comes from the project's installation;
+// GitLab identity is verified against the account's OAuth connection.
 type CreateEnvironmentGitSourceRequest struct {
+	Provider       string `json:"provider,omitempty"`
+	Repository     string `json:"repository,omitempty"`
 	Ref            string `json:"ref,omitempty"`
 	ManifestPath   string `json:"manifest_path"`
 	Mode           string `json:"mode,omitempty"`
@@ -44,36 +47,41 @@ type ApproveEnvironmentGitRevisionResponse struct {
 }
 
 type EnvironmentGitOpsStatusResponse struct {
-	Source           EnvironmentGitSource                   `json:"source"`
-	Runs             []EnvironmentGitOpsRun                 `json:"runs"`
-	Approval         *EnvironmentGitRevisionApproval        `json:"approval,omitempty"`
-	WorkloadEvidence *EnvironmentWorkloadActivationEvidence `json:"workload_evidence,omitempty"`
+	Explanation         *EnvironmentGitOpsExplanation          `json:"explanation,omitempty"`
+	WorkloadRetirements []EnvironmentWorkloadRetirement        `json:"workload_retirements,omitempty"`
+	Source              EnvironmentGitSource                   `json:"source"`
+	Runs                []EnvironmentGitOpsRun                 `json:"runs"`
+	Approval            *EnvironmentGitRevisionApproval        `json:"approval,omitempty"`
+	WorkloadEvidence    *EnvironmentWorkloadActivationEvidence `json:"workload_evidence,omitempty"`
 }
 
 // EnvironmentWorkloadActivationEvidence summarizes the current reviewed
 // candidate graph. It reports committed evidence only; it grants no activation
 // or serving authority.
+// CommitSHA identifies the approved revision in this snapshot, never a polled ref.
 type EnvironmentWorkloadActivationEvidence struct {
-	GraphID                                string `json:"graph_id"`
-	SourceID                               string `json:"source_id"`
-	EnvironmentID                          string `json:"environment_id"`
-	RevisionID                             string `json:"revision_id"`
-	DefinitionDigest                       string `json:"definition_digest"`
-	Generation                             int64  `json:"generation"`
-	IntentVersion                          int64  `json:"intent_version"`
-	PlanHash                               string `json:"plan_hash"`
-	GraphPhase                             string `json:"graph_phase"`
-	GraphErrorCode                         string `json:"graph_error_code,omitempty"`
-	ArtifactsPrepared                      bool   `json:"artifacts_prepared"`
-	Candidates                             int    `json:"candidates"`
-	RetainedWorkloadsRecorded              int    `json:"retained_workloads_recorded"`
-	CapturesRecorded                       int    `json:"captures_recorded"`
-	GuestConfigAcknowledgementsRecorded    int    `json:"guest_config_acknowledgements_recorded"`
-	RestoresRecorded                       int    `json:"restores_recorded"`
-	SmokesRecorded                         int    `json:"smokes_recorded"`
-	JobSmokesRecorded                      int    `json:"job_smokes_recorded"`
-	FrameworkReadyAcknowledgementsRecorded int    `json:"framework_ready_acknowledgements_recorded"`
-	Qualified                              bool   `json:"qualified"`
+	Workloads                              []EnvironmentWorkloadProgress `json:"workloads,omitempty"`
+	CommitSHA                              string                        `json:"commit_sha,omitempty"`
+	GraphID                                string                        `json:"graph_id"`
+	SourceID                               string                        `json:"source_id"`
+	EnvironmentID                          string                        `json:"environment_id"`
+	RevisionID                             string                        `json:"revision_id"`
+	DefinitionDigest                       string                        `json:"definition_digest"`
+	Generation                             int64                         `json:"generation"`
+	IntentVersion                          int64                         `json:"intent_version"`
+	PlanHash                               string                        `json:"plan_hash"`
+	GraphPhase                             string                        `json:"graph_phase"`
+	GraphErrorCode                         string                        `json:"graph_error_code,omitempty"`
+	ArtifactsPrepared                      bool                          `json:"artifacts_prepared"`
+	Candidates                             int                           `json:"candidates"`
+	RetainedWorkloadsRecorded              int                           `json:"retained_workloads_recorded"`
+	CapturesRecorded                       int                           `json:"captures_recorded"`
+	GuestConfigAcknowledgementsRecorded    int                           `json:"guest_config_acknowledgements_recorded"`
+	RestoresRecorded                       int                           `json:"restores_recorded"`
+	SmokesRecorded                         int                           `json:"smokes_recorded"`
+	JobSmokesRecorded                      int                           `json:"job_smokes_recorded"`
+	FrameworkReadyAcknowledgementsRecorded int                           `json:"framework_ready_acknowledgements_recorded"`
+	Qualified                              bool                          `json:"qualified"`
 	// Activated reflects exact active release-set membership for every graph
 	// member; it does not prove that serving has converged.
 	Activated bool `json:"activated"`
@@ -106,6 +114,7 @@ type RemoveEnvironmentGitOpsOverrideRequest struct {
 }
 
 type EnvironmentGitSourceSpec struct {
+	Provider       string `json:"provider,omitempty"`
 	RepositoryID   int64  `json:"repository_id"`
 	InstallationID int64  `json:"installation_id"`
 	Repository     string `json:"repository"`
@@ -185,15 +194,16 @@ type EnvironmentGitOpsChange struct {
 }
 
 type EnvironmentGitOpsPlan struct {
-	Manager         string                    `json:"manager"`
-	Revision        string                    `json:"revision"`
-	CommitSHA       string                    `json:"commit_sha,omitempty"`
-	Generation      int64                     `json:"generation"`
-	DesiredDigest   string                    `json:"desired_digest"`
-	ObservedVersion int64                     `json:"observed_version"`
-	Hash            string                    `json:"plan_hash"`
-	Changes         []EnvironmentGitOpsChange `json:"changes"`
-	BlockingReasons []string                  `json:"blocking_reasons"`
+	RetirementImpacts []EnvironmentWorkloadRetirementImpact `json:"retirement_impacts,omitempty"`
+	Manager           string                                `json:"manager"`
+	Revision          string                                `json:"revision"`
+	CommitSHA         string                                `json:"commit_sha,omitempty"`
+	Generation        int64                                 `json:"generation"`
+	DesiredDigest     string                                `json:"desired_digest"`
+	ObservedVersion   int64                                 `json:"observed_version"`
+	Hash              string                                `json:"plan_hash"`
+	Changes           []EnvironmentGitOpsChange             `json:"changes"`
+	BlockingReasons   []string                              `json:"blocking_reasons"`
 }
 
 func (p EnvironmentGitOpsPlan) CanApply() bool { return len(p.BlockingReasons) == 0 }
@@ -210,8 +220,14 @@ func (p EnvironmentGitOpsPlan) HasDrift() bool {
 }
 
 func (s EnvironmentGitSourceSpec) Validate() error {
+	provider := s.Provider
+	if provider == "" {
+		provider = "github"
+	}
 	parts := strings.Split(s.Repository, "/")
-	if s.RepositoryID <= 0 || s.InstallationID <= 0 || len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(s.Repository, " \t\r\n") {
+	if s.RepositoryID <= 0 || (provider == "github" && (s.InstallationID <= 0 || len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(s.Repository, " \t\r\n"))) ||
+		(provider == "gitlab" && (s.InstallationID != 0 || !gitlabsource.ValidRepositoryPath(s.Repository))) ||
+		(provider != "github" && provider != "gitlab") {
 		return fmt.Errorf("git source requires a verified repository and installation identity")
 	}
 	if !validEnvironmentGitRef(s.Ref) || s.ApprovalPolicy == "protected_branch" && !strings.HasPrefix(s.Ref, "refs/heads/") {
@@ -263,4 +279,20 @@ type EnvironmentFieldOwnershipRequest struct {
 }
 type EnvironmentFieldOwnershipResponse struct {
 	Status string `json:"status"`
+}
+
+// EnvironmentWorkloadRetirementImpact is a review-time inventory. Work counts
+// are informational and can grow before cutover; identities and retained
+// configuration remain bound by the plan's normal freshness hash.
+type EnvironmentWorkloadRetirementImpact struct {
+	Resource            string          `json:"resource"`
+	AppID               string          `json:"app_id"`
+	Routes              []DeclaredRoute `json:"routes,omitempty"`
+	QueueBindingIDs     []string        `json:"queue_binding_ids,omitempty"`
+	ConsumerIDs         []string        `json:"consumer_ids,omitempty"`
+	JobID               string          `json:"job_id,omitempty"`
+	PendingInvocations  int64           `json:"pending_invocations"`
+	InFlightInvocations int64           `json:"in_flight_invocations"`
+	QueuedTasks         int64           `json:"queued_tasks"`
+	InFlightTasks       int64           `json:"in_flight_tasks"`
 }

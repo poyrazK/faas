@@ -494,6 +494,20 @@ type Trigger struct {
 	// direct test/integration callers safe.
 	admissionMu      sync.Mutex
 	admissionBackoff map[string]admissionBackoffState
+
+	// Worker pools reconcile in background runs, one per account at a time
+	// (ADR-20261018101500); workerRunning holds the accounts with a run in progress.
+	// workerWakes holds, per account with a run in progress, the apps
+	// WakeWorkerPool queued for that run.
+	workerRunMu   sync.Mutex
+	workerRunning map[string]bool
+	workerWakes   map[string]map[string]state.App
+	workerRuns    sync.WaitGroup
+
+	// workerApps holds the queue-driven worker pool apps the last tick saw,
+	// by app id, for WakeWorkerPool.
+	workerAppsMu sync.Mutex
+	workerApps   map[string]state.App
 }
 
 // Options is the functional-options bag for New(). All fields are
@@ -718,6 +732,12 @@ func (t *Trigger) Tick(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("targets: list apps: %w", err)
 	}
+	var workerPools workerPoolRuns
+	workerApps := map[string]state.App{}
+	defer func() {
+		t.rememberWorkerPoolApps(workerApps)
+		t.startWorkerPoolRuns(ctx, workerPools)
+	}()
 	for _, app := range apps {
 		// A parked or suspended app is not scaled: the reaper parks whatever
 		// a target admits for it (H5-54).
@@ -731,6 +751,16 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		// misses half the fleet.
 		declared := policy.EffectiveTargets()
 		if len(declared) == 0 {
+			if app.ProjectID != "" && app.Manifest.ExecutionMode == api.ExecutionModeWorker {
+				if pool, ok := t.engine.(ScopedWorkerPoolEngine); ok && !t.admissionBackoffActive(app.ID, now) {
+					if err := pool.ReconcileWorkerPools(ctx, app.ID, workerPoolTriggerTargets); err != nil {
+						t.recordAdmissionFailure(app.ID, now)
+						t.log.Warn("targets: reconcile graph worker", "app_id", app.ID, "err", err)
+					} else {
+						t.clearAdmissionBackoff(app.ID)
+					}
+				}
+			}
 			continue
 		}
 		// This trigger owns the two axes it can observe. rps and cpu are
@@ -750,6 +780,9 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		workerWorkload := app.WorkloadClass == state.WorkloadClassWorker || app.Manifest.ExecutionMode == api.ExecutionModeWorker
 		if workerWorkload && (haveQueueTarget || haveQueueLagTarget || len(customTargets) > 0) {
 			if pool, ok := t.engine.(ScopedWorkerPoolEngine); ok {
+				if haveQueueTarget || haveQueueLagTarget {
+					workerApps[app.ID] = app
+				}
 				// Keep queue gauges for visibility. These aggregate
 				// observations never authorize a scoped mutation. Custom
 				// worker metrics are read by ReconcileWorkerPools, which
@@ -771,12 +804,7 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				if t.admissionBackoffActive(app.ID, now) {
 					continue
 				}
-				if err := pool.ReconcileWorkerPools(ctx, app.ID, workerPoolTriggerTargets); err != nil {
-					t.recordAdmissionFailure(app.ID, now)
-					t.log.Warn("targets: reconcile worker environments failed", "app_id", app.ID, "err", err)
-				} else {
-					t.clearAdmissionBackoff(app.ID)
-				}
+				workerPools.add(pool, app)
 				continue
 			}
 		}
@@ -923,6 +951,11 @@ func (t *Trigger) Tick(ctx context.Context) error {
 					t.log.Warn("targets: custom metrics failed", "app_id", app.ID, "err", err)
 				}
 				for _, row := range rows {
+					// ADR-745: a cumulative counter only grows; as a
+					// backlog it would mean monotonic scale-out.
+					if row.Kind == state.CustomMetricKindCounter {
+						continue
+					}
 					stored[row.Name] = row
 				}
 			}

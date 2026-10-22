@@ -64,7 +64,32 @@ func TestEdgeRuleEventsAPI(t *testing.T) {
 	if logged := read("?outcome=logged&rule=" + rule.ID); len(logged.Events) != 1 {
 		t.Fatalf("logged = %+v", logged.Events)
 	}
-	for _, bad := range []string{"?since=-1h", "?since=soon", "?limit=500", "?outcome=blocked", "?rule=nope", "?cursor=x"} {
+	// ADR-831 amendment 5: kind=waf detections are events with WAF detail.
+	if err := store.RecordEdgeRuleEvents(context.Background(), []state.EdgeRuleEvent{{
+		RuleID: rule.ID, AppID: rule.AppID, OccurredAt: now, Outcome: state.EdgeRuleEventBlocked, Method: "GET", Path: "/login",
+		WAFRuleIDs: []int{942100}, WAFCategories: []string{"sqli"}, WAFScore: 5,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	blocked := read("?outcome=blocked")
+	if len(blocked.Events) != 1 || blocked.Events[0].WAFScore != 5 || len(blocked.Events[0].WAFRuleIDs) != 1 ||
+		blocked.Events[0].WAFRuleIDs[0] != 942100 || blocked.Events[0].WAFCategories[0] != "sqli" {
+		t.Fatalf("blocked = %+v", blocked.Events)
+	}
+	// ADR-831 amendment 7 follow-up: kind=challenge outcomes are events too.
+	if err := store.RecordEdgeRuleEvents(context.Background(), []state.EdgeRuleEvent{{
+		RuleID: rule.ID, AppID: rule.AppID, OccurredAt: now, Outcome: state.EdgeRuleEventRejected, Method: "GET", Path: "/api/cart",
+		ClientIP: "198.51.100.23", UserAgent: "python-requests/2.32",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if rejected := read("?outcome=rejected"); len(rejected.Events) != 1 || rejected.Events[0].Path != "/api/cart" || rejected.Events[0].UserAgent != "python-requests/2.32" {
+		t.Fatalf("rejected = %+v", rejected.Events)
+	}
+	if solved := read("?outcome=solved"); len(solved.Events) != 0 {
+		t.Fatalf("solved = %+v, want none", solved.Events)
+	}
+	for _, bad := range []string{"?since=-1h", "?since=soon", "?limit=500", "?outcome=denied", "?rule=nope", "?cursor=x"} {
 		if rec := e.Do(t, "GET", "/v1/apps/"+slug+"/edge-rules/events"+bad, nil, nil); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: %d, want 400", bad, rec.Code)
 		}

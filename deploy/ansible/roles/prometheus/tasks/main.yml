@@ -236,6 +236,15 @@
     mode: "0644"
   notify: reload prometheus
 
+- name: prometheus — drop data repair health rules
+  ansible.builtin.copy:
+    src: data_repair.rules.yml
+    dest: /etc/prometheus/data_repair.rules.yml
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+  notify: reload prometheus
+
 # ADR-127 §D3 / G19 — bridge wire-protocol framing alerts
 # (FaasBridgeFramingMismatch + FaasBridgeRollbackStuck). The
 # prometheus role owns this drop so the rules file lives next to

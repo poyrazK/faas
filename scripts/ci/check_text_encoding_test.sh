@@ -86,6 +86,29 @@ func trim(message string) string {
 EOF
 expect reject "rule2 flags a fixed-cap cut on free text" "$d"
 
+d="$(mktemp -d)"
+make_tree "$d" "pkg/thing/reset.go" <<'EOF'
+package thing
+
+func reset(line []byte, message string) ([]byte, string) {
+	line = line[:0]
+	message = message[:0]
+	return line, message
+}
+EOF
+expect accept "rule2 allows empty buffer and string resets" "$d"
+
+d="$(mktemp -d)"
+make_tree "$d" "pkg/thing/one.go" <<'EOF'
+package thing
+
+func first(message string) string {
+	message = message[:01]
+	return message
+}
+EOF
+expect reject "rule2 still flags a one-byte cap with a leading zero" "$d"
+
 # --- RULE 2: a *Max* constant bound is also rejected. -----------------------
 d="$(mktemp -d)"
 make_tree "$d" "pkg/thing/e.go" <<'EOF'
@@ -131,6 +154,41 @@ func page(rows []string, limit int) []string {
 }
 EOF
 expect accept "rule2 ignores slice pagination" "$d"
+
+# --- RULE 2: empty resets never split a rune, regardless of the value type. ---
+d="$(mktemp -d)"
+make_tree "$d" "pkg/thing/reset.go" <<'EOF'
+package thing
+
+func reset(line []byte, message string) {
+    line = line[:0]
+    message = message[:00]
+}
+EOF
+expect accept "rule2 accepts empty buffer and string resets" "$d"
+
+d="$(mktemp -d)"
+make_tree "$d" "pkg/thing/trim.go" <<'EOF'
+package thing
+
+func trim(message string) string {
+    message = message[:01]
+    return message
+}
+EOF
+expect reject "rule2 still flags a nonzero cap with leading zeros" "$d"
+# --- RULE 2: emptying a buffer for reuse is not truncation. -----------------
+d="$(mktemp -d)"
+make_tree "$d" "pkg/thing/h.go" <<'EOF'
+package thing
+
+type scanner struct{ line []byte }
+
+func (s *scanner) reset() {
+	s.line = s.line[:0]
+}
+EOF
+expect accept "rule2 ignores a [:0] buffer reset" "$d"
 
 # --- The real tree must be clean. -------------------------------------------
 repo_root="$(cd "${here}/../.." && pwd)"

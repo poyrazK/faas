@@ -25,6 +25,19 @@ to see the effective value and its source without exposing credentials.
 
 ## Command output and forwarded arguments
 
+`gregale deploy --help` and `gregale app --help` show common options and examples.
+Add `--all` to see every option grouped by purpose:
+
+```bash
+gregale deploy --help --all
+gregale help app --all
+gregale app my-api scale --help
+```
+
+Help is local and works without login or a valid saved connection. Shell
+completion, man pages, and the [CLI reference](cli-reference.md) always retain
+all options. `--all` expands help; it does not change deployment or app settings.
+
 Put the global `--json` (or `-j`) flag before a command's `--` separator.
 Arguments after the separator belong to the app command, including flags such
 as `--help` and `--json`:
@@ -39,6 +52,35 @@ with `124`, writes the last known status to stdout when available, and writes
 an `invocation_wait_timeout` Problem to stderr. Ctrl-C exits with `130`.
 Stopping the CLI wait leaves the invocation running; inspect it later with
 `gregale invocations get <id>`.
+
+## Project and app defaults
+
+Finishing a successful `gregale start [path]` remembers the confirmed app in the
+selected source directory's `.gregale/project.json` and ignores `.gregale/` in
+Git. A conflicting saved app is preserved. From that source directory, these
+commands reuse the app:
+
+```sh
+gregale logs --follow
+gregale metrics
+gregale inspect
+gregale deploy
+```
+
+`deploy --path DIR`, `dev --path DIR`, and `dev setup --path DIR` resolve defaults
+from the selected directory and its ancestors. Explicit target options take
+precedence. `gregale context` explains the saved defaults; `context --verify`
+checks them against the current connection. Use `context set --app SLUG` to
+change the app, `unlink` to remove the local default, or `link PROJECT --app SLUG`
+to select a project. A saved environment affects only commands that support it;
+ordinary app logs and metrics are not filtered by that environment.
+
+Project links retain the version-1 format. Standalone apps use version 2 with
+an app and no project or environment. Older CLIs reject that format. These local
+defaults contain no credentials and are separate from shareable settings in
+`gregale.yaml`. When no app is saved, interactive `metrics` uses the same app
+picker as `logs` and `inspect`; JSON and non-interactive runs require an explicit
+or saved target.
 
 ## Connection profiles
 
@@ -62,9 +104,17 @@ Upgrading does not move or replace existing credentials.
 
 `profile use <name>` saves the active connection. The prefix option
 `gregale --profile <name> <command>` selects a connection for that command only.
-Put it **before the command**: some commands have their own `--profile` option
-for resource or test settings, and those options retain their meaning.
+Put it **before the command**: after the command, `--profile` keeps that
+command's own meaning, such as a test profile or the deprecated spelling of the
+RAM/CPU size (use `--size` instead).
 Arguments after `--` are forwarded unchanged.
+
+For example, this previews a deployment using the `staging` connection and the
+`small` RAM/CPU size:
+
+```bash
+gregale --profile staging deploy --size small --dry-run
+```
 
 `FAAS_API` and `FAAS_TOKEN` still override the selected connection's endpoint
 and credential. JSON preferences remain shared across connections.

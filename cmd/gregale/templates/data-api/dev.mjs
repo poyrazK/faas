@@ -1,3 +1,4 @@
+import {mutationObserver} from './mutation-observer.mjs'
 // Local-only entrypoint. Production continues to use server.mjs unchanged.
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -12,13 +13,22 @@ import pg from 'pg'
 import { generateKeyPair, exportJWK, createLocalJWKSet, SignJWT } from 'jose'
 import { runtimeConfig, acceptedContracts, servingContracts, limits } from './config.mjs'
 import { createServer, tokenVerifier } from './server.mjs'
-import { inspect, generate, fingerprint } from './types.mjs'
+import { checkPublicRelations, checkPublicFunctions } from './access.mjs'
+import { inspect, inspectBundle, generate, fingerprint } from './types.mjs'
+import { generateValidators, inputModel } from './type-render.mjs'
+
+export function developmentTypes(snapshot, metadata, validators) {
+  return validators ? generateValidators(snapshot, metadata) : generate(snapshot)
+}
 import { migrate } from './migrate.mjs'
 import { requestStore } from './dev-requests.mjs'
 import { replayRequest, collectionScenarios } from './request-replay.mjs'
 import { inspector } from './dev-inspector.mjs'
 import { permissions } from './rpc-permissions.mjs'
-import { loadDevProject, verifyProject } from './dev-project.mjs'
+import { loadDevProject, verifyProject, readLocalFile } from './dev-project.mjs'
+import { prepareRehearsal, checkUpgradeData, parseDataChecks, fixtureBinding } from './dev-upgrade.mjs'
+import { prepareAccessChecks, runAccessChecks } from './dev-access.mjs'
+import { prepareExplain, plannerMetadata, explainRequests, printExplain, checkQueryBudgets } from './dev-explain.mjs'
 
 const execute = promisify(execFile)
 const postgrestImage = 'postgrest/postgrest@sha256:7c5840727ad683b0fdbfb9810930665b34f8b44884a4dc740aa8844748a2b85e'
@@ -49,7 +59,7 @@ async function readContract(path, required) {
   }
 }
 
-async function compareContract(before, snapshot, cli, signal, approval = '') {
+async function compareContract(before, snapshot, cli, signal, approval = '', dependencies = '') {
   const suffix = randomBytes(12).toString('hex')
   const baseline = join(import.meta.dirname, `diff-before-${suffix}.json`)
   const current = join(import.meta.dirname, `diff-after-${suffix}.json`)
@@ -59,13 +69,14 @@ async function compareContract(before, snapshot, cli, signal, approval = '') {
     // Use the existing Go comparator, including its strict contract validation.
     const args = ['--json', 'data-api', 'diff', '--baseline', baseline, '--current', current]
     if (approval) args.push('--approval', approval)
+    if (dependencies) args.push('--dependencies', dependencies)
     const result = await execute(cli, args, { signal, timeout: 30000, maxBuffer: 2 << 20 })
     const report = JSON.parse(result.stdout)
     if (!Number.isInteger(report.breaking) || report.breaking < 0 || !Array.isArray(report.changes) || report.current_fingerprint !== fingerprint(snapshot)) throw new Error('Invalid comparison')
     const approved = report.approved ?? 0
     const unapproved = report.unapproved ?? report.breaking
     if (!Number.isInteger(approved) || approved < 0 || !Number.isInteger(unapproved) || unapproved < 0 || approved + unapproved !== report.breaking) throw new Error('Invalid approval counts')
-    return { baseline_fingerprint: report.baseline_fingerprint, current_fingerprint: report.current_fingerprint, breaking: report.breaking, approved, unapproved, changes: report.changes }
+    return { baseline_fingerprint: report.baseline_fingerprint, current_fingerprint: report.current_fingerprint, breaking: report.breaking, approved, unapproved, changes: report.changes, impacts: report.impacts ?? [], dependency_coverage: report.dependency_coverage ?? 'declared' }
   } catch { throw new DevFailure('Schema compatibility comparison failed; check the saved contracts and any approval fingerprints and named changes.') }
   finally { await unlink(baseline).catch(() => {}); await unlink(current).catch(() => {}) }
 }
@@ -133,15 +144,51 @@ async function atomicFile(path, content, mode) {
   finally { await unlink(temporary).catch(() => {}) }
 }
 
+async function grantAPI(connectionString) {
+  const grants = new pg.Client({ connectionString })
+  await grants.connect()
+  try {
+    await grants.query(`GRANT USAGE ON SCHEMA api TO gregale_data_api;
+      GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA api TO gregale_data_api;
+      GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA api TO gregale_data_api;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA api GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO gregale_data_api;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA api GRANT USAGE,SELECT ON SEQUENCES TO gregale_data_api;`)
+  } finally { await grants.end() }
+}
+
 export async function run(options) {
   if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('Node.js 22 or newer is required')
   if (options.check_types && !options.once) throw new DevFailure('--check-types requires --once.')
   if (options.replay && !options.once) throw new DevFailure('--replay requires --once.')
   if (options.scenario && !options.replay) throw new DevFailure('--scenario requires --replay.')
+  if (options.preview && (!options.once || !options.check_types || !options.check || !options.baseline || !options.check_breaking)) throw new DevFailure('Migration preview requires a fixed baseline and all local checks.')
   let project
   try { project = await loadDevProject(options) }
   catch (error) { throw new DevFailure(`Invalid development project: ${error.message}`) }
   options = { ...options, output: project.output }
+  if ((options.from_version || (options.fixture && !options.explain && !options.verify) || (options.data_check && !options.verify)) && !options.preview) throw new DevFailure('Upgrade options require migration preview.')
+  let verificationContext
+  if (options.verify) {
+    try {
+      const checks = options.data_check ? parseDataChecks(await readLocalFile(options.data_check)) : []
+      const access = options.access_checks ? await prepareAccessChecks(options.access_checks, project) : null
+      if (!checks.length && !access) throw new Error("No assertions provided")
+      const seedSQL = options.fixture ? await readLocalFile(options.fixture, limits.bodyBytes) : project.seedSQL
+      verificationContext = { checks, access, seedSQL, fixtureFingerprint: seedSQL === null ? null : fixtureBinding(seedSQL) }
+    } catch { throw new DevFailure('Invalid verification inputs; use a bounded version 1 check manifest and valid SQL fixture.') }
+  }
+  const verification = options.verify ? { version: 1, command: 'data-api verify', status: 'failed', authorization: 'not_run', cleanup: 'not_run', checks: [] } : null
+  let explainContext
+  if (options.explain) {
+    try { explainContext = await prepareExplain(options, project) }
+    catch { throw new DevFailure('Invalid explain inputs; check the saved collection, fixture, successful JSON baseline and query budget.') }
+  }
+  const explanation = options.explain ? { version: 1, command: 'data-api explain', status: 'failed', cleanup: 'not_run', workload_fingerprint: explainContext.workload_fingerprint, dataset_fingerprint: explainContext.dataset_fingerprint, results: [] } : null
+  let rehearsal
+  if (options.preview) {
+    try { rehearsal = await prepareRehearsal(options, project) }
+    catch (error) { throw new DevFailure(`Invalid upgrade rehearsal: ${error.message}`) }
+  }
   const readPolicy = async () => {
     if (!options.accepted_contracts) return undefined
     try { return acceptedContracts(await readContract(options.accepted_contracts, true)) }
@@ -177,21 +224,36 @@ export async function run(options) {
       return (await execute('docker', args, { signal: cleanup || args[0] === 'run' ? undefined : controller.signal, timeout: cleanup || args[0] === 'run' ? 30000 : 300000, maxBuffer: 1 << 20 })).stdout.trim()
     } catch { throw new Error(`Docker ${args[0]} failed; check your local daemon, image availability and ports`) }
   }
+  const preview = options.preview ? {
+    version: 1, command: 'data-api migration preview', mode: options.from_version ? 'upgrade' : 'clean_rebuild', status: 'failed',
+    dependency_coverage: options.dependencies ? 'declared' : 'not_provided',
+    steps: Object.fromEntries([...(options.from_version ? ['source', 'fixture'] : []), 'migrations', ...(options.from_version || options.data_check ? ['data'] : []), 'permissions', 'compatibility', 'authorization', 'types', 'client', 'replay', 'cleanup'].map(name => [name, { status: (name === 'replay' && !options.replay) || (name === 'data' && !options.data_check) ? 'skipped' : 'not_run' }])),
+    data_check_coverage: options.data_check ? 'declared' : 'not_provided', data_checks: [],
+    ...(options.from_version ? { upgrade: { from_version: options.from_version, source_migrations: [], pending_migrations: rehearsal.pending, source_fingerprint: null } } : {}),
+    migrations: [], compatibility: null, replay_results: [], replay_scenarios: [],
+  } : null
+  let previewStep = options.from_version ? 'source' : 'migrations'
+  const previewPassed = step => { if (preview) preview.steps[step] = { status: 'passed' } }
+  const previewFailed = (step, detail) => { if (preview) preview.steps[step] = { status: 'failed', detail } }
   let cleanupFailed = false
   let servicesAttempted = false
   try {
     const contractPath = options.baseline || join(options.directory, '.gregale', 'data-api-contract.json')
-    let acceptedContract = await readContract(contractPath, Boolean(options.baseline || options.check_breaking))
+    let acceptedContract = options.explain || options.verify ? null : await readContract(contractPath, Boolean(options.baseline || options.check_breaking))
     let compatibility = null
     const checkCompatibility = async snapshot => {
       if (!acceptedContract) return
-      compatibility = await compareContract(acceptedContract, snapshot, options.cli, controller.signal, options.approval)
-      compatibilityReport(compatibility, options.json)
-      if (options.check_breaking && compatibility.unapproved) throw new BreakingContract()
+      compatibility = await compareContract(acceptedContract, snapshot, options.cli, controller.signal, options.approval, options.dependencies)
+      if (preview) {
+        preview.compatibility = compatibility
+        if (compatibility.unapproved) previewFailed('compatibility', 'Unapproved breaking contract changes')
+        else previewPassed('compatibility')
+      } else compatibilityReport(compatibility, options.json)
+      if (!preview && options.check_breaking && compatibility.unapproved) throw new BreakingContract()
     }
     const acceptContract = async snapshot => {
       const content = JSON.stringify({ version: 1, fingerprint: fingerprint(snapshot), snapshot }) + '\n'
-      if (!options.baseline) { await atomicFile(contractPath, content, 0o600); acceptedContract = content }
+      if (!options.preview && !options.baseline) { await atomicFile(contractPath, content, 0o600); acceptedContract = content }
       // An explicitly selected baseline is read-only and stays fixed for CI.
     }
     const context = JSON.parse(await docker(['context', 'inspect']))
@@ -231,7 +293,8 @@ export async function run(options) {
       await owner.query(`REVOKE ALL ON DATABASE gregale_dev FROM PUBLIC;
         REVOKE ALL ON SCHEMA public FROM PUBLIC;
         CREATE ROLE gregale_data_api LOGIN NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD '${password}';
-        ALTER ROLE gregale_data_api SET statement_timeout='15000';
+        ALTER ROLE gregale_data_api SET statement_timeout='${limits.queryMs}';
+        ALTER ROLE gregale_data_api SET lock_timeout='${limits.lockMs}';
         GRANT CONNECT ON DATABASE gregale_dev TO gregale_data_api;`)
     } finally { await owner.end() }
     phase = 'SQL migrations'
@@ -239,50 +302,109 @@ export async function run(options) {
     const watchedSource = async () => (await migrationSource(migrationDirectory)) + (options.accepted_contracts ? createHash('sha256').update(await readContract(options.accepted_contracts, true)).digest('hex') : '')
     const initialSource = await watchedSource()
     const applyMigrations = () => migrate(ownerURL, pathToFileURL(migrationDirectory + '/'))
-    await applyMigrations()
-    if (project.seedSQL !== null) {
-      phase = 'local seed data'
+    const readLedger = async () => {
+      const ledger = new pg.Client({ connectionString: ownerURL })
+      try { await ledger.connect(); return (await ledger.query('SELECT version, name, checksum FROM gregale_migrations.applied ORDER BY version')).rows }
+      finally { await ledger.end() }
+    }
+    const sourceSnapshot = async () => {
+      await grantAPI(ownerURL)
+      await permissions(ownerURL, { role: 'gregale_data_api', apply: true })
+      const sourceConnection = new URL(ownerURL); sourceConnection.username = 'gregale_data_api'
+      return inspect(sourceConnection.toString(), ['api'])
+    }
+    const seedData = async sql => {
+      if (sql === null) return
       const seed = new pg.Client({ connectionString: ownerURL })
-      try { await seed.connect(); await seed.query('BEGIN'); await seed.query("SET LOCAL statement_timeout='15s'"); await seed.query(project.seedSQL); await seed.query('COMMIT') }
+      try { await seed.connect(); await seed.query('BEGIN'); await seed.query("SET LOCAL statement_timeout='15s'"); await seed.query(sql); await seed.query('COMMIT') }
       catch (error) { await seed.query('ROLLBACK').catch(() => {}); throw error }
       finally { await seed.end() }
     }
-    const grants = new pg.Client({ connectionString: ownerURL })
-    await grants.connect()
-    try {
-      await grants.query(`GRANT USAGE ON SCHEMA api TO gregale_data_api;
-        GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA api TO gregale_data_api;
-        GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA api TO gregale_data_api;
-        ALTER DEFAULT PRIVILEGES IN SCHEMA api GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO gregale_data_api;
-        ALTER DEFAULT PRIVILEGES IN SCHEMA api GRANT USAGE,SELECT ON SEQUENCES TO gregale_data_api;`)
-    } finally { await grants.end() }
+    if (options.from_version) {
+      phase = 'source schema migrations'
+      await migrate(ownerURL, pathToFileURL(migrationDirectory + '/'), { through: options.from_version })
+      preview.migrations = await readLedger()
+      preview.upgrade.source_migrations = preview.migrations
+      phase = 'source baseline verification'
+      const snapshot = await sourceSnapshot()
+      const source = await compareContract(acceptedContract, snapshot, options.cli, controller.signal)
+      preview.upgrade.source_fingerprint = source.current_fingerprint
+      preview.upgrade.baseline_fingerprint = source.baseline_fingerprint
+      if (source.current_fingerprint !== source.baseline_fingerprint) throw new DevFailure('Selected migration version does not match the baseline contract')
+      previewPassed('source')
+      previewStep = 'fixture'
+      phase = 'older-schema fixture loading'
+      if (rehearsal.fixtureFingerprint && rehearsal.fixtureFingerprint !== source.current_fingerprint) throw new DevFailure('Generated fixture source fingerprint does not match the source schema')
+      await seedData(rehearsal.fixtureSQL)
+      // A fixture must not silently alter the contract being rehearsed.
+      if (fingerprint(await sourceSnapshot()) !== source.current_fingerprint) throw new DevFailure('Fixture changed the source API contract; use a data-only fixture')
+      previewPassed('fixture')
+      previewStep = 'migrations'
+      phase = 'pending SQL migrations'
+      await applyMigrations()
+      preview.migrations = await readLedger()
+    } else {
+      await applyMigrations()
+      if (preview) preview.migrations = await readLedger()
+      phase = 'local seed data'
+      await seedData(options.verify ? verificationContext.seedSQL : options.explain ? explainContext.seedSQL : project.seedSQL)
+    }
+    previewPassed('migrations')
+    if (verification) {
+      phase = 'data integrity assertions'
+      verification.checks = await checkUpgradeData(ownerURL, verificationContext.checks, controller.signal)
+      verification.summary = { total: verification.checks.length, passed: verification.checks.filter(check => check.passed).length, failed: verification.checks.filter(check => !check.passed).length }
+      verification.fixture_source_fingerprint = verificationContext.fixtureFingerprint
+    }
+    if (rehearsal?.dataChecks.length) {
+      previewStep = 'data'
+      phase = 'upgraded data assertions'
+      preview.data_checks = await checkUpgradeData(ownerURL, rehearsal.dataChecks, controller.signal)
+      if (preview.data_checks.some(check => !check.passed)) previewFailed('data', 'Post-migration data assertions failed')
+      else previewPassed('data')
+    }
+    await grantAPI(ownerURL)
+    previewStep = 'permissions'
     phase = 'RLS and RPC permission checks'
     await permissions(ownerURL, { role: 'gregale_data_api', apply: true })
     phase = 'schema introspection'
     const connection = new URL(ownerURL); connection.username = 'gregale_data_api'
     const config = runtimeConfig({ DATABASE_URL: connection.toString(), DATA_API_ISSUER: 'https://gregale-dev.invalid',
       DATA_API_JWKS_URL: 'https://gregale-dev.invalid/jwks', DATA_API_AUDIENCE: 'gregale-local-dev',
-      DATA_API_ALLOWED_ORIGINS: 'http://localhost:5173,http://127.0.0.1:5173' })
-    config.snapshot = await inspect(connection.toString(), ['api'])
+      DATA_API_ALLOWED_ORIGINS: 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:3030,http://127.0.0.1:3030',
+      ...(project.publicRead ? { DATA_API_PUBLIC_READ: project.publicRead } : {}), ...(project.publicRpc ? { DATA_API_PUBLIC_RPC: project.publicRpc } : {}) })
+    if (config.publicRead) {
+      try { await checkPublicRelations(connection.toString(), config.publicRead) } catch (error) { throw new DevFailure(error.message) }
+    }
+    const bundle = await inspectBundle(connection.toString(), ['api'], { validators: true })
+    config.snapshot = bundle.snapshot
     config.functions = config.snapshot.functions
+    if (config.publicRpc) {
+      try { await checkPublicFunctions(connection.toString(), config.publicRpc, config.functions) } catch (error) { throw new DevFailure(error.message) }
+    }
     config.fingerprint = fingerprint(config.snapshot)
     config.acceptedContracts = await readPolicy()
     try { servingContracts(config) } catch { throw new DevFailure('Accepted contracts are stale; review a policy for the current schema before starting.') }
+    previewPassed('permissions')
+    previewStep = 'compatibility'
     phase = 'schema compatibility'
     await checkCompatibility(config.snapshot)
     const internal = new URL(connection); internal.port = '5432'
-    const postgrestEnv = { ...config.postgrestEnv, PGRST_DB_URI: internal.toString(), PGRST_SERVER_HOST: '0.0.0.0' }
+    const postgrestEnv = { ...config.postgrestEnv, PGRST_DB_URI: internal.toString(), PGRST_SERVER_HOST: '0.0.0.0', ...(options.explain ? { PGRST_DB_PLAN_ENABLED: 'true' } : {}) }
     const restEnvFile = join(import.meta.dirname, `postgrest-${suffix}.env`)
     await writeFile(restEnvFile, Object.entries(postgrestEnv).map(([key, value]) => `${key}=${value}`).join('\n') + '\n', { mode: 0o600, flag: 'wx' })
     // Share only this disposable database's network namespace. All exposed ports are loopback-bound.
     // Wait for each run request to finish even on interruption: the daemon may
     // still create its container after the client is disconnected.
+    previewStep = 'authorization'
     phase = 'PostgREST and gateway startup'
     await docker(['run', '--detach', '--name', rest, '--label', 'gregale.data-api.dev=true', '--network', `container:${database}`, '--env-file', restEnvFile, postgrestImage])
     const { privateKey, publicKey } = await generateKeyPair('ES256')
     const jwk = await exportJWK(publicKey)
     const verify = tokenVerifier(config.auth, createLocalJWKSet({ keys: [jwk] }))
     let gateway = createServer(config, verify, upstreamPort, readyPort, () => {}).listeners('request')[0]
+    const inspectorRules=(snapshot,metadata)=>{try{return inputModel(snapshot,metadata)}catch{return {tables:[],revision:fingerprint(snapshot),unavailable:true}}}
+    let inspectorModel=inspectorRules(config.snapshot,bundle.metadata)
     let inspectorState = { status: 'starting', ready: false }
     const browser = await inspector(() => inspectorState, join(options.directory, 'data-api.requests.json'), Object.keys(project.identities))
     server = http.createServer((req, res) => {
@@ -299,18 +421,53 @@ export async function run(options) {
       await delay(100, undefined, { signal: controller.signal })
     }
     const identities = {}
-    for (const [name, identity] of Object.entries(project.identities)) identities[name] = { subject: identity.subject, token: await new SignJWT({ ...identity.claims, sub: identity.subject })
+    for (const [name, identity] of Object.entries(project.identities)) identities[name] = { subject: identity.subject, ...(identity.read_only?{read_only:true}:{}), token: await new SignJWT({ ...identity.claims, sub: identity.subject, ...(identity.read_only?{gregale_read_only:true}:{}) })
       .setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience(config.auth.audience).setExpirationTime('24h').sign(privateKey) }
     phase = 'required project authorization verification'
     await verifyProject(url, identities, project, AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]))
+    previewPassed('authorization')
+    if (verification) {
+      verification.authorization = 'passed'
+      if (verificationContext.access) {
+        phase = 'identity-aware access assertions'
+        verification.access_checks = await runAccessChecks(verificationContext.access, { url, identities, snapshot: config.snapshot, fingerprint: config.fingerprint, signal: controller.signal, disposable: true, ...([4,5].includes(verificationContext.access.version)?{observe:mutationObserver(ownerURL,config.snapshot,controller.signal)}:{}) })
+        verification.access_summary = { total: verification.access_checks.length, passed: verification.access_checks.filter(check => check.passed).length, failed: verification.access_checks.filter(check => !check.passed).length }
+      }
+      verification.schema_fingerprint = config.fingerprint
+      if (verification.summary.failed || verification.access_summary?.failed) throw new DevFailure('Data or access assertions failed; inspect the named check results.')
+      verification.status = 'passed'
+      return
+    }
+    if (explanation) {
+      phase = 'planning saved reads'
+      const metadata = await plannerMetadata(ownerURL)
+      explanation.schema_fingerprint = config.fingerprint
+      explanation.fixture_source_fingerprint = explainContext.fixtureFingerprint
+      explanation.results = await explainRequests(explainContext, { url, identities, metadata, schemaFingerprint: config.fingerprint, signal: controller.signal })
+      explanation.summary = { planned: explanation.results.filter(result => result.status === 'planned').length, failed: explanation.results.filter(result => result.status === 'failed').length, skipped: explanation.results.filter(result => result.status === 'skipped').length }
+      if (explainContext.budget) {
+        explanation.budget_check = checkQueryBudgets(explainContext.budget, explanation.results)
+        if (explanation.budget_check.status !== 'passed') throw new DevFailure('Query performance budgets failed; inspect the report violations.')
+      }
+      if (!explanation.summary.planned || explanation.summary.failed) throw new DevFailure('Planning requires at least one successful read and no failed reads.')
+      explanation.status = 'passed'
+      return
+    }
+    previewStep = 'types'
     phase = options.check_types ? 'checking committed types' : 'writing generated types'
-    const generatedTypes = generate(config.snapshot)
-    if (options.check_types) {
-      let committedTypes
-      try { committedTypes = await readFile(options.output) }
-      catch { throw new DevFailure('Committed types are missing or unreadable; regenerate with gregale data-api dev --once, then commit the types file.') }
-      if (!committedTypes.equals(Buffer.from(generatedTypes))) throw new DevFailure('Database types are stale; regenerate with gregale data-api dev --once using the same project, config and output options, then commit the types file.')
-    } else await atomicFile(options.output, generatedTypes, 0o644)
+    const generatedTypes = developmentTypes(config.snapshot, bundle.metadata, options.validators)
+    try {
+      if (options.check_types) {
+        let committedTypes
+        try { committedTypes = await readFile(options.output) }
+        catch { throw new DevFailure('Committed types are missing or unreadable; regenerate with gregale data-api dev --once, then commit the types file.') }
+        if (!committedTypes.equals(Buffer.from(generatedTypes))) throw new DevFailure('Database types are stale; regenerate with gregale data-api dev --once using the same project, config, output and --validators options, then commit the types file.')
+      } else await atomicFile(options.output, generatedTypes, 0o644)
+      previewPassed('types')
+    } catch (error) {
+      if (!preview) throw error
+      previewFailed('types', error instanceof DevFailure ? error.message : 'Cannot check committed types')
+    }
     await acceptContract(config.snapshot)
     const checkClient = async () => {
       if (!options.check) return
@@ -321,9 +478,12 @@ export async function run(options) {
         catch { throw new Error(`Client ${task} failed; install the pinned SDK and client dependencies first, then check your client code`) }
       }
     }
-    await checkClient()
+    previewStep = 'client'
+    try { await checkClient(); previewPassed('client') }
+    catch (error) { if (!preview) throw error; previewFailed('client', 'Configured client checks failed; inspect your client and installed dependencies') }
     clearTimeout(startup)
     if (replayCollection) {
+      previewStep = 'replay'
       phase = 'saved request replay'
       let failed = 0, total = 0
       for (const scenario of scenarios) {
@@ -333,25 +493,36 @@ export async function run(options) {
           const result = await replayRequest(request, { url, identities, signal: controller.signal, variables })
           total++
           if (!result.passed) { failed++; scenarioFailed++ }
-          if (options.json) console.log(JSON.stringify({ event: 'replay_result', ...(replayCollection.version === 2 ? { scenario: scenario.name } : {}), ...result }))
+          if (preview) preview.replay_results.push({ scenario: scenario.name, ...result })
+          else if (options.json) console.log(JSON.stringify({ event: 'replay_result', ...(replayCollection.version === 2 ? { scenario: scenario.name } : {}), ...result }))
           else console.log(`${result.passed ? 'PASS' : 'FAIL'} ${JSON.stringify(scenario.name)}/${JSON.stringify(result.name)}: ${result.error ?? `HTTP ${result.status}, expected ${result.expected_status}; JSON ${result.json_matches ? 'matched' : 'mismatched'}`}`)
         }
         const report = { event: 'replay_scenario_summary', scenario: scenario.name, total: scenario.requests.length, passed: scenario.requests.length - scenarioFailed, failed: scenarioFailed }
-        if (replayCollection.version === 2) {
+        if (preview) preview.replay_scenarios.push(report)
+        else if (replayCollection.version === 2) {
           if (options.json) console.log(JSON.stringify(report))
           else console.log(`Scenario ${JSON.stringify(scenario.name)}: ${report.passed}/${report.total} checks passed.`)
         }
       }
       const summary = { event: 'replay_summary', total, passed: total - failed, failed }
-      if (options.json) console.log(JSON.stringify(summary))
+      if (preview) {
+        preview.replay_summary = summary
+        if (failed) previewFailed('replay', 'Saved request assertions failed'); else previewPassed('replay')
+      }
+      else if (options.json) console.log(JSON.stringify(summary))
       else console.log(`Replay: ${summary.passed}/${summary.total} checks passed.`)
-      if (failed) throw new DevFailure('Saved request replay failed; see the assertion results above.')
+      if (failed && !preview) throw new DevFailure('Saved request replay failed; see the assertion results above.')
+    }
+    if (preview) {
+      if (stopped || Object.values(preview.steps).some(step => step.status === 'failed')) throw new DevFailure('Migration preview failed; review the rehearsal report')
+      preview.status = 'passed'
+      return
     }
     phase = 'writing the private identity file'
     const inspectorURL = browser.url(url)
     const writeReceipt = async (status = 'ready', clientChecked = options.check) => {
-      inspectorState = { url, fingerprint: config.fingerprint, snapshot: config.snapshot, identities, status, client_checked: clientChecked, ready: Boolean(gateway), compatibility }
-      await atomicFile(receipt, JSON.stringify({ ...inspectorState, snapshot: undefined, output: options.output, inspector_url: inspectorURL }, null, 2) + '\n', 0o600)
+      inspectorState = { url, fingerprint: config.fingerprint, snapshot: config.snapshot, input_model: inspectorModel, identities, status, client_checked: clientChecked, ready: Boolean(gateway), compatibility }
+      await atomicFile(receipt, JSON.stringify({ ...inspectorState, snapshot: undefined, input_model: undefined, output: options.output, inspector_url: inspectorURL }, null, 2) + '\n', 0o600)
     }
     await writeReceipt()
     receiptWritten = true
@@ -376,7 +547,7 @@ export async function run(options) {
       await permissions(ownerURL, { role: 'gregale_data_api', apply: true })
       controller.signal.throwIfAborted()
       phase = 'schema introspection'
-      const snapshot = await inspect(connection.toString(), ['api'])
+      const { snapshot, metadata } = await inspectBundle(connection.toString(), ['api'], { validators: true })
       controller.signal.throwIfAborted()
       const nextConfig = { ...config, snapshot, functions: snapshot.functions, fingerprint: fingerprint(snapshot), acceptedContracts: await readPolicy() }
       phase = 'accepted contracts'
@@ -401,9 +572,10 @@ export async function run(options) {
       } finally { candidate.closeAllConnections(); await new Promise(resolve => candidate.close(resolve)) }
       controller.signal.throwIfAborted()
       phase = 'writing generated types'
-      await atomicFile(options.output, generate(snapshot), 0o644)
+      await atomicFile(options.output, developmentTypes(snapshot, metadata, options.validators), 0o644)
       await acceptContract(snapshot)
       Object.assign(config, nextConfig)
+      inspectorModel=inspectorRules(snapshot,metadata)
       gateway = candidate.listeners('request')[0]
       await writeReceipt('ready', false)
       await checkClient()
@@ -424,7 +596,11 @@ export async function run(options) {
       else controller.signal.addEventListener('abort', resolve, { once: true })
     })
   } catch (error) {
-    if (stopped && options.replay) throw new DevFailure('Saved request replay interrupted; verification did not complete.')
+    if (preview && preview.steps[previewStep].status === 'not_run') previewFailed(previewStep, error instanceof DevFailure ? error.message : `Local rehearsal failed during ${phase}`)
+    if (preview) preview.status = 'failed'
+    if (verification) { verification.status = 'failed'; verification.error = error instanceof DevFailure ? error.message : `Local verification failed during ${phase}`; if (phase === 'required project authorization verification' && verification.authorization !== 'passed') verification.authorization = 'failed' }
+    if (explanation) { explanation.status = 'failed'; explanation.error = `Local planning failed during ${phase}` }
+    if (stopped && (preview || options.replay || explanation || verification)) throw new DevFailure('Saved request replay interrupted; verification did not complete.')
     if (!stopped) throw error instanceof DevFailure ? error : new DevFailure(`Local Data API failed during ${phase}; check local Docker, numbered SQL migrations, schema permissions, output path and client dependencies.`)
   } finally {
     clearTimeout(startup)
@@ -437,8 +613,39 @@ export async function run(options) {
         if (existing === name) await docker(['rm', '--force', '--volumes', name], true)
       } catch { cleanupFailed = true; console.error(`Cleanup failed; remove the owned container with: docker rm --force --volumes ${name}`) }
     }
-    if (receiptWritten) await unlink(receipt)
+    if (receiptWritten) { try { await unlink(receipt) } catch { cleanupFailed = true } }
     for (const kind of ['postgres', 'postgrest']) await unlink(join(import.meta.dirname, `${kind}-${suffix}.env`)).catch(() => {})
+    if (preview) {
+      if (cleanupFailed) { previewFailed('cleanup', 'Disposable container cleanup did not complete'); preview.status = 'failed' }
+      else previewPassed('cleanup')
+      if (options.json) console.log(JSON.stringify(preview))
+      else {
+        console.log(`Migration preview: ${preview.status} (${preview.mode === 'upgrade' ? `upgrade from migration ${preview.upgrade.from_version}` : 'clean rebuild from local migrations and seed data'})`)
+        for (const [name, step] of Object.entries(preview.steps)) console.log(`${name}: ${step.status}${step.detail ? ` — ${step.detail}` : ''}`)
+        if (preview.compatibility) {
+          compatibilityReport(preview.compatibility, false)
+          for (const impact of preview.compatibility.impacts) console.log(`affected ${impact.kind} ${JSON.stringify(impact.name)}: ${impact.changes.length} changes`)
+        }
+        console.log(`Impact coverage: ${preview.dependency_coverage}`)
+        for (const check of preview.data_checks) console.log(`${check.passed ? 'PASS' : 'FAIL'} data ${JSON.stringify(check.name)}${check.error ? `: ${check.error}` : ''}`)
+        if (preview.replay_summary) console.log(`Replay: ${preview.replay_summary.passed}/${preview.replay_summary.total} passed`)
+      }
+    }
+    if (verification) {
+      verification.cleanup = cleanupFailed ? 'failed' : 'passed'
+      if (cleanupFailed) verification.status = 'failed'
+      if (options.json) console.log(JSON.stringify(verification))
+      else {
+        console.log(`Data API verify: ${verification.status}`)
+        for (const check of [...verification.checks, ...(verification.access_checks ?? [])]) console.log(`${check.passed ? 'PASS' : 'FAIL'} ${JSON.stringify(check.name)}${check.error ? `: ${check.error}` : ''}`)
+        console.log(`Authorization: ${verification.authorization}; cleanup: ${verification.cleanup}`)
+      }
+    }
+    if (explanation) {
+      explanation.cleanup = cleanupFailed ? 'failed' : 'passed'
+      if (cleanupFailed) explanation.status = 'failed'
+      if (options.json) console.log(JSON.stringify(explanation)); else printExplain(explanation)
+    }
     if (cleanupFailed) throw new DevFailure('Disposable container cleanup did not complete')
   }
 }

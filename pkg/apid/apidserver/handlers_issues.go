@@ -22,14 +22,52 @@ import (
 var issueEnvironmentPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 func (s *server) registerIssueRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getNativeLinearIssueTrackerStatus)))
+	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateNativeLinearIssueTrackerStatus))))
+	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/native-linear-tickets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createNativeLinearIssueTicket))))
+	mux.HandleFunc("GET /v1/apps/{slug}/issue-tracker-linear-connection", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueTrackerLinearConnection)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/issue-tracker-linear-connection", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateIssueTrackerLinearConnection))))
+	mux.HandleFunc("GET /v1/apps/{slug}/issue-saved-views", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listIssueSavedViews)))
+	mux.HandleFunc("GET /v1/apps/{slug}/issue-saved-views/{view_key}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueSavedView)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/issue-saved-views/{view_key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putIssueSavedView))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/issue-saved-views/{view_key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteIssueSavedView))))
+	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/native-tickets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createNativeIssueTicket))))
+	mux.HandleFunc("GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueTrackerAutoSync)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateIssueTrackerAutoSync))))
+	mux.HandleFunc("GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getNativeIssueTrackerStatus)))
+	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateNativeIssueTrackerStatus))))
+	mux.HandleFunc("GET /v1/apps/{slug}/issues/{issue_id}/tracker-links", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listIssueTrackerLinks)))
+	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/tracker-links", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putIssueTrackerLink))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteIssueTrackerLink))))
+	mux.HandleFunc("GET /v1/apps/{slug}/issue-teams", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listIssueTeams)))
+	mux.HandleFunc("GET /v1/apps/{slug}/issue-teams/{team_key}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueTeam)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/issue-teams/{team_key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putIssueTeam))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/issue-teams/{team_key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteIssueTeam))))
+	mux.HandleFunc("GET /v1/apps/{slug}/issue-release-comparison", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.compareIssueReleases)))
+	mux.HandleFunc("POST /v1/apps/{slug}/issues/bulk-actions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.bulkActOnIssues)))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.publishIssueSourceMaps))))
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueSourceMaps)))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retireIssueSourceMaps))))
 	mux.HandleFunc("POST /v1/apps/{slug}/issue-events", s.ingestIssueEvent)
 	mux.HandleFunc("POST /v1/apps/{slug}/issue-events/otlp/{signal}", s.ingestIssueOTLP)
 	mux.HandleFunc("GET /v1/apps/{slug}/issues", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listIssues)))
+	mux.HandleFunc("GET /v1/apps/{slug}/issue-lifecycle-alert-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueLifecycleAlertPolicy)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/issue-lifecycle-alert-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setIssueLifecycleAlertPolicy))))
+	mux.HandleFunc("POST /v1/apps/{slug}/issue-lifecycle-alert-policy/preview", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.previewIssueLifecycleAlert)))
+	mux.HandleFunc("GET /v1/apps/{slug}/issue-compound-alert-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueCompoundAlertPolicy)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/issue-compound-alert-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setIssueCompoundAlertPolicy))))
+	mux.HandleFunc("POST /v1/apps/{slug}/issue-compound-alert-policy/preview", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.previewIssueCompoundAlert)))
+	mux.HandleFunc("GET /v1/apps/{slug}/issue-frequency-alert-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueFrequencyAlertPolicy)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/issue-frequency-alert-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setIssueFrequencyAlertPolicy))))
 	mux.HandleFunc("GET /v1/apps/{slug}/issue-impact-alert-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueImpactAlertPolicy)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/issue-impact-alert-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setIssueImpactAlertPolicy))))
 	mux.HandleFunc("GET /v1/apps/{slug}/issue-ownership-rules", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueOwnershipRules)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/issue-ownership-rules", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setIssueOwnershipRules))))
 	mux.HandleFunc("GET /v1/apps/{slug}/issues/{issue_id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssue)))
+	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/split-rules", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createIssueSplitRule)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.undoIssueSplitRule)))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateIssueSplitRule)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/split-preview", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.previewIssueSplit)))
 	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/actions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.actOnIssue)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/issue-ingest-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createIssueIngestToken))))
 	mux.HandleFunc("GET /v1/apps/{slug}/issue-ingest-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.listIssueIngestTokens))))
@@ -76,8 +114,22 @@ func writeIssueError(w http.ResponseWriter, err error) {
 	}
 
 	switch {
+	case errors.Is(err, state.ErrIssueLifecycleAlertRevision):
+		api.WriteProblem(w, api.NewProblem(409, "issue_lifecycle_alert_policy_changed", "Policy changed", "reload the lifecycle alert policy before saving"))
+	case errors.Is(err, state.ErrIssueCompoundAlertRevision):
+		api.WriteProblem(w, api.NewProblem(409, "issue_compound_alert_revision_conflict", "Policy changed", "reload compound alerts before saving"))
+	case errors.Is(err, state.ErrIssueFrequencyAlertRevision):
+		api.WriteProblem(w, api.NewProblem(409, "issue_frequency_alert_revision_conflict", "Policy changed", "reload the frequency alert policy before saving"))
+	case errors.Is(err, state.ErrIssueTeamInUse):
+		api.WriteProblem(w, api.NewProblem(409, "issue_team_in_use", "Team in use", "remove this team’s issue assignments and ownership rules before deleting it"))
+	case errors.Is(err, state.ErrIssueSourceMapsConflict):
+		api.WriteProblem(w, api.NewProblem(409, "issue_source_maps_conflict", "Conflict", "source-map manifest is immutable for this deployment"))
+	case errors.Is(err, state.ErrIssueSourceMapsUnavailable):
+		api.WriteProblem(w, api.NewProblem(409, "issue_source_maps_unavailable", "Source maps unavailable", "publish this deployment's source-map artifacts before requesting symbolication"))
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(404, api.CodeNotFound, "Not found", "issue resource not found"))
+	case errors.Is(err, state.ErrIssueGroupingConflict):
+		api.WriteProblem(w, api.NewProblem(409, "issue_grouping_conflict", "Conflict", "issue membership changed or is incompatible with the requested regrouping"))
 	case errors.Is(err, state.ErrIssueEventConflict):
 		api.WriteProblem(w, api.NewProblem(409, "issue_event_conflict", "Conflict", "event_id was already used with a different payload"))
 	case errors.Is(err, state.ErrIssueQuota):
@@ -119,7 +171,7 @@ func (s *server) ingestIssueEvent(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrValidation("application ingestion accepts exception or worker events"))
 		return
 	}
-	out, err := st.RecordIssue(r.Context(), state.RecordIssueParams{Credential: credential, Event: event, Fingerprint: fp, Title: title, PayloadHash: digest, GroupingVersion: issues.GroupingVersion, Limits: acct.Plan.IssueLimits(), Now: now})
+	out, err := st.RecordIssue(r.Context(), state.RecordIssueParams{Credential: credential, Event: event, Fingerprint: fp, Title: title, PayloadHash: digest, GroupingVersion: issues.GroupingVersionFor(event), Limits: acct.Plan.IssueLimits(), Now: now})
 	s.observeIssueEvent(out, err)
 	if err != nil {
 		writeIssueError(w, err)
@@ -345,7 +397,10 @@ func (s *server) setIssueOwnershipRules(w http.ResponseWriter, r *http.Request, 
 
 func parseIssueListFilter(r *http.Request, accountID string) (state.IssueListFilter, error) {
 	q := r.URL.Query()
-	filter := state.IssueListFilter{State: q.Get("state"), Environment: q.Get("environment")}
+	filter := state.IssueListFilter{State: q.Get("state"), Environment: q.Get("environment"), Tag: q.Get("tag")}
+	if _, err := api.ParseIssueTagFilter(filter.Tag); err != nil {
+		return state.IssueListFilter{}, err
+	}
 	if filter.State != "" && filter.State != "open" && filter.State != "resolved" && filter.State != "ignored" {
 		return state.IssueListFilter{}, errors.New("state must be open, resolved, or ignored")
 	}
@@ -361,6 +416,13 @@ func parseIssueListFilter(r *http.Request, accountID string) (state.IssueListFil
 			return state.IssueListFilter{}, errors.New("assignee must be me, unassigned, or an account UUID")
 		}
 		filter.AssigneeAccountID = id.String()
+	}
+	if team := strings.TrimSpace(q.Get("team")); team != "" {
+		id, err := uuid.Parse(team)
+		if err != nil || id == uuid.Nil || filter.AssigneeAccountID != "" || filter.Unassigned {
+			return state.IssueListFilter{}, errors.New("team must be a nonzero team UUID and cannot be combined with assignee")
+		}
+		filter.TeamID = id.String()
 	}
 	switch sortBy := strings.TrimSpace(q.Get("sort")); sortBy {
 	case "", "recent":
@@ -459,24 +521,30 @@ func (s *server) actOnIssue(w http.ResponseWriter, r *http.Request, acct state.A
 func validateIssueAction(in api.IssueActionRequest, now time.Time) error {
 	switch in.Action {
 	case "assign":
-		if in.AssigneeAccountID != "" {
-			if _, err := uuid.Parse(in.AssigneeAccountID); err != nil {
-				return errors.New("assignee must be an account UUID")
-			}
+		if _, _, err := api.NormalizeIssueAssignment(in.AssigneeAccountID, in.AssigneeTeamID); err != nil {
+			return err
 		}
 	case "resolve":
 		if _, err := uuid.Parse(in.FixedDeploymentID); err != nil {
 			return errors.New("resolution requires fixed_deployment_id")
 		}
 	case "reopen":
+	case "merge":
+		if _, err := uuid.Parse(in.TargetIssueID); err != nil {
+			return errors.New("merge requires target_issue_id")
+		}
+	case "split":
+		if _, err := uuid.Parse(in.MemberIssueID); err != nil {
+			return errors.New("split requires member_issue_id")
+		}
 	case "ignore":
 		if in.IgnoredUntil == nil || !in.IgnoredUntil.After(now) || in.IgnoredUntil.After(now.Add(api.IssueMaxTokenLifetime)) {
 			return errors.New("ignored_until must be in the future and within 90 days")
 		}
 	default:
-		return errors.New("action must be assign, resolve, reopen, or ignore")
+		return errors.New("action must be assign, resolve, reopen, ignore, merge, or split")
 	}
-	if in.Action != "assign" && in.AssigneeAccountID != "" || in.Action != "resolve" && in.FixedDeploymentID != "" || in.Action != "ignore" && in.IgnoredUntil != nil {
+	if in.Action != "assign" && (in.AssigneeAccountID != "" || in.AssigneeTeamID != "") || in.Action != "resolve" && in.FixedDeploymentID != "" || in.Action != "ignore" && in.IgnoredUntil != nil || in.Action != "merge" && in.TargetIssueID != "" || in.Action != "split" && in.MemberIssueID != "" {
 		return errors.New("action contains unrelated fields")
 	}
 	return nil

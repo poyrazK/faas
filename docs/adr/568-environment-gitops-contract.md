@@ -970,6 +970,9 @@ environment or one that manages only environment configuration; a missing or
 null map is rejected. Removing the last workload produces the same reviewed
 prune candidates as any other removal, preserves unmanaged resources and
 other managers, and remains blocked by the workload pruning adapter gate.
+An initially configuration-only environment may converge when no Git-managed
+deployment is serving in its scope. An active managed release or live-scope
+fallback keeps the empty revision pending until reviewed pruning is available.
 
 Source and Dockerfile preparation now persists the exact approved source commit
 separately from its directory/Dockerfile parameters. A commit-only change therefore
@@ -4226,6 +4229,12 @@ drift, reconciliation repairs them under the current lease, creates new route
 generations and requires fresh gateway acknowledgements; old acks cannot survive
 a traffic change.
 
+PostgreSQL serving completion also compares the receipt roster with the current
+registered serving gateways and requires exact acknowledgement names for each
+route. The preparation transaction rejects a caller's stale roster. A registry
+change therefore cannot complete a pending receipt merely because old and new
+rosters have equal cardinality; the next preparation resets route generations.
+
 Request/service graphs without queue bindings, push-worker graphs and request
 graphs for HTTP functions with reviewed push bindings can enter this phase.
 Activation requires both route acknowledgements and a completed named-queue
@@ -4485,3 +4494,37 @@ evidence hashes the alias map without storing secret values; runtime receipts
 bind the source versions. Queue bindings remain unsupported for Jobs, and
 dedicated Linux acceptance is still required before production polling or
 enforcement is enabled.
+
+
+### Retained whole-workload retirement (ADR-1331)
+
+In the gated enforcement preview, source pruning plus the reviewed root
+`workload_pruning_policy: retain` permits removal of a workload owned by that
+source. The plan lists the app, routes, queue binding and consumer identities,
+linked scheduled Job, and a snapshot of pending and in-flight work counts.
+Counts are informational: work accepted before cutover remains retained even
+if the count increases after review.
+
+Retirement is reserved first. The remaining graph must qualify before the
+release cutover closes new admission in this environment. After the current
+registered gateway roster acknowledges route withdrawal, schedd drains the
+original executions. API status and the dashboard expose the durable phases
+`planned`, `retiring`, `retired`, `recovering`, `recovered`, and `cancelled`.
+An expired lease, source suspension, stale release pin or process restart does
+not reopen admission. App configuration, artifacts, queue identities, pending
+messages, Job tasks, and receipts remain in place. Other environments are not
+retired. An active override, another field manager, an unmanaged live deployment
+or an unmanaged queue binding blocks whole-workload retirement.
+
+To restore, declare the workload under its original logical name and add
+`workload_recoveries: {api: <original-app-UUID>}` to the reviewed root definition.
+Each recovered queue still needs its existing per-workload
+`queue_recoveries: {orders: <original-binding-UUID>}`. Recovery remains closed to
+normal admission until its new generation passes fresh preparation,
+qualification, and activation. Historical serving receipts grant no authority.
+A source with an active retirement cannot be detached or rebound; restore its
+retained workloads first. This feature does not delete customer data.
+
+Production enforcement remains gated. These changes do not replace the
+required end-to-end run and leak checks on an exclusive dedicated native
+x86_64 KVM host.

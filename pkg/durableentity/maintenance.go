@@ -148,7 +148,7 @@ func (m *Manager) maintainEntity(ctx context.Context, prefix, owner string, apps
 		result.Failed++
 		return
 	}
-	if !apps[base.ID.AppID] {
+	if !apps[base.ID.AppID] || base.Retirement != nil {
 		result.Skipped++
 		return
 	}

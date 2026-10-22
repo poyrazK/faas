@@ -47,9 +47,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/alerts"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
+	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -116,7 +118,7 @@ func (s *server) listAlertRules(w http.ResponseWriter, r *http.Request, acct sta
 		if row.AppID != "" && row.AppID != app.ID {
 			continue
 		}
-		out = append(out, alertRuleResponse(row))
+		out = append(out, s.alertRuleResponseWithChannels(r.Context(), row))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -167,6 +169,14 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := api.ValidateRouteInsightAlert(req.Metric, req.WindowSpec, app.ID); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.anomalyAlertsGate(acct, req.Comparison); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	// FailureSource family check: failed_invocations needs a
 	// non-empty failure_source; every other metric needs empty.
 	// Mirrors the DB alert_rules_failure_source_xor_chk constraint.
@@ -174,28 +184,45 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
-	if !s.appEvents.CheckEventConsumerAlertTarget(w, r, acct.ID, app.ID, req) {
-		return
-	}
-	if prob := resolveAndCheckEgress(r.Context(), req.WebhookURL); prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
-	recipient := setSecretRecipient()
-	if recipient == nil {
-		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
-		return
-	}
-	sealed, err := secretbox.SealBytes(recipient, alertRuleSecretSealLabel, []byte(req.WebhookSecret), api.AlertRuleWebhookSecretMaxBytes)
-	if err != nil {
-		if prob := api.AsProblem(err); prob != nil {
+	if req.EdgeRuleID != "" && api.IsEdgeRuleAlertMetric(req.Metric) {
+		id, prob := s.edgeRules.ResolveActivityAlertRule(r.Context(), app.ID, req.EdgeRuleID)
+		if prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not seal webhook secret"))
+		req.EdgeRuleID = id
+	}
+	if prob := validateCustomMetricAlert(req.Metric, req.CustomMetricName, req.WindowSpec, req.Action, s.customMetricHistoryEnabled); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
-	row, err := s.store.CreateAlertRuleIfUnderQuota(r.Context(), state.AlertRule{
+	if prob := s.validateSyntheticCheckAlert(r.Context(), app.ID, req); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.validateSLOAlert(r.Context(), app.ID, req); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if !s.appEvents.CheckEventConsumerAlertTarget(w, r, acct.ID, app.ID, req) {
+		return
+	}
+	channelIDs, prob := s.validateRuleChannels(r.Context(), acct.ID, req.ChannelIDs)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	sealed, prob := sealCreateWebhook(r.Context(), req)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	minCalls, forMinutes := api.MCPProtocolAlertDefaults(req.Metric, req.MCPMinCalls, req.MCPForMinutes)
+	if api.IsMCPProtocolMetric(req.Metric) && app.ID == "" {
+		api.WriteProblem(w, api.ErrAlertRuleInvalid("MCP performance alerts require an app"))
+		return
+	}
+	row, err := s.store.CreateAlertRuleIfUnderQuota(r.Context(), state.AlertRule{MCPReadinessScope: req.MCPReadinessScope, MCPMinCalls: minCalls, MCPForMinutes: forMinutes,
 		AccountID:                       acct.ID,
 		AppID:                           app.ID,
 		Name:                            req.Name,
@@ -205,7 +232,11 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		Threshold:                       req.Threshold,
 		WindowSpec:                      state.AlertWindowSpec(req.WindowSpec),
 		EventSubscriptionID:             req.EventSubscriptionID,
+		EdgeRuleID:                      req.EdgeRuleID,
 		FailureSource:                   state.AlertFailureSource(req.FailureSource),
+		CustomMetricName:                req.CustomMetricName,
+		SLOID:                           req.SLOID,
+		SyntheticCheckID:                req.SyntheticCheckID,
 		Action:                          alertRuleActionFrom(req.Action),
 		WebhookURL:                      req.WebhookURL,
 		WebhookSecretSealed:             sealed,
@@ -254,12 +285,20 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		"threshold":                           row.Threshold,
 		"window_spec":                         row.WindowSpec,
 		"failure_source":                      row.FailureSource,
+		"custom_metric_name":                  row.CustomMetricName,
+		"slo_id":                              row.SLOID,
+		"synthetic_check_id":                  row.SyntheticCheckID,
+		"edge_rule_id":                        row.EdgeRuleID,
 		"webhook_url":                         row.WebhookURL,
 		"enabled":                             row.Enabled,
 		"cooldown_minutes":                    row.CooldownMinutes,
 		"post_deploy_rollback_window_seconds": row.PostDeployRollbackWindowSeconds,
 	})
-	writeJSON(w, http.StatusCreated, alertRuleResponse(row))
+	if prob := s.bindRuleChannels(r.Context(), row, channelIDs); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	writeJSON(w, http.StatusCreated, s.alertRuleResponseWithChannels(r.Context(), row))
 }
 
 // --- get --------------------------------------------------------------------
@@ -289,7 +328,7 @@ func (s *server) getAlertRule(w http.ResponseWriter, r *http.Request, acct state
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, alertRuleResponse(row))
+	writeJSON(w, http.StatusOK, s.alertRuleResponseWithChannels(r.Context(), row))
 }
 
 // --- list deliveries -------------------------------------------------------
@@ -390,6 +429,10 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 			return
 		}
 	}
+	if req.MCPReadinessScope != nil && *req.MCPReadinessScope != row.MCPReadinessScope {
+		api.WriteProblem(w, api.ErrAlertRuleInvalid("readiness alert environment cannot change; create a new rule"))
+		return
+	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok || limits.AlertRuleLimitPerApp == 0 {
 		api.WriteProblem(w, api.ErrPlanAlertRulesNotAllowed(acct.Plan))
@@ -398,8 +441,16 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	// Build the merged state row for body validation so the
 	// closed-set + threshold + cooldown checks see the post-patch
 	// shape, not just the partial request.
+	if req.Metric != nil && api.IsMCPProtocolMetric(*req.Metric) != api.IsMCPProtocolMetric(string(row.Metric)) {
+		api.WriteProblem(w, api.ErrAlertRuleInvalid("MCP metric family cannot change; delete and recreate"))
+		return
+	}
 	merged := alertRuleRowForValidation(row, req)
 	if prob := validateAlertRuleRowUpdate(merged); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.anomalyAlertsGate(acct, string(merged.Comparison)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -417,16 +468,21 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		}
 	}
 	// Optional URL re-guard.
-	if req.WebhookURL != nil {
+	if req.WebhookURL != nil && *req.WebhookURL != "" {
 		if prob := resolveAndCheckEgress(r.Context(), *req.WebhookURL); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
 	}
+	newChannels, prob := s.updatedRuleChannels(r.Context(), acct.ID, row, merged, req.ChannelIDs)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	// Optional secret re-seal.
 	var sealedPtr *[]byte
 	if req.WebhookSecret != nil {
-		recipient := setSecretRecipient()
+		recipient := hostSecretRecipient()
 		if recipient == nil {
 			api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
 			return
@@ -442,7 +498,7 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		}
 		sealedPtr = &sealed
 	}
-	updated, err := s.store.UpdateAlertRule(r.Context(), id, state.UpdateAlertRuleParams{
+	updated, err := s.store.UpdateAlertRule(r.Context(), id, state.UpdateAlertRuleParams{MCPMinCalls: req.MCPMinCalls, MCPForMinutes: req.MCPForMinutes,
 		Name:                            req.Name,
 		Enabled:                         req.Enabled,
 		Metric:                          ptrAlertMetric(req.Metric),
@@ -524,7 +580,13 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		"old":     oldMap,
 		"new":     newMap,
 	})
-	writeJSON(w, http.StatusOK, alertRuleResponse(updated))
+	if newChannels != nil {
+		if prob := s.bindRuleChannels(r.Context(), updated, *newChannels); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, s.alertRuleResponseWithChannels(r.Context(), updated))
 }
 
 // --- delete -----------------------------------------------------------------
@@ -618,7 +680,7 @@ func (s *server) rotateAlertRuleSecret(w http.ResponseWriter, r *http.Request, a
 		}
 	}
 	plaintext := []byte(req.WebhookSecret)
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
 		return
@@ -684,7 +746,7 @@ func (s *server) rotateAlertRuleSecret(w http.ResponseWriter, r *http.Request, a
 // here at the pkg/api ↔ pkg/state boundary so pkg/api/alerts.go
 // stays free of the import cycle.
 func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
-	return api.AlertRuleResponseFromRow(api.AlertRuleRow{
+	return api.AlertRuleResponseFromRow(api.AlertRuleRow{MCPReadinessScope: r.MCPReadinessScope, MCPMinCalls: r.MCPMinCalls, MCPForMinutes: r.MCPForMinutes,
 		ID:                              r.ID,
 		AppID:                           r.AppID,
 		Name:                            r.Name,
@@ -694,7 +756,11 @@ func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
 		Threshold:                       r.Threshold,
 		WindowSpec:                      string(r.WindowSpec),
 		EventSubscriptionID:             r.EventSubscriptionID,
+		EdgeRuleID:                      r.EdgeRuleID,
 		FailureSource:                   string(r.FailureSource),
+		CustomMetricName:                r.CustomMetricName,
+		SLOID:                           r.SLOID,
+		SyntheticCheckID:                r.SyntheticCheckID,
 		Action:                          string(r.Action),
 		WebhookURL:                      r.WebhookURL,
 		CooldownMinutes:                 r.CooldownMinutes,
@@ -717,6 +783,7 @@ func alertDeliveryResponse(d state.AlertDelivery) api.AlertDeliveryResponse {
 		lastErr = dashboard.FormatAlertError(lastErr)
 	}
 	return api.AlertDeliveryResponse{
+		ReadinessEventID: d.ReadinessEventID, ReadinessDestination: d.ReadinessDestination, ReadinessFailoverReason: d.ReadinessFailoverReason,
 		ID:             d.ID,
 		RuleID:         d.RuleID,
 		AccountID:      d.AccountID,
@@ -777,8 +844,30 @@ func alertRuleActionFrom(p *string) state.AlertAction {
 // trimmed name. The same trim-non-empty check is mirrored on the
 // update path via state.AlertRule.Name (the DB schema enforces
 // non-empty via CHECK).
+// anomalyAlertsGate keeps baseline comparisons (ADR-744) dark until the
+// operator enables FAAS_ANOMALY_ALERTS_ENABLED, or releases the
+// anomaly_alerts platform flag (ADR-1700) to the account.
+func (s *server) anomalyAlertsGate(acct state.Account, comparison string) *api.Problem {
+	if api.IsAnomalyAlertComparison(comparison) && !s.platformFlagOr(platformflags.AnomalyAlerts, acct, s.anomalyAlertsEnabled) {
+		return api.NewProblem(http.StatusServiceUnavailable, "anomaly_alerts_unavailable",
+			"Anomaly alerts unavailable", "baseline comparisons are not enabled for this deployment")
+	}
+	return nil
+}
+
 func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
+	if p := api.ValidateMCPReadinessAlertScope(req.Metric, req.MCPReadinessScope); p != nil {
+		return p
+	}
+	minCalls, forMinutes := api.MCPProtocolAlertDefaults(req.Metric, req.MCPMinCalls, req.MCPForMinutes)
+	if p := api.ValidateMCPProtocolAlert(req.Metric, req.Comparison, req.WindowSpec, req.Threshold, minCalls, forMinutes); p != nil {
+		return p
+	}
+
 	if p := appevents.ValidateEventConsumerAlert(req.Metric, req.EventSubscriptionID, req.WindowSpec); p != nil {
+		return p
+	}
+	if p := edgerules.ValidateActivityAlert(req.Metric, req.EdgeRuleID, req.WindowSpec); p != nil {
 		return p
 	}
 	if p := validateAlertRollbackWindow(alertRollbackWindowFrom(req.PostDeployRollbackWindowSeconds), string(alertRuleActionFrom(req.Action))); p != nil {
@@ -787,8 +876,13 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 	if !api.AllowedAlertRuleMetric(req.Metric) {
 		return api.ErrAlertRuleInvalid(fmt.Sprintf("metric must be one of error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, %s", alertRuleMetricFailedInvocations))
 	}
-	if !api.AllowedAlertRuleComparison(req.Comparison) {
-		return api.ErrAlertRuleInvalid("comparison must be one of gt, gte, lt, lte")
+	if api.IsAnomalyAlertComparison(req.Comparison) {
+		// Create routes are app-scoped by path (ADR-744 requires it).
+		if reason := api.ValidateAnomalyAlertRule(req.Metric, req.Comparison, req.Threshold, true); reason != "" {
+			return api.ErrAlertRuleInvalid(reason)
+		}
+	} else if !api.AllowedAlertRuleComparison(req.Comparison) {
+		return api.ErrAlertRuleInvalid("comparison must be one of gt, gte, lt, lte, above_baseline, below_baseline")
 	}
 	if !api.AllowedAlertRuleWindowSpec(req.WindowSpec) {
 		return api.ErrAlertRuleInvalid("window_spec must be one of 5m, 15m, 1h, 6h, 24h, 7d, 15d")
@@ -816,6 +910,12 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 			return api.ErrAlertRuleInvalid(fmt.Sprintf("cooldown_minutes must be in [%d, %d]", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
 		}
 	}
+	if req.WebhookURL == "" && req.WebhookSecret == "" {
+		if len(req.ChannelIDs) == 0 {
+			return api.ErrAlertRuleInvalid("set webhook_url and webhook_secret, or deliver to notification channels with channel_ids")
+		}
+		return nil // channel-only rule (ADR-749)
+	}
 	if len(req.WebhookSecret) == 0 {
 		return api.ErrAlertRuleInvalid("webhook_secret must be non-empty")
 	}
@@ -841,7 +941,23 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 // create path. Cooldown is optional on update so a nil merge is
 // fine. Secret is also optional: nil means "don't reseal".
 func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
+	if p := api.ValidateMCPReadinessAlertScope(string(merged.Metric), merged.MCPReadinessScope); p != nil {
+		return p
+	}
+	if p := api.ValidateMCPProtocolAlert(string(merged.Metric), string(merged.Comparison), string(merged.WindowSpec), merged.Threshold, merged.MCPMinCalls, merged.MCPForMinutes); p != nil {
+		return p
+	}
+	if p := api.ValidateRouteInsightAlert(string(merged.Metric), string(merged.WindowSpec), merged.AppID); p != nil {
+		return p
+	}
+	if api.IsMCPProtocolMetric(string(merged.Metric)) && merged.AppID == "" {
+		return api.ErrAlertRuleInvalid("MCP performance alerts require an app")
+	}
+
 	if p := appevents.ValidateEventConsumerAlert(string(merged.Metric), merged.EventSubscriptionID, string(merged.WindowSpec)); p != nil {
+		return p
+	}
+	if p := edgerules.ValidateActivityAlert(string(merged.Metric), merged.EdgeRuleID, string(merged.WindowSpec)); p != nil {
 		return p
 	}
 	if merged.PostDeployRollbackWindowSeconds > 0 && merged.AppID == "" {
@@ -856,8 +972,12 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 	if !api.AllowedAlertRuleMetric(string(merged.Metric)) {
 		return api.ErrAlertRuleInvalid(fmt.Sprintf("metric must be one of error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, %s", alertRuleMetricFailedInvocations))
 	}
-	if !api.AllowedAlertRuleComparison(string(merged.Comparison)) {
-		return api.ErrAlertRuleInvalid("comparison must be one of gt, gte, lt, lte")
+	if api.IsAnomalyAlertComparison(string(merged.Comparison)) {
+		if reason := api.ValidateAnomalyAlertRule(string(merged.Metric), string(merged.Comparison), merged.Threshold, merged.AppID != ""); reason != "" {
+			return api.ErrAlertRuleInvalid(reason)
+		}
+	} else if !api.AllowedAlertRuleComparison(string(merged.Comparison)) {
+		return api.ErrAlertRuleInvalid("comparison must be one of gt, gte, lt, lte, above_baseline, below_baseline")
 	}
 	if !api.AllowedAlertRuleWindowSpec(string(merged.WindowSpec)) {
 		return api.ErrAlertRuleInvalid("window_spec must be one of 5m, 15m, 1h, 6h, 24h, 7d, 15d")
@@ -875,11 +995,19 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 	if !api.AlertRuleActionAllowedForMetric(string(merged.Metric), string(merged.Action)) {
 		return api.ErrAlertRuleInvalid(alertMetricActionRestriction(string(merged.Metric)))
 	}
+	if merged.Metric == state.AlertMetricCustomMetric {
+		if p := validateCustomMetricAlertWindow(string(merged.WindowSpec)); p != nil {
+			return p
+		}
+	}
 	if !api.IsFiniteFloat(merged.Threshold) {
 		return api.ErrAlertRuleInvalid("threshold must be a finite number")
 	}
 	if merged.CooldownMinutes < api.AlertRuleCooldownMinMinutes || merged.CooldownMinutes > api.AlertRuleCooldownMaxMinutes {
 		return api.ErrAlertRuleInvalid(fmt.Sprintf("cooldown_minutes must be in [%d, %d]", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
+	}
+	if merged.WebhookURL == "" {
+		return nil // channel-only rule (ADR-749); the handler checks it keeps a channel
 	}
 	if _, err := url.ParseRequestURI(merged.WebhookURL); err != nil {
 		return api.ErrAlertRuleInvalid("webhook_url is not a valid URL")
@@ -891,16 +1019,7 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 }
 
 func alertMetricActionRestriction(metric string) string {
-	if metric == string(state.AlertMetricMCPTaskPromotionHoldAgeSeconds) {
-		return "MCP promotion hold alerts support webhook action only"
-	}
-	if metric == string(state.AlertMetricMCPTasksOldestAgeSeconds) {
-		return "MCP task age alerts support webhook action only"
-	}
-	if metric == string(state.AlertMetricMCPTasksMetricsStale) {
-		return "MCP task metrics freshness alerts support webhook action only"
-	}
-	return "pre-auth target metrics support webhook action only"
+	return api.AlertMetricActionRestriction(metric)
 }
 
 // alertRuleRowForValidation folds an existing row + a partial update
@@ -909,6 +1028,12 @@ func alertMetricActionRestriction(metric string) string {
 // sees the post-patch shape, not just the partial request.
 func alertRuleRowForValidation(existing state.AlertRule, req api.UpdateAlertRuleRequest) state.AlertRule {
 	merged := existing
+	if req.MCPMinCalls != nil {
+		merged.MCPMinCalls = *req.MCPMinCalls
+	}
+	if req.MCPForMinutes != nil {
+		merged.MCPForMinutes = *req.MCPForMinutes
+	}
 	if req.PostDeployRollbackWindowSeconds != nil {
 		merged.PostDeployRollbackWindowSeconds = *req.PostDeployRollbackWindowSeconds
 	}
@@ -971,8 +1096,24 @@ func alertRuleFamily(m state.AlertMetric) string {
 	if api.IsEventConsumerAlertMetric(string(m)) {
 		return "event_consumer"
 	}
+	if api.IsEdgeRuleAlertMetric(string(m)) {
+		return "edge_rule"
+	}
 	if m == state.AlertMetricFailedInvocs {
 		return alertRuleMetricFailedInvocations
+	}
+	if m == state.AlertMetricCustomMetric {
+		// The rule's custom_metric_name only means something for this
+		// metric (alert_rules_custom_metric_chk); swapping away would orphan it.
+		return api.AlertRuleMetricCustomMetric
+	}
+	if api.IsSLOAlertMetric(string(m)) {
+		// slo_id only means something for these metrics (alert_rules_slo_chk).
+		return "slo"
+	}
+	if api.IsSyntheticCheckAlertMetric(string(m)) {
+		// synthetic_check_id only means something for these metrics.
+		return "synthetic_check"
 	}
 	return "other"
 }

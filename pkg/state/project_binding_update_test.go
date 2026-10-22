@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -6,28 +6,29 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreUpdateProjectBindingIsAccountScopedAndConflictAtomic(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	acct, err := store.CreateAccount(ctx, "projects@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := store.CreateProject(ctx, Project{AccountID: acct.ID, Slug: "first", RepoFullName: "acme/first", ProductionBranch: "main", InstallID: 7})
+	first, err := store.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "first", RepoFullName: "acme/first", ProductionBranch: "main", InstallID: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.CreateProject(ctx, Project{AccountID: acct.ID, Slug: "second", RepoFullName: "acme/second", ProductionBranch: "main", InstallID: 7})
+	second, err := store.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "second", RepoFullName: "acme/second", ProductionBranch: "main", InstallID: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := store.UpdateProjectBinding(ctx, "another-account", first.ID, "acme/new", "release", 7); !errors.Is(err, ErrNotFound) {
+	if _, err := store.UpdateProjectBinding(ctx, "another-account", first.ID, "acme/new", "release", 7); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account update err = %v, want ErrNotFound", err)
 	}
-	if _, err := store.UpdateProjectBinding(ctx, acct.ID, first.ID, second.RepoFullName, "release", second.InstallID); !errors.Is(err, ErrConflict) {
+	if _, err := store.UpdateProjectBinding(ctx, acct.ID, first.ID, second.RepoFullName, "release", second.InstallID); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("conflicting update err = %v, want ErrConflict", err)
 	}
 	if got, err := store.ProjectByRepo(ctx, acct.ID, first.InstallID, first.RepoFullName); err != nil || got.ID != first.ID {
@@ -41,7 +42,7 @@ func TestMemStoreUpdateProjectBindingIsAccountScopedAndConflictAtomic(t *testing
 	if updated.RepoFullName != "" || updated.InstallID != 0 || updated.ProductionBranch != "release" {
 		t.Fatalf("updated project = %+v", updated)
 	}
-	if _, err := store.ProjectByRepo(ctx, acct.ID, first.InstallID, first.RepoFullName); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ProjectByRepo(ctx, acct.ID, first.InstallID, first.RepoFullName); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("old repository index remained after unbind: %v", err)
 	}
 }

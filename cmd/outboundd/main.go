@@ -18,7 +18,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/outbound"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -122,8 +124,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if err := ValidateAIGateway(configured, cfg.AIGateway(os.Getenv)); err != nil {
+	aiGatewayFlags, err := startPlatformFlags(ctx, cfg, pool, log)
+	if err != nil {
 		return err
+	}
+	if ids := AIIntegrationsWhileGatewayOff(configured, aiGatewayFlags.Snapshot().GloballyEnabled(platformflags.AIGateway)); len(ids) > 0 {
+		log.Warn("outbound AI gateway is off; these operator AI integrations return 503 until the ai_gateway platform flag is on", "integrations", ids)
 	}
 	identityVerifier, err := cfg.IdentityVerifier(configured)
 	if err != nil {
@@ -185,6 +191,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	} else if needCustomerCredentials {
 		return errors.New("outboundd: customer-sealed credentials require FAAS_FLEET_AGE_IDENTITY_PATH")
 	}
+	handler.SimulationHandler = &outbound.SimulationHandler{Store: state.NewPgStore(pool)}
 	handler.IdentityVerifier = identityVerifier
 	handler.ExecutionIdentityVerifier = executionIdentityVerifier
 	handler.ExecutionAuthorizer = executionAuthorizer
@@ -201,14 +208,31 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	handler.Metrics = outboundMetrics
 	handler.MaxBodyBytes = cfg.MaxBodyBytes
-	handler.AIGatewayEnabled = cfg.AIGateway(os.Getenv)
-	log.Info("outbound AI gateway release gate", "enabled", handler.AIGatewayEnabled)
+	// ADR-1700: the gate and rollout are the live ai_gateway platform flag.
+	handler.AIGatewayFlags = aiGatewayFlags
+	_, flagVersion, _ := aiGatewayFlags.Snapshot().Definition(platformflags.AIGateway)
+	log.Info("outbound AI gateway release gate", "enabled", aiGatewayFlags.Snapshot().GloballyEnabled(platformflags.AIGateway),
+		"platform_flag_version", flagVersion)
 	// ADR-990: AI fallback routes are served on relay connections.
 	if handler.Routes, err = outbound.NewPostgresRouteResolver(pool); err != nil {
 		return err
 	}
 	go runAIUsagePrune(ctx, backend, log)
-	shutdownRelay, err := startRelay(ctx, cfg, pool, trace.HTTPHandler("outboundd-relay", handler), identityVerifier, outboundMetrics, log)
+	// ADR-997: replays recorded by apid run through this daemon's handler.
+	replayWorker := &outbound.AIReplayWorker{Store: backend, Handler: handler, Log: log}
+	go replayWorker.Run(ctx)
+	// ADR-1340: model canaries are judged here and rolled back when they do
+	// worse than their route's first target.
+	canaryEvaluator := &outbound.AIRouteCanaryEvaluator{Store: backend, Metrics: outboundMetrics, Log: log}
+	go canaryEvaluator.Run(ctx)
+	// ADR-1431: provider batches are settled here once they finish, and
+	// evaluations replay captured calls against a candidate model.
+	batchWorker := &outbound.AIBatchWorker{Backend: backend, Usage: backend, Handler: handler, Log: log}
+	go batchWorker.Run(ctx)
+	evaluationWorker := &outbound.AIEvaluationWorker{Store: backend, Handler: handler, Log: log}
+	go evaluationWorker.Run(ctx)
+	relayHandler := outbound.WithSimulationRelay(trace.HTTPHandler("outboundd-relay", handler), handler.SimulationHandler)
+	shutdownRelay, err := startRelay(ctx, cfg, pool, relayHandler, identityVerifier, outboundMetrics, log)
 	if err != nil {
 		return err
 	}
@@ -230,6 +254,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		WriteTimeout: cfg.WriteTimeout,
 		IdleTimeout:  cfg.IdleTimeout,
 	}
+	publicServer := startPublicServer(cfg, handler, backend, log)
 	var metricsServer *http.Server
 	if cfg.MetricsAddr != "" {
 		metricsMux := http.NewServeMux()
@@ -250,29 +275,61 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}()
 		log.Info("outboundd metrics listening", "addr", cfg.MetricsAddr)
 	}
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
-		if metricsServer != nil {
-			_ = metricsServer.Shutdown(shutdownCtx)
-		}
-		if shutdownRelay != nil {
-			shutdownRelay(shutdownCtx)
-		}
-	}()
+	listener, err := wire.ListenInherited("tcp", cfg.ListenAddr)
+	if err != nil {
+		return fmt.Errorf("outboundd: listen %s: %w", cfg.ListenAddr, err)
+	}
+	if err := wire.RequireInheritedListenersClaimed("outboundd"); err != nil {
+		_ = listener.Close()
+		return err
+	}
 	// All startup dependencies (config, Postgres, policy resolution, and the
 	// metrics registry) are ready before the serving listener is entered. Keep
 	// the daemon-level metric aligned with the /readyz contract; wire.Daemon
 	// flips it back to 0 on shutdown or an early return.
 	ops.MarkReady("outboundd", true, "")
 	log.Info("outbound gateway listening", "addr", cfg.ListenAddr, "integrations", len(configured))
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+	var stops []func(context.Context)
+	if metricsServer != nil {
+		stops = append(stops, func(ctx context.Context) { _ = metricsServer.Shutdown(ctx) })
 	}
-	return nil
+	if publicServer != nil {
+		stops = append(stops, func(ctx context.Context) { _ = publicServer.Shutdown(ctx) })
+	}
+	if shutdownRelay != nil {
+		stops = append(stops, shutdownRelay)
+	}
+	return wire.ServeUntilShutdown(ctx, server, listener, outbounddDrainGrace, stops...)
 }
+
+// startPublicServer serves access-token callers on the public listener when
+// one is configured (ADR-1431). It carries no control or metrics endpoints.
+func startPublicServer(cfg *Config, handler *outbound.Handler, tokens outbound.AIAccessTokenStore, log *slog.Logger) *http.Server {
+	if cfg.PublicListenAddr == "" {
+		return nil
+	}
+	public := &outbound.PublicHandler{Handler: handler, Tokens: tokens}
+	server := &http.Server{
+		Addr:              cfg.PublicListenAddr,
+		Handler:           trace.HTTPHandler("outboundd-public", public),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       cfg.ReadTimeout,
+		WriteTimeout:      cfg.WriteTimeout,
+		IdleTimeout:       cfg.IdleTimeout,
+		MaxHeaderBytes:    64 << 10,
+	}
+	go func() {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("outboundd: public http", "err", err)
+		}
+	}()
+	log.Info("outbound AI gateway public listener", "addr", cfg.PublicListenAddr)
+	return server
+}
+
+// outbounddDrainGrace bounds how long a stopping outboundd lets in-flight
+// third-party and AI calls finish, inside systemd's default 90 s stop budget.
+const outbounddDrainGrace = time.Duration(api.GatewayDrainGraceSeconds) * time.Second
 
 // aiUsagePruner removes AI usage rollups past their retention (ADR-988).
 type aiUsagePruner interface {

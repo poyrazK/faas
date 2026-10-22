@@ -1,12 +1,23 @@
 from typing import Literal
 
-OutboundAIBudgetAlertBudget = Literal["app_daily_tokens", "daily_cost", "daily_tokens", "monthly_cost"]
+OutboundAIBudgetAlertBudget = Literal[
+    "app_daily_tokens",
+    "daily_cost",
+    "daily_tokens",
+    "monthly_cost",
+    "tag_daily_cost",
+    "user_daily_cost",
+    "user_daily_tokens",
+]
 
 OUTBOUND_AI_BUDGET_ALERT_BUDGET_VALUES: set[OutboundAIBudgetAlertBudget] = {
     "app_daily_tokens",
     "daily_cost",
     "daily_tokens",
     "monthly_cost",
+    "tag_daily_cost",
+    "user_daily_cost",
+    "user_daily_tokens",
 }
 
 

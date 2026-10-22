@@ -26,9 +26,11 @@ T = TypeVar("T", bound="WorkflowRecoveryPolicy")
 
 @_attrs_define
 class WorkflowRecoveryPolicy:
-    """Explicit app recovery policy. Preview prepares plans only. Opt-in automatic_retry requires saved_failure only and
-    explicit failure statuses and execution limits. Resume count caps the absolute generation; preparation and execution
-    budgets are separate. Cancellation remains manual.
+    """Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure reviews.
+    initial_failure requires explicit failure statuses. Opt-in automatic_retry requires saved_failure only;
+    automatic_initial requires initial_failure only. Both require explicit workflow and failure-status filters and
+    execution limits. Resume count caps the absolute generation; preparation and execution budgets are separate.
+    Cancellation remains manual.
 
     """
 
@@ -47,10 +49,11 @@ class WorkflowRecoveryPolicy:
     duration thresholds. Settings are replaced with the full recovery policy. Read-only health query thresholds
     remain request-local."""
     hourly_execution_budget: int | Unset = UNSET
-    """Required 1..100 for automatic_retry; zero or omitted in preview. Counts automatic child job creation."""
+    """Required 1..100 for either automatic mode; zero or omitted in preview. Counts automatic job creation across
+    policy versions and automatic modes"""
     pause_after_failures: int | Unset = UNSET
-    """Required 1..10 for automatic_retry; zero or omitted in preview. Consecutive proven failures pause automatic
-    execution."""
+    """Required 1..10 for either automatic mode; zero or omitted in preview. Consecutive proven failures pause
+    automatic execution."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -1,6 +1,7 @@
 name: codeql
 
-# GitHub-native SAST. Free for public repos; runs on push + weekly cron.
+# GitHub-native SAST. Free for public repos; runs on pushes to main, a weekly
+# cron, and on demand (workflow_dispatch, any branch).
 # The Query pack is 'security-and-quality' — covers both vulns and code
 # smells. We omit JavaScript/Python because there's no JS/Python in this
 # repo (yet).
@@ -10,15 +11,12 @@ name: codeql
 on:
   push:
     branches: [main]
-  # Drafts and documentation-only pull requests skip analysis: neither can
-  # change the Go or workflow code CodeQL scans, and each run holds two hosted
-  # runners. `ready_for_review` analyses the PR once it leaves draft; pushes to
-  # main and the weekly schedule still scan everything.
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
+  # Not on pull requests: the Go analysis held a hosted runner for 35-50
+  # minutes on every push to every pull request (about 45 runner-minutes, the
+  # largest single job a push started) while no merge rule reads its result.
+  # Findings surface on the next push to main; dispatch it on a branch to
+  # scan before merging.
+  workflow_dispatch:
   schedule:
     # Weekly Sunday 02:00 UTC. Off the workload peak. SARIF artefacts
     # appear under Security > Code scanning.
@@ -36,7 +34,6 @@ permissions:
 jobs:
   analyze:
     name: CodeQL ${{ matrix.language }}
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
@@ -48,9 +45,9 @@ jobs:
             queries: security-and-quality
             upload: always
           - language: go
-            # Full Go extraction exceeded 30 minutes on hosted runners.
+            # Full Go extraction and analysis exceeded 60 minutes on hosted runners.
             # Allow it to finish without reducing the analyzed source set.
-            timeout_minutes: 60
+            timeout_minutes: 120
             queries: security-and-quality
             # The Go suppression query has kind `alert-suppression`, so it
             # must be added as a query-pack query rather than a local query

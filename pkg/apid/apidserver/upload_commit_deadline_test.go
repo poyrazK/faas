@@ -13,13 +13,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // expiringOutcomeStore expires the request context the moment the commit
 // records its outcome, after Enqueue has already created the deployment.
 type expiringOutcomeStore struct {
-	*state.MemStore
-	expire context.CancelFunc
+	MemStore *state.MemStore
+	expire   context.CancelFunc
 }
 
 func (s expiringOutcomeStore) RecordUploadCommitOutcome(ctx context.Context, arg sqlc.RecordUploadCommitOutcomeParams) (sqlc.UploadCommitOutcome, error) {
@@ -54,7 +55,7 @@ func TestUploadCommitRecordsTheOutcomeAfterTheRequestDeadline(t *testing.T) {
 
 	ctx, expire := context.WithCancel(context.Background())
 	defer expire()
-	(*(*e.S()).Store()) = expiringOutcomeStore{MemStore: (*e.Store()), expire: expire}
+	(*(*e.S()).Store()) = statetest.NewMem(expiringOutcomeStore{MemStore: (*e.Store()), expire: expire})
 	req = httptest.NewRequest("POST", "/v1/uploads/"+started.UploadID+"/commit", nil).WithContext(ctx)
 	req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 	rec = httptest.NewRecorder()

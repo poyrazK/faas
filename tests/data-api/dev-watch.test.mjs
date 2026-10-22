@@ -79,3 +79,15 @@ test('watching recovers when the migrations directory is replaced with identical
   await writeFile(path, 'SELECT 1;')
   await until(() => calls === 1)
 })
+
+test('development output selects validators without changing plain output or schema fingerprints', {skip:!runtime}, async()=>{
+  const {generate,fingerprint}=await import(pathToFileURL(join(runtime,'types.mjs')))
+  const snapshot={version:3,schemas:['api'],tables:[{schema:'api',name:'notes',view:false,relationships:[],columns:[{name:'body',type:'string',nullable:false,optional:false,insertable:true,updatable:true}]}],functions:[],enums:{},composites:[]}
+  const metadata=[{schema:'api',relation:'notes',name:'body',type:'varchar',typmod:12}]
+  assert.equal(dev.developmentTypes(snapshot,metadata,false),generate(snapshot))
+  const withValidators=dev.developmentTypes(snapshot,metadata,true)
+  assert.ok(withValidators.startsWith(generate(snapshot)))
+  assert.ok(withValidators.includes('export const inputValidators'))
+  assert.ok(withValidators.includes('"maxLength":8'))
+  assert.ok(withValidators.includes(`// Schema fingerprint: ${fingerprint(snapshot)}`))
+})

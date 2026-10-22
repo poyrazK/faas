@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"io/fs"
@@ -31,6 +31,11 @@ func TestTemplatesDoNotEnumerateEnvironment(t *testing.T) {
 				t.Fatalf("materialize %q: %v", name, err)
 			}
 			err := filepath.WalkDir(dest, func(path string, d fs.DirEntry, err error) error {
+				// Standalone acceptance fixtures prepare child process environments;
+				// they are excluded from deployment and serve no public responses.
+				if err == nil && d.IsDir() && (d.Name() == "tests" || d.Name() == "test") {
+					return fs.SkipDir
+				}
 				if err != nil || d.IsDir() {
 					return err
 				}

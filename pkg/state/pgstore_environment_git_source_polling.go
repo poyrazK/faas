@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -82,6 +83,12 @@ func (s *PgStore) FinishEnvironmentGitSourcePoll(ctx context.Context, lease Envi
 		SourceID: source.ID, CheckedAt: gitOpsTime(now), CommitSha: result.CommitSHA, DefinitionDigest: result.Digest, ErrorCode: result.ErrorCode,
 	}); err != nil {
 		return mapErr(err)
+	}
+	if err := pgEnvironmentGitNotification(ctx, tx, lease.Source.ID, "source", environmentGitSourceNotificationStatus(result.ErrorCode), "", result.ErrorCode, api.EnvironmentGitOpsPlan{CommitSHA: result.CommitSHA}, now); err != nil {
+		return err
+	}
+	if err := pgEnvironmentGitRolloutNotification(ctx, tx, lease.Source.ID, "", nil, now); err != nil {
+		return err
 	}
 	return mapErr(tx.Commit(ctx))
 }

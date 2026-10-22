@@ -1,0 +1,30 @@
+---
+# ADR-1344 §8: control-plane host files the warm standby needs to take over.
+# None of them is in PostgreSQL or the release bundle, and an unplanned
+# failover cannot copy them from a dead host, so every standby converge
+# stages the primary's current copies (sync.yml) and a takeover installs
+# them before the first control-plane bootstrap (takeover.yml).
+
+# The single control-plane host the files are read from (same default as
+# postgres_standby).
+faas_postgres_primary_inventory_host: "{{ (groups['control_plane'] | default(['']))[0] }}"
+
+# Root-only staging area on the standby. Files are kept base64-encoded, with
+# an index of their owner, group and mode on the primary.
+faas_standby_stage_dir: /var/lib/faas-standby
+
+# What is staged: the shared control-plane state list
+# (deploy/ansible/vars/cp_state_files.yml, loaded by sync.yml), which the
+# off-host backup (cp_state_backup) seals too.
+faas_standby_sync_trees: "{{ faas_cp_state_trees }}"
+faas_standby_sync_files: "{{ faas_cp_state_files }}"
+faas_standby_sync_exclude: "{{ faas_cp_state_exclude }}"
+
+# Operator-chosen paths, such as the Alertmanager receiver files
+# (am_*_file). The off-host backup takes them too.
+faas_standby_sync_extra_files: "{{ faas_cp_state_extra_files | default([]) }}"
+
+# A takeover refuses to run until this host's database is promoted. A
+# rebuild from the off-host backup (cp_state_restore.yml) installs the files
+# before PostgreSQL exists, so it turns the check off.
+control_plane_standby_require_promoted: true

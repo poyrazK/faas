@@ -65,6 +65,8 @@ function fixture(t, version = "1.2.3-rc.4") {
         if (!state.pending.has(name)) makePublic(name);
         else tags.set(name, { latest: "0.0.0-stage" });
       } else if (args[1] === "rm") {
+        // The public registry answers E403 to removing latest.
+        if (args[3] === "latest") throw new Error("npm dist-tag failed: 1");
         delete tags.get(args[2])[args[3]];
       } else {
         const spec = args[2], at = spec.lastIndexOf("@"), name = spec.slice(0, at);
@@ -75,14 +77,20 @@ function fixture(t, version = "1.2.3-rc.4") {
   return { dir, packages: loadPackages(dir), options, state, makePublic };
 }
 
-test("delayed platform metadata gates the root and initial latest is removed", async t => {
+test("delayed platform metadata gates the root and npm's initial latest is kept", async t => {
   const f = fixture(t);
   f.state.pending.add(names[1]);
   f.state.onPoll = () => { if (f.state.ticks >= 20) f.makePublic(names[1]); };
   await publishPackages(f.packages, f.options);
   assert.equal(f.state.ticks, 20);
   assert.deepEqual(f.state.calls.filter(c => c[0] === "publish").map(c => c[1]), f.packages.map(p => p.dir));
-  for (const name of names) assert.deepEqual(f.state.tags.get(name), { rc: "1.2.3-rc.4" });
+  // H10-50: npm cannot remove latest and these packages have no stable
+  // release, so npm's initial prerelease latest stays and rc still moves.
+  for (const name of names) {
+    assert.equal(f.state.tags.get(name).rc, "1.2.3-rc.4");
+    assert.notEqual(f.state.tags.get(name).latest, undefined);
+  }
+  assert.equal(f.state.calls.some(c => c[1] === "rm" && c[3] === "latest"), false);
 });
 
 test("a non-runner platform held forever fails without publishing the root", async t => {
@@ -90,7 +98,7 @@ test("a non-runner platform held forever fails without publishing the root", asy
   f.state.pending.add(names[1]);
   await assert.rejects(publishPackages(f.packages, f.options), /incomplete.*do not blindly republish/);
   assert.equal(f.state.accepted.has("gregale"), false);
-  for (const name of names.slice(0, 4)) assert.equal(f.state.tags.get(name)?.latest, undefined);
+  assert.equal(f.state.tags.get("gregale"), undefined);
 });
 
 test("a visible manifest with an unavailable tarball still gates the launcher", async t => {
@@ -116,7 +124,7 @@ test("repair-only restores a completed release without any uploads", async t => 
   names.forEach(f.makePublic);
   await publishPackages(f.packages, { ...f.options, repairOnly: true });
   assert.equal(f.state.calls.filter(c => c[0] === "publish").length, 0);
-  for (const name of names) assert.deepEqual(f.state.tags.get(name), { rc: "1.2.3-rc.4" });
+  for (const name of names) assert.deepEqual(f.state.tags.get(name), { latest: "1.2.3-rc.4", rc: "1.2.3-rc.4" });
 });
 
 test("repair-only waits for held uploads and restores the withdrawn root tag", async t => {

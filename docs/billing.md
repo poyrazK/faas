@@ -8,16 +8,49 @@ gregale billing status
 gregale billing portal
 ```
 
-Usage is measured in GB-RAM-hours for running app instances. The plan also sets deployed-app, developer-app, concurrency, storage-layer, and idle-timeout limits. Apps parked by scale-to-zero do not accrue running-instance usage; storage and other explicitly metered services remain separate line items.
+Usage is measured in GB-RAM-hours for running app instances. The plan also sets deployed-app, developer-app, concurrency, storage-layer, and idle-timeout limits. Apps parked by scale-to-zero, and function instances held frozen between requests, do not accrue running-instance usage; storage and other explicitly metered services remain separate line items.
 
 Free accounts have a zero monthly charge and are subject to the published limits. Paid plans are billed monthly through the account billing portal. Treat the portal as the source of truth for invoices, tax, payment methods, credits, and failed-payment recovery.
+
+## Spend cap
+
+A spend cap is a hard ceiling on the overage an account is billed in a UTC
+calendar month. The included GB-RAM-hours are not counted against it.
+
+```bash
+gregale overage-cap 500      # cap overage at $5.00 this month
+gregale overage-cap --clear  # remove the cap
+```
+
+`POST /v1/account/overage-cap` with `{"overage_cap_cents": 500}` (or `null`
+to clear) does the same. A cap of 0 is a pause switch: it counts as reached
+immediately, so the account's workloads stop even within the included
+allowance.
+
+When the month's overage reaches the cap:
+
+- usage is billed exactly up to the cap and no further. Raising the cap later
+  does not bill the usage the cap excluded;
+- running instances, minimum-instance floors, service replicas, workers and
+  warm pools are parked within one scheduler tick;
+- new wakes are refused with HTTP 402 `admission_refused`; the problem body
+  carries the observed overage and the cap;
+- queued job tasks wait in the queue; they are not failed;
+- object storage, which is billed once the month closes, is billed only up
+  to what the cap still allows after the month's compute and egress overage.
+  Object storage keeps serving within its plan limits.
+
+Raising or clearing the cap, or the start of the next month, lets workloads
+wake again on the next request or scheduler tick. If you change plans during
+a month, the month keeps the largest allowance any of its plans granted.
 
 ## Retained usage costs and forecasts
 
 This financial visibility preview reports supported usage costs and budget
-drafts. Budget enforcement is unavailable: drafts do not stop workloads or
-send spending notifications. Coverage and unavailable bill components are
-reported explicitly.
+policies. Enabled monitored notification policies send spending alerts; disabled
+drafts do not. Monitored preview stopping and strict app compute are local
+candidates pending native acceptance; see their sections below.
+Coverage and unavailable bill components are reported explicitly.
 
 ```bash
 gregale billing costs --month 2026-10 --json
@@ -109,7 +142,7 @@ For example, this spec would select previews while production continues:
 {
   "name": "Preview spending",
   "scope": {"kind": "account"},
-  "currency": "EUR",
+  "currency": "USD",
   "meters": ["compute"],
   "basis": "net_usage",
   "limit_millicents": 1000000,
@@ -122,10 +155,10 @@ For example, this spec would select previews while production continues:
 }
 ```
 
-The limit above is EUR 10.00. Available scopes are account, project,
+The limit above is $10.00. Available scopes are account, project,
 environment, application, and job; resource scopes use their stable UUID.
 Preview identity comes from Gregale's persisted preview metadata. Environment
-membership currently comes from live deployment scopes. Historical costs retain
+membership uses the deployment’s retained runtime environment identity. Historical costs retain
 older identities even when the current target list changes.
 
 Responses explain the difference between notifying, rejecting new traffic,
@@ -136,23 +169,25 @@ account allowance once; gross usage measures cost before that allowance.
 Strict resource scopes require gross compute, and a broad strict policy must
 stop every covered workload.
 
-Enforcement currently reports `enforcement_ready: false`. Policy activation,
-durable decisions, independent holds, stopping acknowledgements, and strict
-compute reservations are still under implementation. A successful preview does
+Notification-only policies report `enforcement_ready: false`. Monitored
+compute-only preview stopping reports integration readiness separately from
+actual per-target stopping acknowledgements. The strict app compute candidate
+reports conservative commitments and funding separately. Other stopping actions
+and strict scopes remain unavailable. A successful preview does
 not activate a spending limit. Monitored responses can exceed a threshold while
 usage arrives or workloads drain. Full-invoice hard limits are not implied by
 compute controls.
 
 ## Budget policy drafts and audit
 
-The console's Usage page can preview responses and save disabled budget drafts.
-It uses live account-owned project, environment, app and job lists. The editor
-parses EUR text to exact millicents and shows affected and continuing workloads;
-a partial cost observation remains labelled partial. Saved drafts do not stop
-usage or send threshold notifications.
+The console's Usage page creates account or app compute notification policies,
+shows monitoring health and threshold delivery state, and enables or disables
+notification policies at their current revision. Other scopes and existing
+policy specifications remain accessible through the API and CLI. USD text is
+parsed to exact millicents. Disabled drafts do not stop usage or send alerts.
 
 ```bash
-# budget-draft.json contains the spec above with enabled set to false.
+# Use enabled=false for unsupported policy drafts; see supported modes below.
 gregale billing budgets create --file budget-draft.json --key previews-october --json
 gregale billing budgets list --json
 gregale billing budgets get --json POLICY_ID
@@ -177,18 +212,148 @@ deletion retains that history, accessible through
 `next_revision` as the next cursor. A final full page can be followed by an empty
 page. At most 128 nondeleted policies are allowed per account.
 
-Activation currently returns 422 `financial_budget_activation_unavailable`
-without writing policy intent. Save `enabled=false` to retain a draft. A policy
-response separately reports `status`, `enforcement_ready` and readiness reasons.
-An internal enabled intent whose integrations are unavailable reports
-`unavailable`, never active protection. Cost reads, policy reads, updates and
+`mode=monitored` with `action=notify`, or compute-only `action=stop_previews`,
+accepts `enabled=true`. The strict app compute contract below also supports
+activation when its readiness checks pass. Other enabled
+responses return 422 `financial_budget_activation_unavailable` without changing
+policy intent. Save `enabled=false` to retain those drafts. A notification policy
+reports `status=active`, `notification_ready=true` and `enforcement_ready=false`.
+It never claims that workloads stopped or that spending is capped. Unsupported
+legacy enabled intent reports `unavailable`. Cost reads, policy reads, updates and
 deletion remain reachable while an account is suspended for billing recovery;
 they do not change payment/security/deletion status or resume its workloads.
 
 The Node and Python generated Billing clients expose the same operations,
 revision conditions, retry headers and readiness fields. Revision history is
-intent history; target stopping acknowledgements and action history are still
-under implementation.
+intent history; `runtime.stops` separately retains threshold decisions and
+current scheduler acknowledgements.
+
+### Budget alerts on Slack, PagerDuty and email channels
+
+A budget's threshold alerts always go to the account email. They can also go to
+up to five of the account's notification channels (the same Slack, PagerDuty
+and email channels alert rules use;
+[ADR 20261019193500](adr/20261019193500-budget-alert-channels.md)):
+
+```bash
+gregale channels list                                         # find channel IDs
+gregale billing budgets channels --set CHANNEL_ID,CHANNEL_ID POLICY_ID
+gregale billing budgets channels POLICY_ID                    # last delivery per channel
+gregale billing budgets channels --clear POLICY_ID
+```
+
+The REST form is `GET`/`PUT /v1/billing/budgets/{id}/channels` with
+`{"channel_ids": [...]}`; `PUT` needs `admin`, session MFA and an
+`Idempotency-Key`. Changing channels does not change the policy revision.
+
+Each threshold is sent once to each channel. A failed send is retried with
+backoff (1 minute, doubling to 1 hour) and given up after 12 attempts; the
+channel shows the last error. A channel added mid-month receives a threshold
+already crossed this month at the next evaluation. Removing a channel pauses
+its pending alerts, and deleting it discards them. On PagerDuty, every threshold
+of one budget in one month updates a single incident: `warning` below the
+limit, `error` at it. Amounts are the selected usage meters, not the invoice.
+
+### Projected overruns
+
+Each evaluation also projects the budget to the end of the UTC month at this
+month's usage rate (`runtime.evaluation.projected_millicents`; `gregale billing
+budgets get` prints "Projected month end"). When the projection reaches the
+limit while known usage is still below it, the account email and the bound
+channels get one "projected to exceed its limit" alert for the month. It
+shows the projected amount, the limit and the usage so far. It is an estimate,
+not an invoice, and it never stops a workload.
+
+A projection needs complete, fresh evidence for every selected meter and at
+least a day of usage this month. Otherwise `projection_reason` says why it is
+unavailable (for example `compute:insufficient_history`). Editing the budget
+starts a new revision, so a still-projected overrun can alert again.
+
+### Object storage in budgets
+
+A monitored account budget can include object storage by adding
+`object_storage` to `meters`, for example `["compute", "object_storage"]`.
+Object storage cannot be selected on app, job, project or environment budgets
+(buckets carry no such attribution), or on strict budgets
+([ADR 20261020160000](adr/20261020160000-object-storage-in-budgets.md)).
+
+The amount is the live object-storage estimate: this month's stored
+GiB-months, requests and egress, priced with the same rates and plan
+allowance as `gregale usage object-storage` and month close. Gross is before the
+allowance and net is after. apid refreshes it every five minutes, and an
+estimate more than 15 minutes old counts as stale. `GET /v1/billing/costs`
+shows it as the `object_storage` meter. Threshold and projected-overrun alerts
+count it like compute and egress. The invoice line still comes from month
+close, which also applies the overage cap; the budget counts the uncapped
+estimate.
+
+## Active spending notifications
+
+For example, save this specification to `budget.json` and run
+`gregale billing budgets create --file budget.json --key monthly-compute --json`:
+
+```json
+{
+  "name": "Monthly compute",
+  "scope": {"kind": "account"},
+  "currency": "USD",
+  "meters": ["compute"],
+  "basis": "net_usage",
+  "limit_millicents": 1000000,
+  "notify_millicents": [800000],
+  "mode": "monitored",
+  "action": "notify",
+  "drain_seconds": 0,
+  "resume_rule": "next_period",
+  "enabled": true
+}
+```
+
+This sends spending alerts to the account email at USD 8 and USD 10 of known
+recorded compute usage. The limit is always a notification threshold too, with
+identical amounts deduplicated. All existing account/project/environment/app/job
+scopes and the supported compute/interface-egress meters are accepted by the
+API and CLI. This does not include subscription, tax, managed-resource or other
+missing bill components.
+
+`meterd` evaluates once per sampling interval, independently of provider billing
+and email delivery. The evaluation and its threshold events commit together,
+guarded by the policy revision. Events are unique per policy revision, threshold
+amount and UTC usage month. Usage replay and downward corrections followed by a
+recrossing do not resend an event. Editing or re-enabling creates a new revision
+and evaluates the existing month's spending again; it does not reset spending.
+Deleted or superseded policy revisions cannot acquire new delivery claims. An
+alert already claimed for delivery when the policy changes may still arrive.
+
+A fresh **known subtotal** can cross a threshold even with partial coverage;
+the email and runtime explicitly label it partial. Stale evidence cannot create
+new events. Failed evaluations omit `known_millicents`; they never substitute
+zero. Missing scope attribution remains a coverage gap. An amount below the
+threshold with partial or unavailable evidence does not establish that total
+spending is below the budget.
+
+Policy reads include `runtime.evaluation` and the current revision/month's
+`runtime.alerts`. They expose evidence and evaluation timestamps, coverage,
+known usage, threshold events, attempts, retry time and delivery state. No
+evaluation means the revision has not yet been evaluated in the current month.
+API reads mark old monitor observations stale even if the worker has stopped.
+`gregale billing budgets get ID` prints this health; `--json` returns the details.
+
+An independent delivery worker claims durable events with fenced leases. Failed
+attempts retry with capped exponential backoff; a process restart recovers expired
+claims. The existing configured mail pipeline, suppression rules and transport
+apply. `delivered` means the pipeline returned success, not confirmed inbox
+receipt. Log transport is for operator-selected development/diagnostic delivery.
+Every attempt uses the same message ID. Resend deduplicates within its provider
+window; Postmark does not support idempotency keys, so delivery is **at least
+once**, including the unavoidable send-success/commit-failure boundary.
+
+The workers are visible separately as `financial_budget_evaluation` and
+`financial_budget_delivery` in meterd health. Email failure cannot block sampling.
+Deploy the additive monitoring migration before activating policies, run matching
+`apid` and `meterd` versions, and verify a threshold and one retry with an isolated
+account before promoting the capability. This release does not add scheduler,
+gateway or VM lifecycle enforcement.
 
 ## FOCUS invoice export
 
@@ -339,7 +504,7 @@ best-effort view rather than a frozen snapshot; `has_more: false` means the
 provider reported no further page at that time. Repeat backfill later to find
 newly surfaced or recently created documents.
 
-Imports require EUR totals and tax, a supported invoice state, and an explicit
+Imports require USD totals and tax, a supported invoice state, and an explicit
 billing period. Rows without enough information are counted as skipped rather
 than assigned guessed dates or amounts. Imported invoices have an explicit
 unknown historical Gregale plan because provider history does not reliably
@@ -374,3 +539,104 @@ The mapping is based on the official
 `make focus-contract-check` checks the pinned upstream columns, exact
 reconciliation, snapshot metadata, ownership, export/refresh bounds, provider
 reads, lifecycle concurrency, and CLI operations.
+
+## Monitored preview stopping
+
+Set `mode=monitored`, `action=stop_previews`, `meters=[compute]`, a drain interval
+from 0 to 300 seconds, and an explicit `manual` or `next_period` resume rule.
+Only persisted preview workloads are selected; production names, environment
+names and absence of protection do not establish preview identity.
+
+At a fresh recorded threshold, meterd latches the decision with its evidence and
+notification outbox. New warm/cold requests, mesh HTTP/TCP calls, queued request
+claims and command dispatch are blocked. Existing previews drain until the
+configured deadline; the owning scheduler then destroys their resident VMs via
+vmmd, retaining deployment snapshots/rootfs for the next allowed cold wake.
+Command VMs carry retained node/lease ownership and preparation deadlines too.
+
+Inspect `runtime.stops[].targets`: `draining` means resident resources remain;
+`enforced` requires confirmed teardown and durable settlement; `failed` requires
+retry/recovery. Stale scheduler observations become `unavailable`. A decision or
+email alone is not proof of shutdown. `gregale billing budgets get ID` and the
+console expose these states, including a manual hold from a previous month.
+
+Corrections and unavailable costs never automatically release a hold. Disabling,
+editing or deleting a policy releases that policy revision only; other budget,
+payment, security and user holds remain. An already-started teardown may finish.
+`next_period` releases at the next UTC month; `manual` persists until an explicit
+policy mutation. Re-enabling evaluates existing monthly spending again.
+
+This is a monitored response: usage ingestion, scheduler sweeps, draining and
+teardown can exceed the threshold. Production and uncovered meters can continue
+spending. It does not establish a strict compute or full-invoice ceiling.
+
+
+## Strict app compute candidate
+
+This implementation is local; native KVM acceptance and release review remain
+required. Strict budgets are released per account through the `strict_budgets`
+platform flag. Until it includes your account, creating or enabling one returns
+422 `financial_budget_activation_unavailable` ("Strict budgets not released").
+
+A project can be capped the same way with `scope={kind:project,id:PROJECT_ID}`:
+one limit shared by every app in the project, and when it is reached every app
+in the project is held. Jobs are not part of a project, so they need their own
+job caps. Activation needs every app in the project to be idle
+([ADR-1750, amendment 1](adr/1750-strict-app-compute-reservations.md#amendment-1-2026-10-20-strict-project-caps)).
+
+An environment can be capped with `scope={kind:environment,id:ENVIRONMENT_ID}`:
+one limit shared by every deployment that runs in the environment, across the
+project's apps. When it is reached, only that environment's deployments are
+held; the same apps keep serving other environments. A deployment without a
+recorded environment counts toward the project's environment of the same name.
+Capacity floors are app-wide, so an environment cap neither counts nor waives
+them; use an app or project cap to bound them. Activation needs every
+deployment in the environment to be idle
+([ADR-1750, amendment 2](adr/1750-strict-app-compute-reservations.md#amendment-2-2026-10-21-strict-environment-caps)).
+
+Configure `scope={kind:app,id:APP_ID}`, `mode=strict`,
+`basis=gross_usage`, `meters=[compute]`, `action=suspend_workloads`,
+`drain_seconds=0`, and `notify_millicents=[]`. A separate monitored policy can
+send spending alerts. Subscription, storage, network egress, taxes, builds and
+independent job resources are outside this app compute limit.
+
+Activation requires a quiet app, settled prior VM ownership, complete retained
+closed-minute accounting from app creation or UTC month start, and matching
+native compute owners on all active nodes. Unsupported dedicated qualification
+restore/job paths fail closed. Live migration cannot duplicate an active funded
+instance identity; drain it before moving that workload.
+
+Every VM reserves startup/execution and teardown funding before allocation.
+Renewal failure preserves a local deadline; no timeout releases the money.
+Shutdown and financial settlement must be confirmed. The API's `runtime.compute`
+and `gregale billing budgets get POLICY_ID` show committed, reserved and remaining
+millicents, unconfirmed VM attempts and durable holds. Commitments use a paid-rate
+upper bound, include startup, and round up per funded minute; they can exceed
+known billed compute. Cost evidence retains its own freshness/coverage status.
+
+Changing/deleting/replacing a policy never resets the app/month book. A new
+limit must cover existing funding. Manual holds cross UTC months until their
+policy changes; next-period holds reset at the next UTC month. Independent
+payment, security and user holds still apply.
+
+Execution funding ends before the UTC reset with thirty seconds for teardown.
+Work may pause at that boundary until earlier attempts settle and the new
+month's accounting and funding are ready.
+
+The meter charges only funded windows, even when instance rows are stale after
+local shutdown. Gregale absorbs unfunded teardown tail. Strict budgets preempt
+capacity floors; the book waives synthetic floor charges for that UTC month,
+including replay after policy deletion. This bounds supported customer compute
+charges, rather than promising a ceiling on host cost or the complete invoice.
+See the [decision](adr/1750-strict-app-compute-reservations.md) and
+[native acceptance procedure](runbooks/financial-strict-compute-acceptance.md).
+
+### Currency and retained funding
+
+New budgets and strict funding use USD, matching ADR-1430. Historical EUR
+invoices, price snapshots and budget revisions are retained without conversion.
+A period containing incompatible historical contracts cannot activate strict
+funding. The forward-only USD funding migration refuses pre-release books or
+enabled non-USD policies; those require explicit operator repair rather than
+reinterpreting retained balances. Apply the complete reviewed migration set
+before enabling the matching daemon graph.

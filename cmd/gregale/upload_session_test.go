@@ -12,7 +12,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -127,24 +129,6 @@ func TestDeployResumableTarball_ResumesPersistedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fingerprint options: %v", err)
 	}
-	statePath, err := uploadStatePath("demo", digestHex, optionsHash)
-	if err != nil {
-		t.Fatalf("state path: %v", err)
-	}
-	// The state was written by an earlier run that packed the same bytes into
-	// another temp file: `deploy --path` repacks on every run, and keying the
-	// state by archive path meant directory deploys never resumed
-	// (production-us hunt #9).
-	if err := saveResumableUploadState(statePath, resumableUploadState{
-		Version: resumableUploadStateVersion, UploadID: "upload-resume", AppSlug: "demo",
-		APIBase:     apiBase(),
-		ArchivePath: filepath.Join(dir, "gregale-cwd-previous-run.tar.gz"), ArchiveSize: info.Size(), ArchiveSHA256: digestHex,
-		ArchiveModTimeUnixNano: info.ModTime().UnixNano(), DeployOptionsSHA256: optionsHash,
-		TotalSize: info.Size(), ChunkSize: 3, CreatedAt: "2030-01-01T00:00:00Z",
-	}); err != nil {
-		t.Fatalf("save state: %v", err)
-	}
-
 	var offsets []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -177,9 +161,25 @@ func TestDeployResumableTarball_ResumesPersistedSession(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	client := api.NewClient(srv.URL, "fp_test").SetCompletionCache(nil)
+	identity := uploadRecoveryIdentity(client, context.Background(), "demo", digestHex, optionsHash)
+	statePath, err := uploadStatePath(identity)
+	if err != nil {
+		t.Fatalf("state path: %v", err)
+	}
+	if err := saveResumableUploadState(statePath, resumableUploadState{
+		Version: resumableUploadStateVersion, UploadID: "upload-resume", AppSlug: "demo",
+		APIBase: srv.URL, RecoveryIdentitySHA256: identity,
+		ArchivePath: path, ArchiveSize: info.Size(), ArchiveSHA256: digestHex,
+		DeployOptionsSHA256: optionsHash,
+		TotalSize:           info.Size(), ChunkSize: 3, CreatedAt: "2030-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
 	var progress []int64
 	dep, gotDigest, supported, err := DeployResumableTarball(
-		api.NewClient(srv.URL, "fp_test").SetCompletionCache(nil),
+		client,
 		context.Background(), "demo", path,
 		func(uploaded, _ int64) { progress = append(progress, uploaded) },
 	)
@@ -227,4 +227,83 @@ func atoiForTest(t *testing.T, raw string) int {
 		t.Fatalf("parse offset %q: %v", raw, err)
 	}
 	return n
+}
+
+// Production-us hunt #9: each submission that failed after its upload left
+// an open server session keyed to that archive. After five edited redeploys
+// the app hit the per-app cap ("Too many upload sessions … Cancel one") and
+// no command could cancel them. The CLI now cancels its own unresumable
+// sessions for the app and retries once.
+func TestDeployResumableTarball_ReclaimsUnresumableSessionsAtCap(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	dir := t.TempDir()
+	path := filepath.Join(dir, "source.tar.gz")
+	contents := []byte("abcdefg")
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	optionsHash, err := deployOptionsFingerprint(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var cancelled []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/uploads":
+			if len(cancelled) == 0 {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"type":"about:blank","title":"Too many upload sessions","status":429,"code":"upload_session_too_many","detail":"Account has 5 open upload sessions on app \"demo\" (cap 5). Cancel one before opening another."}`))
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"upload_id": "upload-1", "chunk_size": 8, "total_size": len(contents)})
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/uploads/"):
+			cancelled = append(cancelled, strings.TrimPrefix(r.URL.Path, "/v1/uploads/"))
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/uploads/upload-1":
+			body, _ := io.ReadAll(r.Body)
+			w.Header().Set("Upload-Offset", strconv.Itoa(atoiForTest(t, r.Header.Get("Upload-Offset"))+len(body)))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/uploads/upload-1/commit":
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "dep-1", AppID: "demo", Status: "pending"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	stale := map[string]string{"demo": "old-1", "demo ": "old-2", "other": "old-other"}
+	for label, uploadID := range stale {
+		app := strings.TrimSpace(label)
+		archive := fmt.Sprintf("%064x", len(uploadID)+len(label))
+		statePath, err := uploadStatePath(app + archive + optionsHash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := saveResumableUploadState(statePath, resumableUploadState{
+			Version: resumableUploadStateVersion, UploadID: uploadID, AppSlug: app, APIBase: srv.URL,
+			ArchivePath: filepath.Join(dir, uploadID+".tar.gz"), ArchiveSize: 9, ArchiveSHA256: archive,
+			DeployOptionsSHA256: optionsHash, TotalSize: 9, ChunkSize: 3, CreatedAt: "2030-01-01T00:00:00Z",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dep, _, supported, err := DeployResumableTarball(api.NewClient(srv.URL, "fp_test").SetCompletionCache(nil), context.Background(), "demo", path, nil)
+	if err != nil || !supported || dep.ID != "dep-1" {
+		t.Fatalf("deploy = %+v supported=%v err=%v", dep, supported, err)
+	}
+	sort.Strings(cancelled)
+	if got := strings.Join(cancelled, ","); got != "old-1,old-2" {
+		t.Fatalf("cancelled %q, want only this app's unresumable sessions old-1,old-2", got)
+	}
+	otherPath, err := uploadStatePath("other" + fmt.Sprintf("%064x", len("old-other")+len("other")) + optionsHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(otherPath); err != nil {
+		t.Fatalf("another app's recovery state was removed: %v", err)
+	}
 }

@@ -2385,19 +2385,17 @@ func TestUpdateEgressAllowlist_AppliesV4Patch(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateEgressAllowlist: %v", err)
 	}
-	// The patch sequence must include: delete-by-handle 7 on the
-	// v4 chain, then add the new 8.8.8.0/24 rule. Each argv is
-	// per-netns: `ip netns exec fc-i-1 nft …`. Note: the tap
-	// name is "tap0" verbatim in argv (no quotes) — nft's
-	// output printer adds quotes when listing rules; the
-	// argv-side tokenisation is the literal string.
-	wantDelete := `ip netns exec fc-i-1 nft delete rule ip faas forward handle 7`
-	if !run.ran(wantDelete) {
-		t.Errorf("missing %q in command stream", wantDelete)
+	// The patch rewrites handle 7 in place, so the accept keeps its
+	// position before the DNS gate and terminal drops (H10-36); the old
+	// delete-then-add appended it after them. Each argv is per-netns:
+	// `ip netns exec fc-i-1 nft …`. The tap name is "tap0" verbatim in
+	// argv (no quotes); nft's printer adds quotes when listing rules.
+	wantReplace := `ip netns exec fc-i-1 nft insert rule ip faas forward handle 7 iifname tap0 ip daddr { 8.8.8.0/24 } tcp dport != 25 accept ; delete rule ip faas forward handle 7`
+	if !run.ran(wantReplace) {
+		t.Errorf("missing %q in command stream", wantReplace)
 	}
-	wantAdd := `ip netns exec fc-i-1 nft add rule ip faas forward iifname tap0 ip daddr { 8.8.8.0/24 } tcp dport != 25 accept`
-	if !run.ran(wantAdd) {
-		t.Errorf("missing %q in command stream", wantAdd)
+	if run.ran("nft add rule") || run.ran("nft delete rule") {
+		t.Errorf("patch appended or deleted a rule outside the in-place swap")
 	}
 	// Cached state refreshed: the next patch's fast-path
 	// compares against the new baseline.
@@ -2467,9 +2465,10 @@ func TestUpdateEgressAllowlist_SameAllowlistNoOp(t *testing.T) {
 	m := newTestManager(run, &fakeVMM{})
 	nc := netns.NewConfig("i-2", "fc-i-2", "vh2", "vp2", netip.MustParseAddr("10.100.0.3"))
 	inst := &Instance{
-		Lease: Lease{Instance: "i-2", UID: 20002},
-		Net:   nc,
-		AppID: "app-2",
+		Lease:             Lease{Instance: "i-2", UID: 20002},
+		Net:               nc,
+		AppID:             "app-2",
+		AllowlistHandleV4: 5,
 	}
 	inst.Net.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
 	m.mu.Lock()
@@ -2477,13 +2476,13 @@ func TestUpdateEgressAllowlist_SameAllowlistNoOp(t *testing.T) {
 	m.mu.Unlock()
 
 	// First push — a different allowlist, should run nft
-	// (prior handle is 0 so no delete, just the add).
+	// (an in-place replace of handle 5).
 	if err := m.UpdateEgressAllowlist(context.Background(), "app-2", []netip.Prefix{
 		netip.MustParsePrefix("8.8.8.0/24"),
 	}); err != nil {
 		t.Fatalf("first push: %v", err)
 	}
-	if !run.ran("nft add rule") {
+	if !run.ran("nft insert rule") {
 		t.Fatal("first push should have run nft")
 	}
 	// Second push — same allowlist as the cached baseline
@@ -2500,17 +2499,18 @@ func TestUpdateEgressAllowlist_SameAllowlistNoOp(t *testing.T) {
 	}
 }
 
-// TestUpdateEgressAllowlist_NftErrorReverts — when the add
-// step fails, the prior allowlist argv is re-emitted (best
-// effort) so the live netns returns to the pre-patch state.
-func TestUpdateEgressAllowlist_NftErrorReverts(t *testing.T) {
+// TestUpdateEgressAllowlist_NftErrorKeepsPriorState — a failed
+// replace is atomic in nft, so nothing is re-emitted (a re-add would
+// duplicate the rule) and the cached allowlist still names what is live.
+func TestUpdateEgressAllowlist_NftErrorKeepsPriorState(t *testing.T) {
 	run := &fakeRunner{failOn: "8.8.8.0/24"}
 	m := newTestManager(run, &fakeVMM{})
 	nc := netns.NewConfig("i-3", "fc-i-3", "vh3", "vp3", netip.MustParseAddr("10.100.0.4"))
 	inst := &Instance{
-		Lease: Lease{Instance: "i-3", UID: 20003},
-		Net:   nc,
-		AppID: "app-3",
+		Lease:             Lease{Instance: "i-3", UID: 20003},
+		Net:               nc,
+		AppID:             "app-3",
+		AllowlistHandleV4: 9,
 	}
 	inst.Net.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
 	m.mu.Lock()
@@ -2521,11 +2521,15 @@ func TestUpdateEgressAllowlist_NftErrorReverts(t *testing.T) {
 		netip.MustParsePrefix("8.8.8.0/24"),
 	})
 	if err == nil {
-		t.Fatal("UpdateEgressAllowlist should have failed when the add step errors")
+		t.Fatal("UpdateEgressAllowlist should have failed when the replace step errors")
 	}
-	// Revert path: the prior v4 rule was re-emitted.
-	if !run.ran("1.2.3.0/24") {
-		t.Error("revert did not re-emit the prior v4 rule")
+	if run.ran("1.2.3.0/24") || run.ran("nft add rule") {
+		t.Error("a failed replace re-emitted a rule")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if got := m.live["i-3"].Net.EgressAllowlist[0].String(); got != "1.2.3.0/24" {
+		t.Errorf("cached allowlist = %q, want the live 1.2.3.0/24", got)
 	}
 }
 
@@ -2538,9 +2542,10 @@ func TestUpdateEgressAllowlist_FansOutAcrossLiveInstances(t *testing.T) {
 	for i, id := range []string{"a", "b"} {
 		nc := netns.NewConfig("i-"+id, "fc-i-"+id, "vh-"+id, "vp-"+id, netip.MustParseAddr(fmt.Sprintf("10.100.0.%d", 10+i)))
 		inst := &Instance{
-			Lease: Lease{Instance: "i-" + id, UID: 20010 + i},
-			Net:   nc,
-			AppID: "app-shared",
+			Lease:             Lease{Instance: "i-" + id, UID: 20010 + i},
+			Net:               nc,
+			AppID:             "app-shared",
+			AllowlistHandleV4: uint64(40 + i),
 		}
 		inst.Net.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix(fmt.Sprintf("1.1.%d.0/24", i+1))}
 		m.mu.Lock()
@@ -2715,10 +2720,10 @@ func TestUpdateEgressAllowlist_TwoPatchesInRow(t *testing.T) {
 	m := newTestManager(run, &fakeVMM{})
 	nc := netns.NewConfig("i-2p", "fc-i-2p", "vh-2p", "vp-2p", netip.MustParseAddr("10.100.0.20"))
 	inst := &Instance{
-		Lease: Lease{Instance: "i-2p", UID: 20020},
-		Net:   nc,
-		AppID: "app-2p",
-		// No handle captured — fresh Wake simulation.
+		Lease:             Lease{Instance: "i-2p", UID: 20020},
+		Net:               nc,
+		AppID:             "app-2p",
+		AllowlistHandleV4: 5, // wake-time capture; no capture runner afterwards
 	}
 	inst.Net.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
 	m.mu.Lock()
@@ -2731,18 +2736,16 @@ func TestUpdateEgressAllowlist_TwoPatchesInRow(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("patch 1: %v", err)
 	}
-	// Second patch: another different allowlist. The cached
-	// handle is still 0 (no capture runner), so the delete
-	// step is skipped and the add succeeds. The cached
-	// allowlist is the most recent.
+	// Second patch: another different allowlist. With no capture
+	// runner the cached handle stays 5, and the rule is replaced in
+	// place again. The cached allowlist is the most recent.
 	if err := m.UpdateEgressAllowlist(context.Background(), "app-2p", []netip.Prefix{
 		netip.MustParsePrefix("9.9.9.0/24"),
 	}); err != nil {
 		t.Fatalf("patch 2: %v", err)
 	}
-	// Both new rules must have been emitted. The 1.2.3.0/24
-	// prior should NEVER appear (no delete step runs because
-	// handleV4=0 throughout).
+	// Both new rules must have been emitted as in-place replacements.
+	// The 1.2.3.0/24 prior should NEVER appear.
 	if run.ran("1.2.3.0/24") {
 		t.Errorf("patch should not have re-emitted the prior CGI: 1.2.3.0/24")
 	}
@@ -2804,29 +2807,24 @@ func TestUpdateEgressAllowlist_TwoPatchesInRow_WithCaptureRunner(t *testing.T) {
 	if m.live["i-2pc"].AllowlistHandleV4 == 0 {
 		t.Errorf("after patch 2 with captureRunner wired, AllowlistHandleV4 should be non-zero")
 	}
-	// The first patch's path: delete-by-handle 9 + add.
-	// The second patch's path: delete-by-handle <new-from-patch-1>
-	// + add.
-	wantDeletePatch1 := `delete rule ip faas forward handle 9`
-	if !run.ran(wantDeletePatch1) {
-		t.Errorf("patch 1 delete-by-handle 9 missing")
+	// The first patch replaces handle 9; the second replaces the
+	// handle captured after patch 1, not 9.
+	if !run.ran(`insert rule ip faas forward handle 9 `) {
+		t.Errorf("patch 1 replace-by-handle 9 missing")
 	}
-	// The second patch's delete-by-handle must NOT be 9 (the
-	// original handle) — it must be the handle captured after
-	// patch 1.
-	var sawDeletePatch2 bool
+	var sawReplacePatch2 bool
 	run.mu.Lock()
 	for _, c := range run.commands {
 		join := strings.Join(c, " ")
-		if strings.Contains(join, "delete rule ip faas forward handle") &&
+		if strings.Contains(join, "insert rule ip faas forward handle") &&
 			!strings.Contains(join, "handle 9 ") {
-			sawDeletePatch2 = true
-			t.Logf("patch 2 delete argv: %s", join)
+			sawReplacePatch2 = true
+			t.Logf("patch 2 replace argv: %s", join)
 		}
 	}
 	run.mu.Unlock()
-	if !sawDeletePatch2 {
-		t.Errorf("patch 2 must delete by the post-patch-1 handle, not by handle 9")
+	if !sawReplacePatch2 {
+		t.Errorf("patch 2 must replace by the post-patch-1 handle, not by handle 9")
 	}
 }
 
@@ -2866,18 +2864,14 @@ func (f *handleSeqCaptureRunner) RunCapture(_ context.Context, argv []string) ([
 }`, family, family, cidr, handle)), nil
 }
 
-// TestUpdateEgressAllowlist_V6FailureLeavesV4Untouched — the
-// per-family revert path. A v4 + v6 allowlist patch where the
-// v6 add step fails: the v4 patch should still have landed
-// (its add rule is in the command stream), and the v6 revert
-// should re-emit the prior v6 rule. The pre-fix code did the
-// revert for both families, which would have undone the v4
-// success.
+// TestUpdateEgressAllowlist_V6FailureLeavesV4Untouched — a v4 + v6
+// patch whose v6 replace fails: the v4 replace has landed, nothing is
+// re-emitted for either family (replace is atomic, so the v6 rule is
+// unchanged), and the error reaches the caller.
 func TestUpdateEgressAllowlist_V6FailureLeavesV4Untouched(t *testing.T) {
-	// failOn matches the v6 add argv (the new v6 prefix
-	// "fe80::/10"). The fakeRunner fails on the FIRST matching
-	// command in command order; the patch sequence is v4 first
-	// then v6, so the v4 add succeeds and the v6 add fails.
+	// failOn matches the v6 argv (the new v6 prefix "fe80::/10"). The
+	// patch sequence is v4 first then v6, so the v4 replace succeeds and
+	// the v6 replace fails.
 	run := &fakeRunner{failOn: "fe80::/10"}
 	m := newTestManager(run, &fakeVMM{})
 	nc := netns.NewConfig("i-pf", "fc-i-pf", "vh-pf", "vp-pf", netip.MustParseAddr("10.100.0.30"))
@@ -2901,38 +2895,16 @@ func TestUpdateEgressAllowlist_V6FailureLeavesV4Untouched(t *testing.T) {
 		netip.MustParsePrefix("fe80::/10"),
 	})
 	if err == nil {
-		t.Fatal("expected error from v6 add failure")
+		t.Fatal("expected error from v6 replace failure")
 	}
-	// The v4 patch should have run: delete-by-handle 11 + add 8.8.8.0/24.
-	if !run.ran("delete rule ip faas forward handle 11") {
-		t.Error("v4 delete-by-handle 11 missing")
+	if !run.ran("insert rule ip faas forward handle 11 iifname tap0 ip daddr { 8.8.8.0/24 }") {
+		t.Error("v4 replace-by-handle 11 missing")
 	}
-	if !run.ran("8.8.8.0/24") {
-		t.Error("v4 add 8.8.8.0/24 missing")
+	if !run.ran("insert rule ip6 faas forward handle 22") {
+		t.Error("v6 replace-by-handle 22 was not attempted")
 	}
-	// The v6 revert should re-emit the prior v6 rule
-	// (2001:db8::/32). The pre-fix code would have
-	// re-emitted prior v4 too (1.2.3.0/24), which would have
-	// undone the v4 success.
-	if !run.ran("2001:db8::/32") {
-		t.Error("v6 revert did not re-emit the prior v6 rule (2001:db8::/32)")
-	}
-	// The prior v4 should NOT have been re-emitted by the
-	// revert (per-family revert preserves the v4 success).
-	// Count v4 add invocations: 1 from the patch path (the
-	// new 8.8.8.0/24 rule), 0 from the revert path.
-	v4AddCount := 0
-	run.mu.Lock()
-	for _, c := range run.commands {
-		join := strings.Join(c, " ")
-		if strings.Contains(join, "ip daddr") && strings.Contains(join, "accept") {
-			v4AddCount++
-		}
-	}
-	run.mu.Unlock()
-	if v4AddCount != 1 {
-		t.Errorf("v4 add ran %d times; want 1 (no revert of v4 success); commands: %v",
-			v4AddCount, run.commands)
+	if run.ran("2001:db8::/32") || run.ran("1.2.3.0/24") || run.ran("nft add rule") {
+		t.Errorf("a prior rule was re-emitted; commands: %v", run.commands)
 	}
 }
 
@@ -3694,4 +3666,52 @@ func TestManager_ReportWorkloadOOM_NilRelayNoOp(t *testing.T) {
 	}()
 	m.ReportWorkloadOOM(context.Background(), "inst-1", 384, 256)
 
+}
+
+// TestUpdateEgressAllowlist_TransitionsWaitForRestart — adding the first
+// allowlist or clearing it changes the chain's shape (the terminal
+// allowlist drop), which the in-place patch cannot reproduce. A cleared
+// list used to delete the accept and leave the terminal drop blocking all
+// egress (H10-36); now no nft command runs and the cached allowlist still
+// names the live rules.
+func TestUpdateEgressAllowlist_TransitionsWaitForRestart(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		prior    []netip.Prefix
+		handleV4 uint64
+		next     []netip.Prefix
+	}{
+		{name: "clear", prior: []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}, handleV4: 7, next: nil},
+		{name: "first entry", prior: nil, next: []netip.Prefix{netip.MustParsePrefix("8.8.8.0/24")}},
+		{name: "family gains its first entry", prior: []netip.Prefix{netip.MustParsePrefix("2001:db8::/32")}, next: []netip.Prefix{
+			netip.MustParsePrefix("2001:db8::/32"), netip.MustParsePrefix("8.8.8.0/24"),
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			run := &fakeRunner{}
+			m := newTestManager(run, &fakeVMM{})
+			inst := &Instance{
+				Lease:             Lease{Instance: "i-tr", UID: 20040},
+				Net:               netns.NewConfig("i-tr", "fc-i-tr", "vh-tr", "vp-tr", netip.MustParseAddr("10.100.0.40")),
+				AppID:             "app-tr",
+				AllowlistHandleV4: tc.handleV4,
+				AllowlistHandleV6: 33,
+			}
+			inst.Net.EgressAllowlist = tc.prior
+			m.mu.Lock()
+			m.live["i-tr"] = inst
+			m.mu.Unlock()
+			if err := m.UpdateEgressAllowlist(context.Background(), "app-tr", tc.next); err != nil {
+				t.Fatalf("UpdateEgressAllowlist: %v", err)
+			}
+			if run.ran("faas forward") {
+				t.Errorf("a transition patched the live forward chain: %v", run.commands)
+			}
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if got := m.live["i-tr"].Net.EgressAllowlist; !samePrefixSet(got, tc.prior) {
+				t.Errorf("cached allowlist = %v, want the live %v", got, tc.prior)
+			}
+		})
+	}
 }

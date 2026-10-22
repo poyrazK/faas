@@ -6,6 +6,8 @@
 # Dedicated native acceptance is required before enabling broadly.
 # Default: false
 # native_process_recovery = true
+# Native-recovery public bridges require nftables 1.1.3+, Linux 6.13+ and
+# faas_public_forwarding: true in the matching nftables role inventory.
 
 # native_snapshot_publication_root: EXPERIMENTAL persistent, root-owned 0700
 # directory outside the jail and image-staging roots. It stores immutable
@@ -44,6 +46,14 @@
 # changes latency, never behaviour. FAAS_RESTORE_PREFETCH=0 overrides.
 # Default: false
 # disable_restore_prefetch = false
+
+# quiet_pause: pause an eligible instance's vCPUs between requests and resume
+# it when the next one arrives (ADR-957). The instance stays RUNNING and
+# billed; a paused VM uses no host CPU. schedd decides which instances are
+# eligible (function apps only, for now); this switch keeps the whole node out
+# of it. FAAS_QUIET_PAUSE overrides.
+# Default: false
+# quiet_pause = false
 
 # kernel_path: path to the Firecracker-compatible kernel image. The daemon
 # refuses to start if this file does not exist. Default: /srv/fc/base/vmlinux-6.1

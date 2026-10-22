@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestBindingRuntimeInventoryPassedProbeLeavesOldServingInstanceStale(t *testing.T) {
@@ -117,7 +118,7 @@ func TestBindingRuntimeInventoryPartialReadsAndBatchedRefresh(t *testing.T) {
 			if failure == "refresh" {
 				reads.refreshErr = errors.New("PRIVATE_ERROR password")
 			}
-			e.s.store = reads
+			e.s.store = statetest.NewMem(reads)
 			response := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/bindings", nil, nil)
 			got := decodeBindingInventory(t, response)
 			if reads.runtimeCalls != 1 || reads.refreshCalls != 1 || !reflect.DeepEqual(reads.requestedIDs, []string{wakeID}) || len(got.Bindings) != 2 {

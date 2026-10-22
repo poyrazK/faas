@@ -45,6 +45,9 @@ type RequestTelemetryClient interface {
 	IncrementRequestTelemetry(ctx context.Context) (RequestTelemetryStream, error)
 	// RecordRequestIDJournal is the synchronous, fail-closed public-ID write.
 	RecordRequestIDJournal(ctx context.Context, req *apidpb.RecordRequestIDJournalRequest) (*apidpb.RecordRequestIDJournalResponse, error)
+	// RecordRequestIDJournalBatch writes many journal records in one call
+	// (ADR-1521). An apid without it answers codes.Unimplemented.
+	RecordRequestIDJournalBatch(ctx context.Context, req *apidpb.RecordRequestIDJournalBatchRequest) (*apidpb.RecordRequestIDJournalBatchResponse, error)
 	Close() error
 }
 
@@ -130,6 +133,17 @@ func (c *RequestTelemetryClientImpl) RecordRequestIDJournal(ctx context.Context,
 	receipt, err := c.cli.RecordRequestIDJournal(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("apidgrpc: RecordRequestIDJournal: %w", err)
+	}
+	return receipt, nil
+}
+
+// RecordRequestIDJournalBatch writes a gateway's buffered journal records in
+// one call (ADR-1521). The wrapped error keeps the gRPC status, so callers can
+// detect an apid that predates the RPC with status.Code.
+func (c *RequestTelemetryClientImpl) RecordRequestIDJournalBatch(ctx context.Context, req *apidpb.RecordRequestIDJournalBatchRequest) (*apidpb.RecordRequestIDJournalBatchResponse, error) {
+	receipt, err := c.cli.RecordRequestIDJournalBatch(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("apidgrpc: RecordRequestIDJournalBatch: %w", err)
 	}
 	return receipt, nil
 }

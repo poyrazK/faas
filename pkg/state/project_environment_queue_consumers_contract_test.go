@@ -14,10 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type environmentQueueConsumerTestStore interface {
-	environmentQueueTestStore
-	state.ProjectEnvironmentQueueConsumerStore
-}
+type environmentQueueConsumerTestStore = contractTestStore
 
 type queueConsumerFixture struct {
 	account state.Account

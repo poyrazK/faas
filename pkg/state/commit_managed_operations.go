@@ -47,6 +47,9 @@ func (s *PgStore) setCommitSourceEnabled(ctx context.Context, account, id string
 	if err != nil {
 		return CommitSource{}, exclusiveSQLError(err)
 	}
+	if enabled && row.Destination == "event" && row.PlatformTenantRequired {
+		return CommitSource{}, ErrInvalidArgument
+	}
 	if enabled && row.OperationPolicy != "" {
 		policy, err := owner.policy(account, row.OperationPolicy)
 		if err != nil {

@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copycontents"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestCloneWorkerRejectsUnboundedKernelResources(t *testing.T) {
@@ -96,8 +97,8 @@ func TestCloneWorkerAuthenticatesActualCgroupBeforeIO(t *testing.T) {
 }
 
 type cloneWorkerClaimStore struct {
-	*state.PgStore
-	claims int
+	PgStore *state.PgStore
+	claims  int
 }
 
 func (s *cloneWorkerClaimStore) ClaimNextProjectEnvironmentClone(context.Context, string, time.Duration) (state.ProjectEnvironmentCloneLease, error) {
@@ -107,7 +108,7 @@ func (s *cloneWorkerClaimStore) ClaimNextProjectEnvironmentClone(context.Context
 
 func TestCloneWorkerHostAdmissionPrecedesEveryDurableClaim(t *testing.T) {
 	store := &cloneWorkerClaimStore{}
-	srv := &server{store: store}
+	srv := &server{store: statetest.NewPg(store)}
 	err := srv.runProjectEnvironmentCloneCoordinatorWithAdmission(t.Context(), func(context.Context) error { return managedpostgres.ErrConflict }, nil)
 	if !errors.Is(err, managedpostgres.ErrConflict) || store.claims != 0 {
 		t.Fatalf("claim after rejected host admission: %v, %d", err, store.claims)

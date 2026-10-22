@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -21,6 +23,13 @@ type roleResponse struct {
 		Name string `json:"name"`
 	} `json:"role"`
 	Operations []operation `json:"operations"`
+}
+
+func (p *Provider) IssueBoundedCredentials(ctx context.Context, request managedpostgres.CredentialRequest) (managedpostgres.CredentialMaterial, error) {
+	if request.ConnectionLimit < 1 || request.ConnectionLimit > api.DataPipelineAuthBindingConnections {
+		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrInvalid
+	}
+	return p.IssueCredentials(ctx, request)
 }
 
 type connectionURIResponse struct {
@@ -40,10 +49,10 @@ func (p *Provider) IssueCredentials(ctx context.Context, request managedpostgres
 	if err := validateCredentialRequest(request); err != nil {
 		return managedpostgres.CredentialMaterial{}, err
 	}
-	if request.Access != managedpostgres.CredentialReadWrite && request.Access != managedpostgres.CredentialReadOnly && request.Access != managedpostgres.CredentialMigration && request.Access != managedpostgres.CredentialDataAPI {
+	if !request.Access.Known() {
 		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnsupported
 	}
-	if request.Access == managedpostgres.CredentialDataAPI && !p.dataAPIEnabled {
+	if request.Access == managedpostgres.CredentialDataAPI && !p.dataAPIEnabled || request.Access == managedpostgres.CredentialAuth && !p.authEnabled {
 		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnsupported
 	}
 	ref, err := parseResourceRef(request.ProviderResourceID)
@@ -124,10 +133,19 @@ func (p *Provider) ownerCredentials(ctx context.Context, projectID, branchID str
 }
 
 func validateCredentialRequest(request managedpostgres.CredentialRequest) error {
+	if request.ConnectionLimit < 0 || request.ConnectionLimit > api.DataPipelineAuthBindingConnections {
+		return managedpostgres.ErrInvalid
+	}
+	if request.BindingID != "" {
+		id, err := uuid.Parse(request.BindingID)
+		if err != nil || id == uuid.Nil || id.String() != request.BindingID {
+			return managedpostgres.ErrInvalid
+		}
+	}
 	if _, err := parseResourceRef(request.ProviderResourceID); err != nil || request.IdentityKey == "" || len(request.IdentityKey) > 1024 || request.IdempotencyKey == "" || len(request.IdempotencyKey) > 255 {
 		return managedpostgres.ErrInvalid
 	}
-	if request.Access != managedpostgres.CredentialReadWrite && request.Access != managedpostgres.CredentialReadOnly && request.Access != managedpostgres.CredentialMigration && request.Access != managedpostgres.CredentialDataAPI {
+	if !request.Access.Known() {
 		return managedpostgres.ErrInvalid
 	}
 	return nil
@@ -194,7 +212,9 @@ func operationFinished(status string) bool {
 func (p *Provider) credentialMaterial(ctx context.Context, projectID, branchID, roleName string, access managedpostgres.CredentialAccess) (managedpostgres.CredentialMaterial, error) {
 	var directResponse connectionURIResponse
 	var pooledResponse connectionURIResponse
-	if access == managedpostgres.CredentialMigration {
+	// Migration and auth logins run DDL and rely on the role's session
+	// defaults (SET role, search_path), so they never use the pooler.
+	if access == managedpostgres.CredentialMigration || access == managedpostgres.CredentialAuth {
 		if err := p.connectionURI(ctx, projectID, branchID, roleName, false, &directResponse); err != nil {
 			return managedpostgres.CredentialMaterial{}, err
 		}

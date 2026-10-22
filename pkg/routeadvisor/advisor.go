@@ -13,6 +13,7 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -30,6 +31,7 @@ type RouteStats struct {
 	P95LatencyMs      int
 	CacheHits         int64
 	WakesAvoided      int64
+	Content           ContentStats
 }
 
 // ConsumerPeak is one identified consumer's traffic on a route.
@@ -47,11 +49,17 @@ type ConsumerStats struct {
 }
 
 // ExistingRule is an app edge rule, enabled or not, used to avoid suggesting
-// a rule the customer already has or has already applied for review.
+// a rule the customer already has or has already applied for review. Enabled,
+// Priority and MaxAgeSeconds let cache rules be checked (ADR-1199).
 type ExistingRule struct {
-	Kind    string
-	Path    string
-	Methods []string
+	// ID identifies the stored rule; analyses ignore it.
+	ID            string
+	Kind          string
+	Path          string
+	Methods       []string
+	Enabled       bool
+	Priority      int
+	MaxAgeSeconds int
 }
 
 // Key identifies a route by method and path.
@@ -177,20 +185,48 @@ func cacheSuggestion(in Inputs, r RouteStats) (api.RouteAdviceSuggestion, bool) 
 	if !ok || covered(in.Existing, api.RouteAdviceKindCache, r.Method, r.Path) {
 		return api.RouteAdviceSuggestion{}, false
 	}
+	verdict := r.Content.Verdict()
+	if verdict.Unsafe != "" {
+		return api.RouteAdviceSuggestion{}, false
+	}
 	action := api.EdgeRuleCacheAction{MaxAgeSeconds: in.CacheMaxAgeSeconds, StaleIfErrorSeconds: api.ResponseCacheDefaultStaleIfErrorSeconds}
 	summary := fmt.Sprintf("about %d of %d requests (%s) would be served from the edge cache", r.CacheHits, r.Requests, percent(r.CacheHits, r.Requests))
 	if r.WakesAvoided > 0 {
 		summary += fmt.Sprintf(", avoiding %d of %d wakes", r.WakesAvoided, r.ColdBoots)
 	}
-	return suggestion(in, r, api.RouteAdviceKindCache, glob, []string{"GET", "HEAD"}, action, api.RouteAdviceSuggestion{
+	s, ok := suggestion(in, r, api.RouteAdviceKindCache, glob, []string{"GET", "HEAD"}, action, api.RouteAdviceSuggestion{
 		Title:     "Cache " + r.Method + " " + r.Path,
 		Rationale: fmt.Sprintf("%s of requests are anonymous and succeed, so a shared %ds cache can answer repeats without waking the app.", percent(r.AnonymousSuccess, r.Requests), in.CacheMaxAgeSeconds),
 		Impact:    api.RouteAdviceImpact{Summary: summary, EstimatedCacheHits: r.CacheHits, EstimatedWakesAvoided: r.WakesAvoided},
-		Cautions: []string{
-			fmt.Sprintf("Responses can be up to %ds old. Apply only if the response is the same for every caller and changes less often than that.", in.CacheMaxAgeSeconds),
-			"Requests with Authorization or Cookie headers always bypass the cache, and the estimate treats all query strings as one response, so it is an upper bound.",
-		},
+		Cautions:  cacheCautions(in.CacheMaxAgeSeconds, verdict),
 	})
+	if !ok {
+		return s, false
+	}
+	s.Evidence.ContentObserved, s.Evidence.ContentRepeats, s.Evidence.ContentChanges = verdict.Observed, verdict.Repeats, verdict.Changes
+	s.Evidence.ContentUncacheable, s.Evidence.SafeMaxAgeSeconds = verdict.Uncacheable, int(verdict.SafeMaxAge/time.Second)
+	if verdict.SafeMaxAge > 0 {
+		s.Rationale += fmt.Sprintf(" Measured: %d repeat requests within %s returned the same body as before (%s changed).",
+			verdict.Repeats, verdict.SafeMaxAge, percent(verdict.Changes, verdict.Repeats+verdict.Changes))
+	}
+	return s, true
+}
+
+// cacheCautions warns about staleness from the content evidence when there is
+// enough of it, and otherwise falls back to the unmeasured warning.
+func cacheCautions(maxAgeSeconds int, v ContentVerdict) []string {
+	bypass := "Requests with Authorization or Cookie headers always bypass the cache, and the estimate treats all query strings as one response, so it is an upper bound."
+	maxAge := time.Duration(maxAgeSeconds) * time.Second
+	switch {
+	case v.SafeMaxAge == 0:
+		return []string{fmt.Sprintf("Responses can be up to %ds old, and the gateways have not yet seen enough repeat requests to measure how often this response changes. Apply only if it is the same for every caller and changes less often than that.", maxAgeSeconds), bypass}
+	case maxAge > v.SafeMaxAge:
+		return []string{fmt.Sprintf("Responses can be up to %ds old, longer than the %s the gateways measured as safe; some cached answers would be stale.", maxAgeSeconds, v.SafeMaxAge), bypass}
+	case maxAge < v.SafeMaxAge:
+		return []string{fmt.Sprintf("The response stayed the same for at least %s; `--cache-max-age %d` would cache longer and answer more repeats.", v.SafeMaxAge, int(v.SafeMaxAge/time.Second)), bypass}
+	default:
+		return []string{bypass}
+	}
 }
 
 func asyncSuggestion(in Inputs, r RouteStats) (api.RouteAdviceSuggestion, bool) {
@@ -299,22 +335,27 @@ func PathGlob(route string) (string, bool) {
 // covered reports whether an existing rule of the kind already matches the
 // route, using a sample path with every parameter filled in.
 func covered(rules []ExistingRule, kind, method, route string) bool {
+	sample := samplePath(route)
+	return slices.ContainsFunc(rules, func(rule ExistingRule) bool { return matches(rule, kind, method, sample) })
+}
+
+// samplePath fills every parameter of a route template with "x".
+func samplePath(route string) string {
 	parts := strings.Split(route, "/")
 	for i, p := range parts {
 		if strings.HasPrefix(p, "{") && strings.HasSuffix(p, "}") {
 			parts[i] = "x"
 		}
 	}
-	sample := strings.Join(parts, "/")
-	for _, rule := range rules {
-		if rule.Kind != kind || len(rule.Methods) > 0 && !slices.Contains(rule.Methods, method) {
-			continue
-		}
-		if ok, err := api.MatchEdgeRulePath(rule.Path, sample); err == nil && ok {
-			return true
-		}
+	return strings.Join(parts, "/")
+}
+
+func matches(rule ExistingRule, kind, method, sample string) bool {
+	if rule.Kind != kind || len(rule.Methods) > 0 && !slices.Contains(rule.Methods, method) {
+		return false
 	}
-	return false
+	ok, err := api.MatchEdgeRulePath(rule.Path, sample)
+	return err == nil && ok
 }
 
 func share(part, total int64) float64 {

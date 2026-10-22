@@ -137,11 +137,11 @@ func TestPGClonePostgresContentsOwnedReaderCapturesSelectedAndRecoversWithoutSou
 		t.Fatal("completed source read was not privately retained and closed")
 	}
 	old := x.f.lease
-	if err := x.store.ReleaseProjectEnvironmentCloneLease(t.Context(), old, 0); err != nil {
+	if err := x.store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), old, 0); err != nil {
 		t.Fatal(err)
 	}
 	var err error
-	x.f.lease, err = x.store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	x.f.lease, err = x.store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,18 +254,18 @@ func TestPGClonePostgresContentsOwnedReaderRechecksDuringReadAndClosesOnLoss(t *
 				changed = true
 				switch mode {
 				case "handoff":
-					if err := x.store.ReleaseProjectEnvironmentCloneLease(ctx, x.f.lease, 0); err != nil {
+					if err := x.store.PgStore.ReleaseProjectEnvironmentCloneLease(ctx, x.f.lease, 0); err != nil {
 						return err
 					}
 					var err error
-					x.f.lease, err = x.store.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
+					x.f.lease, err = x.store.PgStore.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
 					return err
 				case "reader_unavailable":
-					r, err := x.store.ProjectEnvironmentClonePostgresCopyReaderForLease(ctx, x.f.lease, x.d.Scope.SourceDatabaseID)
+					r, err := x.store.PgStore.ProjectEnvironmentClonePostgresCopyReaderForLease(ctx, x.f.lease, x.d.Scope.SourceDatabaseID)
 					if err != nil {
 						return err
 					}
-					_, err = x.store.RecordProjectEnvironmentClonePostgresCopyReader(ctx, x.f.lease, x.d.Scope.SourceDatabaseID,
+					_, err = x.store.PgStore.RecordProjectEnvironmentClonePostgresCopyReader(ctx, x.f.lease, x.d.Scope.SourceDatabaseID,
 						state.ProjectEnvironmentClonePostgresCopyReaderObservation{EndpointID: r.EndpointID, CreatedAt: r.EndpointCreatedAt, Available: false})
 					return err
 				case "native_pin":
@@ -334,20 +334,20 @@ func TestPGClonePostgresContentsOwnedReaderRejectsAuthorityLossAfterProviderPost
 				checked = true
 				switch mode {
 				case "handoff":
-					if err := x.store.ReleaseProjectEnvironmentCloneLease(ctx, x.f.lease, 0); err != nil {
+					if err := x.store.PgStore.ReleaseProjectEnvironmentCloneLease(ctx, x.f.lease, 0); err != nil {
 						return err
 					}
 					var err error
-					x.f.lease, err = x.store.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
+					x.f.lease, err = x.store.PgStore.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
 					return err
 				case "provider_unavailable":
 					f.p.readerActual.Available = false
 				case "reader_unavailable":
-					r, err := x.store.ProjectEnvironmentClonePostgresCopyReaderForLease(ctx, x.f.lease, x.d.Scope.SourceDatabaseID)
+					r, err := x.store.PgStore.ProjectEnvironmentClonePostgresCopyReaderForLease(ctx, x.f.lease, x.d.Scope.SourceDatabaseID)
 					if err != nil {
 						return err
 					}
-					_, err = x.store.RecordProjectEnvironmentClonePostgresCopyReader(ctx, x.f.lease, x.d.Scope.SourceDatabaseID,
+					_, err = x.store.PgStore.RecordProjectEnvironmentClonePostgresCopyReader(ctx, x.f.lease, x.d.Scope.SourceDatabaseID,
 						state.ProjectEnvironmentClonePostgresCopyReaderObservation{EndpointID: r.EndpointID, CreatedAt: r.EndpointCreatedAt, Available: false})
 					return err
 				}

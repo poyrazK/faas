@@ -23,7 +23,7 @@ func financialAdjustmentSuite(t *testing.T, store financialTestStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	price := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: end, Plan: api.PlanHobby, EffectiveFrom: start, DeliveryMode: "live", Price: financial.Price{Version: "old-terms", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1}}
+	price := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: end, Plan: api.PlanHobby, EffectiveFrom: start, DeliveryMode: "live", Price: financial.Price{Version: "old-terms", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1}}
 	if _, err := store.PutFinancialPriceSnapshot(t.Context(), price); err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestFinancialPostgresImmutableHistory(t *testing.T) {
 			t.Fatal("ledger rewrite accepted")
 		}
 	}
-	price := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: end, Plan: api.PlanHobby, EffectiveFrom: start, DeliveryMode: "live", Price: financial.Price{Version: "fixed", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1}}
+	price := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: end, Plan: api.PlanHobby, EffectiveFrom: start, DeliveryMode: "live", Price: financial.Price{Version: "fixed", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1}}
 	if _, err := store.PutFinancialPriceSnapshot(ctx, price); err != nil {
 		t.Fatal(err)
 	}
@@ -162,8 +162,13 @@ func TestFinancialPostgresImmutableHistory(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(read, policy) {
 		t.Fatalf("audit failure did not roll back intent: %+v,%v", read, err)
 	}
+	// Evidence is owned by the stable resource namespace (ADR-202610171900);
+	// erasure removes the unused personal namespace after the account.
 	if _, err := pool.Exec(ctx, `delete from accounts where id=$1`, a.ID); err != nil {
 		t.Fatalf("privacy deletion blocked: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `delete from resource_namespaces where id=$1`, a.ID); err != nil {
+		t.Fatalf("personal namespace deletion blocked: %v", err)
 	}
 	head, err := store.FinancialEvidenceHead(ctx, a.ID, start, end)
 	if err != nil || head != 0 {

@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/chaos"
 )
 
 const testHTTPBodyLimit = 1 << 20
@@ -42,13 +44,15 @@ type testHTTPExpect struct {
 }
 
 type testHTTPRequestEvidence struct {
-	Name       string `json:"name"`
-	Method     string `json:"method"`
-	Path       string `json:"path"`
-	Status     int    `json:"status,omitempty"`
-	DurationMS int64  `json:"duration_ms"`
-	Passed     bool   `json:"passed"`
-	Error      string `json:"error,omitempty"`
+	CorrelationID              string `json:"-"`
+	ExpectedDependencyAttempts *int64 `json:"-"`
+	Name                       string `json:"name"`
+	Method                     string `json:"method"`
+	Path                       string `json:"path"`
+	Status                     int    `json:"status,omitempty"`
+	DurationMS                 int64  `json:"duration_ms"`
+	Passed                     bool   `json:"passed"`
+	Error                      string `json:"error,omitempty"`
 }
 
 func validateTestHTTPRequests(scenario testScenario) error {
@@ -86,6 +90,10 @@ func testHTTPDataFields(scenario testScenario) []string {
 	for _, scenarioStep := range scenario.Steps {
 		steps = append(steps, scenarioStep.Requests...)
 		steps = append(steps, scenarioStep.Checks...)
+		if scenarioStep.Restart != nil {
+			steps = append(steps, scenarioStep.Restart.Readiness)
+			steps = append(steps, scenarioStep.Restart.StorageChecks...)
+		}
 	}
 	for _, step := range steps {
 		collect(step.Path)
@@ -385,6 +393,9 @@ func runOneTestHTTPRequestWithBody(ctx context.Context, client *http.Client, bas
 		}
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
+	if evidence.CorrelationID != "" {
+		request.Header.Set(chaos.RequestCorrelationHeader, evidence.CorrelationID)
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		var urlError *url.Error
@@ -394,6 +405,9 @@ func runOneTestHTTPRequestWithBody(ctx context.Context, client *http.Client, bas
 		return fmt.Errorf("send request: %w", err)
 	}
 	defer func() { _ = response.Body.Close() }()
+	if evidence.CorrelationID != "" {
+		evidence.ExpectedDependencyAttempts = readTestAttemptReceipt(response.Header)
+	}
 	evidence.Status = response.StatusCode
 	var responseBody []byte
 	if fullBody {

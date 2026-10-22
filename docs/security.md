@@ -299,11 +299,13 @@ happens to a detection:
 
 Request bodies are never blocked: checking them costs tens to hundreds of
 milliseconds, so they are inspected off the request path, and only a sample
-of them under load. To reject bad bodies, declare their shape with a
-`kind=validate` rule. Checks on headers and the URL add about 1 ms to each
-matched request. If your app sends more traffic than its check budget allows
-(roughly 500 requests per second), the rest pass unchecked and are counted
-as `inline_skipped`; the WAF never slows your app down to keep up.
+of them under load. In `warn` and `block`, a request without a body is
+checked in-path only; it is not also sampled. To reject bad bodies, declare their shape with a
+`kind=validate` rule. Checks on headers and the URL take about 1 ms of CPU
+per matched request, and can add several milliseconds when the node is busy.
+When your app's check budget (roughly 500 requests per second) or the node's
+check capacity runs out, the rest pass unchecked and are counted as
+`inline_skipped`; the WAF never slows your app down to keep up.
 
 Start in `observe`, look for false positives, then switch to `block`:
 
@@ -317,10 +319,77 @@ gregale edge-rules update <rule-id> --kind waf --waf-mode block --waf-exclude-ru
 `edge-rules update --kind waf` replaces the whole WAF action, so repeat every
 setting you want to keep (mode, exclusions, thresholds) in each update.
 
+Each detection is also a security event, so you can see which request was
+flagged and why. `gregale edge-rules events --app my-api --outcome blocked`
+(or `detected` for sampled requests, `warned` for warn rules) lists the
+request ID, method, path, client and user agent, plus the CRS rule IDs that
+scored, their attack categories and the anomaly score. The matched payload
+and the query string are never stored. Up to 10 detections per rule per
+minute are kept, for 7 days; the Edge rules page in the dashboard shows the
+same table. A WAF rule's ordinary matches are counted but not listed, since
+every inspected request matches.
+
+Some legitimate traffic is known to score as an attack at paranoia level 1.
+Exclude these rule IDs on rules that match such routes, or narrow the rule's
+`--match-path` so it skips them:
+
+| Traffic | CRS rule IDs | Checked |
+|---|---|---|
+| GraphQL query in the URL (`GET /graphql?query={...}`) | 942190 | headers and URL, so `block` rejects it |
+| GraphQL request bodies | 932235, 942290 | body (reported only) |
+| Prose with SQL keywords after a semicolon (`...; select one from the list`) | 942350 | body (reported only) |
+| Content that is SQL, HTML or code: a docs search, a CMS editor, a snippet tool | 942100, 941160 | URL and body |
+
+The WAF accepts any `Content-Type`, or none, and the methods GET, HEAD,
+POST, OPTIONS, PUT, PATCH and DELETE; other methods are reported (rule
+911100).
+
 `warn` and `block` run at paranoia level 1. Level 2 detects more and
 produces more false positives; it is available in `observe` only. The
 `edge_waf_detections` alert preset notifies you of bursts, and blocked
 requests also count toward `edge_rejection_pressure`.
+
+## Browser challenge (preview)
+
+A `kind=challenge` edge rule keeps scripts and scrapers off browser pages.
+An app can have 3 on Hobby, 10 on Pro and 25 on Scale; Free has none. A matched request without a valid pass never reaches your app:
+
+- A page load gets a short page that does a small calculation in the
+  browser (a proof of work, tens to a few hundred milliseconds by default),
+  then reloads the page with a signed pass cookie. No third-party script is
+  involved, so it works the same on custom domains.
+- Any other request (an API call, an image, a script without the pass) gets
+  `403` with code `challenge_required`.
+- Requests with a verified API key, consumer key or JWT are never
+  challenged, so API clients keep working.
+
+The pass lasts an hour by default and is tied to the browser's address
+range and User-Agent, so it cannot be copied to another machine. Start in
+log mode to see what the rule would challenge, and add a `verified_bot
+missing` condition so search engine crawlers still reach your pages:
+
+```sh
+gregale edge-rules create --app my-site --kind challenge --match-host my-site.example.com \
+  --match-path '/*' --match '{"field":"verified_bot","op":"missing"}' --mode log
+gregale edge-rules update <rule-id> --mode enforce
+```
+
+`--challenge-difficulty` (10 to 22, default 16) sets how much work a browser
+does; each step doubles it. `--challenge-pass-ttl` (300 to 86400 seconds)
+sets how long a pass lasts. Visitors need JavaScript; without it the page
+explains that it is required.
+
+An enforced challenge rule records what it did as security events, with
+the client's address, country, User-Agent and path: `challenged` (the page
+was served), `rejected` (a request that was not a page load got `403`),
+`solved` (a browser earned a pass) and `failed` (a solution was refused: a
+forged token, one carried to another machine, or too little work). Visitors
+who already hold a pass or a verified credential are counted, not recorded.
+In log mode the rule's matches appear as `logged` events instead.
+
+```sh
+gregale edge-rules events --app my-site --outcome rejected
+```
 
 ## Outbound connections and DNS
 

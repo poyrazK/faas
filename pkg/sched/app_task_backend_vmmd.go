@@ -7,15 +7,20 @@ import (
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
+	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // ResolvedAppTaskRuntime is the command-free result of resolving a task's
 // immutable deployment pin into one vmmd wake envelope.
 type ResolvedAppTaskRuntime struct {
-	NodeID  string
-	Spec    AppTaskRestoreSpec
-	release func()
+	NodeID    string
+	RuntimeID string
+	Spec      AppTaskRestoreSpec
+	release   func()
+	ready     func(context.Context) error
+	publish   func(context.Context, *AppTaskRestoreOutcome) error
 }
 
 type AppTaskRuntimeResolver func(context.Context, AppTaskRestoreRequest) (ResolvedAppTaskRuntime, error)
@@ -39,14 +44,22 @@ func NewRoutedVmmdAppTaskBackend(router RoutedAppTaskVMM, resolve AppTaskRuntime
 }
 
 func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskRestoreRequest) (AppTaskSession, error) {
+	fields, _ := wire.FromContext(ctx)
+	fields.AppID = request.AppID
+	fields.WakeID = request.LeaseToken
+	ctx = wire.WithContext(ctx, fields)
 	if b == nil || b.router == nil || b.resolve == nil {
 		return nil, ErrAppTaskCoordinatorNotWired
 	}
 	resolved, err := b.resolve(ctx, request)
 	if err != nil {
-		return nil, err
+		return nil, withAppTaskStage("resolve", err)
 	}
-	if resolved.NodeID == "" || resolved.Spec.Instance != request.ID || resolved.Spec.DeploymentID != request.DeploymentID {
+	runtimeID := request.ID
+	if resolved.RuntimeID != "" {
+		runtimeID = resolved.RuntimeID
+	}
+	if resolved.NodeID == "" || resolved.Spec.Instance != runtimeID || resolved.Spec.DeploymentID != request.DeploymentID {
 		if resolved.release != nil {
 			resolved.release()
 		}
@@ -54,17 +67,17 @@ func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskR
 	}
 	outcome, err := b.router.RestoreAppTask(ctx, resolved.NodeID, resolved.Spec)
 	if err != nil {
-		cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, request.ID)
+		cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, runtimeID)
 		if cleanupErr == nil && resolved.release != nil {
 			resolved.release()
 		}
 		if cleanupErr != nil {
-			return nil, errors.Join(err, cleanupErr)
+			return nil, withAppTaskStage("vmmd_restore", errors.Join(err, cleanupErr))
 		}
-		return nil, err
+		return nil, withAppTaskStage("vmmd_restore", err)
 	}
-	if outcome == nil || outcome.Instance == "" || outcome.Instance != request.ID {
-		cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, request.ID)
+	if outcome == nil || outcome.Instance == "" || outcome.Instance != runtimeID {
+		cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, runtimeID)
 		identityErr := errors.New("sched: vmmd returned an unexpected app task instance")
 		if cleanupErr != nil {
 			return nil, errors.Join(identityErr, cleanupErr)
@@ -73,6 +86,30 @@ func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskR
 			resolved.release()
 		}
 		return nil, identityErr
+	}
+	if resolved.ready != nil {
+		if err := resolved.ready(ctx); err != nil {
+			cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, request.ID)
+			if cleanupErr == nil && resolved.release != nil {
+				resolved.release()
+			}
+			return nil, errors.Join(err, cleanupErr)
+		}
+	}
+	if resolved.Spec.App.RehearsalRunID != "" {
+		var publishErr error
+		if resolved.publish == nil {
+			publishErr = errors.New("contained command network publisher unavailable")
+		} else {
+			publishErr = resolved.publish(ctx, outcome)
+		}
+		if publishErr != nil {
+			cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, request.ID)
+			if cleanupErr == nil && resolved.release != nil {
+				resolved.release()
+			}
+			return nil, errors.Join(publishErr, cleanupErr)
+		}
 	}
 	return &routedVmmdAppTaskSession{
 		router: b.router, nodeID: resolved.NodeID, instance: outcome.Instance, release: resolved.release,
@@ -100,12 +137,23 @@ func (s *routedVmmdAppTaskSession) Execute(ctx context.Context, request AppTaskE
 		Command: append([]string(nil), request.Command...), CommandShell: request.CommandShell,
 		TimeoutSeconds: timeoutSeconds, MaxOutputBytes: request.MaxOutputBytes,
 	}
+	if rehearsalcommand.IsCommand(wireReq.Command) {
+		wireReq.Version = apptaskproto.RehearsalVersion
+	}
 	if err := wireReq.Validate(); err != nil {
 		return AppTaskOutcome{}, err
 	}
 	var result apptaskproto.Result
 	var err error
-	if streaming, ok := s.router.(interface {
+	if request.Interactive != nil {
+		interactive, ok := s.router.(interface {
+			ExecuteInteractiveAppTask(context.Context, string, string, apptaskproto.Request, AppTaskAttachSpec) (apptaskproto.Result, error)
+		})
+		if !ok {
+			return AppTaskOutcome{}, errors.New("sched: app task router does not support interactive sessions")
+		}
+		result, err = interactive.ExecuteInteractiveAppTask(ctx, s.nodeID, s.instance, wireReq, *request.Interactive)
+	} else if streaming, ok := s.router.(interface {
 		ExecuteAppTaskWithOutput(context.Context, string, string, apptaskproto.Request, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
 	}); ok {
 		result, err = streaming.ExecuteAppTaskWithOutput(ctx, s.nodeID, s.instance, wireReq, nil)
@@ -117,6 +165,9 @@ func (s *routedVmmdAppTaskSession) Execute(ctx context.Context, request AppTaskE
 	}
 	return appTaskOutcomeFromProtocol(result), nil
 }
+
+// NodeID names the compute node whose vmmd owns the task VM.
+func (s *routedVmmdAppTaskSession) NodeID() string { return s.nodeID }
 
 func (s *routedVmmdAppTaskSession) Destroy(ctx context.Context) error {
 	if err := s.router.Destroy(ctx, s.nodeID, s.instance); err != nil {
@@ -144,4 +195,11 @@ func appTaskOutcomeFromProtocol(result apptaskproto.Result) AppTaskOutcome {
 		OutcomeCode: result.OutcomeCode,
 		FailureCode: result.FailureCode, FailureMessage: result.FailureMessage,
 	}
+}
+
+func (b *RoutedVmmdAppTaskBackend) QuiescePromotionMigration(ctx context.Context, job state.PromotionMigrationQuiescenceJob) error {
+	if b == nil || b.router == nil || job.NodeID == "" || job.InstanceID == "" {
+		return ErrAppTaskCoordinatorNotWired
+	}
+	return b.router.Destroy(ctx, job.NodeID, job.InstanceID)
 }

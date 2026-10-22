@@ -77,8 +77,8 @@ func (s *server) processNextProjectEnvironmentClone(ctx context.Context, store p
 	stepCtx, cancel := context.WithDeadline(ctx, lease.ExpiresAt)
 	lease, stepErr := s.processProjectEnvironmentCloneLease(stepCtx, store, lease)
 	cancel()
-	if lease.Operation.Status == state.CloneOperationReady {
-		return stepErr // publication has already cleared the lease atomically
+	if lease.Operation.Status == state.CloneOperationReady || lease.Operation.Status == state.CloneOperationCompensated {
+		return stepErr // the terminal commit has already cleared the lease atomically
 	}
 	// Cancellation must still relinquish a successfully checkpointed lease.
 	// Unknown commit outcomes deliberately wait for expiry rather than adopting
@@ -134,6 +134,9 @@ func (s *server) processProjectEnvironmentCloneLease(ctx context.Context, store 
 			return lease, err
 		}
 	case state.CloneOperationCompensating:
+		if cloneCoordinatorHasCommonCheckpoint(lease.Operation) {
+			return s.completeProjectEnvironmentCloneCompensation(ctx, lease)
+		}
 		lease, err = s.abandonProjectEnvironmentCloneConfigurationFence(ctx, lease)
 		if err != nil {
 			return lease, err
@@ -245,7 +248,7 @@ func (s *server) copyProjectEnvironmentClone(ctx context.Context, store projectE
 	if err != nil {
 		return lease, fmt.Errorf("prepare clone object credentials: %w", err)
 	}
-	account, err := s.store.AccountByID(ctx, lease.Operation.AccountID)
+	account, err := state.ProjectResourceAccountByID(ctx, s.store, lease.Operation.ProjectID)
 	if err != nil {
 		return lease, err
 	}

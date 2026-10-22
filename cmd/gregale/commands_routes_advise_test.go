@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -28,6 +29,7 @@ func (a *routeAdviceTestAPI) server(t *testing.T) *httptest.Server {
 			ID: "abc123def456", Kind: "cache", Method: "GET", Route: "/catalog", Title: "Cache GET /catalog",
 			Rationale: "98% of requests are anonymous and succeed.", Impact: api.RouteAdviceImpact{Summary: "about 700 of 1000 requests would be served from the edge cache"},
 			Cautions: []string{"Responses can be up to 60s old."},
+			Evidence: api.RouteAdviceEvidence{ContentObserved: 633, ContentRepeats: 600, ContentChanges: 3, SafeMaxAgeSeconds: 3600},
 			Rules: []api.CreateEdgeRuleRequest{
 				{MatchHost: "demo.gregale.dev", MatchPath: "/catalog", MatchMethods: []string{"GET", "HEAD"}, Enabled: &disabled, Kind: "cache", Action: json.RawMessage(`{"max_age_seconds":60}`)},
 				{MatchHost: "api.example.com", MatchPath: "/catalog", MatchMethods: []string{"GET", "HEAD"}, Enabled: &disabled, Kind: "cache", Action: json.RawMessage(`{"max_age_seconds":60}`)},
@@ -40,7 +42,7 @@ func (a *routeAdviceTestAPI) server(t *testing.T) *httptest.Server {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/demo/routes/advice":
 			a.query = r.URL.RawQuery
-			writeJSONTest(w, advice)
+			main.WriteJSONTest(w, advice)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/demo/edge-rules":
 			var req api.CreateEdgeRuleRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -54,7 +56,7 @@ func (a *routeAdviceTestAPI) server(t *testing.T) *httptest.Server {
 				return
 			}
 			w.WriteHeader(http.StatusCreated)
-			writeJSONTest(w, api.EdgeRuleResponse{ID: "rule-" + req.MatchHost, Kind: req.Kind, MatchHost: req.MatchHost})
+			main.WriteJSONTest(w, api.EdgeRuleResponse{ID: "rule-" + req.MatchHost, Kind: req.Kind, MatchHost: req.MatchHost})
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -64,14 +66,14 @@ func (a *routeAdviceTestAPI) server(t *testing.T) *httptest.Server {
 
 func runRouteAdviseCLI(t *testing.T, server *httptest.Server, args ...string) (int, string) {
 	t.Helper()
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	t.Setenv("FAAS_API", server.URL)
 	var output bytes.Buffer
-	old := osStdout
-	osStdout = &output
-	t.Cleanup(func() { osStdout = old })
-	code := run(append([]string{"routes", "advise"}, args...))
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = old })
+	code := main.Run(append([]string{"routes", "advise"}, args...))
 	return code, output.String()
 }
 
@@ -83,7 +85,7 @@ func TestRoutesAdviseCLIListsSuggestions(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, out)
 	}
-	for _, want := range []string{"[abc123def456] cache — Cache GET /catalog", "Impact:  about 700", "Caution: Responses can be up to 60s old.", "Rules:   2 (demo.gregale.dev, api.example.com)", "--apply ID"} {
+	for _, want := range []string{"[abc123def456] cache — Cache GET /catalog", "Impact:  about 700", "Caution: Responses can be up to 60s old.", "Content: 633 responses compared; 600 repeats, 3 changed; safe max-age 3600s", "Rules:   2 (demo.gregale.dev, api.example.com)", "--apply ID"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q:\n%s", want, out)
 		}
@@ -131,6 +133,18 @@ func TestRoutesAdviseCLIEnableAndFailures(t *testing.T) {
 	for _, args := range [][]string{{"demo", "--enable"}, {"demo", "--since", "soon"}, {"demo", "--cache-max-age", "4000"}, {}} {
 		if code, _ := runRouteAdviseCLI(t, server, args...); code == 0 {
 			t.Fatalf("args %v must be rejected", args)
+		}
+	}
+}
+
+// adr: 1188
+func TestRouteAdviceContentLine(t *testing.T) {
+	for want, e := range map[string]api.RouteAdviceEvidence{
+		"": {},
+		"40 responses compared; 30 repeats, 0 changed, 10 not storable; not enough repeats to measure a safe max-age yet": {ContentObserved: 40, ContentRepeats: 30, ContentUncacheable: 10},
+	} {
+		if got := main.RouteAdviceContentLine(e); got != want {
+			t.Fatalf("routeAdviceContentLine(%+v) = %q, want %q", e, got, want)
 		}
 	}
 }

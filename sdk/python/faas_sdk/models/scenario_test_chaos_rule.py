@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -11,6 +11,10 @@ from ..models.scenario_test_chaos_rule_direction import (
     check_scenario_test_chaos_rule_direction,
 )
 from ..models.scenario_test_chaos_rule_kind import ScenarioTestChaosRuleKind, check_scenario_test_chaos_rule_kind
+from ..models.scenario_test_chaos_rule_status_code_type_0 import (
+    ScenarioTestChaosRuleStatusCodeType0,
+    check_scenario_test_chaos_rule_status_code_type_0,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="ScenarioTestChaosRule")
@@ -27,9 +31,15 @@ class ScenarioTestChaosRule:
     kind: ScenarioTestChaosRuleKind
     percent: int
     seed: int
+    correlation_scope: str | Unset = UNSET
+    """Optional strict per-request HTTP attempt scope; requires a full-coverage latency/status rule with an
+    explicit source."""
     from_: str | Unset = UNSET
     latency_ms: int | Unset = UNSET
-    status_code: int | Unset = UNSET
+    status_code: int | ScenarioTestChaosRuleStatusCodeType0 | Unset = UNSET
+    """Synthetic HTTP status; accepts 429 or 500 through 599."""
+    retry_after_seconds: int | Unset = UNSET
+    """Optional Retry-After delta-seconds header. Only valid for http_status with status_code 429 or 503."""
     port: int | Unset = UNSET
     """Required target port for TCP rules."""
     direction: ScenarioTestChaosRuleDirection | Unset = UNSET
@@ -49,11 +59,21 @@ class ScenarioTestChaosRule:
 
         seed = self.seed
 
+        correlation_scope = self.correlation_scope
+
         from_ = self.from_
 
         latency_ms = self.latency_ms
 
-        status_code = self.status_code
+        status_code: int | Unset
+        if isinstance(self.status_code, Unset):
+            status_code = UNSET
+        elif isinstance(self.status_code, int):
+            status_code = self.status_code
+        else:
+            status_code = self.status_code
+
+        retry_after_seconds = self.retry_after_seconds
 
         port = self.port
 
@@ -75,12 +95,16 @@ class ScenarioTestChaosRule:
                 "seed": seed,
             }
         )
+        if correlation_scope is not UNSET:
+            field_dict["correlation_scope"] = correlation_scope
         if from_ is not UNSET:
             field_dict["from"] = from_
         if latency_ms is not UNSET:
             field_dict["latency_ms"] = latency_ms
         if status_code is not UNSET:
             field_dict["status_code"] = status_code
+        if retry_after_seconds is not UNSET:
+            field_dict["retry_after_seconds"] = retry_after_seconds
         if port is not UNSET:
             field_dict["port"] = port
         if direction is not UNSET:
@@ -103,11 +127,28 @@ class ScenarioTestChaosRule:
 
         seed = d.pop("seed")
 
+        correlation_scope = d.pop("correlation_scope", UNSET)
+
         from_ = d.pop("from", UNSET)
 
         latency_ms = d.pop("latency_ms", UNSET)
 
-        status_code = d.pop("status_code", UNSET)
+        def _parse_status_code(data: object) -> int | ScenarioTestChaosRuleStatusCodeType0 | Unset:
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, int):
+                    raise TypeError()
+                status_code_type_0 = check_scenario_test_chaos_rule_status_code_type_0(data)
+
+                return status_code_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(int | ScenarioTestChaosRuleStatusCodeType0 | Unset, data)
+
+        status_code = _parse_status_code(d.pop("status_code", UNSET))
+
+        retry_after_seconds = d.pop("retry_after_seconds", UNSET)
 
         port = d.pop("port", UNSET)
 
@@ -127,9 +168,11 @@ class ScenarioTestChaosRule:
             kind=kind,
             percent=percent,
             seed=seed,
+            correlation_scope=correlation_scope,
             from_=from_,
             latency_ms=latency_ms,
             status_code=status_code,
+            retry_after_seconds=retry_after_seconds,
             port=port,
             direction=direction,
             rate_kib_per_second=rate_kib_per_second,

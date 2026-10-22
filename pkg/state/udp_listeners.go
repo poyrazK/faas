@@ -143,7 +143,7 @@ func (s *PgStore) UDPListenerByID(ctx context.Context, id string) (UDPListener, 
 	return udpListenerFromSQL(row), nil
 }
 
-func (s *PgStore) UDPListenerByAppAndName(ctx context.Context, appID, listenerName string) (UDPListener, error) {
+func (s *pgCore) UDPListenerByAppAndName(ctx context.Context, appID, listenerName string) (UDPListener, error) {
 
 	row, err := sqlc.New().UDPListenerByAppAndName(ctx, s.pool, sqlc.UDPListenerByAppAndNameParams{AppID: appID, ListenerName: strings.ToLower(strings.TrimSpace(listenerName))})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -192,7 +192,7 @@ func (s *PgStore) ListUDPListenersForApp(ctx context.Context, appID string) ([]U
 // ListEnabledUDPListeners supplies current edge bindings without widening
 // the optional customer-intent store interface. Deleted or foreign-owned apps
 // cannot contribute a public binding.
-func (s *PgStore) ListEnabledUDPListeners(ctx context.Context) ([]UDPListener, error) {
+func (s *pgCore) ListEnabledUDPListeners(ctx context.Context) ([]UDPListener, error) {
 	rows, err := sqlc.New().ListEnabledUDPListeners(ctx, s.pool)
 	if err != nil {
 		return nil, fmt.Errorf("state: list enabled UDP listeners: %w", err)

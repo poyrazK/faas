@@ -6,6 +6,41 @@ import (
 	"io"
 )
 
+func (r *PrefixRouter) cohortRoute(objects [4]ExclusiveArtifactReceipt) (StorageBackend, [4]ExclusiveArtifactReceipt, error) {
+	var routed [4]ExclusiveArtifactReceipt
+	var backend StorageBackend
+	var prefix string
+	for i, object := range objects {
+		b, remainder, p, err := r.dispatch(object.Key)
+		if err != nil {
+			return nil, routed, err
+		}
+		if i > 0 && p != prefix {
+			return nil, routed, ErrArtifactReceiptMismatch
+		}
+		backend, prefix = b, p
+		routed[i] = object
+		routed[i].Key = remainder
+	}
+	return backend, routed, nil
+}
+
+func (r *PrefixRouter) CheckExclusiveArtifactCohortRetirement(ctx context.Context, captureID string, objects [4]ExclusiveArtifactReceipt) error {
+	b, routed, err := r.cohortRoute(objects)
+	if err != nil {
+		return err
+	}
+	return CheckExclusiveArtifactCohortRetirement(ctx, b, captureID, routed)
+}
+
+func (r *PrefixRouter) RetireExclusiveArtifactCohort(ctx context.Context, captureID string, objects [4]ExclusiveArtifactReceipt) error {
+	b, routed, err := r.cohortRoute(objects)
+	if err != nil {
+		return err
+	}
+	return RetireExclusiveArtifactCohort(ctx, b, captureID, routed)
+}
+
 func (r *PrefixRouter) CheckExclusiveArtifact(ctx context.Context, key string) error {
 	b, remainder, _, err := r.dispatch(key)
 	if err != nil {
@@ -69,6 +104,12 @@ func (b *FallbackStorageBackend) RetireExclusiveArtifact(ctx context.Context, re
 func (b *FallbackStorageBackend) CheckExclusiveArtifactRetirement(ctx context.Context, receipt ExclusiveArtifactReceipt) error {
 	return CheckExclusiveArtifactRetirement(ctx, b.primary, receipt)
 }
+func (b *FallbackStorageBackend) CheckExclusiveArtifactCohortRetirement(ctx context.Context, captureID string, objects [4]ExclusiveArtifactReceipt) error {
+	return CheckExclusiveArtifactCohortRetirement(ctx, b.primary, captureID, objects)
+}
+func (b *FallbackStorageBackend) RetireExclusiveArtifactCohort(ctx context.Context, captureID string, objects [4]ExclusiveArtifactReceipt) error {
+	return RetireExclusiveArtifactCohort(ctx, b.primary, captureID, objects)
+}
 
 func (c *LocalCacheBackend) CheckExclusiveArtifact(ctx context.Context, key string) error {
 	return CheckExclusiveArtifact(ctx, c.parent, key)
@@ -84,4 +125,10 @@ func (c *LocalCacheBackend) RetireExclusiveArtifact(ctx context.Context, receipt
 }
 func (c *LocalCacheBackend) CheckExclusiveArtifactRetirement(ctx context.Context, receipt ExclusiveArtifactReceipt) error {
 	return CheckExclusiveArtifactRetirement(ctx, c.parent, receipt)
+}
+func (c *LocalCacheBackend) CheckExclusiveArtifactCohortRetirement(ctx context.Context, captureID string, objects [4]ExclusiveArtifactReceipt) error {
+	return CheckExclusiveArtifactCohortRetirement(ctx, c.parent, captureID, objects)
+}
+func (c *LocalCacheBackend) RetireExclusiveArtifactCohort(ctx context.Context, captureID string, objects [4]ExclusiveArtifactReceipt) error {
+	return RetireExclusiveArtifactCohort(ctx, c.parent, captureID, objects)
 }

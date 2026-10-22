@@ -58,6 +58,11 @@ func EncodeEventReceiptCursor(accountID string, receipt state.EventReceipt) stri
 
 // getEventReceipt reads a repeatable snapshot; it neither claims nor replays work.
 func (s *Service) GetEventReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	guard, guardErr := api.ParseAppEventAcceptanceGuard(r.URL.Query().Get("expected_accepted_at"))
+	if guardErr != nil {
+		api.WriteProblem(w, api.ErrValidation(guardErr.Error()))
+		return
+	}
 	source, id := strings.TrimSpace(r.URL.Query().Get("source")), strings.TrimSpace(r.URL.Query().Get("id"))
 	if source == "" || id == "" || len(source) > events.EnvelopeStringMax || len(id) > events.EnvelopeStringMax {
 		api.WriteProblem(w, api.ErrValidation("source and id are required and must be at most 256 bytes"))
@@ -84,6 +89,10 @@ func (s *Service) GetEventReceipt(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
+	if guard.ExpectedAcceptedAt != nil && !receipt.AcceptedAt.Equal(*guard.ExpectedAcceptedAt) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "event_acceptance_replaced", "Event acceptance replaced", "the retained receipt belongs to a different acceptance"))
+		return
+	}
 	httpkit.WriteJSON(w, http.StatusOK, EventReceiptResponse(acct.ID, receipt))
 }
 
@@ -145,6 +154,14 @@ func eventReceiptActions(receipt state.EventReceipt, entry state.EventReceiptRec
 		actions = append(actions, api.EventReceiptRecoveryAction{Kind: "routing_replay", Method: http.MethodPost,
 			URL:  "/v1/apps/" + url.PathEscape(entry.AppSlug) + "/event-deliveries:replay-fanout-failure",
 			Body: &api.ReplayEventFanoutFailureRequest{EventSource: receipt.EventSource, EventID: receipt.EventID, SubscriptionID: entry.SubscriptionID}})
+		if entry.Origin == "" || entry.Origin == "acceptance" {
+			accepted := receipt.AcceptedAt
+			actions[len(actions)-1].Body.ExpectedAcceptedAt = &accepted
+			if entry.Routing.Generation != nil {
+				generation := *entry.Routing.Generation
+				actions[len(actions)-1].Body.ExpectedGeneration = &generation
+			}
+		}
 	}
 	if entry.HandlerReplayMode != "" {
 		id := entry.HandlerReplayInvocationID

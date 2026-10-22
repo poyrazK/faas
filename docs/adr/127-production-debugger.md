@@ -216,6 +216,54 @@ or raw span attribute is passed to the synthesis layer. A future prose model
 can consume this same redacted envelope without changing the customer-facing
 contract.
 
+### 7.2 Amendment (2026-10-13): error-rate regressions and request-ID links
+
+**Error-rate regressions.** The detector originally opened observations only
+on p95 latency, so a deployment that made a route fail without slowing it
+never alerted. Each pass now also compares, per route, the share of HTTP 5xx
+responses in the same two 30-minute windows (`RequestTelemetryErrorsByRoute`,
+weighted by the collapsed-row count). A route regresses on errors when both
+windows have at least 50 requests, the current window has at least 10 failed
+requests, and the error share rose by at least 5 percentage points and at
+least 2x. Platform-caused 5xx responses (wake failures, queue timeouts) count
+toward the deployment that served them, as cold boots already do for latency.
+
+Each observation records `kind` (`latency`, `errors`, `latency_and_errors`)
+plus `error_rate_pct`, `error_rate_base_pct` and `error_count`, all CHECKed.
+The (app, deployment, route) key is unchanged, so acknowledge, dismiss and
+resolve still act on one lifecycle per route; `kind` reflects the latest pass.
+When an observation that held only the latency signal gains the error signal
+it reopens: state returns to `active` with a new `first_detected_at`, any
+acknowledgement or dismissal is cleared, and a fresh `debug.regression.detected`
+is enqueued, because a route that starts failing is a new incident even when
+its slowness was already triaged. A pass that cannot read the error rates
+skips the app, and one that cannot read the latency drilldown skips the
+route, so a transient read failure never rewrites an observation with only
+the other signal.
+
+`regression_factor` stays the latency inflation and stores 1.00 for an
+error-only observation whose p95 did not rise, which satisfies its ≥ 1.0
+CHECK; observations that include the error signal sort first. The suspected
+dependency for an error-only regression prefers a dependency whose error rate
+regressed (ADR-958 §5), and the synthesis reports `error_regression`, ranking
+a failing dependency above a slow one for such routes. The regressions API,
+event stream, `debug.regression.*` webhooks, CLI and dashboard carry the kind
+and rates. The latency drilldown is now read once per app pass instead of
+once per regressed route.
+
+**Request IDs open evidence.** The request lookup, the evidence endpoint and
+the dashboard request view share one lookup: the identifier is first matched
+as a telemetry row or trace ID, then resolved through the request-ID journal.
+App errors return the public `x-faas-request-id` as a dashed UUID while the
+gateway issues it as 32 hex characters; both spellings resolve, so each
+app-error request links straight to its evidence.
+
+**Request logs are not attached to evidence.** `log_events` holds only the
+HTTP access projection of request telemetry; runtime output is not projected
+with trace IDs. Trace-matched lines would repeat the request itself (and its
+5xx access line would read as an application error), so log lines are left
+out of evidence until runtime logs carry trace IDs.
+
 ## Why now
 
 Issue #517 closed the wake timeline. Issue #477 closed consumer_keys. The mirror comparator (ADR-125, PR #1019) shipped the dual-fire primitive but no customer-facing surface. The "did v81 make it slow?" question is the most-asked operator question on Hobby / Pro plans; the answer is unanswerable today. PR-A lands the data plane so PR-B (cron + alerting) and PR-C (LLM synthesis) can compose on top.

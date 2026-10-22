@@ -290,7 +290,8 @@ func TestRunDeployScan_PathTraversalStampsFailed(t *testing.T) {
 	// Hand the hook a slug that fails the guard. The ID
 	// stays the real one — the guard inspects slug +
 	// deploymentID, not the app's stored slug.
-	h.runDeployScan(ctx, state.App{Slug: "../etc", ID: app.ID}, dep)
+	app.Slug = "../etc"
+	h.runDeployScan(ctx, app, dep)
 
 	if invoked {
 		t.Fatal("grypeRun invoked for path-traversal slug; should be skipped")

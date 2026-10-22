@@ -54,6 +54,7 @@ import type { ObjectVersionRetentionResult } from '../models/ObjectVersionRetent
 import type { ObjectWriteReceipt } from '../models/ObjectWriteReceipt.js';
 import type { ObjectWriteReceiptList } from '../models/ObjectWriteReceiptList.js';
 import type { Problem } from '../models/Problem.js';
+import type { ReconcileObjectStorageComputeTriggersRequest } from '../models/ReconcileObjectStorageComputeTriggersRequest.js';
 import type { SetObjectBucketAccessGrantRequest } from '../models/SetObjectBucketAccessGrantRequest.js';
 import type { SetObjectS3CopySourceRequest } from '../models/SetObjectS3CopySourceRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -1569,6 +1570,52 @@ export class StorageService {
     });
   }
   /**
+   * Reconcile managed ObjectCreated triggers for the bucket's owning app
+   * Requires MFA, storage manage scope and bucket write access. The destination
+   * is always this bucket's owning app in its region. expected_revision is
+   * mandatory and stale revisions return 409, including unchanged requests.
+   * Replaces only managed rules, preserving manual notification rules.
+   * Explicit triggers: [] clears managed ownership. Manual ID collisions
+   * return 409; overlapping filters return 400. Nonempty configuration
+   * requires object storage enabled and an async-invocation eligible plan.
+   * Accepted deliveries retain their original destination snapshots.
+   *
+   * @returns ObjectBucketNotifications Complete notification configuration including managed rule identities; Cache-Control no-store
+   * @returns Problem Missing owned bucket, storage disabled, or invalid request
+   * @throws ApiError
+   */
+  public static reconcileObjectStorageComputeTriggers({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * App owning the bucket and trigger destination.
+     */
+    slug: string,
+    /**
+     * Bucket whose managed triggers are reconciled.
+     */
+    bucket: string,
+    requestBody: ReconcileObjectStorageComputeTriggersRequest,
+  }): CancelablePromise<ObjectBucketNotifications | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/compute-triggers',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
    * Read durable bucket notification rules
    * Requires storage manage scope and bucket write access. Reads owned notification intent without a provider call, including when ingress is disabled. Initial configuration has revision zero and no notification rules.
    * @returns ObjectBucketNotifications Persisted notification configuration; Cache-Control no-store
@@ -1599,7 +1646,7 @@ export class StorageService {
   }
   /**
    * Replace durable bucket notification rules
-   * Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent. Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
+   * Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent. Full replacement clears managed compute-trigger ownership, including identical rules. Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
    * @returns ObjectBucketNotifications Normalized notification destinations, filters and configuration revision
    * @returns Problem Invalid rule replacement, unavailable destination or unsupported event
    * @throws ApiError
@@ -2344,6 +2391,594 @@ export class StorageService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/account/object-storage-usage',
+    });
+  }
+  /**
+   * List organization buckets and creation capabilities
+   * Owners, admins, developers and viewers can inspect bucket metadata. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. storage:manage lists every bucket. storage:read/storage:write keys see only buckets with an explicit grant. Admin and dashboard sessions list every bucket.
+   * @returns ObjectBucketList List organization buckets and creation capabilities. Buckets across this app's environment scopes; backend credentials are never exposed.
+   * @returns Problem List organization buckets and creation capabilities. Authentication, authorization, or storage error
+   * @throws ApiError
+   */
+  public static listOrgObjectBuckets({
+    organization,
+    slug,
+  }: {
+    /**
+     * Company bucket catalog: Organization owning this application and its storage catalog.
+     */
+    organization: string,
+    /**
+     * Company bucket catalog: App whose bucket catalog is being managed.
+     */
+    slug: string,
+  }): CancelablePromise<ObjectBucketList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/apps/{slug}/buckets',
+      path: {
+        'organization': organization,
+        'slug': slug,
+      },
+    });
+  }
+  /**
+   * Create a bucket for an organization application
+   * Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Requires storage:manage or admin. Idempotent by app, scope and name, not
+   * by Idempotency-Key. Retry provisioning by submitting the same name and
+   * scope. Existing buckets retain their backend when the default changes.
+   *
+   * @returns ObjectBucket Create a bucket for an organization application. Existing ready bucket
+   * @returns Problem Create a bucket for an organization application. Invalid request, access denied, bucket limit/conflict, or provider unavailable
+   * @throws ApiError
+   */
+  public static createOrgObjectBucket({
+    organization,
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Company bucket catalog: Organization owning this application and its storage catalog.
+     */
+    organization: string,
+    /**
+     * Company bucket catalog: App whose bucket catalog is being managed.
+     */
+    slug: string,
+    requestBody: {
+      name: string;
+      scope?: string;
+      /**
+       * Create a bucket for an organization application. Gregale region, not upstream signing region. Omit to use the configured default.
+       */
+      region?: string;
+      /**
+       * Create a bucket for an organization application. Serve objects anonymously on the app hostname.
+       */
+      public?: boolean;
+      /**
+       * Create a bucket for an organization application. Immutable app path mounted when public is true.
+       */
+      serve_at?: string;
+    },
+  }): CancelablePromise<ObjectBucket | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/apps/{slug}/buckets',
+      path: {
+        'organization': organization,
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Delete an empty organization bucket
+   * Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Requires storage:manage or admin. Never recursively deletes data. Nonempty buckets return 409. Repeat after successful deletion returns 404.
+   * @returns Problem Delete an empty organization bucket. Access denied, bucket missing/nonempty/busy, or provider unavailable
+   * @throws ApiError
+   */
+  public static deleteOrgObjectBucket({
+    organization,
+    slug,
+    bucket,
+  }: {
+    /**
+     * Company /{bucket}: Organization owning this application and its storage catalog.
+     */
+    organization: string,
+    /**
+     * Company /{bucket}: App that owns the bucket to remove.
+     */
+    slug: string,
+    /**
+     * Company /{bucket}: Identifier of the empty bucket to delete.
+     */
+    bucket: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * List organization API-key bucket grants
+   * Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Requires storage:manage or admin. Revoked keys remain visible until their key row is deleted.
+   * @returns ObjectBucketAccessGrantList List organization API-key bucket grants. Logical grants; provider credentials are never exposed.
+   * @returns Problem List organization API-key bucket grants. Access denied or bucket unavailable
+   * @throws ApiError
+   */
+  public static listOrgObjectBucketAccessGrants({
+    organization,
+    slug,
+    bucket,
+  }: {
+    /**
+     * Company /{bucket}/access-grants: Organization owning this application and its storage catalog.
+     */
+    organization: string,
+    /**
+     * Company /{bucket}/access-grants: App containing the bucket access binding.
+     */
+    slug: string,
+    /**
+     * Company /{bucket}/access-grants: Bucket whose API-key grants are being managed.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectBucketAccessGrantList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/access-grants',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Grant an organization API key access to a bucket
+   * Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Requires storage:manage or admin. The target key must be active or in grace and carry the storage scopes needed by the requested permission. Admin keys do not need and cannot receive grants.
+   * @returns ObjectBucketAccessGrant Grant an organization API key access to a bucket. Grant created or replaced
+   * @returns Problem Grant an organization API key access to a bucket. Invalid request, missing key/bucket, scope mismatch, or access denied
+   * @throws ApiError
+   */
+  public static setOrgObjectBucketAccessGrant({
+    organization,
+    slug,
+    bucket,
+    key,
+    requestBody,
+  }: {
+    /**
+     * Company /{bucket}/access-grants/{key}: Organization owning this application and its storage catalog.
+     */
+    organization: string,
+    /**
+     * Company /{bucket}/access-grants/{key}: App whose API-key bucket grant is being managed.
+     */
+    slug: string,
+    /**
+     * Company /{bucket}/access-grants/{key}: Bucket whose API-key grant is being managed.
+     */
+    bucket: string,
+    /**
+     * Company /{bucket}/access-grants/{key}: Account API-key identifier.
+     */
+    key: string,
+    requestBody: SetObjectBucketAccessGrantRequest,
+  }): CancelablePromise<ObjectBucketAccessGrant | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/access-grants/{key}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'bucket': bucket,
+        'key': key,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Revoke an organization API-key bucket grant
+   * Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Requires storage:manage or admin. Revocation takes effect before this response returns; already-signed provider URLs remain valid until their short expiry.
+   * @returns Problem Revoke an organization API-key bucket grant. Grant or bucket missing, or access denied
+   * @throws ApiError
+   */
+  public static deleteOrgObjectBucketAccessGrant({
+    organization,
+    slug,
+    bucket,
+    key,
+  }: {
+    /**
+     * Company /{bucket}/access-grants/{key}: Organization owning this application and its storage catalog.
+     */
+    organization: string,
+    /**
+     * Company /{bucket}/access-grants/{key}: App whose API-key bucket grant is being managed.
+     */
+    slug: string,
+    /**
+     * Company /{bucket}/access-grants/{key}: Bucket whose API-key grant is being managed.
+     */
+    bucket: string,
+    /**
+     * Company /{bucket}/access-grants/{key}: Account API-key identifier.
+     */
+    key: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/access-grants/{key}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'bucket': bucket,
+        'key': key,
+      },
+    });
+  }
+  /**
+   * List organization user S3 credentials
+   * Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Requires storage:manage or admin. Secret access keys are never returned by this endpoint.
+   * @returns ObjectS3CredentialList List organization user S3 credentials. Active bucket-scoped S3 credentials; Cache-Control no-store
+   * @returns Problem List organization user S3 credentials. S3 credential listing denied or its bucket is unavailable
+   * @throws ApiError
+   */
+  public static listOrgObjectS3Credentials({
+    organization,
+    slug,
+    bucket,
+  }: {
+    /**
+     * Company /{bucket}/s3-credentials: Organization owning this application and its storage catalog.
+     */
+    organization: string,
+    /**
+     * Company /{bucket}/s3-credentials: App whose new S3 credential will be bucket-scoped.
+     */
+    slug: string,
+    /**
+     * Company /{bucket}/s3-credentials: Bucket receiving the S3 credential.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectS3CredentialList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/s3-credentials',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Create a user S3 key for an organization bucket
+   * Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. The secret access key is returned exactly once, sealed at rest, and never recoverable through the control-plane API. At most ten active credentials may exist per bucket.
+   * @returns Problem Create a user S3 key for an organization bucket. Invalid request, credential limit, unavailable sealing key, or access denied
+   * @returns ObjectS3CredentialSecret Create a user S3 key for an organization bucket. One-time S3 credential response; Cache-Control no-store
+   * @throws ApiError
+   */
+  public static createOrgObjectS3Credential({
+    organization,
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * Company /{bucket}/s3-credentials: Organization owning this application and its storage catalog.
+     */
+    organization: string,
+    /**
+     * Company /{bucket}/s3-credentials: App whose new S3 credential will be bucket-scoped.
+     */
+    slug: string,
+    /**
+     * Company /{bucket}/s3-credentials: Bucket receiving the S3 credential.
+     */
+    bucket: string,
+    requestBody: CreateObjectS3CredentialRequest,
+  }): CancelablePromise<Problem | ObjectS3CredentialSecret> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/s3-credentials',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Revoke an organization user S3 key
+   * Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Revocation is immediate for new requests at s3.gregale.dev. Existing provider-signed internal requests are never exposed to the customer.
+   * @returns Problem Revoke an organization user S3 key. Credential or bucket missing, or access denied
+   * @throws ApiError
+   */
+  public static revokeOrgObjectS3Credential({
+    organization,
+    slug,
+    bucket,
+    credential,
+  }: {
+    /**
+     * Company /{bucket}/s3-credentials/{credential}: Organization owning this application and its storage catalog.
+     */
+    organization: string,
+    /**
+     * Company /{bucket}/s3-credentials/{credential}: App whose S3 credential is being revoked.
+     */
+    slug: string,
+    /**
+     * Company /{bucket}/s3-credentials/{credential}: Bucket whose credential is being revoked.
+     */
+    bucket: string,
+    /**
+     * Company /{bucket}/s3-credentials/{credential}: Gregale S3 credential identifier.
+     */
+    credential: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'bucket': bucket,
+        'credential': credential,
+      },
+    });
+  }
+  /**
+   * List organization application bucket bindings
+   * Owners, admins, developers and viewers can inspect application bindings. Requires storage:manage or admin and current organization membership. Secret values are never returned; only the sealed app-secret names are listed.
+   * @returns ObjectStorageComputeBindingList List organization application bucket bindings. Active compute bindings; Cache-Control no-store
+   * @returns Problem List organization application bucket bindings. Binding listing denied or its bucket is unavailable
+   * @throws ApiError
+   */
+  public static listOrgObjectStorageComputeBindings({
+    organization,
+    slug,
+    bucket,
+  }: {
+    /**
+     * Company /{bucket}/compute-bindings: Organization owning this application and its storage catalog.
+     */
+    organization: string,
+    /**
+     * Company /{bucket}/compute-bindings: App receiving the sealed storage connection settings.
+     */
+    slug: string,
+    /**
+     * Company /{bucket}/compute-bindings: Bucket exposed to the compute workload.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectStorageComputeBindingList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/compute-bindings',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Bind an organization bucket to its application environment
+   * Owners, admins and developers can manage application bindings. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Creates a bucket-scoped Gregale S3 credential and injects endpoint, region, bucket, access-key, secret-key, and addressing settings as sealed app secrets. The secret values are never returned.
+   * @returns Problem Bind an organization bucket to its application environment. Invalid request, secret quota/conflict, unavailable sealing key, or access denied
+   * @returns ObjectStorageComputeBinding Bind an organization bucket to its application environment. Compute binding created; Cache-Control no-store
+   * @throws ApiError
+   */
+  public static createOrgObjectStorageComputeBinding({
+    organization,
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * Company /{bucket}/compute-bindings: Organization owning this application and its storage catalog.
+     */
+    organization: string,
+    /**
+     * Company /{bucket}/compute-bindings: App receiving the sealed storage connection settings.
+     */
+    slug: string,
+    /**
+     * Company /{bucket}/compute-bindings: Bucket exposed to the compute workload.
+     */
+    bucket: string,
+    requestBody: CreateObjectStorageComputeBindingRequest,
+  }): CancelablePromise<Problem | ObjectStorageComputeBinding> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/compute-bindings',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Revoke an organization application bucket binding
+   * Owners, admins and developers can manage application bindings. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Revokes the bucket-scoped S3 credential before removing its sealed app secrets. The operation is idempotent after revocation.
+   * @returns Problem Revoke an organization application bucket binding. Binding or bucket missing, or access denied
+   * @throws ApiError
+   */
+  public static deleteOrgObjectStorageComputeBinding({
+    organization,
+    slug,
+    bucket,
+    binding,
+  }: {
+    /**
+     * Company /{bucket}/compute-bindings/{binding}: Organization owning this application and its storage catalog.
+     */
+    organization: string,
+    /**
+     * Company /{bucket}/compute-bindings/{binding}: App owning the compute binding.
+     */
+    slug: string,
+    /**
+     * Company /{bucket}/compute-bindings/{binding}: Bucket attached to the compute binding.
+     */
+    bucket: string,
+    /**
+     * Company /{bucket}/compute-bindings/{binding}: Opaque compute binding identifier.
+     */
+    binding: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'bucket': bucket,
+        'binding': binding,
+      },
+    });
+  }
+  /**
+   * Rotate an organization application bucket binding
+   * Owners and admins can rotate application bindings. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Atomically replaces the bucket-scoped access key and two sealed app secrets while keeping the binding and environment variable names stable. For a live app, the previous key remains valid until the rolling runtime refresh drains old instances; rotation_pending is true in the response. Retrying during a pending rotation requeues the same refresh. Secret values are never returned.
+   * @returns ObjectStorageComputeBinding Rotate an organization application bucket binding. Binding rotated; Cache-Control no-store
+   * @returns Problem Rotate an organization application bucket binding. Binding unavailable, sealing key unavailable, or access denied
+   * @throws ApiError
+   */
+  public static rotateOrgObjectStorageComputeBinding({
+    organization,
+    slug,
+    bucket,
+    binding,
+  }: {
+    /**
+     * Company /{bucket}/compute-bindings/{binding}/rotate: Organization owning this application and its storage catalog.
+     */
+    organization: string,
+    /**
+     * Company /{bucket}/compute-bindings/{binding}/rotate: App whose workload receives the rotated credential.
+     */
+    slug: string,
+    /**
+     * Company /{bucket}/compute-bindings/{binding}/rotate: Logical bucket whose access key is being rotated.
+     */
+    bucket: string,
+    /**
+     * Company /{bucket}/compute-bindings/{binding}/rotate: Binding identifier retained across credential rotations.
+     */
+    binding: string,
+  }): CancelablePromise<ObjectStorageComputeBinding | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}/rotate',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'bucket': bucket,
+        'binding': binding,
+      },
+    });
+  }
+  /**
+   * List objects in an organization bucket
+   * Owners, admins, developers and viewers can inspect bucket metadata. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this bucket.
+   * @returns any List objects in an organization bucket. One page, not a bucket-wide usage or billing total
+   * @returns Problem List objects in an organization bucket. Invalid request, access denied, bucket unavailable, or provider error
+   * @throws ApiError
+   */
+  public static listOrgBucketObjects({
+    organization,
+    slug,
+    bucket,
+    prefix,
+    cursor,
+    limit = 100,
+  }: {
+    /**
+     * Company /{bucket}/objects: Organization owning this application and its storage catalog.
+     */
+    organization: string,
+    /**
+     * Company /{bucket}/objects: App containing the objects being managed.
+     */
+    slug: string,
+    /**
+     * Company /{bucket}/objects: Identifier of the bucket whose objects are being managed.
+     */
+    bucket: string,
+    /**
+     * List objects in an organization bucket. Only return keys starting with this prefix.
+     */
+    prefix?: string,
+    /**
+     * List objects in an organization bucket. Opaque next_cursor from the preceding page.
+     */
+    cursor?: string,
+    /**
+     * List objects in an organization bucket. Maximum objects in this page.
+     */
+    limit?: number,
+  }): CancelablePromise<{
+    items: Array<{
+      key: string;
+      size_bytes: number;
+      last_modified: string;
+    }>;
+    next_cursor?: string;
+  } | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/objects',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'prefix': prefix,
+        'cursor': cursor,
+        'limit': limit,
+      },
+    });
+  }
+  /**
+   * Read aggregate organization object storage usage
+   * Owners, admins, developers, viewers and billing seats can read usage with usage:read or admin. Requires billing adoption. Aggregates company buckets across their retained storage namespaces; excludes personal buckets. Reservations are capacity commitments. Fresh false blocks further admission until allocated provider evidence arrives.
+   * @returns ObjectStorageUsageResponse Read aggregate organization object storage usage. Organization storage accounting: Current account usage; Cache-Control no-store
+   * @returns Problem Read aggregate organization object storage usage. Organization storage accounting: Access denied or accounting unavailable
+   * @throws ApiError
+   */
+  public static getOrgObjectStorageUsage({
+    organization,
+  }: {
+    /**
+     * Company whose aggregate object storage accounting is requested.
+     */
+    organization: string,
+  }): CancelablePromise<ObjectStorageUsageResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/object-storage-usage',
+      path: {
+        'organization': organization,
+      },
     });
   }
 }

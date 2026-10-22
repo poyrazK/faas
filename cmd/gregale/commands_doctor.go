@@ -7,9 +7,7 @@
 // Sister to the operator `gregale doctor` (issue #952 / PR #921).
 // This one is for the customer-developer pre-deploy loop: runs
 // without auth, scans local source, prints one line per finding,
-// exits non-zero if any check is "error" (--strict) or "warn"
-// (default, so the deploy pipeline can pre-cache the prose via
-// `gregale doctor` in CI).
+// exits non-zero if any check is "error", or "warn" under --strict.
 //
 // Each check returns one of: ok | warn | error | skipped with the same
 // shape as the operator doctor (commands_inspect.go:99-103).
@@ -23,7 +21,7 @@
 //
 //   1. port-bind         warns on likely fixed source ports; live verification
 //                        still requires a deployed listener probe
-//   2. loopback-bind     scans for app.listen("127.0.0.1"...) patterns
+//   2. loopback-bind     scans for listeners bound to 127.0.0.1/localhost/::1
 //   3. arch              detects target/host arch mismatch
 //   4. env-required      scans source for env-var references; flags undeclared
 //   5. runtime-oom       reads latest metered RAM; flags if approaching cap
@@ -157,8 +155,7 @@ func renderDoctorDeployPreflight(rep doctorReport, jsonMode bool) {
 // Exit codes:
 //
 //	0  all checks ok, OR all warnings under --strict=false
-//	1  any check error (always), OR any check warn under --strict=true
-//	2  usage error (bad argv)
+//	1  invalid input, any check error, OR any check warn under --strict=true
 func cmdDoctor(args []string) int {
 	return cmdDoctorWithImageInspector(args, oci.NewRegistryClient(oci.WithHTTPClient(oci.NewEgressHTTPClient())))
 }
@@ -169,14 +166,12 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	strict := fs.Bool("strict", false, "exit 1 on warn (default: exit 0 on warn)")
 	jsonOut := fs.Bool("json", false, "machine output (default: human prose)")
 	imageFlags := registerDoctorImageFlags(fs)
-	if err := fs.Parse(args); err != nil {
-		PrintUsage(osStderr, doctorUsage, "doctor")
-		return 2
+	if err := parseInterspersed(fs, args); err != nil {
+		return 1
 	}
 	if err := imageFlags.validate(fs); err != nil {
-		_, _ = fmt.Fprintln(osStderr, err)
-		PrintUsage(osStderr, doctorUsage, "doctor")
-		return 2
+		PrintUsage(osStderr, err.Error()+"\n"+doctorUsage, "doctor")
+		return 1
 	}
 	if imageFlags.image != "" {
 		return runDoctorImageCommand(imageFlags, inspector, *strict, *jsonOut || jsonOutput)
@@ -188,6 +183,9 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return printErr("Bad path", err)
+	}
+	if _, err := os.ReadDir(abs); err != nil {
+		return printErr("Could not read source directory", err)
 	}
 	report := runDoctorChecks(abs)
 	// Honour --strict: a warn under strict promotes to exit 1.
@@ -232,6 +230,9 @@ func runDoctorChecksForShape(path string, deploymentShape shape) doctorReport {
 	rep.Checks = append(rep.Checks, doctorCheckArch(path))
 	rep.Checks = append(rep.Checks, doctorCheckEnvRequired(path))
 	rep.Checks = append(rep.Checks, doctorCheckStatelessOnly(path))
+	if check, present := doctorCheckDurableEntities(path); present {
+		rep.Checks = append(rep.Checks, check)
+	}
 	// The remaining checks need the server (listener probe, metered
 	// RAM reading, build dry-run, and cold-boot probe). Preserve their
 	// names in the stable JSON shape, but report them as skipped: an
@@ -272,14 +273,21 @@ func doctorCheckPortBind(path string) doctorCheck {
 	}
 }
 
-// loopbackBindRegex matches `app.listen(..., '127.0.0.1')` (Express)
-// and `bind('127.0.0.1', ...)` (Python socket) patterns. The match
-// allows an optional port argument between the open-paren and the
-// IP literal so `app.listen(8080, '127.0.0.1')` and
-// `app.listen('127.0.0.1', 8080)` both trip. Wider matches would
-// catch string literals in comments; we anchor on the call-site
-// shape (`listen(...)` with the IP literal as one of the args).
-var loopbackBindRegex = regexp.MustCompile(`(?:app\.listen|bind)\s*\([^)]*?['"]127\.0\.0\.1['"]`)
+// loopbackBindRegex matches a listener call whose host argument is a
+// loopback literal: `<any>.listen(..., '127.0.0.1')` (Express, Node's
+// http.Server, Fastify's `{host: ...}`), `bind('127.0.0.1', ...)` (Python
+// socket), `.run(host='127.0.0.1')` (Flask, uvicorn), and Go's
+// `ListenAndServe("localhost:8080")` / `net.Listen("tcp", "127.0.0.1:0")`.
+// The match allows other arguments between the open-paren and the host so
+// `app.listen(8080, '127.0.0.1')` and `app.listen('127.0.0.1', 8080)` both
+// trip. Wider matches would catch string literals in comments; we anchor on
+// the call-site shape with the host as an exact string literal. Hunt #9:
+// matching only the `app` receiver and 127.0.0.1 passed Node's own
+// `server.listen(port, '127.0.0.1')` example and every 'localhost' bind.
+var loopbackBindRegex = regexp.MustCompile(
+	`(?:\.listen|bind)\s*\([^)]*?['"](?:127\.0\.0\.1|localhost|::1)['"]` +
+		`|\.run\s*\([^)]*?\bhost\s*=\s*['"](?:127\.0\.0\.1|localhost|::1)['"]` +
+		`|\b(?:ListenAndServe(?:TLS)?|Listen)\s*\([^)]*?"(?:127\.0\.0\.1|localhost|\[::1\]):`)
 
 // doctorCheckLoopbackBind scans the source tree for listeners
 // bound to 127.0.0.1. The per-VM bridge forwards to 10.0.0.2,

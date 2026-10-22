@@ -167,7 +167,7 @@ func (s *PgStore) mutateClonePostgresWriteFenceAbandonment(ctx context.Context, 
 	if err != nil {
 		return ProjectEnvironmentClonePostgresWriteFence{}, err
 	}
-	if op.Status != CloneOperationCompensating {
+	if op.Status != CloneOperationCompensating || len(op.Resources) > 0 && op.Resources[0].Kind == "data_checkpoint" {
 		return ProjectEnvironmentClonePostgresWriteFence{}, ErrConflict
 	}
 	receipt, err := readClonePostgresWriteFence(ctx, tx, op, sourceID)

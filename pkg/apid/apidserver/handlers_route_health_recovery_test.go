@@ -16,10 +16,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type routeRecoveryAPIStore struct {
-	*state.MemStore
+	MemStore                 *state.MemStore
 	account, app, deployment string
 	calls                    int
 }
@@ -105,7 +106,7 @@ func TestRouteHealthRecoveryAPIActionIsolationAndFreshChecks(t *testing.T) {
 		t.Fatal("periodic check retained history", err)
 	}
 	stub := &routeRecoveryAPIStore{MemStore: (*e.Store()), account: (*e.Acct()).ID, app: app.ID, deployment: d.ID}
-	(*(*e.S()).Store()) = stub
+	(*(*e.S()).Store()) = statetest.NewMem(stub)
 	for i := 0; i < 2; i++ {
 		rec := call(actionToken, "127.0.0.1:1234", `{"expected_step":0}`)
 		var result api.CanaryRouteHealthRecoveryResponse

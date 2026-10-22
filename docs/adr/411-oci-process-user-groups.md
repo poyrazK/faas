@@ -1,6 +1,7 @@
 # ADR-411 · OCI process user and group identity
 
-- **Status:** accepted
+- **Status:** accepted; amended by [ADR-1239](1239-docker-compatible-image-process-identity.md)
+  (a numeric UID absent from passwd now runs with GID 0)
 - **Date:** 2026-09-30
 
 ## Context

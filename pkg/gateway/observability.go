@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -162,6 +163,21 @@ func wakeTimelineStart(r *http.Request) time.Time {
 		}
 	}
 	return startTime(r)
+}
+
+// firstByteOnceKey dedupes wake.proxy_first_byte per wake generation. A
+// claimed generation pins its start in the context (armWakeFirstByte), so
+// the key carries that start: a frozen VM keeps its wake_id across thaws,
+// and the wake_id alone let only its first thaw emit a first-byte event.
+// Without a claimed start the wake_id alone stays the key, which keeps
+// warm requests on an old target from re-emitting.
+func firstByteOnceKey(r *http.Request, wakeID string) string {
+	if r != nil {
+		if t, ok := r.Context().Value(wakeTimelineStartKey{}).(time.Time); ok && !t.IsZero() {
+			return wakeID + "@" + strconv.FormatInt(t.UnixNano(), 10)
+		}
+	}
+	return wakeID
 }
 
 // routeLabelKey (ADR-093) is the context key used to thread the

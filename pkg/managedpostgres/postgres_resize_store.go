@@ -35,7 +35,7 @@ func (s *PostgresStore) GetResize(ctx context.Context, account, id string) (Resi
 	if err != nil {
 		return ResizeOperation{}, err
 	}
-	row, err := sqlc.New().GetManagedPostgresResize(ctx, s.pool, sqlc.GetManagedPostgresResizeParams{AccountID: accountID, ID: operationID})
+	row, err := sqlc.New().GetManagedPostgresResize(ctx, s.catalog, sqlc.GetManagedPostgresResizeParams{AccountID: accountID, ID: operationID})
 	if err != nil {
 		return ResizeOperation{}, mapPostgresError(err)
 	}
@@ -59,7 +59,7 @@ func (s *PostgresStore) ActiveResize(ctx context.Context, account, database stri
 	if err != nil {
 		return ResizeOperation{}, err
 	}
-	row, err := sqlc.New().ActiveManagedPostgresResize(ctx, s.pool, sqlc.ActiveManagedPostgresResizeParams{AccountID: accountID, DatabaseID: databaseID})
+	row, err := sqlc.New().ActiveManagedPostgresResize(ctx, s.catalog, sqlc.ActiveManagedPostgresResizeParams{AccountID: accountID, DatabaseID: databaseID})
 	if err != nil {
 		return ResizeOperation{}, mapPostgresError(err)
 	}
@@ -82,7 +82,7 @@ func (s *PostgresStore) ReserveResize(ctx context.Context, expected Database, op
 	if err != nil {
 		return ResizeOperation{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.catalog.Begin(ctx)
 	if err != nil {
 		return ResizeOperation{}, err
 	}
@@ -158,7 +158,7 @@ func (s *PostgresStore) claimResize(ctx context.Context, account, database, toke
 	if err != nil {
 		return Database{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.catalog.Begin(ctx)
 	if err != nil {
 		return Database{}, err
 	}
@@ -203,7 +203,7 @@ func (s *PostgresStore) FinishResize(ctx context.Context, expected Database, ope
 	if err != nil {
 		return Database{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.catalog.Begin(ctx)
 	if err != nil {
 		return Database{}, err
 	}

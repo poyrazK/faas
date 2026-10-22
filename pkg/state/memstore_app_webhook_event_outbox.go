@@ -61,6 +61,10 @@ func (m *MemStore) relayAppWebhookOutboxEventLocked(event appWebhookOutboxEvent)
 			Status: AppWebhookDeliveryPending, NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
 		}
 		m.trackRecoveryNotificationDeliveryLocked(event, webhookID, id)
+		if m.appWebhookDeliverySources == nil {
+			m.appWebhookDeliverySources = map[string]string{}
+		}
+		m.appWebhookDeliverySources[id] = event.ID
 	}
 	delete(m.appWebhookEventOutbox, event.ID)
 }

@@ -15,6 +15,8 @@ NAMES = {
     "DurableEntityOutboxProtocolVersion": ("DurableEntityOutboxHandlerProtocolVersion", "DURABLE_ENTITY_OUTBOX_PROTOCOL_VERSION"),
     "MaxDurableEntityInvocationBytes": ("DurableEntityHandlerMaxRequestBytes", "DURABLE_ENTITY_MAX_REQUEST_BYTES"),
     "MaxDurableEntitySnapshotBytes": ("DurableEntityHandlerMaxTransitionBytes", "DURABLE_ENTITY_MAX_TRANSITION_BYTES"),
+    "MaxDurableEntityIdentityBytes": ("DurableEntityHandlerMaxIdentityBytes", "DURABLE_ENTITY_MAX_IDENTITY_BYTES"),
+    "MaxDurableEntityOutboxPending": ("DurableEntityHandlerMaxPendingOutbox", "DURABLE_ENTITY_MAX_PENDING_OUTBOX"),
     "DurableEntityHandlerPath": ("DurableEntityHandlerPath", "DURABLE_ENTITY_HANDLER_PATH"),
 }
 LIMITS = {
@@ -46,6 +48,7 @@ def outputs():
         value = json.dumps(values[name])
         go += f"\t{go_name} = {value}\n"
         node += f"export const {node_name} = {value};\n"
+    node += "export const DURABLE_ENTITY_LOCAL_LIMITS = Object.freeze(" + json.dumps({alias: values[name] for name, alias in LIMITS.items()}) + ");\n"
     go += ")\n"
     go = subprocess.run(["gofmt"], input=go, text=True, capture_output=True, check=True).stdout
     request = {

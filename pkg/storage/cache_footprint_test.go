@@ -113,7 +113,7 @@ func TestEnforceBudgetDoesNotEvictForSharedBlocks(t *testing.T) {
 			})
 			cache.maxBytes = tc.maxBytes
 			cache.mu.Lock()
-			err = cache.enforceBudgetLocked()
+			err = cache.enforceBudgetLocked("")
 			cache.mu.Unlock()
 			if err != nil {
 				t.Fatal(err)

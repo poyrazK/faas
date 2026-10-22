@@ -40,11 +40,14 @@ func UnitApidCloneWorker() daemonunit.Unit {
 	}
 	u.LoadCredential = []daemonunit.LoadCred{
 		{Name: "faas_fleet_age_identity", Path: "/etc/faas/secrets/fleet.age"},
+		{Name: "faas_fleet_age_identity_previous", Path: "/etc/faas/secrets/fleet.age.previous", Optional: true},
 		{Name: "faas_fleet_age_recipient", Path: "/etc/faas/secrets/fleet.age.pub"},
 		{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},
 		{Name: "faas_host_age_identity_previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
 		{Name: "faas_host_hmac_key", Path: "/etc/faas/secrets/host.hmac.key"},
 	}
 	u.ReadWritePaths = []string{"/var/spool/faas/apid-clone-worker"}
+	// The clone worker serves no requests and does not hand off (ADR-1736).
+	u.NotifyAccess, u.ExecReload, u.OOMPolicy = "", "", ""
 	return u
 }

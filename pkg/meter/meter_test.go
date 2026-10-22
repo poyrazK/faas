@@ -150,13 +150,13 @@ func TestCheckQuota_Bands(t *testing.T) {
 		want   string
 		pct    int
 	}{
-		{"free under", api.PlanFree, 4.0, "", 80},
-		{"free at", api.PlanFree, 5.0, "stop", 100},
-		{"free over", api.PlanFree, 12.5, "stop", 250},
-		{"hobby under", api.PlanHobby, 49.0, "", 98},
-		{"hobby at", api.PlanHobby, 50.0, "warn", 100},
-		{"hobby over", api.PlanHobby, 200.0, "warn", 400},
-		{"pro over", api.PlanPro, 2500.0, "warn", 999}, // capped at 999
+		{"free under", api.PlanFree, 16.0, "", 80},
+		{"free at", api.PlanFree, 20.0, "stop", 100},
+		{"free over", api.PlanFree, 50.0, "stop", 250},
+		{"hobby under", api.PlanHobby, 196.0, "", 98},
+		{"hobby at", api.PlanHobby, 200.0, "warn", 100},
+		{"hobby over", api.PlanHobby, 800.0, "warn", 400},
+		{"pro over", api.PlanPro, 10000.0, "warn", 999}, // capped at 999
 		{"scale over", api.PlanScale, 150000.0, "warn", 999},
 	}
 	for _, tc := range cases {
@@ -253,6 +253,29 @@ func TestSampler_SkipsParkedInstances(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Fatalf("rows = %d, want 0 (parked)", len(rows))
+	}
+}
+
+// TestSampler_SkipsFrozenInstances: a frozen instance (ADR-1151) is resident
+// but unbilled, like a parked one, even though it counts for RAM.
+func TestSampler_SkipsFrozenInstances(t *testing.T) {
+	t.Parallel()
+	s := state.NewMemStore()
+	ctx := context.Background()
+	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
+
+	acct := makeAccount(t, ctx, s, api.PlanHobby)
+	app := newApp(t, ctx, s, acct.ID)
+	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateFrozen), 256, state.DefaultLocalNodeName, "")
+
+	rows, err := meter.NewSampler(s, nil, func() time.Time { return now }).SampleAndRoll(ctx)
+	if err != nil {
+		t.Fatalf("sample: %v", err)
+	}
+	for _, row := range rows {
+		if row.MBSeconds != 0 {
+			t.Fatalf("frozen instance billed %d MB-seconds, want 0", row.MBSeconds)
+		}
 	}
 }
 
@@ -439,9 +462,9 @@ func TestPaidOverageNoStop(t *testing.T) {
 	app := newApp(t, ctx, s, acct.ID)
 	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateRunning), 512, state.DefaultLocalNodeName, "")
 
-	// Plant usage equal to one Hobby quota so CheckQuota at Pro's 250 GB-h
-	// threshold still trips. (5 GB-h * 1024 * 3600 = 18_432_000.)
-	if err := s.AppendUsage(ctx, acct.ID, app.ID, "inst1", now, 18_432_000*100, 0, 0, 0, 0, 0, 0, 0); err != nil {
+	// Plant twice the Pro allowance so CheckQuota at Pro's included GB-h
+	// threshold still trips.
+	if err := s.AppendUsage(ctx, acct.ID, app.ID, "inst1", now, 2*api.IncludedMBSeconds(api.PlanPro), 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("seed usage: %v", err)
 	}
 	usages, err := s.UsageByMonth(ctx, acct.ID, meter.AccountMonthKey(now))
@@ -488,9 +511,9 @@ func TestPaidOverageDedupesPerDay(t *testing.T) {
 	acct := makeAccount(t, ctx, s, api.PlanPro)
 	app := newApp(t, ctx, s, acct.ID)
 	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateRunning), 512, state.DefaultLocalNodeName, "")
-	// Plant usage equal to one Hobby quota so CheckQuota at Pro's
-	// 250 GB-h threshold trips.
-	if err := s.AppendUsage(ctx, acct.ID, app.ID, "inst1", day1Hour1, 18_432_000*100, 0, 0, 0, 0, 0, 0, 0); err != nil {
+	// Plant twice the Pro allowance so CheckQuota at Pro's
+	// included GB-h threshold trips.
+	if err := s.AppendUsage(ctx, acct.ID, app.ID, "inst1", day1Hour1, 2*api.IncludedMBSeconds(api.PlanPro), 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("seed usage: %v", err)
 	}
 	usages, err := s.UsageByMonth(ctx, acct.ID, meter.AccountMonthKey(day1Hour1))

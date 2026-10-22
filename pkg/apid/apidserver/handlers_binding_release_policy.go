@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/bindings"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -41,6 +42,18 @@ func (s *server) getBindingReleasePolicy(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, http.StatusOK, p)
 }
 func (s *server) putBindingReleasePolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.putBindingReleasePolicyWithRequirements(w, r, acct, "base")
+}
+
+func (s *server) putObjectStorageBindingReleasePolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.putBindingReleasePolicyWithRequirements(w, r, acct, "storage")
+}
+
+func (s *server) putQueueBindingReleasePolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.putBindingReleasePolicyWithRequirements(w, r, acct, "queues")
+}
+
+func (s *server) putBindingReleasePolicyWithRequirements(w http.ResponseWriter, r *http.Request, acct state.Account, route string) {
 	var request api.SetBindingReleasePolicyRequest
 	if err := decodeJSONSized(r, &request, api.RoutePolicyRequestMaxBytes); err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid binding release policy request"))
@@ -54,13 +67,22 @@ func (s *server) putBindingReleasePolicy(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return
 	}
+	current, err := store.GetBindingReleasePolicy(r.Context(), acct.ID, app.ID, scope)
+	if err != nil {
+		s.bindingReleasePolicyError(w, err)
+		return
+	}
+	if err := bindings.ValidateReleasePolicyRoute(request, current, route); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()).WithHint("Retain every requirement with --queue-require NAME=consumer_readiness and --object-storage-require PREFIX=MODE, or explicitly clear the corresponding requirements."))
+		return
+	}
 	p, err := store.SetBindingReleasePolicy(r.Context(), acct.ID, app.ID, scope, request)
 	if err != nil {
 		s.bindingReleasePolicyError(w, err)
 		return
 	}
 	if s.audit != nil {
-		s.audit.Emit(r.Context(), "bindings.release_policy_updated", &acct.ID, map[string]any{"app_id": app.ID, "scope": scope, "mode": p.Mode, "revision": p.Revision, "reason": p.Reason})
+		s.audit.Emit(r.Context(), "bindings.release_policy_updated", &acct.ID, map[string]any{"app_id": app.ID, "scope": scope, "mode": p.Mode, "revision": p.Revision, "reason": p.Reason, "object_storage_requirements": p.ObjectStorageRequirements, "queue_requirements": p.QueueRequirements})
 	}
 	writeJSON(w, http.StatusOK, p)
 }

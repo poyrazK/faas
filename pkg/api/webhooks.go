@@ -75,6 +75,22 @@ var AllowedAppWebhookDeliveryFormats = []string{"json", "cloudevents"}
 // The delivery ledger intentionally retains its wider historical enum so old
 // rows remain readable during upgrades.
 var AllowedAppWebhookEvents = []string{
+	"realtime.replay_job.completed",
+	"realtime.replay_job.cancelled",
+	"realtime.replay_job.processing_failed",
+
+	"realtime.channel.published",
+	"realtime.channel.acknowledged",
+	"realtime.consumer_group.dead_lettered",
+	"realtime.consumer_group.dead_letter_expiring",
+	"realtime.consumer_group.delivery_expired",
+	"realtime.consumer_group.worker_lost",
+	"realtime.consumer_group.worker_recovered",
+	"realtime.consumer_group.circuit_opened",
+	"realtime.consumer_group.circuit_half_open",
+	"realtime.consumer_group.circuit_closed",
+	"realtime.consumer_group.lag_exceeded",
+	"realtime.consumer_group.lag_recovered",
 	"realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped",
 	"realtime.notification.sent",
 	"realtime.notification.failed",
@@ -100,19 +116,22 @@ var AllowedAppWebhookEvents = []string{
 	"routes.requirements.recovered",
 	"routes.health.blocked", "routes.health.resumed", "routes.health.aborted",
 	"routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered",
-	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached",
+	"routes.insight.detected", "routes.insight.resolved",
+	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.frequency_threshold_reached", "issue.compound_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered",
 	"workflow.finished", "automation.paused",
 	"event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished",
 	"event_recovery.execution_attention",
 	"automation.recovery_review_ready", "automation.recovery_review_finished",
-	"automation.recovery_policy_paused", "automation.recovery_queue_blocked",
+	"automation.recovery_polling_status", "automation.recovery_policy_paused", "automation.recovery_queue_blocked",
 	"automation.recovery_health_alert", "automation.recovery_health_recovered",
 }
 
 // Account receivers intentionally cannot use the app-level all-events
-// wildcard. Their filter is a non-empty subset of these release events.
+// wildcard. Their filter is a non-empty subset of these account release and
+// environment events.
 var AllowedAccountReleaseWebhookEvents = []string{
 	"deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted",
+	"environment.gitops.changed",
 }
 
 // DeploymentLiveWebhookPayload is the payload stored for a deployment.live
@@ -145,6 +164,8 @@ type RolloutCompletedWebhookPayload struct {
 	RolloutState   string `json:"rollout_state"`
 	TrafficPercent int    `json:"traffic_percent"`
 	CompletedAt    string `json:"completed_at"`
+	// Decision is the advance evidence that completed the rollout (ADR-1447).
+	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
 // RolloutAbortedWebhookPayload is the payload stored for a rollout.aborted
@@ -156,6 +177,9 @@ type RolloutAbortedWebhookPayload struct {
 	TrafficPercent int    `json:"traffic_percent"`
 	Reason         string `json:"reason"`
 	AbortedAt      string `json:"aborted_at"`
+	// Decision is the abort evidence when the circuit breaker or a recorded
+	// manual or lease-expiry transition aborted the rollout (ADR-1447).
+	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
 // ErrorNewWebhookPayload is the payload stored for an error.new delivery.
@@ -228,26 +252,35 @@ type APIConsumerUsageStatementFinalizedWebhookPayload struct {
 	Buckets          []APIConsumerUsageStatementBucketResponse `json:"buckets"`
 	AsOf             string                                    `json:"as_of"`
 	FinalizedAt      time.Time                                 `json:"finalized_at"`
+	// Prepaid credit drawn at finalization and what is left to bill
+	// (ADR-1306).
+	CreditAppliedMillicents int64 `json:"credit_applied_millicents"`
+	AmountDueMillicents     int64 `json:"amount_due_millicents"`
 }
 
 // PlatformTenantStatementFinalizedWebhookPayload is the cross-app billing
 // snapshot emitted once a platform tenant statement becomes payable.
 type PlatformTenantStatementFinalizedWebhookPayload struct {
-	PlatformTenantID string                                `json:"platform_tenant_id"`
-	ExternalRef      string                                `json:"external_ref"`
-	StatementID      string                                `json:"statement_id"`
-	Revision         int                                   `json:"revision"`
-	Status           string                                `json:"status"`
-	PeriodStart      time.Time                             `json:"period_start"`
-	PeriodEnd        time.Time                             `json:"period_end"`
-	Currency         string                                `json:"currency"`
-	BillableUnits    int64                                 `json:"billable_units"`
-	UnpricedUnits    int64                                 `json:"unpriced_units"`
-	AmountMillicents int64                                 `json:"amount_millicents"`
-	Priced           bool                                  `json:"priced"`
-	Lines            []PlatformTenantStatementLineResponse `json:"lines"`
-	AsOf             time.Time                             `json:"as_of"`
-	FinalizedAt      time.Time                             `json:"finalized_at"`
+	PlatformTenantID string    `json:"platform_tenant_id"`
+	ExternalRef      string    `json:"external_ref"`
+	StatementID      string    `json:"statement_id"`
+	Revision         int       `json:"revision"`
+	Status           string    `json:"status"`
+	PeriodStart      time.Time `json:"period_start"`
+	PeriodEnd        time.Time `json:"period_end"`
+	Currency         string    `json:"currency"`
+	BillableUnits    int64     `json:"billable_units"`
+	UnpricedUnits    int64     `json:"unpriced_units"`
+	AmountMillicents int64     `json:"amount_millicents"`
+	// CreditAppliedMillicents and AmountDueMillicents split the amount into
+	// prepaid credit and what is left to invoice (ADR-20261019100331).
+	CreditAppliedMillicents int64                                 `json:"credit_applied_millicents"`
+	AmountDueMillicents     int64                                 `json:"amount_due_millicents"`
+	Priced                  bool                                  `json:"priced"`
+	Lines                   []PlatformTenantStatementLineResponse `json:"lines"`
+	Fees                    []APIConsumerStatementFeeResponse     `json:"fees"`
+	AsOf                    time.Time                             `json:"as_of"`
+	FinalizedAt             time.Time                             `json:"finalized_at"`
 }
 
 // PlatformTenantHostnameVerifiedWebhookPayload records the ownership check
@@ -395,7 +428,7 @@ type UpdateAppWebhookRequest struct {
 }
 
 // Account routes use the same write fields but require a non-empty subset of
-// release events. Keeping separate DTOs makes that contract explicit in the
+// account events. Keeping separate DTOs makes that contract explicit in the
 // OpenAPI and typed clients.
 type CreateAccountReleaseWebhookRequest struct {
 	TargetURL      string   `json:"target_url"`

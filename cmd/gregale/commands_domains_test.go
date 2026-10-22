@@ -9,44 +9,47 @@
 // surface. The wire-shape gate (the CustomDomainResponse payload)
 // is covered by the apid tests + the SDK round-trip.
 
-package main
+package main_test
 
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestDomainsVerify_HappyPath(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t,
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t,
 		`{"domain":"app.example.com","app_id":"0123456789abcdef0123456789abcdef","verified":true,"cert_not_after":"2026-09-18T00:00:00Z","cert_sans":["app.example.com"]}`,
 		http.StatusOK,
 	)
-	if code := cmdDomainsVerify([]string{"app.example.com"}); code != 0 {
+	if code := main.CmdDomainsVerify([]string{"app.example.com"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "POST" || f.sawPath != "/v1/domains/app.example.com/verify" {
-		t.Errorf("route = %s %s, want POST /v1/domains/app.example.com/verify", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "POST" || (*f.SawPath()) != "/v1/domains/app.example.com/verify" {
+		t.Errorf("route = %s %s, want POST /v1/domains/app.example.com/verify", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
 func TestDomainsVerify_PendingExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	previousOut := osStdout
+	main.ResetJSONOut(t)
+	previousOut := (*main.OsStdout)
 	var out bytes.Buffer
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
-	authedFakeAPI(t,
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previousOut })
+	main.AuthedFakeAPI(t,
 		`{"domain":"app.example.com","app_id":"app-1","verified":false,"cert_status":"pending"}`,
 		http.StatusOK,
 	)
 
-	if code := run([]string{"domains", "verify", "app.example.com"}); code != 1 {
+	if code := main.Run([]string{"domains", "verify", "app.example.com"}); code != 1 {
 		t.Fatalf("pending verify exit = %d, want 1", code)
 	}
 	if !strings.Contains(out.String(), "pending") || !strings.Contains(out.String(), "retry") {
@@ -55,17 +58,17 @@ func TestDomainsVerify_PendingExitsOne(t *testing.T) {
 }
 
 func TestDomainsVerify_PendingJSONExitsOneAndPreservesResponse(t *testing.T) {
-	resetJSONOut(t)
-	previousOut := osStdout
+	main.ResetJSONOut(t)
+	previousOut := (*main.OsStdout)
 	var out bytes.Buffer
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
-	authedFakeAPI(t,
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previousOut })
+	main.AuthedFakeAPI(t,
 		`{"domain":"app.example.com","app_id":"app-1","verified":false,"cert_status":"pending"}`,
 		http.StatusOK,
 	)
 
-	if code := run([]string{"--json", "domains", "verify", "app.example.com"}); code != 1 {
+	if code := main.Run([]string{"--json", "domains", "verify", "app.example.com"}); code != 1 {
 		t.Fatalf("pending JSON verify exit = %d, want 1", code)
 	}
 	var got api.CustomDomainResponse
@@ -78,17 +81,17 @@ func TestDomainsVerify_PendingJSONExitsOneAndPreservesResponse(t *testing.T) {
 }
 
 func TestDomainsAdd_EnvironmentScope(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"domain":"staging.example.com","app_id":"app-1","environment":"staging","challenge_token":"challenge"}`, http.StatusAccepted)
-	if code := cmdDomains([]string{"add", "--domain", "staging.example.com", "--app", "shop-api", "--environment", "staging"}); code != 0 {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"domain":"staging.example.com","app_id":"app-1","environment":"staging","challenge_token":"challenge"}`, http.StatusAccepted)
+	if code := main.CmdDomains([]string{"add", "--domain", "staging.example.com", "--app", "shop-api", "--environment", "staging"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/domains" {
-		t.Fatalf("request = %s %s, want POST /v1/domains", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != http.MethodPost || (*f.SawPath()) != "/v1/domains" {
+		t.Fatalf("request = %s %s, want POST /v1/domains", (*f.SawMethod()), (*f.SawPath()))
 	}
 	var request api.CreateCustomDomainRequest
-	if err := json.Unmarshal(f.sawBody, &request); err != nil {
-		t.Fatalf("decode request: %v; raw=%s", err, f.sawBody)
+	if err := json.Unmarshal((*f.SawBody()), &request); err != nil {
+		t.Fatalf("decode request: %v; raw=%s", err, (*f.SawBody()))
 	}
 	if request.Domain != "staging.example.com" || request.AppID != "shop-api" || request.Environment != "staging" {
 		t.Fatalf("request body = %+v", request)
@@ -96,46 +99,46 @@ func TestDomainsAdd_EnvironmentScope(t *testing.T) {
 }
 
 func TestDomainsVerify_MissingArgExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
-	if code := cmdDomainsVerify(nil); code != 1 {
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdDomainsVerify(nil); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
-	if code := cmdDomainsVerify([]string{}); code != 1 {
+	if code := main.CmdDomainsVerify([]string{}); code != 1 {
 		t.Fatalf("exit = %d, want 1 (empty args)", code)
 	}
 }
 
 func TestDomainsShow_HappyPath(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t,
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t,
 		`{"domain":"app.example.com","app_id":"0123456789abcdef0123456789abcdef","verified":true,"cert_not_after":"2026-09-18T00:00:00Z","cert_sans":["app.example.com","www.example.com"]}`,
 		http.StatusOK,
 	)
-	if code := cmdDomainsShow([]string{"app.example.com"}); code != 0 {
+	if code := main.CmdDomainsShow([]string{"app.example.com"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "GET" || f.sawPath != "/v1/domains/app.example.com" {
-		t.Errorf("route = %s %s, want GET /v1/domains/app.example.com", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "GET" || (*f.SawPath()) != "/v1/domains/app.example.com" {
+		t.Errorf("route = %s %s, want GET /v1/domains/app.example.com", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
 func TestDomainsShow_JSONMode(t *testing.T) {
-	resetJSONOut(t)
-	previousOut := osStdout
+	main.ResetJSONOut(t)
+	previousOut := (*main.OsStdout)
 	var out bytes.Buffer
-	osStdout = &out
-	jsonOutput = true
+	(*main.OsStdout) = &out
+	(*main.JsonOutput) = true
 	t.Cleanup(func() {
-		osStdout = previousOut
-		jsonOutput = false
+		(*main.OsStdout) = previousOut
+		(*main.JsonOutput) = false
 	})
-	authedFakeAPI(t,
+	main.AuthedFakeAPI(t,
 		`{"domain":"app.example.com","app_id":"0123456789abcdef0123456789abcdef","verified":true,"cert_not_after":"2026-09-18T00:00:00Z","cert_sans":["app.example.com","www.example.com"]}`,
 		http.StatusOK,
 	)
 
-	if code := cmdDomainsShow([]string{"app.example.com"}); code != 0 {
+	if code := main.CmdDomainsShow([]string{"app.example.com"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	var got api.CustomDomainResponse
@@ -151,18 +154,18 @@ func TestDomainsShow_JSONMode(t *testing.T) {
 }
 
 func TestDomainsShow_FAASJSONMode(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("FAAS_JSON", "1")
-	previousOut := osStdout
+	previousOut := (*main.OsStdout)
 	var out bytes.Buffer
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
-	authedFakeAPI(t,
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previousOut })
+	main.AuthedFakeAPI(t,
 		`{"domain":"app.example.com","app_id":"0123456789abcdef0123456789abcdef","verified":true,"cert_not_after":"2026-09-18T00:00:00Z","cert_sans":["app.example.com","www.example.com"]}`,
 		http.StatusOK,
 	)
 
-	if code := run([]string{"domains", "show", "app.example.com"}); code != 0 {
+	if code := main.Run([]string{"domains", "show", "app.example.com"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	var got api.CustomDomainResponse
@@ -175,9 +178,9 @@ func TestDomainsShow_FAASJSONMode(t *testing.T) {
 }
 
 func TestDomainsShow_MissingArgExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
-	if code := cmdDomainsShow(nil); code != 1 {
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdDomainsShow(nil); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 }
@@ -188,28 +191,28 @@ func TestDomainsShow_MissingArgExitsOne(t *testing.T) {
 // "case subDomainsVerify" being renamed would silently fall
 // through to the "unknown subcommand" branch.
 func TestDomainsDispatch_VerifyAndShowRegistered(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"domain":"x","app_id":"y","verified":true}`, http.StatusOK)
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"domain":"x","app_id":"y","verified":true}`, http.StatusOK)
 	// Capture the dispatched handler by hitting the parent
 	// cmdDomains with "verify" as the first arg.
-	if code := cmdDomains([]string{"verify", "app.example.com"}); code != 0 {
+	if code := main.CmdDomains([]string{"verify", "app.example.com"}); code != 0 {
 		t.Fatalf("cmdDomains verify exit = %d, want 0", code)
 	}
-	if f.sawMethod != "POST" {
-		t.Errorf("verify dispatch method = %s, want POST", f.sawMethod)
+	if (*f.SawMethod()) != "POST" {
+		t.Errorf("verify dispatch method = %s, want POST", (*f.SawMethod()))
 	}
 }
 
 // TestDomainsDispatch_SetDefaultRegistered pins the new default-domain route
 // at the CLI dispatch surface.
 func TestDomainsDispatch_SetDefaultRegistered(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"domain":"app.example.com","app_id":"y","verified":true,"default":true}`, http.StatusOK)
-	if code := cmdDomains([]string{"set-default", "app.example.com"}); code != 0 {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"domain":"app.example.com","app_id":"y","verified":true,"default":true}`, http.StatusOK)
+	if code := main.CmdDomains([]string{"set-default", "app.example.com"}); code != 0 {
 		t.Fatalf("cmdDomains set-default exit = %d, want 0", code)
 	}
-	if f.sawMethod != "POST" || f.sawPath != "/v1/domains/app.example.com/default" {
-		t.Errorf("set-default request = %s %s, want POST /v1/domains/app.example.com/default", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "POST" || (*f.SawPath()) != "/v1/domains/app.example.com/default" {
+		t.Errorf("set-default request = %s %s, want POST /v1/domains/app.example.com/default", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
@@ -219,17 +222,17 @@ func TestDomainsDispatch_SetDefaultRegistered(t *testing.T) {
 // "case subDomainsDoctor" being renamed would silently fall
 // through to the "unknown subcommand" branch.
 func TestDomainsDispatch_DoctorRegistered(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	healthyReport := `{"domain":"x","app_id":"y","observed_at":"2026-08-18T14:23:11Z","healthy":true,"checks":[]}`
-	f := authedFakeAPI(t, healthyReport, http.StatusOK)
-	if code := cmdDomains([]string{"doctor", "app.example.com"}); code != 0 {
+	f := main.AuthedFakeAPI(t, healthyReport, http.StatusOK)
+	if code := main.CmdDomains([]string{"doctor", "app.example.com"}); code != 0 {
 		t.Fatalf("cmdDomains doctor exit = %d, want 0", code)
 	}
-	if f.sawMethod != "GET" {
-		t.Errorf("doctor dispatch method = %s, want GET", f.sawMethod)
+	if (*f.SawMethod()) != "GET" {
+		t.Errorf("doctor dispatch method = %s, want GET", (*f.SawMethod()))
 	}
-	if f.sawPath != "/v1/domains/app.example.com/doctor" {
-		t.Errorf("doctor dispatch path = %q, want /v1/domains/app.example.com/doctor", f.sawPath)
+	if (*f.SawPath()) != "/v1/domains/app.example.com/doctor" {
+		t.Errorf("doctor dispatch path = %q, want /v1/domains/app.example.com/doctor", (*f.SawPath()))
 	}
 }
 
@@ -237,26 +240,26 @@ func TestDomainsDispatch_DoctorRegistered(t *testing.T) {
 // handler must return exit 1 when the report is not healthy so
 // the customer (and CI) can branch on it.
 func TestDomainsDispatch_DoctorReportsFail(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	badReport := `{"domain":"x","app_id":"y","observed_at":"2026-08-18T14:23:11Z","healthy":false,"checks":[]}`
-	authedFakeAPI(t, badReport, http.StatusOK)
-	if code := cmdDomains([]string{"doctor", "app.example.com"}); code != 1 {
+	main.AuthedFakeAPI(t, badReport, http.StatusOK)
+	if code := main.CmdDomains([]string{"doctor", "app.example.com"}); code != 1 {
 		t.Fatalf("cmdDomains doctor exit = %d, want 1 (unhealthy)", code)
 	}
 }
 
 func TestDomainsDoctor_UnhealthyJSONExitsOneAndPreservesReport(t *testing.T) {
-	resetJSONOut(t)
-	previousOut := osStdout
+	main.ResetJSONOut(t)
+	previousOut := (*main.OsStdout)
 	var out bytes.Buffer
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
-	authedFakeAPI(t,
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previousOut })
+	main.AuthedFakeAPI(t,
 		`{"domain":"app.example.com","app_id":"app-1","observed_at":"2026-09-28T00:00:00Z","healthy":false,"checks":[{"name":"dns_record","status":"fail","detail":"TXT record missing","remediation":"Publish the requested TXT record."}]}`,
 		http.StatusOK,
 	)
 
-	if code := run([]string{"--json", "domains", "doctor", "app.example.com"}); code != 1 {
+	if code := main.Run([]string{"--json", "domains", "doctor", "app.example.com"}); code != 1 {
 		t.Fatalf("unhealthy JSON doctor exit = %d, want 1", code)
 	}
 	var got api.DomainDoctorReport
@@ -269,17 +272,17 @@ func TestDomainsDoctor_UnhealthyJSONExitsOneAndPreservesReport(t *testing.T) {
 }
 
 func TestDomainsDoctor_PendingHumanSummaryIsNotHealthy(t *testing.T) {
-	resetJSONOut(t)
-	previousOut := osStdout
+	main.ResetJSONOut(t)
+	previousOut := (*main.OsStdout)
 	var out bytes.Buffer
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
-	authedFakeAPI(t,
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previousOut })
+	main.AuthedFakeAPI(t,
 		`{"domain":"app.example.com","app_id":"app-1","observed_at":"2026-09-28T00:00:00Z","healthy":false,"checks":[{"name":"tls_certificate","status":"pending","detail":"Certificate issuance is pending."}]}`,
 		http.StatusOK,
 	)
 
-	if code := run([]string{"domains", "doctor", "app.example.com"}); code != 1 {
+	if code := main.Run([]string{"domains", "doctor", "app.example.com"}); code != 1 {
 		t.Fatalf("pending doctor exit = %d, want 1", code)
 	}
 	if !strings.Contains(out.String(), "domain is not ready") || strings.Contains(out.String(), "all 1 checks OK") {
@@ -288,13 +291,13 @@ func TestDomainsDoctor_PendingHumanSummaryIsNotHealthy(t *testing.T) {
 }
 
 func TestDomainsDispatch_StatusRegistered(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `[{"domain":"app.example.com","app_id":"a","verified":true,"cert_status":"issued","cert_expires_at":"2027-01-01T00:00:00Z"}]`, http.StatusOK)
-	if code := cmdDomains([]string{"status"}); code != 0 {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `[{"domain":"app.example.com","app_id":"a","verified":true,"cert_status":"issued","cert_expires_at":"2027-01-01T00:00:00Z"}]`, http.StatusOK)
+	if code := main.CmdDomains([]string{"status"}); code != 0 {
 		t.Fatalf("cmdDomains status exit = %d, want 0", code)
 	}
-	if f.sawMethod != "GET" || f.sawPath != "/v1/domains" {
-		t.Errorf("status route = %s %s, want GET /v1/domains", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "GET" || (*f.SawPath()) != "/v1/domains" {
+		t.Errorf("status route = %s %s, want GET /v1/domains", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
@@ -308,19 +311,66 @@ func TestDomainsAdd_PositionalDomainWithTrailingFlags(t *testing.T) {
 		{"add", "--app", "shop-api", "shop.example.com"},
 		{"add", "shop.example.com", "--domain", "shop.example.com", "--app", "shop-api"},
 	} {
-		resetJSONOut(t)
-		f := authedFakeAPI(t, `{"domain":"shop.example.com","app_id":"app-1","challenge_token":"challenge"}`, http.StatusAccepted)
-		if code := cmdDomains(args); code != 0 {
+		main.ResetJSONOut(t)
+		f := main.AuthedFakeAPI(t, `{"domain":"shop.example.com","app_id":"app-1","challenge_token":"challenge"}`, http.StatusAccepted)
+		if code := main.CmdDomains(args); code != 0 {
 			t.Fatalf("%v: exit = %d, want 0", args, code)
 		}
 		var request api.CreateCustomDomainRequest
-		if err := json.Unmarshal(f.sawBody, &request); err != nil || request.Domain != "shop.example.com" || request.AppID != "shop-api" {
+		if err := json.Unmarshal((*f.SawBody()), &request); err != nil || request.Domain != "shop.example.com" || request.AppID != "shop-api" {
 			t.Fatalf("%v: request = %+v err=%v", args, request, err)
 		}
 	}
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
-	if code := cmdDomains([]string{"add", "a.example.com", "--domain", "b.example.com", "--app", "shop-api"}); code == 0 {
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdDomains([]string{"add", "a.example.com", "--domain", "b.example.com", "--app", "shop-api"}); code == 0 {
 		t.Fatal("conflicting positional and --domain accepted")
+	}
+}
+
+// On an installation without customer certificates the control plane reports
+// custom-domains as runtime_unavailable; domains add must refuse instead of
+// creating a binding that stays pending while promising a certificate (H10-64).
+func TestDomainsAdd_RefusesWhenCustomDomainsRuntimeUnavailable(t *testing.T) {
+	main.ResetJSONOut(t)
+	for _, tc := range []struct {
+		name       string
+		capability string
+		wantCode   int
+		wantCreate bool
+	}{
+		{name: "runtime unavailable", capability: `{"key":"custom-domains","enabled":false,"unavailable_reason":"runtime_unavailable","unavailable_detail":"Not on this installation."}`, wantCode: 1},
+		{name: "enabled", capability: `{"key":"custom-domains","enabled":true}`, wantCode: 0, wantCreate: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			created := false
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.URL.Path == "/v1/capabilities":
+					_, _ = io.WriteString(w, `{"capabilities":[`+tc.capability+`]}`)
+				case r.Method == http.MethodPost && r.URL.Path == "/v1/domains":
+					created = true
+					w.WriteHeader(http.StatusAccepted)
+					_, _ = io.WriteString(w, `{"domain":"app.example.com","app_id":"app-1","challenge_token":"challenge"}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "test-token")
+			code, stderr := main.RunWithStderr(t, func() int {
+				return main.CmdDomains([]string{"add", "app.example.com", "--app", "shop-api"})
+			})
+			if code != tc.wantCode || created != tc.wantCreate {
+				t.Fatalf("exit = %d created = %t, want %d/%t; stderr=%s", code, created, tc.wantCode, tc.wantCreate, stderr)
+			}
+			if !tc.wantCreate && !strings.Contains(stderr, "never get a certificate") {
+				t.Fatalf("refusal should say why: %s", stderr)
+			}
+		})
 	}
 }

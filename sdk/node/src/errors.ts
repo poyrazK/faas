@@ -72,6 +72,7 @@ export interface FaasError extends Error {
   readonly problem: Problem;
   readonly status: number;
   readonly txId?: string;
+  readonly retryAfter?: string;
 }
 
 /**

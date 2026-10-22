@@ -8,23 +8,49 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
 # Both are built into ./bin by `make build`.
 CLIS := gregale gregalectl
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -X github.com/onebox-faas/faas/pkg/wire.Version=$(VERSION)
+# An uncommitted checkout cannot claim a revision's qualification. Release
+# builders using a verified source archive can supply SOURCE_REVISION explicitly.
+SOURCE_REVISION ?= $(shell if test -z "$$(git status --porcelain 2>/dev/null)"; then git rev-parse HEAD 2>/dev/null || echo unknown; else echo unknown; fi)
+LDFLAGS := -X github.com/onebox-faas/faas/pkg/wire.Version=$(VERSION) -X github.com/onebox-faas/faas/pkg/wire.GitSHA=$(SOURCE_REVISION)
 # Release artifacts must not contain host-specific source paths or automatic
 # VCS metadata. The release workflow supplies VERSION from the tag commit;
 # these flags make the bytes independent of the runner checkout path and
 # whether the checkout has a .git directory.
 GO_BUILD_FLAGS := -trimpath -buildvcs=false
+# Build tags of every daemon build. grpcnotrace drops gRPC's
+# golang.org/x/net/trace, whose html/template pages make the linker keep every
+# exported method of every type a daemon converts to an interface (all ~6,000
+# store methods), so a query change rewrote every daemon's code. No daemon
+# serves the pages or sets grpc.EnableTracing
+# (docs/adr/20261020160744-daemon-blast-radius.md). Comma-separated.
+DAEMON_TAGS := metal,grpcnotrace
 # Keep the build target's cgo setting separate from the test environment.
 # `make test` needs the host default for race-enabled tests, while release
 # binaries are always static.
 BUILD_CGO_ENABLED ?= 0
+# Test compiles skip DWARF: GO_TEST_LDFLAGS strips it at link anyway, and
+# generating it costs about a quarter of a large package's compiler memory
+# (pkg/state's internal test unit: 5.2 -> 3.8 GB RSS). The largest test units
+# also compile with one backend worker, CI's flags (-c=1): 3.8 -> 3.4 GB for
+# pkg/state, and a local `-race` apidserver build from ~13.5 to ~7.5 GB
+# together with the soft heap limit (ADR-982). GO_TEST applies both; a
+# GOMEMLIMIT already in the environment wins. Packages that never approach
+# the limit are unaffected.
+TEST_HEAVY_PKGS ?= pkg/apid/apidserver pkg/apid/apidserver_test pkg/state pkg/state_test pkg/sched cmd/gregale
+TEST_GCFLAGS ?= '-gcflags=all=-dwarf=false' $(foreach p,$(TEST_HEAVY_PKGS),'-gcflags=github.com/onebox-faas/faas/$(p)=-c=1 -dwarf=false')
+GO_TEST_MEMLIMIT ?= $(if $(GOMEMLIMIT),$(GOMEMLIMIT),6GiB)
+# Test binaries link without DWARF: measured ~75% less link CPU and 15-18%
+# smaller binaries for apidserver and sched. Set GO_TEST_LDFLAGS= to debug a
+# test binary with delve.
+GO_TEST_LDFLAGS ?= -ldflags=-w
+GO_TEST = GOMEMLIMIT=$(GO_TEST_MEMLIMIT) $(GO) test $(TEST_GCFLAGS) $(GO_TEST_LDFLAGS)
 BINDIR  := bin
 # Always use the repository's Ansible configuration.  Ansible only discovers
 # ansible.cfg from the current directory (or its parents); the playbook lives
@@ -39,6 +65,10 @@ ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG="$(ANSIBLE_CONFIG)" ansible-playbook
 
 .PHONY: test-customer-platform
 .PHONY: test-commit
+.PHONY: test-data-repair
+test-data-repair: ## Run strict internal repair PostgreSQL, SDK and isolated operator-CLI acceptance
+	@GO="$(GO)" bash scripts/test-data-repair.sh
+
 test-commit: ## Run strict PostgreSQL and Linux process acceptance for Gregale Commit
 	@GO="$(GO)" sh scripts/test-commit.sh
 
@@ -53,6 +83,18 @@ test-managed-operation-native: ## Run native Firecracker managed workflow recove
 .PHONY: test-managed-postgres-native
 test-managed-postgres-native: ## Run strict deployed PostgreSQL SQL, rotation and snapshot acceptance
 	@GO="$(GO)" sh scripts/test-managed-postgres-native.sh
+
+.PHONY: test-object-storage-native
+test-object-storage-native: ## Run strict shipped storage starter rotation, snapshot and cold-boot acceptance
+	@GO="$(GO)" sh scripts/test-object-storage-native.sh
+
+.PHONY: test-queue-bindings-native
+test-queue-bindings-native: ## Run strict shipped queue worker completion, recovery and release acceptance
+	@GO="$(GO)" sh scripts/test-queue-bindings-native.sh
+
+.PHONY: test-managed-service-native
+test-managed-service-native: ## Run isolated reviewed managed HTTPS guest and CLI acceptance
+	@GO="$(GO)" sh scripts/test-managed-service-native.sh
 
 test-customer-platform: ## Run the two-customer starter acceptance with disposable PostgreSQL databases (no KVM)
 	@GO="$(GO)" sh scripts/test-customer-platform.sh
@@ -71,17 +113,45 @@ bench-platform-tenant-coverage: ## Measure 90-day, two-app statement coverage re
 	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set — set it to a disposable PostgreSQL database"; exit 1)
 	@GO="$(GO)" sh scripts/bench-platform-tenant-coverage.sh
 
+.PHONY: bench-event-substrate
+bench-event-substrate: ## Measure event publish, fanout, drain and webhook delivery on disposable PostgreSQL (V12); FAAS_EVENT_SUBSTRATE_BENCH_DIR writes JSON
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set — set it to a disposable PostgreSQL database"; exit 1)
+	@GO="$(GO)" sh scripts/bench-event-substrate.sh
+
 .PHONY: help
 help: ## List targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
 	  awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: build
+.PHONY: ci-runner-build test-ci-runtime test-ci-scheduler test-ci-storage test-ci-service test-ci-acceptance native-ci-acceptance
+ci-runner-build: ## Build the internal guest-only CI runner; no image publication or dispatch
+	@mkdir -p $(BINDIR)
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GO_BUILD_FLAGS) -ldflags '-s -w' -o $(BINDIR)/gregale-ci-runner ./cmd/ci-runner
+
+test-ci-runtime: ## CI runner/transport contract tests with fake compute; requires isolated test PostgreSQL
+	FAAS_PGTEST_TEMPLATE_DATABASE=1 $(GO) test -race -count=1 ./guest/cirunner ./pkg/apid/ciruntime ./pkg/ci/... -run 'Test(Archive|Guest|RunnerCannot|CIRunner|CIJobs(Runtime|Scheduler|Stopped))'
+
+test-ci-scheduler: ## Disabled CI scheduler integration with real PostgreSQL and simulated VM receipts
+	FAAS_PGTEST_TEMPLATE_DATABASE=1 $(GO) test -race -count=1 ./pkg/sched -run '^TestCIJob'
+
+test-ci-storage: ## Scoped CI storage, retention, conditional GCS protocol and HTTPS boundary tests
+	FAAS_PGTEST_TEMPLATE_DATABASE=1 $(GO) test -race -count=1 ./pkg/ci/... ./pkg/apid/ciruntime -run '^TestCI(Storage|RuntimeHTTPS)'
+
+test-ci-service: ## Bounded CI dispatcher, execution API and operator CLI checks with synthetic compute
+	FAAS_PGTEST_TEMPLATE_DATABASE=1 $(GO) test -race -count=1 ./pkg/ci/... ./pkg/apid/ciapi ./pkg/githubd ./cmd/gregalectl -run '^TestCI(Health|Archive|Automation|Check|Dispatch|Execution|Profile|SourceRPC|Artifact)'
+
+test-ci-acceptance: ## Portable native CI gate ownership, evidence and configuration checks; no VM execution
+	$(GO) test -race -count=1 ./tests/ci/acceptance ./pkg/e2etest -run 'TestCI(Acceptance|NativeHarness)'
+
+native-ci-acceptance: ## Explicit dedicated KVM/GCS CI qualification; never enables fleet flags
+	bash scripts/ci/run-native-ci-acceptance.sh
+
 build: guest-runners ## Build every daemon + CLIs + guest init + function runners into ./bin
 	@mkdir -p $(BINDIR)
 	@for d in $(DAEMONS); do \
 	  echo "building $$d"; \
-	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags metal -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$$d ./cmd/$$d || exit 1; \
+	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags $(DAEMON_TAGS) -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$$d ./cmd/$$d || exit 1; \
 	done
 	@for c in $(CLIS); do \
 	  echo "building $$c (CLI)"; \
@@ -120,7 +190,7 @@ guest-runners: ## Build function-runner shims into ./bin/runners/<runtime>/faas-
 build-release-batch: ## Build the complete static release binary set in batched Go invocations
 	@mkdir -p $(BINDIR) $(BINDIR)/runners
 	@echo "building release daemons (batched)"
-	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags metal \
+	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags $(DAEMON_TAGS) \
 	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/ $(addprefix ./cmd/,$(DAEMONS))
 	@echo "building release CLIs (batched)"
 	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) \
@@ -142,6 +212,18 @@ build-release-batch: ## Build the complete static release binary set in batched 
 	      $(BINDIR)/runners/$$rt/faas-runner; \
 	  done
 	@install -m 0755 scripts/schedd-brokerq-apply $(BINDIR)/schedd-brokerq-apply
+
+# Per-unit releases (docs/adr/1650-per-unit-control-plane-releases.md)
+# build one binary with build-release-batch's flags. VERSION is the unit
+# version (unit-<commit that last changed the binary's inputs>), so the bytes
+# depend only on the source the binary was built from.
+.PHONY: build-release-unit
+build-release-unit: ## Build one release binary: UNIT=<cmd> VERSION=unit-<commit> [BINDIR=dir]
+	@case " $(DAEMONS) $(CLIS) " in *" $(UNIT) "*) ;; *) echo "UNIT=$(UNIT) is not a release binary"; exit 2;; esac
+	@case "$(VERSION)" in unit-*) ;; *) echo "VERSION=$(VERSION) must be unit-<commit>"; exit 2;; esac
+	@mkdir -p $(BINDIR)
+	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) $(if $(filter $(UNIT),$(DAEMONS)),-tags $(DAEMON_TAGS)) \
+	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$(UNIT) ./cmd/$(UNIT)
 
 # M1 gRPC codegen (ADR-013). Generated *.pb.go is COMMITTED — do not run
 # `make proto` to produce output; CI uses `proto-check` to verify drift only.
@@ -232,7 +314,23 @@ test: grafana-mirror-check ## Unit tests — must pass on any machine, no KVM ne
 	# (pkg/e2etest.EnsureSharedBinaries) rather than once per test, so
 	# the e2e wall is dominated by the tests themselves; the ceiling is
 	# kept generous for slow runners. Memory: cmd-e2e-coverage-timeout-edge.md
-	$(GO) test -race -count=1 -timeout=18m $(PKGS)
+	$(GO_TEST) -race -count=1 -timeout=18m $(PKGS)
+
+.PHONY: test-apid
+test-apid: ## apidserver tests with bounded compiler memory (ADR-982); RUN='^TestX' narrows, RACE=1 adds -race
+	$(GO_TEST) -count=1 $(if $(RACE),-race) $(if $(RUN),-run '$(RUN)') ./pkg/apid/apidserver/
+
+.PHONY: product-control-provider-qualification
+product-control-provider-qualification: ## Qualify Product Control exports against real Stripe test mode, Paddle sandbox and a Lago test org; set FAAS_QUALIFY_* (docs/ops/product-control.md)
+	$(GO_TEST) -count=1 -v -run '^TestProductControlProviderQualification$$' ./pkg/apid/apidserver/
+
+.PHONY: test-changed
+test-changed: ## Vet + test only what your change affects (ci-light's selection vs origin/main); RACE=1, BASE=<ref>, VET=importers|0, DRY_RUN=1
+	@LDFLAGS=$(GO_TEST_LDFLAGS) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) GO=$(GO) bash scripts/test-changed.sh $(TEST_GCFLAGS)
+
+.PHONY: clean-tmp
+clean-tmp: ## Free disk: remove go-build work dirs idle >2h in $$TMPDIR (left by killed builds); never clears the shared GOCACHE
+	@bash scripts/clean-tmp.sh
 
 .PHONY: test-state-coverage
 test-state-coverage: ## Assert pkg/state coverage ≥ 70% (excluding generated pkg/state/sqlc/**). Needs DATABASE_URL pointing at a reachable Postgres; PgStore tests skip cleanly otherwise.
@@ -241,7 +339,7 @@ test-state-coverage: ## Assert pkg/state coverage ≥ 70% (excluding generated p
 	@$(MAKE) check-state-coverage COVERFILE=$(COVERAGE_DIR)/state.out
 
 .PHONY: check-state-coverage
-check-state-coverage: ## Assert exact pkg/state package coverage ≥ 70% from existing profile (default: coverage/cover.out) without re-running tests
+check-state-coverage: ## Assert exact pkg/state package coverage ≥ STATE_EXACT_FLOOR (.claude/ci/coverage_floor.py) from existing profile (default: coverage/cover.out) without re-running tests
 	@COVERFILE="$${COVERFILE:-$(COVERAGE_DIR)/cover.out}" ; \
 	test -f "$$COVERFILE" || (echo "Coverage file $$COVERFILE not found — run tests with -coverprofile first" ; exit 1) ; \
 	python3 .claude/ci/coverage_floor.py --state-only "$$COVERFILE"
@@ -249,6 +347,10 @@ check-state-coverage: ## Assert exact pkg/state package coverage ≥ 70% from ex
 .PHONY: coverage-checker-test
 coverage-checker-test: ## Exercise coverage block union and exact-package gates without Go or Postgres
 	python3 -m unittest discover -s .claude/ci -p test_coverage_floor.py
+
+.PHONY: daemon-deps-check
+daemon-deps-check: ## Fail when a release binary links a package scripts/ci/daemon_deps.json forbids (ADR-1650 unit blast radius)
+	python3 scripts/ci/check_daemon_deps.py
 
 .PHONY: memstore-stubs-check
 memstore-stubs-check: ## Fail pure nil-return MemStore methods that can make tests vacuous (issue #1529 / PR-2b)
@@ -282,14 +384,6 @@ spec-cited-tests-check-test: ## Exercise the spec-cited-tests CI gate with synth
 adr-number-uniqueness-check: ## Reject a NEWLY duplicated ADR number (ratchet over docs/adr/DUPLICATE_NUMBERS_BASELINE.txt)
 	bash scripts/ci/check_adr_number_uniqueness.sh
 
-.PHONY: apid-size-check
-apid-size-check: ## Reject growth of pkg/apid/apidserver non-test code past scripts/ci/apid_size_baseline.txt (ADR-977)
-	bash scripts/ci/check_apid_size.sh
-
-.PHONY: apid-size-check-test
-apid-size-check-test: ## Exercise the apid size gate against synthetic packages
-	bash scripts/ci/check_apid_size_test.sh
-
 .PHONY: adr-number-uniqueness-check-test
 adr-number-uniqueness-check-test: ## Exercise the ADR-number gate against synthetic ADR trees in both directions
 	bash scripts/ci/check_adr_number_uniqueness_test.sh
@@ -302,6 +396,20 @@ migration-version-hygiene-check: ## Reject hand-typed migration versions and ver
 migration-version-hygiene-check-test: ## Exercise the migration-version gate with synthetic pull request events
 	bash scripts/ci/check_migration_version_hygiene_test.sh
 
+.PHONY: version-skew-check
+version-skew-check: ## Fail a proto or guest-protocol change an N-1 peer cannot handle (BASE=<ref>, default merge-base with origin/main)
+	$(GO) run ./scripts/ci/versionskew $(if $(BASE),-base $(BASE))
+
+.PHONY: migration-lint
+migration-lint: ## Expand/contract lint of the migrations added since BASE (default merge-base with origin/main)
+	python3 scripts/ci/check_migration_expand_contract.py $(if $(BASE),--base $(BASE))
+
+.PHONY: release-safety-check-test
+release-safety-check-test: ## Unit tests of the version-skew check, migration linter and post-deploy SLO gate
+	python3 scripts/ci/check_migration_expand_contract_test.py
+	python3 scripts/ci/slo_gate_test.py
+	$(GO) test -count=1 ./scripts/ci/versionskew
+
 .PHONY: text-encoding-check-test
 text-encoding-check-test: ## Exercise the text-encoding gate against fixture trees in both directions
 	bash scripts/ci/check_text_encoding_test.sh
@@ -313,6 +421,14 @@ shell-quoting-check-test: ## Exercise the shell-quoting gate against fixture tre
 .PHONY: deploy-action-head-check
 deploy-action-head-check: ## Verify stale branch and invalid release-tag pushes cannot submit Action deployments
 	@bash scripts/ci/test_deploy_action_head.sh
+
+.PHONY: deploy-action-cli-check
+deploy-action-cli-check: ## Verify the deploy Action unpacks and checks the gzip-compressed vendored CLI
+	@bash scripts/ci/deploy_action_cli_test.sh
+
+.PHONY: verify-action-ref-contents-check
+verify-action-ref-contents-check: ## Verify release.yml's Contents API check accepts a pinned ref that vendors the bare CLI
+	@bash scripts/ci/verify-action-ref-contents_test.sh
 
 .PHONY: environment-preflight-action-check
 environment-preflight-action-check: ## Verify the OIDC capability and promotion gate contract in the environment preflight Action
@@ -403,10 +519,13 @@ grafana-jq-check: ## Validate every Grafana dashboard JSON parses cleanly (jq -e
 	    jq -e . "$$f" > /dev/null || (echo "grafana-jq-check: parse failed $$f"; exit 1); \
 	  fi; \
 	done
+	@jq -e . examples/event-acknowledgment-monitoring/preparation-dashboard.json > /dev/null
 
 .PHONY: grafana-mirror-check
 grafana-mirror-check: ## SHA-256 byte-identity check for deploy/grafana/ → deploy/ansible/roles/grafana/files/ mirror. PR #837 (ADR-091 Amendment 1, issue #561) wired this into `test`.
-	@for f in faas-fleet.json warm-snapshot.json top-tenants.json top-throttled-apps.json edge-rules.json audit-write-fidelity.json obs-trace-completeness.json telemetry-pipeline.json loki-pipeline.json ai-gateway.json; do \
+	@for source in deploy/grafana/*.json; do \
+	  f=$$(basename "$$source"); \
+	  test -f "deploy/ansible/roles/grafana/files/$$f" || { echo "grafana-mirror-check: $$f is missing its Ansible mirror"; exit 1; }; \
 	  if [ -f "deploy/grafana/$$f" ] && [ -f "deploy/ansible/roles/grafana/files/$$f" ]; then \
 	    a=$$(shasum -a 256 "deploy/grafana/$$f" | awk '{print $$1}'); \
 	    b=$$(shasum -a 256 "deploy/ansible/roles/grafana/files/$$f" | awk '{print $$1}'); \
@@ -456,7 +575,28 @@ test-metal: ## Integration tests tagged //go:build metal — needs KVM + root (R
 	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -o "$$helper_dir/vmmd" ./cmd/vmmd; \
 	  CGO_ENABLED=0 $(GO) build -o "$$helper_dir/vmmd-jail-helper" ./cmd/vmmd-jail-helper; \
 	  if [ -n "$${RUN_REGEX:-}" ]; then set -- -run "$$RUN_REGEX"; else set --; fi; \
-	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags metal -race -count=1 $(RUN_ARGS) "$$@" $(PKGS)
+	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags "$${FAAS_METAL_TEST_TAGS:-metal}" -race -count=1 $(RUN_ARGS) "$$@" $(PKGS)
+
+.PHONY: test-function-background-native
+test-function-background-native: ## Strict Node execution lifetime/capture/thaw gate on the isolated native KVM host (ADR-20261018030610)
+	@test "$$(id -u)" = 0 || (echo "requires root on the isolated native KVM acceptance host" >&2; exit 1)
+	@test -c /dev/kvm || (echo "/dev/kvm missing; native qualification cannot skip" >&2; exit 1)
+	@test -r /etc/faas/builder-acceptance-host || (echo "requires the designated isolated acceptance host" >&2; exit 1)
+	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
+	  CGO_ENABLED=0 $(GO) build -tags metal,function_background_native -o "$$helper_dir/guest-init" ./guest/init; \
+	  CGO_ENABLED=0 $(GO) build -tags metal,function_background_native -o "$$helper_dir/node22-runner" ./guest/runners/node22; \
+	  CGO_ENABLED=0 $(GO) build -tags metal,function_background_native -o "$$helper_dir/node24-runner" ./guest/runners/node24; \
+	  FAAS_GUEST_INIT="$$helper_dir/guest-init" FAAS_E2E_FUNCTION_RUNNER_NODE22="$$helper_dir/node22-runner" \
+	  FAAS_E2E_FUNCTION_RUNNER_NODE24="$$helper_dir/node24-runner" \
+	  FAAS_REQUIRE_FUNCTION_BACKGROUND_METAL=1 $(GO) test -tags metal,function_background_native \
+	  -race -count=1 -v -run '^TestFunction(Background|ResourcesPostgres|MigrationAdmissionPostgres)Metal$$' -timeout 90m ./cmd/e2e
+	$(MAKE) leakcheck
+
+.PHONY: test-function-migration-native
+test-function-migration-native: ## Guarded Node22/24 migration, replies and coordinator restart on native KVM hosts (ADR-20261018030616)
+	@test -n "$${FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG:-}" || (echo "FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG must name the isolated two-host fixture" >&2; exit 1)
+	@test -n "$${FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE:-}" || (echo "FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE must name a new private directory outside this checkout" >&2; exit 1)
+	python3 scripts/ci/function-migration-native.py --config "$$FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG" --out "$$FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE"
 
 .PHONY: test-metal-builder
 test-metal-builder: ## Native KVM builder acceptance — requires staged release assets and root
@@ -494,6 +634,17 @@ e2e-general: ## Focused KVM-free general-path acceptance gate (real daemons + Po
 	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set; set it to a reachable Postgres to run e2e-general" ; exit 1)
 	@psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'select 1' >/dev/null || (echo "Postgres is not reachable; e2e-general refuses a green no-op run" ; exit 1)
 	$(GO) test -race -count=1 -timeout=12m -run '^TestE2E_NormalPath_' ./cmd/e2e/...
+
+.PHONY: e2e-start
+e2e-start: ## Gregale start acceptance: real CLI/daemons/Postgres, simulated build and VM boundary (Linux, no KVM).
+	@test "$$(uname -s)" = Linux || (echo "e2e-start requires Linux terminal support" >&2; exit 1)
+	@command -v python3 >/dev/null 2>&1 || (echo "Python 3 is required for the Start live-runner API contracts" >&2; exit 1)
+	@test -z "$$FAAS_SKIP_PG_TESTS" || (echo "Unset FAAS_SKIP_PG_TESTS; e2e-start refuses a skipped run" >&2; exit 1)
+	@test -z "$$FAAS_E2E_BIN_DIR" || (echo "Unset FAAS_E2E_BIN_DIR; e2e-start builds current daemon binaries" >&2; exit 1)
+	@command -v psql >/dev/null 2>&1 || (echo "psql not on PATH; e2e-start needs reachable PostgreSQL" >&2; exit 1)
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL is required for e2e-start" >&2; exit 1)
+	@psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'select 1' >/dev/null || (echo "PostgreSQL is unreachable; e2e-start refuses a green no-op run" >&2; exit 1)
+	$(GO) test -race -count=1 -timeout=20m -run '^TestE2E_Start_' ./cmd/e2e/...
 
 .PHONY: e2e-sandbox
 e2e-sandbox: ## Live Paddle sandbox walk (operator-only; PR-P3). Reads secrets from secrets/.env.sandbox — NEVER committed.
@@ -546,6 +697,8 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/faas-pg-basebackup-push_test.sh
 	bash deploy/scripts/faas-pg-wal-prune_test.sh
 	bash deploy/scripts/faas-pg-backup-contract-preflight_test.sh
+	bash deploy/scripts/faas-check-compute-edges_test.sh
+	bash deploy/ansible/roles/cp_state_backup/files/faas-cp-state-backup_test.sh
 
 .PHONY: m8-evidence-check
 m8-evidence-check: ## Fail when the executed M8 restore-drill record is missing or older than 30 days
@@ -583,6 +736,30 @@ metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see de
 
 .PHONY: native-m9-acceptance
 .PHONY: native-dev-bridge-acceptance
+.PHONY: native-start-acceptance test-start-native-acceptance
+native-start-acceptance: ## Qualify Start deploy/edit/configuration/recovery and park/wake against a dedicated native fleet
+	@GO="$(GO)" bash scripts/ci/run-native-start-acceptance.sh
+
+test-start-native-acceptance: ## Portable Start live-runner contracts and source detection; no native qualification claim
+	@python3 scripts/ci/start-native_test.py
+	@$(GO) test ./scripts/ci/start-relay -count=1
+	@$(GO) test ./cmd/gregale -run '^TestStartNativeFixtureDetection$$' -count=1
+
+.PHONY: native-scenario-restart-acceptance test-scenario-restart-acceptance test-scenario-dependency-postgres
+native-scenario-restart-acceptance: ## Verify native checkout batches, restart checkpoint matrix, pending recovery, failure/cancellation and cleanup
+	@GO="$(GO)" bash scripts/ci/run-native-scenario-restart-acceptance.sh
+
+test-scenario-restart-acceptance: ## Portable native-gate contracts, Node fixtures and manifest checks; no native VM claim
+	@python3 scripts/ci/scenario-restart-native_test.py
+	@python3 scripts/ci/scenario-dependency-postgres_test.py
+	@node --test examples/scenario-checkout/test/checkout.test.mjs examples/scenario-checkout/test/durable.test.mjs examples/scenario-checkout/test/batch.test.mjs examples/scenario-checkout/test/native-probe.test.mjs examples/scenario-checkout/test/pool-exhaustion.test.mjs examples/scenario-http-write/test/write.test.mjs examples/scenario-http-write/test/in-flight.test.mjs examples/scenario-http-write/test/retry-budget.test.mjs examples/scenario-http-write/test/circuit-breaker.test.mjs examples/scenario-http-write/test/bulkhead.test.mjs examples/scenario-http-write/test/combined.test.mjs examples/scenario-http-write/test/isolation.test.mjs examples/scenario-http-write/test/request-correlation.test.mjs examples/scenario-http-write/test/pg-commit-proxy.test.mjs
+	@$(GO) test ./cmd/gregale -run '^TestNativePoolCancellationRealCommandAndProxy$$|^TestNativeTransportNegativeAssertionsRealTCP$$|^TestRequestDeadline|^TestPoolExhaustion|^TestConnectionLeak|^TestDeclared.*Campaign|^TestCheckout.*ExampleManifest$$|^TestScenarioNativeAcceptanceHarness$$|^TestHTTPInFlightExampleManifest$$|^TestHTTPRestartMatrix|^TestHTTPDependencyRestart|^TestScenarioSecretEnvironment|^TestScenarioRestartInFlight' -race -count=1
+
+test-scenario-dependency-postgres: ## Verify dependency crash/replay and plaintext/TLS COMMIT faults, latency, bandwidth, read cuts, SSL/auth connection stalls, deployed COMMIT acknowledgement loss/deadlines, bandwidth restrictions, deployed read interruption/SSLRequest stalls, application retry budgets/circuit breakers/bulkheads, combined policies, repeated outage/recovery cycles, dependency isolation and recovery against Postgres 16
+	@node --test examples/scenario-http-write/test/pg-commit-proxy.test.mjs
+	@python3 scripts/ci/scenario-dependency-postgres_test.py
+	@python3 scripts/ci/scenario-dependency-postgres.py
+
 .PHONY: native-profiling-acceptance
 native-profiling-acceptance: ## Qualify deployed CPU profiling, request counters and native restore with evidence
 	@result=0; bash scripts/ci/run-native-profiling-acceptance.sh || result=$$?; \
@@ -592,8 +769,23 @@ native-profiling-acceptance: ## Qualify deployed CPU profiling, request counters
 native-dev-bridge-acceptance: ## Verify Dev Bridge against designated native split-box fixtures and public TLS
 	@bash scripts/ci/run-native-dev-bridge-acceptance.sh
 
-native-m9-acceptance: ## M9: run the guarded two-node failure-safe drill on the native x86 split-box pair
-	@bash scripts/ci/run-native-m9-acceptance.sh
+native-m9-acceptance: ## M9: qualify real migration, lost acknowledgement, vmmd restart and replacement protection on native x86
+	@GO="$(GO)" bash scripts/ci/run-native-m9-acceptance.sh
+
+.PHONY: native-m9-drain-acceptance
+native-m9-drain-acceptance: ## Qualify the real drain API, schedd restart, automatic migration and maintenance completion on native x86
+	@GO="$(GO)" bash scripts/ci/run-native-m9-acceptance.sh --scenario drain
+
+.PHONY: native-m9-heartbeat-smoke test-native-m9-contracts
+native-m9-heartbeat-smoke: ## Separate native two-node heartbeat smoke (does not qualify migration recovery)
+	@bash scripts/ci/run-native-m9-heartbeat-smoke.sh
+
+test-native-m9-contracts: ## Portable migration/drain verdicts, API and peer guards, and in-memory fixture tests; no KVM claim
+	@python3 scripts/ci/native-m9-gate_test.py
+	@python3 scripts/ci/native-m9-drain_test.py
+	@python3 tests/native/m9/native_m9_peer_test.py
+	@node --test tests/native/m9/fixture/server.test.mjs
+	@$(GO) test -race -count=1 ./tests/native/m9
 
 .PHONY: metal-lima-m5
 metal-lima-m5: ## Run the M5 §14 deploy-to-park cold-boot acceptance on Lima (subtest 1 only)
@@ -705,8 +897,12 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  echo "  interactive pass; the bash block above is the manual form."; \
 	  exit 0'
 
+.PHONY: lint-changed
+lint-changed: ## golangci-lint only what your change touches (ci-light's selection vs origin/main) + teststorecheck; BASE=<ref>, DRY_RUN=1
+	@GO=$(GO) bash scripts/lint-changed.sh
+
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check apid-size-check check-durable-entity-sdk-contract ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check check-durable-entity-sdk-contract check-binding-runner-sync ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
 	@python3 scripts/ci/check_gosec_baseline.py
 	@GO="$(GO)" python3 scripts/ci/lint_go_shard.py --shard 1 --shards 1 -- $(GO) tool golangci-lint
 
@@ -770,6 +966,11 @@ public-endpoint-check: ## Validate the public HTTPS/Caddy endpoint (PUBLIC_ENDPO
 	@test -n "$(PUBLIC_ENDPOINT_URL)" || { echo "PUBLIC_ENDPOINT_URL is required (example: https://my-api.gregale.dev)" >&2; exit 2; }
 	@PUBLIC_ENDPOINT_URL="$(PUBLIC_ENDPOINT_URL)" PUBLIC_PLATFORM_API_URL="$(PUBLIC_PLATFORM_API_URL)" PUBLIC_HTTP_URL="$(PUBLIC_HTTP_URL)" PUBLIC_ENDPOINT_PATH="$(PUBLIC_ENDPOINT_PATH)" bash scripts/ci/check_public_endpoint.sh
 
+.PHONY: check-compute-edges
+check-compute-edges: ## ADR-1343 §5: probe every compute node's app edge and tunnel connector from the control plane (CP_SSH=user@host)
+	@test -n "$(CP_SSH)" || { echo "CP_SSH is required (the control plane's SSH destination)" >&2; exit 2; }
+	ssh "$(CP_SSH)" 'bash -s' < deploy/scripts/faas-check-compute-edges.sh
+
 .PHONY: systemd-hardening-check
 systemd-hardening-check: ## Static release gate for production systemd isolation directives
 	bash scripts/ci/check_systemd_hardening.sh $(CURDIR)
@@ -827,6 +1028,19 @@ bootstrap-database-nodes: ansible-preflight ## ADR-1027: authorize pgproxyd on t
 bootstrap-tenant-egress-gateway: ansible-preflight ## ADR-372: converge the tenant egress gateway, then register every compute node with it.
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/tenant_egress_gateway.yml
 
+.PHONY: bootstrap-postgres-standby
+bootstrap-postgres-standby: ## ADR-1344 §8: seed and converge the warm-standby PostgreSQL replica (converge the control plane first).
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_standby.yml
+
+.PHONY: postgres-promote
+postgres-promote: ## ADR-1344 §8: promote the warm standby. PROMOTE_MODE=planned, or PROMOTE_MODE=failover FENCED_PRIMARY=<host> after fencing it. Then docs/runbooks/ControlPlaneFailover.md.
+	@test -n "$(PROMOTE_MODE)" || (echo "PROMOTE_MODE=planned|failover is required" >&2; exit 2)
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_promote.yml -e faas_promote_mode=$(PROMOTE_MODE) -e faas_promote_fenced_primary=$(FENCED_PRIMARY)
+
+.PHONY: standby-takeover
+standby-takeover: ## ADR-1344 §8: install the staged control-plane files on the promoted standby, before bootstrapping it as the control plane.
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/standby_takeover.yml
+
 .PHONY: bootstrap-fleet-runner
 bootstrap-fleet-runner: ## Install the pinned trusted runner. Gets a short-lived registration token via gh or the controller environment.
 	@if [ -n "$${FAAS_RUNNER_REGISTRATION_TOKEN:-}" ]; then \
@@ -855,6 +1069,10 @@ ansible-syntax-check: ## Validate the bare-metal Ansible playbooks with the prod
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/fleet_runner.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/node_join.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/node_join_control_plane.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_standby.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_promote.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/standby_takeover.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/cp_state_restore.yml --syntax-check
 
 .PHONY: ansible-lint
 ansible-lint: ## Lint deploy/ansible at the production profile (config: deploy/ansible/.ansible-lint) — ADR-143
@@ -1060,19 +1278,38 @@ sqlc-generate: sqlc ## (re)generate every SQLC package from its queries and sche
 sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be regenerated
 	@set -e; tmp=$$(mktemp -d); \
 	  trap 'rm -rf "$$tmp"' EXIT; \
-	  mkdir -p "$$tmp/pkg/state" "$$tmp/pkg/managedpostgres/connectionfence" "$$tmp/pkg/managedpostgres/copyinventory" "$$tmp/pkg/managedpostgres/copyroles" "$$tmp/pkg/managedpostgres/copydatabases" "$$tmp/pkg/managedpostgres/copycontents"; \
+	  mkdir -p "$$tmp/pkg/productemail" "$$tmp/pkg/datapipeline" "$$tmp/pkg/state" "$$tmp/pkg/db" "$$tmp/pkg/managedpostgres/connectionfence" "$$tmp/pkg/managedpostgres/copyinventory" "$$tmp/pkg/managedpostgres/copyroles" "$$tmp/pkg/managedpostgres/copydatabases" "$$tmp/pkg/managedpostgres/copycontents" "$$tmp/pkg/managedpostgres/credentialdelivery"; \
+	  cp pkg/datapipeline/queries.sql pkg/datapipeline/schema.sql pkg/datapipeline/catalog_schema.sql "$$tmp/pkg/datapipeline/"; \
+	  mkdir -p "$$tmp/pkg/connectioncapacity"; \
+	  cp pkg/connectioncapacity/queries.sql pkg/connectioncapacity/schema.sql "$$tmp/pkg/connectioncapacity/"; \
 	  cp sqlc.yaml schema.sql "$$tmp/"; \
-	  cp pkg/state/queries.sql pkg/state/telemetry_coverage_queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql pkg/state/event_recipient_queries.sql pkg/state/event_receipt_queries.sql pkg/state/keyed_replay_queries.sql pkg/state/invocation_attempt_queries.sql pkg/state/plain_replay_queries.sql pkg/state/work_admission_queries.sql pkg/state/deployment_dependency_queries.sql pkg/state/dev_source_patch_queries.sql pkg/state/profile_investigation_queries.sql pkg/state/profile_periodic_queries.sql pkg/state/profile_gate_queries.sql pkg/state/route_advice_queries.sql pkg/state/service_wake_ahead_queries.sql pkg/state/route_priority_queries.sql "$$tmp/pkg/state/"; \
+	  mkdir -p "$$tmp/pkg/apid/mailoutbox"; \
+	  cp pkg/apid/mailoutbox/queries.sql pkg/apid/mailoutbox/schema.sql "$$tmp/pkg/apid/mailoutbox/"; \
+	  mkdir -p "$$tmp/pkg/internalmail"; \
+	  cp pkg/internalmail/queries.sql pkg/internalmail/retention_queries.sql pkg/internalmail/operations_queries.sql pkg/internalmail/domain_queries.sql pkg/internalmail/control_queries.sql pkg/internalmail/producer_queries.sql pkg/internalmail/timing_queries.sql pkg/internalmail/pacing_queries.sql pkg/internalmail/relay_health_queries.sql pkg/internalmail/reputation_queries.sql pkg/internalmail/event_feed_queries.sql pkg/internalmail/producer_scheduler_queries.sql pkg/internalmail/producer_lifecycle_queries.sql pkg/internalmail/encryption_queries.sql pkg/internalmail/suppression_queries.sql pkg/internalmail/recovery_queries.sql pkg/internalmail/schema.sql "$$tmp/pkg/internalmail/"; \
+	  cp pkg/productemail/queries.sql pkg/productemail/schema.sql "$$tmp/pkg/productemail/"; \
+	  mkdir -p "$$tmp/pkg/ci/db"; \
+	  cp pkg/ci/db/*.sql "$$tmp/pkg/ci/db/"; \
+	  for source_package in pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/dataapiusage pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
+	    mkdir -p "$$tmp/$$source_package"; \
+	    cp "$$source_package/queries.sql" "$$source_package/schema.sql" "$$tmp/$$source_package/"; \
+	  done; \
+	  cp pkg/state/*queries.sql "$$tmp/pkg/state/"; \
 	  cp pkg/state/event*_queries.sql pkg/state/entity_outbox_delivery_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/state/binding_verification_run_queries.sql pkg/state/project_binding_verification_run_queries.sql pkg/state/queue_binding_canary_queries.sql pkg/state/project_release_staging_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/db/migration_recovery_queries.sql "$$tmp/pkg/db/"; \
 	  cp pkg/managedpostgres/connectionfence/queries.sql pkg/managedpostgres/connectionfence/bootstrap.sql pkg/managedpostgres/connectionfence/schema.sql "$$tmp/pkg/managedpostgres/connectionfence/"; \
 	  cp pkg/managedpostgres/copyinventory/queries.sql pkg/managedpostgres/copyinventory/schema.sql "$$tmp/pkg/managedpostgres/copyinventory/"; \
 	  cp pkg/managedpostgres/copyroles/queries.sql pkg/managedpostgres/copyroles/memberships.sql pkg/managedpostgres/copyroles/schema.sql "$$tmp/pkg/managedpostgres/copyroles/"; \
 	  cp pkg/managedpostgres/copycontents/queries.sql pkg/managedpostgres/copycontents/schema.sql "$$tmp/pkg/managedpostgres/copycontents/"; \
 	  cp pkg/managedpostgres/copydatabases/queries.sql pkg/managedpostgres/copydatabases/maintenance.sql pkg/managedpostgres/copydatabases/verification.sql pkg/managedpostgres/copydatabases/verification_retries.sql pkg/managedpostgres/copydatabases/schema.sql "$$tmp/pkg/managedpostgres/copydatabases/"; \
-	  mkdir -p "$$tmp/pkg/managedpostgres/credentialdelivery"; \
 	  cp pkg/managedpostgres/credentialdelivery/probe_queries.sql pkg/managedpostgres/credentialdelivery/probe_schema.sql "$$tmp/pkg/managedpostgres/credentialdelivery/"; \
+	  mkdir -p "$$tmp/pkg/e2etest/migrationprobe"; \
+	  cp pkg/e2etest/migrationprobe/queries.sql pkg/e2etest/migrationprobe/schema.sql "$$tmp/pkg/e2etest/migrationprobe/"; \
+	  mkdir -p "$$tmp/pkg/managedpostgres/connectioncapacity"; \
+	  cp pkg/managedpostgres/connectioncapacity/queries.sql pkg/managedpostgres/connectioncapacity/schema.sql "$$tmp/pkg/managedpostgres/connectioncapacity/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  for package in pkg/state/sqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc; do \
+	  for package in pkg/apid/mailoutbox/sqlc pkg/internalmail/sqlc pkg/productemail/sqlc pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/livekeys/sqlc pkg/state/orgaccess/sqlc pkg/state/resourceownership/sqlc pkg/state/appquota/sqlc pkg/state/scenariopg/sqlc pkg/state/scenariopgfault/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/managedpostgres/credentialprobe/sqlc pkg/managedpostgres/connectioncapacity/sqlc pkg/connectioncapacity/sqlc pkg/datapipeline/sqlc pkg/e2etest/migrationprobe/sqlc; do \
 	    diff -r "$$package" "$$tmp/$$package" || \
 	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
 	  done
@@ -1232,7 +1469,7 @@ standards-contract-check: ## Run official-schema and SDK interoperability checks
 
 .PHONY: focus-contract-check
 focus-contract-check: ## Check FOCUS invoice projection, refresh, ownership, and CLI operations
-	@$(GO) test -count=1 -run '^TestFOCUS|^TestInactiveAccount_CanStillPay$$' ./pkg/focus/... ./pkg/api ./pkg/apid/apidserver ./cmd/gregale
+	@$(GO_TEST) -count=1 -run '^TestFOCUS|^TestInactiveAccount_CanStillPay$$' ./pkg/focus/... ./pkg/api ./pkg/apid/apidserver ./cmd/gregale
 	@$(GO) test -count=1 -run '^TestInvoiceSnapshot|^TestInvoiceRefresh|^TestMemInvoiceRefresh|^TestMemInvoiceDetails|^TestMemInvoiceLifecycle|^TestInvoiceDetailsValidation' ./pkg/billing ./pkg/billing/stripe ./pkg/billing/paddle ./pkg/billing/polar ./pkg/state
 
 .PHONY: pricing-md
@@ -1331,11 +1568,31 @@ data-api-check: ## Runtime and typed application client unit checks
 data-api-acceptance: ## Disposable PostgreSQL/PostgREST application API acceptance
 	@bash scripts/test-data-api.sh --integration
 
+.PHONY: data-api-load-check data-api-load-verify
+data-api-load-check: ## Portable Data API load verifier bounds, evidence and failure contracts
+	@node --test tests/data-api/load/*.test.mjs
+
+data-api-load-verify: ## Concurrent REST/RPC and recovery checks on a disposable local PostgreSQL fixture
+	@bash scripts/test-data-api-load.sh
+
 data-api-browser-acceptance: ## Real browser CORS acceptance with disposable PostgreSQL
 	@DATA_API_BROWSER_REQUIRED=1 bash scripts/test-data-api.sh --integration
 
 data-api-packaging-check: ## Reproducible CLI/SDK bundle and fresh starter installation
 	@bash scripts/test-data-api-packaging.sh
+
+.PHONY: test-auth-app
+test-auth-app: ## Application Auth template and @gregale/auth SDK unit tests (ADR-1190); needs Node 22+ and npm
+	@scratch="$$(mktemp -d)" && trap 'rm -rf "$$scratch"' EXIT && \
+	  cp -R cmd/gregale/templates/auth "$$scratch/template" && (cd "$$scratch/template" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test) && \
+	  cp -R sdk/auth "$$scratch/sdk" && rm -rf "$$scratch/sdk/dist" "$$scratch/sdk/node_modules" && (cd "$$scratch/sdk" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test)
+
+.PHONY: auth-staging-check auth-staging-canary
+auth-staging-check: ## Application Auth canary harness contracts without provider calls (ADR-1190)
+	@node --test tests/auth/staging/*.test.mjs
+
+auth-staging-canary: ## Opt-in application Auth native acceptance through Gregale's remote builder (ADR-1190)
+	@bash scripts/ci/run-auth-staging-canary.sh
 
 .PHONY: data-api-staging-check data-api-staging-canary
 data-api-staging-check: ## Staging canary harness contracts without provider calls
@@ -1421,7 +1678,7 @@ sdk-smoke-python: ## Build fakeapid fixture + run Python SDK smoke + unit tests
 
 .PHONY: sdk-unit-python
 sdk-unit-python: ## Run Python SDK unit tests (no fixture required)
-	@cd sdk/python && .venv/bin/python -m pytest tests/test_client.py tests/test_sse.py tests/test_dev_bridge.py tests/test_flags.py
+	@cd sdk/python && .venv/bin/python -m pytest tests/test_client.py tests/test_sse.py tests/test_dev_bridge.py tests/test_flags.py tests/test_object_storage_runtime.py tests/test_trigger_batch.py
 
 .PHONY: test-flags
 test-flags: ## Validate customer-aware flag release, SDK and request evidence against disposable Postgres
@@ -1431,7 +1688,7 @@ test-flags: ## Validate customer-aware flag release, SDK and request evidence ag
 	@$(GO) test -p 1 ./pkg/flags ./pkg/workloadidentity
 	@DATABASE_URL="$(DATABASE_URL)" $(GO) test -p 1 ./pkg/flagsintegration
 	@$(GO) test -p 1 ./pkg/gateway -run 'TestFeatureFlag|TestFlagEvidence' -count=1
-	@GREGALE_FLAGS_ACCEPTANCE=1 DATABASE_URL="$(DATABASE_URL)" $(GO) test -p 1 ./pkg/apid/apidserver -run '^TestFeatureFlags' -count=1
+	@GREGALE_FLAGS_ACCEPTANCE=1 DATABASE_URL="$(DATABASE_URL)" $(GO_TEST) -p 1 ./pkg/apid/apidserver -run '^TestFeatureFlags' -count=1
 	@$(GO) test -p 1 ./cmd/gregale -run '^TestCmdFlags' -count=1
 
 .PHONY: test-flags-metal
@@ -1443,14 +1700,32 @@ test-flags-metal: ## Validate Node Flags refresh after native VM restore (root, 
 	@cd sdk/node && npm ci --ignore-scripts --no-audit --no-fund && npm run build
 	@RUN_REGEX='^TestFeatureFlagsNativeParkRestoreMetal$$' $(MAKE) test-metal PKGS=./cmd/e2e/...
 
+PROMTOOL ?= promtool
+.PHONY: test-ci-observability
+test-ci-observability: grafana-mirror-check grafana-jq-check prometheus-alert-metadata-check ## Internal CI metrics, quiet-default alerts and dashboard contracts; no KVM or provider access.
+	$(GO) test -race -count=1 ./pkg/ci -run '^TestCI(HealthMetrics|WorkerConfiguration)'
+	$(GO) test -count=1 ./pkg/promqlrules -run '^TestCIAlertsAndDashboard'
+	$(PROMTOOL) check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
+	$(PROMTOOL) test rules pkg/promqlrules/testdata/internal_ci.test.yml
+
 .PHONY: test-environment-gitops-core
 test-environment-gitops-core: ## Strict contract, planner, worker, and real PostgreSQL lease/revision acceptance (no KVM).
 	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL is required; GitOps core acceptance refuses a skipped PostgreSQL run"; exit 1)
 	@GREGALE_GITOPS_ACCEPTANCE=1 $(GO) test -p 1 ./pkg/environmentsync/... ./pkg/environmentgitops ./pkg/gregalemanifest -count=1
 
+.PHONY: test-environment-gitops-native
+test-environment-gitops-native: ## Isolated native API/worker/queue and source scheduled-Job acceptance with strict pass and leak gates.
+	@GO="$(GO)" bash scripts/test-environment-gitops-native.sh
+
+.PHONY: test-environment-gitops-report
+test-environment-gitops-report: ## Test structured native acceptance evidence; no KVM or database required.
+	@python3 scripts/gitops_native_report_test.py
+	@python3 scripts/ci/gitops_native_ci_test.py
+	@bash -n scripts/ci/run-gitops-native-acceptance.sh
+
 .PHONY: test-environment-gitops-controls
 test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashboard review workflows and SDK contracts; does not replace native runtime acceptance.
-	@$(GO) test -p 1 ./pkg/apid/apidserver ./cmd/gregale ./pkg/dashboard ./scripts/ci/speccompliance -run '^(TestEnvironmentGit(Ops.*|Source(Polling|Metrics).*)|TestStubGithubdProtectedBranchEvidenceCannotQualify|TestSpecCompliance)$$' -count=1
+	@$(GO_TEST) -p 1 ./pkg/apid/apidserver ./cmd/gregale ./pkg/dashboard ./scripts/ci/speccompliance -run '^(TestEnvironmentGit(Ops.*|Source(Polling|Metrics).*)|TestStubGithubdProtectedBranchEvidenceCannotQualify|TestSpecCompliance)$$' -count=1
 	@$(GO) test -p 1 ./pkg/gitapproval ./pkg/githubd ./pkg/githubdgrpc -run '^Test(HTTP(ProtectedBranch|ReviewedMerge)Evidence.*|(ProtectedBranch|ReviewedMerge)Evidence.*|ServerSplitBoxListenerPreservesLocalSocketAndRestrictsRemoteMethods)$$' -count=1
 	@$(GO) test -p 1 ./pkg/promqlrules -run '^TestEnvironmentGitSourceAlertsStayInternal$$' -count=1
 	@promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
@@ -1458,7 +1733,7 @@ test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashbo
 	@$(GO) test -p 1 ./pkg/state -run '^TestPgStoreEdgeRule(Batch|MutationLock)' -count=1
 	@$(GO) test -p 1 ./pkg/state -run '^Test(Mem|Pg)StoreConformance$$/^(runtime_input_receipt.*|scoped_runtime_changes.*|snapshot_publication_fences_runtime_config_changes|invocation_environment.*|keyed_invocation_environment.*|queue_batch_admission.*|queue_demand_uses_captured_environment|worker_pool_history_is_generation_scoped|worker_account_capacity_is_shared_and_released|worker_admission_identity_cannot_be_reinterpreted|queue_binding_consumer_publication_is_atomic|queue_binding_environment_identity_is_scoped_and_retained|queue_binding_retirement_holds_work_and_retains_receipts|queue_binding_identity_survives_rename_replacement_and_replay|queue_dead_letter_replay_rearms_original_receipt|queue_consumer_and_trigger_share_account_quota)$$' -count=1
 	@$(GO) test -p 1 ./pkg/state -run '^(TestPgQueue(Consumer.*|Replay.*|Binding(Retirement|Admission).*)|TestPgWorkerAccountReservationRace)$$' -count=1
-	@$(GO) test -p 1 ./pkg/apid/apidserver -run '^(TestHTTPFunctionPushQueueBinding|TestQueueBinding.*|TestConfigureQueueWorkload.*|TestQueueEnvironmentHTTP.*|TestPGQueueEnvironmentHTTP.*)$$' -count=1
+	@$(GO_TEST) -p 1 ./pkg/apid/apidserver -run '^(TestHTTPFunctionPushQueueBinding|TestQueueBinding.*|TestConfigureQueueWorkload.*|TestQueueEnvironmentHTTP.*|TestPGQueueEnvironmentHTTP.*)$$' -count=1
 	@$(GO) test -p 1 ./migrations -run '^(TestMigration(EnvironmentGitOpsQueueIntent|InvocationDeploymentScope|InvocationQueueBindingIdentity|QueueBindingEnvironmentScope|QueueReplayDeliveryFence|QueueConsumerBindingIdentity).*|TestEnvironmentGitOpsMigrationsReplayRetainsIdentityAndLeases|TestEnvironmentGitApprovalProvenance.*)$$' -count=1
 	@$(GO) test -p 1 ./pkg/state -run '^(TestPg_InvocationScope.*|TestResolveInvocationVersionUsesCapturedProjectScope)$$' -count=1
 	@$(GO) test -p 1 ./pkg/sched -run '^(TestDrain_StoredScope.*|TestWakeCoord_Scope.*|TestEnsureWake_SeparateScopes.*|TestLedgerRolloutScope.*|TestEngineSeedLedgerPreservesDeploymentScope)$$' -count=1
@@ -1467,7 +1742,7 @@ test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashbo
 	@$(GO) test -p 1 ./pkg/sched -run '^(TestQueuePollerLinksTriggerAndInvocationOutcomes|TestQueuePollerRequiresAuthoritativeBindingIdentity|TestQueuePollerBindingIdentitySurvivesRename|TestQueuePollerEnvironmentIdentity.*|TestQueueReplay.*|TestNamedQueuePollerSharesWorkReservationsAndFencesAcknowledgement|TestBuildDispatchEnvelope_DurableIdentityIsTyped|TestQueueBatchDispatchPreservesCapturedScopes)$$' -count=1
 	@$(GO) test -p 1 ./pkg/gateway -run '^TestHandleInvocationDispatchBatch_DurableIdentity$$' -count=1
 	@$(GO) test -p 1 ./cmd/gatewayd-internal -run '^(TestSynthAdapterStoredScope.*|TestSynthAdapterPlatformTenant.*|TestSynthBatch.*)$$' -count=1
-	@$(GO) test -p 1 ./pkg/apid/apidserver -run '^TestReplayInvocation_(PreservesCapturedEnvironment|BoundQueueRetainsDeliveryIdentity)$$' -count=1
+	@$(GO_TEST) -p 1 ./pkg/apid/apidserver -run '^TestReplayInvocation_(PreservesCapturedEnvironment|BoundQueueRetainsDeliveryIdentity)$$' -count=1
 	@$(GO) test -p 1 ./pkg/state/conformance -run '^TestConformanceCoverage$$' -count=1
 	@$(GO) test -p 1 ./pkg/sched -run '^(TestRefreshRuntimeConfig.*|TestRuntimeConfig.*)$$' -count=1
 	@$(GO) test -p 1 ./pkg/vmmdgrpc -run '^TestMigrationAdoptionAcknowledges.*$$' -count=1
@@ -1541,3 +1816,28 @@ check-operation-sdk-schema:
 .PHONY: check-durable-entity-sdk-contract
 check-durable-entity-sdk-contract:
 	python3 scripts/gen-durable-entity-contract.py --check
+
+.PHONY: obs-rule-catalog-generate obs-rule-catalog-check
+obs-rule-catalog-generate: ## Regenerate the explicit operator alert expectation sets
+	$(GO) run ./cmd/obs-rule-catalog -root .
+
+obs-rule-catalog-check: ## Verify the operator alert catalog matches shipped sources
+	$(GO) run ./cmd/obs-rule-catalog -root . -check
+
+.PHONY: test-data-repair-native
+test-data-repair-native: ## Repair rehearsal acceptance on a designated native Linux KVM host
+	@GO="$(GO)" "$${PYTHON:-python3}" scripts/ci/run-data-repair-native.py
+.PHONY: issues-grouping-eval
+issues-grouping-eval: ## Compare grouping strategies against the labeled offline corpus
+	$(GO) run ./cmd/issues-grouping-eval
+
+.PHONY: issues-grouping-check
+issues-grouping-check: ## Check newly incorrect grouping pairs against the reviewed synthetic baseline
+	$(GO) run ./cmd/issues-grouping-eval -strategy cause-chain-v1 -baseline pkg/issues/evaluation/testdata/cause-chain-v1.baseline.json -check
+
+.PHONY: check-binding-runner-sync
+check-binding-runner-sync:
+	python3 scripts/sync_binding_runner.py --check
+.PHONY: test-data-pipeline
+test-data-pipeline: ## Real TLS Postgres replication and signed HTTP acceptance (Docker, Node, Go)
+	@bash scripts/test-data-pipeline.sh

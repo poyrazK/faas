@@ -13,6 +13,7 @@ from ..models.app_task_response_status import AppTaskResponseStatus, check_app_t
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.app_task_attach_info import AppTaskAttachInfo
     from ..models.app_task_failure import AppTaskFailure
     from ..models.work_decision import WorkDecision
 
@@ -55,6 +56,10 @@ class AppTaskResponse:
     cancel_requested_at: datetime.datetime | None | Unset = UNSET
     started_at: datetime.datetime | None | Unset = UNSET
     finished_at: datetime.datetime | None | Unset = UNSET
+    interactive: bool | Unset = UNSET
+    """Present on the create response of an interactive session."""
+    attach: AppTaskAttachInfo | Unset = UNSET
+    """One-time attach credential for an interactive app task (ADR-1037). Returned only in the create response."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -153,6 +158,12 @@ class AppTaskResponse:
         else:
             finished_at = self.finished_at
 
+        interactive = self.interactive
+
+        attach: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.attach, Unset):
+            attach = self.attach.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -197,11 +208,16 @@ class AppTaskResponse:
             field_dict["started_at"] = started_at
         if finished_at is not UNSET:
             field_dict["finished_at"] = finished_at
+        if interactive is not UNSET:
+            field_dict["interactive"] = interactive
+        if attach is not UNSET:
+            field_dict["attach"] = attach
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.app_task_attach_info import AppTaskAttachInfo
         from ..models.app_task_failure import AppTaskFailure
         from ..models.work_decision import WorkDecision
 
@@ -355,6 +371,15 @@ class AppTaskResponse:
 
         finished_at = _parse_finished_at(d.pop("finished_at", UNSET))
 
+        interactive = d.pop("interactive", UNSET)
+
+        _attach = d.pop("attach", UNSET)
+        attach: AppTaskAttachInfo | Unset
+        if isinstance(_attach, Unset):
+            attach = UNSET
+        else:
+            attach = AppTaskAttachInfo.from_dict(_attach)
+
         app_task_response = cls(
             id=id,
             app_id=app_id,
@@ -382,6 +407,8 @@ class AppTaskResponse:
             cancel_requested_at=cancel_requested_at,
             started_at=started_at,
             finished_at=finished_at,
+            interactive=interactive,
+            attach=attach,
         )
 
         app_task_response.additional_properties = d

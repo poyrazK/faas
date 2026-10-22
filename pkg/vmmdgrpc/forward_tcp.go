@@ -8,14 +8,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/netns"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -59,9 +57,16 @@ func (s *Server) ForwardTCPStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	if port == 0 || port > 65535 {
 		return status.Error(codes.InvalidArgument, "guest TCP port must be between 1 and 65535")
 	}
+	ctx, err = s.publicForwardContext(ctx, instance)
+	if err != nil {
+		return err
+	}
 
 	s.beginActivity(instance)
 	defer s.endActivity(instance)
+	if err := s.prepareGuest(stream.Context(), instance); err != nil {
+		return err
+	}
 
 	cmd, stdinW, stdoutR, readyR, stderr, err := tcpBridgeSpawn(ctx, pid, port)
 	if err != nil {
@@ -133,7 +138,7 @@ func namespaceBridgeSpawn(ctx context.Context, instancePID int, port uint32, pat
 		return nil, nil, nil, nil, nil, status.Errorf(codes.Internal, "namespace bridge readiness pipe: %v", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "nsenter", "--target", strconv.Itoa(instancePID), "--net", "--", bridgePath, netns.GuestIP, strconv.FormatUint(uint64(port), 10))
+	cmd := namespaceOrPublicCommand(ctx, instancePID, bridgePath, port)
 	cmd.Stdin = stdinR
 	cmd.Stdout = stdoutW
 	cmd.ExtraFiles = []*os.File{readyW}

@@ -542,7 +542,7 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if len(parts) != 2 {
 		t.Fatal("missing configuration guard downgrade")
 	}
-	// ADR-590's protection successor refines this function. Exercise the
+	// ADR-590's protection and purge successors refine these functions. Exercise the
 	// actual ordered downgrade/upgrade chain and compare the final schema.
 	successorRaw, err := migrations.FS.ReadFile("20261007125239060_object_protection_capture_admission.sql")
 	if err != nil {
@@ -559,6 +559,30 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	purge := strings.SplitN(string(purgeRaw), "-- +goose Down", 2)
 	if len(purge) != 2 {
 		t.Fatal("missing parent purge downgrade")
+	}
+	reservationRaw, err := migrations.FS.ReadFile("20261011232006310_clone_checkpoint_target_reservations.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation := strings.SplitN(string(reservationRaw), "-- +goose Down", 2)
+	if len(reservation) != 2 {
+		t.Fatal("missing target reservation successor downgrade")
+	}
+	unusedRaw, err := migrations.FS.ReadFile("20261011232006374_clone_checkpoint_unused_reservation_guard.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unused := strings.SplitN(string(unusedRaw), "-- +goose Down", 2)
+	if len(unused) != 2 {
+		t.Fatal("missing unused reservation guard downgrade")
+	}
+	accountPurgeRaw, err := migrations.FS.ReadFile("20261016084512417_clone_guard_account_purge_order.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountPurge := strings.SplitN(string(accountPurgeRaw), "-- +goose Down", 2)
+	if len(accountPurge) != 2 {
+		t.Fatal("missing account purge ordering downgrade")
 	}
 	f := newCloneConfigurationFenceFixture(t)
 	tx, err := f.pool.Begin(f.ctx)
@@ -584,6 +608,15 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if err := tx.QueryRow(f.ctx, shape).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := tx.Exec(f.ctx, accountPurge[1]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(f.ctx, unused[1]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(f.ctx, reservation[1]); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(f.ctx, purge[1]); err != nil {
 		t.Fatal(err)
 	}
@@ -600,6 +633,21 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(f.ctx, purge[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(f.ctx, reservation[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(f.ctx, unused[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(f.ctx, accountPurge[0]); err != nil {
+		t.Fatal(err)
+	}
+	// 20261019190114312 (#4882, applied online) later points the guard's owner at the durable
+	// resource namespace; reapply it so the comparison covers this round trip.
+	if _, err := tx.Exec(f.ctx, `ALTER TABLE project_environment_clone_configuration_guards DROP CONSTRAINT project_environment_clone_configuration_guards_account_id_fkey;
+ALTER TABLE project_environment_clone_configuration_guards ADD CONSTRAINT project_environment_clone_configuration_guards_account_id_fkey FOREIGN KEY (account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(f.ctx, shape).Scan(&after); err != nil || before != after {

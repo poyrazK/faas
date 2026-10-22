@@ -46,6 +46,7 @@ var (
 	ErrLimit            = errors.New("durable entity prototype budget exceeded")
 	ErrUnsupported      = errors.New("object store does not satisfy durable entity conditional-write requirements")
 	ErrInventoryPending = errors.New("durable entity storage accounting is pending")
+	ErrRetired          = errors.New("durable entity is permanently retired")
 )
 
 // ObjectStore versions are opaque CAS tokens. Get must return body and version
@@ -179,4 +180,5 @@ type manifest struct {
 	StorageUsage      *StorageUsage   `json:"storage_usage,omitempty"`
 	AlarmDelivery     *alarmDelivery  `json:"alarm_delivery,omitempty"`
 	OutboxDelivery    *outboxDelivery `json:"outbox_delivery,omitempty"`
+	Retirement        *retirement     `json:"retirement,omitempty"`
 }

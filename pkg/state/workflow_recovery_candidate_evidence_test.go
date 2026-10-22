@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,14 +7,15 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWorkflowRecoveryCandidateEvidenceSurvivesPruning(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, s Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
 		ctx := context.Background()
-		r, app, _, now := seedAutomaticRecoveryReview(t, s, nil)
+		r, app, _, now := state.SeedAutomaticRecoveryReview(t, s, nil)
 		var evidence api.WorkflowRecoveryHistoryEntry
-		for _, e := range durableRecoveryEvents(t, s, app.ID) {
+		for _, e := range state.DurableRecoveryEvents(t, s, app.ID) {
 			if e.Kind == "candidates_observed" && e.ReviewID == r.ID {
 				evidence = e
 			}
@@ -22,14 +23,14 @@ func TestWorkflowRecoveryCandidateEvidenceSurvivesPruning(t *testing.T) {
 		if evidence.CandidateEvidence == nil || evidence.CandidateEvidence.Decisions[0].FailureStatus != r.Decisions[0].FailureStatus || r.Decisions[0].FailureStatus == "" || evidence.CandidateEvidence.Decisions[0].PreflightOutcome != "eligible" {
 			t.Fatalf("capture missing: %+v", evidence)
 		}
-		policies := s.(WorkflowRecoveryPolicyStore)
+		policies := s.(state.WorkflowRecoveryPolicyStore)
 		for i := 1; i <= 2; i++ {
 			if _, err := policies.ProcessNextWorkflowRecoveryPolicy(ctx, now.Add(time.Duration(i)*time.Minute)); err != nil {
 				t.Fatal(err)
 			}
 		}
 		seen := map[string]bool{}
-		for _, e := range durableRecoveryEvents(t, s, app.ID) {
+		for _, e := range state.DurableRecoveryEvents(t, s, app.ID) {
 			if e.Kind != "candidates_observed" {
 				continue
 			}
@@ -43,53 +44,53 @@ func TestWorkflowRecoveryCandidateEvidenceSurvivesPruning(t *testing.T) {
 		at := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
 		evidence.OccurredAt = at
 		evidence.CandidateEvidence.ObservedAt = at
-		if m, ok := s.(*MemStore); ok {
-			m.mu.Lock()
-			p := m.recoveryPolicies[canonicalMemUUID(app.ID)]
+		if m, ok := s.(*state.MemStore); ok {
+			(*m.Mu()).Lock()
+			p := (*m.RecoveryPolicies())[state.CanonicalMemUUID(app.ID)]
 			for i := range p.History {
 				if p.History[i].Entry.ID == evidence.ID {
 					p.History[i].Entry = evidence
 				}
 			}
 			for id := range p.Reviews {
-				forgetRecoveryPolicyReview(p, id)
+				state.ForgetRecoveryPolicyReview(p, id)
 			}
-			delete(m.eventRecoveryJobs, canonicalMemUUID(r.JobID))
-			m.mu.Unlock()
+			delete((*m.EventRecoveryJobs()), state.CanonicalMemUUID(r.JobID))
+			(*m.Mu()).Unlock()
 		} else {
-			pg := s.(*PgStore)
+			pg := s.(*state.PgStore)
 			raw, err := json.Marshal(evidence)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = pg.pool.Exec(ctx, "UPDATE workflow_recovery_history_events SET entry=$1,occurred_at=$2 WHERE app_id=$3 AND entry->>'id'=$4", raw, at, app.ID, evidence.ID); err != nil {
+			if _, err = (*pg.Pool()).Exec(ctx, "UPDATE workflow_recovery_history_events SET entry=$1,occurred_at=$2 WHERE app_id=$3 AND entry->>'id'=$4", raw, at, app.ID, evidence.ID); err != nil {
 				t.Fatal(err)
 			}
-			if _, err = pg.pool.Exec(ctx, "DELETE FROM event_recovery_jobs WHERE id=$1", r.JobID); err != nil {
+			if _, err = (*pg.Pool()).Exec(ctx, "DELETE FROM event_recovery_jobs WHERE id=$1", r.JobID); err != nil {
 				t.Fatal(err)
 			}
-			s = NewPgStore(pg.pool)
+			s = state.NewPgStore((*pg.Pool()).Pool)
 		}
-		proposed := recoveryPolicyClone(r.Policy)
+		proposed := state.RecoveryPolicyClone(r.Policy)
 		proposed.FailureStatuses = []string{r.Decisions[0].FailureStatus}
-		out, err := s.(WorkflowRecoveryPolicyEvaluationStore).EvaluateWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.WorkflowRecoveryPolicyEvaluationRequest{ExpectedVersion: r.PolicyVersion, Policy: proposed, CreatedBefore: at.Add(time.Second)})
+		out, err := s.(state.WorkflowRecoveryPolicyEvaluationStore).EvaluateWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.WorkflowRecoveryPolicyEvaluationRequest{ExpectedVersion: r.PolicyVersion, Policy: proposed, CreatedBefore: at.Add(time.Second)})
 		if err != nil || len(out.Candidates) != 1 || out.ProposedTotals.WouldPrepare != 1 || out.Candidates[0].CandidateEvidenceID != evidence.ID || len(out.Candidates[0].HistoricalFailureStatuses) != 1 || out.Candidates[0].HistoricalFailureStatuses[0] != r.Decisions[0].FailureStatus {
 			t.Fatalf("pruning/restart evaluation: %+v %v", out, err)
 		}
 		// Evidence remains subject to recording-age retention; reads do not prune it.
 		aged := time.Now().Add(-api.WorkflowRecoveryHistoryRetention - time.Hour)
-		if m, ok := s.(*MemStore); ok {
-			m.mu.Lock()
-			for i := range m.recoveryPolicies[canonicalMemUUID(app.ID)].History {
-				m.recoveryPolicies[canonicalMemUUID(app.ID)].History[i].RecordedAt = aged
+		if m, ok := s.(*state.MemStore); ok {
+			(*m.Mu()).Lock()
+			for i := range (*m.RecoveryPolicies())[state.CanonicalMemUUID(app.ID)].History {
+				(*m.RecoveryPolicies())[state.CanonicalMemUUID(app.ID)].History[i].RecordedAt = aged
 			}
-			m.mu.Unlock()
+			(*m.Mu()).Unlock()
 		} else {
-			if _, err = s.(*PgStore).pool.Exec(ctx, "UPDATE workflow_recovery_history_events SET recorded_at=$1 WHERE app_id=$2", aged, app.ID); err != nil {
+			if _, err = (*s.(*state.PgStore).Pool()).Exec(ctx, "UPDATE workflow_recovery_history_events SET recorded_at=$1 WHERE app_id=$2", aged, app.ID); err != nil {
 				t.Fatal(err)
 			}
 		}
-		out, err = s.(WorkflowRecoveryPolicyEvaluationStore).EvaluateWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.WorkflowRecoveryPolicyEvaluationRequest{ExpectedVersion: r.PolicyVersion, Policy: proposed, CreatedBefore: at.Add(time.Second)})
+		out, err = s.(state.WorkflowRecoveryPolicyEvaluationStore).EvaluateWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.WorkflowRecoveryPolicyEvaluationRequest{ExpectedVersion: r.PolicyVersion, Policy: proposed, CreatedBefore: at.Add(time.Second)})
 		if err != nil || len(out.Candidates) != 0 {
 			t.Fatalf("expired candidate facts: %+v %v", out, err)
 		}

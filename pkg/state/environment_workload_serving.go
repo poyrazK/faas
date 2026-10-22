@@ -28,6 +28,8 @@ type EnvironmentWorkloadServingRoute struct {
 // require a completed invocation for every reviewed queue consumer; scheduled
 // Jobs require one successful, revision-current occurrence after activation.
 type EnvironmentWorkloadServingReceipt struct {
+	// FirstServedAt survives gateway handoffs; it is historical evidence only.
+	FirstServedAt          *time.Time                                  `json:"-"`
 	GraphID                string                                      `json:"graph_id"`
 	SourceID               string                                      `json:"-"`
 	SourceGeneration       int64                                       `json:"-"`
@@ -138,6 +140,10 @@ func cloneEnvironmentWorkloadServingReceipt(in EnvironmentWorkloadServingReceipt
 	for generation, nodes := range in.Acknowledgements {
 		out.Acknowledgements[generation] = slices.Clone(nodes)
 	}
+	if in.FirstServedAt != nil {
+		first := *in.FirstServedAt
+		out.FirstServedAt = &first
+	}
 	if in.ServedAt != nil {
 		servedAt := *in.ServedAt
 		out.ServedAt = &servedAt
@@ -181,7 +187,8 @@ func environmentWorkloadServingReceiptMatches(receipt EnvironmentWorkloadServing
 	}
 	acks := make(map[string]EnvironmentWorkloadServingQueueAck, len(receipt.QueueAcknowledgements))
 	for _, acknowledgement := range receipt.QueueAcknowledgements {
-		if acknowledgement.Mode == "" || acknowledgement.BindingID == "" || acknowledgement.InvocationID == "" || acknowledgement.Acknowledged.IsZero() {
+		if acknowledgement.Mode == "" || acknowledgement.BindingID == "" || acknowledgement.InvocationID == "" ||
+			receipt.ReleaseCreatedAt.IsZero() || acknowledgement.Acknowledged.Before(receipt.ReleaseCreatedAt) {
 			return false
 		}
 		if _, duplicate := acks[acknowledgement.BindingID]; duplicate {
@@ -456,7 +463,8 @@ func environmentWorkloadServingReceiptAcknowledged(receipt EnvironmentWorkloadSe
 	}
 	acks := make(map[string]EnvironmentWorkloadServingQueueAck, len(receipt.QueueAcknowledgements))
 	for _, acknowledgement := range receipt.QueueAcknowledgements {
-		if acknowledgement.Mode == "" || acknowledgement.BindingID == "" || acknowledgement.InvocationID == "" || acknowledgement.Acknowledged.IsZero() {
+		if acknowledgement.Mode == "" || acknowledgement.BindingID == "" || acknowledgement.InvocationID == "" ||
+			receipt.ReleaseCreatedAt.IsZero() || acknowledgement.Acknowledged.Before(receipt.ReleaseCreatedAt) {
 			return false
 		}
 		if _, duplicate := acks[acknowledgement.BindingID]; duplicate {

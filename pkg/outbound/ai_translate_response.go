@@ -21,6 +21,12 @@ type aiResponseTranslator interface {
 	end() []byte
 }
 
+// awsEventTranslator converts the messages of a binary AWS event stream
+// (Bedrock converse-stream, ADR-995) into OpenAI SSE bytes.
+type awsEventTranslator interface {
+	awsEvent(messageType, eventType string, payload []byte) []byte
+}
+
 type openAIUsage struct {
 	PromptTokens        int64 `json:"prompt_tokens"`
 	CompletionTokens    int64 `json:"completion_tokens"`
@@ -108,6 +114,10 @@ func openAIErrorBody(status int, body []byte) []byte {
 			Status  string `json:"status"`
 		} `json:"error"`
 	}
+	// Bedrock errors carry a top-level message instead (ADR-995).
+	var topLevel struct {
+		Message string `json:"message"`
+	}
 	message := http.StatusText(status)
 	errorType := "provider_error"
 	if json.Unmarshal(body, &provider) == nil && provider.Error != nil && provider.Error.Message != "" {
@@ -117,6 +127,8 @@ func openAIErrorBody(status int, body []byte) []byte {
 		} else if provider.Error.Status != "" {
 			errorType = strings.ToLower(provider.Error.Status)
 		}
+	} else if json.Unmarshal(body, &topLevel) == nil && topLevel.Message != "" {
+		message = topLevel.Message
 	}
 	encoded, _ := json.Marshal(map[string]any{"error": map[string]any{
 		"message": message, "type": errorType, "code": strconv.Itoa(status),
@@ -437,6 +449,8 @@ const (
 	translatePassthrough translateMode = iota
 	translateJSON
 	translateEventStream
+	// translateAWSEventStream reads Bedrock's binary event stream.
+	translateAWSEventStream
 )
 
 // translatingWriter rewrites a target's provider response into OpenAI chat
@@ -451,7 +465,10 @@ type translatingWriter struct {
 	body       bytes.Buffer
 	line       []byte
 	data       []byte
+	frames     awsEventStreamReader
 	wrote      bool
+	// aborted marks a stream a response check ended (ADR-1435).
+	aborted bool
 }
 
 func newTranslatingWriter(dst http.ResponseWriter, translator aiResponseTranslator) *translatingWriter {
@@ -466,11 +483,25 @@ func (w *translatingWriter) WriteHeader(status int) {
 	}
 	w.wrote, w.status = true, status
 	mediaType, _, _ := mime.ParseMediaType(w.header.Get("Content-Type"))
+	awsTranslator, readsAWS := w.translator.(awsEventTranslator)
 	switch {
 	case mediaType == "application/problem+json":
 		w.mode = translatePassthrough
 	case mediaType == "text/event-stream" && status >= 200 && status <= 299:
 		w.mode = translateEventStream
+	case mediaType == awsEventStreamMediaType && readsAWS && status >= 200 && status <= 299:
+		w.mode = translateAWSEventStream
+		w.frames.onMessage = func(messageType, eventType string, payload []byte) {
+			if w.aborted {
+				return
+			}
+			if code, message := gatewayErrorCode(payload); messageType == "exception" && code != "" {
+				_, _ = w.dst.Write(openAIGatewayErrorEvent(code, message))
+				w.aborted = true
+				return
+			}
+			_, _ = w.dst.Write(awsTranslator.awsEvent(messageType, eventType, payload))
+		}
 	case mediaType == "application/json" || strings.HasSuffix(mediaType, "+json"):
 		w.mode = translateJSON
 	default:
@@ -483,7 +514,7 @@ func (w *translatingWriter) WriteHeader(status int) {
 		w.dst.Header()[name] = values
 	}
 	switch w.mode {
-	case translateEventStream:
+	case translateEventStream, translateAWSEventStream:
 		w.dst.Header().Set("Content-Type", "text/event-stream")
 	case translateJSON:
 		w.dst.Header().Set("Content-Type", "application/json")
@@ -500,6 +531,9 @@ func (w *translatingWriter) Write(p []byte) (int, error) {
 		return w.body.Write(p)
 	case translateEventStream:
 		w.writeEvents(p)
+		return len(p), nil
+	case translateAWSEventStream:
+		w.frames.write(p)
 		return len(p), nil
 	}
 	return w.dst.Write(p)
@@ -519,7 +553,7 @@ func (w *translatingWriter) writeEvents(p []byte) {
 		line := bytes.TrimSuffix(w.line, []byte{'\r'})
 		if len(line) == 0 {
 			if len(w.data) > 0 && !bytes.Equal(w.data, []byte("[DONE]")) {
-				_, _ = w.dst.Write(w.translator.event(w.data))
+				w.dispatch(w.data)
 			}
 			w.data = w.data[:0]
 		} else if value, ok := bytes.CutPrefix(line, []byte("data:")); ok {
@@ -530,6 +564,20 @@ func (w *translatingWriter) writeEvents(p []byte) {
 		}
 		w.line = w.line[:0]
 	}
+}
+
+// dispatch translates one provider event. A response check's error event
+// ends the translated stream with an OpenAI error event (ADR-1435).
+func (w *translatingWriter) dispatch(data []byte) {
+	if w.aborted {
+		return
+	}
+	if code, message := gatewayErrorCode(data); code != "" {
+		_, _ = w.dst.Write(openAIGatewayErrorEvent(code, message))
+		w.aborted = true
+		return
+	}
+	_, _ = w.dst.Write(w.translator.event(data))
 }
 
 // Flush passes streamed output through promptly.
@@ -550,10 +598,17 @@ func (w *translatingWriter) finish() {
 		_, _ = w.dst.Write(w.translator.json(w.status, w.body.Bytes()))
 	case translateEventStream:
 		if len(w.data) > 0 && !bytes.Equal(w.data, []byte("[DONE]")) {
-			_, _ = w.dst.Write(w.translator.event(w.data))
+			w.dispatch(w.data)
 			w.data = w.data[:0]
 		}
-		_, _ = w.dst.Write(w.translator.end())
+		if !w.aborted {
+			_, _ = w.dst.Write(w.translator.end())
+		}
+		w.Flush()
+	case translateAWSEventStream:
+		if !w.aborted {
+			_, _ = w.dst.Write(w.translator.end())
+		}
 		w.Flush()
 	}
 }

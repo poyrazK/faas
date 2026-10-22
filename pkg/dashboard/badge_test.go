@@ -17,6 +17,7 @@ func TestBadgeFor(t *testing.T) {
 	}{
 		{state.StateRunning, "running", "●", "running"},
 		{state.StateParked, "sleeping", "◌", "sleeping"},
+		{state.StateFrozen, "sleeping", "◌", "sleeping"},
 		{state.StateWaking, "waking", "⟳", "waking"},
 		{state.StateColdBooting, "waking", "⟳", "waking"},
 		{state.StateSnapshotting, "waking", "⟳", "waking"},

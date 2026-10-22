@@ -49,7 +49,7 @@ type devPhaseTiming struct {
 
 // devSyncReceipt is the machine-readable contract emitted by `gregale dev
 // --json`. It intentionally contains only timings, a deployment id, and safe
-// resource metadata; source paths, environment values, credentials, and
+// resource metadata; source paths, environment values, credential secrets, and
 // application logs never enter the receipt.
 type devSyncReceipt struct {
 	SchemaVersion int                      `json:"schema_version"`
@@ -61,6 +61,7 @@ type devSyncReceipt struct {
 	WithinSLO     bool                     `json:"within_slo"`
 	Phases        []devPhaseTiming         `json:"phases"`
 	Postgres      *api.DevPostgresResponse `json:"postgres,omitempty"`
+	Buckets       []api.DevBucketResponse  `json:"buckets,omitempty"`
 	// DevPatch reports whether this sync could have been applied as a live
 	// source patch (ADR-740 phase 1, measurement only).
 	DevPatch *api.DevPatchPreview `json:"dev_patch,omitempty"`
@@ -74,6 +75,7 @@ type devPhaseTracker struct {
 	timings        map[string]devPhaseTiming
 	routeStartedAt time.Time
 	postgres       *api.DevPostgresResponse
+	buckets        []api.DevBucketResponse
 	devPatch       *api.DevPatchPreview
 }
 
@@ -97,6 +99,7 @@ func (t *devPhaseTracker) receipt(status string) devSyncReceipt {
 		copy := *t.postgres
 		postgres = &copy
 	}
+	buckets := append([]api.DevBucketResponse(nil), t.buckets...)
 	var devPatch *api.DevPatchPreview
 	if t.devPatch != nil {
 		preview := *t.devPatch
@@ -117,6 +120,7 @@ func (t *devPhaseTracker) receipt(status string) devSyncReceipt {
 		WithinSLO:     editToLive <= devEditToLiveTarget,
 		Phases:        timings,
 		Postgres:      postgres,
+		Buckets:       buckets,
 		DevPatch:      devPatch,
 	}
 }
@@ -284,6 +288,25 @@ func (t *devPhaseTracker) observeStageState(raw json.RawMessage) {
 	}
 }
 
+// reconcileFinalStages applies the live deployment's persisted stage history.
+// A build-log stream that drops mid-build never delivers the image_build
+// completion, so in human output the receipt reported build=0ms for a
+// four-minute build (production-us hunt #10, H10-34).
+func (t *devPhaseTracker) reconcileFinalStages(ctx context.Context, client *api.Client) {
+	if t == nil || client == nil {
+		return
+	}
+	deploymentID, _ := t.snapshot()
+	if deploymentID == "" {
+		return
+	}
+	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if dep, err := client.GetDeployment(readCtx, deploymentID); err == nil {
+		t.observeStageState(dep.StageState)
+	}
+}
+
 func (t *devPhaseTracker) finishRouteSwitch() {
 	if t == nil {
 		return
@@ -362,4 +385,13 @@ func formatDevPhaseDuration(durationMS int64) string {
 		return fmt.Sprintf("%dms", durationMS)
 	}
 	return (time.Duration(durationMS) * time.Millisecond).Round(100 * time.Millisecond).String()
+}
+
+func (t *devPhaseTracker) setBuckets(buckets []api.DevBucketResponse) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.buckets = append([]api.DevBucketResponse(nil), buckets...)
+	t.mu.Unlock()
 }

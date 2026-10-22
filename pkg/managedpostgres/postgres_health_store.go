@@ -18,7 +18,7 @@ func (s *PostgresStore) ClaimHealthCheck(ctx context.Context, token string, now,
 	if token == "" || now.IsZero() || !until.After(now) {
 		return HealthClaim{}, ErrInvalid
 	}
-	row, err := sqlc.New().ClaimManagedPostgresHealthCheck(ctx, s.pool, sqlc.ClaimManagedPostgresHealthCheckParams{
+	row, err := sqlc.New().ClaimManagedPostgresHealthCheck(ctx, s.catalog, sqlc.ClaimManagedPostgresHealthCheckParams{
 		Now: healthTimestamp(now), LeaseToken: token, LeaseUntil: healthTimestamp(until),
 	})
 	if err != nil {
@@ -40,7 +40,7 @@ func (s *PostgresStore) FinishHealthCheck(ctx context.Context, claim HealthClaim
 	if claim.LeaseToken == "" {
 		return ErrInvalid
 	}
-	count, err := sqlc.New().FinishManagedPostgresHealthCheck(ctx, s.pool, sqlc.FinishManagedPostgresHealthCheckParams{
+	count, err := sqlc.New().FinishManagedPostgresHealthCheck(ctx, s.catalog, sqlc.FinishManagedPostgresHealthCheckParams{
 		DatabaseID: claim.Database.ID, LeaseToken: claim.LeaseToken,
 		ProviderStatus: result.ProviderStatus, ComputeState: string(result.ComputeState), CheckedAt: healthTimestamp(result.CheckedAt),
 		Succeeded: result.Succeeded, ErrorCode: result.LastErrorCode, NextCheckAt: healthTimestamp(result.NextCheckAt),
@@ -55,7 +55,7 @@ func (s *PostgresStore) FinishHealthCheck(ctx context.Context, claim HealthClaim
 }
 
 func (s *PostgresStore) ReadHealthSnapshots(ctx context.Context, accountID string, ids []string) (map[string]HealthSnapshot, error) {
-	rows, err := sqlc.New().ReadManagedPostgresHealthSnapshots(ctx, s.pool, sqlc.ReadManagedPostgresHealthSnapshotsParams{AccountID: accountID, DatabaseIds: ids})
+	rows, err := sqlc.New().ReadManagedPostgresHealthSnapshots(ctx, s.catalog, sqlc.ReadManagedPostgresHealthSnapshotsParams{AccountID: accountID, DatabaseIds: ids})
 	if err != nil {
 		return nil, mapPostgresError(err)
 	}
@@ -75,7 +75,7 @@ func (s *PostgresStore) ReadHealthSnapshots(ctx context.Context, accountID strin
 }
 
 func (s *PostgresStore) CountDatabaseHealth(ctx context.Context, cutoff, now time.Time) (HealthCounts, error) {
-	row, err := sqlc.New().CountManagedPostgresHealth(ctx, s.pool, sqlc.CountManagedPostgresHealthParams{Cutoff: healthTimestamp(cutoff), Now: healthTimestamp(now)})
+	row, err := sqlc.New().CountManagedPostgresHealth(ctx, s.catalog, sqlc.CountManagedPostgresHealthParams{Cutoff: healthTimestamp(cutoff), Now: healthTimestamp(now)})
 	if err != nil {
 		return HealthCounts{}, mapPostgresError(err)
 	}

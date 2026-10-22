@@ -26,8 +26,8 @@ func (h *Handler) completeMultipart(w http.ResponseWriter, r *http.Request, req 
 	if !ok {
 		return
 	}
-	parts, ok := h.readMultipartCompletion(w, r, req)
-	if !ok || h.replayMultipartCompletion(w, r, req, upload, parts) {
+	parts, checksums, ok := h.readMultipartCompletion(w, r, req, upload)
+	if !ok || h.replayMultipartCompletion(w, r, req, upload, parts, checksums) {
 		return
 	}
 	transfers, ok := store.(state.ObjectMultipartTransferStore)
@@ -43,8 +43,11 @@ func (h *Handler) completeMultipart(w http.ResponseWriter, r *http.Request, req 
 		// the persisted intent without listing parts or admitting capacity again.
 		claimed, err = store.ClaimObjectMultipartUpload(r.Context(), upload.AccountID, upload.AppID, upload.BucketID, upload.ID, token, upload.State, parts, false)
 	} else if upload.State == state.ObjectMultipartActive {
-		total, valid := h.multipartCompletionSize(w, r, req, upload, parts)
+		total, valid := h.multipartCompletionSize(w, r, req, &upload, parts, checksums)
 		if !valid {
+			return
+		}
+		if !h.checkWritePressure(w, r, req, "complete", total) {
 			return
 		}
 		upload.CompletionConditions = writeConditions(r)
@@ -59,47 +62,74 @@ func (h *Handler) completeMultipart(w http.ResponseWriter, r *http.Request, req 
 	h.executeMultipartCompletion(w, r, req, store, transfers, claimed)
 }
 
-func (h *Handler) readMultipartCompletion(w http.ResponseWriter, r *http.Request, req requestContext) ([]api.ObjectMultipartCompletedPart, bool) {
-	bodyBytes, err := readVerifiedRequestBody(w, r, req.signature.PayloadHash, maxCompleteMultipartBodyBytes)
+func (h *Handler) readMultipartCompletion(w http.ResponseWriter, r *http.Request, req requestContext, u state.ObjectMultipartUpload) ([]api.ObjectMultipartCompletedPart, []string, bool) {
+	bodyRequest := r.Clone(r.Context())
+	for _, name := range awsChecksumHeaderNames {
+		bodyRequest.Header.Del(name)
+	}
+	bodyBytes, err := readVerifiedRequestBody(w, bodyRequest, req.signature.PayloadHash, maxCompleteMultipartBodyBytes)
 	if err != nil {
 		if !h.writeAWSChunkedError(w, r, req.requestID, err) {
 			h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "MalformedXML")
 		}
-		return nil, false
+		return nil, nil, false
 	}
 	var body completeMultipartUploadRequest
 	decoder := xml.NewDecoder(bytes.NewReader(bodyBytes)) // #nosec G709 -- Size-bounded S3 XML into a fixed struct; encoding/xml does not resolve external entities.
 	decoder.Strict = true
 	if err := decoder.Decode(&body); err != nil || body.XMLName.Local != "CompleteMultipartUpload" || len(body.Parts) == 0 || len(body.Parts) > api.MaxMultipartParts {
 		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "MalformedXML")
-		return nil, false
+		return nil, nil, false
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "MalformedXML")
-		return nil, false
+		return nil, nil, false
 	}
 	parts := make([]api.ObjectMultipartCompletedPart, len(body.Parts))
+	checksums := make([]string, len(body.Parts))
 	var previous int32
 	for i, part := range body.Parts {
 		if part.PartNumber < 1 || part.PartNumber > api.MaxMultipartParts || part.PartNumber <= previous || len(part.ETag) == 0 || len(part.ETag) > api.MaxObjectWriteETagBytes || !objectstorage.ValidKey(strings.Trim(part.ETag, `"`)) {
 			h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidPart")
-			return nil, false
+			return nil, nil, false
 		}
+		value, err := part.selected(u.Checksum.Policy)
+		if err != nil {
+			h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidPart")
+			return nil, nil, false
+		}
+		checksums[i] = value
 		previous = part.PartNumber
 		parts[i] = api.ObjectMultipartCompletedPart{PartNumber: part.PartNumber, ETag: part.ETag}
 	}
-	return parts, true
+	return parts, checksums, true
 }
 
 // Once an intent exists, every retry must carry exactly its parts and conditions.
-func (h *Handler) replayMultipartCompletion(w http.ResponseWriter, r *http.Request, req requestContext, u state.ObjectMultipartUpload, parts []api.ObjectMultipartCompletedPart) bool {
+func (h *Handler) replayMultipartCompletion(w http.ResponseWriter, r *http.Request, req requestContext, u state.ObjectMultipartUpload, parts []api.ObjectMultipartCompletedPart, checksums []string) bool {
 	if !state.ObjectMultipartIsCompleting(u.State) && u.State != state.ObjectMultipartCompleted && u.CompletionErrorCode == "" {
 		return false
 	}
 	if !slices.Equal(u.Parts, parts) {
 		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidPart")
 		return true
+	}
+	if err := completionChecksumRequest(r, u.Checksum, u.SizeBytes); err != nil {
+		h.writeAWSChunkedError(w, r, req.requestID, err)
+		return true
+	}
+	if !u.Checksum.Empty() {
+		if !u.Checksum.Complete() || len(checksums) != len(u.Checksum.Parts) {
+			h.providerError(w, r, req, objectstorage.ErrUnavailable, u.Key)
+			return true
+		}
+		for i, value := range checksums {
+			if value != "" && value != u.Checksum.Parts[i].Value {
+				h.writeAWSChunkedError(w, r, req.requestID, badAWSChunkDigest())
+				return true
+			}
+		}
 	}
 	if u.CompletionConditions != writeConditions(r) {
 		h.writeMultipartError(w, r, req, state.ErrConflict, "OperationAborted")
@@ -115,8 +145,8 @@ func (h *Handler) replayMultipartCompletion(w http.ResponseWriter, r *http.Reque
 	return false
 }
 
-func (h *Handler) multipartCompletionSize(w http.ResponseWriter, r *http.Request, req requestContext, u state.ObjectMultipartUpload, parts []api.ObjectMultipartCompletedPart) (int64, bool) {
-	sizes, err := h.multipartPartSizes(r, req, u.Key, u)
+func (h *Handler) multipartCompletionSize(w http.ResponseWriter, r *http.Request, req requestContext, u *state.ObjectMultipartUpload, parts []api.ObjectMultipartCompletedPart, checksums []string) (int64, bool) {
+	sizes, err := h.multipartPartSizes(r, req, u.Key, *u)
 	if err != nil {
 		h.providerError(w, r, req, err, u.Key)
 		return 0, false
@@ -142,11 +172,14 @@ func (h *Handler) multipartCompletionSize(w http.ResponseWriter, r *http.Request
 		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "EntityTooLarge")
 		return 0, false
 	}
+	if !h.bindCompletionChecksum(w, r, req, u, parts, checksums, sizes, total) {
+		return 0, false
+	}
 	return total, true
 }
 
 func (h *Handler) executeMultipartCompletion(w http.ResponseWriter, r *http.Request, req requestContext, store state.ObjectMultipartUploadStore, transfers state.ObjectMultipartTransferStore, u state.ObjectMultipartUpload) {
-	if _, capable := req.provider.(objectstorage.MultipartResultCompleter); capable || !u.Encryption.Empty() {
+	if _, capable := req.provider.(objectstorage.MultipartResultCompleter); capable || !u.Encryption.Empty() || !u.Checksum.Empty() {
 		h.executeMultipartResult(w, r, req, store, u)
 		return
 	}
@@ -207,5 +240,6 @@ func writeMultipartCompleted(w http.ResponseWriter, req requestContext, u state.
 		w.Header().Set("X-Amz-Version-Id", u.CompletionVersionID)
 	}
 	writeEncryptionHeaders(w.Header(), u.Encryption.Selection)
-	writeS3XML(w, http.StatusOK, req.requestID, completeMultipartResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: u.Key, ETag: etag, UploadID: u.ID})
+	writeChecksumHeaders(w.Header(), u.Checksum.Digest, true)
+	writeS3XML(w, http.StatusOK, req.requestID, completeMultipartResult{checksumXML: checksumXMLFor(u.Checksum.Digest), ChecksumType: u.Checksum.Type, XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: u.Key, ETag: etag, UploadID: u.ID})
 }

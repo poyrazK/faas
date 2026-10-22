@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -13,8 +16,38 @@ import (
 // EdgeRuleEventRetention is how long sampled events are kept.
 const EdgeRuleEventRetention = 7 * 24 * time.Hour
 
-// EdgeRuleEvent is one sampled rule match. Outcome is EdgeRuleHitMatched or
-// EdgeRuleHitLogged. ID is assigned by the store.
+// Outcomes of kind=waf detection events (ADR-831 amendment 5), alongside
+// EdgeRuleHitMatched and EdgeRuleHitLogged.
+const (
+	EdgeRuleEventDetected = "detected"
+	EdgeRuleEventWarned   = "warned"
+	EdgeRuleEventBlocked  = "blocked"
+)
+
+// Outcomes of kind=challenge events (ADR-831 amendment 7 follow-up): the
+// challenge page served, a non-browser request refused, a solution that
+// earned a pass, and one that was refused.
+const (
+	EdgeRuleEventChallenged = "challenged"
+	EdgeRuleEventRejected   = "rejected"
+	EdgeRuleEventSolved     = "solved"
+	EdgeRuleEventFailed     = "failed"
+)
+
+// IsEdgeRuleEventOutcome reports whether outcome is a stored event outcome.
+func IsEdgeRuleEventOutcome(outcome string) bool {
+	switch outcome {
+	case EdgeRuleHitMatched, EdgeRuleHitLogged, EdgeRuleEventDetected, EdgeRuleEventWarned, EdgeRuleEventBlocked,
+		EdgeRuleEventChallenged, EdgeRuleEventRejected, EdgeRuleEventSolved, EdgeRuleEventFailed:
+		return true
+	}
+	return false
+}
+
+// EdgeRuleEvent is one sampled rule match, kind=waf detection or
+// kind=challenge outcome. Outcome is EdgeRuleHitMatched, EdgeRuleHitLogged
+// or one of the outcomes above; the WAF* fields are set on detections only.
+// ID is assigned by the store.
 type EdgeRuleEvent struct {
 	ID         int64
 	RuleID     string
@@ -28,6 +61,10 @@ type EdgeRuleEvent struct {
 	ClientIP   string
 	Country    string
 	UserAgent  string
+
+	WAFRuleIDs    []int
+	WAFCategories []string
+	WAFScore      int
 }
 
 // EdgeRuleEventQuery selects an app's events newest first. RuleID and
@@ -64,7 +101,13 @@ func (s *PgStore) RecordEdgeRuleEvents(ctx context.Context, events []EdgeRuleEve
 	at := make([]time.Time, n)
 	reqIDs, methods, hosts, paths := make([]string, n), make([]string, n), make([]string, n), make([]string, n)
 	ips, countries, agents := make([]*string, n), make([]string, n), make([]string, n)
+	// Per-row arrays cannot pass through unnest (it flattens nested arrays),
+	// so each row's WAF lists travel as one comma-joined string.
+	wafRules, wafCategories, wafScores := make([]string, n), make([]string, n), make([]int32, n)
 	for i, e := range events {
+		wafRules[i] = joinInts(e.WAFRuleIDs)
+		wafCategories[i] = strings.Join(e.WAFCategories, ",")
+		wafScores[i] = int32(e.WAFScore)
 		rules[i], apps[i], outcomes[i], at[i] = e.RuleID, e.AppID, e.Outcome, e.OccurredAt.UTC()
 		reqIDs[i], methods[i], hosts[i], paths[i] = e.RequestID, e.Method, e.Host, e.Path
 		countries[i], agents[i] = e.Country, e.UserAgent
@@ -74,9 +117,12 @@ func (s *PgStore) RecordEdgeRuleEvents(ctx context.Context, events []EdgeRuleEve
 		}
 	}
 	_, err := s.pool.Exec(ctx, `
-		insert into edge_rule_events (rule_id, app_id, outcome, occurred_at, request_id, method, host, path, client_ip, country, user_agent)
-		select * from unnest($1::uuid[], $2::uuid[], $3::text[], $4::timestamptz[], $5::text[], $6::text[], $7::text[], $8::text[], $9::inet[], $10::text[], $11::text[])`,
-		rules, apps, outcomes, at, reqIDs, methods, hosts, paths, ips, countries, agents)
+		insert into edge_rule_events (rule_id, app_id, outcome, occurred_at, request_id, method, host, path, client_ip, country, user_agent,
+		                              waf_rule_ids, waf_categories, waf_score)
+		select r, a, o, t, q, m, h, p, ip, cc, ua, string_to_array(wr, ',')::integer[], string_to_array(wc, ','), ws
+		from unnest($1::uuid[], $2::uuid[], $3::text[], $4::timestamptz[], $5::text[], $6::text[], $7::text[], $8::text[], $9::inet[], $10::text[], $11::text[],
+		            $12::text[], $13::text[], $14::integer[]) as u(r, a, o, t, q, m, h, p, ip, cc, ua, wr, wc, ws)`,
+		rules, apps, outcomes, at, reqIDs, methods, hosts, paths, ips, countries, agents, wafRules, wafCategories, wafScores)
 	if err != nil {
 		return fmt.Errorf("state: record edge-rule events: %w", err)
 	}
@@ -96,7 +142,7 @@ func (s *PgStore) ListEdgeRuleEvents(ctx context.Context, q EdgeRuleEventQuery) 
 	}
 	rows, err := s.pool.Query(ctx, `
 		select id, rule_id::text, app_id::text, occurred_at, outcome, request_id, method, host, path,
-		       coalesce(host(client_ip), ''), country, user_agent
+		       coalesce(host(client_ip), ''), country, user_agent, waf_rule_ids, waf_categories, waf_score
 		from edge_rule_events
 		where app_id = $1
 		  and occurred_at >= $2
@@ -112,10 +158,19 @@ func (s *PgStore) ListEdgeRuleEvents(ctx context.Context, q EdgeRuleEventQuery) 
 	var out []EdgeRuleEvent
 	for rows.Next() {
 		var e EdgeRuleEvent
+		var wafRules []int32
+		var wafScore int32
 		if err := rows.Scan(&e.ID, &e.RuleID, &e.AppID, &e.OccurredAt, &e.Outcome, &e.RequestID, &e.Method,
-			&e.Host, &e.Path, &e.ClientIP, &e.Country, &e.UserAgent); err != nil {
+			&e.Host, &e.Path, &e.ClientIP, &e.Country, &e.UserAgent, &wafRules, &e.WAFCategories, &wafScore); err != nil {
 			return nil, fmt.Errorf("state: scan edge-rule event: %w", err)
 		}
+		for _, id := range wafRules {
+			e.WAFRuleIDs = append(e.WAFRuleIDs, int(id))
+		}
+		if len(e.WAFCategories) == 0 {
+			e.WAFCategories = nil
+		}
+		e.WAFScore = int(wafScore)
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -139,6 +194,7 @@ func (m *MemStore) RecordEdgeRuleEvents(_ context.Context, events []EdgeRuleEven
 		if net.ParseIP(e.ClientIP) == nil {
 			e.ClientIP = ""
 		}
+		e.WAFRuleIDs, e.WAFCategories = slices.Clone(e.WAFRuleIDs), slices.Clone(e.WAFCategories)
 		m.edgeRuleEvents = append(m.edgeRuleEvents, e)
 	}
 	return nil
@@ -183,4 +239,13 @@ func (m *MemStore) PruneEdgeRuleEvents(_ context.Context, before time.Time) (int
 	}
 	m.edgeRuleEvents = kept
 	return n, nil
+}
+
+// joinInts renders ids as "1,2,3" for string_to_array on the server.
+func joinInts(ids []int) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = strconv.Itoa(id)
+	}
+	return strings.Join(parts, ",")
 }

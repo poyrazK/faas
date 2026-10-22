@@ -25,3 +25,21 @@ test('notification replacement preserves owned destination wire data', async () 
     assert.deepEqual(calls,['PUT','GET','DELETE']);
   } finally {globalThis.fetch=oldFetch;OpenAPI.BASE=oldBase;OpenAPI.TOKEN=oldToken;}
 });
+
+test('managed trigger reconciliation preserves revision and explicit clear', async () => {
+  const oldFetch = globalThis.fetch, oldBase = OpenAPI.BASE, oldToken = OpenAPI.TOKEN;
+  OpenAPI.BASE = 'https://api.example.test'; OpenAPI.TOKEN = 'token';
+  let calls = 0;
+  globalThis.fetch = async (input, init) => {
+    calls++;
+    assert.equal(new URL(String(input)).pathname, '/v1/apps/worker/buckets/assets/compute-triggers');
+    assert.equal(init?.method, 'PUT');
+    assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer token');
+    assert.deepEqual(JSON.parse(String(init?.body)), { expected_revision: 3, triggers: [] });
+    return new Response(JSON.stringify({ bucket_id: 'assets', revision: 4, rules: [], managed_rule_ids: ['managed'] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  try {
+    const out = await StorageService.reconcileObjectStorageComputeTriggers({ slug: 'worker', bucket: 'assets', requestBody: { expected_revision: 3, triggers: [] } });
+    assert.equal(calls, 1); assert.ok('rules' in out); assert.deepEqual(out.managed_rule_ids, ['managed']);
+  } finally { globalThis.fetch = oldFetch; OpenAPI.BASE = oldBase; OpenAPI.TOKEN = oldToken; }
+});

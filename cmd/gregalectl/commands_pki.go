@@ -71,6 +71,7 @@ const (
 	subPKIFingerprint    = "fingerprint"
 	subPKIRecoverInstall = "recover-install"
 	subPKIMetrics        = "metrics"
+	subPKIIssueFeature   = "issue-feature"
 )
 
 // cmdPKI is the parent dispatcher. With zero args it prints usage;
@@ -79,7 +80,7 @@ const (
 func cmdPKI(args []string) int {
 	parent, _ := lookupCliCommand("pki")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregalectl pki <init|status|list|rotate|export-bundle|issue-bundle|install-bundle|recover-install|fingerprint|metrics> [flags]", "pki")
+		PrintUsage(os.Stderr, "usage: gregalectl pki <init|status|list|rotate|export-bundle|issue-bundle|install-bundle|recover-install|fingerprint|metrics|issue-feature> [flags]", "pki")
 		return 1
 	}
 	switch args[0] {
@@ -103,9 +104,11 @@ func cmdPKI(args []string) int {
 		return cmdPKIFingerprint(args[1:])
 	case subPKIMetrics:
 		return cmdPKIMetrics(args[1:])
+	case subPKIIssueFeature:
+		return cmdPKIIssueFeature(args[1:])
 	default:
 		sug, _ := suggestSubcommand(args[0], parent)
-		fmt.Fprintf(os.Stderr, "gregalectl pki: unknown subcommand %q (known: init, status, list, rotate, export-bundle, issue-bundle, install-bundle, recover-install, fingerprint, metrics)\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregalectl pki: unknown subcommand %q (known: init, status, list, rotate, export-bundle, issue-bundle, install-bundle, recover-install, fingerprint, metrics, issue-feature)\n", args[0])
 		maybeSuggestSub(sug)
 		return 1
 	}
@@ -348,6 +351,41 @@ func cmdPKIFingerprint(args []string) int {
 	return 0
 }
 
+// cmdPKIIssueFeature issues the leaves of an operator-enabled feature
+// (pkg/pki feature leaves), which no host role requires. It runs where the CA
+// key is: --ca-dir is the issuer's PKI root, and --root-dir is where the
+// leaves are written, either the issuer's own active root or a staging
+// directory a playbook copies to another host. It prints the leaves it issued
+// as JSON, so a playbook restarts only the daemons whose leaf changed.
+func cmdPKIIssueFeature(args []string) int {
+	fs := flag.NewFlagSet("pki issue-feature", flag.ContinueOnError)
+	feature := fs.String("feature", "", "feature whose leaves to issue: "+strings.Join(pki.Features(), ", "))
+	boxRole := fs.String("box-role", "", "host role the leaves are for: control-plane, compute-only or single-box")
+	caDir := fs.String("ca-dir", pki.DefaultRootDir, "PKI root holding the CA (ca/ca.crt and ca/ca.key)")
+	rootDir := fs.String("root-dir", pki.DefaultRootDir, "PKI root the leaves are written under")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 0 || *feature == "" || *boxRole == "" {
+		PrintUsage(os.Stderr, "usage: gregalectl pki issue-feature --feature FEATURE --box-role ROLE [--ca-dir DIR] [--root-dir DIR]", "pki")
+		return 1
+	}
+	issued, err := pki.EnsureFeatureLeaves(*caDir, *rootDir, *feature, *boxRole)
+	if err != nil {
+		return printErr("pki issue-feature", err)
+	}
+	report := struct {
+		Issued []string `json:"issued"`
+	}{Issued: []string{}}
+	for _, role := range issued {
+		report.Issued = append(report.Issued, role.Directory+"/"+role.Filename)
+	}
+	if err := json.NewEncoder(osStdout).Encode(report); err != nil {
+		return printErr("pki issue-feature", err)
+	}
+	return 0
+}
+
 func cmdPKIInstallBundle(args []string) int {
 	fs, f := newPKIFlags("pki install-bundle", false)
 	bundleDir := fs.String("bundle-dir", "", "validated trust-only host bundle to install")
@@ -444,6 +482,23 @@ func renderPKIMetrics(rootDir, boxRole, host, statePath string, now time.Time) (
 		expires := cert.NotAfter.Unix()
 		if current, ok := earliest[role.Directory]; !ok || expires < current {
 			earliest[role.Directory] = expires
+		}
+	}
+	// Feature leaves count once a host carries them; a host without the
+	// feature has none, which is not an error.
+	for _, feature := range pki.Features() {
+		for _, role := range pki.FeatureRoles(feature, boxRole) {
+			certPath, _ := pki.LeafPaths(rootDir, role)
+			cert, err := loadPKIMetricsCert(certPath)
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("%s/%s certificate: %w", role.Directory, role.Filename, err)
+			}
+			if expires := cert.NotAfter.Unix(); earliest[role.Directory] == 0 || expires < earliest[role.Directory] {
+				earliest[role.Directory] = expires
+			}
 		}
 	}
 
@@ -1029,4 +1084,17 @@ func reportLeafStatusFiltered(w io.Writer, rootDir, daemon, boxRole string) {
 		label := fmt.Sprintf("%-9s %s", role.Directory, role.Filename)
 		reportOneStatus(w, label, certPath)
 	}
+}
+
+// loadPKIMetricsCert parses the PEM certificate at path.
+func loadPKIMetricsCert(path string) (*x509.Certificate, error) {
+	data, err := os.ReadFile(path) //nolint:forbidigo // operator PKI root named by --root-dir
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, errors.New("no PEM block")
+	}
+	return x509.ParseCertificate(block.Bytes)
 }

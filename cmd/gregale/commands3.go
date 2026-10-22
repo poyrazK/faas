@@ -66,6 +66,12 @@ func cmdSecrets(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "requirements":
+		return cmdSecretRequirements(args[1:])
+	case "defaults":
+		return cmdSecretDefaults(args[1:])
+	case "check":
+		return secretsCheck(args[1:])
 	case subList:
 		return secretsList(args[1:])
 	case "set":
@@ -509,6 +515,7 @@ func secretsSet(args []string) int {
 	waitForAck := fs.Bool("wait-for-ack", false, "wait for application acknowledgements for every updated key")
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum restart and acknowledgement wait after saving values")
 	restart := fs.Bool("restart", false, "restart app with the updated secrets")
+	noGuard := fs.Bool("no-guard", false, "do not open a config guard for this change (ADR-1451)")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "secret set:", err)
@@ -569,11 +576,9 @@ func secretsSet(args []string) int {
 			fmt.Fprintln(os.Stderr, "secret set: --from-stdin takes no positional pairs")
 			return 1
 		}
-		scanner := bufio.NewScanner(osStdin)
-		// A 64 KB line cap is enough for SecretValueMaxBytes at Scale (32 KB)
-		// plus the key name. Larger lines silently truncate today; the
-		// apid-side byte cap will still reject the request.
-		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+		// The line cap fits SecretValueMaxBytes at Scale plus the key name;
+		// a longer line fails here with the cap named.
+		scanner := newKeyValueScanner(bufio.NewScanner(osStdin))
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" || strings.HasPrefix(line, "#") {
@@ -587,7 +592,7 @@ func secretsSet(args []string) int {
 			pairs = append(pairs, p)
 		}
 		if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
-			fmt.Fprintln(os.Stderr, "read stdin:", err)
+			fmt.Fprintln(os.Stderr, "read stdin:", keyValueScanErr(err))
 			return 1
 		}
 	} else {
@@ -625,6 +630,9 @@ func secretsSet(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	if *noGuard {
+		client = client.WithoutConfigGuard()
+	}
 
 	printMutationTarget(*app, *scope, appSource, scopeSource)
 	return writeSecretsPairs(context.Background(), client, *app, pairs, *scope, *secretClass, *restart, secretSetWaitOptions{enabled: *waitForAck, timeout: *timeout})
@@ -644,6 +652,7 @@ func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []
 			PrintOK(osStdout, "%s set (scope=%s)", p.Key, scopeOrDefault(scope))
 		}
 	}
+	printConfigGuardNotice(ctx, client, app, scope)
 	if len(waitOptions) > 0 && waitOptions[0].enabled {
 		return finishSecretSetWait(ctx, client, app, scope, keys, restart, waitOptions[0].timeout)
 	}
@@ -764,6 +773,12 @@ func reorderSecretsSetArgs(args []string) ([]string, error) {
 			a == "--wait-for-ack" || a == "-wait-for-ack" ||
 			strings.HasPrefix(a, "--wait-for-ack=") || strings.HasPrefix(a, "-wait-for-ack="):
 			flags = append(flags, a)
+		case strings.HasPrefix(a, "-") && a != "-":
+			// No KEY or KEY=VALUE starts with "-", so this is a flag the
+			// command does not define. Hand it to the flag parser, which
+			// names it; left among the keys, `unset KEY --yes` reported
+			// "Invalid secret key" without saying which (hunt #10, H10-85).
+			flags = append(flags, a)
 		default:
 			pairs = append(pairs, a)
 		}
@@ -837,8 +852,7 @@ func readSecretsFile(path string) ([]secretsPair, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+	scanner := newKeyValueScanner(bufio.NewScanner(f))
 	pairs := make([]secretsPair, 0, 8)
 	seen := make(map[string]struct{})
 	lineNo := 0
@@ -862,7 +876,7 @@ func readSecretsFile(path string) ([]secretsPair, error) {
 		pairs = append(pairs, pair)
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, keyValueScanErr(err)
 	}
 	if len(pairs) == 0 {
 		return nil, errors.New("no KEY=VALUE pairs found")
@@ -883,11 +897,27 @@ func setDeploySecretsWithScope(ctx context.Context, client *Client, app string, 
 	return nil
 }
 
-// setProjectDeploySecrets applies a validated deploy bundle to each workload
-// in a project plan. Project plans can contain duplicate names only when a
-// detector has merged the same workload, so de-duplicate by the API slug to
-// avoid issuing duplicate writes. Values remain in memory and are passed only
-// to the existing sealed app-secret endpoint; they are never logged.
+// projectDeployInitialSecrets keeps the bundle in the request for the reviewed
+// selection, so the server can seal it before any builds are enqueued.
+func projectDeployInitialSecrets(workloads []api.PlanWorkload, pairs []secretsPair) api.ProjectInitialSecrets {
+	if len(pairs) == 0 {
+		return nil
+	}
+	values := make(api.ProjectInitialSecrets)
+	for _, workload := range workloads {
+		if workload.Name == "" {
+			continue
+		}
+		values[workload.Name] = make(map[string]string, len(pairs))
+		for _, pair := range pairs {
+			values[workload.Name][pair.Key] = pair.Value
+		}
+	}
+	return values
+}
+
+// setProjectDeploySecrets preserves the legacy direct-write helper for callers
+// that already have saved apps. Deploy itself sends the bundle during apply.
 func setProjectDeploySecrets(ctx context.Context, client *Client, workloads []api.PlanWorkload, pairs []secretsPair) (int, error) {
 	return setProjectDeploySecretsWithScope(ctx, client, workloads, pairs, "")
 }
@@ -924,6 +954,7 @@ func secretsUnset(args []string) int {
 	waitForAck := fs.Bool("wait-for-ack", false, "wait until every active authorized runtime confirms it removed the secret")
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum time to wait for runtime acknowledgements")
 	restart := fs.Bool("restart", false, "restart the app so running instances drop the removed secret now")
+	noGuard := fs.Bool("no-guard", false, "do not open a config guard for this change (ADR-1451)")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "secret unset:", err)
@@ -994,6 +1025,9 @@ func secretsUnset(args []string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	if *noGuard {
+		client = client.WithoutConfigGuard()
 	}
 	printMutationTarget(*app, *scope, appSource, scopeSource)
 	if len(keys) > 1 {
@@ -1261,7 +1295,7 @@ func collectSecretAudit(ctx context.Context, client *api.Client, age time.Durati
 			secretAge := now.Sub(updated)
 			report.StaleSecrets = append(report.StaleSecrets, secretAuditFinding{
 				AppSlug: secret.AppSlug, Scope: scopeOrDefault(secret.Scope), Key: secret.Key,
-				Class: secretClassLabel(secret.SecretClass), UpdatedAt: secret.UpdatedAt, Age: secretAge.String(),
+				Class: secretClassLabel(secret.SecretClass), UpdatedAt: secret.UpdatedAt, Age: secretAge.Round(time.Second).String(),
 			})
 		}
 		if page.NextBefore == "" {

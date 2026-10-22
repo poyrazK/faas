@@ -54,9 +54,13 @@ type Input struct {
 	Country  string
 	// ASN is the simulated client autonomous system for asn conditions
 	// (ADR-966); 0 means unknown.
-	ASN     uint32
-	Headers http.Header
-	Body    []byte
+	ASN uint32
+	// VerifiedBot simulates a client IP that passes crawler verification
+	// (ADR-973): verified_bot is then the known crawler the User-Agent
+	// header claims. The simulator does no DNS.
+	VerifiedBot bool
+	Headers     http.Header
+	Body        []byte
 	// CorsPresets supplies caller-resolved presets for preset-backed CORS
 	// rules. Missing or cross-account presets remain incomplete instead of
 	// being guessed.
@@ -677,7 +681,7 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		return simulation
 	}
 
-	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "respond", "async", "cache", "budget", "circuit_breaker", "retry"}
+	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "challenge", "respond", "async", "cache", "budget", "circuit_breaker", "retry"}
 	for _, phase := range phases {
 		if phase == "app_maintenance" {
 			if !input.AppMaintenanceLoaded {
@@ -1040,6 +1044,19 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			// they do not intercept the request.
 			step.PathAfter = requestPath
 			simulation.Steps = append(simulation.Steps, step)
+		case "challenge":
+			if outcome != "challenge_page" && outcome != "challenge_required" {
+				return stop("incomplete", outcome, phase, reason, rule)
+			}
+			simulation.Status, simulation.Outcome = "incomplete", outcome
+			simulation.StatusCode, simulation.StoppedAt, simulation.Reason = http.StatusForbidden, phase, reason
+			step.StatusCode = http.StatusForbidden
+			if outcome == "challenge_required" {
+				simulation.ProblemCode, step.ProblemCode = api.CodeChallengeRequired, api.CodeChallengeRequired
+			}
+			simulation.Steps = append(simulation.Steps, step)
+			simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
+			return simulation
 		case "validate":
 			switch outcome {
 			case "validated", "validation_failed_observe", "validation_failed_warn":
@@ -1373,6 +1390,8 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 		return previewAsyncRule(rule, input)
 	case "throttle":
 		return previewThrottleRule(rule, input)
+	case "challenge":
+		return previewChallengeRule(rule, input)
 	case "budget":
 		return previewBudgetRule(rule, input)
 	case "retry":
@@ -1912,7 +1931,7 @@ func resolveBudgetPolicy(input Input, rule *api.EdgeRuleResponse, headers http.H
 		}
 	}
 	policy.ConfiguredMS = configuredMS
-	platformMaxMS := api.RequestBudgetMax.Milliseconds()
+	platformMaxMS := api.RequestBudgetPlanMax.Milliseconds()
 	if rule != nil && (candidateMS <= 0 || candidateMS > platformMaxMS) {
 		candidateMS, source = platformMaxMS, "ceiling_clamp"
 		if policy.OverrideStatus == "applied" {
@@ -2617,7 +2636,22 @@ func traceConditionMatches(rule api.EdgeRuleResponse, input Input, requestPath, 
 	return program.Matches(api.EdgeRuleMatchInput{
 		Method: method, Path: requestPath, Host: input.Host, Headers: headers,
 		ClientIP: net.ParseIP(input.ClientIP), Country: input.Country, ASN: input.ASN,
+		VerifiedBot: traceVerifiedBot(input.VerifiedBot, headers),
 	})
+}
+
+// traceVerifiedBot is the simulated verified_bot value (ADR-973).
+func traceVerifiedBot(verified bool, headers http.Header) func() string {
+	if !verified {
+		return nil
+	}
+	return func() string {
+		bot, ok := api.ClaimedEdgeRuleBot(headers.Get("User-Agent"))
+		if !ok {
+			return ""
+		}
+		return bot.Name
+	}
 }
 
 // ReferencedEdgeRuleLists returns the distinct list names the rules'
@@ -2819,4 +2853,24 @@ func applyHeaderOps(headers http.Header, ops []api.EdgeRuleHeaderOp) {
 			}
 		}
 	}
+}
+
+// previewChallengeRule shows what a kind=challenge rule (ADR-831 amendment
+// 7) does to the request: a browser navigation gets the proof-of-work page,
+// anything else 403 challenge_required. Both are incomplete predictions: a
+// verified API key, consumer key or JWT, or a pass from an earlier solve,
+// lets the request continue, and the trace collects neither.
+func previewChallengeRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
+	action, ok := decodeAction[api.EdgeRuleChallengeAction](rule.Action, "challenge")
+	if !ok || action.Validate() != nil {
+		return "unavailable", "challenge action is missing or invalid; gateway compilation would drop it", nil
+	}
+	const unless = "unless the request carries a verified API key, consumer key or JWT, or a challenge pass from an earlier solve"
+	preview := &ActionPreview{Type: "challenge", StatusCode: http.StatusForbidden}
+	if api.EdgeChallengeNavigation(input.Method, input.Headers) {
+		preview.Message = "proof-of-work page"
+		return "challenge_page", fmt.Sprintf("a browser navigation would get the challenge page (difficulty %d, pass lasts %ds) %s", action.Difficulty, action.PassTTLSeconds, unless), preview
+	}
+	preview.Message = "challenge_required"
+	return "challenge_required", "a request that is not a browser navigation would get HTTP 403 challenge_required " + unless, preview
 }

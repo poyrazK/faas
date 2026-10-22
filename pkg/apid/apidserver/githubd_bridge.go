@@ -36,6 +36,8 @@ import (
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/freeze"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -293,6 +295,14 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"EnqueueBuild: account %s has not verified its email; deploys are blocked until it does", acct.ID)
 	}
+	app, standardFailure := prepareApplicationStandardDeployment(ctx, g.store, g.log, app, "github-build")
+	if standardFailure != nil {
+		code := codes.FailedPrecondition
+		if standardFailure.Retryable {
+			code = codes.Unavailable
+		}
+		return nil, status.Error(code, "EnqueueBuild: "+standardFailure.Detail)
+	}
 	manifest, manifestProblem := loadSourceRefManifest(req.SourcePath, app, acct.Plan)
 	if manifestProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: source manifest: %s", manifestProblem.Detail)
@@ -373,7 +383,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	}
 	kind := eventKindToDeploymentKind(req.EventKind)
 	activity := g.newDeploymentActivity(ctx, acct, app, req)
-	res, err := apidsource.Enqueue(ctx, g.store, g.notif, apidsource.EnqueueParams{
+	params := apidsource.EnqueueParams{
 		OperationDefinitions: sourceOperationSpecs(manifest),
 		Activity:             activity,
 		AppID:                app.ID,
@@ -383,6 +393,8 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		ImagePort:            app.Manifest.ProjectImagePort,
 		ImageCommand:         app.Manifest.ProjectImageCommand,
 		ImageHealthcheck:     app.Manifest.ProjectImageHealthcheck,
+		ImageProcess:         app.Manifest.ProjectImageProcess,
+		DockerfileBuild:      app.Manifest.DockerfileBuild,
 		FullRootfsAllowAuto:  api.FullRootfsAllowAutoDefault[acct.Plan],
 		SourcePath:           req.SourcePath,
 		SourceBytes:          req.SourceBytes,
@@ -424,7 +436,19 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		DeployedBy: deployedBy,
 		PRNumber:   int(req.PullRequestNumber),
 		Tag:        req.Tag,
-	})
+	}
+	if kind == state.DeploymentKindGitHub {
+		// ADR-20261019071733: a push cannot carry an override, so a freeze
+		// refuses it; githubd reports the reason on the commit.
+		active, freezeErr := freeze.ActiveFor(ctx, g.store, acct.ID, app.ID, req.DeploymentScope, time.Now().UTC())
+		if freezeErr != nil {
+			g.log.Warn("githubd bridge: could not read deploy freezes; releasing", "app_id", app.ID, "err", freezeErr)
+		} else if len(active) > 0 {
+			return nil, status.Error(codes.FailedPrecondition, freeze.Summary(app.Slug, active))
+		}
+		release.ApplyDefaultToEnqueue(ctx, g.store, g.log, app, acct.Plan, req.DeploymentScope, &params)
+	}
+	res, err := apidsource.Enqueue(ctx, g.store, g.notif, params)
 	if err != nil {
 		return nil, g.asGRPC("enqueue", err)
 	}

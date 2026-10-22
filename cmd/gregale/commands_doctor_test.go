@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/binary"
@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -21,11 +22,11 @@ func TestRunDoctorChecks_LoopbackBindError(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "server.js"), []byte("app.listen(8080, '127.0.0.1');\n"), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
-	rep := runDoctorChecks(dir)
+	rep := main.RunDoctorChecks(dir)
 	if len(rep.Checks) != 8 {
 		t.Fatalf("expected 8 checks, got %d", len(rep.Checks))
 	}
-	var loopback *doctorCheck
+	var loopback *main.DoctorCheck
 	for i := range rep.Checks {
 		if rep.Checks[i].Name == "loopback-bind" {
 			loopback = &rep.Checks[i]
@@ -60,7 +61,7 @@ func TestRunDoctorChecks_CleanRepo(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "server.js"), []byte("app.listen(process.env.PORT);\n"), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
-	rep := runDoctorChecks(dir)
+	rep := main.RunDoctorChecks(dir)
 	skipped := map[string]bool{
 		"port-bind": true, "runtime-oom": true, "dep-install": true, "startup-timeout": true,
 	}
@@ -95,8 +96,8 @@ func TestRunDoctorChecks_HardCodedPortIsAdvisory(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, tc.file), []byte(tc.source), 0o644); err != nil {
 				t.Fatalf("write fixture: %v", err)
 			}
-			rep := runDoctorChecks(dir)
-			var portCheck *doctorCheck
+			rep := main.RunDoctorChecks(dir)
+			var portCheck *main.DoctorCheck
 			for i := range rep.Checks {
 				if rep.Checks[i].Name == "port-bind" {
 					portCheck = &rep.Checks[i]
@@ -118,7 +119,7 @@ func TestRunDoctorChecks_HardCodedPortIsAdvisory(t *testing.T) {
 				t.Fatalf("report errors=%t warnings=%t, want warn-only", rep.HasErrors(), rep.HasWarnings())
 			}
 			var rendered strings.Builder
-			renderDoctorHuman(&rendered, rep)
+			main.RenderDoctorHuman(&rendered, rep)
 			for _, want := range []string{"port-bind — warn", "PORT", "sources:", tc.file + ":1"} {
 				if !strings.Contains(rendered.String(), want) {
 					t.Errorf("human doctor output missing %q:\n%s", want, rendered.String())
@@ -140,7 +141,7 @@ func TestRunDoctorChecks_PortFallbackAndNonRuntimeFilesDoNotWarn(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	rep := runDoctorChecks(dir)
+	rep := main.RunDoctorChecks(dir)
 	for _, check := range rep.Checks {
 		if check.Name == "port-bind" {
 			if check.Status != "skipped" || check.Code != "" {
@@ -161,8 +162,8 @@ func TestRunDoctorChecks_EnvVarMissing(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "app.py"), []byte(`import os\nprint(os.environ["DATABASE_URL"])\n`), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
-	rep := runDoctorChecks(dir)
-	var envCheck *doctorCheck
+	rep := main.RunDoctorChecks(dir)
+	var envCheck *main.DoctorCheck
 	for i := range rep.Checks {
 		if rep.Checks[i].Name == "env-required" {
 			envCheck = &rep.Checks[i]
@@ -219,8 +220,8 @@ func TestRunDoctorChecks_EnvVarReferenceForms(t *testing.T) {
 				}
 			}
 
-			rep := runDoctorChecks(dir)
-			var envCheck *doctorCheck
+			rep := main.RunDoctorChecks(dir)
+			var envCheck *main.DoctorCheck
 			for i := range rep.Checks {
 				if rep.Checks[i].Name == "env-required" {
 					envCheck = &rep.Checks[i]
@@ -255,7 +256,7 @@ func TestRunDoctorChecks_EnvVarSkipsDocumentationExamples(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("Use process.env.API_TOKEN in your handler.\n"), 0o644); err != nil {
 		t.Fatalf("write README: %v", err)
 	}
-	rep := runDoctorChecks(dir)
+	rep := main.RunDoctorChecks(dir)
 	for _, check := range rep.Checks {
 		if check.Name == "env-required" {
 			if check.Status != "ok" {
@@ -277,7 +278,7 @@ func TestRunDoctorChecks_IgnoresNonRuntimeFixtureEvidence(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "server.test.js"), []byte(fixture), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	rep := runDoctorChecks(dir)
+	rep := main.RunDoctorChecks(dir)
 	for _, check := range rep.Checks {
 		if (check.Name == "loopback-bind" || check.Name == "arch" || check.Name == "env-required") && check.Status != "ok" {
 			t.Fatalf("%s = %+v, valid workload must not inherit fixture findings", check.Name, check)
@@ -292,13 +293,13 @@ func TestExecutableHeaderMismatchUsesBinaryFormat(t *testing.T) {
 	binary.LittleEndian.PutUint16(elfAMD64[18:20], 62)
 	elfARM64 := append([]byte(nil), elfAMD64...)
 	binary.LittleEndian.PutUint16(elfARM64[18:20], 183)
-	if executableHeaderMismatch([]byte("linux/aarch64 is only documentation")) {
+	if main.ExecutableHeaderMismatch([]byte("linux/aarch64 is only documentation")) {
 		t.Fatal("plain-text architecture mention classified as executable")
 	}
-	if executableHeaderMismatch(elfAMD64) {
+	if main.ExecutableHeaderMismatch(elfAMD64) {
 		t.Fatal("linux/amd64 ELF classified as incompatible")
 	}
-	if !executableHeaderMismatch(elfARM64) || !executableHeaderMismatch([]byte{0xfe, 0xed, 0xfa, 0xcf}) {
+	if !main.ExecutableHeaderMismatch(elfARM64) || !main.ExecutableHeaderMismatch([]byte{0xfe, 0xed, 0xfa, 0xcf}) {
 		t.Fatal("incompatible executable header was accepted")
 	}
 }
@@ -311,8 +312,8 @@ func TestRunDoctorChecks_StatelessOnlyDir(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "data"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	rep := runDoctorChecks(dir)
-	var statCheck *doctorCheck
+	rep := main.RunDoctorChecks(dir)
+	var statCheck *main.DoctorCheck
 	for i := range rep.Checks {
 		if rep.Checks[i].Name == "stateless-only" {
 			statCheck = &rep.Checks[i]
@@ -345,9 +346,41 @@ func TestScanSource_SkipsVendoredDirs(t *testing.T) {
 		[]byte("app.listen(80, '127.0.0.1');\n"), 0o644); err != nil {
 		t.Fatalf("write vendor: %v", err)
 	}
-	out := scanSource(dir, loopbackBindRegex, 5)
+	out := main.ScanSource(dir, (*main.LoopbackBindRegex), 5)
 	if len(out) != 0 {
 		t.Fatalf("expected 0 sources (vendor must be skipped), got %v", out)
+	}
+}
+
+// Hunt #9: the check matched only the `app` receiver and 127.0.0.1, so
+// Node's own `server.listen(port, '127.0.0.1')` and every 'localhost' bind
+// reported loopback-bind ok and then failed the wake.
+func TestLoopbackBindRegexListenerShapes(t *testing.T) {
+	for _, tc := range []struct {
+		line string
+		want bool
+	}{
+		{"app.listen(8080, '127.0.0.1');", true},
+		{"app.listen('127.0.0.1', 8080);", true},
+		{"server.listen(3000, '127.0.0.1', () => {});", true},
+		{"server.listen(process.env.PORT || 3000, 'localhost');", true},
+		{"fastify.listen({ port: 3000, host: '127.0.0.1' })", true},
+		{"server.listen(8080, '::1')", true},
+		{"s.bind(('127.0.0.1', 8080))", true},
+		{"app.run(host='127.0.0.1', port=8080)", true},
+		{"uvicorn.run(app, host=\"localhost\", port=8000)", true},
+		{"http.ListenAndServe(\"localhost:8080\", nil)", true},
+		{"ln, err := net.Listen(\"tcp\", \"127.0.0.1:\"+port)", true},
+		{"server.listen(process.env.PORT || 8080, '0.0.0.0')", false},
+		{"app.listen(PORT, () => console.log('listening on localhost'))", false},
+		{"http.ListenAndServe(\":\"+port, nil)", false},
+		{"app.run(host='0.0.0.0', port=8080)", false},
+		{"const db = new Client({ host: 'localhost' })", false},
+		{"mongoose.connect('mongodb://localhost:27017/app')", false},
+	} {
+		if got := (*main.LoopbackBindRegex).MatchString(tc.line); got != tc.want {
+			t.Errorf("loopbackBindRegex.MatchString(%q) = %v, want %v", tc.line, got, tc.want)
+		}
 	}
 }
 
@@ -356,9 +389,9 @@ func TestScanSource_SkipsVendoredDirs(t *testing.T) {
 // script consumers grep on a fixed line index per check.
 func TestRenderDoctorHuman_HasAllChecks(t *testing.T) {
 	dir := t.TempDir()
-	rep := runDoctorChecks(dir)
+	rep := main.RunDoctorChecks(dir)
 	var sb strings.Builder
-	renderDoctorHuman(&sb, rep)
+	main.RenderDoctorHuman(&sb, rep)
 	out := sb.String()
 	for _, name := range []string{"port-bind", "loopback-bind", "arch", "env-required", "stateless-only", "runtime-oom", "dep-install", "startup-timeout"} {
 		if !strings.Contains(out, name) {
@@ -379,7 +412,7 @@ func TestRenderDoctorHuman_HasAllChecks(t *testing.T) {
 func TestDoctorReport_HasErrorsAndHasWarnings(t *testing.T) {
 	t.Run("all ok trips neither", func(t *testing.T) {
 		dir := t.TempDir()
-		rep := runDoctorChecks(dir)
+		rep := main.RunDoctorChecks(dir)
 		if rep.HasErrors() {
 			t.Errorf("clean repo: HasErrors=true, want false")
 		}
@@ -392,7 +425,7 @@ func TestDoctorReport_HasErrorsAndHasWarnings(t *testing.T) {
 		if err := os.Mkdir(filepath.Join(dir, "data"), 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
-		rep := runDoctorChecks(dir)
+		rep := main.RunDoctorChecks(dir)
 		if !rep.HasErrors() {
 			t.Errorf("stateless fixture: HasErrors=false, want true")
 		}
@@ -410,9 +443,9 @@ func TestDoctorReport_HasErrorsAndHasWarnings(t *testing.T) {
 		// isolation, independent of the check implementations. This
 		// pins the contract for any future check that promotes
 		// a finding to warn (e.g. a dep-install soft-warning).
-		rep := doctorReport{
+		rep := main.DoctorReport{
 			Path: "/tmp",
-			Checks: []doctorCheck{
+			Checks: []main.DoctorCheck{
 				{Name: "fake-ok", Status: "ok"},
 				{Name: "fake-warn", Status: "warn"},
 				{Name: "fake-error", Status: "error"},
@@ -426,8 +459,8 @@ func TestDoctorReport_HasErrorsAndHasWarnings(t *testing.T) {
 		}
 	})
 	t.Run("warn-only trips HasWarnings, not HasErrors", func(t *testing.T) {
-		rep := doctorReport{
-			Checks: []doctorCheck{
+		rep := main.DoctorReport{
+			Checks: []main.DoctorCheck{
 				{Name: "fake-ok", Status: "ok"},
 				{Name: "fake-warn", Status: "warn"},
 			},
@@ -442,7 +475,7 @@ func TestDoctorReport_HasErrorsAndHasWarnings(t *testing.T) {
 }
 
 func TestDeployDoctorFlagsAreMutuallyExclusive(t *testing.T) {
-	if code := cmdDeployTarball([]string{"--doctor-strict", "--no-doctor"}); code != 1 {
+	if code := main.CmdDeployTarball([]string{"--doctor-strict", "--no-doctor"}); code != 1 {
 		t.Fatalf("--doctor-strict + --no-doctor exit = %d, want 1", code)
 	}
 }

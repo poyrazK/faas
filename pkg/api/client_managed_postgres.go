@@ -170,3 +170,15 @@ func (c *Client) CancelManagedPostgresCutover(ctx context.Context, id string) (M
 	err := c.do(ctx, http.MethodPost, "/v1/postgres/cutovers/"+url.PathEscape(id)+"/cancel", nil, &out)
 	return out, err
 }
+
+func (c *Client) RequestManagedPostgresCutoverPreflight(ctx context.Context, id string) (ManagedPostgresCutoverPreflight, error) {
+	var out ManagedPostgresCutoverPreflight
+	err := c.do(ctx, http.MethodPost, "/v1/postgres/cutovers/"+url.PathEscape(id)+"/preflight", nil, &out)
+	return out, err
+}
+
+func (c *Client) GetManagedPostgresCutoverPreflight(ctx context.Context, id string) (ManagedPostgresCutoverPreflight, error) {
+	var out ManagedPostgresCutoverPreflight
+	err := c.do(ctx, http.MethodGet, "/v1/postgres/cutovers/"+url.PathEscape(id)+"/preflight", nil, &out)
+	return out, err
+}

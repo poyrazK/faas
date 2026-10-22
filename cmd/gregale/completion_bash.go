@@ -147,6 +147,18 @@ func renderBashHeader(w io.Writer) {
 
 	_, _ = fmt.Fprintln(w)
 
+	_, _ = io.WriteString(w, `  local local_names
+  if local_names=$(gregale "${__gregale_profile_args[@]}" completion local-names -- "${words[@]:1:cword}" 2>/dev/null); then
+    COMPREPLY=()
+    local candidate quoted
+    while IFS= read -r candidate; do
+      [ -z "$candidate" ] && continue
+      printf -v quoted '%q' "$candidate"
+      COMPREPLY+=("$quoted")
+    done <<< "$local_names"
+    return 0
+  fi
+`)
 	_, _ = io.WriteString(w, `  if [ "${words[1]}" = secrets ]; then
     local secret_names
     if secret_names=$(gregale "${__gregale_profile_args[@]}" completion secret-keys -- "${words[@]:1:cword}" 2>/dev/null); then

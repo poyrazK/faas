@@ -1,6 +1,7 @@
 package sched
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -101,10 +102,30 @@ func (s *workerScaleInStabilizer) sweepLocked(now time.Time) {
 	}
 }
 
-// workerBusyRank orders scale-in victims. Telemetry reports in-flight
-// requests for push deliveries only; a worker with unknown telemetry may be
-// processing, so observed-idle workers are stopped before it.
-func (e *Engine) workerBusyRank(ins state.Instance, now time.Time) int {
+// workerQueueLeases counts each worker's unexpired pull leases, read only
+// when some worker is about to be stopped. A failed read ranks every worker
+// on telemetry alone rather than blocking the reconcile.
+func (e *Engine) workerQueueLeases(ctx context.Context, appID string, scaleIn bool) map[string]int {
+	leases, ok := e.store.(state.QueueLeaseStore)
+	if !scaleIn || !ok {
+		return nil
+	}
+	held, err := leases.QueueLeasesByInstance(ctx, appID)
+	if err != nil {
+		e.log.Warn("sched: read worker queue leases; ranking on telemetry", "app", appID, "err", err)
+		return nil
+	}
+	return held
+}
+
+// workerBusyRank orders scale-in victims. A worker holding unexpired pull
+// leases (ADR-1140) is busy. Telemetry reports in-flight HTTP requests; a
+// worker with unknown telemetry may be processing, so observed-idle workers
+// are stopped before it.
+func (e *Engine) workerBusyRank(ins state.Instance, now time.Time, leases map[string]int) int {
+	if leases[ins.ID] > 0 {
+		return 0
+	}
 	inflight, _, observed := e.telemetryCache.LookupInflightRequests(ins.ID, now)
 	switch {
 	case !observed:

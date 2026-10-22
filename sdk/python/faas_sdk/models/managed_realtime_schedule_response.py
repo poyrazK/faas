@@ -49,6 +49,8 @@ class ManagedRealtimeScheduleResponse:
     """Total attempts per retry cycle; one disables automatic retries."""
     backoff_seconds: int = 5
     """Initial retry delay, doubled per failure up to one hour."""
+    ttl_seconds: int | Unset = 0
+    """Message lifetime in seconds from publication of each occurrence; zero disables expiry."""
     group: str | Unset = UNSET
     """Optional immutable channel-scoped group label; at most 128 UTF-8 bytes."""
     conditions: list[Any] | Unset = UNSET
@@ -106,6 +108,8 @@ class ManagedRealtimeScheduleResponse:
         created_at = self.created_at.isoformat()
 
         updated_at = self.updated_at.isoformat()
+
+        ttl_seconds = self.ttl_seconds
 
         group = self.group
 
@@ -171,6 +175,8 @@ class ManagedRealtimeScheduleResponse:
                 "updated_at": updated_at,
             }
         )
+        if ttl_seconds is not UNSET:
+            field_dict["ttl_seconds"] = ttl_seconds
         if group is not UNSET:
             field_dict["group"] = group
         if conditions is not UNSET:
@@ -236,6 +242,8 @@ class ManagedRealtimeScheduleResponse:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        ttl_seconds = d.pop("ttl_seconds", UNSET)
 
         group = d.pop("group", UNSET)
 
@@ -316,6 +324,7 @@ class ManagedRealtimeScheduleResponse:
             status=status,
             created_at=created_at,
             updated_at=updated_at,
+            ttl_seconds=ttl_seconds,
             group=group,
             conditions=conditions,
             on_condition_failure=on_condition_failure,

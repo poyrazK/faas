@@ -5,7 +5,12 @@ import { OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES, OPERATION_SUBJECT_ID_BYTES } fr
 import { parseFrame } from './sse.js';
 import type { OperationWorkflowStep } from './generated/models/OperationWorkflowStep.js';
 
-export type OperationState = 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation';
+export type OperationState = 'accepted' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation';
+/** ADR-1194: why a waiting operation holds no execution, and until when. */
+export interface OperationWaitingState { kind: 'timer' | 'approval' | 'event'; step: string; since: string; until?: string; approver?: 'account' | 'customer'; event?: string }
+/** ADR-1196: bounds fixed onto an accepted Operation, and what it has used. */
+export interface OperationLimits { deadline_seconds?: number; max_attempts?: number; max_execution_seconds?: number }
+export interface OperationUsage { execution_ms: number; attempts: number }
 export interface OperationProgress { stage: string; completed: number; total: number; attempt: number; updated_at: string }
 export interface OperationDelivery { state: string; delivery_id?: string; attempts: number; last_error?: string; next_attempt_at?: string }
 export interface OperationArtifact { id: string; name: string; uri: string; size_bytes: number; sha256: string; expires_at?: string }
@@ -58,7 +63,7 @@ export interface Operation<T = unknown> {
   subject?: OperationSubject;
   id: string; name: string; generation: number; state: OperationState;
   progress?: OperationProgress; result?: T; artifacts?: OperationArtifact[]; completion_delivery: OperationDelivery;
-  cancellation_requested: boolean; failure_code?: string; latest_sequence: number;
+  cancellation_requested: boolean; failure_code?: string; waiting?: OperationWaitingState; limits?: OperationLimits; deadline_at?: string; usage?: OperationUsage; latest_sequence: number;
   created_at: string; updated_at: string; expires_at: string;
 }
 export interface OperationTenantIdentity { account_id: string; platform_tenant_id: string }
@@ -165,7 +170,7 @@ export class GregaleOperationClient {
     if (!UUID.test(options.appID) || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
     if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 100)) throw new Error('Invalid operation page size');
     if (options.name !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.name)) throw new Error('Invalid operation name');
-    if (options.state !== undefined && !['accepted', 'running', 'succeeded', 'failed', 'cancelled', 'requires_reconciliation'].includes(options.state)) throw new Error('Invalid operation state');
+    if (options.state !== undefined && !['accepted', 'running', 'waiting', 'succeeded', 'failed', 'cancelled', 'requires_reconciliation'].includes(options.state)) throw new Error('Invalid operation state');
     if (options.cursor !== undefined && (!options.cursor || options.cursor.length > 512)) throw new Error('Invalid operation page cursor');
     if (options.subjectType !== undefined || options.subjectID !== undefined) {
       if (options.subjectType === undefined || !/^[a-z][a-z0-9-]{0,63}$/.test(options.subjectType) || options.subjectID === undefined || !options.subjectID || new TextEncoder().encode(options.subjectID).length > OPERATION_SUBJECT_ID_BYTES || /[\x00-\x1f\x7f]/.test(options.subjectID) || /[\uD800-\uDFFF]/u.test(options.subjectID)) throw new Error('Valid paired business reference required');
@@ -322,12 +327,19 @@ export class GregaleOperationClient {
 
   workflowReadinessFollowUps(options: OperationWorkflowReadinessFollowUpOptions, signal?: AbortSignal): Promise<OperationWorkflowReadinessFollowUpsResponse> {
     const q = readinessSubscriptionQuery(options);
+    if (options.view !== undefined) q.set('view', options.view);
+    if (options.actionKind !== undefined) q.set('action_kind', options.actionKind);
+    if (options.actionTrigger !== undefined) q.set('action_trigger', options.actionTrigger);
+    if (options.impactPriority !== undefined) q.set('impact_priority', options.impactPriority);
+    if (options.impactKind !== undefined) q.set('impact_kind', options.impactKind);
+    if (options.impactCode !== undefined) q.set('impact_code', options.impactCode);
+    if (options.sort !== undefined) q.set('sort', options.sort);
     if (options.reminderOnly !== undefined) q.set('reminder_only', String(options.reminderOnly));
     if (options.owner !== undefined) q.set('owner', options.owner);
     if (options.workflow !== undefined) q.set('workflow', options.workflow);
     if (options.due !== undefined) q.set('due', options.due);
     if (options.offset !== undefined) {
-      if (!Number.isSafeInteger(options.offset) || options.offset < 0 || options.offset > 2000) throw new Error('Invalid follow-up offset');
+      if (!Number.isSafeInteger(options.offset) || options.offset < 0 || options.offset > (options.view === 'next_actions' ? 278000 : 2000)) throw new Error('Invalid follow-up offset');
       q.set('offset', String(options.offset));
     }
     if (options.limit !== undefined) {
@@ -392,6 +404,14 @@ export class GregaleOperationClient {
     q.set('workflow', options.workflow); q.set('instance_id', options.instanceID);
     return this.request('/v1/platform-tenant-self/workflow-readiness/playbook-progress/' + encodeURIComponent(id) + '/reviews?' + q, 'POST', body, undefined, signal);
   }
+  configureWorkflowPlaybookEvidenceWatch(options: OperationWorkflowCoordinationTimelineOptions, id: string, body: OperationWorkflowPlaybookEvidenceWatchRequest, signal?: AbortSignal): Promise<OperationWorkflowPlaybookEvidenceWatch> {
+    const q = readinessSubscriptionQuery(options);
+    if (options.offset !== undefined || options.limit !== undefined) throw new Error('Pagination is not accepted for watch configuration');
+    if (!options.subjectType || !options.subjectID || !options.workflow || !options.instanceID || !UUID.test(id)) throw new Error('Explicit case and checklist UUID required');
+    q.set('subject_type', options.subjectType); q.set('subject_id', options.subjectID);
+    q.set('workflow', options.workflow); q.set('instance_id', options.instanceID);
+    return this.request('/v1/platform-tenant-self/workflow-readiness/playbook-progress/' + encodeURIComponent(id) + '/evidence-watch?' + q, 'POST', body, undefined, signal);
+  }
   compareWorkflowReadiness(body: OperationWorkflowReadinessComparisonRequest, signal?: AbortSignal): Promise<OperationWorkflowReadinessComparisonResponse> {
     if (!UUID.test(body.app_id ?? '') || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(body.scope)) throw new Error('Explicit app and environment required');
     if (body.tenant_id !== undefined) throw new Error('Customer ownership comes from authentication');
@@ -430,6 +450,13 @@ export class GregaleOperationClient {
   cancel<T = unknown>(id: string, generation: number, signal?: AbortSignal): Promise<Operation<T>> {
     if (!Number.isSafeInteger(generation) || generation < 1) throw new Error('Current operation generation required');
     return this.request(operationPath(id) + '/cancel', 'POST', { expected_generation: generation }, undefined, signal);
+  }
+  /** ADR-1194: decide an approval this customer owns on a waiting operation. */
+  decideApproval<T = unknown>(id: string, step: string, generation: number, decision: 'approved' | 'rejected', comment?: string, signal?: AbortSignal): Promise<Operation<T>> {
+    if (!Number.isSafeInteger(generation) || generation < 1) throw new Error('Current operation generation required');
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(step)) throw new Error('Invalid approval step');
+    if (comment !== undefined && new TextEncoder().encode(comment).length > 1024) throw new Error('Approval comment exceeds 1 KiB');
+    return this.request(operationPath(id) + '/approvals/' + encodeURIComponent(step), 'POST', { expected_generation: generation, decision, ...(comment === undefined ? {} : { comment }) }, undefined, signal);
   }
   events(id: string, after = 0, signal?: AbortSignal): Promise<OperationEvents> {
     if (!Number.isSafeInteger(after) || after < 0) throw new Error('Invalid operation cursor');
@@ -752,34 +779,36 @@ export interface OperationWorkflowReadinessComparisonResponse {
 }
 
 export interface OperationWorkflowReadinessSubscriptionOptions { appID: string; scope: string }
-export interface OperationWorkflowReadinessSubscriptionRequest {
+export interface OperationWorkflowReadinessSubscriptionRequest { next_action_digest?: OperationWorkflowNextActionDigestPolicy; business_impact_watches?: OperationWorkflowReadinessImpactWatchRequest[];
  app_id?: string; tenant_id?: string; scope: string; name: string; workflow?: string; target_operation?: string; owner?: string; unassigned?: boolean;
  events?: ('newly_ready' | 'newly_blocked' | 'reassigned' | 'unavailable')[];
 }
-export interface OperationWorkflowReadinessSubscription extends Omit<OperationWorkflowReadinessSubscriptionRequest, 'app_id' | 'events'> {
+export interface OperationWorkflowReadinessSubscription extends Omit<OperationWorkflowReadinessSubscriptionRequest, 'app_id' | 'events' | 'business_impact_watches'> {
+ digest_next_at?: string; digest_evaluated_at?: string; digest_delivered_at?: string;
+ business_impact_watches?: OperationWorkflowReadinessImpactWatch[];
  id: string; app_id: string; events: string[]; created_at: string; evaluated_at: string; status: 'active' | 'retrying'; watched_transition_count: number; coverage_incomplete: boolean; latest_sequence: number;
 }
 export interface OperationWorkflowReadinessSubscriptionsResponse { items: OperationWorkflowReadinessSubscription[] }
-export interface OperationWorkflowReadinessNotification { escalation_response?: OperationWorkflowReadinessEscalationResponseEvent; outcome_escalation?: OperationWorkflowReadinessOutcomeEscalation; business_outcome_watch?: OperationWorkflowReadinessBusinessOutcomeWatch; business_outcome?: OperationWorkflowReadinessBusinessOutcomeEvent; verification_watch?: OperationWorkflowReadinessVerificationWatch; verification?: OperationWorkflowReadinessVerificationEvent; reminder?: OperationWorkflowReadinessDueReminder; coordination?: OperationWorkflowReadinessCoordination; id: string; sequence: number; kind: string; created_at: string; explanation: string; change?: OperationWorkflowReadinessChange }
+export interface OperationWorkflowReadinessNotification { fulfillment_review_escalation?: OperationWorkflowFulfillmentReviewEscalation; fulfillment_review_reminder?: OperationWorkflowFulfillmentReviewReminder; fulfillment_review?: OperationWorkflowObligationFulfillmentReview; obligation_reopening?: OperationWorkflowObligationReopening; target_assessment?: OperationWorkflowObligationAssessment; obligation_receipts?: OperationWorkflowObligationEvent[]; obligation_receipts_truncated?: boolean; next_action_digest?: OperationWorkflowNextActionDigest; handoff_reassignment?: OperationWorkflowReviewResponseHandoffReassignmentEvent; handoff_decline?: OperationWorkflowReviewResponseHandoffDeclineEvent; decision_review?: OperationWorkflowReviewResponseDecisionReviewEvent; review_blockage?: OperationWorkflowReviewResponseBlockageEvent; review_check_in?: OperationWorkflowReviewResponseCheckInEvent; review_response?: OperationWorkflowReviewResponse; business_impact?: OperationWorkflowReadinessImpactEvent; dependency_recovery?: OperationWorkflowPlaybookDependencyRecovery; dependency_regression?: OperationWorkflowPlaybookDependencyRegression; playbook_step?: OperationWorkflowPlaybookStepAssignment; playbook_review?: OperationWorkflowPlaybookCompletionReview; playbook_review_event?: OperationWorkflowPlaybookCompletionReviewEvent; playbook_escalation?: OperationWorkflowPlaybookOutcomeEscalation; playbook_evidence?: OperationWorkflowPlaybookEvidenceEvent; escalation_response?: OperationWorkflowReadinessEscalationResponseEvent; outcome_escalation?: OperationWorkflowReadinessOutcomeEscalation; business_outcome_watch?: OperationWorkflowReadinessBusinessOutcomeWatch; business_outcome?: OperationWorkflowReadinessBusinessOutcomeEvent; verification_watch?: OperationWorkflowReadinessVerificationWatch; verification?: OperationWorkflowReadinessVerificationEvent; reminder?: OperationWorkflowReadinessDueReminder; coordination?: OperationWorkflowReadinessCoordination; id: string; sequence: number; kind: string; created_at: string; explanation: string; change?: OperationWorkflowReadinessChange }
 export interface OperationWorkflowReadinessInboxResponse { subscription: OperationWorkflowReadinessSubscription; items: OperationWorkflowReadinessNotification[]; latest_sequence: number; next_sequence: number; resync_required: boolean; has_more: boolean }
 function readinessSubscriptionQuery(options: OperationWorkflowReadinessSubscriptionOptions): URLSearchParams {
  if (!UUID.test(options.appID) || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
  return new URLSearchParams({app_id: options.appID, scope: options.scope});
 }
 
-export interface OperationWorkflowReadinessCoordinationRequest { completion?: OperationWorkflowReadinessCompletionRequest; revision: number; status: 'unread' | 'read' | 'acknowledged'; owner: string; note: string; follow_up_at?: string }
-export interface OperationWorkflowReadinessCoordination extends OperationWorkflowReadinessCoordinationRequest { completion?: OperationWorkflowReadinessCompletion; updated_at: string; updated_by: string; acknowledged_at?: string; acknowledged_by?: string }
+export interface OperationWorkflowReadinessCoordinationRequest { review_coordination?: OperationWorkflowFulfillmentReviewCoordinationRequest; reaffirmation?: OperationWorkflowObligationReaffirmationRequest; reopening?: OperationWorkflowObligationReopeningRequest; fulfillment?: OperationWorkflowObligationFulfillmentRequest; target_binding?: OperationWorkflowObligationTargetRequest; review_response?: OperationWorkflowReviewResponseRequest; completion?: OperationWorkflowReadinessCompletionRequest; revision: number; status: 'unread' | 'read' | 'acknowledged'; owner: string; note: string; follow_up_at?: string }
+export interface OperationWorkflowReadinessCoordination extends Omit<OperationWorkflowReadinessCoordinationRequest, 'review_response' | 'fulfillment' | 'target_binding' | 'reopening' | 'reaffirmation' | 'review_coordination'> { fulfillment_review_escalations?: OperationWorkflowFulfillmentReviewEscalation[]; fulfillment_review_reminders?: OperationWorkflowFulfillmentReviewReminder[]; review_coordination_changes?: OperationWorkflowFulfillmentReviewCoordinationChange[]; fulfillment_reviews?: OperationWorkflowObligationFulfillmentReview[]; reaffirmations?: OperationWorkflowObligationReaffirmation[]; reopenings?: OperationWorkflowObligationReopening[]; fulfillments?: OperationWorkflowObligationFulfillment[]; target_bindings?: OperationWorkflowObligationTargetBinding[]; completion?: OperationWorkflowReadinessCompletion; updated_at: string; updated_by: string; acknowledged_at?: string; acknowledged_by?: string }
 export interface OperationWorkflowReadinessHandoff { summary: string; baseline_evaluated_at?: string; comparable: boolean; limitations: string[] }
-export interface OperationWorkflowReadinessNotificationCheck { business_outcome?: OperationWorkflowReadinessBusinessOutcome; handoff: OperationWorkflowReadinessHandoff; notification: OperationWorkflowReadinessNotification; checked_at: string; status: string; change?: OperationWorkflowReadinessChange }
+export interface OperationWorkflowReadinessNotificationCheck { next_action_digest?: OperationWorkflowNextActionDigestCheck; business_outcome?: OperationWorkflowReadinessBusinessOutcome; handoff: OperationWorkflowReadinessHandoff; notification: OperationWorkflowReadinessNotification; checked_at: string; status: string; change?: OperationWorkflowReadinessChange }
 
-export interface OperationWorkflowReadinessFollowUpOptions extends OperationWorkflowReadinessSubscriptionOptions { reminderOnly?: boolean; owner?: string; workflow?: string; due?: 'all' | 'overdue' | 'upcoming'; offset?: number; limit?: number }
-export interface OperationWorkflowReadinessFollowUp { outcome_escalation?: OperationWorkflowReadinessOutcomeEscalation; reminder?: OperationWorkflowReadinessDueReminder; subscription_id: string; subscription_name: string; subscription_tenant_id?: string; platform_tenant_id?: string; scope: string; notification_id: string; sequence: number; kind: string; created_at: string; coordination: OperationWorkflowReadinessCoordination; workflow?: string; instance_id?: string; subject?: OperationSubject; operation?: string; from_state?: string; to_state?: string; overdue: boolean }
-export interface OperationWorkflowReadinessFollowUpsResponse { due_reminder_count: number; items: OperationWorkflowReadinessFollowUp[]; evaluated_at: string; total_count: number; overdue_count: number; next_offset: number; has_more: boolean; retention_limited: boolean }
+export interface OperationWorkflowReadinessFollowUpOptions extends OperationWorkflowReadinessSubscriptionOptions { view?: 'follow_ups' | 'next_actions'; actionKind?: string; actionTrigger?: 'human' | 'automatic' | 'suggested'; impactPriority?: 'normal' | 'high' | 'critical'; impactKind?: 'milestone' | 'outcome'; impactCode?: string; sort?: 'due' | 'business_impact'; reminderOnly?: boolean; owner?: string; workflow?: string; due?: 'all' | 'overdue' | 'upcoming'; offset?: number; limit?: number }
+export interface OperationWorkflowReadinessFollowUp { attention_due_at?: string; review_response?: OperationWorkflowReviewResponse; business_impact?: OperationWorkflowReadinessImpactEvent; playbook_step?: OperationWorkflowPlaybookStepAssignment; playbook_escalation?: OperationWorkflowPlaybookOutcomeEscalation; outcome_escalation?: OperationWorkflowReadinessOutcomeEscalation; reminder?: OperationWorkflowReadinessDueReminder; subscription_id: string; subscription_name: string; subscription_tenant_id?: string; platform_tenant_id?: string; scope: string; notification_id: string; sequence: number; kind: string; created_at: string; coordination: OperationWorkflowReadinessCoordination; workflow?: string; instance_id?: string; subject?: OperationSubject; operation?: string; from_state?: string; to_state?: string; overdue: boolean }
+export interface OperationWorkflowReadinessFollowUpsResponse { view?: 'next_actions'; next_actions?: OperationWorkflowNextActionQueueItem[]; business_impact_summary?: OperationWorkflowReadinessImpactSummary[]; due_reminder_count: number; items: OperationWorkflowReadinessFollowUp[]; evaluated_at: string; total_count: number; overdue_count: number; next_offset: number; has_more: boolean; retention_limited: boolean }
 
 export interface OperationWorkflowReadinessDueReminder { id: string; due_at: string; created_at: string }
 
-export interface OperationWorkflowReadinessCompletionRequest { escalation_policy?: OperationWorkflowReadinessOutcomeEscalationPolicy; watch_outcome?: boolean; outcome_deadline_at?: string; expected_outcome_code?: string; watch_verification?: boolean; outcome: 'resolved' | 'no_longer_applicable' | 'handed_off'; note: string; evidence_operation_ids: string[] }
-export interface OperationWorkflowReadinessCompletion { escalation_policy?: OperationWorkflowReadinessOutcomeEscalationPolicy; watch_outcome?: boolean; outcome_deadline_at?: string; expected_outcome_code?: string; business_outcome?: OperationWorkflowReadinessBusinessOutcome; watch_verification?: boolean; outcome: 'resolved' | 'no_longer_applicable' | 'handed_off'; note: string; evidence_operation_ids: string[]; completed_at: string; completed_by: string; evidence: OperationWorkflowReadinessCompletionEvidence }
+export interface OperationWorkflowReadinessCompletionRequest { playbook_review_after_seconds?: number; playbook_resolution?: 'expected_outcome_achieved' | 'alternative_accepted' | 'follow_up_canceled'; escalation_policy?: OperationWorkflowReadinessOutcomeEscalationPolicy; watch_outcome?: boolean; outcome_deadline_at?: string; expected_outcome_code?: string; watch_verification?: boolean; outcome: 'resolved' | 'no_longer_applicable' | 'handed_off'; note: string; evidence_operation_ids: string[] }
+export interface OperationWorkflowReadinessCompletion { playbook_review_after_seconds?: number; playbook_outcome?: OperationWorkflowPlaybookCompletionOutcome; escalation_policy?: OperationWorkflowReadinessOutcomeEscalationPolicy; watch_outcome?: boolean; outcome_deadline_at?: string; expected_outcome_code?: string; business_outcome?: OperationWorkflowReadinessBusinessOutcome; watch_verification?: boolean; outcome: 'resolved' | 'no_longer_applicable' | 'handed_off'; note: string; evidence_operation_ids: string[]; completed_at: string; completed_by: string; evidence: OperationWorkflowReadinessCompletionEvidence }
 export interface OperationWorkflowReadinessCompletionEvidence { checked_at: string; status: string; explanation: string; reporting_operation_id?: string; state_revision?: number; evidence_complete: boolean; remaining_reasons: string[]; pending_verification_count: number; warnings: string[] }
 
 export interface OperationWorkflowReadinessVerificationWatch { id: string; revision: number; started_at: string; evaluated_at: string; state_revision: number; contract_version: number; pending_count_at_start: number; coverage_incomplete: boolean; items: OperationWorkflowReadinessVerificationWatchItem[] }
@@ -797,8 +826,8 @@ export interface OperationWorkflowReadinessOutcomeEscalationReference { notifica
 export interface OperationWorkflowReadinessOutcomeEscalation { response?: OperationWorkflowReadinessEscalationResponse; watch_id: string; source_notification_id: string; source_sequence: number; current: OperationWorkflowReadinessBusinessOutcome; success_observed_at?: string }
 
 export interface OperationWorkflowReadinessEscalationResponse { deadline_at: string; initial_owner: string; fallback_owner?: string; status: 'awaiting' | 'acknowledged' | 'closed' | 'deadline_missed'; first_acknowledged_at?: string; deadline_notified_at?: string; history: OperationWorkflowReadinessAssignmentChange[]; history_truncated: boolean }
-export interface OperationWorkflowReadinessAssignmentChange { from_owner: string; to_owner: string; at: string; actor: string; reason: 'manual_assignment' | 'response_deadline_fallback' }
-export interface OperationWorkflowReadinessEscalationResponseEvent { escalation_notification_id: string; escalation_sequence: number; source: OperationWorkflowReadinessSnapshotEntry; checked_at: string; deadline_at: string; owner: string; reassigned: boolean }
+export interface OperationWorkflowReadinessAssignmentChange { from_owner: string; to_owner: string; at: string; actor: string; reason: 'manual_assignment' | 'response_deadline_fallback' | 'step_assignment' }
+export interface OperationWorkflowReadinessEscalationResponseEvent { business_impact?: OperationWorkflowReadinessImpactEvent; escalation_notification_id: string; escalation_sequence: number; source?: OperationWorkflowReadinessSnapshotEntry; playbook?: OperationWorkflowPlaybookEvidenceEvent; checked_at: string; deadline_at: string; owner: string; reassigned: boolean }
 
 export interface OperationWorkflowCoordinationTimelineOptions extends OperationWorkflowReadinessSubscriptionOptions { subjectType: string; subjectID: string; workflow: string; instanceID: string; offset?: number; limit?: number }
 export interface OperationWorkflowCoordinationTimelineEvent { playbook_progress_id?: string; id: string; at: string; kind: string; summary: string; subscription_id?: string; subscription_name?: string; subscription_tenant_id?: string; notification_id?: string; sequence?: number; actor?: string; owner?: string; status?: string; note?: string; follow_up_at?: string; expected_outcome_code?: string; reported_outcome_code?: string; state_revision?: number; reporting_operation_ids: string[] }
@@ -806,19 +835,165 @@ export interface OperationWorkflowCoordinationTimelineSource { subscription_id: 
 export interface OperationWorkflowCoordinationTimeline { items: OperationWorkflowCoordinationTimelineEvent[]; sources: OperationWorkflowCoordinationTimelineSource[]; subject: OperationSubject; workflow: string; instance_id: string; scope: string; platform_tenant_id?: string; evaluated_at: string; total_count: number; next_offset: number; has_more: boolean; retention_limited: boolean; sources_truncated: boolean; history_truncated: boolean; limitations: string[] }
 
 export interface OperationWorkflowCaseAction { kind: string; summary: string; owner?: string; operation_id?: string; subscription_id?: string; sequence?: number }
-export interface OperationWorkflowCase { playbook_progress: OperationWorkflowPlaybookProgress[]; guidance: OperationWorkflowPlaybookGuidance[]; guidance_status: string; guidance_truncated: boolean; status: string; summary: string; instance?: OperationWorkflowInstanceSnapshot; follow_ups: OperationWorkflowReadinessFollowUp[]; follow_up_count: number; overdue_follow_up_count: number; follow_ups_truncated: boolean; actions: OperationWorkflowCaseAction[]; actions_truncated: boolean; timeline: OperationWorkflowCoordinationTimeline; evidence_checked_at: string; coordination_checked_at: string; evaluated_at: string; limitations: string[] }
+export interface OperationWorkflowCase { obligation_context?: OperationWorkflowObligationContext; obligation_assessments: OperationWorkflowObligationAssessment[]; obligation_history: OperationWorkflowCaseObligationHistoryItem[]; obligation_history_count: number; obligation_history_truncated: boolean; obligation_history_limited: boolean; obligation_history_checked_at: string; next_actions: OperationWorkflowCaseNextAction[]; next_action_count: number; next_actions_truncated: boolean; playbook_progress: OperationWorkflowPlaybookProgress[]; guidance: OperationWorkflowPlaybookGuidance[]; guidance_status: string; guidance_truncated: boolean; status: string; summary: string; instance?: OperationWorkflowInstanceSnapshot; follow_ups: OperationWorkflowReadinessFollowUp[]; follow_up_count: number; overdue_follow_up_count: number; follow_ups_truncated: boolean; actions: OperationWorkflowCaseAction[]; actions_truncated: boolean; timeline: OperationWorkflowCoordinationTimeline; evidence_checked_at: string; coordination_checked_at: string; evaluated_at: string; limitations: string[] }
 
-export interface OperationWorkflowPlaybook { id: string; version: number; match_kind: 'blocker' | 'missing_milestone' | 'missing_dependency' | 'pending_verification' | 'requirement'; match_code: string; summary: string; owner?: string; required_evidence?: string[]; runbook_url?: string; action_url?: string }
+export interface OperationWorkflowPlaybookEvidenceRequirement { label: string; kind: 'milestone' | 'prerequisite' | 'verification'; operation: string; milestone?: string; prerequisite_operation?: string; from_state?: string; to_state?: string; group_id?: string; path_id?: string; blocker_code?: string }
+export interface OperationWorkflowPlaybookEvidenceCheck { requirement: OperationWorkflowPlaybookEvidenceRequirement; status: 'satisfied' | 'missing' | 'stale' | 'invalidated' | 'unavailable'; reason: string; checked_at: string; state_revision?: number; reporting_operation_id?: string; review_suggested: boolean; evidence?: OperationWorkflowInstanceMilestoneRef; prerequisite?: OperationWorkflowRetainedMilestone }
+export interface OperationWorkflowPlaybook { outcome_guidance?: OperationWorkflowPlaybookOutcomeGuidance[]; outcome_acceptance?: OperationWorkflowPlaybookOutcomeAcceptancePolicy; outcome_deadline?: OperationWorkflowPlaybookOutcomeDeadlinePolicy; expected_outcome_code?: string; evidence_requirements?: OperationWorkflowPlaybookEvidenceRequirement[]; id: string; version: number; match_kind: 'blocker' | 'missing_milestone' | 'missing_dependency' | 'pending_verification' | 'requirement'; match_code: string; summary: string; owner?: string; required_evidence?: string[]; runbook_url?: string; action_url?: string }
 export interface OperationWorkflowPlaybookGuidance { playbook: OperationWorkflowPlaybook; contract_version: number; reporting_operation_id: string }
 
 export interface OperationWorkflowPlaybookProgressStartRequest { playbook_id: string; playbook_version: number; contract_version: number; reporting_operation_id: string }
 export interface OperationWorkflowPlaybookEvidence { operation_id: string; milestone_id?: string }
-export interface OperationWorkflowPlaybookProgressUpdateRequest { revision: number; item_index: number; status: 'pending' | 'completed'; note: string; evidence: OperationWorkflowPlaybookEvidence[] }
-export interface OperationWorkflowPlaybookProgressItem { label: string; status: 'pending' | 'completed'; note: string; evidence: OperationWorkflowPlaybookEvidence[]; reviewed_by?: string; reviewed_at?: string }
-export interface OperationWorkflowPlaybookProgressChange { revision: number; item_index: number; item: OperationWorkflowPlaybookProgressItem; at: string; actor: string }
-export interface OperationWorkflowPlaybookProgress { disposition?: 'active' | 'retired' | 'replaced'; latest_review?: OperationWorkflowPlaybookReview; reviews?: OperationWorkflowPlaybookReview[]; reviews_truncated?: boolean; replaces_progress_ids?: string[]; applicability?: OperationWorkflowPlaybookApplicability; id: string; revision: number; playbook: OperationWorkflowPlaybook; contract_version: number; definition_id: string; reporting_operation_id: string; items: OperationWorkflowPlaybookProgressItem[]; completed_count: number; checklist_complete: boolean; created_at: string; created_by: string; updated_at: string; history: OperationWorkflowPlaybookProgressChange[]; history_truncated: boolean }
+export interface OperationWorkflowPlaybookProgressUpdateRequest { owner?: string; outcome_code?: string; revision: number; item_index: number; status: 'pending' | 'completed'; note: string; evidence: OperationWorkflowPlaybookEvidence[] }
+export interface OperationWorkflowPlaybookProgressItem { readiness?: OperationWorkflowPlaybookStepReadiness; owner?: string; due_at?: string; evidence_check?: OperationWorkflowPlaybookEvidenceCheck; label: string; status: 'pending' | 'completed'; note: string; evidence: OperationWorkflowPlaybookEvidence[]; reviewed_by?: string; reviewed_at?: string }
+export interface OperationWorkflowPlaybookProgressChange { outcome_code?: string; revision: number; item_index: number; item: OperationWorkflowPlaybookProgressItem; at: string; actor: string }
+export interface OperationWorkflowPlaybookProgress { outcome_follow_ups?: OperationWorkflowPlaybookOutcomeFollowUp[]; outcome_deadline_at?: string; start_state_revision?: number; business_outcome?: OperationWorkflowPlaybookBusinessOutcome; disposition?: 'active' | 'retired' | 'replaced'; latest_review?: OperationWorkflowPlaybookReview; reviews?: OperationWorkflowPlaybookReview[]; reviews_truncated?: boolean; replaces_progress_ids?: string[]; applicability?: OperationWorkflowPlaybookApplicability; id: string; revision: number; playbook: OperationWorkflowPlaybook; contract_version: number; definition_id: string; reporting_operation_id: string; items: OperationWorkflowPlaybookProgressItem[]; completed_count: number; checklist_complete: boolean; created_at: string; created_by: string; updated_at: string; history: OperationWorkflowPlaybookProgressChange[]; history_truncated: boolean }
 
 export interface OperationWorkflowPlaybookApplicability { status: 'applicable' | 'trigger_absent' | 'terminal_reported' | 'contract_changed' | 'guidance_changed' | 'evidence_unavailable' | 'definition_unavailable' | 'evidence_incomplete'; summary: string; suggested_action: string; checked_at: string; current_contract_version?: number; state_revision?: number; reporting_operation_id?: string; definition_id?: string; definition_changed: boolean; trigger_matched: boolean; evidence_complete: boolean; remaining_item_count: number }
 
 export interface OperationWorkflowPlaybookReviewRequest { revision: number; decision: 'continue' | 'retire' | 'replace'; reason: string; replacement_progress_id?: string; replacement_revision?: number }
 export interface OperationWorkflowPlaybookReview { revision: number; decision: 'continue' | 'retire' | 'replace'; reason: string; actor: string; at: string; applicability: OperationWorkflowPlaybookApplicability; replacement_progress_id?: string; replacement_revision?: number }
+
+export interface OperationWorkflowPlaybookEvidenceWatchRequest { watch_id?: string; subscription_id: string; progress_revision: number; revision: number; enabled: boolean; owner: string }
+export interface OperationWorkflowPlaybookEvidenceWatch { dependency_states?: OperationWorkflowPlaybookDependencyState[]; step_assignments?: OperationWorkflowPlaybookStepAssignmentReference[]; outcome_deadline?: OperationWorkflowPlaybookOutcomeDeadlinePolicy; deadline_at?: string; deadline_checked_at?: string; escalation?: OperationWorkflowReadinessOutcomeEscalationReference; outcome_state_revision?: number; business_outcome?: OperationWorkflowPlaybookBusinessOutcome; id: string; progress_id: string; subscription_id: string; revision: number; status: 'active' | 'stopped'; stop_reason?: string; owner: string; platform_tenant_id?: string; subject: OperationSubject; workflow: string; instance_id: string; contract_version: number; playbook_id: string; playbook_version: number; created_at: string; updated_at: string; updated_by: string; evaluated_at: string; items: OperationWorkflowPlaybookEvidenceCheck[] }
+export interface OperationWorkflowPlaybookEvidenceChange { before_status: string; before_reason: string; after: OperationWorkflowPlaybookEvidenceCheck }
+export interface OperationWorkflowPlaybookEvidenceEvent { deadline_at?: string; business_outcome?: OperationWorkflowPlaybookBusinessOutcome; outcome_change?: OperationWorkflowPlaybookOutcomeChange; watch_id: string; progress_id: string; platform_tenant_id?: string; subject: OperationSubject; workflow: string; instance_id: string; contract_version: number; playbook_id: string; playbook_version: number; checked_at: string; changes: OperationWorkflowPlaybookEvidenceChange[] }
+
+export interface OperationWorkflowPlaybookBusinessOutcome { outcome_guidance?: OperationWorkflowPlaybookOutcomeGuidance[]; guidance?: OperationWorkflowPlaybookOutcomeGuidance; acceptance_policy?: OperationWorkflowPlaybookOutcomeAcceptancePolicy; acceptance?: 'expected' | 'acceptable_alternative' | 'unexpected' | 'pending' | 'unavailable'; deadline_at?: string; deadline_reached?: boolean; status: 'pending' | 'achieved' | 'different_outcome' | 'unavailable'; reason: string; evidence: OperationWorkflowReadinessBusinessOutcome }
+export interface OperationWorkflowPlaybookOutcomeChange { before_status: string; before_reason: string; before_reported_outcome_code?: string; after: OperationWorkflowPlaybookBusinessOutcome }
+
+export interface OperationWorkflowPlaybookOutcomeDeadlinePolicy { acknowledge_after_seconds?: number; fallback_owner?: string; after_seconds: number; owner: string; follow_up_after_seconds: number; note?: string }
+export interface OperationWorkflowPlaybookOutcomeEscalation { response?: OperationWorkflowReadinessEscalationResponse; watch_id: string; progress_id: string; deadline_at: string; current: OperationWorkflowPlaybookBusinessOutcome; success_observed_at?: string }
+
+export interface OperationWorkflowPlaybookCompletionOutcome { resolution: 'expected_outcome_achieved' | 'alternative_accepted' | 'follow_up_canceled'; alignment: 'matches' | 'mismatch' | 'unavailable' | 'not_applicable'; explanation: string; observation: OperationWorkflowPlaybookBusinessOutcome }
+
+export interface OperationWorkflowPlaybookCompletionReview { id: string; revision: number; owner: string; status: 'active' | 'expired' | 'stopped'; expires_at: string; state_revision: number; current: OperationWorkflowPlaybookBusinessOutcome }
+export interface OperationWorkflowPlaybookCompletionReviewEvent { review_id: string; source_notification_id: string; source_sequence: number; resolution: 'expected_outcome_achieved' | 'alternative_accepted' | 'follow_up_canceled'; previous: OperationWorkflowPlaybookBusinessOutcome; current: OperationWorkflowPlaybookBusinessOutcome }
+
+export interface OperationWorkflowPlaybookOutcomeAcceptancePolicy { alternative_outcome_codes: string[] }
+
+export interface OperationWorkflowPlaybookOutcomeGuidance { follow_up_dependencies?: OperationWorkflowPlaybookStepDependency[]; follow_up_assignments?: OperationWorkflowPlaybookStepAssignmentPolicy[]; follow_up_steps?: string[]; outcome_code: string; description: string; suggested_follow_up?: string }
+
+export interface OperationWorkflowPlaybookOutcomeFollowUp { outcome_code: string; observation: OperationWorkflowPlaybookBusinessOutcome; items: OperationWorkflowPlaybookProgressItem[]; completed_count: number; checklist_complete: boolean }
+
+export interface OperationWorkflowPlaybookStepAssignmentPolicy { acknowledge_after_seconds?: number; fallback_owner?: string; label: string; owner: string; complete_after_seconds: number }
+export interface OperationWorkflowPlaybookStepAssignmentReference { outcome_code: string; item_index: number; notification: OperationWorkflowReadinessOutcomeEscalationReference }
+export interface OperationWorkflowPlaybookStepAssignment { readiness?: OperationWorkflowPlaybookStepReadiness; source_revision?: number; response?: OperationWorkflowReadinessEscalationResponse; progress_id: string; outcome_code: string; item_index: number; label: string; status: 'pending' | 'completed'; due_at: string; last_step_owner: string; manual_owner: boolean; history: OperationWorkflowReadinessAssignmentChange[]; history_truncated: boolean }
+
+export interface OperationWorkflowPlaybookStepDependency { label: string; prerequisites: string[] }
+export interface OperationWorkflowPlaybookStepReadiness { status: 'ready' | 'waiting'; waiting_for: string[]; review_suggested: boolean }
+
+export interface OperationWorkflowPlaybookDependencyState { regression?: OperationWorkflowReadinessOutcomeEscalationReference; outcome_code: string; item_index: number; label: string; status: 'pending' | 'completed'; owner: string; readiness: OperationWorkflowPlaybookStepReadiness }
+export interface OperationWorkflowPlaybookDependencyRegression { checked_at: string; reopened_prerequisites: OperationWorkflowPlaybookDependencyState[]; affected_steps: OperationWorkflowPlaybookDependencyState[] }
+
+export interface OperationWorkflowPlaybookDependencyRecovery { checked_at: string; regression: OperationWorkflowReadinessOutcomeEscalationReference; ready_steps: OperationWorkflowPlaybookDependencyState[] }
+
+export type OperationWorkflowReadinessImpactSummary = import('./generated/models/OperationWorkflowReadinessImpactSummary.js').OperationWorkflowReadinessImpactSummary;
+export type OperationWorkflowReadinessImpactOwner = import('./generated/models/OperationWorkflowReadinessImpactOwner.js').OperationWorkflowReadinessImpactOwner;
+
+export type OperationWorkflowReadinessImpactWatchRequest = import('./generated/models/OperationWorkflowReadinessImpactWatchRequest.js').OperationWorkflowReadinessImpactWatchRequest;
+export type OperationWorkflowReadinessImpactWatch = import('./generated/models/OperationWorkflowReadinessImpactWatch.js').OperationWorkflowReadinessImpactWatch;
+export type OperationWorkflowReadinessImpactEvent = import('./generated/models/OperationWorkflowReadinessImpactEvent.js').OperationWorkflowReadinessImpactEvent;
+
+export type OperationWorkflowReviewResponseRequest = import('./generated/models/OperationWorkflowReviewResponseRequest.js').OperationWorkflowReviewResponseRequest;
+
+export type OperationWorkflowReviewResponseLinkRequest = import('./generated/models/OperationWorkflowReviewResponseLinkRequest.js').OperationWorkflowReviewResponseLinkRequest;
+
+export type OperationWorkflowReviewResponseLink = import('./generated/models/OperationWorkflowReviewResponseLink.js').OperationWorkflowReviewResponseLink;
+
+export type OperationWorkflowReviewResponse = import('./generated/models/OperationWorkflowReviewResponse.js').OperationWorkflowReviewResponse;
+
+export type OperationWorkflowReviewResponseChange = import('./generated/models/OperationWorkflowReviewResponseChange.js').OperationWorkflowReviewResponseChange;
+
+export type OperationWorkflowReviewResponseCheckInEvent = import('./generated/models/OperationWorkflowReviewResponseCheckInEvent.js').OperationWorkflowReviewResponseCheckInEvent;
+
+export type OperationWorkflowReviewResponseBlockageEvent = import('./generated/models/OperationWorkflowReviewResponseBlockageEvent.js').OperationWorkflowReviewResponseBlockageEvent;
+
+export type OperationWorkflowReviewResponseHealth = import('./generated/models/OperationWorkflowReviewResponseHealth.js').OperationWorkflowReviewResponseHealth;
+export type OperationWorkflowReviewResponseSourceHealth = import('./generated/models/OperationWorkflowReviewResponseSourceHealth.js').OperationWorkflowReviewResponseSourceHealth;
+
+export type OperationWorkflowReviewResponseDecisionRequest = import('./generated/models/OperationWorkflowReviewResponseDecisionRequest.js').OperationWorkflowReviewResponseDecisionRequest;
+export type OperationWorkflowReviewResponseDecision = import('./generated/models/OperationWorkflowReviewResponseDecision.js').OperationWorkflowReviewResponseDecision;
+
+export type OperationWorkflowReviewResponseDecisionReview = import('./generated/models/OperationWorkflowReviewResponseDecisionReview.js').OperationWorkflowReviewResponseDecisionReview;
+export type OperationWorkflowReviewResponseDecisionReviewEvent = import('./generated/models/OperationWorkflowReviewResponseDecisionReviewEvent.js').OperationWorkflowReviewResponseDecisionReviewEvent;
+
+export type OperationWorkflowReviewResponseHandoffAcceptanceRequest = import('./generated/models/OperationWorkflowReviewResponseHandoffAcceptanceRequest.js').OperationWorkflowReviewResponseHandoffAcceptanceRequest;
+export type OperationWorkflowReviewResponseHandoffAcceptance = import('./generated/models/OperationWorkflowReviewResponseHandoffAcceptance.js').OperationWorkflowReviewResponseHandoffAcceptance;
+
+export type OperationWorkflowReviewResponseHandoffDeclineRequest = import('./generated/models/OperationWorkflowReviewResponseHandoffDeclineRequest.js').OperationWorkflowReviewResponseHandoffDeclineRequest;
+
+export type OperationWorkflowReviewResponseHandoffDecline = import('./generated/models/OperationWorkflowReviewResponseHandoffDecline.js').OperationWorkflowReviewResponseHandoffDecline;
+
+export type OperationWorkflowReviewResponseHandoffDeclineEvent = import('./generated/models/OperationWorkflowReviewResponseHandoffDeclineEvent.js').OperationWorkflowReviewResponseHandoffDeclineEvent;
+
+export type OperationWorkflowReviewResponseHandoffReassignmentRequest = import('./generated/models/OperationWorkflowReviewResponseHandoffReassignmentRequest.js').OperationWorkflowReviewResponseHandoffReassignmentRequest;
+
+export type OperationWorkflowReviewResponseHandoffReassignment = import('./generated/models/OperationWorkflowReviewResponseHandoffReassignment.js').OperationWorkflowReviewResponseHandoffReassignment;
+
+export type OperationWorkflowReviewResponseHandoffReassignmentEvent = import('./generated/models/OperationWorkflowReviewResponseHandoffReassignmentEvent.js').OperationWorkflowReviewResponseHandoffReassignmentEvent;
+
+export type OperationWorkflowReviewResponseEscalationAcknowledgmentRequest = import('./generated/models/OperationWorkflowReviewResponseEscalationAcknowledgmentRequest.js').OperationWorkflowReviewResponseEscalationAcknowledgmentRequest;
+export type OperationWorkflowReviewResponseEscalationAcknowledgment = import('./generated/models/OperationWorkflowReviewResponseEscalationAcknowledgment.js').OperationWorkflowReviewResponseEscalationAcknowledgment;
+
+export type OperationWorkflowReviewResponseEscalationCompletionRequest = import('./generated/models/OperationWorkflowReviewResponseEscalationCompletionRequest.js').OperationWorkflowReviewResponseEscalationCompletionRequest;
+export type OperationWorkflowReviewResponseEscalationCompletion = import('./generated/models/OperationWorkflowReviewResponseEscalationCompletion.js').OperationWorkflowReviewResponseEscalationCompletion;
+
+export type OperationWorkflowReviewResponseEscalationActionReviewRequest = import('./generated/models/OperationWorkflowReviewResponseEscalationActionReviewRequest.js').OperationWorkflowReviewResponseEscalationActionReviewRequest;
+export type OperationWorkflowReviewResponseEscalationRevisionRequest = import('./generated/models/OperationWorkflowReviewResponseEscalationRevisionRequest.js').OperationWorkflowReviewResponseEscalationRevisionRequest;
+export type OperationWorkflowReviewResponseEscalationActionReview = import('./generated/models/OperationWorkflowReviewResponseEscalationActionReview.js').OperationWorkflowReviewResponseEscalationActionReview;
+
+export type OperationWorkflowReviewResponseScheduledReviewCancellationRequest = import('./generated/models/OperationWorkflowReviewResponseScheduledReviewCancellationRequest.js').OperationWorkflowReviewResponseScheduledReviewCancellationRequest;
+export type OperationWorkflowReviewResponseScheduledReviewCancellation = import('./generated/models/OperationWorkflowReviewResponseScheduledReviewCancellation.js').OperationWorkflowReviewResponseScheduledReviewCancellation;
+
+export type OperationWorkflowReviewResponseScheduledReviewRescheduleRequest = import('./generated/models/OperationWorkflowReviewResponseScheduledReviewRescheduleRequest.js').OperationWorkflowReviewResponseScheduledReviewRescheduleRequest;
+export type OperationWorkflowReviewResponseScheduledReviewReschedule = import('./generated/models/OperationWorkflowReviewResponseScheduledReviewReschedule.js').OperationWorkflowReviewResponseScheduledReviewReschedule;
+
+export type OperationWorkflowCaseNextAction = import('./generated/models/OperationWorkflowCaseNextAction.js').OperationWorkflowCaseNextAction;
+
+export type OperationWorkflowNextActionQueueItem = import('./generated/models/OperationWorkflowNextActionQueueItem.js').OperationWorkflowNextActionQueueItem;
+export type OperationWorkflowNextActionCase = import('./generated/models/OperationWorkflowNextActionCase.js').OperationWorkflowNextActionCase;
+
+export type OperationWorkflowNextActionDigestPolicy = import('./generated/models/OperationWorkflowNextActionDigestPolicy.js').OperationWorkflowNextActionDigestPolicy;
+export type OperationWorkflowNextActionDigest = import('./generated/models/OperationWorkflowNextActionDigest.js').OperationWorkflowNextActionDigest;
+
+export type OperationWorkflowNextActionDigestExplanation = import('./generated/models/OperationWorkflowNextActionDigestExplanation.js').OperationWorkflowNextActionDigestExplanation;
+
+export type OperationWorkflowNextActionDigestCheck = import('./generated/models/OperationWorkflowNextActionDigestCheck.js').OperationWorkflowNextActionDigestCheck;
+
+export type OperationWorkflowNextActionDigestCheckItem = import('./generated/models/OperationWorkflowNextActionDigestCheckItem.js').OperationWorkflowNextActionDigestCheckItem;
+
+export type OperationWorkflowActionObligation = import('./generated/models/OperationWorkflowActionObligation.js').OperationWorkflowActionObligation;
+
+export type OperationWorkflowObligationEvent = import('./generated/models/OperationWorkflowObligationEvent.js').OperationWorkflowObligationEvent;
+
+export type OperationWorkflowCaseObligationHistoryItem = import('./generated/models/OperationWorkflowCaseObligationHistoryItem.js').OperationWorkflowCaseObligationHistoryItem;
+
+export type OperationWorkflowObligationReplacement = import('./generated/models/OperationWorkflowObligationReplacement.js').OperationWorkflowObligationReplacement;
+
+export type OperationWorkflowObligationContext = import('./generated/models/OperationWorkflowObligationContext.js').OperationWorkflowObligationContext;
+
+export type OperationWorkflowObligationAssessment = import('./generated/models/OperationWorkflowObligationAssessment.js').OperationWorkflowObligationAssessment;
+
+export type OperationWorkflowObligationTransitionTarget = import('./generated/models/OperationWorkflowObligationTransitionTarget.js').OperationWorkflowObligationTransitionTarget;
+
+export type OperationWorkflowObligationTargetBinding = import('./generated/models/OperationWorkflowObligationTargetBinding.js').OperationWorkflowObligationTargetBinding;
+
+export type OperationWorkflowObligationTargetRequest = import('./generated/models/OperationWorkflowObligationTargetRequest.js').OperationWorkflowObligationTargetRequest;
+
+export type OperationWorkflowObligationFulfillment = import('./generated/models/OperationWorkflowObligationFulfillment.js').OperationWorkflowObligationFulfillment;
+export type OperationWorkflowObligationFulfillmentRequest = import('./generated/models/OperationWorkflowObligationFulfillmentRequest.js').OperationWorkflowObligationFulfillmentRequest;
+
+export type OperationWorkflowObligationReopening = import('./generated/models/OperationWorkflowObligationReopening.js').OperationWorkflowObligationReopening;
+export type OperationWorkflowObligationReopeningRequest = import('./generated/models/OperationWorkflowObligationReopeningRequest.js').OperationWorkflowObligationReopeningRequest;
+
+export type OperationWorkflowObligationFulfillmentReview = import('./generated/models/OperationWorkflowObligationFulfillmentReview.js').OperationWorkflowObligationFulfillmentReview;
+export type OperationWorkflowObligationReaffirmation = import('./generated/models/OperationWorkflowObligationReaffirmation.js').OperationWorkflowObligationReaffirmation;
+export type OperationWorkflowObligationReaffirmationRequest = import('./generated/models/OperationWorkflowObligationReaffirmationRequest.js').OperationWorkflowObligationReaffirmationRequest;
+
+export type OperationWorkflowFulfillmentReviewCoordinationRequest = import('./generated/models/OperationWorkflowFulfillmentReviewCoordinationRequest.js').OperationWorkflowFulfillmentReviewCoordinationRequest;
+export type OperationWorkflowFulfillmentReviewCoordinationChange = import('./generated/models/OperationWorkflowFulfillmentReviewCoordinationChange.js').OperationWorkflowFulfillmentReviewCoordinationChange;
+
+export type OperationWorkflowFulfillmentReviewReminder = import('./generated/models/OperationWorkflowFulfillmentReviewReminder.js').OperationWorkflowFulfillmentReviewReminder;
+
+export type OperationWorkflowFulfillmentReviewEscalation = import('./generated/models/OperationWorkflowFulfillmentReviewEscalation.js').OperationWorkflowFulfillmentReviewEscalation;

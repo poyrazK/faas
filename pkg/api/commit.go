@@ -3,11 +3,13 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"time"
 )
 
 type CommitSourceResponse struct {
+	Destination          string     `json:"destination"`
 	ID                   string     `json:"id"`
 	AppID                string     `json:"app_id"`
 	Name                 string     `json:"name"`
@@ -30,7 +32,17 @@ type CommitRouting struct {
 	Key              json.RawMessage `json:"key"`
 }
 
+// CommitEventPublication retains publication identity independently of event retention.
+type CommitEventPublication struct {
+	AcceptanceID int64     `json:"acceptance_id"`
+	Source       string    `json:"source"`
+	ID           string    `json:"id"`
+	AcceptedAt   time.Time `json:"accepted_at"`
+	ReceiptURL   string    `json:"receipt_url"`
+}
+
 type CreateCommitSourceRequest struct {
+	Destination          string `json:"destination,omitempty"`
 	Name                 string `json:"name"`
 	OperationPolicy      string `json:"operation_policy"`
 	ContractVersion      int    `json:"contract_version,omitempty"`
@@ -44,13 +56,14 @@ func (c *Client) GetCommitSource(ctx context.Context, source string) (CommitSour
 }
 
 type CommitReceiptResponse struct {
-	ID           string    `json:"receipt_id"`
-	SourceID     string    `json:"source_id"`
-	EventID      string    `json:"event_id"`
-	InvocationID string    `json:"invocation_id,omitempty"`
-	OperationID  string    `json:"operation_id,omitempty"`
-	AcceptedAt   time.Time `json:"accepted_at"`
-	OperationURL string    `json:"operation_url"`
+	ID           string                  `json:"receipt_id"`
+	SourceID     string                  `json:"source_id"`
+	EventID      string                  `json:"event_id"`
+	InvocationID string                  `json:"invocation_id,omitempty"`
+	OperationID  string                  `json:"operation_id,omitempty"`
+	AcceptedAt   time.Time               `json:"accepted_at"`
+	OperationURL string                  `json:"operation_url,omitempty"`
+	Publication  *CommitEventPublication `json:"publication,omitempty"`
 }
 
 type CommitOperationResponse struct {
@@ -72,10 +85,11 @@ func (c *Client) GetCommitOperation(ctx context.Context, id string) (CommitOpera
 }
 
 type CommitEventRequest struct {
-	ID      string          `json:"id"`
-	Type    string          `json:"type"`
-	Data    json.RawMessage `json:"data"`
-	Routing *CommitRouting  `json:"routing,omitempty"`
+	SchemaVersion string          `json:"schema_version,omitempty"`
+	ID            string          `json:"id"`
+	Type          string          `json:"type"`
+	Data          json.RawMessage `json:"data"`
+	Routing       *CommitRouting  `json:"routing,omitempty"`
 }
 
 type CommitBlockedEventResponse struct {
@@ -126,4 +140,48 @@ func (c *Client) GetCommitReceipt(ctx context.Context, source, event string) (Co
 	var out CommitReceiptResponse
 	err := c.do(ctx, "GET", "/v1/commit-sources/"+url.PathEscape(source)+"/events/"+url.PathEscape(event), nil, &out)
 	return out, err
+}
+
+// GetCommitPublicationReceipt reads a page of the retained subscriber evidence.
+// The acceptance-time guard prevents attributing a replacement to this receipt.
+func (c *Client) GetCommitPublicationReceipt(ctx context.Context, publication CommitEventPublication, after string, limit int) (EventReceiptResponse, error) {
+	var out EventReceiptResponse
+	if publication.Source == "" || publication.ID == "" || publication.AcceptedAt.IsZero() || limit < 0 || limit > EventReceiptPageMax {
+		return out, ErrValidation("invalid publication receipt query")
+	}
+	query := url.Values{"source": {publication.Source}, "id": {publication.ID}, "expected_accepted_at": {publication.AcceptedAt.UTC().Format(time.RFC3339Nano)}}
+	if after != "" {
+		query.Set("after", after)
+	}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	return out, c.do(ctx, "GET", "/v1/events/receipt?"+query.Encode(), nil, &out)
+}
+
+// CommitPublicationHistoryItem contains retained acceptance metadata, never event data.
+type CommitPublicationHistoryItem struct {
+	CommitReceiptResponse
+	Type          string `json:"type"`
+	SchemaVersion string `json:"schema_version,omitempty"`
+}
+type CommitPublicationHistoryResponse struct {
+	Items      []CommitPublicationHistoryItem `json:"items"`
+	NextBefore string                         `json:"next_before,omitempty"`
+}
+
+// ListCommitPublications reads newest-first acceptance history, not delivery completion.
+func (c *Client) ListCommitPublications(ctx context.Context, source, before string, limit int) (CommitPublicationHistoryResponse, error) {
+	var out CommitPublicationHistoryResponse
+	if limit < 0 || limit > CommitPublicationHistoryPageMax {
+		return out, ErrValidation("invalid publication history limit")
+	}
+	query := url.Values{}
+	if before != "" {
+		query.Set("before", before)
+	}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	return out, c.do(ctx, "GET", "/v1/commit-sources/"+url.PathEscape(source)+"/publications?"+query.Encode(), nil, &out)
 }

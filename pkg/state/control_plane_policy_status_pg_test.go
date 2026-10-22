@@ -264,6 +264,11 @@ func TestPgEdgeRuleWatermarkTracksBootsAndProtectsReplayHistory(t *testing.T) {
 	if err := store.UpsertGatewayEdgeRuleWatermark(ctx, node.Name, bootB, changeID); err != nil {
 		t.Fatalf("advance new boot watermark: %v", err)
 	}
+	// Keep a newer revision so the caught-up old entry can be pruned while
+	// the fleet desired watermark remains available.
+	if _, err := pool.Exec(ctx, `INSERT INTO edge_rule_change_log (app_id, rule_id, operation) VALUES ($1, $2, 'updated')`, appID, ruleID); err != nil {
+		t.Fatal(err)
+	}
 	if removed, err := store.PruneEdgeRuleChangeLog(ctx, cutoff); err != nil || removed != 1 {
 		t.Fatalf("prune after gateway caught up = %d, %v; want 1, nil", removed, err)
 	}

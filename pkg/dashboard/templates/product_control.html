@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root{color-scheme:light dark}body{font-family:ui-sans-serif,system-ui,sans-serif;max-width:1200px;margin:auto;padding:0 1.5rem;line-height:1.5}header{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;padding:1rem 0;border-bottom:1px solid #888}nav a{margin-right:1rem}main{padding:1rem 0}section,.card{border:1px solid #888;border-radius:6px;padding:1rem;margin:1rem 0}table{width:100%;border-collapse:collapse;text-align:left}th,td{padding:.6rem;border-bottom:1px solid #888;vertical-align:top}.scroll{overflow-x:auto}code{overflow-wrap:anywhere}.activity p{overflow-wrap:anywhere}.activity pre{white-space:pre-wrap;overflow-wrap:anywhere}form{display:flex;flex-wrap:wrap;gap:.8rem;align-items:end;margin:.7rem 0}label{display:flex;flex-direction:column;gap:.25rem}input,select,button{font:inherit;padding:.4rem;max-width:100%;box-sizing:border-box}button{cursor:pointer}.muted{opacity:.75}.alert{border-left:5px solid #b91c1c;padding:1rem}.notice{border-left:5px solid #059669;padding:1rem}dl{display:grid;grid-template-columns:12rem 1fr;gap:.5rem}dd{margin:0;overflow-wrap:anywhere}.help pre,.help p{white-space:pre-wrap;overflow-wrap:anywhere}.help textarea{font:inherit;min-height:8rem;max-width:100%;box-sizing:border-box}.help label{max-width:100%;min-width:0}footer{padding:2rem 0;border-top:1px solid #888}@media(max-width:640px){dl{grid-template-columns:1fr}td,th{padding:.4rem}}
+  </style>
+</head>
+<body>
+<header><strong>Gregale</strong><nav aria-label="Dashboard"><a href="/dashboard/">Overview</a><a href="/dashboard/apps">Apps</a><a href="/dashboard/account">Account</a></nav></header>
+<main>
+  <p><a href="/dashboard/apps/{{.Data.AppSlug}}">{{.Data.AppSlug}}</a> / <a href="{{.Data.BaseURL}}">Product Control</a></p>
+  <h1>Product Control <small>· internal</small></h1>
+  <p><a href="{{.Data.BaseURL}}/customers">Customer readiness and activation</a></p>
+  <p><a href="{{.Data.BaseURL}}/help">Customer Help</a></p>
+  <p><a href="{{.Data.BaseURL}}/email{{if .Data.TenantID}}?tenant={{.Data.TenantID}}{{end}}">Notification email</a></p>
+  <p><a href="{{.Data.BaseURL}}/setup">Guided product setup</a> · <a href="{{.Data.BaseURL}}/onboarding">Onboard a customer</a> · <a href="{{.Data.BaseURL}}/plan-policy">Self-service plans</a> · <a href="{{.Data.BaseURL}}/team-policy">Team roles</a> · <a href="{{.Data.BaseURL}}/access">Customer permissions</a> · <a href="{{.Data.BaseURL}}/doctor{{if .Data.TenantID}}?tenant={{.Data.TenantID}}{{end}}">Check readiness</a></p>
+  {{if .Data.Error}}<p class="alert" role="alert">{{.Data.Error}}</p>{{end}}
+  {{if .Data.Notice}}<p class="notice" role="status">{{.Data.Notice}}</p>{{end}}
+  {{if .Data.TenantID}}<p><a href="{{.Data.BaseURL}}?tenant={{.Data.TenantID}}&amp;period={{.Data.Period}}">Return to customer {{if .Data.TenantName}}{{.Data.TenantName}}{{else}}{{.Data.TenantID}}{{end}}</a></p>{{end}}
+
+  {{with .Data.EmailOptOuts}}
+  <section aria-labelledby="notification-opt-outs"><h2 id="notification-opt-outs">Notification opt-outs</h2>
+    <p>These confirmations stopped personal notifications for the selected workspace. They are historical records; a customer may have given new consent since then. Only the customer can enable notifications again. Bounce and complaint pauses still apply.</p>
+    <form method="get" action="{{$.Data.BaseURL}}/email-opt-outs"><label>Customer tenant UUID (optional)<input name="tenant" value="{{.Page.TenantID}}"></label><button>View opt-outs</button></form>
+    {{range .Page.Receipts}}<article class="card"><h3>Unsubscribe confirmed</h3><dl><dt>Confirmation</dt><dd><code>{{.ID}}</code></dd><dt>Customer</dt><dd><code>{{.TenantID}}</code></dd><dt>Recipient reference</dt><dd><code>{{.RecipientID}}</code></dd><dt>Email reference</dt><dd><code>{{.DeliveryID}}</code></dd><dt>Confirmed</dt><dd>{{.UnsubscribedAt.UTC.Format "2006-01-02 15:04:05"}} UTC</dd><dt>Preference version</dt><dd>{{.ExpectedVersion}} → {{.Version}}</dd><dt>Recipient generation</dt><dd>{{.Generation}}</dd></dl></article>{{else}}<p>No retained notification opt-outs.</p>{{end}}
+    {{if .NextURL}}<p><a href="{{.NextURL}}">Older opt-outs</a></p>{{end}}
+  </section>
+  {{end}}
+
+  {{with .Data.EmailRecoveries}}
+  <section aria-labelledby="notification-recoveries"><h2 id="notification-recoveries">Notification recoveries</h2>
+    <p>These confirmations enabled only future eligible updates. Current pause and delivery state are checked separately. Complaint pauses require review; owners cannot resume personal notifications.</p>
+    <form method="get" action="{{$.Data.BaseURL}}/email-recoveries"><label>Customer tenant UUID (optional)<input name="tenant" value="{{.Page.TenantID}}"></label><button>View recoveries</button></form>
+    {{range .Page.Receipts}}<article class="card"><h3>Recovery confirmed</h3><dl><dt>Recovery</dt><dd><code>{{.ID}}</code></dd><dt>Customer</dt><dd><code>{{.TenantID}}</code></dd><dt>Recipient reference</dt><dd><code>{{.RecipientID}}</code></dd><dt>Confirmed</dt><dd>{{.RecoveredAt.UTC.Format "2006-01-02 15:04:05"}} UTC</dd><dt>Recipient generation</dt><dd>{{.PreviousGeneration}} → {{.Generation}}</dd><dt>Preference version</dt><dd>{{.ExpectedVersion}} → {{.Version}}</dd><dt>Work outcomes</dt><dd>{{.WorkOutcomes}}</dd><dt>Help replies</dt><dd>{{.HelpReplies}}</dd></dl></article>{{else}}<p>No retained notification recoveries.</p>{{end}}
+    {{if .NextURL}}<p><a href="{{.NextURL}}">Older recoveries</a></p>{{end}}
+  </section>
+  {{end}}
+
+  {{with .Data.EmailRetry}}
+  <section><h2>Email retry receipt</h2><dl><dt>Delivery</dt><dd><code>{{.DeliveryID}}</code></dd><dt>Failed attempt</dt><dd>{{.FailedAttempt}}</dd><dt>Queued</dt><dd>{{.QueuedAt.UTC.Format "2006-01-02 15:04:05"}} UTC</dd></dl><p><a href="{{$.Data.BaseURL}}/email?tenant={{.TenantID}}">View current customer email status</a></p></section>
+  {{end}}
+
+  {{with .Data.Email}}
+  <p><a href="{{$.Data.BaseURL}}/email-opt-outs?tenant={{.Report.TenantID}}">View notification opt-out history</a></p>
+  <p><a href="{{$.Data.BaseURL}}/email-recoveries?tenant={{.Report.TenantID}}">View notification recovery history</a></p>
+  <section aria-labelledby="notification-email"><h2 id="notification-email">Notification email</h2>
+    <p>Mode: <strong>{{.Report.Mode}}</strong>. {{if eq .Report.Mode "local"}}Messages are captured locally; no email is sent.{{else if eq .Report.Mode "disabled"}}Email sending is disabled.{{else}}Provider acceptance and receiving-server delivery reports do not verify inbox placement or reading.{{end}}</p>
+    <p>Counts cover retained deliveries since {{.Report.WindowStart.UTC.Format "2006-01-02 15:04:05"}} UTC for the selected customer or product, across every status. Checked {{.Report.ObservedAt.UTC.Format "2006-01-02 15:04:05"}} UTC.</p>
+    <dl><dt>Queued</dt><dd>{{.Report.Counts.Queued}}</dd><dt>Sending</dt><dd>{{.Report.Counts.Leased}}</dd><dt>Captured locally</dt><dd>{{.Report.Counts.Captured}}</dd><dt>Provider accepted</dt><dd>{{.Report.Counts.ProviderAccepted}}</dd><dt>Provider reported delivery</dt><dd>{{.Report.Counts.Delivered}}</dd><dt>Bounced</dt><dd>{{.Report.Counts.Bounced}}</dd><dt>Complained</dt><dd>{{.Report.Counts.Complained}}</dd><dt>Failed</dt><dd>{{.Report.Counts.Failed}}</dd><dt>Cancelled</dt><dd>{{.Report.Counts.Cancelled}}</dd>{{if .Report.OldestPendingAt}}<dt>Oldest pending</dt><dd>{{.BacklogAge}} old · {{.Report.OldestPendingAt.UTC.Format "2006-01-02 15:04:05"}} UTC</dd>{{end}}</dl>
+    <form method="get" action="{{$.Data.BaseURL}}/email"><label>Customer tenant UUID (optional)<input name="tenant" value="{{.Report.TenantID}}"></label><label>Show<select name="status"><option value="all" {{if eq .Report.Status "all"}}selected{{end}}>All messages</option><option value="queued" {{if eq .Report.Status "queued"}}selected{{end}}>Queued</option><option value="leased" {{if eq .Report.Status "leased"}}selected{{end}}>Sending</option><option value="delivered" {{if eq .Report.Status "delivered"}}selected{{end}}>Provider reported delivery</option><option value="bounced" {{if eq .Report.Status "bounced"}}selected{{end}}>Bounced</option><option value="complained" {{if eq .Report.Status "complained"}}selected{{end}}>Complained</option><option value="failed" {{if eq .Report.Status "failed"}}selected{{end}}>Failed</option><option value="cancelled" {{if eq .Report.Status "cancelled"}}selected{{end}}>Cancelled</option><option value="captured" {{if eq .Report.Status "captured"}}selected{{end}}>Captured locally</option><option value="provider_accepted" {{if eq .Report.Status "provider_accepted"}}selected{{end}}>Provider accepted</option></select></label><button>View email status</button></form>
+    <p>Each entry shows the latest state of one message and its attempt count. Recipient references distinguish personal subscriptions without showing email addresses. Retry eligibility uses queue metadata; current consent, workspace access and source updates are checked again before queuing and sending.</p>
+    {{range .Deliveries}}<article class="card"><h3>{{.StatusLabel}} · {{.Kind}}</h3><p>{{.ReasonLabel}}</p>
+      <dl><dt>Delivery</dt><dd><code>{{.ID}}</code></dd><dt>Notification</dt><dd><code>{{.NotificationID}}</code></dd><dt>Customer</dt><dd><a href="{{$.Data.BaseURL}}/email?tenant={{.TenantID}}">{{.TenantID}}</a></dd><dt>Recipient reference</dt><dd><code>{{.RecipientID}}</code></dd><dt>Attempts</dt><dd>{{.Attempts}}</dd><dt>Created</dt><dd>{{.CreatedAt.UTC.Format "2006-01-02 15:04:05"}} UTC</dd><dt>Updated</dt><dd>{{.UpdatedAt.UTC.Format "2006-01-02 15:04:05"}} UTC</dd>{{if .ReportedAt}}<dt>Provider reported</dt><dd>{{.ReportedAt.UTC.Format "2006-01-02 15:04:05"}} UTC</dd>{{end}}{{if .PausedAt}}<dt>Subscription paused</dt><dd>{{.PausedAt.UTC.Format "2006-01-02 15:04:05"}} UTC</dd>{{end}}<dt>Delivery deadline</dt><dd>{{.Deadline.UTC.Format "2006-01-02 15:04:05"}} UTC</dd>{{if eq .Status "queued"}}<dt>Next attempt</dt><dd>{{.NextAttemptAt.UTC.Format "2006-01-02 15:04:05"}} UTC</dd>{{end}}</dl>
+      <p>{{.RetryLabel}}</p>{{if .RetryEligible}}<form method="post" action="{{$.Data.BaseURL}}/email/{{.ID}}/retry"><input type="hidden" name="csrf_token" value="{{.Token}}"><input type="hidden" name="tenant" value="{{.TenantID}}"><input type="hidden" name="attempt" value="{{.Attempts}}"><button>Queue retry for failed attempt {{.Attempts}}</button></form>{{end}}
+    </article>{{else}}<p>No retained messages match this view. An empty queue does not verify that email is configured or that customers have opted in.</p>{{end}}
+    {{if .NextURL}}<p><a href="{{.NextURL}}">Older messages →</a></p>{{end}}
+    <p><a href="{{$.Data.BaseURL}}/email?tenant={{.Report.TenantID}}&amp;status={{.Report.Status}}">Refresh newest messages</a></p>
+  </section>
+  {{end}}
+
+  {{with .Data.Help}}{{$help := .}}
+  <section class="help" aria-labelledby="customer-help"><h2 id="customer-help">Customer Help</h2>
+    {{with .Request}}
+      <p><a href="{{$.Data.BaseURL}}/help">Return to the help queue</a></p>
+      <dl><dt>Request reference</dt><dd><code>{{.Request.ID}}</code></dd><dt>Workspace</dt><dd><a href="{{$.Data.BaseURL}}?tenant={{.TenantID}}">{{.TenantID}}</a></dd><dt>Status</dt><dd>{{.Status}}</dd><dt>Created</dt><dd>{{.CreatedAt.UTC.Format "2006-01-02 15:04"}} UTC</dd><dt>Updated</dt><dd>{{.UpdatedAt.UTC.Format "2006-01-02 15:04"}} UTC</dd></dl>
+      <h3>Customer message</h3><pre>{{.Request.Message}}</pre>
+      {{if .Response}}<h3>Latest response visible to the customer</h3><pre>{{.Response}}</pre>{{end}}
+      <details><summary>Context attached at submission</summary><pre>{{$help.ContextJSON}}</pre></details>
+      <p>Attached context is a historical observation. Resolve access, deployment, billing or work issues through the existing review flows.</p>
+      <p><a href="{{$.Data.BaseURL}}/doctor?tenant={{.TenantID}}">Check current readiness</a> · <a href="{{$.Data.BaseURL}}/activity?tenant={{.TenantID}}">View customer activity</a>{{if .Request.OperationID}} · <a href="{{$.Data.BaseURL}}/runs/{{.Request.OperationID}}">Review the referenced run</a>{{end}}</p>
+      <form method="post" action="{{$.Data.BaseURL}}/help/{{.Request.ID}}">
+        <input type="hidden" name="csrf_token" value="{{$help.Token}}"><input type="hidden" name="version" value="{{.Version}}">
+        <label>Request status<select name="status"><option value="open" {{if eq .Status "open"}}selected{{end}}>Open</option><option value="in_progress" {{if eq .Status "in_progress"}}selected{{end}}>In progress</option><option value="resolved" {{if eq .Status "resolved"}}selected{{end}}>Resolved</option></select></label>
+        <label>Response visible to the workspace<textarea name="response" required maxlength="{{$help.TextMaxBytes}}" rows="5">{{.Response}}</textarea></label>
+        <button>Update request</button>
+      </form>
+      <p class="muted">Updating this request changes its status and latest response. Run outcomes, allowances, permissions and charges are reviewed separately.</p>
+    {{else}}
+      <form method="get" action="{{$.Data.BaseURL}}/help">{{if $.Data.TenantID}}<input type="hidden" name="tenant" value="{{$.Data.TenantID}}">{{end}}
+        <label>Show<select name="status"><option value="active" {{if eq .Status "active"}}selected{{end}}>Open and in progress</option><option value="all" {{if eq .Status "all"}}selected{{end}}>All requests</option><option value="open" {{if eq .Status "open"}}selected{{end}}>Open</option><option value="in_progress" {{if eq .Status "in_progress"}}selected{{end}}>In progress</option><option value="resolved" {{if eq .Status "resolved"}}selected{{end}}>Resolved</option></select></label><button>View requests</button>
+      </form>
+      <ul>{{range .Queue}}<li><a href="{{.URL}}">{{.Status}} · {{.Request.Kind}} · {{.CreatedAt.UTC.Format "2006-01-02 15:04"}} UTC</a><p>{{.Preview}}</p><code>{{.TenantID}}</code></li>{{else}}<li>No requests match this view.</li>{{end}}</ul>
+      {{if .NextURL}}<a href="{{.NextURL}}">Older requests →</a>{{end}}
+    {{end}}
+  </section>
+  {{end}}
+
+  {{with .Data.Overview}}
+  <section aria-labelledby="customer-overview">
+    <h2 id="customer-overview">Customer readiness and activation</h2>
+    <p>This page shows assigned customers. Allowance checks use UTC month {{.Report.Period}}. Work counts cover all retained months.</p>
+    <p>Pending outcomes include ordinary running work. Need review identifies unresolved outcomes requiring investigation.</p>
+    <p class="muted">Checked {{.Report.ObservedAt.UTC.Format "2006-01-02 15:04"}} UTC. Configuration checks and historical activation records do not verify current login, downloads, or native execution. Native qualification remains {{.Report.QualificationState}}. Refresh to check again.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Customer</th><th>Configuration</th><th>Activation</th><th>Work</th><th>Next steps</th></tr></thead>
+      <tbody>{{range .Customers}}
+        <tr>
+          <th scope="row"><a href="{{.URL}}">{{.Name}}</a><br><small>Plan {{.Customer.Plan}} · tenant {{.TenantStatus}}{{if .Customer.Suspended}} · product access suspended{{end}}</small><br><code>{{.Customer.TenantID}}</code></th>
+          <td><strong>{{.ConfigurationLabel}}</strong><br>{{if .Customer.AuthOrganizationID}}Workspace link configured{{else}}Workspace link missing{{end}}
+            <details><summary>Feature and configuration checks</summary>
+              <ul>{{range .Readiness.Checks}}<li><strong>{{.Status}}</strong> · {{if .Feature}}{{.Feature}} / {{end}}{{.Check}}: {{.Message}}{{if .Remediation}} <span class="muted">{{.Remediation}}</span>{{end}}</li>{{end}}</ul>
+            </details>
+          </td>
+          <td><strong>{{.ActivationLabel}}</strong>
+            {{with .Activation.SetupAt}}<br>Guided setup: {{.UTC.Format "2006-01-02 15:04"}} UTC{{end}}
+            {{with .Activation.AccessVerifiedAt}}<br>First verified workspace visit: {{.UTC.Format "2006-01-02 15:04"}} UTC{{end}}
+            {{with .Activation.FirstSuccess}}<br>First success after that setup: {{.Feature}} · {{.VerifiedAt.UTC.Format "2006-01-02 15:04"}} UTC{{end}}
+            {{if eq .Activation.State "not_recorded"}}<p class="muted">Usage outside guided onboarding is not inferred here.</p>{{end}}
+            {{if eq .Activation.State "setup_changed"}}<p class="muted">These records belong to a previous setup. Review the current assignment and workspace link.</p>{{end}}
+          </td>
+          <td>Pending outcomes: {{.Work.Unresolved}}<br><strong>Need review: {{.Work.NeedsReview}}</strong>{{if .Work.ReviewPeriod}}<br>Earliest review month: {{.Work.ReviewPeriod}}{{end}}</td>
+          <td><ul>{{range .NextActions}}<li><a href="{{.URL}}">{{.Label}}</a></li>{{end}}<li><a href="{{$.Data.BaseURL}}/activity?tenant={{.Customer.TenantID}}">View activity timeline</a></li></ul></td>
+        </tr>
+      {{else}}<tr><td colspan="5">No assigned customers on this page. Use Onboard a customer or assign a reviewed plan to an existing tenant.</td></tr>{{end}}</tbody>
+    </table></div>
+    {{if .NextURL}}<p><a href="{{.NextURL}}">More customers →</a></p>{{end}}
+  </section>
+  {{end}}
+
+  {{with .Data.Activity}}
+  <section class="activity" aria-labelledby="customer-activity">
+    <h2 id="customer-activity">Customer activity timeline</h2>
+    <p>Retained Product Control records for <code>{{.Report.TenantID}}</code>, newest first. Times are UTC.</p>
+    <p>Setup, workspace visits and verified outcomes are historical evidence. Admission is not success. Waivers and invoice handoffs do not establish execution, payment or refunds.</p>
+    <p class="muted">Observed {{.Report.ObservedAt.UTC.Format "2006-01-02 15:04:05"}} UTC. This history includes recorded guided setup, reviewed assignment changes, customer plan changes, work receipts and billing records. Legacy direct assignments and Auth team changes are not recorded here. Missing history does not establish inactivity or failure. Each page is a fresh observation; refresh from the newest page for later records.</p>
+    <ol>{{range .Events}}
+      <li class="card">
+        <h3>{{.Label}}</h3>
+        <p><time datetime="{{.OccurredAt.UTC.Format "2006-01-02T15:04:05.999999999Z07:00"}}">{{.OccurredAt.UTC.Format "2006-01-02 15:04:05.999999"}} UTC</time></p>
+        <p>{{.Summary}}</p>
+        {{if .Reason}}<p>Reason: {{.Reason}}</p>{{end}}
+        <p><a href="{{.ReviewURL}}">Review source and next steps</a></p>
+        <details><summary>Retained record details</summary><pre>{{.SourceJSON}}</pre></details>
+      </li>
+    {{else}}<li>No retained events on this page. Missing history does not establish inactivity or failure.</li>{{end}}</ol>
+    {{if .NextURL}}<p><a href="{{.NextURL}}">Older activity →</a></p>{{end}}
+    <p><a href="{{$.Data.BaseURL}}/activity?tenant={{.Report.TenantID}}">Refresh newest activity</a></p>
+  </section>
+  {{end}}
+
+  {{with .Data.PlanPolicy}}
+  <section><h2>Self-service plan choices</h2>
+    <p>Offer specific plan changes to customers. Each transition is one direction, from the customer's current plan to a target using the latest catalog terms.</p>
+    <p>Customers also need <a href="{{$.Data.BaseURL}}/access">Manage plan permission</a>. Billing access alone does not allow changes. Existing customer prices and consumed starts are preserved until a customer reviews and confirms a change.</p>
+    {{range .Transitions}}
+    <form method="post" action="{{$.Data.BaseURL}}/plan-policy/review"><input type="hidden" name="csrf_token" value="{{$.Data.PlanPolicy.ReviewToken}}"><input type="hidden" name="head" value="{{$.Data.PlanPolicy.Revision}}"><input type="hidden" name="source" value="{{.Source}}"><input type="hidden" name="target" value="{{.Target}}"><span>{{.Source}} → {{.Target}}</span><button name="action" value="remove">Review removal</button></form>
+    {{else}}<p>No customer plan changes are offered.</p>{{end}}
+    <form method="post" action="{{$.Data.BaseURL}}/plan-policy/review"><input type="hidden" name="csrf_token" value="{{.ReviewToken}}"><input type="hidden" name="head" value="{{.Revision}}"><label>From plan name<input name="source" required pattern="[a-z][a-z0-9-]{0,62}" placeholder="starter"></label><label>To plan<select name="target" required>{{range .Plans}}<option value="{{.Name}}">{{.Label}} ({{.Name}})</option>{{end}}</select></label><button name="action" value="allow">Review offered change</button></form>
+    <form method="post" action="{{$.Data.BaseURL}}/plan-policy/review"><input type="hidden" name="csrf_token" value="{{.ReviewToken}}"><input type="hidden" name="head" value="{{.Revision}}"><button name="action" value="close">Review closing all choices</button></form>
+    <p>Older plan names may be used as a source so existing customers can move from retired plans. A target must exist in the current catalog. These changes affect future starts immediately after confirmation; they do not create subscriptions or prorated charges.</p>
+  </section>
+  {{end}}
+
+  {{with .Data.TeamPolicy}}
+  <section><h2>Team role delegation</h2>
+    <p>Choose which roles each team manager may assign, change or remove. Both the existing and proposed member role must be delegated. Customers also need <a href="{{$.Data.BaseURL}}/access">Manage team permission</a> and authority to read and manage workspace members.</p>
+    <p>Roles affect the whole workspace, including other connected products. Customers cannot change their own role here. Application Auth retains membership and last-owner protection.</p>
+    {{range .Delegations}}
+    <form method="post" action="{{$.Data.BaseURL}}/team-policy/review"><input type="hidden" name="csrf_token" value="{{$.Data.TeamPolicy.ReviewToken}}"><input type="hidden" name="head" value="{{$.Data.TeamPolicy.Revision}}"><input type="hidden" name="actor" value="{{.Actor}}"><input type="hidden" name="role" value="{{.Target}}"><span>{{.Actor}} may manage {{.Target}}</span><button name="action" value="remove">Review removal</button></form>
+    {{else}}<p>No team roles are delegated.</p>{{end}}
+    <form method="post" action="{{$.Data.BaseURL}}/team-policy/review"><input type="hidden" name="csrf_token" value="{{.ReviewToken}}"><input type="hidden" name="head" value="{{.Revision}}"><label>Manager role<select name="actor" required>{{range .Roles}}<option value="{{.}}">{{.}}</option>{{end}}</select></label><label>Role they may manage<select name="role" required>{{range .Roles}}<option value="{{.}}">{{.}}</option>{{end}}</select></label><button name="action" value="allow">Review delegation</button></form>
+    <form method="post" action="{{$.Data.BaseURL}}/team-policy/review"><input type="hidden" name="csrf_token" value="{{.ReviewToken}}"><input type="hidden" name="head" value="{{.Revision}}"><button name="action" value="close">Review closing all delegation</button></form>
+    <p>Roles must already exist in Application Auth and in this product's access policy. Removing delegation stops new actions; issued invitations remain valid until accepted, expired or revoked. The internal Auth team-management feature must also be enabled on the Auth app.</p>
+  </section>
+  {{end}}
+
+  {{with .Data.Access}}
+  <section><h2>Customer permissions</h2>
+    <p>Choose what each Application Auth role can do in this product. Roles and workspace membership are checked on every request. Run work includes viewing activity and results.</p>
+    <p>Auth app: <strong>{{.AuthApp}}</strong>. {{if .Default}}Using the default policy: owners and admins can view/run work and view billing; members can view work. Manage plan and Manage team must be granted explicitly.{{end}} Unlisted roles have no product access.</p>
+    {{range .Roles}}
+    <form method="post" action="{{$.Data.BaseURL}}/access/review">
+      <input type="hidden" name="csrf_token" value="{{$.Data.Access.ReviewToken}}"><input type="hidden" name="head" value="{{$.Data.Access.Revision}}"><input type="hidden" name="role" value="{{.Name}}">
+      <strong>{{.Name}}</strong>
+      <label><input type="checkbox" name="view_work" value="true" {{if .ViewWork}}checked{{end}}>View work</label>
+      <label><input type="checkbox" name="run_work" value="true" {{if .RunWork}}checked{{end}}>Run work</label>
+      <label><input type="checkbox" name="view_billing" value="true" {{if .ViewBilling}}checked{{end}}>View billing</label>
+      <label><input type="checkbox" name="manage_plan" value="true" {{if .ManagePlan}}checked{{end}}>Manage plan</label>
+      <label><input type="checkbox" name="manage_team" value="true" {{if .ManageTeam}}checked{{end}}>Manage team</label>
+      <label><input type="checkbox" name="manage_billing" value="true" {{if .ManageBilling}}checked{{end}}>Manage billing details</label>
+      <button name="action" value="set">Review changes</button><button name="action" value="remove">Review removal</button>
+    </form>
+    {{end}}
+    <h3>Add a role</h3>
+    <form method="post" action="{{$.Data.BaseURL}}/access/review">
+      <input type="hidden" name="csrf_token" value="{{.ReviewToken}}"><input type="hidden" name="head" value="{{.Revision}}">
+      <label>Existing Auth role<input name="role" required maxlength="32" pattern="[a-z][a-z0-9_-]{0,31}" placeholder="operator"></label>
+      <label><input type="checkbox" name="view_work" value="true">View work</label><label><input type="checkbox" name="run_work" value="true">Run work</label><label><input type="checkbox" name="view_billing" value="true">View billing</label>
+      <label><input type="checkbox" name="manage_plan" value="true">Manage plan</label>
+      <label><input type="checkbox" name="manage_team" value="true">Manage team</label>
+      <label><input type="checkbox" name="manage_billing" value="true">Manage billing details</label>
+      <button name="action" value="set">Review role permissions</button>
+    </form>
+    <p>Custom roles must already be configured in Application Auth. Assign or remove members through its workspace settings. This page changes product permissions for a role across every linked workspace.</p>
+  </section>
+  {{end}}
+
+  {{with .Data.Onboarding}}
+  <section aria-labelledby="onboarding"><h2 id="onboarding">Onboard a customer</h2>
+    <p>Connect an existing Application Auth workspace, then review this customer's plan and prices.</p>
+    {{if .Connected}}
+      <p>Workspace connection ready. Choose a workspace you own or administer.</p>
+      <form method="post" action="{{$.Data.BaseURL}}/onboarding/disconnect"><input type="hidden" name="csrf_token" value="{{.SessionToken}}"><button>Disconnect workspace session</button></form>
+      <form method="post" action="{{$.Data.BaseURL}}/onboarding/review">
+        <input type="hidden" name="csrf_token" value="{{.ReviewToken}}"><input type="hidden" name="id" value="{{.ID}}">
+        <label>Existing customer<select name="tenant"><option value="">Create a new customer</option>{{range .Tenants}}<option value="{{.TenantID}}" {{if eq .TenantID $.Data.Onboarding.TenantID}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+        <label>New customer's name<input name="name" maxlength="128" autocomplete="organization"></label>
+        <label>New customer's reference<input name="external_ref" maxlength="256"></label>
+        <label>Workspace<select name="organization" required>{{range .Workspaces}}<option value="{{.ID}}">{{.Name}} ({{.Slug}})</option>{{end}}</select></label>
+        <label>Plan<select name="plan" required>{{range $.Data.Plans}}<option value="{{.Name}}">{{.Label}} ({{.Name}})</option>{{end}}</select></label>
+        <button>Review customer setup</button>
+      </form>
+      <p>Fill the name and reference only when creating a customer. Existing customers keep their prices and plan. You can add their first workspace link here; use the customer plan-change flow to change their terms.</p>
+      {{if .NextTenantsURL}}<a href="{{.NextTenantsURL}}">More existing customers →</a>{{end}}
+    {{else}}
+      <h3>Connect your workspace</h3><p>Sign in to the product's Application Auth app with a workspace owner or admin account.</p>
+      <form method="post" action="{{$.Data.BaseURL}}/onboarding/session">
+        <input type="hidden" name="csrf_token" value="{{.SessionToken}}">
+        <label>Email<input name="email" type="email" autocomplete="username" required></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+        <button>Connect workspace</button>
+      </form>
+      <p><a href="{{.AuthSignInURL}}" rel="noreferrer">Open Application Auth</a> to accept an invitation or manage your account. Use the existing Auth workflow to create a workspace before connecting it here.</p>
+    {{end}}
+  </section>
+  {{end}}
+
+  {{with .Data.OnboardingStatus}}
+  <section aria-labelledby="activation"><h2 id="activation">{{.Receipt.Tenant.Name}} · activation</h2>
+    <ol><li>Setup completed · plan {{.Receipt.Customer.Plan}} · workspace {{.Receipt.Request.OrganizationName}}</li>
+      <li>{{if .AccessVerifiedAt}}Customer workspace access verified at {{.AccessVerifiedAt}}{{else}}Waiting for a customer to open their workspace{{end}}</li>
+      <li>{{if .FirstSuccess}}First successful {{.FirstSuccess.Feature}} action after setup verified at {{.FirstSuccess.VerifiedAt}}{{else}}Waiting for the first successful action after setup{{end}}</li></ol>
+    {{if not .SetupCurrent}}<p>The customer assignment has changed since this setup. Review the current customer before sharing access.</p>{{end}}
+    {{if not .AccessConfigured}}<p>The original workspace link is currently unavailable or suspended. Review the customer assignment and product's Auth app.</p>{{end}}
+    <p>Access verification records a previous authenticated workspace request. Workspace membership is checked again whenever customers use the portal.</p>
+    <p>Send invitations through the existing Application Auth workflow. After accepting an invitation, customers can sign in to their portal.</p>
+    {{if .AuthSignInURL}}<p><a href="{{.AuthSignInURL}}" rel="noreferrer">Open Application Auth</a></p>{{end}}
+    <p><a href="{{.PortalPath}}">Open customer portal</a> · <a href="{{$.Data.BaseURL}}?tenant={{.Receipt.Tenant.ID}}">Review current customer</a></p>
+    <p>Share this portal path: <code>{{.PortalPath}}</code></p>
+    <p>Setup receipt <code>{{.Receipt.ID}}</code></p>
+  </section>
+  {{end}}
+
+  {{with .Data.Confirmation}}
+  <section aria-labelledby="confirmation"><h2 id="confirmation">{{.Title}}</h2><p>{{.Description}}</p>
+    {{if $.Data.TenantID}}<p>Customer <code>{{$.Data.TenantID}}</code> · UTC month <code>{{$.Data.Period}}</code></p>{{else}}<p>Product <code>{{$.Data.AppSlug}}</code></p>{{end}}
+    <div class="scroll"><table><thead><tr><th>Item</th><th>Current</th><th>Proposed</th></tr></thead><tbody>{{range .Details}}<tr><th scope="row">{{.Feature}}</th><td>{{.Before}}</td><td>{{.After}}</td></tr>{{end}}</tbody></table></div>
+    <form method="post" action="{{if .ActionURL}}{{.ActionURL}}{{else}}{{$.Data.BaseURL}}/confirm{{end}}"><input type="hidden" name="csrf_token" value="{{.Token}}"><input type="hidden" name="payload" value="{{.Payload}}"><button type="submit">Confirm {{.Title}}</button><a href="{{$.Data.BaseURL}}">Cancel</a></form>
+  </section>
+  {{end}}
+
+  {{with .Data.Doctor}}<section aria-labelledby="readiness"><h2 id="readiness">Product readiness</h2><p>Configuration: <strong>{{.ConfigurationState}}</strong> · Native qualification: <strong>{{.QualificationState}}</strong></p><p>Observed {{.ObservedAt}} · scope {{.ObservationScope}}. This observation reserves no capacity and grants no execution access.</p><p>Catalog <code>{{.Revision}}</code>{{if .TenantID}} · customer <code>{{.TenantID}}</code>{{else}}. Select a customer to inspect entitlement and execution cohort.{{end}}</p><div class="scroll"><table><thead><tr><th>Check</th><th>Status</th><th>Observation</th><th>Next action</th></tr></thead><tbody>{{range .Checks}}<tr><td>{{.Check}}{{if .Feature}} / {{.Feature}}{{end}}<br><small>{{.Impact}}</small></td><td>{{.Status}}</td><td>{{.Message}}<br><code>{{.Code}}</code></td><td>{{.Remediation}}</td></tr>{{end}}</tbody></table></div></section>{{end}}
+
+  {{with .Data.Setup}}
+  {{if .CatalogJSON}}<section><h2>Resulting catalog</h2><p>Review every feature, plan, price and allowance before publishing. Other existing entries are preserved.</p><pre><code>{{.CatalogJSON}}</code></pre></section>{{end}}
+  {{if .ReviewToken}}<section aria-labelledby="setup"><h2 id="setup">1. Connect one paid capability</h2><p>Select an existing Application Auth app, a named Operation and two plans. Prices use integer millicents: 100,000 = one currency unit. Current assignments keep their old terms until explicitly changed.</p>
+    <form method="post" action="{{$.Data.BaseURL}}/setup/review"><input type="hidden" name="csrf_token" value="{{.ReviewToken}}">
+      <label>Application Auth app<input name="auth_app" value="{{.AuthApp}}" list="product-auth-apps" required><datalist id="product-auth-apps">{{range .Apps}}<option value="{{.}}"></option>{{end}}</datalist></label>
+      <label>Currency<input name="currency" value="{{.Currency}}" required maxlength="3" {{if $.Data.LatestRevision}}readonly{{end}}></label>
+      <label>Feature name<input name="feature" value="{{.Feature}}" required maxlength="63"></label><label>Feature label<input name="label" value="{{.Label}}" required maxlength="120"></label>
+      <label>Operation name<input name="operation" value="{{.Operation}}" required maxlength="63"></label><label>Environment<input name="scope" value="{{.Scope}}" required></label>
+      <fieldset><legend>First plan</legend><label>Name<input name="starter_name" value="{{.StarterName}}" required maxlength="63"></label><label>Label<input name="starter_label" value="{{.StarterLabel}}" required maxlength="120"></label><label>Starts per UTC month<input name="starter_starts" type="number" min="1" max="{{.MaxStarts}}" step="1" value="{{.StarterStarts}}" required></label><label>Millicents per verified success<input name="starter_price" type="number" min="0" max="{{.MaxPrice}}" step="1" value="{{.StarterPrice}}" required></label></fieldset>
+      <fieldset><legend>Second plan</legend><label>Name<input name="pro_name" value="{{.ProName}}" required maxlength="63"></label><label>Label<input name="pro_label" value="{{.ProLabel}}" required maxlength="120"></label><label>Starts per UTC month<input name="pro_starts" type="number" min="1" max="{{.MaxStarts}}" step="1" value="{{.ProStarts}}" required></label><label>Millicents per verified success<input name="pro_price" type="number" min="0" max="{{.MaxPrice}}" step="1" value="{{.ProPrice}}" required></label></fieldset>
+      <button>Preview setup</button>
+    </form><p>App suggestions include owned apps; the selected app's managed Auth binding is validated before publication. Named Operations can be deployed afterward; readiness will identify missing bindings.</p></section>{{end}}
+  {{if .ChooseCustomer}}<section aria-labelledby="setup-customers"><h2 id="setup-customers">2. Assign internal customers</h2><p>After publishing terms, select an existing tenant by name and preview its plan assignment. For a first assignment, link its existing Auth organization UUID. Auth users, invitations and organizations use the existing Application Auth workflow. Live membership is verified at customer login.</p><ul>{{range .Tenants}}<li><a href="{{.URL}}">{{.Name}}</a> · {{.Status}} · <code>{{.TenantID}}</code></li>{{else}}<li>No existing tenants on this page. Create internal tenants with the existing platform-tenant workflow.</li>{{end}}</ul>{{if .NextTenantsURL}}<a href="{{.NextTenantsURL}}">More existing tenants →</a>{{end}}</section>{{end}}
+  {{end}}
+
+  {{with .Data.Explanation}}
+  <section aria-labelledby="run"><h2 id="run">Run <code>{{.Evidence.OperationID}}</code></h2>
+    <dl><dt>Customer</dt><dd><a href="{{$.Data.BaseURL}}?tenant={{.Evidence.TenantID}}&amp;period={{.Evidence.Receipt.Period}}">{{.Evidence.TenantID}}</a></dd><dt>Feature / plan</dt><dd>{{.Evidence.Receipt.Feature}} / {{.Evidence.Receipt.Plan}}</dd><dt>Commercial revision</dt><dd><code>{{.Evidence.Receipt.Revision}}</code></dd><dt>Admitted</dt><dd>{{.Evidence.Receipt.AdmittedAt}}</dd><dt>Verified outcome</dt><dd>{{if .Evidence.ResolvedState}}{{.Evidence.ResolvedState}} at {{.Evidence.ResolvedAt}}{{else}}Not yet verified{{end}}</dd><dt>Charge</dt><dd>{{.Charge.State}} · {{.Charge.AmountMillicents}} millicents {{.Evidence.Receipt.Currency}}</dd></dl>
+    {{with .Evidence.Receipt.Admission}}<h3>Admission evidence</h3><dl><dt>Definition</dt><dd><code>{{.DefinitionID}}</code> · revision <code>{{.DefinitionRevision}}</code></dd><dt>Deployment</dt><dd><code>{{.DeploymentID}}</code></dd><dt>Allowance</dt><dd>{{.StartsBefore}} starts used before admission / {{.MonthlyStarts}} allowed</dd></dl>{{end}}
+    {{with .Evidence.WaivedAt}}<p>Charge permanently waived at {{.}}. Reason: {{$.Data.Explanation.Evidence.WaiverReason}}</p>{{end}}
+    {{with .Outcome}}<p>Retained state: {{.State}} · generation {{.Generation}} · completion delivery {{.CompletionDelivery}}.</p>{{end}}
+    {{if .OperationRetained}}<p><a href="/dashboard/apps/{{$.Data.AppSlug}}/customer-operations/{{.Evidence.OperationID}}">Inspect execution and recovery controls</a></p>{{else}}<p>The execution result is no longer retained. Its commercial receipt remains available. An unresolved outcome does not justify starting a replacement run.</p>{{end}}
+    <h3>Execution history</h3><div class="scroll"><table><thead><tr><th>Generation</th><th>State</th><th>Created</th><th>Completed</th></tr></thead><tbody>{{range .Executions}}<tr><td>{{.Generation}}</td><td>{{.State}}</td><td>{{.CreatedAt}}</td><td>{{.CompletedAt}}</td></tr>{{else}}<tr><td colspan="4">No retained execution history.</td></tr>{{end}}</tbody></table></div>
+    {{if $.Data.NextExecutionURL}}<a href="{{$.Data.NextExecutionURL}}">More executions →</a>{{end}}
+  </section>
+  {{end}}
+
+  {{if .Data.Main}}
+  <section aria-labelledby="attention"><h2 id="attention">Needs attention</h2>
+    <p>Closed months without statements and runs whose outcome needs review. Ordinary running work is excluded from the current month's queue.</p>
+    <div class="scroll"><table><thead><tr><th>Customer</th><th>UTC month</th><th>Unresolved</th><th>Runs needing review</th><th>Next step</th></tr></thead><tbody>{{range .Data.Attention}}<tr><td><code>{{.TenantID}}</code></td><td>{{.Period}}</td><td>{{.Unresolved}}</td><td>{{.NeedsReview}}</td><td><a href="{{.URL}}">{{if .Unresolved}}Review outcomes{{else}}Review billing{{end}}</a></td></tr>{{else}}<tr><td colspan="5">No items on this page.</td></tr>{{end}}</tbody></table></div>
+    {{if .Data.NextAttentionURL}}<a href="{{.Data.NextAttentionURL}}">More attention items →</a>{{end}}
+    <h3>Latest catalog bindings</h3><p>Revision <code>{{.Data.LatestRevision}}</code>. Customer revisions are checked separately below. <a href="/dashboard/apps/{{.Data.AppSlug}}/customer-operations">Inspect Operations</a>.</p><ul>{{range .Data.LatestFeatures}}<li>{{.Label}} (<code>{{.Name}}</code>): {{.Binding}}</li>{{end}}</ul>
+  </section>
+  <section aria-labelledby="customers"><h2 id="customers">Customers</h2>
+    <form method="get" action="{{.Data.BaseURL}}"><label>Existing platform tenant UUID<input name="tenant" value="{{.Data.TenantID}}" required></label><label>UTC month<input type="month" name="period" value="{{.Data.Period}}" required></label><button>Open customer</button></form>
+    <div class="scroll"><table><thead><tr><th>Customer</th><th>Plan</th><th>Product access</th><th>Tenant status</th></tr></thead><tbody>{{range .Data.Customers}}<tr><td><a href="{{.URL}}">{{.Name}}</a><br><code>{{.TenantID}}</code></td><td>{{.Plan}}</td><td>{{if .Suspended}}Suspended{{else}}Enabled{{end}}</td><td>{{.Status}}</td></tr>{{else}}<tr><td colspan="4">No assigned customers on this page. Open an existing platform tenant to assign a plan.</td></tr>{{end}}</tbody></table></div>
+    {{if .Data.NextCustomersURL}}<a href="{{.Data.NextCustomersURL}}">More customers →</a>{{end}}
+  </section>
+  {{with .Data.Overdue}}<section aria-labelledby="overdue"><h2 id="overdue">Overdue invoices</h2><p>{{.Policy}}</p>
+    <p>Change it with <code>gregale product billing overdue-policy set --block-overdue-after-days N --app {{$.Data.AppSlug}}</code> or remove it with <code>overdue-policy clear</code>, which lifts every hold. Holds are recomputed every few minutes and lift when the invoice is paid; they are separate from suspending a customer.</p>
+    <div class="scroll"><table><thead><tr><th>Held customer</th><th>Invoice due</th><th>Held since</th><th>Invoice</th></tr></thead><tbody>{{range .Holds}}<tr><td><a href="{{.URL}}"><code>{{.TenantID}}</code></a></td><td>{{.DueAt}}</td><td>{{.Since}}</td><td>{{if .InvoiceURL}}<a href="{{.InvoiceURL}}" target="_blank" rel="noopener noreferrer">Customer's hosted invoice</a>{{end}}</td></tr>{{else}}<tr><td colspan="4">No customer is held.</td></tr>{{end}}</tbody></table></div>
+  </section>{{end}}
+  {{if .Data.TenantID}}
+  <section aria-labelledby="customer"><h2 id="customer">{{.Data.TenantName}}</h2><p><a href="{{.Data.BaseURL}}/activity?tenant={{.Data.TenantID}}">View activity timeline</a></p>
+    <p><a href="{{.Data.BaseURL}}/onboarding?tenant={{.Data.TenantID}}">Onboarding and activation</a></p>
+    <p><code>{{.Data.TenantID}}</code> · tenant status {{.Data.TenantStatus}}</p>
+    {{with .Data.Customer}}<dl><dt>Plan</dt><dd>{{.Plan}}</dd><dt>Revision</dt><dd><code>{{.Revision}}</code></dd><dt>Product access</dt><dd>{{if .Suspended}}Suspended{{else}}Enabled{{end}}</dd>{{if $.Data.CustomerHold}}<dt>Payment hold</dt><dd>{{$.Data.CustomerHold}}</dd>{{end}}<dt>Auth organization</dt><dd>{{if .AuthOrganizationID}}<code>{{.AuthOrganizationID}}</code>{{else}}No customer portal identity linked{{end}}</dd></dl>{{else}}<p>This platform tenant has no Product Control plan assigned.</p>{{end}}
+    <h3>{{if .Data.Customer}}Change plan or access{{else}}Assign first plan{{end}}</h3>
+    <form method="post" action="{{.Data.BaseURL}}/review"><input type="hidden" name="csrf_token" value="{{.Data.ReviewToken}}"><input type="hidden" name="action" value="plan"><input type="hidden" name="tenant" value="{{.Data.TenantID}}"><input type="hidden" name="period" value="{{.Data.Period}}">
+      <label>Plan<input name="plan" list="product-plans" value="{{if .Data.Customer}}{{.Data.Customer.Plan}}{{end}}" required><datalist id="product-plans">{{range .Data.Plans}}<option value="{{.Name}}">{{.Label}}</option>{{end}}</datalist></label>
+      <label>Catalog revision<input name="revision" value="{{.Data.LatestRevision}}" required size="30"></label>
+      <label>Product access<select name="suspended"><option value="false">Enabled</option><option value="true" {{if .Data.Customer}}{{if .Data.Customer.Suspended}}selected{{end}}{{end}}>Suspended</option></select></label>
+      {{if not .Data.Customer}}<label>Auth organization UUID (optional)<input name="organization"></label>{{end}}
+      <button>Preview plan change</button>
+    </form>
+    <p>Existing customer identity links are preserved. Change the revision to an older immutable catalog when needed; preview validates its plans.</p>
+    {{if .Data.Customer}}<h3>Assigned feature allowance · {{.Data.Period}}</h3><p>Starts count across all plan and catalog revisions in this UTC month. Price applies to one verified successful logical run.</p>
+    <div class="scroll"><table><thead><tr><th>Feature</th><th>Access</th><th>Unit price</th><th>Starts used / allowed</th><th>Remaining</th><th>Binding</th></tr></thead><tbody>{{range .Data.Features}}<tr><td>{{.Label}}<br><code>{{.Name}}</code></td><td>{{if .Enabled}}Enabled{{else}}Disabled{{end}}</td><td>{{.Price}}</td><td>{{.Used}} / {{.Limit}}</td><td>{{if .Enabled}}{{.Remaining}}{{else}}0{{end}}</td><td>{{.Binding}}</td></tr>{{end}}</tbody></table></div>{{end}}
+  </section>
+  {{end}}
+  {{with .Data.Billing}}
+  <section aria-labelledby="billing"><h2 id="billing">Billing · {{.Period}}</h2>
+    <p>{{if .Finalized}}Finalized statement <code>{{.Finalized.ID}}</code>{{else}}Provisional charges{{end}} · {{$.Data.BillingAmount}} · {{.Starts}} starts · {{.Unresolved}} unresolved.</p>
+    <div class="scroll"><table><thead><tr><th>Feature / plan / revision</th><th>Starts</th><th>Success</th><th>Failed</th><th>Cancelled</th><th>Waived</th><th>Unresolved</th><th>Millicents {{.Currency}}</th></tr></thead><tbody>{{range .Lines}}<tr><td>{{.Feature}} / {{.Plan}}<br><code>{{.Revision}}</code></td><td>{{.Starts}}</td><td>{{.Succeeded}}</td><td>{{.Failed}}</td><td>{{.Cancelled}}</td><td>{{.Waived}}</td><td>{{.Unresolved}}</td><td>{{.AmountMillicents}}</td></tr>{{else}}<tr><td colspan="8">No admissions in this month.</td></tr>{{end}}</tbody></table></div>
+    {{range .Fees}}<p>Monthly fee · plan {{.Plan}} · <code>{{.Revision}}</code> · {{.AmountMillicents}} millicents {{$.Data.Billing.Currency}}{{if .ProratedFrom}} · prorated from {{.ProratedFrom.Format "2006-01-02"}}{{end}}</p>{{end}}
+    {{if not .Finalized}}{{if .Closed}}{{if eq .Unresolved 0}}<form method="post" action="{{$.Data.BaseURL}}/review"><input type="hidden" name="csrf_token" value="{{$.Data.ReviewToken}}"><input type="hidden" name="action" value="finalize"><input type="hidden" name="tenant" value="{{$.Data.TenantID}}"><input type="hidden" name="period" value="{{.Period}}"><button>Review statement for finalization</button></form>{{else}}<p>Unresolved charges block finalization. Inspect execution evidence or explicitly waive a charge.</p>{{end}}{{else}}<p>This UTC month is still open. Finalize it after month-end.</p>{{end}}{{end}}
+    <h3>Statements and credit notes</h3><p>Credits are separate documents. Document pages may contain only part of the month; no partial-page net total is shown.</p>
+    {{range $.Data.Documents}}<article class="card" id="document-{{.ID}}"><h4>{{.Kind}} · {{.Amount}}</h4><p><code>{{.ID}}</code> · {{.CreatedAt}}</p>{{if .StatementID}}<p>Statement <code>{{.StatementID}}</code> · run <code>{{.OperationID}}</code> · {{.Reason}}</p>{{end}}
+      {{if .Invoice}}<p>{{.Invoice}}</p>{{if or .DashboardURL .InvoiceURL}}<p>{{if .DashboardURL}}<a href="{{.DashboardURL}}" target="_blank" rel="noopener noreferrer">Open in provider dashboard</a>{{end}}{{if and .DashboardURL .InvoiceURL}} · {{end}}{{if .InvoiceURL}}<a href="{{.InvoiceURL}}" target="_blank" rel="noopener noreferrer">Customer's hosted invoice</a>{{end}}</p>{{end}}{{end}}
+      {{if .Exported}}{{else if .Reference}}<p>Invoice handoff recorded: <code>{{.Reference}}</code></p>{{else}}<form method="post" action="{{$.Data.BaseURL}}/review"><input type="hidden" name="csrf_token" value="{{$.Data.ReviewToken}}"><input type="hidden" name="action" value="handoff"><input type="hidden" name="tenant" value="{{$.Data.TenantID}}"><input type="hidden" name="period" value="{{$.Data.Period}}"><input type="hidden" name="document" value="{{.ID}}"><label>Existing external invoice / credit reference<input name="reference" required maxlength="255"></label><button>Review invoice handoff</button></form>{{end}}
+    </article>{{else}}<p>No documents on this page.</p>{{end}}
+    {{if $.Data.NextDocumentsURL}}<a href="{{$.Data.NextDocumentsURL}}">More documents →</a>{{end}}
+  </section>
+  <section aria-labelledby="runs"><h2 id="runs">Recent runs · {{.Period}}</h2>
+    <p>Newest admissions first. Receipts survive execution result expiry; unresolved outcomes remain uncharged until verified or explicitly waived.</p>
+    {{range $.Data.Runs}}<article class="card"><h3>{{.Feature}} · {{.State}}</h3><p><a href="{{.URL}}"><code>{{.ID}}</code></a> · {{.AdmittedAt}}</p><p>Original success price {{.Price}} · credited {{.Credited}}.</p>
+      {{if .CanWaive}}<form method="post" action="{{$.Data.BaseURL}}/review"><input type="hidden" name="csrf_token" value="{{$.Data.ReviewToken}}"><input type="hidden" name="action" value="waive"><input type="hidden" name="tenant" value="{{$.Data.TenantID}}"><input type="hidden" name="period" value="{{$.Data.Period}}"><input type="hidden" name="operation" value="{{.ID}}"><label>Reason for permanently waiving charge<input name="reason" required maxlength="512"></label><button>Review charge waiver</button></form>{{end}}
+      {{if .CanCredit}}<form method="post" action="{{$.Data.BaseURL}}/review"><input type="hidden" name="csrf_token" value="{{$.Data.ReviewToken}}"><input type="hidden" name="action" value="credit"><input type="hidden" name="tenant" value="{{$.Data.TenantID}}"><input type="hidden" name="period" value="{{$.Data.Period}}"><input type="hidden" name="operation" value="{{.ID}}"><label>Credit amount in millicents<input name="amount" type="number" min="1" max="1000000000" step="1" required></label><label>Credit reason<input name="reason" required maxlength="512"></label><button>Review credit</button></form><p class="muted">100,000 millicents = 1 currency unit. The remaining balance is rechecked on confirmation.</p>{{end}}
+    </article>{{else}}<p>No admissions on this page.</p>{{end}}
+    {{if $.Data.NextRunsURL}}<a href="{{$.Data.NextRunsURL}}">Older runs →</a>{{end}}
+  </section>
+  {{end}}
+  {{end}}
+  <p class="muted">All periods and times use UTC. Input and result bodies, storage locations, and runtime credentials are excluded.</p>
+</main><footer>Gregale · Product Control</footer>
+</body></html>

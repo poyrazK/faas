@@ -8,8 +8,10 @@ import (
 // The algorithm and its draw order are part of the campaign format. Never
 // change them in place: replay fingerprints also pin the expanded schedule.
 const testFaultCampaignAlgorithm = "splitmix64-v1"
+const testDeclaredFaultCampaignAlgorithm = "declared-splitmix64-v1"
 
 type testFaultCampaignSpec struct {
+	Order                string                    `yaml:"order,omitempty" json:"order,omitempty"`
 	CoverageRequirements map[int]int               `yaml:"-" json:"coverage_requirements,omitempty"`
 	Seed                 *uint64                   `yaml:"seed" json:"seed"`
 	Count                int                       `yaml:"count" json:"count"`
@@ -43,10 +45,26 @@ func testFaultCampaignDraw(state *uint64) uint64 {
 	return z ^ (z >> 31)
 }
 
+// Consume the same two draws per cycle in both modes. The seed still controls
+// fault sampling, while declaration order guarantees every selected fault runs.
+func testFaultCampaignChoiceIndex(spec *testFaultCampaignSpec, state *uint64, cycle int) int {
+	draw := testFaultCampaignDraw(state)
+	if spec.Order == "declared" {
+		return cycle % len(spec.Choices)
+	}
+	return int(draw % uint64(len(spec.Choices)))
+}
+
 func expandTestFaultCampaignLoad(original *testLoadSpec) (*testLoadSpec, error) {
 	spec := original.FaultCampaign
 	fail := func(message string) (*testLoadSpec, error) {
 		return original, fmt.Errorf("load.fault_campaign: %s", message)
+	}
+	if spec.Order != "" && spec.Order != "declared" {
+		return fail("order must be omitted for seeded selection or set to declared")
+	}
+	if spec.Order == "declared" && !original.campaignExpanded && spec.Count != len(spec.Choices) {
+		return fail("declared order requires count equal to the number of choices")
 	}
 	if spec.Seed == nil || spec.Count < 2 || spec.Count > 9 || len(spec.Choices) < 2 || len(spec.Choices) > 16 {
 		return fail("requires an explicit seed, count 2..9, and 2..16 choices")
@@ -109,7 +127,7 @@ func expandTestFaultCampaignLoad(original *testLoadSpec) (*testLoadSpec, error) 
 	state := *spec.Seed
 	total, _ := time.ParseDuration(load.ChaosSchedule[0].Duration)
 	for cycle := 1; cycle <= spec.Count; cycle++ {
-		choice := spec.Choices[testFaultCampaignDraw(&state)%uint64(len(spec.Choices))]
+		choice := spec.Choices[testFaultCampaignChoiceIndex(spec, &state, cycle-1)]
 		rule := choice.Rule
 		rule.Seed = testFaultCampaignDraw(&state)
 		phase := &load.ChaosSchedule[2*cycle-1]
@@ -131,6 +149,9 @@ func expandTestFaultCampaignLoad(original *testLoadSpec) (*testLoadSpec, error) 
 
 func testFaultCampaignReport(cfg *testLoadConfig) *testFaultCampaignEvidence {
 	e := &testFaultCampaignEvidence{Seed: *cfg.FaultCampaign.Seed, Algorithm: testFaultCampaignAlgorithm, CoverageRequirements: cloneTestCampaignRequirements(cfg.FaultCampaign.CoverageRequirements)}
+	if cfg.FaultCampaign.Order == "declared" {
+		e.Algorithm = testDeclaredFaultCampaignAlgorithm
+	}
 	for _, phase := range cfg.ChaosSchedule {
 		e.Schedule = append(e.Schedule, testFaultCampaignPhase{Name: phase.Name, DurationMS: phase.Duration.Milliseconds(), Rules: append([]testChaosRule(nil), phase.Rules...)})
 	}

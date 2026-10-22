@@ -11,15 +11,16 @@ export type CommitSourceResponse = {
   name: string;
   enabled: boolean;
   /**
-   * Immutable managed Operations policy. Absent only for legacy internal sources.
+   * Immutable managed Operations policy. Absent for legacy internal sources and event destinations.
    */
   operation_policy?: string;
-  contract_version: 1 | 2;
+  contract_version: 1 | 2 | 3;
   allow_tenant_selection: boolean;
   relay_status?: string;
   last_checked_at?: string;
   pending_events?: number;
   blocked_events?: number;
   oldest_pending_at?: string;
+  destination?: 'operation' | 'event';
 };
 

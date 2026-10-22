@@ -42,6 +42,7 @@ type sourceRefManifestStaged struct {
 	appID                 string
 	edgeRuleChanges       []sourceRefManifestEdgeRuleChange
 	cronIDs               []string
+	cronIntent            *api.DeploymentCronStagingRequest
 	triggerIDs            []string
 	triggerWorkChanges    []sourceRefTriggerWorkBindingChange
 	eventSubscriptionIDs  []string
@@ -74,7 +75,7 @@ type sourceRefWorkPolicyChange struct {
 }
 
 func sourceRefManifestNeedsRollback(staged sourceRefManifestStaged) bool {
-	return staged.scalingChanged || staged.retryPolicyChanged || len(staged.edgeRuleChanges) > 0 ||
+	return staged.cronIntent != nil || staged.scalingChanged || staged.retryPolicyChanged || len(staged.edgeRuleChanges) > 0 ||
 		len(staged.cronIDs) > 0 || len(staged.triggerIDs) > 0 || len(staged.triggerWorkChanges) > 0 ||
 		len(staged.eventSubscriptionIDs) > 0 || len(staged.eventWorkChanges) > 0 || len(staged.eventRetryChanges) > 0 || len(staged.eventVersionChanges) > 0 ||
 		len(staged.workPolicyChanges) > 0 || len(staged.bindingIDs) > 0
@@ -167,7 +168,7 @@ func (s *server) applyManifestWorkloads(
 // selected source root's Procfile release: process is used. Both forms are
 // stored as a single shell command, matching Heroku's Procfile semantics.
 func resolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
-	if manifest != nil && manifest.Release != nil {
+	if manifest != nil && manifest.Release != nil && manifest.Release.Command != "" {
 		return validateDeploymentReleaseCommand(manifest.Release.Command)
 	}
 	body, found, err := readSourceRefProcfileBytes(sourcePath, app.RootDir)
@@ -245,7 +246,7 @@ func readSourceRefArchiveFileBytes(sourcePath, sourceRoot string, names []string
 		if nextErr != nil {
 			return nil, "", false, fmt.Errorf("read source archive: %w", nextErr)
 		}
-		name := strings.TrimPrefix(strings.TrimSuffix(hdr.Name, "/"), "./")
+		name := strings.TrimSuffix(tarball.TrimLeadingDotSlash(hdr.Name), "/")
 		rank, ok := wanted[name]
 		if !ok || hdr.Typeflag != tar.TypeReg {
 			continue
@@ -278,7 +279,7 @@ func sourceRefManifestCandidates(sourcePath, sourceRoot string) ([]string, error
 	}
 	roots := make([]string, 0, 2)
 	for _, root := range []string{selected, prefix} {
-		root = strings.Trim(path.Clean(root), "/.")
+		root = strings.Trim(path.Clean(root), "/")
 		if root == "." {
 			root = ""
 		}
@@ -441,11 +442,24 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	for _, trigger := range triggers {
 		triggerKeys[trigger.Kind+"\x00"+trigger.Slug] = trigger
 	}
+	deferredCrons, _ := ctx.Value(sourceManifestSkipCronsKey{}).(bool)
+	if store, ok := s.store.(state.PreparedDeploymentCronStore); ok {
+		var err error
+		prepared, checkErr := store.PreparedDeploymentCrons(ctx, app.ID)
+		err = checkErr
+		deferredCrons = deferredCrons || prepared
+		if err != nil {
+			return staged, api.ErrCapacity("could not check pending deployment crons")
+		}
+	}
 	for _, declaration := range m.Triggers {
 		if declaration.App != app.Slug {
 			continue
 		}
 		if declaration.Kind == gregalemanifest.TriggerKindCron {
+			if deferredCrons {
+				continue
+			}
 			key := declaration.Schedule + "\x00" + declaration.Path
 			if _, exists := cronKeys[key]; exists {
 				continue
@@ -506,6 +520,10 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		if problem := applyTriggerRetryPolicy(&createReq); problem != nil {
 			return staged, problem
 		}
+		delivery, deliveryProblem := s.requestedTriggerDelivery(acct, kind, nonEmptyStringPointer(declaration.Delivery))
+		if deliveryProblem != nil {
+			return staged, deliveryProblem
+		}
 		bsm, bwm, attempts, payload, poison, capProblem := enforceCreateTriggerCaps(&createReq, acct.Plan, limits)
 		if capProblem != nil {
 			return staged, capProblem
@@ -514,10 +532,17 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		if sealProblem != nil {
 			return staged, sealProblem
 		}
-		initialEnabled := declaration.IsEnabled() && declaration.WorkPolicy == ""
-		created, createErr := s.store.CreateTriggerIfUnderQuota(ctx, app.ID, string(kind), declaration.Slug, initialEnabled, sealed, triggerSourceForConfig(kind, sealed), bsm, bwm, attempts, payload, poison, limits)
+		enableAtCreate := declaration.IsEnabled() && declaration.WorkPolicy == ""
+		created, createErr := s.store.CreateTriggerIfUnderQuota(ctx, app.ID, string(kind), declaration.Slug, enableAtCreate && delivery == api.TriggerDeliveryRecord, sealed, triggerSourceForConfig(kind, sealed), bsm, bwm, attempts, payload, poison, limits)
 		if createErr != nil {
 			return staged, sourceRefManifestStoreProblem(createErr, acct.Plan, false)
+		}
+		if delivery != api.TriggerDeliveryRecord {
+			// A failed switch deletes the trigger, so it is not staged.
+			var problem *api.Problem
+			if created, problem = s.applyTriggerDelivery(ctx, created, delivery, enableAtCreate); problem != nil {
+				return staged, problem
+			}
 		}
 		id := uuidFromPgtype(created.ID).String()
 		staged.triggerIDs = append(staged.triggerIDs, id)
@@ -740,6 +765,9 @@ func scalingPoliciesEqual(left, right *state.ScalingPolicy) bool {
 }
 
 func sourceRefManifestStoreProblem(err error, plan api.Plan, cron bool) *api.Problem {
+	if errors.Is(err, state.ErrDeploymentCronConflict) {
+		return api.NewProblem(http.StatusConflict, api.CodeDeploymentCronConflict, "Deployment cron staging changed", "cron configuration changed while preparing this deployment; retry with a new deployment attempt")
+	}
 	if cron {
 		var quota *state.CronQuotaError
 		if errors.As(err, &quota) {
@@ -759,6 +787,9 @@ func sourceRefManifestStoreProblem(err error, plan api.Plan, cron bool) *api.Pro
 
 func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRefManifestStaged) error {
 	var errs []error
+	if err := s.cancelSourceManifestCrons(ctx, staged); err != nil {
+		errs = append(errs, err)
+	}
 	if staged.scalingChanged {
 		// apps.scaling_policy is NOT NULL in PostgreSQL. A nil prior
 		// policy is the legacy empty-policy projection, so restore it as

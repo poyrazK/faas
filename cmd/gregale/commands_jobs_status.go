@@ -20,9 +20,9 @@ func cmdJobsStatus(args []string) int {
 		return printErr("Invalid Job status target", fmt.Errorf("usage: gregale jobs status [JOB] [RUN_ID|latest] [--check]"))
 	}
 	if len(args) == 0 {
-		defaults, path, err := readJobDefaults()
+		defaults, path, err := readJobDefaultsForCommand([]string{"jobs", "status", "my-job"})
 		if err != nil {
-			return printErr("Could not read Job defaults", err)
+			return printJobDefaultsSelectionError("Could not read Job defaults", err)
 		}
 		args = []string{defaults.Job}
 		if !jsonOutput {

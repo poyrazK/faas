@@ -22,20 +22,43 @@ type OperationWorkflowReadinessSubscriptionWorkerStore interface {
 	EvaluateDueWorkflowReadinessSubscriptions(context.Context) (int, error)
 }
 type readinessSubscriptionRecord struct {
-	ResponseCursor     int64                                      `json:"response_cursor,omitempty"`
-	OutcomeCursor      int64                                      `json:"outcome_cursor,omitempty"`
-	VerificationCursor int64                                      `json:"verification_cursor,omitempty"`
-	Subscription       api.OperationWorkflowReadinessSubscription `json:"subscription"`
-	Baseline           api.OperationWorkflowReadinessSnapshot     `json:"baseline"`
-	Seen               map[string]string                          `json:"seen"`
-	Account            string                                     `json:"-"`
-	Tenant             string                                     `json:"-"`
-	Operator           bool                                       `json:"-"`
-	Lease              string                                     `json:"-"`
-	LeaseUntil         time.Time                                  `json:"-"`
-	NextEvaluation     time.Time                                  `json:"-"`
+	FulfillmentReviewEscalationCursor string                                              `json:"fulfillment_review_escalation_cursor,omitempty"`
+	FulfillmentReviewReminderCursor   string                                              `json:"fulfillment_review_reminder_cursor,omitempty"`
+	FulfillmentReviewCursor           string                                              `json:"fulfillment_review_cursor,omitempty"`
+	ReopeningKnown                    map[string]bool                                     `json:"reopening_known,omitempty"`
+	ReopeningCursor                   int64                                               `json:"reopening_cursor,omitempty"`
+	TargetObservations                map[string]string                                   `json:"target_observations,omitempty"`
+	TargetCursor                      int64                                               `json:"target_cursor,omitempty"`
+	DigestDeliveredItems              map[string]api.OperationWorkflowNextActionQueueItem `json:"digest_delivered_items,omitempty"`
+	DigestKnown                       map[string]string                                   `json:"digest_known,omitempty"`
+	ScheduledActionReviewCursor       int64                                               `json:"scheduled_action_review_cursor,omitempty"`
+	EscalationCommitmentCursor        int64                                               `json:"escalation_commitment_cursor,omitempty"`
+	HandoffReassignmentCursor         int64                                               `json:"handoff_reassignment_cursor,omitempty"`
+	HandoffDeclineCursor              int64                                               `json:"handoff_decline_cursor,omitempty"`
+	HandoffDeadlineCursor             int64                                               `json:"handoff_deadline_cursor,omitempty"`
+	ReviewDecisionCursor              int64                                               `json:"review_decision_cursor,omitempty"`
+	ReviewBlockageCursor              int64                                               `json:"review_blockage_cursor,omitempty"`
+	ReviewBlockages                   map[string][]string                                 `json:"review_blockages,omitempty"`
+	ReviewResponseCursor              int64                                               `json:"review_response_cursor,omitempty"`
+	ImpactSources                     [][]impactReviewSource                              `json:"impact_sources,omitempty"`
+	ImpactTruncated                   []bool                                              `json:"impact_truncated,omitempty"`
+	PlaybookCursor                    string                                              `json:"playbook_cursor,omitempty"`
+	ResponseCursor                    int64                                               `json:"response_cursor,omitempty"`
+	OutcomeCursor                     int64                                               `json:"outcome_cursor,omitempty"`
+	VerificationCursor                int64                                               `json:"verification_cursor,omitempty"`
+	Subscription                      api.OperationWorkflowReadinessSubscription          `json:"subscription"`
+	Baseline                          api.OperationWorkflowReadinessSnapshot              `json:"baseline"`
+	Seen                              map[string]string                                   `json:"seen"`
+	Account                           string                                              `json:"-"`
+	Tenant                            string                                              `json:"-"`
+	Operator                          bool                                                `json:"-"`
+	Lease                             string                                              `json:"-"`
+	LeaseUntil                        time.Time                                           `json:"-"`
+	NextEvaluation                    time.Time                                           `json:"-"`
 }
 type readinessSubscriptionBackend interface {
+	readinessFollowUpBackend
+	readPlaybookProgress(context.Context, workflowPlaybookProgressRecord) ([]api.OperationWorkflowPlaybookProgress, error)
 	OperationByID(context.Context, string, string, string) (Operation, error)
 	updateReadinessNotification(context.Context, string, string, string, string, string, int64, string, readinessCoordinationUpdate, bool) (api.OperationWorkflowReadinessNotification, error)
 	readinessQueueStore
@@ -57,13 +80,23 @@ func createReadinessSubscription(ctx context.Context, store readinessSubscriptio
 	if operator && req.AppID != "" || !operator && req.TenantID != "" || api.ValidateOperationWorkflowName(req.Name) != nil {
 		return out, ErrInvalidArgument
 	}
+	if err := validateImpactWatchRequests(req.BusinessImpactWatches); err != nil {
+		return out, err
+	}
+	if req.NextActionDigest != nil {
+		policy, err := normalizeNextActionDigestPolicy(*req.NextActionDigest)
+		if err != nil {
+			return out, err
+		}
+		req.NextActionDigest = &policy
+	}
 	if req.Events == nil {
 		req.Events = []string{"newly_ready", "newly_blocked", "reassigned", "unavailable"}
 	}
 	if len(req.Events) == 0 || !readinessUniqueNames(req.Events, 4, []string{"newly_ready", "newly_blocked", "reassigned", "unavailable"}) {
 		return out, ErrInvalidArgument
 	}
-	out = api.OperationWorkflowReadinessSubscription{ID: uuid.NewString(), AppID: app, TenantID: req.TenantID, Scope: req.Scope, Name: req.Name, Workflow: req.Workflow, TargetOperation: req.TargetOperation, Owner: req.Owner, Unassigned: req.Unassigned, Events: req.Events, Status: "active"}
+	out = api.OperationWorkflowReadinessSubscription{NextActionDigest: req.NextActionDigest, ID: uuid.NewString(), AppID: app, TenantID: req.TenantID, Scope: req.Scope, Name: req.Name, Workflow: req.Workflow, TargetOperation: req.TargetOperation, Owner: req.Owner, Unassigned: req.Unassigned, Events: req.Events, Status: "active"}
 	opts := readinessSubscriptionOptions(out)
 	base, _, err := prepareReadinessQueue(account, tenant, opts, operator)
 	if err != nil {
@@ -93,10 +126,23 @@ func createReadinessSubscription(ctx context.Context, store readinessSubscriptio
 		return out, err
 	}
 	out.CreatedAt = page.EvaluatedAt
+	if out.NextActionDigest != nil {
+		next := out.CreatedAt.Add(time.Duration(out.NextActionDigest.CadenceSeconds) * time.Second)
+		out.DigestNextAt = &next
+	}
 	out.EvaluatedAt = page.EvaluatedAt
 	out.WatchedTransitionCount = len(page.Snapshot.Items)
 	out.CoverageIncomplete = readinessSubscriptionCoverage(page)
 	record := readinessSubscriptionRecord{Subscription: out, Baseline: page.Snapshot, Seen: map[string]string{}, Account: uuid.MustParse(account).String(), Tenant: selectedTenant, Operator: operator, NextEvaluation: time.Now().UTC().Add(api.OperationWorkflowReadinessSubscriptionPollInterval)}
+	if len(req.BusinessImpactWatches) > 0 {
+		for _, watch := range req.BusinessImpactWatches {
+			record.Subscription.BusinessImpactWatches = append(record.Subscription.BusinessImpactWatches, api.OperationWorkflowReadinessImpactWatch{Workflow: watch.Workflow, Kind: watch.Kind, Code: watch.Code, Owner: watch.Owner, AcknowledgeAfterSeconds: watch.AcknowledgeAfterSeconds, FallbackOwner: watch.FallbackOwner})
+		}
+		if _, err = evaluateReadinessImpactWatches(ctx, store, &record, true); err != nil {
+			return api.OperationWorkflowReadinessSubscription{}, err
+		}
+		out = record.Subscription
+	}
 	if err = store.insertReadinessSubscription(ctx, record); err != nil {
 		return api.OperationWorkflowReadinessSubscription{}, err
 	}
@@ -326,6 +372,18 @@ func evaluateDueReadinessSubscriptions(ctx context.Context, store readinessSubsc
 		watchUpdates = append(watchUpdates, outcomeUpdates...)
 		cancel()
 		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
+		playbookUpdates, playbookErr := evaluatePlaybookEvidenceWatches(check, store, &record)
+		watchUpdates = append(watchUpdates, playbookUpdates...)
+		cancel()
+		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
+		blockageUpdates, blockageErr := evaluateReadinessReviewBlockages(check, store, &record)
+		watchUpdates = append(watchUpdates, blockageUpdates...)
+		cancel()
+		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
+		scheduledUpdates, scheduledErr := evaluateScheduledActionReviews(check, store, &record)
+		watchUpdates = append(watchUpdates, scheduledUpdates...)
+		cancel()
+		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
 		notifications, evaluationErr := evaluateReadinessSubscription(check, store, &record)
 		cancel()
 		if evaluationErr != nil {
@@ -335,7 +393,36 @@ func evaluateDueReadinessSubscriptions(ctx context.Context, store readinessSubsc
 			}
 			record.Seen["evaluation"] = "unavailable"
 		}
-		if watchErr != nil || outcomeErr != nil {
+		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
+		impactNotices, impactErr := evaluateReadinessImpactWatches(check, store, &record, false)
+		cancel()
+		notifications = append(notifications, impactNotices...)
+		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
+		digestNotices, digestErr := evaluateNextActionDigest(check, store, &record)
+		notifications = append(notifications, digestNotices...)
+		cancel()
+		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
+		targetUpdates, targetErr := evaluateObligationTargets(check, store, &record)
+		watchUpdates = append(watchUpdates, targetUpdates...)
+		cancel()
+		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
+		reopeningUpdates, reopeningErr := evaluateObligationReopenings(check, store, &record)
+		watchUpdates = append(watchUpdates, reopeningUpdates...)
+		cancel()
+		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
+		fulfillmentUpdates, fulfillmentErr := evaluateFulfillmentReviews(check, store, &record)
+		watchUpdates = append(watchUpdates, fulfillmentUpdates...)
+		cancel()
+		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
+		reminderUpdates, reminderErr := evaluateFulfillmentReviewReminders(check, store, &record)
+		watchUpdates = append(watchUpdates, reminderUpdates...)
+		cancel()
+
+		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
+		escalationUpdates, escalationErr := evaluateFulfillmentReviewEscalations(check, store, &record)
+		watchUpdates = append(watchUpdates, escalationUpdates...)
+		cancel()
+		if escalationErr != nil || reminderErr != nil || fulfillmentErr != nil || reopeningErr != nil || targetErr != nil || digestErr != nil || scheduledErr != nil || watchErr != nil || outcomeErr != nil || playbookErr != nil || impactErr != nil || blockageErr != nil {
 			record.Subscription.Status = "retrying"
 		}
 		record.NextEvaluation = time.Now().UTC().Add(api.OperationWorkflowReadinessSubscriptionPollInterval)

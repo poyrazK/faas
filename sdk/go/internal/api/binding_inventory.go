@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"time"
 )
@@ -18,6 +19,7 @@ const (
 // snapshot or a connectivity check. Complete means every binding section
 // could be read. Omitted sections always have a structured issue.
 type AppBindingInventory struct {
+	ServiceTargets           map[string]string         `json:"service_targets,omitempty"`
 	App                      string                    `json:"app"`
 	Scope                    string                    `json:"scope,omitempty"`
 	GeneratedAt              time.Time                 `json:"generated_at"`
@@ -37,37 +39,44 @@ type AppBindingInventory struct {
 // Credential material, credential IDs, provider origins and raw errors are
 // deliberately absent from this contract.
 type AppBindingInventoryItem struct {
-	Type                 string                      `json:"type"`
-	Name                 string                      `json:"name"`
-	Binding              string                      `json:"binding"`
-	Scope                string                      `json:"scope"`
-	Access               string                      `json:"access"`
-	State                string                      `json:"state"`
-	RuntimeStatus        string                      `json:"runtime_status"`
-	VerificationStatus   string                      `json:"verification_status"`
-	Verification         *BindingVerification        `json:"verification,omitempty"`
-	Refresh              *BindingRefresh             `json:"refresh,omitempty"`
-	ApplicationAdoption  *BindingApplicationAdoption `json:"application_adoption,omitempty"`
-	ObservedAt           *time.Time                  `json:"observed_at,omitempty"`
-	HTTPURL              string                      `json:"http_url,omitempty"`
-	HTTPSEnv             string                      `json:"https_env,omitempty"`
-	HTTPSURL             string                      `json:"https_url,omitempty"`
-	Transport            string                      `json:"transport,omitempty"`
-	CredentialGeneration *int64                      `json:"credential_generation,omitempty"`
-	RotationPending      *bool                       `json:"rotation_pending,omitempty"`
-	ConsumerState        string                      `json:"consumer_state,omitempty"`
-	ConsumerStateReason  string                      `json:"consumer_state_reason,omitempty"`
-	ConsumerLiveness     string                      `json:"consumer_liveness,omitempty"`
-	CredentialConfigured *bool                       `json:"credential_configured,omitempty"`
-	OutboundProbe        *OutboundBindingProbePolicy `json:"outbound_probe,omitempty"`
-	AllowedMethods       []string                    `json:"allowed_methods,omitempty"`
-	AllowedPathPrefixes  []string                    `json:"allowed_path_prefixes,omitempty"`
+	QueueCanary               *QueueBindingCanary         `json:"queue_canary,omitempty"`
+	QueueCanarySupported      bool                        `json:"queue_canary_supported"`
+	ServiceTargetDeploymentID string                      `json:"service_target_deployment_id,omitempty"`
+	Type                      string                      `json:"type"`
+	Name                      string                      `json:"name"`
+	Binding                   string                      `json:"binding"`
+	Scope                     string                      `json:"scope"`
+	Access                    string                      `json:"access"`
+	State                     string                      `json:"state"`
+	RuntimeStatus             string                      `json:"runtime_status"`
+	VerificationStatus        string                      `json:"verification_status"`
+	Verification              *BindingVerification        `json:"verification,omitempty"`
+	Refresh                   *BindingRefresh             `json:"refresh,omitempty"`
+	ApplicationAdoption       *BindingApplicationAdoption `json:"application_adoption,omitempty"`
+	ObservedAt                *time.Time                  `json:"observed_at,omitempty"`
+	HTTPURL                   string                      `json:"http_url,omitempty"`
+	HTTPSEnv                  string                      `json:"https_env,omitempty"`
+	HTTPSURL                  string                      `json:"https_url,omitempty"`
+	Transport                 string                      `json:"transport,omitempty"`
+	CredentialGeneration      *int64                      `json:"credential_generation,omitempty"`
+	RotationPending           *bool                       `json:"rotation_pending,omitempty"`
+	ConsumerState             string                      `json:"consumer_state,omitempty"`
+	QueueEnvironment          *string                     `json:"queue_environment,omitempty"`
+	ConsumerStateReason       string                      `json:"consumer_state_reason,omitempty"`
+	ConsumerLiveness          string                      `json:"consumer_liveness,omitempty"`
+	CredentialConfigured      *bool                       `json:"credential_configured,omitempty"`
+	OutboundProbe             *OutboundBindingProbePolicy `json:"outbound_probe,omitempty"`
+	AllowedMethods            []string                    `json:"allowed_methods,omitempty"`
+	AllowedPathPrefixes       []string                    `json:"allowed_path_prefixes,omitempty"`
 }
 
 // BindingVerification describes the latest admitted platform canary, never a
 // resident application's acknowledgement. Check details contain stable status
 // values only; task output, provider errors and credential material are absent.
 type BindingVerification struct {
+	TaskID               string                     `json:"task_id,omitempty"`
+	TargetDeploymentID   string                     `json:"target_deployment_id,omitempty"`
+	ObjectStorageMode    string                     `json:"object_storage_mode,omitempty"`
 	Result               string                     `json:"result"`
 	Reason               string                     `json:"reason,omitempty"`
 	Source               string                     `json:"source"`
@@ -151,6 +160,10 @@ func (c *Client) GetAppBindingInventory(ctx context.Context, slug, scope string)
 // GetAppBindingInventoryForDeployment selects evidence for an exact live
 // deployment. Empty deploymentID preserves the manual-task selection.
 func (c *Client) GetAppBindingInventoryForDeployment(ctx context.Context, slug, scope, deploymentID string) (AppBindingInventory, error) {
+	return c.GetAppBindingInventoryForServiceTargets(ctx, slug, scope, deploymentID, nil)
+}
+
+func (c *Client) GetAppBindingInventoryForServiceTargets(ctx context.Context, slug, scope, deploymentID string, targets map[string]string) (AppBindingInventory, error) {
 	var out AppBindingInventory
 	path := "/v1/apps/" + url.PathEscape(slug) + "/bindings"
 	query := url.Values{}
@@ -159,6 +172,13 @@ func (c *Client) GetAppBindingInventoryForDeployment(ctx context.Context, slug, 
 	}
 	if deploymentID != "" {
 		query.Set("deployment_id", deploymentID)
+	}
+	if len(targets) > 0 {
+		encoded, err := json.Marshal(targets)
+		if err != nil {
+			return out, err
+		}
+		query.Set("service_targets", string(encoded))
 	}
 	if len(query) > 0 {
 		path += "?" + query.Encode()
@@ -179,38 +199,43 @@ type BindingCheckFinding struct {
 }
 
 type BindingCheckBindingResult struct {
-	Type                string                      `json:"type"`
-	Name                string                      `json:"name"`
-	Binding             string                      `json:"binding,omitempty"`
-	Scope               string                      `json:"scope"`
-	Status              string                      `json:"status"`
-	Reason              string                      `json:"reason,omitempty"`
-	VerificationStatus  string                      `json:"verification_status,omitempty"`
-	CheckedAt           *time.Time                  `json:"checked_at,omitempty"`
-	RefreshStatus       string                      `json:"refresh_status,omitempty"`
-	ApplicationAdoption *BindingApplicationAdoption `json:"application_adoption,omitempty"`
+	RequiredQueueEvidence     string                      `json:"required_queue_evidence,omitempty"`
+	RequiredObjectStorageMode string                      `json:"required_object_storage_mode,omitempty"`
+	ObjectStorageMode         string                      `json:"object_storage_mode,omitempty"`
+	Type                      string                      `json:"type"`
+	Name                      string                      `json:"name"`
+	Binding                   string                      `json:"binding,omitempty"`
+	Scope                     string                      `json:"scope"`
+	Status                    string                      `json:"status"`
+	Reason                    string                      `json:"reason,omitempty"`
+	VerificationStatus        string                      `json:"verification_status,omitempty"`
+	CheckedAt                 *time.Time                  `json:"checked_at,omitempty"`
+	RefreshStatus             string                      `json:"refresh_status,omitempty"`
+	ApplicationAdoption       *BindingApplicationAdoption `json:"application_adoption,omitempty"`
 }
 
 // Report.Passed means the declared policy passed at CheckedAt. Optional
 // application acknowledgements are self-attestations, not independent proof
 // of readiness or credential use. Coverage is complete, partial, or none.
 type BindingCheckReport struct {
-	ExpectedDeploymentID  string                      `json:"expected_deployment_id,omitempty"`
-	App                   string                      `json:"app"`
-	Scope                 string                      `json:"scope"`
-	DeploymentID          string                      `json:"deployment_id"`
-	CheckedAt             time.Time                   `json:"checked_at"`
-	InventoryGeneratedAt  time.Time                   `json:"inventory_generated_at"`
-	MaxVerificationAge    string                      `json:"max_verification_age"`
-	AllowUnsupported      bool                        `json:"allow_unsupported"`
-	RequireApplicationAck bool                        `json:"require_application_ack"`
-	Passed                bool                        `json:"passed"`
-	Coverage              string                      `json:"coverage"`
-	Bindings              []BindingCheckBindingResult `json:"bindings"`
-	Runtime               []BindingRuntimeDeployment  `json:"runtime"`
-	Issues                []BindingInventoryIssue     `json:"issues"`
-	Blockers              []BindingCheckFinding       `json:"blockers"`
-	Warnings              []BindingCheckFinding       `json:"warnings"`
+	QueueRequirements         map[string]string           `json:"queue_requirements,omitempty"`
+	ObjectStorageRequirements map[string]string           `json:"object_storage_requirements,omitempty"`
+	ExpectedDeploymentID      string                      `json:"expected_deployment_id,omitempty"`
+	App                       string                      `json:"app"`
+	Scope                     string                      `json:"scope"`
+	DeploymentID              string                      `json:"deployment_id"`
+	CheckedAt                 time.Time                   `json:"checked_at"`
+	InventoryGeneratedAt      time.Time                   `json:"inventory_generated_at"`
+	MaxVerificationAge        string                      `json:"max_verification_age"`
+	AllowUnsupported          bool                        `json:"allow_unsupported"`
+	RequireApplicationAck     bool                        `json:"require_application_ack"`
+	Passed                    bool                        `json:"passed"`
+	Coverage                  string                      `json:"coverage"`
+	Bindings                  []BindingCheckBindingResult `json:"bindings"`
+	Runtime                   []BindingRuntimeDeployment  `json:"runtime"`
+	Issues                    []BindingInventoryIssue     `json:"issues"`
+	Blockers                  []BindingCheckFinding       `json:"blockers"`
+	Warnings                  []BindingCheckFinding       `json:"warnings"`
 }
 
 // BindingPromotionRequest requires passed binding evidence for this promotion.

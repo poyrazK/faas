@@ -2,10 +2,12 @@ package realtime
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -38,6 +40,42 @@ type AuthPolicy struct {
 // embedders can inject a deterministic authorizer.
 type JWTAuthorizer interface {
 	Authorize(context.Context, string, AuthPolicy) (string, error)
+}
+
+// JWTIdentity contains claims handed off only after signature and policy
+// verification. SessionID is optional for external identity providers.
+type JWTIdentity struct {
+	Principal string
+	SessionID string
+	ExpiresAt time.Time
+}
+
+// JWTIdentityAuthorizer extends JWTAuthorizer for retained transports. Its
+// verified identity must include an expiry. Older embedders can keep returning
+// only a principal, but cannot authorize session-bound Application Auth channels.
+type JWTIdentityAuthorizer interface {
+	AuthorizeIdentity(context.Context, string, AuthPolicy) (JWTIdentity, error)
+}
+
+func (m *Manager) authorizeIdentity(ctx context.Context, token string, policy AuthPolicy) (JWTIdentity, error) {
+	authCtx, cancel := context.WithTimeout(ctx, m.cfg.CallbackTimeout)
+	defer cancel()
+	var identity JWTIdentity
+	var err error
+	if authorizer, ok := m.cfg.JWTAuthorizer.(JWTIdentityAuthorizer); ok {
+		identity, err = authorizer.AuthorizeIdentity(authCtx, token, policy)
+		if err == nil && (identity.ExpiresAt.IsZero() || !time.Now().Before(identity.ExpiresAt)) {
+			err = ErrUnauthorized
+		}
+	} else if m.cfg.JWTAuthorizer != nil {
+		identity.Principal, err = m.cfg.JWTAuthorizer.Authorize(authCtx, token, policy)
+	} else {
+		err = ErrUnauthorized
+	}
+	if err == nil {
+		err = authCtx.Err()
+	}
+	return identity, err
 }
 
 func cloneStringMap(values map[string]string) map[string]string {
@@ -179,6 +217,12 @@ func resumeBearerFromProtocols(protocols []string) (token string, present, inval
 			invalid = true
 			continue
 		}
+		if isTicket(token) {
+			if _, err := decodeBrowserTicket(token); err != nil {
+				invalid = true
+			}
+			continue
+		}
 		parts := strings.Split(token, ".")
 		if len(parts) != 3 {
 			invalid = true
@@ -200,4 +244,12 @@ func resumeBearerFromProtocols(protocols []string) (token string, present, inval
 		}
 	}
 	return token, present, invalid, remaining
+}
+
+func decodeBrowserTicket(token string) ([]byte, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(token, "grt_"))
+	if err != nil || len(raw) != 32 {
+		return nil, fmt.Errorf("invalid ticket")
+	}
+	return raw, nil
 }

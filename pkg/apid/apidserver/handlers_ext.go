@@ -24,7 +24,11 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/object"
+	"github.com/onebox-faas/faas/pkg/apid/orgbilling"
+	"github.com/onebox-faas/faas/pkg/apid/release"
+	"github.com/onebox-faas/faas/pkg/apid/trafficguard"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
@@ -980,6 +984,20 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if problem := validateDeploySettingsCondition(req, environment); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if req.ExpectedServiceBindingFingerprint != nil {
+		if problem := validateServiceBindingPlanRequest(req, environment.Slug); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		if *req.ExpectedServiceBindingFingerprint != state.ServiceBindingFingerprint(app) {
+			api.WriteProblem(w, serviceBindingPlanConflictProblem())
+			return
+		}
+	}
 	allowedCallers, callerPolicySet, callerProblem := serviceCallersForPatch(req.AllowedServiceCallers)
 	if callerProblem != nil {
 		api.WriteProblem(w, callerProblem)
@@ -1169,7 +1187,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// a previous PATCH doesn't reach a fresh request.
 	var publicAuthSealed []byte
 	if req.PublicAuth != nil && req.PublicAuth.Mode == api.AppPublicAuthModeBasic {
-		recipient := setSecretRecipient()
+		recipient := hostSecretRecipient()
 		if recipient == nil {
 			api.WriteProblem(w, customerCapacityProblem(s.log, "update app public authentication", "App settings temporarily unavailable",
 				"Gregale could not securely update these app settings.",
@@ -1492,11 +1510,16 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			Sealed:   publicAuthSealed,
 		}
 	}
+	if req.ExpectedServiceBindingFingerprint != nil {
+		params.ExpectedServiceBindingFingerprint = *req.ExpectedServiceBindingFingerprint
+	}
 	if environment.Slug != "" {
 		s.updateEnvironmentAppSettings(w, r, acct, app, environment, params)
 		return
 	}
 	configActivityAtomic := false
+	params.TouchDeploymentPolicies = req.Profiling != nil || req.Tracing != nil
+	params = guardedDeploySettingsParams(req, acct, params)
 	var configActivityOutboxID int64
 	var updated state.App
 	var err error
@@ -1523,7 +1546,11 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		if problem := state.ServiceCapacityProblem(err); problem != nil {
+		if problem := deploySettingsUpdateProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
+		} else if errors.Is(err, state.ErrServiceBindingPlanConflict) {
+			api.WriteProblem(w, serviceBindingPlanConflictProblem())
+		} else if problem := state.ServiceCapacityProblem(err); problem != nil {
 			api.WriteProblem(w, problem)
 		} else {
 			// The caller only sees a generic 503; keep the cause. Under load,
@@ -1956,52 +1983,6 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// restoreApp reactivates a deleted app while its seven-day grace window is
-// open. The tombstone lookup is deliberately separate from loadApp so normal
-// customer reads continue to hide deleted slugs.
-func (s *server) restoreApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, err := s.store.AppBySlugIncludingDeleted(r.Context(), r.PathValue("slug"))
-	if err != nil || app.AccountID != acct.ID {
-		s.notFound(w, "no such app")
-		return
-	}
-	limits := api.MustLimitsFor(acct.Plan)
-	restored, err := s.restoreAppWithActivity(r.Context(), r, acct, app, limits)
-	if err != nil {
-		var qe *state.QuotaError
-		if errors.As(err, &qe) {
-			api.WriteProblem(w, api.ErrPlanLimitApps(limits, qe.Observed))
-			return
-		}
-		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict,
-				api.CodeAppNotRestorable, "App not restorable",
-				"the seven-day app deletion grace window has lapsed"))
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not restore app"))
-		return
-	}
-	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
-		fmt.Sprintf(`{"app_id":"%s","kind":"restored"}`, restored.ID))
-	s.audit.Emit(r.Context(), "app.restored", &acct.ID, map[string]any{
-		"app_id": restored.ID,
-		"slug":   restored.Slug,
-	})
-	resp := s.appResponseWithContext(r.Context(), restored, acct.Plan)
-	// RestoreApp persists the storage state as active, but the customer-facing
-	// read model calls an app with no deployments "undeployed". Keep this
-	// mutation response consistent with GET /v1/apps/{slug} and listApps so
-	// automation does not observe active and undeployed for the same row.
-	if _, latestErr := s.store.LatestDeployment(r.Context(), restored.ID); errors.Is(latestErr, state.ErrNotFound) && resp.Status == string(state.AppActive) {
-		resp.Status = api.AppStatusUndeployed
-	} else if latestErr != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not resolve restored app deployment state"))
-		return
-	}
-	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, restored))
-}
-
 // --- deployments -----------------------------------------------------------
 
 // getDeployment returns one deployment by id.
@@ -2017,7 +1998,16 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such deployment")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.deploymentResponseWithBuild(r.Context(), d, app))
+	response := s.withRolloutHold(r.Context(), s.deploymentResponseWithBuild(r.Context(), d, app))
+	if store, ok := s.store.(state.DeploymentConfigurationStore); ok {
+		configuration, err := store.DeploymentConfiguration(r.Context(), acct.ID, d.ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not read deployment configuration status"))
+			return
+		}
+		response.Configuration = &configuration
+	}
+	writeJSON(w, http.StatusOK, s.withRelease(r.Context(), response, d))
 }
 
 // updateDeploymentMinInstances (issue #557 closure / ADR-074) is the
@@ -2188,19 +2178,12 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
-	if req.ExpectedServingDeploymentID != nil && *req.ExpectedServingDeploymentID != "" {
-		if !deploymentIDRefPattern.MatchString(*req.ExpectedServingDeploymentID) {
-			api.WriteProblem(w, api.ErrValidation("expected_serving_deployment_id must be a deployment id"))
-			return
-		}
-		parsed, parseErr := uuid.Parse(*req.ExpectedServingDeploymentID)
-		if parseErr != nil {
-			api.WriteProblem(w, api.ErrValidation("expected_serving_deployment_id must be a deployment id"))
-			return
-		}
-		canonical := parsed.String()
-		req.ExpectedServingDeploymentID = &canonical
+	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
 	}
+	r = r.WithContext(guardCtx)
 	// Plan tier gate (issue #556). Pro + Scale only. Hobby is
 	// locked: the canary-rollout audience is more expensive
 	// (RAM-billable per-running-second for two deployments) than
@@ -2209,12 +2192,23 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrPlanTrafficSplitNotAllowed(acct.Plan))
 		return
 	}
+
 	prev := d.TrafficPercent
 	var updated state.Deployment
+	if req.ExpectedReview != nil && (req.TrafficPercent != 100 || req.ExpectedServingDeploymentID == nil || req.ExpectedReview.AppID != app.ID || req.ExpectedReview.Scope != d.Scope || req.ExpectedReview.EnvironmentID == "") {
+		api.WriteProblem(w, api.ErrValidation("reviewed promotion requires the exact named environment at 100% traffic and a serving guard"))
+		return
+	}
 	var gateProblem *api.Problem
 	gateProblem, err = s.withBindingReleaseTraffic(r, acct, app, d, req.TrafficPercent, func(ctx context.Context) error {
 		var writeErr error
-		if req.ExpectedServingDeploymentID != nil {
+		if req.ExpectedReview != nil {
+			store, ok := s.store.(state.ReviewedTrafficStore)
+			if !ok {
+				return state.ErrReleaseReviewChanged
+			}
+			updated, writeErr = store.UpdateDeploymentTrafficReviewed(ctx, id, req.TrafficPercent, *req.ExpectedServingDeploymentID, *req.ExpectedReview)
+		} else if req.ExpectedServingDeploymentID != nil {
 			updated, writeErr = s.store.UpdateDeploymentTraffic(ctx, id, req.TrafficPercent, *req.ExpectedServingDeploymentID)
 		} else {
 			updated, writeErr = s.store.UpdateDeploymentTraffic(ctx, id, req.TrafficPercent)
@@ -2226,6 +2220,9 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if err != nil {
+		if writeReleaseReviewError(w, err) {
+			return
+		}
 		switch {
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no such deployment")
@@ -2236,7 +2233,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		case errors.Is(err, state.ErrDeploymentNotLive):
 			status := string(d.Status)
-			if current, readErr := s.store.DeploymentByID(r.Context(), id); readErr == nil {
+			if current, readErr := s.store.DeploymentByID(guardCtx, id); readErr == nil {
 				status = string(current.Status)
 			}
 			api.WriteProblem(w, api.ErrDeploymentNotLive(status))
@@ -2247,6 +2244,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			// for target=0 on a sole live row (legitimate Σ=0 —
 			// pinned by TestPg_UpdateDeploymentTraffic_SoleLiveRow).
 			api.WriteProblem(w, api.ErrTrafficPercentSumInvalid(0))
+		case trafficguard.PromotionProblem(err) != nil:
+			api.WriteProblem(w, trafficguard.PromotionProblem(err))
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
@@ -2261,7 +2260,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if s.audit != nil {
-		s.audit.Emit(r.Context(), "deployment.traffic_percent_changed", &acct.ID, map[string]any{
+		s.audit.Emit(guardCtx, "deployment.traffic_percent_changed", &acct.ID, map[string]any{
 			"app":             app.ID,
 			"deployment":      updated.ID,
 			"traffic_percent": req.TrafficPercent,
@@ -2279,13 +2278,13 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 	// additive. Failure is logged-and-continued — same contract as
 	// the audit emit above.
 	if s.notif != nil {
-		if err := s.notif.Notify(r.Context(), db.NotifyDeploymentChanged,
+		if err := s.notif.Notify(guardCtx, db.NotifyDeploymentChanged,
 			fmt.Sprintf(`{"kind":"traffic","app_id":"%s","deployment_id":"%s","traffic_percent":%d}`,
 				app.ID, updated.ID, req.TrafficPercent)); err != nil {
 			s.log.Warn("apid: notify deployment_changed (traffic) failed", "err", err)
 		}
 	}
-	writeJSON(w, http.StatusOK, s.deploymentResponse(r.Context(), updated, app))
+	writeJSON(w, http.StatusOK, s.deploymentResponse(guardCtx, updated, app))
 }
 
 // planMaxFor resolves the per-plan MaxMinInstances cap for the
@@ -2333,12 +2332,18 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 		return
 	}
 
-	target, problem := s.rollbackAppCore(r, acct, app, req)
+	trigger := state.RollbackTriggerManual
+	if req.AlertRuleID != nil && *req.AlertRuleID != "" {
+		trigger = state.RollbackTriggerAlert
+	}
+	target, operation, problem := s.rollbackAppCore(r, acct, app, req, trigger)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), target, app))
+	response := s.deploymentResponse(r.Context(), target, app)
+	response.RollbackOperation = operation
+	writeJSON(w, http.StatusAccepted, response)
 }
 
 // zeroTrafficRollbackCandidates lists, newest first, the app's live
@@ -2369,11 +2374,54 @@ func (s *server) zeroTrafficRollbackCandidates(ctx context.Context, appID string
 	return out
 }
 
+// trafficSplitEarlierRelease reports whether more than one deployment of a
+// scope serves a share of traffic, and the oldest of them as a retypeable
+// ref. A plain rollback then has no single previous release: the latest
+// superseded row is one nobody serves, so `rollback` re-activated a release
+// the customer had rolled away from while the split stayed in place (H10-10).
+func (s *server) trafficSplitEarlierRelease(ctx context.Context, appID string) (string, bool) {
+	deployments, err := s.store.ListDeploymentsForApp(ctx, appID, 50, 0)
+	if err != nil {
+		return "", false
+	}
+	serving := map[string][]state.Deployment{}
+	for _, d := range deployments {
+		if d.Status == state.DeployLive && d.TrafficPercent > 0 && d.TrafficPercent < 100 {
+			serving[d.Scope] = append(serving[d.Scope], d)
+		}
+	}
+	for _, rows := range serving {
+		if len(rows) < 2 {
+			continue
+		}
+		earliest := rows[0]
+		for _, d := range rows[1:] {
+			if d.CreatedAt.Before(earliest.CreatedAt) {
+				earliest = d
+			}
+		}
+		if earliest.Revision > 0 {
+			return fmt.Sprintf("v%d", earliest.Revision), true
+		}
+		return earliest.ID, true
+	}
+	return "", false
+}
+
+func rollbackDuringTrafficSplitProblem(appSlug, earlier string) *api.Problem {
+	return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
+		"Traffic is split between deployments",
+		fmt.Sprintf("more than one deployment serves traffic, so there is no single previous release to roll back to. Return all traffic to the earlier release: gregale traffic promote --app %s --deployment %s", appSlug, earlier)).
+		WithDocs("https://gregale.dev/docs/deploys#rollback")
+}
+
 // rollbackAppCore performs the shared rollback state transition for the REST
 // and dashboard surfaces. The caller owns authentication and app lookup;
 // this helper owns target selection, notifications, and audit records so the
-// two entry points cannot drift.
-func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.App, req api.RollbackRequest) (state.Deployment, *api.Problem) {
+// two entry points cannot drift. It also opens the ADR-1446 outcome ledger
+// row; the returned receipt is nil only when that write failed, and the
+// rollback itself still proceeds.
+func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.App, req api.RollbackRequest, trigger string) (state.Deployment, *api.RollbackOperation, *api.Problem) {
 	ctx := r.Context()
 	alertRuleID := uuid.Nil
 	if req.AlertRuleID != nil && *req.AlertRuleID != "" {
@@ -2394,91 +2442,98 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		// reference so the operator sees the string they typed.
 		resolved, problem := s.resolveDeploymentRef(ctx, app.ID, *req.TargetDeploymentID)
 		if problem != nil {
-			return state.Deployment{}, problem
+			return state.Deployment{}, nil, problem
 		}
 		req.TargetDeploymentID = &resolved
 		target, err = s.store.GetDeploymentByIDScopedToSuperseded(ctx, app.ID, *req.TargetDeploymentID)
 		if err != nil {
 			switch {
 			case errors.Is(err, state.ErrNoRollbackTarget):
-				return state.Deployment{}, api.ErrRollbackTargetNotFound(fmt.Sprintf("no rollback-eligible deployment with id %q belongs to app %q", *req.TargetDeploymentID, app.ID))
+				return state.Deployment{}, nil, api.ErrRollbackTargetNotFound(fmt.Sprintf("no rollback-eligible deployment with id %q belongs to app %q", *req.TargetDeploymentID, app.ID))
 			case errors.Is(err, state.ErrRollbackTargetAlreadyLive):
 				candidate, readErr := s.store.DeploymentByID(ctx, *req.TargetDeploymentID)
 				if readErr != nil {
-					return state.Deployment{}, customerCapacityProblem(s.log, "load rollback target state", "Deployment temporarily unavailable",
+					return state.Deployment{}, nil, customerCapacityProblem(s.log, "load rollback target state", "Deployment temporarily unavailable",
 						"Gregale could not load the rollback target right now.",
 						"Retry the request in a moment; if it continues, contact support.", readErr)
 				}
 				if candidate.Status == state.DeployLive {
-					return state.Deployment{}, api.ErrRollbackTargetAlreadyLive(fmt.Sprintf("deployment %q is already the current live deployment", *req.TargetDeploymentID))
+					return state.Deployment{}, nil, api.ErrRollbackTargetAlreadyLive(fmt.Sprintf("deployment %q is already the current live deployment", *req.TargetDeploymentID))
 				}
-				return state.Deployment{}, api.ErrRollbackTargetIneligible(fmt.Sprintf("deployment %q has status %q; only a superseded or zero-traffic live deployment can be rolled back", *req.TargetDeploymentID, candidate.Status))
+				return state.Deployment{}, nil, api.ErrRollbackTargetIneligible(fmt.Sprintf("deployment %q has status %q; only a superseded or zero-traffic live deployment can be rolled back", *req.TargetDeploymentID, candidate.Status))
 			default:
-				return state.Deployment{}, customerCapacityProblem(s.log, "load rollback target", "Deployment temporarily unavailable",
+				return state.Deployment{}, nil, customerCapacityProblem(s.log, "load rollback target", "Deployment temporarily unavailable",
 					"Gregale could not load the rollback target right now.",
 					"Retry the request in a moment; if it continues, contact support.", err)
 			}
 		}
 	} else {
+		if earlier, split := s.trafficSplitEarlierRelease(ctx, app.ID); split {
+			return state.Deployment{}, nil, rollbackDuringTrafficSplitProblem(app.Slug, earlier)
+		}
 		target, err = s.store.LatestSupersededDeployment(ctx, app.ID)
 		if err != nil {
-			return state.Deployment{}, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
+			return state.Deployment{}, nil, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
 		}
 	}
 	if policies, ok := s.store.(state.BindingReleasePolicyStore); ok {
 		policy, err := policies.GetBindingReleasePolicy(ctx, acct.ID, app.ID, target.Scope)
 		if err != nil {
-			return state.Deployment{}, api.ErrCapacity("could not read rollback release policy")
+			return state.Deployment{}, nil, api.ErrCapacity("could not read rollback release policy")
 		}
 		if policy.Mode == "enforce" {
-			return state.Deployment{}, api.NewProblem(http.StatusConflict, api.CodeBindingReleaseRequired, "Exact rollback required", "Use target_deployment_id and expected_current_deployment_id to start a checked historical rollback.")
+			return state.Deployment{}, nil, api.NewProblem(http.StatusConflict, api.CodeBindingReleaseRequired, "Exact rollback required", "Use target_deployment_id and expected_current_deployment_id to start a checked historical rollback.")
 		}
+	}
+	crossed, problem := s.rollbackReleaseGuard(ctx, app, target, req.AcknowledgeReleases)
+	if problem != nil {
+		return state.Deployment{}, nil, problem
 	}
 
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
-		return state.Deployment{}, problem
+		return state.Deployment{}, nil, problem
 	}
 	if problem := s.durable.ValidatorReleaseProblem(ctx, app, target); problem != nil {
-		return state.Deployment{}, problem
+		return state.Deployment{}, nil, problem
 	}
 	var current state.Deployment
 	current, err = s.store.LiveDeploymentForScope(ctx, app.ID, target.Scope)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
-		return state.Deployment{}, customerCapacityProblem(s.log, "load current deployment for rollback", "Deployment temporarily unavailable",
+		return state.Deployment{}, nil, customerCapacityProblem(s.log, "load current deployment for rollback", "Deployment temporarily unavailable",
 			"Gregale could not load the current deployment right now.",
 			"Retry the request in a moment; if it continues, contact support.", err)
 	}
 	if api.ApiContractDiffEnabled() && strings.EqualFold(strings.TrimSpace(target.Scope), "prod") {
 		check, gateErr := openapidiff.CheckDeploymentPromotion(ctx, s.store, app.ID, target.ID, "prod")
 		if gateErr != nil && !errors.Is(gateErr, openapidiff.ErrSnapshotBaselineMissing) {
-			return state.Deployment{}, api.ErrCapacity("could not evaluate API contract")
+			return state.Deployment{}, nil, api.ErrCapacity("could not evaluate API contract")
 		}
 		if check.Diff.Blocking() {
 			problem := contractGateProblem(check.Diff)
-			return state.Deployment{}, problem
+			return state.Deployment{}, nil, problem
 		}
 	}
 	priorTargetStatus := target.Status
 	target, err = s.store.PrepareDeploymentRollback(ctx, app.ID, target.ID)
 	if err != nil {
 		if errors.Is(err, state.ErrNoRollbackTarget) || errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
-			return state.Deployment{}, api.ErrRollbackTargetIneligible("rollback target changed state while the request was being validated; refresh deployments and retry")
+			return state.Deployment{}, nil, api.ErrRollbackTargetIneligible("rollback target changed state while the request was being validated; refresh deployments and retry")
 		}
-		return state.Deployment{}, api.ErrCapacity("could not prepare rollback target")
+		return state.Deployment{}, nil, api.ErrCapacity("could not prepare rollback target")
 	}
 	primePayload, marshalErr := json.Marshal(map[string]string{
 		"app_id": app.ID, "deployment_id": target.ID,
 	})
 	if marshalErr != nil {
 		_ = s.store.UpdateDeploymentStatus(ctx, target.ID, priorTargetStatus, "")
-		return state.Deployment{}, api.ErrCapacity("could not encode rollback readiness request")
+		return state.Deployment{}, nil, api.ErrCapacity("could not encode rollback readiness request")
 	}
 	if err := s.notif.Notify(ctx, db.NotifySnapshotPrime, string(primePayload)); err != nil {
 		// NotifySnapshotPrime is durable in production, so an error means no
 		// handoff committed. Restore eligibility while leaving the current live
 		// deployment untouched.
 		_ = s.store.UpdateDeploymentStatus(ctx, target.ID, priorTargetStatus, "")
-		return state.Deployment{}, api.ErrCapacity("could not queue rollback readiness check")
+		return state.Deployment{}, nil, api.ErrCapacity("could not queue rollback readiness check")
 	}
 	s.log.Info("app rollback readiness requested", "app", app.ID, "from", current.ID, "to", target.ID, "account", acct.ID, "mode", mode)
 	s.audit.Emit(ctx, "app.rollback_requested", &acct.ID, map[string]any{
@@ -2501,11 +2556,12 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		DeploymentID: depUUID, AccountID: acctUUID, Kind: state.DeployRolledBack,
 		Actor: "apid:rollback", At: time.Now().UTC(),
 		Data: json.RawMessage(safetext.JSONObject(struct {
-			From  string `json:"from"`
-			To    string `json:"to"`
-			Mode  string `json:"mode"`
-			Phase string `json:"phase"`
-		}{From: current.ID, To: target.ID, Mode: mode, Phase: "readiness_requested"})),
+			From            string   `json:"from"`
+			To              string   `json:"to"`
+			Mode            string   `json:"mode"`
+			Phase           string   `json:"phase"`
+			CrossedReleases []string `json:"crossed_releases,omitempty"`
+		}{From: current.ID, To: target.ID, Mode: mode, Phase: "readiness_requested", CrossedReleases: crossedReleaseIDs(crossed)})),
 	}
 	if alertRuleID != uuid.Nil {
 		auditEntry.AlertRuleID = &alertRuleID
@@ -2521,7 +2577,10 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		activity.DeploymentID = &targetID
 	}
 	s.recordAppActivity(ctx, r, acct, app, activity)
-	return target, nil
+	if trigger != state.RollbackTriggerManual {
+		s.freezeAfterAutomaticRollback(ctx, acct.ID, app, current.ID, automaticRollbackCause(trigger, current))
+	}
+	return target, s.plainRollbacks().Record(ctx, acct, app, target, current.ID, trigger), nil
 }
 
 func (s *server) verifyRollbackTargetArtifact(ctx context.Context, target state.Deployment) *api.Problem {
@@ -2607,10 +2666,14 @@ func (s *server) parkAppWithGuard(w http.ResponseWriter, r *http.Request, acct s
 			"Preview required", "fresh park is available only for preview apps"))
 		return
 	}
+	coldPreparation, err := s.beginScenarioColdPark(r.Context(), acct.ID, app.ID, fresh)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Cold-start preparation unavailable", "finish managed work and use a fresh preview park with one running instance per workload"))
+		return
+	}
 	st := state.AppEvictedCold
 	var (
 		claimed        bool
-		err            error
 		parkTransition state.AppParkTransition
 		durablePark    state.AppParkTransitionStore
 	)
@@ -2656,12 +2719,21 @@ func (s *server) parkAppWithGuard(w http.ResponseWriter, r *http.Request, acct s
 	}
 	if fresh {
 		if _, err := state.InvalidateAppSnapshots(r.Context(), s.store, app.ID); err != nil {
+			// The client sees only "capacity_unavailable"; without the cause a
+			// failed cold scenario run cannot be traced (hunt #10).
+			s.log.ErrorContext(r.Context(), "invalidate preview snapshots", "app", app.ID, "err", err)
 			api.WriteProblem(w, api.ErrCapacity("could not invalidate preview snapshots"))
 			return
 		}
 		s.audit.Emit(r.Context(), "preview.test_fresh_parked", &acct.ID, map[string]any{
 			"app_id": app.ID, "slug": app.Slug,
 		})
+	}
+	if coldPreparation {
+		if err := s.completeScenarioColdPark(r.Context(), acct.ID, app.ID); err != nil {
+			api.WriteProblem(w, api.ErrCapacity("cold-start preparation receipt is incomplete"))
+			return
+		}
 	}
 	if durablePark != nil {
 		if _, err := durablePark.CompleteDrainedAppParkTransition(r.Context(), parkTransition.ID); err != nil {
@@ -3267,6 +3339,9 @@ func (s *server) wildcardTenantSurfaceOverlap(ctx context.Context, accountID, do
 
 func (s *server) listDomains(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	domains, err := s.store.ListDomainsForAccount(r.Context(), acct.ID)
+	if err == nil {
+		domains, err = appaccess.VisibleResources(r, s.store, actorAccount(r, acct), domains, func(d state.CustomDomain) string { return d.AppID })
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list domains"))
 		return
@@ -3854,8 +3929,8 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, problem)
 		return
 	}
-	if !validCron(req.Schedule) {
-		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression (m h dom mon dow)"))
+	if problem := cronScheduleProblem(req.Schedule); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	timezone, err := normalizeCronTimezone(req.Timezone)
@@ -4004,6 +4079,11 @@ func (s *server) listCrons(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 		apps = all
 	}
+	apps, err := appaccess.VisibleApps(r, s.store, actorAccount(r, acct), apps)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not authorize cron inventory"))
+		return
+	}
 	out := make([]api.CronResponse, 0)
 	for _, app := range apps {
 		cs, err := s.store.ListCronsForApp(r.Context(), app.ID)
@@ -4040,9 +4120,11 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, problem)
 		return
 	}
-	if req.Schedule != nil && !validCron(*req.Schedule) {
-		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression"))
-		return
+	if req.Schedule != nil {
+		if problem := cronScheduleProblem(*req.Schedule); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
 	var timezone string
 	if req.Timezone != nil {
@@ -4163,7 +4245,7 @@ func (s *server) deleteCron(w http.ResponseWriter, r *http.Request, acct state.A
 		return
 	}
 	if err := s.store.DeleteCron(r.Context(), id, c.AppID); err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not delete cron"))
+		api.WriteProblem(w, customerCapacityProblem(s.log, "delete cron", "Briefly at capacity", "could not delete cron", "Retry the delete; each attempt keeps the history it has already detached.", err))
 		return
 	}
 	_ = s.notif.Notify(r.Context(), db.NotifyCronChanged, `{"kind":"deleted","cron":"`+id+`"}`)
@@ -4840,7 +4922,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 	// so the provider can change the product without creating a duplicate
 	// subscription; a customer without one gets a hosted checkout when the
 	// active provider supports it.
-	if acct.Plan.RequiresBillingUpgradeTo(plan) {
+	if acct.Plan.RequiresBillingUpgradeTo(plan) || (acct.ResourceOrgID != "" && plan != api.PlanFree && acct.StripeSubscriptionItem == "") {
 		// CodeQL go/log-injection (CWE-117): plan was enum-validated
 		// against the 4 Plan constants (free|hobby|pro|scale) by
 		// plan.Valid() in this handler, but CodeQL's taint engine
@@ -4947,7 +5029,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 				"the provider could not schedule this plan change; the current plan remains active"))
 			return
 		}
-		updated, err := s.store.AccountByID(r.Context(), acct.ID)
+		updated, err := state.BillingResourceAccount(r.Context(), s.store, acct.ID)
 		if err != nil {
 			updated = acct
 		}
@@ -4958,14 +5040,14 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 		if !effectiveAt.IsZero() {
 			response.EffectiveAt = &effectiveAt
 		}
-		writeJSON(w, http.StatusAccepted, response)
+		writeJSON(w, http.StatusAccepted, orgbilling.PlanResponse(updated, response))
 		return
 	}
 	if err := s.setAccountPlan(r.Context(), acct, plan); err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update plan"))
 		return
 	}
-	updated, err := s.store.AccountByID(r.Context(), acct.ID)
+	updated, err := state.BillingResourceAccount(r.Context(), s.store, acct.ID)
 	if err != nil {
 		updated = acct
 		updated.Plan = plan
@@ -4985,7 +5067,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 		"from": string(acct.Plan),
 		"to":   string(plan),
 	})
-	writeJSON(w, http.StatusOK, s.accountResponse(r.Context(), updated, r))
+	writeJSON(w, http.StatusOK, orgbilling.PlanResponse(updated, s.accountResponse(r.Context(), updated, r)))
 }
 
 // --- spend cap raise (issue #561) --------------------------------------------
@@ -5155,7 +5237,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		// events remain ACKed so an unsupported provider event cannot create
 		// an endless retry loop.
 		if mapStripeTypeToEventType(ev.Type) != billing.EventUnknown {
-			s.log.Warn("stripe_webhook.unknown_customer", "customer_id", ev.Data.Object.Customer, "event_type", ev.Type)
+			s.log.Warn("stripe_webhook.unknown_customer", "customer_id", logsanitize.Field(ev.Data.Object.Customer), "event_type", logsanitize.Field(ev.Type))
 			api.WriteProblem(w, api.ErrCapacity("billing webhook customer binding unavailable"))
 			return
 		}
@@ -5164,7 +5246,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	normalized := normalizeStripeWebhook(ev, body)
 	if err := s.persistBillingInvoice(r.Context(), string(webhookdedupe.ProviderStripe), acct, normalized.PlanID, normalized.Invoice); err != nil {
-		s.log.Error("stripe webhook invoice persistence failed", "event_id", logsanitize.Field(ev.ID), "err", err)
+		s.log.Error("stripe webhook invoice persistence failed", "event_id", logsanitize.Field(ev.ID), "err", logsanitize.Field(err.Error()))
 		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
 		return
 	}
@@ -5179,13 +5261,22 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	// row carries the resolved account id as the subject (matching
 	// the refund.processed precedent at spec §5.7 line 336).
 	//
+	if s.handleSubscriptionEndedOutbox(w, r, "stripe", normalized, acct) {
+		return
+	}
+	if s.handleAccountRestoredOutbox(w, r, "stripe", normalized, acct) {
+		return
+	}
+	if s.handlePaymentFailedOutbox(w, r, "stripe", normalized, acct) {
+		return
+	}
 	if ev.ID == "" {
 		api.WriteProblem(w, api.ErrValidation("stripe webhook event id is required"))
 		return
 	}
 	claimed, err := s.claimWebhookDelivery(r.Context(), webhookdedupe.ProviderStripe, ev.ID)
 	if err != nil {
-		s.log.Error("stripe replay claim failed", "event_id", logsanitize.Field(ev.ID), "err", err)
+		s.log.Error("stripe replay claim failed", "event_id", logsanitize.Field(ev.ID), "err", logsanitize.Field(err.Error()))
 		api.WriteProblem(w, api.ErrCapacity("billing webhook replay protection unavailable"))
 		return
 	}
@@ -5204,7 +5295,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	// VerifyWebhook return value, so both paths converge on
 	// handleBillingEvent.
 	if err := s.handleBillingEvent(r.Context(), normalized, acct); err != nil {
-		s.log.Error("stripe webhook state application failed", "event_id", logsanitize.Field(ev.ID), "err", err)
+		s.log.Error("stripe webhook state application failed", "event_id", logsanitize.Field(ev.ID), "err", logsanitize.Field(err.Error()))
 		s.releaseWebhookDelivery(r.Context(), webhookdedupe.ProviderStripe, ev.ID)
 		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
 		return
@@ -5396,6 +5487,15 @@ func (s *server) paddleWebhook(w http.ResponseWriter, r *http.Request) {
 	// the check — pre-#294 behaviour. Claim failures are retryable because
 	// acknowledging without replay protection could duplicate money-related
 	// audit/state side effects.
+	if s.handleSubscriptionEndedOutbox(w, r, "paddle", ev, acct) {
+		return
+	}
+	if s.handleAccountRestoredOutbox(w, r, "paddle", ev, acct) {
+		return
+	}
+	if s.handlePaymentFailedOutbox(w, r, "paddle", ev, acct) {
+		return
+	}
 	if ev.EventID != "" {
 		now := time.Now().UTC()
 		claimed, err := s.store.ClaimWebhookDelivery(
@@ -5454,7 +5554,7 @@ func (s *server) persistBillingInvoice(ctx context.Context, provider string, acc
 	}
 	currency := data.Currency
 	if currency == "" {
-		currency = "eur"
+		currency = api.BillingCurrencyLower
 	}
 	plan := billingPlanFromProviderID(providerPlanID)
 	if !plan.Valid() {
@@ -5613,61 +5713,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 			}
 		}
 	case billing.EventPaymentSucceeded:
-		if err := s.applyInvoiceCredits(ctx, providerName(s.billingProvider), acct, ev.Invoice); err != nil {
-			return fmt.Errorf("apply invoice credits: %w", err)
-		}
-		if ev.SubscriptionID != "" {
-			if err := s.stampActiveBillingSubscription(ctx, acct, ev.SubscriptionID); err != nil {
-				return fmt.Errorf("store payment subscription id: %w", err)
-			}
-		}
-		if plan := billingPlanFromProviderID(ev.PlanID); plan != "" {
-			if err := s.setAccountPlan(ctx, acct, plan); err != nil {
-				return fmt.Errorf("store payment plan: %w", err)
-			}
-		}
-		// Restore the account if it was past_due. meterd will refresh
-		// quota state on its next tick. We also clear the dedupe stamp
-		// on last_quota_warning_at so the next quota tick (if the
-		// customer is still over quota from a prior cycle) emits a
-		// fresh warning — otherwise the stamp from the previous day
-		// would suppress it (spec §4.7).
-		//
-		// A dunning suspension (suspended with past_due_at still set) is
-		// lifted too: the suspension email tells the customer that paying
-		// — `gregale billing retry` — restores service, but only past_due
-		// was restored, so a customer who paid stayed suspended and the
-		// dunning timer went on to schedule the account for deletion.
-		// Operator suspensions carry no past_due_at and stay in place.
-		// A dunning deletion (deleted_pending with past_due_at) is
-		// undone by paying within its grace window as well.
-		if acct.Status == state.AccountPastDue ||
-			(acct.Status == state.AccountSuspended && acct.PastDueAt != nil) ||
-			(acct.Status == state.AccountDeletedPending && acct.PastDueAt != nil) {
-			if err := s.store.UpdateAccountStatus(ctx, acct.ID, state.AccountActive); err != nil {
-				s.log.Warn("apid: payment_succeeded restore",
-					"account", acct.ID, "err", err)
-				return fmt.Errorf("restore account: %w", err)
-			} else {
-				s.notifyAccountLifecycle(ctx, acct.ID, "account_reactivated")
-				// Status just flipped back to active. Send the
-				// recovery email (spec §171 "All transitions emailed").
-				// payment_succeeded is naturally idempotent — the
-				// status guard above ensures we only fire on a real
-				// past_due → active transition, never on a no-op
-				// redelivery.
-				subject, body := mail.AccountRestoredBody(acct.Email, time.Now().UTC())
-				s.sendBillingTransitionMail(ctx, acct, subject, body, asyncBillingMail, "payment_succeeded")
-			}
-		}
-		// Clear the dedupe stamp on every payment_succeeded, not just
-		// past_due → active flips: a fresh signup's first provider
-		// confirmation shouldn't wait until the next UTC midnight to
-		// hear about a quota they crossed during the trial, and the
-		// cost of an extra pg_notify on a no-op event is nil.
-		if err := s.store.ClearQuotaWarning(ctx, acct.ID); err != nil {
-			return fmt.Errorf("clear quota warning: %w", err)
-		}
+		return s.handleSuccessfulPayment(ctx, ev, acct, asyncBillingMail, providerName(s.billingProvider), s.accountRestoredRequested())
 	case billing.EventSubscriptionUpdated:
 		if ev.SubscriptionID != "" {
 			if err := s.stampActiveBillingSubscription(ctx, acct, ev.SubscriptionID); err != nil {
@@ -5836,6 +5882,7 @@ func (s *server) deploymentResponse(parent context.Context, d state.Deployment, 
 		len(d.OverrideReadinessProbe) > 0 ||
 		len(d.OverrideMainDependsOn) > 0
 	resp := api.DeploymentResponse{
+		StagedReview:      d.StagedReview,
 		PromotionHold:     promotionHold,
 		WorkerDrain:       workerDrain,
 		StageState:        append(json.RawMessage(nil), d.StageState...),
@@ -5907,6 +5954,7 @@ func (s *server) deploymentResponse(parent context.Context, d state.Deployment, 
 		RolloutCompletedAt:   d.RolloutCompletedAt,
 		RolloutAbortedAt:     d.RolloutAbortedAt,
 		RolloutAbortedReason: d.RolloutAbortedReason,
+		RolloutDecision:      release.DecodeDecision(d.RolloutDecision),
 		APIHostingReceipt:    d.APIHostingReceipt,
 	}
 	if d.ServiceRolloutHandoff.Action != "" {
@@ -6289,6 +6337,7 @@ func cronResponse(c state.Cron) api.CronResponse {
 // account owns, in created_at DESC order. Cursor pagination via
 // ?before=<RFC3339Nano>; limit defaults to 50, capped at 200.
 func (s *server) listDeployments(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	requestCtx := r.Context()
 	limit := 50
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -6313,7 +6362,26 @@ func (s *server) listDeployments(w http.ResponseWriter, r *http.Request, acct st
 			return
 		}
 	}
-	rows, err := s.store.ListDeploymentsForAccount(r.Context(), acct.ID, before, limit)
+	cursor := ""
+	if !before.IsZero() {
+		cursor = before.UTC().Format(time.RFC3339Nano)
+	}
+	rows, nextBefore, err := appaccess.VisiblePage(requestCtx, cursor, limit,
+		func(cursor string) ([]state.Deployment, error) {
+			var anchor time.Time
+			if cursor != "" {
+				parsed, err := time.Parse(time.RFC3339Nano, cursor)
+				if err != nil {
+					return nil, err
+				}
+				anchor = parsed
+			}
+			return s.store.ListDeploymentsForAccount(requestCtx, acct.ID, anchor, limit)
+		},
+		func(rows []state.Deployment) ([]state.Deployment, error) {
+			return appaccess.VisibleResources(r, s.store, actorAccount(r, acct), rows, func(row state.Deployment) string { return row.AppID })
+		},
+		func(row state.Deployment) string { return row.CreatedAt.UTC().Format(time.RFC3339Nano) })
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list deployments"))
 		return
@@ -6324,22 +6392,24 @@ func (s *server) listDeployments(w http.ResponseWriter, r *http.Request, acct st
 	// per-plan deployed cap (pkg/api/limits.go) so the in-memory map
 	// is small. AppByID failures fall through to a zero-value App
 	// (BuildPlan.Class is empty), which the wire renders as missing.
-	apps, _ := s.store.ListApps(r.Context(), acct.ID)
+	apps, err := s.store.ListApps(requestCtx, acct.ID)
+	if err == nil {
+		apps, err = appaccess.VisibleApps(r, s.store, actorAccount(r, acct), apps)
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not authorize deployment inventory"))
+		return
+	}
 	appByID := make(map[string]state.App, len(apps))
 	for _, a := range apps {
 		appByID[a.ID] = a
 	}
-	resp := api.DeploymentListResponse{Items: make([]api.DeploymentResponse, 0, len(rows))}
+	resp := api.DeploymentListResponse{NextBefore: nextBefore, Items: make([]api.DeploymentResponse, 0, len(rows))}
 	for _, d := range rows {
-		resp.Items = append(resp.Items, s.deploymentResponse(r.Context(), d, appByID[d.AppID]))
-	}
-	if len(rows) == limit && limit > 0 && len(resp.Items) > 0 {
-		// NextBefore = CreatedAt of the LAST row (the oldest on this
-		// page). Pass it back as `before` to fetch the next page.
-		last := resp.Items[len(resp.Items)-1].CreatedAt
-		if t, err := time.Parse(time.RFC3339, last); err == nil {
-			resp.NextBefore = t.UTC().Format(time.RFC3339Nano)
+		if _, visible := appByID[d.AppID]; !visible {
+			continue
 		}
+		resp.Items = append(resp.Items, s.deploymentResponse(requestCtx, d, appByID[d.AppID]))
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -6432,6 +6502,7 @@ func formatBuildCursorNano(b state.Build, id string) string {
 // the builds family does not — see ADR-089 §6). The route mount
 // in cmd/apid/server.go calls this out.
 func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	requestCtx := r.Context()
 	limit := 50
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -6441,8 +6512,6 @@ func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.A
 			limit = n
 		}
 	}
-	var before time.Time
-	var beforeID string
 	if v := r.URL.Query().Get("before"); v != "" {
 		// Cursor is "<started_at_rfc3339nano>|<id_hex>" — opaque
 		// token, pipe-separated so URL encoding stays simple.
@@ -6453,13 +6522,12 @@ func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.A
 		// wall-clock second were silently dropped past page 1.
 		// The id tiebreaker solves both — see ADR-091 §3 + the
 		// code-review follow-up.
-		t, id, ok := parseBuildCursor(v)
+		_, _, ok := parseBuildCursor(v)
 		if !ok {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Bad cursor", "expected '<rfc3339nano>|<id_hex>' (opaque)"))
 			return
 		}
-		before, beforeID = t, id
 	}
 	statusFilter := r.URL.Query().Get("status")
 	if statusFilter != "" {
@@ -6482,48 +6550,30 @@ func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.A
 		}
 		appIDFilter = app.ID
 	}
-	rows, err := s.store.ListBuildsForAccountPaged(
-		r.Context(), acct.ID, statusFilter, appIDFilter, before, beforeID, limit)
+	rows, nextBefore, err := appaccess.VisiblePage(requestCtx, r.URL.Query().Get("before"), limit,
+		func(cursor string) ([]state.Build, error) {
+			var anchor time.Time
+			var anchorID string
+			if cursor != "" {
+				var ok bool
+				anchor, anchorID, ok = parseBuildCursor(cursor)
+				if !ok {
+					return nil, state.ErrInvalidArgument
+				}
+			}
+			return s.store.ListBuildsForAccountPaged(requestCtx, acct.ID, statusFilter, appIDFilter, anchor, anchorID, limit)
+		},
+		func(rows []state.Build) ([]state.Build, error) {
+			return appaccess.VisibleBuilds(r, s.store, actorAccount(r, acct), rows)
+		},
+		func(row state.Build) string { return formatBuildCursorNano(row, row.ID) })
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list builds"))
 		return
 	}
-	resp := api.BuildListResponse{Items: make([]api.BuildResponse, 0, len(rows))}
+	resp := api.BuildListResponse{Items: make([]api.BuildResponse, 0, len(rows)), NextBefore: nextBefore}
 	for _, b := range rows {
 		resp.Items = append(resp.Items, s.buildResponse(b))
-	}
-	if len(rows) == limit && limit > 0 && len(resp.Items) > 0 {
-		// NextBefore = opaque cursor pointing at the LAST row
-		// on this page. The cursor anchor uses the SOURCE
-		// `state.Build.StartedAt` (NOT `BuildResponse.StartedAt`)
-		// so we preserve DB precision. BuildResponse emits
-		// RFC3339 (whole-second) for backward-compat with the
-		// single-id endpoint at GET /v1/builds/{id}; the
-		// cursor's started_at segment, by contrast, MUST be
-		// RFC3339Nano so the keyset sub-second comparison
-		// `(b.started_at = $4 AND b.id < $5)` is reachable on
-		// rows whose sub-second started_at falls between the
-		// cursor's nanosecond and the next whole second (this
-		// was code-review Finding 2 — see ADR-091 §3).
-		//
-		// The cursor segment is opaque to clients per the
-		// `before` query-parameter docstring; only the SDK
-		// `GetBuilds` + CLI `gregale build list --before`
-		// thread it verbatim. No backward-compat impact on
-		// the wire response (BuildResponse.StartedAt is
-		// unchanged at whole-second RFC3339).
-		//
-		// Caveat (intentional, documented in ADR-091): when
-		// the page exactly fills to the last row in the
-		// dataset, the next-page request returns 0 rows but the
-		// client has already received a cursor. Clients should
-		// treat an empty items[] as the terminal signal and
-		// NOT continue to next_page with the cursor. The fix
-		// here matches ListDeploymentsForAccount's behavior
-		// (no peek-trim); introducing one would require an
-		// extra DB roundtrip per page.
-		last := rows[len(rows)-1]
-		resp.NextBefore = formatBuildCursorNano(last, last.ID)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -6592,7 +6642,7 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 	if overage < 0 {
 		overage = 0
 	}
-	// Spec §1 / financial model: €0.01/GB-h overage → 1 cent per
+	// Spec §1 / financial model: $0.01/GB-h overage → 1 cent per
 	// GB-h. Plan's overage rate can vary in the model; constants here
 	// are the production default. Storing cents as int64 keeps
 	// floats away from money (spec §Conventions).
@@ -6759,12 +6809,12 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 			return
 		}
 		usage := state.SummarizeObjectUsage(snapshot, s.objectStorage.Accounting, now)
-		charges, err := s.objectStorage.ChargeForUsage(usage)
+		charges, err := s.objectStorage.ChargeForUsage(usage, api.MustLimitsFor(acct.Plan).ObjectStorage.Allowance())
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not calculate object storage usage"))
 			return
 		}
-		objectStorage := s.object.ObjectStorageUsageResponse(usage, charges)
+		objectStorage := s.object.ObjectStorageUsageResponse(usage, charges, acct.Plan)
 		out.ObjectStorage = &objectStorage
 	}
 
@@ -7075,10 +7125,20 @@ func keyPrefixFromHash(hash []byte) string {
 	return api.APIKeyPrefix + hex.EncodeToString(hash)[:12]
 }
 
-// validCron uses the exact parser schedd uses, keeping direct and project
-// cron admission on the same five-field grammar.
-func validCron(s string) bool {
-	return cronexpr.Validate(s) == nil
+// cronScheduleProblem uses the exact parser schedd uses, keeping direct and
+// project cron admission on the same five-field grammar, and says why a
+// schedule is invalid with the parser's reason ("end of range (61) above
+// maximum (59): 61", "never fires"). The handlers used to answer "expected
+// 5-field cron expression" for every bad schedule, which read wrong for
+// five-field input (H10-68).
+func cronScheduleProblem(s string) *api.Problem {
+	err := cronexpr.Validate(s)
+	if err == nil {
+		return nil
+	}
+	reason := strings.TrimPrefix(err.Error(), cronexpr.ErrInvalidSchedule.Error())
+	reason = strings.ReplaceAll(strings.TrimLeft(reason, ":\n "), "\n", "; ")
+	return api.ErrCronInvalid("expected a 5-field cron expression (m h dom mon dow): " + reason)
 }
 
 // streamDeploymentLogs serves the build log for a deployment as a
@@ -7228,8 +7288,12 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 			// poll sees it. The terminal `DeployLive` flip is
 			// covered by imaged's `MarkDeploymentLive` (handler.go:
 			// 2240) which appends `snapshot_prepare → readiness`.
+			// Every terminal status ends the stream. Cancelled and
+			// superseded rows used to keep it open until the 10-min
+			// backstop, so a waiting `gregale deploy` sat on a
+			// cancelled build for minutes (H10-48).
 			if d2, err := s.store.DeploymentByID(ctx, id); err == nil {
-				if d2.Status == state.DeployLive || d2.Status == state.DeployFailed {
+				if d2.Status == state.DeployLive || d2.Status.IsTerminal() {
 					emitStageDiff(w, flusher, d2.StageState, announced, &lastStageStateRaw)
 					_, _ = fmt.Fprintf(w, "event: status\ndata: {\"status\":%q}\n\n", d2.Status)
 					if flusher != nil {

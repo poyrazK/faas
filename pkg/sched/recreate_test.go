@@ -183,3 +183,36 @@ func TestRecreateInstance_StateOutOfScope(t *testing.T) {
 		t.Errorf("State changed: parked → %q", post.State)
 	}
 }
+
+// TestRecreateInstance_WorkerReconcilesPool pins production-us hunt #9,
+// H9-171: a worker the recovery arbiter parked stayed at zero replicas for
+// 42 h, because a worker pool without a queue scaling target has no periodic
+// reconcile.
+func TestRecreateInstance_WorkerReconcilesPool(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 128, 4)
+	configureExecutionMode(t, store, app, dep, api.ExecutionModeWorker, state.DeployLive)
+	lost, err := store.CreateInstanceWithMode(context.Background(), app.ID, dep.ID,
+		string(state.StateRunning), app.RAMMB, "node-a", "worker-recovery", string(state.InstanceModeWorker))
+	if err != nil {
+		t.Fatalf("CreateInstanceWithMode: %v", err)
+	}
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	if err := e.RecreateInstance(context.Background(), lost.ID); err != nil {
+		t.Fatalf("RecreateInstance: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		rows, err := store.ListInstancesForApp(context.Background(), app.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range rows {
+			if row.ID != lost.ID && row.Mode == string(state.InstanceModeWorker) && state.State(row.State).CountsForConcurrency() {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("no replacement worker was admitted after the recovery park")
+}

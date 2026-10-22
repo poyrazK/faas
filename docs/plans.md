@@ -2,16 +2,16 @@
 
 <!-- GENERATED — do not edit by hand; regenerate with `make pricing-md`. -->
 
-Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly and shown in euros. Usage beyond the included GB-RAM-hours is billed at €0.01 per GB-RAM-hour on paid plans.
+Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly and shown in US dollars. Usage beyond the included GB-RAM-hours is billed at $0.01 per GB-RAM-hour on paid plans.
 
 ## At a glance
 
-| Plan | Monthly | Deployed apps | PR preview apps | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App layer | Idle timeout |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **Free** | €0 | 1 | 1 | 1 | 1 | 128 MB | 5 | 256 MB | 1m |
-| **Hobby** | €9 | 5 | 2 | 2 | 2 | 256 MB | 50 | 512 MB | 1m |
-| **Pro** | €29 | 25 | 5 | 5 | 5 | 512 MB | 250 | 1024 MB | 5m |
-| **Scale** | €99 | 100 | 20 | 10 | 20 | 1024 MB | 1500 | 2048 MB | 10m |
+| Plan | Monthly | Deployed apps | PR preview apps | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App layer | Idle timeout | Max request timeout |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **Free** | $0 | 1 | 1 | 1 | 1 | 256 MB | 20 | 256 MB | 1m | 30s |
+| **Hobby** | $10 | 5 | 2 | 2 | 2 | 512 MB | 200 | 512 MB | 1m | 1m |
+| **Pro** | $30 | 25 | 5 | 5 | 5 | 1024 MB | 1000 | 1024 MB | 5m | 5m |
+| **Scale** | $99 | 100 | 20 | 10 | 20 | 2048 MB | 3000 | 2048 MB | 10m | 15m |
 
 ## What each limit means
 
@@ -21,6 +21,7 @@ Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go)
 - **RAM / app** and **app layer** are hard build/runtime ceilings. Smaller resource profiles remain available where the plan permits them.
 - **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate.
 - **Idle timeout** is when an inactive app is parked. A later request wakes it from its snapshot; see [scale-to-zero](cold-wake.md). Functions default to 30s on every plan; any app or function can set its own value from 10s up to twice the plan default.
+- **Max request timeout** is the longest `request_timeout_s` an app or function may set (`gregale app APP --request-timeout SECONDS`). Without one, a function request must start its response within 3s and an app request within 30s; a function's whole invocation, a streamed response included, may then run for the longer of its timeout and 30s.
 
 ## Developer environments
 
@@ -32,6 +33,19 @@ Each [`gregale dev`](gregale-dev.md) environment keeps a lease that every sync r
 | **Hobby** | 2 | 72h |
 | **Pro** | 5 | 168h |
 | **Scale** | 10 | 336h |
+
+## Managed realtime
+
+Realtime is included on every paid plan at no extra charge: Gregale bills compute, and channels, consumer groups and delivery are software. Limits apply only where realtime holds real capacity. Retained history is bounded per endpoint, and functions triggered by channel messages bill as normal compute.
+
+| Plan | Endpoints per app | Endpoints per account | Concurrent connections per account |
+|---|---:|---:|---:|
+| **Free** | — | — | — |
+| **Hobby** | 2 | 10 | 200 |
+| **Pro** | 10 | 50 | 1,000 |
+| **Scale** | 25 | 250 | 5,000 |
+
+The connection limit counts open WebSocket and SSE connections across all of an account's endpoints. One account may also hold at most 50% of a single realtime node's connections; see [realtime fair use](realtime.md#fair-use-limits).
 
 ## Choose a plan
 

@@ -13,6 +13,10 @@ from ..models.create_environment_git_source_request_mode import (
     CreateEnvironmentGitSourceRequestMode,
     check_create_environment_git_source_request_mode,
 )
+from ..models.create_environment_git_source_request_provider import (
+    CreateEnvironmentGitSourceRequestProvider,
+    check_create_environment_git_source_request_provider,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="CreateEnvironmentGitSourceRequest")
@@ -20,17 +24,30 @@ T = TypeVar("T", bound="CreateEnvironmentGitSourceRequest")
 
 @_attrs_define
 class CreateEnvironmentGitSourceRequest:
-    """Select a Git definition in the project repository; repository identities are verified by the server."""
+    """Select a Git definition. GitHub uses the project's bound repository; GitLab.com requires an account OAuth
+    connection, a repository path and an explicit ref. Repository identity is verified by the server. Both providers
+    support manual or verified protected-branch approval. Production enforcement remains unavailable in this preview.
+
+    """
 
     manifest_path: str
+    provider: CreateEnvironmentGitSourceRequestProvider | Unset = "github"
+    repository: str | Unset = UNSET
+    """Canonical GitLab.com group/project path, including subgroups when present."""
     ref: str | Unset = UNSET
-    """Git ref selecting candidates; defaults to the project production branch."""
+    """Git ref selecting candidates; GitHub defaults to the project production branch."""
     mode: CreateEnvironmentGitSourceRequestMode | Unset = "report"
     approval_policy: CreateEnvironmentGitSourceRequestApprovalPolicy | Unset = "manual"
     prune: bool | Unset = False
 
     def to_dict(self) -> dict[str, Any]:
         manifest_path = self.manifest_path
+
+        provider: str | Unset = UNSET
+        if not isinstance(self.provider, Unset):
+            provider = self.provider
+
+        repository = self.repository
 
         ref = self.ref
 
@@ -51,6 +68,10 @@ class CreateEnvironmentGitSourceRequest:
                 "manifest_path": manifest_path,
             }
         )
+        if provider is not UNSET:
+            field_dict["provider"] = provider
+        if repository is not UNSET:
+            field_dict["repository"] = repository
         if ref is not UNSET:
             field_dict["ref"] = ref
         if mode is not UNSET:
@@ -66,6 +87,15 @@ class CreateEnvironmentGitSourceRequest:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         manifest_path = d.pop("manifest_path")
+
+        _provider = d.pop("provider", UNSET)
+        provider: CreateEnvironmentGitSourceRequestProvider | Unset
+        if isinstance(_provider, Unset):
+            provider = UNSET
+        else:
+            provider = check_create_environment_git_source_request_provider(_provider)
+
+        repository = d.pop("repository", UNSET)
 
         ref = d.pop("ref", UNSET)
 
@@ -87,6 +117,8 @@ class CreateEnvironmentGitSourceRequest:
 
         create_environment_git_source_request = cls(
             manifest_path=manifest_path,
+            provider=provider,
+            repository=repository,
             ref=ref,
             mode=mode,
             approval_policy=approval_policy,

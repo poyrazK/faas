@@ -10,6 +10,7 @@ export interface CommitEvent {
   id?: string;
   type: string;
   data: unknown;
+  schema_version?: string;
   routing?: CommitEventRouting;
 }
 
@@ -32,6 +33,16 @@ export async function insertCommitEvent(
   }
   const payload = JSON.stringify(event.data);
   if (payload === undefined) throw new TypeError("Commit data must be JSON serializable");
+  if (event.schema_version !== undefined) {
+    if (typeof event.schema_version !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(event.schema_version) || event.routing !== undefined) {
+      throw new TypeError("Commit schema version requires an event publication without operation routing");
+    }
+    await transaction.query(
+      "INSERT INTO public.gregale_outbox(event_id,event_type,payload,schema_version) VALUES ($1::uuid,$2,$3::jsonb,$4)",
+      [id, event.type, payload, event.schema_version],
+    );
+    return id;
+  }
   if (event.routing !== undefined) {
     const routing = event.routing;
     if (routing.version !== 2 || !["string", "number", "boolean"].includes(typeof routing.key)

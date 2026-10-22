@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -6,11 +6,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreStatusHistoryRollupAndIncidentWindow(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	since := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	dayOne := since.Add(2 * time.Hour)
 	dayTwo := since.AddDate(0, 0, 1).Add(3 * time.Hour)
@@ -18,11 +19,12 @@ func TestMemStoreStatusHistoryRollupAndIncidentWindow(t *testing.T) {
 	recordCompleteStatusInterval(t, store, dayOne.Add(5*time.Minute), publicstatus.ComponentNetworking, publicstatus.StatePartialOutage)
 	recordCompleteStatusInterval(t, store, dayTwo, publicstatus.ComponentDeployments, publicstatus.StateMaintenance)
 	// An incomplete observation is coverage loss, not downtime.
-	if err := store.RecordStatusBucket(ctx, StatusBucket{Component: publicstatus.ComponentAPIConsole, BucketAt: dayTwo.Add(5 * time.Minute), State: publicstatus.StateMajorOutage, HasTelemetry: true}); err != nil {
+	if err := store.RecordStatusBucket(ctx, state.StatusBucket{Component: publicstatus.ComponentAPIConsole, BucketAt: dayTwo.Add(5 * time.Minute), State: publicstatus.StateMajorOutage, HasTelemetry: true}); err != nil {
 		t.Fatal(err)
 	}
+	(*
 	// Customer outcomes remain in their own ledger and cannot change uptime.
-	store.invocations = map[string]Invocation{"customer-failure": {CreatedAt: dayTwo, State: InvocationFailed}}
+	store.Invocations()) = map[string]state.Invocation{"customer-failure": {CreatedAt: dayTwo, State: state.InvocationFailed}}
 
 	buckets, err := store.StatusUptimeBuckets(ctx, since)
 	if err != nil {
@@ -41,7 +43,7 @@ func TestMemStoreStatusHistoryRollupAndIncidentWindow(t *testing.T) {
 	}
 
 	resolvedAt := since.Add(time.Hour)
-	store.statusIncidents = []StatusIncident{
+	(*store.StatusIncidents()) = []state.StatusIncident{
 		{ID: 1, Message: "old resolved", PostedAt: since.Add(-time.Hour), ResolvedAt: &resolvedAt},
 		{ID: 2, Message: "old open", PostedAt: since.Add(-time.Hour)},
 		{ID: 3, Message: "recent resolved", PostedAt: since.Add(2 * time.Hour), ResolvedAt: &resolvedAt},
@@ -65,7 +67,7 @@ func TestMemStoreStatusHistoryRollupAndIncidentWindow(t *testing.T) {
 }
 
 type statusBucketRecorder interface {
-	RecordStatusBucket(context.Context, StatusBucket) error
+	RecordStatusBucket(context.Context, state.StatusBucket) error
 }
 
 func recordCompleteStatusInterval(t *testing.T, store statusBucketRecorder, at time.Time, changed publicstatus.Component, changedState publicstatus.State) {
@@ -75,7 +77,7 @@ func recordCompleteStatusInterval(t *testing.T, store statusBucketRecorder, at t
 		if component == changed {
 			stateValue = changedState
 		}
-		if err := store.RecordStatusBucket(context.Background(), StatusBucket{Component: component, BucketAt: at, State: stateValue, HasTelemetry: true}); err != nil {
+		if err := store.RecordStatusBucket(context.Background(), state.StatusBucket{Component: component, BucketAt: at, State: stateValue, HasTelemetry: true}); err != nil {
 			t.Fatalf("RecordStatusBucket(%s): %v", component, err)
 		}
 	}

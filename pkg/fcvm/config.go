@@ -291,6 +291,11 @@ type ColdBootSpec struct {
 	// ExecutionMode constrains the host-derived characterization class. Empty
 	// preserves the legacy inference contract for older vmmd callers.
 	ExecutionMode string
+	// ProvenWorker boots a declared worker whose deployment already passed
+	// the full characterization window on this node with api.ProvenWorkerBootArg,
+	// so guest-init reports it after api.ProvenWorkerCharacterizationWindow
+	// (ADR-20261018101500).
+	ProvenWorker bool
 	// SkipReady suppresses readiness probing for builder VMs. Builder guests
 	// run a finite build and power off instead of binding port 8080.
 	// Networkless execution guests use the vsock execution protocol instead of
@@ -385,6 +390,13 @@ type JobColdBootSpec struct {
 	AccountID string
 	RunID     string
 	TaskIndex int
+	// Interactive holds the command until one client attaches (ADR-1330).
+	Interactive *JobInteractive
+	// ImageProcess runs the command with the image's ENV, USER and WORKDIR;
+	// ProcessUser and ProcessWorkdir override USER and WORKDIR (ADR-1790).
+	ImageProcess   bool
+	ProcessUser    string
+	ProcessWorkdir string
 }
 
 // BuildColdBootConfig assembles the Firecracker config for a cold boot. MMDS is
@@ -463,6 +475,9 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 	if s.Networkless {
 		bootArgs = withGuestTimer(executionBootArgs)
 	}
+	if s.ProvenWorker && s.ExecutionMode == api.ExecutionModeWorker {
+		bootArgs = strings.TrimSpace(bootArgs) + " " + api.ProvenWorkerBootArg
+	}
 	return VMConfig{
 		BootSource:        BootSource{KernelImagePath: s.KernelKey, BootArgs: bootArgs},
 		Drives:            drives,
@@ -470,10 +485,13 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 		NetworkInterfaces: network,
 		Entropy:           &Entropy{},
 		VsockDevice:       NewVsockDevice(slot),
-		// SkipReady is also used by networkless execution guests, but their
-		// layer is caller-supplied runtime state and must remain private. Only
+		// SkipReady is also used by networkless execution guests and app
+		// tasks. An execution layer is caller-supplied runtime state, and an
+		// app task boots the deployment's signed, node-cached layer: both must
+		// get a private copy. A hard link would let the task write into the
+		// cached layer, which the next prime then refuses as tampered. Only
 		// builder scratch images may use the hard-link optimization.
-		EphemeralWritable: s.SkipReady && !s.Networkless,
+		EphemeralWritable: s.SkipReady && !s.Networkless && !s.AppTask,
 	}
 }
 

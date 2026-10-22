@@ -9,12 +9,13 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type healthAlertSchedulerStore struct {
-	*state.MemStore
-	calls int
-	fail  bool
+	MemStore *state.MemStore
+	calls    int
+	fail     bool
 }
 
 func (s *healthAlertSchedulerStore) ProcessNextWorkflowRecoveryHealthAlert(context.Context, time.Time) (bool, error) {
@@ -27,7 +28,7 @@ func (s *healthAlertSchedulerStore) ProcessNextWorkflowRecoveryHealthAlert(conte
 func TestWorkflowRecoveryHealthAlertScheduler(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		s := &healthAlertSchedulerStore{MemStore: state.NewMemStore(), fail: fail}
-		l := &Loop{engine: &Engine{store: s}}
+		l := &Loop{engine: &Engine{store: statetest.NewMem(s)}}
 		l.runWorkflowRecoveryHealthAlerts(context.Background(), time.Now().UTC())
 		want := api.WorkflowRecoveryPolicyPollBatch
 		if fail {

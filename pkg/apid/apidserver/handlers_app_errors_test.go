@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // TestAppErrorsSummary_FreePlanReturns402 confirms the Free plan
@@ -165,7 +166,7 @@ func TestAppErrorsSummary_PlanDowngradeBounces(t *testing.T) {
 // stub at pkg/state/memstore_app_errors.go:41. Mirrors the
 // wakeBootStartedStore wrapper from commit 2's tests.
 type appErrorsListStore struct {
-	*state.MemStore
+	MemStore *state.MemStore
 }
 
 func (appErrorsListStore) ListAppErrorGroups(_ context.Context, _ sqlc.ListAppErrorGroupsParams) ([]state.AppErrorGroup, error) {
@@ -185,7 +186,7 @@ func (appErrorsListStore) ListAppErrorRequests(_ context.Context, _ sqlc.ListApp
 func swapStoreForAppErrors(t *testing.T, e *apidserver.TestEnv) {
 	t.Helper()
 	wrapped := appErrorsListStore{MemStore: (*e.Store())}
-	srv := apidserver.NewServer(wrapped, slog.New(slog.NewTextHandler(io.Discard, nil)),
+	srv := apidserver.NewServer(statetest.NewMem(wrapped), slog.New(slog.NewTextHandler(io.Discard, nil)),
 		"gregale.dev", apidserver.NoopNotifier{}).WithOpsMetrics(context.Background(), (*e.Ops()))
 	(*e.H()) = srv.Handler()
 	(*e.S()) = srv

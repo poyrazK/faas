@@ -7,10 +7,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
+	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func accountSLOPromResponse(query, appID string) string {
@@ -165,5 +168,44 @@ func TestFetchAppSLO_IdleAppIsNotDegraded(t *testing.T) {
 	}
 	if got.RequestsTotal != 0 || got.ErrorRatePct != 0 || got.ColdBootRatePct != 0 {
 		t.Fatalf("idle app SLO = %+v, want zero requests and rates", got)
+	}
+}
+
+// fixedUsageStore reports a known usage_minutes rollup; MemStore's is always
+// zero.
+type fixedUsageStore struct {
+	Store                  state.Store
+	instanceHours, gbHours float64
+}
+
+func (f fixedUsageStore) UsageSLOForAccount(context.Context, string, time.Time, time.Time) (float64, float64, error) {
+	return f.instanceHours, f.gbHours, nil
+}
+
+// TestFetchAccountSLO_TelemetryTimeoutKeepsUsage pins H9-133: on
+// production-us the account panel's 24h Prometheus scans exceed their budget,
+// and the degraded response also zeroed instance-hours and GB-hours, which
+// come from Postgres, so a slow query made a busy account look idle.
+func TestFetchAccountSLO_TelemetryTimeoutKeepsUsage(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "slo-usage")
+	store := (*e.S()).Store()
+	*store = statetest.NewStore(fixedUsageStore{Store: *store, instanceHours: 12.5, gbHours: 6.25})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = fmt.Fprint(w, "query timed out")
+	}))
+	t.Cleanup(srv.Close)
+	(*e.S()).WithStatusCache(srv.URL, "")
+
+	got, source := (*e.S()).FetchAccountSLO(context.Background(), (*e.Acct()), "24h")
+	if !strings.HasPrefix(source, appmetrics.SourceDegradedPrefix) {
+		t.Fatalf("source = %q, want degraded", source)
+	}
+	if got.InstanceHours != 12.5 || got.GBHours != 6.25 {
+		t.Fatalf("usage = %v instance-h / %v GB-h, want the Postgres rollup 12.5 / 6.25", got.InstanceHours, got.GBHours)
+	}
+	if got.RequestsTotal != 0 {
+		t.Fatalf("requests_total = %d, want 0 when its query failed", got.RequestsTotal)
 	}
 }

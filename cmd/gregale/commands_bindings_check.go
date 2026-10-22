@@ -23,10 +23,15 @@ func cmdBindingsCheck(args []string) int {
 	maxAge := fs.Duration("max-verification-age", bindingcheck.DefaultMaxVerificationAge, "maximum age of passed probe evidence (default 10m)")
 	allowUnsupported := fs.Bool("allow-unsupported", false, "waive connectivity coverage for active queue and outbound bindings")
 	requireAck := fs.Bool("require-application-ack", false, "require current application acknowledgements for PostgreSQL and object-storage binding secrets")
+	releasePolicy := fs.Bool("release-policy", false, "apply the stored scope release policy and confirm it after every inventory evaluation (read-only)")
+	var storageRequirements storageRequirementsFlag
+	fs.Var(&storageRequirements, "object-storage-require", "require PREFIX=read|write|read_write evidence (repeatable; reads recorded evidence only)")
+	var queueRequirements queueRequirementsFlag
+	fs.Var(&queueRequirements, "queue-require", "require NAME=consumer_readiness for a push binding (repeatable; connectivity coverage remains partial)")
 	wait := fs.Bool("wait", false, "poll read-only inventory while probes, refreshes or application acknowledgements are pending")
-	timeout := fs.Duration("timeout", bindingProbeWaitTimeoutDefault, "maximum time to wait for binding preflight")
+	timeout := fs.Duration("timeout", bindingProbeWaitTimeoutDefault, "maximum time for a waiting or policy-aware binding preflight")
 	pollInterval := fs.Duration("poll-interval", bindingCheckPollIntervalDefault, "inventory polling interval with --wait")
-	flags, positionals := splitArgsForFlags(args, "allow-unsupported", "require-application-ack", "wait", "interactive")
+	flags, positionals := splitArgsForFlags(args, "allow-unsupported", "require-application-ack", "release-policy", "wait", "interactive")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -58,7 +63,7 @@ func cmdBindingsCheck(args []string) int {
 		return cmdBindingsCheckInteractive(slug, *timeout, *pollInterval)
 	}
 	if len(positionals) != 1 || !api.ValidAppSlug(strings.TrimSpace(positionals[0])) || *maxAge <= 0 || *timeout <= 0 || *pollInterval <= 0 || !validBindingDeploymentFlag(*deployment) {
-		PrintUsage(osStderr, "usage: gregale bindings check <app> [--deployment ID|vN] [--scope SCOPE] [--max-verification-age DURATION] [--allow-unsupported] [--require-application-ack] [--wait --timeout DURATION --poll-interval DURATION] [--json]", "bindings")
+		PrintUsage(osStderr, "usage: gregale bindings check <app> [--deployment ID|vN] [--scope SCOPE] [--release-policy] [--max-verification-age DURATION] [--allow-unsupported] [--require-application-ack] [--wait --timeout DURATION --poll-interval DURATION] [--json]", "bindings")
 		return 1
 	}
 
@@ -72,7 +77,7 @@ func cmdBindingsCheck(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
-	if *wait {
+	if *wait || *releasePolicy {
 		interrupted, stop := signal.NotifyContext(ctx, os.Interrupt)
 		defer stop()
 		bounded, cancel := context.WithTimeout(interrupted, *timeout)
@@ -88,8 +93,15 @@ func cmdBindingsCheck(args []string) int {
 		}
 		return code
 	}
-	policy := bindingcheck.Policy{App: slug, Scope: *scope, DeploymentID: deploymentID, MaxVerificationAge: *maxAge, AllowUnsupported: *allowUnsupported, RequireApplicationAck: *requireAck}
-	report, err := pollBindingCheck(ctx, client, policy, *wait, *pollInterval)
+	policy := bindingcheck.Policy{App: slug, Scope: *scope, DeploymentID: deploymentID, MaxVerificationAge: *maxAge, AllowUnsupported: *allowUnsupported, RequireApplicationAck: *requireAck, ObjectStorageRequirements: storageRequirements, QueueRequirements: queueRequirements}
+	var report bindingcheck.Report
+	var releaseReport bindingReleasePolicyCheckReport
+	if *releasePolicy {
+		releaseReport, err = pollBindingCheckReleasePolicy(ctx, client, policy, *wait, *pollInterval)
+		report = releaseReport.Report
+	} else {
+		report, err = pollBindingCheck(ctx, client, policy, *wait, *pollInterval)
+	}
 	if err != nil && report.App == "" {
 		code := printErr("Could not load app bindings", err)
 		if errors.Is(err, context.Canceled) {
@@ -98,13 +110,25 @@ func cmdBindingsCheck(args []string) int {
 		return code
 	}
 	if err != nil {
-		_, _ = fmt.Fprintln(osStderr, "Binding preflight wait ended:", err)
+		label := "Binding preflight failed:"
+		if *wait {
+			label = "Binding preflight wait ended:"
+		}
+		_, _ = fmt.Fprintln(osStderr, label, err)
 	}
 	if jsonOutput {
-		if code := jsonOut(writeJSON(report)); code != 0 {
+		var output any = report
+		if *releasePolicy {
+			output = releaseReport
+		}
+		if code := jsonOut(writeJSON(output)); code != 0 {
 			return code
 		}
 	} else {
+		if *releasePolicy && releaseReport.ReleasePolicy != nil {
+			_, _ = fmt.Fprintf(osStdout, "Stored release policy: mode=%s revision=%d confirmed=%t\n", releaseReport.ReleasePolicy.Mode, releaseReport.ReleasePolicy.Revision, releaseReport.ReleasePolicyConfirmed)
+			_, _ = fmt.Fprintln(osStdout, "Policy confirmation records the last read; promotion rechecks policy and evidence at the traffic write.")
+		}
 		renderBindingCheck(report)
 	}
 	if errors.Is(err, context.Canceled) {
@@ -129,6 +153,12 @@ func renderBindingCheck(report bindingcheck.Report) {
 			_, _ = fmt.Fprintf(osStdout, " (%s)", item.Reason)
 		}
 		_, _ = fmt.Fprintln(osStdout)
+		if item.RequiredObjectStorageMode != "" || item.ObjectStorageMode != "" {
+			_, _ = fmt.Fprintf(osStdout, "  storage evidence=%s required=%s\n", humanBindingValue(item.ObjectStorageMode), humanBindingValue(item.RequiredObjectStorageMode))
+		}
+		if item.RequiredQueueEvidence != "" {
+			_, _ = fmt.Fprintf(osStdout, "  required queue evidence=%s; connectivity remains unverified\n", item.RequiredQueueEvidence)
+		}
 		if adoption := item.ApplicationAdoption; adoption != nil {
 			_, _ = fmt.Fprintf(osStdout, "  application adoption=%s; ACK pairs current=%d failed=%d stale=%d unknown=%d; reload pairs current=%d failed=%d stale=%d unknown=%d\n", adoption.Status, adoption.Application.Current, adoption.Application.Failed, adoption.Application.Stale, adoption.Application.Unknown, adoption.Reload.Current, adoption.Reload.Failed, adoption.Reload.Stale, adoption.Reload.Unknown)
 			for _, target := range adoption.Targets {
@@ -159,7 +189,7 @@ func renderBindingCheck(report bindingcheck.Report) {
 	for _, warning := range report.Warnings {
 		renderBindingCheckFinding("Warning", warning)
 	}
-	_, _ = fmt.Fprintln(osStdout, "This checks recorded probe evidence and instance timestamps. Application acknowledgements, when required, are version-bound self-attestations. It does not confirm resident credential use or application readiness; object-storage evidence covers bucket-list read access only.")
+	_, _ = fmt.Fprintln(osStdout, "This checks recorded probe evidence and instance timestamps. Application acknowledgements, when required, are version-bound self-attestations. It does not confirm resident credential use or application readiness; object-storage evidence lists the operations checked; write probes require explicit opt-in.")
 }
 
 func renderBindingCheckFinding(label string, finding bindingcheck.Finding) {

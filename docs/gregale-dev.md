@@ -11,6 +11,41 @@ From an application directory:
 gregale dev
 ```
 
+The normal `dev` entry point runs the local source checks used by `dev setup`
+before provisioning. Blocking source errors include a `doctor --path` command;
+warnings remain visible. Source and app defaults come from the selected source
+directory, including with `--path`. The app default supplies the developer
+session name; the session still uses an isolated developer app and resources.
+On exit, the CLI explains the lease and prints exact `dev info` and `dev --stop`
+commands retaining the source, session name, and connection profile.
+
+## Save setup for the next session or a teammate
+
+Preview the portable choices, then save them:
+
+```sh
+gregale dev setup --env-file .env.dev --postgres --ttl 72h --save --dry-run
+gregale dev setup --env-file .env.dev --postgres --ttl 72h --save
+gregale dev
+```
+
+`--save` records the effective lease, database and bucket choices, and relative
+env-file and service-override-file references in `gregale.yaml` (or the existing
+`gregale.yml`). It preserves unrelated manifest settings, comments, and file
+permissions. It never exports file contents or credentials. Referenced files must
+be inside the source directory; each developer supplies their own values. Session
+names remain local choices. Existing hosting, seed, debug, and watch configuration
+continues to work.
+
+Saving requires valid local source checks but no login or network access.
+`--dry-run` requires `--save` and writes nothing. Add `--start` to save and then
+start the developer loop after authentication; it cannot be combined with
+`--dry-run`. JSON output adds a `saved_config` object describing the selected
+values and destination. TOML manifests require an explicit migration before
+using this YAML writer.
+
+## The development loop
+
 The CLI detects the application shape, uploads the current working tree
 (including uncommitted changes), waits for the real build, prints a stable URL,
 and watches deployable files for the next change. Watching continues while a
@@ -29,8 +64,9 @@ Railpack and Dockerfile developer builds keep their Firecracker VM isolation
 but reuse a tenant- and workspace-scoped BuildKit dependency cache between
 syncs. When the runtime, Dockerfile, and lockfiles are unchanged, matching
 layers are restored; a dependency, build-input, or runtime change is validated
-by BuildKit and rebuilds only the invalidated layers. Cache import, export, and
-validation failures fall back to a cold build. The CLI prints whether the
+by BuildKit and rebuilds only the invalidated layers. A Railpack build whose
+plan and dependency inputs are unchanged keeps the cache instead of saving it
+again. Cache import, export, and validation failures fall back to a cold build. The CLI prints whether the
 dependency cache was restored and the total time until the new version is
 live.
 
@@ -230,6 +266,15 @@ delivers the edit. With `--json`, the watcher emits a
 (`applied` or `failed`), `edit_to_patch_ms`, and `apply_ms`; the
 `developer_sync` receipt includes the same `patch` phase.
 
+When a sync cannot be live-patched, the terminal says why and what would make
+the app patchable, for example
+`Full rebuild instead of a live patch: your app has a build step, so edits go through the build. Run gregale dev --watch to hot-reload it with its development server (npm run dev) instead ...`
+or that a dependency or lockfile changed. A reason is printed when it first
+appears and again only after a sync with a different outcome, so an app with a
+build step hears it once per session. Expected cases (the first sync, a running
+version from before live patches) stay quiet. With `--json`, the reason is the
+`dev_patch.reason` field of the `developer_sync` receipt.
+
 Failed syncs include a developer diagnostic in the same terminal. Deployment
 stage failures reuse the platform error code and explain the failing phase,
 the next action, and the deployment log command. The runtime stream also
@@ -301,6 +346,91 @@ debugger; with `"restart": true` VS Code reconnects on its own. Running
 `gregale dev` without `--debug` turns the inspector off again. Only Node.js
 workloads are supported so far; `--debug` cannot be combined with `--once`,
 `--stop`, or `--all`.
+
+## Watch mode for apps with a build step
+
+Live patches (above) only apply to apps that run their source files directly.
+For an app with a build step, such as TypeScript, Next.js, Vite or a uv
+Python project, every save otherwise waits for a full build.
+`gregale dev --watch` instead runs the app's own development server in the
+developer environment, so edits hot-reload in seconds:
+
+```bash
+gregale dev --watch                              # runs your dev script or framework
+gregale dev --watch-command "next dev"           # or an explicit command
+gregale dev --all --watch                        # every app in the workspace that has one
+```
+
+or in `gregale.yaml`:
+
+```yaml
+dev:
+  watch: true          # or: watch: { command: "next dev" }
+```
+
+Without a command, `--watch` picks one and prints it:
+
+| Your app | Command |
+| --- | --- |
+| a `dev` script in `package.json` | `npm run dev`, or `pnpm` / `yarn` / `bun run dev` when the `packageManager` field or lockfile says so |
+| no `dev` script: Nuxt / Astro / SvelteKit / React Router / Remix with Vite / Next.js / Vite | `nuxt dev` / `astro dev` / `vite dev` / `react-router dev` / `remix vite:dev` / `next dev` / `vite` |
+| Django (`manage.py`) | `python manage.py runserver` |
+| FastAPI | `uvicorn <module>:<app> --reload`, for the module that creates `FastAPI()` |
+| Flask | `flask --app <module>:<app> run --debug`, for the module that creates `Flask()` |
+
+The development server can listen wherever it likes: on `localhost` only,
+or on its own port (Vite's 5173, Astro's 4321). In a watch-mode environment
+Gregale forwards the app's port to the port the server actually opened, so no
+`--host` or `--port` flags are needed. With `gregale dev --all --watch`, apps
+for which no command can be picked keep production-shaped builds; a
+`dev.watch.command` in an app's own `gregale.yaml` is used for that app.
+
+The developer environment's hostname is available to the development server
+as `GREGALE_DEV_HOST`. Vite-based servers accept it automatically (Gregale
+sets Vite's `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS`). Two frameworks need it
+in their own configuration:
+
+- **Next.js** serves hot reload only to origins listed in
+  `allowedDevOrigins`, which it reads from `next.config` alone. In a terminal,
+  `gregale dev --watch` offers to add it: it creates `next.config.mjs`, or
+  edits a config that exports a plain object, and otherwise prints the line
+  to add:
+
+  ```js
+  allowedDevOrigins: process.env.GREGALE_DEV_HOST ? [process.env.GREGALE_DEV_HOST] : [],
+  ```
+
+  The value is empty outside the developer environment.
+- **Django** answers 400 to hosts outside `ALLOWED_HOSTS`; add
+  `os.environ.get("GREGALE_DEV_HOST", "")` to it. The CLI reminds you when no
+  Python file mentions `GREGALE_DEV_HOST`.
+
+The developer build then installs your dependencies as usual, skips the
+production build, ships your source unchanged and starts the development
+command (Node.js apps with `NODE_ENV=development`; Python apps with `src/` on
+`PYTHONPATH`, because the project is not installed into the virtual
+environment). Source edits reach the running server as live patches without
+restarting it, and the server's own watcher recompiles and reloads them.
+Changing `package.json`, `pyproject.toml`, a lockfile, `railpack.json` or
+`gregale.yaml` still triggers a full developer build, which reinstalls
+dependencies; a build that changes none of them keeps the dependency cache
+instead of saving it again.
+
+Watch mode needs:
+
+- a Node.js or Python app built without a Dockerfile (a Dockerfile owner can
+  write a development stage instead);
+- a command: a `dev` script, a framework from the table above, or
+  `--watch-command`;
+- at least 512 MB of RAM for the developer environment;
+- authentication on the developer environment, because development servers
+  serve source maps and error overlays.
+
+Otherwise the session is refused with `dev_watch_unsupported`. A watch-mode
+environment runs your development server, not your production build, so check
+production behaviour with `gregale deploy` or a pull-request preview. Run
+`gregale dev` without `--watch` to go back to production-shaped developer
+builds; the change applies from the next build.
 
 ## Run every app in a workspace
 

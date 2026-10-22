@@ -259,3 +259,53 @@ func TestResizeAndDeletionReservationAreSerialized(t *testing.T) {
 		_ = service
 	}
 }
+
+// Hunt #9 (H9-P201): usage admission blocked every compute change, so an
+// account whose usage was stale (for hours after any database deletion) or at
+// its guardrail could not resize down or turn scale-to-zero back on — the two
+// changes that stop spend. Only changes that can raise cost are usage-gated.
+func TestComputeChangeUsageAdmissionOnlyGuardsCostIncreases(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		source  Spec
+		change  func(*Service, Database) error
+		blocked bool
+	}{
+		{"resize up", testSpec(), func(s *Service, d Database) error {
+			_, err := s.Resize(t.Context(), ResizeDatabaseRequest{AccountID: d.AccountID, DatabaseID: d.ID, RequestID: uuid.NewString(), TargetClass: ClassBurstable})
+			return err
+		}, true},
+		{"resize down", func() Spec { s := testSpec(); s.Class = ClassBurstable; return s }(), func(s *Service, d Database) error {
+			_, err := s.Resize(t.Context(), ResizeDatabaseRequest{AccountID: d.AccountID, DatabaseID: d.ID, RequestID: uuid.NewString(), TargetClass: ClassDevelopment})
+			return err
+		}, false},
+		{"scale-to-zero off", testSpec(), func(s *Service, d Database) error {
+			_, err := s.ChangeComputePolicy(t.Context(), ChangeComputePolicyRequest{AccountID: d.AccountID, DatabaseID: d.ID, RequestID: uuid.NewString(), ScaleToZero: false})
+			return err
+		}, true},
+		{"scale-to-zero on", func() Spec { s := testSpec(); s.ScaleToZero = false; return s }(), func(s *Service, d Database) error {
+			_, err := s.ChangeComputePolicy(t.Context(), ChangeComputePolicyRequest{AccountID: d.AccountID, DatabaseID: d.ID, RequestID: uuid.NewString(), ScaleToZero: true})
+			return err
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			capabilities := testCapabilities()
+			capabilities.ClassResize = true
+			capabilities.ScaleToZeroUpdate = true
+			provider := &resizeTestProvider{fakeProvider: &fakeProvider{capabilities: capabilities, provisionStatus: ProviderStatusReady}}
+			service, err := NewService(testRegistry(t, provider, nil), NewMemoryStore(), ServiceOptions{ProvisioningEnabled: func() bool { return true }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			database, err := service.Create(t.Context(), CreateRequest{AccountID: "account", Name: "orders", Spec: tc.source})
+			if err != nil {
+				t.Fatal(err)
+			}
+			service.admit = func(context.Context, string) error { return ErrUsageStale }
+			err = tc.change(service, database)
+			if tc.blocked != errors.Is(err, ErrUsageStale) || !tc.blocked && err != nil {
+				t.Fatalf("err = %v, want blocked=%v", err, tc.blocked)
+			}
+		})
+	}
+}

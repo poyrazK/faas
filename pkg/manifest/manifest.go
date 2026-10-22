@@ -493,6 +493,11 @@ type DaemonConfig struct {
 	// per node. "local" keeps one in-process bucket per gateway.
 	RateLimitMode string `yaml:"ratelimit_mode,omitempty"`
 
+	// RateLimitLease is gatewayd-internal's [ratelimit] lease (ADR-1520):
+	// central counters are spent from local leases instead of one Postgres
+	// consult per request. Omitted renders false. Requires central mode.
+	RateLimitLease *bool `yaml:"ratelimit_lease,omitempty"`
+
 	// GatewaySynthTarget is schedd's optional remote gatewayd-internal
 	// synthesis endpoint. It is separate from Outbound because schedd has
 	// two remote peers in a split-box fleet: vmmd for placement and
@@ -597,6 +602,36 @@ type DNS struct {
 // PublicEdge is the public HTTPS edge contract beyond the platform zone.
 type PublicEdge struct {
 	CustomDomains CustomDomainsEdge `yaml:"custom_domains,omitempty"`
+	// ComputeNodes runs the app edge on every compute node behind a
+	// Cloudflare Tunnel connector (ADR-1343): *.<apps domain> is served
+	// there, while the platform hosts and custom domains stay on the control
+	// plane. Off by default.
+	ComputeNodes bool `yaml:"compute_nodes,omitempty"`
+}
+
+// validate checks the compute-node edge against the fleet: it needs a control
+// plane to forward credential-bound routes to and compute nodes to run on.
+func (e PublicEdge) validate(hosts []Host) Errors {
+	if !e.ComputeNodes {
+		return nil
+	}
+	var controlPlanes, computeNodes int
+	for _, h := range hosts {
+		switch h.Role {
+		case "control-plane":
+			controlPlanes++
+		case "compute-only":
+			computeNodes++
+		}
+	}
+	var errs Errors
+	if controlPlanes == 0 {
+		errs = append(errs, Error{"public_edge.compute_nodes", "needs a control-plane host to forward public object reads, uploads and OTLP to"})
+	}
+	if computeNodes == 0 {
+		errs = append(errs, Error{"public_edge.compute_nodes", "needs at least one compute-only host to run the edge"})
+	}
+	return errs
 }
 
 // CustomDomainsEdgeModeOnDemand selects ADR-520's self-hosted customer
@@ -698,6 +733,84 @@ type PostgreSQL struct {
 	// `on-boot-offline`). `on-boot-offline` is the single-box dev
 	// default; the multi-box fleet convention is `on-boot`.
 	Policy string `yaml:"policy"`
+	// Standby is the warm standby of ADR-1344 §8: an asynchronous streaming
+	// replica of the control plane's cluster on a host outside the fleet.
+	// It is not a control-plane host, so the singleton leases stay off and
+	// it serves nothing until an operator promotes it. Absent means none.
+	Standby *PostgresStandby `yaml:"standby,omitempty"`
+}
+
+// PostgresStandby is the host that runs the warm-standby replica.
+type PostgresStandby struct {
+	// Name is the standby's inventory host name. It must not collide with a
+	// fleet host, because a promotion turns it into the control-plane host.
+	Name string `yaml:"name"`
+	// Address is the private IP the standby replicates from. The primary
+	// admits replication from this address only, and it must lie inside
+	// overlay.cidr so WAL never crosses the public internet unencrypted.
+	Address string `yaml:"address"`
+	// SSHHost is the address Ansible uses to converge the standby. Empty
+	// means Address.
+	SSHHost string `yaml:"ssh_host,omitempty"`
+}
+
+// AnsibleHost is the inventory address of the standby.
+func (s *PostgresStandby) AnsibleHost() string {
+	if s.SSHHost != "" {
+		return s.SSHHost
+	}
+	return s.Address
+}
+
+// cgnatPrefix is RFC 6598 shared address space, where Tailscale assigns
+// overlay addresses; netip's IsPrivate does not cover it.
+var cgnatPrefix = netip.MustParsePrefix("100.64.0.0/10")
+
+// validatePostgresStandby checks the warm standby (ADR-1344 §8). It needs
+// exactly one control-plane host to replicate, a name that no fleet host
+// uses, and an address on the private overlay.
+func (m *Manifest) validatePostgresStandby() Errors {
+	s := m.PostgreSQL.Standby
+	if s == nil {
+		return nil
+	}
+	var errs Errors
+	add := func(field, msg string) { errs = append(errs, Error{"postgresql.standby." + field, msg}) }
+	switch {
+	case s.Name == "":
+		add("name", "is required")
+	case !validNodeName(s.Name):
+		add("name", fmt.Sprintf("invalid host name %q (use lowercase letters, digits, dots, or dashes)", s.Name))
+	default:
+		for _, h := range m.Fleet.Hosts {
+			if h.Name == s.Name {
+				add("name", fmt.Sprintf("%q is already a fleet host; the standby must be a separate host", s.Name))
+			}
+		}
+	}
+	addr, err := netip.ParseAddr(s.Address)
+	overlay, overlayErr := netip.ParsePrefix(m.Overlay.CIDR)
+	switch {
+	case err != nil || addr.Zone() != "":
+		add("address", fmt.Sprintf("%q must be an IP address (the primary admits replication from it)", s.Address))
+	case overlayErr == nil && !overlay.Contains(addr):
+		add("address", fmt.Sprintf("%q is outside overlay.cidr %s; replication must stay on the private overlay", s.Address, overlay))
+	case overlayErr != nil && !addr.IsPrivate() && !cgnatPrefix.Contains(addr):
+		add("address", fmt.Sprintf("%q must be a private address; replication must not cross the public internet", s.Address))
+	}
+	if s.SSHHost != "" && strings.ContainsAny(s.SSHHost, " \t\n/") {
+		add("ssh_host", fmt.Sprintf("%q must be a host name or address", s.SSHHost))
+	}
+	controlPlanes := 0
+	for _, h := range m.Fleet.Hosts {
+		if h.Role == "control-plane" {
+			controlPlanes++
+		}
+	}
+	if controlPlanes != 1 {
+		add("name", fmt.Sprintf("needs exactly one control-plane host to replicate, found %d", controlPlanes))
+	}
+	return errs
 }
 
 // Release is the immutable release-tuple anchor. PR-0 only validates
@@ -911,8 +1024,10 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.DNS.validate()...)
 	errs = append(errs, m.PrivateDNS.validate()...)
 	errs = append(errs, m.PublicEdge.CustomDomains.validate(m.DNS)...)
+	errs = append(errs, m.PublicEdge.validate(m.Fleet.Hosts)...)
 	errs = append(errs, m.validatePrivateResolution()...)
 	errs = append(errs, m.PostgreSQL.validate()...)
+	errs = append(errs, m.validatePostgresStandby()...)
 	errs = append(errs, m.Release.validate()...)
 	errs = append(errs, m.Storage.validate()...)
 	errs = append(errs, m.Cgroups.validate()...)
@@ -1270,6 +1385,13 @@ func (d *Daemons) validate() Errors {
 			} else if !contains(RateLimitModes, dc.RateLimitMode) {
 				errs = append(errs, Error{path + ".ratelimit_mode",
 					fmt.Sprintf("unsupported %q (allowed: %s)", dc.RateLimitMode, strings.Join(RateLimitModes, "|"))})
+			}
+		}
+		if dc.RateLimitLease != nil {
+			if name != "gatewayd_internal" {
+				errs = append(errs, Error{path + ".ratelimit_lease", "is only valid for gatewayd_internal"})
+			} else if *dc.RateLimitLease && dc.RateLimitMode != "" && dc.RateLimitMode != "central" {
+				errs = append(errs, Error{path + ".ratelimit_lease", fmt.Sprintf("requires ratelimit_mode central, got %q", dc.RateLimitMode)})
 			}
 		}
 	}

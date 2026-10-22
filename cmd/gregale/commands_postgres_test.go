@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,26 +8,27 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // adr: 463 — customer health survives safe CLI decoding in both formats.
 func TestCmdPostgresGetHealth(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/v1/postgres/databases/db-1" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/postgres/databases/3f1c2a9e-8b7d-4c6e-9a1b-0d2e4f6a8c10" {
 			t.Errorf("request = %s %s", r.Method, r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"id":"db-1","name":"orders","state":"ready","provider_resource_id":"private-upstream","connection_url":"private-password","health":{"enabled":true,"status":"degraded","fresh":true,"provider_status":"missing","compute_state":"unknown","checked_at":"2026-10-01T12:00:00Z","last_success_at":"2026-10-01T11:00:00Z","last_error_code":"resource_missing","stale_after_seconds":300}}`))
+		_, _ = w.Write([]byte(`{"id":"3f1c2a9e-8b7d-4c6e-9a1b-0d2e4f6a8c10","name":"orders","state":"ready","provider_resource_id":"private-upstream","connection_url":"private-password","health":{"enabled":true,"status":"degraded","fresh":true,"provider_status":"missing","compute_state":"unknown","checked_at":"2026-10-01T12:00:00Z","last_success_at":"2026-10-01T11:00:00Z","last_error_code":"resource_missing","stale_after_seconds":300}}`))
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	previousOut, previousJSON := osStdout, jsonOutput
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 	for _, asJSON := range []bool{true, false} {
 		var out bytes.Buffer
-		osStdout, jsonOutput = &out, asJSON
-		if code := cmdPostgresGet([]string{"db-1"}); code != 0 {
+		(*main.OsStdout), (*main.JsonOutput) = &out, asJSON
+		if code := main.CmdPostgresGet([]string{"3f1c2a9e-8b7d-4c6e-9a1b-0d2e4f6a8c10"}); code != 0 {
 			t.Fatalf("exit = %d", code)
 		}
 		if strings.Contains(out.String(), "private-") {
@@ -59,11 +60,11 @@ func TestCmdPostgresListJSONUsesSafeEnvelope(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previousOut, previousJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, true
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 
-	if code := cmdPostgresList(nil); code != 0 {
+	if code := main.CmdPostgresList(nil); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	var got api.ManagedPostgresDatabaseList
@@ -97,11 +98,11 @@ func TestCmdPostgresCreateSendsProviderNeutralSpec(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previousOut, previousJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 
-	if code := cmdPostgresCreate([]string{"orders", "--region", "eu", "--class", "burstable", "--scale-to-zero=false", "--storage-bytes", "123"}); code != 0 {
+	if code := main.CmdPostgresCreate([]string{"orders", "--region", "eu", "--class", "burstable", "--scale-to-zero=false", "--storage-bytes", "123"}); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	if !strings.Contains(out.String(), "state:            provisioning") || strings.Contains(out.String(), "connection") {
@@ -120,11 +121,11 @@ func TestCmdPostgresUsageJSONUsesSafeEnvelope(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previousOut, previousJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, true
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 
-	if code := cmdPostgresUsage(nil); code != 0 {
+	if code := main.CmdPostgresUsage(nil); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	var got api.ManagedPostgresUsageResponse
@@ -139,6 +140,37 @@ func TestCmdPostgresUsageJSONUsesSafeEnvelope(t *testing.T) {
 	}
 }
 
+// TestCmdPostgresUsageHumanOutputHasReadableUnits pins the canary output
+// "storage_byte_seconds: 114070377600 / 2875910101401600000": raw meters stay
+// for scripts, with GiB-months, CU-hours and IEC bytes alongside.
+func TestCmdPostgresUsageHumanOutputHasReadableUnits(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"period_start":"2026-10-01T00:00:00Z","policy_enabled":true,"fresh":true,"guardrail_state":"healthy","ready_databases":1,"database_limit":3,"compute_unit_seconds":5400,"storage_byte_seconds":114070377600,"storage_byte_seconds_limit":2875910101401600000,"storage_byte_seconds_remaining":2875909987331222400,"history_byte_seconds":0,"egress_bytes":1572864}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	var out bytes.Buffer
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
+
+	if code := main.CmdPostgresUsage(nil); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	for _, want := range []string{
+		"compute_unit_seconds:         5400 (1.50 CU-hours)",
+		"storage_byte_seconds:         114070377600 / 2875910101401600000",
+		"(0.03 GiB-hours of 1000.00 GiB-months used)",
+		"history_byte_seconds:         0 (0.00 GiB-months)",
+		"egress_bytes:                 1572864 (1.5 MiB)",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
+	}
+}
+
 func TestRunDispatchesPostgresJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/postgres/bindings/binding-1" {
@@ -150,11 +182,11 @@ func TestRunDispatchesPostgresJSON(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previousOut, previousJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 
-	if code := run([]string{"--json", "postgres", "bindings", "get", "binding-1"}); code != 0 {
+	if code := main.Run([]string{"--json", "postgres", "bindings", "get", "binding-1"}); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	var got api.ManagedPostgresBinding
@@ -168,21 +200,26 @@ func TestRunDispatchesPostgresJSON(t *testing.T) {
 
 func TestRunDispatchesPostgresBindingRotateJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/bindings/binding-1" {
+			// The pre-rotate read that lets the CLI adopt a lost response.
+			_, _ = w.Write([]byte(`{"id":"binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","credential_generation":1,"state":"ready"}`))
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/postgres/bindings/binding-1/rotate" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","credential_generation":2,"rotation_pending":true,"state":"ready"}`))
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previousOut, previousJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 
-	if code := run([]string{"--json", "postgres", "bindings", "rotate", "binding-1"}); code != 0 {
+	if code := main.Run([]string{"--json", "postgres", "bindings", "rotate", "binding-1"}); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	var got api.ManagedPostgresBinding
@@ -196,21 +233,26 @@ func TestRunDispatchesPostgresBindingRotateJSON(t *testing.T) {
 
 func TestCmdPostgresBindingsRotateHumanOutput(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/bindings/binding-1" {
+			// The pre-rotate read that lets the CLI adopt a lost response.
+			_, _ = w.Write([]byte(`{"id":"binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","credential_generation":1,"state":"ready"}`))
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/postgres/bindings/binding-1/rotate" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","credential_generation":2,"rotation_pending":true,"state":"ready"}`))
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previousOut, previousJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 
-	if code := cmdPostgresBindingsRotate([]string{"binding-1"}); code != 0 {
+	if code := main.CmdPostgresBindingsRotate([]string{"binding-1"}); code != 0 {
 		t.Fatalf("exit = %d, output = %s", code, out.String())
 	}
 	if !strings.Contains(out.String(), "credential_generation: 2") || !strings.Contains(out.String(), "rotation_pending:  true") {
@@ -242,11 +284,11 @@ func TestCmdPostgresBindingsRotateWaitReturnsCompletedBinding(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previousOut, previousJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, true
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 
-	if code := cmdPostgresBindingsRotate([]string{"binding-1", "--wait", "--wait-timeout=1s", "--poll-interval=1ms"}); code != 0 {
+	if code := main.CmdPostgresBindingsRotate([]string{"binding-1", "--wait", "--wait-timeout=1s", "--poll-interval=1ms"}); code != 0 {
 		t.Fatalf("exit = %d, output = %s", code, out.String())
 	}
 	var got api.ManagedPostgresBinding
@@ -277,11 +319,13 @@ func TestCmdPostgresBindingsRotateWaitTimeoutReturnsPendingJSON(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out, stderr bytes.Buffer
-	previousOut, previousErr, previousJSON := osStdout, osStderr, jsonOutput
-	osStdout, osStderr, jsonOutput = &out, &stderr, true
-	t.Cleanup(func() { osStdout, osStderr, jsonOutput = previousOut, previousErr, previousJSON })
+	previousOut, previousErr, previousJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &out, &stderr, true
+	t.Cleanup(func() {
+		(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = previousOut, previousErr, previousJSON
+	})
 
-	if code := cmdPostgresBindingsRotate([]string{"binding-1", "--wait", "--wait-timeout=10ms", "--poll-interval=1s"}); code != 1 {
+	if code := main.CmdPostgresBindingsRotate([]string{"binding-1", "--wait", "--wait-timeout=10ms", "--poll-interval=1s"}); code != 1 {
 		t.Fatalf("exit = %d, want timeout exit 1; output = %s", code, out.String())
 	}
 	var got api.ManagedPostgresBinding
@@ -291,8 +335,8 @@ func TestCmdPostgresBindingsRotateWaitTimeoutReturnsPendingJSON(t *testing.T) {
 	if !got.RotationPending || got.ID != "binding-1" {
 		t.Fatalf("latest binding = %+v, want pending binding state", got)
 	}
-	if reads != 0 {
-		t.Fatalf("status reads = %d, want no poll before timeout", reads)
+	if reads != 1 {
+		t.Fatalf("status reads = %d, want only the pre-rotate read and no poll before timeout", reads)
 	}
 	if !strings.Contains(stderr.String(), "timed out after 10ms") {
 		t.Fatalf("stderr = %q, want timeout detail", stderr.String())
@@ -324,11 +368,11 @@ func TestCmdPostgresAttachResolvesSlugAndDatabaseName(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previousOut, previousJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 
-	if code := cmdPostgresAttach([]string{"orders", "api", "--scope", "production"}); code != 0 {
+	if code := main.CmdPostgresAttach([]string{"orders", "api", "--scope", "production"}); code != 0 {
 		t.Fatalf("exit = %d, output = %s", code, out.String())
 	}
 	if !strings.Contains(out.String(), "Attached orders to app api as DATABASE_URL") {
@@ -363,10 +407,10 @@ func TestCmdPostgresAttachMigrationMode(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previousOut, previousJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
-	if code := cmdPostgresAttach([]string{"orders", "api", "--scope", "production", "--access", "migration", "--env", "MIGRATION_DATABASE_URL"}); code != 0 {
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
+	if code := main.CmdPostgresAttach([]string{"orders", "api", "--scope", "production", "--access", "migration", "--env", "MIGRATION_DATABASE_URL"}); code != 0 {
 		t.Fatalf("migration attach exit=%d output=%s", code, out.String())
 	}
 }

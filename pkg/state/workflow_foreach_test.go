@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func foreachTestSpec() api.WorkflowSpec {
@@ -23,46 +24,46 @@ func foreachTestSpec() api.WorkflowSpec {
 	}}
 }
 
-func seedForEach(t *testing.T, store Store, spec api.WorkflowSpec, items string) *WorkflowRun {
+func seedForEach(t *testing.T, store state.Store, spec api.WorkflowSpec, items string) *state.WorkflowRun {
 	t.Helper()
-	run := seedGuardRunWithSpec(t, store, spec, `{}`)
-	if err := store.MarkWorkflowStepStatus(context.Background(), run.ID, "lookup", WorkflowStepStatusSucceeded, 1, json.RawMessage(`{"items":`+items+`}`), nil); err != nil {
+	run := state.SeedGuardRunWithSpec(t, store, spec, `{}`)
+	if err := store.MarkWorkflowStepStatus(context.Background(), run.ID, "lookup", state.WorkflowStepStatusSucceeded, 1, json.RawMessage(`{"items":`+items+`}`), nil); err != nil {
 		t.Fatal(err)
 	}
 	return run
 }
 
-func finishForEachItem(t *testing.T, store Store, runID string, item *WorkflowStep, output string) {
+func finishForEachItem(t *testing.T, store state.Store, runID string, item *state.WorkflowStep, output string) {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := store.StartWorkflowStep(ctx, runID, item.StepName, item.Attempt+1, item.Input); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.MarkWorkflowStepAttemptStatus(ctx, runID, item.StepName, WorkflowStepStatusSucceeded, item.Attempt+1, nil, json.RawMessage(output), nil); err != nil {
+	if err := store.MarkWorkflowStepAttemptStatus(ctx, runID, item.StepName, state.WorkflowStepStatusSucceeded, item.Attempt+1, nil, json.RawMessage(output), nil); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestWorkflowForEachSnapshotsSequentialProgressAndRecovery(t *testing.T) {
-	workflowGuardStores(t, func(t *testing.T, store Store) {
+	state.WorkflowGuardStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
 		run := seedForEach(t, store, foreachTestSpec(), `[{"id":9007199254740993},{"literal":"{{input.secret}}"}]`)
 		first, err := store.ResolveWorkflowForEach(ctx, run.ID, "batch")
 		if err != nil || first.Item == nil || first.Item.ForEachIndex == nil || *first.Item.ForEachIndex != 0 {
 			t.Fatalf("first item: %+v %v", first, err)
 		}
-		if _, err := store.StartWorkflowStep(ctx, run.ID, "batch", 1, json.RawMessage(`{}`)); !errors.Is(err, ErrWorkflowGuardNotReady) {
+		if _, err := store.StartWorkflowStep(ctx, run.ID, "batch", 1, json.RawMessage(`{}`)); !errors.Is(err, state.ErrWorkflowGuardNotReady) {
 			t.Fatalf("parent ran an executor: %v", err)
 		}
-		second := guardStep(t, store, run.ID, api.WorkflowForEachItemName("batch", 1))
-		if _, err := store.StartWorkflowStep(ctx, run.ID, second.StepName, 1, second.Input); !errors.Is(err, ErrWorkflowGuardNotReady) {
+		second := state.GuardStep(t, store, run.ID, api.WorkflowForEachItemName("batch", 1))
+		if _, err := store.StartWorkflowStep(ctx, run.ID, second.StepName, 1, second.Input); !errors.Is(err, state.ErrWorkflowGuardNotReady) {
 			t.Fatalf("out-of-order start: %v", err)
 		}
-		if _, err := store.StartWorkflowStep(ctx, run.ID, first.Item.StepName, 1, json.RawMessage(`{"changed":true}`)); !errors.Is(err, ErrWorkflowGuardNotReady) {
+		if _, err := store.StartWorkflowStep(ctx, run.ID, first.Item.StepName, 1, json.RawMessage(`{"changed":true}`)); !errors.Is(err, state.ErrWorkflowGuardNotReady) {
 			t.Fatalf("item input changed: %v", err)
 		}
 		finishForEachItem(t, store, run.ID, first.Item, `{"n":9007199254740993}`)
-		if err := store.MarkWorkflowStepStatus(ctx, run.ID, "lookup", WorkflowStepStatusSucceeded, 1, json.RawMessage(`{"items":["replaced"]}`), nil); err != nil {
+		if err := store.MarkWorkflowStepStatus(ctx, run.ID, "lookup", state.WorkflowStepStatusSucceeded, 1, json.RawMessage(`{"items":["replaced"]}`), nil); err != nil {
 			t.Fatal(err)
 		}
 		next, err := store.ResolveWorkflowForEach(ctx, run.ID, "batch")
@@ -82,7 +83,7 @@ func TestWorkflowForEachSnapshotsSequentialProgressAndRecovery(t *testing.T) {
 		if err != nil || recovered.Item == nil || recovered.Item.Attempt != 1 || *recovered.Item.ForEachIndex != 1 {
 			t.Fatalf("recovery reset completed progress/attempt: %+v %v", recovered, err)
 		}
-		if err := store.MarkWorkflowStepAttemptStatus(ctx, run.ID, next.Item.StepName, WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(`"stale"`), nil); !errors.Is(err, ErrWorkflowOutboundAttemptExpired) {
+		if err := store.MarkWorkflowStepAttemptStatus(ctx, run.ID, next.Item.StepName, state.WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(`"stale"`), nil); !errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) {
 			t.Fatalf("stale result committed: %v", err)
 		}
 		finishForEachItem(t, store, run.ID, recovered.Item, `[true,null]`)
@@ -90,23 +91,23 @@ func TestWorkflowForEachSnapshotsSequentialProgressAndRecovery(t *testing.T) {
 		if err != nil || !outcome.Complete {
 			t.Fatalf("batch stranded: %+v %v", outcome, err)
 		}
-		parent := guardStep(t, store, run.ID, "batch")
-		if parent.Status != WorkflowStepStatusSucceeded || parent.Attempt != 0 || parent.ForEachCount == nil || *parent.ForEachCount != 2 || !equalWorkflowJSON(parent.Output, json.RawMessage(`[{"n":9007199254740993},[true,null]]`)) {
+		parent := state.GuardStep(t, store, run.ID, "batch")
+		if parent.Status != state.WorkflowStepStatusSucceeded || parent.Attempt != 0 || parent.ForEachCount == nil || *parent.ForEachCount != 2 || !state.EqualWorkflowJSON(parent.Output, json.RawMessage(`[{"n":9007199254740993},[true,null]]`)) {
 			t.Fatalf("ordered results lost: %+v", parent)
 		}
 		attempts, err := store.GetWorkflowStepAttempts(ctx, run.ID, next.Item.StepName)
-		if err != nil || len(attempts) != 2 || attempts[0].Status != WorkflowAttemptStatusFailed || attempts[1].Status != WorkflowAttemptStatusSucceeded {
+		if err != nil || len(attempts) != 2 || attempts[0].Status != state.WorkflowAttemptStatusFailed || attempts[1].Status != state.WorkflowAttemptStatusSucceeded {
 			t.Fatalf("attempt history: %+v %v", attempts, err)
 		}
 		*parent.ForEachCount = 0
-		if *guardStep(t, store, run.ID, "batch").ForEachCount != 2 {
+		if *state.GuardStep(t, store, run.ID, "batch").ForEachCount != 2 {
 			t.Fatal("inspection modified batch metadata")
 		}
 	})
 }
 
 func TestWorkflowForEachBoundedParallelAdmissionAndFailureDrain(t *testing.T) {
-	workflowGuardStores(t, func(t *testing.T, store Store) {
+	state.WorkflowGuardStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
 		spec := foreachTestSpec()
 		spec.Steps[1].ForEach.MaxParallel = 2
@@ -120,11 +121,11 @@ func TestWorkflowForEachBoundedParallelAdmissionAndFailureDrain(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		third := guardStep(t, store, run.ID, api.WorkflowForEachItemName("batch", 2))
-		if _, err := store.StartWorkflowStep(ctx, run.ID, third.StepName, 1, third.Input); !errors.Is(err, ErrWorkflowGuardNotReady) {
+		third := state.GuardStep(t, store, run.ID, api.WorkflowForEachItemName("batch", 2))
+		if _, err := store.StartWorkflowStep(ctx, run.ID, third.StepName, 1, third.Input); !errors.Is(err, state.ErrWorkflowGuardNotReady) {
 			t.Fatalf("batch exceeded max_parallel: %v", err)
 		}
-		if err := store.MarkWorkflowStepAttemptStatus(ctx, run.ID, firstWave.Items[0].StepName, WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(`0`), nil); err != nil {
+		if err := store.MarkWorkflowStepAttemptStatus(ctx, run.ID, firstWave.Items[0].StepName, state.WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(`0`), nil); err != nil {
 			t.Fatal(err)
 		}
 		next, err := store.ResolveWorkflowForEach(ctx, run.ID, "batch")
@@ -136,13 +137,13 @@ func TestWorkflowForEachBoundedParallelAdmissionAndFailureDrain(t *testing.T) {
 		}
 		for index, output := range map[int]string{1: `1`, 2: `2`} {
 			name := api.WorkflowForEachItemName("batch", index)
-			if err := store.MarkWorkflowStepAttemptStatus(ctx, run.ID, name, WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(output), nil); err != nil {
+			if err := store.MarkWorkflowStepAttemptStatus(ctx, run.ID, name, state.WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(output), nil); err != nil {
 				t.Fatal(err)
 			}
 		}
 		complete, err := store.ResolveWorkflowForEach(ctx, run.ID, "batch")
-		parent := guardStep(t, store, run.ID, "batch")
-		if err != nil || !complete.Complete || parent.Status != WorkflowStepStatusSucceeded || !equalWorkflowJSON(parent.Output, json.RawMessage(`[0,1,2]`)) {
+		parent := state.GuardStep(t, store, run.ID, "batch")
+		if err != nil || !complete.Complete || parent.Status != state.WorkflowStepStatusSucceeded || !state.EqualWorkflowJSON(parent.Output, json.RawMessage(`[0,1,2]`)) {
 			t.Fatalf("parallel results lost input order: outcome=%+v parent=%+v err=%v", complete, parent, err)
 		}
 
@@ -159,7 +160,7 @@ func TestWorkflowForEachBoundedParallelAdmissionAndFailureDrain(t *testing.T) {
 			}
 		}
 		failure := "expected failure"
-		if err := store.MarkWorkflowStepAttemptStatus(ctx, stopRun.ID, admitted.Items[1].StepName, WorkflowStepStatusFailed, 1, nil, nil, &failure); err != nil {
+		if err := store.MarkWorkflowStepAttemptStatus(ctx, stopRun.ID, admitted.Items[1].StepName, state.WorkflowStepStatusFailed, 1, nil, nil, &failure); err != nil {
 			t.Fatal(err)
 		}
 		waiting, err := store.ResolveWorkflowForEach(ctx, stopRun.ID, "batch")
@@ -168,14 +169,14 @@ func TestWorkflowForEachBoundedParallelAdmissionAndFailureDrain(t *testing.T) {
 		}
 		for _, index := range []int{0, 2} {
 			name := api.WorkflowForEachItemName("batch", index)
-			if err := store.MarkWorkflowStepAttemptStatus(ctx, stopRun.ID, name, WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(fmt.Sprint(index)), nil); err != nil {
+			if err := store.MarkWorkflowStepAttemptStatus(ctx, stopRun.ID, name, state.WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(fmt.Sprint(index)), nil); err != nil {
 				t.Fatal(err)
 			}
 		}
 		failed, err := store.ResolveWorkflowForEach(ctx, stopRun.ID, "batch")
-		parent = guardStep(t, store, stopRun.ID, "batch")
-		pending := guardStep(t, store, stopRun.ID, api.WorkflowForEachItemName("batch", 3))
-		if err != nil || !failed.Complete || parent.Status != WorkflowStepStatusFailed || string(parent.Output) != `[0]` || pending.Status != WorkflowStepStatusSkipped {
+		parent = state.GuardStep(t, store, stopRun.ID, "batch")
+		pending := state.GuardStep(t, store, stopRun.ID, api.WorkflowForEachItemName("batch", 3))
+		if err != nil || !failed.Complete || parent.Status != state.WorkflowStepStatusFailed || string(parent.Output) != `[0]` || pending.Status != state.WorkflowStepStatusSkipped {
 			t.Fatalf("stop policy did not drain and stop: outcome=%+v parent=%+v pending=%+v err=%v", failed, parent, pending, err)
 		}
 	})
@@ -190,26 +191,26 @@ func TestWorkflowForEachParallelLimitClampsPersistedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := workflowForEachMaxParallel(snapshot, "batch"); got != api.WorkflowForEachMaxParallelLimit {
+	if got := state.WorkflowForEachMaxParallel(snapshot, "batch"); got != api.WorkflowForEachMaxParallelLimit {
 		t.Fatalf("persisted max_parallel was not clamped: got %d", got)
 	}
 
 	count := api.WorkflowForEachMaxParallelLimit + 2
-	parent := WorkflowStep{StepName: "batch", ForEachCount: &count}
-	steps := make(map[string]WorkflowStep, count)
+	parent := state.WorkflowStep{StepName: "batch", ForEachCount: &count}
+	steps := make(map[string]state.WorkflowStep, count)
 	for index := range count {
 		owner, position := "batch", index
 		name := api.WorkflowForEachItemName("batch", index)
-		steps[name] = WorkflowStep{StepName: name, Status: WorkflowStepStatusPending, ForEachParent: &owner, ForEachIndex: &position}
+		steps[name] = state.WorkflowStep{StepName: name, Status: state.WorkflowStepStatusPending, ForEachParent: &owner, ForEachIndex: &position}
 	}
-	outcome, _, _, _, err := workflowForEachNext(parent, steps, false, maxParallel)
+	outcome, _, _, _, err := state.WorkflowForEachNext(parent, steps, false, maxParallel)
 	if err != nil || len(outcome.Items) != api.WorkflowForEachMaxParallelLimit {
 		t.Fatalf("admission ignored the hard parallel cap: admitted=%d err=%v", len(outcome.Items), err)
 	}
 }
 
 func TestWorkflowForEachFailureBoundsAndCancellation(t *testing.T) {
-	workflowGuardStores(t, func(t *testing.T, store Store) {
+	state.WorkflowGuardStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
 		run := seedForEach(t, store, foreachTestSpec(), `[0,1,2]`)
 		first, err := store.ResolveWorkflowForEach(ctx, run.ID, "batch")
@@ -225,20 +226,20 @@ func TestWorkflowForEachFailureBoundsAndCancellation(t *testing.T) {
 			t.Fatal(err)
 		}
 		oversized := json.RawMessage(`"` + strings.Repeat("y", int(api.WorkflowForEachMaxOutputBytes)/2) + `"`)
-		if err := store.MarkWorkflowStepAttemptStatus(ctx, run.ID, next.Item.StepName, WorkflowStepStatusSucceeded, 1, nil, oversized, nil); !errors.Is(err, ErrWorkflowForEachOutputLimit) {
+		if err := store.MarkWorkflowStepAttemptStatus(ctx, run.ID, next.Item.StepName, state.WorkflowStepStatusSucceeded, 1, nil, oversized, nil); !errors.Is(err, state.ErrWorkflowForEachOutputLimit) {
 			t.Fatalf("collection cap bypassed: %v", err)
 		}
 		message := "output limit"
-		if err := store.MarkWorkflowStepAttemptStatus(ctx, run.ID, next.Item.StepName, WorkflowStepStatusFailed, 1, nil, nil, &message); err != nil {
+		if err := store.MarkWorkflowStepAttemptStatus(ctx, run.ID, next.Item.StepName, state.WorkflowStepStatusFailed, 1, nil, nil, &message); err != nil {
 			t.Fatal(err)
 		}
 		if result, err := store.ResolveWorkflowForEach(ctx, run.ID, "batch"); err != nil || !result.Complete {
 			t.Fatalf("failed batch did not finish: %+v %v", result, err)
 		}
-		if parent := guardStep(t, store, run.ID, "batch"); parent.Status != WorkflowStepStatusFailed || len(parent.Output) == 0 || int64(len(parent.Output)) > api.WorkflowForEachMaxOutputBytes {
+		if parent := state.GuardStep(t, store, run.ID, "batch"); parent.Status != state.WorkflowStepStatusFailed || len(parent.Output) == 0 || int64(len(parent.Output)) > api.WorkflowForEachMaxOutputBytes {
 			t.Fatalf("failed batch summary: %+v", parent)
 		}
-		if item := guardStep(t, store, run.ID, api.WorkflowForEachItemName("batch", 2)); item.Status != WorkflowStepStatusSkipped || item.Attempt != 0 {
+		if item := state.GuardStep(t, store, run.ID, api.WorkflowForEachItemName("batch", 2)); item.Status != state.WorkflowStepStatusSkipped || item.Attempt != 0 {
 			t.Fatalf("failed batch activated next item: %+v", item)
 		}
 		other := seedForEach(t, store, foreachTestSpec(), `[0,1]`)
@@ -253,8 +254,8 @@ func TestWorkflowForEachFailureBoundsAndCancellation(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			err := store.MarkWorkflowStepAttemptStatus(ctx, other.ID, item.Item.StepName, WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(`true`), nil)
-			if err != nil && !errors.Is(err, ErrWorkflowOutboundAttemptExpired) {
+			err := store.MarkWorkflowStepAttemptStatus(ctx, other.ID, item.Item.StepName, state.WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(`true`), nil)
+			if err != nil && !errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) {
 				t.Error(err)
 			}
 		}()
@@ -265,17 +266,17 @@ func TestWorkflowForEachFailureBoundsAndCancellation(t *testing.T) {
 			}
 		}()
 		wg.Wait()
-		if _, err := store.ResolveWorkflowForEach(ctx, other.ID, "batch"); !errors.Is(err, ErrWorkflowGuardNotReady) {
+		if _, err := store.ResolveWorkflowForEach(ctx, other.ID, "batch"); !errors.Is(err, state.ErrWorkflowGuardNotReady) {
 			t.Fatalf("cancelled batch resumed: %v", err)
 		}
-		if attempts, err := store.GetWorkflowStepAttempts(ctx, other.ID, item.Item.StepName); err != nil || len(attempts) != 1 || attempts[0].Status == WorkflowAttemptStatusRunning {
+		if attempts, err := store.GetWorkflowStepAttempts(ctx, other.ID, item.Item.StepName); err != nil || len(attempts) != 1 || attempts[0].Status == state.WorkflowAttemptStatusRunning {
 			t.Fatalf("cancel left a running attempt: %+v %v", attempts, err)
 		}
 	})
 }
 
 func TestWorkflowForEachItemGuardsAndFailureContinuation(t *testing.T) {
-	workflowGuardStores(t, func(t *testing.T, store Store) {
+	state.WorkflowGuardStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
 		guarded := foreachTestSpec()
 		guarded.Steps[1].ForEach.Action.When = &api.WorkflowGuardSpec{Ref: "input.item.enabled", Op: "eq", Value: json.RawMessage("true")}
@@ -284,17 +285,17 @@ func TestWorkflowForEachItemGuardsAndFailureContinuation(t *testing.T) {
 		if err != nil || first.Item == nil || *first.Item.ForEachIndex != 1 {
 			t.Fatalf("first matching item: %+v %v", first, err)
 		}
-		skipped := guardStep(t, store, run.ID, api.WorkflowForEachItemName("batch", 0))
-		if skipped.Status != WorkflowStepStatusSkipped || skipped.WhenMatched == nil || *skipped.WhenMatched || skipped.SkipReason == nil || *skipped.SkipReason != WorkflowSkipWhenFalse || skipped.WhenEvaluatedAt == nil {
+		skipped := state.GuardStep(t, store, run.ID, api.WorkflowForEachItemName("batch", 0))
+		if skipped.Status != state.WorkflowStepStatusSkipped || skipped.WhenMatched == nil || *skipped.WhenMatched || skipped.SkipReason == nil || *skipped.SkipReason != state.WorkflowSkipWhenFalse || skipped.WhenEvaluatedAt == nil {
 			t.Fatalf("guard decision was not persisted: %+v", skipped)
 		}
-		if _, err := store.StartWorkflowStep(ctx, run.ID, skipped.StepName, 1, skipped.Input); !errors.Is(err, ErrWorkflowGuardNotReady) {
+		if _, err := store.StartWorkflowStep(ctx, run.ID, skipped.StepName, 1, skipped.Input); !errors.Is(err, state.ErrWorkflowGuardNotReady) {
 			t.Fatalf("guarded item was dispatchable: %v", err)
 		}
 		finishForEachItem(t, store, run.ID, first.Item, `"sent"`)
 		complete, err := store.ResolveWorkflowForEach(ctx, run.ID, "batch")
-		parent := guardStep(t, store, run.ID, "batch")
-		if err != nil || !complete.Complete || parent.Status != WorkflowStepStatusSucceeded || !equalWorkflowJSON(parent.Output, json.RawMessage(`[null,"sent",null]`)) {
+		parent := state.GuardStep(t, store, run.ID, "batch")
+		if err != nil || !complete.Complete || parent.Status != state.WorkflowStepStatusSucceeded || !state.EqualWorkflowJSON(parent.Output, json.RawMessage(`[null,"sent",null]`)) {
 			t.Fatalf("guarded batch output: outcome=%+v parent=%+v err=%v", complete, parent, err)
 		}
 
@@ -305,13 +306,13 @@ func TestWorkflowForEachItemGuardsAndFailureContinuation(t *testing.T) {
 		if err != nil || item.Item == nil || *item.Item.ForEachIndex != 0 {
 			t.Fatalf("first continue item: %+v %v", item, err)
 		}
-		failItem := func(item *WorkflowStep) {
+		failItem := func(item *state.WorkflowStep) {
 			t.Helper()
 			if _, err := store.StartWorkflowStep(ctx, continuedRun.ID, item.StepName, item.Attempt+1, item.Input); err != nil {
 				t.Fatal(err)
 			}
 			message := "safe test failure"
-			if err := store.MarkWorkflowStepAttemptStatus(ctx, continuedRun.ID, item.StepName, WorkflowStepStatusFailed, item.Attempt+1, nil, nil, &message); err != nil {
+			if err := store.MarkWorkflowStepAttemptStatus(ctx, continuedRun.ID, item.StepName, state.WorkflowStepStatusFailed, item.Attempt+1, nil, nil, &message); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -327,18 +328,18 @@ func TestWorkflowForEachItemGuardsAndFailureContinuation(t *testing.T) {
 		}
 		failItem(item.Item)
 		complete, err = store.ResolveWorkflowForEach(ctx, continuedRun.ID, "batch")
-		parent = guardStep(t, store, continuedRun.ID, "batch")
-		if err != nil || !complete.Complete || parent.Status != WorkflowStepStatusFailed || !equalWorkflowJSON(parent.Output, json.RawMessage(`[null,"ok",null]`)) || parent.Error == nil || *parent.Error != "for_each completed with 2 failed item(s)" {
+		parent = state.GuardStep(t, store, continuedRun.ID, "batch")
+		if err != nil || !complete.Complete || parent.Status != state.WorkflowStepStatusFailed || !state.EqualWorkflowJSON(parent.Output, json.RawMessage(`[null,"ok",null]`)) || parent.Error == nil || *parent.Error != "for_each completed with 2 failed item(s)" {
 			t.Fatalf("continued batch result: outcome=%+v parent=%+v err=%v", complete, parent, err)
 		}
 	})
 }
 
 func TestWorkflowForEachEmptyArrayAndLeaseRecovery(t *testing.T) {
-	workflowGuardStores(t, func(t *testing.T, store Store) {
+	state.WorkflowGuardStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
 		empty := seedForEach(t, store, foreachTestSpec(), `[]`)
-		if result, err := store.ResolveWorkflowForEach(ctx, empty.ID, "batch"); err != nil || !result.Complete || string(guardStep(t, store, empty.ID, "batch").Output) != "[]" {
+		if result, err := store.ResolveWorkflowForEach(ctx, empty.ID, "batch"); err != nil || !result.Complete || string(state.GuardStep(t, store, empty.ID, "batch").Output) != "[]" {
 			t.Fatalf("empty batch: %+v %v", result, err)
 		}
 		run := seedForEach(t, store, foreachTestSpec(), `[true]`)
@@ -350,19 +351,19 @@ func TestWorkflowForEachEmptyArrayAndLeaseRecovery(t *testing.T) {
 			t.Fatal(err)
 		}
 		switch store := store.(type) {
-		case *MemStore:
-			store.mu.Lock()
-			store.workflowRunLeases[run.ID] = time.Now().Add(-time.Minute)
-			store.mu.Unlock()
-		case *PgStore:
-			if _, err := store.pool.Exec(ctx, `UPDATE workflow_runs SET lease_until=now()-interval '1 minute' WHERE id=$1`, run.ID); err != nil {
+		case *state.MemStore:
+			(*store.Mu()).Lock()
+			(*store.WorkflowRunLeases())[run.ID] = time.Now().Add(-time.Minute)
+			(*store.Mu()).Unlock()
+		case *state.PgStore:
+			if _, err := (*store.Pool()).Exec(ctx, `UPDATE workflow_runs SET lease_until=now()-interval '1 minute' WHERE id=$1`, run.ID); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if err := store.MarkWorkflowStepAttemptStatus(ctx, run.ID, item.Item.StepName, WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(`"expired"`), nil); !errors.Is(err, ErrWorkflowOutboundAttemptExpired) {
+		if err := store.MarkWorkflowStepAttemptStatus(ctx, run.ID, item.Item.StepName, state.WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(`"expired"`), nil); !errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) {
 			t.Fatalf("expired item completion committed: %v", err)
 		}
-		if err := store.ScheduleWorkflowStepRetryWithHTTPStatus(ctx, run.ID, item.Item.StepName, 1, time.Now(), nil, "expired"); !errors.Is(err, ErrWorkflowOutboundAttemptExpired) {
+		if err := store.ScheduleWorkflowStepRetryWithHTTPStatus(ctx, run.ID, item.Item.StepName, 1, time.Now(), nil, "expired"); !errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) {
 			t.Fatalf("expired item retry committed: %v", err)
 		}
 		if _, err := store.ClaimNextDueWorkflowRun(ctx); err != nil {
@@ -378,7 +379,7 @@ func TestWorkflowForEachEmptyArrayAndLeaseRecovery(t *testing.T) {
 func TestWorkflowForEachOutboundRecoveryRetainsReplayPolicy(t *testing.T) {
 	for _, safe := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unsafe mutation", true: "provider idempotency"}[safe], func(t *testing.T) {
-			workflowOutboundRecoveryStores(t, func(t *testing.T, store Store, recoverRun func(string)) {
+			workflowOutboundRecoveryStores(t, func(t *testing.T, store state.Store, recoverRun func(string)) {
 				ctx := context.Background()
 				spec := foreachTestSpec()
 				spec.Steps[1].ForEach.Action = api.WorkflowForEachActionSpec{Outbound: &api.WorkflowOutboundSpec{IntegrationID: "00000000-0000-0000-0000-000000000001", Method: "POST", Path: "/send", IdempotencySupported: safe}}
@@ -399,10 +400,10 @@ func TestWorkflowForEachOutboundRecoveryRetainsReplayPolicy(t *testing.T) {
 					if result.Item == nil || result.Item.Attempt != 1 || *result.Item.ForEachIndex != 0 {
 						t.Fatalf("safe item lost attempt fence: %+v", result)
 					}
-				} else if !result.Complete || guardStep(t, store, run.ID, "batch").Status != WorkflowStepStatusDead || guardStep(t, store, run.ID, api.WorkflowForEachItemName("batch", 1)).Status != WorkflowStepStatusSkipped {
+				} else if !result.Complete || state.GuardStep(t, store, run.ID, "batch").Status != state.WorkflowStepStatusDead || state.GuardStep(t, store, run.ID, api.WorkflowForEachItemName("batch", 1)).Status != state.WorkflowStepStatusSkipped {
 					t.Fatal("unknown unsafe mutation was replayed or next item activated")
 				}
-				if attempts, err := store.GetWorkflowStepAttempts(ctx, run.ID, item.Item.StepName); err != nil || len(attempts) != 1 || attempts[0].Status != WorkflowAttemptStatusFailed {
+				if attempts, err := store.GetWorkflowStepAttempts(ctx, run.ID, item.Item.StepName); err != nil || len(attempts) != 1 || attempts[0].Status != state.WorkflowAttemptStatusFailed {
 					t.Fatalf("interrupted item ledger: %+v %v", attempts, err)
 				}
 			})
@@ -411,7 +412,7 @@ func TestWorkflowForEachOutboundRecoveryRetainsReplayPolicy(t *testing.T) {
 }
 
 func TestWorkflowForEachConcurrentInitializationAndAdmission(t *testing.T) {
-	workflowGuardStores(t, func(t *testing.T, store Store) {
+	state.WorkflowGuardStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
 		run := seedForEach(t, store, foreachTestSpec(), `[true,false]`)
 		var wg sync.WaitGroup
@@ -428,7 +429,7 @@ func TestWorkflowForEachConcurrentInitializationAndAdmission(t *testing.T) {
 		if err != nil || len(steps) != 5 {
 			t.Fatalf("duplicate item records: %d %v", len(steps), err)
 		}
-		item := guardStep(t, store, run.ID, api.WorkflowForEachItemName("batch", 0))
+		item := state.GuardStep(t, store, run.ID, api.WorkflowForEachItemName("batch", 0))
 		var admissions int
 		var mu sync.Mutex
 		for range 4 {
@@ -438,7 +439,7 @@ func TestWorkflowForEachConcurrentInitializationAndAdmission(t *testing.T) {
 					mu.Lock()
 					admissions++
 					mu.Unlock()
-				} else if !errors.Is(err, ErrWorkflowOutboundAttemptExpired) && !errors.Is(err, ErrWorkflowGuardNotReady) {
+				} else if !errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) && !errors.Is(err, state.ErrWorkflowGuardNotReady) {
 					t.Error(err)
 				}
 			})
@@ -451,7 +452,7 @@ func TestWorkflowForEachConcurrentInitializationAndAdmission(t *testing.T) {
 }
 
 func TestWorkflowForEachMigrationRollbackAndReapply(t *testing.T) {
-	store := NewPgStore(pgtest.OpenMigrated(t))
+	store := state.NewPgStore(pgtest.OpenMigrated(t))
 	ctx := context.Background()
 	run := seedForEach(t, store, foreachTestSpec(), `[true]`)
 	item, err := store.ResolveWorkflowForEach(ctx, run.ID, "batch")
@@ -470,21 +471,21 @@ func TestWorkflowForEachMigrationRollbackAndReapply(t *testing.T) {
 	if !ok {
 		t.Fatal("missing rollback")
 	}
-	if _, err := store.pool.Exec(ctx, down); err != nil {
+	if _, err := (*store.Pool()).Exec(ctx, down); err != nil {
 		t.Fatal(err)
 	}
 	var count int
-	if err := store.pool.QueryRow(ctx, `SELECT count(*) FROM workflow_steps WHERE run_id=$1`, run.ID).Scan(&count); err != nil || count != 3 {
+	if err := (*store.Pool()).QueryRow(ctx, `SELECT count(*) FROM workflow_steps WHERE run_id=$1`, run.ID).Scan(&count); err != nil || count != 3 {
 		t.Fatalf("rollback left internal items or deleted parents: %d %v", count, err)
 	}
-	if err := store.pool.QueryRow(ctx, `SELECT count(*) FROM workflow_step_attempts WHERE run_id=$1`, run.ID).Scan(&count); err != nil || count != 0 {
+	if err := (*store.Pool()).QueryRow(ctx, `SELECT count(*) FROM workflow_step_attempts WHERE run_id=$1`, run.ID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("rollback left orphan item attempts: %d %v", count, err)
 	}
-	if _, err := store.pool.Exec(ctx, up); err != nil {
+	if _, err := (*store.Pool()).Exec(ctx, up); err != nil {
 		t.Fatal(err)
 	}
 	var name string
-	if err := store.pool.QueryRow(ctx, `SELECT workflow_foreach_item_name($1,0)`, "büç").Scan(&name); err != nil || name != api.WorkflowForEachItemName("büç", 0) {
+	if err := (*store.Pool()).QueryRow(ctx, `SELECT workflow_foreach_item_name($1,0)`, "büç").Scan(&name); err != nil || name != api.WorkflowForEachItemName("büç", 0) {
 		t.Fatalf("SQL/Go identity disagrees: %s %v", name, err)
 	}
 }

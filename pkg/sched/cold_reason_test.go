@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 import (
 	"context"
@@ -8,7 +8,9 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -24,17 +26,17 @@ func TestChooseWakeSnapshotColdReasons(t *testing.T) {
 		want     string
 		rejected bool // the refused row is reported
 	}{
-		{name: "no snapshot", want: ColdReasonNoSnapshot},
-		{name: "only a stale row", seed: &state.Snapshot{FCVersion: "1.10.0", Stale: true}, want: ColdReasonNoSnapshot},
-		{name: "firecracker version changed", seed: &state.Snapshot{FCVersion: "1.7.0"}, want: ColdReasonFCVersion, rejected: true},
-		{name: "legacy capture without drive", seed: &state.Snapshot{FCVersion: "1.10.0", StorageKey: "legacy"}, want: ColdReasonNoDrive, rejected: true},
-		{name: "guest RAM changed", seed: &state.Snapshot{FCVersion: "1.10.0", MemBytes: 512 << 20}, want: ColdReasonRAM, rejected: true},
-		{name: "h2 base image changed", seed: &state.Snapshot{FCVersion: "1.10.0", BaseImageVersion: "old"}, protocol: api.AppProtocolHTTP2, want: ColdReasonBaseImage, rejected: true},
+		{name: "no snapshot", want: sched.ColdReasonNoSnapshot},
+		{name: "only a stale row", seed: &state.Snapshot{FCVersion: "1.10.0", Stale: true}, want: sched.ColdReasonNoSnapshot},
+		{name: "firecracker version changed", seed: &state.Snapshot{FCVersion: "1.7.0"}, want: sched.ColdReasonFCVersion, rejected: true},
+		{name: "legacy capture without drive", seed: &state.Snapshot{FCVersion: "1.10.0", StorageKey: "legacy"}, want: sched.ColdReasonNoDrive, rejected: true},
+		{name: "guest RAM changed", seed: &state.Snapshot{FCVersion: "1.10.0", MemBytes: 512 << 20}, want: sched.ColdReasonRAM, rejected: true},
+		{name: "h2 base image changed", seed: &state.Snapshot{FCVersion: "1.10.0", BaseImageVersion: "old"}, protocol: api.AppProtocolHTTP2, want: sched.ColdReasonBaseImage, rejected: true},
 		{name: "usable", seed: &state.Snapshot{FCVersion: "1.10.0"}, wantOK: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := state.NewMemStore()
-			_, _, dep := seedApp(t, store, api.PlanFree, 256, 5)
+			_, _, dep := sched.SeedApp(t, store, api.PlanFree, 256, 5)
 			var seeded state.Snapshot
 			if tc.seed != nil {
 				snap := *tc.seed
@@ -58,19 +60,19 @@ func TestChooseWakeSnapshotColdReasons(t *testing.T) {
 			if protocol == "" {
 				protocol = api.AppProtocolHTTP1
 			}
-			e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
-			got := e.chooseWakeSnapshot(context.Background(), dep.ID, string(api.PlanFree), 256, protocol)
-			if got.ok != tc.wantOK || got.coldReason != tc.want {
-				t.Fatalf("choice ok=%v reason=%q, want ok=%v reason=%q", got.ok, got.coldReason, tc.wantOK, tc.want)
+			e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+			got := e.ChooseWakeSnapshot(context.Background(), dep.ID, string(api.PlanFree), 256, protocol)
+			if (*got.Ok()) != tc.wantOK || (*got.ColdReason()) != tc.want {
+				t.Fatalf("choice ok=%v reason=%q, want ok=%v reason=%q", (*got.Ok()), (*got.ColdReason()), tc.wantOK, tc.want)
 			}
-			if tc.wantOK && (got.tier != wakeTierInit || got.snap.ID != seeded.ID) {
-				t.Fatalf("usable choice = tier %q snap %q, want init %q", got.tier, got.snap.ID, seeded.ID)
+			if tc.wantOK && ((*got.Tier()) != sched.WakeTierInit || (*got.Snap()).ID != seeded.ID) {
+				t.Fatalf("usable choice = tier %q snap %q, want init %q", (*got.Tier()), (*got.Snap()).ID, seeded.ID)
 			}
-			if !tc.wantOK && got.tier != wakeTierColdBootFallback {
-				t.Fatalf("cold choice tier = %q, want %q", got.tier, wakeTierColdBootFallback)
+			if !tc.wantOK && (*got.Tier()) != sched.WakeTierColdBootFallback {
+				t.Fatalf("cold choice tier = %q, want %q", (*got.Tier()), sched.WakeTierColdBootFallback)
 			}
-			if tc.rejected && got.rejected.ID != seeded.ID {
-				t.Fatalf("rejected snapshot = %q, want the refused row %q", got.rejected.ID, seeded.ID)
+			if tc.rejected && (*got.Rejected()).ID != seeded.ID {
+				t.Fatalf("rejected snapshot = %q, want the refused row %q", (*got.Rejected()).ID, seeded.ID)
 			}
 		})
 	}
@@ -82,8 +84,8 @@ func TestChooseWakeSnapshotColdReasons(t *testing.T) {
 // adr: 005 — pkg/wire cannot import pkg/sched, so it carries its own copy of
 // the reason set for metric pre-instantiation; the two must never drift.
 func TestColdReasonsMatchWireLabels(t *testing.T) {
-	if !reflect.DeepEqual(ColdReasons, wire.WakeColdReasons) {
-		t.Fatalf("sched.ColdReasons %v != wire.WakeColdReasons %v", ColdReasons, wire.WakeColdReasons)
+	if !reflect.DeepEqual(sched.ColdReasons, wire.WakeColdReasons) {
+		t.Fatalf("sched.ColdReasons %v != wire.WakeColdReasons %v", sched.ColdReasons, wire.WakeColdReasons)
 	}
 }
 
@@ -95,13 +97,13 @@ func TestEngineWake_BootStartedCarriesColdReason(t *testing.T) {
 		fcVersion string // "" seeds no snapshot
 		want      string
 	}{
-		{name: "never snapshotted", want: ColdReasonNoSnapshot},
-		{name: "firecracker version changed", fcVersion: "1.7.0", want: ColdReasonFCVersion},
+		{name: "never snapshotted", want: sched.ColdReasonNoSnapshot},
+		{name: "firecracker version changed", fcVersion: "1.7.0", want: sched.ColdReasonFCVersion},
 		{name: "restores", fcVersion: "1.10.0", want: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := state.NewMemStore()
-			_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+			_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
 			if tc.fcVersion != "" {
 				if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 					DeploymentID: dep.ID, FCVersion: tc.fcVersion, MemBytes: 512 << 20,
@@ -111,12 +113,12 @@ func TestEngineWake_BootStartedCarriesColdReason(t *testing.T) {
 					t.Fatalf("CreateSnapshot: %v", err)
 				}
 			}
-			e := wakeEngineWithEvents(t, store, &fakeVMM{}, &fakeNotifier{})
+			e := sched.WakeEngineWithEvents(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{})
 			res, err := e.Wake(context.Background(), app.ID, "", "", "")
 			if err != nil {
 				t.Fatalf("Wake: %v", err)
 			}
-			rows := eventuallyEventsForInstance(t, store, res.WakeID, 3)
+			rows := sched.EventuallyEventsForInstance(t, store, res.WakeID, 3)
 			for _, r := range rows {
 				if r.Kind != "wake.boot_started" {
 					continue
@@ -134,12 +136,12 @@ func TestEngineWake_BootStartedCarriesColdReason(t *testing.T) {
 				}
 				return
 			}
-			t.Fatalf("no wake.boot_started row among %v", kindsOf(rows))
+			t.Fatalf("no wake.boot_started row among %v", sched.KindsOf(rows))
 		})
 	}
 }
 
-type activeSnapshotBackoffStore struct{ *state.MemStore }
+type activeSnapshotBackoffStore struct{ MemStore *state.MemStore }
 
 func (activeSnapshotBackoffStore) DeploymentSnapshotBackoffActive(context.Context, string) (state.Deployment, bool, error) {
 	return state.Deployment{}, true, nil
@@ -151,8 +153,8 @@ func (activeSnapshotBackoffStore) DeploymentSnapshotBackoffActive(context.Contex
 func TestEngineWake_EphemeralSecretNeverRestoresExistingSnapshot(t *testing.T) {
 	ctx := context.Background()
 	mem := state.NewMemStore()
-	acct, app, dep := seedApp(t, mem, api.PlanPro, 512, 5)
-	enableWarmSnapshot(t, mem, app.ID)
+	acct, app, dep := sched.SeedApp(t, mem, api.PlanPro, 512, 5)
+	sched.EnableWarmSnapshot(t, mem, app.ID)
 	for _, tier := range []string{state.SnapshotTierInit, state.SnapshotTierWarm} {
 		if _, err := mem.CreateSnapshot(ctx, state.Snapshot{
 			DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 512 << 20,
@@ -167,17 +169,17 @@ func TestEngineWake_EphemeralSecretNeverRestoresExistingSnapshot(t *testing.T) {
 		t.Fatalf("UpsertAppSecretWithClassInScope: %v", err)
 	}
 
-	vmm := &fakeVMM{}
+	vmm := &sched.FakeVMM{}
 	store := activeSnapshotBackoffStore{MemStore: mem}
-	e := wakeEngineWithEvents(t, store, vmm, &fakeNotifier{})
+	e := sched.WakeEngineWithEvents(t, statetest.NewMem(store), vmm, &sched.FakeNotifier{})
 	res, err := e.Wake(ctx, app.ID, "", "", "")
 	if err != nil {
 		t.Fatalf("Wake with ephemeral secret and active snapshot backoff: %v", err)
 	}
-	if vmm.restores != 0 || vmm.coldBoots != 1 {
-		t.Fatalf("VMM wake calls: restores=%d cold_boots=%d, want 0/1", vmm.restores, vmm.coldBoots)
+	if (*vmm.Restores()) != 0 || (*vmm.ColdBoots()) != 1 {
+		t.Fatalf("VMM wake calls: restores=%d cold_boots=%d, want 0/1", (*vmm.Restores()), (*vmm.ColdBoots()))
 	}
-	for _, row := range eventuallyEventsForInstance(t, store, res.WakeID, 3) {
+	for _, row := range sched.EventuallyEventsForInstance(t, statetest.NewMem(store), res.WakeID, 3) {
 		if row.Kind != "wake.boot_started" {
 			continue
 		}
@@ -185,8 +187,8 @@ func TestEngineWake_EphemeralSecretNeverRestoresExistingSnapshot(t *testing.T) {
 		if err := json.Unmarshal(row.Data, &data); err != nil {
 			t.Fatal(err)
 		}
-		if data["cold_reason"] != ColdReasonEphemeralSecret {
-			t.Fatalf("cold_reason = %v, want %s", data["cold_reason"], ColdReasonEphemeralSecret)
+		if data["cold_reason"] != sched.ColdReasonEphemeralSecret {
+			t.Fatalf("cold_reason = %v, want %s", data["cold_reason"], sched.ColdReasonEphemeralSecret)
 		}
 		return
 	}
@@ -195,7 +197,7 @@ func TestEngineWake_EphemeralSecretNeverRestoresExistingSnapshot(t *testing.T) {
 
 // historyStore reports snapshot history the way PgStore does (any row,
 // stale or not). MemStore.HasSnapshotHistory always answers false.
-type historyStore struct{ *state.MemStore }
+type historyStore struct{ MemStore *state.MemStore }
 
 func (historyStore) HasSnapshotHistory(context.Context, string) (bool, error) { return true, nil }
 
@@ -203,7 +205,7 @@ func (historyStore) HasSnapshotHistory(context.Context, string) (bool, error) { 
 // as snapshots_stale, not as one that never had a snapshot.
 func TestEngineWake_AllSnapshotsStaleReason(t *testing.T) {
 	mem := state.NewMemStore()
-	_, app, dep := seedApp(t, mem, api.PlanPro, 512, 5)
+	_, app, dep := sched.SeedApp(t, mem, api.PlanPro, 512, 5)
 	if _, err := mem.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 512 << 20, Stale: true,
 		StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "c1"),
@@ -212,12 +214,12 @@ func TestEngineWake_AllSnapshotsStaleReason(t *testing.T) {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
 	store := historyStore{mem}
-	e := wakeEngineWithEvents(t, store, &fakeVMM{}, &fakeNotifier{})
+	e := sched.WakeEngineWithEvents(t, statetest.NewMem(store), &sched.FakeVMM{}, &sched.FakeNotifier{})
 	res, err := e.Wake(context.Background(), app.ID, "", "", "")
 	if err != nil {
 		t.Fatalf("Wake: %v", err)
 	}
-	for _, r := range eventuallyEventsForInstance(t, store, res.WakeID, 3) {
+	for _, r := range sched.EventuallyEventsForInstance(t, statetest.NewMem(store), res.WakeID, 3) {
 		if r.Kind != "wake.boot_started" {
 			continue
 		}
@@ -225,8 +227,8 @@ func TestEngineWake_AllSnapshotsStaleReason(t *testing.T) {
 		if err := json.Unmarshal(r.Data, &data); err != nil {
 			t.Fatal(err)
 		}
-		if data["cold_reason"] != ColdReasonSnapshotsStale {
-			t.Fatalf("cold_reason = %v, want %s", data["cold_reason"], ColdReasonSnapshotsStale)
+		if data["cold_reason"] != sched.ColdReasonSnapshotsStale {
+			t.Fatalf("cold_reason = %v, want %s", data["cold_reason"], sched.ColdReasonSnapshotsStale)
 		}
 		return
 	}
@@ -239,16 +241,16 @@ func TestEngineWake_AllSnapshotsStaleReason(t *testing.T) {
 func TestChooseWakeSnapshotRetiresDrivelessRow(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	_, _, dep := seedApp(t, store, api.PlanFree, 256, 5)
+	_, _, dep := sched.SeedApp(t, store, api.PlanFree, 256, 5)
 	if _, err := store.CreateSnapshot(ctx, state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 256 << 20,
 		StorageKey: "snap/" + dep.ID + "/captures/old/mem", Tier: state.SnapshotTierInit,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
-	if got := e.chooseWakeSnapshot(ctx, dep.ID, string(api.PlanFree), 256, api.AppProtocolHTTP1); got.coldReason != ColdReasonNoDrive {
-		t.Fatalf("first wake reason = %q, want %q", got.coldReason, ColdReasonNoDrive)
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+	if got := e.ChooseWakeSnapshot(ctx, dep.ID, string(api.PlanFree), 256, api.AppProtocolHTTP1); (*got.ColdReason()) != sched.ColdReasonNoDrive {
+		t.Fatalf("first wake reason = %q, want %q", (*got.ColdReason()), sched.ColdReasonNoDrive)
 	}
 	fresh, err := store.CreateSnapshot(ctx, state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 256 << 20,
@@ -258,8 +260,8 @@ func TestChooseWakeSnapshotRetiresDrivelessRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the next capture still conflicts with the retired row: %v", err)
 	}
-	got := e.chooseWakeSnapshot(ctx, dep.ID, string(api.PlanFree), 256, api.AppProtocolHTTP1)
-	if !got.ok || got.snap.ID != fresh.ID {
-		t.Fatalf("second wake = ok %v snap %q reason %q, want a restore of %q", got.ok, got.snap.ID, got.coldReason, fresh.ID)
+	got := e.ChooseWakeSnapshot(ctx, dep.ID, string(api.PlanFree), 256, api.AppProtocolHTTP1)
+	if !(*got.Ok()) || (*got.Snap()).ID != fresh.ID {
+		t.Fatalf("second wake = ok %v snap %q reason %q, want a restore of %q", (*got.Ok()), (*got.Snap()).ID, (*got.ColdReason()), fresh.ID)
 	}
 }

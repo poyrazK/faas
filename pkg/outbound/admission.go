@@ -37,6 +37,16 @@ const (
 	// Per-app per-minute AI limits (ADR-991).
 	ReasonRequestsPerMinute = "requests_per_minute_limit"
 	ReasonTokensPerMinute   = "tokens_per_minute_limit"
+	// Per-end-user UTC-day AI limits (ADR-994).
+	ReasonUserDailyTokenLimit = "user_daily_token_limit"
+	ReasonUserDailyCostLimit  = "user_daily_cost_limit"
+	// ReasonTagDailyCostLimit refuses a call one of whose tags reached its
+	// daily cost limit (ADR-1436).
+	ReasonTagDailyCostLimit = "tag_daily_cost_limit"
+	// ReasonUserTrackingFull refuses a new end user once the day already
+	// tracks the maximum number of end users and per-user limits are set
+	// (ADR-996).
+	ReasonUserTrackingFull = "user_tracking_full"
 
 	ProviderAuthApplication        = "application"
 	ProviderAuthManaged            = "managed"
@@ -54,8 +64,11 @@ type Integration struct {
 	// AccountID and Name are loaded from the trusted integration row. They
 	// let outboundd attribute its platform-owned dependency span without
 	// trusting caller headers or exposing credentials.
-	AccountID                      string
-	Name                           string
+	AccountID string
+	Name      string
+	// AccountPlan is the owning account's plan; customer AI integrations
+	// need a plan entitled to the AI gateway (ADR-998).
+	AccountPlan                    api.Plan
 	Origin                         *url.URL
 	TokenHash                      [32]byte
 	AppIDs                         map[string]struct{}
@@ -100,6 +113,28 @@ type Integration struct {
 	BindingAIGuardrails map[string]AIGuardrails
 	// AIRequestLogEnabled records per-call metadata at settlement.
 	AIRequestLogEnabled bool
+	// AIRequestLogContent also keeps the start of each logged call's
+	// request and response bodies (ADR-996).
+	AIRequestLogContent bool
+	// AIContentPolicy is checked and applied before admission (ADR-997);
+	// its moderation check runs after admission (ADR-1340).
+	AIContentPolicy api.OutboundAIContentPolicy
+	// AILogExport writes each settled app call to the export outbox for the
+	// app's log drains (ADR-1340).
+	AILogExport bool
+	// AIAllowUnmetered lets through writes the gateway can neither meter
+	// nor knows to be free; otherwise they are refused (ADR-1432).
+	AIAllowUnmetered bool
+	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
+	// that carry none (ADR-1437).
+	AIAutoPromptCache bool
+	// AIUserDailyTokenLimit and AIUserDailyCostLimit cap each end user a
+	// call names with X-Gregale-AI-User per UTC day (ADR-994).
+	AIUserDailyTokenLimit *int64
+	AIUserDailyCostLimit  *int64
+	// AITagDailyCostLimits caps the UTC-day cost of exact usage tags
+	// (ADR-1436).
+	AITagDailyCostLimits map[string]int64
 }
 
 // AIGuardrails are one app binding's AI restrictions; nil fields are unset.
@@ -207,6 +242,24 @@ func (i Integration) Validate() error {
 	if i.AIRequestLogEnabled && i.AIProvider == "" {
 		return fmt.Errorf("%w: the AI request log requires an AI provider", ErrInvalidIntegration)
 	}
+	if i.AILogExport && i.AIProvider == "" {
+		return fmt.Errorf("%w: AI log export requires an AI provider", ErrInvalidIntegration)
+	}
+	if i.AIAllowUnmetered && i.AIProvider == "" {
+		return fmt.Errorf("%w: allowing unmetered AI calls requires an AI provider", ErrInvalidIntegration)
+	}
+	if i.AIAutoPromptCache && i.AIProvider == "" {
+		return fmt.Errorf("%w: automatic prompt caching requires an AI provider", ErrInvalidIntegration)
+	}
+	if i.AIRequestLogContent && !i.AIRequestLogEnabled {
+		return fmt.Errorf("%w: AI content capture requires the request log", ErrInvalidIntegration)
+	}
+	if !i.AIContentPolicy.Valid() || (i.AIContentPolicy.Active() && i.AIProvider == "") {
+		return fmt.Errorf("%w: the AI content policy is invalid", ErrInvalidIntegration)
+	}
+	if !api.ValidOutboundAIUserLimits(i.AIProvider, i.AIUserDailyTokenLimit, i.AIUserDailyCostLimit) {
+		return fmt.Errorf("%w: per-end-user AI limits are invalid", ErrInvalidIntegration)
+	}
 	for appID, limit := range i.BindingDailyRequestLimits {
 		if strings.TrimSpace(appID) == "" || !i.AllowsApp(appID) || (limit != nil && (*limit < 1 || *limit > api.MaxOutboundRequestsPerDay)) {
 			return fmt.Errorf("%w: binding daily request limit is invalid", ErrInvalidIntegration)
@@ -299,6 +352,16 @@ type AdmissionSpec struct {
 	// per-minute limits; the Postgres backend reads the stored values.
 	BindingRequestsPerMinute *int64
 	BindingTokensPerMinute   *int64
+	// AIEndUser is the call's X-Gregale-AI-User value (ADR-994). With it,
+	// UserDailyAITokenLimit and UserDailyAICostLimit cap that end user's UTC
+	// day; the Postgres backend reads the stored limits.
+	AIEndUser             string
+	UserDailyAITokenLimit *int64
+	UserDailyAICostLimit  *int64
+	// AITags are the call's usage tags (ADR-1436). AITagDailyCostLimits caps
+	// a tag's UTC day; the Postgres backend reads the stored limits.
+	AITags               []string
+	AITagDailyCostLimits map[string]int64
 	// BindingAppID scopes an explicit app binding budget. It is set from
 	// verified workload identity, never from a guest-controlled header.
 	BindingAppID                   string
@@ -307,6 +370,9 @@ type AdmissionSpec struct {
 	CircuitBreakerOpenSeconds      int
 	RetryBudgetPerMinute           int
 	LeaseTTL                       time.Duration
+	// PolicyRevision is the resolved policy's revision. A backend that reads
+	// the provider cooldown while it admits compares it with the stored one.
+	PolicyRevision int64
 }
 
 // Decision describes an admission or a deterministic rejection. A granted
@@ -320,6 +386,14 @@ type Decision struct {
 	CircuitBreakerFailureThreshold int
 	CircuitBreakerOpenSeconds      int
 	RetryBudgetPerMinute           int
+	// CircuitClosed reports that the configured circuit breaker was closed
+	// under this policy when the call was admitted, so the call needs no
+	// separate breaker check (ADR-1120). False means "ask the breaker".
+	CircuitClosed bool
+	// ProviderGate is the provider cooldown as admission read it under the
+	// call's policy revision, or nil when the caller must ask the cooldown
+	// backend (ADR-1120).
+	ProviderGate *ProviderCooldownDecision
 }
 
 // Backend is the shared state boundary. Implementations must fail closed on
@@ -402,6 +476,8 @@ func NewStaticResolver(items []Integration) (*StaticResolver, error) {
 		copyItem.DailyAICostLimit = copyInt64Pointer(item.DailyAICostLimit)
 		copyItem.MonthlyAICostLimit = copyInt64Pointer(item.MonthlyAICostLimit)
 		copyItem.AIPrices = append([]AIPrice(nil), item.AIPrices...)
+		copyItem.AIUserDailyTokenLimit = copyInt64Pointer(item.AIUserDailyTokenLimit)
+		copyItem.AIUserDailyCostLimit = copyInt64Pointer(item.AIUserDailyCostLimit)
 		copyItem.BindingAIGuardrails = copyAIGuardrails(item.BindingAIGuardrails)
 		copyItem.BindingDailyRequestLimits = copyInt64PointerMap(item.BindingDailyRequestLimits)
 		copyItem.AllowedMethods = append([]string(nil), item.AllowedMethods...)
@@ -433,6 +509,8 @@ func (r *StaticResolver) Integration(ctx context.Context, id string) (Integratio
 	i.DailyAICostLimit = copyInt64Pointer(i.DailyAICostLimit)
 	i.MonthlyAICostLimit = copyInt64Pointer(i.MonthlyAICostLimit)
 	i.AIPrices = append([]AIPrice(nil), i.AIPrices...)
+	i.AIUserDailyTokenLimit = copyInt64Pointer(i.AIUserDailyTokenLimit)
+	i.AIUserDailyCostLimit = copyInt64Pointer(i.AIUserDailyCostLimit)
 	i.BindingAIGuardrails = copyAIGuardrails(i.BindingAIGuardrails)
 	i.BindingDailyRequestLimits = copyInt64PointerMap(i.BindingDailyRequestLimits)
 	i.AllowedMethods = append([]string(nil), i.AllowedMethods...)

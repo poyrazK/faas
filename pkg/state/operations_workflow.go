@@ -59,7 +59,10 @@ func prepareOperationWorkflow(op *Operation, inv Invocation, spec api.WorkflowSp
 	// infers that an uncertain action is safe to repeat inside a generation.
 	spec.Steps = append([]api.WorkflowStepSpec(nil), spec.Steps...)
 	for index := range spec.Steps {
-		spec.Steps[index].Retry = &api.WorkflowRetrySpec{MaxAttempts: 1, Backoff: "fixed"}
+		// Timers and approvals reject retry policies; they have no action.
+		if operations.WorkflowStepKind(spec.Steps[index]) == "http" {
+			spec.Steps[index].Retry = &api.WorkflowRetrySpec{MaxAttempts: 1, Backoff: "fixed"}
+		}
 	}
 	snapshot, err := json.Marshal(spec)
 	if err != nil {
@@ -67,7 +70,7 @@ func prepareOperationWorkflow(op *Operation, inv Invocation, spec api.WorkflowSp
 	}
 	run := WorkflowRun{ID: newOperationID(), AppID: op.AppID, PlatformTenantID: op.PlatformTenantID,
 		WorkflowName: spec.Name, Status: WorkflowRunStatusPending, Input: cloneWorkflowJSON(inv.Payload),
-		DefinitionSnapshot: snapshot, ScheduledFor: op.CreatedAt, CreatedAt: op.CreatedAt, UpdatedAt: op.CreatedAt}
+		DefinitionSnapshot: snapshot, ScheduledFor: operationDispatchAt(op), CreatedAt: op.CreatedAt, UpdatedAt: op.CreatedAt}
 	op.CurrentInvocationID, op.WorkflowRunID = "", run.ID
 	steps := make([]*WorkflowStep, 0, len(spec.Steps))
 	for _, step := range spec.Steps {
@@ -92,7 +95,8 @@ func operationWorkflowProjection(op *Operation, def OperationDefinition, run Wor
 		return nil, nil
 	}
 	events := []api.OperationEvent{}
-	completed, unknown := int64(0), false
+	waits := operationWorkflowWaits(run)
+	completed, unknown, failureCode := int64(0), false, ""
 	stage := def.Spec.ProgressStages[0]
 	stageChosen := false
 	for _, name := range def.Spec.ProgressStages {
@@ -104,7 +108,22 @@ func operationWorkflowProjection(op *Operation, def OperationDefinition, run Wor
 			stage = name
 			stageChosen = step.Status != WorkflowStepStatusSucceeded
 		}
-		if (step.Status == WorkflowStepStatusFailed || step.Status == WorkflowStepStatusDead || step.Status == WorkflowStepStatusSkipped) && step.Attempt > 0 && len(step.Output) == 0 {
+		failed := step.Status == WorkflowStepStatusFailed || step.Status == WorkflowStepStatusDead
+		// A timer or approval performs no external effect, so its failure is
+		// certain (ADR-1194); a rejected or expired approval names its cause.
+		if wait, ok := waits[name]; ok {
+			if failed && wait.Kind == api.OperationWaitApproval && failureCode == "" {
+				failureCode = api.OperationFailureApprovalExpiry
+				if step.Error != nil && *step.Error == api.OperationFailureApprovalDenied {
+					failureCode = api.OperationFailureApprovalDenied
+				}
+			}
+			if failed && wait.Kind == api.OperationWaitEvent && failureCode == "" {
+				failureCode = api.OperationFailureEventExpiry
+			}
+			continue
+		}
+		if (failed || step.Status == WorkflowStepStatusSkipped) && step.Attempt > 0 && len(step.Output) == 0 {
 			unknown = true
 		}
 	}
@@ -112,7 +131,8 @@ func operationWorkflowProjection(op *Operation, def OperationDefinition, run Wor
 		op.State = api.OperationRunning
 		events = append(events, operationWorkflowEvent(op, run, "running", map[string]any{"state": op.State}, now))
 	}
-	if op.State == api.OperationRunning && (op.Progress == nil || op.Progress.Stage != stage || op.Progress.Completed != completed || op.Progress.Attempt != run.ResumeCount+1) {
+	events = append(events, operationWorkflowWaitTransition(op, def, run, waits[stage], steps[stage], now)...)
+	if (op.State == api.OperationRunning || op.State == api.OperationWaiting) && (op.Progress == nil || op.Progress.Stage != stage || op.Progress.Completed != completed || op.Progress.Attempt != run.ResumeCount+1) {
 		op.Progress = &api.OperationProgress{Stage: stage, Completed: completed, Total: int64(len(def.Spec.ProgressStages)), Attempt: run.ResumeCount + 1, UpdatedAt: now}
 		events = append(events, operationWorkflowEvent(op, run, "progress", map[string]any{"stage": stage, "completed": completed, "total": op.Progress.Total, "attempt": op.Progress.Attempt, "updated_at": now}, now))
 	}
@@ -135,16 +155,81 @@ func operationWorkflowProjection(op *Operation, def OperationDefinition, run Wor
 	case WorkflowRunStatusFailed, WorkflowRunStatusDead:
 		if unknown {
 			op.State, op.FailureCode, kind = api.OperationRequiresReconciliation, "execution_outcome_unknown", "reconciliation_required"
+		} else if run.CancelledAt != nil && op.LimitExceeded != "" {
+			op.State, op.FailureCode, kind = api.OperationFailed, op.LimitExceeded, "failed"
 		} else if run.CancelledAt != nil {
 			op.State, kind = api.OperationCancelled, "cancelled"
+		} else if failureCode != "" {
+			op.State, op.FailureCode, kind = api.OperationFailed, failureCode, "failed"
 		} else {
 			op.State, op.FailureCode, kind = api.OperationFailed, "execution_failed", "failed"
 		}
 	}
 	if kind != "" {
+		op.Waiting = nil
 		op.ExpiresAt = now.Add(time.Duration(op.PlanLimits.ResultRetentionSeconds) * time.Second)
 		op.EventExpiresAt = now.Add(time.Duration(op.PlanLimits.EventRetentionSeconds) * time.Second)
 		events = append(events, operationWorkflowEvent(op, run, kind, map[string]any{"state": op.State, "failure_code": op.FailureCode}, now))
 	}
 	return events, nil
+}
+
+// operationWorkflowWait is a parked step kind and its bound from the
+// generation's immutable workflow snapshot.
+type operationWorkflowWait struct {
+	Kind     string
+	Duration time.Duration
+	Event    string
+}
+
+func operationWorkflowWaits(run WorkflowRun) map[string]operationWorkflowWait {
+	var spec api.WorkflowSpec
+	waits := map[string]operationWorkflowWait{}
+	if json.Unmarshal(run.DefinitionSnapshot, &spec) != nil {
+		return waits
+	}
+	for _, step := range spec.Steps {
+		switch operations.WorkflowStepKind(step) {
+		case api.OperationWaitTimer:
+			waits[step.Name] = operationWorkflowWait{Kind: api.OperationWaitTimer, Duration: step.WaitForDuration}
+		case api.OperationWaitApproval:
+			waits[step.Name] = operationWorkflowWait{Kind: api.OperationWaitApproval, Duration: step.Timeout}
+		case api.OperationWaitEvent:
+			waits[step.Name] = operationWorkflowWait{Kind: api.OperationWaitEvent, Duration: step.Timeout, Event: step.WaitForEvent}
+		}
+	}
+	return waits
+}
+
+// operationWorkflowWaitTransition moves a live operation between running and
+// waiting as its current step parks on, or leaves, a timer or approval.
+func operationWorkflowWaitTransition(op *Operation, def OperationDefinition, run WorkflowRun, wait operationWorkflowWait, step WorkflowStep, now time.Time) []api.OperationEvent {
+	if op.State != api.OperationRunning && op.State != api.OperationWaiting {
+		return nil
+	}
+	parked := wait.Kind != "" && step.Status == WorkflowStepStatusAwaitingEvent && step.StartedAt != nil
+	if !parked {
+		if op.State != api.OperationWaiting {
+			return nil
+		}
+		op.State, op.Waiting = api.OperationRunning, nil
+		return []api.OperationEvent{operationWorkflowEvent(op, run, "resumed", map[string]any{"state": op.State, "step": step.StepName}, now)}
+	}
+	if op.State == api.OperationWaiting && op.Waiting != nil && op.Waiting.Step == step.StepName {
+		return nil
+	}
+	until := step.StartedAt.Add(wait.Duration)
+	waiting := &api.OperationWaitingState{Kind: wait.Kind, Step: step.StepName, Since: *step.StartedAt, Until: &until, Event: wait.Event}
+	if approval, ok := operations.ApprovalFor(def.Spec, step.StepName); ok {
+		waiting.Approver = approval.Approver
+	}
+	op.State, op.Waiting = api.OperationWaiting, waiting
+	data := map[string]any{"state": op.State, "kind": waiting.Kind, "step": waiting.Step, "since": waiting.Since, "until": until}
+	if waiting.Approver != "" {
+		data["approver"] = waiting.Approver
+	}
+	if waiting.Event != "" {
+		data["event"] = waiting.Event
+	}
+	return []api.OperationEvent{operationWorkflowEvent(op, run, "waiting", data, now)}
 }

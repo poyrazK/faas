@@ -17,11 +17,17 @@ type RuntimeAppSecretGrants struct {
 // RuntimeAppValuesSnapshot contains plaintext configuration and sealed secret
 // inputs for one deployment. Delivery observations are not configuration.
 type RuntimeAppValuesSnapshot struct {
+	ReleaseSecretsPinned    bool
+	ReleaseSecretVersionIDs map[string]string
 	RuntimeAppEnvSnapshot
 	Secrets       []AppSecret
 	SecretGrants  RuntimeAppSecretGrants
 	Configuration RuntimeAppConfiguration
 	SidecarLayers []DeploymentSidecarLayer
+
+	// InheritedSecrets are the project environment secrets the deployment
+	// inherits (ADR-1139), without the keys the app sets itself.
+	InheritedSecrets []ProjectEnvironmentSecret
 }
 
 type RuntimeAppValuesStore interface {

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // BuildPlan binds every proposed mutation to the desired revision, observed
@@ -19,7 +21,8 @@ func BuildPlan(desired DesiredState, observed ObservedState, owners []Ownership,
 		DesiredDigest: desired.Digest, ObservedVersion: observed.Version,
 		Changes: []Change{}, BlockingReasons: []string{},
 	}
-	if options.Manager == "" || options.Revision == "" || options.Generation <= 0 || observed.Version < 0 {
+	if options.Manager == "" || options.Revision == "" || options.Generation < 0 || (options.Generation == 0 && !options.Preview) || observed.Version < 0 ||
+		(options.Preview && !strings.HasPrefix(options.Revision, "candidate:")) {
 		return plan, fmt.Errorf("plan needs an authenticated manager, revision, positive generation, and observed version")
 	}
 	// Recompile instead of trusting a caller-provided field list or digest.
@@ -32,6 +35,12 @@ func BuildPlan(desired DesiredState, observed ObservedState, owners []Ownership,
 	for _, name := range sortedKeys(compiled.Definition.Workloads) {
 		workload := compiled.Definition.Workloads[name]
 		if workload.Source == nil || workload.Source.Kind == "image" {
+			continue
+		}
+		if workload.Source.BuildArtifactID != "" {
+			// An explicit artifact replaces commit-based build intent. Keep
+			// ownership and clear the obsolete commit without enabling prune.
+			compiled.Fields = append(compiled.Fields, Field{Resource: "workload/" + name, Path: "source_revision", Value: json.RawMessage("null")})
 			continue
 		}
 		if !validCommitSHA(options.CommitSHA) {
@@ -127,6 +136,7 @@ func BuildPlan(desired DesiredState, observed ObservedState, owners []Ownership,
 		old := current[key]
 		plan.Changes = append(plan.Changes, Change{Resource: old.Resource, Path: old.Path, Action: "retain_unmanaged", Before: old.Value})
 	}
+	planWorkloadRetirements(&plan, compiled, ownership, overrides, options)
 	slices.SortFunc(plan.Changes, func(a, b Change) int {
 		return strings.Compare((Field{Resource: a.Resource, Path: a.Path}).Key(), (Field{Resource: b.Resource, Path: b.Path}).Key())
 	})
@@ -159,6 +169,17 @@ func BuildPlan(desired DesiredState, observed ObservedState, owners []Ownership,
 		return plan, err
 	}
 	plan.Hash = digest(preimage)
+	// Live work counts are review information, not a gate that prevents a busy
+	// workload from ever retiring. Mutation authority uses stable scoped inputs.
+	for _, impact := range observed.RetirementImpacts {
+		for _, change := range plan.Changes {
+			if change.Resource == impact.Resource && change.Path == "presence" && (change.Action == "remove" || change.Action == "remove_candidate") {
+				plan.RetirementImpacts = append(plan.RetirementImpacts, impact)
+				break
+			}
+		}
+	}
+	slices.SortFunc(plan.RetirementImpacts, func(a, b api.EnvironmentWorkloadRetirementImpact) int { return strings.Compare(a.Resource, b.Resource) })
 	return plan, nil
 }
 

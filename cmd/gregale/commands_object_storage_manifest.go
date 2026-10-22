@@ -94,6 +94,7 @@ func deployManifestObjectStorageBindings(ctx context.Context, client manifestObj
 
 	plans := make([]manifestObjectStorageBindingPlan, 0, len(matching))
 	seen := make(map[string]struct{}, len(matching))
+	triggerOwners := map[string]bool{}
 	for i, dependency := range matching {
 		scope, err := manifestScopeForDeclared(dependency.Scope, environment)
 		if err != nil {
@@ -115,6 +116,12 @@ func deployManifestObjectStorageBindings(ctx context.Context, client manifestObj
 			return fmt.Errorf("bucket dependency %d (%q): duplicate resolved (bucket, scope, prefix) binding", i+1, dependency.Bucket)
 		}
 		seen[key] = struct{}{}
+		if dependency.Triggers != nil {
+			if triggerOwners[bucket.ID] {
+				return fmt.Errorf("bucket dependency %d (%q): declare triggers once per resolved bucket", i+1, dependency.Bucket)
+			}
+			triggerOwners[bucket.ID] = true
+		}
 		bindings, err := client.ListObjectStorageComputeBindings(ctx, slug, bucket.ID)
 		if err != nil {
 			return fmt.Errorf("bucket dependency %d (%q): list compute bindings: %w", i+1, dependency.Bucket, err)
@@ -129,6 +136,13 @@ func deployManifestObjectStorageBindings(ctx context.Context, client manifestObj
 		})
 	}
 
+	for _, plan := range plans {
+		if plan.dependency.Triggers != nil {
+			if _, ok := client.(manifestComputeTriggerClient); !ok {
+				return fmt.Errorf("compute trigger reconciliation is unavailable")
+			}
+		}
+	}
 	for i, plan := range plans {
 		var existing *api.ObjectStorageComputeBinding
 		for j := range plan.bindings.Items {
@@ -148,6 +162,9 @@ func deployManifestObjectStorageBindings(ctx context.Context, client manifestObj
 			if !jsonOutput {
 				_, _ = fmt.Fprintf(osStdout, "  ✓ %s: bucket %s attached as %s\n", slug, plan.bucket.Name, plan.prefix)
 			}
+			if err := reconcileManifestComputeTriggers(ctx, client, slug, plan); err != nil {
+				return err
+			}
 			continue
 		}
 
@@ -160,6 +177,9 @@ func deployManifestObjectStorageBindings(ctx context.Context, client manifestObj
 		}
 		if !jsonOutput {
 			_, _ = fmt.Fprintf(osStdout, "  ✓ %s: bucket %s attached as %s\n", slug, plan.bucket.Name, binding.Prefix)
+		}
+		if err := reconcileManifestComputeTriggers(ctx, client, slug, plan); err != nil {
+			return err
 		}
 	}
 	return nil

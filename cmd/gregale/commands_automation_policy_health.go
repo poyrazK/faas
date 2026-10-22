@@ -25,6 +25,8 @@ func printAutomationRecoveryHealth(app string, seconds int) int {
 		return jsonOut(writeJSON(out))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Recovery automation health: %s | %s\nPending: %d | outstanding: %d | remaining execution budget: %d\nWorker evaluation threshold: %ds | queue sample truncated: %t\n", oneLine(out.Status), oneLine(out.Reason), out.Queue.Pending, out.Queue.Outstanding, out.Queue.RemainingBudget, out.StallAfterSeconds, out.Queue.Truncated)
+	printRecoveryPollingHealth(out.Queue.Policy, out.Overview)
+	printRecoveryOverview(out.Overview, app)
 	if settings := out.Queue.Policy.Policy.HealthAlerts; settings != nil {
 		_, _ = fmt.Fprintf(osStdout, "Health alerts: enabled %t | monitor stall threshold %ds | alert after %ds\n", settings.Enabled, settings.StallAfterSeconds, settings.AlertAfterSeconds)
 	}

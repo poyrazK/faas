@@ -56,6 +56,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssocket"
+	"github.com/onebox-faas/faas/pkg/internalmail"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/promql"
@@ -1020,12 +1021,28 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// suspended → deleted_pending transitions (spec §4.7, §17). Wired
 	// into the loop alongside sample/quota/stripe so all five timers
 	// share the same ctx-cancel lifecycle.
+	quotaWarningCommands, err := configureQuotaWarningCommands(ctx, deps.getenv)
+	if err != nil {
+		return err
+	}
+	nonpaymentDeletionCommands, err := configureNonpaymentDeletionCommands(ctx, deps.getenv)
+	if err != nil {
+		return err
+	}
+	suspensionCommands, err := configureSuspensionCommands(ctx, deps.getenv)
+	if err != nil {
+		return err
+	}
 	dunning := meter.NewDunning(meter.DunningParams{
-		Store:  store,
-		Parker: parker,
-		Mailer: mailer,
-		Notif:  pn,
-		Log:    log,
+		NonpaymentDeletionCommands:  nonpaymentDeletionCommands,
+		NonpaymentDeletionRequested: func() bool { return deps.getenv(internalmail.NonpaymentDeletionOutboxEnableEnv) == "1" },
+		SuspensionCommands:          suspensionCommands,
+		SuspensionRequested:         func() bool { return deps.getenv(internalmail.AccountSuspendedOutboxEnableEnv) == "1" },
+		Store:                       store,
+		Parker:                      parker,
+		Mailer:                      mailer,
+		Notif:                       pn,
+		Log:                         log,
 	})
 
 	// Per-daemon Prometheus registry (ADR-015) — built unconditionally
@@ -1151,7 +1168,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// loop's contract is "at most one", matching the design note at
 	// pkg/alerts/evaluator.go.
 	promClient := buildPromQLClient(deps)
+	// ADR-748: probe customer synthetic checks against their public hostnames.
+	appsDomain := deps.getenv("FAAS_APPS_DOMAIN")
+	if appsDomain == "" {
+		appsDomain = "gregale.dev" // apid's default for unset deployments
+	}
+	go runSyntheticChecks(ctx, store, appsDomain, log)
 	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient)
+	// ADR-749: deliver alerts to Slack, PagerDuty and email channels.
+	evaluator.SetChannels(newAlertChannelSender(mailer), newAlertChannelCounter(ops.Registry()))
+	// ADR-747: record customer SLO budget hours from Prometheus.
+	go runSLORollup(ctx, store, promClient, log)
 	// ADR-098 PR-C: connection-aware upstream probe + partition
 	// cron. The FAAS_UPSTREAM_PROBE environment value is the
 	// bootstrap fallback; the durable data-placement flag can
@@ -1184,6 +1211,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return nil
 		}, log)
+	watcher.Daemon = "meterd" // ADR-1700 apply receipts
 	if err := watcher.Reconcile(runtimeCtx); err != nil {
 		log.Warn("meterd: initial runtime config reconcile failed", "err", err)
 	}
@@ -1204,7 +1232,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// gauges without a nil check (zero value is a no-op).
 	jobMetrics := meter.NewJobMetrics()
 	loop := meter.NewLoop(store, cpu, parker, pusher, pn, mailer, dunning, residency, evaluator, deps.now, log, mc, ops).
+		WithQuotaWarnings(func() bool { return deps.getenv(internalmail.QuotaWarningOutboxEnableEnv) == "1" }, quotaWarningCommands).
 		WithBillingEnabled(billingMode.Enabled()).
+		WithFinancialBudgets().
 		WithEgress(egress).
 		WithProbe(probe).
 		WithPartitionCreate(gatedPartitionCreate).
@@ -1237,6 +1267,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	rec := reconciler.New(provName, store, pusher, log, recRegistry).WithMode(billingMode)
 	go rec.Loop(ctx, mc.ReconcileInterval)
+	// ADR-20261019193600: the ledger dual run compares the financial ledger with the
+	// pusher's receipts on the same cadence. Read-only.
+	ledgerProvider := ""
+	if billingMode.Enabled() {
+		ledgerProvider = provName // with billing off there are no receipts to compare
+	}
+	ledgerRec := meter.NewLedgerReconciler(meter.NewPusher(store, pusher, log, deps.now, ops), ledgerProvider, recRegistry)
+	go ledgerRec.Loop(ctx, mc.ReconcileInterval)
 
 	// ADR-049 §B.3: snapshot/app-layer storage rollup. The store
 	// interface (pkg/meter/storage.go) is a narrow projection over
@@ -1603,10 +1641,9 @@ func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetric
 }
 
 // buildSafeDeployOrchestrator (issue #976 / ADR-122 / SAFE-RELEASES-F)
-// wires the safedeploy orchestrator meterd tick driver. Returns
-// nil when FAAS_SAFEDEPLOY_TOKEN is unset (default OFF — the
-// cluster outline's rollout gate flips the token generation ON in
-// a follow-up operator-config PR). When ON:
+// wires the safedeploy orchestrator meterd tick driver. Without
+// FAAS_SAFEDEPLOY_TOKEN the tick runs in completion-only mode (#1926):
+// finished rollouts reach "complete", nothing else changes. When ON:
 //
 //   - FAAS_SAFEDEPLOY_TOKEN is the action-class service secret that
 //     enables the rollout state machine and automatic recovery.
@@ -1615,10 +1652,6 @@ func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetric
 //     client is used for idempotent automatic aborts when a rollout
 //     remains stuck beyond the configured safety window.
 //
-// Returns nil when the token is missing — the call sites
-// nil-check the orchestrator and skip the goroutine, preserving
-// the pre-PR meterd behaviour exactly.
-//
 // ActionDispatcher wiring: the alert evaluator's SetActionExec
 // method is called on the Evaluator instance built upstream
 // (the Evaluator doesn't know about pkg/safedeploy; pkg/safedeploy
@@ -1626,10 +1659,6 @@ func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetric
 // alerts.Evaluator.SetActionExec).
 func buildSafeDeployOrchestrator(deps runDeps, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, apidClient *api.InternalSafeDeployClient, evaluator *alerts.Evaluator) *safedeploy.Orchestrator {
 	token := safeDeployToken(deps.getenv, "FAAS_SAFEDEPLOY_TOKEN")
-	if token == "" {
-		log.Info("meterd: safedeploy disabled — FAAS_SAFEDEPLOY_TOKEN unset; running without safedeploy tick")
-		return nil
-	}
 	// The orchestrator's Store surface is narrower than the
 	// canary store adapter's — SafedeployListPendingRollouts +
 	// SafedeployStampRollout + AppendDeploymentAudit all exist
@@ -1638,6 +1667,17 @@ func buildSafeDeployOrchestrator(deps runDeps, store state.Store, ops *wire.OpsM
 	storeAdapter := &safedeployStoreAdapter{store: store}
 	const actorSentinel = "meterd:safedeploy"
 	orchestrator := safedeploy.NewOrchestrator(storeAdapter, log, actorSentinel, actorSentinel)
+	if token == "" {
+		// #1926: without the safe-release tokens nothing advances a canary
+		// ladder, but a deployment with no ladder (or one already at its last
+		// step) is finished and must not stay "pending" forever. Run the
+		// tick in completion-only mode: no ladder starts, no stuck detection,
+		// no APID recovery and no alert actions.
+		log.Info("meterd: safedeploy tokens unset; completing finished rollouts only")
+		orchestrator.CompleteOnly = true
+		orchestrator.Ops = ops
+		return orchestrator
+	}
 	// SAFE-RELEASES GitHub lifecycle follow-up: give the orchestrator the
 	// same APID recovery client used by alert actions. Stuck canaries are
 	// aborted through APID's atomic transaction so traffic redistribution,

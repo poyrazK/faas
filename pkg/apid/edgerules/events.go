@@ -63,8 +63,8 @@ func EdgeRuleEventsQuery(r *http.Request, plan api.Plan, appID string, now time.
 			return out, api.ErrValidation("rule must be an edge rule id")
 		}
 	}
-	if out.Outcome != "" && out.Outcome != state.EdgeRuleHitMatched && out.Outcome != state.EdgeRuleHitLogged {
-		return out, api.ErrValidation("outcome must be matched or logged")
+	if out.Outcome != "" && !state.IsEdgeRuleEventOutcome(out.Outcome) {
+		return out, api.ErrValidation("outcome must be matched, logged, detected, warned, blocked, challenged, rejected, solved or failed")
 	}
 	since, err := parseEdgeRuleEventsSince(q.Get("since"))
 	if err != nil {
@@ -135,6 +135,7 @@ func EdgeRuleEventsResponse(since time.Time, events []state.EdgeRuleEvent, rules
 			ID: strconv.FormatInt(e.ID, 10), RuleID: e.RuleID, RuleName: rule.Name, RuleKind: string(rule.Kind),
 			Outcome: e.Outcome, OccurredAt: e.OccurredAt, RequestID: e.RequestID, Method: e.Method,
 			Host: e.Host, Path: e.Path, ClientIP: e.ClientIP, Country: e.Country, UserAgent: e.UserAgent,
+			WAFRuleIDs: e.WAFRuleIDs, WAFCategories: e.WAFCategories, WAFScore: e.WAFScore,
 		})
 	}
 	return out

@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -175,6 +176,43 @@ func testWorkerScopedDemandLifecycle(t *testing.T, store state.Store) {
 
 func TestWorkerScopedDemandLifecycle(t *testing.T) {
 	testWorkerScopedDemandLifecycle(t, state.NewMemStore())
+}
+
+type busyOnceWorkerAdmissionStore struct {
+	Store          state.Store
+	createAttempts int
+}
+
+func (s *busyOnceWorkerAdmissionStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentID, status string, ramMB int, nodeID, wakeID, mode string) (state.Instance, error) {
+	s.createAttempts++
+	if s.createAttempts == 1 {
+		return state.Instance{}, state.ErrApplicationStandardRuntimeBusy
+	}
+	return s.Store.CreateInstanceWithMode(ctx, appID, deploymentID, status, ramMB, nodeID, wakeID, mode)
+}
+
+func TestWorkerScopedDemandRetriesTransientRuntimeAdmissionLock(t *testing.T) {
+	ctx := context.Background()
+	base := state.NewMemStore()
+	account, app, deps := seedWorkerScopes(t, base, api.PlanPro)
+	seedScopedWorker(t, base, app, deps["staging"])
+	enqueueScopedDemand(t, base, account, app, "default", "", 21)
+	enqueueScopedDemand(t, base, account, app, "staging", "", 1)
+
+	store := &busyOnceWorkerAdmissionStore{Store: base}
+	vmm := &fakeVMM{}
+	engine := newEngine(t, statetest.NewStore(store), vmm, &fakeNotifier{}, "1.10.0")
+	if err := engine.SeedLedger(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatalf("reconcile after transient runtime admission lock: %v", err)
+	}
+
+	counts := scopedWorkerCounts(t, statetest.NewStore(store), app.ID)
+	if counts["default"] != 2 || counts["staging"] != 1 || vmm.coldBoots != 2 || store.createAttempts != 3 {
+		t.Fatalf("reconciled pools=%v boots=%d create attempts=%d", counts, vmm.coldBoots, store.createAttempts)
+	}
 }
 
 func TestWorkerScopedCooldownDoesNotHoldColdNeighbor(t *testing.T) {
@@ -428,7 +466,7 @@ func TestWorkerScopedDemandRetirementHoldsBacklogWithoutAdmittingWorkers(t *test
 }
 
 type workerDemandFailureStore struct {
-	state.Store
+	Store     state.Store
 	failScope string
 }
 
@@ -442,16 +480,16 @@ func (s *workerDemandFailureStore) QueueStateInScope(ctx context.Context, appID,
 func TestWorkerScopedDemandReadFailurePreservesAllPools(t *testing.T) {
 	ctx := context.Background()
 	store := &workerDemandFailureStore{Store: state.NewMemStore(), failScope: "staging"}
-	_, app, deps := seedWorkerScopes(t, store, api.PlanPro)
-	seedScopedWorker(t, store, app, deps["default"])
-	seedScopedWorker(t, store, app, deps["staging"])
+	_, app, deps := seedWorkerScopes(t, statetest.NewStore(store), api.PlanPro)
+	seedScopedWorker(t, statetest.NewStore(store), app, deps["default"])
+	seedScopedWorker(t, statetest.NewStore(store), app, deps["staging"])
 	vmm := &recordingStopVMM{fakeVMM: &fakeVMM{}}
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, statetest.NewStore(store), vmm, &fakeNotifier{}, "1.10.0")
 	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err == nil {
 		t.Fatal("missing demand was treated as an empty queue")
 	}
 	engine.WaitWorkerStops()
-	counts := scopedWorkerCounts(t, store, app.ID)
+	counts := scopedWorkerCounts(t, statetest.NewStore(store), app.ID)
 	if counts["default"] != 1 || counts["staging"] != 1 || vmm.stopInstanceOnNodeN != 0 || vmm.coldBoots != 0 {
 		t.Fatalf("read failure mutated fleet: %v, stops=%d boots=%d", counts, vmm.stopInstanceOnNodeN, vmm.coldBoots)
 	}

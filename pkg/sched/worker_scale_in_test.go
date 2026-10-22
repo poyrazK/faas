@@ -1,5 +1,7 @@
 package sched
 
+// adr: 1140
+
 import (
 	"context"
 	"sort"
@@ -172,6 +174,49 @@ func TestWorkerPoolScaleInStopsIdleWorkerBeforeBusyOne(t *testing.T) {
 	}
 }
 
+// A pull worker never reports HTTP in-flight telemetry. The lease it holds
+// (ADR-1140) is what marks it busy during scale-in.
+func TestWorkerPoolScaleInKeepsWorkerHoldingQueueLease(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, app, deps := seedWorkerScopes(t, store, api.PlanPro)
+	workers := []state.Instance{
+		seedScopedWorker(t, store, app, deps["default"]),
+		seedScopedWorker(t, store, app, deps["default"]),
+	}
+	sort.SliceStable(workers, func(i, j int) bool {
+		if workers[i].StartedAt.Equal(workers[j].StartedAt) {
+			return workers[i].ID < workers[j].ID
+		}
+		return workers[i].StartedAt.Before(workers[j].StartedAt)
+	})
+	// Age ordering keeps workers[0]; the lease must override it.
+	idle, leasing := workers[0], workers[1]
+	if _, err := store.CreateQueueBinding(ctx, state.QueueBinding{AccountID: acct.ID, AppID: app.ID, Name: "jobs", QueueName: "jobs",
+		Mode: "pull", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 5}); err != nil {
+		t.Fatal(err)
+	}
+	enqueueScopedDemand(t, store, acct, app, "default", "jobs", 1)
+	leases, err := store.LeaseQueueMessages(ctx, state.QueueLeaseRequest{AccountID: acct.ID, AppID: app.ID, QueueName: "jobs", InstanceID: leasing.ID})
+	if err != nil || len(leases) != 1 {
+		t.Fatalf("lease: %v err=%v", leases, err)
+	}
+	vmm := &recordingStopVMM{fakeVMM: &fakeVMM{}}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	if err := engine.SeedLedger(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ReconcileWorkerPoolForScope(ctx, app.ID, "default", 1, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	engine.WaitWorkerStops()
+	afterIdle, _ := store.InstanceByID(ctx, idle.ID)
+	afterLeasing, _ := store.InstanceByID(ctx, leasing.ID)
+	if afterIdle.State != string(state.StateStopped) || afterLeasing.State != string(state.StateRunning) {
+		t.Fatalf("scale-in victim: idle=%s leasing=%s", afterIdle.State, afterLeasing.State)
+	}
+}
+
 func TestWorkerBusyRankTreatsUnknownTelemetryAsPossiblyBusy(t *testing.T) {
 	engine := newEngine(t, state.NewMemStore(), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	now := time.Now()
@@ -179,11 +224,15 @@ func TestWorkerBusyRankTreatsUnknownTelemetryAsPossiblyBusy(t *testing.T) {
 		{InstanceID: "busy", InflightRequests: 1},
 		{InstanceID: "idle"},
 	})
-	busy := engine.workerBusyRank(state.Instance{ID: "busy"}, now)
-	unknown := engine.workerBusyRank(state.Instance{ID: "unreported"}, now)
-	idle := engine.workerBusyRank(state.Instance{ID: "idle"}, now)
-	stale := engine.workerBusyRank(state.Instance{ID: "idle"}, now.Add(TelemetryFreshness+time.Second))
+	busy := engine.workerBusyRank(state.Instance{ID: "busy"}, now, nil)
+	unknown := engine.workerBusyRank(state.Instance{ID: "unreported"}, now, nil)
+	idle := engine.workerBusyRank(state.Instance{ID: "idle"}, now, nil)
+	stale := engine.workerBusyRank(state.Instance{ID: "idle"}, now.Add(TelemetryFreshness+time.Second), nil)
 	if !(busy < unknown && unknown < idle) || stale != unknown {
 		t.Fatalf("ranks busy=%d unknown=%d idle=%d stale=%d", busy, unknown, idle, stale)
+	}
+	// A pull lease (ADR-1140) is work in progress whatever HTTP telemetry says.
+	if leased := engine.workerBusyRank(state.Instance{ID: "idle"}, now, map[string]int{"idle": 1}); leased != busy {
+		t.Fatalf("lease-holding worker ranked %d, want busy %d", leased, busy)
 	}
 }

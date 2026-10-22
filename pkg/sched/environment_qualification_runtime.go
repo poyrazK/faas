@@ -67,6 +67,9 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if err != nil || !dep.EnvironmentWorkloadHeld() {
 		return errors.Join(state.ErrConflict, err)
 	}
+	if err := e.checkFinancialBudgetAdmission(ctx, app, dep.ID); err != nil {
+		return err
+	}
 	if err := securityQuarantineErr(dep); err != nil {
 		return err
 	}
@@ -92,7 +95,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if err != nil {
 		return fmt.Errorf("preflight qualification service listener: %w", err)
 	}
-	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(ctx, claimed, state.EnvironmentWorkloadQualificationPlacement{
+	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(nodePlacementContext(ctx, placement), claimed, state.EnvironmentWorkloadQualificationPlacement{
 		NodeID: placement.NodeID, WakeID: uuid.NewString(), RAMMB: app.RAMMB})
 	if err != nil {
 		return fmt.Errorf("admit qualification instance: %w", err)
@@ -190,15 +193,15 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	// the attempt and reserved instance are fenced at every publication.
 	release()
 	locked = false
-	bootCtx, bootCancel := context.WithTimeout(ctx, e.budgetFor(state.StateColdBooting))
+	bootCtx, bootCancel := qualificationBootBudgetContext(ctx, e.budgetFor(state.StateColdBooting))
 	defer bootCancel()
 	if err := executor.MarkEnvironmentQualificationDispatched(bootCtx, claimed, frame); err != nil {
-		return fmt.Errorf("mark qualification dispatched: %w", err)
+		return fmt.Errorf("mark qualification dispatched: %w", errors.Join(err, context.Cause(bootCtx)))
 	}
 	vmAttempted = true
 	out, err := vm.CreateEnvironmentQualification(bootCtx, frame, prepared.Spec)
 	if err != nil {
-		return fmt.Errorf("create qualification runtime: %w", errors.Join(err, context.Cause(ctx)))
+		return fmt.Errorf("create qualification runtime: %w", errors.Join(err, context.Cause(bootCtx), context.Cause(ctx)))
 	}
 	if out == nil {
 		return state.ErrConflict
@@ -235,6 +238,18 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 		return fmt.Errorf("validate qualification owner after visitor: %w", err)
 	}
 	return nil
+}
+
+// vmmd records the incoming qualification deadline as the attempt's native
+// lifetime. Bound the original boot by cancellation while retaining the full
+// claim deadline for capture and retirement after the guest becomes ready.
+func qualificationBootBudgetContext(ctx context.Context, budget time.Duration) (context.Context, context.CancelFunc) {
+	bootCtx, cancel := context.WithCancelCause(ctx)
+	timer := time.AfterFunc(budget, func() { cancel(context.DeadlineExceeded) })
+	return bootCtx, func() {
+		timer.Stop()
+		cancel(nil)
+	}
 }
 
 // A private attempt remains observable without asking the ordinary service or

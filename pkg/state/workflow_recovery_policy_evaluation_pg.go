@@ -34,7 +34,7 @@ func (s *PgStore) EvaluateWorkflowRecoveryPolicy(ctx context.Context, account, a
 	current := defaultWorkflowRecoveryPolicy(canonicalMemUUID(app))
 	row, err := q.WorkflowRecoveryPolicyGet(ctx, tx, sqlc.WorkflowRecoveryPolicyGetParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app)})
 	if err == nil {
-		current, err = pgPolicyResponse(uuidString(row.AppID), row.Version, row.Policy, row.UpdatedAt, row.ActorKind, row.ActorID, row.LastEvaluatedAt, row.Status, row.AutomaticFailures, row.AutomaticPausedAt, row.AutomaticPauseReason)
+		current, err = pgPolicyResponse(uuidString(row.AppID), row.Version, row.Policy, row.UpdatedAt, row.ActorKind, row.ActorID, row.LastEvaluatedAt, row.Status, row.AutomaticFailures, row.AutomaticPausedAt, row.AutomaticPauseReason, row.AutomaticPollFailure, row.AutomaticPollNotification)
 	} else if errors.Is(err, pgx.ErrNoRows) {
 		err = nil
 	}

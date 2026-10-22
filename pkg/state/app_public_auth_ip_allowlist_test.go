@@ -1,7 +1,8 @@
-package state
+package state_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/pkg/state"
 	"net/netip"
 	"reflect"
 	"testing"
@@ -29,12 +30,12 @@ import (
 // the column shape + CHECK + trigger.
 func TestUpdateApp_WithPublicAuthIPAllowlist(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	acct, err := store.CreateAccount(ctx, "alice@example.com", "pro")
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: acct.ID, Slug: "api"})
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "api"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +53,7 @@ func TestUpdateApp_WithPublicAuthIPAllowlist(t *testing.T) {
 		netip.MustParsePrefix("192.0.2.0/24"),
 		netip.MustParsePrefix("2001:db8::/32"),
 	}
-	updated, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{
+	updated, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		PublicAuthIPAllowlist:    &three,
 		SetPublicAuthIPAllowlist: true,
 	})
@@ -73,7 +74,7 @@ func TestUpdateApp_WithPublicAuthIPAllowlist(t *testing.T) {
 	}
 
 	// PATCH with unset (no SetPublicAuthIPAllowlist) — column stays at 3.
-	updated, err = store.UpdateApp(ctx, app.ID, UpdateAppParams{})
+	updated, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{})
 	if err != nil {
 		t.Fatalf("unset update: %v", err)
 	}
@@ -86,7 +87,7 @@ func TestUpdateApp_WithPublicAuthIPAllowlist(t *testing.T) {
 	// "no rule" state). An empty slice is a deliberate
 	// "clear", not a no-op.
 	empty := []netip.Prefix{}
-	updated, err = store.UpdateApp(ctx, app.ID, UpdateAppParams{
+	updated, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		PublicAuthIPAllowlist:    &empty,
 		SetPublicAuthIPAllowlist: true,
 	})

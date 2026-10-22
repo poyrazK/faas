@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -11,10 +12,10 @@ import (
 
 const platformTenantStatementCols = `id, account_id, platform_tenant_id, period_start, period_end,
        revision, status, currency, billable_units, unpriced_units, amount_millicents,
-       lines, coverage, as_of, created_at, finalized_at`
+       lines, fees, coverage, as_of, created_at, finalized_at, credit_applied_millicents`
 const platformTenantStatementHeaderCols = `id, account_id, platform_tenant_id, period_start, period_end,
        revision, status, currency, billable_units, unpriced_units, amount_millicents,
-       lines, as_of, created_at, finalized_at`
+       lines, fees, as_of, created_at, finalized_at, credit_applied_millicents`
 const platformTenantStatementSummaryCols = `id, account_id, platform_tenant_id, period_start, period_end,
        revision, status, currency, billable_units, unpriced_units, amount_millicents,
        as_of, created_at, finalized_at`
@@ -24,15 +25,18 @@ const platformTenantHandoffCols = `id, account_id, platform_tenant_id, statement
 func scanPlatformTenantStatement(row pgx.Row) (PlatformTenantStatement, error) {
 	var out PlatformTenantStatement
 	var status string
-	var rawLines, rawCoverage []byte
+	var rawLines, rawFees, rawCoverage []byte
 	err := row.Scan(&out.ID, &out.AccountID, &out.TenantID, &out.PeriodStart, &out.PeriodEnd,
 		&out.Revision, &status, &out.Currency, &out.BillableUnits, &out.UnpricedUnits,
-		&out.AmountMillicents, &rawLines, &rawCoverage, &out.AsOf, &out.CreatedAt, &out.FinalizedAt)
+		&out.AmountMillicents, &rawLines, &rawFees, &rawCoverage, &out.AsOf, &out.CreatedAt, &out.FinalizedAt, &out.CreditAppliedMillicents)
 	if err != nil {
 		return out, err
 	}
 	out.Status = APIConsumerUsageStatementStatus(status)
 	if err := json.Unmarshal(rawLines, &out.Lines); err != nil {
+		return out, err
+	}
+	if err := unmarshalStatementFees(rawFees, &out.Fees); err != nil {
 		return out, err
 	}
 	if err := json.Unmarshal(rawCoverage, &out.Coverage); err != nil {
@@ -63,15 +67,18 @@ func scanPlatformTenantStatement(row pgx.Row) (PlatformTenantStatement, error) {
 func scanPlatformTenantStatementHeader(row pgx.Row) (PlatformTenantStatement, error) {
 	var out PlatformTenantStatement
 	var status string
-	var rawLines []byte
+	var rawLines, rawFees []byte
 	err := row.Scan(&out.ID, &out.AccountID, &out.TenantID, &out.PeriodStart, &out.PeriodEnd,
 		&out.Revision, &status, &out.Currency, &out.BillableUnits, &out.UnpricedUnits,
-		&out.AmountMillicents, &rawLines, &out.AsOf, &out.CreatedAt, &out.FinalizedAt)
+		&out.AmountMillicents, &rawLines, &rawFees, &out.AsOf, &out.CreatedAt, &out.FinalizedAt, &out.CreditAppliedMillicents)
 	if err != nil {
 		return out, err
 	}
 	out.Status = APIConsumerUsageStatementStatus(status)
 	if err := json.Unmarshal(rawLines, &out.Lines); err != nil {
+		return out, err
+	}
+	if err := unmarshalStatementFees(rawFees, &out.Fees); err != nil {
 		return out, err
 	}
 	out.PeriodStart, out.PeriodEnd, out.AsOf = out.PeriodStart.UTC(), out.PeriodEnd.UTC(), out.AsOf.UTC()
@@ -239,7 +246,7 @@ func (s *PgStore) ListPlatformTenantUsageMinutes(ctx context.Context, accountID,
 		case when source_kind = 'consumer' then consumer_key else '' end,
 		case when source_kind = 'surface' then consumer_key else '' end,
 		case when source_kind = 'jwt' then consumer_key else '' end, window_start,
-		request_count, error_count, billable_units from platform_tenant_usage_minutes
+		request_count, error_count, billable_units, compute_ms, response_bytes from platform_tenant_usage_minutes
 		where account_id = $1::uuid and platform_tenant_id = $2::uuid
 		and window_start >= $3 and window_start < $4
 		order by app_id, source_kind, consumer_key, window_start`, accountID, tenantID, start.UTC(), end.UTC())
@@ -251,7 +258,7 @@ func (s *PgStore) ListPlatformTenantUsageMinutes(ctx context.Context, accountID,
 	for rows.Next() {
 		var b APIConsumerUsageBucket
 		if err := rows.Scan(&b.AccountID, &b.AppID, &b.ConsumerKey, &b.SurfaceID, &b.JWTAuthorizationRuleID, &b.WindowStart,
-			&b.RequestCount, &b.ErrorCount, &b.BillableUnits); err != nil {
+			&b.RequestCount, &b.ErrorCount, &b.BillableUnits, &b.ComputeMS, &b.ResponseBytes); err != nil {
 			return nil, err
 		}
 		b.WindowStart = b.WindowStart.UTC()
@@ -265,11 +272,16 @@ func (s *PgStore) CreatePlatformTenantStatement(ctx context.Context, in Platform
 	if err := validatePlatformTenantStatementInput(in); err != nil {
 		return PlatformTenantStatement{}, false, err
 	}
-	lines, err := json.Marshal(in.Lines)
+	// A fee-only revision (ADR-1322) has neither; store empty arrays.
+	lines, err := json.Marshal(append([]PlatformTenantStatementLine{}, in.Lines...))
 	if err != nil {
 		return PlatformTenantStatement{}, false, err
 	}
-	coverage, err := json.Marshal(in.Coverage)
+	coverage, err := json.Marshal(append([]PlatformTenantStatementCoverage{}, in.Coverage...))
+	if err != nil {
+		return PlatformTenantStatement{}, false, err
+	}
+	fees, err := json.Marshal(append([]APIConsumerStatementFee{}, in.Fees...))
 	if err != nil {
 		return PlatformTenantStatement{}, false, err
 	}
@@ -305,11 +317,11 @@ func (s *PgStore) CreatePlatformTenantStatement(ctx context.Context, in Platform
 	if latestStatus == string(APIConsumerUsageStatementDraft) {
 		var sameSnapshot bool
 		if err := tx.QueryRow(ctx, `select currency = $6 and billable_units = $7 and unpriced_units = $8
-			and amount_millicents = $9 and lines = $10::jsonb and coverage = $11::jsonb
+			and amount_millicents = $9 and lines = $10::jsonb and coverage = $11::jsonb and fees = $12::jsonb
 			from platform_tenant_statements
 			where account_id = $1::uuid and platform_tenant_id = $2::uuid and period_start = $3 and period_end = $4
 			and revision = $5 and status = 'draft'`, in.AccountID, in.TenantID, in.PeriodStart, in.PeriodEnd,
-			latestRevision, in.Currency, in.BillableUnits, in.UnpricedUnits, in.AmountMillicents, lines, coverage).Scan(&sameSnapshot); err != nil {
+			latestRevision, in.Currency, in.BillableUnits, in.UnpricedUnits, in.AmountMillicents, lines, coverage, fees).Scan(&sameSnapshot); err != nil {
 			return PlatformTenantStatement{}, false, err
 		}
 		if sameSnapshot {
@@ -336,11 +348,11 @@ func (s *PgStore) CreatePlatformTenantStatement(ctx context.Context, in Platform
 	}
 	out, err := scanPlatformTenantStatementHeader(tx.QueryRow(ctx, `insert into platform_tenant_statements
 		(account_id, platform_tenant_id, period_start, period_end, revision, status,
-		 currency, billable_units, unpriced_units, amount_millicents, lines, coverage, as_of)
-		values ($1::uuid, $2::uuid, $3, $4, $5, 'draft', $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12)
+		 currency, billable_units, unpriced_units, amount_millicents, lines, coverage, as_of, fees)
+		values ($1::uuid, $2::uuid, $3, $4, $5, 'draft', $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13::jsonb)
 		returning `+platformTenantStatementHeaderCols,
 		in.AccountID, in.TenantID, in.PeriodStart, in.PeriodEnd, in.Revision,
-		in.Currency, in.BillableUnits, in.UnpricedUnits, in.AmountMillicents, lines, coverage, in.AsOf))
+		in.Currency, in.BillableUnits, in.UnpricedUnits, in.AmountMillicents, lines, coverage, in.AsOf, fees))
 	if err != nil {
 		return PlatformTenantStatement{}, false, err
 	}
@@ -457,19 +469,42 @@ func (s *PgStore) ListFinalizedPlatformTenantStatements(ctx context.Context, acc
 	return out, rows.Err()
 }
 
+// FinalizePlatformTenantStatement finalizes a priced draft and draws the
+// tenant's prepaid credit down against it in one transaction
+// (ADR-20261019100331); the finalized-statement webhook sees the credit.
 func (s *PgStore) FinalizePlatformTenantStatement(ctx context.Context, accountID, tenantID, statementID string) (PlatformTenantStatement, bool, error) {
-	out, err := scanPlatformTenantStatementHeader(s.pool.QueryRow(ctx, `update platform_tenant_statements
-		set status = 'finalized', finalized_at = now()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return PlatformTenantStatement{}, false, fmt.Errorf("begin tenant finalize: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	draft, err := scanPlatformTenantStatementHeader(tx.QueryRow(ctx, `select `+platformTenantStatementHeaderCols+`
+		from platform_tenant_statements
 		where id = $1::uuid and account_id = $2::uuid and platform_tenant_id = $3::uuid
 		and status = 'draft' and unpriced_units = 0 and currency <> ''
-		returning `+platformTenantStatementHeaderCols, statementID, accountID, tenantID))
+		for update`, statementID, accountID, tenantID))
 	if err == nil {
+		applied, err := applyPlatformTenantCredits(ctx, tx, draft)
+		if err != nil {
+			return PlatformTenantStatement{}, false, err
+		}
+		out, err := scanPlatformTenantStatementHeader(tx.QueryRow(ctx, `update platform_tenant_statements
+			set status = 'finalized', finalized_at = now(), credit_applied_millicents = $2
+			where id = $1::uuid
+			returning `+platformTenantStatementHeaderCols, statementID, applied))
+		if err != nil {
+			return PlatformTenantStatement{}, false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return PlatformTenantStatement{}, false, fmt.Errorf("commit tenant finalize: %w", err)
+		}
 		return out, true, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return PlatformTenantStatement{}, false, err
 	}
-	out, err = s.GetPlatformTenantStatementHeader(ctx, accountID, tenantID, statementID)
+	_ = tx.Rollback(ctx)
+	out, err := s.GetPlatformTenantStatementHeader(ctx, accountID, tenantID, statementID)
 	if err != nil {
 		return PlatformTenantStatement{}, false, err
 	}
@@ -515,32 +550,7 @@ func (s *PgStore) CreatePlatformTenantStatementHandoff(ctx context.Context, in P
 		return PlatformTenantStatementHandoff{}, false, ErrConflict
 	}
 	var conflict bool
-	err = tx.QueryRow(ctx, `select
-		exists (select 1 from api_consumer_usage_statement_handoffs h
-		  join api_consumer_usage_statements a on a.id = h.statement_id
-		  join platform_tenant_statement_consumers c on c.app_id = a.app_id and c.consumer_id = a.consumer_id
-		 where c.statement_id = $1::uuid and a.period_start < $3 and a.period_end > $2)
-		or exists (select 1 from platform_tenant_statement_handoffs h
-		  join platform_tenant_statements p on p.id = h.statement_id
-		  join platform_tenant_statement_consumers mine on mine.statement_id = $1::uuid
-		  join platform_tenant_statement_consumers theirs on theirs.statement_id = p.id
-		    and theirs.app_id = mine.app_id and theirs.consumer_id = mine.consumer_id
-		 where p.period_start < $3 and p.period_end > $2
-		   and not (p.platform_tenant_id = $4::uuid and p.period_start = $2 and p.period_end = $3))
-		or exists (select 1 from platform_tenant_statement_handoffs h
-		  join platform_tenant_statements p on p.id = h.statement_id
-		  join platform_tenant_statement_surfaces mine on mine.statement_id = $1::uuid
-		  join platform_tenant_statement_surfaces theirs on theirs.statement_id = p.id
-		    and theirs.app_id = mine.app_id and theirs.surface_id = mine.surface_id
-		 where p.period_start < $3 and p.period_end > $2
-		   and not (p.platform_tenant_id = $4::uuid and p.period_start = $2 and p.period_end = $3))
-		or exists (select 1 from platform_tenant_statement_handoffs h
-		  join platform_tenant_statements p on p.id = h.statement_id
-		  join platform_tenant_statement_jwt_rules mine on mine.statement_id = $1::uuid
-		  join platform_tenant_statement_jwt_rules theirs on theirs.statement_id = p.id
-		    and theirs.app_id = mine.app_id and theirs.authorization_rule_id = mine.authorization_rule_id
-		 where p.period_start < $3 and p.period_end > $2
-		   and not (p.platform_tenant_id = $4::uuid and p.period_start = $2 and p.period_end = $3))
+	err = tx.QueryRow(ctx, `select `+tenantHandoffOverlapSQL+`
 		or exists (select 1 from api_consumer_usage_statement_handoffs where account_id = $5::uuid and external_invoice_id = $6)
 		or exists (select 1 from platform_tenant_statement_handoffs where account_id = $5::uuid and external_invoice_id = $6)`,
 		in.StatementID, statement.PeriodStart, statement.PeriodEnd, in.TenantID, in.AccountID, in.ExternalInvoiceID).Scan(&conflict)
@@ -570,4 +580,16 @@ func (s *PgStore) GetPlatformTenantStatementHandoff(ctx context.Context, account
 		return PlatformTenantStatementHandoff{}, ErrNotFound
 	}
 	return out, err
+}
+
+// unmarshalStatementFees reads a statement's fees column (ADR-1322); an
+// empty array reads as no fees.
+func unmarshalStatementFees(raw []byte, fees *[]APIConsumerStatementFee) error {
+	if err := json.Unmarshal(raw, fees); err != nil {
+		return err
+	}
+	if len(*fees) == 0 {
+		*fees = nil
+	}
+	return nil
 }

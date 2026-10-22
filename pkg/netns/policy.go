@@ -50,6 +50,9 @@ import (
 // substitution individually so the per-host rendering can't regress
 // to a hard-coded default.
 type HostPolicy struct {
+	// PublicForwarding retains the native-recovery socket generation guard
+	// across host-policy reloads. Legacy nodes keep their original ruleset.
+	PublicForwarding bool
 	// BridgeName is the root-ns bridge that all per-instance veth host-sides
 	// enslave to (set up by pkg/fcvm/manager.go via the TenantBridge constant
 	// in this package). MUST equal `TenantBridge`.
@@ -834,6 +837,9 @@ func (h HostPolicy) Render() string {
 	}
 	b.WriteString("  }\n")
 	b.WriteString("}\n")
+	if h.PublicForwarding {
+		b.WriteString(publicForwardPolicyRender())
+	}
 	return b.String()
 }
 

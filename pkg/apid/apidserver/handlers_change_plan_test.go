@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // billingPortalURL is the production-shape template the operator is
@@ -594,7 +595,7 @@ func TestChangePlan_PaddleCheckout_CreateCustomerSidecar(t *testing.T) {
 // (Bug 3 fix): only the named method fails; everything else delegates
 // to the embedded store.
 type paddleStampErrStore struct {
-	*state.MemStore
+	MemStore *state.MemStore
 	stampErr error
 }
 
@@ -627,7 +628,7 @@ func TestChangePlan_PaddleCheckout_StampFailureSurfacesOrphan(t *testing.T) {
 		MemStore: store,
 		stampErr: errors.New("synthetic stamp outage"),
 	}
-	srv := newServerWithDeps(wrap, slog.New(slog.NewTextHandler(io.Discard, nil)),
+	srv := newServerWithDeps(statetest.NewMem(wrap), slog.New(slog.NewTextHandler(io.Discard, nil)),
 		"example.com", noopNotifier{}, "", noopMailer{}, stubGithubdClient{}, nil, nil,
 		15*24, "")
 	srv.WithBillingPortalURL(billingPortalURL)

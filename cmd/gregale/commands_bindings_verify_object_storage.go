@@ -13,15 +13,25 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func runObjectStorageBindingProbe(ctx context.Context, client bindingInventoryProbeClient, slug, prefix string, pollInterval, waitTimeout time.Duration) int {
+func runObjectStorageBindingProbeWithWrite(ctx context.Context, client bindingInventoryProbeClient, slug, prefix string, write bool, pollInterval, waitTimeout time.Duration) int {
 	inventory, err := client.GetAppBindingInventory(ctx, slug, "")
 	if err != nil {
 		return printErr("Could not load app bindings", err)
 	}
 	bound := false
+	mode := ""
 	for _, item := range inventory.Bindings {
 		if item.Type == api.BindingTypeObjectStorage && item.Binding == prefix && item.Scope == inventory.VerificationScope {
 			bound = true
+			if !write && item.Access == "write" {
+				return printErr("Write-only binding needs an explicit write canary", errors.New("use --object-storage-write to opt into upload and cleanup"))
+			}
+			if write {
+				if !api.ValidObjectStorageWriteProbeMode(item.Access) {
+					return printErr("Object-storage write canary requires a writable binding", fmt.Errorf("selected binding does not grant write permission"))
+				}
+				mode = item.Access
+			}
 			break
 		}
 	}
@@ -29,7 +39,7 @@ func runObjectStorageBindingProbe(ctx context.Context, client bindingInventoryPr
 		return printErr("Object-storage prefix is not bound in the selected live scope", fmt.Errorf("%s has no selected managed object-storage binding for %s", slug, prefix))
 	}
 
-	report, task, errorTitle, exitCode, err := executeObjectStorageBindingProbe(ctx, client, slug, prefix, pollInterval, waitTimeout)
+	report, task, errorTitle, exitCode, err := executeObjectStorageBindingProbeMode(ctx, client, slug, prefix, mode, pollInterval, waitTimeout)
 	if errorTitle != "" {
 		return printErr(errorTitle, err)
 	}
@@ -50,10 +60,17 @@ func runObjectStorageBindingProbe(ctx context.Context, client bindingInventoryPr
 	return exitCode
 }
 
-func executeObjectStorageBindingProbe(ctx context.Context, client serviceBindingProbeClient, slug, prefix string, pollInterval, waitTimeout time.Duration) (api.ObjectStorageBindingProbeReport, api.AppTaskResponse, string, int, error) {
+func executeObjectStorageBindingProbeMode(ctx context.Context, client serviceBindingProbeClient, slug, prefix, mode string, pollInterval, waitTimeout time.Duration) (api.ObjectStorageBindingProbeReport, api.AppTaskResponse, string, int, error) {
 	report := newObjectStorageBindingProbeReport(slug, prefix)
+	command := []string{api.AppTaskObjectStorageBindingProbeCommand, prefix}
+	if mode != "" {
+		if !api.ValidObjectStorageWriteProbeMode(mode) {
+			return report, api.AppTaskResponse{}, "Invalid Object-storage canary mode", 1, errors.New("invalid write canary mode")
+		}
+		command = []string{api.AppTaskObjectStorageWriteProbeCommand, prefix, mode}
+	}
 	task, err := client.CreateAppTask(ctx, slug, api.CreateAppTaskRequest{
-		Command:        []string{api.AppTaskObjectStorageBindingProbeCommand, prefix},
+		Command:        command,
 		TimeoutSeconds: bindingProbeTaskTimeoutSeconds,
 		MaxOutputBytes: 4096,
 	})
@@ -70,7 +87,7 @@ func executeObjectStorageBindingProbe(ctx context.Context, client serviceBinding
 	for !task.Status.Terminal() {
 		select {
 		case <-waitContext.Done():
-			if errors.Is(interruptContext.Err(), context.Canceled) {
+			if bindingProbeAutoCancel(ctx) && errors.Is(interruptContext.Err(), context.Canceled) {
 				cancelContext, cancelRequest := context.WithTimeout(context.WithoutCancel(ctx), bindingProbeCancelTimeout)
 				defer cancelRequest()
 				cancelled, cancelErr := client.CancelAppTask(cancelContext, slug, task.ID)
@@ -101,7 +118,7 @@ func executeObjectStorageBindingProbe(ctx context.Context, client serviceBinding
 			report.Error = "task did not return a valid Object-storage canary report"
 		} else {
 			report = taskReport
-			if report.Prefix != prefix {
+			if report.Prefix != prefix || report.Mode != mode {
 				report.Error = "canary report does not match the selected Object-storage key"
 			}
 		}
@@ -127,7 +144,11 @@ func executeObjectStorageBindingProbe(ctx context.Context, client serviceBinding
 }
 
 func renderObjectStorageBindingProbeReport(app string, report api.ObjectStorageBindingProbeReport, task api.AppTaskResponse) {
-	_, _ = fmt.Fprintf(osStdout, "Object-storage binding canary: %s → %s (read access only)\n", app, report.Prefix)
+	coverage := "read access only"
+	if report.Mode != "" {
+		coverage = report.Mode + " object operations"
+	}
+	_, _ = fmt.Fprintf(osStdout, "Object-storage binding canary: %s → %s (%s)\n", app, report.Prefix, coverage)
 	_, _ = fmt.Fprintf(osStdout, "Task: %s (deployment=%s)\n", task.ID, task.DeploymentID)
 	for _, row := range []struct {
 		name  string
@@ -144,6 +165,14 @@ func renderObjectStorageBindingProbeReport(app string, report api.ObjectStorageB
 			_, _ = fmt.Fprintf(osStdout, "%-14s %s (%s)\n", row.name, label, row.check.Detail)
 		} else {
 			_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", row.name, label)
+		}
+	}
+	for _, row := range []struct {
+		name  string
+		check *api.ObjectStorageBindingProbeCheck
+	}{{"Upload", report.Upload}, {"Download", report.Download}, {"Cleanup", report.Cleanup}} {
+		if row.check != nil {
+			_, _ = fmt.Fprintf(osStdout, "%-14s %s (%s)\n", row.name, strings.ToUpper(strings.ReplaceAll(row.check.Status, "_", " ")), row.check.Detail)
 		}
 	}
 	if report.Error != "" {

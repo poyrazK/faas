@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,12 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestRenderDeploymentReleaseSummary(t *testing.T) {
 	var out bytes.Buffer
-	renderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
+	main.RenderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
 		Previous: &api.DeploymentResponse{ID: "previous-release"},
 		Changes: []api.DeploymentChange{{
 			Field: "image_digest", Before: "sha256:old", After: "sha256:new",
@@ -40,10 +41,10 @@ func TestRenderSuccessfulDeploymentIncludesReleaseSummary(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/deployments/d1":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: statusLive})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: main.StatusLive})
 		case "/v1/apps/my-app/deployments/d1/summary":
 			_ = json.NewEncoder(w).Encode(api.DeploymentSummaryResponse{
-				Deployment:       api.DeploymentResponse{ID: "d1", Status: statusLive},
+				Deployment:       api.DeploymentResponse{ID: "d1", Status: main.StatusLive},
 				Previous:         &api.DeploymentResponse{ID: "d0", Status: "superseded"},
 				Changes:          []api.DeploymentChange{{Field: "commit_sha", Before: "old", After: "new"}},
 				RollbackTargetID: "d0",
@@ -55,11 +56,11 @@ func TestRenderSuccessfulDeploymentIncludesReleaseSummary(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	oldOut := osStdout
-	osStdout = &out
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := renderSuccessfulDeployment(context.Background(), api.NewClient(srv.URL, "fp_live_x"), api.DeploymentResponse{ID: "d1", Status: statusLive}, "my-app"); code != 0 {
+	if code := main.RenderSuccessfulDeployment(context.Background(), api.NewClient(srv.URL, "fp_live_x"), api.DeploymentResponse{ID: "d1", Status: main.StatusLive}, "my-app"); code != 0 {
 		t.Fatalf("renderSuccessfulDeployment exit = %d, want 0", code)
 	}
 	for _, want := range []string{
@@ -78,7 +79,7 @@ func TestRenderSuccessfulDeploymentUsesCanonicalAppURL(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/deployments/d1":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: statusLive})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: main.StatusLive})
 		case "/v1/apps/my-app":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{
 				Slug: "my-app", URL: "https://my-app.gregale.dev", CanonicalURL: "https://custom.example.com",
@@ -90,11 +91,11 @@ func TestRenderSuccessfulDeploymentUsesCanonicalAppURL(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	oldOut := osStdout
-	osStdout = &out
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := renderSuccessfulDeployment(context.Background(), api.NewClient(srv.URL, "fp_live_x"), api.DeploymentResponse{ID: "d1", Status: statusLive}, "my-app"); code != 0 {
+	if code := main.RenderSuccessfulDeployment(context.Background(), api.NewClient(srv.URL, "fp_live_x"), api.DeploymentResponse{ID: "d1", Status: main.StatusLive}, "my-app"); code != 0 {
 		t.Fatalf("renderSuccessfulDeployment exit = %d, want 0", code)
 	}
 	if !strings.Contains(out.String(), "Deployed. https://custom.example.com") {
@@ -106,15 +107,15 @@ func TestRenderSuccessfulDarkDeploymentShowsPreviewAndPromotion(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/deployments/d1":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: statusLive, Revision: 44, TrafficPercent: 0})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: main.StatusLive, Revision: 44, TrafficPercent: 0})
 		case "/v1/deployments/d1/url":
 			_ = json.NewEncoder(w).Encode(api.DeploymentPreviewURL{DeploymentID: "d1", URL: "https://deploy-44-my-app.gregale.dev", Alive: true})
 		case "/v1/apps/my-app":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: "my-app", CanonicalURL: "https://my-app.gregale.dev"})
 		case "/v1/apps/my-app/deployments":
 			_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{
-				{ID: "d1", Revision: 44, Status: statusLive, TrafficPercent: 0},
-				{ID: "d0", Revision: 43, Status: statusLive, TrafficPercent: 100},
+				{ID: "d1", Revision: 44, Status: main.StatusLive, TrafficPercent: 0},
+				{ID: "d0", Revision: 43, Status: main.StatusLive, TrafficPercent: 100},
 			}})
 		default:
 			http.Error(w, "not found", http.StatusNotFound)
@@ -123,11 +124,11 @@ func TestRenderSuccessfulDarkDeploymentShowsPreviewAndPromotion(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	oldOut := osStdout
-	osStdout = &out
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := renderSuccessfulDeploymentWithOptions(context.Background(), api.NewClient(srv.URL, "fp_live_x"), api.DeploymentResponse{ID: "d1", Status: statusLive}, "my-app", true); code != 0 {
+	if code := main.RenderSuccessfulDeploymentWithOptions(context.Background(), api.NewClient(srv.URL, "fp_live_x"), api.DeploymentResponse{ID: "d1", Status: main.StatusLive}, "my-app", true); code != 0 {
 		t.Fatalf("renderSuccessfulDeploymentWithOptions exit = %d, want 0", code)
 	}
 	for _, want := range []string{
@@ -152,14 +153,14 @@ func TestDeploymentPromotionCommandOmitsSplitTraffic(t *testing.T) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{
-			{ID: "candidate", Revision: 44, Status: statusLive, TrafficPercent: 0},
-			{ID: "stable-a", Revision: 43, Status: statusLive, TrafficPercent: 50},
-			{ID: "stable-b", Revision: 42, Status: statusLive, TrafficPercent: 50},
+			{ID: "candidate", Revision: 44, Status: main.StatusLive, TrafficPercent: 0},
+			{ID: "stable-a", Revision: 43, Status: main.StatusLive, TrafficPercent: 50},
+			{ID: "stable-b", Revision: 42, Status: main.StatusLive, TrafficPercent: 50},
 		}})
 	}))
 	defer srv.Close()
-	command, serving := deploymentPromotionCommand(context.Background(), api.NewClient(srv.URL, "fp_live_x"),
-		"my-app", api.DeploymentResponse{ID: "candidate", Revision: 44, Status: statusLive})
+	command, serving := main.DeploymentPromotionCommand(context.Background(), api.NewClient(srv.URL, "fp_live_x"),
+		"my-app", api.DeploymentResponse{ID: "candidate", Revision: 44, Status: main.StatusLive})
 	if command != "" || serving != "" {
 		t.Fatalf("split traffic yielded promotion command %q serving %q, want neither", command, serving)
 	}
@@ -169,10 +170,10 @@ func TestWriteWaitedDeploymentReceiptIncludesReleaseSummary(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/deployments/d1":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: statusLive})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: main.StatusLive})
 		case "/v1/apps/my-app/deployments/d1/summary":
 			_ = json.NewEncoder(w).Encode(api.DeploymentSummaryResponse{
-				Deployment:       api.DeploymentResponse{ID: "d1", Status: statusLive},
+				Deployment:       api.DeploymentResponse{ID: "d1", Status: main.StatusLive},
 				Previous:         &api.DeploymentResponse{ID: "d0"},
 				Changes:          []api.DeploymentChange{{Field: "image_digest", Before: "old", After: "new"}},
 				RollbackTargetID: "d0",
@@ -184,22 +185,22 @@ func TestWriteWaitedDeploymentReceiptIncludesReleaseSummary(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	oldOut := osStdout
-	osStdout = &out
-	defer func() { osStdout = oldOut }()
-	oldJSON := jsonOutput
-	jsonOutput = true
-	defer func() { jsonOutput = oldJSON }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	defer func() { (*main.OsStdout) = oldOut }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := writeWaitedDeploymentReceiptUntil(
+	if code := main.WriteWaitedDeploymentReceiptUntil(
 		context.Background(), api.NewClient(srv.URL, "fp_live_x"),
-		api.DeploymentResponse{ID: "d1", Status: statusLive}, nil,
+		api.DeploymentResponse{ID: "d1", Status: main.StatusLive}, nil,
 		"https://my-app.gregale.dev", "", "my-app", time.Second,
 	); code != 0 {
 		t.Fatalf("writeWaitedDeploymentReceiptUntil exit = %d, want 0", code)
 	}
 
-	var receipt DeployReceipt
+	var receipt main.DeployReceipt
 	if err := json.Unmarshal(out.Bytes(), &receipt); err != nil {
 		t.Fatalf("decode deploy receipt: %v\noutput: %s", err, out.String())
 	}
@@ -218,13 +219,13 @@ func TestWriteWaitedDarkDeploymentReceiptIncludesPreviewAndPromotion(t *testing.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/deployments/d1":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: statusLive, Revision: 44, TrafficPercent: 0})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: main.StatusLive, Revision: 44, TrafficPercent: 0})
 		case "/v1/deployments/d1/url":
 			_ = json.NewEncoder(w).Encode(api.DeploymentPreviewURL{DeploymentID: "d1", URL: "https://deploy-44-my-app.gregale.dev", Alive: true})
 		case "/v1/apps/my-app/deployments":
 			_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{
-				{ID: "d1", Revision: 44, Status: statusLive, TrafficPercent: 0},
-				{ID: "d0", Revision: 43, Status: statusLive, TrafficPercent: 100},
+				{ID: "d1", Revision: 44, Status: main.StatusLive, TrafficPercent: 0},
+				{ID: "d0", Revision: 43, Status: main.StatusLive, TrafficPercent: 100},
 			}})
 		default:
 			http.Error(w, "not found", http.StatusNotFound)
@@ -233,22 +234,22 @@ func TestWriteWaitedDarkDeploymentReceiptIncludesPreviewAndPromotion(t *testing.
 	defer srv.Close()
 
 	var out bytes.Buffer
-	oldOut := osStdout
-	osStdout = &out
-	defer func() { osStdout = oldOut }()
-	oldJSON := jsonOutput
-	jsonOutput = true
-	defer func() { jsonOutput = oldJSON }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	defer func() { (*main.OsStdout) = oldOut }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := writeWaitedDeploymentReceiptUntilWithOptions(
+	if code := main.WriteWaitedDeploymentReceiptUntilWithOptions(
 		context.Background(), api.NewClient(srv.URL, "fp_live_x"),
-		api.DeploymentResponse{ID: "d1", Status: statusLive}, nil,
+		api.DeploymentResponse{ID: "d1", Status: main.StatusLive}, nil,
 		"https://my-app.gregale.dev", "", "my-app", time.Second, false, true,
 	); code != 0 {
 		t.Fatalf("writeWaitedDeploymentReceiptUntilWithOptions exit = %d, want 0", code)
 	}
 
-	var receipt DeployReceipt
+	var receipt main.DeployReceipt
 	if err := json.Unmarshal(out.Bytes(), &receipt); err != nil {
 		t.Fatalf("decode dark deploy receipt: %v\noutput: %s", err, out.String())
 	}
@@ -271,7 +272,7 @@ func TestWriteWaitedDarkDeploymentReceiptIncludesPreviewAndPromotion(t *testing.
 // adr: 198
 func TestRenderDeploymentReleaseSummary_UsesRevisionHandle(t *testing.T) {
 	var out bytes.Buffer
-	renderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
+	main.RenderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
 		Previous: &api.DeploymentResponse{ID: "8f14e45fceea467a9c8e9b0e21c6d5a1", Revision: 41},
 		Changes: []api.DeploymentChange{{
 			Field: "image_digest", Before: "sha256:old", After: "sha256:new",
@@ -302,7 +303,7 @@ func TestRenderDeploymentReleaseSummary_UsesRevisionHandle(t *testing.T) {
 // adr: 198
 func TestRenderDeploymentReleaseSummary_FallsBackToIDWithoutRevision(t *testing.T) {
 	var out bytes.Buffer
-	renderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
+	main.RenderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
 		Previous:         &api.DeploymentResponse{ID: "legacy-release"},
 		Changes:          []api.DeploymentChange{},
 		RollbackTargetID: "legacy-release",
@@ -323,9 +324,9 @@ func TestRenderDeploymentReleaseSummary_FallsBackToIDWithoutRevision(t *testing.
 // is now the safe exit: promote the still-serving release.
 func TestRenderDeploymentReleaseSummary_MidCanaryOffersAbort(t *testing.T) {
 	var out bytes.Buffer
-	renderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
-		Deployment:             api.DeploymentResponse{ID: "d7", Revision: 7, Status: statusLive, TrafficPercent: 10, CanaryPreset: "custom"},
-		Previous:               &api.DeploymentResponse{ID: "d6", Revision: 6, Status: statusLive, TrafficPercent: 90},
+	main.RenderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
+		Deployment:             api.DeploymentResponse{ID: "d7", Revision: 7, Status: main.StatusLive, TrafficPercent: 10, CanaryPreset: "custom"},
+		Previous:               &api.DeploymentResponse{ID: "d6", Revision: 6, Status: main.StatusLive, TrafficPercent: 90},
 		RollbackTargetID:       "d5",
 		RollbackTargetRevision: 5,
 	}, "h6-lab")
@@ -335,5 +336,97 @@ func TestRenderDeploymentReleaseSummary_MidCanaryOffersAbort(t *testing.T) {
 	}
 	if strings.Contains(got, "--to v5") {
 		t.Fatalf("mid-canary summary still offers a rollback past the serving release:\n%s", got)
+	}
+}
+
+// H10-10: after rollback v2→v1, deploying v3 at 50% printed
+// `rollback --to v2`, a release nobody served.
+func TestRenderDeploymentReleaseSummary_TrafficSplitOffersPromote(t *testing.T) {
+	var out bytes.Buffer
+	main.RenderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
+		Deployment: api.DeploymentResponse{ID: "d3", Revision: 3, Status: main.StatusLive, TrafficPercent: 50},
+		Previous:   &api.DeploymentResponse{ID: "d2", Revision: 2, Status: "superseded"},
+	}, "h10-hello-node")
+	got := out.String()
+	if !strings.Contains(got, "Undo split: gregale traffic status h10-hello-node, then gregale traffic promote --app h10-hello-node") {
+		t.Fatalf("split summary lacks the promote hint:\n%s", got)
+	}
+	if strings.Contains(got, "rollback h10-hello-node --to") || strings.Contains(got, "Rollback: unavailable") {
+		t.Fatalf("split summary offers a plain rollback:\n%s", got)
+	}
+	out.Reset()
+	main.RenderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
+		Deployment: api.DeploymentResponse{ID: "d3", Revision: 3, Status: main.StatusLive, TrafficPercent: 50},
+		Previous:   &api.DeploymentResponse{ID: "d1", Revision: 1, Status: main.StatusLive, TrafficPercent: 50},
+	}, "h10-hello-node")
+	if got := out.String(); !strings.Contains(got, "Undo split: gregale traffic promote --app h10-hello-node --deployment v1") {
+		t.Fatalf("split summary with a live previous release lacks its exact promote command:\n%s", got)
+	}
+}
+
+// H10-137: a worker or job never answers requests, so its deploy output must
+// not offer a URL, the scale-to-zero note or the bearer-auth hint.
+func TestRenderSuccessfulDeploymentForNoHTTPModes(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    string
+		want    []string
+		notWant []string
+	}{
+		{
+			name:    "request app",
+			want:    []string{"Deployed v1. https://my-app.gregale.dev", "scales to zero when idle", "Authorization: Bearer"},
+			notWant: []string{"does not serve HTTP"},
+		},
+		{
+			name:    "worker",
+			mode:    api.ExecutionModeWorker,
+			want:    []string{"Deployed v1.\n", "Your worker runs continuously; it does not serve HTTP.", "gregale logs my-app"},
+			notWant: []string{"https://my-app.gregale.dev", "scales to zero", "Authorization: Bearer"},
+		},
+		{
+			name:    "job",
+			mode:    api.ExecutionModeJob,
+			want:    []string{"Deployed v1.\n", "Your job runs to completion when triggered"},
+			notWant: []string{"https://my-app.gregale.dev", "scales to zero", "Authorization: Bearer"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/v1/deployments/d1":
+					_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: main.StatusLive, Revision: 1})
+				case "/v1/apps/my-app":
+					_ = json.NewEncoder(w).Encode(api.AppResponse{
+						Slug: "my-app", CanonicalURL: "https://my-app.gregale.dev", RequireAuthn: true,
+						Manifest: api.AppManifest{ExecutionMode: tt.mode},
+					})
+				default:
+					http.Error(w, "not found", http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			var out bytes.Buffer
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			defer func() { (*main.OsStdout) = oldOut }()
+
+			if code := main.RenderSuccessfulDeployment(context.Background(), api.NewClient(srv.URL, "fp_live_x"), api.DeploymentResponse{ID: "d1", Status: main.StatusLive, Revision: 1}, "my-app"); code != 0 {
+				t.Fatalf("renderSuccessfulDeployment exit = %d, want 0", code)
+			}
+			got := out.String()
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("output missing %q\nfull output:\n%s", want, got)
+				}
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(got, notWant) {
+					t.Errorf("output contains %q\nfull output:\n%s", notWant, got)
+				}
+			}
+		})
 	}
 }

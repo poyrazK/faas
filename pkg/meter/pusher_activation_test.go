@@ -62,6 +62,7 @@ func TestPushPendingMidHourIdentityPreservesAllowance(t *testing.T) {
 					}
 				}
 				pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return hour.Add(2 * time.Hour) }, nil)
+				completeUsageThrough(t, ctx, store, hour.Add(2*time.Hour))
 				want := 2
 				if capped {
 					want = 0
@@ -87,13 +88,11 @@ func TestPushPendingMidHourIdentityPreservesAllowance(t *testing.T) {
 				if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 0 {
 					t.Fatalf("replay = (%d, %v), want no new deliveries", pushed, err)
 				}
+				// ADR-1162: windows above the cap settle with zero receipts, so
+				// raising the cap later never back-bills them.
 				pending, err := store.PendingBillingMeterUsageWindows(ctx, "stripe", kind, hour, hour.Add(2*time.Hour))
-				wantPending := 0
-				if capped {
-					wantPending = 2
-				}
-				if err != nil || len(pending) != wantPending {
-					t.Fatalf("pending = (%+v, %v), want %d; capped windows must not get zero-usage receipts", pending, err, wantPending)
+				if err != nil || len(pending) != 0 {
+					t.Fatalf("pending = (%+v, %v), want every window settled", pending, err)
 				}
 			})
 		}
@@ -131,6 +130,7 @@ func TestPushPendingRetriesFailedBoundaryRead(t *testing.T) {
 			readErr := errors.New("identity lookup unavailable")
 			wrapped := &failingBoundaryStore{Store: store, err: readErr}
 			pusher := meter.NewPusher(wrapped, provider, discardLog(), func() time.Time { return hour.Add(time.Hour) }, nil)
+			completeUsageThrough(t, ctx, store, hour.Add(time.Hour))
 			if pushed, err := pusher.PushPending(ctx, 24*time.Hour); pushed != 0 || !errors.Is(err, readErr) {
 				t.Fatalf("failed boundary read = (%d, %v), want no deliveries and original error", pushed, err)
 			}

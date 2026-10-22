@@ -23,11 +23,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyarchive"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 type archiveWorkerFailureStore struct {
-	*state.PgStore
+	PgStore                            *state.PgStore
 	loseReserve, loseClaim, loseRecord bool
 }
 
@@ -83,7 +84,7 @@ func cloneArchiveWorkerFixture(t *testing.T) (cloneCoordinatorFixture, *archiveW
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealed, err := original.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), f.lease, sourceID)
+	sealed, err := original.PgStore.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), f.lease, sourceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,7 @@ func cloneArchiveWorkerFixture(t *testing.T) (cloneCoordinatorFixture, *archiveW
 		t.Fatal("missing reader database")
 	}
 	store := &archiveWorkerFailureStore{PgStore: original.PgStore}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	local, err := storage.NewLocalStorageBackend(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -176,14 +177,14 @@ func TestPGClonePostgresArchiveWorkerRecoversCommittedReceiptWithOriginalKeyAndN
 	}
 	req, _ := plan.RequirementsForWorker()
 	sourceID := req[0].Scope.SourceDatabaseID
-	saved, err := store.ProjectEnvironmentClonePostgresArchiveForLease(t.Context(), f.lease, sourceID, oid)
+	saved, err := store.PgStore.ProjectEnvironmentClonePostgresArchiveForLease(t.Context(), f.lease, sourceID, oid)
 	if err != nil || saved.State != "retained" {
 		t.Fatalf("retained reply loss: %v", err)
 	}
-	if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.lease, err = store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

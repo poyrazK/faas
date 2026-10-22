@@ -62,6 +62,22 @@ type OutboundIntegrationOffer struct {
 	AIMonthlyCostLimitMillicents *int64 `json:"ai_monthly_cost_limit_millicents"`
 	// AIRequestLogEnabled records per-call metadata (ADR-991).
 	AIRequestLogEnabled bool `json:"ai_request_log_enabled"`
+	// Per-end-user UTC-day limits (ADR-994).
+	AIUserDailyTokenLimit          *int64 `json:"ai_user_daily_token_limit"`
+	AIUserDailyCostLimitMillicents *int64 `json:"ai_user_daily_cost_limit_millicents"`
+	// AIRequestLogContent captures logged calls' bodies (ADR-996).
+	AIRequestLogContent bool `json:"ai_request_log_content"`
+	// AIContentPolicy is the integration's content guardrails (ADR-997).
+	AIContentPolicy OutboundAIContentPolicy `json:"ai_content_policy"`
+	// AILogExport sends each settled app call to the app's log drains
+	// (ADR-1340).
+	AILogExport bool `json:"ai_log_export"`
+	// AIAllowUnmetered lets through writes the gateway cannot meter, outside
+	// the caps (ADR-1432).
+	AIAllowUnmetered bool `json:"ai_allow_unmetered"`
+	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
+	// that carry none (ADR-1437).
+	AIAutoPromptCache bool `json:"ai_auto_prompt_cache"`
 }
 
 // Outbound AI providers select the credential handling and the response
@@ -106,15 +122,36 @@ type PutOutboundAIPolicyRequest struct {
 	DailyTokenLimit            *int64 `json:"daily_token_limit"`
 	DailyCostLimitMillicents   *int64 `json:"daily_cost_limit_millicents"`
 	MonthlyCostLimitMillicents *int64 `json:"monthly_cost_limit_millicents"`
-	// RequestLogEnabled stores per-call metadata, never content (ADR-991).
+	// RequestLogEnabled stores per-call metadata (ADR-991).
 	RequestLogEnabled bool `json:"request_log_enabled"`
+	// RequestLogContent also keeps the start of each logged call's request
+	// and response bodies; it requires the request log (ADR-996).
+	RequestLogContent bool `json:"request_log_content,omitempty"`
+	// UserDailyTokenLimit and UserDailyCostLimitMillicents cap each end
+	// user named by X-Gregale-AI-User per UTC day (ADR-994).
+	UserDailyTokenLimit          *int64 `json:"user_daily_token_limit,omitempty"`
+	UserDailyCostLimitMillicents *int64 `json:"user_daily_cost_limit_millicents,omitempty"`
+	// LogExport sends each settled call of an app to that app's log drains
+	// as one JSON line, without prompts or completions (ADR-1340).
+	LogExport bool `json:"log_export,omitempty"`
+	// AllowUnmetered lets through writes the gateway can neither meter nor
+	// knows to be free, such as realtime client secrets, vector stores or
+	// fine-tuning jobs. Their spend is outside the caps (ADR-1432).
+	AllowUnmetered bool `json:"allow_unmetered,omitempty"`
+	// AutoPromptCache adds prompt-cache breakpoints to Claude requests that
+	// carry none: after a repeated system prompt or tool list, and after the
+	// last message of a continuing conversation (ADR-1437).
+	AutoPromptCache bool `json:"auto_prompt_cache,omitempty"`
 }
 
 // Valid reports whether the complete AI policy can be stored.
 func (r PutOutboundAIPolicyRequest) Valid() bool {
 	return ValidOutboundAIPolicy(r.AIProvider, r.DailyTokenLimit) &&
 		ValidOutboundAICostLimits(r.AIProvider, r.DailyCostLimitMillicents, r.MonthlyCostLimitMillicents) &&
-		(!r.RequestLogEnabled || r.AIProvider != "")
+		ValidOutboundAIUserLimits(r.AIProvider, r.UserDailyTokenLimit, r.UserDailyCostLimitMillicents) &&
+		(!r.RequestLogEnabled || r.AIProvider != "") && (!r.RequestLogContent || r.RequestLogEnabled) &&
+		(!r.LogExport || r.AIProvider != "") && (!r.AllowUnmetered || r.AIProvider != "") &&
+		(!r.AutoPromptCache || r.AIProvider != "")
 }
 
 // OutboundAIUsageItem is one UTC-day rollup for a caller and model. Caller is
@@ -133,6 +170,27 @@ type OutboundAIUsageItem struct {
 	// CostMillicents is priced from the price list effective at each call,
 	// rounded up per call; zero without a price list (ADR-990).
 	CostMillicents int64 `json:"cost_millicents"`
+	// Media usage (ADR-997): images billed per image, seconds of
+	// transcribed audio and characters of synthesized speech.
+	Images       int64 `json:"images"`
+	AudioSeconds int64 `json:"audio_seconds"`
+	Characters   int64 `json:"characters"`
+	// VideoSeconds is seconds of generated video (ADR-1432).
+	VideoSeconds int64 `json:"video_seconds"`
+	// Built-in tool uses (ADR-1433): web searches as the provider bills
+	// them, file searches, and GB of code-interpreter container sessions.
+	WebSearches   int64 `json:"web_searches"`
+	FileSearches  int64 `json:"file_searches"`
+	CodeSessionGB int64 `json:"code_session_gb"`
+	// ADR-1440: requests the response cache served, the provider cost they
+	// avoided, and what provider prompt caching saved, negative when cache
+	// writes outweighed reads.
+	CachedRequests             int64 `json:"cached_requests"`
+	CacheSavedMillicents       int64 `json:"cache_saved_millicents"`
+	PromptCacheSavedMillicents int64 `json:"prompt_cache_saved_millicents"`
+	// Audio tokens, part of the input and output totals (ADR 20261019072722).
+	InputAudioTokens  int64 `json:"input_audio_tokens"`
+	OutputAudioTokens int64 `json:"output_audio_tokens"`
 }
 
 // OutboundAIUsageResponse reports one UTC day of AI usage for an integration.

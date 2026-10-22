@@ -215,7 +215,11 @@ func newEgressWatcher(log *slog.Logger, stagingDir, livePath string) *egressWatc
 // with a failed atomic-rename, or a failed reload, must leave the
 // live ruleset intact. The atomic-rename is the gate.
 func (w *egressWatcher) Run(ctx context.Context, pool *pgxpool.Pool) error {
-	notif, err := db.SubscribeWithReconnect(ctx, pool, []string{db.NotifyEgressPolicyChanged}, w.log)
+	// The watcher has no table poll of its own, so a policy change notified
+	// while the LISTEN connection was down would otherwise wait for the next
+	// cache mutation. SubscribeWithResync forces a reload after a reconnect
+	// (ADR-1344 §5 rule 3).
+	notif, err := db.SubscribeWithResync(ctx, pool, []string{db.NotifyEgressPolicyChanged}, w.log)
 	if err != nil {
 		return fmt.Errorf("vmmd: egress watcher subscribe: %w", err)
 	}
@@ -230,6 +234,14 @@ func (w *egressWatcher) Run(ctx context.Context, pool *pgxpool.Pool) error {
 				// reconnect; the OUTER channel closing means
 				// ctx cancelled. Belt-and-braces.
 				return nil
+			}
+			if got.Channel == db.ResyncChannel {
+				if err := w.Reload(ctx); err != nil {
+					w.log.Error("vmmd: egress watcher reload after resync", "err", err)
+					continue
+				}
+				w.log.Info("vmmd: egress policy reloaded after LISTEN resync")
+				continue
 			}
 			var row egressPolicyAuditRow
 			if err := json.Unmarshal([]byte(got.Payload), &row); err != nil {

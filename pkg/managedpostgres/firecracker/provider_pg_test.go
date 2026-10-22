@@ -242,7 +242,7 @@ func TestCredentialBatchesEnforceTheRoleModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	scope := credentialScope(resourceID, dbName)
-	if len(settings) != 1 || settings[0] != "statement_timeout=15000" || members != 0 ||
+	if len(settings) != 2 || settings[0] != "statement_timeout=15000" || settings[1] != "lock_timeout=5000" || members != 0 ||
 		apiMarker != "gregale:credential:v1:"+scope+":data_api" || migMarker != "gregale:credential:v1:"+scope+":migration" {
 		t.Fatalf("data api role: settings %v, memberships %d, marker %q, migration marker %q", settings, members, apiMarker, migMarker)
 	}

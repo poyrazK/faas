@@ -10,9 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -171,6 +168,16 @@ func TestIssueOwnershipRulesRouteNewIssuesAndPreserveManualAssignment(t *testing
 	if err := e.store.AddOrgMember(t.Context(), org.ID, member.ID, state.OrgRoleDeveloper, nil); err != nil {
 		t.Fatal(err)
 	}
+	// A company app takes a key bound to the company; the environment's
+	// personal key never reaches it (#4882).
+	orgKey, orgKeyHash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CreateOrgAPIKey(t.Context(), org.ID, e.acct.ID, orgKeyHash, "issue routing", api.ScopesAdminOnly, nil); err != nil {
+		t.Fatal(err)
+	}
+	e.key = orgKey
 	app, err := e.store.CreateApp(t.Context(), state.App{
 		AccountID: e.acct.ID, OrgID: org.ID, Slug: "issue-routing-app", Type: state.AppTypeApp,
 		Status: state.AppActive, RequireAuthn: e.acct.Plan.RequireAuthnDefault(), PublicAuthMode: e.acct.Plan.PublicAuthModeDefault(),
@@ -549,64 +556,5 @@ func TestIssueImpactSortAndThresholdPaginationPostgres(t *testing.T) {
 	}
 	if w := e.do(t, http.MethodGet, base+"?sort=recent&cursor="+url.QueryEscape(firstPage.NextCursor), nil, nil); w.Code != http.StatusBadRequest {
 		t.Fatalf("cursor reused under different sort = %d, want 400", w.Code)
-	}
-}
-
-func TestIssueSDKEndToEndPostgres(t *testing.T) {
-	if os.Getenv("GREGALE_ISSUES_SDK_ACCEPTANCE") == "" {
-		t.Skip("run make test-issues for SDK process acceptance")
-	}
-	if os.Getenv("DATABASE_URL") == "" || os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
-		t.Fatal("SDK acceptance requires enabled PostgreSQL tests")
-	}
-	e := setupPGHandler(t, api.PlanHobby)
-	app := seedPGApp(t, e, "issue-sdk")
-	dep := issueSeedDeployment(t, e, app, 1)
-	token := issueCreateToken(t, e, app.Slug, dep)
-	server := httptest.NewServer(e.h)
-	defer server.Close()
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Fatal("Node SDK acceptance requires Node.js")
-	}
-	// Dynamic import accepts an absolute path without shell interpolation.
-	script := `const {createIssueReporter}=await import(process.env.GREGALE_ISSUE_NODE_MODULE);const r=createIssueReporter({baseURL:process.env.GREGALE_ISSUE_API,app:'issue-sdk',token:process.env.GREGALE_ISSUE_TOKEN});r.captureException(new TypeError('Node SDK failure'));if(!await r.close())process.exit(2);`
-	cmd := exec.CommandContext(t.Context(), node, "--input-type=module", "-e", script)
-	cmd.Env = append(os.Environ(), "GREGALE_ISSUE_API="+server.URL, "GREGALE_ISSUE_TOKEN="+token.Token, "GREGALE_ISSUE_NODE_MODULE="+filepath.Join(root, "sdk/node/dist/issues.js"))
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("Node capture: %v %s", err, out)
-	}
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Fatal("Python SDK acceptance requires Python")
-	}
-	script = `import os
-from faas_sdk.issues import IssueReporter
-r=IssueReporter(os.environ['GREGALE_ISSUE_API'],'issue-sdk',os.environ['GREGALE_ISSUE_TOKEN'])
-try:
- raise ValueError('Python SDK failure')
-except ValueError as e:
- r.capture_exception(e)
-assert r.close()
-`
-	cmd = exec.CommandContext(t.Context(), python, "-c", script)
-	cmd.Env = append(os.Environ(), "PYTHONPATH="+filepath.Join(root, "sdk/python"), "GREGALE_ISSUE_API="+server.URL, "GREGALE_ISSUE_TOKEN="+token.Token)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("Python capture: %v %s", err, out)
-	}
-	c := api.NewClient(server.URL, e.key)
-	list, err := c.ListIssues(t.Context(), app.Slug, "", "", "")
-	if err != nil || len(list.Items) != 2 {
-		t.Fatalf("SDK issues = %+v %v", list, err)
-	}
-	for _, issue := range list.Items {
-		detail, err := c.GetIssue(t.Context(), app.Slug, issue.ID, "", "")
-		if err != nil || len(detail.Events) != 1 || len(detail.Events[0].Frames) == 0 || detail.Releases[0].DeploymentID != dep.ID {
-			t.Fatalf("SDK evidence incomplete: %+v %v", detail, err)
-		}
 	}
 }

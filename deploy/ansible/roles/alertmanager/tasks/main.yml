@@ -131,6 +131,8 @@
     - "{{ am_pushover_user_key_file }}"
     - "{{ am_discord_webhook_url_file }}"
     - "{{ am_slack_webhook_url_file }}"
+    - "{{ am_discord_warn_webhook_url_file }}"
+    - "{{ am_slack_warn_webhook_url_file }}"
     - "{{ am_heartbeat_url_file }}"
   failed_when:
     - not am_dev_mode | bool
@@ -156,13 +158,18 @@
       - grep
       - -Eq
       - '^https://(discord\.com|discordapp\.com|canary\.discord\.com|ptb\.discord\.com)/api/webhooks/[^[:space:]]+/slack/?$'
-      - "{{ am_discord_webhook_url_file }}"
+      - "{{ item }}"
   register: am_discord_url_check
   changed_when: false
   failed_when: am_discord_url_check.rc != 0
+  loop:
+    - "{{ am_discord_webhook_url_file | default('') | trim }}"
+    - "{{ am_discord_warn_webhook_url_file | default('') | trim }}"
+  loop_control:
+    label: "{{ item | basename | default('(unset)') }}"
   when:
     - not am_dev_mode | bool
-    - am_discord_webhook_url_file | default('') | trim | length > 0
+    - item | length > 0
   no_log: true
 
 - name: alertmanager — require a notification channel in production

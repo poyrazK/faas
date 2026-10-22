@@ -104,7 +104,7 @@ func cloneOwnedReaderArchiveFixture(t *testing.T) (cloneCoordinatorFixture, *clo
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealed, err := store.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), f.lease, sourceID)
+	sealed, err := store.PgStore.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), f.lease, sourceID)
 	if err != nil {
 		t.Fatal(err)
 	}

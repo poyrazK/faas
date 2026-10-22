@@ -41,6 +41,31 @@ func TestManagedPostgresUsageViewIsCustomerSafe(t *testing.T) {
 	}
 }
 
+// TestManagedPostgresUsageViewReportsEnforcedDatabaseLimit pins the
+// production-us canary display: `postgres usage` printed "ready_databases
+// 0 / 10" (the plan maximum) while the operator capped accounts at 3 and
+// `postgres capabilities` said 3.
+func TestManagedPostgresUsageViewReportsEnforcedDatabaseLimit(t *testing.T) {
+	limits := api.ManagedPostgresPlanLimits{DatabasesMax: 10, StorageLimitBytes: 1 << 30}
+	cases := []struct {
+		name     string
+		enforced int
+		want     int
+	}{
+		{name: "operator cap below plan", enforced: 3, want: 3},
+		{name: "plan below operator cap", enforced: 25, want: 10},
+		{name: "enforced limit unknown", enforced: 0, want: 10},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			view := apidserver.ManagedPostgresUsageView(managedpostgres.UsageSummary{DatabaseLimit: tc.enforced}, limits)
+			if view.DatabaseLimit != tc.want {
+				t.Fatalf("database_limit = %d, want %d", view.DatabaseLimit, tc.want)
+			}
+		})
+	}
+}
+
 func TestManagedPostgresUsageViewGuardrailStates(t *testing.T) {
 	limits := api.ManagedPostgresPlanLimits{DatabasesMax: 1, StorageLimitBytes: 1 << 30}
 	for _, tc := range []struct {

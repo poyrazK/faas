@@ -1,0 +1,92 @@
+version: 1
+suites:
+  checkout:
+    scenarios:
+      - {scenario: checkout-outage, engine: real-vm, profile: warm}
+scenarios:
+  checkout-outage:
+    project: checkout-resilience-example
+    source: ./app
+    timeout: 5m
+    secrets:
+      PAYMENT_HOST: ${service.payment.host}
+      PAYMENT_PORT: ${service.payment.port}
+      ORDER_LEDGER_URL: ${service.payment.url}
+      ORDER_LEDGER_TOKEN: ${run.secret}
+    services:
+      payment:
+        source: ./payment
+        tcp_ports: [6379]
+        secrets:
+          ORDER_LEDGER_TOKEN: ${run.secret}
+    steps:
+      - name: baseline
+        command: [node, ../test/acceptance.mjs, baseline]
+        requests:
+          - name: checkout-baseline
+            method: POST
+            path: /checkout
+            headers: {idempotency-key: baseline}
+            expect: {status: 200, json: {'/id': baseline, '/status': confirmed}}
+        load:
+          vus: 2
+          iterations: 5
+          thresholds: {p95: 2s, error_rate: 0, success_rate: 1, min_samples: 5}
+      - name: payment-outage
+        chaos:
+          duration: 2m
+          rules:
+            - to: payment
+              kind: tcp_timeout
+              port: 6379
+              direction: downstream
+              percent: 100
+              min_matches: 1
+        command: [node, ../test/acceptance.mjs, outage]
+        checks:
+          - name: no-failed-order
+            method: GET
+            path: /stats
+            expect: {status: 200, json: {'/orders': 1, '/pending': 0}}
+          - name: ledger-before-restart
+            method: GET
+            path: /durability
+            expect: {status: 200, json: {'/orders': 1, '/outage_state': pending}}
+            capture: {ledger_id: '/ledger_id'}
+      - name: restart-checkout
+        restart:
+          workload: app
+          timeout: 1m
+          readiness:
+            name: checkout-ready
+            method: GET
+            path: /catalog
+            expect: {status: 200, json: {'/available': true}}
+          storage_checks:
+            - name: preserved-order-intent
+              method: GET
+              path: /durability
+              expect:
+                status: 200
+                json:
+                  '/ledger_id': '${steps.ledger-before-restart.ledger_id}'
+                  '/orders': 1
+                  '/outage_state': pending
+      - name: restore-payment
+        clear_chaos: true
+      - name: recovery
+        command: [node, ../test/acceptance.mjs, recovery]
+        requests:
+          - name: checkout-recovered
+            method: POST
+            path: /checkout
+            headers: {idempotency-key: outage}
+            expect: {status: 200, json: {'/id': outage, '/status': confirmed}}
+          - name: no-duplicate-orders
+            method: GET
+            path: /stats
+            expect: {status: 200, json: {'/orders': 2, '/pending': 0}}
+        load:
+          vus: 2
+          iterations: 5
+          thresholds: {p95: 2s, error_rate: 0, success_rate: 1, min_samples: 10}

@@ -35,6 +35,11 @@ func (s *Service) GetWorkflowRecoveryPolicyHealth(w http.ResponseWriter, r *http
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
+	if overview, supported := store.(state.WorkflowRecoveryHealthOverviewStore); supported {
+		health, err := overview.GetWorkflowRecoveryPolicyHealth(r.Context(), acct.ID, app, seconds)
+		s.writeEventRecovery(w, r, http.StatusOK, health, err)
+		return
+	}
 	queue, err := operator.GetWorkflowRecoveryAutomaticQueue(r.Context(), acct.ID, app)
 	s.writeEventRecovery(w, r, http.StatusOK, api.RecoveryPolicyHealth(queue, seconds), err)
 }

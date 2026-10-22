@@ -101,8 +101,8 @@ def sync_detailed(
     Args:
         source (UUID):
         body (CommitEventRequest): At-least-once handoff. Repeating the identity with identical
-            JSON data and routing returns the original receipt; changed type, data or routing
-            conflicts.
+            JSON data and routing returns the original receipt; changed type, schema version, data or
+            routing conflicts.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -135,8 +135,8 @@ def sync(
     Args:
         source (UUID):
         body (CommitEventRequest): At-least-once handoff. Repeating the identity with identical
-            JSON data and routing returns the original receipt; changed type, data or routing
-            conflicts.
+            JSON data and routing returns the original receipt; changed type, schema version, data or
+            routing conflicts.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -164,8 +164,8 @@ async def asyncio_detailed(
     Args:
         source (UUID):
         body (CommitEventRequest): At-least-once handoff. Repeating the identity with identical
-            JSON data and routing returns the original receipt; changed type, data or routing
-            conflicts.
+            JSON data and routing returns the original receipt; changed type, schema version, data or
+            routing conflicts.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -196,8 +196,8 @@ async def asyncio(
     Args:
         source (UUID):
         body (CommitEventRequest): At-least-once handoff. Repeating the identity with identical
-            JSON data and routing returns the original receipt; changed type, data or routing
-            conflicts.
+            JSON data and routing returns the original receipt; changed type, schema version, data or
+            routing conflicts.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

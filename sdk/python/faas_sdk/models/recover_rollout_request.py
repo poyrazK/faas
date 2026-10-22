@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -9,6 +9,10 @@ from attrs import field as _attrs_field
 
 from ..models.recover_rollout_request_action import RecoverRolloutRequestAction, check_recover_rollout_request_action
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.app_release_review import AppReleaseReview
+
 
 T = TypeVar("T", bound="RecoverRolloutRequest")
 
@@ -24,6 +28,8 @@ class RecoverRolloutRequest:
     action: RecoverRolloutRequestAction
     """The recovery action. `advance` requires the rollout to be stuck (>30 min in the same canary step); `promote`
     short-circuits the rollout to 100% / complete; `abort` flips rollout_state='aborted'."""
+    expected_review: AppReleaseReview | Unset = UNSET
+    """Atomic app configuration and serving-deployment identities used to fence release admission."""
     reason: str | Unset = UNSET
     """Operator-supplied reason (≤1024 chars). Lands verbatim in the deployment_audit row's data payload under the
     `reason` key."""
@@ -38,6 +44,10 @@ class RecoverRolloutRequest:
 
     def to_dict(self) -> dict[str, Any]:
         action: str = self.action
+
+        expected_review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.expected_review, Unset):
+            expected_review = self.expected_review.to_dict()
 
         reason = self.reason
 
@@ -56,6 +66,8 @@ class RecoverRolloutRequest:
                 "action": action,
             }
         )
+        if expected_review is not UNSET:
+            field_dict["expected_review"] = expected_review
         if reason is not UNSET:
             field_dict["reason"] = reason
         if deployment_id is not UNSET:
@@ -67,8 +79,17 @@ class RecoverRolloutRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.app_release_review import AppReleaseReview
+
         d = dict(src_dict)
         action = check_recover_rollout_request_action(d.pop("action"))
+
+        _expected_review = d.pop("expected_review", UNSET)
+        expected_review: AppReleaseReview | Unset
+        if isinstance(_expected_review, Unset):
+            expected_review = UNSET
+        else:
+            expected_review = AppReleaseReview.from_dict(_expected_review)
 
         reason = d.pop("reason", UNSET)
 
@@ -88,6 +109,7 @@ class RecoverRolloutRequest:
 
         recover_rollout_request = cls(
             action=action,
+            expected_review=expected_review,
             reason=reason,
             deployment_id=deployment_id,
             expected_predecessor_deployment_id=expected_predecessor_deployment_id,

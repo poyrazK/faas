@@ -7650,3 +7650,2665 @@ GET fixtures, missing observations, malformed pages and denied journal
 authority. Pinned golangci-lint v2.4.0 reports zero issues for object storage;
 text encoding, shell quoting and ADR numbering checks pass. No live-provider
 drainage qualification was performed.
+
+### Durable common-checkpoint coordinator intent (2026-10-07)
+
+A private coordinator step now pins one checkpoint request to the captured
+source revision, held configuration generation and complete frozen database/
+bucket roster. The plan includes original backend fingerprints and physical
+source identities. It contains no credentials, worker tokens or caller-selected
+timestamp. A qualified driver is required before any source hold is acquired.
+
+The coordinator composes the existing stable configuration and data barriers,
+waits for tracked writers, and rejects unselected native PostgreSQL databases.
+It commits a `data_checkpoint` intent before committing dispatch. Only the
+worker that durably claims the planned-to-capturing transition may invoke
+capture. An uncertain dispatch is recovered through independent observation
+of the original request, never another capture call. Missing evidence remains
+blocked, including a dispatch claim whose commit reply was lost before IO.
+
+The optional driver contract requires authenticated complete native/background
+writer coverage and retained immutable capture identities for every original
+source under one common boundary. Zero instrumented writers cannot satisfy
+that contract. The independent receipt must match the operation and canonical
+plan hash, contain the exact source roster, and provide a common UTC point no
+earlier than the held configuration. The coordinator rechecks host admission,
+worker authority, configuration and the complete held roster around provider IO.
+
+A separate receipt digest preserves all original source capture identities as
+well as the common point. A changed source identity under the same aggregate
+checkpoint ID is rejected on recovery. The PostgreSQL intent write checks the
+exact worker token, operation revision, live lease and held configuration in
+the committing transaction. Lost commit replies are recovered by the next
+worker against the retained intent/receipt, without recapturing the sources.
+
+Both checkpoint journal resource kinds remain unsupported publication
+strategies. This step does not release source holds, populate subordinate
+snapshot/manifest journals, enter copying, publish a stage, or enable public
+full-clone admission. No built-in qualified driver is installed. Native
+provider implementations, independent capture-identity adoption into the
+existing PostgreSQL/object workers, verified source-hold release and full
+publication remain necessary. Live R2/OVH qualification remains deferred.
+
+Validation: focused PostgreSQL tests pass for original-capture recovery,
+worker takeover before commit, lost intent/capture/receipt replies, incomplete
+or rewritten evidence, and the existing stable capture barriers. SQLC parity,
+text encoding, shell quoting and ADR numbering checks pass. These are local
+contract tests with a test driver, not native-provider qualification.
+Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
+
+### Original snapshot and manifest adoption (2026-10-07)
+
+A private adoption driver now reads subordinate captures by their original
+common-checkpoint identities. It must independently verify snapshot ownership
+under the existing clone snapshot request (including owner and idempotency
+key), original request start time, immutable creation time and absence of
+automatic expiry. For objects,
+the original capture identity is the canonical version-manifest hash. The
+driver reads that original complete manifest and verifies retention at the
+pinned source through the worker lease deadline; a fresh listing at the same
+timestamp is not adoption evidence. No built-in qualified driver is installed.
+
+The coordinator reobserves the original checkpoint after reading subordinate
+evidence and rechecks configuration, host admission and the complete held
+source roster around IO and commit. Shared private receipt types preserve the
+existing checkpoint proof encoding. Caller-supplied target identities and
+mutable source definitions are not adoption inputs.
+
+One PostgreSQL transaction imports retained snapshot receipts into the existing
+snapshot journal, reserves private object target bucket rows from frozen
+bindings, imports exact version manifests into the existing manifest journal,
+and appends the complete dataset inventory with a private adoption digest.
+The committing write checks the exact worker token, revision, live lease and
+held configuration. A quota failure or invalid receipt rolls back the entire
+adoption, including earlier snapshot imports and bucket reservations. Snapshot
+dispatch claims already see retained state after adoption and cannot authorize
+another capture. Target bucket reservation does not provision a remote bucket.
+
+An append-only migration admits only a manifest-backed private target bucket
+INSERT under the original owned hold and live capturing operation. It locks
+the operation, guard, source and source fence while checking admission. The
+complete original manifest is inserted before its target row in the same
+transaction. Source rows, existing target rows, credentials and policy changes
+retain the project-wide configuration guard; no session-setting bypass is used.
+
+Recovery independently reads the original captures and verifies every imported
+journal and target reservation. A lost commit reply reuses those original
+identities. Missing or rewritten imported evidence stays blocked and cannot
+be repaired by recapture. The adoption digest excludes the independently
+observed object-retention deadline so lease renewal can verify continued
+retention without rebinding immutable manifest content.
+
+Source holds remain owned and closed. This step does not release holds,
+provision targets, copy data, publish a stage or enable public full clones.
+The checkpoint and adoption resource kinds still block copying/publication.
+Native driver implementations and qualification, verified successful hold
+release, target preparation and final configuration/publication inventory are
+still required. Live R2/OVH qualification remains deferred.
+
+Validation: focused PostgreSQL tests pass for lost adoption replies, immutable
+snapshot/manifest identities, missing-journal refusal, quota rollback and held
+configuration admission. Existing common-checkpoint, stable-barrier,
+PostgreSQL snapshot and leased object snapshot tests also pass. The migration's
+Up/Down/reapply SQL and admission query plan were checked in PostgreSQL;
+the full migration chain runs through the new version in the test fixtures.
+SQLC parity, text encoding, shell quoting and ADR numbering checks pass.
+Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
+These remain local tests with a test driver, not native-provider qualification.
+
+## Private successful source-hold release
+
+A separate private successful-release protocol now follows atomic adoption.
+Before native release IO, PostgreSQL stores the exact original checkpoint plan,
+receipt and adoption digest. Plan/source types move into the state package with
+unchanged JSON field order and encoding. Recovery verifies frozen bindings,
+retained PostgreSQL snapshot receipts, complete original object manifests and
+private target reservations against that original proof. It never rebuilds a
+release plan from mutable source configuration.
+
+The journal transitions from planned to requested once under the exact live
+worker lease. Only a known committing dispatch claim authorizes native release.
+Requested retries independently observe the original native request; a lost
+claim acknowledgement or absent terminal evidence cannot authorize redispatch.
+The stable native request identity is `release-<operation ID>`. A qualified
+release driver must authenticate the original pinned placements and operation
+ownership, release only the original native barriers, and preserve all original
+immutable captures. No built-in qualified driver is installed.
+
+Independent release evidence binds the request, plan, checkpoint receipt and
+complete ordered source roster. Every source must report the original capture
+identity, operation owner, pinned physical/data resource, released terminal
+state and original terminal timestamp. The reader must also independently
+verify original capture retention through the worker deadline. Retention
+horizons may extend across leases without changing the immutable release hash.
+Observation must never release, retry, recapture or regrant anything.
+
+Local PostgreSQL and object write fences and the project configuration hold
+remain owned while native release is uncertain. One transaction verifies the
+original adoption again, records the independent release digest, marks owned
+PostgreSQL fences released, deletes owned object fences, reopens the original
+configuration generation and appends a private release marker. The final write
+checks the exact worker token, revision and live lease; any failure rolls back
+all local release effects. Unresolved shared PostgreSQL maintenance or object
+grant revocation prevents settlement.
+
+After a lost commit reply, a replacement worker reads the saved original plan
+and reobserves the original native terminal journal and capture retention.
+Successful replay leaves the operation revision unchanged and never reads or
+clears newly acquired source holds. Source configuration changes after release
+therefore do not rebind the capture or break recovery. Missing or rewritten
+capture journals still fail closed.
+
+This seam remains private and the operation remains capturing. The checkpoint,
+adoption and release markers continue to block generic copying and publication.
+Reserved object targets remain private and unprovisioned. Target preparation,
+PostgreSQL restore, copy verification, complete publication inventory and
+qualified native drivers remain necessary before public full-clone admission.
+Live R2/OVH qualification remains deferred at the user's request.
+
+Validation: PostgreSQL release tests pass for lost native/claim/commit replies,
+source configuration changes and later holds, complete operation replay,
+foreign or incomplete terminal evidence, stale workers, modified capture
+journals and rollback of every local hold after an injected final write failure.
+The verifier reads unpublished targets through the operation-owned private
+lookup and normalizes stored snapshot timestamps to their original UTC instants.
+The release migration's Up/Down/reapply SQL and indexed journal read plan were
+checked in PostgreSQL; owned release journals explicitly block downgrade.
+Configuration guard, schema coverage, snapshot, write-fence and target
+reservation regressions pass, including the complete guard successor migration
+round trip. SQLC parity and text encoding, shell quoting and ADR numbering
+checks pass. These tests use a test driver, not native-provider qualification.
+Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
+
+## Released-checkpoint target preflight
+
+Private object target preparation now has a read-only preflight that renews the
+worker lease before independently observing original release and capture
+retention. It requires a completed durable release, validates its immutable
+journals against the renewed deadline, and reads the exact reserved targets and
+manifests from frozen bindings. Source configuration changes do not select new
+versions or targets. Failed or incomplete retention evidence returns no targets.
+The operation and resource inventory remain unchanged, and targets stay private.
+
+This is the prerequisite for native target preparation. The generic bucket
+provisioner currently retries creation after uncertain native replies; connecting
+it requires an operation-owned creation recovery protocol first. PostgreSQL
+restore, copying and publication remain gated. Live provider qualification is
+still deferred.
+
+Validation: PostgreSQL preflight tests pass after source configuration mutation,
+confirm target reservations remain unpublished and unprovisioned, and reject
+pending release or retention shorter than the renewed lease. The existing
+checkpoint release recovery tests also pass. No live provider test was run.
+
+## Private checkpoint object target creation recovery
+
+Released checkpoints now have a separate private target creation journal. Its
+original plan binds the operation, source and reserved target IDs, account/app,
+pinned backend fingerprint, region, native name, original manifest and checkpoint.
+The stable native request is `target-<operation ID>-<target ID>`; the plan digest
+must be authenticated by a qualified provider's durable ownership journal.
+
+Only a known committing planned-to-requested claim authorizes creation. Lost
+claim acknowledgements and requested/ready recovery authorize observation only,
+including worker handoff and lost native or local commit replies. A missing
+original native journal blocks progress; it never selects or adopts an unowned
+bucket. The general provisioning/recovery worker excludes common-checkpoint
+reservations, including reservations before the release journal exists.
+
+Independent original request evidence must prove the operation owner, exact
+native resource and plan, original UTC creation time, and a currently private,
+empty target. Original source release and capture retention are independently
+checked through the renewed lease both before dispatch and after native IO.
+One worker-fenced transaction records the creation digest and marks the private
+reservation ready; failure of the final bucket update rolls back both effects.
+Resource inventory and operation revision stay unchanged. A ready replay requires
+the same original creation digest. Downgrade refuses any owned target journal.
+
+This is a private qualified-driver seam with no built-in provider implementation.
+It creates no credentials, copies no data and publishes nothing. PostgreSQL
+restore, object copy verification, final publication inventory and native provider
+qualification remain required. Target retirement also needs independent terminal
+cleanup proof before this ownership journal can be removed. Live R2/OVH
+qualification stays deferred.
+
+Validation: PostgreSQL tests pass for lost native/claim/commit replies, worker
+handoff, source mutation, foreign ownership/request/placement evidence, public
+or nonempty targets, stale workers, retention loss after native IO, and rollback
+of the journal and private bucket readiness after an injected final write failure.
+Ready replay preserves the replacement worker's operation metadata and inventory.
+General bucket claims/recovery exclude checkpoint reservations. The new migration
+passes Up/Down/reapply and refuses downgrade with owned dispatch authority.
+Original release, preflight, ordinary bucket lease/mutation, schema registration,
+configuration-fence and target-reservation regressions pass. SQLC parity and
+repository encoding, shell quoting and ADR numbering checks pass. These are
+private-driver tests with real PostgreSQL, not native provider qualification.
+Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
+
+## Private restore from a released PostgreSQL checkpoint
+
+A qualified private driver can now restore the original retained PostgreSQL
+snapshot after successful source release. This path authenticates the original
+release/adoption journals and frozen bindings instead of rechecking mutable live
+source database state. It renews the worker lease and independently verifies all
+original capture retention before native dispatch and again before recording the
+restored fork. Pending release and insufficient quota authorize no native IO.
+
+The existing durable native restore owner remains the stable request identity.
+Only a known committing request claim dispatches restore; lost claim/native/local
+commit replies and worker handoff authorize observation of the original request.
+Independent evidence must bind its exact owner, original snapshot/data resource,
+capture point, creation times and stable target identity. Pending forks remain
+pending; replacement or foreign evidence cannot be adopted.
+
+Restored forks remain private native owners, without catalogue adoption or
+resource inventory changes. Legacy restore/adoption paths reject common
+checkpoint inventories so they cannot bypass retention checks or invalidate the
+original release proof. Auxiliary SQL isolation, target catalogue adoption,
+copy verification, publication and retirement remain separate requirements.
+There is no built-in qualified checkpoint restore driver. Live R2/OVH tests
+remain deferred.
+
+Validation: PostgreSQL checkpoint restore tests pass for lost native/claim/commit
+replies, source state changes, worker handoff, foreign owner/snapshot/source
+proof, retention loss after native IO, pending forks, quota before dispatch and
+unreleased checkpoints. Original operation inventory remains unchanged and
+legacy restore/adoption stay blocked. Existing restore-worker and state-layer
+quota, adoption, cleanup, substitution and lease-lock-wait regressions pass.
+SQLC parity and encoding, shell quoting and ADR numbering checks pass. These
+are private-driver tests against real PostgreSQL; native qualification was not run.
+Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
+
+## Original fork SQL isolation and private catalogue adoption
+
+A separate private isolation journal binds the released checkpoint, original
+retained PostgreSQL snapshot, restored native fork owner, physical resource,
+pinned backend and immutable capture/creation times. The stable native request
+is `isolate-<operation ID>-<owner ID>`. Only a known committing dispatch claim
+may apply SQL isolation; lost claim/native/commit replies and handoff authorize
+observation of the original journal, never another isolation request.
+
+Qualified drivers must isolate only the original fork's own authentication and
+writer scope, without changing source/shared authentication or customer data.
+Independent evidence proves complete writer closure, disabled inherited logins
+and scheduled/background jobs, private scope, exact ownership and the original
+closed roster. Observation checks current closure through the renewed worker
+lease without regranting or repairing SQL. Original capture retention is checked
+before dispatch and after native IO. Changed rosters, reopened writers, missing
+native evidence and expired retention fail closed.
+
+One transaction authenticates these proofs, transfers the existing native owner
+into a private `checkpoint` catalogue row, and records the isolation digest.
+The row remains provisioning, excluded from customer reads and general database
+provisioning. No new fork, quota owner, target credentials or ready state is
+created. Failure of the final isolation write rolls back catalogue insertion,
+fork adoption and proof together. Replay reads the same unready owner without
+mutating the operation inventory or original checkpoint proof. Native restore
+replay recognizes an already adopted owner; SQL closure is rechecked separately.
+
+Downgrade refuses any owned isolation journal. The qualified-driver seam has no
+built-in native implementation. Data copy verification, usable stage database
+preparation, credentials, publication and terminal retirement remain required.
+Live R2/OVH qualification stays deferred.
+
+Validation: real-PostgreSQL tests pass for lost isolation replies, worker
+handoff, foreign or incomplete proof, changed rosters, reopened writers,
+retention loss, private visibility and atomic catalogue/adoption rollback.
+Migration round trips and refusal to downgrade owned journals pass. Existing
+checkpoint restore, native adoption, quota, cleanup and schema registry tests
+pass, as do SQLC parity, encoding, shell quoting and ADR numbering checks.
+These tests exercise private test drivers; native provider qualification was
+not run.
+Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
+
+## Original checkpoint PostgreSQL data verification
+
+A private verification journal binds the original retained snapshot and capture
+point, exact isolated fork owner/backend, immutable isolation digest and existing
+PostgreSQL copy byte cap. It requires catalogue adoption before reservation and
+fresh original retention and SQL closure before dispatch. Only a known committing
+claim may issue the bounded comparison. Lost claim/native/commit replies and
+worker handoff observe the original native request without repeating data reads,
+recapturing current source or restoring a replacement fork.
+
+Qualified comparators must compare the complete canonical logical inventory and
+contents of the retained snapshot and original fork, including schemas, empty
+objects, table contents, sequences and large objects. Unsupported objects must
+fail qualification or comparison, never be silently omitted. The driver must
+use pre-existing operator-only read access, enforce the immutable per-side read
+cap and worker deadline, and supply its qualified shared memory, spool and
+account admission bounds. It may not alter data, authentication or SQL closure.
+There is no built-in qualified native comparator. This seam does not substitute
+provider restore success or a physical page checksum for data verification.
+
+The terminal receipt requires an exact request/plan digest, complete equal
+canonical content digests, read-only evidence, absent unsupported objects,
+bounded per-side read counts and an original UTC comparison time. Recording it
+rechecks the original checkpoint retention and the independently current
+isolation proof through the work lease. Changed rosters, reopened writers,
+expired retention, altered equal digests or substituted owners fail closed.
+The immutable terminal digest prevents replacement proof on replay; final-write
+failure leaves the requested owner available for observation-only recovery.
+
+Verification remains private and does not change operation inventory, catalogue
+readiness, credentials, publication authority or the original released checkpoint
+proof. Downgrade refuses any owned verification journal, and its restrictive
+foreign key retains the isolation authority. Usable stage database preparation,
+credentials, complete publication and terminal retirement remain outstanding.
+Live R2/OVH qualification remains deferred.
+
+Validation: real-PostgreSQL control-plane tests with private test drivers pass
+for lost native/claim/commit replies, observation-only worker handoff, substituted
+owners, missing/unequal/incomplete/unsupported or over-budget data evidence,
+changed terminal proof, reopened SQL writers, changed rosters, retention loss,
+late-write rollback and private unready catalogue visibility. Verification and
+predecessor isolation migration round trips and owned-journal downgrade refusal
+pass. Existing checkpoint restore/isolation and state-layer native restore,
+adoption, quota, cleanup and schema-registry regressions pass. SQLC parity,
+encoding, shell quoting and ADR numbering checks pass. These tests authenticate
+the protocol; they do not qualify a native comparator or perform live R2/OVH
+qualification.
+Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
+
+## Verified original fork private runtime readiness
+
+A separate private runtime journal binds the original verification plan and
+terminal digest, isolation authority, retained snapshot, exact native fork owner
+and frozen database specification. Only a verified, isolated and catalogue-adopted
+fork can reserve it. A known committing claim dispatches one qualified runtime
+request. Lost claim/native/commit replies and handoff observe that original
+request without another qualification probe, provisioning, replacement restore
+or source recapture.
+
+Qualified drivers must independently observe the original private runtime and
+its exact immutable dataset, using existing operator-only read access. They
+must preserve customer data and closed SQL writers/logins and may not create
+credentials. Terminal evidence authenticates the original request and plan,
+owner, physical fork, non-source dataset, complete frozen specification,
+read-only private access and original readiness time. Independent current
+runtime health must cover the renewed worker lease. Original data verification,
+SQL isolation and capture retention are rechecked before dispatch and after
+native IO; reopened writers, altered verification proof, changed ownership,
+missing access or expired health/retention fail closed.
+
+One transaction records the stable runtime receipt, pins its exact dataset and
+changes the same private catalogue owner to `ready` with observed generation 1.
+A failure of the catalogue write rolls back the receipt and readiness together.
+Replay authenticates the original receipt and independently current health.
+Every native-fork catalogue read now distinguishes an unready owner from a
+ready owner backed by the original runtime/isolation/verification journals;
+altered dataset, generation, role or specification is rejected. Prior restore,
+isolation and verification coordinators can replay a qualified ready owner.
+
+The catalogue role remains `checkpoint`, excluded from customer reads and the
+general provisioning worker. Operation inventory and original checkpoint proof
+remain unchanged, and ordinary credential preparation/publication gates are
+not advanced. Fresh stage credentials and complete publication remain separate
+requirements. Compensation can retire this exact ready fork and retains the
+historical runtime proof; existing binding/child/read-owner guards remain in
+force. Downgrade refuses any owned runtime journal and preserves the original
+verification authority through a restrictive foreign key.
+
+There is no built-in qualified native runtime driver. Live R2/OVH qualification
+remains deferred, and private runtime readiness does not establish full stage
+readiness or public one-command cloning.
+
+Validation: real-PostgreSQL control-plane tests with private drivers pass for
+lost qualification/claim/commit replies, observation-only handoff, source state
+changes, incomplete/foreign runtime evidence, source dataset rejection, changed
+specification, lost private read access and insufficient health coverage.
+Post-IO SQL closure, original verification and retention loss and stale workers
+fail closed. Final catalogue failure rolls back runtime proof and readiness;
+altered catalogue dataset, generation and role and replacement runtime datasets
+are rejected. Ready fork compensation and retirement replay pass. Customer reads
+and the general lifecycle worker exclude the private owner. Runtime and prior
+isolation/verification migration round trips and owned-journal downgrade refusal
+pass. Original restore/isolation/verification and state-layer native adoption,
+quota, cleanup and schema-registry regressions pass, as do SQLC parity, encoding,
+shell quoting and ADR numbering checks. These tests validate protocol and
+metadata ownership, not native driver qualification or live R2/OVH behavior.
+Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
+
+## Fresh inactive checkpoint PostgreSQL credentials
+
+A separate private credential journal derives each binding from the frozen
+capture and exact original runtime-ready fork. It assigns a new generation-1
+binding and native identity, retains the captured app, target scope, environment
+key and access mode, and binds the original runtime/verification/isolation proof
+and dataset. Source credential material is never read, copied or accepted as an
+input. Reservation precedes encryption and any provider IO.
+
+The worker generates 256 bits of fresh entropy, encodes a password and seals an
+age envelope containing the immutable plan digest before claiming native work.
+The namespace, plan digest, original key ID and ciphertext digest are checked
+before dispatch. New centralized limits bound each encrypted envelope to 4 KiB
+and each account to 4,096 owned journals, including planned owners. Account
+locking serializes reservations; occupied ownership remains charged until an
+explicit future retirement protocol. This caps retained credential-password ciphertext at 16 MiB
+per account without relying on a provider retry to recover secret material.
+
+Only a known committing claim can prepare the named fresh inactive native
+identity with that original password. The adapter must prove exact original
+request, envelope, owner, dataset, access, identity and creation time, no
+source/inherited authority, private scope and unchanged original fork SQL scope.
+Independent observation must prove the identity remains disabled through the
+renewed worker lease. Providers unable to separate inactive credential ownership
+from the original closed SQL roster cannot qualify this seam. Preparation may
+not add SQL grants, enable logins/writers or publish app secrets.
+
+Lost sealing/claim/native/commit replies and handoff reuse the original encrypted
+material and observe original native intent without reissuing or repairing an
+identity. Key rotation can open the original envelope during overlap; an absent
+original key blocks dispatch before the claim, and never authorizes resealing.
+Requested/prepared observation recovery needs no plaintext or key access.
+Plaintext buffers are cleared after the synchronous native call, debug/JSON
+representations redact the secret, and provider errors that could echo credential
+input are replaced with a non-secret unavailable error.
+
+Runtime health, original data verification, SQL closure and capture retention
+are authenticated before dispatch and again after native IO. Changed scope,
+access, ownership, proof or current disabled state fails closed. A final-write
+failure leaves the original requested owner available for observation-only
+recovery. Prepared identities remain private journal entries; no managed binding,
+app-secret publication, source modification or operation-inventory change occurs.
+
+Native fork cleanup refuses any owned credential journal so uncertain or prepared
+identities cannot outlive a deleted dataset without explicit retirement evidence.
+Downgrade likewise refuses owned journals and retains original runtime authority
+through restrictive foreign keys. Activation, native credential retirement,
+sealed connection-value preparation and complete publication remain separate
+requirements. There is no built-in qualified native credential driver; live
+R2/OVH qualification remains deferred.
+
+Validation: the targeted credential, restore, isolation, verification and runtime
+coordinator suite passes against PostgreSQL, alongside state/schema tests,
+SQLC parity, encoding, shell-quoting and ADR-number checks; targeted lint
+reports zero issues. Credential cases
+cover both captured bindings sharing a database, lost replies and handoff,
+proof rejection, prerequisite loss after IO, key rotation and envelope tampering,
+late writes, migration ownership guards, account quota, cleanup blocking and
+plaintext redaction. Native observations use the protocol test driver; these
+checks do not establish live provider qualification.
+
+### Private checkpoint PostgreSQL credential retirement
+
+Compensation now has a separate credential retirement journal, pinned to the
+original credential plan, preparation state, encrypted-material digest, request
+time and terminal preparation digest. It never decrypts, reseals or rewrites the
+original password journal. Planned, sealed, requested and prepared owners all
+require an explicit native retirement receipt; generic identity absence does not
+establish that a delayed preparation request cannot create authority later.
+
+A qualified adapter must permanently fence the exact original preparation
+request, remove only its named fresh identity, close its sessions and prove no
+source authority or change to the original fork SQL roster. Its independent
+observation binds the original preparation and retirement requests, plan, identity,
+owner, dataset and normalized completion time. Providers unable to establish this
+permanent fence cannot qualify. There is still no built-in qualified adapter.
+
+Only a known committed claim dispatches retirement. Lost reserve/claim/native/
+finish replies and worker handoff preserve original intent; requested and retired
+recovery only observe it. An unknown claimed request without a native receipt
+retains ownership and blocks database cleanup. Final writes and read-only replay
+require the exact compensating worker, revision and live lease. Published bindings
+or app-secret references reject this private retirement path. Changed native
+proof or terminal receipt likewise fails closed.
+
+Retirement authenticates captured binding and original runtime provenance without
+requiring current database health or a new retention horizon. It remains replayable
+after the original fork has been deleted. Fork deletion and local catalogue
+retirement require a completed retirement journal for every credential owner of
+the database, including multiple bindings sharing one fork. Retiring one identity
+cannot release another identity's dataset. Original preparation and retirement
+evidence survive compensation; downgrade refuses any retirement journal, including
+completed records, through restrictive foreign keys and explicit ownership guards.
+
+This is a private compensation seam, not full stage activation or publication.
+Retained encrypted ownership continues to count toward the existing bounded account
+ledger; ciphertext erasure and audited quota reclamation require a separate
+retention protocol. Sealed connection values, activation, complete publication and
+live provider qualification remain outstanding. Live R2/OVH qualification remains
+deferred at the user's request.
+
+Validation: the targeted PostgreSQL coordinator suite passes retirement,
+credential preparation, native restoration, SQL isolation, data verification and
+private runtime readiness against PostgreSQL. Retirement cases cover lost
+reserve/claim/native/finish replies, invalid permanent-fence evidence, all four
+preparation states, multiple binding owners, stale workers and handoff, late final
+writes, empty/owned/terminal downgrade guards, immutable terminal receipts and
+replay after fork deletion without credential keys. State/schema tests and SQLC,
+encoding, shell-quoting and ADR-number checks also pass; targeted lint reports
+zero issues. Native effects are supplied
+by a protocol test driver; these results do not establish provider qualification.
+
+### Private sealed checkpoint PostgreSQL connection values
+
+Prepared inactive credentials can now own a private connection-value journal.
+Its immutable plan binds the original credential plan, preparation receipt and
+password-envelope digest to an independently attested target endpoint. The
+qualified adapter must identify the exact endpoint, target owner, native resource,
+dataset and fresh credential identity, with private scope, verified TLS server
+identity, disabled logins, no source authority and unchanged SQL scope. Observation
+is read-only; provider-supplied URLs, passwords and connection options are never
+accepted. There is no built-in qualified endpoint adapter.
+
+Hostnames are canonical lowercase ASCII DNS names or canonical IP literals without
+IPv6 zones, capped at 253 bytes with 63-byte DNS labels. Database names are bounded
+ASCII identifiers (letters, digits, underscore or hyphen), capped at 63 bytes, and
+ports must be nonzero. Canonical IPv6 hosts are bracketed correctly in the generated
+URI. Endpoint birth time and identity remain immutable while the independently
+current attestation horizon covers the worker lease. Changed endpoint identity,
+host, database, port, TLS proof, ownership or native scope fails closed.
+
+The coordinator constructs a PostgreSQL URI with the original generation-one
+identity/password and exact target host, port and database, requiring
+`sslmode=verify-full`. It seals a plan-bound connection envelope with the current
+age recipient, after opening the original password envelope only during key overlap.
+It clears owned plaintext byte buffers and never sends plaintext to SQL, logs or
+native endpoint observation. Password and connection URI strings exist transiently
+while constructing the URI; Go strings cannot be explicitly zeroed. Missing original
+keys retain planned ownership without authorizing password replacement or resealing.
+
+Runtime health, original data verification, SQL closure, capture retention,
+credential-disabled state and endpoint scope are authenticated at reservation and
+again before the final seal commit. All writes and read-only recovery require the
+exact capturing revision and live worker lease. A committed seal is immutable;
+lost replies and handoff retain the original plan, recipient and ciphertext, and
+sealed observation recovery needs no credential keys. Endpoint horizons are fresh
+proof rather than part of the immutable plan. The original checkpoint inventory,
+managed bindings and app secrets remain unchanged.
+
+Each existing bounded credential owner can own at most one connection-value row,
+with ciphertext capped at 4 KiB. Combined password and connection ciphertext is
+bounded at 32 MiB per account by the existing 4096-owner ledger. Retained rows
+continue to count until a future audited erasure/quota-reclamation protocol.
+Downgrade refuses both planned and sealed connection ownership through an explicit
+guard and restrictive credential foreign key. Credential retirement can still
+release a fork because its permanent preparation fence makes retained private
+connection ciphertext unusable; compensation cannot prepare new connection values.
+
+This completes private value preparation, not stage activation or app-secret
+publication. Activation, atomic binding/secret publication, retained-secret erasure
+and live native provider qualification remain separate requirements. Live R2/OVH
+qualification remains deferred at the user's request.
+
+### Retiring unused adopted checkpoint captures
+
+Capture retirement now accepts adopted snapshots and object manifests when the
+operation never acquired native target or borrower intents. Each unused object
+reservation must first have its authenticated release record. Deleted catalogue
+labels alone do not authorize capture cleanup.
+
+The terminal native capture proof and per-source catalogue retirement records
+commit in one transaction. PostgreSQL snapshots become deleted with the original
+identity and proof timestamp; frozen snapshot metadata, object manifests and
+entries remain available to authenticate the original adoption. Completed replay
+checks that evidence without provider calls. A failed catalogue write rolls back
+the terminal proof, and downgrade refuses while retirement authority or proof
+remains owned.
+
+Captures used by native restores, copies, readers or credential preparations remain
+blocked. Connecting their authenticated retirement proofs and whole-stage terminal
+reconciliation remains outstanding. Public full-stage admission remains gated.
+
+### Object dependency proofs before capture retirement
+
+Adopted capture retirement now authenticates each recorded object creation and
+optional copy against the frozen release, manifest and original placement. A
+native intent requires its saved terminal target retirement proof, including
+permanent closure of the original creation, copy and writers, target absence and
+no native grants. An unused reservation still requires its separate authenticated
+completion record. Orphan object intents fail closed, and publication withdrawal
+remains mandatory.
+
+The same dependency checks run during reservation, claim, terminal commit and
+completed replay. Proof changes after dispatch leave capture retirement requested
+and catalogue records owned; recovery observes the original request. Target proof
+replay continues after snapshot catalogue retirement. PostgreSQL restore, reader,
+copy-target and credential dependencies remain blocked pending their authenticated
+retirement linkage. Public full-stage admission remains gated.
+
+### PostgreSQL target dependency proofs before capture retirement
+
+Capture retirement now authenticates terminal compensation for every recorded
+PostgreSQL restore. The original frozen release, snapshot, restore owner and
+optional isolation journal must match the saved compensation plan, and the deleted
+restore must reference its exact native terminal proof digest. Missing native
+proof cannot be replaced by deleted state or by missing catalogue dependencies.
+
+Credential preparations require their original authenticated retirement proofs
+and local publication withdrawal, rechecked even after target compensation has
+completed. These checks also protect claim, terminal capture commit and completed
+replay. Target and credential proof replay continues after snapshot retirement;
+proof changes during dispatch leave the capture request pending for observation
+recovery without another dispatch.
+
+PostgreSQL copy readers and copy targets remain blocked until their complete
+retirement provenance is connected. Whole-stage reconciliation and qualified
+native provider adapters remain outstanding; public full-stage admission is gated.
+
+### Permanent PostgreSQL copy dependency retirement contract
+
+The private copy retirement contract pins the original adopted, isolated capture
+and frozen SQL scope, plus the original reader and/or independent copy-target
+ownership journals. Plans and proofs are bounded by
+`PostgresCheckpointCopyRetirementMaxBytes` (2 MiB). Native observations must
+permanently fence the original creation keys, close all reader operations
+(including queued cleanup) and all copy writers, and prove each complete owner
+namespace absent with no native grants. Source data, snapshot and capture must
+remain unchanged.
+
+Unknown native identities may remain unknown under owner-wide absence proof, or
+be supplied by the qualified observer after an original request was dispatched.
+Known identities cannot change; undispatched reservations cannot invent physical
+identities. Proofs for omitted dependencies, protected source/capture identities,
+missing closure and changed terminal replay are rejected. Legacy deleted/retired
+labels and deletion receipts do not satisfy this contract.
+
+The private durable journal now authenticates this original plan under the
+compensation lease, including the exact completed source-compensation digest,
+frozen bindings, capture adoption/isolation, reader scope and independent target
+catalogue. Reservation replay cannot replace ownership. Claim commits
+`planned` to `requested` once; recovery of a requested journal observes the
+original native retirement request without another dispatch claim.
+
+Terminal native proof, reader retirement, independent target deletion/quota
+release and target retirement commit in one transaction. Reader/target rows carry
+foreign-key links to that exact proof digest. Unknown physical identities remain
+unknown in original catalogue rows; the native proof may report a discovered
+identity without fabricating legacy deletion operation receipts. Re-read before
+commit verifies the complete catalogue and proof agree, so any failed mutation
+rolls back the proof and quota release.
+
+PostgreSQL target compensation and capture retirement now authenticate these
+complete copy proofs, including replay after native capture/snapshot retirement.
+Legacy `retired` labels without proof links remain blockers; changed original
+ownership, missing closure, changed terminal evidence and new borrowers block
+cleanup. Empty journal migrations can replay up/down; a journal in any owned
+state prevents downgrade.
+
+The private native coordinator now renews the compensation lease, authenticates
+original borrower ownership and commits a dispatch claim before native IO.
+Lost reservation, claim, native, observation and finish replies recover from the
+saved journal; requested recovery only observes, while terminal replay performs
+no native IO. Adapter inputs have independent nested ownership records, and each
+native call is bounded by the worker lease deadline. Invalid closure proofs,
+cancelled workers and lease handoff leave the request owned and recoverable.
+
+A qualified provider adapter and whole-stage reconciliation remain outstanding.
+Public full-stage admission remains gated; these control-plane checks do not
+qualify a native provider. Live provider qualification remains deferred.
+
+Validation: focused PostgreSQL API tests cover lost reservation/claim/native/
+observation/finish replies, worker handoff, cancelled finish, missing closure,
+changed source/digest proofs, absent or partial borrower ownership, nested adapter
+mutation and terminal replay without native IO. Existing durable journal and
+parent cleanup regressions pass alongside them.
+
+### Checkpoint terminal compensation gate
+
+The generic operation transition now refuses `compensating` to `compensated`
+for inventories containing common-checkpoint roots or evidence. Marking every
+resource `compensated` is not proof of native cleanup, especially after unknown
+capture, restore or isolation outcomes. Such operations remain recoverable in
+`compensating`; legacy source-revision compensation remains available.
+
+Opening this terminal transition requires an atomic whole-stage reconciler that
+authenticates original source compensation, target and credential retirement,
+publication withdrawal, and retained checkpoint cleanup. The individual journals
+implemented so far do not establish that complete terminal condition. Public
+full-stage admission and live provider qualification remain gated.
+
+### Retained common-capture retirement proof contract
+
+Terminal compensation additionally needs authenticated absence of retained
+PostgreSQL snapshots and object manifests. The private capture-retirement plan
+pins the complete original source-compensation journal, including its immutable
+terminal proof. Pending source compensation cannot authorize capture retirement.
+The contract covers unused capture intents, unknown capture outcomes, known
+receipts and original release intents with unknown outcomes.
+
+A native terminal observation must bind the original capture request and complete
+plan digest, permanently fence that request, and cover the exact sorted source
+roster. For each source it must prove absence of all artifacts in the original
+capture owner's namespace, absence of native borrowers, and unchanged source data
+and restored access. Known capture identities must match the original receipt;
+unknown outcomes retain an empty identity and require owner-wide absence rather
+than a fabricated replacement receipt or a single provider not-found result.
+Terminal replay accepts only the saved observation digest. Retirement requires
+no renewed source retention window.
+
+This is a proof contract, not a durable journal, native dispatch coordinator or
+authority to mark the operation compensated. The remaining store must authenticate
+the frozen capture and completed source proof, gate on every original borrower
+and target retirement, claim dispatch once, observe recovery without redispatch,
+and retire retained local catalogue records atomically with the terminal proof.
+Only then can whole-stage reconciliation authenticate this evidence alongside
+publication withdrawal and target cleanup. Public full-stage admission remains
+closed; live R2/OVH qualification remains deferred.
+
+### Private capture-retirement worker coordination
+
+The private worker now drives capture retirement through the authenticated store
+journal and a qualified native-driver seam. It renews the compensating lease,
+reserves the store-derived original plan, and commits its dispatch claim before
+native IO. Driver calls share the worker deadline and receive separate deep copies
+of the entire nested source-compensation plan and proof. Admission is checked
+around dispatch, observation and terminal persistence.
+
+Requested recovery only observes the original native request. Lost claim replies,
+native acknowledgements and worker handoff never authorize another dispatch;
+provider not-found leaves cleanup requested rather than fabricating a terminal
+proof. A saved terminal proof is replayed through the authenticated store without
+fresh native mutation or observation, including after a lost finish reply.
+
+Recovery tests cover unused, unknown and known pre-adoption captures, durable claim
+ordering, adapter mutation, lost reservation/claim/native/observation/finish replies,
+worker handoff, stale and cancelled workers, incomplete native proof, admission
+failure, pending source compensation and adopted-capture rejection. This remains
+an internal seam with no built-in qualified R2/OVH driver or public full-stage
+admission. Authenticated retirement of adopted snapshots/manifests and final
+whole-stage reconciliation remain outstanding; live qualification stays deferred.
+
+### Durable pre-adoption capture retirement
+
+Capture retirement now has a bounded durable journal with an immutable original
+source-compensation plan, once-only dispatch claim, terminal native observation
+and digest. Reservation derives its authority from the authenticated saved source
+compensation rather than caller-provided evidence. Every read, claim and finish
+reauthenticates the complete original plan and operation-owned source-hold absence.
+Configuration-clock, project, operation and app locks follow source compensation's
+ordering, with lease authorization checked again before commit.
+
+The first store path supports unused capture intents, unknown capture outcomes
+and receipts recorded before local adoption. It refuses adopted snapshot or object
+manifest catalogues and any recorded restore, object-target, PostgreSQL copy-reader,
+copy-target or credential dependencies, including during reservation replay. A
+closed or deleted state flag does not bypass this gate. Consequently this path
+needs no local catalogue deletion and preserves all frozen evidence.
+
+Only the first committed planned-to-requested claim permits native dispatch.
+Lost claim replies and worker handoff recover the original requested identity
+without another dispatch. A failed terminal write retains the request; identical
+terminal proof replay succeeds, while changed source or retirement evidence fails
+closed. Downgrade refuses planned, requested and completed journals, and the
+source-compensation foreign key prevents deleting their original ownership record.
+
+Tests cover original capture phases, pending or missing source evidence, lease
+handoff, cancelled finish, partial catalogue adoption, terminal rollback and replay,
+changed ownership and migration round trips and downgrade refusal. Native worker
+coordination and authenticated retirement of adopted catalogues remain separate
+work before final whole-stage reconciliation. Public full-stage admission stays
+closed; live R2/OVH qualification remains deferred.
+
+Validation: the targeted PostgreSQL coordinator suite passes connection-value
+preparation, credential retirement/preparation, native restoration, SQL isolation,
+data verification and private runtime readiness. New cases cover original-password
+URI contents and TLS options, IPv6, hostile or foreign endpoint proofs, current
+proof changes before the final write, lost reserve/seal replies and worker handoff,
+key rotation/missing keys, immutable ciphertext and bounds, late-write recovery,
+empty/owned downgrade guards, and retirement compatibility. State/schema tests,
+canonical endpoint component tests, SQLC parity, encoding, shell-quoting and ADR
+number checks also pass. Targeted lint is clean after applying equivalent boolean
+character checks and rerunning their endpoint tests. Native effects use the
+protocol test driver; these results
+do not establish live provider qualification.
+
+### Private checkpoint PostgreSQL activation
+
+Activation freezes one complete manifest of every captured PostgreSQL binding
+before enabling any identity. Each member must have an original prepared inactive
+credential and a sealed connection value. The manifest pins those plans, native
+receipts, envelope digests and connection key IDs, sorted by source binding ID.
+Reservation atomically attaches all connection rows; a subset cannot dispatch.
+There is one manifest per operation, bounded at 16 MiB and by the existing
+4096-credential account ledger. Restrictive foreign keys and an explicit downgrade
+guard retain both planned and completed activation ownership.
+
+Current runtime, data, SQL closure, disabled-credential, endpoint and retention
+proofs are required at reservation and again before the activation claim. Only a
+known committed claim may dispatch the named native intent. Its qualified adapter
+may enable only the fresh prepared identities and grant only their frozen access
+on the pinned datasets. It cannot create identities, change passwords, inherit
+source authority, enable original jobs or publish secrets. Activation requires no
+credential decryption or plaintext inputs. There is no built-in qualified adapter.
+
+Once activation is requested, recovery observes the original intent without
+redispatch. Enabling writers invalidates the old closed-roster and equal-data
+proofs, so completion instead requires independently current exact grant scope,
+all identities active, no inherited or source authority, disabled scheduled jobs,
+private endpoints, verified TLS and pinned datasets. Partial or unknown activation
+retains ownership and blocks completion. The original receipt is immutable while
+health and original capture retention must cover the current worker lease. Every
+write and replay remains fenced by the exact capturing worker and revision.
+
+Compensation pins the activation request and manifest digest into each credential
+retirement plan, including planned, uncertain and completed activation. The native
+retirement proof must permanently fence delayed activation of that identity before
+fork cleanup can proceed. Removing the owned grant delta must preserve source and
+unowned SQL authority. Historical retirement plans without activation retain their
+original serialized hashes. Retirement remains replayable after fork deletion and
+does not depend on credential keys or a live database health horizon.
+
+Activated identities remain private: this step creates no managed bindings or app
+secret references and does not open the public full-stage clone gate. Atomic
+binding/secret publication, audited retained-secret erasure and quota reclamation,
+and qualified native provider adapters remain outstanding. Live R2/OVH
+qualification remains deferred at the user's request.
+
+Validation: PostgreSQL activation tests cover lost reserve/claim/native/finish
+replies, worker handoff, incomplete or duplicate manifests, missing sealed values,
+changed endpoints, current prerequisite loss, partial or foreign grant proofs,
+health horizons, late-write recovery, empty/owned/completed downgrade guards,
+immutable receipts and activation-fenced retirement through fork deletion. The
+state suite includes legacy retirement hash compatibility and schema coverage.
+Native effects use the protocol test driver; these tests do not establish live
+provider qualification.
+
+Connection sealing, credential retirement/preparation, SQL isolation, native
+restoration and private runtime regression groups also passed. The combined API
+run reached its 15-minute limit during verification; the complete verification
+group then passed separately. Targeted lint reports zero issues, and SQLC,
+encoding, shell-quoting and ADR-number checks pass. An initial API attempt exhausted
+test-database disk space; obsolete build cache was removed before the rerun.
+
+### Checkpoint PostgreSQL app-secret envelope conversion
+
+The checkpoint connection journal is a private namespaced envelope containing a
+plan digest and connection bytes. It is not an application secret envelope and
+cannot be copied directly into `app_secrets`. A conversion seam now authenticates
+its original activation-manifest member, connection key/ciphertext digest,
+credential plan and preparation receipt. It opens the original password and
+connection envelopes during key overlap, verifies the complete canonical URI
+against the pinned identity, original password, endpoint, database and
+`sslmode=verify-full`, then seals an app-readable one-value envelope to the current
+recipient with the standard keyed value fingerprint.
+
+The result retains the original account, app, target scope, environment key,
+fresh binding ID, access and generation-one credential reference. Secret class is
+persistent and version is one. No new native credential or password is requested.
+Owned plaintext byte buffers are cleared; transient Go URI/password strings retain
+the same zeroing limitation as connection preparation. Missing original keys,
+changed ownership, foreign namespaces, mismatched plans, altered passwords,
+source endpoints and weaker TLS options fail without disclosing private values.
+
+This seam only prepares ciphertext in memory. It is not yet wired to a publication
+writer, persists no binding or secret, and grants no publication authority. The
+remaining writer must journal the complete original set, authenticate current
+activation at its final commit, enforce target secret quotas and collisions,
+commit bindings and secrets atomically, and provide compensation before native
+retirement. The public full-stage gate and deferred live qualification are unchanged.
+
+Validation: focused conversion tests pass application-envelope decryption, current
+recipient rotation, original-password/endpoint/TLS preservation, ownership and
+fingerprint checks, plus rejection of changed manifests, keys, ciphertext,
+preparation receipts, unsealed values, namespaces, plans, passwords, endpoints,
+TLS options and missing keys/HMAC configuration. Existing managed PostgreSQL
+credential/connection helper tests also pass. SQLC and repository policy checks
+are clean. These are cryptographic preparation tests, not publication or live
+provider qualification.
+
+### Atomic private checkpoint PostgreSQL binding publication
+
+One transaction now materializes the complete original activated PostgreSQL
+binding matrix and its app-readable encrypted secrets. It authenticates the frozen
+activation manifest, sealed connection ownership, original credential/runtime graph,
+current exact native grant scope and health, and current capture retention. Every
+member must match its original account, app, target scope/key, binding identity,
+access, credential reference and generation. It locks apps and secret targets,
+rejects existing target secrets, and enforces the account plan's current per-app
+secret quota. A collision, partial set, invalid member or late journal failure rolls
+back all binding and secret writes.
+
+The publication journal commits the original normalized secret envelopes with the
+activation-plan and terminal-receipt digests. A lost reply or worker handoff reuses
+that complete immutable set without credential keys or resealing. Replay still
+requires independently current activation/retention proof and verifies every owned
+binding and secret against the journal. Shared activation recovery accepts only
+metadata authenticated by this publication journal. Foreign references, changed
+ciphertext, scope, access, generation, rotation/cutover state or secret delivery
+state fail closed.
+
+Compensation first authenticates and withdraws the complete owned set atomically:
+it removes its app-secret rows, tombstones its bindings and records withdrawal.
+Native credential retirement cannot begin through the coordinator until withdrawal
+succeeds. Lost withdrawal replies are replayable without keys; retained journals
+and tombstones remain authenticatable after the original fork is deleted. Changed
+or extra references block withdrawal without deleting unrelated metadata. Native
+retirement still requires the permanent preparation and delayed-activation fences
+before fork cleanup. Withdrawn publication cannot be republished.
+
+There is one bounded publication journal per activation, with a 24 MiB plan cap
+and the existing 4096-credential account ledger. App-readable envelopes retain the
+4 KiB per-owner cap. Password, checkpoint connection, journaled app-secret
+and live app-secret ciphertext together are bounded at 64 MiB per account by
+the existing owner ledger; withdrawal removes the live app-secret copy.
+Retained journal ciphertext continues to count as owned material; audited erasure and quota reclamation remain separate work. Restrictive
+activation foreign keys and an explicit downgrade guard preserve both published
+and withdrawn ownership.
+
+This is PostgreSQL metadata publication inside the private target. Database role
+remains `checkpoint`, operation resources remain the original checkpoint inventory,
+and no release set or serving graph is published. The internal helper is not yet a
+qualified full-stage worker. Complete object-storage publication, integration of
+the common resource graph with workload/configuration materialization and final
+release publication, and qualified native adapters remain required. Live R2/OVH
+qualification stays deferred at the user's request.
+
+Validation: the final PostgreSQL publication suite passes lost commit replies,
+keyless worker handoff and activation replay, complete-set rollback for invalid
+members, quotas, collisions, late journal writes, health/retention loss and stale
+workers; withdrawal/retirement through fork deletion; immutable owned metadata;
+empty/published/withdrawn downgrade guards; and withdrawal rollback/recovery.
+Scope corruption is injected only in a disposable database by temporarily disabling
+its owner trigger and restoring it before replay checks. An extra binding reference
+is rejected by the database's unique-owner index. Initial fixtures hit these
+existing guards before reaching the intended assertion and were corrected.
+Activation, app-secret conversion, credential retirement and affected parent
+migration regression groups also passed. State/schema tests and SQLC, encoding,
+shell-quoting and ADR-number checks pass; targeted lint reports zero issues.
+Native effects use the protocol test driver and do not establish live provider
+qualification or complete stage publication.
+
+### Checkpoint PostgreSQL workload-value preparation bridge
+
+Committed private PostgreSQL publication inputs now include canonical workload
+preparations indexed by the original source binding. The transaction authenticates
+and locks the original activation, credential/runtime graph, publication journal
+and live owned rows before projecting any preparations. Each preparation retains
+its original independent target database, fresh binding/identity, target app/scope,
+environment key, access, generation and committed encrypted envelope. The standard
+workload-value preparation hash covers the resulting normalized metadata. The
+projection copies ciphertext buffers and neither decrypts nor reseals secrets.
+
+The bridge requires the complete original manifest, matching activation and
+publication digests, and exact operation/account/project/scope/revision ownership.
+It rejects withdrawn or inactive publication, missing or duplicate source owners,
+and changed secret ownership. Before publication, inputs still contain only the
+original connection/credential preparation material; they provide no committed
+workload preparations. Keyless worker handoff recovers the same canonical set.
+
+These preparations allow the existing workload-value calculation to substitute
+fresh PostgreSQL envelopes while preserving captured customer variables. They do
+not create a legacy restore ledger or provide independent resource publication
+proof. Configuration materialization and final release publication remain gated;
+the private helper is not yet wired to a qualified full-stage worker. Object-storage
+publication, the complete common resource graph and qualified native adapters
+remain prerequisites. Live R2/OVH qualification remains deferred.
+
+Validation: focused unit tests pass committed-envelope substitution, captured
+variable preservation, ciphertext buffer ownership, and rejection of inactive,
+withdrawn, partial, duplicate or changed operation/account/scope/generation and
+digest ownership. PostgreSQL publication tests pass original-envelope projection,
+lost replies, keyless handoff and rejection of changed ciphertext, scope and
+binding access, alongside the existing publication/withdrawal suite. Existing
+workload-value and resource-publication fence regressions pass. Native effects
+use the protocol test driver; this is not live provider qualification.
+
+### Checkpoint PostgreSQL workload binding graph
+
+Committed publication inputs now also return the complete PostgreSQL binding graph
+for the authenticated frozen workload catalogue. Each edge ties its source app,
+effective scope, binding-catalogue digest, binding and database to the original
+independent target definition. Target definitions retain the captured database
+spec, backend placement, environment key and access, and use the original fork's
+catalogue name, owner, native/data resource identities and generation-one binding
+and credential reference. They match the private live catalogue authenticated and
+locked by activation/publication replay.
+
+The projection checks the complete original binding roster and exact preparation
+envelopes, and rejects missing, extra or duplicate source/target owners, source
+identity reuse, changed specs/backends/data origins and replacement credentials.
+Shared source databases must retain one identical independent target database;
+different source databases cannot collapse into one target owner or physical
+resource. Opaque physical identities are compared within their backend ID,
+placement fingerprint and native/data resource kind. Identical strings in different
+placements or resource namespaces do not imply shared physical authority.
+
+Edges are sorted by original source binding, and the graph digest binds the
+operation, target environment, original configuration revision and activation and
+publication digests. Reordering workload views or keyless worker handoff yields
+the same graph. The graph copies target definitions without changing the frozen
+capture and contains no password or encrypted secret material.
+
+This is the PostgreSQL component of the common workload resource graph. It remains
+a private read projection, creates no workload specs or deployments, promotes no
+database role and publishes no release. Object-storage binding publication and
+its graph, complete configuration materialization and final release proof remain
+required. Public full-stage cloning stays gated; live R2/OVH qualification remains
+deferred at the user's request.
+
+Validation: focused unit tests pass shared-database preservation, distinct fresh
+binding ownership, stable graph digests under deterministic workload permutations,
+target-definition hashing and capture-copy isolation. They reject missing, extra
+and duplicate owners, modified source hashes/specs/backends/data origins, split or
+merged database relationships, source and target physical identity reuse, and
+changed preparation envelopes/digests. Namespace tests accept equal opaque IDs
+across different backends, placement fingerprints or native/data resource kinds.
+The PostgreSQL publication suite passes full target-definition equality with the
+live owned catalogue, stable graph/provenance through lost replies and keyless
+handoff, and the existing publication/withdrawal regressions. Workload-value and
+resource-publication fence regressions pass. Native effects use the protocol test
+driver and do not establish live qualification or complete stage publication.
+
+### Private retained-object verification journal
+
+Read-only object verification now has a separate durable `planned -> requested
+-> verified` journal, bound to the original released capture, manifest, ready
+private target creation receipt, placement and physical owner. A committed claim
+is the sole comparison dispatch authority. Lost claim, comparison or finish
+acknowledgements recover by observing the original request; an unknown request
+cannot be restarted. Each claim and finish reauthenticates the capturing worker,
+retained source horizon, frozen inventory and private target with no credential
+or access-grant rows. No source listing, bucket creation, copy, policy change or
+credential publication is authorized by this journal.
+
+Qualified comparison must cover every original pinned body and supported
+metadata field, the entire target key set, empty objects and empty buckets. Its
+logical source and target digests exclude placement-specific version IDs and
+ETags and must match. Unsupported metadata, missing or extra keys, partial reads
+and active writers fail closed. Observe must attest current privacy, absent
+credentials, closed writers and unchanged contents through the current lease.
+The original comparison receipt is immutable across handoff; only its freshly
+observed closure horizon may advance. Requests are limited centrally to 16 MiB
+and 5 TiB of comparison reads per side. These limits grant no storage entitlement
+or native write authority. Downgrade refuses any owned verification row.
+
+Protocol tests exercise lost comparison and commit replies, unknown claim
+recovery without dispatch, worker handoff, immutable verified replay, changed
+contents and guarded migration round trips. Unit proof tests reject mismatched
+owners, requests, digests, counts, bytes, metadata coverage, privacy, credentials,
+writer closure and timestamps, and cover an empty inventory. The private
+coordinator has no qualified built-in provider or public worker wiring. Native
+copying, object credential/binding publication and complete stage publication
+remain outstanding; live R2/OVH qualification remains deferred.
+
+### Once-only retained-object copy authority
+
+Private object targets now have a durable `planned -> requested -> copied`
+journal. Its immutable plan contains the original inventory and creation receipt,
+pinned source versions, physical source and target placement, bounded byte count,
+and the original worker's UTC write deadline. Reservation refuses an existing
+verification journal. Only a committed claim can dispatch a native copy, and a
+changed lease cannot claim a planned request with a different write deadline. Requested
+and copied recovery observes the original request without redispatching it.
+
+A qualified provider must atomically require the originally created empty,
+private target without other writers, bind every write (including delayed
+requests) to the exact request and deadline, copy only the pinned bodies and
+supported metadata, and permanently close all writers before issuing its
+terminal receipt. A client timeout alone does not qualify as a native write
+fence. Copy observations must prove complete original key/byte coverage, no
+unsupported objects, privacy, absent credentials, permanent writer closure and
+unchanged contents through the current lease. Completion timestamps must lie
+inside the original request's write window. Terminal receipts are immutable
+across handoff; only fresh closure horizons can advance.
+
+Verification now requires an authenticated completed copy and binds its receipt
+digest into the original comparison request. Existing copyless verification
+requests fail closed; they cannot authorize copying or be silently relabeled.
+Every copy claim/finish revalidates the frozen manifest and target, capturing
+worker, source retention and absence of grants. The existing 16 MiB request and
+5 TiB logical byte bounds also constrain copy inventory; these grant no storage
+or IO entitlement. Downgrade refuses any owned copy journal row.
+
+Protocol tests cover lost claim, native and finish acknowledgements, observe-only
+handoff, unchanged receipts, source retention and worker replacement, transaction
+rollback, deadline-extension rejection, gated verification, copy/verification
+integration and guarded migration round trips. This is private coordination for
+a qualified native driver, not provider qualification: no built-in R2/OVH driver
+or public worker wiring is enabled. Credential/binding publication, retirement
+and complete stage publication remain outstanding. Live provider tests remain
+deferred at the user's request.
+
+### Verified object credential issuance inputs
+
+Private object credential planning now reads the complete original binding
+catalogue under the capturing worker lease, original release/retention proofs,
+and locked copy, verification and target journals. Every frozen object bucket
+must have a completed authenticated copy and verified comparison. The projection
+binds each original app, source scope and binding-definition digest to its
+original bucket definition, private target identity, copy receipt and verification
+plan/receipt digests. It does not reread current source credentials or decrypt
+source secrets, and any failed authentication returns an empty result.
+
+The canonical input roster preserves standalone credentials, labels, permissions,
+managed app ownership/prefixes and platform API-key access grants. Managed slots
+retain all six original secret key names in the target stage scope; standalone
+credentials acquire no app secret slots. Missing, extra or duplicate buckets,
+reused target ownership, source/target identity reuse, cross-app credential
+ownership, duplicate credential IDs and colliding managed key slots fail closed.
+Physical ownership is scoped by backend and placement fingerprint. Sorting app
+and bucket edges makes input digests stable across worker handoff without
+mutating the frozen catalogue. The existing 16 MiB checkpoint metadata bound also
+limits this projection.
+
+Unit tests cover complete managed/standalone/grant rosters, stable ordering and
+copy isolation, incomplete proof matrices, source hash/scope/ownership changes,
+physical aliases and backend namespaces. Database tests cover verification
+prerequisites, exact frozen definitions, unchanged inputs across handoff, stale
+workers, expired retention and changed target privacy. These inputs grant no
+native issuance or publication authority. Durable fresh credential reservation,
+qualified issuance/revocation, sealed target values, atomic binding publication,
+retirement and final stage publication remain outstanding. Provider qualification
+and live R2/OVH tests remain deferred; public full-stage cloning stays gated.
+
+### Durable fresh object credential identity reservations
+
+The private capturing path now atomically reserves the entire verified object
+credential matrix before issuance. An operation-owned immutable journal stores
+the complete authenticated input graph, including original access-grant policies,
+and a fresh UUID for every managed or standalone source credential. Each member
+binds its original app, source bucket and credential to the verified target
+bucket. A plan digest authenticates the full snapshot and identity matrix; the
+existing 16 MiB checkpoint metadata bound applies to the whole reservation.
+
+Reservation and every replay rebuild the original input graph under the same
+transaction locks and worker fences as verification. Retries and worker handoff
+return the committed identities without regenerating them. Missing, extra or
+reordered members, altered definitions, changed proof receipts, invalid or reused
+identities, and pre-existing credential rows fail closed. Failed insertion or a
+worker expiry before the final commit returns no identities and rolls back the
+journal. A downgrade refuses any owned reservation, including an empty matrix;
+an empty graph is not evidence of native issuance or final publication.
+
+Tests cover complete managed/standalone matrices, defensive copies, stored-plan
+round trips, member and grant tampering, empty graphs, lost reservation replies,
+worker handoff, stale/late-expiring workers, expired retention, insert rollback,
+and guarded migration round trips. These rows contain no source or target keys
+and confer no native grant dispatch authority. A separate once-only issuance and
+observe/revocation protocol, sealed target values, atomic object binding and grant
+publication, retirement and final stage publication remain outstanding. Native
+R2/OVH qualification and live provider tests remain deferred at the user's request;
+public full-stage cloning stays gated.
+
+### Private sealed object credential matrix
+
+After verified identity reservation, private checkpoint coordination now prepares
+fresh Gregale S3 gateway signing keys and all six managed runtime values. These
+are local gateway credentials; native grants used outside Gregale remain under
+the separate provider qualification/revocation protocol. Source signing material
+is never opened. Each preparation uses its committed fresh credential ID and
+preserves original labels, permissions, managed ownership, prefix and stage scope.
+Standalone credentials acquire no app-secret slots. Gateway endpoint and region
+are pinned with the sealed matrix; bucket values use the operation-owned deterministic stage name.
+
+An operation-owned journal commits the complete sealed matrix atomically under
+original retention, copy/verification, target privacy and worker proofs. The
+reservation digest binds every member to the full original grant and credential
+roster. Current target logical names and scopes are additionally authenticated
+against the original operation-owned reservation before any credential preparation/replay.
+The matrix digest covers credential ciphertext, public access-key IDs and every
+sealed runtime envelope and ownership field. Payloads use the existing 16 MiB
+checkpoint metadata bound; this preparation grants no secret-count or credential
+quota entitlement for later publication.
+
+Recovery reads the committed matrix before key generation, without decryption,
+recipient or HMAC-key availability. Concurrent proposals reuse the first committed
+matrix and cannot replace its keys. A failed transaction or late worker expiry
+returns no values and leaves no journal. No normal credential or app-secret rows
+are inserted, so the signing keys confer no usable gateway access. Owned sealed
+journals prevent downgrade. Empty credential matrices require no key material
+and confer no publication authority.
+
+Unit and database tests cover matrix completeness, sealed-envelope/identity
+linkage, metadata tampering, lost commit acknowledgement, first-writer recovery,
+worker handoff without encryption keys, late-expiry rollback, no premature
+publication, target-name changes and guarded migration round trips. Gateway
+credential and binding publication, API-key grant publication, native grant
+qualification/revocation, retirement and final stage publication remain separate
+steps. Live R2/OVH qualification remains deferred at the user's request; public
+full-stage cloning stays gated.
+
+### Authenticated object publication plan
+
+A private read-only publication plan now projects the complete frozen object
+matrix and committed sealed values under the current worker transaction. Every
+bucket remains represented, including buckets with API-key grants and no gateway
+credentials. Target bucket IDs, original source edges, sealed credential and app
+secret preparations, and sorted API-key grants are bound to the frozen-input,
+identity-reservation and sealed-value digests. Nested ciphertext and secret slices
+are copied so consumers cannot mutate the underlying authenticated inputs.
+
+Plan reads reauthenticate retained original checkpoints, copy and verification
+receipts, private target ownership and logical names, and the reserved identities.
+Worker authorization is checked before and after the transaction; errors return
+no plan or sealed material. Recovery derives the same plan without opening keys
+or creating any normal credentials, secrets or grants. This is publication intent,
+not a quota reservation or an API-key eligibility decision: those checks must
+occur under locks in the future atomic publication transaction.
+
+Tests cover the complete matrix, defensive copies, grant-only and empty graphs,
+reservation linkage, stale workers, handoff without encryption keys, and tampered
+sealed journals. Atomic object credential/binding/API-key grant publication and
+its exact-ownership replay remain the next implementation step. Native grant
+qualification/revocation, retirement and final stage publication remain required;
+live R2/OVH qualification remains deferred and public full-stage cloning gated.
+
+### Atomic private object metadata publication
+
+The private checkpoint coordinator now publishes the complete authenticated
+object publication plan in one database transaction. It inserts fresh Gregale
+S3 gateway credentials, the six managed runtime secrets, and frozen API-key
+access grants, together with an operation-owned publication journal. Standalone
+credentials gain no secret slots; grant-only buckets remain in the matrix.
+Native provider credential issuance is not implied by this local metadata step.
+
+Admission locks current account entitlement, project apps, secret slots, target
+buckets and account API keys. Current credential/secret quotas apply across the
+whole matrix, including existing secrets in every scope. Occupied secret slots
+are rejected rather than overwritten. Grants require same-account active/grace
+keys, the requested storage scopes and no admin scope. Grant insertion checks
+the exact capturing revision, worker token and live lease. Retained original
+checkpoints, copy and verification receipts, reserved IDs and target privacy
+are reauthenticated before publication; worker authorization is checked again
+before commit. Any failure rolls back credentials, secrets, grants and journal,
+and returns no sealed material.
+
+Recovery accepts existing normal rows only through the committed publication
+journal and its exact sealed plan. Every bucket's complete credential and grant
+roster is checked, including unexpected revoked/rotation rows. All secrets
+referencing a credential are checked across apps/scopes, with exact envelopes,
+owner fields, persistent version one and pending delivery. Verification and
+reservation replay permit only this proven whole-matrix ownership; a journal
+cannot authorize a different source/target bucket edge. Gateway resolution and
+API-key authorization continue to require final operation ready state, so this
+private transaction creates no customer-visible gateway access.
+
+Database tests cover managed/standalone credentials, grant-only buckets, lost
+commit replies and worker handoff, stale workers/expired retention, changed
+grants/secrets, revoked/under-scoped/admin keys, occupied slots, current quota
+failure, late worker expiry, complete rollback, and guarded migration round
+trips. Withdrawal/retirement and the final stage publication bridge remain
+separate implementation steps. Live R2/OVH qualification remains deferred at
+the user's request and public full-stage capture stays gated.
+
+### Private object publication withdrawal
+
+Private checkpoint compensation now atomically withdraws the complete local
+object publication matrix. Only a compensating operation's current worker lease
+can perform this transition. The sealed plan and all normal credential, secret
+and API-key grant rows are authenticated before mutation. Managed secrets and
+exact grants are removed; standalone and managed gateway credentials remain as
+revoked audit rows. Every credential revocation shares the journal's immutable
+transaction retirement timestamp. The original plan and sealed values remain
+owned, and withdrawal grants no native-provider deletion/revocation authority.
+
+The journal moves permanently from published to withdrawn. Replay requires the
+same revoked credential payloads and retirement stamps, no secrets referencing
+those credentials, and no target grants. Unexpected credentials (including
+revoked rows), changed grants, foreign/missing secret owners, changed target
+names and corrupt journals fail closed. Replay works after owned target buckets
+enter deleting/deleted state, while preserving their operation/app/scope/name
+ownership. Revived credential rows are rejected rather than silently repaired.
+Unrelated app secrets and original production credentials/grants are untouched.
+
+Worker identity, revision and live lease are checked before and after the
+transaction. Late expiry rolls back the entire withdrawal; a lost commit reply
+is recovered by worker handoff without decrypting or regenerating keys. An absent
+publication is a no-op under the same compensation fence, not proof of native
+cleanup. A capturing worker cannot withdraw or re-publish retired metadata.
+Downgrade refuses owned retirement evidence. The private coordinator provides
+an admission-checked, renewed-lease withdrawal entry point for use before native
+target cleanup; public capture remains gated.
+
+Database tests cover lost acknowledgement/handoff, stale workers, exact revoked
+stamps, unrelated/source preservation, replay after bucket deletion, ownership
+tampering, extra revoked rows, late-expiry rollback/retry, revival rejection,
+absent journals, state fences and guarded migration round trips. Native object
+target retirement/cleanup and final stage publication remain further steps. Live
+R2/OVH qualification remains deferred at the user's request.
+
+### Private native object retirement proof contract
+
+The next compensation step now has a private immutable retirement plan and proof
+validator. The plan pins the original target creation journal, its request state,
+claim timestamp and observation digest, plus the original copy journal when one
+exists. The original physical source resource is included independently of the
+copy, so compensation before copying still binds source preservation. Request
+digests cover the placement, owner, manifest, checkpoint, pinned copy inventory
+and original write deadline; no new inventory, credential or worker token is
+introduced.
+
+A retirement receipt must name the exact retirement, creation and optional copy
+requests and their digests. It must attest permanent fencing of creation and
+copy, permanent closure of all writers, absence of the native target and native
+grants, and preservation of the original source. A currently absent target is
+insufficient evidence because a delayed creation or copy request could recreate
+it. Even planned requests require permanent fencing. Copy provenance requires a
+completed original creation and the same target/source/creation digest. Proofs
+require a UTC microsecond timestamp after the retirement claim, which cannot
+precede the original claims. Terminal replay requires the exact original proof
+digest. Expired source retention or an expired copy write deadline does not
+prevent cleanup.
+
+Focused tests cover planned, requested and completed original requests, unknown
+copy outcomes after deadline expiry, foreign owners/targets/sources, changed
+request digests, missing permanent fences, remaining grants, source mutation,
+invalid timestamps, inconsistent journal provenance and changed terminal proofs.
+This is a proof contract only: frozen-journal authentication, a durable once-only
+retirement journal, atomic bucket-state completion and the private compensation
+coordinator are still required before dispatching any native deletion. Local
+publication withdrawal is not native retirement proof. No provider adapter or
+public full-stage path is enabled; live R2/OVH qualification remains deferred.
+
+### Private durable native object retirement
+
+Private checkpoint compensation now reserves, claims and finishes native target
+retirement through an append-only SQLC journal. Only the operation's current
+compensating worker lease can use it. The original released checkpoint, frozen
+bindings, manifests and deterministic private target placement are authenticated
+before every transition. The original creation record and optional copy record
+are pinned in full, including unknown outcomes. Copy inventory must match the
+original manifest and source placement; any existing comparison also witnesses
+completed original copy and its unchanged digest. Local publication must already
+be withdrawn with its entire revoked credential audit matrix, secrets and grants
+matching exactly. Foreign credentials, including revoked rows, remain blockers.
+
+Claim changes planned to requested and commits before granting dispatch. Failed
+or lost claim acknowledgement grants no dispatch authority. A requested or
+retired journal is never dispatched again, including after worker handoff. If a
+claimed request has no independently available closure receipt, compensation
+stops until that proof becomes available; absence does not justify retrying the
+native write. Missing creation means no native request was locally authorized,
+not proof of native bucket deletion. Missing or changed dependencies of an
+existing creation are conflicts rather than skipped cleanup.
+
+Finish validates the permanent-fence/source-preservation receipt defined above,
+then records it and marks the exact owned bucket deleted in one transaction.
+The lease is checked again after both mutations. Late expiry rolls back both
+changes. Terminal replay authenticates the same receipt and requires the bucket
+to remain deleted; revival or changed provenance is rejected without repair.
+Compensation alone can authenticate original placement metadata after sibling
+target deletion. Capture, creation, copy and publication retain their existing
+live-target checks. Retained original checkpoint journals remain necessary for
+provenance, but source health and renewed provider retention are not cleanup
+prerequisites. Retirement request plans are bounded by
+`ObjectCheckpointRetirementPlanMaxBytes` (17 MiB, including original copy
+inventory and creation metadata). Downgrade refuses every owned journal state,
+including completed retirement evidence.
+
+The private coordinator withdraws local object publication before native IO,
+renews the compensation lease per source, checks admission around dispatch and
+observation, and processes only frozen source bindings. It accepts a qualified
+retirement/observation adapter; no built-in R2 or OVH adapter is enabled. Tests
+cover lost reserve/claim/native/finish replies, immutable worker handoff, partial
+creation/copy, planned requests, unknown outcomes, no-creation behavior, stale
+workers, admission fences, foreign placement/credentials/grants, changed copy
+provenance and deadlines, late expiry before and after bucket mutation, atomic
+rollback, changed terminal receipts, revival and guarded migration round trips.
+Native provider qualification and the final full-stage publication bridge remain
+outstanding. Public full-stage capture stays gated, and live R2/OVH qualification
+remains deferred at the user's request.
+
+### Private cleanup of unused checkpoint object reservations
+
+Compensation now distinguishes unused local reservations from targets with any
+original native creation journal. The latter still require qualified permanent
+native retirement, even when the original creation is only planned. An unused
+reservation can be marked deleted without native IO only after authenticating
+the original released checkpoint, frozen bindings, manifest and deterministic
+private target placement under the current compensating worker lease. Ordinary
+bucket provisioning excludes checkpoint-owned reservations. Ready/deleting
+buckets, bucket worker leases, published access, foreign credentials (including
+revoked rows), corrupted provenance and unproved deletion remain conflicts.
+
+The local completion record pins the exact reservation metadata and target UUID.
+It commits atomically with bucket deletion, releases the bucket quota reservation,
+and records no native absence receipt. Lost acknowledgement and worker handoff
+replay the same completion; stale workers, changed records or revived targets
+are rejected. Late worker expiry after either mutation rolls back both. Downward
+migration refuses to discard owned completion evidence.
+
+The private retirement coordinator uses this path when the original creation
+journal is absent, allowing mixed native requests and unused reservations to
+complete without dispatching native IO for unused targets. Tests cover mixed
+creation states, lost completion reply, handoff/replay, placement and grant
+fences, late expiry, revival and guarded migration round trips. This first path
+requires a fully released checkpoint: cleanup of earlier incomplete captures
+still needs a separate authenticated reservation-provenance path. Final stage
+publication and native provider qualification remain outstanding; public
+full-stage capture stays gated and live R2/OVH qualification remains deferred.
+
+### Unused object cleanup before source release completes
+
+Unused reservation compensation now authenticates complete adoption before
+source release has completed. Planned and requested release journals retain
+exact original receipt, frozen placement and adoption digest checks. If release
+has not been recorded, compensation reconstructs the original plan from the
+owned configuration hold and frozen source catalogue, and the original receipt
+from retained snapshot/manifest identities. Both must match the hashes already
+recorded in the captured intent, receipt and complete adoption resource roster.
+This is authentication of original local provenance, not a new provider receipt.
+Missing or changed capture records, replaced configuration ownership/generation,
+rewound released journals and incomplete adoption remain conflicts.
+
+Only the unused local cleanup path can authenticate an incomplete release. Native
+retirement still requires the original released checkpoint; capture/adoption and
+native creation writers retain their capturing-state and release prerequisites.
+Compensation never changes a release request, source write/configuration holds,
+or retained snapshots. Original holds remain necessary to authenticate adoption
+before a release journal exists, including on replay. Local reservation evidence,
+lease fencing, atomic deletion, lost-reply recovery and revival rejection remain
+unchanged. The database configuration guard admits only the exact provisioning to
+deleted transition backed by a committed local completion row under the
+operation's own held guard and live compensation lease. Placement, policy,
+source buckets and credential mutations retain the guard. The cleanup locks the
+configuration clock before operation/application rows, matching acquisition
+order. Downgrade refuses active completion evidence that still depends on owned
+source holds. Tests cover adoption before any release journal, planned release,
+requested/unknown native release, worker handoff, unchanged source authority and
+corrupted receipts, snapshots, manifests and configuration provenance.
+
+Reservations lacking complete authenticated adoption remain blocked. Source
+barrier compensation and final stage publication are separate remaining work;
+public full-stage capture stays gated and live R2/OVH qualification is deferred.
+
+### Private source compensation proof contract
+
+Source compensation now has an immutable private proof contract that pins the
+original common-capture plan, capture intent, optional original receipt and
+optional release journal. Planned and unknown capture or release outcomes both
+require permanent fencing of their original native request keys: absence alone
+cannot prove that a delayed request will never close source access again.
+
+The receipt must cover every original source, in the original order and at the
+original physical placement. Each source must be unchanged, accessible and free
+of native holds, owned by this operation, with any recorded original capture
+identity preserved. Claim and completion timestamps are checked, and a completed
+journal accepts only identical receipt replay. Cleanup has no retention deadline;
+expired capture retention must not prevent restoring source access.
+
+This is shape validation only. It does not dispatch native work or release local
+holds. The remaining durable coordinator must authenticate the frozen original
+journals, claim compensation once before native IO, independently observe unknown
+outcomes, and commit the receipt together with local configuration, PostgreSQL and
+object hold release under the current compensation worker fence. It must preserve
+original capture provenance for unfinished target cleanup after source reopening.
+No native adapter or public full-stage capture is enabled by this contract.
+
+### Private durable source compensation
+
+Source compensation now reserves, claims and finishes through an append-only
+SQLC journal. Initial reservation authenticates the supplied original capture
+plan against the operation's frozen binding catalogue and recorded intent hash.
+Any supplied capture receipt must match the original recorded receipt hash; an
+unknown capture cannot acquire a fabricated receipt. The optional release must
+match its original persisted journal exactly. Adopted datasets are authenticated
+against their original complete snapshot and manifest journals, including
+retired target placement metadata. Current source inventories never replace the
+original capture plan.
+
+A current compensation worker receives native dispatch authority only from the
+first committed planned-to-requested transition. Lost claim replies grant no
+permission to dispatch, and requested recovery observes independently without
+retrying native cleanup. The private coordinator checks admission around native
+IO and isolates the original plan from adapter mutation. A provider must
+permanently fence queued original capture and release requests before attesting
+that each exact source is unchanged, accessible and free of native holds owned
+by this operation. Restoration removes this operation's original closure only;
+it must preserve later owners' native holds. Completed observation reads the
+original immutable closure receipt rather than replacing it with current state.
+
+Finish validates the complete proof and atomically records it with release of
+owned configuration, PostgreSQL and object write holds under the current worker
+revision and lease. PostgreSQL maintenance and unsettled native object grant
+retirement still block local release. A failure at the final configuration write
+rolls back the receipt and every local hold change. Successful original release
+requires no further local hold writes. Completed replay checks the original
+receipt and operation-owned hold absence without touching another capture's
+holds or depending on current source configuration.
+
+The legacy independent abandonment methods reject common-capture operations;
+only the coordinated proof can reopen those holds. Original plans remain in the
+journal after source reopening, so unused fully adopted targets can still be
+cleaned when no original release journal exists. Journal payloads are bounded by
+`CheckpointSourceCompensationMaxBytes`; downgrade refuses all reserved,
+requested and completed authority or evidence.
+
+Tests cover original capture/release phases, unknown and lost acknowledgements,
+worker handoff, stale/cancelled workers, adapter mutation, incomplete proofs,
+legacy abandonment bypasses, atomic rollback, migration rollback and preservation
+of a later capture's configuration hold. This is a private coordinator seam;
+there is no built-in qualified R2/OVH adapter or public full-stage admission.
+Final whole-stage publication and remaining target compensation are separate
+work. Live provider qualification remains deferred.
+
+### PostgreSQL target compensation proof contract
+
+Private checkpoint target compensation now pins the original retained snapshot,
+restore owner and optional isolation journal. A terminal observation must prove
+permanent fencing of the original restore owner request and every recorded
+isolation request, exact owned target absence, and unchanged source and snapshot.
+Even unused reservations require a permanent restore fence; provider not-found
+cannot settle a delayed or queued restore. Unknown restore outcomes may report an
+independently authenticated owned physical target in their terminal observation,
+without rewriting the original restore plan. Known physical targets must match
+exactly, and source physical resources cannot be cleanup targets. Terminal proof
+replay is immutable and bound to the complete original plan digest.
+
+This is a proof contract, not a native deletion coordinator or mutation authority.
+The remaining implementation must authenticate frozen journals, durably claim
+cleanup dispatch once, observe unknown outcomes without redispatch, and atomically
+retire owned catalogue rows only after credential retirement and this proof. It
+must also block the legacy deletion-only cleanup path for common checkpoints.
+Public full-stage admission remains gated; provider qualification is outstanding.
+
+### Durable PostgreSQL checkpoint target compensation
+
+The private compensation store now reserves an immutable plan from the original
+frozen binding catalogue, released common checkpoint, retained snapshot, restore
+owner and optional SQL isolation journal. It supports unused restore reservations,
+unknown requests, partial restores, and isolation planned or requested before
+catalogue adoption. Source recapture, current source health, replacement targets
+and retention renewal supply no cleanup authority.
+
+Only the first committed planned-to-requested claim permits native dispatch.
+Lost claim replies, worker handoff and unknown native outcomes recover by observing
+the original request; they do not dispatch compensation again. Qualified native
+adapters must permanently fence the original restore and recorded isolation keys,
+prove the entire owned target absent, and preserve the source and snapshot.
+Dependent native copy targets/readers must already be retired. Every recorded
+credential preparation requires its authenticated terminal retirement proof, and
+published target bindings and secrets must be withdrawn before dispatch.
+
+Terminal proof, exact owned catalogue retirement and restore quota release commit
+atomically. A foreign placement, stale worker, unretired borrower or late write
+failure leaves the original journal and quota owned. The restore records a foreign
+key to the exact terminal proof digest, allowing unknown creation outcomes to
+settle without fabricated target identities or deletion-operation IDs. Completed
+replay authenticates the original journals and saved proof without fresh native
+IO, including after later snapshot cleanup. Legacy deletion-only restore cleanup
+is blocked for common checkpoints in both the store and SQLC mutation predicates.
+The new migration refuses downgrade while any compensation authority or proof
+remains recorded.
+
+This remains an internal protocol with no built-in qualified native adapter.
+Whole-stage final publication and terminal compensation reconciliation remain
+outstanding, and public full-stage admission remains gated. Live R2/OVH
+qualification remains deferred at the user's request.
+
+### Checkpoint compensation reconciliation report
+
+The private store now assembles a non-secret, read-only compensation report under
+the original compensation lease and the capture-retirement clock/operation/app
+locks. It authenticates terminal capture retirement and its complete original
+source compensation, native borrower retirement and catalogue proof chain. Missing,
+nonterminal or corrupted evidence returns no partial report. The report binds the
+operation/revision, exact resource inventory digest, frozen source revision and
+source/capture terminal proof digests; replay dispatches no native IO and changes
+no operation or resource status.
+
+The report exposes unverified workload/configuration scopes from frozen workload
+records even when their resource labels are absent. Unsupported resource kinds,
+foreign data-source identities and target release sets remain explicit blockers.
+A `compensated` resource label cannot clear them. Blockers have deterministic
+ordering and contain no copied settings, secret values or native credentials.
+
+This is evidence assembly for whole-stage reconciliation, not terminal mutation
+authority. Workload runtime/configuration retirement and atomic terminal proof
+persistence remain outstanding. The generic checkpoint compensation transition
+and public full-stage admission remain closed; native provider qualification stays
+deferred at the user's request.
+
+### Original workload retirement proof contract
+
+The private workload retirement plan now pins the original frozen source revision
+and completed source-compensation digest/time, target scope, optional original
+materialization environment/digest and release set, and each original workload's
+source deployment/hash, target deployment/settings hash and desired spec/hash.
+The non-secret plan and native observation are each bounded by
+`CheckpointWorkloadRetirementMaxBytes` (2 MiB). A missing materialization or target
+deployment remains missing; an observer cannot discover a replacement deployment
+and attach it to this plan. Ownership aliases to source deployments, Apps,
+operation/account/project IDs, duplicate targets and noncanonical workload order
+are rejected.
+
+Native retirement must permanently fence the entire original operation's
+deployment request namespace, close all queued scheduler operations and prove no
+owned instances, cgroups, network resources, routes or native publication remain.
+Instance absence covers parked instances and their native runtime artifacts in the
+original owner namespace, rather than just currently running processes.
+Each recorded target deployment also requires its original permanent fence and
+complete runtime-operation closure. These checks apply to unknown instance
+creation outcomes; local deployment labels and process/instance not-found are
+insufficient. Source resources must remain unchanged. Proof time follows the
+committed claim and original source compensation, and terminal replay requires
+the exact saved observation digest.
+
+### Durable original workload retirement journal
+
+An append-only SQLC journal now authenticates these original records under the
+current compensation lease and configuration clock/operation/app locks. It pins
+the completed source-compensation proof, exact materialization receipt and desired
+heads, and lossless deployment artifacts and settings pins. Foreign deployment
+ownership and orphan deployments in the original operation namespace block a
+claim. Pending deployments remain eligible because cleanup must cover unknown
+native outcomes. Published clones are rejected until a separate authenticated
+release withdrawal is available.
+
+The first claim durably moves planned to requested exactly once. A replacement
+worker observes the same request without dispatch authority. Finish stores the
+validated native observation, digest and timestamp atomically; failed writes
+retain requested state, and terminal replay requires the exact saved proof and
+unchanged original ownership. Migration rollback refuses every journal row,
+including planned and retired ownership evidence.
+
+The journal does not delete configuration. Native closure leaves the environment
+and desired settings available for later authenticated
+catalogue cleanup. Catalogue retirement must separately verify removal of owned
+settings, values and policies; native observations cannot assert that SQL state
+was deleted. Atomic catalogue cleanup and whole-stage terminal compensation
+remain outstanding. Public full-stage admission stays gated, and native
+qualification remains deferred.
+
+### Private native workload retirement coordinator
+
+The private coordinator now renews the compensation lease before reserving and
+claiming the authenticated workload journal. Admission checks guard the claim,
+native dispatch, observation and final write, and all work is bounded by the
+renewed lease deadline. Only the first committed claim authorizes native
+retirement. After a lost claim or native reply, a replacement worker observes the
+original request without dispatching cleanup again. A lost reservation reply can
+still recover the unclaimed original plan.
+
+Qualified drivers must permanently fence the entire original deployment request
+namespace and close queued scheduler work, including unknown creation outcomes,
+then prove all owned runtime artifacts and publication are absent while preserving
+the source. Observation is read-only; local not-found and deployment labels are
+insufficient. Fresh copies of the immutable workload membership isolate adapter
+mutation, and returned proof membership is copied before persistence. Terminal
+replay authenticates the saved proof without native calls.
+
+PostgreSQL-backed simulated-driver tests cover lost reservation, claim, dispatch,
+observation and finish replies, worker handoff, cancellation, invalid scheduler
+and runtime closure, changed source/digest, and adapter mutation. They do not
+qualify a scheduler/VM adapter. No built-in native adapter or public full-stage
+admission is enabled; configuration cleanup and terminal compensation remain
+outstanding, and live provider qualification stays deferred.
+
+### Original materialized configuration ownership
+
+Leased materialization now saves a non-secret original ownership receipt in the
+same transaction as the environment, desired settings and copied configuration.
+It hashes the complete original rows of eleven explicit tables: environment
+identity, desired specs and heads, project configuration versions, feature flag
+versions, variables, sealed secrets, secret references and suppressions, and
+scoped route and edge policies. Full row identities and timestamps participate
+in the hashes; values and sealed content are not persisted in the receipt.
+`CloneConfigurationOwnershipMaxBytes` bounds the manifest to 32 KiB.
+
+Before copying, the transaction rejects existing scoped configuration, including
+rows on deleted or preview Apps. Previously prepared managed secrets remain
+eligible only through the existing original preparation checks and frozen App
+membership. The configuration clock is acquired before project/operation/App
+locks, and the materialization context is bounded by the worker lease.
+
+A lost materialization reply replays the original receipt without recapturing or
+backfilling ownership. Changed or additional rows, or a changed manifest digest,
+block replay. Workload retirement pins the receipt's original environment,
+manifest digest and creation time in its materialization hash. Legacy receipts
+remain readable without gaining configuration-deletion authority. Migration
+rollback refuses every retained ownership receipt.
+
+This receipt is a prerequisite for atomic configuration retirement, not a cleanup
+receipt. It does not delete configuration, authorize whole-environment cascades,
+clear compensation blockers or enable public full-stage admission. A later
+transaction must authenticate this original evidence together with native
+closure, account for separately proven managed-secret retirement, reject foreign
+borrowers and persist exact catalogue removal atomically. Native qualification
+remains deferred.
+
+### Atomic copied-configuration cleanup after native closure
+
+The private leased state transaction now removes copied variables, sealed
+unmanaged secrets, secret references/suppressions, feature flag versions, project
+configuration versions, and route/edge policies only after verifying the original
+materialization ownership receipt and completed native workload retirement. It
+persists the exact post-deletion manifest with the original ownership digest,
+native plan digest and native observation digest in the same transaction. A lost
+commit reply verifies that receipt and current post-state without recapturing
+ownership or dispatching native work. Receipt-write failure rolls deletion back;
+stale leases, legacy materializations without original ownership, foreign rows,
+changed proof/time, or repopulated settings block deletion and replay.
+
+The eleven-table manifest remains bounded by `CloneConfigurationOwnershipMaxBytes`
+and contains hashes rather than configuration values. The eight removed table
+hashes must be the hash of an empty array; the original environment, workload
+heads and workload specs must remain byte-for-byte identical. Migration rollback
+refuses every retained cleanup receipt. Frozen captures, deployment pins, original
+materialization, and native ownership journals remain retained.
+
+This transaction deliberately retains environment metadata and workload heads,
+specs and pins: invocation/queue/promotion borrowers require separate retirement
+before those rows can be removed safely. Managed-secret ownership or per-runtime
+secret-reload observation rows, external field owners, managed fields or GitOps
+sources also block this cleanup; they must not disappear
+through an unproven cascade or be treated as ordinary copied configuration.
+Published release withdrawal, separately deleted managed-secret normalization,
+whole-stage terminal compensation and public full-stage admission remain gated.
+Native provider qualification remains deferred.
+
+### Workload configuration borrower guard
+
+The private leased borrower report authenticates the original materialization and
+completed native workload retirement before returning six bounded counts:
+foreign deployment pins, promotion prepared/previous specs, queue runtime sets,
+and invocation work/queue admissions. Original clone deployment pins are retained
+and excluded from the foreign-pin count. Cross-environment spec references and
+queue/admission rows with an inconsistent environment/spec pair still count.
+Configuration cleanup now refuses to delete copied settings while any of these
+borrowers remain, even when native VM retirement has completed. The same clock,
+operation, App and worker locks cover authentication, inventory and deletion.
+
+This is an inventory and deletion guard, not operational retirement authority.
+It never deletes promotion history, queue projections or invocation admissions,
+and does not clear whole-stage compensation blockers. Their owning protocols
+must close and retire those references before workload specs/heads/pins can be
+removed. A PostgreSQL foreign-key inventory test requires explicit review when
+another table begins borrowing workload specs. Live qualification remains deferred.
+
+### Atomic unborrowed workload catalogue cleanup
+
+The private leased workload cleanup transaction authenticates completed native
+retirement, original materialization ownership and the earlier copied-settings
+cleanup receipt. It locks original specs before checking foreign deployment pins,
+promotion references, queue projections and invocation admissions; new foreign-key
+borrowers cannot race the check and disappear through a cascade. External field
+owners, managed fields and GitOps sources also block deletion. Only after these
+checks does it delete the original deployment pins, heads and specs and persist a
+bounded, non-secret post-state receipt atomically. Receipt-write failure rolls all
+three removals back. Environment metadata, deployments, source records and original
+materialization/native/configuration receipts remain retained.
+
+Recovery validates the new receipt's link to the exact earlier cleanup receipt,
+its time and manifest digest, absence of original deployment pins and all workload
+specs/heads, and unchanged environment identity. Native terminal replay reconstructs
+the original plan from retained original materialization and frozen records, while
+still rechecking deployment artifacts, layers, signals and original clone ownership.
+Replacement specs or altered artifacts/receipts block replay; no native request is
+redispatched. Ordinary materialization and publication still require live settings
+and pins. Migration rollback refuses every retained workload cleanup receipt.
+
+This removes unborrowed workload catalogue rows only. It does not retire operational
+borrowers, delete environment metadata, authorize published-release withdrawal,
+normalize independently removed managed secrets, or enable whole-stage terminal
+compensation/public full-stage admission. Native qualification remains deferred.
+
+### Authenticated managed-secret withdrawal inventory
+
+The private leased managed-secret borrower report requires original configuration
+ownership and completed native workload retirement. It returns only counts of
+target-scope PostgreSQL secret envelopes, object-storage secret envelopes, managed
+credential references and runtime reload observations, linked to the original
+ownership digest and native plan/observation digests. Credential-reference counts
+overlap provider counts. Runtime observations include unmanaged secrets and
+observations from instances in other scopes; their secret scope is authoritative.
+All project Apps are included, including deleted Apps. Source-scope secrets are
+excluded. Missing legacy ownership, stale workers, altered original rows or native
+proofs fail closed without returning partial inventory. Authenticated configuration
+and workload cleanup receipts allow the empty post-cleanup inventory to replay.
+
+This is a transactionally authenticated observation, not a persisted withdrawal
+receipt or provider revocation proof. It does not remove secrets, observations or
+credentials, or grant deletion authority. Configuration cleanup continues to block
+on these borrowers. Linking separately withdrawn managed envelopes to the original
+configuration manifest atomically remains required before cleanup can normalize
+their absence; the report never backfills or adopts that ownership. Whole-stage
+terminal compensation and public full-stage admission remain gated.
+
+### Atomic PostgreSQL secret withdrawal ownership receipt
+
+Private PostgreSQL publication withdrawal now locks the configuration clock before
+operation/App locks and authenticates original materialization and its configuration
+ownership before deleting managed envelopes. Runtime reload observations, including
+observations from another instance scope, block withdrawal instead of disappearing
+through secret deletion cascades. External field owners, managed fields and GitOps
+sources also block withdrawal for materializations with original ownership.
+The publication check locks its secret rows before the observation inventory, so
+new foreign-key borrowers cannot race that inventory and disappear in a cascade.
+
+The same transaction removes only the publication's authenticated PostgreSQL secret
+envelopes, tombstones its bindings, marks its original publication withdrawn and
+saves a bounded non-secret post-configuration manifest. This receipt pins the
+original ownership digest, publication plan digest and exact withdrawal timestamp.
+Receipt-write failure rolls secret removal, binding changes and publication changes
+back together. Legacy materializations continue their existing withdrawal protocol
+but never acquire a backfilled ownership receipt.
+
+Recovery validates the retained publication/activation proof, absence of its owned
+secret envelopes, the original ownership link and all unchanged non-secret table
+hashes. It accepts only the exact saved post-state until a separately authenticated
+configuration/workload cleanup receipt supersedes current rows. Original ownership
+and materialization hashes remain unchanged. Missing, altered or reordered evidence
+and changed remaining settings fail closed; keyless worker handoff never rewrites
+the receipt. Migration rollback refuses any retained receipt. Object withdrawal now
+uses the same clock-first lock order.
+
+This records local PostgreSQL envelope withdrawal only. Native credential/grant
+revocation remains governed by its existing retirement protocol. Object-storage
+envelope withdrawal still needs its own linked transition receipt; independently
+removed object envelopes cannot be normalized by the PostgreSQL witness. Environment
+metadata retirement, operational borrower retirement, published release withdrawal
+and whole-stage terminal compensation remain separate gaps. Public full-stage
+admission and live qualification remain gated/deferred.
+
+### Atomic object-storage secret withdrawal ownership receipt
+
+Object publication withdrawal now authenticates the original materialization and
+configuration ownership before removing managed envelopes. Its locked secret rows
+and runtime-observation inventory prevent reload observations from disappearing
+through cascading deletion. External field owners, managed fields and GitOps
+sources block withdrawal for owned materializations. Legacy stages retain their
+withdrawal behavior and never receive backfilled ownership.
+
+Withdrawal saves a bounded non-secret configuration manifest in the same transaction
+as envelope removal, credential revocation, grant deletion and publication withdrawal.
+The receipt pins original ownership, the prior configuration manifest, the exact
+object publication digest and withdrawal time, and the PostgreSQL withdrawal receipt
+when present. Owned mixed stages must withdraw PostgreSQL bindings first. Recovery
+normalizes these two authenticated transitions in that order without changing the
+original ownership digest or native materialization hashes. A changed predecessor,
+missing receipt, changed remaining configuration or altered publication proof fails
+closed. Keyless worker handoff preserves the same receipt. Publications with no
+managed envelopes retain an unchanged configuration manifest and still require
+their saved transition receipt. Migration rollback refuses any retained evidence.
+
+This completes the local managed-envelope ownership transitions. It records local
+gateway withdrawal only; provider grant revocation still requires its existing
+native retirement proof. The PostgreSQL withdrawal witness still requires a
+non-empty secret list; zero-binding PostgreSQL publications need an explicit
+unchanged-manifest transition before owned object-only stages can complete that
+ordered protocol. Operational borrowers, environment/deployment metadata
+retirement, published release withdrawal and whole-stage terminal compensation
+remain separate work. Public full-stage admission remains gated and live provider
+qualification remains deferred at the user's request.
+
+### Zero-binding PostgreSQL withdrawal transition
+
+Owned object-only stages can now activate, publish and withdraw an empty
+PostgreSQL binding roster without inventing a configuration change. Reservation
+and static activation replay authenticate the original frozen workload catalogue;
+an empty activation journal cannot erase non-empty captured bindings. The original activation/publication journals
+still authenticate the exact empty binding and secret roster. Withdrawal records
+the original ownership digest, publication digest and timestamp atomically, with
+an unchanged configuration manifest. A publication with managed envelopes still
+requires an actual secret-table transition; an empty publication must preserve all
+eleven original table hashes. The original ownership receipt is never rewritten.
+
+Owned replay requires the withdrawal receipt even when current rows still equal
+the original manifest. Missing evidence cannot be reconstructed from equality.
+Receipt-write failure rolls back publication withdrawal; changed configuration
+blocks the transition. Legacy stages without original ownership do not acquire a
+backfilled receipt. Object withdrawal authenticates and pins this empty PostgreSQL
+predecessor in the same order as a non-empty predecessor, including keyless worker
+handoff and replay after object envelopes have been removed.
+
+This closes the zero-binding PostgreSQL publication gap identified above.
+Operational borrower retirement, environment/deployment metadata retirement,
+published release withdrawal and whole-stage terminal compensation remain separate
+work. Public full-stage admission remains gated; live provider qualification stays
+deferred at the user's request.
+
+### Authenticated environment metadata borrower inventory
+
+The private leased environment borrower report requires original configuration
+ownership and completed native workload retirement. It links its counts to the
+original ownership and native plan/observation digests, plus the exact settings
+and workload cleanup receipts when present. It can run before or after those
+catalogue cleanups; legacy materializations without original ownership, stale
+leases, protected/changed environments and altered cleanup/native evidence return
+no partial inventory. Original ownership and materialization records are retained.
+
+The fixed report covers all 21 direct foreign-key borrowers of
+`project_environments`, including composite project/slug references. It counts
+retained invocations, admissions, invocation domains, queue projections, custom
+domains, dev-bridge sessions, GitOps sources/graphs/field ownership, workload
+intents/specs, copied reference/configuration rows, release sets, qualifications
+and scaling state. Expired, revoked, detached and inactive records still count.
+Invocation/scaling rows also count through target App scope when the environment
+UUID is missing or inconsistent. Matching both predicates counts the row once;
+unrelated source-environment rows are excluded. A database catalogue test requires
+explicit review when another foreign key begins borrowing environment metadata.
+
+Scoped deployments are counted separately as original clone targets or foreign
+rows. Ownership comes from the authenticated original workload/deployment pairs,
+never from reason labels or environment scope alone. The query returns counts
+only; it exposes no invocation content, Git definitions or credential values.
+
+This report observes references, not operational closure or deletion authority.
+Zero counts do not authorize a cascade, delete environment/deployment metadata,
+withdraw published releases or clear whole-stage compensation blockers. Remaining
+retirement protocols must also cover indirect and non-foreign-key references.
+Public full-stage admission remains gated; live provider qualification remains
+deferred.
+
+### Atomic unborrowed environment metadata cleanup
+
+The private leased environment cleanup requires completed native workload
+retirement, original configuration ownership, settings cleanup and workload
+catalogue cleanup. It locks the original environment before inventory and briefly holds SHARE writer locks on the
+known scope-only borrower tables through receipt verification. The worker lease
+bounds lock waits. It removes exactly that unprotected UUID/account/project/slug row. All 21 direct environment
+foreign-key borrowers must be absent. Retained deployments, scope-only queue and
+runtime references, external/GitOps owners, provider bindings, policies, approvals,
+promotions, cleanup jobs and other clone owners also block removal. Their own
+protocols must retire those rows; this transaction never cascades over them.
+The first supported path therefore covers materialized stages without retained
+target deployments. Deployed stages remain blocked pending deployment retirement.
+
+A new bounded receipt links the exact workload cleanup digest, original environment
+UUID, all eleven post-state table hashes and cleanup time. Receipt persistence and
+environment removal commit atomically; a write failure restores the environment.
+Original ownership, materialization, source captures and native/settings/workload
+journals remain retained. Historical secret-revocation tombstones, runtime-change
+markers and binding-policy history are retained evidence, not rows to cascade away.
+Compensated clone history without a direct environment ownership claim is also
+retained. Active clone operations and direct claims on the original UUID still
+block deletion. Abstract account/runtime configuration scope enums are not
+environment labels.
+
+Native terminal replay reconstructs the original environment identity from retained
+materialization only when an environment cleanup receipt exists. It then verifies
+the entire receipt chain, unchanged other ten table hashes, exact environment
+absence, time ordering and absence of new borrowers before accepting the original
+native plan. A replacement with either the old UUID or the old project/slug,
+repopulated settings, late scoped references, altered receipts or a missing witness
+blocks replay. Settings/workload cleanup retries continue to authenticate this same
+post-state and never redispatch native requests or rewrite original ownership.
+
+Migration downgrade refuses retained environment-cleanup evidence and keeps a
+restrictive link to the workload predecessor. Database inventory tests require
+review of new direct foreign keys and concrete environment/scope columns before
+extending deletion authority. Operational borrower retirement, deployment metadata
+retirement, published release withdrawal and whole-stage terminal compensation
+remain separate work. Public full-stage admission remains gated and live provider
+qualification remains deferred.
+
+### Authenticated deployment borrower inventory
+
+The private PostgreSQL store now inventories all 44 direct deployment foreign-key
+constraints for the original clone target deployments after authenticated native
+retirement. It verifies the original configuration ownership and current cleanup
+proof chain, rejects legacy ownership and stale leases, and retains counts for
+inactive records, cascades, and SET NULL references. Constraint names distinguish
+multiple references from the same table. A database schema coverage test requires
+new deployment foreign keys to enter the explicit SQLC inventory.
+
+This report does not authorize deployment deletion. Soft and scope-only references,
+owner-specific retirement of operational records, and an authenticated artifact
+removal transition that preserves original native replay are still required.
+Full-stage admission and live provider qualification remain gated.
+
+### Atomic clone deployment artifact cleanup
+
+The private PostgreSQL cleanup can now remove originally copied deployment
+artifacts after authenticated native retirement and workload catalogue cleanup.
+It verifies the unchanged lossless artifact, original settings hashes, permanent
+native fencing and the exact runtime environment identity before removal. Only
+copied sidecar layers/signals and that identity may cascade; the other direct
+foreign-key references and all 20 typed soft references block removal, including
+retained inactive history. Other operations' frozen source/target references
+remain borrowers; this operation's original target roster remains evidence.
+
+Deletion and its receipt commit together. The receipt binds the original native
+plan and observation hashes, exact workload cleanup receipt, original environment
+UUID, deployment count and cleanup time. Retirement replay accepts absent target
+artifacts only with this authenticated transition, rechecks their absence and
+borrowers, and preserves the original native plan without dispatching native work.
+Publication continues to require live artifacts. Parent receipts and cleanup
+migration rollback cannot discard retained evidence.
+
+The private transition holds the deployment table in SHARE ROW EXCLUSIVE mode
+and typed soft-reference tables in SHARE mode through deletion and validation;
+PostgreSQL foreign-key locking and these writer fences prevent cascade races and
+replacement artifacts during commit. These brief global writer pauses are lease
+bounded. This is not a native disk/image garbage collector or owner authority for
+unrelated operational records. Whole-stage final compensation, published release
+withdrawal, remaining operational retirement and provider qualification are still
+required before full-stage admission can be enabled.
+
+### Workload cleanup evidence in compensation reconciliation
+
+The private compensation report now authenticates a present workload retirement
+journal and its original configuration ownership, then reports the exact hashes
+of each present settings, workload, deployment and environment cleanup receipt.
+Missing cleanup steps remain explicit blockers. A missing native predecessor for
+retained cleanup evidence, changed receipt or changed post-state rejects the
+entire report rather than returning partial authenticated evidence.
+
+Once all four cleanup receipts authenticate, the report includes a stable workload
+closure digest binding original ownership, native plan/observation, source
+compensation, capture retirement and the four cleanup receipts. It recognizes
+only frozen configuration/resource identities and versions, independently of
+claimed resource status. Foreign versions, duplicate labels hiding different
+identities, unknown resource kinds and release withdrawal remain blockers. The
+report retains the current operation revision and resource inventory hash; worker
+handoff preserves the cleanup digest while requiring the current lease.
+
+This read does not mutate the operation, dispatch native work or enable the
+generic terminal transition. A dedicated terminal writer must still consume the
+complete authenticated report and close remaining ownership protocols. Public
+full-stage admission and native/provider qualification remain gated.
+
+### Fenced compensation reconciliation
+
+Reconciliation now acquires the deployment borrower writer fence followed by
+the environment scope borrower writer fence before reading any cleanup evidence.
+Both remain held through final lease validation and transaction commit, including
+soft-reference partition children. This prevents scope-only writers from entering
+between cleanup verification steps after the original rows have been removed.
+The writer pauses remain bounded by the compensation worker lease.
+
+The verification is a reusable transaction helper so a dedicated terminal writer
+can consume the complete report and persist its receipt in the same transaction.
+A returned report is still only evidence of the committed read: a subsequent
+borrower invalidates a later reconciliation. It grants no terminal mutation or
+native dispatch authority. The terminal receipt and writer remain pending.
+
+### Private terminal compensation receipt
+
+The dedicated private completion writer now consumes the complete compensation
+report in the fenced transaction. Every data, native workload, original ownership
+and settings/workload/deployment/environment cleanup proof must authenticate;
+missing steps, unknown resources and published releases remain blockers. It saves
+the report and terminal receipt, increments the operation revision once, marks
+the operation compensated and clears its worker lease atomically. Original
+resource inventory, error history and retirement journals remain unchanged.
+
+`CloneCompensationReceiptMaxBytes` bounds the saved report to 4 KiB. The receipt
+digest binds the report, completion time, original project/source/target identity
+and completing worker token digest. That digest is private and never appears in
+the returned receipt. Replay requires the same completing token and pre-terminal
+revision, the terminal operation revision and unchanged original inventory. An
+expired worker can replay its committed receipt but cannot authorize a new write.
+Replay returns historical completion evidence; it does not revalidate a new
+cleanup scope or authorize native dispatch. A failed commit leaves neither a
+terminal operation nor a receipt.
+
+Foreign keys retain the capture retirement, deployment cleanup and environment
+cleanup predecessors, including their own retained proof chains. Migration
+rollback refuses to discard any terminal receipt. Generic terminal transitions
+remain guarded. This closes the modeled private unpublished compensation path;
+worker integration, published-release withdrawal, other operational retirement
+and native/provider qualification remain before public full-stage admission.
+
+### Terminal compensation in the clone worker
+
+Compensating operations with a common-checkpoint inventory now enter the private
+metadata completion path before legacy fence abandonment. The admitted worker
+uses the current renewed lease to replay settings, workload, deployment and
+environment cleanup in dependency order, then invokes the dedicated terminal
+writer. Each step authenticates its original native retirement and ownership
+evidence; missing proofs still defer compensation. With no driver installed, this
+path dispatches no native retirement. It does not alter resource labels or original
+journals.
+
+Host admission is checked before each step. A lost terminal commit response is
+retried once with the original completing token and revision, without renewal or
+another cleanup pass. A verified terminal receipt advances the local operation
+view and clears its local lease; the queue loop then skips lease release, as it
+already does after publication. Failed predecessors stop subsequent steps and
+retain the ordinary lease-release/backoff behavior. Stores without this private
+protocol and workers without host admission cannot use it. Public full-stage
+admission and native/provider qualification remain gated.
+
+### Explicit workload retirement driver in the worker
+
+Private server wiring can now supply a workload retirement driver to the clone
+worker. Before metadata completion, the worker runs the existing durable
+reservation, claim, native dispatch, independent observation and proof-finish
+protocol. The renewed compensation lease returned by that protocol becomes the
+lease for every subsequent cleanup and terminal write. A failed or uncertain
+native step stops metadata cleanup; requested operations recover by observation
+without repeating dispatch. Already-retired journals revalidate saved proof
+without calling the driver again.
+
+The default driver is absent, preserving the existing proof-consumption path.
+This wiring does not qualify an adapter: there is still no built-in native owner
+adapter proving permanent closure of queued scheduler work and all original
+runtime resources. Controlled-driver tests exercise ordering, unknown outcomes,
+lease propagation and replay, not live native qualification. Source compensation,
+capture retirement, other data-owner protocols and public full-stage admission
+retain their existing gates.
+
+### Permanent scheduler catalogue request fencing
+
+Claiming the original workload retirement journal now serializes deployment and
+instance writers before reauthenticating its frozen plan. Committing `requested`
+permanently closes catalogue admission for every original target deployment UUID
+and the complete `environment-clone:<operation-id>` deployment request namespace.
+Database guards cover scheduler instance creation, including direct exclusive and
+qualification inserts, as well as attempts to restart or reassign existing
+instances. They permit draining and terminal cleanup. Deployment identity and
+ownership cannot be relabelled to evade the fence, while metadata deletion remains
+possible. The original journal retains the fence after metadata deletion and
+worker handoff; requested ownership cannot be deleted, rewritten or moved back to
+planned. Downgrading the guard migration refuses retained requested or retired
+journals.
+
+Deployment identity admissions and instance admissions or state changes require
+READ COMMITTED isolation. Existing production writers use this isolation; an old
+REPEATABLE READ or SERIALIZABLE snapshot must retry with a current snapshot rather
+than overlook a newly committed retirement request. Concurrent tests cover an
+instance insert already waiting when the request becomes durable, and a writer
+holding a snapshot from before that request.
+
+These guards close future control-plane admission only. They do not cancel an
+already issued native RPC, prove absence of existing processes, cgroups, networks,
+routes or publication, or qualify the native owner adapter. Independent native
+observation and runtime request closure remain required before metadata cleanup.
+Public full-stage admission and live provider qualification remain gated.
+
+### Qualification dispatch closure before workload retirement
+
+The original retirement claim now also fences qualification execution writers.
+An instance admitted before that claim cannot subsequently mark its immutable
+qualification execution as dispatched. The guard covers both original target
+UUIDs and execution frames in the originally owned environment; retirement with
+the existing cleanup capability remains available. New execution admission and
+first dispatch require READ COMMITTED isolation, so a prior transaction snapshot
+cannot hide a committed fence. Execution retention also rejects TRUNCATE. Qualification cleanup reserves
+instance writer intent before updating its execution frame, matching the clone
+fence lock order and allowing concurrent cleanup and claim transactions to finish
+without a lock cycle. Native I/O remains outside these bounded state transactions.
+
+Workload retirement accepts native observation only while all three writer
+fences are held and the original scheduler inventory is closed. Any remaining
+original instance row, regardless of its state, or unretired original
+qualification execution blocks the receipt. Execution frames survive missing
+instance/request metadata and still block acceptance. Reads and replay of a
+retired workload journal recheck this closure before supplying downstream cleanup
+authority. Unrelated execution records do not authorize or block this clone.
+
+Tests reconstruct original execution frames and controlled receipts to verify
+storage fencing, unknown dispatch outcomes, cleanup capabilities, orphaned
+frames and queued dispatch writers. They do not run native VMs or qualify the
+host adapter. An issued native RPC still requires original host retirement;
+ordinary wake and migration RPC closure and complete physical resource
+observation remain gaps. Public full-stage admission remains gated.
+
+### Retaining original migration handoff evidence
+
+The clone retirement writer fence now includes `migration_leases`. After the
+original workload journal becomes requested, a migration lease for an original
+target deployment cannot be inserted, renewed, replaced, reassigned or deleted.
+An expired lease retains the same protection: expiry does not prove that a source
+pause, destination restore or delayed resume has finished. An in-flight original
+snapshot completion may record its handles once, and exact completion replay is
+allowed; it cannot replace completed handles or renew handoff authority.
+
+Instance and deployment deletion cannot cascade away an original fenced lease.
+TRUNCATE likewise refuses retained clone migration ownership. Migration admission
+and deletion require READ COMMITTED isolation so stale snapshots cannot overlook
+a newly requested fence. Unrelated source migration leases keep their existing
+reservation, completion, renewal and release behavior. Downgrading the guard
+migration refuses any requested or retired original workload journal.
+
+These guards preserve unresolved handoff evidence and block new lease authority;
+they do not supply native closure. The existing instance-absence check prevents
+accepting workload retirement while the retained handoff still has its original
+instance. There is deliberately no generic lease-deletion exception for expiry,
+Destroy success or an instance state label. A future original host-proof protocol
+must close both source and destination producers before collecting this evidence.
+Ordinary wake RPC closure, migration host closure and public full-stage admission
+remain gated. Storage tests use no native VMs or live provider qualification.
+
+### Durable ordinary clone wake dispatch ownership
+
+Schedd's production VMM router now records original instance, app, deployment,
+node, wake ID, request namespace and boot method before sending ordinary clone
+cold boots, snapshot restores or paused warm-pool restores. The PostgreSQL
+recorder verifies current instance ownership and boot state under the deployment
+and instance writer locks, then rejects any requested or retired clone fence.
+Queued dispatch checks run after the fence commits; stale transaction snapshots
+cannot authorize dispatch. Unrelated source wakes acquire no clone journal row.
+
+The dispatch table has no cascading parent foreign keys. Its original identity
+survives instance and deployment deletion. Rows cannot be rewritten, deleted or
+truncated, and a duplicate dispatch is rejected rather than treating an unknown
+RPC outcome as permission to retry. Workload retirement and receipt replay check
+these original dispatch rows in addition to instances and qualification frames.
+Database downgrade refuses retained dispatches or requested/retired fences.
+
+This is dispatch admission and evidence retention, not native closure. Neither a
+successful wake response, a timeout, Destroy success nor a stopped instance
+collects the record. A subsequent protocol must bind independent host-generation
+and producer-closure evidence before releasing original wake authority. Existing
+pre-upgrade RPCs are not retroactively recorded. Migration source/destination
+closure, legacy wake qualification and public full-stage admission remain gated.
+The tests use PostgreSQL and controlled router clients; native metal and leak
+acceptance have not been run in this managed environment.
+
+### Authenticated original wake recovery inventory
+
+A private PostgreSQL recovery reader now pages the retained ordinary wake
+journal under the current compensation lease. Before reading, it authenticates
+the original source compensation, materialization and frozen workload retirement
+plan and requires a requested or retired journal. Lease authority is checked
+again before commit. Failed authentication returns no partial inventory.
+
+Pages contain only non-secret original instance, app, deployment, node, wake ID,
+request namespace, boot method and dispatch timestamp. Selection uses original
+target deployment IDs or the complete original operation request namespace,
+without joining current instance or deployment rows. Requests whose instance or
+extra deployment metadata was removed remain discoverable; another operation's
+requests remain excluded. UUID ordering and an exclusive cursor support stable
+continuation after worker handoff. The page cap is centrally defined by
+`CheckpointWorkloadWakeRecoveryBatchMax` and invalid bounds or cursors fail before
+reading. Returned records are independent copies of the original journal.
+
+This reader neither closes a producer nor releases dispatch evidence. Reading an
+inventory cannot turn an unknown wake into an accepted retirement receipt.
+Native host-generation correlation, independent producer-closure observations,
+proof-backed collection and migration source/destination recovery still need a
+qualified protocol. Public full-stage admission remains gated. PostgreSQL tests
+exercise metadata absence, operation isolation, stale/foreign leases, paging,
+adapter mutation, empty inventories and recovery across worker handoff without
+native VMs or live provider qualification.
+
+### Authenticated retained migration recovery inventory
+
+A private recovery reader now pages original fenced migration holdings under the
+current compensation lease. It re-authenticates original source compensation,
+materialization and the frozen workload retirement plan, requires the permanent
+requested/retired fence and checks worker authority again before commit. Invalid
+cursors or bounds fail before reading; the page cap lives centrally in
+`CheckpointWorkloadMigrationRecoveryBatchMax`. Failed authentication returns no
+partial holding or cleanup capability.
+
+Selection uses original target deployment IDs or the operation request namespace
+and includes live, expired, pending and completed leases, including stopped
+instances. Source-stage and foreign-operation leases are excluded. Instance and
+deployment rows remain protected by the previously installed migration retention
+guards. UUID ordering supports stable identity continuation across worker
+handoff. An original delayed snapshot completion may still populate handles;
+subsequent recovery reads observe those handles without replacing source lease
+identity or granting renewal authority. Returned holdings are independent copies.
+
+The original source node, token, creation/expiry times and snapshot handles stay
+in the private lease field, which is excluded from JSON output. The separately
+named scheduling node is current catalog ownership; it does not identify an
+original destination launch, prove that adoption completed or authorize a resume.
+Reading a holding supplies neither native closure nor permission to delete it.
+Expiry, completion and terminal instance state remain insufficient evidence.
+
+PostgreSQL tests cover paging, current worker authentication, expired/completed
+holdings, delayed original completion, source-versus-scheduler identity, private
+capability serialization, adapter mutation and recovery after worker takeover.
+No native VM or live provider is exercised. Destination adoption dispatch
+ownership, source/destination host-generation correlation and proof-backed
+collection still need a qualified native protocol; public full-stage admission
+remains gated.
+
+### Retained migration destination dispatch ownership
+
+The production scheduler router now records clone migration adoption before the
+vmmd RPC. PostgreSQL authenticates the original migrating instance, completed
+unexpired source lease, snapshot handles and distinct existing destination node.
+The record binds original instance, app, deployment, wake and request identities
+to source and destination ownership. The permanent retirement fence serializes
+with dispatch admission; stale transaction snapshots cannot admit adoption.
+
+One dispatch is admitted per original instance and source lease token. A lost RPC
+reply does not authorize retry or redirection. Records are immutable, have no
+catalog cascade and survive source lease and instance cleanup. Scheduler closure
+checks this retained inventory independently of current catalog rows, so an
+unresolved destination prevents an all-clear retirement receipt. Evidence-bearing
+migration rollback is rejected. Unrelated deployments retain their existing
+adoption behavior without creating clone records.
+
+PostgreSQL tests cover ownership, pending snapshots, queued fence races, stale
+snapshots, retry/redirection, evidence retention and rollback. Router tests check
+record-before-RPC ordering and unknown replies. This records dispatch ownership,
+not native completion. Authenticated destination recovery, source cancel/resume
+closure, host-generation correlation and proof-backed release remain pending.
+No native VM or live provider qualification was performed; public full-stage
+admission remains gated.
+
+### Authenticated migration destination recovery inventory
+
+A private recovery reader now pages retained destination adoption dispatches under
+the current compensation lease. It authenticates original source compensation,
+materialization and the frozen workload retirement plan, requires the permanent
+requested/retired fence and rechecks worker authority before commit. Requests
+with invalid UUID cursors or bounds fail before reading; the centrally defined
+`CheckpointWorkloadMigrationAdoptionRecoveryBatchMax` caps each page.
+
+Selection uses original target deployment IDs or the complete original operation
+request namespace without joining current catalog or source lease rows. UUID
+ordering by dispatch identity preserves continuation when one instance has
+multiple original source leases. Source token, snapshot handles and original
+lease timestamps remain in a private source lease field excluded from JSON.
+Results are independent copies of immutable evidence, recoverable after worker
+handoff and source metadata deletion.
+
+Recovery does not authorize replay, resume, evidence deletion or an all-clear
+receipt. Source cancel/resume closure, destination host-generation correlation
+and proof-backed release still need a qualified native protocol. PostgreSQL tests
+exercise catalog absence, namespace isolation, paging, private serialization,
+worker authentication and handoff. No native VM or live provider was exercised;
+public full-stage admission remains gated.
+
+### Retained source cancel/resume dispatch ownership
+
+The production scheduler router records clone source cancellation before its
+vmmd RPC, because cancellation can resume the source workload. Admission is
+serialized with the permanent retirement fence and requires a current database
+snapshot. The journal binds original instance, app, deployment, wake, request
+namespace and source lease identity. It permits the normal durable rollback to
+parked, which clears the instance token, while authenticating the retained source
+lease. Pending and expired leases remain ownership evidence on this cancel path.
+
+One dispatch is allowed per instance and original lease token. Lost replies do
+not authorize redispatch. Records are immutable, survive source cleanup and
+prevent an all-clear retirement receipt independently of current catalog rows.
+Evidence-bearing rollback is rejected. Unrelated deployments keep their existing
+cancel behavior without clone journaling; missing instance ownership fails closed
+because it cannot exclude a fenced clone request.
+
+PostgreSQL tests cover source ownership, parked rollback, pending/expired leases,
+queued fence races, stale snapshots, retention and migration replay. Router tests
+verify record-before-RPC ordering and rejection after an unknown reply. This is
+control-plane dispatch evidence. Native host-generation correlation and
+proof-backed release remain pending.
+Native KVM acceptance and live provider qualification were not performed;
+public full-stage admission remains gated.
+
+### Authenticated source cancel/resume recovery inventory
+
+A private recovery reader now pages immutable source resume dispatches under the
+current compensation lease. It authenticates original source compensation,
+materialization and the frozen retirement plan, requires the requested/retired
+fence and rechecks worker authority before commit. Invalid cursors and bounds
+fail before reading; `CheckpointWorkloadMigrationResumeRecoveryBatchMax` centrally
+caps each page. Failed authentication returns no partial private source identity.
+
+Selection uses original target deployment IDs or the complete operation request
+namespace without joining current source leases, instances or extra deployment
+rows. Dispatch UUID ordering preserves independent lease identities. The original
+source token and timestamps remain in a private field excluded from JSON; the
+source identity type makes no claim about snapshot completion or current lease
+state. Returned records are independent copies, recoverable after worker handoff.
+
+PostgreSQL tests cover original field preservation, pending/expired source
+ownership, source and extra catalog deletion, namespace isolation, paging,
+private serialization, invalid bounds and stale/foreign workers. A recovery read
+neither permits resume replay nor proves native closure or evidence release.
+Host-generation correlation, native producer closure and proof-backed release
+still require a qualified native protocol. No native VM or live provider was
+exercised; public full-stage admission remains gated.
+
+### Read-only native launch incarnation evidence
+
+The native backend now exposes a locked read of the durable launch journal and
+an observation that requires an exact pinned instance, launch generation, kernel
+boot ID and PID/start-time incarnation. Missing, damaged, prior-boot and
+unconfigured journals fail without partial evidence. Reads preserve the original
+record and return independent values. Revocation, exit and resource removal are
+reported separately; no transition is inferred from another flag.
+
+This accessor supplies physical incarnation evidence only. The serving vmmd must
+still authenticate its node, and a qualified protocol must bind the original
+scheduler dispatch to that native generation. The existing physical journal does
+not authenticate app/deployment provenance. Observation does not close producers,
+authorize replay or cleanup, release retained evidence or admit public copies.
+Native actions must revalidate ownership under their own producer locks.
+
+Pure Go journal tests exercise original identity, caller mutation, pinned identity
+mismatches, revocation, canceled reads, missing/damaged records and kernel reboot.
+Launch and cleanup behavior is unchanged. Dedicated native KVM acceptance and
+live provider qualification were not performed; native correlation, producer
+closure and proof-backed release remain pending. Public full-stage admission
+remains gated.
+
+### Exact original archived native generation evidence
+
+The native backend now reads a retained launch archive by the exact pinned
+instance, generation, kernel boot ID and PID/start-time incarnation. It takes
+the same instance journal lock as replacement and validates the private archive
+path, strict record shape, current kernel boot and original retirement flags.
+It reads only the selected archive: a current or newer launch cannot substitute
+for missing original evidence. Current instance record absence does not erase an
+existing original archive. Daemon restart on the same kernel preserves access.
+
+Archive observations preserve exit and resource removal as separate fields.
+Fallback replacement may retain an exited generation whose resources were reused;
+reading that archive must not infer resource closure or authorize teardown of the
+new owner. Reads do not mutate archives or provide cleanup, replay or evidence
+release authority. Exact archived identity is a prerequisite for binding original
+scheduler requests to physical generations, not that binding itself.
+
+Pure Go tests cover actual journal replacement, daemon reconstruction, current
+metadata absence, original identity preservation, caller mismatches, canceled
+reads and missing, malformed, unretired, symlinked, public or prior-boot archives.
+Launch and cleanup behavior is unchanged. Native request provenance, producer
+closure and proof-backed release remain pending, as does dedicated native KVM
+qualification. No live provider qualification was performed; public full-stage
+admission remains gated.
+
+
+### Original qualification request to native generation observation
+
+The manager now exposes read-only correlation of a qualification execution with
+its already durable native generation binding. It checks the configured local
+node and complete original execution frame, then reads the incoming and physical
+journals under their existing incoming-before-physical lock order. The physical
+generation, kernel boot and lease must match the original binding. An unbound,
+missing or changed publication returns no partial evidence; a newer generation
+cannot substitute for the original. Private cleanup and artifact capabilities
+are omitted from the returned descriptor.
+
+Request revocation and physical authorization, revocation, exit and resource
+removal remain independent observations. Revoked requests remain observable
+without granting replay, cleanup, producer closure or evidence release authority.
+Daemon reconstruction on the same kernel preserves the original correlation.
+This uses the existing qualification binding; ordinary wake and migration request
+provenance still require their own native protocol.
+
+Pure Go tests cover exact original frames, foreign app/deployment/wake/attempt
+and cleanup capabilities, unbound requests, configured node authentication,
+changed physical leases and generations, revocation and daemon reconstruction.
+Launch and cleanup behavior is unchanged. Dedicated native KVM qualification,
+native producer closure and proof-backed release remain pending. No live provider
+qualification was performed; public full-stage admission remains gated.
+
+
+### Pinned qualification process incarnation observations
+
+Qualification recovery can now require the exact previously observed native
+instance, generation, kernel boot, PID and start time in addition to the full
+original execution frame and configured node. A prepared generation becoming an
+authorized process changes that identity and cannot silently satisfy the earlier
+pin. Foreign or changed identities and canceled reads return no partial evidence.
+Revocation remains observable for the same incarnation without implying exit or
+resource removal. Portable tests exercise these transitions and mismatches.
+
+Ordinary wake deployment and wake IDs still arrive through correlation metadata;
+these fields are not an authenticated original dispatch capability. A separate
+scheduler-to-vmmd protocol must carry and durably bind original dispatch ownership
+before ordinary native preparation. This observation API does not introduce that
+protocol, change launch behavior or authorize closure or release. Native KVM and
+live provider qualification remain unperformed; public full-stage admission stays
+gated.
+
+### Explicit retained wake dispatch transport contract
+
+A private versioned metadata envelope now carries the retained ordinary clone
+wake dispatch record: original instance, app, deployment, node, wake, clone
+request reason, requested method and UTC dispatch timestamp. Encoding accepts
+complete canonical identities only and refuses to overwrite an existing envelope.
+Decoding checks the configured local node and rejects missing, duplicate, empty,
+unknown and unsupported fields without returning partial provenance. Ordinary
+correlation headers cannot supply any missing ownership fields. Authentication
+metadata and unrelated tracing metadata are preserved.
+
+This codec requires the existing authenticated scheduler-to-vmmd channel; it does
+not itself authenticate a peer. Its input must be the retained scheduler record,
+not current instance state or reconstructed trace fields. It is not yet wired
+into ordinary wake RPCs. Sender-side retained record retrieval, receiver-side
+payload matching, durable incoming ownership and physical generation binding
+must precede granting native launch authority. Delayed-producer revocation,
+closure and proof-backed evidence release also remain pending. Portable tests
+cover round trips and ambiguous, incomplete and foreign-node envelopes. No native
+VM or live provider was exercised; public full-stage admission remains gated.
+
+### Transactional original wake dispatch preparation
+
+The store now provides sender-side dispatch preparation that records admission
+and reads the retained original ownership in one read-committed transaction.
+Table locks follow the retirement fence's deployment-before-instance order, then
+an instance row lock serializes the original-dispatch check with other producers.
+A previously retained clone dispatch fails rather than becoming permission to
+retry, even if current deployment metadata has changed. The returned clone frame
+uses the database's original wake ID, reason and timestamp; it becomes available
+only after commit. Any error, including an uncertain commit, returns no frame.
+Ordinary non-clone wakes return no clone envelope.
+
+This additive store surface is not yet wired to the router or native launch.
+Transport integration, receiver payload matching, durable native incoming
+ownership, physical binding and delayed-producer closure remain pending. No
+schema or launch behavior changes are introduced. Public full-stage admission
+remains gated, and no native VM or live provider qualification is claimed.
+
+### Gated router transport for original wake ownership
+
+The router has an additive retained-dispatch preparer that replaces the existing
+recorder for the selected admission, verifies the returned instance, app,
+deployment, node and requested method, and attaches the private ownership
+envelope before cold boot, restore or paused restore. Source wakes with no clone
+record carry no envelope. Subsequent correlation metadata cannot replace the
+retained original wake identity. Admission errors or foreign ownership return
+before the VM RPC.
+
+This path requires a separate client capability before admission. Older clients
+cannot silently drop ownership, and the production VMM client rejects support
+until durable native incoming binding exists. Production schedd configuration
+continues to use its current recorder. The vmmd generic wake parsers also refuse
+any checkpoint ownership envelope, including malformed or future fields, before
+ordinary VM effects. Tagged requests cannot fall back to generic launch on this
+receiver. The sender capability remains gated until a qualified native owner can
+handle incoming admission, physical binding and delayed-producer revocation.
+
+Portable router and in-process RPC tests cover original transport, metadata
+preservation, single preparation, denied or foreign admission, ordinary source
+wakes, unsupported clients and rejection before VM effects. Durable native
+ownership and closure, proof-backed release, native KVM qualification and live
+provider qualification remain pending. Public full-stage admission remains gated.
+
+### Durable incoming checkpoint wake claims and tombstones
+
+The native owner now has a private incoming wake journal containing the exact
+retained scheduler dispatch, an independent incoming generation, kernel boot,
+acceptance timestamp and separate claim/revocation flags. Its strict record reader
+rejects missing, duplicate, unknown, damaged, public, foreign-instance or prior-boot
+evidence. Claims and revocation use the existing canonical incoming instance lock
+shared with qualification and generic native producers. A claim never replays;
+pre-dispatch revocation persists an exact tombstone that survives daemon restart.
+Errors, including lost publication replies, return no partial incoming ownership.
+
+Wake and qualification records cannot borrow the same incoming instance. A new
+wake claim or tombstone also refuses an existing physical owner. Generic native
+producers fail when this namespace contains a retained or damaged record. This
+first version deliberately grants no native producer capability: it does not
+bind a physical generation, revoke an already bound process, prove producer
+closure or release evidence. It is not exposed through a serving wake handler.
+Production sender and receiver support remain gated until physical binding,
+request payload matching and delayed producer revocation are implemented.
+Manager claim and revoke accessors require the configured local compute identity
+and a journal-backed backend; their descriptors carry incoming evidence only.
+
+Portable journal tests cover restart, pre-dispatch tombstones, duplicate and
+foreign claims, publication uncertainty, damaged and prior-boot records,
+concurrent claim/revoke, cancellation, physical ownership and qualification
+namespace exclusion. Dedicated native KVM acceptance remains pending; no native
+VM or live provider was exercised. Public full-stage admission remains gated.
+
+### Planned checkpoint wake physical generation binding
+
+The native manager can now bind a claimed, unrevoked original dispatch to one
+planned physical generation and validated workload lease. The incoming record is
+published first under the shared incoming lock; only then is the prepared physical
+journal published under its own lock. Qualification ownership, existing physical
+owners, changed requests, invalid workload leases and repeated binding are
+rejected. A retained binding cannot be replaced after an uncertain write, even
+when the physical publication is missing. Errors return no partial ownership.
+
+The incoming schema now stores the planned native generation and lease. Strict
+version-1 records remain readable; binding upgrades them without changing the
+original incoming generation, dispatch, boot identity or acceptance timestamp.
+Generic producers remain blocked. Incoming revocation preserves this binding and
+does not imply physical revocation, process exit or resource removal. Returned
+NativeGeneration is planned ownership, not physical publication or launch proof.
+
+Portable tests cover exact generation/lease publication, restart, duplicate
+binding, generic producer exclusion, foreign requests, revoked claims, invalid
+leases, publication uncertainty at both writes, manager preparation and legacy
+schema upgrade. Tagged serving still requires frozen request payload matching,
+native producer capability validation and durable physical revocation. Native
+KVM acceptance, producer closure and proof-backed evidence release remain pending.
+No live provider qualification was performed; public full-stage admission remains
+gated.
+
+### Ordinary checkpoint wake request commitment
+
+The private request-aware preparation surface now retains a domain-separated
+SHA-256 commitment to the complete exported `fcvm.WakeRequest` before publishing
+its planned physical generation. It checks the original instance, app,
+deployment, dispatch method, workload plan and physical RAM/CPU/boost settings.
+Builder, disposable execution, app-task, paused-pool and already-prepared secret
+handoffs are rejected. Snapshot ownership and selectors participate in matching;
+a request commitment does not attest that stored artifact bytes are immutable.
+
+The incoming journal uses strict version 3 records. Versions 1 and 2 remain
+readable, but missing commitments cannot authorize request matching. Existing
+lease-only preparation retains no request commitment. Neither preparation path
+supplies a launch permit. Only the digest is persisted, not environment values
+or sealed ciphertext. Invalid UTF-8 and malformed probe JSON are rejected before
+encoding so replacement during JSON encoding cannot hide altered input.
+
+Read-only matching checks the exact retained dispatch, planned lease and request
+commitment, and rejects revoked ownership. Publication uncertainty preserves the
+original commitment and blocks replacement, including after restart. Portable
+tests cover changed artifacts, snapshot selectors, resources, environment,
+network and readiness policy, legacy records, lost replies and manager binding.
+
+This is a private pre-effects primitive, not a serving capability. Trusted caller
+provenance, artifact immutability, lock-held producer validation, physical
+revocation and native producer closure still need implementation and native
+x86_64 KVM qualification before enabling tagged wakes or full-stage admission.
+Live provider qualification remains canceled.
+
+### Release integration with the current server and migration history
+
+The accumulated checkpoint changes now follow ADR-977's apid server relocation:
+existing stage server implementation and tests live in `pkg/apid/apidserver`,
+while `cmd/apid` remains the daemon entry point. Its size baseline accounts for
+this move of existing stage code; extracting that domain from server internals
+is separate work. Newly authored apid domains still belong in their own package.
+
+Unmerged checkpoint migrations were regenerated after the current main history
+using the migration generator's prerequisite ordering. Their relative dependency
+order is preserved, while colliding versions from independently
+merged qualification changes remain untouched. This renumbering applies only to
+this PR's unmerged migrations, not migrations already released on main.
+
+Cold/restore qualification and checkpoint wake ownership exclude one another
+under the same incoming lock. Checkpoint binding can still read its own retained
+record; competing restore claim and recovery entry points reject that record.
+This integration does not enable tagged serving or qualify native closure.
+
+
+The release checks also cover schema/ledger drift: all unmerged checkpoint
+migrations tolerate replay of their existing tables, indexes, functions,
+triggers, columns and constraints. Existing admission and retirement checks are
+retained, with a named activation-owner constraint for repeatable installation.
+Fresh apply-and-walk and full replay of all forty migrations pass against a
+disposable PostgreSQL database; generated SQLC output remains unchanged.
+
+The old-transaction cutover regression accepts either an app-lock wait followed
+by rejection or an immediate PostgreSQL serialization rejection from the current
+snapshot guard. Both paths must refuse admission. Customer-platform acceptance
+retains its entire suite and existing compiler memory bounds, with a forty-five
+minute cold-build budget after the thirty-minute job completed state/API tests
+but expired while compiling remaining packages.

@@ -193,6 +193,15 @@ func desiredBurstInstancesForApp(state *burstPressureState, app App, perVM, maxI
 	return desired
 }
 
+// burstCapacityWait bounds a request held in maybeBurstCapacity. A request only
+// waits there while the app has no routable target, which is a wake, not warm
+// saturation: during `app restart` the replacement instance needs 2-3 s, and
+// the 2 s warm-queue wait turned arriving requests into a generic 503 "wake
+// failed" (production-us hunt #9, H9-166). Use the app's wake budget.
+func burstCapacityWait(app App) time.Duration {
+	return WakeAdmissionPolicyForAppWithWakeLimits(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.WakeMaxQueueDepth, app.WakeMaxQueueWaitSeconds).MaxWait
+}
+
 // maybeBurstCapacity reconciles desired capacity before the request is
 // forwarded. There is only one detached admission worker per app. Requests
 // wait for that generation when the app has no routable capacity; once at

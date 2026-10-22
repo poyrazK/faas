@@ -1,13 +1,15 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routestatus"
 )
@@ -21,7 +23,7 @@ func routeStatusTestServer(t *testing.T, telemetryErr bool) *httptest.Server {
 		}
 		switch r.URL.Path {
 		case "/v1/apps/demo/deployments":
-			writeJSONTest(w, api.DeploymentListResponse{Items: []api.DeploymentResponse{
+			main.WriteJSONTest(w, api.DeploymentListResponse{Items: []api.DeploymentResponse{
 				{ID: "11111111-1111-4111-8111-111111111111", Status: "live", TrafficPercent: 90},
 				{ID: "22222222-2222-4222-8222-222222222222", Status: "live", TrafficPercent: 10, CanaryStep: 1, CanaryTotalSteps: 4},
 				{ID: "33333333-3333-4333-8333-333333333333", Status: "superseded"},
@@ -36,20 +38,24 @@ func routeStatusTestServer(t *testing.T, telemetryErr bool) *httptest.Server {
 				_ = json.NewEncoder(w).Encode(api.Problem{Status: 403, Code: "plan_feature_gated", Title: "Plan", Detail: "analytics is not included in this plan"})
 				return
 			}
-			writeJSONTest(w, api.RouteCustomerUsageResponse{Routes: []api.RouteCustomerUsage{
+			main.WriteJSONTest(w, api.RouteCustomerUsageResponse{Routes: []api.RouteCustomerUsage{
 				{Route: "POST /checkout", Method: "POST", Requests: 900, PlatformTenantCount: 40},
 				{Route: "GET /debug", Method: "GET", Requests: 50, PlatformTenantCount: 1},
 			}})
 		case "/v1/apps/demo/deployments/11111111-1111-4111-8111-111111111111/openapi":
-			writeJSONTest(w, api.OpenAPIDocResponse{Doc: map[string]any{"paths": map[string]any{"/checkout": map[string]any{"post": map[string]any{"operationId": "checkout"}}}}})
+			main.WriteJSONTest(w, api.OpenAPIDocResponse{Doc: map[string]any{"paths": map[string]any{"/checkout": map[string]any{"post": map[string]any{"operationId": "checkout"}}}}})
 		case "/v1/apps/demo/route-health/gate":
-			writeJSONTest(w, api.RouteHealthGate{Mode: "report", Revision: 1, Routes: []api.RouteHealthRoute{}})
+			main.WriteJSONTest(w, api.RouteHealthGate{Mode: "report", Revision: 1, Routes: []api.RouteHealthRoute{}})
 		case "/v1/apps/demo/route-monitor":
-			writeJSONTest(w, api.RouteMonitorConfig{Enabled: true, OnViolation: "rollback", Revision: 2, Routes: []api.RouteMonitorRoute{{Method: "POST", Path: "/checkout", Max5xxRateBPS: &budget}}})
+			main.WriteJSONTest(w, api.RouteMonitorConfig{Enabled: true, OnViolation: "rollback", Revision: 2, Routes: []api.RouteMonitorRoute{{Method: "POST", Path: "/checkout", Max5xxRateBPS: &budget}}})
 		case "/v1/apps/demo/route-monitor/report":
-			writeJSONTest(w, api.RouteMonitorReport{Routes: []api.RouteMonitorFinding{{Route: api.RouteMonitorRoute{Method: "POST", Path: "/checkout"}, Status: "healthy"}}})
+			main.WriteJSONTest(w, api.RouteMonitorReport{Routes: []api.RouteMonitorFinding{{Route: api.RouteMonitorRoute{Method: "POST", Path: "/checkout"}, Status: "healthy"}}})
 		case "/v1/apps/demo/route-monitor/incidents":
-			writeJSONTest(w, api.RouteMonitorIncidentPage{Incidents: []api.RouteMonitorIncident{}})
+			main.WriteJSONTest(w, api.RouteMonitorIncidentPage{Incidents: []api.RouteMonitorIncident{}})
+		case "/v1/apps/demo/routes/advice":
+			main.WriteJSONTest(w, api.RouteAdviceResponse{Slug: "demo", Suggestions: []api.RouteAdviceSuggestion{
+				{ID: "a1", Kind: api.RouteAdviceKindCache, Method: "GET", Route: "/debug", Title: "Cache GET /debug"},
+			}})
 		case "/v1/apps/demo/route-requirements":
 			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(http.StatusNotFound)
@@ -63,14 +69,14 @@ func routeStatusTestServer(t *testing.T, telemetryErr bool) *httptest.Server {
 
 func runRouteStatusCLI(t *testing.T, server *httptest.Server, args ...string) (int, string) {
 	t.Helper()
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	t.Setenv("FAAS_API", server.URL)
 	var output bytes.Buffer
-	old := osStdout
-	osStdout = &output
-	t.Cleanup(func() { osStdout = old })
-	code := run(append([]string{"routes", "status", "demo"}, args...))
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = old })
+	code := main.Run(append([]string{"routes", "status", "demo"}, args...))
 	return code, output.String()
 }
 
@@ -93,6 +99,9 @@ func TestRoutesStatusCLIJoinsReadOnlySources(t *testing.T) {
 	}
 	if s.Summary.Unprotected != 1 || len(s.Unavailable) != 0 {
 		t.Fatalf("summary = %+v unavailable = %v (a missing requirements file is not an error)", s.Summary, s.Unavailable)
+	}
+	if s.Summary.Advice != 1 || !slices.Contains(s.Routes[1].Gaps, routestatus.GapAdviceAvailable) {
+		t.Fatalf("advice summary = %d, /debug gaps = %v", s.Summary.Advice, s.Routes[1].Gaps)
 	}
 }
 

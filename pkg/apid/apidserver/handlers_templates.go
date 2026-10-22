@@ -42,6 +42,10 @@ type templateView struct {
 // these out of the <select>.
 func templateDescription(name string) string {
 	switch name {
+	case "auth":
+		return "Application Auth for your users on your own Postgres — create it with gregale auth create"
+	case "durable-entity-node":
+		return "Node.js durable entity with local development, typed clients and object-storage-backed state"
 	case "hello-node":
 		return "minimal Node.js HTTP server — first-touch smoke test"
 	case "hello-python":
@@ -60,14 +64,24 @@ func templateDescription(name string) string {
 		return "Rust function on the binary runtime — static executable built from a Dockerfile"
 	case "s3-uploader":
 		return "S3-compatible PUT/GET adapter — bring your own bucket"
+	case "object-storage-node":
+		return "Node.js app with managed object storage, scoped compute credentials and safe secret reload"
+	case "object-storage-python":
+		return "Python app with managed object storage, private file transfers and safe credential reload"
 	case "slack-bot":
 		return "Slack slash-command handler — bring your own tokens"
 	case "rest-api-postgres":
 		return "Postgres-backed REST API — bring your own connection string"
+	case "rest-api-postgres-python":
+		return "Python REST API with managed Postgres, separate migration credentials and verified TLS"
 	case "data-api":
 		return "Schema-generated Postgres REST API with JWT authentication and row-level security"
 	case "data-api-starter":
 		return "Versioned Data API migrations, a typed client, two-user RLS checks and application CI"
+	case "data-api-teams":
+		return "Tenant-aware team orders with typed clients, guarded workflows and a support dashboard"
+	case "data-api-support-console":
+		return "OIDC-authenticated customer support with scoped data, audit history and approved case actions"
 	case "customer-platform":
 		return "Node.js customer platform with tenant authentication and Postgres data isolation"
 	case "mcp-node":
@@ -121,7 +135,7 @@ func (s *server) listTemplates(w http.ResponseWriter, r *http.Request) {
 	_ = op
 
 	rows := make([]templateView, 0, len(templates.Names))
-	for _, name := range templates.Names {
+	for _, name := range templates.ListedNames() {
 		cat := templates.CategoryFor(name)
 		desc := templateDescription(name)
 		if cat == "" || desc == "" {

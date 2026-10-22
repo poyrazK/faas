@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -21,7 +22,7 @@ func TestProjectEnvironmentPaginationContract(t *testing.T) {
 		for _, machine := range []bool{false, true} {
 			for _, mode := range []string{"page", "all", "empty-page", "failure", "repeat"} {
 				t.Run(fmt.Sprintf("%s/json=%t/%s", command, machine, mode), func(t *testing.T) {
-					setupCLIRegression(t)
+					main.SetupCLIRegression(t)
 					var cursors []string
 					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						q := r.URL.Query()
@@ -50,7 +51,7 @@ func TestProjectEnvironmentPaginationContract(t *testing.T) {
 					}))
 					defer server.Close()
 					t.Setenv("FAAS_API", server.URL)
-					t.Setenv("FAAS_TOKEN", testAPIKey('a'))
+					t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
 					args := []string{"projects", "environments", command, "--limit", "2", "--before", "ignored", "--cursor", "start + opaque|cursor", "shop", "production"}
 					if command == "history" {
 						args = append(args, "--from", "staging", "--status", "succeeded")
@@ -62,7 +63,7 @@ func TestProjectEnvironmentPaginationContract(t *testing.T) {
 					if machine {
 						args = append(args, "--json")
 					}
-					code, out, errOut := capturePreviewRun(t, args)
+					code, out, errOut := main.CapturePreviewRun(t, args)
 					wantCursors := []string{"start + opaque|cursor"}
 					if mode == "all" || mode == "failure" {
 						wantCursors = append(wantCursors, "next + opaque|cursor'quoted")
@@ -79,7 +80,7 @@ func TestProjectEnvironmentPaginationContract(t *testing.T) {
 							t.Fatalf("exit=%d stdout=%s stderr=%s", code, out, errOut)
 						}
 						if machine {
-							assertOneProblem(t, errOut)
+							main.AssertOneProblem(t, errOut)
 						}
 						return
 					}
@@ -148,8 +149,8 @@ func TestProjectEnvironmentPaginationContract(t *testing.T) {
 func TestProjectEnvironmentPaginationHelpAndValidation(t *testing.T) {
 	for _, command := range []string{"history", "release-sets"} {
 		t.Run(command, func(t *testing.T) {
-			setupCLIRegression(t)
-			code, out, errOut := capturePreviewRun(t, []string{"projects", "environments", command, "--help"})
+			main.SetupCLIRegression(t)
+			code, out, errOut := main.CapturePreviewRun(t, []string{"projects", "environments", command, "--help"})
 			if code != 0 || errOut != "" {
 				t.Fatalf("exit=%d stderr=%s", code, errOut)
 			}
@@ -159,11 +160,11 @@ func TestProjectEnvironmentPaginationHelpAndValidation(t *testing.T) {
 				}
 			}
 			for _, limit := range []string{"0", "101"} {
-				code, out, errOut = capturePreviewRun(t, []string{"projects", "environments", command, "--all", "shop", "production", "--limit", limit, "--json"})
+				code, out, errOut = main.CapturePreviewRun(t, []string{"projects", "environments", command, "--all", "shop", "production", "--limit", limit, "--json"})
 				if code != 1 || out != "" {
 					t.Fatalf("limit=%s exit=%d stdout=%s", limit, code, out)
 				}
-				assertOneProblem(t, errOut)
+				main.AssertOneProblem(t, errOut)
 			}
 		})
 	}

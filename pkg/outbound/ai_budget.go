@@ -22,6 +22,21 @@ func validateAIAdmissionSpec(spec AdmissionSpec) error {
 		*spec.BindingTokensPerMinute > api.MaxOutboundAITokensPerMinute) {
 		return fmt.Errorf("%w: binding tokens-per-minute limit is invalid", ErrInvalidIntegration)
 	}
+	if spec.AIEndUser != "" && !api.ValidOutboundAIUserID(spec.AIEndUser) {
+		return fmt.Errorf("%w: AI end user is invalid", ErrInvalidIntegration)
+	}
+	if !validAITags(spec.AITags) {
+		return fmt.Errorf("%w: AI usage tags are invalid", ErrInvalidIntegration)
+	}
+	for _, limit := range spec.AITagDailyCostLimits {
+		if limit < 1 || limit > api.MaxOutboundAICostMillicents {
+			return fmt.Errorf("%w: AI tag limit is invalid", ErrInvalidIntegration)
+		}
+	}
+	if (spec.UserDailyAITokenLimit != nil && (*spec.UserDailyAITokenLimit < 1 || *spec.UserDailyAITokenLimit > api.MaxOutboundAITokensPerDay)) ||
+		(spec.UserDailyAICostLimit != nil && (*spec.UserDailyAICostLimit < 1 || *spec.UserDailyAICostLimit > api.MaxOutboundAICostMillicents)) {
+		return fmt.Errorf("%w: per-end-user AI limit is invalid", ErrInvalidIntegration)
+	}
 	return nil
 }
 
@@ -31,16 +46,26 @@ func validateAIAdmissionSpec(spec AdmissionSpec) error {
 type aiBudgetState struct {
 	dailyTokens, bindingTokens, dailyCost, monthlyCost  int64
 	inflightTokens, inflightBindingTokens, inflightCost int64
+	// The call's end user today and its live reservations (ADR-994).
+	userTokens, userCost, inflightUserTokens, inflightUserCost int64
+	// userUntracked marks a new end user the day's tracking cap leaves no
+	// row for; with per-user limits set it is refused (ADR-996).
+	userUntracked bool
 }
 
-// aiBudgetLimits are the effective AI limits; nil means unlimited.
+// aiBudgetLimits are the effective AI limits; nil means unlimited. The
+// user limits apply only to a call that names an end user.
 type aiBudgetLimits struct {
 	dailyTokens, bindingTokens, dailyCost, monthlyCost *int64
+	userTokens, userCost                               *int64
 }
 
 // aiReservation is one call's admission-time estimate (ADR-991).
 type aiReservation struct {
 	tokens, cost int64
+	// estimate is the usage the reservation priced; a billable call whose
+	// usage cannot be read settles at it (ADR-996, ADR-997).
+	estimate AIUsage
 }
 
 // positiveLimit maps a stored COALESCE(limit, 0) value to an optional limit.
@@ -52,10 +77,14 @@ func positiveLimit(value int64) *int64 {
 }
 
 func aiBudgetLimitsFromSpec(spec AdmissionSpec) aiBudgetLimits {
-	return aiBudgetLimits{
+	limits := aiBudgetLimits{
 		dailyTokens: spec.DailyAITokenLimit, bindingTokens: spec.BindingDailyAITokenLimit,
 		dailyCost: spec.DailyAICostLimit, monthlyCost: spec.MonthlyAICostLimit,
 	}
+	if spec.AIEndUser != "" {
+		limits.userTokens, limits.userCost = spec.UserDailyAITokenLimit, spec.UserDailyAICostLimit
+	}
+	return limits
 }
 
 func aiReservationFromSpec(spec AdmissionSpec) aiReservation {
@@ -70,6 +99,11 @@ func aiReservationFromSpec(spec AdmissionSpec) aiReservation {
 func aiBudgetExhausted(utcNow time.Time, state aiBudgetState, limits aiBudgetLimits, reserve aiReservation) (string, time.Duration, bool) {
 	nextDay := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day()+1, 0, 0, 0, 0, time.UTC)
 	nextMonth := time.Date(utcNow.Year(), utcNow.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+	if state.userUntracked && (limits.userTokens != nil || limits.userCost != nil) {
+		// ADR-996: an end user the cap cannot track cannot be limited, so
+		// with per-user limits set it is refused rather than let through.
+		return ReasonUserTrackingFull, retryUntil(utcNow, nextDay), true
+	}
 	checks := []struct {
 		limit            *int64
 		used, held, call int64
@@ -80,6 +114,8 @@ func aiBudgetExhausted(utcNow time.Time, state aiBudgetState, limits aiBudgetLim
 		{limits.bindingTokens, state.bindingTokens, state.inflightBindingTokens, reserve.tokens, ReasonDailyTokenLimit, nextDay},
 		{limits.dailyCost, state.dailyCost, state.inflightCost, reserve.cost, ReasonDailyCostLimit, nextDay},
 		{limits.monthlyCost, state.monthlyCost, state.inflightCost, reserve.cost, ReasonMonthlyCostLimit, nextMonth},
+		{limits.userTokens, state.userTokens, state.inflightUserTokens, reserve.tokens, ReasonUserDailyTokenLimit, nextDay},
+		{limits.userCost, state.userCost, state.inflightUserCost, reserve.cost, ReasonUserDailyCostLimit, nextDay},
 	}
 	for _, check := range checks {
 		if check.limit == nil {

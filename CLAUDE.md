@@ -25,9 +25,11 @@ make manifest-ansible MANIFEST=deploy/manifest/splitbox.yaml
 make ANSIBLE_INVENTORY=deploy/ansible/.generated/inventory/hosts.ini bootstrap-control-plane
 make ANSIBLE_INVENTORY=deploy/ansible/.generated/inventory/hosts.ini bootstrap-compute
 make test           # unit tests, must pass on any machine, no KVM needed
+make test-changed   # vet + test only what your diff affects (ci-light's selection); use while iterating
 make test-metal     # integration tests tagged //go:build metal — needs KVM + root
 make leakcheck      # asserts zero leaked netns/TAPs/jail uids/cgroups after tests
 make lint           # golangci-lint + custom checks (see Conventions)
+make lint-changed   # golangci-lint only the packages your diff touches + teststorecheck; use before a PR
 make native-m9-acceptance # guarded two-node failure-safe acceptance on native x86_64
 ```
 
@@ -103,12 +105,12 @@ docs/adr/
 - **Builder slots**: 1 guaranteed (inside the 6 GB control-plane slice), 2nd opportunistic
   only when tenant residency < 60%. Builds never outrank tenant wakes.
 
-## Hard limits (source: financial model §1; encoded in pkg/api/limits.go)
+## Hard limits (source: financial model §1 as amended by the Oct 2026 COGS report, ADR-1430; encoded in pkg/api/limits.go)
 
-Plans (deployed/concurrent/RAM MB/GB-h): Free 1/1/128/5 · Hobby 5/2/256/50 ·
-Pro 25/5/512/250 · Scale 100/20/1024/1500. Overage €0.01/GB-h. Source tarball ≤100 MB
+Plans (deployed/concurrent/RAM MB/GB-h): Free 1/1/256/20 · Hobby 5/2/512/200 ·
+Pro 25/5/1024/1000 · Scale 100/20/2048/3000. Overage $0.01/GB-h (USD, ADR-1430). Source tarball ≤100 MB
 (≤250 MB Pro+). App layer ≤256 MB/512 MB/1 GB/2 GB by plan. Build VM: 2 vCPU, 2048 MB,
-15 min (ADR-791). Idle timeouts: 30/60/300/600 s (functions default to 30 s, ADR-974). RAM admission ceiling: 47,600 MB.
+15 min (ADR-791). Idle timeouts: 60/60/300/600 s by plan (functions default to 30 s on every plan, ADR-974; spec §4.3). RAM admission ceiling: 47,600 MB.
 Fleet snapshot average target: 130 MB — `snapshot_fleet_avg_mb` alerts at 160.
 Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/app 500/acct (`cron_limit_per_app`, `cron_limit_per_account` in pkg/api/limits.go).
 
@@ -120,11 +122,16 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
 - SQL via sqlc only; no string-built queries. Every state column has a CHECK.
 - Handlers ≤ 50 lines — extract. Table-driven tests. No global state except wiring.
 - New apid code goes in a `pkg/apid/<domain>` package (ADR-982); `pkg/apid/apidserver`
-  keeps wiring, the route table and middleware. `make apid-size-check` fails if its
-  non-test code grows; PRs that move code out lower `scripts/ci/apid_size_baseline.txt`.
+  keeps wiring, the route table and middleware.
 - Logs: `slog` JSON. Metrics: Prometheus, names as specced in §12 — dashboards depend
   on exact names (`gateway_wake_latency_seconds`, `snapshot_fleet_avg_mb`, …).
 - Never log secret values; env secrets are sealed at rest (gap G2 lean, §17).
+- Units release independently, so release N runs beside N-1 (docs/release-compatibility.md).
+  Remove a proto RPC/field only after a release that deprecated it; new pkg/api guest JSON
+  keys are `omitempty`; new migrations are expand/contract and start with
+  `SET LOCAL lock_timeout = '5s';` before touching an existing table. CI enforces these
+  (`make version-skew-check`, `make migration-lint`). Deploy order: data → control plane →
+  edge/node → runtime.
 
 ## Security rules (ship-blocking, §11)
 
@@ -164,9 +171,32 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
   disappears on reboot and eats RAM until then.
 - The gateway holds requests during wake (queue cap 512/30 s). Load tests that fire
   before readiness are testing the queue, not the app.
-- `go test ./pkg/apid/apidserver` compiles two units: the package with its internal tests
-  (~9 GB peak) and the external `apidserver_test` package (~6 GB). Write new apid tests in
-  `package apidserver_test` and reach internals through `export_test.go`; every test added
-  to the internal unit grows the bigger compile. Run these builds one at a time, type-check
-  with `go vet ./pkg/apid/apidserver` while iterating, and keep the default shared GOCACHE:
-  per-job private caches grow to ~11 GB each and have filled developer disks.
+- apidserver's tests compile as two units: the package with its internal tests, and the
+  external `apidserver_test` package. Prefer `make test-apid [RUN='^TestX'] [RACE=1]` to a
+  bare `go test`: it adds CI's `-c=1 -dwarf=false` for apidserver and `GOMEMLIMIT=6GiB`,
+  which holds a `-race` build near 3 GB RSS (a bare `go test -race` peaks near 4 GB).
+  Write new apid tests in `package apidserver_test` and reach internals through
+  `export_test.go`, because internal tests grow the larger of the two compiles (`pkg/sched` is
+  split the same way: new sched tests go in `package sched_test`). Run these builds
+  one at a time, type-check with `go vet ./pkg/apid/apidserver` while iterating, and keep
+  the default shared GOCACHE: per-job private caches grow to ~11 GB each and have filled
+  developer disks. Never run `go clean -cache` on it: other sessions' builds fail mid-run and
+  everyone rebuilds cold. When the disk fills, run `make clean-tmp` (it removes go-build work
+  dirs that killed builds left in $TMPDIR) and ask before clearing the cache. `cmd/gregale`'s
+  tests are split the same way: new CLI tests go in `package main_test` (they call `main.Run`
+  and reach internals through `cmd/gregale/export_test.go`).
+- Test fakes must not embed `state.Store`, `*state.MemStore` or `*state.PgStore`: Go generates
+  a wrapper per promoted method for every such type (~3,000 for the concrete stores, ~80 MB of
+  compiler memory each; this was most of apidserver's test-compile memory). Keep the store in a
+  named field (`MemStore *state.MemStore`), define only the overrides, and pass
+  `statetest.NewMem(fake)` (or `NewPg`, `NewStore`) where a store is needed. Overriding a method
+  for the first time needs a dispatch method in `pkg/state/statetest/dispatch.go`; the
+  constructor panics with that instruction if it is missing.
+- Test code must not declare its own interface that embeds `state.Store` (named or as a literal
+  parameter type): the compiler generates a wrapper for every method of every interface a package
+  declares and converts to, ~10 MB per Store-sized interface. In `pkg/state` contract tests, alias
+  the shared one (`type fooTestStore = contractTestStore`) and add any new optional store
+  interface to `contractTestStore`. `scripts/ci/teststorecheck` (ci-light, `make lint-changed`)
+  fails a change that adds either kind; a fake that must keep an embedding, because it implements
+  an optional interface a statetest wrapper would hide, marks the field
+  `// teststorecheck:allow <reason>`.

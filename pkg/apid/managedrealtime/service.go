@@ -11,8 +11,10 @@ package managedrealtime
 import (
 	"bytes"
 	"context"
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"log/slog"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -45,7 +48,12 @@ type Host interface {
 // the history preview at boot (see its With* setters); DrainWake is a
 // 1-buffered channel created by newServer.
 type Service struct {
-	Host Host
+	AccessPreviewEnabled  bool
+	TicketsPreviewEnabled bool
+	ClaimWaitOnce         sync.Once
+	ClaimWaitSlots        chan struct{}
+	AuthLimiter           *middleware.Limiter
+	Host                  Host
 
 	// Owner routes customer-facing connection operations to the node that
 	// owns a live socket; the local Unix client is the same-box fast path.
@@ -61,6 +69,17 @@ type Service struct {
 	// channel grants and the versioned reconnect protocol are ready.
 	HistoryPreviewEnabled bool
 	HistoryMetrics        *ManagedRealtimeHistoryMetrics
+	// OccupancyPreviewEnabled serves channel occupancy (ADR-1324).
+	OccupancyPreviewEnabled bool
+	// UsageEnabled serves the account's realtime usage (ADR-1323), recorded
+	// only by realtimed nodes with the same flag.
+	UsageEnabled bool
+	// FairUseEnabled sends each endpoint's account connection limit to
+	// realtimed (ADR-1323); off, endpoints register without one.
+	FairUseEnabled bool
+	// LiveRoutes lists the live-query keys an app's endpoints route
+	// (ADR-20261016151947): those of live databases bound to the app. Nil routes none.
+	LiveRoutes func(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error)
 
 	publishIdempotencySweep atomic.Uint64
 }

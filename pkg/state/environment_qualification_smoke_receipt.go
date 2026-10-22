@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
 	"slices"
 	"strings"
@@ -52,17 +53,19 @@ type EnvironmentQualificationSmokeEvidence struct {
 // application defaults and platform TCP readiness are not sufficient
 // application-level smoke policy.
 type EnvironmentQualificationSmokePolicy struct {
-	ID            string                                      `json:"id"`
-	Version       int                                         `json:"version"`
-	Resource      string                                      `json:"resource"`
-	AppID         string                                      `json:"app_id"`
-	Method        string                                      `json:"method"`
-	Path          string                                      `json:"path"`
-	Port          int                                         `json:"port"`
-	StatusMin     int                                         `json:"status_min"`
-	StatusMax     int                                         `json:"status_max"`
-	TimeoutMillis int                                         `json:"timeout_millis"`
-	QueueMessages []EnvironmentQualificationQueueSmokeMessage `json:"queue_messages,omitempty"`
+	ID                      string                                      `json:"id"`
+	Version                 int                                         `json:"version"`
+	Resource                string                                      `json:"resource"`
+	AppID                   string                                      `json:"app_id"`
+	Method                  string                                      `json:"method"`
+	Path                    string                                      `json:"path"`
+	Port                    int                                         `json:"port"`
+	StatusMin               int                                         `json:"status_min"`
+	StatusMax               int                                         `json:"status_max"`
+	TimeoutMillis           int                                         `json:"timeout_millis"`
+	QueueMessages           []EnvironmentQualificationQueueSmokeMessage `json:"queue_messages,omitempty"`
+	ServiceBindings         map[string]EnvironmentScopedServiceBinding  `json:"service_bindings,omitempty"`
+	ServiceBindingTransport api.ServiceBindingTransport                 `json:"service_binding_transport,omitempty"`
 }
 
 // EnvironmentQualificationQueueSmokeMessage is a reviewed synthetic delivery
@@ -81,6 +84,7 @@ type EnvironmentQualificationQueueSmokeMessage struct {
 
 const environmentQualificationHTTPHealthzPolicyID = "http-healthz-v1"
 const environmentQualificationWorkerQueuePolicyID = "worker-queue-v2"
+const environmentQualificationWorkerServiceQueuePolicyID = "worker-queue-v3"
 const environmentQualificationFunctionQueuePolicyID = "function-queue-v1"
 
 // EnvironmentQualificationSmokePolicyFor returns the reviewed, deterministic
@@ -158,7 +162,7 @@ func environmentQualificationQueueSmokePolicy(request EnvironmentWorkloadQualifi
 	frozen := request.FrozenInputs
 	worker := request.ExecutionMode == api.ExecutionModeWorker && frozen.WorkloadClass == WorkloadClassWorker
 	function := request.ExecutionMode == api.ExecutionModeRequest && frozen.AppType == AppTypeFunction && frozen.WorkloadClass == WorkloadClassHTTP
-	if (!worker && !function) || len(frozen.ServiceBindings) != 0 || len(frozen.QueueBindings) == 0 || len(frozen.QueueSmoke) == 0 ||
+	if (!worker && !function) || function && len(frozen.ServiceBindings) != 0 || len(frozen.QueueBindings) == 0 || len(frozen.QueueSmoke) == 0 ||
 		len(frozen.QueueSmoke) > api.EnvironmentGitOpsMaxQueueSmokeMessages {
 		return zero, "", ErrEnvironmentWorkloadPreparationUnavailable
 	}
@@ -173,6 +177,29 @@ func environmentQualificationQueueSmokePolicy(request EnvironmentWorkloadQualifi
 	}
 	policy := EnvironmentQualificationSmokePolicy{ID: policyID, Version: 1,
 		Resource: request.Resource, AppID: request.AppID, Port: frozen.Baseline.Port, TimeoutMillis: 3000}
+	if len(frozen.ServiceBindings) != 0 {
+		// Service-bound workers run only in an atomically claimed graph. Bind
+		// their reviewed dependency identities and effective transport into a
+		// distinct policy; graph execution still validates every live route
+		// before capture and restored smoke can produce evidence.
+		manifest, err := EffectiveEnvironmentWorkloadManifest(frozen)
+		if err != nil || manifest.ExecutionMode != api.ExecutionModeWorker ||
+			(manifest.ServiceBindingTransport != "" && manifest.ServiceBindingTransport != api.ServiceBindingTransportHTTP && manifest.ServiceBindingTransport != api.ServiceBindingTransportHTTPS) ||
+			validateEnvironmentServiceBindings(request.AppID, frozen.ServiceBindings) != nil {
+			return zero, "", ErrEnvironmentWorkloadPreparationUnavailable
+		}
+		for _, binding := range frozen.ServiceBindings {
+			if _, exists := frozen.Variables[binding.EnvKey]; exists {
+				return zero, "", ErrEnvironmentWorkloadPreparationUnavailable
+			}
+			if _, exists := frozen.SecretRefs[binding.EnvKey]; exists {
+				return zero, "", ErrEnvironmentWorkloadPreparationUnavailable
+			}
+		}
+		policy.ID, policy.Version = environmentQualificationWorkerServiceQueuePolicyID, 3
+		policy.ServiceBindings = maps.Clone(frozen.ServiceBindings)
+		policy.ServiceBindingTransport = manifest.EffectiveServiceBindingTransport()
+	}
 	if rawPort, exists := frozen.Runtime["port"]; exists {
 		if bytes.Equal(bytes.TrimSpace(rawPort), []byte("null")) || json.Unmarshal(rawPort, &policy.Port) != nil {
 			return zero, "", fmt.Errorf("state: invalid frozen queue smoke port for %s: %w", request.Resource, ErrInvalidArgument)

@@ -13,6 +13,9 @@ import (
 // catalogue reservations. This neither releases source writers nor advances to
 // copying. Public data capture remains separately gated.
 func (s *server) restoreProjectEnvironmentClonePostgresSnapshots(ctx context.Context, lease state.ProjectEnvironmentCloneLease) (state.ProjectEnvironmentCloneLease, bool, error) {
+	if len(lease.Operation.Resources) > 0 && lease.Operation.Resources[0].Kind == "data_checkpoint" {
+		return lease, false, errCloneCheckpointUnavailable
+	}
 	if lease.Operation.Status != state.CloneOperationCapturing {
 		return lease, false, state.ErrConflict
 	}

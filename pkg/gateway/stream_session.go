@@ -43,7 +43,7 @@ func newStreamSession(parent context.Context, ceiling, idle time.Duration) (ctx 
 // sending the session's deadline to vmmd. gRPC turns a deadline present at
 // stream creation into grpc-timeout, which becomes vmmd's fixed server-side
 // deadline. Before the response starts, a stream session's deadline is the
-// request budget (at most RequestBudgetMax, 30 s). Detaching that budget after
+// request budget (at most the plan ceiling, up to 15 min). Detaching that budget after
 // the upgrade then cannot extend the stream vmmd already bounded.
 //
 // On production-us every WebSocket was closed (code 1006) at about 30 s, even

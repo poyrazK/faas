@@ -21,9 +21,10 @@ export class GithubService {
    * visible to the user's GitHub App installation — githubd
    * resolves the per-install token from the session's account.
    *
-   * §11 anti-takeover: the handler re-runs
-   * githubd.VerifyInstallation with the session's github_login
-   * as `expected_login` before listing. Mismatch → 403 forged.
+   * ADR-1345 / §11: the exact installation must be durably connected to
+   * the session's Gregale account before any GitHub call. A separate
+   * GitHub sign-in claim is not required. Live installation verification
+   * and account-scoped repository access checks still apply.
    *
    * @returns RepoResponse Repos the install can see.
    * @throws ApiError
@@ -40,11 +41,10 @@ export class GithubService {
       mediaType: 'application/json',
       errors: {
         400: `code: invalid_request — missing/malformed body or installation_id.`,
-        403: `\`forged\` if the install's account.login differs from
-        the session's github_login; \`github_login_required\` if
-        the user hasn't completed /v1/auth/github. Returned for
-        POST /v1/install/repos/list — the bind picker refuses
-        to list repos of an install the user can't prove they own.
+        403: `\`github_install_not_owned\` if the exact installation is not
+        connected to the signed-in Gregale account; \`forged\` if the
+        live GitHub installation verification fails. Unknown and foreign
+        installation IDs have the same response.
         `,
         502: `code: github_unreachable — githubd could not reach api.github.com; retry in a minute.`,
         503: `code: githubd_not_ready — githubd is not wired on this host (M7.5 slices 7-8).`,
@@ -405,10 +405,11 @@ export class GithubService {
    * writes through to pkg/state.PgStore.UpsertGithubInstallBinding
    * per PR-B).
    *
-   * §11 anti-takeover: the handler re-runs
-   * githubd.VerifyInstallation with the session's github_login
-   * as `expected_login` before persisting. Mismatch → 403 forged.
-   * Empty github_login → 403 github_login_required.
+   * ADR-1345 / §11: the exact installation must be durably connected to
+   * the session's Gregale account. Requires the named, account-bound
+   * bind_app_to_repo CSRF proof. A separate GitHub sign-in claim is not
+   * required. Live installation verification and githubd's current
+   * repository access check still run before persistence.
    *
    * On success emits `auth.install.bound` for the audit trail.
    *
@@ -435,11 +436,12 @@ export class GithubService {
       mediaType: 'application/json',
       errors: {
         400: `code: invalid_request — missing/malformed body, installation_id, or repo_full_name.`,
-        403: `\`forged\` if the install's account.login differs from
-        the session's github_login; \`github_login_required\` if
-        the user hasn't completed /v1/auth/github. Returned for
-        POST /v1/apps/{slug}/install/bind — the bind refuses to
-        persist a row for an install the user can't prove they own.
+        403: `Repository binding refused. A valid account-bound
+        \`bind_app_to_repo\` CSRF token and named cookie are required.
+        \`github_install_not_owned\` if the exact installation is not
+        connected to the signed-in Gregale account; \`forged\` if the
+        live GitHub installation verification fails. Unknown and foreign
+        installation IDs have the same response.
         `,
         404: `code: not_found`,
         502: `code: github_unreachable — githubd could not reach api.github.com when persisting the bind; retry in a minute.`,

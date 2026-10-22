@@ -8,7 +8,7 @@ Spec: §6.2 budget (47,600 MB / 56 GB), §12 SLO family
 (`snapshot_fleet_avg_mb` 130 plan / 160 warn / 200 page).
 ADR: ADR-127 §5 (cold-boot ratio SLO).
 Issue: #1059.
-Severity: page.
+Severity: warn (ADR-1236). Customer wake latency pages through the availability burn rate.
 
 This alert is a SIBLING of `FaasColdBootFallbackHigh` (severity warn,
 10 % over 15m) — page tier above 30 % over 10m. The two alerts sit on

@@ -71,6 +71,14 @@ type EnvironmentGitOpsGraphActivationStore interface {
 	ActivateEnvironmentGitOpsWorkloadGraph(context.Context, EnvironmentGitOpsLease, environmentsync.Plan) (ProjectReleaseSet, bool, error)
 }
 
+// EnvironmentGitOpsEmptyGraphGuard lets a configuration-only revision skip
+// workload preparation only when no Git-managed deployment can still serve in
+// the environment, either through an active release or live-scope fallback. A
+// removed workload must first be retired by a reviewed graph transition.
+type EnvironmentGitOpsEmptyGraphGuard interface {
+	EnvironmentGitOpsHasServingManagedWorkload(context.Context, EnvironmentGitOpsLease) (bool, error)
+}
+
 func preparationGraph(snapshot gitOpsIntentSnapshot, revision EnvironmentDesiredRevision, generation int64, planHash string, candidates []EnvironmentWorkloadCandidate) (EnvironmentWorkloadGraph, error) {
 	desired, err := desiredEnvironmentRevision(revision)
 	if err != nil {

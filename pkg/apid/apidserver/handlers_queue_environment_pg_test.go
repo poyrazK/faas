@@ -15,11 +15,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type recreatePGQueueEnvironmentOnAdmission struct {
-	*state.PgStore
-	before func()
+	PgStore *state.PgStore
+	before  func()
 }
 
 func (s *recreatePGQueueEnvironmentOnAdmission) EnqueueInvocation(ctx context.Context, inv state.Invocation) (state.Invocation, error) {
@@ -112,12 +113,12 @@ func TestPGQueueEnvironmentHTTPIdentityAndAdmissionRace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	(*(*e.S()).Store()) = &recreatePGQueueEnvironmentOnAdmission{PgStore: (*e.Store()).(*state.PgStore), before: func() {
+	(*(*e.S()).Store()) = statetest.NewPg(&recreatePGQueueEnvironmentOnAdmission{PgStore: (*e.Store()).(*state.PgStore), before: func() {
 		if err := (*e.Store()).DeleteProjectEnvironment(ctx, (*e.Acct()).ID, project.ID, "staging"); err != nil {
 			t.Fatal(err)
 		}
 		createEnvironment()
-	}}
+	}})
 	rec = e.Do(t, http.MethodPost, base+"/inbox", api.SendAppMessageRequest{Environment: "staging", Type: "order.created", Data: json.RawMessage(`{}`), FlagContext: contextHeader}, nil)
 	apidserver.AssertProblem(t, rec, http.StatusConflict, "queue_binding_environment_unavailable")
 	stats, err = (*e.Store()).QueueStateForBinding(ctx, app.ID, replacement.ID)

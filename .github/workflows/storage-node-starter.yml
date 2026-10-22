@@ -1,0 +1,60 @@
+name: managed storage Node starter
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    name: managed storage Node (embedded app + gateway journey)
+    runs-on: ubuntu-latest
+    # A cold cache compiles both the gateway journey and native fixture race
+    # binaries; allow both sets of checks to finish on hosted runners.
+    timeout-minutes: 30
+    env:
+      GOMEMLIMIT: 2GiB
+      GOGC: 10
+      GOMAXPROCS: 2
+      GO_VERSION: '1.26.9'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-storage-starter-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-light-test-2-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-3-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-e2e-${{ runner.os }}-
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+          cache: npm
+          cache-dependency-path: |
+            sdk/node/package-lock.json
+            cmd/gregale/templates/object-storage-node/package-lock.json
+      - name: canonical SDK helper drift
+        working-directory: sdk/node
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          node scripts/sync-storage-starter.mjs --check
+      - name: materialized app tests and actual gateway journey
+        run: bash scripts/test-storage-node-starter.sh
+      - name: native Node and Python storage fixture and evidence contracts (no KVM)
+        run: |
+          python3 scripts/ci/object-storage-native-verdict_test.py
+          python3 scripts/ci/object-storage-native-runner_test.py
+          sh -n scripts/test-object-storage-native.sh
+          go test -race -p 1 -count=1 ./pkg/e2etest/storagestarter ./pkg/e2etest/storagefixture
+          go test -race -p 1 -count=1 ./pkg/e2etest -run '^TestStorageGuest(Manifest|App)'
+          go test -race -p 1 -count=1 -run '^TestStorageNativeIndependentObserver$' ./pkg/s3gateway

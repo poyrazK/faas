@@ -110,8 +110,9 @@ def sync_detailed(
     Args:
         slug (str):
         issue_id (UUID):
-        body (IssueActionRequest): Desired ownership or lifecycle action, validated within the app
-            scope.
+        body (IssueActionRequest): Desired ownership, lifecycle, or reversible regrouping action
+            within the app. Merge adopts the destination owner/state; split opens one linked original
+            group. Merge/split responses identify the remaining canonical issue.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -146,8 +147,9 @@ def sync(
     Args:
         slug (str):
         issue_id (UUID):
-        body (IssueActionRequest): Desired ownership or lifecycle action, validated within the app
-            scope.
+        body (IssueActionRequest): Desired ownership, lifecycle, or reversible regrouping action
+            within the app. Merge adopts the destination owner/state; split opens one linked original
+            group. Merge/split responses identify the remaining canonical issue.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -177,8 +179,9 @@ async def asyncio_detailed(
     Args:
         slug (str):
         issue_id (UUID):
-        body (IssueActionRequest): Desired ownership or lifecycle action, validated within the app
-            scope.
+        body (IssueActionRequest): Desired ownership, lifecycle, or reversible regrouping action
+            within the app. Merge adopts the destination owner/state; split opens one linked original
+            group. Merge/split responses identify the remaining canonical issue.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -211,8 +214,9 @@ async def asyncio(
     Args:
         slug (str):
         issue_id (UUID):
-        body (IssueActionRequest): Desired ownership or lifecycle action, validated within the app
-            scope.
+        body (IssueActionRequest): Desired ownership, lifecycle, or reversible regrouping action
+            within the app. Merge adopts the destination owner/state; split opens one linked original
+            group. Merge/split responses identify the remaining canonical issue.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

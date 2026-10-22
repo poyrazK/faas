@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copydatabases"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type databaseSQLPinsWorkerFailureStore struct {
@@ -41,7 +42,7 @@ func cloneDatabaseSQLPinsWorkerFixture(t *testing.T, charge bool) (*databaseWork
 	t.Helper()
 	f := cloneDatabaseWorkerFixture(t)
 	s := &databaseSQLPinsWorkerFailureStore{databaseWorkerFailureStore: f.store}
-	f.x.f.srv.store = s
+	f.x.f.srv.store = statetest.NewPg(s)
 	if charge {
 		chargeDatabaseSQLPinsWorker(t, f, f.closedOID)
 	}
@@ -51,11 +52,11 @@ func cloneDatabaseSQLPinsWorkerFixture(t *testing.T, charge bool) (*databaseWork
 func chargeDatabaseSQLPinsWorker(t *testing.T, f *databaseWorkerFixture, oid uint32) {
 	t.Helper()
 	x := f.x
-	i, err := x.store.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), x.f.lease, x.source.source.ID)
+	i, err := x.store.PgStore.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), x.f.lease, x.source.source.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = x.store.ReserveProjectEnvironmentClonePostgresArchive(t.Context(), x.f.lease, state.ProjectEnvironmentClonePostgresArchiveRequest{Scope: i.Sealed.Scope, DatabaseOID: oid, InventoryFingerprint: i.Sealed.Fingerprint, KeyID: mfaIdentities()[0].Recipient().String(), StorageID: "private-worker-artifacts", StorageFingerprint: strings.Repeat("d", 64), ReservedBytes: 8192}, state.ProjectEnvironmentClonePostgresArchiveLimits{Count: api.PostgresCopyArchivesPerAccountMax, Bytes: api.PostgresCopyArchiveBytesPerAccountMax})
+	_, _, err = x.store.PgStore.ReserveProjectEnvironmentClonePostgresArchive(t.Context(), x.f.lease, state.ProjectEnvironmentClonePostgresArchiveRequest{Scope: i.Sealed.Scope, DatabaseOID: oid, InventoryFingerprint: i.Sealed.Fingerprint, KeyID: mfaIdentities()[0].Recipient().String(), StorageID: "private-worker-artifacts", StorageFingerprint: strings.Repeat("d", 64), ReservedBytes: 8192}, state.ProjectEnvironmentClonePostgresArchiveLimits{Count: api.PostgresCopyArchivesPerAccountMax, Bytes: api.PostgresCopyArchiveBytesPerAccountMax})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +70,7 @@ func TestPGClonePostgresDatabaseSQLPinsWorkerRetainsOriginalReceiptAcrossLostRec
 	if !errors.Is(err, managedpostgres.ErrUnavailable) || !r.CreatedAt().IsZero() || !f.exists(t, f.closed) {
 		t.Fatal("lost record supplied authority or lost owned database", err)
 	}
-	original, err := s.ProjectEnvironmentClonePostgresDatabaseSQLPinsForLease(t.Context(), x.f.lease, x.source.source.ID, f.closedOID)
+	original, err := s.PgStore.ProjectEnvironmentClonePostgresDatabaseSQLPinsForLease(t.Context(), x.f.lease, x.source.source.ID, f.closedOID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,10 +92,10 @@ func TestPGClonePostgresDatabaseSQLPinsWorkerRetainsOriginalReceiptAcrossLostRec
 	createdAt := r.CreatedAt()
 	x.f.srv.managedPostgres = service
 	old := x.f.lease
-	if err = s.ReleaseProjectEnvironmentCloneLease(t.Context(), old, 0); err != nil {
+	if err = s.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), old, 0); err != nil {
 		t.Fatal(err)
 	}
-	x.f.lease, err = s.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), 2*time.Minute)
+	x.f.lease, err = s.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), 2*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +209,7 @@ func TestPGClonePostgresDatabaseSQLPinsWorkerChecksOriginalTargetJournalAndLiveA
 			case "database missing":
 				_, err = x.targetRoot.Exec(t.Context(), "DROP DATABASE "+pgx.Identifier{f.closed}.Sanitize())
 			case "stale":
-				err = s.ReleaseProjectEnvironmentCloneLease(t.Context(), x.f.lease, 0)
+				err = s.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), x.f.lease, 0)
 			case "phase":
 				_, err = x.f.pool.Exec(t.Context(), "UPDATE project_environment_clone_operations SET status='compensating' WHERE id=$1", x.f.lease.Operation.ID)
 			case "archive changed":
@@ -244,7 +245,7 @@ func TestPGClonePostgresDatabaseSQLPinsWorkerChecksOriginalTargetJournalAndLiveA
 				if err != nil || !r.CreatedAt().Equal(createdAt) {
 					t.Fatal("postcheck retry rebased preparation", err)
 				}
-				owner, e := s.ProjectEnvironmentClonePostgresDatabaseSQLPinsForLease(t.Context(), x.f.lease, x.source.source.ID, f.closedOID)
+				owner, e := s.PgStore.ProjectEnvironmentClonePostgresDatabaseSQLPinsForLease(t.Context(), x.f.lease, x.source.source.ID, f.closedOID)
 				if e != nil || !sameClonePostgresDatabaseSQLPins(owner, original) {
 					t.Fatal("read-only retry replaced pins", e)
 				}

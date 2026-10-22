@@ -24,8 +24,52 @@ func TestMigrationTracker_PutNewEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got != m {
-		t.Errorf("get returned %p, want same pointer %p", got, m)
+	if got == m || *got != *m {
+		t.Fatal("get must return an equal, independently owned snapshot")
+	}
+	got.memKey = "changed by reader"
+	m.pending = true
+	next, err := tr.get("inst-1", "tok")
+	if err != nil || next.memKey != "" || next.pending {
+		t.Fatal("tracker aliases a caller-owned migration", err)
+	}
+}
+
+// TestMigrationTracker_RecordKeysReachesPendingEntry — a partial durable
+// capture records its keys on the tracked entry, not on the caller's copy, so
+// cancellation and expiry can delete the capture while it is still pending.
+func TestMigrationTracker_RecordKeysReachesPendingEntry(t *testing.T) {
+	tr := newMigrationTracker()
+	m, err := tr.reserveSource("inst-1", time.Now(), false)
+	if err != nil {
+		t.Fatalf("reserveSource: %v", err)
+	}
+	tr.recordKeys("other-token", "wrong-mem", "wrong-state")
+	tr.recordKeys(m.leaseToken, "mem", "state")
+	got, err := tr.get("inst-1", m.leaseToken)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.memKey != "mem" || got.vmstateKey != "state" || !got.pending {
+		t.Fatalf("tracked entry = %+v, want pending entry with recorded keys", *got)
+	}
+}
+
+// TestStaleMigrationLease — ack and cancel retries on a removed or superseded
+// lease stay idempotent; store failures do not.
+func TestStaleMigrationLease(t *testing.T) {
+	for _, tc := range []struct {
+		err   error
+		stale bool
+	}{
+		{errNoLease{instanceID: "i"}, true},
+		{errLeaseMismatch{instanceID: "i"}, true},
+		{errors.Join(errors.New("wrapped"), errLeaseMismatch{instanceID: "i"}), true},
+		{errors.New("state: get migration lease: connection refused"), false},
+	} {
+		if got := staleMigrationLease(tc.err); got != tc.stale {
+			t.Errorf("staleMigrationLease(%v) = %v, want %v", tc.err, got, tc.stale)
+		}
 	}
 }
 

@@ -14,7 +14,9 @@ from ..models.upsert_dev_session_request_type import UpsertDevSessionRequestType
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.dev_bucket_request import DevBucketRequest
     from ..models.dev_postgres_request import DevPostgresRequest
+    from ..models.dev_watch import DevWatch
 
 
 T = TypeVar("T", bound="UpsertDevSessionRequest")
@@ -31,9 +33,18 @@ class UpsertDevSessionRequest:
     sessions."""
     postgres: DevPostgresRequest | Unset = UNSET
     """Opts the developer environment into an isolated managed PostgreSQL database."""
+    buckets: list[DevBucketRequest] | Unset = UNSET
+    """Explicitly provision private workspace buckets and bindings. Requires storage:manage or admin in addition to
+    developer session authorization. Omission preserves existing resources. Repeating a revoked binding returns
+    conflict."""
     lease_seconds: int | Unset = UNSET
     """How long the environment survives after this request. Omit for the 24-hour default. Values above the plan's
     developer lease maximum return 403 plan_limit_developer_lease."""
+    watch: DevWatch | Unset = UNSET
+    """Watch mode (ADR-1170). The environment runs this development server instead of the production build, and
+    live source patches reach the server's own reloader. Omit to turn watch mode off; the change applies from the
+    next developer build. Refused with 422 dev_watch_unsupported when the developer app has less than 512 MB of RAM
+    or does not require authentication."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -51,7 +62,18 @@ class UpsertDevSessionRequest:
         if not isinstance(self.postgres, Unset):
             postgres = self.postgres.to_dict()
 
+        buckets: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.buckets, Unset):
+            buckets = []
+            for buckets_item_data in self.buckets:
+                buckets_item = buckets_item_data.to_dict()
+                buckets.append(buckets_item)
+
         lease_seconds = self.lease_seconds
+
+        watch: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.watch, Unset):
+            watch = self.watch.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -64,14 +86,20 @@ class UpsertDevSessionRequest:
             field_dict["workspace_id"] = workspace_id
         if postgres is not UNSET:
             field_dict["postgres"] = postgres
+        if buckets is not UNSET:
+            field_dict["buckets"] = buckets
         if lease_seconds is not UNSET:
             field_dict["lease_seconds"] = lease_seconds
+        if watch is not UNSET:
+            field_dict["watch"] = watch
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.dev_bucket_request import DevBucketRequest
         from ..models.dev_postgres_request import DevPostgresRequest
+        from ..models.dev_watch import DevWatch
 
         d = dict(src_dict)
         _type_ = d.pop("type", UNSET)
@@ -97,14 +125,32 @@ class UpsertDevSessionRequest:
         else:
             postgres = DevPostgresRequest.from_dict(_postgres)
 
+        _buckets = d.pop("buckets", UNSET)
+        buckets: list[DevBucketRequest] | Unset = UNSET
+        if _buckets is not UNSET:
+            buckets = []
+            for buckets_item_data in _buckets:
+                buckets_item = DevBucketRequest.from_dict(buckets_item_data)
+
+                buckets.append(buckets_item)
+
         lease_seconds = d.pop("lease_seconds", UNSET)
+
+        _watch = d.pop("watch", UNSET)
+        watch: DevWatch | Unset
+        if isinstance(_watch, Unset):
+            watch = UNSET
+        else:
+            watch = DevWatch.from_dict(_watch)
 
         upsert_dev_session_request = cls(
             type_=type_,
             runtime=runtime,
             workspace_id=workspace_id,
             postgres=postgres,
+            buckets=buckets,
             lease_seconds=lease_seconds,
+            watch=watch,
         )
 
         upsert_dev_session_request.additional_properties = d

@@ -68,6 +68,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
+	"github.com/onebox-faas/faas/pkg/apid/queueaccess"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -112,6 +114,7 @@ func triggerResponse(t sqlc.Trigger) api.Trigger {
 		BatchSizeMax:         int(t.BatchSizeMax),
 		BatchWindowMs:        int(t.BatchWindowMs),
 		MaxAttempts:          int(t.MaxAttempts),
+		Delivery:             triggerDeliveryOrDefault(t.Delivery),
 		RetryPolicy:          retryPolicyFromTriggerConfig(t.Config),
 		PayloadMaxBytes:      int(t.PayloadMaxBytes),
 		BrokerPoisonStrategy: t.BrokerPoisonStrategy,
@@ -203,6 +206,11 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, p)
 		return
 	}
+	realtimeCfg, p := s.prepareRealtimeTrigger(r.Context(), acct, &req)
+	if p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	if p := applyTriggerRetryPolicy(&req); p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -221,6 +229,16 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, p)
 		return
 	}
+	delivery, p := s.requestedTriggerDelivery(acct, req.Kind, req.Delivery)
+	if p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	if realtimeCfg != nil {
+		// The bound group owns attempts (ADR-1322); batch delivery may claim
+		// several messages per invocation (ADR-1321).
+		batchSizeMax, maxAttempts = managedrealtime.RealtimeTriggerBatchSize(delivery, req.BatchSizeMax), 1
+	}
 	sealedConfig, p := sealTriggerConfig(req.Kind, req.Config)
 	if p != nil {
 		api.WriteProblem(w, p)
@@ -228,13 +246,60 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	req.Config = sealedConfig
 	source := triggerSourceForConfig(req.Kind, req.Config)
-	t, problem := s.persistCreatedTrigger(w, r.Context(), &req, acct, app.ID, enabled,
+	// A realtime trigger is created disabled and enabled only once it is
+	// bound, so no dispatcher polls a group it cannot consume.
+	// Batch delivery is switched on before the trigger is enabled, so no record
+	// is ever delivered in the wrong shape.
+	t, problem := s.persistCreatedTrigger(w, r.Context(), &req, acct, app.ID, enabled && realtimeCfg == nil && delivery == api.TriggerDeliveryRecord,
 		source, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy, limits)
+	if problem == nil && delivery != api.TriggerDeliveryRecord {
+		t, problem = s.applyTriggerDelivery(r.Context(), t, delivery, enabled && realtimeCfg == nil)
+	}
+	if problem == nil && realtimeCfg != nil {
+		t, problem = s.bindRealtimeTrigger(r.Context(), acct, t, *realtimeCfg, enabled)
+	}
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
 	writeJSON(w, http.StatusCreated, triggerResponse(t))
+}
+
+// prepareRealtimeTrigger runs ADR-1322's pre-create checks for a
+// kind=realtime trigger. It returns nil for every other kind.
+func (s *server) prepareRealtimeTrigger(ctx context.Context, acct state.Account, req *api.CreateTriggerRequest) (*api.RealtimeTriggerConfig, *api.Problem) {
+	if req.Kind != api.TriggerKindRealtime {
+		return nil, nil
+	}
+	cfg, p := s.realtime.PrepareRealtimeTrigger(ctx, acct, req)
+	if p != nil {
+		return nil, p
+	}
+	return &cfg, nil
+}
+
+// bindRealtimeTrigger binds a just-created, disabled realtime trigger to its
+// group and enables it when requested. A trigger that cannot be bound, for
+// example because a concurrent create won the group, is deleted again.
+func (s *server) bindRealtimeTrigger(ctx context.Context, acct state.Account, t sqlc.Trigger, cfg api.RealtimeTriggerConfig, enable bool) (sqlc.Trigger, *api.Problem) {
+	triggerID, appID := uuidFromPgtype(t.ID).String(), uuidFromPgtype(t.AppID).String()
+	p := s.realtime.BindRealtimeTrigger(ctx, acct, triggerID, cfg)
+	if p == nil && enable {
+		enabled, err := s.store.UpdateTrigger(ctx, triggerID, &enable, nil, nil, nil, nil, nil, nil, nil, nil)
+		if err == nil {
+			_ = s.notif.Notify(ctx, db.NotifyTriggerChanged, notifyTriggerChangedJSON("updated", appID, triggerID))
+			return enabled, nil
+		}
+		p = api.ErrCapacity("could not enable realtime trigger")
+	}
+	if p == nil {
+		return t, nil
+	}
+	if err := s.store.DeleteTrigger(ctx, triggerID, appID); err != nil {
+		s.log.Warn("realtime trigger cleanup failed", "trigger", triggerID, "err", err)
+	}
+	_ = s.notif.Notify(ctx, db.NotifyTriggerChanged, notifyTriggerChangedJSON("deleted", appID, triggerID))
+	return sqlc.Trigger{}, p
 }
 
 // persistCreatedTrigger runs the store call + audit emission that
@@ -334,8 +399,8 @@ func validateCreateTriggerRequest(req *api.CreateTriggerRequest) *api.Problem {
 	// "triggers not allowed on plan free" response that
 	// would be misleading.
 	if req.Kind == api.TriggerKindCron {
-		if !validCron(req.Schedule) {
-			return api.ErrCronInvalid("expected 5-field cron expression (m h dom mon dow)")
+		if problem := cronScheduleProblem(req.Schedule); problem != nil {
+			return problem
 		}
 		// Path default kept here for parity with the cron table.
 		if req.Path == "" {
@@ -347,7 +412,7 @@ func validateCreateTriggerRequest(req *api.CreateTriggerRequest) *api.Problem {
 			"")
 	}
 	switch req.Kind {
-	case api.TriggerKindKafka, api.TriggerKindNATS, api.TriggerKindRedisStreams, api.TriggerKindSQSCompat, api.TriggerKindQueue:
+	case api.TriggerKindKafka, api.TriggerKindNATS, api.TriggerKindRedisStreams, api.TriggerKindSQSCompat, api.TriggerKindQueue, api.TriggerKindRealtime:
 		if req.Slug == "" {
 			return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", "slug is required for non-cron triggers")
 		}
@@ -360,7 +425,7 @@ func validateCreateTriggerRequest(req *api.CreateTriggerRequest) *api.Problem {
 		return nil
 	default:
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request",
-			"unknown kind: must be one of cron|kafka|nats|redis_streams|sqs_compat|queue")
+			"unknown kind: must be one of cron|kafka|nats|redis_streams|sqs_compat|queue|realtime")
 	}
 }
 
@@ -600,7 +665,7 @@ func retryPolicyDTOFromManifest(policy *gregalemanifest.RetryPolicyConfig) *api.
 func validTriggerKind(kind api.TriggerKind) bool {
 	switch kind {
 	case api.TriggerKindCron, api.TriggerKindKafka, api.TriggerKindNATS,
-		api.TriggerKindRedisStreams, api.TriggerKindSQSCompat, api.TriggerKindQueue:
+		api.TriggerKindRedisStreams, api.TriggerKindSQSCompat, api.TriggerKindQueue, api.TriggerKindRealtime:
 		return true
 	default:
 		return false
@@ -616,46 +681,7 @@ func validTriggerKind(kind api.TriggerKind) bool {
 // so a cross-account probe has the same not-found response as the
 // item endpoint.
 func (s *server) listTriggers(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	query := r.URL.Query()
-	appID := query.Get("app_id")
-	kind := api.TriggerKind(query.Get("kind"))
-	if kind != "" && !validTriggerKind(kind) {
-		// The public list contract treats an unknown filter value as
-		// an empty result, preserving the same semantics as a valid
-		// filter that currently matches no rows.
-		writeJSON(w, http.StatusOK, []api.Trigger{})
-		return
-	}
-	var apps []state.App
-	var err error
-	if appID != "" {
-		app, appErr := s.store.AppByID(r.Context(), appID)
-		if appErr != nil || app.AccountID != acct.ID {
-			s.notFound(w, "no such app")
-			return
-		}
-		apps = []state.App{app}
-	} else {
-		apps, err = s.store.ListApps(r.Context(), acct.ID)
-		if err != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not list triggers"))
-			return
-		}
-	}
-	out := make([]api.Trigger, 0)
-	for _, app := range apps {
-		ts, err := s.store.ListTriggersForApp(r.Context(), app.ID)
-		if err != nil {
-			continue
-		}
-		for _, t := range ts {
-			if kind != "" && api.TriggerKind(t.Kind) != kind {
-				continue
-			}
-			out = append(out, triggerResponse(t))
-		}
-	}
-	writeJSON(w, http.StatusOK, out)
+	queueaccess.ListPersonalTriggers(s.store, triggerResponse)(w, r, acct)
 }
 
 // --- getTrigger ------------------------------------------------------------
@@ -721,6 +747,18 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if t.Kind == string(api.TriggerKindRealtime) {
+		if p := managedrealtime.CheckRealtimeTriggerUpdate(t.Config, triggerDeliveryOrDefault(t.Delivery), t.BatchSizeMax, &req); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+	}
+	if req.Delivery != nil {
+		if _, p := s.requestedTriggerDelivery(acct, api.TriggerKind(t.Kind), req.Delivery); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+	}
 	if (req.Schedule != nil || req.Path != nil) && t.Kind != string(api.TriggerKindCron) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request",
 			"schedule/path patches are only valid for kind=cron triggers"))
@@ -731,9 +769,11 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 			"retry_policy is only valid for non-cron triggers"))
 		return
 	}
-	if req.Schedule != nil && !validCron(*req.Schedule) {
-		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression"))
-		return
+	if req.Schedule != nil {
+		if problem := cronScheduleProblem(*req.Schedule); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
 	// PR #993 / issue #757 review MED-4: mirror createTrigger's
 	// plan gates for PATCH. A Hobby customer upgrading their
@@ -860,6 +900,12 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 			api.WriteProblem(w, api.ErrCapacity("could not update trigger"))
 			return
 		}
+		if req.Delivery != nil && *req.Delivery != triggerDeliveryOrDefault(updated.Delivery) {
+			if updated, err = s.setTriggerDelivery(r.Context(), id, *req.Delivery); err != nil {
+				api.WriteProblem(w, api.ErrCapacity("could not change trigger delivery"))
+				return
+			}
+		}
 	}
 	triggerUUID := uuidFromPgtype(updated.ID).String()
 	appUUID := uuidFromPgtype(updated.AppID).String()
@@ -873,6 +919,10 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 	if req.MaxAttempts != nil {
 		oldT["max_attempts"] = t.MaxAttempts
 		newT["max_attempts"] = updated.MaxAttempts
+	}
+	if req.Delivery != nil {
+		oldT["delivery"] = triggerDeliveryOrDefault(t.Delivery)
+		newT["delivery"] = triggerDeliveryOrDefault(updated.Delivery)
 	}
 	s.audit.Emit(r.Context(), "trigger.updated", &acct.ID, map[string]any{
 		"trigger_id": triggerUUID,
@@ -1195,23 +1245,38 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 			MaxAttempts:          positiveIntPointer(t.MaxAttempts),
 			PayloadMaxBytes:      positiveIntPointer(t.PayloadMaxBytes),
 			BrokerPoisonStrategy: nonEmptyStringPointer(t.BrokerPoisonStrategy),
+			Delivery:             nonEmptyStringPointer(t.Delivery),
 		}
 		if problem := applyTriggerRetryPolicy(&createReq); problem != nil {
 			errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
 			continue
 		}
+		delivery, problem := s.requestedTriggerDelivery(acct, kind, createReq.Delivery)
+		if problem != nil {
+			errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
+			continue
+		}
 		config = createReq.Config
+		realtimeCfg, problem := s.prepareRealtimeTrigger(r.Context(), acct, &createReq)
+		if problem != nil {
+			errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
+			continue
+		}
 		bsm, bwm, ma, pmb, bps, problem := enforceCreateTriggerCaps(&createReq, acct.Plan, limits)
 		if problem != nil {
 			errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
 			continue
+		}
+		if realtimeCfg != nil {
+			bsm, ma = managedrealtime.RealtimeTriggerBatchSize(delivery, createReq.BatchSizeMax), 1
 		}
 		sealedConfig, problem := sealTriggerConfig(kind, config)
 		if problem != nil {
 			errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
 			continue
 		}
-		initialEnabled := t.IsEnabled() && t.WorkPolicy == ""
+		enableAtCreate := t.IsEnabled() && t.WorkPolicy == "" && realtimeCfg == nil
+		initialEnabled := enableAtCreate && delivery == api.TriggerDeliveryRecord
 		created, err := s.store.CreateTriggerIfUnderQuota(r.Context(),
 			req.AppID,
 			string(t.Kind), t.Slug, initialEnabled, sealedConfig,
@@ -1228,6 +1293,20 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 				errs = append(errs, batchError{Slug: t.Slug, Message: "internal error"})
 			}
 			continue
+		}
+		if delivery != api.TriggerDeliveryRecord {
+			if created, problem = s.applyTriggerDelivery(r.Context(), created, delivery, enableAtCreate); problem != nil {
+				errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
+				continue
+			}
+		}
+		if realtimeCfg != nil {
+			bound, problem := s.bindRealtimeTrigger(r.Context(), acct, created, *realtimeCfg, t.IsEnabled())
+			if problem != nil {
+				errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
+				continue
+			}
+			created = bound
 		}
 		if t.WorkPolicy != "" {
 			bindings, ok := s.store.(state.TriggerWorkBindingStore)
@@ -1254,6 +1333,9 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 			}
 		}
 		out = append(out, triggerResponse(created))
+	}
+	if failed := s.applyBatchEventTriggers(r.Context(), acct, app, m.EventTriggers); failed != nil {
+		errs = append(errs, *failed)
 	}
 	writeJSON(w, http.StatusOK, batchCreateResponse{Created: out, Errors: errs})
 }
@@ -1438,7 +1520,7 @@ func triggerConfigIdentities() []*age.X25519Identity {
 func sealTriggerConfig(kind api.TriggerKind, raw json.RawMessage) (json.RawMessage, *api.Problem) {
 	var recipient *age.X25519Recipient
 	if setSecretRecipient != nil {
-		recipient = setSecretRecipient()
+		recipient = hostSecretRecipient()
 	}
 	sealed, err := triggerconfig.Seal(kind, raw, recipient)
 	if err == nil {

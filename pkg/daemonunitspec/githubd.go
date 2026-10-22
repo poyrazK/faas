@@ -62,12 +62,19 @@ func UnitGithubd() daemonunit.Unit {
 
 		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/githubd/githubd.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
+			{Key: "FAAS_CI_INTERNAL_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_INTERNAL_ACCOUNTS", Value: ""},
+			{Key: "FAAS_CI_GITHUB_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_GITHUB_CHECKS_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_EXECUTION_CHECKS_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_AUTOMATION_ENABLED", Value: "0"},
 			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_fleet_age_identity"},
 			{Key: "FAAS_HOST_AGE_PUB", Value: "%d/faas_fleet_age_recipient"},
 			{Key: "FAAS_GITHUB_APP_KEY_PATH", Value: "%d/faas_github_app_key_unit"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
 			{Name: "faas_fleet_age_identity", Path: "/etc/faas/secrets/fleet.age"},
+			{Name: "faas_fleet_age_identity_previous", Path: "/etc/faas/secrets/fleet.age.previous", Optional: true},
 			{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},
 			{Name: "faas_fleet_age_recipient", Path: "/etc/faas/secrets/fleet.age.pub"},
 			// Keep this credential ID distinct from the legacy Ansible

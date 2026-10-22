@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -1329,8 +1330,8 @@ func TestAppEffectiveLimits_UsesScalingPolicyCeiling(t *testing.T) {
 	if got.ConcurrencyQueueDepth != 19 || got.ConcurrencyQueueWaitMS != 1750 {
 		t.Fatalf("warm queue limits = %d/%dms, want 19/1750ms", got.ConcurrencyQueueDepth, got.ConcurrencyQueueWaitMS)
 	}
-	if got.MemoryLimitMB != 384 || got.PlanMemoryMaxMB != 512 {
-		t.Fatalf("memory limits = %d/%d, want 384/512", got.MemoryLimitMB, got.PlanMemoryMaxMB)
+	if want := api.MustLimitsFor(api.PlanPro).RAMMB; got.MemoryLimitMB != 384 || got.PlanMemoryMaxMB != want {
+		t.Fatalf("memory limits = %d/%d, want 384/%d", got.MemoryLimitMB, got.PlanMemoryMaxMB, want)
 	}
 	if got.EphemeralDiskMaxMB != api.MustLimitsFor(api.PlanPro).AppLayerMaxMB {
 		t.Fatalf("ephemeral disk limit = %d, want %d", got.EphemeralDiskMaxMB, api.MustLimitsFor(api.PlanPro).AppLayerMaxMB)
@@ -1451,7 +1452,7 @@ func TestUpdateApp_RAMValidationPreservesConfiguration(t *testing.T) {
 	}{
 		{name: "negative", ram: -1, wantStatus: http.StatusUnprocessableEntity, wantCode: api.CodeInvalidAppRAM},
 		{name: "zero", ram: 0, wantStatus: http.StatusUnprocessableEntity, wantCode: api.CodeInvalidAppRAM},
-		{name: "above plan", ram: 513, wantStatus: http.StatusForbidden, wantCode: api.CodePlanLimitRAM},
+		{name: "above plan", ram: api.MustLimitsFor(api.PlanPro).RAMMB + 1, wantStatus: http.StatusForbidden, wantCode: api.CodePlanLimitRAM},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -5763,7 +5764,7 @@ func ptrInt64(v int64) *int64 { return &v }
 // satisfies the full state.Store interface — no need to
 // re-implement the ~100 other methods just to stub one.
 type parkedRefStore struct {
-	*state.MemStore
+	MemStore *state.MemStore
 	// err is consulted by LatestParkedDeploymentForApp.
 	// When non-nil, the err is returned verbatim and the
 	// embedded memstore implementation is bypassed.
@@ -5874,7 +5875,7 @@ func TestWithParkedDeploymentRef_StoreErrorLoggedAndIgnored(t *testing.T) {
 	logBuf := &safeBuffer{}
 	captureLogger := slog.New(slog.NewJSONHandler(logBuf, nil))
 	srv := newServerWithDeps(
-		&parkedRefStore{MemStore: e.store, err: errors.New("simulated PG outage")},
+		statetest.NewMem(&parkedRefStore{MemStore: e.store, err: errors.New("simulated PG outage")}),
 		captureLogger,
 		"gregale.dev",
 		noopNotifier{},

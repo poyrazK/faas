@@ -9,13 +9,14 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // Deliberately stale advisory discovery. The real store must reject cleanup
 // while the original lease is current, before an attempt-aware native RPC.
 type staleQualificationRecoveryStore struct {
-	*state.MemStore
-	row state.EnvironmentQualificationExecutionStatus
+	MemStore *state.MemStore
+	row      state.EnvironmentQualificationExecutionStatus
 }
 
 func (s *staleQualificationRecoveryStore) ListEnvironmentQualificationExecutionsForRecovery(context.Context, string, string, int) ([]state.EnvironmentQualificationExecutionStatus, error) {
@@ -35,7 +36,7 @@ func TestEnvironmentQualificationRecoveryPageFencesLiveLeaseAndRetriesUncertainR
 		t.Fatal(err)
 	}
 	before := v.destroys
-	stale, err := NewEngine(t.Context(), &staleQualificationRecoveryStore{MemStore: store, row: stored}, e.ledger, v, &fakeNotifier{}, "test-fc", testLog())
+	stale, err := NewEngine(t.Context(), statetest.NewMem(&staleQualificationRecoveryStore{MemStore: store, row: stored}), e.ledger, v, &fakeNotifier{}, "test-fc", testLog())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -37,7 +37,9 @@ type Inputs struct {
 	MonitorReport       *api.RouteMonitorReport
 	LatestIncident      *api.RouteMonitorIncident
 	Requirements        *api.SavedRouteRequirements
-	Unavailable         map[string]string
+	// Advice is the route advisor's current suggestions (ADR-1152).
+	Advice      *api.RouteAdviceResponse
+	Unavailable map[string]string
 }
 
 type Canary struct {
@@ -83,6 +85,17 @@ type Summary struct {
 	Protected   int `json:"protected"`
 	Unprotected int `json:"unprotected_with_traffic"`
 	Rollback    int `json:"rollback_armed"`
+	Advice      int `json:"advice"`
+}
+
+// Advice is one route advisor suggestion; Method and Path are empty for
+// app-level settings such as wake-ahead or route priorities.
+type Advice struct {
+	ID     string `json:"id"`
+	Kind   string `json:"kind"`
+	Method string `json:"method,omitempty"`
+	Path   string `json:"path,omitempty"`
+	Title  string `json:"title"`
 }
 
 type Status struct {
@@ -95,6 +108,7 @@ type Status struct {
 	Summary             Summary           `json:"summary"`
 	Routes              []Route           `json:"routes"`
 	LatestIncident      *Incident         `json:"latest_incident,omitempty"`
+	Advice              []Advice          `json:"advice,omitempty"`
 	Unavailable         map[string]string `json:"unavailable,omitempty"`
 }
 
@@ -104,6 +118,7 @@ const (
 	GapOutsideContract    = "traffic_outside_contract"
 	GapNoTraffic          = "contract_route_without_traffic"
 	GapRollbackNoErrorCap = "rollback_needs_error_budget"
+	GapAdviceAvailable    = "advice_available"
 )
 
 // OperationsFromDoc lists method/path pairs of a captured OpenAPI document.
@@ -240,6 +255,8 @@ func Build(in Inputs) Status {
 	if i := in.LatestIncident; i != nil {
 		s.LatestIncident = &Incident{ID: i.ID, Status: i.Status, OpenedAt: i.OpenedAt.UTC().Format("2006-01-02T15:04:05Z"), Rollback: i.Rollback}
 	}
+	s.Advice = adviceList(in)
+	s.Summary.Advice = len(s.Advice)
 	return s
 }
 
@@ -292,6 +309,26 @@ func classify(r *Route, in Inputs) {
 	if r.Production != nil && r.Production.OnViolation == "rollback" && r.Production.Max5xxRateBPS == nil {
 		r.Gaps = append(r.Gaps, GapRollbackNoErrorCap)
 	}
+	if in.Advice != nil {
+		for _, a := range in.Advice.Suggestions {
+			if a.Method == r.Method && a.Route == r.Path {
+				r.Gaps = append(r.Gaps, GapAdviceAvailable)
+				break
+			}
+		}
+	}
+}
+
+// adviceList flattens the advisor response for the status view.
+func adviceList(in Inputs) []Advice {
+	if in.Advice == nil {
+		return nil
+	}
+	out := make([]Advice, 0, len(in.Advice.Suggestions))
+	for _, a := range in.Advice.Suggestions {
+		out = append(out, Advice{ID: a.ID, Kind: a.Kind, Method: a.Method, Path: a.Route, Title: a.Title})
+	}
+	return out
 }
 
 func hasGap(r Route, gap string) bool {

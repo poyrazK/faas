@@ -10,6 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestGetOverageCap_SavedValue(t *testing.T) {
@@ -60,7 +61,7 @@ func TestGetOverageCap_ReadScope(t *testing.T) {
 	}
 }
 
-type failedOverageCapStore struct{ state.Store }
+type failedOverageCapStore struct{ Store state.Store }
 
 func (s failedOverageCapStore) GetAccountOverageCapCents(context.Context, string) (int64, bool, error) {
 	return 0, false, errors.New("read unavailable")
@@ -68,7 +69,7 @@ func (s failedOverageCapStore) GetAccountOverageCapCents(context.Context, string
 
 func TestGetOverageCap_ReadFailure(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
-	(*(*e.S()).Store()) = failedOverageCapStore{(*e.Store())}
+	(*(*e.S()).Store()) = statetest.NewStore(failedOverageCapStore{(*e.Store())})
 	rec := e.Do(t, "GET", "/v1/account/overage-cap", nil, nil)
 	if rec.Code != 500 || strings.Contains(rec.Body.String(), `"overage_cap_cents":null`) {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)

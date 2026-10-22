@@ -8,6 +8,18 @@ gregale init --template data-api-starter --path notes
 cd notes
 ```
 
+With an approved matching CLI/SDK bundle, new projects can instead run:
+
+```sh
+gregale data-api onboard --path notes --bundle /path/to/data-api-bundle.json
+```
+
+Run this from outside an existing project. It creates the starter, verifies and
+installs the SDK, generates types, checks the client and replays the scenarios.
+It removes disposable services when done; run `gregale data-api dev --check`
+inside the new project to start a development session. See the
+[first-application journey](https://gregale.dev/docs/data-api-onboarding).
+
 For local development, install Node.js 22+, npm and Docker, then run
 `gregale data-api dev`. It starts a disposable database and authenticated API,
 applies these migrations, generates client types, and verifies Alice/Bob RLS
@@ -190,7 +202,19 @@ and PostgreSQL egress. Use an isolated database: the first migration creates
 and audience. No identity provider or database administrator key is bundled.
 Keep credentials in your environment or secret store.
 
-Reserve the migration app and attach its release-only connection:
+To run the API and its migrations as one app instead, skip the migration app
+and pass this directory's migrations to `create`. Later schema changes then ship
+with `gregale data-api deploy notes-data --migrations migrations`; see
+[single-app projects](https://gregale.dev/docs/data-api#single-app-projects):
+
+```sh
+gregale data-api create notes-data --database notes-db \
+  --issuer https://identity.example.com/ \
+  --jwks-url https://identity.example.com/.well-known/jwks.json \
+  --audience notes --migrations migrations
+```
+
+For the two-app layout, reserve the migration app and attach its release-only connection:
 
 ```sh
 gregale deploy --create-only --path . --dockerfile --name notes-migrations
@@ -568,7 +592,8 @@ npm run build:browser --prefix client
 npm run serve:browser --prefix client
 ```
 
-Open `http://127.0.0.1:3030`. Configure that exact origin in the Data API's
+Open `http://127.0.0.1:3030`. Local `data-api dev` already allows this
+loopback origin. For a hosted runtime, configure that exact origin in the Data API's
 `--origins` setting and redeploy before testing. Enter the API URL, the signed-in
 application user's subject and application JWT. Management credentials must
 never enter the browser. The example clears the token field immediately and
@@ -906,9 +931,12 @@ Upgrade the installed SDK bundle alongside the starter to use these helpers.
 ### Validated RPC form
 
 The browser example also includes a note-and-tags form backed by the approved
-`create_note_with_tags_once` function. Apply migrations and RPC permissions,
+`create_note_with_tags_once_v2` function. Apply migrations and RPC permissions,
 refresh the serving schema and install a current paired SDK bundle before using
-it. No additional database migration is needed for this form.
+it. V2 requires `0012_note_replay_expiry.sql` and execution permission on
+`read_note_create_receipt_v2(uuid,text,text[])`. Both RPCs are granted by the
+normal owner permission workflow. The controller explicitly selects
+`replayContract: 'v2'`; existing callers retain v1 unless they opt in.
 
 Enter the session information above, then a body and optional comma-separated
 tags. The application-owned parser trims content, rejects a blank body or empty
@@ -923,17 +951,30 @@ Requests use `dataRequest()` with a five-second deadline and automatic retries
 disabled. If a save cannot be confirmed, the controller retains a frozen request
 key and payload in memory and blocks new submissions. The API URL, subject and
 note fields stay locked; supply a current token for the **same signed-in user**
-and choose **Resolve pending save**. This explicitly calls the idempotent function
-with the original key and payload. It returns the saved receipt, or completes the
-save if the first transaction did not commit. It is not a read-only status check.
-The subject input does not override JWT ownership or verify a renewed token's
-identity; production session management must enforce the same-user requirement.
+and choose **Check pending save**. This reads the receipt using the original key
+and payload, then uses `reconcileMutation` to confirm the saved snapshot under
+the controller's captured subject. It never replays the write. Missing, purged,
+hidden or uncommitted receipts stay unresolved, as do lookup failures and payload
+conflicts; all preserve the original pending operation. The subject input does
+not override JWT ownership; production session management must keep API and
+identity context stable when renewing credentials.
 
-Resolve pending saves promptly within the owner's receipt-retention window.
-After receipt deletion, replay can create another note. The example does not
+**Retry original save** is a separate explicit action with replay-window review.
+It calls the idempotent creation function with the same frozen key and payload.
+An unsuccessful retry cannot discard the original uncertain operation, including
+when the latest token is refused. The controller exposes these actions separately
+as `reconcile()` and `retry()`.
+
+Resolve pending saves promptly. V2 UUIDv7 keys expire 24 hours after their embedded
+timestamp, with five minutes of future clock tolerance. The database rejects an
+expired write even after its receipt is purged. The lookup can still confirm a
+retained receipt after expiry; an expired missing receipt stays unresolved.
+Keep the original operation for business review; expiry never proves rollback.
+Legacy v1 replay after receipt deletion can still create another note.
+The example does not
 persist tokens or pending requests, and closing or reloading the page loses the
 recovery state. A production app should retain operation state under its own
-identity and privacy policy and enforce its agreed retention window before replay.
+identity and privacy policy, including the original API and contract version.
 The token input is cleared immediately and the in-memory token is cleared after
 each action; paste a fresh application token for each save or recovery action.
 
@@ -943,3 +984,166 @@ PostgreSQL/PostgREST acceptance suite tests committed-response loss and retained
 receipts. Required Chromium acceptance exercises the actual form, checks invalid
 input sends no request, verifies token clearing and locked fields, and confirms
 explicit recovery produces one saved note.
+
+### Recoverable updates and deletes
+
+Apply `0013_note_mutation_receipts.sql`, run the owner RPC permission workflow,
+refresh the Data API and regenerate types. Install the paired SDK bundle. The
+client exposes opt-in `updateOnceV2(key,id,expectedVersion,patch)` and
+`removeOnceV2(key,id,expectedVersion)`, plus read-only `readUpdateReceiptV2` and
+`readDeleteReceiptV2` with the same arguments. Existing REST methods and the
+browser editor keep their prior behavior.
+
+Capture a `createReplayKeyV2()` key with the original API, subject, action, target,
+version and complete payload before sending. Use `classifyVersionedMutation` for
+the completed write response and `reconcileMutation` for a separate receipt
+lookup. Successful update receipts preserve the post-update version; delete
+receipts preserve the deleted row's version. Missing, stale and hidden rows
+share the same version conflict. A missing receipt, conflict or expired key
+cannot itself confirm an earlier uncertain request; keep its original operation.
+
+For owner cleanup select `--contract v2 --receipt-kind mutation`. Preview with a
+past UTC cutoff before applying bounded batches. Only expired snapshots can be
+purged; cleanup never deletes notes or reopens an expired key. The default
+creation-receipt cleanup remains unchanged. See
+[the Data API guide](https://gregale.dev/docs/data-api#versioned-update-and-delete-recovery)
+for typed examples, exact errors and recovery limits.
+
+### Atomic note updates and deletes
+
+After migration `0014_note_atomic_batches.sql`, apply owner RPC grants, refresh
+the runtime, regenerate types and install the paired SDK. Use `prepareNoteBatch`
+from `client/src/note-batch.ts` to capture 1–100 distinct note updates/deletes,
+then `applyBatchOnceV2(pending.key,pending.operations)`. Updates require an
+expected version and nonempty body/priority patch; deletes require an expected
+version and omit the patch. Any failing item rolls back the whole transaction.
+
+Use `classifyVersionedMutation(response,noteBatchMatches(pending))` for its single
+ordered acknowledgement envelope. After an uncertain response, explicitly call
+`readBatchReceiptV2` with the original key/array and use `reconcileMutation` with
+the same matcher. Retain the original API/identity/contract and immutable pending
+operation; preparation does not persist it. Receipt snapshots can confirm the
+original batch after later changes, but do not describe current rows. Never
+replace a key/version automatically after missing, conflicting or expired results.
+
+The v2 24-hour key deadline applies; expired writers stay refused after cleanup.
+Saved results are capped at 1 MiB, with full rollback on overflow. Owner cleanup
+uses `--contract v2 --receipt-kind batch`. See
+[the Data API guide](https://gregale.dev/docs/data-api#atomic-note-batch-recovery)
+for setup, examples, errors and recovery assumptions.
+
+### Schema-driven form feedback
+
+Run `gregale data-api dev --validators --check` to regenerate runtime insert/update
+parsers alongside types, including after watched migrations. The note form uses
+those generated rules before creating a request key or sending a save. Database
+constraints, RPC business rules and RLS remain authoritative. Plain type generation
+keeps the existing form validation. Keep your generation mode consistent in CI:
+
+```sh
+gregale data-api dev --validators --check-types --once
+```
+
+### Validate a CSV before importing notes
+
+After generating with `--validators`, use `previewNotesCsv` from
+`client/src/note-import.ts`. Supply the signed-in subject as application context;
+CSV ownership columns are ignored. Map `body` and optional `priority` headers, review
+all rows, and explicitly approve before submitting a successful `preview.rows`.
+An invalid preview has complete counts, capped row/field issues and no partial rows.
+It never retrieves a token or sends a request. CSV is limited to 1 MiB/1,000 records,
+and errors use record numbers including the header. SQL and RLS recheck submissions.
+
+### Schema-driven create and edit forms
+
+With `dev --validators`, the browser example builds note body and edit-priority
+controls from generated `formMetadata`. Labels and the editable-field allowlist
+remain application-owned; subject, identity and version are never auto-rendered.
+Supported limits and enum choices refresh with the generated module. Field parsers
+provide feedback before transport. Read a current note ID/version before editing;
+blank edit fields keep existing values, conflicts require a fresh read, and uncertain
+saves are never automatically replayed. Plain types retain default starter controls.
+
+### Enable version-checked inspector edits
+
+Review the existing note version trigger, then copy
+`migrations/examples/enable-versioned-edits.sql` into a new numbered migration.
+Its `@gregale:version` column annotation declares that the database advances the
+version on every successful update. The local inspector then offers reviewed edits
+for visible keyed rows, with stale-version rejection and a fresh-read requirement.
+Do not modify an already applied numbered migration to add the annotation.
+
+### Owner receipt storage diagnostics
+
+After installing dependencies, run `npm run --silent receipts:diagnostics` with
+the secret-managed stable-owner `MIGRATION_DATABASE_URL`. It reports all three
+v2 receipt contracts; select one with `--receipt-kind create`, `mutation` or
+`batch`. The command returns one versioned JSON object with total/active/expired
+counts, oldest expired deadline and age, and table/index/total physical bytes.
+Counts, ages in milliseconds and sizes are decimal strings; an empty backlog has
+null oldest deadline and age. No receipt payloads, keys or identities appear.
+
+The report uses read-only transactions. Serving logins and all non-owners are
+refused. Missing/FORCE RLS tables, incompatible shapes, lock contention and query
+failures produce unavailable entries without measurements and a nonzero exit.
+Statements and connections have 5-second deadlines, lock waits a 1-second limit
+and client queries a 6-second fallback. Exact counts can time out on large tables.
+Keep these cross-user aggregates in operator monitoring. Physical allocation
+includes TOAST and free space and can remain unchanged after deletion. Cleanup
+remains explicit. See the receipt storage diagnostics section of
+https://gregale.dev/docs/data-api for output fields and failure reasons.
+
+### Incremental note synchronization
+
+Migration `0015_note_change_feed.sql` records subject-scoped insert/update/delete
+metadata in the same transaction as note writes. Apply it, approve the two new
+RPC grants through the owner workflow, refresh and regenerate client types.
+`notesClient.startSync()` gives a checkpoint; `syncRows({ afterID, size })` scans
+current notes by ascending id. Take the checkpoint before the scan, then use
+`readChanges(cursor, size)` to catch up. Validate responses with
+`parseNoteSyncCheckpoint` and `parseNoteChangePage` from `note-changes.ts`.
+
+Re-fetch every changed id under current RLS, including deletion events. Upsert
+present rows, remove missing ids, and save the next cursor only after applying
+the whole page. Continue while `has_more` is true, then poll explicitly. Metadata
+contains only sequence, operation, note id and version; it stores no old bodies.
+Comments/tags are outside this notes-only feed. Pages can split a SQL transaction.
+
+The latest 10,000 events per subject are retained. An expired cursor returns
+HTTP 410 / `PT410` / `note_change_cursor_expired`; `noteChangeCursorExpired`
+recognizes this exact result. Restart a fresh staging scan on expiry. Bind caches
+to API/subject, and reset staging on identity changes. Wrong-context/future
+cursors fail with HTTP 400. Missing/inconsistent history fails with HTTP 503.
+Pages hold at most 100 events and cursors at most 128 bytes. Cursors are opaque
+continuations, not authorization tokens.
+
+Transactional counter locks serialize writes within one subject until commit;
+other subjects have independent streams. SQL lock/deadlock failures still roll
+back normally. Both polling RPCs are read-only, and direct metadata-table CRUD is
+blocked. Watermarks survive deletion of all notes; stream storage grows with the
+number of subjects with history. Owner history resets need an epoch strategy.
+See https://gregale.dev/docs/data-api for the bootstrap/catch-up example.
+
+### Ranked note search
+
+Migration `0016_note_search.sql` adds `search_notes` and backfills an internal
+subject/lexeme index. Apply it, approve the RPC through the owner permission
+workflow, refresh the runtime and regenerate types. Use
+`notes.search('running errands', { size: 20 })`, then validate the single response
+page with `parseNoteSearchPage` from `note-search.ts`. Continue with the same
+query and `{ after: page.next_cursor, size: 20 }` while `page.has_more` is true.
+
+Matching uses English stemming and AND words, with stop words removed. Boolean,
+phrase, prefix and fuzzy syntax are unsupported. Empty/stop-word-only queries
+fail. Results contain current note fields and integer relevance, ordered by rank
+then descending id. Queries allow 1,024 UTF-8 bytes and 16 distinct normalized
+terms; pages 1–100 results; cursors 128 ASCII bytes. Invalid query/size/cursor
+arguments return HTTP 400. Cursors bind to exact query text and verified subject.
+Keep API and identity consistent; edited relevance can move rows between pages.
+
+Ordinary writes maintain postings atomically. The search RPC runs read-only with
+invoker rights, rechecks current notes through RLS, and preserves cancellation.
+Direct index reads are hidden and writes rejected. Common searches can still
+rank many matches within existing runtime budgets. Index storage/write overhead
+scales with note lexemes. Owner TRUNCATE, disabled triggers and dictionary changes
+need a reviewed rebuild. See https://gregale.dev/docs/data-api for usage.

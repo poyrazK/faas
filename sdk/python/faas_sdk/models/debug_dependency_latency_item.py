@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -11,6 +11,10 @@ from ..models.debug_dependency_latency_item_type import (
     check_debug_dependency_latency_item_type,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.debug_dependency_query_item import DebugDependencyQueryItem
+
 
 T = TypeVar("T", bound="DebugDependencyLatencyItem")
 
@@ -33,6 +37,9 @@ class DebugDependencyLatencyItem:
     regression: bool
     """True when both split-window samples meet the minimum call threshold and current p95 is at least 1.5x and
     25ms above baseline."""
+    failure_regression: bool
+    """True when both split-window samples meet the minimum call threshold, the current side has at least 3 failed
+    calls, and the current error rate is at least 5 percentage points and 2x above baseline."""
     kind: str | Unset = UNSET
     exclusive_p50_ms: int | Unset = UNSET
     """P50 wall time not covered by overlapping direct child spans."""
@@ -50,6 +57,13 @@ class DebugDependencyLatencyItem:
     baseline_error_rate_pct: float | Unset = UNSET
     current_error_rate_pct: float | Unset = UNSET
     error_rate_delta_pct: float | Unset = UNSET
+    top_error_type: str | Unset = UNSET
+    """Most frequent span failure class, from the current side when it has failures."""
+    queries: list[DebugDependencyQueryItem] | Unset = UNSET
+    """Database dependencies only: the dependency broken down by normalized query pattern (literals, placeholders,
+    IN lists and VALUES rows folded), regressions first."""
+    queries_truncated: bool | Unset = UNSET
+    """True when more query patterns were seen than are returned."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -70,6 +84,8 @@ class DebugDependencyLatencyItem:
         p99_ms = self.p99_ms
 
         regression = self.regression
+
+        failure_regression = self.failure_regression
 
         kind = self.kind
 
@@ -99,6 +115,17 @@ class DebugDependencyLatencyItem:
 
         error_rate_delta_pct = self.error_rate_delta_pct
 
+        top_error_type = self.top_error_type
+
+        queries: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.queries, Unset):
+            queries = []
+            for queries_item_data in self.queries:
+                queries_item = queries_item_data.to_dict()
+                queries.append(queries_item)
+
+        queries_truncated = self.queries_truncated
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -112,6 +139,7 @@ class DebugDependencyLatencyItem:
                 "p95_ms": p95_ms,
                 "p99_ms": p99_ms,
                 "regression": regression,
+                "failure_regression": failure_regression,
             }
         )
         if kind is not UNSET:
@@ -142,11 +170,19 @@ class DebugDependencyLatencyItem:
             field_dict["current_error_rate_pct"] = current_error_rate_pct
         if error_rate_delta_pct is not UNSET:
             field_dict["error_rate_delta_pct"] = error_rate_delta_pct
+        if top_error_type is not UNSET:
+            field_dict["top_error_type"] = top_error_type
+        if queries is not UNSET:
+            field_dict["queries"] = queries
+        if queries_truncated is not UNSET:
+            field_dict["queries_truncated"] = queries_truncated
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.debug_dependency_query_item import DebugDependencyQueryItem
+
         d = dict(src_dict)
         type_ = check_debug_dependency_latency_item_type(d.pop("type"))
 
@@ -165,6 +201,8 @@ class DebugDependencyLatencyItem:
         p99_ms = d.pop("p99_ms")
 
         regression = d.pop("regression")
+
+        failure_regression = d.pop("failure_regression")
 
         kind = d.pop("kind", UNSET)
 
@@ -194,6 +232,19 @@ class DebugDependencyLatencyItem:
 
         error_rate_delta_pct = d.pop("error_rate_delta_pct", UNSET)
 
+        top_error_type = d.pop("top_error_type", UNSET)
+
+        _queries = d.pop("queries", UNSET)
+        queries: list[DebugDependencyQueryItem] | Unset = UNSET
+        if _queries is not UNSET:
+            queries = []
+            for queries_item_data in _queries:
+                queries_item = DebugDependencyQueryItem.from_dict(queries_item_data)
+
+                queries.append(queries_item)
+
+        queries_truncated = d.pop("queries_truncated", UNSET)
+
         debug_dependency_latency_item = cls(
             type_=type_,
             name=name,
@@ -204,6 +255,7 @@ class DebugDependencyLatencyItem:
             p95_ms=p95_ms,
             p99_ms=p99_ms,
             regression=regression,
+            failure_regression=failure_regression,
             kind=kind,
             exclusive_p50_ms=exclusive_p50_ms,
             exclusive_p95_ms=exclusive_p95_ms,
@@ -218,6 +270,9 @@ class DebugDependencyLatencyItem:
             baseline_error_rate_pct=baseline_error_rate_pct,
             current_error_rate_pct=current_error_rate_pct,
             error_rate_delta_pct=error_rate_delta_pct,
+            top_error_type=top_error_type,
+            queries=queries,
+            queries_truncated=queries_truncated,
         )
 
         debug_dependency_latency_item.additional_properties = d

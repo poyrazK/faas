@@ -118,7 +118,10 @@ func TestNativeQualificationRestoreStagingJoinsOriginalTargetAndReceipts(t *test
 			if err := v.stageNativeQualificationRestore(ctx, owner); err == nil || b.prepares != 3 {
 				t.Fatal("staging replay reacquired an uncertain native image epoch", err, b.prepares)
 			}
-			cleanup, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+			// Revoke blocks while staging still holds the incoming authority,
+			// so a stuck release exhausts this bound. 30 ms was too tight for
+			// a race-instrumented run on a loaded CI runner.
+			cleanup, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			if _, err := q.restores().revoke(cleanup, r.Execution); err != nil {
 				t.Fatal("synchronous staging did not release original incoming authority", err)

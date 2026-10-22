@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -97,7 +98,7 @@ func qualificationCaptureFixture(t *testing.T) (*Manager, *nativeQualificationJo
 			return SnapshotInfo{}, errors.New("capture omitted original process-bound output capability")
 		}
 		started, err := j.readCapture(permit.Incoming)
-		if err != nil || started != permit.Capture {
+		if err != nil || !started.Equal(permit.Capture) {
 			return SnapshotInfo{}, errors.Join(err, errors.New("output capability preceded durable capture start"))
 		}
 		if !sameNativePhysicalLease(got, lease) || !spec.ResumeBeforePublish || spec.BeforeCheckpoint || spec.StageMemPath != "" || spec.VMStatePath != "" {
@@ -304,7 +305,7 @@ func TestNativeQualificationCaptureJournalPinsVersionAtStartAndCompletion(t *tes
 		t.Fatal("completed capture receipt was rewritten")
 	}
 	got, err := j.readCapture(incoming)
-	if err != nil || got != completed {
+	if err != nil || !reflect.DeepEqual(got, completed) {
 		t.Fatalf("capture receipt changed after completion: %+v %v", got, err)
 	}
 }
@@ -431,7 +432,7 @@ func TestNativeQualificationSnapshotUncertaintyCannotRecapture(t *testing.T) {
 				t.Fatal(err)
 			}
 			record, err := j.readCapture(incoming)
-			if err != nil || !record.CompletedAt.IsZero() || record.Info != (SnapshotInfo{}) {
+			if err != nil || !record.CompletedAt.IsZero() || !record.Info.IsZero() {
 				t.Fatal("uncertain capture was durably promoted", err)
 			}
 			v.capture = capture

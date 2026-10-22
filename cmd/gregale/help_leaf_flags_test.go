@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 )
@@ -28,17 +29,18 @@ func TestLeafHelpDocumentsRequiredArguments(t *testing.T) {
 		{"jobs run", []string{"gregale jobs run <job-name>"}},
 		{"data-api install", []string{"--bundle <MANIFEST>", "--restore", "--directory <DIR>", "--client-directory <DIR>", "--from <DIR>", "--base-url <HTTPS_URL>"}},
 		{"data-api refresh", []string{"gregale data-api refresh <name>", "--wait", "--timeout <DURATION>"}},
+		{"data-api health", []string{"gregale data-api health <name>", "--since <DURATION|RFC3339>", "--timeout <DURATION>"}},
 		{"data-api sync", []string{"gregale data-api sync --config <FILE> <name>", "--config <FILE>", "--timeout <DURATION>"}},
 		{"data-api dev", []string{"gregale data-api dev", "--directory <DIR>", "--config <FILE>", "--port <PORT>", "--check", "--once", "--watch", "--baseline <FILE>", "--check-breaking", "--replay <FILE>", "--scenario <NAME>"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
-			resetJSONOut(t)
+			main.ResetJSONOut(t)
 			var stdout bytes.Buffer
-			oldOut := osStdout
-			osStdout = &stdout
-			t.Cleanup(func() { osStdout = oldOut })
-			if code := run(append(strings.Fields(tc.path), "--help")); code != 0 {
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &stdout
+			t.Cleanup(func() { (*main.OsStdout) = oldOut })
+			if code := main.Run(append(strings.Fields(tc.path), "--help")); code != 0 {
 				t.Fatalf("help exit = %d", code)
 			}
 			for _, want := range tc.want {
@@ -54,12 +56,12 @@ func TestLeafHelpDocumentsRequiredArguments(t *testing.T) {
 }
 
 func TestDomainsAddHelpMarksRequiredOnce(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	t.Cleanup(func() { osStdout = oldOut })
-	if code := run([]string{"domains", "add", "--help"}); code != 0 {
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
+	if code := main.Run([]string{"domains", "add", "--help"}); code != 0 {
 		t.Fatalf("help exit = %d", code)
 	}
 	if strings.Contains(stdout.String(), "(required) (required)") {
@@ -69,12 +71,12 @@ func TestDomainsAddHelpMarksRequiredOnce(t *testing.T) {
 
 // The workflow name can follow the flags, as the help synopsis shows.
 func TestWorkflowsRunAcceptsNameAfterFlags(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("FAAS_TOKEN", "")
 	t.Setenv("FAAS_API", "http://127.0.0.1:1")
-	_, readStderr, restore := swapIO(t)
+	_, readStderr, restore := main.SwapIO(t)
 	defer restore()
-	_ = cmdWorkflowsRun([]string{"--app", "my-api", "nightly"})
+	_ = main.CmdWorkflowsRun([]string{"--app", "my-api", "nightly"})
 	if stderr := readStderr(); strings.Contains(stderr, "usage: gregale workflows run") {
 		t.Fatalf("flags-before-name was rejected as a usage error: %s", stderr)
 	}

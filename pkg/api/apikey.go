@@ -385,6 +385,9 @@ const (
 	// deployment authority. Existing deploy:write keys remain valid.
 	ScopeEventsPublish = "events:publish"
 	ScopeQueuesSend    = "queues:send"
+	// Consumer keys can lease, ack, nack and extend pull-queue messages
+	// (ADR-1140) without deployment authority.
+	ScopeQueuesConsume = "queues:consume"
 	// Object storage separates control-plane management from data-plane
 	// access. Data-plane keys also need an explicit grant for the target
 	// bucket; these scopes alone never expose a bucket.
@@ -443,6 +446,7 @@ var validScopes = map[string]struct{}{
 	ScopeDelayedTasksWrite:         {},
 	ScopeEventsPublish:             {},
 	ScopeQueuesSend:                {},
+	ScopeQueuesConsume:             {},
 	ScopeStorageManage:             {},
 	ScopeStorageRead:               {},
 	ScopeStorageWrite:              {},
@@ -564,6 +568,7 @@ var (
 	ScopesDelayedTasksWriteSurface = []string{ScopeAdmin, ScopeDeployWrite, ScopeDelayedTasksWrite}
 	ScopesEventsPublishSurface     = []string{ScopeAdmin, ScopeDeployWrite, ScopeEventsPublish}
 	ScopesQueuesSendSurface        = []string{ScopeAdmin, ScopeDeployWrite, ScopeQueuesSend}
+	ScopesQueuesConsumeSurface     = []string{ScopeAdmin, ScopeDeployWrite, ScopeQueuesConsume}
 
 	// ScopesRegistryCredentialsReadSurface: GET on
 	// /v1/apps/{slug}/registry-credentials (issue #461 / ADR-062).

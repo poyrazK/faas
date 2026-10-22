@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.app_operational_incident import AppOperationalIncident
+    from ..models.scoped_route_budget_report import ScopedRouteBudgetReport
 
 
 T = TypeVar("T", bound="AppOperationalMonitoring")
@@ -18,8 +19,8 @@ T = TypeVar("T", bound="AppOperationalMonitoring")
 
 @_attrs_define
 class AppOperationalMonitoring:
-    """Recent default-scope route-monitor evaluation with observed-only coverage. Unknown or unavailable health is
-    independent of deployment smoke verification.
+    """Recent default-scope or explicitly scoped route-monitor evaluation with observed-only coverage. Unknown or
+    unavailable health is independent of deployment smoke verification.
 
     """
 
@@ -28,6 +29,9 @@ class AppOperationalMonitoring:
     reason: str
     coverage: str
     incidents_available: bool
+    route_budgets: ScopedRouteBudgetReport | Unset = UNSET
+    """Read-only evaluation of inherited or overridden budgets against one selected environment serving release.
+    Completed current windows only; no pooled history, customer cohorts, scoped incidents or automatic rollback."""
     deployment_id: str | Unset = UNSET
     checked_at: datetime.datetime | Unset = UNSET
     window_start: datetime.datetime | Unset = UNSET
@@ -47,6 +51,10 @@ class AppOperationalMonitoring:
         coverage = self.coverage
 
         incidents_available = self.incidents_available
+
+        route_budgets: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.route_budgets, Unset):
+            route_budgets = self.route_budgets.to_dict()
 
         deployment_id = self.deployment_id
 
@@ -77,6 +85,8 @@ class AppOperationalMonitoring:
                 "incidents_available": incidents_available,
             }
         )
+        if route_budgets is not UNSET:
+            field_dict["route_budgets"] = route_budgets
         if deployment_id is not UNSET:
             field_dict["deployment_id"] = deployment_id
         if checked_at is not UNSET:
@@ -93,6 +103,7 @@ class AppOperationalMonitoring:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.app_operational_incident import AppOperationalIncident
+        from ..models.scoped_route_budget_report import ScopedRouteBudgetReport
 
         d = dict(src_dict)
         available = d.pop("available")
@@ -104,6 +115,13 @@ class AppOperationalMonitoring:
         coverage = d.pop("coverage")
 
         incidents_available = d.pop("incidents_available")
+
+        _route_budgets = d.pop("route_budgets", UNSET)
+        route_budgets: ScopedRouteBudgetReport | Unset
+        if isinstance(_route_budgets, Unset):
+            route_budgets = UNSET
+        else:
+            route_budgets = ScopedRouteBudgetReport.from_dict(_route_budgets)
 
         deployment_id = d.pop("deployment_id", UNSET)
 
@@ -141,6 +159,7 @@ class AppOperationalMonitoring:
             reason=reason,
             coverage=coverage,
             incidents_available=incidents_available,
+            route_budgets=route_budgets,
             deployment_id=deployment_id,
             checked_at=checked_at,
             window_start=window_start,

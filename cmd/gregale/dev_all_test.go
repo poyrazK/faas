@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -200,6 +201,20 @@ func TestDevAllChildArgs(t *testing.T) {
 			want: []string{"dev", "--path", "/repo/apps/api", "--name", "api", "--open", "--postgres", "--postgres-region", "eu-central-1", "--json=false"}},
 		{name: "ttl", opts: devAllOptions{ttl: "72h"},
 			want: []string{"dev", "--path", "/repo/apps/api", "--name", "api", "--ttl", "72h", "--json=false"}},
+	}
+	// --watch reaches an app only when it has a development command.
+	web := devAllApp{Project: "web", SourceDir: t.TempDir()}
+	if err := os.WriteFile(filepath.Join(web.SourceDir, "package.json"), []byte(`{"scripts":{"dev":"vite"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := (devAllOptions{watch: true}).childArgs(web, false); !slices.Contains(got, "--watch") {
+		t.Fatalf("watchable app args = %v, want --watch", got)
+	}
+	if got := (devAllOptions{watch: true}).childArgs(app, false); slices.Contains(got, "--watch") {
+		t.Fatalf("app without a development command got --watch: %v", got)
+	}
+	if got := (devAllOptions{watch: true, stop: true}).childArgs(web, false); slices.Contains(got, "--watch") {
+		t.Fatalf("--stop child got --watch: %v", got)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

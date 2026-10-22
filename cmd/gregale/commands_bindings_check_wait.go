@@ -17,6 +17,12 @@ type bindingCheckInventoryClient interface {
 // Waiting only observes work already scheduled by the customer or control plane.
 // Pin the first selected deployment and scope so a rollout cannot change the check.
 func pollBindingCheck(ctx context.Context, client bindingCheckInventoryClient, policy bindingcheck.Policy, wait bool, interval time.Duration) (bindingcheck.Report, error) {
+	return pollBindingCheckConfirmed(ctx, client, policy, wait, interval, nil)
+}
+
+type bindingCheckConfirmation func(context.Context, bindingcheck.Report) (bindingcheck.Report, error)
+
+func pollBindingCheckConfirmed(ctx context.Context, client bindingCheckInventoryClient, policy bindingcheck.Policy, wait bool, interval time.Duration, confirm bindingCheckConfirmation) (bindingcheck.Report, error) {
 	var last bindingcheck.Report
 	for {
 		inventory, err := client.GetAppBindingInventoryForDeployment(ctx, policy.App, policy.Scope, policy.DeploymentID)
@@ -26,6 +32,12 @@ func pollBindingCheck(ctx context.Context, client bindingCheckInventoryClient, p
 		last, err = bindingcheck.Evaluate(inventory, policy, time.Now())
 		if err != nil {
 			return last, err
+		}
+		if confirm != nil {
+			last, err = confirm(ctx, last)
+			if err != nil {
+				return last, err
+			}
 		}
 		if !wait || last.Passed || !bindingCheckCanProgress(last, inventory) {
 			return last, nil
@@ -54,14 +66,26 @@ func bindingCheckCanProgress(report bindingcheck.Report, inventory api.AppBindin
 		switch blocker.Code {
 		case "runtime_updating", "runtime_stale", "rotation_pending", "application_ack_stale", "application_ack_candidate_unobserved":
 			continue
-		case "verification_unknown", "refresh_incomplete", "application_adoption_unknown":
+		case "queue_consumer_stale", "queue_consumer_unobserved":
+			pending := false
+			for _, item := range inventory.Bindings {
+				if item.Type == api.BindingTypeQueue && item.Binding == blocker.Binding && item.Scope == blocker.Scope &&
+					report.QueueRequirements[item.Binding] == api.QueueEvidenceConsumerReadiness && item.QueueEnvironment != nil &&
+					api.QueueBindingInScope(item, report.Scope) && item.State == "enabled" && item.Access == "push" && item.ConsumerState == "active" {
+					pending = true
+				}
+			}
+			if !pending {
+				return false
+			}
+		case "verification_unknown", "object_storage_operations_missing", "object_storage_operations_incomplete", "refresh_incomplete", "application_adoption_unknown":
 			pending := false
 			for _, item := range inventory.Bindings {
 				if item.Type != blocker.Type || item.Name != blocker.Name || item.Binding != blocker.Binding || item.Scope != blocker.Scope {
 					continue
 				}
 				switch blocker.Code {
-				case "verification_unknown":
+				case "verification_unknown", "object_storage_operations_missing", "object_storage_operations_incomplete":
 					pending = item.Verification != nil && item.Verification.Reason == "probe_pending" && item.Verification.Result == "unknown"
 				case "refresh_incomplete":
 					pending = item.Refresh != nil && (item.Refresh.Status == "queued" || item.Refresh.Status == "running" || item.Refresh.Status == "retrying")

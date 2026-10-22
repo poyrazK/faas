@@ -1,0 +1,153 @@
+version: 1
+suites:
+  http-dependency-restart:
+    scenarios:
+      - {scenario: dependency-pending, engine: real-vm, profile: warm}
+      - {scenario: dependency-committed, engine: real-vm, profile: warm}
+scenarios:
+  dependency-pending:
+    project: http-dependency-pending
+    source: ./app
+    timeout: 5m
+    secrets:
+      CHECKOUT_DEADLINE_MS: '90000'
+    services:
+      payment:
+        source: ./payment-postgres
+        secrets:
+          DATABASE_URL: '${env.GREGALE_DEPENDENCY_DATABASE_URL}'
+          LEDGER_NAMESPACE: '${run.id}'
+          LEDGER_TEST_DISPOSABLE: '${env.GREGALE_DEPENDENCY_DATABASE_DISPOSABLE}'
+          HOLD_FIRST_KEY: in-flight
+          HOLD_STAGE: pending
+    cleanup:
+      - [node, ../test/postgres-cleanup.mjs]
+    steps:
+      - name: baseline
+        requests:
+          - name: seed-charge
+            method: POST
+            path: /checkout
+            headers: {idempotency-key: baseline}
+            json: {customer: customer-one, sku: item-one, quantity: 1}
+            expect: {status: 200, json: {'/status': confirmed}}
+          - name: seed-ledger
+            method: GET
+            path: /durability
+            expect: {status: 200, json: {'/charges': 1, '/pending': 0}}
+            capture: {id: /ledger_id}
+      - name: replace-payment
+        restart:
+          workload: payment
+          timeout: 1m
+          in_flight:
+            request:
+              name: interrupted-write
+              method: POST
+              path: /checkout
+              headers: {idempotency-key: in-flight}
+              json: {customer: customer-one, sku: item-one, quantity: 1}
+              expect: {status: 200}
+            checkpoints:
+              - workload: app
+                request:
+                  name: caller-pending
+                  method: GET
+                  path: /in-flight
+                  expect: {status: 200, json: {'/active': 1}}
+              - workload: payment
+                request:
+                  name: provider-pending
+                  method: GET
+                  path: /checkpoints/in-flight
+                  expect: {status: 200, json: {'/received': true, '/accepted': true, '/pending': true, '/committed': false, '/held': true}}
+          readiness:
+            name: replacement-payment-ready
+            method: GET
+            path: /stats
+            expect: {status: 200, json: {'/ready': true, '/held': 0}}
+          storage_checks:
+            - name: retained-ledger
+              method: GET
+              path: /stats
+              expect: {status: 200, json: {'/ledger_id': '${steps.seed-ledger.id}', '/charges': 1, '/pending': 1}}
+      - name: reconcile-write
+        command: [node, ../test/dependency-acceptance.mjs, pending]
+        checks:
+          - name: reconciled-ledger
+            method: GET
+            path: /durability
+            expect: {status: 200, json: {'/charges': 2, '/pending': 0, '/held': 0}}
+  dependency-committed:
+    project: http-dependency-after
+    source: ./app
+    timeout: 5m
+    secrets:
+      CHECKOUT_DEADLINE_MS: '90000'
+    services:
+      payment:
+        source: ./payment-postgres
+        secrets:
+          DATABASE_URL: '${env.GREGALE_DEPENDENCY_DATABASE_URL}'
+          LEDGER_NAMESPACE: '${run.id}'
+          LEDGER_TEST_DISPOSABLE: '${env.GREGALE_DEPENDENCY_DATABASE_DISPOSABLE}'
+          HOLD_FIRST_KEY: in-flight
+          HOLD_STAGE: committed
+    cleanup:
+      - [node, ../test/postgres-cleanup.mjs]
+    steps:
+      - name: baseline
+        requests:
+          - name: seed-charge
+            method: POST
+            path: /checkout
+            headers: {idempotency-key: baseline}
+            json: {customer: customer-one, sku: item-one, quantity: 1}
+            expect: {status: 200, json: {'/status': confirmed}}
+          - name: seed-ledger
+            method: GET
+            path: /durability
+            expect: {status: 200, json: {'/charges': 1, '/pending': 0}}
+            capture: {id: /ledger_id}
+      - name: replace-payment
+        restart:
+          workload: payment
+          timeout: 1m
+          in_flight:
+            request:
+              name: interrupted-write
+              method: POST
+              path: /checkout
+              headers: {idempotency-key: in-flight}
+              json: {customer: customer-one, sku: item-one, quantity: 1}
+              expect: {status: 200}
+            checkpoints:
+              - workload: app
+                request:
+                  name: caller-pending
+                  method: GET
+                  path: /in-flight
+                  expect: {status: 200, json: {'/active': 1}}
+              - workload: payment
+                request:
+                  name: provider-committed
+                  method: GET
+                  path: /checkpoints/in-flight
+                  expect: {status: 200, json: {'/received': true, '/accepted': true, '/pending': false, '/committed': true, '/held': true}}
+          readiness:
+            name: replacement-payment-ready
+            method: GET
+            path: /stats
+            expect: {status: 200, json: {'/ready': true, '/held': 0}}
+          storage_checks:
+            - name: retained-ledger
+              method: GET
+              path: /stats
+              expect: {status: 200, json: {'/ledger_id': '${steps.seed-ledger.id}', '/charges': 2, '/pending': 0}}
+      - name: reconcile-write
+        command: [node, ../test/dependency-acceptance.mjs, committed]
+        checks:
+          - name: reconciled-ledger
+            method: GET
+            path: /durability
+            expect: {status: 200, json: {'/charges': 2, '/pending': 0, '/held': 0}}

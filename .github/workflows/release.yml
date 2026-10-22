@@ -2,7 +2,9 @@
 #
 # Triggered by a tag push matching v*.*.*. Cross-builds the gregale CLI
 # for linux-amd64 (and optional darwin-arm64 for maintainer local dev),
-# vendors the linux-amd64 binary into .github/actions/deploy/bin/gregale,
+# vendors the linux-amd64 binary gzip-compressed into
+# .github/actions/deploy/bin/gregale.gz (GitHub refuses files over 100 MB;
+# the Action unpacks it, see .github/actions/deploy/src/cli.sh),
 # updates src/version.txt, generates SHA256SUMS, commits everything back
 # to a release branch, force-updates the MAJOR moving tag so customers
 # pinned at @vN always resolve to the latest vendored binary, and
@@ -39,23 +41,13 @@ permissions:
   packages: read
 
 jobs:
-  # Release gate: the complete mega-tier suite (ci.yml) must pass on the
-  # tagged commit before anything is built, signed or published. Pull
-  # requests only run the light tier (ci-light.yml), so this is where e2e,
-  # the full migration history and the cross-package suites gate a release.
-  full-ci:
-    name: Full CI (release gate)
-    uses: ./.github/workflows/ci.yml
-    secrets: inherit
-    permissions:
-      contents: read
-      pull-requests: write
-      security-events: write
-      id-token: write
-
+  # No full-CI gate (docs/adr/20261018104452-release-decoupled-from-full-ci.md).
+  # A tag builds, signs and publishes at once. The tagged commit has passed
+  # its pull request's light tier (ci-light.yml); the mega tier (ci.yml) runs
+  # nightly and on dispatch, and is not consulted here. Production safety is
+  # the deploy's canary, SLO gate and rollback.
   resolve-action-pin:
     name: Resolve deploy Action pin
-    needs: [full-ci]
     runs-on: ubuntu-22.04
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
@@ -208,19 +200,31 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Vendor binary + SHA256SUMS into action repo
+      # The Action vendors the CLI gzip-compressed: GitHub rejects any file
+      # over 100 MB, and the bare linux-amd64 binary reached 102 MB in
+      # rc.274. src/cli.sh unpacks it and checks it against SHA256SUMS.
+      - name: Vendor compressed binary + SHA256SUMS into action repo
         env:
           VERSION: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          cp /tmp/gregale-build/gregale .github/actions/deploy/bin/gregale
-          chmod +x .github/actions/deploy/bin/gregale
+          packed=.github/actions/deploy/bin/gregale.gz
+          gzip -9 -n -c /tmp/gregale-build/gregale > "$packed"
+          size="$(stat -c %s "$packed")"
+          limit=$((95 * 1024 * 1024))
+          if [ "$size" -gt "$limit" ]; then
+            echo "::error::$packed is $size bytes; GitHub refuses files over 100 MB (limit kept at 95 MB)" >&2
+            exit 1
+          fi
+          echo "vendored $packed: $size bytes (binary $(stat -c %s /tmp/gregale-build/gregale) bytes)"
           cp /tmp/gregale-build/CLI-SHA256SUMS SHA256SUMS
           echo "$VERSION" > .github/actions/deploy/src/version.txt
-          # Sanity-check: the vendored binary should report the right
-          # version when invoked. Smoke asserts the LDFLAGS stamping
-          # worked end-to-end.
-          ./.github/actions/deploy/bin/gregale version
+          # Sanity-check through the Action's own unpacking: the CLI it
+          # resolves must match SHA256SUMS and report the stamped version.
+          # shellcheck source=/dev/null
+          source .github/actions/deploy/src/cli.sh
+          cli="$(gregale_cli .github/actions/deploy)"
+          "$cli" version
 
       - name: Start fixture Gregale API
         run: |
@@ -274,7 +278,7 @@ jobs:
             git branch -D "${BRANCH}"
           fi
           git checkout -b "$BRANCH"
-          git add .github/actions/deploy/bin/gregale .github/actions/deploy/src/version.txt SHA256SUMS
+          git add .github/actions/deploy/bin/gregale.gz .github/actions/deploy/src/version.txt SHA256SUMS
           git commit -m "release: bundle gregale ${TAG}"
           git push -u origin "$BRANCH"
 
@@ -317,14 +321,10 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$SNIPPET" | grep -Fq "https://gregale.dev/docs/deploy-from-github"
-          for path in .github/actions/deploy/action.yml .github/actions/deploy/bin/gregale; do
-            gh api "repos/${GITHUB_REPOSITORY}/contents/${path}?ref=${ACTION_SHA}" \
-              | jq -e '.type == "file" and .size > 0' >/dev/null
-            # The moving major tag still needs to expose this release's bundle
-            # for direct Action users who choose the latest-version channel.
-            gh api "repos/${GITHUB_REPOSITORY}/contents/${path}?ref=${MAJOR}" \
-              | jq -e '.type == "file" and .size > 0' >/dev/null
-          done
+          # The pinned ref is the previous release's commit (it may still
+          # vendor the bare bin/gregale); the moving major tag must expose
+          # this release's compressed CLI for direct Action users.
+          bash scripts/ci/verify-action-ref-contents.sh "$ACTION_SHA" "$MAJOR"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -400,7 +400,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           CLI_RELEASE_ASSETS: |
-            .github/actions/deploy/bin/gregale
+            /tmp/gregale-build/gregale
             /tmp/gregale-build/gregale-darwin-arm64
             /tmp/gregale-build/gregale_*.tar.gz
             scripts/install.sh
@@ -490,9 +490,62 @@ jobs:
       - name: Verify npm installation from the public registry
         run: node scripts/verify-npm-installation.mjs --packages-dir "$RUNNER_TEMP/npm" --prefix "$RUNNER_TEMP/npm-smoke"
 
+  # @gregale/data (ADR 20261018170742). Off until the client-SDK license is
+  # decided (sdk/README-publishing.md); the repository variable
+  # PUBLISH_DATA_SDK=true turns it on. A version already on the registry is
+  # skipped, so a CLI release that does not bump the SDK publishes nothing.
+  publish-data-sdk:
+    name: Publish @gregale/data
+    if: vars.PUBLISH_DATA_SDK == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    concurrency:
+      group: gregale-npm-publish-data-sdk
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Build and test the SDK
+        working-directory: sdk/data
+        run: |
+          npm ci --ignore-scripts
+          npm test
+
+      # The live-query module ships as @gregale/data/live and /live/react.
+      - name: Verify the package contents
+        working-directory: sdk/data
+        run: |
+          set -euo pipefail
+          npm pack --dry-run --json > "$RUNNER_TEMP/data-pack.json"
+          node -e '
+            const files = require(process.argv[1])[0].files.map(f => f.path)
+            for (const f of ["dist/index.js", "dist/index.d.ts", "dist/live/index.js", "dist/live/index.d.ts", "dist/live/react.js", "dist/live/react.d.ts", "README.md", "LICENSE"]) if (!files.includes(f)) throw new Error("missing " + f)
+          ' "$RUNNER_TEMP/data-pack.json"
+
+      - name: Publish unless this version exists
+        working-directory: sdk/data
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error title=npm channel unavailable::Set NPM_TOKEN to publish @gregale/data."
+            exit 1
+          fi
+          version=$(node -p 'require("./package.json").version')
+          if npm view "@gregale/data@$version" version >/dev/null 2>&1; then
+            echo "@gregale/data@$version is already published; nothing to do."
+            exit 0
+          fi
+          npm publish
+
   daemon-bundle:
     name: Build and sign canonical daemon bundle
-    needs: [full-ci]
     runs-on: ubuntu-22.04
     # The builder-base publisher is a separate workflow and can use most of
     # its 25-minute budget before the immutable tag is available. Leave room

@@ -662,10 +662,15 @@ func TestPgStoreDebugRegressions_ReadsEmptyAndNonEmpty(t *testing.T) {
 	if err := factor.Scan("1.50"); err != nil {
 		t.Fatalf("scan regression factor: %v", err)
 	}
+	zero := pgtype.Numeric{}
+	if err := zero.Scan("0"); err != nil {
+		t.Fatalf("scan zero rate: %v", err)
+	}
 	if err := store.UpsertRegressionObservation(ctx, sqlc.UpsertRegressionObservationParams{
 		AppID: appID, DeploymentID: depID, Route: "GET /debug",
 		P95Ms: 300, P95BaseMs: 200, AffectedCount: 4,
 		RegressionFactor: factor,
+		Kind:             "latency", ErrorRatePct: zero, ErrorRateBasePct: zero,
 	}); err != nil {
 		t.Fatalf("UpsertRegressionObservation: %v", err)
 	}

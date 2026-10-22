@@ -30,7 +30,9 @@ func TestManagedPostgresUpgradeHiddenOutsideTheRollout(t *testing.T) {
 	account := (*e.Acct()).ID
 	registry, err := managedpostgres.NewRegistry(managedpostgres.Config{DefaultRegion: "us-east-1", MaxDatabasesPerAccount: 3, Defaults: map[string]string{"us-east-1": "private-backend"},
 		Backends: []managedpostgres.BackendConfig{{ID: "private-backend", Driver: "fixture", Region: "us-east-1", Namespace: "private"}}}, func(string) string { return "" },
-		map[string]managedpostgres.Factory{"fixture": func(managedpostgres.BackendConfig, func(string) string) (managedpostgres.Provider, error) { return upgradeAPIProvider{}, nil }})
+		map[string]managedpostgres.Factory{"fixture": func(managedpostgres.BackendConfig, func(string) string) (managedpostgres.Provider, error) {
+			return upgradeAPIProvider{}, nil
+		}})
 	if err != nil {
 		t.Fatal(err)
 	}

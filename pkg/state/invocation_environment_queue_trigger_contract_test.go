@@ -2,7 +2,6 @@
 package state_test
 
 import (
-	"context"
 	"reflect"
 	"testing"
 	"time"
@@ -11,10 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type environmentQueueTriggerTestStore interface {
-	invocationEnvironmentTestStore
-	ListDueInvocationsAfter(context.Context, time.Time, state.InvocationDueCursor, int) ([]state.Invocation, error)
-}
+type environmentQueueTriggerTestStore = contractTestStore
 
 func TestMemStageDelayedTasksIgnoreProductionQueueTrigger(t *testing.T) {
 	testStageDelayedTasksIgnoreProductionQueueTrigger(t, state.NewMemStore())

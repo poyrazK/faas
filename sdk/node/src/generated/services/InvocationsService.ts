@@ -85,6 +85,1499 @@ export class InvocationsService {
     });
   }
   /**
+   * Inspect Durable Entity Tenant Quotas.
+   * Inspect durable entity tenant quotas: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any Inspect durable entity tenant quotas — responses / 200: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static inspectDurableEntityTenantQuotas({
+    slug,
+    namespace,
+    key,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Inspect durable entity tenant quotas — parameters / namespace: Exact entity namespace selecting the scope.
+     */
+    namespace: string,
+    /**
+     * Inspect durable entity tenant quotas — parameters / key: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant registry.
+     */
+    key: string,
+    /**
+     * Inspect durable entity tenant quotas — parameters / environment: Registered environment, defaulting to production.
+     */
+    environment?: string,
+    /**
+     * Inspect durable entity tenant quotas — parameters / platform tenant id: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/entities/quotas',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Inspect durable entity tenant quotas — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Inspect durable entity tenant quotas — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Get Durable Entity Readiness.
+   * Get durable entity readiness: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any Get durable entity readiness — responses / 200: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static getDurableEntityReadiness({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/entities/readiness',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Get durable entity readiness — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Get durable entity readiness — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Plan Durable Entity Quota Migration.
+   * Plan durable entity quota migration: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any Plan durable entity quota migration — responses / 200: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static planDurableEntityQuotaMigration({
+    slug,
+    namespace,
+    key,
+    environment,
+    platformTenantId,
+    cursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Plan durable entity quota migration — parameters / namespace: Exact entity namespace selecting the scope.
+     */
+    namespace: string,
+    /**
+     * Plan durable entity quota migration — parameters / key: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant registry.
+     */
+    key: string,
+    /**
+     * Plan durable entity quota migration — parameters / environment: Registered environment, defaulting to production.
+     */
+    environment?: string,
+    /**
+     * Plan durable entity quota migration — parameters / platform tenant id: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+     */
+    platformTenantId?: string,
+    /**
+     * Plan durable entity quota migration — parameters / cursor: Opaque continuation from the preceding page; restart listing after revision or cursor conflicts.
+     */
+    cursor?: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/entities/quota-migration/plan',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Plan durable entity quota migration — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Plan durable entity quota migration — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect Durable Entity Quota Migration.
+   * Inspect durable entity quota migration: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any Inspect durable entity quota migration — responses / 200: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static inspectDurableEntityQuotaMigration({
+    slug,
+    namespace,
+    key,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Inspect durable entity quota migration — parameters / namespace: Exact entity namespace selecting the scope.
+     */
+    namespace: string,
+    /**
+     * Inspect durable entity quota migration — parameters / key: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant registry.
+     */
+    key: string,
+    /**
+     * Inspect durable entity quota migration — parameters / environment: Registered environment, defaulting to production.
+     */
+    environment?: string,
+    /**
+     * Inspect durable entity quota migration — parameters / platform tenant id: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/entities/quota-migration',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Inspect durable entity quota migration — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Inspect durable entity quota migration — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Start Durable Entity Quota Migration.
+   * Start durable entity quota migration: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any Start durable entity quota migration — responses / 200: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static startDurableEntityQuotaMigration({
+    slug,
+    namespace,
+    key,
+    requestBody,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Start durable entity quota migration — parameters / namespace: Exact entity namespace selecting the scope.
+     */
+    namespace: string,
+    /**
+     * Start durable entity quota migration — parameters / key: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant registry.
+     */
+    key: string,
+    /**
+     * Start durable entity quota migration — requestBody: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+     */
+    requestBody: {
+      /**
+       * Start durable entity quota migration — requestBody / content / application/json / schema / properties / migration id: Fresh operation identity; replay must retain this identity and the exact request.
+       */
+      migration_id: string;
+      /**
+       * Start durable entity quota migration — requestBody / content / application/json / schema / properties / expected migration id: Prior migration identity, or empty for an initial migration.
+       */
+      expected_migration_id?: string;
+      /**
+       * Start durable entity quota migration — requestBody / content / application/json / schema / properties / expected revision: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+       */
+      expected_revision: number;
+    },
+    /**
+     * Start durable entity quota migration — parameters / environment: Registered environment, defaulting to production.
+     */
+    environment?: string,
+    /**
+     * Start durable entity quota migration — parameters / platform tenant id: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/entities/quota-migration/start',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Start durable entity quota migration — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Start durable entity quota migration — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Step Durable Entity Quota Migration.
+   * Step durable entity quota migration: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any Step durable entity quota migration — responses / 200: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static stepDurableEntityQuotaMigration({
+    slug,
+    namespace,
+    key,
+    requestBody,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Step durable entity quota migration — parameters / namespace: Exact entity namespace selecting the scope.
+     */
+    namespace: string,
+    /**
+     * Step durable entity quota migration — parameters / key: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant registry.
+     */
+    key: string,
+    /**
+     * Step durable entity quota migration — requestBody: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+     */
+    requestBody: {
+      /**
+       * Step durable entity quota migration — requestBody / content / application/json / schema / properties / migration id: Fresh operation identity; replay must retain this identity and the exact request.
+       */
+      migration_id: string;
+      /**
+       * Step durable entity quota migration — requestBody / content / application/json / schema / properties / expected revision: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+       */
+      expected_revision: number;
+    },
+    /**
+     * Step durable entity quota migration — parameters / environment: Registered environment, defaulting to production.
+     */
+    environment?: string,
+    /**
+     * Step durable entity quota migration — parameters / platform tenant id: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/entities/quota-migration/step',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Step durable entity quota migration — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Step durable entity quota migration — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect Durable Entity Quota Policy.
+   * Inspect durable entity quota policy: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any Inspect durable entity quota policy — responses / 200: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static inspectDurableEntityQuotaPolicy({
+    slug,
+    namespace,
+    key,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Inspect durable entity quota policy — parameters / namespace: Exact entity namespace selecting the scope.
+     */
+    namespace: string,
+    /**
+     * Inspect durable entity quota policy — parameters / key: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant registry.
+     */
+    key: string,
+    /**
+     * Inspect durable entity quota policy — parameters / environment: Registered environment, defaulting to production.
+     */
+    environment?: string,
+    /**
+     * Inspect durable entity quota policy — parameters / platform tenant id: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/entities/quota-policy',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Inspect durable entity quota policy — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Inspect durable entity quota policy — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Preview Durable Entity Quota Policy.
+   * Preview durable entity quota policy: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any Preview durable entity quota policy — responses / 200: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static previewDurableEntityQuotaPolicy({
+    slug,
+    namespace,
+    key,
+    requestBody,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Preview durable entity quota policy — parameters / namespace: Exact entity namespace selecting the scope.
+     */
+    namespace: string,
+    /**
+     * Preview durable entity quota policy — parameters / key: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant registry.
+     */
+    key: string,
+    /**
+     * Preview durable entity quota policy — requestBody: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+     */
+    requestBody: {
+      /**
+       * Preview durable entity quota policy — requestBody / content / application/json / schema / properties / operation id: Fresh operation identity; replay must retain this identity and the exact request.
+       */
+      operation_id: string;
+      /**
+       * Preview durable entity quota policy — requestBody / content / application/json / schema / properties / expected revision: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+       */
+      expected_revision: number;
+      /**
+       * Preview durable entity quota policy — requestBody / content / application/json / schema / properties / expected migration id: Observed completed migration identity.
+       */
+      expected_migration_id?: string;
+      /**
+       * Preview durable entity quota policy — requestBody / content / application/json / schema / properties / expected migration revision: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+       */
+      expected_migration_revision: number;
+      /**
+       * Preview durable entity quota policy — requestBody / content / application/json / schema / properties / migration id: Fresh operation identity; replay must retain this identity and the exact request.
+       */
+      migration_id: string;
+      /**
+       * Preview durable entity quota policy — requestBody / content / application/json / schema / properties / limits: Proposed tenant admission caps; all fields are required.
+       */
+      limits: {
+        /**
+         * Preview durable entity quota policy — requestBody / content / application/json / schema / properties / limits / properties / connections: Approved connections cap; server validates bounds and monotonic increases.
+         */
+        connections: number;
+        /**
+         * Preview durable entity quota policy — requestBody / content / application/json / schema / properties / limits / properties / grants per minute: Approved grants per minute cap; server validates bounds and monotonic increases.
+         */
+        grants_per_minute: number;
+        /**
+         * Preview durable entity quota policy — requestBody / content / application/json / schema / properties / limits / properties / invocations per minute: Approved invocations per minute cap; server validates bounds and monotonic increases.
+         */
+        invocations_per_minute: number;
+        /**
+         * Preview durable entity quota policy — requestBody / content / application/json / schema / properties / limits / properties / retained bytes: Approved retained bytes cap; server validates bounds and monotonic increases.
+         */
+        retained_bytes: number;
+        /**
+         * Preview durable entity quota policy — requestBody / content / application/json / schema / properties / limits / properties / entity bytes: Approved entity bytes cap; server validates bounds and monotonic increases.
+         */
+        entity_bytes: number;
+      };
+    },
+    /**
+     * Preview durable entity quota policy — parameters / environment: Registered environment, defaulting to production.
+     */
+    environment?: string,
+    /**
+     * Preview durable entity quota policy — parameters / platform tenant id: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/entities/quota-policy/preview',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Preview durable entity quota policy — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Preview durable entity quota policy — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Apply Durable Entity Quota Policy.
+   * Apply durable entity quota policy: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any Apply durable entity quota policy — responses / 200: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static applyDurableEntityQuotaPolicy({
+    slug,
+    namespace,
+    key,
+    requestBody,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Apply durable entity quota policy — parameters / namespace: Exact entity namespace selecting the scope.
+     */
+    namespace: string,
+    /**
+     * Apply durable entity quota policy — parameters / key: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant registry.
+     */
+    key: string,
+    /**
+     * Apply durable entity quota policy — requestBody: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+     */
+    requestBody: {
+      /**
+       * Apply durable entity quota policy — requestBody / content / application/json / schema / properties / operation id: Fresh operation identity; replay must retain this identity and the exact request.
+       */
+      operation_id: string;
+      /**
+       * Apply durable entity quota policy — requestBody / content / application/json / schema / properties / expected revision: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+       */
+      expected_revision: number;
+      /**
+       * Apply durable entity quota policy — requestBody / content / application/json / schema / properties / expected migration id: Observed completed migration identity.
+       */
+      expected_migration_id?: string;
+      /**
+       * Apply durable entity quota policy — requestBody / content / application/json / schema / properties / expected migration revision: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+       */
+      expected_migration_revision: number;
+      /**
+       * Apply durable entity quota policy — requestBody / content / application/json / schema / properties / migration id: Fresh operation identity; replay must retain this identity and the exact request.
+       */
+      migration_id: string;
+      /**
+       * Apply durable entity quota policy — requestBody / content / application/json / schema / properties / limits: Proposed tenant admission caps; all fields are required.
+       */
+      limits: {
+        /**
+         * Apply durable entity quota policy — requestBody / content / application/json / schema / properties / limits / properties / connections: Approved connections cap; server validates bounds and monotonic increases.
+         */
+        connections: number;
+        /**
+         * Apply durable entity quota policy — requestBody / content / application/json / schema / properties / limits / properties / grants per minute: Approved grants per minute cap; server validates bounds and monotonic increases.
+         */
+        grants_per_minute: number;
+        /**
+         * Apply durable entity quota policy — requestBody / content / application/json / schema / properties / limits / properties / invocations per minute: Approved invocations per minute cap; server validates bounds and monotonic increases.
+         */
+        invocations_per_minute: number;
+        /**
+         * Apply durable entity quota policy — requestBody / content / application/json / schema / properties / limits / properties / retained bytes: Approved retained bytes cap; server validates bounds and monotonic increases.
+         */
+        retained_bytes: number;
+        /**
+         * Apply durable entity quota policy — requestBody / content / application/json / schema / properties / limits / properties / entity bytes: Approved entity bytes cap; server validates bounds and monotonic increases.
+         */
+        entity_bytes: number;
+      };
+    },
+    /**
+     * Apply durable entity quota policy — parameters / environment: Registered environment, defaulting to production.
+     */
+    environment?: string,
+    /**
+     * Apply durable entity quota policy — parameters / platform tenant id: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/entities/quota-policy/apply',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Apply durable entity quota policy — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Apply durable entity quota policy — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * List Durable Entity Registry.
+   * List durable entity registry: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any List durable entity registry — responses / 200: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static listDurableEntityRegistry({
+    slug,
+    namespace,
+    key,
+    environment,
+    platformTenantId,
+    cursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * List durable entity registry — parameters / namespace: Exact entity namespace selecting the scope.
+     */
+    namespace: string,
+    /**
+     * List durable entity registry — parameters / key: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant registry.
+     */
+    key: string,
+    /**
+     * List durable entity registry — parameters / environment: Registered environment, defaulting to production.
+     */
+    environment?: string,
+    /**
+     * List durable entity registry — parameters / platform tenant id: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+     */
+    platformTenantId?: string,
+    /**
+     * List durable entity registry — parameters / cursor: Opaque continuation from the preceding page; restart listing after revision or cursor conflicts.
+     */
+    cursor?: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/entities/registry',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `List durable entity registry — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `List durable entity registry — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Enable Durable Entity Registry.
+   * Enable durable entity registry: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any Enable durable entity registry — responses / 200: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static enableDurableEntityRegistry({
+    slug,
+    namespace,
+    key,
+    requestBody,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Enable durable entity registry — parameters / namespace: Exact entity namespace selecting the scope.
+     */
+    namespace: string,
+    /**
+     * Enable durable entity registry — parameters / key: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant registry.
+     */
+    key: string,
+    /**
+     * Enable durable entity registry — requestBody: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+     */
+    requestBody: {
+      /**
+       * Enable durable entity registry — requestBody / content / application/json / schema / properties / operation id: Fresh operation identity; replay must retain this identity and the exact request.
+       */
+      operation_id: string;
+      /**
+       * Enable durable entity registry — requestBody / content / application/json / schema / properties / expected revision: Exact opaque revision returned by inspection; never convert it to a number.
+       */
+      expected_revision: string;
+    },
+    /**
+     * Enable durable entity registry — parameters / environment: Registered environment, defaulting to production.
+     */
+    environment?: string,
+    /**
+     * Enable durable entity registry — parameters / platform tenant id: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/entities/registry/enable',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Enable durable entity registry — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Enable durable entity registry — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect Durable Entity Registry Cleanup.
+   * Inspect durable entity registry cleanup: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any Inspect durable entity registry cleanup — responses / 200: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static inspectDurableEntityRegistryCleanup({
+    slug,
+    namespace,
+    key,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Inspect durable entity registry cleanup — parameters / namespace: Exact entity namespace selecting the scope.
+     */
+    namespace: string,
+    /**
+     * Inspect durable entity registry cleanup — parameters / key: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant registry.
+     */
+    key: string,
+    /**
+     * Inspect durable entity registry cleanup — parameters / environment: Registered environment, defaulting to production.
+     */
+    environment?: string,
+    /**
+     * Inspect durable entity registry cleanup — parameters / platform tenant id: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/entities/registry/cleanup',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Inspect durable entity registry cleanup — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Inspect durable entity registry cleanup — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Start Durable Entity Registry Cleanup.
+   * Start durable entity registry cleanup: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any Start durable entity registry cleanup — responses / 200: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static startDurableEntityRegistryCleanup({
+    slug,
+    namespace,
+    key,
+    requestBody,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Start durable entity registry cleanup — parameters / namespace: Exact entity namespace selecting the scope.
+     */
+    namespace: string,
+    /**
+     * Start durable entity registry cleanup — parameters / key: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant registry.
+     */
+    key: string,
+    /**
+     * Start durable entity registry cleanup — requestBody: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+     */
+    requestBody: {
+      /**
+       * Start durable entity registry cleanup — requestBody / content / application/json / schema / properties / operation id: Fresh operation identity; replay must retain this identity and the exact request.
+       */
+      operation_id: string;
+      /**
+       * Start durable entity registry cleanup — requestBody / content / application/json / schema / properties / expected revision: Exact opaque revision returned by inspection; never convert it to a number.
+       */
+      expected_revision: string;
+    },
+    /**
+     * Start durable entity registry cleanup — parameters / environment: Registered environment, defaulting to production.
+     */
+    environment?: string,
+    /**
+     * Start durable entity registry cleanup — parameters / platform tenant id: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/entities/registry/cleanup/start',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Start durable entity registry cleanup — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Start durable entity registry cleanup — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Step Durable Entity Registry Cleanup.
+   * Step durable entity registry cleanup: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any Step durable entity registry cleanup — responses / 200: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static stepDurableEntityRegistryCleanup({
+    slug,
+    namespace,
+    key,
+    requestBody,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Step durable entity registry cleanup — parameters / namespace: Exact entity namespace selecting the scope.
+     */
+    namespace: string,
+    /**
+     * Step durable entity registry cleanup — parameters / key: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant registry.
+     */
+    key: string,
+    /**
+     * Step durable entity registry cleanup — requestBody: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+     */
+    requestBody: {
+      /**
+       * Step durable entity registry cleanup — requestBody / content / application/json / schema / properties / operation id: Fresh operation identity; replay must retain this identity and the exact request.
+       */
+      operation_id: string;
+      /**
+       * Step durable entity registry cleanup — requestBody / content / application/json / schema / properties / expected revision: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+       */
+      expected_revision: number;
+      /**
+       * Step durable entity registry cleanup — requestBody / content / application/json / schema / properties / restart cleanup: Restart bounded listing passes while preserving the existing epoch fence.
+       */
+      restart_cleanup?: boolean;
+    },
+    /**
+     * Step durable entity registry cleanup — parameters / environment: Registered environment, defaulting to production.
+     */
+    environment?: string,
+    /**
+     * Step durable entity registry cleanup — parameters / platform tenant id: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/entities/registry/cleanup/step',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Step durable entity registry cleanup — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Step durable entity registry cleanup — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Preview Durable Entity Retirement.
+   * Preview durable entity retirement: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any Preview durable entity retirement — responses / 200: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static previewDurableEntityRetirement({
+    slug,
+    namespace,
+    key,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Preview durable entity retirement — parameters / namespace: Exact entity namespace selecting the scope.
+     */
+    namespace: string,
+    /**
+     * Preview durable entity retirement — parameters / key: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant registry.
+     */
+    key: string,
+    /**
+     * Preview durable entity retirement — parameters / environment: Registered environment, defaulting to production.
+     */
+    environment?: string,
+    /**
+     * Preview durable entity retirement — parameters / platform tenant id: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/entities/retirement',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Preview durable entity retirement — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Preview durable entity retirement — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Start Durable Entity Retirement.
+   * Start durable entity retirement: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any Start durable entity retirement — responses / 200: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static startDurableEntityRetirement({
+    slug,
+    namespace,
+    key,
+    requestBody,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Start durable entity retirement — parameters / namespace: Exact entity namespace selecting the scope.
+     */
+    namespace: string,
+    /**
+     * Start durable entity retirement — parameters / key: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant registry.
+     */
+    key: string,
+    /**
+     * Start durable entity retirement — requestBody: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+     */
+    requestBody: {
+      /**
+       * Start durable entity retirement — requestBody / content / application/json / schema / properties / operation id: Fresh operation identity; replay must retain this identity and the exact request.
+       */
+      operation_id: string;
+      /**
+       * Start durable entity retirement — requestBody / content / application/json / schema / properties / expected version: Exact entity version observed in the retirement preview.
+       */
+      expected_version: number;
+      /**
+       * Start durable entity retirement — requestBody / content / application/json / schema / properties / expected recovery revision: Exact opaque revision returned by inspection; never convert it to a number.
+       */
+      expected_recovery_revision: string;
+    },
+    /**
+     * Start durable entity retirement — parameters / environment: Registered environment, defaulting to production.
+     */
+    environment?: string,
+    /**
+     * Start durable entity retirement — parameters / platform tenant id: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/entities/retirement/start',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Start durable entity retirement — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Start durable entity retirement — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Step Durable Entity Retirement.
+   * Step durable entity retirement: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any Step durable entity retirement — responses / 200: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static stepDurableEntityRetirement({
+    slug,
+    namespace,
+    key,
+    requestBody,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Step durable entity retirement — parameters / namespace: Exact entity namespace selecting the scope.
+     */
+    namespace: string,
+    /**
+     * Step durable entity retirement — parameters / key: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant registry.
+     */
+    key: string,
+    /**
+     * Step durable entity retirement — requestBody: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+     */
+    requestBody: {
+      /**
+       * Step durable entity retirement — requestBody / content / application/json / schema / properties / operation id: Fresh operation identity; replay must retain this identity and the exact request.
+       */
+      operation_id: string;
+      /**
+       * Step durable entity retirement — requestBody / content / application/json / schema / properties / expected revision: Exact observed numeric checkpoint revision; inspect after uncertain outcomes.
+       */
+      expected_revision: number;
+      /**
+       * Step durable entity retirement — requestBody / content / application/json / schema / properties / restart cleanup: Restart verified retirement cleanup after an uncertain outcome.
+       */
+      restart_cleanup?: boolean;
+    },
+    /**
+     * Step durable entity retirement — parameters / environment: Registered environment, defaulting to production.
+     */
+    environment?: string,
+    /**
+     * Step durable entity retirement — parameters / platform tenant id: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/entities/retirement/step',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Step durable entity retirement — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Step durable entity retirement — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Mint Durable Entity Session Grant.
+   * Mint durable entity session grant: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns any Mint durable entity session grant — responses / 201: Bounded preview result. Metadata revisions remain opaque or exact integers as documented in the operator guide.
+   * @throws ApiError
+   */
+  public static mintDurableEntitySessionGrant({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Mint durable entity session grant — requestBody: Exact operation input. Retain operation identity and payload when replaying an uncertain mutation.
+     */
+    requestBody: {
+      /**
+       * Mint durable entity session grant — requestBody / content / application/json / schema / properties / namespace: Exact entity namespace.
+       */
+      namespace: string;
+      /**
+       * Mint durable entity session grant — requestBody / content / application/json / schema / properties / key: Exact logical entity key.
+       */
+      key: string;
+      /**
+       * Mint durable entity session grant — requestBody / content / application/json / schema / properties / env: Registered environment; defaults to production.
+       */
+      env?: string;
+      /**
+       * Mint durable entity session grant — requestBody / content / application/json / schema / properties / platform tenant id: Optional same-account platform tenant.
+       */
+      platform_tenant_id?: string;
+      /**
+       * Mint durable entity session grant — requestBody / content / application/json / schema / properties / session id: Existing logical session identity.
+       */
+      session_id: string;
+      /**
+       * Mint durable entity session grant — requestBody / content / application/json / schema / properties / generation: Current session generation.
+       */
+      generation: number;
+      /**
+       * Mint durable entity session grant — requestBody / content / application/json / schema / properties / origin: Exact browser origin without a path, query or fragment.
+       */
+      origin: string;
+      /**
+       * Mint durable entity session grant — requestBody / content / application/json / schema / properties / commands: Allowed command names; delegation does not grant other commands.
+       */
+      commands: Array<string>;
+      /**
+       * Mint durable entity session grant — requestBody / content / application/json / schema / properties / ttl seconds: Credential lifetime in seconds.
+       */
+      ttl_seconds: number;
+    },
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/entities/session-grants',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Mint durable entity session grant — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Mint durable entity session grant — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Revoke Durable Entity Session Grant.
+   * Revoke durable entity session grant: Opt-in durable-object preview. Requires the configured application allowlist and applicable feature gates; production enablement awaits native GCS/KVM acceptance. Account-owner HTTP operations require MFA and app read access for inspection or deploy write access for mutation. Reader grace, claims and unknown acknowledgements must be respected. Responses are not cacheable. See the durable entity operator guides for the bounded recovery contract.
+   * @returns void
+   * @throws ApiError
+   */
+  public static revokeDurableEntitySessionGrant({
+    slug,
+    grant,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Revoke durable entity session grant — parameters / grant: Grant identity returned when minting the credential.
+     */
+    grant: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/entities/session-grants/{grant}',
+      path: {
+        'slug': slug,
+        'grant': grant,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Revoke durable entity session grant — responses / 409: Observed revision, ownership, migration or request identity conflicts. Inspect before replaying.`,
+        410: `Revoke durable entity session grant — responses / 410: Entity identity is permanently retired. Use a new identity for new work.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Upgrade a scoped durable entity session to WebSocket.
+   * Upgrade a scoped durable entity session to websocket: Service transport requires Bearer authentication, MFA, deploy write access and exact entity selectors. Origin headers are rejected. Every frame re-enters authentication and immutable-scope admission. Feature gates and the application allowlist must be enabled; native acceptance remains pending. The Node durable-session helper handles framing, replay and generation fences.
+   * @returns void
+   * @throws ApiError
+   */
+  public static connectDurableEntity({
+    slug,
+    namespace,
+    key,
+    environment,
+    platformTenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Upgrade a scoped durable entity session to websocket — parameters / namespace: Exact entity namespace selecting the scope.
+     */
+    namespace: string,
+    /**
+     * Upgrade a scoped durable entity session to websocket — parameters / key: Exact entity key selecting the scope; scope management affects the entire account/app/environment/tenant registry.
+     */
+    key: string,
+    /**
+     * Upgrade a scoped durable entity session to websocket — parameters / environment: Registered environment, defaulting to production.
+     */
+    environment?: string,
+    /**
+     * Upgrade a scoped durable entity session to websocket — parameters / platform tenant id: Optional same-account platform tenant; customer self-service tokens cannot manage scope state.
+     */
+    platformTenantId?: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/entities/connect',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'namespace': namespace,
+        'key': key,
+        'environment': environment,
+        'platform_tenant_id': platformTenantId,
+      },
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Upgrade a scoped browser session to WebSocket.
+   * Upgrade a scoped browser session to websocket: Browser transport authenticates the short-lived grant through Sec-WebSocket-Protocol and requires the exact Origin bound at issuance. Authorization headers and query parameters are rejected. Issuer revocation, scope and generation are rechecked for commands. Feature gates and the application allowlist must be enabled; native acceptance remains pending. The Node durable-session helper handles framing, replay and generation fences.
+   * @returns void
+   * @throws ApiError
+   */
+  public static connectDurableEntityBrowserSession({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/entities/session-connect',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
    * Inspect one durable entity's state and recovery metadata.
    * Account-owner read preview, requiring apps:read or admin, MFA where
    * applicable, and the explicit durable entity app allowlist. Resolves the

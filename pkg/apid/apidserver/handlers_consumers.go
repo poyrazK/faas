@@ -3,11 +3,13 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -83,6 +85,17 @@ func (s *server) createAPIConsumer(w http.ResponseWriter, r *http.Request, acct 
 			"Invalid consumer", "external_ref must be 1-256 characters and name must be 1-128 characters"))
 		return
 	}
+	if req.TrialDays != 0 && !s.apiMonetizationEnabled() {
+		// Trials are API monetization: until it is released the field is
+		// answered like any unknown one (ADR-20261018090210).
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", `json: unknown field "trial_days"`))
+		return
+	}
+	if req.TrialDays != 0 && !consumercontrols.ValidTrialDays(req.TrialDays) {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid consumer", fmt.Sprintf("trial_days must be 1 to %d", state.MaxAPIConsumerTrialDays)))
+		return
+	}
 	c, err := s.store.CreateAPIConsumer(r.Context(), acct.ID, app.ID, req.ExternalRef, req.Name)
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
@@ -96,6 +109,12 @@ func (s *server) createAPIConsumer(w http.ResponseWriter, r *http.Request, acct 
 	s.audit.Emit(r.Context(), "api_consumer.created", &acct.ID, map[string]any{
 		"app_id": app.ID, "consumer_id": c.ID, "external_ref": c.ExternalRef,
 	})
+	if req.TrialDays != 0 {
+		if _, err := s.consumerControls.StartTrial(r.Context(), acct, c, req.TrialDays); err != nil {
+			api.WriteProblem(w, api.ErrInternal("the consumer was created but its trial was not; set it with PUT .../trial"))
+			return
+		}
+	}
 	writeJSON(w, http.StatusCreated, consumerResponse(c))
 }
 
@@ -200,6 +219,30 @@ func (s *server) countAccountConsumerKeys(ctx context.Context, acctID string) (i
 	return count, nil
 }
 
+// consumerKeyScopesProblem trims scopes in place and rejects unknown or
+// repeated ones. The billing scope only reaches API monetization's
+// self-service routes, so it is not offered until monetization is released
+// (ADR-20261018090210).
+func (s *server) consumerKeyScopesProblem(scopes []string) *api.Problem {
+	billing, allowed := s.apiMonetizationEnabled(), "scopes must contain only read, write, or admin"
+	if billing {
+		allowed = "scopes must contain only read, write, admin, or billing"
+	}
+	seen := make(map[string]struct{}, len(scopes))
+	for i, scope := range scopes {
+		scopes[i] = strings.TrimSpace(scope)
+		if scopes[i] != "read" && scopes[i] != "write" && scopes[i] != "admin" && (!billing || scopes[i] != api.ConsumerScopeBilling) {
+			return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid consumer key scope", allowed)
+		}
+		if _, ok := seen[scopes[i]]; ok {
+			return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+				"Invalid consumer key scope", "scopes must not contain duplicates")
+		}
+		seen[scopes[i]] = struct{}{}
+	}
+	return nil
+}
+
 func (s *server) createConsumerKey(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.consumerFeatureAllowed(w, acct) {
 		return
@@ -228,20 +271,9 @@ func (s *server) createConsumerKey(w http.ResponseWriter, r *http.Request, acct 
 			"Invalid consumer key", "name must be 1-64 characters and scopes must not be empty"))
 		return
 	}
-	seen := make(map[string]struct{}, len(req.Scopes))
-	for i, scope := range req.Scopes {
-		req.Scopes[i] = strings.TrimSpace(scope)
-		if req.Scopes[i] != "read" && req.Scopes[i] != "write" && req.Scopes[i] != "admin" {
-			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-				"Invalid consumer key scope", "scopes must contain only read, write, or admin"))
-			return
-		}
-		if _, ok := seen[req.Scopes[i]]; ok {
-			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-				"Invalid consumer key scope", "scopes must not contain duplicates"))
-			return
-		}
-		seen[req.Scopes[i]] = struct{}{}
+	if problem := s.consumerKeyScopesProblem(req.Scopes); problem != nil {
+		api.WriteProblem(w, problem)
+		return
 	}
 	if req.ExpiresAt != nil && !req.ExpiresAt.After(time.Now()) {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,

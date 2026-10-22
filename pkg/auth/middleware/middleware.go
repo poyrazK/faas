@@ -178,12 +178,14 @@ type AccountHandler func(w http.ResponseWriter, r *http.Request, acct state.Acco
 // inject a fresh limiter per test so the bucket doesn't bleed
 // across cases.
 type Middleware struct {
-	Authn    Authenticator
-	Sessions Sessions
-	Lookups  SessionLookup       // live-session-row check; nil disables RequireSession's cookie branch
-	Audit    Auditor             // nil-safe; nil disables audit emit
-	Log      *slog.Logger        // nil-safe; nil disables the Warn path
-	Limiter  *middleware.Limiter // shared per-IP bucket for RequireLimited
+	HostingAutomationEnabled func() bool
+	HostingOIDCEnabled       func() bool
+	Authn                    Authenticator
+	Sessions                 Sessions
+	Lookups                  SessionLookup       // live-session-row check; nil disables RequireSession's cookie branch
+	Audit                    Auditor             // nil-safe; nil disables audit emit
+	Log                      *slog.Logger        // nil-safe; nil disables the Warn path
+	Limiter                  *middleware.Limiter // shared per-IP bucket for RequireLimited
 
 	// CookieDomain is the cookie attribute on the session-cookie
 	// issued/cleared by RequireSession. Empty = omit Domain
@@ -470,6 +472,9 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// (1) Bearer-key branch — fastest path, no DB cross-check.
 		tok := bearerToken(r)
+		if m.hostingAutomation(w, r, tok, next) {
+			return
+		}
 		if api.ValidAPIKeyFormat(tok) {
 			acct, key, err := m.Authn.AuthenticateKey(r.Context(), api.HashAPIKey(tok))
 			// IAM-5 (issue #189): translate the IAM-5 sentinels
@@ -481,18 +486,22 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			if err != nil {
 				if errors.Is(err, state.ErrAPIKeyExpired) {
 					setBearerChallenge(w, "invalid_token")
-					m.Audit.Emit(r.Context(), "key.expired", nil, map[string]any{
-						"key_id": key.ID,
-					})
+					if m.Audit != nil {
+						m.Audit.Emit(r.Context(), "key.expired", nil, map[string]any{"key_id": key.ID})
+					}
 					api.WriteProblem(w, api.ErrAPIKeyExpired())
 					return
 				}
 				if errors.Is(err, state.ErrAPIKeyRevoked) {
 					setBearerChallenge(w, "invalid_token")
-					m.Audit.Emit(r.Context(), "key.auth_rejected_revoked", nil, map[string]any{
-						"key_id": key.ID,
-					})
+					if m.Audit != nil {
+						m.Audit.Emit(r.Context(), "key.auth_rejected_revoked", nil, map[string]any{"key_id": key.ID})
+					}
 					api.WriteProblem(w, api.ErrAPIKeyRevoked())
+					return
+				}
+				if !errors.Is(err, state.ErrNotFound) {
+					m.credentialStoreUnavailable(w, r, err)
 					return
 				}
 				// Fall through to the session-cookie branch —
@@ -617,6 +626,10 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				next(w, r, acct)
 				return
 			}
+			if !errors.Is(err, state.ErrNotFound) {
+				m.credentialStoreUnavailable(w, r, err)
+				return
+			}
 			// ErrNotFound → fall through to the cookie branch (the
 			// same "the bearer may have been deleted or simply
 			// unknown" semantics as the fp_live_ branch's
@@ -640,7 +653,12 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 							"Deploy token scope is app-bound", "this token may only access routes under /v1/apps/{slug}"))
 						return
 					}
-					if !m.deployTokenBoundTo(r, key) {
+					bound, bindErr := m.deployTokenBoundTo(r, key)
+					if bindErr != nil {
+						m.storeUnavailable(w, r, bindErr, "could not load the app; retry shortly")
+						return
+					}
+					if !bound {
 						// Same 404 shape LoadApp returns for a cross-app or
 						// cross-account slug probe.
 						api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
@@ -676,6 +694,10 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					api.WriteProblem(w, api.ErrAPIKeyRevoked())
 					return
 				}
+				if !errors.Is(err, state.ErrNotFound) {
+					m.credentialStoreUnavailable(w, r, err)
+					return
+				}
 			}
 		}
 
@@ -687,14 +709,13 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				if err == nil {
 					sess, handled, cookieErr := m.RequireSessionCookie(w, r, env)
 					if cookieErr != nil {
+						// RequireSessionCookie has already answered: the
+						// session could not be checked, so it kept the
+						// cookie and returned a retryable 503.
 						if m.Log != nil {
 							m.Log.Warn("session cross-check error",
 								"path", logsanitize.Field(r.URL.Path), "error", cookieErr.Error())
 						}
-						m.clearSessionCookie(w)
-						api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
-							api.CodeSessionExpired, "Session expired",
-							"session validation failed; sign in again"))
 						return
 					}
 					if handled {
@@ -735,6 +756,9 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 						*r = *r.WithContext(WithStepUp(r.Context(), env.StepUpAt))
 						next(w, r, acct)
 						return
+					} else if !errors.Is(err, state.ErrNotFound) {
+						m.credentialStoreUnavailable(w, r, err)
+						return
 					}
 					// AccountByID err: AEAD-bound env.AccountID
 					// should never miss; if it does, treat as
@@ -765,6 +789,12 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	if suffix == path {
 		return false
 	}
+	if suffix == "product" || suffix == "product/billing" {
+		return method == http.MethodGet
+	}
+	if suffix == "product/start" || suffix == "product/submissions/lookup" {
+		return method == http.MethodPost
+	}
 	if suffix == "customer-operations/submissions/lookup" {
 		return method == http.MethodPost
 	}
@@ -774,15 +804,43 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	if suffix == "customer-operation-milestones" {
 		return method == http.MethodGet
 	}
+	// ADR-20261017100853: a customer signals its own Operations by subject.
+	if suffix == "customer-operation-signals" {
+		return method == http.MethodPost
+	}
+	// ADR-20261018210500: a customer reads its own queued Operations.
+	if suffix == "customer-operation-queue" {
+		return method == http.MethodGet
+	}
+	// ADR-20261018161833: a customer manages its own Operation schedules.
+	// apid hides these routes unless the account is allowlisted.
+	if suffix == "customer-operation-schedules" {
+		return method == http.MethodPost || method == http.MethodGet
+	}
+	if strings.HasPrefix(suffix, "customer-operation-schedules/") {
+		parts := strings.Split(suffix, "/")
+		if len(parts) == 2 && parts[1] != "" {
+			return method == http.MethodGet
+		}
+		return len(parts) == 3 && parts[1] != "" && (parts[2] == "pause" || parts[2] == "resume" || parts[2] == "cancel") && method == http.MethodPost
+	}
 	if strings.HasPrefix(suffix, "customer-operations/") {
 		parts := strings.Split(suffix, "/")
 		if len(parts) == 2 && parts[1] != "" {
 			return method == http.MethodGet
 		}
 		if len(parts) == 3 && parts[1] != "" {
-			return ((parts[2] == "events" || parts[2] == "milestones") && method == http.MethodGet) || (parts[2] == "cancel" && method == http.MethodPost)
+			return ((parts[2] == "events" || parts[2] == "milestones" || parts[2] == "children") && method == http.MethodGet) || ((parts[2] == "cancel" || parts[2] == "signals") && method == http.MethodPost)
 		}
 		if len(parts) == 4 && parts[1] != "" && parts[2] == "artifacts" && parts[3] != "" {
+			return method == http.MethodGet
+		}
+		// ADR-1194: a customer decides approvals its operation's definition assigns to it.
+		if len(parts) == 4 && parts[1] != "" && parts[2] == "approvals" && parts[3] != "" {
+			return method == http.MethodPost
+		}
+		// ADR-20261019001500: a customer reads the form of an approval it decides.
+		if len(parts) == 5 && parts[1] != "" && parts[2] == "approvals" && parts[3] != "" && parts[4] == "form" {
 			return method == http.MethodGet
 		}
 		return false
@@ -895,13 +953,16 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 	}
 	// (2) row lookup. ErrNotFound = never-valid sid.
 	sess, err := m.Lookups.GetSession(ctx, env.Sid)
-	if err != nil {
+	switch {
+	case errors.Is(err, state.ErrNotFound):
 		m.clearSessionCookie(w)
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeSessionExpired,
 			"Session expired", "this dashboard session has been revoked; sign in again"))
-		if errors.Is(err, state.ErrNotFound) {
-			return state.Session{}, true, nil
-		}
+		return state.Session{}, true, nil
+	case err != nil:
+		// The row could not be read, which says nothing about the
+		// session: keep the cookie and answer a retryable 503.
+		api.WriteProblem(w, credentialStoreUnavailableProblem())
 		return state.Session{}, true, fmt.Errorf("session lookup: %w", err)
 	}
 	// (3) revoked-row = possibly-stolen cookie. Distinct audit.
@@ -1454,6 +1515,10 @@ func (m *Middleware) RequireScope(allowed ...string) func(AccountHandler) Accoun
 // convention never leaks "this slug exists, just not for you".
 func (m *Middleware) LoadApp(w http.ResponseWriter, r *http.Request, acct state.Account, slug string) (state.App, bool) {
 	app, err := m.Authn.AppBySlug(r.Context(), slug)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		m.storeUnavailable(w, r, err, "could not load the app; retry shortly")
+		return state.App{}, false
+	}
 	if err != nil || app.AccountID != acct.ID {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"Not found", "no such app"))
@@ -1476,13 +1541,19 @@ func (m *Middleware) LoadApp(w http.ResponseWriter, r *http.Request, acct state.
 // handlers resolve the app with a direct store lookup and never reach
 // LoadApp's AppID check. A route without a {slug} (the account-wide
 // /v1/apps/metrics) is outside a deploy token's reach.
-func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) bool {
+func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) (bool, error) {
 	slug := r.PathValue("slug")
 	if slug == "" || key.AppID == "" {
-		return false
+		return false, nil
 	}
 	app, err := m.Authn.AppBySlug(r.Context(), slug)
-	return err == nil && app.ID == key.AppID
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return app.ID == key.AppID, nil
 }
 
 // --- scope helpers -------------------------------------------------------
@@ -1542,6 +1613,8 @@ var mfaAllowlist = []string{
 	"/v1/account/mfa/disable",
 	"/v1/account/mfa/disable-email",
 	"/v1/account/mfa/disable-email/confirm",
+	// The internal durable-mail confirmation page is gated before auth.
+	"/auth/reset/mfa",
 	// IAM-3 (ADR-039) — a customer whose session is mfa_pending
 	// must still be able to list / revoke their active sessions.
 	// The /v1/auth/sessions/{id} route is matched by the prefix
@@ -1652,3 +1725,33 @@ func prefix8(s string) string {
 // IsMFAAllowlisted reports whether an mfa_pending session may reach path.
 // Exported for route-table tests in cmd/apid.
 func IsMFAAllowlisted(path string) bool { return isMFAAllowlisted(path) }
+
+// credentialStoreUnavailable answers a request whose credential could not be
+// checked because the store failed (a timeout, an exhausted pool), not because
+// the credential is unknown, expired or revoked. Answering 401 there told
+// valid callers to sign in again, counted toward the per-IP failed-auth budget
+// (so a slow database also produced 429s), and on the session path cleared the
+// cookie as "revoked" (production-us hunt #9, H9-160).
+func (m *Middleware) credentialStoreUnavailable(w http.ResponseWriter, r *http.Request, err error) {
+	m.storeUnavailable(w, r, err, credentialStoreUnavailableDetail)
+}
+
+const credentialStoreUnavailableDetail = "could not verify credentials; retry shortly"
+
+func credentialStoreUnavailableProblem() *api.Problem {
+	return storeUnavailableProblem(credentialStoreUnavailableDetail)
+}
+
+// storeUnavailable answers a lookup the store could not complete. The app
+// lookup has the same shape: a timeout used to read as "404 no such app".
+func (m *Middleware) storeUnavailable(w http.ResponseWriter, r *http.Request, err error, detail string) {
+	if m.Log != nil {
+		m.Log.Warn("auth: store lookup failed",
+			"path", logsanitize.Field(r.URL.Path), "error", err.Error())
+	}
+	api.WriteProblem(w, storeUnavailableProblem(detail))
+}
+
+func storeUnavailableProblem(detail string) *api.Problem {
+	return api.ErrCapacity(detail).WithHeader("Retry-After", "1")
+}

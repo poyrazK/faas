@@ -1,0 +1,37 @@
+# ADR-1436 · AI gateway phase 14: usage tags and per-tag cost limits
+
+- **Status:** accepted
+- **Date:** 2026-10-17
+- **Relates to:** ADR-994 (end users), ADR-995 (per-user budgets), ADR-996 (request log), ADR-1120 (round trips), ADR-1340 (log export)
+- **Decision:**
+  - **Tags header.** An AI call may send `X-Gregale-AI-Tags: key=value[,key=value...]`.
+    - At most `OutboundAITagsPerCall` tags, with distinct keys.
+    - A key is 1 to 32 characters: a lowercase letter, then lowercase letters, digits, `_`, `.` or `-`. A value is 1 to 64 of `A-Z a-z 0-9 . _ : @ + / -`.
+    - A malformed header is refused with `400 outbound_ai_tags_invalid`. Like every `X-Gregale-*` header, it never reaches the provider.
+  - **Usage by tag.** Settlement adds the call to one UTC-day row per tag in `outbound_ai_tag_usage_daily`: requests, errors, input and output tokens, and cost.
+    - An integration tracks at most `OutboundAITagsPerDay` distinct tags per day. A later new tag adds to its key's overflow row, `<key>=~other`, so every key keeps a total.
+    - A tag with a limit always has its own row.
+    - Rows follow the end-user retention (`OutboundAIUserUsageRetentionDays`).
+  - **Per-tag daily cost limits.** `PUT /v1/outbound/integrations/{id}/ai-tag-limits` replaces up to `OutboundAITagLimitsMax` limits, each an exact tag with a UTC-day cost in millicents.
+    - Leases record the call's tags.
+    - A call carrying a limited tag is refused at admission when that tag's settled day cost, plus the live reservations of calls with the tag, plus this call's reservation, would pass the limit. The refusal is `429 outbound_budget_exhausted` with `X-Gregale-Outbound-Rejection: tag_daily_cost_limit`.
+    - The read joins the admission batch, so it adds no round trip, and calls without tags read nothing.
+  - **Visibility.**
+    - `GET /v1/outbound/integrations/{id}/ai-usage/tags` lists a day's tags by cost, optionally for one key, with each tag's limit.
+    - Request-log entries carry `tags`. The log-export line carries a `tags` object, and OTLP drains get `gregale.ai.tags`.
+    - CLI: `gregale ai tags` and `gregale ai tag-limits`.
+- **Why:**
+  - Usage splits by integration, app, model and end user. Teams also need cost by feature, environment, customer tier or experiment without creating an integration or app for each.
+  - A runaway feature should be cappable on its own, without capping the whole integration.
+  - Per-end-user limits (ADR-994) already cap individual users; tags cap any other dimension the app names.
+  - Other AI gateways offer request metadata for cost attribution.
+- **Consequences:**
+  - **Bounded cardinality.** A caller cannot grow the table without bound; tags past the day's cap are only visible as their key's overflow row.
+  - **Limits are exact tags.** "Each value of a key" limits are what end-user limits give; a tag limit names one value.
+  - **Settlement writes one more statement** for tagged calls, in the existing batch. Admission reads one more for tagged calls of an integration that has tag limits.
+  - **No budget alerts for tags yet.** The 80% and 100% alerts stay on the integration, app and end-user budgets.
+  - **New tables:** `outbound_ai_tag_usage_daily` and `outbound_ai_tag_limits`. **New columns:** `outbound_admission_leases.ai_tags` and `outbound_ai_request_log.tags`.
+- **Rejected alternatives:**
+  - **Tags as Prometheus labels.** Customer-chosen values would make unbounded series.
+  - **Free-form JSON metadata.** It is harder to bound, to roll up and to limit; key=value pairs cover attribution.
+  - **Limits per tag key.** It overlaps per-end-user limits and needs a row per value for every key with a limit.

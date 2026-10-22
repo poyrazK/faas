@@ -9,6 +9,10 @@ import type { ObjectNotificationRule } from './ObjectNotificationRule.js';
 export type ObjectBucketNotifications = {
   bucket_id: string;
   revision: number;
+  /**
+   * Rules owned by declarative compute reconciliation. Full manual replacement clears ownership.
+   */
+  managed_rule_ids?: Array<string>;
   rules: Array<ObjectNotificationRule>;
 };
 

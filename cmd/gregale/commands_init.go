@@ -32,15 +32,18 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // initCmdUsage is the top-of-failure-line shown for `gregale init` errors.
@@ -111,11 +114,11 @@ func runCmdInitList(stdout io.Writer) int {
 	if jsonOutput {
 		return jsonOut(writeJSONTo(stdout, struct {
 			Templates []string `json:"templates"`
-		}{Templates: templates.Names}))
+		}{Templates: templates.ListedNames()}))
 	}
 	for _, cat := range templates.CategoryOrder {
 		var inCat []string
-		for _, n := range templates.Names {
+		for _, n := range templates.ListedNames() {
 			if templates.CategoryFor(n) == cat {
 				inCat = append(inCat, n)
 			}
@@ -154,13 +157,13 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 	// We use Exists (which wraps NameIsValid + Names membership) so a
 	// bad flag like "--template ../../etc/passwd" is rejected before we
 	// touch the embed FS.
-	if !templates.Exists(tpl) {
-		PrintFail(stderr, "unknown --template %q (known: %s)",
-			tpl, strings.Join(templates.Names, ", "))
+	if !templateAvailable(tpl) {
+		PrintUsage(stderr, fmt.Sprintf("unknown --template %q (known: %s)",
+			tpl, strings.Join(templates.ListedNames(), ", ")), initCmdDocsTopic)
 		return 1
 	}
-	if deploy && templates.CategoryFor(tpl) == "operations" {
-		PrintFail(stderr, "%s requires a local SDK bundle; initialize without --deploy, follow README.md, then deploy the prepared source", tpl)
+	if deploy && (templates.CategoryFor(tpl) == "operations" || templates.CategoryFor(tpl) == "durable-entities") {
+		PrintUsage(stderr, fmt.Sprintf("%s requires a local SDK bundle; initialize without --deploy, follow README.md, then deploy the prepared source", tpl), initCmdDocsTopic)
 		return 1
 	}
 
@@ -266,11 +269,13 @@ func docsURLForTemplate(name string) string {
 		return functionsDocsURL
 	case "cron-example", "cron-worker", "event-worker", "queue-worker", "slack-bot", "webhook-receiver":
 		return eventDrivenDocsURL
-	case "s3-uploader", "rest-api-postgres":
+	case "s3-uploader", "object-storage-node", "object-storage-python", "rest-api-postgres", "rest-api-postgres-python":
 		return storageDocsURL
 	case "secret-reload-node":
 		return secretsDocsURL
-	case "data-api", "data-api-starter":
+	case "durable-entity-node":
+		return "https://gregale.dev/docs/durable-entity-development"
+	case "data-api", "data-api-starter", "data-api-teams", "data-api-support-console":
 		return "https://gregale.dev/docs/data-api"
 	case "mcp-node", "mcp-go", "mcp-python":
 		return "https://gregale.dev/docs/mcp"
@@ -314,6 +319,29 @@ func pluralY(n int) string {
 	return "ies"
 }
 
+// requireTemplateSecretsBeforeFirstStart refuses the first deploy of a
+// template that cannot start without secrets when none are supplied. On
+// production-us `gregale init --template ai-chat --deploy` built for 7.6
+// minutes and then failed with "no provider key set" (hunt #9, H9-164). An
+// existing app may already hold its secrets, so only a missing app is refused;
+// when the lookup fails for another reason the deploy proceeds as before.
+func requireTemplateSecretsBeforeFirstStart(ctx context.Context, apps interface {
+	GetApp(context.Context, string) (api.AppResponse, error)
+}, tpl, secretsFile string, createOnly bool, slug string) error {
+	if tpl == "" || secretsFile != "" || createOnly {
+		return nil
+	}
+	missing := validateTemplateSecrets(tpl, nil)
+	if missing == nil {
+		return nil
+	}
+	var ae *APIError
+	if _, err := apps.GetApp(ctx, slug); !errors.As(err, &ae) || ae.Problem.Status != http.StatusNotFound {
+		return nil
+	}
+	return fmt.Errorf("%w; template %s cannot start without them. Pass --secrets-file <file> on the first deploy, or reserve the app with --create-only, set them with `gregale secrets set --app %s ...`, then deploy", missing, tpl, slug)
+}
+
 // validateTemplateSecrets catches an incomplete first-deploy bundle before
 // CreateApp runs. The handler remains the runtime source of truth, but this
 // local guard turns the common missing-secret case into a no-side-effect CLI
@@ -326,12 +354,15 @@ func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
 		values[pair.Key] = pair.Value
 	}
 	required := map[string][]string{
-		"s3-uploader":        []string{"S3_BUCKET", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"},
-		"slack-bot":          []string{"SLACK_SIGNING_SECRET"},
-		"rest-api-postgres":  []string{"DATABASE_URL"},
-		"secret-reload-node": []string{"DATABASE_URL"},
-		"customer-platform":  []string{"DATABASE_URL"},
-		"cron-worker":        []string{"QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
+		"object-storage-python":    []string{"STORAGE_APP_TOKEN"},
+		"object-storage-node":      []string{"STORAGE_APP_TOKEN"},
+		"s3-uploader":              []string{"S3_BUCKET", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"},
+		"slack-bot":                []string{"SLACK_SIGNING_SECRET"},
+		"rest-api-postgres":        []string{"DATABASE_URL"},
+		"rest-api-postgres-python": []string{"DATABASE_URL"},
+		"secret-reload-node":       []string{"DATABASE_URL"},
+		"customer-platform":        []string{"DATABASE_URL"},
+		"cron-worker":              []string{"QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
 	}
 	var missing []string
 	for _, key := range required[tpl] {
@@ -421,6 +452,27 @@ func nextStepsFor(tpl string) []string {
 			"Onboard customers locally with `node tools/customer.js onboard <slug> <external-ref> <customer-name>`.",
 			"Read README.md for external database secrets, credential issuance, rotation, usage, and suspension.",
 		}
+	case "object-storage-python":
+		return []string{
+			"cd <dest> && python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt",
+			"python -m unittest discover -s tests -v",
+			"Reserve the app, then attach a private managed bucket:",
+			"  gregale deploy --create-only --template object-storage-python --name <slug>",
+			"  gregale add bucket assets --app <slug> --permission read_write --prefix GREGALE_S3_ASSETS",
+			"Set STORAGE_APP_TOKEN from a 0600 secrets file outside the source directory; see README.md.",
+			"  cd <dest> && gregale deploy --name <slug> --secrets-file <secrets-file>",
+			"Use a Bearer token for PUT/GET /objects/<key>; /readyz reports adoption and restore readiness.",
+		}
+	case "object-storage-node":
+		return []string{
+			"cd <dest> && npm ci --ignore-scripts && npm test",
+			"Reserve the app, then attach a private managed bucket:",
+			"  gregale deploy --create-only --template object-storage-node --name <slug>",
+			"  gregale add bucket assets --app <slug> --permission read_write --prefix GREGALE_S3_ASSETS",
+			"Set STORAGE_APP_TOKEN from a 0600 secrets file outside the source directory; see README.md.",
+			"  cd <dest> && gregale deploy --name <slug> --secrets-file <secrets-file>",
+			"Use a Bearer token for PUT/GET /objects/<key>; /readyz reports storage adoption and restore readiness.",
+		}
 	case "s3-uploader":
 		return []string{
 			"Create a 0600 secrets file outside this directory (one KEY=VALUE per line):",
@@ -450,8 +502,21 @@ func nextStepsFor(tpl string) []string {
 			"  gregale secrets set --app <slug> SLACK_SIGNING_SECRET=... SLACK_BOT_TOKEN=xoxb-...",
 			"  cd <dest> && gregale deploy",
 		}
+	case "auth":
+		return []string{"Deploy application Auth bound to a ready managed database:", "  gregale auth create <slug> --database <database> --site-url https://app.example.com", "See README.md for sign-up, tokens and Data API RLS."}
 	case "data-api":
 		return []string{"Create the Data API with its database and application JWT issuer:", "  gregale data-api create <slug> --database <database> --issuer https://issuer.example --jwks-url https://issuer.example/jwks --audience <audience>", "Generate typed database contracts:", "  gregale data-api types <slug> --output database.types.ts", "See README.md for migration and RLS setup."}
+	case "data-api-support-console":
+		return []string{"Run the synthetic staff sign-in demo:", "  cd <dest> && npm ci && npm run demo", "Configure your OIDC provider, read-only API tokens and approved support views using README.md.", "Run npm test before deploying the console; the demo is never used in production."}
+	case "data-api-teams":
+		return []string{
+			"Install the approved matching SDK bundle:",
+			"  cd <dest> && gregale data-api install --bundle /path/to/data-api-bundle.json --client-directory client",
+			"Verify the client, team access and reliable save scenarios:",
+			"  gregale data-api dev --port 0 --once --check-types --check",
+			"Start the API with `gregale data-api dev --port 0 --check` and follow README.md for the dashboard.",
+			"The seed identities are local test data; provision real membership through reviewed owner migrations.",
+		}
 	case "data-api-starter":
 		return []string{
 			"With Node.js 22+, npm and local Docker, run the starter scenarios:",
@@ -462,10 +527,10 @@ func nextStepsFor(tpl string) []string {
 			"  gregale data-api sync notes-data --config data-api.json",
 			"The scaffold includes versioned migrations, two-user RLS checks and application CI.",
 		}
-	case "rest-api-postgres":
+	case "rest-api-postgres", "rest-api-postgres-python":
 		return []string{
 			"Reserve the app, then attach managed runtime and migration bindings:",
-			"  gregale deploy --create-only --template rest-api-postgres --name <slug>",
+			"  gregale deploy --create-only --template " + tpl + " --name <slug>",
 			"  gregale postgres attach <database> <slug> --access read_write --env DATABASE_URL",
 			"  gregale postgres attach <database> <slug> --access migration --env MIGRATION_DATABASE_URL",
 			"For PostgreSQL on TCP 5432 (Pro/Scale): `gregale app <slug> egress-ports add 5432`.",

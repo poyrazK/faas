@@ -13,25 +13,27 @@
 // Flag-level ClosedSet literals are a different audit (a flag can have
 // a closed set without the command being missing), so a dedicated test
 // is clearer than overloading the manifest-drift test.
-package main
+package main_test
 
 import (
 	"reflect"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 )
 
 // TestClosedSetTemplatesMatchEmbedFS asserts that every --template
 // ClosedSet literal in cli_meta.go references a name that exists in
-// templates.Names AND vice versa. Catches both directions:
+// templates.ListedNames AND vice versa. Unlisted templates stay out of
+// completion. Catches both directions:
 //
 //   - ClosedSet has "node22-http" but templates.Names does not → FAIL.
 //   - templates.Names has "foo" but ClosedSet does not → FAIL.
 func TestClosedSetTemplatesMatchEmbedFS(t *testing.T) {
 	closedSet := map[string]struct{}{}
-	for _, c := range cliCommands {
+	for _, c := range *main.CliCommands {
 		if c.Name != "deploy" && c.Name != "init" {
 			continue
 		}
@@ -44,7 +46,7 @@ func TestClosedSetTemplatesMatchEmbedFS(t *testing.T) {
 		}
 	}
 	embedSet := map[string]struct{}{}
-	for _, n := range templates.Names {
+	for _, n := range templates.ListedNames() {
 		embedSet[n] = struct{}{}
 	}
 	if len(closedSet) == 0 {
@@ -71,11 +73,12 @@ func TestClosedSetTemplatesMatchEmbedFS(t *testing.T) {
 // in the catalog — the completion-backend ordering is part of the
 // customer-facing contract.
 func TestTemplateNames13MirrorsEmbedFS(t *testing.T) {
-	if len(templateNames13) != len(templates.Names) {
-		t.Fatalf("templateNames13 len = %d, templates.Names len = %d", len(templateNames13), len(templates.Names))
+	listed := templates.ListedNames()
+	if len((*main.TemplateNames13)) != len(listed) {
+		t.Fatalf("templateNames13 len = %d, templates.ListedNames len = %d", len((*main.TemplateNames13)), len(listed))
 	}
-	for i, want := range templates.Names {
-		if got := templateNames13[i]; got != want {
+	for i, want := range listed {
+		if got := (*main.TemplateNames13)[i]; got != want {
 			t.Errorf("templateNames13[%d] = %q, want %q", i, got, want)
 		}
 	}
@@ -83,7 +86,7 @@ func TestTemplateNames13MirrorsEmbedFS(t *testing.T) {
 
 func TestThrottleSuggestionsRangeManifestMatchesServer(t *testing.T) {
 	var got []string
-	for _, command := range cliCommands {
+	for _, command := range *main.CliCommands {
 		if command.Name != "throttle-suggestions" {
 			continue
 		}

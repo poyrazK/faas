@@ -56,9 +56,9 @@ func TestServeOpenAPISpec_ContentType(t *testing.T) {
 		t.Errorf("body must begin with `openapi: 3.1`; got prefix %q", first40(body))
 	}
 	// Metadata can grow ahead of paths. The endpoint must serve the complete
-	// embedded document, including its root paths section, at any byte offset.
-	if !bytes.Equal(body, OpenAPIYAML()) {
-		t.Error("YAML endpoint did not serve the complete embedded specification")
+	// public document, including its root paths section, at any byte offset.
+	if !bytes.Equal(body, PublicOpenAPIYAML()) {
+		t.Error("YAML endpoint did not serve the complete public specification")
 	}
 	if !bytes.Contains(body, []byte("\npaths:\n")) {
 		t.Errorf("body missing root paths section; first lines: %q", first40(body))
@@ -97,7 +97,12 @@ func TestServeOpenAPISpecJSON_Deterministic(t *testing.T) {
 	// Second round-trip is the formal property: parse + re-marshal
 	// should not introduce change.
 	var doc any
-	if err := json.Unmarshal(a, &doc); err != nil {
+	// The spec includes int64 byte limits above float64's exact range.
+	// Preserve JSON numbers so this checks serialization rather than
+	// introducing rounding through the test's decoder.
+	decoder := json.NewDecoder(bytes.NewReader(a))
+	decoder.UseNumber()
+	if err := decoder.Decode(&doc); err != nil {
 		t.Fatalf("unmarshal first response: %v", err)
 	}
 	b, err := json.Marshal(doc)
@@ -106,6 +111,17 @@ func TestServeOpenAPISpecJSON_Deterministic(t *testing.T) {
 	}
 	if !bytes.Equal(a, b) {
 		t.Fatalf("JSON response is not deterministic across round-trip:\n  first:  %s\n  second: %s", trunc(a), trunc(b))
+	}
+}
+
+func TestOpenAPIJSONPreservesInt64Limits(t *testing.T) {
+	body := mustMarshalJSON([]byte("maximum: 1152921504606846976\n"))
+	var doc map[string]json.Number
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc["maximum"].String() != "1152921504606846976" {
+		t.Fatalf("int64 byte limit changed: %s", body)
 	}
 }
 
@@ -219,11 +235,11 @@ func TestOpenAPIJSONLazyInitialization(t *testing.T) {
 		}
 		return
 	}
-	if openapiJSON != nil {
+	if openapiJSON[0].body != nil || openapiJSON[1].body != nil {
 		t.Fatal("JSON was converted during package initialization")
 	}
 	ServeOpenAPISpec(httptest.NewRecorder(), httptest.NewRequest("GET", "/v1/openapi.yaml", nil))
-	if openapiJSON != nil {
+	if openapiJSON[0].body != nil || openapiJSON[1].body != nil {
 		t.Fatal("serving YAML unnecessarily converted the JSON spec")
 	}
 	const clients = 8

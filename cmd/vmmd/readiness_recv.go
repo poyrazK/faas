@@ -19,11 +19,13 @@ type appReadinessProbeLoop struct {
 	events     *events.Platform
 	log        *slog.Logger
 	probeFn    func(context.Context, int) string
-	failures   int
-	ready      bool
+	// quietGate reports ADR-1151 quiet pause state; nil means never paused.
+	quietGate func() (paused bool, epoch uint64)
+	failures  int
+	ready     bool
 }
 
-func startAppReadinessProbeLoop(parent context.Context, log *slog.Logger, platform *events.Platform, instance, appID string, cfg fcvm.ReadinessProbeConfig, socketPath string) {
+func startAppReadinessProbeLoop(parent context.Context, log *slog.Logger, platform *events.Platform, instance, appID string, cfg fcvm.ReadinessProbeConfig, socketPath string, quietGate func() (bool, uint64)) {
 	loop := &appReadinessProbeLoop{
 		instance:   instance,
 		appID:      appID,
@@ -31,6 +33,7 @@ func startAppReadinessProbeLoop(parent context.Context, log *slog.Logger, platfo
 		socketPath: socketPath,
 		events:     platform,
 		log:        log,
+		quietGate:  quietGate,
 	}
 	go loop.run(parent) //nolint:contextcheck // Manager supplies the daemon-owned lifecycle context.
 }
@@ -59,6 +62,13 @@ func (l *appReadinessProbeLoop) runOne(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
+	// ADR-1151: skip a quiet-paused guest, and drop an outcome if the guest
+	// was paused at any point while the probe ran. A paused instance keeps
+	// its last readiness; the next request resumes it.
+	pausedBefore, epochBefore := l.quiet()
+	if pausedBefore {
+		return
+	}
 	timeoutMs := l.cfg.TimeoutSeconds * 1000
 	if timeoutMs <= 0 {
 		timeoutMs = 2000
@@ -81,6 +91,9 @@ func (l *appReadinessProbeLoop) runOne(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
+	if pausedAfter, epochAfter := l.quiet(); pausedAfter || epochAfter != epochBefore {
+		return
+	}
 	if outcome == livenessOutcomeOK {
 		l.failures = 0
 		if !l.ready {
@@ -97,6 +110,13 @@ func (l *appReadinessProbeLoop) runOne(ctx context.Context) {
 		l.log.Warn("readiness: instance withdrawn from routing",
 			"instance", l.instance, "failures", l.failures, "threshold", l.cfg.FailureThreshold, "reason", outcome)
 	}
+}
+
+func (l *appReadinessProbeLoop) quiet() (paused bool, epoch uint64) {
+	if l.quietGate == nil {
+		return false, 0
+	}
+	return l.quietGate()
 }
 
 func (l *appReadinessProbeLoop) emit(ctx context.Context, status, reason string) {

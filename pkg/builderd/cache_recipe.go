@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -22,15 +23,33 @@ const buildCacheRecipeVersion = 4
 // The build environment partitions toolchain and platform changes separately
 // from the runtime base consumed by the produced application layer.
 type BuildCacheRecipe struct {
-	SourceSHA256        string    `json:"source_sha256"`
-	SourceRoot          string    `json:"source_root"`
-	DockerfilePath      string    `json:"dockerfile_path,omitempty"`
-	Framework           Framework `json:"framework"`
-	Plan                api.Plan  `json:"plan"`
-	RuntimeBaseRef      string    `json:"runtime_base_ref"`
-	Function            bool      `json:"function"`
-	BuilderBaseIdentity string    `json:"builder_base_identity"`
-	TargetPlatform      string    `json:"target_platform"`
+	// GitOpsReuseScope partitions opt-in contexts by account, app, repository,
+	// reviewed source recipe, and all app/deployment build intent.
+	GitOpsReuseScope      string            `json:"gitops_reuse_scope,omitempty"`
+	BuildDependencyDigest string            `json:"build_dependency_digest,omitempty"`
+	PublicBuildURLs       map[string]string `json:"public_build_urls,omitempty"`
+	// DockerfileBuild separates builds of other stages or arguments
+	// (ADR-20261019142544). Omitted when nil, so existing keys are unchanged.
+	DockerfileBuild     *api.DockerfileBuildOptions `json:"dockerfile_build,omitempty"`
+	SourceSHA256        string                      `json:"source_sha256"`
+	SourceRoot          string                      `json:"source_root"`
+	DockerfilePath      string                      `json:"dockerfile_path,omitempty"`
+	Framework           Framework                   `json:"framework"`
+	Plan                api.Plan                    `json:"plan"`
+	RuntimeBaseRef      string                      `json:"runtime_base_ref"`
+	Function            bool                        `json:"function"`
+	BuilderBaseIdentity string                      `json:"builder_base_identity"`
+	TargetPlatform      string                      `json:"target_platform"`
+
+	// DevWatchCommand separates watch-mode developer images (ADR-1170) from
+	// production-shaped builds of the same source. Omitted when empty, so
+	// every existing recipe key is unchanged.
+	DevWatchCommand string `json:"dev_watch_command,omitempty"`
+	// DevWatchHost is baked into the watch-mode image's environment, so two
+	// developer apps with the same source never share one image.
+	DevWatchHost string `json:"dev_watch_host,omitempty"`
+	// Separate opted-in output from older builders that ignored the config.
+	IssueSourceMapsDirectory string `json:"issue_source_maps_directory,omitempty"`
 }
 
 const (
@@ -142,6 +161,34 @@ func (c *Cache) StoreBuildWithToolchain(recipe BuildCacheRecipe, layerPath strin
 	return c.storeBuild(recipe, layerPath, bytes, toolchain)
 }
 
+// UpdateBuildOrigins rewrites only the GitOps origin metadata of an entry whose
+// canonical bytes are still the leased inode. A concurrent replacement keeps
+// its own origin, and the reused bytes are never copied again.
+func (c *Cache) UpdateBuildOrigins(recipe BuildCacheRecipe, leasePath string, toolchain CacheToolchain) error {
+	key, err := recipe.key()
+	if err != nil {
+		return err
+	}
+	if c == nil || c.root == "" {
+		return errors.New("cache: not configured")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	current, ok := c.lookupKey(key, recipe.Framework, recipe.Plan)
+	if !ok {
+		return nil
+	}
+	leased, err := os.Stat(leasePath)
+	if err != nil {
+		return err
+	}
+	canonical, err := os.Stat(current.Path)
+	if err != nil || !os.SameFile(leased, canonical) {
+		return err
+	}
+	return writeCacheMetadata(filepath.Join(filepath.Dir(current.Path), "toolchain.json"), toolchain)
+}
+
 func (c *Cache) storeBuild(recipe BuildCacheRecipe, layerPath string, bytes int64, toolchain CacheToolchain) error {
 	key, err := recipe.key()
 	if err != nil {
@@ -152,5 +199,5 @@ func (c *Cache) storeBuild(recipe BuildCacheRecipe, layerPath string, bytes int6
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.storeKey(key, recipe.Framework, recipe.Plan, layerPath, bytes, toolchain)
+	return c.storeKey(key, recipe.Framework, recipe.Plan, layerPath, bytes, toolchain, recipe.GitOpsReuseScope != "")
 }

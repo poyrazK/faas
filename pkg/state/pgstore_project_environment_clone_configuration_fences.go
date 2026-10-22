@@ -169,7 +169,7 @@ func (s *PgStore) ProjectEnvironmentCloneConfigurationFenceForLease(ctx context.
 func (s *PgStore) AbandonProjectEnvironmentCloneConfigurationFence(ctx context.Context, lease ProjectEnvironmentCloneLease) error {
 	_, err := s.cloneConfigurationFenceTx(ctx, lease, false, func(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, row sqlc.ProjectEnvironmentCloneConfigurationGuard) (ProjectEnvironmentCloneConfigurationFence, error) {
 		var zero ProjectEnvironmentCloneConfigurationFence
-		if op.Status != CloneOperationCompensating {
+		if op.Status != CloneOperationCompensating || len(op.Resources) > 0 && op.Resources[0].Kind == "data_checkpoint" {
 			return zero, ErrConflict
 		}
 		if row.State == "open" || pgUUIDString(row.OperationID) != op.ID {

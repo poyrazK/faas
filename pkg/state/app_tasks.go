@@ -108,9 +108,11 @@ const (
 // CreateAppTaskParams is already-resolved app-task intent. Scope, artifact
 // key, and image digest are copied atomically from DeploymentID by the store.
 type CreateAppTaskParams struct {
+	promotionMigrationID  string
 	RequireLiveDeployment bool                    // Explicit binding probes and smoke callers must remain live at atomic admission.
 	BindingVerification   *BindingVerificationPin // Internal admission metadata, never caller-selected.
 	FailureRules          *workpolicy.FailureRules
+	Interactive           *AppTaskInteractive // ADR-1037; nil for batch tasks.
 	OccurrenceID          string
 	StartDeadlineAt       *time.Time
 	AccountID             string
@@ -228,6 +230,9 @@ func resolveCreateAppTask(params CreateAppTaskParams) (CreateAppTaskParams, erro
 	if err := validateBindingVerificationPin(params); err != nil {
 		return CreateAppTaskParams{}, err
 	}
+	if err := validateAppTaskInteractive(params); err != nil {
+		return CreateAppTaskParams{}, err
+	}
 	if params.AccountID == "" || params.AppID == "" || params.DeploymentID == "" {
 		return CreateAppTaskParams{}, fmt.Errorf("%w: account, app, and deployment are required", ErrAppTaskInvalid)
 	}
@@ -289,6 +294,7 @@ func resolveCreateAppTask(params CreateAppTaskParams) (CreateAppTaskParams, erro
 	params.Command = append([]string(nil), params.Command...)
 	params.FailureRules = workpolicy.Clone(params.FailureRules)
 	params.StartDeadlineAt = cloneAppTaskTimePtr(params.StartDeadlineAt)
+	params.Interactive = cloneAppTaskInteractive(params.Interactive)
 	return params, nil
 }
 

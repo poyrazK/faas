@@ -14,11 +14,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/objectstorage/grantrevocation"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type cloneGrantRevocationFailureStore struct {
-	*state.PgStore
-	fault string
+	PgStore *state.PgStore
+	fault   string
 }
 
 func (s *cloneGrantRevocationFailureStore) ReserveProjectEnvironmentCloneObjectGrantRevocation(ctx context.Context, l state.ProjectEnvironmentCloneLease, id string) (state.ProjectEnvironmentCloneObjectGrantRevocation, error) {
@@ -117,7 +118,7 @@ func cloneGrantRevocationFixture(t *testing.T) (cloneCoordinatorFixture, *cloneG
 	f, _, _, buckets := cloneCaptureBarrierFixture(t)
 	ctx := t.Context()
 	store := &cloneGrantRevocationFailureStore{PgStore: f.store.PgStore}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	provider := &cloneGrantRevocationProvider{Provider: f.objects, revoked: true}
 	config := objectstorage.BackendConfig{ID: "storage", Driver: "fixture", Region: "us-east-1", Namespace: "coordinator", Endpoint: "https://storage.example.test", S3Region: "us-east-1"}
 	registry, err := objectstorage.NewRegistry(objectstorage.Config{DefaultRegion: config.Region, Defaults: map[string]string{config.Region: config.ID}, Backends: []objectstorage.BackendConfig{config}},
@@ -147,16 +148,16 @@ func cloneGrantRevocationFixture(t *testing.T) (cloneCoordinatorFixture, *cloneG
 	if source.ID == "" {
 		t.Fatal("no source in qualified fixture placement")
 	}
-	request, err := store.BeginObjectBucketMutation(ctx, source, state.ObjectBucketMutationRequest)
+	request, err := store.PgStore.BeginObjectBucketMutation(ctx, source, state.ObjectBucketMutationRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if _, err := store.BeginObjectBucketMutation(ctx, source, state.ObjectBucketMutationNativeGrant); err != nil {
+		if _, err := store.PgStore.BeginObjectBucketMutation(ctx, source, state.ObjectBucketMutationNativeGrant); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := store.AcquireProjectEnvironmentCloneObjectWriteFence(ctx, f.lease, source.ID); err != nil {
+	if _, err := store.PgStore.AcquireProjectEnvironmentCloneObjectWriteFence(ctx, f.lease, source.ID); err != nil {
 		t.Fatal(err)
 	}
 	provider.beforeRevoke = func(p grantrevocation.Plan) {
@@ -189,10 +190,10 @@ func TestPGCloneObjectGrantRevocationWorkerRecoversLostAcknowledgements(t *testi
 			}
 			original := r.Plan.Clone()
 			stale := f.lease
-			if err := store.ReleaseProjectEnvironmentCloneLease(ctx, stale, 0); err != nil {
+			if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(ctx, stale, 0); err != nil {
 				t.Fatal(err)
 			}
-			f.lease, err = store.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
+			f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -204,11 +205,11 @@ func TestPGCloneObjectGrantRevocationWorkerRecoversLostAcknowledgements(t *testi
 			if err != nil || !observation.Drained() || observation.RequestID != original.RequestID || provider.reads == 0 || !reflect.DeepEqual(provider.journal, original) {
 				t.Fatalf("retirement failed to recover original request: %+v %v", observation, err)
 			}
-			fences, err := store.ProjectEnvironmentCloneObjectWriteFencesForLease(ctx, f.lease)
+			fences, err := store.PgStore.ProjectEnvironmentCloneObjectWriteFencesForLease(ctx, f.lease)
 			if err != nil || len(fences) != 1 || fences[0].NativeGrants != 0 || fences[0].Requests != 1 {
 				t.Fatalf("retirement consumed synchronous request: %+v %v", fences, err)
 			}
-			if err := store.FinishObjectBucketMutation(ctx, request); err != nil {
+			if err := store.PgStore.FinishObjectBucketMutation(ctx, request); err != nil {
 				t.Fatal(err)
 			}
 			assertCloneCaptureHasNoPoint(t, f)
@@ -237,7 +238,7 @@ func TestPGCloneObjectGrantRevocationWorkerRequiresIndependentDrain(t *testing.T
 			} else if err == nil || !reflect.DeepEqual(observation, grantrevocation.Observation{}) {
 				t.Fatalf("unowned provider observation: %+v %v", observation, err)
 			}
-			fences, err := store.ProjectEnvironmentCloneObjectWriteFencesForLease(t.Context(), f.lease)
+			fences, err := store.PgStore.ProjectEnvironmentCloneObjectWriteFencesForLease(t.Context(), f.lease)
 			if err != nil || fences[0].NativeGrants != 2 || provider.revokes != 1 || provider.reads != 1 {
 				t.Fatalf("reply or unknown observation consumed native grants: %+v %v", fences, err)
 			}
@@ -268,11 +269,11 @@ func TestPGCloneObjectGrantRevocationWorkerRechecksAuthorityAndConfiguration(t *
 				case "revocation_admission", "observation_admission":
 					closed = true
 				case "revocation_lease", "observation_lease":
-					if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
+					if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
 						t.Fatal(err)
 					}
 				case "configuration":
-					if err := store.UpsertAppEnvInScope(t.Context(), f.lease.Operation.AccountID, plan.appID, "production", "CAPTURED", "changed"); err != nil {
+					if err := store.PgStore.UpsertAppEnvInScope(t.Context(), f.lease.Operation.AccountID, plan.appID, "production", "CAPTURED", "changed"); err != nil {
 						t.Fatal(err)
 					}
 				case "placement":
@@ -316,7 +317,7 @@ func TestPGCloneObjectGrantRevocationWorkerUnsupportedProvider(t *testing.T) {
 	if !errors.Is(err, objectstorage.ErrUnsupported) || !reflect.DeepEqual(observation, grantrevocation.Observation{}) {
 		t.Fatalf("unqualified provider accepted: %+v %v", observation, err)
 	}
-	if _, err := store.ProjectEnvironmentCloneObjectGrantRevocationForLease(t.Context(), f.lease, plan.source.ID); !errors.Is(err, state.ErrNotFound) {
+	if _, err := store.PgStore.ProjectEnvironmentCloneObjectGrantRevocationForLease(t.Context(), f.lease, plan.source.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("unsupported provider persisted dispatch: %v", err)
 	}
 }
@@ -332,14 +333,14 @@ func TestPGCloneObjectGrantRevocationWorkerCompensationRecoversOriginalIntent(t 
 	}
 	original := provider.journal.Clone()
 	op := f.lease.Operation
-	f.lease.Operation, err = store.AdvanceProjectEnvironmentCloneOperation(ctx, op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, nil, "")
+	f.lease.Operation, err = store.PgStore.AdvanceProjectEnvironmentCloneOperation(ctx, op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AbandonProjectEnvironmentCloneObjectWriteFences(ctx, f.lease); !errors.Is(err, state.ErrConflict) {
+	if err := store.PgStore.AbandonProjectEnvironmentCloneObjectWriteFences(ctx, f.lease); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("unknown dispatched retirement reopened source: %v", err)
 	}
-	if err := store.UpsertAppEnvInScope(ctx, op.AccountID, plan.appID, "production", "CAPTURED", "changed-after-abandonment"); err != nil {
+	if err := store.PgStore.UpsertAppEnvInScope(ctx, op.AccountID, plan.appID, "production", "CAPTURED", "changed-after-abandonment"); err != nil {
 		t.Fatal(err)
 	}
 	provider.beforeRevoke = nil
@@ -354,7 +355,7 @@ func TestPGCloneObjectGrantRevocationWorkerCompensationRecoversOriginalIntent(t 
 	if err != nil || !observation.Drained() {
 		t.Fatalf("compensation failed to drain original retirement: %+v %v", observation, err)
 	}
-	if err := store.AbandonProjectEnvironmentCloneObjectWriteFences(ctx, f.lease); err != nil {
+	if err := store.PgStore.AbandonProjectEnvironmentCloneObjectWriteFences(ctx, f.lease); err != nil {
 		t.Fatal(err)
 	}
 }

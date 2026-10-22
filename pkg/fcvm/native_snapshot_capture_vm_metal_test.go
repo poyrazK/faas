@@ -65,6 +65,21 @@ func TestMetalNativeCaptureVM(t *testing.T) {
 		t.Logf("%s", out)
 		return
 	}
+	if scratch := os.Getenv("FAAS_NATIVE_CAPTURE_SCRATCH"); scratch != "" {
+		if !filepath.IsAbs(scratch) {
+			t.Fatal("native capture scratch must be an absolute directory")
+		}
+		// This child has a private mount namespace. A short, real /tmp path
+		// keeps guest vsock sockets below Unix's pathname limit while the
+		// backing bytes remain on the acceptance scratch filesystem.
+		if err := unix.Mount(scratch, "/tmp", "", unix.MS_BIND, ""); err != nil {
+			t.Fatal("mount native capture scratch:", err)
+		}
+		t.Cleanup(func() { _ = unix.Unmount("/tmp", 0) })
+		if err := os.Setenv("TMPDIR", "/tmp"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// Leave one minute for joined retirement before the outer process budget.
 	work, stop := context.WithTimeout(ctx, 3*time.Minute)
 	defer stop()
@@ -80,7 +95,9 @@ func nativeMetalCaptureVM(t *testing.T, ctx context.Context) {
 	if _, err := os.Stat(kernel); err != nil {
 		t.Fatal(err)
 	}
-	disk, err := os.MkdirTemp("/tmp", "ncvm-")
+	// Acceptance hosts can have a small root disk and a dedicated scratch
+	// filesystem. Honor TMPDIR so capture artifacts stay on that filesystem.
+	disk, err := os.MkdirTemp("", "ncvm-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +155,12 @@ func nativeMetalCaptureVM(t *testing.T, ctx context.Context) {
 	frame.RAMMB = 128
 	m := NewManager(runner, &nativeCaptureAcceptanceVMM{JailerVMM: v}, Paths{Kernel: kernel}, version, nil, nil).WithNativeQualificationNodeID(frame.NodeID)
 	m.WithStorage(canonical)
-	m.alloc.free = []int{MaxSlots - 1}
+	// Native recovery inventories all running Firecracker owners, including
+	// other VMs on a shared test node. Keep the full allocator pool so those
+	// slots can be quarantined before this fixture takes a fresh one.
+	if err := m.RecoverNativeProcesses(ctx); err != nil {
+		t.Fatal("inventory native slots before qualification boot:", err)
+	}
 	if err := v.RegisterGuestVsockStreamHandler(VsockGuestEventHostPort, func(instance string, conn net.Conn) (string, error) {
 		body, err := io.ReadAll(io.LimitReader(conn, 1025))
 		if err != nil {
@@ -294,7 +316,9 @@ func nativeMetalCaptureVM(t *testing.T, ctx context.Context) {
 	restoreVMM.WithStorage(canonical)
 	restoredManager = NewManager(runner, restoreVMM, Paths{Kernel: kernel}, version, nil, nil)
 	restoredManager.WithStorage(canonical)
-	restoredManager.alloc.free = []int{MaxSlots - 1}
+	// The capture VM has retired, so its exact slot is safe for this separate
+	// ordinary restore Manager even if another host VM holds the highest slot.
+	restoredManager.alloc.free = []int{incoming.NativeLease.Slot}
 	nativeMetalCaptureVMRestoreBackings(t, ctx, m, v, incoming, completed, [2]string{kernel, base}, disk, originalUUID, version)
 	err = withNativeSnapshotRestoreInputs(ctx, r.publications.(nativeSnapshotRestoreReceiptJournal), canonical, completed, images, func(inputs nativeSnapshotRestoreInputs) (result error) {
 		// Only this disposable acceptance fixture names the verified copies.
@@ -368,7 +392,28 @@ func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, m *M
 		t.Fatal(err)
 	}
 	ctx = nativeQualificationRestoreContext(ctx, target)
-	lease := leaseForSlot(frame.InstanceID, MaxSlots-2)
+	// The dedicated target must differ from the captured source and from every
+	// slot native recovery reserved for another running VM.
+	m.alloc.mu.Lock()
+	targetIndex := -1
+	for i := len(m.alloc.free) - 1; i >= 0; i-- {
+		if m.alloc.free[i] != incoming.NativeLease.Slot {
+			targetIndex = i
+			break
+		}
+	}
+	if targetIndex >= 0 {
+		last := len(m.alloc.free) - 1
+		m.alloc.free[targetIndex], m.alloc.free[last] = m.alloc.free[last], m.alloc.free[targetIndex]
+	}
+	m.alloc.mu.Unlock()
+	if targetIndex < 0 {
+		t.Fatal("no distinct free native slot for restored qualification target")
+	}
+	lease, err := m.alloc.Acquire(frame.InstanceID)
+	if err != nil {
+		t.Fatal("reserve restored qualification target slot:", err)
+	}
 	lease.Plan, lease.MemoryMaxMiB, lease.CPUMillicores = api.PlanHobby, frame.RAMMB, 1000
 	if err := q.owner.prepare(ctx, lease); err != nil {
 		t.Fatal(err)
@@ -468,14 +513,17 @@ func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, m *M
 	blocked := make(chan struct{}, 1)
 	acknowledged := make(chan struct{}, 1)
 	handlers := nativeMetalRestoreMetadataHandlers(frame, &privateStreams, blocked, acknowledged)
+	// The source VM already registered the daemon-wide guest event port. It
+	// has retired, so replace the test's ordinary handlers with traps before
+	// asserting that this private target cannot borrow serving channels.
+	v.mu.Lock()
 	for _, port := range nativeRestoreChannelPorts() {
-		if err := v.RegisterGuestVsockStreamHandler(port, func(string, net.Conn) (string, error) {
+		v.guestVsockStreamHandlers[port] = func(string, net.Conn) (string, error) {
 			ordinaryStreams.Add(1)
 			return "read", errors.New("private restore borrowed serving channel")
-		}); err != nil {
-			t.Fatal(err)
 		}
 	}
+	v.mu.Unlock()
 	if err := v.prepareRegisteredGuestVsockListeners(lease); err == nil {
 		t.Fatal("private target obtained ordinary serving receivers")
 	}

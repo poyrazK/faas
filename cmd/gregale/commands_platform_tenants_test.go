@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -37,26 +38,26 @@ func TestCmdPlatformTenantsAddListAndSuspend(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var stdout bytes.Buffer
-	osStdout, jsonOutput = &stdout, false
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
-	if code := cmdPlatformTenants([]string{"add", "--external-ref", "customer-42", "--name", "Customer 42"}); code != 0 {
+	(*main.OsStdout), (*main.JsonOutput) = &stdout, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
+	if code := main.CmdPlatformTenants([]string{"add", "--external-ref", "customer-42", "--name", "Customer 42"}); code != 0 {
 		t.Fatalf("add exit = %d", code)
 	}
 	if created.ExternalRef != "customer-42" || created.Name != "Customer 42" {
 		t.Fatalf("create body = %+v", created)
 	}
-	if code := cmdPlatformTenants([]string{"list"}); code != 0 || !strings.Contains(stdout.String(), "customer-42") {
+	if code := main.CmdPlatformTenants([]string{"list"}); code != 0 || !strings.Contains(stdout.String(), "customer-42") {
 		t.Fatalf("list exit=%d output=%q", code, stdout.String())
 	}
-	if code := cmdPlatformTenants([]string{"suspend", "--id", "tenant-id"}); code != 0 || status.Status != "suspended" {
+	if code := main.CmdPlatformTenants([]string{"suspend", "--id", "tenant-id"}); code != 0 || status.Status != "suspended" {
 		t.Fatalf("suspend exit=%d body=%+v", code, status)
 	}
 }
 
 func TestCmdPlatformTenantsRejectsIncompleteLink(t *testing.T) {
-	if code := cmdPlatformTenants([]string{"link-consumer", "--id", "tenant-id"}); code == 0 {
+	if code := main.CmdPlatformTenants([]string{"link-consumer", "--id", "tenant-id"}); code == 0 {
 		t.Fatal("accepted missing consumer ID")
 	}
 }
@@ -86,12 +87,12 @@ func TestCmdPlatformTenantsActivity(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var stdout bytes.Buffer
-	osStdout, jsonOutput = &stdout, false
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &stdout, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 
-	if code := cmdPlatformTenants([]string{"activity", "--id", tenantID, "--since", "2h", "--app-id", appID, "--status", "503", "--limit", "25", "--cursor", "opaque+/="}); code != 0 {
+	if code := main.CmdPlatformTenants([]string{"activity", "--id", tenantID, "--since", "2h", "--app-id", appID, "--status", "503", "--limit", "25", "--cursor", "opaque+/="}); code != 0 {
 		t.Fatalf("activity exit = %d output=%q", code, stdout.String())
 	}
 	wantQuery := "app_id=" + appID + "&cursor=opaque%2B%2F%3D&limit=25&since=2h&status=503"
@@ -127,11 +128,11 @@ func TestCmdPlatformTenantsApplyBundle(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"external_ref":"customer-42","name":"Customer 42"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var stdout bytes.Buffer
-	osStdout, jsonOutput = &stdout, false
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
-	if code := cmdPlatformTenants([]string{"apply", "--file", path, "--dry-run"}); code != 0 {
+	(*main.OsStdout), (*main.JsonOutput) = &stdout, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
+	if code := main.CmdPlatformTenants([]string{"apply", "--file", path, "--dry-run"}); code != 0 {
 		t.Fatalf("apply exit = %d", code)
 	}
 	if !received.DryRun || received.ExternalRef != "customer-42" || !strings.Contains(stdout.String(), "create") {
@@ -163,17 +164,17 @@ func TestCmdPlatformTenantCredentialsApplyAndList(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"keys":[{"consumer_id":"consumer-id","name":"v1","prefix":"cafebabe","hash":"001122","scopes":["read"]}]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var stdout bytes.Buffer
-	osStdout, jsonOutput = &stdout, false
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
-	if code := cmdPlatformTenants([]string{"credentials-apply", "--id", "tenant-id", "--file", path, "--dry-run"}); code != 0 {
+	(*main.OsStdout), (*main.JsonOutput) = &stdout, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
+	if code := main.CmdPlatformTenants([]string{"credentials-apply", "--id", "tenant-id", "--file", path, "--dry-run"}); code != 0 {
 		t.Fatalf("apply exit = %d", code)
 	}
 	if !received.DryRun || received.Keys[0].Prefix != "cafebabe" || !strings.Contains(stdout.String(), "create") {
 		t.Fatalf("apply = %+v, output=%q", received, stdout.String())
 	}
-	if code := cmdPlatformTenants([]string{"credentials-list", "--id", "tenant-id"}); code != 0 || !strings.Contains(stdout.String(), "cafebabe") {
+	if code := main.CmdPlatformTenants([]string{"credentials-list", "--id", "tenant-id"}); code != 0 || !strings.Contains(stdout.String(), "cafebabe") {
 		t.Fatalf("list exit = %d, output=%q", code, stdout.String())
 	}
 }
@@ -194,11 +195,11 @@ func TestCmdPlatformTenantsActivationSnapshotAndWait(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var stdout bytes.Buffer
-	osStdout, jsonOutput = &stdout, false
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
-	if code := cmdPlatformTenants([]string{"activation", "--id", "tenant-id", "--wait", "--timeout", "1s"}); code != 0 {
+	(*main.OsStdout), (*main.JsonOutput) = &stdout, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
+	if code := main.CmdPlatformTenants([]string{"activation", "--id", "tenant-id", "--wait", "--timeout", "1s"}); code != 0 {
 		t.Fatalf("activation exit = %d", code)
 	}
 	if calls != 1 || !strings.Contains(stdout.String(), "ready=true") || !strings.Contains(stdout.String(), "customer.example") {

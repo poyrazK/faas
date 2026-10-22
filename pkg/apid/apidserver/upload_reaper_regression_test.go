@@ -14,10 +14,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type staleUploadReaperStore struct {
-	state.Store
+	Store     state.Store
 	candidate sqlc.ReapExpiredUploadSessionsRow
 	readErr   error
 	expired   bool
@@ -63,7 +64,7 @@ func TestUploadReaperRechecksCandidateBeforeDeletingSource(t *testing.T) {
 				stale.readErr = errors.New("database unavailable")
 			}
 			stale.expired = scenario == "still expired" || scenario == "commit completed after scan"
-			(*(*e.S()).Store()) = stale
+			(*(*e.S()).Store()) = statetest.NewStore(stale)
 			apidserver.SweepUploadSessions(t.Context(), (*e.S()), (*(*e.S()).Log()))
 			if scenario == "still expired" {
 				if _, err := os.Stat(row.PartPath); !errors.Is(err, os.ErrNotExist) {

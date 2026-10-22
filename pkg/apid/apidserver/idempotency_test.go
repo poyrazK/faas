@@ -11,6 +11,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -131,7 +132,7 @@ func TestIdempotent_GateRefusalIsNotReplayed(t *testing.T) {
 		return rec
 	}
 	create := httptest.NewRecorder()
-	cr := httptest.NewRequest(http.MethodPost, "/v1/apps", strings.NewReader(`{"slug":"idem-gate","runtime":"node22"}`))
+	cr := httptest.NewRequest(http.MethodPost, "/v1/apps", strings.NewReader(`{"slug":"idem-gate","type":"app"}`))
 	cr.Header.Set("Authorization", "Bearer "+(*env.Key()))
 	cr.Header.Set("Content-Type", "application/json")
 	(*env.H()).ServeHTTP(create, cr)
@@ -157,10 +158,74 @@ func TestIdempotent_GateRefusalIsNotReplayed(t *testing.T) {
 	}
 }
 
+// adr: 1330
+// TestIdempotent_OneTimeCredentialIsNotReplayed — an interactive session's
+// create response carries a one-time attach token. Storing it would put the
+// plaintext token in the idempotency table and hand the same token to every
+// retry with the key; a retry runs the operation again.
+func TestIdempotent_OneTimeCredentialIsNotReplayed(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	var runs atomic.Int32
+	h := (*e.S()).Idempotent(func(w http.ResponseWriter, _ *http.Request, _ state.Account) {
+		n := runs.Add(1)
+		w.Header().Set("Cache-Control", "no-store")
+		httpkit.SkipIdempotentReplay(w)
+		apidserver.WriteJSON(w, http.StatusCreated, map[string]string{"token": "one-time-" + string(rune('0'+n))})
+	})
+	call := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/image-runs", nil)
+		req.Header.Set("Idempotency-Key", "interactive-run")
+		rec := httptest.NewRecorder()
+		h(rec, req, (*e.Acct()))
+		return rec
+	}
+	first, second := call(), call()
+	for i, rec := range []*httptest.ResponseRecorder{first, second} {
+		if rec.Code != http.StatusCreated || rec.Header().Get("Idempotent-Replayed") != "" {
+			t.Fatalf("call %d = %d replayed=%q, want a fresh 201", i+1, rec.Code, rec.Header().Get("Idempotent-Replayed"))
+		}
+	}
+	if first.Body.String() == second.Body.String() || runs.Load() != 2 {
+		t.Fatalf("handler runs=%d first=%s second=%s; want two runs with distinct tokens", runs.Load(), first.Body, second.Body)
+	}
+	if _, _, err := (*e.Store()).GetIdempotent(t.Context(), (*e.Acct()).ID, "POST /v1/image-runs\ninteractive-run"); err == nil {
+		t.Fatal("no-store response was stored for replay")
+	}
+	// The key was released, not left in flight: a later request still runs.
+	if third := call(); third.Code != http.StatusCreated || runs.Load() != 3 {
+		t.Fatalf("third call = %d runs=%d", third.Code, runs.Load())
+	}
+}
+
+// adr: 1330
+// TestIdempotent_NoStoreHeaderAloneIsStillReplayed — many handlers send
+// Cache-Control: no-store only to keep HTTP caches away. Their keyed
+// mutations must still replay, or a retry would run them twice.
+func TestIdempotent_NoStoreHeaderAloneIsStillReplayed(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	var runs atomic.Int32
+	h := (*e.S()).Idempotent(func(w http.ResponseWriter, _ *http.Request, _ state.Account) {
+		runs.Add(1)
+		w.Header().Set("Cache-Control", "no-store")
+		apidserver.WriteJSON(w, http.StatusOK, map[string]string{"status": "pending"})
+	})
+	call := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/workflows/runs/r1/resume", nil)
+		req.Header.Set("Idempotency-Key", "resume-once")
+		rec := httptest.NewRecorder()
+		h(rec, req, (*e.Acct()))
+		return rec
+	}
+	call()
+	if replay := call(); replay.Header().Get("Idempotent-Replayed") != "true" || runs.Load() != 1 {
+		t.Fatalf("retry replayed=%q runs=%d; want a replay of the first response", replay.Header().Get("Idempotent-Replayed"), runs.Load())
+	}
+}
+
 func TestIdempotencyReplayable(t *testing.T) {
 	for status, want := range map[int]bool{
-		200: true, 201: true, 202: true, 400: true, 404: true, 409: true, 422: true, 500: true,
-		401: false, 402: false, 403: false, 429: false, 503: false,
+		200: true, 201: true, 202: true, 400: true, 409: true, 422: true, 500: true,
+		401: false, 402: false, 403: false, 404: false, 429: false, 501: false, 503: false,
 	} {
 		if got := apidserver.IdempotencyReplayable(status); got != want {
 			t.Errorf("idempotencyReplayable(%d) = %v, want %v", status, got, want)
@@ -203,7 +268,7 @@ func TestIdempotent_FailedDeployIsNotReplayed(t *testing.T) {
 		(*env.H()).ServeHTTP(rec, r)
 		return rec
 	}
-	if rec := do(http.MethodPost, "/v1/apps", `{"slug":"idem-fail","runtime":"node22"}`); rec.Code != http.StatusCreated {
+	if rec := do(http.MethodPost, "/v1/apps", `{"slug":"idem-fail","type":"app"}`); rec.Code != http.StatusCreated {
 		t.Fatalf("create app = %d %s", rec.Code, rec.Body)
 	}
 	deploy := `{"image":"registry.gregale.dev/app@sha256:a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"}`

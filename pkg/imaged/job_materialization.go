@@ -11,9 +11,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 const (
@@ -68,7 +68,10 @@ func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobIma
 		}
 		workCtx, stopRenewal := startJobMaterializationLeaseRenewal(ctx, renewer, job, owner, h.jobMaterializationLeaseTTL())
 		defer func() {
-			if renewalErr := stopRenewal(); renewalErr != nil {
+			// Work returns nil only after claim-fenced publication succeeds.
+			// That atomic write releases the claim, so a concurrent renewal may
+			// correctly refuse it. Join the renewer without undoing that success.
+			if renewalErr := stopRenewal(); renewalErr != nil && err != nil {
 				err = errors.Join(err, fmt.Errorf("imaged: job %s materialization lease renewal failed: %w", job.ID, renewalErr))
 			}
 		}()
@@ -125,6 +128,10 @@ func (h *Handler) materializeClaimedJobWork(ctx context.Context, images state.Jo
 	if err != nil {
 		return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("pull image config: %v", err))
 	}
+	// Image runs (ADR-1161) resolve Docker-style commands from the image's
+	// own ENTRYPOINT and CMD, so keep them before the fallback below.
+	imageEntrypoint := append([]string{}, config.Entrypoint...)
+	imageCmd := append([]string{}, config.Cmd...)
 	// A job's command is staged later in job.json, but BuildFullRootfs also
 	// injects the stable app.json contract. Use the job command only when the
 	// source image has no command of its own so a valid manifest can be built.
@@ -164,7 +171,7 @@ func (h *Handler) materializeClaimedJobWork(ctx context.Context, images state.Jo
 	if err != nil {
 		return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("storage backend: %v", err))
 	}
-	key := sched.JobLayerAttemptKey(job.ID, uuid.NewString())
+	key := storagekey.JobLayerAttempt(job.ID, uuid.NewString())
 	if _, err := h.builder.BuildFullRootfs(ctx, rootfs.BuildFullRootfsInput{
 		Layers:        readers,
 		Manifest:      appManifest,
@@ -179,7 +186,10 @@ func (h *Handler) materializeClaimedJobWork(ctx context.Context, images state.Jo
 	var publishErr error
 	_, claimAware := h.store.(state.JobImageMaterializationClaimer)
 	if publisher, ok := h.store.(state.JobImageMaterializationPublisher); ok && claimAware {
-		_, publishErr = publisher.JobPublishImageMaterialization(ctx, job.ID, job.ImageRef, owner, job.ImageMaterializationAttempts, digest, key)
+		publishErr = recordJobImageConfig(ctx, h.store, job, owner, imageEntrypoint, imageCmd)
+		if publishErr == nil {
+			_, publishErr = publisher.JobPublishImageMaterialization(ctx, job.ID, job.ImageRef, owner, job.ImageMaterializationAttempts, digest, key)
+		}
 	} else if claimAware {
 		publishErr = fmt.Errorf("claim-aware job materialization store does not support fenced publication")
 	} else {
@@ -195,6 +205,18 @@ func (h *Handler) materializeClaimedJobWork(ctx context.Context, images state.Jo
 	h.markJobRegistryCredentialUsed(ctx, job, ref.APIHost(), jobAuth)
 	h.log.Info("imaged: materialized job image", "job", job.ID, "digest", digest, "key", key)
 	return nil
+}
+
+// recordJobImageConfig stores the image's ENTRYPOINT and CMD under the same
+// claim fence as the publication that follows, so a ready job never carries
+// another artifact's config. Stores without the recorder skip it; apid then
+// re-queues image runs that need the config.
+func recordJobImageConfig(ctx context.Context, store any, job state.Job, owner string, entrypoint, cmd []string) error {
+	recorder, ok := store.(state.JobImageConfigRecorder)
+	if !ok {
+		return nil
+	}
+	return recorder.JobRecordImageConfig(ctx, job.ID, job.ImageRef, owner, job.ImageMaterializationAttempts, entrypoint, cmd)
 }
 
 // MaterializePendingJobs drains the bounded pending queue. Transient failures
@@ -244,7 +266,9 @@ func (h *Handler) MaterializePendingJobs(ctx context.Context) error {
 			jobErr = h.materializeClaimedJobWork(ctx, images, job, owner)
 		}
 		if stopRenewals[i] != nil {
-			if renewalErr := stopRenewals[i](); renewalErr != nil {
+			// Successful work already published under the live claim fence;
+			// its released lease no longer requires a renewal acknowledgment.
+			if renewalErr := stopRenewals[i](); renewalErr != nil && jobErr != nil {
 				jobErr = errors.Join(jobErr, fmt.Errorf("imaged: job %s materialization lease renewal failed: %w", job.ID, renewalErr))
 			}
 		}
@@ -364,7 +388,7 @@ func (h *Handler) verifyLegacyJobArtifacts(ctx context.Context, verifier state.J
 			h.retryLegacyJobArtifact(ctx, verifier, job, fmt.Sprintf("read legacy artifact: %v", getErr))
 			continue
 		}
-		jobKey := sched.JobLayerKey(job.ID)
+		jobKey := storagekey.JobLayer(job.ID)
 		putErr := backend.Put(ctx, jobKey, body)
 		closeErr := body.Close()
 		if putErr != nil || closeErr != nil {

@@ -16,7 +16,7 @@
 // pgstore_test.go uses, so the assertions stay bit-for-bit equivalent
 // to the SQL path.
 
-package state
+package state_test
 
 import (
 	"context"
@@ -26,29 +26,30 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func memNodeShardFixture(t *testing.T) (*MemStore, context.Context, Account, App, App) {
+func memNodeShardFixture(t *testing.T) (*state.MemStore, context.Context, state.Account, state.App, state.App) {
 	t.Helper()
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	account, err := m.CreateAccount(ctx, "shard-"+uuid.NewString()+"@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// unplaced: NodeID stays empty so ListUnplacedApps picks it up.
-	unplaced, err := m.CreateApp(ctx, App{
+	unplaced, err := m.CreateApp(ctx, state.App{
 		AccountID: account.ID, Slug: "unplaced-" + uuid.NewString(),
-		RAMMB: 256, Status: AppActive,
+		RAMMB: 256, Status: state.AppActive,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// claimed: placement chooser (legacy) or schedd's claim
 	// subscriber (post-00091) stamps NodeID before any test sees it.
-	claimed, err := m.CreateApp(ctx, App{
+	claimed, err := m.CreateApp(ctx, state.App{
 		AccountID: account.ID, Slug: "claimed-" + uuid.NewString(),
-		RAMMB: 256, Status: AppActive,
+		RAMMB: 256, Status: state.AppActive,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +87,7 @@ func TestMemStore_ListAppsByNodeID(t *testing.T) {
 // return empty.
 func TestMemStore_ListInstancesByNodeID(t *testing.T) {
 	m, ctx, _, unplaced, claimed := memNodeShardFixture(t)
-	dep, err := m.CreateDeployment(ctx, Deployment{AppID: claimed.ID, ImageDigest: "sha256:shard"})
+	dep, err := m.CreateDeployment(ctx, state.Deployment{AppID: claimed.ID, ImageDigest: "sha256:shard"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,9 +178,9 @@ func TestMemStore_ListUnplacedApps(t *testing.T) {
 
 	// A soft-deleted app must never appear, even if its NodeID is
 	// empty. The status check happens before the NodeID check.
-	deleted, err := m.CreateApp(ctx, App{
+	deleted, err := m.CreateApp(ctx, state.App{
 		AccountID: unplaced.AccountID, Slug: "deleted-" + uuid.NewString(),
-		RAMMB: 128, Status: AppDeleted,
+		RAMMB: 128, Status: state.AppDeleted,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -207,19 +208,19 @@ func TestMemStore_SetAppNodeID(t *testing.T) {
 
 	// Loser of the race: the row is already claimed.
 	err = m.SetAppNodeID(ctx, unplaced.ID, "node-fsn-4")
-	if !errors.Is(err, ErrConflict) {
+	if !errors.Is(err, state.ErrConflict) {
 		t.Errorf("SetAppNodeID loser: %v; want ErrConflict", err)
 	}
 
 	// Already-claimed app cannot be re-claimed by a peer.
 	err = m.SetAppNodeID(ctx, claimed.ID, "node-fsn-4")
-	if !errors.Is(err, ErrConflict) {
+	if !errors.Is(err, state.ErrConflict) {
 		t.Errorf("SetAppNodeID re-claim: %v; want ErrConflict", err)
 	}
 
 	// Row missing.
 	err = m.SetAppNodeID(ctx, "missing-app-"+uuid.NewString(), "node-fsn-3")
-	if !errors.Is(err, ErrNotFound) {
+	if !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("SetAppNodeID missing: %v; want ErrNotFound", err)
 	}
 
@@ -227,5 +228,46 @@ func TestMemStore_SetAppNodeID(t *testing.T) {
 	err = m.SetAppNodeID(ctx, unplaced.ID, "")
 	if err == nil {
 		t.Error("SetAppNodeID empty: nil error; want rejection")
+	}
+}
+
+// H10-145: schedd's live-only owner listing drops terminal wake history,
+// other nodes' apps and deleted apps.
+func TestMemStore_ListLiveInstancesByNodeID(t *testing.T) {
+	m, ctx, _, unplaced, claimed := memNodeShardFixture(t)
+	dep, err := m.CreateDeployment(ctx, state.Deployment{AppID: claimed.ID, ImageDigest: "sha256:shard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{}
+	for _, st := range []string{"running", "waking", "frozen", "parked", "stopped", "failed"} {
+		ins, err := m.CreateInstance(ctx, claimed.ID, dep.ID, st, 256, "node-fsn-2", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.IsLive(st) {
+			want[ins.ID] = true
+		}
+	}
+	if _, err := m.CreateInstance(ctx, unplaced.ID, dep.ID, "running", 256, "node-fsn-2", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.ListLiveInstancesByNodeID(ctx, "node-fsn-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("live instances = %d, want %d (running, waking, frozen)", len(got), len(want))
+	}
+	for _, ins := range got {
+		if !want[ins.ID] {
+			t.Fatalf("unexpected instance %s in state %s", ins.ID, ins.State)
+		}
+	}
+	if _, err := m.SoftDeleteAppCascade(ctx, claimed.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := m.ListLiveInstancesByNodeID(ctx, "node-fsn-2"); err != nil || len(got) != 0 {
+		t.Fatalf("after app delete = %d instances, %v; want none", len(got), err)
 	}
 }

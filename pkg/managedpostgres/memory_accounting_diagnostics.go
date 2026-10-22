@@ -47,6 +47,7 @@ func (s *MemoryStore) accountingCoverageLocked(database Database) AccountingCove
 		progress = s.usageProgressLocked(database.ID, progress.Window)
 	}
 	progress.Terminal = root.State == StateDeleted
+	progress.CreatedAt = root.CreatedAt
 	progress.Unresolved = database.AccountingRequired && database.ProviderResourceID == ""
 	if root.DeletedAt != nil {
 		progress.EndedAt = *root.DeletedAt

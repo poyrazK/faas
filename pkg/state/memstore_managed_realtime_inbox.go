@@ -172,7 +172,7 @@ func (m *MemStore) PruneExpiredManagedRealtimeInboxCursors(ctx context.Context, 
 	return removed, nil
 }
 
-func (m *MemStore) appendManagedRealtimeInboxMessage(_ context.Context, endpointID, channel string, data []byte, binary bool, idempotencyKey string, fallbackAfter int, categories ...string) (ManagedRealtimeChannelMessage, error) {
+func (m *MemStore) appendManagedRealtimeInboxMessage(ctx context.Context, endpointID, channel string, data []byte, binary bool, idempotencyKey string, fallbackAfter int, categories ...string) (ManagedRealtimeChannelMessage, error) {
 	category := "notifications"
 	if len(categories) > 0 {
 		category = categories[0]
@@ -246,7 +246,7 @@ func (m *MemStore) appendManagedRealtimeInboxMessage(_ context.Context, endpoint
 	if idempotencyKey != "" {
 		for _, existing := range state.messages {
 			if existing.TargetMessageID == idempotencyKey {
-				if existing.Version > 1 || existing.Deleted || existing.Binary != binary || !bytes.Equal(existing.Data, data) || existing.FallbackAfterSeconds != fallbackAfter || existing.NotificationCategory != category || existing.NotificationGroupKey != groupKey || existing.NotificationGroupLabel != groupLabel || existing.NotificationPriority != priority || existing.NotificationTTLSeconds != ttl || existing.NotificationCollapseKey != collapseKey || existing.NotificationNotBefore != notBeforeRaw {
+				if existing.TTLSeconds != realtimeMessageTTL(ctx) || existing.Version > 1 || existing.Deleted || existing.Binary != binary || !bytes.Equal(existing.Data, data) || existing.FallbackAfterSeconds != fallbackAfter || existing.NotificationCategory != category || existing.NotificationGroupKey != groupKey || existing.NotificationGroupLabel != groupLabel || existing.NotificationPriority != priority || existing.NotificationTTLSeconds != ttl || existing.NotificationCollapseKey != collapseKey || existing.NotificationNotBefore != notBeforeRaw {
 					return ManagedRealtimeChannelMessage{}, ErrConflict
 				}
 				return cloneManagedRealtimeInboxMessage(existing), nil
@@ -288,6 +288,11 @@ func (m *MemStore) appendManagedRealtimeInboxMessage(_ context.Context, endpoint
 		EndpointID: endpointID, Channel: channel, Sequence: state.next,
 		Data: append([]byte(nil), data...), Binary: binary,
 		IdempotencyKey: idempotencyKey, FallbackAfterSeconds: fallbackAfter, NotificationCategory: category, NotificationGroupKey: groupKey, NotificationGroupLabel: groupLabel, NotificationPriority: priority, NotificationTTLSeconds: ttl, NotificationCollapseKey: collapseKey, NotificationNotBefore: notBeforeRaw, CreatedAt: time.Now().UTC(),
+	}
+	message.TTLSeconds = realtimeMessageTTL(ctx)
+	if message.TTLSeconds > 0 {
+		deadline := message.CreatedAt.Add(time.Duration(message.TTLSeconds) * time.Second)
+		message.ExpiresAt = &deadline
 	}
 	if fallbackAfter > 0 {
 		m.setNotificationFallbackLocked(managedRealtimeFallbackKey{endpointID: endpointID, principal: channel, sequence: message.Sequence}, managedRealtimeFallback{notBefore: notBefore, collapseKey: collapseKey, ttlSeconds: ttl, expiresAt: message.CreatedAt.Add(time.Duration(ttl) * time.Second), priority: priority, category: category, groupKey: groupKey, groupLabel: groupLabel, messageID: idempotencyKey, deadline: message.CreatedAt.Add(time.Duration(fallbackAfter) * time.Second)})
@@ -393,8 +398,7 @@ func (m *MemStore) PruneExpiredManagedRealtimeInboxMessages(_ context.Context, b
 }
 
 func cloneManagedRealtimeInboxMessage(message ManagedRealtimeChannelMessage) ManagedRealtimeChannelMessage {
-	message.Data = append([]byte(nil), message.Data...)
-	return message
+	return cloneManagedRealtimeChannelMessage(message)
 }
 
 func (m *MemStore) GetManagedRealtimeInboxCursor(ctx context.Context, endpointID, principal, consumer string) (int64, error) {

@@ -19,7 +19,7 @@ func QualifySchemaVersion(ctx context.Context, pool *pgxpool.Pool, version int) 
 	if version == 0 {
 		version = 1
 	}
-	if version != 1 && version != 2 {
+	if version != 1 && version != 2 && version != 3 {
 		return errors.New("commit: unsupported source contract")
 	}
 	if pool == nil {
@@ -31,12 +31,32 @@ func QualifySchemaVersion(ctx context.Context, pool *pgxpool.Pool, version int) 
 		"lease_token": "uuid", "lease_until": "timestamptz", "next_attempt_at": "timestamptz",
 		"attempts": "int4", "blocked_code": "text",
 	}
+	if version == 3 {
+		required["schema_version"] = "text"
+		required["publication_acceptance_id"] = "int8"
+	}
 	if version == 2 {
 		required["routing"] = "jsonb"
 	}
+	return qualifyOutboxTable(ctx, pool, "public.gregale_outbox", required)
+}
+
+func QualifyRealtimeSchema(ctx context.Context, pool *pgxpool.Pool) error {
+	return qualifyOutboxTable(ctx, pool, "public.gregale_realtime_outbox", map[string]string{
+		"event_id": "uuid", "endpoint_id": "text", "channel": "text", "data": "bytea", "metadata": "jsonb",
+		"created_at": "timestamptz", "published_at": "timestamptz", "sequence": "int8",
+		"lease_token": "uuid", "lease_until": "timestamptz", "next_attempt_at": "timestamptz",
+		"attempts": "int4", "blocked_code": "text",
+	})
+}
+
+func qualifyOutboxTable(ctx context.Context, pool *pgxpool.Pool, table string, required map[string]string) error {
+	if pool == nil {
+		return errors.New("commit: outbox schema unavailable")
+	}
 	rows, err := pool.Query(ctx, `SELECT a.attname,t.typname FROM pg_attribute a
  JOIN pg_class c ON c.oid=a.attrelid JOIN pg_type t ON t.oid=a.atttypid
- WHERE c.oid=to_regclass('public.gregale_outbox') AND c.relkind='r' AND a.attnum>0 AND NOT a.attisdropped`)
+ WHERE c.oid=to_regclass($1) AND c.relkind='r' AND a.attnum>0 AND NOT a.attisdropped`, table)
 	if err != nil {
 		return errors.New("commit: outbox schema unavailable")
 	}
@@ -61,7 +81,7 @@ func QualifySchemaVersion(ctx context.Context, pool *pgxpool.Pool, version int) 
 	}
 	var unique bool
 	err = pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attname='event_id'
- WHERE c.conrelid=to_regclass('public.gregale_outbox') AND c.contype='p' AND c.conkey=ARRAY[a.attnum]::smallint[])`).Scan(&unique)
+ WHERE c.conrelid=to_regclass($1) AND c.contype='p' AND c.conkey=ARRAY[a.attnum]::smallint[])`, table).Scan(&unique)
 	if err != nil || !unique {
 		return errors.New("commit: event ID primary key is required")
 	}

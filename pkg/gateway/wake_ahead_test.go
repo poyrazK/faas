@@ -26,15 +26,52 @@ func (c *wakeAheadClock) after(d time.Duration) {
 	c.t = c.t.Add(d)
 }
 
+// outcomeLog is a WakeAheadSink that records outcomes and published edges.
 type outcomeLog struct {
-	mu  sync.Mutex
-	got []string
+	mu     sync.Mutex
+	got    []string
+	edges  map[string][2]float64 // caller>target → call, cold share
+	wakes  map[string]float64
+	gone   []string
+	called []string
 }
 
-func (o *outcomeLog) add(s string) {
+func (o *outcomeLog) WakeAheadOutcome(caller, target, outcome string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.got = append(o.got, s)
+	o.got = append(o.got, outcome)
+}
+
+func (o *outcomeLog) WakeAheadEdge(caller, target string, callShare, coldShare float64) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.edges == nil {
+		o.edges = map[string][2]float64{}
+	}
+	o.edges[caller+">"+target] = [2]float64{callShare, coldShare}
+}
+
+func (o *outcomeLog) WakeAheadEdgeGone(caller, target string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	delete(o.edges, caller+">"+target)
+	o.gone = append(o.gone, caller+">"+target)
+}
+
+func (o *outcomeLog) WakeAheadCallerWakes(caller string, wakes float64) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.wakes == nil {
+		o.wakes = map[string]float64{}
+	}
+	o.wakes[caller] = wakes
+}
+
+func (o *outcomeLog) WakeAheadCallerGone(caller string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	delete(o.wakes, caller)
+	o.called = append(o.called, caller)
 }
 
 func (o *outcomeLog) count(s string) int {
@@ -52,7 +89,7 @@ func (o *outcomeLog) count(s string) int {
 func newTestLearner() (*WakeAheadLearner, *wakeAheadClock, *outcomeLog) {
 	clock := &wakeAheadClock{t: time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)}
 	outcomes := &outcomeLog{}
-	return NewWakeAheadLearner(clock.now, outcomes.add), clock, outcomes
+	return NewWakeAheadLearner(clock.now, outcomes), clock, outcomes
 }
 
 // train records n caller wakes; calls lists the targets called after each
@@ -146,7 +183,7 @@ func TestWakeAheadLearnerKeepsPredictingWhenItWorks(t *testing.T) {
 	// From now on every wake-ahead lands, so the call finds auth warm.
 	for range 3 * api.ServiceWakeAheadMinWakes {
 		l.ObserveWake("api")
-		if !l.ClaimSpeculation("auth") {
+		if !l.ClaimSpeculation("api", "auth") {
 			t.Fatal("claim must succeed once the previous one expired")
 		}
 		clock.after(time.Second)
@@ -163,18 +200,18 @@ func TestWakeAheadLearnerKeepsPredictingWhenItWorks(t *testing.T) {
 
 func TestWakeAheadLearnerSpeculationLifecycle(t *testing.T) {
 	l, clock, outcomes := newTestLearner()
-	if !l.ClaimSpeculation("auth") || l.ClaimSpeculation("auth") {
+	if !l.ClaimSpeculation("api", "auth") || l.ClaimSpeculation("api", "auth") {
 		t.Fatal("a fresh claim must block a second one")
 	}
 	clock.after(api.ServiceWakeAheadFollowWindow + time.Second)
-	if !l.ClaimSpeculation("auth") {
+	if !l.ClaimSpeculation("api", "auth") {
 		t.Fatal("an expired claim must be retired")
 	}
 	if got := outcomes.count(WakeAheadUnused); got != 1 {
 		t.Fatalf("unused outcomes = %d, want 1", got)
 	}
 	l.ReleaseSpeculation("auth")
-	if !l.ClaimSpeculation("auth") {
+	if !l.ClaimSpeculation("api", "auth") {
 		t.Fatal("a released claim must not block")
 	}
 	clock.after(time.Second)
@@ -329,7 +366,7 @@ func TestWakeAheadFailureReleasesClaim(t *testing.T) {
 	for testutil.ToFloat64(f.h.metrics.serviceWakeAhead.WithLabelValues(WakeAheadFailed)) != 1 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if !f.learner.ClaimSpeculation("auth") {
+	if !f.learner.ClaimSpeculation("api", "auth") {
 		t.Fatal("a failed wake-ahead must release its claim")
 	}
 }

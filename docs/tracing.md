@@ -39,6 +39,62 @@ says so directly, for example:
 The same comparison is available for the whole app under dependency latency
 (`deployment_comparison`).
 
+Database dependencies are also broken down by query. Each statement is
+normalized into a pattern: literal values, placeholders, `IN` lists and
+multi-row `VALUES` are folded, so `WHERE id = 42` and `WHERE id = 43` count as
+one query. When a dependency regresses, the evidence and the regression alert
+name the query that changed:
+
+> postgresql "SELECT orders" p95 rose from 82ms to 191ms (2.3x) compared with the previous deployment (v80). The slower query is `SELECT * FROM orders WHERE customer_id = ?` (p95 40ms to 210ms).
+
+Failures are compared the same way. A span that ends with error status counts
+as a failed call, and its failure class is kept: the `error.type` attribute,
+or the type of the first recorded exception (`QueryTimeout`, `503`). Exception
+messages and stack traces are never retained, since they often contain request
+data. When a request fails while one of its dependency calls failed, the
+evidence names that call:
+
+> The request failed while its call to postgresql "SELECT orders" failed with QueryTimeout.
+
+A dependency that fails materially more often than on the previous deployment
+is flagged as `failure_regression`. That needs at least 3 failed calls, and an
+error rate at least 5 percentage points and twice above baseline:
+
+> http "api.stripe.com" fails 12.5% of calls since the previous deployment (v80), up from 0.0%.
+
+## Following a request across services
+
+`gregale trace <trace-id>` shows every retained request of one trace across
+your apps, with the logs, queued invocations and spans linked to it. The trace
+id is on each request in `gregale debug requests get`.
+
+```text
+MATCHES
+  public-api · GET /checkout · HTTP 200 · 920 ms · telemetry row …
+  billing · POST other · HTTP 200 · 900 ms · telemetry row …
+      woke by restore in 610 ms (wake …) · app ≈270 ms · other ≈20 ms
+```
+
+A call to another service joins the trace when the calling code forwards the
+`traceparent` header of the request it is handling. With tracing on, the
+Node.js and Python instrumentation does this for the HTTP clients it supports.
+
+When the caller forwards nothing, Gregale links the call itself if the calling
+instance is serving exactly one request at that moment. The hop is shown as
+"trace linked by Gregale" and returned with `trace_inferred: true`, so it can
+be told apart from propagated context. An instance serving several requests at
+once (or holding a WebSocket or TCP session) is not linked, because Gregale
+cannot tell which request made the call; forward `traceparent` yourself for
+busy services. A call made by background work while exactly one request is in
+flight is linked to that request.
+
+For a request that found its app parked, the line under it says how the app
+was woken (restored from a snapshot or cold booted) and how long the instance
+took to become ready. When the app's runtime reports its own execution time,
+as the managed function runtimes do, that is shown as app time, and the rest
+(routing, queueing and the network) as other. Latencies are kept rounded up to
+10 ms below 1 s and more coarsely above, so the split is approximate.
+
 ## What is traced
 
 On the managed Node.js (22, 24) and Python (3.12, 3.13) runtimes, Gregale

@@ -1088,7 +1088,12 @@ func (m *MemStore) scheduleWorkflowStepRetry(ctx context.Context, runID, stepNam
 	step.Error = &stepErr
 	m.workflowSteps[runID][stepName] = step
 
-	run.Status = WorkflowRunStatusPending
+	// A for_each item's retry leaves its running run to the pass that holds
+	// the lease, which parks it at the earliest wake once the batch is done;
+	// see the PgStore twin (H9-155). Any other retry parks the run.
+	if run.Status != WorkflowRunStatusRunning || step.ForEachParent == nil {
+		run.Status = WorkflowRunStatusPending
+	}
 	run.CurrentStep = &stepName
 	run.ScheduledFor = wakeAt
 	run.UpdatedAt = now
@@ -1175,6 +1180,9 @@ func (m *MemStore) ParkWorkflowTimer(ctx context.Context, runID, stepName string
 	run.ScheduledFor = deadline
 	run.UpdatedAt = now
 	m.workflowRuns[runID] = run
+	if err := m.syncOperationWorkflowLocked(runID); err != nil {
+		return time.Time{}, err
+	}
 	return deadline, nil
 }
 
@@ -1234,6 +1242,9 @@ func (m *MemStore) ParkWorkflowEvent(ctx context.Context, runID, stepName, event
 	run.ScheduledFor = wakeAt
 	run.UpdatedAt = now
 	m.workflowRuns[runID] = run
+	if err := m.syncOperationWorkflowLocked(runID); err != nil {
+		return nil, time.Time{}, err
+	}
 	return nil, deadline, nil
 }
 
@@ -1289,6 +1300,9 @@ func (m *MemStore) ResolveWorkflowEventWait(ctx context.Context, runID, stepName
 	run.CurrentStep = &stepName
 	run.UpdatedAt = now
 	m.workflowRuns[runID] = run
+	if err := m.syncOperationWorkflowLocked(runID); err != nil {
+		return nil, false, err
+	}
 	return nil, true, nil
 }
 
@@ -1315,6 +1329,10 @@ func (m *MemStore) completeWorkflowCallback(_ context.Context, tenantID, runID, 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.completeWorkflowCallbackLocked(tenantID, runID, stepName, eventName, eventID, timeout, payload)
+}
+
+func (m *MemStore) completeWorkflowCallbackLocked(tenantID, runID, stepName, eventName, eventID string, timeout time.Duration, payload json.RawMessage) (bool, error) {
 	run, ok := m.workflowRuns[runID]
 	if !ok {
 		return false, ErrWorkflowRunNotFound
@@ -1386,6 +1404,11 @@ func (m *MemStore) insertWorkflowEvent(_ context.Context, tenantID string, e *Wo
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.insertWorkflowEventLocked(tenantID, e)
+}
+
+// insertWorkflowEventLocked mirrors insertWorkflowEventTx.
+func (m *MemStore) insertWorkflowEventLocked(tenantID string, e *WorkflowEvent) error {
 	run, ok := m.workflowRuns[e.RunID]
 	if !ok {
 		return ErrWorkflowRunNotFound
@@ -1497,6 +1520,7 @@ func (m *MemStore) SweepExpiredWorkflowRuns(_ context.Context, olderThan time.Du
 		if r.FinishedAt != nil && !r.FinishedAt.After(threshold) && !retainedByOperation {
 			m.captureWorkflowRecoveryResultLocked(r, time.Now().UTC())
 			delete(m.workflowRuns, id)
+			delete(m.automationLiveVerifications, id)
 			delete(m.workflowSteps, id)
 			delete(m.workflowEvents, id)
 			for key := range m.workflowStepAttempts {

@@ -29,11 +29,19 @@ func (v *JailerVMM) RestoreNativeQualification(ctx context.Context, frame state.
 	if err != nil {
 		return err
 	}
-	defer func() { result = errors.Join(result, lock.Close()) }()
-	if producer == nil || producer.restore == nil || *producer.restore != target || !sameNativePhysicalLease(lease, producer.NativeLease) ||
+	producerLockHeld := true
+	defer func() {
+		if producerLockHeld {
+			result = errors.Join(result, lock.Close())
+		}
+	}()
+	if producer == nil || producer.restore == nil || !sameNativeQualificationRestoreClaim(target, *producer.restore) || !sameNativePhysicalLease(lease, producer.NativeLease) ||
 		producer.NativeGeneration == "" || r.generation(lease.Instance) != producer.NativeGeneration {
 		return fmt.Errorf("native qualification restore: target process differs from the original attempt: %w", state.ErrConflict)
 	}
+	// The context carries the pre-binding claim. Every physical owner check from
+	// here onward must use the matching, journal-backed bound target.
+	target = *producer.restore
 	ctx, cancel := context.WithDeadline(ctx, target.Deadline)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
@@ -59,6 +67,14 @@ func (v *JailerVMM) RestoreNativeQualification(ctx context.Context, frame state.
 	if owner.Generation != target.NativeGeneration || owner.KernelBootID != target.KernelBootID ||
 		!sameNativePhysicalLease(owner.Lease, lease) || owner.Authorized || owner.Revoked || owner.ResourcesRemoved {
 		return fmt.Errorf("native qualification restore: prepared physical owner changed: %w", state.ErrConflict)
+	}
+	// The initial claim and physical owner are now bound. Each staging, load
+	// and channel operation takes this producer lock again and revalidates the
+	// original target. Keeping it here would make the first backing stage wait
+	// on our own lock until the qualification lease expires.
+	producerLockHeld = false
+	if err := lock.Close(); err != nil {
+		return err
 	}
 	root, err := v.mkChrootForOwner(ctx, owner, lease.Instance)
 	if err != nil {

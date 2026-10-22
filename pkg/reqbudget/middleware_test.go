@@ -328,6 +328,63 @@ func TestIsSyncInvokeRequest(t *testing.T) {
 	}
 }
 
+func TestIsDeploymentResponseCheckRequest(t *testing.T) {
+	for _, tc := range []struct {
+		method, path string
+		want         bool
+	}{
+		{http.MethodPost, "/v1/apps/private-api/deployments/accepted-id/response-check", true},
+		{http.MethodGet, "/v1/apps/private-api/deployments/accepted-id/response-check", false},
+		{http.MethodPost, "/v1/apps/private-api/deployments/accepted-id/response-check/extra", false},
+		{http.MethodPost, "/v1/apps//deployments/accepted-id/response-check", false},
+		{http.MethodPost, "/v1/apps/private-api/deployments//response-check", false},
+		{http.MethodPost, "/v1/apps/private-api/deployments/accepted-id", false},
+	} {
+		if got := IsDeploymentResponseCheckRequest(httptest.NewRequest(tc.method, tc.path, nil)); got != tc.want {
+			t.Errorf("budget classification for %s %s = %t", tc.method, tc.path, got)
+		}
+	}
+	if IsDeploymentResponseCheckRequest(nil) {
+		t.Fatal("nil request selected a response-check budget")
+	}
+}
+
+// TestIsDeploySubmissionRequest pins H9-157: deploy source uploads and
+// submissions must be recognised so apid can lift them off its 5 s default;
+// on production-us a 12 MB Dockerfile commit spent its budget scanning the
+// archive and failed at the account deploy-limit check, every time.
+func TestIsDeploySubmissionRequest(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+		want   bool
+	}{
+		{http.MethodPatch, "/v1/uploads/a3bbf3e9390e3017ae0e55b9", true},
+		{http.MethodPost, "/v1/uploads/a3bbf3e9390e3017ae0e55b9/commit", true},
+		{http.MethodPost, "/v1/apps/demo/deployments", true},
+		{http.MethodPost, "/v1/apps/demo/deployments/source-tarball", true},
+		{http.MethodPost, "/v1/apps/demo/deployments/source-ref", true},
+		{http.MethodPost, "/v1/apps/demo/rollback", true},
+		{http.MethodPost, "/v1/deployments/d9d1c1b4/retry", true},
+		{http.MethodPost, "/v1/uploads", false},
+		{http.MethodGet, "/v1/uploads/abc", false},
+		{http.MethodGet, "/v1/apps/demo/deployments", false},
+		{http.MethodPost, "/v1/apps//deployments", false},
+		{http.MethodPost, "/v1/uploads//commit", false},
+		{http.MethodPost, "/v1/apps/demo/deployments/abc/cancel", false},
+		{http.MethodPost, "/v1/apps/demo/invoke", false},
+		{http.MethodPost, "/v1/projects", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+"_"+tc.path, func(t *testing.T) {
+			r := httptest.NewRequest(tc.method, tc.path, nil)
+			if got := IsDeploySubmissionRequest(r); got != tc.want {
+				t.Fatalf("IsDeploySubmissionRequest(%s %s) = %v, want %v", tc.method, tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestMiddleware_EndToEndTimeoutEnforced is the ADR-093 §14
 // metal-acceptance smoke: a 100ms budget with a 1s slow
 // downstream fake must 504 in <200ms with a stable

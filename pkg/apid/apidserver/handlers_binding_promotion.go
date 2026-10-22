@@ -152,7 +152,11 @@ func (s *server) observeBindingPromotion(r *http.Request, acct state.Account, ap
 	if err != nil {
 		return observation, api.ErrCapacity("binding release policy could not be read")
 	}
+	var storageRequirements map[string]string
+	var queueRequirements map[string]string
 	if releasePolicy.Mode == "enforce" {
+		storageRequirements = releasePolicy.ObjectStorageRequirements
+		queueRequirements = releasePolicy.QueueRequirements
 		storedAge, err := time.ParseDuration(releasePolicy.MaxVerificationAge)
 		if err != nil {
 			return observation, api.ErrCapacity("binding release policy is invalid")
@@ -163,13 +167,17 @@ func (s *server) observeBindingPromotion(r *http.Request, acct state.Account, ap
 		req.AllowUnsupported = false
 		req.RequireApplicationAck = req.RequireApplicationAck || releasePolicy.RequireApplicationAck
 	}
-	inventoryRequest := r.Clone(r.Context())
+	inventoryRequest, problem := bindingGraphInventoryRequest(r, app)
+	if problem != nil {
+		return observation, problem
+	}
+	inventoryRequest = inventoryRequest.Clone(r.Context())
 	query := inventoryRequest.URL.Query()
 	query.Set("deployment_id", deployment.ID)
 	query.Del("scope")
 	inventoryRequest.URL.RawQuery = query.Encode()
 	inventory := s.collectBindingInventory(r.Context(), inventoryRequest, acct, app, "")
-	report, err := bindingcheck.Evaluate(inventory, bindingcheck.Policy{App: app.Slug, DeploymentID: deployment.ID, MaxVerificationAge: age, AllowUnsupported: req.AllowUnsupported, RequireApplicationAck: req.RequireApplicationAck}, time.Now())
+	report, err := bindingcheck.Evaluate(inventory, bindingcheck.Policy{App: app.Slug, DeploymentID: deployment.ID, MaxVerificationAge: age, AllowUnsupported: req.AllowUnsupported, RequireApplicationAck: req.RequireApplicationAck, ObjectStorageRequirements: storageRequirements, QueueRequirements: queueRequirements}, time.Now())
 	if err != nil {
 		return observation, api.ErrInternal("could not evaluate binding promotion policy")
 	}
@@ -180,6 +188,8 @@ func (s *server) observeBindingPromotion(r *http.Request, acct state.Account, ap
 	deadline, expiration := bindingPromotionDeadline(observation.report, inventory, age)
 	observation.expiration = expiration
 	observation.fence = state.BindingPromotionFence{AccountID: acct.ID, AppID: app.ID, DeploymentID: deployment.ID, Scope: report.Scope, Revision: revision, ValidUntil: deadline, PolicyRevision: releasePolicy.Revision, MaxVerificationAge: age, AllowUnsupported: req.AllowUnsupported, RequireApplicationAck: req.RequireApplicationAck}
+	observation.fence.ObjectStorageRequirements = report.ObjectStorageRequirements
+	observation.fence.QueueRequirements = report.QueueRequirements
 	return observation, nil
 }
 
@@ -199,8 +209,15 @@ func bindingPromotionDeadline(report api.BindingCheckReport, inventory api.AppBi
 		}
 	}
 	for _, item := range inventory.Bindings {
-		if item.Type != api.BindingTypeQueue || item.State != "enabled" || item.Access != "push" || item.ObservedAt == nil {
+		if !api.QueueBindingInScope(item, report.Scope) || item.State != "enabled" || item.Access != "push" || item.ObservedAt == nil {
 			continue
+		}
+		if item.QueueCanary != nil && report.QueueRequirements[item.Binding] == api.QueueEvidenceHandlerCompletion {
+			end := item.QueueCanary.ExpiresAt
+			if deadline.IsZero() || end.Before(deadline) {
+				deadline = end
+				expiration = api.BindingCheckFinding{Code: "queue_completion_expired", Type: item.Type, Binding: item.Binding, Scope: item.Scope, Message: "Queue completion evidence expired before promotion; verify again."}
+			}
 		}
 		end := item.ObservedAt.Add(api.QueueConsumerMaxPollAge)
 		if deadline.IsZero() || end.Before(deadline) {

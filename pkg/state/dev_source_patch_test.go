@@ -12,10 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type devPatchStore interface {
-	state.Store
-	state.DevSourcePatchStore
-}
+type devPatchStore = contractTestStore
 
 func TestDevSourcePatchStoreMem(t *testing.T) {
 	runDevSourcePatchStoreContract(t, state.NewMemStore(), context.Background())
@@ -100,11 +97,11 @@ func runDevSourcePatchStoreContract(t *testing.T, s devPatchStore, ctx context.C
 	if status, err := s.DevSourcePatchStatus(ctx, app.ID, 2); err != nil || status.AppliedAt != nil {
 		t.Fatalf("unacknowledged status = %+v, %v", status, err)
 	}
-	if err := s.RecordDevSourcePatchApplied(ctx, app.ID, live.ID, 2, 640, ""); err != nil {
-		t.Fatal(err)
+	if ack, err := s.RecordDevSourcePatchApplied(ctx, app.ID, live.ID, 2, 640, ""); err != nil || !ack.First || ack.Delivery < 0 {
+		t.Fatalf("first acknowledgement = %+v, %v; want First", ack, err)
 	}
-	if err := s.RecordDevSourcePatchApplied(ctx, app.ID, live.ID, 2, 9999, "late_instance"); err != nil {
-		t.Fatal(err)
+	if ack, err := s.RecordDevSourcePatchApplied(ctx, app.ID, live.ID, 2, 9999, "late_instance"); err != nil || ack.First || ack.Delivery != 0 {
+		t.Fatalf("late acknowledgement = %+v, %v; want ignored", ack, err)
 	}
 	if status, err := s.DevSourcePatchStatus(ctx, app.ID, 2); err != nil || status.AppliedAt == nil || status.ApplyMS != 640 || status.ApplyError != "" {
 		t.Fatalf("acknowledged status = %+v, %v; want the first acknowledgement", status, err)

@@ -7,7 +7,7 @@
  */
 export type ProgressiveRollout = {
   /**
-   * Strictly increasing rollout percentages in basis points
+   * Strictly increasing rollout percentages in basis points, ending at 10000.
    */
   stages: Array<number>;
   /**

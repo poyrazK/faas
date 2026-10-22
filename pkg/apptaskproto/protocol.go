@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/jobresult"
+	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 )
 
 const (
@@ -69,9 +70,13 @@ func (s Status) Terminal() bool {
 	return s == StatusSucceeded || s == StatusFailed || s == StatusTimedOut
 }
 
-// Request contains only dispatch-time command data. Deployment artifacts,
-// environment, secrets, and network policy are staged during VM preparation
-// and intentionally cannot be changed through this channel.
+// Request contains dispatch-time command data. Deployment artifacts, sealed
+// secrets and network policy are staged during VM preparation. ADR-20261017201008 adds
+// bounded command environment overrides and regular-file inputs through the
+// reserved rehearsal envelope; it cannot replace those platform bindings.
+//
+// Interactive requests (ADR-1037) use InteractiveVersion so a guest that only
+// speaks version 1 rejects them instead of running a shell without stdin.
 type Request struct {
 	Version        uint16   `json:"version"`
 	TaskID         string   `json:"task_id"`
@@ -79,11 +84,34 @@ type Request struct {
 	CommandShell   bool     `json:"command_shell"`
 	TimeoutSeconds int      `json:"timeout_seconds"`
 	MaxOutputBytes int      `json:"max_output_bytes"`
+	Interactive    bool     `json:"interactive,omitempty"`
+	TTY            bool     `json:"tty,omitempty"`
+	Rows           uint16   `json:"rows,omitempty"`
+	Cols           uint16   `json:"cols,omitempty"`
 }
 
 func (r Request) Validate() error {
-	if r.Version != Version {
+	switch r.Version {
+	case Version:
+		if r.Interactive || r.TTY || r.Rows != 0 || r.Cols != 0 {
+			return fmt.Errorf("%w: interactive fields require version %d", ErrInvalidRequest, InteractiveVersion)
+		}
+	case InteractiveVersion:
+		if err := r.validateInteractive(); err != nil {
+			return err
+		}
+	case RehearsalVersion:
+		if r.Interactive || r.TTY || r.Rows != 0 || r.Cols != 0 || r.CommandShell || r.MaxOutputBytes != rehearsalcommand.MaxReceiptBytes {
+			return fmt.Errorf("%w: contained commands require a bounded batch request", ErrInvalidRequest)
+		}
+		if _, err := rehearsalcommand.Decode(r.Command); err != nil {
+			return fmt.Errorf("%w: invalid contained command envelope", ErrInvalidRequest)
+		}
+	default:
 		return fmt.Errorf("%w: unsupported version %d", ErrInvalidRequest, r.Version)
+	}
+	if rehearsalcommand.IsCommand(r.Command) && r.Version != RehearsalVersion {
+		return fmt.Errorf("%w: contained commands require version %d", ErrInvalidRequest, RehearsalVersion)
 	}
 	if strings.TrimSpace(r.TaskID) == "" || len(r.TaskID) > MaxTaskIDBytes || strings.ContainsRune(r.TaskID, '\x00') {
 		return fmt.Errorf("%w: task_id is empty or too long", ErrInvalidRequest)
@@ -106,6 +134,9 @@ func (r Request) Validate() error {
 	}
 	if r.TimeoutSeconds < MinTimeoutSeconds || r.TimeoutSeconds > MaxTimeoutSeconds {
 		return fmt.Errorf("%w: timeout_seconds is outside the hard range", ErrInvalidRequest)
+	}
+	if r.Interactive {
+		return nil
 	}
 	if r.MaxOutputBytes < MinOutputBytes || r.MaxOutputBytes > MaxOutputBytes {
 		return fmt.Errorf("%w: max_output_bytes is outside the hard range", ErrInvalidRequest)
@@ -294,6 +325,13 @@ func (w *OutputWriter) Write(p []byte) (int, error) {
 type Handler func(context.Context, Request, *OutputWriter, *OutputWriter) (Result, error)
 
 func Serve(ctx context.Context, conn net.Conn, handler Handler) error {
+	return ServeSession(ctx, conn, handler, nil)
+}
+
+// ServeSession serves one request. Ordinary batch version 1 and contained
+// batch version 3 run through handler. Interactive version 2 uses interactive,
+// or is rejected when the guest has no interactive support.
+func ServeSession(ctx context.Context, conn net.Conn, handler Handler, interactive InteractiveHandler) error {
 	if conn == nil || handler == nil {
 		return fmt.Errorf("%w: nil connection or handler", ErrInvalidRequest)
 	}
@@ -312,6 +350,12 @@ func Serve(ctx context.Context, conn net.Conn, handler Handler) error {
 	var req Request
 	if err := json.Unmarshal(body, &req); err != nil || req.Validate() != nil {
 		return writeError(ctx, conn, "invalid_request", "request failed validation")
+	}
+	if req.Interactive {
+		if interactive == nil {
+			return writeError(ctx, conn, "interactive_unsupported", "guest does not support interactive sessions")
+		}
+		return serveInteractive(ctx, conn, req, interactive)
 	}
 
 	var streamMu, budgetMu sync.Mutex
@@ -435,14 +479,25 @@ func contextError(ctx context.Context, err error) error {
 	return err
 }
 
+// closeOnCancel closes conn when ctx is cancelled before the returned stop
+// runs. stop waits for the watcher to exit: if it only signalled, a watcher
+// not yet scheduled would find both its cases ready once the caller then
+// cancelled ctx, and select's random choice closed the connection after a
+// normal return about half the time (TestInteractiveLeavesConnectionOpenAfterResult
+// caught it in CI).
 func closeOnCancel(ctx context.Context, conn net.Conn) func() {
 	done := make(chan struct{})
+	exited := make(chan struct{})
 	go func() {
+		defer close(exited)
 		select {
 		case <-ctx.Done():
 			_ = conn.Close()
 		case <-done:
 		}
 	}()
-	return func() { close(done) }
+	return func() {
+		close(done)
+		<-exited
+	}
 }

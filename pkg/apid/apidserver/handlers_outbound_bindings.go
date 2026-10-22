@@ -9,6 +9,7 @@ import (
 	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/outboundai"
 	"github.com/onebox-faas/faas/pkg/outbound"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -35,6 +36,14 @@ func outboundOfferResponse(offer state.OutboundIntegrationOffer) api.OutboundInt
 		AIDailyCostLimitMillicents:   copyOutboundDailyLimit(offer.AIDailyCostLimit),
 		AIMonthlyCostLimitMillicents: copyOutboundDailyLimit(offer.AIMonthlyCostLimit),
 		AIRequestLogEnabled:          offer.AIRequestLogEnabled,
+		// ADR-994 per-end-user limits.
+		AIUserDailyTokenLimit:          copyOutboundDailyLimit(offer.AIUserDailyTokenLimit),
+		AIUserDailyCostLimitMillicents: copyOutboundDailyLimit(offer.AIUserDailyCostLimit),
+		AIRequestLogContent:            offer.AIRequestLogContent,
+		AIContentPolicy:                offer.AIContentPolicy.Normalized(),
+		AILogExport:                    offer.AILogExport,
+		AIAllowUnmetered:               offer.AIAllowUnmetered,
+		AIAutoPromptCache:              offer.AIAutoPromptCache,
 	}
 }
 
@@ -114,11 +123,10 @@ func (s *server) createOutboundIntegration(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if !api.ValidOutboundAIPolicy(req.AIProvider, req.AIDailyTokenLimit) {
-		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, outboundAIPolicyInvalidDetail)
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, outboundai.PolicyInvalidDetail)
 		return
 	}
-	if req.AIProvider != "" && !s.aiGatewayEnabled {
-		writeAIGatewayUnavailable(w)
+	if req.AIProvider != "" && s.aiGatewayDenied(w, acct) {
 		return
 	}
 	requestPolicy := api.DefaultOutboundRequestPolicy()

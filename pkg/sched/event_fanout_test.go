@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
@@ -412,7 +413,7 @@ func TestEventFanoutLegacyReceiptKeepsCurrentSubscriptionRouting(t *testing.T) {
 }
 
 type eventFanoutEnqueueFailureStore struct {
-	*state.MemStore
+	MemStore *state.MemStore
 }
 
 func (s eventFanoutEnqueueFailureStore) EnqueueInvocation(context.Context, state.Invocation) (state.Invocation, error) {
@@ -522,7 +523,7 @@ func TestEventFanoutMarksTransientEnqueueFailureRetryableAfterExhaustion(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	loop := &Loop{engine: &Engine{store: eventFanoutEnqueueFailureStore{MemStore: mem}}}
+	loop := &Loop{engine: &Engine{store: statetest.NewMem(eventFanoutEnqueueFailureStore{MemStore: mem})}}
 	for attempt := 1; attempt <= eventFanoutRecipientMaxAttempts; attempt++ {
 		err := loop.routePublishedEventSnapshot(ctx, work)
 		if attempt < eventFanoutRecipientMaxAttempts && err == nil {

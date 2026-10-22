@@ -33,8 +33,11 @@ const (
 
 // IssueContext contains the bounded correlation fields accepted by the issue
 // ingestion endpoint. It deliberately has no arbitrary tags or customer
-// identity fields.
+// identity fields. Operational tags use a fixed allowlist.
 type IssueContext struct {
+	Breadcrumbs         []IssueBreadcrumb
+	BreadcrumbsDropped  int
+	Tags                map[string]string
 	TraceID             string
 	SpanID              string
 	RequestID           string
@@ -43,6 +46,8 @@ type IssueContext struct {
 	SourceKind          string
 	HTTPStatus          int
 	FingerprintOverride string
+	// ErrorCode is a stable application code used by failure-site-v1 grouping.
+	ErrorCode string
 }
 
 // IssueReporterOptions configures a deployment-bound issue reporter. Token
@@ -56,6 +61,10 @@ type IssueReporterOptions struct {
 	Timeout    time.Duration
 	RetryDelay time.Duration
 	HTTPClient *http.Client
+	// GroupingStrategy is empty/legacy by default, or "failure-site-v1"/"cause-chain-v1".
+	// Opting in creates version 2 or 3 groups without migrating existing history.
+	GroupingStrategy      string
+	SymbolicationStrategy string
 }
 
 // IssueReporterStats reports the current in-memory queue and settled delivery
@@ -86,12 +95,14 @@ const (
 // trace sampling. Capture methods never return application errors; an empty
 // event ID means the event was not queued.
 type IssueReporter struct {
-	endpoint   string
-	token      string
-	client     *http.Client
-	timeout    time.Duration
-	retryDelay time.Duration
-	maxQueue   int
+	endpoint              string
+	token                 string
+	client                *http.Client
+	timeout               time.Duration
+	retryDelay            time.Duration
+	maxQueue              int
+	groupingStrategy      string
+	symbolicationStrategy string
 
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -120,7 +131,15 @@ func NewIssueReporter(options IssueReporterOptions) (*IssueReporter, error) {
 	if !strings.HasPrefix(options.Token, "g_issue_") {
 		return nil, errors.New("a Gregale issue ingest token is required")
 	}
+	switch options.GroupingStrategy {
+	case "", "legacy", "failure-site-v1", "cause-chain-v1":
+	default:
+		return nil, errors.New("invalid issue grouping strategy")
+	}
 
+	if options.SymbolicationStrategy != "" && (options.SymbolicationStrategy != "deployment-source-maps-v1" || (options.GroupingStrategy != "failure-site-v1" && options.GroupingStrategy != "cause-chain-v1")) {
+		return nil, errors.New("server symbolication requires failure-site-v1 or cause-chain-v1")
+	}
 	maxQueue := options.MaxQueue
 	if maxQueue == 0 {
 		maxQueue = issueReporterDefaultQueue
@@ -167,16 +186,18 @@ func NewIssueReporter(options IssueReporterOptions) (*IssueReporter, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	reporter := &IssueReporter{
-		endpoint:   base.Scheme + "://" + base.Host + "/v1/apps/" + url.PathEscape(options.App) + "/issue-events",
-		token:      options.Token,
-		client:     &clientCopy,
-		timeout:    timeout,
-		retryDelay: retryDelay,
-		maxQueue:   maxQueue,
-		ctx:        ctx,
-		cancel:     cancel,
-		workerDone: make(chan struct{}),
-		changed:    make(chan struct{}),
+		endpoint:              base.Scheme + "://" + base.Host + "/v1/apps/" + url.PathEscape(options.App) + "/issue-events",
+		token:                 options.Token,
+		client:                &clientCopy,
+		timeout:               timeout,
+		retryDelay:            retryDelay,
+		maxQueue:              maxQueue,
+		groupingStrategy:      options.GroupingStrategy,
+		symbolicationStrategy: options.SymbolicationStrategy,
+		ctx:                   ctx,
+		cancel:                cancel,
+		workerDone:            make(chan struct{}),
+		changed:               make(chan struct{}),
 	}
 	go reporter.run()
 	return reporter, nil
@@ -191,7 +212,7 @@ func (r *IssueReporter) CaptureException(err error, issueContext ...IssueContext
 	}
 	defer r.recoverCapturePanic(&eventID)
 	ctx := firstIssueContext(issueContext)
-	return r.capture(reflect.TypeOf(err).String(), err.Error(), ctx, 4)
+	return r.capture(reflect.TypeOf(err).String(), err.Error(), ctx, 4, err)
 }
 
 // CapturePanic queues a panic value. Errors keep their concrete Go type;
@@ -203,7 +224,7 @@ func (r *IssueReporter) CapturePanic(value any, issueContext ...IssueContext) (e
 	defer r.recoverCapturePanic(&eventID)
 	ctx := firstIssueContext(issueContext)
 	if err, ok := value.(error); ok {
-		return r.capture(reflect.TypeOf(err).String(), err.Error(), ctx, 4)
+		return r.capture(reflect.TypeOf(err).String(), err.Error(), ctx, 4, err)
 	}
 	return r.capture("panic", fmt.Sprint(value), ctx, 4)
 }
@@ -225,7 +246,7 @@ func (r *IssueReporter) RecoverAndRepanic(issueContext ...IssueContext) {
 		}
 		ctx := firstIssueContext(issueContext)
 		if err, ok := value.(error); ok {
-			r.capture(reflect.TypeOf(err).String(), err.Error(), ctx, 5)
+			r.capture(reflect.TypeOf(err).String(), err.Error(), ctx, 5, err)
 		} else {
 			r.capture("panic", fmt.Sprint(value), ctx, 5)
 		}
@@ -307,7 +328,7 @@ func firstIssueContext(contexts []IssueContext) IssueContext {
 	return contexts[0]
 }
 
-func (r *IssueReporter) capture(exceptionType, message string, ctx IssueContext, stackSkip int) (eventID string) {
+func (r *IssueReporter) capture(exceptionType, message string, ctx IssueContext, stackSkip int, original ...error) (eventID string) {
 	defer func() {
 		if recover() != nil {
 			r.recordDrop()
@@ -345,6 +366,7 @@ func (r *IssueReporter) capture(exceptionType, message string, ctx IssueContext,
 		StackTrace:          boundedIssueString(stack, issueReporterStackBytes),
 		Frames:              frames,
 		FingerprintOverride: boundedIssueString(ctx.FingerprintOverride, issueReporterTypeBytes),
+		ErrorCode:           boundedIssueString(ctx.ErrorCode, issueReporterTypeBytes),
 		TraceID:             boundedIssueString(ctx.TraceID, 32),
 		SpanID:              boundedIssueString(ctx.SpanID, 16),
 		RequestID:           boundedIssueString(ctx.RequestID, issueReporterTypeBytes),
@@ -352,6 +374,15 @@ func (r *IssueReporter) capture(exceptionType, message string, ctx IssueContext,
 		Route:               boundedIssueString(ctx.Route, issueReporterTypeBytes),
 		HTTPStatus:          ctx.HTTPStatus,
 		SourceKind:          sourceKind,
+	}
+	event.SymbolicationStrategy = r.symbolicationStrategy
+	event.Breadcrumbs, event.BreadcrumbsDropped, event.Tags = boundedIssueContext(ctx)
+	if r.groupingStrategy == "failure-site-v1" || r.groupingStrategy == "cause-chain-v1" {
+		event.GroupingStrategy = r.groupingStrategy
+		event.FrameOrder = "newest-first"
+	}
+	if r.groupingStrategy == "cause-chain-v1" && len(original) > 0 {
+		event.Causes, event.CausesIncomplete = issueErrorCauses(original[0])
 	}
 	body, err := json.Marshal(event)
 	if err != nil || len(body) > issueReporterMaxPayload {
@@ -517,4 +548,38 @@ func boundedIssueString(value string, limit int) string {
 		value = value[:len(value)-1]
 	}
 	return value
+}
+
+// Standard errors have no throw-site frames. Bound traversal even for non-comparable errors.
+func issueErrorCauses(err error) (causes []IssueCause, incomplete bool) {
+	defer func() {
+		if recover() != nil {
+			incomplete = true
+		}
+	}()
+	seen := make(map[error]bool)
+	for err != nil {
+		if reflect.TypeOf(err).Comparable() {
+			if seen[err] {
+				return causes, true
+			}
+			seen[err] = true
+		}
+		if _, multi := err.(interface{ Unwrap() []error }); multi {
+			return causes, true
+		}
+		next := errors.Unwrap(err)
+		if next == nil {
+			return causes, false
+		}
+		if len(causes) == 8 {
+			return causes, true
+		}
+		if reflect.TypeOf(next).Comparable() && seen[next] {
+			return causes, true
+		}
+		causes = append(causes, IssueCause{ExceptionType: boundedIssueString(reflect.TypeOf(next).String(), issueReporterTypeBytes), Message: boundedIssueString(next.Error(), issueReporterMessageBytes)})
+		err = next
+	}
+	return causes, false
 }

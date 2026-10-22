@@ -23,6 +23,7 @@ storage:
 # See docs/runbooks/<AlertName>.md for triage steps per alert.
 rule_files:
   - /etc/prometheus/faas.rules.yml
+  - /etc/prometheus/data_repair.rules.yml
   # ADR-098 §9.A meterd data-upstream alerts (issue #951). The
   # prometheus role's tasks/main.yml drops this file from
   # pkg/promqlrules/data_placement.yaml — single source of truth,
@@ -112,6 +113,22 @@ scrape_configs:
         refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
     target_limit: {{ prom_compute_metrics_target_limit }}
     metrics_path: "/metrics"
+{% if faas_edge_on_compute_nodes | default(false) | bool %}
+  # ADR-1343 §5: the app edge on every active compute node — gatewayd-public
+  # in compute edge mode and its Cloudflare Tunnel connector.
+  - job_name: "gatewayd-public-edge"
+    http_sd_configs:
+      - url: "{{ prom_compute_edge_discovery_url }}"
+        refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
+    target_limit: {{ prom_compute_metrics_target_limit }}
+    metrics_path: "/metrics"
+  - job_name: "cloudflared"
+    http_sd_configs:
+      - url: "{{ prom_compute_cloudflared_discovery_url }}"
+        refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
+    target_limit: {{ prom_compute_metrics_target_limit }}
+    metrics_path: "/metrics"
+{% endif %}
 {% if prom_promtail_enabled | default(false) | bool %}
   # Issue #274: discover every compute-host Promtail endpoint from the same
   # active registry, but through a separate HTTP-SD endpoint so the gateway

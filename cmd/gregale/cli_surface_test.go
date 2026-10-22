@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -12,17 +13,18 @@ import (
 )
 
 func TestTopLevelUsageGroupsCustomerCommands(t *testing.T) {
-	out := topLevelUsage(false)
+	out := main.TopLevelUsage(false, false)
 	for _, want := range []string{
 		"Get started:",
 		"Examples:",
+		"gregale deploy --preview",
 		"Run 'gregale help --all'",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("default help missing %q", want)
 		}
 	}
-	for _, hidden := range []string{"admin", "mail", "postgres", "rollouts", "github-webhook-secret", "tenant-surfaces"} {
+	for _, hidden := range []string{"admin", "mail", "postgres", "rollouts", "github-webhook-secret", "tenant-surfaces", "product"} {
 		if strings.Contains(out, "  "+hidden+" ") {
 			t.Errorf("default help exposes hidden command %q:\n%s", hidden, out)
 		}
@@ -37,53 +39,178 @@ func TestTopLevelUsageGroupsCustomerCommands(t *testing.T) {
 	}
 }
 
-func TestTopLevelUsageAllKeepsCompatibilityAliasesDiscoverable(t *testing.T) {
-	out := topLevelUsage(true)
-	if !strings.Contains(out, "Advanced/operator compatibility:") {
-		t.Fatalf("--all help missing advanced section:\n%s", out)
+// operatorCommands are callable but listed only by `help --all --operator`.
+var operatorCommands = []string{"admin", "commit", "data-repair", "entities", "github-webhook-secret", "mail", "postgres", "product", "rollouts", "tenant-surfaces"}
+
+func TestTopLevelUsageAllFollowsTheCustomerJourney(t *testing.T) {
+	out := main.TopLevelUsage(true, false)
+	sections := []string{"Get started:", "Develop & deploy:", "Operate & observe:", "Configure:", "Async & data:", "Account & billing:"}
+	last := -1
+	for _, section := range sections {
+		at := strings.Index(out, "\n"+section+"\n")
+		if at < 0 {
+			t.Fatalf("--all help omits %q:\n%s", section, out)
+		}
+		if at < last {
+			t.Errorf("--all help lists %q out of journey order", section)
+		}
+		last = at
 	}
-	for _, section := range []string{"Customer commands:", "Core:", "API:", "Data:", "Delivery:", "Observe:"} {
-		if !strings.Contains(out, section) {
-			t.Errorf("--all help omits %q", section)
+	for _, tc := range []struct{ command, section string }{
+		{"start", "Get started:"}, {"deploy", "Develop & deploy:"}, {"logs", "Operate & observe:"},
+		{"secrets", "Configure:"}, {"crons", "Async & data:"}, {"billing", "Account & billing:"},
+	} {
+		section := strings.Index(out, "\n"+tc.section+"\n")
+		end := strings.Index(out[section+1:], "\n\n") + section + 1
+		if !strings.Contains(out[section:end], "\n  "+tc.command+" ") {
+			t.Errorf("--all help does not list %q under %q", tc.command, tc.section)
 		}
 	}
-	for _, command := range []string{"admin", "mail", "postgres", "rollouts", "github-webhook-secret", "tenant-surfaces"} {
-		if !strings.Contains(out, "  "+command+" ") {
-			t.Errorf("--all help omits compatibility command %q", command)
+	for _, command := range operatorCommands {
+		if strings.Contains(out, "\n  "+command+" ") {
+			t.Errorf("--all help lists operator command %q to customers", command)
+		}
+	}
+	for _, unwanted := range []string{"Customer commands:", "Advanced", "Other:", "Operator and compatibility:"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("--all help contains %q", unwanted)
+		}
+	}
+	if !strings.Contains(out, "gregale help --all --operator") {
+		t.Error("--all help does not say how to list operator commands")
+	}
+}
+
+func TestTopLevelUsageOperatorKeepsCompatibilityCommandsDiscoverable(t *testing.T) {
+	out := main.TopLevelUsage(true, true)
+	section := strings.Index(out, "\nOperator and compatibility:\n")
+	if section < 0 {
+		t.Fatalf("operator help missing its section:\n%s", out)
+	}
+	for _, command := range operatorCommands {
+		if !strings.Contains(out[section:], "\n  "+command+" ") {
+			t.Errorf("operator help omits %q", command)
+		}
+	}
+	if !strings.Contains(out, "\nGet started:\n") {
+		t.Error("operator help drops the customer groups")
+	}
+}
+
+func TestRootHelpFlagsSelectTheView(t *testing.T) {
+	oldOut := (*main.OsStdout)
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
+	for _, tc := range []struct {
+		args           []string
+		all, operators bool
+	}{
+		{[]string{"help"}, false, false},
+		{[]string{"--help"}, false, false},
+		{[]string{"help", "--help"}, false, false},
+		{[]string{"help", "--all"}, true, false},
+		{[]string{"--help", "--all"}, true, false},
+		{[]string{"help", "--all", "--operator"}, true, true},
+		{[]string{"help", "--operator", "--all"}, true, true},
+		{[]string{"help", "--operator"}, true, true},
+	} {
+		var out bytes.Buffer
+		(*main.OsStdout) = &out
+		if code := main.Run(tc.args); code != 0 {
+			t.Fatalf("%v exit = %d", tc.args, code)
+		}
+		if got := strings.Contains(out.String(), "\nAsync & data:\n"); got != tc.all {
+			t.Errorf("%v lists every command = %v, want %v", tc.args, got, tc.all)
+		}
+		if got := strings.Contains(out.String(), "\nOperator and compatibility:\n"); got != tc.operators {
+			t.Errorf("%v lists operator commands = %v, want %v", tc.args, got, tc.operators)
 		}
 	}
 }
 
 func TestCliAudienceFiltersOnlyDiscoverySurfaces(t *testing.T) {
-	for _, command := range cliCommands {
-		if command.Audience == cliAudienceCustomer {
+	t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "1")
+	for _, command := range *main.CliCommands {
+		if command.Audience == main.CliAudienceCustomer {
 			continue
 		}
-		if _, ok := lookupCliCommand(command.Name); !ok {
+		if _, ok := main.LookupCliCommand(command.Name); !ok {
 			t.Errorf("hidden command %q is missing from lookup manifest", command.Name)
 		}
 	}
-	if got := len(customerCliCommands()) + len(advancedCliCommands()); got != len(cliCommands) {
-		t.Fatalf("audience partition lost commands: customer+advanced=%d manifest=%d", got, len(cliCommands))
+	if got := len(main.CustomerCliCommands()) + len(main.AdvancedCliCommands()); got != len(main.VisibleCliCommands()) {
+		t.Fatalf("audience partition lost commands: customer+advanced=%d visible=%d", got, len(main.VisibleCliCommands()))
+	}
+}
+
+// Application Auth is a dark launch: without FAAS_APPLICATION_AUTH_ENABLED
+// nothing of it reaches help, completions, the reference, suggestions,
+// dispatch, flag parsing or templates.
+func TestApplicationAuthStaysOutOfEveryCustomerSurface(t *testing.T) {
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "")
+	if _, ok := main.LookupCliCommand("auth"); ok {
+		t.Fatal("lookup finds the auth command")
+	}
+	var surfaces bytes.Buffer
+	surfaces.WriteString(main.TopLevelUsage(true, true))
+	main.RenderMarkdownReference(&surfaces, main.CustomerCliCommands())
+	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
+		oldOut := (*main.OsStdout)
+		(*main.OsStdout) = &surfaces
+		code := main.Run([]string{"completion", shell})
+		(*main.OsStdout) = oldOut
+		if code != 0 {
+			t.Fatalf("completion %s = %d", shell, code)
+		}
+	}
+	for _, leak := range []string{"gregale auth", "Application Auth", "application Auth", "jwt-auth", "AUTH_APP"} {
+		if strings.Contains(surfaces.String(), leak) {
+			t.Errorf("a customer surface mentions %q", leak)
+		}
+	}
+	if suggestion, ok := main.SuggestCommand("auht"); ok && suggestion == "auth" {
+		t.Error("an unknown command suggests auth")
+	}
+	_, stderr, restore := main.SwapIO(t)
+	defer restore()
+	if code := main.Run([]string{"auth", "create", "shop-auth"}); code == 0 || !strings.Contains(stderr(), "unknown command") {
+		t.Fatalf("gregale auth = %d: %s", code, stderr())
+	}
+	for _, args := range [][]string{{"data-api", "create", "notes", "--database", "db", "--auth", "shop-auth"}, {"pipeline", "create", "notes", "--auth", "shop-auth"}, {"pipeline", "create", "notes", "--api", "notes-data"}, {"edge-rules", "create", "--app", "shop", "--kind", "jwt", "--jwt-auth", "shop-auth"}} {
+		before := strings.Count(stderr(), "unknown flag")
+		if code := main.Run(args); code == 0 || strings.Count(stderr(), "unknown flag") != before+1 {
+			t.Errorf("%v = %d: %s", args, code, stderr())
+		}
+	}
+	if main.TemplateAvailable("auth") || !main.TemplateAvailable("hello-node") {
+		t.Fatal("the auth template is available")
+	}
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
+	if _, ok := main.LookupCliCommand("auth"); !ok || !main.TemplateAvailable("auth") {
+		t.Fatal("turning Auth on does not show it")
+	}
+	before := len(stderr())
+	if code := main.Run([]string{"pipeline", "create", "notes", "--api", "notes-data", "--auth", "shop-auth"}); code != 1 || !strings.Contains(stderr()[before:], "Invalid pipeline") {
+		t.Fatalf("turning Auth on does not recognize the pipeline API shortcut: %d: %s", code, stderr()[before:])
 	}
 }
 
 func TestManifestHelpResolvesTopicsAndFlagOrder(t *testing.T) {
-	oldOut := osStdout
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 	for _, tc := range []struct {
 		args []string
 		want string
 	}{
 		{[]string{"help", "deploy"}, "Source defaults to committed HEAD"},
-		{[]string{"deploy", "--plan", "--help"}, "--execution-mode"},
+		{[]string{"deploy", "--plan", "--help"}, "Common flags:"},
+		{[]string{"deploy", "--plan", "--help", "--all"}, "--execution-mode"},
 		{[]string{"deployment", "wait", "--help"}, "gregale deployment wait <id|vN>"},
 		{[]string{"help", "deployment", "wait"}, "--rollout"},
 		{[]string{"deployments", "alias", "list", "--help"}, "gregale deployments alias list"},
 	} {
 		var out bytes.Buffer
-		osStdout = &out
-		if code := run(tc.args); code != 0 {
+		(*main.OsStdout) = &out
+		if code := main.Run(tc.args); code != 0 {
 			t.Errorf("run(%v) = %d", tc.args, code)
 		}
 		if !strings.Contains(out.String(), tc.want) {
@@ -98,20 +225,20 @@ func TestManifestHelpResolvesTopicsAndFlagOrder(t *testing.T) {
 // --cors-allow-origin; 21 create flags (all of kind=headers, CORS origins,
 // JWT audience/claims, --name, --expires-*) were parsed but undocumented.
 func TestEdgeRuleParsedFlagsAppearInCreateAndUpdateHelp(t *testing.T) {
-	oldOut := osStdout
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 	parsed := flagsRegisteredIn(t, "commands_edge_rules.go")
 	for subcommand, fn := range map[string]string{"create": "cmdEdgeRulesCreate", "update": "cmdEdgeRulesUpdate"} {
 		if len(parsed[fn]) == 0 {
 			t.Fatalf("found no flags registered in %s", fn)
 		}
 		var out bytes.Buffer
-		osStdout = &out
-		if code := run([]string{"edge-rules", subcommand, "--help"}); code != 0 {
+		(*main.OsStdout) = &out
+		if code := main.Run([]string{"edge-rules", subcommand, "--help"}); code != 0 {
 			t.Fatalf("edge-rules %s --help = %d", subcommand, code)
 		}
 		for _, flag := range parsed[fn] {
-			if !strings.Contains(out.String(), "--"+flag+" ") && !strings.Contains(out.String(), "--"+flag+"[") {
+			if !strings.Contains(out.String(), "--"+flag+" ") && !strings.Contains(out.String(), "--"+flag+"[") && !strings.Contains(out.String(), "--"+flag+"\n") {
 				t.Errorf("edge-rules %s parses --%s but its help omits it", subcommand, flag)
 			}
 		}
@@ -161,16 +288,16 @@ func flagsRegisteredIn(t *testing.T, file string) map[string][]string {
 }
 
 func TestCommonCommandExamplesAgreeAcrossHelpAndReference(t *testing.T) {
-	for _, name := range []string{"apps", "deploy", "dev", "doctor", "init", "inspect", "login", "logs"} {
+	for _, name := range []string{"app", "apps", "deploy", "dev", "doctor", "init", "inspect", "login", "logs", "start"} {
 		t.Run(name, func(t *testing.T) {
-			command, ok := lookupCliCommand(name)
+			command, ok := main.LookupCliCommand(name)
 			if !ok || len(command.Examples) < 2 {
 				t.Fatalf("%s needs at least two runnable examples", name)
 			}
 			var help, manual, reference bytes.Buffer
-			printLocalCommandHelp(&help, command)
-			renderManCommand(&manual, command)
-			renderMarkdownReference(&reference, []cliCommand{command})
+			main.PrintLocalCommandHelp(&help, command)
+			main.RenderManCommand(&manual, command)
+			main.RenderMarkdownReference(&reference, []main.CliCommand{command})
 			for _, example := range command.Examples {
 				for surface, output := range map[string]string{
 					"help": help.String(), "manual": manual.String(), "reference": reference.String(),
@@ -185,7 +312,7 @@ func TestCommonCommandExamplesAgreeAcrossHelpAndReference(t *testing.T) {
 }
 
 func TestUnknownCommandSuggestsOnlyClearMatch(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	for _, tc := range []struct {
 		args       []string
 		suggestion string
@@ -194,8 +321,8 @@ func TestUnknownCommandSuggestsOnlyClearMatch(t *testing.T) {
 		{args: []string{"help", "deply"}, suggestion: "gregale help deploy"},
 		{args: []string{"aps"}}, // app, apps, and ps are equally close.
 	} {
-		stderr, restore := captureStderr(t)
-		if code := run(tc.args); code != 1 {
+		stderr, restore := main.CaptureStderr(t)
+		if code := main.Run(tc.args); code != 1 {
 			t.Errorf("run(%v) = %d, want 1", tc.args, code)
 		}
 		restore()
@@ -209,7 +336,7 @@ func TestUnknownCommandSuggestsOnlyClearMatch(t *testing.T) {
 }
 
 func TestUnknownCommandSuggestionKeepsJSONErrorParseable(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	for _, tc := range []struct {
 		args []string
 		want string
@@ -217,8 +344,8 @@ func TestUnknownCommandSuggestionKeepsJSONErrorParseable(t *testing.T) {
 		{args: []string{"deply", "--json"}, want: "gregale deploy"},
 		{args: []string{"help", "deply", "--json"}, want: "gregale help deploy"},
 	} {
-		stderr, restore := captureStderr(t)
-		if code := run(tc.args); code != 1 {
+		stderr, restore := main.CaptureStderr(t)
+		if code := main.Run(tc.args); code != 1 {
 			t.Errorf("run(%v) = %d, want 1", tc.args, code)
 		}
 		restore()
@@ -260,12 +387,28 @@ func TestDeployManifestIncludesEveryParserFlag(t *testing.T) {
 				}
 				return true
 			}
+			// resourceSizeFlag(fs, ...) defines --size and its deprecated --profile.
+			if ident, isIdent := call.Fun.(*ast.Ident); isIdent && ident.Name == "resourceSizeFlag" {
+				parsed["size"], parsed["profile"] = true, true
+				return true
+			}
 			sel, ok := call.Fun.(*ast.SelectorExpr)
 			if !ok {
 				return true
 			}
 			receiver, ok := sel.X.(*ast.Ident)
 			if !ok || receiver.Name != "fs" {
+				return true
+			}
+			if (sel.Sel.Name == "Var" || sel.Sel.Name == "BoolVar" || sel.Sel.Name == "StringVar") && len(call.Args) > 1 {
+				if literal, ok := call.Args[1].(*ast.BasicLit); ok {
+					name, err := strconv.Unquote(literal.Value)
+					if err != nil {
+						t.Error(err)
+					} else {
+						parsed[name] = true
+					}
+				}
 				return true
 			}
 			switch sel.Sel.Name {
@@ -285,7 +428,7 @@ func TestDeployManifestIncludesEveryParserFlag(t *testing.T) {
 			return true
 		})
 	}
-	command, ok := lookupCliCommand("deploy")
+	command, ok := main.LookupCliCommand("deploy")
 	if !ok || len(parsed) == 0 {
 		t.Fatal("deploy parser or manifest missing")
 	}

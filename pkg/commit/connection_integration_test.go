@@ -2,6 +2,7 @@ package commit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -105,6 +106,8 @@ func TestPostgresTLSConnectionRecovery(t *testing.T) {
 	if stale, err := OpenPool(ctx, connection("localhost", "initial-fixture-password"), policy); err == nil {
 		stale.Close()
 		t.Fatal("retired database credential accepted")
+	} else if !errors.Is(err, ErrConnectionAuthentication) {
+		t.Fatal("authentication failure lost safe classification", err)
 	}
 	pool = open("rotated-fixture-password")
 	pool.Close()

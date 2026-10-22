@@ -66,9 +66,6 @@ func queuedQualificationExecutionFixtureWithBindingsAndTransport(t *testing.T, b
 			name = fmt.Sprintf("api%d", i+1)
 		}
 		manifest := state.AppManifest{ExecutionMode: mode, Port: 8079, StartupDeadlineS: 10}
-		if i == 0 {
-			manifest.ServiceBindingTransport = transport
-		}
 		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-" + name, Type: state.AppTypeApp,
 			Status: state.AppActive, RAMMB: 512, CPUMillicores: 250, MaxConcurrency: 1, WorkloadClass: workloadClass,
 			Manifest: manifest})
@@ -83,6 +80,20 @@ func queuedQualificationExecutionFixtureWithBindingsAndTransport(t *testing.T, b
 		workload := api.EnvironmentWorkload{App: app.Slug,
 			Source:  &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/shop@sha256:" + strings.Repeat("d", 64)},
 			Runtime: json.RawMessage(fmt.Sprintf(`{"port":8087,"healthz":"/reviewed-ready","startup_deadline_s":25,"execution_mode":%q}`, mode))}
+		if i == 0 && transport != "" {
+			var runtime map[string]json.RawMessage
+			if err := json.Unmarshal(workload.Runtime, &runtime); err != nil {
+				t.Fatal(err)
+			}
+			runtime["service_binding_transport"], err = json.Marshal(transport)
+			if err != nil {
+				t.Fatal(err)
+			}
+			workload.Runtime, err = json.Marshal(runtime)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 		if mode == api.ExecutionModeJob {
 			workload.JobSmoke = &api.EnvironmentJobSmoke{Command: []string{"node", "smoke.js"}, TimeoutSeconds: 30}
 		} else {
@@ -197,6 +208,9 @@ func TestEngineEnvironmentQualificationRuntimeUsesFrozenInputsWithoutActivation(
 			if vmm.lastColdBootSpec.Port != 8087 || vmm.lastColdBootSpec.HealthcheckPath != "/reviewed-ready" || vmm.lastColdBootSpec.StartupDeadlineS != 25 || vmm.lastColdBootSpec.ExecutionMode != mode || vmm.coldBoots != 1 || vmm.snapshots != 0 {
 				t.Fatalf("frozen boot: %+v boots=%d snapshots=%d", vmm.lastColdBootSpec, vmm.coldBoots, vmm.snapshots)
 			}
+			if vmm.createDeadline != *request.LeaseUntil {
+				t.Fatalf("native capture inherited boot deadline %v instead of claim deadline %v", vmm.createDeadline, *request.LeaseUntil)
+			}
 			if notif.count(db.NotifyDeploymentReady) != 0 {
 				t.Fatal("qualification emitted ordinary activation handoff")
 			}
@@ -298,6 +312,25 @@ func TestEngineEnvironmentQualificationRuntimeLeaseDeadlineCancelsBlockedBoot(t 
 	assertQualificationRetired(t, store, e, request, vmm, 1)
 	if _, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), request.ID, "recovery", time.Minute); err != nil {
 		t.Fatal("confirmed retirement prevented attempt recovery", err)
+	}
+}
+
+func TestQualificationBootBudgetCancelsWithoutShorteningClaimDeadline(t *testing.T) {
+	claimDeadline := time.Now().Add(time.Minute)
+	claimCtx, cancel := context.WithDeadline(t.Context(), claimDeadline)
+	defer cancel()
+	bootCtx, stop := qualificationBootBudgetContext(claimCtx, 20*time.Millisecond)
+	defer stop()
+	if deadline, ok := bootCtx.Deadline(); !ok || !deadline.Equal(claimDeadline) {
+		t.Fatalf("boot passed deadline %v instead of qualification lease %v", deadline, claimDeadline)
+	}
+	select {
+	case <-bootCtx.Done():
+		if !errors.Is(bootCtx.Err(), context.Canceled) || !errors.Is(context.Cause(bootCtx), context.DeadlineExceeded) || claimCtx.Err() != nil {
+			t.Fatalf("boot budget canceled the claim or lost its timeout cause: boot=%v cause=%v claim=%v", bootCtx.Err(), context.Cause(bootCtx), claimCtx.Err())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("boot exceeded its cancellation budget")
 	}
 }
 

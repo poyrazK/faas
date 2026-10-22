@@ -31,7 +31,7 @@ class WorkflowRunResponse:
     deployment_id: UUID | Unset = UNSET
     """Immutable deployment used by this run's app handlers. Absent for legacy unpinned runs."""
     platform_tenant_id: None | Unset | UUID = UNSET
-    """Platform tenant authorized for this workflow run"""
+    """Platform tenant authorized for this workflow run, when present."""
     current_step: None | str | Unset = UNSET
     input_: Any | Unset = UNSET
     output: Any | Unset = UNSET

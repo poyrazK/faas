@@ -2,44 +2,88 @@ package state
 
 import (
 	"context"
-	"net/netip"
+	"errors"
 
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // The original environment, app, deployment, instance and retained pins stay
 // locked through the runtime/state CAS. Deletion cannot slip between the
-// ownership check and publishing a paused or routable instance.
+// ownership check and publishing a paused or routable instance. A busy
+// application-standard fence replays the whole transaction: the VM has
+// already booted, and discarding it for a millisecond collision wastes it.
 func (s *PgStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeInstancePublication) (Instance, error) {
 	if err := validateRuntimeInstancePublication(p); err != nil {
 		return Instance{}, err
+	}
+	return retryRuntimeAdmissionBusy(ctx, func() (Instance, error) {
+		return s.publishOwnedInstanceRuntimeOnce(ctx, p)
+	})
+}
+
+// RuntimePublicationOutcomeUnknown reports whether a failed publication may
+// still have committed. A refusal from the database or the store rolled the
+// whole transaction back, so only a deadline or transport failure can hide a
+// commit whose acknowledgment was lost.
+func RuntimePublicationOutcomeUnknown(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return false
+	}
+	for _, refused := range []error{ErrConflict, ErrNotFound, ErrInvalidArgument, ErrApplicationStandardRuntimeStale,
+		ErrApplicationStandardsPending, ErrApplicationStandardRuntimeBusy} {
+		if errors.Is(err, refused) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p RuntimeInstancePublication) (Instance, error) {
+	guard, guarded, err := generationGuardedPublication(ctx, p)
+	if err != nil {
+		return Instance{}, err
+	}
+	// ADR-1741: a boot's guarded publication is one statement when the
+	// database has the admission functions.
+	if guarded && p.RuntimeUpgradeColdBoot == nil && p.ExpectedState != string(StateWarm) &&
+		p.ExpectedState != string(StateFrozen) && s.admissionFunctionsUsable(ctx) {
+		return s.publishOnGenerationFunction(ctx, p, guard)
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Instance{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := runtimeAppConfigFenceDB(ctx, tx, p); err != nil {
-		return Instance{}, err
+	if !guarded {
+		if err := runtimeAppConfigFenceDB(ctx, tx, p); err != nil {
+			return Instance{}, err
+		}
+	}
+	if p.ExpectedState == string(StateWarm) || p.ExpectedState == string(StateFrozen) {
+		fresh, err := sqlc.New().InstanceSnapshotRecoveryFresh(ctx, tx, mustPgUUID(p.InstanceID))
+		if err != nil {
+			return Instance{}, mapErr(err)
+		}
+		if !fresh {
+			return Instance{}, ErrConflict
+		}
 	}
 	acceptance, err := prepareRuntimeUpgradeAcceptanceDB(ctx, tx, p)
 	if err != nil {
 		return Instance{}, err
 	}
-	address, _ := netip.ParseAddr(p.HostIP) // validated before opening the transaction
-	row, err := sqlc.New().PublishOwnedInstanceRuntime(ctx, tx, sqlc.PublishOwnedInstanceRuntimeParams{
-		InstanceID: mustPgUUID(p.InstanceID), AppID: mustPgUUID(p.AppID), DeploymentID: mustPgUUID(p.Fence.DeploymentID),
-		NodeID: mustPgUUID(p.NodeID), WakeID: mustPgUUID(p.WakeID), ExpectedState: p.ExpectedState, TargetState: p.targetState(),
-		Netns: p.Netns, HostIp: address, GuestUid: int32(p.GuestUID),
-		ConfigFingerprint: p.ConfigFence.Fingerprint,
-	})
+	instance, err := publishOwnedRuntimeRow(ctx, tx, p)
 	if err != nil {
-		return Instance{}, runtimeSecretFenceError(err)
+		return Instance{}, err
 	}
-	if err := sqlc.New().SaveRuntimeInstanceConfigProof(ctx, tx, sqlc.SaveRuntimeInstanceConfigProofParams{
-		InstanceID: mustPgUUID(p.InstanceID), EnvironmentID: mustPgUUID(p.Fence.EnvironmentID), Scope: p.Fence.Scope,
-		SecretFingerprint: p.Fence.Fingerprint, ConfigFingerprint: p.ConfigFence.Fingerprint,
-	}); err != nil {
+	saved, err := sqlc.New().SaveRuntimeInstanceConfigProof(ctx, tx, runtimeConfigProofParams(p))
+	if err != nil {
 		return Instance{}, err
 	}
 	if p.Inputs != nil && p.targetState() == string(StateRunning) {
@@ -52,10 +96,41 @@ func (s *PgStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeInst
 			return Instance{}, err
 		}
 	}
+	// ADR-1741: the generation stands in for the fence's reads. It is taken
+	// last, after the row locks above, so it cannot close a lock cycle with
+	// a writer that bumps it after its own row locks.
+	if guarded {
+		if err := checkRuntimeGenerationTx(ctx, tx, guard); err != nil {
+			return Instance{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Instance{}, err
 	}
-	return instanceFromRuntimePublication(row), nil
+	if p.Bookkeeping != nil {
+		p.Bookkeeping.SnapshotBackoffRecorded = saved.SnapshotBackoffRecorded
+	}
+	return instance, nil
+}
+
+// runtimeConfigProofParams saves the publication's config proof and, in the
+// same statement, its bookkeeping.
+func runtimeConfigProofParams(p RuntimeInstancePublication) sqlc.SaveRuntimeInstanceConfigProofParams {
+	params := sqlc.SaveRuntimeInstanceConfigProofParams{
+		InstanceID: mustPgUUID(p.InstanceID), EnvironmentID: mustPgUUID(p.Fence.EnvironmentID), Scope: p.Fence.Scope,
+		SecretFingerprint: p.Fence.Fingerprint, ConfigFingerprint: p.ConfigFence.Fingerprint,
+	}
+	if b := p.Bookkeeping; b != nil {
+		if b.EventKind != "" {
+			params.EventKind = pgtype.Text{String: b.EventKind, Valid: true}
+			params.EventData = b.EventData
+		}
+		if b.NotifyChannel != "" {
+			params.NotifyChannel = pgtype.Text{String: b.NotifyChannel, Valid: true}
+			params.NotifyPayload = pgtype.Text{String: b.NotifyPayload, Valid: true}
+		}
+	}
+	return params
 }
 
 func (s *PgStore) InstanceRuntimeConfigFence(ctx context.Context, accountID, appID, instanceID string) (RuntimeAppConfigFence, error) {

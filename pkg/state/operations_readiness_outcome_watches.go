@@ -16,7 +16,7 @@ func evaluateReadinessOutcomeWatches(ctx context.Context, store readinessSubscri
 	}
 	candidates := []api.OperationWorkflowReadinessNotification{}
 	for _, n := range page.Items {
-		if n.BusinessOutcomeWatch != nil && readinessNotificationBaseline(n) != nil {
+		if (n.PlaybookReview != nil && n.PlaybookReview.Status == "active") || (n.BusinessOutcomeWatch != nil && readinessNotificationBaseline(n) != nil) {
 			candidates = append(candidates, n)
 		}
 	}
@@ -31,9 +31,30 @@ func evaluateReadinessOutcomeWatches(ctx context.Context, store readinessSubscri
 		candidates = candidates[:api.OperationWorkflowReadinessOutcomeWatchesPerPassMax]
 	}
 	updates := readinessEscalationResponseUpdates(page.Items, r)
+	updates = append(updates, reviewResponseCheckInUpdates(page.Items, r)...)
+	updates = append(updates, reviewDecisionDeadlineUpdates(page.Items, r)...)
+	updates = append(updates, reviewHandoffDeadlineUpdates(page.Items, r)...)
+	updates = append(updates, reviewEscalationCommitmentUpdates(page.Items, r)...)
+	updates = append(updates, reviewHandoffDeclineUpdates(page.Items, r)...)
+	updates = append(updates, reviewHandoffReassignmentUpdates(page.Items, r)...)
 	cursor := r.OutcomeCursor
 	var firstErr error
 	for _, n := range candidates {
+		if n.PlaybookReview != nil && n.PlaybookReview.Status == "active" {
+			cursor = n.Sequence
+			update, err := observePlaybookCompletionReview(ctx, store, r, n)
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				if ctx.Err() != nil {
+					break
+				}
+				continue
+			}
+			updates = append(updates, update)
+			continue
+		}
 		current, err := readReadinessBusinessOutcome(ctx, store, r.Account, r.Tenant, r.Subscription.AppID, r.Subscription.Scope, n, n.BusinessOutcomeWatch.Current.ExpectedOutcomeCode, r.Operator)
 		cursor = n.Sequence
 		// A failing source retains its last observation and rotates back for retry without starving other sources.

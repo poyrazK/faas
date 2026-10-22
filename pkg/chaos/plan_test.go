@@ -71,3 +71,61 @@ func TestDNSRuleValidationAndConflictBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestHTTPRetryAfterValidation(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		retry  int64
+		valid  bool
+	}{
+		{429, 0, true}, {429, 1, true}, {503, 30, true}, {500, 0, true}, {599, 0, true},
+		{428, 0, false}, {430, 0, false}, {499, 0, false}, {600, 0, false},
+		{429, -1, false}, {429, 31, false}, {500, 1, false}, {503, 31, false},
+	} {
+		rule := Rule{To: "inventory", Kind: KindHTTPStatus, Percent: 100, StatusCode: tc.status, RetryAfterSeconds: tc.retry}
+		if err := ValidateRule(rule); (err == nil) != tc.valid {
+			t.Fatalf("status=%d retry=%d: %v", tc.status, tc.retry, err)
+		}
+	}
+	for _, rule := range []Rule{
+		{To: "inventory", Kind: KindLatency, Percent: 100, LatencyMS: 1, RetryAfterSeconds: 1},
+		{To: "inventory", Kind: KindTCPLatency, Percent: 100, Port: 6379, LatencyMS: 1, RetryAfterSeconds: 1},
+		{To: "inventory", Kind: KindDNSTimeout, Percent: 100, RetryAfterSeconds: 1},
+	} {
+		if ValidateRule(rule) == nil {
+			t.Fatalf("accepted incompatible retry header: %+v", rule)
+		}
+	}
+	original := Rule{To: "inventory", Kind: KindHTTPStatus, Percent: 100, StatusCode: 429}
+	changed := original
+	changed.RetryAfterSeconds = 1
+	if RuleID(original) == RuleID(changed) {
+		t.Fatal("retry header omitted from match identity")
+	}
+}
+
+func TestHTTPBodyFaultValidation(t *testing.T) {
+	for _, kind := range []string{KindHTTPMalformedJSON, KindHTTPTruncatedBody, KindHTTPResponseLost} {
+		original := Rule{To: "inventory", Kind: kind, Percent: 100}
+		if err := ValidateRule(original); err != nil {
+			t.Fatal(err)
+		}
+		for _, mutate := range []func(*Rule){
+			func(r *Rule) { r.StatusCode = 200 }, func(r *Rule) { r.LatencyMS = 1 },
+			func(r *Rule) { r.RetryAfterSeconds = 1 }, func(r *Rule) { r.Port = 6379 },
+			func(r *Rule) { r.Direction = DirectionBoth }, func(r *Rule) { r.RateKiBPerSecond = 1 }, func(r *Rule) { r.ResetAfterMS = 1 },
+		} {
+			rule := original
+			mutate(&rule)
+			if ValidateRule(rule) == nil {
+				t.Fatalf("incompatible body parameters accepted: %+v", rule)
+			}
+		}
+	}
+	a := Rule{To: "inventory", Kind: KindHTTPMalformedJSON, Percent: 100}
+	b := a
+	b.Kind = KindHTTPTruncatedBody
+	if RuleID(a) == RuleID(b) {
+		t.Fatal("body faults share a match identity")
+	}
+}

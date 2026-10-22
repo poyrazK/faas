@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestProjectEnvironmentCloneIncludesLegacyProductionValues(t *testing.T) {
@@ -87,12 +88,12 @@ func TestProjectEnvironmentBindingPlanUsesCapturedValueScope(t *testing.T) {
 }
 
 type cloneValuesChangingStore struct {
-	*state.MemStore
-	appID string
+	MemStore *state.MemStore
+	appID    string
 }
 
 func (s *cloneValuesChangingStore) CloneProjectEnvironment(ctx context.Context, clone state.ProjectEnvironmentClone, limits api.Limits) (state.ProjectEnvironment, state.ProjectEnvironmentCloneResult, error) {
-	if err := s.UpsertAppEnvInScope(ctx, clone.AccountID, s.appID, "default", "MODE", "changed-during-preparation"); err != nil {
+	if err := s.MemStore.UpsertAppEnvInScope(ctx, clone.AccountID, s.appID, "default", "MODE", "changed-during-preparation"); err != nil {
 		return state.ProjectEnvironment{}, state.ProjectEnvironmentCloneResult{}, err
 	}
 	return s.MemStore.CloneProjectEnvironment(ctx, clone, limits)
@@ -100,7 +101,7 @@ func (s *cloneValuesChangingStore) CloneProjectEnvironment(ctx context.Context, 
 
 func TestProjectEnvironmentCloneRejectsValuesChangedAfterCapture(t *testing.T) {
 	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
-	(*srv.Store()) = &cloneValuesChangingStore{MemStore: store, appID: app.ID}
+	(*srv.Store()) = statetest.NewMem(&cloneValuesChangingStore{MemStore: store, appID: app.ID})
 	req, rec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop", []byte(`{"slug":"staging","from_environment":"production"}`))
 	srv.CreateProjectEnvironment(rec, req, acct)
 	if rec.Code != http.StatusConflict {

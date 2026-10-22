@@ -1,6 +1,7 @@
 package main
 
-// gregale webhooks account manages one receiver for release events across all
+// gregale webhooks account manages receivers for account release and environment
+// events. Release outcomes cover all
 // current and future apps owned by the active account (ADR-224).
 
 import (
@@ -54,7 +55,7 @@ func cmdAccountReleaseWebhooks(args []string) int {
 		seen := make(map[string]bool, len(events))
 		for _, event := range events {
 			if !strInSlice(event, api.AllowedAccountReleaseWebhookEvents) || seen[event] {
-				return printErr("Invalid --event", fmt.Errorf("expected distinct release events: %s", strings.Join(api.AllowedAccountReleaseWebhookEvents, ", ")))
+				return printErr("Invalid --event", fmt.Errorf("expected distinct account events: %s", strings.Join(api.AllowedAccountReleaseWebhookEvents, ", ")))
 			}
 			seen[event] = true
 		}

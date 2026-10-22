@@ -14,9 +14,11 @@ type instanceFlight struct {
 	// parking marks a Park flight: VMM.Snapshot kills Firecracker itself
 	// after the capture, before cleanup registers the teardown, so that
 	// exit is expected and must not be relayed as a liveness failure.
-	parking bool // guarded by Manager.mu
-	cancel  context.CancelFunc
-	done    chan struct{}
+	parking                    bool // guarded by Manager.mu
+	functionHookAdmission      bool // checkpoint-only hooks; sealed at final pause
+	functionExecutionAdmission bool // short registration/resume flight
+	cancel                     context.CancelFunc
+	done                       chan struct{}
 	// Recovery ignores an expired RPC but is cancelled by Destroy and finish.
 	recoveryCtx context.Context
 }
@@ -86,12 +88,37 @@ func (m *Manager) beginInstanceBoot(ctx context.Context, instance string) (conte
 // beginLiveInstanceFlight atomically pins the live identity and registers a
 // resumable operation before checking admission or calling the VMM. It shares
 // the boot registry so Destroy cannot overlook a request between lookup and RPC.
+// Every live operation expects a running guest, so a quiet-paused instance
+// (ADR-1151) is resumed once the flight is registered; from then on the quiet
+// pause pass leaves it alone.
 func (m *Manager) beginLiveInstanceFlight(ctx context.Context, instance string) (context.Context, *Instance, *instanceFlight, error) {
+	operationCtx, inst, flight, err := m.registerLiveInstanceFlight(ctx, instance)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	m.quietResumeBestEffort(operationCtx, instance)
+	return operationCtx, inst, flight, nil
+}
+
+func (m *Manager) registerLiveInstanceFlight(ctx context.Context, instance string) (context.Context, *Instance, *instanceFlight, error) {
+	return m.registerLiveInstanceGenerationForMigration(ctx, instance, "", nil)
+}
+
+func (m *Manager) registerLiveInstanceGeneration(ctx context.Context, instance, generation string) (context.Context, *Instance, *instanceFlight, error) {
+	return m.registerLiveInstanceGenerationForMigration(ctx, instance, generation, nil)
+}
+
+func (m *Manager) registerLiveInstanceFlightForMigration(ctx context.Context, instance string, source *functionMigrationSource) (context.Context, *Instance, *instanceFlight, error) {
+	return m.registerLiveInstanceGenerationForMigration(ctx, instance, "", source)
+}
+
+func (m *Manager) registerLiveInstanceGenerationForMigration(ctx context.Context, instance, generation string, source *functionMigrationSource) (context.Context, *Instance, *instanceFlight, error) {
 	if v := m.nativeVMM(); v != nil {
 		if err := v.nativeRecoveryRuntime().journal.checkQualificationProducer(ctx, instance); err != nil {
 			return nil, nil, nil, err
 		}
 	}
+
 	operationCtx, flight := newInstanceFlight(ctx)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -108,9 +135,17 @@ func (m *Manager) beginLiveInstanceFlight(ctx context.Context, instance string) 
 		flight.cancel()
 		return nil, nil, nil, fmt.Errorf("instance is not live")
 	}
+	if functionMigrationActive(inst) && (inst.functionDestination != nil && !inst.functionDestination.published || inst.functionMigration != source) || source != nil && (inst != source.inst || inst.functionMigration != source) {
+		flight.cancel()
+		return nil, nil, nil, ErrInstanceBusy
+	}
+	if generation != "" && physicalOperatorGeneration(inst) != generation {
+		flight.cancel()
+		return nil, nil, nil, fmt.Errorf("operator park: physical VM generation changed")
+	}
 	if _, ok := m.instanceFlights[instance]; ok {
 		flight.cancel()
-		return nil, nil, nil, fmt.Errorf("instance operation already in progress")
+		return nil, nil, nil, fmt.Errorf("instance operation already in progress: %w", ErrInstanceBusy)
 	}
 	if m.instanceFlights == nil {
 		m.instanceFlights = make(map[string]*instanceFlight)

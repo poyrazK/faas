@@ -26,7 +26,7 @@ func TestDurableEntityStorageLimitProblemsAndPendingAccounting(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			writeDurableEntityProblem(rec, errors.Join(tc.err, errors.New("private-provider-detail")))
+			WriteProblem(rec, errors.Join(tc.err, errors.New("private-provider-detail")))
 			var problem api.Problem
 			if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil || rec.Code != tc.status || problem.Code != tc.code {
 				t.Fatal(rec.Code, rec.Body.String(), err)

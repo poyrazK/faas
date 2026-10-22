@@ -1,0 +1,432 @@
+# Firing and quiet coverage for core alerts that shipped without a
+# promtool fixture: daemon liveness and readiness, restart loops, the
+# resident-RAM / lv-fc / snapshot-size floors, host OOM, DB pool starvation,
+# TLS and internal mTLS expiry, billing drift and schedd instance-stats
+# collection. Seven of them are warn since ADR-1236; the rest still page.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "a dead compute-node schedd pages (schedd-compute job)"
+    input_series:
+      - series: 'up{job="schedd-compute",instance="fsn-2.gregale.dev:9103"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasDaemonDown
+        exp_alerts:
+          - exp_labels:
+              job: "schedd-compute"
+              instance: "fsn-2.gregale.dev:9103"
+              severity: "page"
+              component: "platform"
+              family: "daemon_liveness"
+            exp_annotations:
+              summary: "Daemon schedd-compute is down"
+              description: "Prometheus has been unable to scrape schedd-compute for 2m. Check systemd status + recent logs."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonDown.md"
+
+  - interval: 30s
+    name: "a dead control-plane apid pages"
+    input_series:
+      - series: 'up{job="apid",instance="127.0.0.1:9101"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasDaemonDown
+        exp_alerts:
+          - exp_labels:
+              job: "apid"
+              instance: "127.0.0.1:9101"
+              severity: "page"
+              component: "platform"
+              family: "daemon_liveness"
+            exp_annotations:
+              summary: "Daemon apid is down"
+              description: "Prometheus has been unable to scrape apid for 2m. Check systemd status + recent logs."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonDown.md"
+
+  - interval: 30s
+    name: "healthy daemons and non-daemon jobs stay quiet"
+    input_series:
+      - series: 'up{job="schedd-compute",instance="fsn-2.gregale.dev:9103"}'
+        values: '1x20'
+      - series: 'up{job="node",instance="127.0.0.1:9100"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasDaemonDown
+        exp_alerts: []
+
+  - interval: 30s
+    name: "a daemon reporting itself not ready pages"
+    input_series:
+      - series: 'apid_daemon_ready{job="apid",instance="127.0.0.1:9101",daemon="apid"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasDaemonNotReady
+        exp_alerts:
+          - exp_labels:
+              job: "apid"
+              instance: "127.0.0.1:9101"
+              daemon: "apid"
+              severity: "page"
+              component: "platform"
+              family: "daemon_readiness"
+            exp_annotations:
+              summary: "Daemon apid is not ready"
+              description: "apid has exposed daemon_ready=0 for 5m. Check its /readyz response and dependency-specific reason before routing traffic or restarting it."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonNotReady.md"
+
+  - interval: 30s
+    name: "pre-instantiated readiness rows for other daemons stay quiet"
+    input_series:
+      - series: 'apid_daemon_ready{job="apid",instance="127.0.0.1:9101",daemon="apid"}'
+        values: '1x30'
+      - series: 'apid_daemon_ready{job="apid",instance="127.0.0.1:9101",daemon="vmmd"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasDaemonNotReady
+        exp_alerts: []
+
+  - interval: 30s
+    name: "a stalled daemon loop pages"
+    input_series:
+      - series: 'schedd_loop_stalled{job="schedd",instance="127.0.0.1:9103",loop="reconcile"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: FaasDaemonLoopStalled
+        exp_alerts:
+          - exp_labels:
+              job: "schedd"
+              instance: "127.0.0.1:9103"
+              loop: "reconcile"
+              severity: "warn"
+              component: "platform"
+              family: "daemon_liveness"
+            exp_annotations:
+              summary: "Daemon schedd loop reconcile is stalled"
+              description: "schedd has not advanced its 'reconcile' loop within its budget. The systemd watchdog will restart the unit after WatchdogSec; capture goroutine dumps (SIGQUIT) before it does if the stall is new."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonLoopStalled.md"
+
+  - interval: 30s
+    name: "a beating loop stays quiet"
+    input_series:
+      - series: 'schedd_loop_stalled{job="schedd",instance="127.0.0.1:9103",loop="reconcile"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: FaasDaemonLoopStalled
+        exp_alerts: []
+
+  - interval: 30s
+    name: "a faas unit restarting every 30s pages"
+    input_series:
+      - series: 'node_systemd_restart_count{job="node",instance="127.0.0.1:9100",name="faas-apid.service"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasRestartLoop
+        exp_alerts:
+          - exp_labels:
+              job: "node"
+              instance: "127.0.0.1:9100"
+              name: "faas-apid.service"
+              severity: "page"
+              component: "controlplane"
+              family: "daemon_lifecycle"
+            exp_annotations:
+              summary: "Daemon restart-loop detected (>5 restarts in 5m)"
+              description: "A faas-* systemd unit has restarted more than 5 times in the rolling 5-minute window for 2m. The daemon is crashlooping — customers will see wake errors as the unit is mid-replacement. Fallback (older systemd, no --collector.systemd): increase(<daemon>_daemon_restart_count[5m]) > 5 with the same for-window. Triage: `systemctl status faas-<name>.service` for the active state, `journalctl -u faas-<name>.service -n 200` for the panic / exit-on-error signature. Recover per docs/ops/FaasRestartLoop.md."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRestartLoop.md"
+
+  - interval: 30s
+    name: "restarts of non-faas units and a stable faas unit stay quiet"
+    input_series:
+      - series: 'node_systemd_restart_count{job="node",instance="127.0.0.1:9100",name="ssh.service"}'
+        values: '0+1x40'
+      - series: 'node_systemd_restart_count{job="node",instance="127.0.0.1:9100",name="faas-schedd.service"}'
+        values: '3x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasRestartLoop
+        exp_alerts: []
+
+  - interval: 30s
+    name: "resident RAM above 92% of the ceiling pages"
+    input_series:
+      - series: 'fcvm_resident_ram_pct{job="vmmd",instance="fsn-2.gregale.dev:9104"}'
+        values: '95x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasHighResidentRamPct
+        exp_alerts:
+          - exp_labels:
+              severity: "page"
+              component: "vmmd"
+              family: "resident_ram"
+            exp_annotations:
+              summary: "Resident RAM > 92% of tenant budget"
+              description: "Σ(ram_mb + 8) over live instances has exceeded 92% of the 47,600 MB ceiling for 5m. New wakes will start failing admission."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHighResidentRam.md"
+
+  - interval: 30s
+    name: "resident RAM at 85% stays quiet"
+    input_series:
+      - series: 'fcvm_resident_ram_pct{job="vmmd",instance="fsn-2.gregale.dev:9104"}'
+        values: '85x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasHighResidentRamPct
+        exp_alerts: []
+
+  - interval: 30s
+    name: "a 220 MB fleet snapshot average pages"
+    input_series:
+      - series: 'fcvm_snapshot_fleet_avg_bytes{job="vmmd",instance="fsn-2.gregale.dev:9104"}'
+        values: '230686720x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasSnapshotFleetAvgHighPage
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "vmmd"
+              family: "snapshot_fleet"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Snapshot fleet avg > 200 MB"
+              description: "Average snapshot size has exceeded 200 MB for 10m. The fleet is past the §12 page threshold; /srv allocation will start pressuring tenant disk quotas."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotFleetHigh.md"
+
+  - interval: 30s
+    name: "a 170 MB fleet snapshot average does not page"
+    input_series:
+      - series: 'fcvm_snapshot_fleet_avg_bytes{job="vmmd",instance="fsn-2.gregale.dev:9104"}'
+        values: '178257920x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasSnapshotFleetAvgHighPage
+        exp_alerts: []
+
+  - interval: 30s
+    name: "lv-fc above 90% pages"
+    input_series:
+      - series: 'fcvm_lv_fc_used_pct{job="vmmd",instance="fsn-2.gregale.dev:9104"}'
+        values: '95x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasLvFcUsageHighPage
+        exp_alerts:
+          - exp_labels:
+              severity: "page"
+              component: "vmmd"
+              family: "lv_fc"
+            exp_annotations:
+              summary: "lv-fc usage > 90%"
+              description: "The fc logical volume is past 90% used for 5m. imaged will start refusing new deploys; tenant snapshots can no longer be parked."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLvFcUsageHigh.md"
+
+  - interval: 30s
+    name: "lv-fc at 85% stays quiet"
+    input_series:
+      - series: 'fcvm_lv_fc_used_pct{job="vmmd",instance="fsn-2.gregale.dev:9104"}'
+        values: '85x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasLvFcUsageHighPage
+        exp_alerts: []
+
+  - interval: 30s
+    name: "a host OOM kill pages"
+    input_series:
+      - series: 'node_vmstat_oom_kill{job="node-compute",instance="fsn-2.gregale.dev:9100",node="fsn-2.faas"}'
+        values: '0x6 1x14'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasHostOOMKill
+        exp_alerts:
+          - exp_labels:
+              job: "node-compute"
+              instance: "fsn-2.gregale.dev:9100"
+              node: "fsn-2.faas"
+              severity: "warn"
+              component: "node"
+              family: "host_memory"
+              public_status: "internal"
+            exp_annotations:
+              summary: "The Linux host OOM killer terminated a process on fsn-2.faas"
+              description: "node_vmstat_oom_kill increased. Correlate with builderd_builder_slice_oom_kills_total and system journal kernel OOM records to identify the victim."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuilderSliceOOM.md"
+
+  - interval: 30s
+    name: "a flat OOM counter stays quiet"
+    input_series:
+      - series: 'node_vmstat_oom_kill{job="node-compute",instance="fsn-2.gregale.dev:9100",node="fsn-2.faas"}'
+        values: '4x20'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasHostOOMKill
+        exp_alerts: []
+
+  - interval: 30s
+    name: "abandoned pool acquisitions page"
+    input_series:
+      - series: 'schedd_db_pool_canceled_acquires_total{job="schedd",instance="127.0.0.1:9103"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasDBPoolStarved
+        exp_alerts:
+          - exp_labels:
+              job: "schedd"
+              instance: "127.0.0.1:9103"
+              severity: "page"
+              component: "platform"
+              family: "db_pool"
+            exp_annotations:
+              summary: "Daemon schedd is abandoning Postgres pool acquisitions"
+              description: "schedd has callers giving up while waiting for a pool connection. Compare <daemon>_db_pool_conns against <daemon>_db_pool_max_conns: at the cap, the daemon's DaemonMaxConnections entry is too small for its concurrency; below the cap, connections are being held too long by a slow query or a leaked transaction."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBPoolStarved.md"
+
+  - interval: 30s
+    name: "a flat canceled-acquire counter stays quiet"
+    input_series:
+      - series: 'schedd_db_pool_canceled_acquires_total{job="schedd",instance="127.0.0.1:9103"}'
+        values: '7x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasDBPoolStarved
+        exp_alerts: []
+
+  - interval: 30s
+    name: "a cert expiring in 10 days pages"
+    input_series:
+      - series: 'gateway_tls_cert_expiry_seconds{job="gatewayd",instance="127.0.0.1:9092"}'
+        values: '864000x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasTLSCertExpiryPage
+        exp_alerts:
+          - exp_labels:
+              job: "gatewayd"
+              instance: "127.0.0.1:9092"
+              severity: "warn"
+              component: "gatewayd-public"
+              family: "tls_cert_expiry"
+            exp_annotations:
+              summary: "TLS cert expires in ≤14 days"
+              description: "The smallest remaining lifetime across cached certs is below 14 days. A renewal has failed (or never ran) — HTTPS serving across the box will start failing within hours. Re-run `make bootstrap` on the EX44 to refresh certmagic + the Hetzner DNS-01 token, then force-renew via `faas cert refresh`."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
+
+  - interval: 30s
+    name: "a cert with 30 days left does not page"
+    input_series:
+      - series: 'gateway_tls_cert_expiry_seconds{job="gatewayd",instance="127.0.0.1:9092"}'
+        values: '2592000x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasTLSCertExpiryPage
+        exp_alerts: []
+
+  - interval: 1m
+    name: "provider drift above 0.5% for an hour pages"
+    input_series:
+      - series: 'meterd_billing_drift_ratio{job="meterd",instance="127.0.0.1:9106",account_id="11111111-1111-1111-1111-111111111111",provider="stripe"}'
+        values: '0.01x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: BillingDrift
+        exp_alerts:
+          - exp_labels:
+              provider: "stripe"
+              severity: "warn"
+              component: "meterd"
+              family: "billing_drift"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Provider stripe push drift > 0.5% for 1h"
+              description: "Provider push totals are diverging from local usage_minutes totals by more than 0.5% for an hour (ADR-049 §B.1). Revenue leakage if local > pushed, refund liability if pushed > local. The meterd_billing_drift_mb_seconds{account_id=…} gauge identifies the offending account. Run `faas admin reconcile --verbose` to inspect, or page the on-call."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"
+
+  - interval: 1m
+    name: "drift under 0.5% stays quiet"
+    input_series:
+      - series: 'meterd_billing_drift_ratio{job="meterd",instance="127.0.0.1:9106",account_id="11111111-1111-1111-1111-111111111111",provider="stripe"}'
+        values: '0.001x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: BillingDrift
+        exp_alerts: []
+
+  - interval: 30s
+    name: "an internal mTLS leaf expiring in 7 days pages"
+    input_series:
+      - series: 'faas_internal_mtls_leaf_earliest_expiry_timestamp_seconds{job="node-compute",instance="fsn-2.gregale.dev:9100",daemon="vmmd",host="fsn-2.faas"}'
+        values: '604800x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasInternalMTLSLeafExpiryCritical
+        exp_alerts:
+          - exp_labels:
+              job: "node-compute"
+              instance: "fsn-2.gregale.dev:9100"
+              daemon: "vmmd"
+              host: "fsn-2.faas"
+              severity: "warn"
+              component: "gregalectl"
+              family: "internal_mtls_lifecycle"
+              public_status: "internal"
+            exp_annotations:
+              summary: "An internal mTLS leaf expires within 14 days"
+              description: "The scheduled renewal has not restored a safe validity window for fsn-2.faas/vmmd. Internal RPCs will fail when the leaf expires."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
+
+  - interval: 30s
+    name: "a leaf with 30 days left stays quiet"
+    input_series:
+      - series: 'faas_internal_mtls_leaf_earliest_expiry_timestamp_seconds{job="node-compute",instance="fsn-2.gregale.dev:9100",daemon="vmmd",host="fsn-2.faas"}'
+        values: '2592000x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasInternalMTLSLeafExpiryCritical
+        exp_alerts: []
+
+  - interval: 30s
+    name: "vmmd stats collection failing on a node pages"
+    input_series:
+      - series: 'schedd_instance_stats_partial_errors_total{job="schedd-compute",instance="fsn-2.gregale.dev:9103",node="fsn-2.faas"}'
+        values: '0+5x30'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasScheddInstanceStatsPartialErrors
+        exp_alerts:
+          - exp_labels:
+              job: "schedd-compute"
+              instance: "fsn-2.gregale.dev:9103"
+              node: "fsn-2.faas"
+              severity: "warn"
+              component: "schedd"
+              family: "instance_stats"
+              public_status: "degraded"
+            exp_annotations:
+              summary: "Instance telemetry is missing on fsn-2.faas"
+              description: "The owner schedd recorded more than five missing or unreachable instance telemetry sweeps per minute for node fsn-2.faas. Check the vmmd capacity stream and schedd ownership before using autoscaling or customer instance metrics."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasScheddInstanceStatsPartialErrors.md"
+
+  - interval: 30s
+    name: "occasional partial errors stay quiet"
+    input_series:
+      - series: 'schedd_instance_stats_partial_errors_total{job="schedd-compute",instance="fsn-2.gregale.dev:9103",node="fsn-2.faas"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasScheddInstanceStatsPartialErrors
+        exp_alerts: []

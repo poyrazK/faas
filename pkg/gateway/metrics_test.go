@@ -103,6 +103,36 @@ func TestMetricsRateLimitDegraded(t *testing.T) {
 	}
 }
 
+// TestMetricsRateLimitLeasing pins the ADR-1520 series: closed scope labels
+// and a bounded outcome set, so an unexpected value cannot grow cardinality.
+func TestMetricsRateLimitLeasing(t *testing.T) {
+	m := NewMetrics()
+	m.ObserveLeaseRequest("app", LeaseResultPartial)
+	m.ObserveLeaseRequest("app", "invented")
+	m.ObserveLeaseTokens("account", LeaseTokensSpent, 7)
+	m.ObserveLeaseTokens("preauth", LeaseTokensAllowance, 2)
+	m.ObserveLeaseTokens("app", "invented", 9)
+	m.ObserveRateLimitSyncConsult("rule")
+
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+	for _, want := range []string{
+		`gateway_ratelimit_lease_requests_total{result="partial",scope="app"} 1`,
+		`gateway_ratelimit_lease_requests_total{result="failed",scope="rule"} 0`,
+		`gateway_ratelimit_lease_tokens_total{outcome="spent",scope="account"} 7`,
+		`gateway_ratelimit_lease_tokens_total{outcome="allowance",scope="other"} 2`,
+		`gateway_ratelimit_sync_consults_total{scope="rule"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics body missing %q", want)
+		}
+	}
+	if strings.Contains(body, "invented") {
+		t.Error("an unknown result or outcome reached a label")
+	}
+}
+
 func TestRequestTelemetryMetricsExposition(t *testing.T) {
 	m := NewMetrics()
 	m.IncRequestTelemetryOverwritten()
@@ -127,6 +157,7 @@ func TestConsumerUsageOutboxMetricsExposition(t *testing.T) {
 	m := NewMetrics()
 	m.SetUsageOutboxPending(3, 512)
 	m.IncUsageOutboxFailure()
+	m.IncUsageCommitAbort()
 	m.IncUsageDeliveryFailure()
 	m.IncUsageDelivered()
 	rec := httptest.NewRecorder()
@@ -135,6 +166,7 @@ func TestConsumerUsageOutboxMetricsExposition(t *testing.T) {
 		"gateway_consumer_usage_outbox_pending_records 3",
 		"gateway_consumer_usage_outbox_pending_bytes 512",
 		"gateway_consumer_usage_outbox_failures_total 1",
+		"gateway_usage_commit_aborts_total 1",
 		"gateway_consumer_usage_delivery_failures_total 1",
 		"gateway_consumer_usage_delivered_total 1",
 	} {
@@ -1014,6 +1046,32 @@ func TestMetricsPlatformWakeLatencyUsesDedicatedGateHistogram(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing exposition line %q in body:\n%s", want, body)
+		}
+	}
+}
+
+// TestMetricsWakeHistogramsResolveStalledWakes pins the tail buckets: a wake
+// held near the gate's 30 s TTL must land in a finite bucket, not in +Inf,
+// where histogram_quantile would report the old 10 s (or 3 s) ceiling.
+// spec: §12
+func TestMetricsWakeHistogramsResolveStalledWakes(t *testing.T) {
+	m := NewMetrics()
+	m.ObserveColdBoot("app-1", 25*time.Second, "node-1")
+	m.ObservePlatformWakeWithTrace(25*time.Second, "")
+	m.ObserveWakePhase("vmmd_wake", 25*time.Second)
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+	for _, want := range []string{
+		`gateway_wake_latency_seconds_bucket{le="20"} 0`,
+		`gateway_wake_latency_seconds_bucket{le="30"} 1`,
+		`gateway_wake_latency_seconds_by_node_bucket{node_id="node-1",le="30"} 1`,
+		`gateway_wake_phase_duration_seconds_bucket{phase="vmmd_wake",le="30"} 1`,
+		`gateway_platform_wake_latency_seconds_bucket{le="10"} 0`,
+		`gateway_platform_wake_latency_seconds_bucket{le="30"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing exposition line %q", want)
 		}
 	}
 }

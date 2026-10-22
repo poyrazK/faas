@@ -224,6 +224,7 @@ func cmdDeploysShow(args []string) int {
 	}
 	if *withStatus && dep != nil {
 		renderDeployFailureIfPresent(osStdout, *dep)
+		renderDeploymentConfiguration(*dep)
 	}
 	return 0
 }
@@ -295,6 +296,7 @@ func cmdDeploysStatus(args []string) int {
 		_, _ = fmt.Fprintf(os.Stderr, "warning: stage summary render failed: %v\n", err)
 	}
 	renderDeployFailureIfPresent(osStdout, *dep)
+	renderDeploymentConfiguration(*dep)
 	return 0
 }
 
@@ -325,6 +327,13 @@ func newDeployStatusJSON(dep api.DeploymentResponse, ss state.StageState, termin
 // deployment row, so this avoids making the operator switch to
 // `gregale inspect <slug> --errors` just to learn what to fix.
 func renderDeployFailureIfPresent(w io.Writer, dep api.DeploymentResponse) {
+	// The stage summary alone showed a cancelled deployment as unfinished
+	// stages with no outcome (H10-48).
+	if dep.Status == deploymentStatusCancelled {
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, "  Cancelled before it went live; the live release is unchanged.")
+		return
+	}
 	if dep.Status != deploymentStatusFailed || !hasDeploymentFailureDetails(dep) {
 		return
 	}
@@ -465,7 +474,7 @@ func deriveTerminalAt(ss state.StageState, status string, depCreatedAt time.Time
 // set-min-instances and would otherwise grow a third surface.
 func cmdDeploys(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale deploys <subcommand> [flags]   (subcommands: show, status, cancel, reorder, clear, clear-obsolete, retry)", "deploys")
+		PrintUsage(os.Stderr, "usage: gregale deploys <subcommand> [flags]   (subcommands: show, status, logs, cancel, reorder, clear, clear-obsolete, retry)", "deploys")
 		return 1
 	}
 	switch args[0] {
@@ -487,12 +496,14 @@ func cmdDeploys(args []string) int {
 		return cmdDeploysClear(args[1:])
 	case "clear-obsolete":
 		return cmdDeploysClearObsolete(args[1:])
+	case "logs":
+		return cmdDeploysLogs(args[1:])
 	case "retry":
 		// ADR-117 §Production-ready follow-on, C2 — per-stage
 		// retry. Verb is a sibling to show/status (not a flag
 		// on either) because the action mutates state.
 		return cmdDeploysRetry(args[1:])
 	}
-	PrintUsage(os.Stderr, "usage: gregale deploys <subcommand> [flags]   (subcommands: show, status, cancel, reorder, clear, clear-obsolete, retry)", "deploys")
+	PrintUsage(os.Stderr, "usage: gregale deploys <subcommand> [flags]   (subcommands: show, status, logs, cancel, reorder, clear, clear-obsolete, retry)", "deploys")
 	return 1
 }

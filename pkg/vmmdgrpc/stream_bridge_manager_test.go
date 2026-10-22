@@ -80,7 +80,9 @@ func TestStreamBridgeManagerPrewarmSharesStartupWithFirstAcquire(t *testing.T) {
 	req := &vmmdpb.ForwardHTTPRequestInit{
 		Instance: "instance-prewarm", Port: 9090, AppProtocol: "http2",
 	}
-	manager.prewarm(req, "fc-instance-prewarm")
+	wakeCtx, cancelWake := context.WithCancel(t.Context())
+	manager.prewarm(wakeCtx, req, "fc-instance-prewarm")
+	cancelWake() // The persistent bridge outlives the RPC that requested it.
 	select {
 	case <-started:
 	case <-time.After(time.Second):
@@ -93,7 +95,7 @@ func TestStreamBridgeManagerPrewarmSharesStartupWithFirstAcquire(t *testing.T) {
 	}
 	acquired := make(chan acquireResult, 1)
 	go func() {
-		lease, acquireErr := manager.acquire(context.Background(), req, "fc-instance-prewarm")
+		lease, acquireErr := manager.acquire(t.Context(), req, "fc-instance-prewarm")
 		acquired <- acquireResult{lease: lease, err: acquireErr}
 	}()
 	select {
@@ -119,6 +121,15 @@ func TestStreamBridgeManagerPrewarmSharesStartupWithFirstAcquire(t *testing.T) {
 	}
 	if got := starts.Load(); got != 1 {
 		t.Fatalf("bridge starts after acquire = %d, want one", got)
+	}
+	if err := manager.reaperCtx.Err(); err != nil {
+		t.Fatalf("RPC cancellation stopped the persistent bridge manager: %v", err)
+	}
+	if err := manager.close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if manager.reaperCtx.Err() == nil {
+		t.Fatal("closing the manager did not cancel its lifetime context")
 	}
 }
 
@@ -280,7 +291,7 @@ func TestStreamBridgeManagerReapsIdleEntry(t *testing.T) {
 	}
 
 	now = now.Add(2 * time.Minute)
-	manager.reapIdle()
+	manager.reapIdle(t.Context())
 	if len(manager.entries) != 0 {
 		t.Fatalf("entries after idle reap = %d, want zero", len(manager.entries))
 	}

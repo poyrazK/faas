@@ -58,6 +58,11 @@ func touchGitOpsMemoryIntent(memory *environmentGitOpsMemory) {
 }
 
 func (m *MemStore) gitOpsGuardAppRemovalLocked(appID string) ([]*environmentGitOpsMemory, error) {
+	for _, root := range m.sourceBuildRootfs {
+		if sameStandardUUID(root.Input.AppID, appID) && m.buildArtifactSourcePinnedLocked(root.ID) {
+			return nil, ErrConflict
+		}
+	}
 	var sources []*environmentGitOpsMemory
 	for _, memory := range m.environmentGitOps {
 		if memory.source.Detached {
@@ -111,7 +116,7 @@ func (m *MemStore) gitOpsGuardConfigurationLocked(config ProjectEnvironmentConfi
 func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsIntentSnapshot {
 	source := memory.source
 	snapshot := gitOpsIntentSnapshot{Version: source.IntentVersion, Project: m.projects[source.ProjectID].Slug, Environment: source.EnvironmentSlug, EnvironmentID: source.EnvironmentID,
-		Repository: source.Spec.Repository, Plan: m.accounts[source.AccountID].Plan, SourceID: source.ID, Prune: source.Spec.Prune}
+		GitSource: source.Spec, Repository: source.Spec.Repository, Plan: m.accounts[source.AccountID].Plan, SourceID: source.ID, Prune: source.Spec.Prune}
 	config := m.projectEnvironmentConfigLatestLocked(source.ProjectID, source.EnvironmentSlug)
 	_ = json.Unmarshal(config.Values, &snapshot.Configuration)
 	for resource, appID := range memory.resources {
@@ -199,7 +204,34 @@ func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsI
 			rules := cloneProjectEnvironmentEdgeRules(policy.Rules)
 			row.Policies = &rules
 		}
+		for _, inv := range m.invocations {
+			if inv.AppID == app.ID && (inv.EnvironmentID == source.EnvironmentID || workloadRetirementAdmissionScope(inv.DeploymentScope) == workloadRetirementAdmissionScope(source.EnvironmentSlug)) {
+				if inv.State == InvocationPending {
+					row.PendingInvocations++
+				}
+				if inv.State == InvocationDispatching {
+					row.InFlightInvocations++
+				}
+			}
+		}
+		if row.WorkloadIntent != nil && row.WorkloadIntent.JobID != "" {
+			for id, run := range m.jobRuns {
+				if run.JobID == row.WorkloadIntent.JobID {
+					for _, task := range m.jobTasks[id] {
+						if task.Status == "queued" {
+							row.QueuedTasks++
+						}
+						if task.Status == "claimed" {
+							row.InFlightTasks++
+						}
+					}
+				}
+			}
+		}
 		snapshot.Apps = append(snapshot.Apps, row)
+	}
+	for _, retirement := range memory.retirements {
+		snapshot.Retirements = append(snapshot.Retirements, cloneWorkloadRetirement(retirement))
 	}
 	return snapshot
 }
@@ -554,7 +586,9 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 	}
 	if configChanged {
 		key := projectEnvironmentConfigKey(source.ProjectID, source.EnvironmentSlug)
+		before := m.latestProjectEnvironmentConfigValuesLocked(source.ProjectID, source.EnvironmentSlug)
 		m.projectEnvironmentConfigs[key] = append(m.projectEnvironmentConfigs[key], ProjectEnvironmentConfig{ID: newID(), AccountID: source.AccountID, ProjectID: source.ProjectID, EnvironmentSlug: source.EnvironmentSlug, Version: int64(len(m.projectEnvironmentConfigs[key]) + 1), Values: configValues, ConfigHash: configHash, CreatedAt: now})
+		m.projectConfigRuntimeChangeLocked(source.ProjectID, source.EnvironmentSlug, before, configValues, now)
 	}
 	if len(steps) > 0 {
 		memory.source.IntentVersion++

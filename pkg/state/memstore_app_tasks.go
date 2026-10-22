@@ -33,21 +33,45 @@ func (m *MemStore) appTaskExclusiveCurrentLocked(task AppTask, at time.Time) boo
 	return operation.LeaseExpiresAt.After(at) && operation.AttemptDeadline.After(at)
 }
 
-func (m *MemStore) CreateAppTask(_ context.Context, params CreateAppTaskParams) (AppTask, error) {
+func (m *MemStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams) (AppTask, error) {
 	resolved, err := resolveCreateAppTask(params)
 	if err != nil {
 		return AppTask{}, err
 	}
+	if resolved.BindingVerification != nil && resolved.BindingVerification.ManagedService != nil && ManagedServiceProbeCurrent(ctx, m, AppTask{AppID: resolved.AppID, DeploymentID: resolved.DeploymentID, BindingVerification: resolved.BindingVerification}) != nil {
+		return AppTask{}, ErrAppTaskDeploymentUnavailable
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createAppTaskLocked(resolved)
+}
+
+func (m *MemStore) createAppTaskLocked(resolved CreateAppTaskParams) (AppTask, error) {
+	if !m.promotionMigrationTaskAllowedLocked(resolved) {
+		return AppTask{}, ErrConflict
+	}
+	if m.migrationDeploymentRetiredLocked(resolved.DeploymentID) {
+		return AppTask{}, ErrAppTaskDeploymentUnavailable
+	}
 	m.ensureAppTasksLocked()
+	if err := m.admitRehearsalCommandLocked(resolved); err != nil {
+		return AppTask{}, err
+	}
 
 	app, ok := m.apps[resolved.AppID]
 	if !ok || app.AccountID != resolved.AccountID || app.Status == AppDeleted {
 		return AppTask{}, ErrAppTaskDeploymentUnavailable
 	}
 	deployment, ok := m.deployments[resolved.DeploymentID]
-	if !ok || !validAppTaskDeployment(deployment, app.ID) || resolved.RequireLiveDeployment && deployment.Status != DeployLive {
+	valid := validAppTaskDeployment(deployment, app.ID)
+	if resolved.BindingVerification != nil && resolved.BindingVerification.ManagedService != nil {
+		_, err := managedProbeRuntime(app, deployment)
+		valid = err == nil
+	}
+	if !ok || !valid || resolved.RequireLiveDeployment && deployment.Status != DeployLive {
+		return AppTask{}, ErrAppTaskDeploymentUnavailable
+	}
+	if resolved.BindingVerification != nil && resolved.BindingVerification.ManagedService != nil && !m.managedProbeAdmissionCurrentLocked(app, deployment, *resolved.BindingVerification.ManagedService) {
 		return AppTask{}, ErrAppTaskDeploymentUnavailable
 	}
 	if resolved.ExclusiveOperationID != "" {
@@ -94,7 +118,57 @@ func (m *MemStore) CreateAppTask(_ context.Context, params CreateAppTaskParams) 
 		UpdatedAt:            now,
 	}
 	m.appTasks[task.ID] = task
+	if resolved.Interactive != nil {
+		if m.appTaskAttach == nil {
+			m.appTaskAttach = make(map[string]AppTaskAttach)
+		}
+		m.appTaskAttach[task.ID] = AppTaskAttach{
+			TaskID: task.ID, TTY: resolved.Interactive.TTY,
+			TokenSHA256: append([]byte(nil), resolved.Interactive.TokenSHA256...), CreatedAt: now,
+		}
+	}
 	return cloneAppTask(task), nil
+}
+
+var _ AppTaskAttachStore = (*MemStore)(nil)
+
+func (m *MemStore) AppTaskAttachByTask(_ context.Context, taskID string) (AppTaskAttach, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	record, ok := m.appTaskAttach[taskID]
+	if !ok {
+		return AppTaskAttach{}, ErrNotFound
+	}
+	return cloneAppTaskAttach(record), nil
+}
+
+func (m *MemStore) RecordAppTaskAttachNode(_ context.Context, taskID, leaseToken, nodeID string, recordedAt time.Time) error {
+	if taskID == "" || leaseToken == "" || !validAppTaskAttachNodeID(nodeID) || recordedAt.IsZero() {
+		return ErrAppTaskInvalid
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	record, ok := m.appTaskAttach[taskID]
+	task, taskOK := m.appTasks[taskID]
+	if !ok || !taskOK || task.Status != AppTaskRunning || task.LeaseToken == nil || *task.LeaseToken != leaseToken {
+		return ErrAppTaskLeaseLost
+	}
+	recordedAt = recordedAt.UTC()
+	record.NodeID = nodeID
+	record.NodeRecordedAt = &recordedAt
+	m.appTaskAttach[taskID] = record
+	return nil
+}
+
+func (m *MemStore) AppTaskAttachTarget(_ context.Context, accountID, appID, taskID string) (AppTaskAttachTarget, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	record, ok := m.appTaskAttach[taskID]
+	task, taskOK := m.appTasks[taskID]
+	if !ok || !taskOK || task.AccountID != accountID || task.AppID != appID {
+		return AppTaskAttachTarget{}, ErrNotFound
+	}
+	return AppTaskAttachTarget{TaskID: task.ID, TaskStatus: task.Status, TTY: record.TTY, NodeID: record.NodeID}, nil
 }
 
 func (m *MemStore) ListAppTasksByExclusiveOperation(_ context.Context, accountID, operationID string) ([]AppTask, error) {
@@ -683,6 +757,7 @@ func (m *MemStore) ClaimNextAppTask(_ context.Context, owner string, claimedAt t
 	var selectedPriority time.Time
 	for id, candidate := range m.appTasks {
 		if candidate.Status != AppTaskQueued || candidate.CancelRequested != nil || candidate.CreatedAt.After(claimedAt) ||
+			m.financialPreviewCommandHeldLocked(candidate, claimedAt) ||
 			(candidate.RetryAt != nil && candidate.RetryAt.After(claimedAt)) ||
 			!m.appTaskExclusiveCurrentLocked(candidate, claimedAt) {
 			continue
@@ -694,6 +769,9 @@ func (m *MemStore) ClaimNextAppTask(_ context.Context, owner string, claimedAt t
 			candidate.UpdatedAt = claimedAt
 			m.appTasks[id] = candidate
 			m.syncAppTaskOccurrenceLocked(candidate, claimedAt)
+			continue
+		}
+		if !m.migrationTaskAllowedLocked(candidate) {
 			continue
 		}
 		priority := candidate.CreatedAt
@@ -741,8 +819,12 @@ func (m *MemStore) MarkAppTaskRunning(_ context.Context, taskID, leaseToken stri
 	defer m.mu.Unlock()
 	task, ok := m.appTasks[taskID]
 	if !ok || task.Status != AppTaskRestoring || task.LeaseToken == nil ||
+		m.financialPreviewCommandHeldLocked(task, startedAt) ||
 		*task.LeaseToken != leaseToken || task.CancelRequested != nil || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(startedAt) ||
-		!m.appTaskExclusiveCurrentLocked(task, startedAt) {
+		!m.appTaskExclusiveCurrentLocked(task, startedAt) || !m.migrationTaskAllowedLocked(task) {
+		return AppTask{}, ErrAppTaskLeaseLost
+	}
+	if !m.migrationRuntimeCurrentLocked(task) || !m.promotionMigrationDispatchCurrentLocked(task) {
 		return AppTask{}, ErrAppTaskLeaseLost
 	}
 	if startedAt.Before(task.CreatedAt) {
@@ -841,6 +923,9 @@ func (m *MemStore) CompleteAppTask(_ context.Context, params CompleteAppTaskPara
 		return AppTask{}, ErrAppTaskLeaseLost
 	}
 	if err := validateCompleteAppTask(params, task.MaxOutputBytes); err != nil {
+		return AppTask{}, err
+	}
+	if err := m.validateRehearsalTaskCompletionLocked(task, params); err != nil {
 		return AppTask{}, err
 	}
 	if task.CancelRequested != nil && params.Status != AppTaskCancelled {

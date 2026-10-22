@@ -45,6 +45,7 @@ func TestPGHandler_DebugRegressionSuspectedDependency(t *testing.T) {
 		Route:        "GET /checkout", P95Ms: 240, P95BaseMs: 103, AffectedCount: 40,
 		RegressionFactor: factor,
 		Column8:          apidserver.EncodeSuspectedDependency(suspect),
+		Kind:             "latency", ErrorRatePct: pgNumeric(t, "0"), ErrorRateBasePct: pgNumeric(t, "0"),
 	}
 	if err := (*e.Store()).UpsertRegressionObservation(ctx, params); err != nil {
 		t.Fatalf("upsert with suspect: %v", err)

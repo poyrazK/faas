@@ -43,18 +43,20 @@ func TestDataAPICreateDeploysRuntimeAfterScopedConfiguration(t *testing.T) {
 	for _, tc := range []struct {
 		name, mode string
 		resume     bool
+		readOnly   bool
 	}{
 		{name: "create"},
+		{name: "read-only", readOnly: true},
 		{name: "resume-bearer", resume: true, mode: "bearer"},
 		{name: "resume-ip-allowlist", resume: true, mode: "ip_allowlist"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			testDataAPICreateDeploysRuntime(t, tc.resume, tc.mode)
+			testDataAPICreateDeploysRuntime(t, tc.resume, tc.mode, tc.readOnly)
 		})
 	}
 }
 
-func testDataAPICreateDeploysRuntime(t *testing.T, resume bool, mode string) {
+func testDataAPICreateDeploysRuntime(t *testing.T, resume bool, mode string, readOnly bool) {
 	resetJSONOut(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -81,10 +83,21 @@ func testDataAPICreateDeploysRuntime(t *testing.T, resume bool, mode string) {
 				t.Error("application JWTs would be blocked by the paid-plan owner-key default")
 			}
 			created++
-			writeJSONTest(w, api.AppResponse{ID: "app", Slug: "notes-data", Type: "app"})
+			writeJSONTest(w, api.AppResponse{ID: "a1", Slug: "notes-data", Type: "app"})
 		case r.Method == "GET" && r.URL.Path == "/v1/apps/notes-data":
-			writeJSONTest(w, map[string]any{"id": "app", "slug": "notes-data", "type": "app", "require_authn": true, "public_auth": map[string]string{"mode": mode}})
+			writeJSONTest(w, map[string]any{"id": "a1", "slug": "notes-data", "type": "app", "require_authn": true, "public_auth": map[string]string{"mode": mode}})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/bindings"):
+			var req api.CreateManagedPostgresBindingRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Error(err)
+			}
+			expected := "data_api"
+			if readOnly {
+				expected = "read_only"
+			}
+			if req.Access != expected {
+				t.Errorf("binding access=%s want %s", req.Access, expected)
+			}
 			writeJSONTest(w, api.ManagedPostgresBinding{ID: "binding", State: "ready"})
 		case r.Method == "PATCH" || r.Method == "PUT":
 			if r.Method == "PATCH" && r.URL.Path == "/v1/apps/notes-data" {
@@ -108,7 +121,7 @@ func testDataAPICreateDeploysRuntime(t *testing.T, resume bool, mode string) {
 			settings++
 			writeJSONTest(w, map[string]any{})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/deployments"):
-			if settings != 6 {
+			if settings != 7 {
 				t.Errorf("deployment preceded configuration: %d writes", settings)
 			}
 			base.Config.Handler.ServeHTTP(w, r)
@@ -119,6 +132,9 @@ func testDataAPICreateDeploysRuntime(t *testing.T, resume bool, mode string) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	args := []string{"create", "notes-data", "--database", database, "--issuer", "https://issuer.example", "--jwks-url", "https://issuer.example/jwks", "--audience", "notes"}
+	if readOnly {
+		args = append(args, "--read-only")
+	}
 	if resume {
 		args = append(args, "--resume")
 	}
@@ -226,7 +242,7 @@ func TestDataAPIConfiguresBindingEgressAndScopedSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(writes) != 7 || !strings.HasSuffix(writes[0], "/bindings") || writes[1] != "PATCH /v1/apps/notes" {
+	if len(writes) != 8 || !strings.HasSuffix(writes[0], "/bindings") || writes[1] != "PATCH /v1/apps/notes" {
 		t.Fatalf("wrong configuration order: %v", writes)
 	}
 }
@@ -236,7 +252,7 @@ func TestDataAPIRuntimeBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, bound := range map[string]int{"pool": api.DataAPIMaxPoolConnections, "rows": api.DataAPIMaxRows, "bodyBytes": api.DataAPIMaxRequestBytes, "outputBytes": api.DataAPIMaxOutputBytes, "queryMs": api.DataAPIQueryTimeoutMS, "relations": api.DataAPIMaxRelations, "columns": api.DataAPIMaxColumns, "types": api.DataAPIMaxTypes} {
+	for name, bound := range map[string]int{"userConcurrencyMaxSubjects": api.DataAPIUserConcurrencyMaxSubjects, "userConcurrencyCooldownMs": api.DataAPIUserConcurrencyCooldownMS, "connectionReportMs": int(api.DataAPIRuntimeConnectionReportTimeout.Milliseconds()), "connectionReportIntervalMs": int(api.DataAPIRuntimeConnectionReportInterval.Milliseconds()), "connectionReportBytes": api.DataAPIRuntimeConnectionReportMaxBytes, "pool": api.DataAPIMaxPoolConnections, "rows": api.DataAPIMaxRows, "bodyBytes": api.DataAPIMaxRequestBytes, "responseBytes": api.DataAPIMaxResponseBytes, "outputBytes": api.DataAPIMaxOutputBytes, "queryMs": api.DataAPIQueryTimeoutMS, "lockMs": api.DataAPILockTimeoutMS, "relations": api.DataAPIMaxRelations, "columns": api.DataAPIMaxColumns, "types": api.DataAPIMaxTypes, "queuedRequests": api.DataAPIMaxQueuedRequests, "admissionWaitMs": api.DataAPIAdmissionWaitMS, "overloadRetrySeconds": api.DataAPIOverloadRetrySeconds, "healthProbeMs": api.DataAPIHealthProbeMS, "healthBytes": api.DataAPIHealthMaxBytes, "rateLimitDefaultPerSecond": api.DataAPIRateLimitDefaultPerSecond, "rateLimitDefaultBurst": api.DataAPIRateLimitDefaultBurst, "rateLimitMaxPerSecond": api.DataAPIRateLimitMaxPerSecond, "rateLimitMaxBurst": api.DataAPIRateLimitMaxBurst, "rateLimitMaxSubjects": api.DataAPIRateLimitMaxSubjects, "rateLimitSweepMs": api.DataAPIRateLimitSweepMS, "publicReadMaxRelations": api.DataAPIPublicReadMaxRelations, "publicRpcMaxFunctions": api.DataAPIPublicRPCMaxFunctions, "usageReportMs": int(api.DataAPIUsageReportTimeout.Milliseconds()), "usageReportIntervalMs": int(api.DataAPIUsageReportInterval.Milliseconds()), "usageReportMaxHours": api.DataAPIUsageReportMaxHours, "usageMonthlyCapMax": api.DataAPIUsageMonthlyCapMax, "usageRestoreJumpMs": int(api.DataAPIUsageRestoreJump.Milliseconds()), "serverKeySubjectMaxBytes": api.DataAPIServerKeySubjectMaxBytes, "publicReadMaxAgeSeconds": api.DataAPIPublicReadMaxAgeSeconds, "cacheTagMaxBytes": api.CacheTagMaxBytes, "cacheTagsMax": api.CacheTagMaxCount, "serverKeyPermissionsBytes": api.DataAPIServerKeyPermissionsMaxBytes, "serverKeyPermissionsEntries": api.DataAPIServerKeyPermissionsMaxEntries, "storageObjectDefaultBytes": api.DataAPIStorageObjectDefaultBytes, "storageObjectMaxBytes": api.DataAPIStorageObjectMaxBytes, "storageTransfers": api.DataAPIStorageTransfers, "storageTransferMs": int(api.DataAPIStorageTransferTimeout.Milliseconds()), "storageSignSeconds": int(api.DataAPIStorageSignedURLTTL.Seconds())} {
 		if !strings.Contains(string(config), fmt.Sprintf("%s: %d", name, bound)) {
 			t.Fatalf("runtime %s differs from canonical limit", name)
 		}
@@ -256,5 +272,47 @@ func TestDataAPIRejectsInvalidIssuerConfiguration(t *testing.T) {
 		if dataAPIOrigin(value) {
 			t.Fatalf("accepted origin %q", value)
 		}
+	}
+}
+
+func TestDataAPITypesInputValidators(t *testing.T) {
+	for _, supported := range []bool{false, true} {
+		t.Run(fmt.Sprint(supported), func(t *testing.T) {
+			resetJSONOut(t)
+			content := "// Generated by gregale data-api types. Do not edit.\n// Schema fingerprint: " + strings.Repeat("a", 64) + "\nexport type Database = {}\n"
+			content += "export const inputValidators = {\n}\n"
+			if supported {
+				content += "export const rpcValidators = {\n}\n"
+			}
+			response, _ := json.Marshal(map[string]any{"id": "task", "status": "succeeded", "stdout_tail": content})
+			f := authedFakeAPI(t, string(response), http.StatusCreated)
+			output := filepath.Join(t.TempDir(), "database.ts")
+			if err := os.WriteFile(output, []byte("original"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			code := cmdDataAPI([]string{"types", "notes", "--validators", "--output", output})
+			if (code == 0) != supported {
+				t.Fatalf("code=%d supported=%v", code, supported)
+			}
+			var request api.CreateAppTaskRequest
+			if err := json.Unmarshal(f.sawBody, &request); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(request.Command, " ") != "node /app/types.mjs --validators" || request.TimeoutSeconds != 60 || request.MaxOutputBytes != api.AppTaskDefaultMaxOutputBytes {
+				t.Fatalf("unexpected task: %+v", request)
+			}
+			got, _ := os.ReadFile(output)
+			want := "original"
+			if supported {
+				want = content
+			}
+			if string(got) != want {
+				t.Fatal("unsupported runtime replaced the file")
+			}
+		})
+	}
+	resetJSONOut(t)
+	if code := cmdDataAPI([]string{"types", "notes", "--validators", "--snapshot"}); code == 0 {
+		t.Fatal("accepted incompatible outputs")
 	}
 }

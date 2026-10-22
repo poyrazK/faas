@@ -1,0 +1,135 @@
+name: durable-entity-developer-workflow
+on:
+  pull_request:
+    # Only this suite's own code. Shared hot paths (pkg/api, pkg/state,
+    # pkg/apid, migrations, go.mod, cmd/gregale) changed on nearly every
+    # pull request; ci.yml runs this suite nightly and on dispatch.
+    paths:
+      - 'sdk/node/**'
+      - 'cmd/gregale/templates/durable-entity-node/**'
+      - 'cmd/gregale/durable_entity_project*'
+      - 'pkg/durableentity/**'
+      - 'cmd/apid/durable_entities*'
+      - 'pkg/apid/durable/**'
+      - 'scripts/gen-durable-entity-contract.py'
+      - '.github/workflows/durable-entity-developer-workflow.yml'
+  # Nightly and on dispatch: ci.yml calls this workflow.
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  # A literal name: when ci.yml calls this workflow, github.workflow is the
+  # caller's name, which the other called suites would share.
+  group: durable-entity-developer-workflow-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  node-starter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+          cache: npm
+          cache-dependency-path: sdk/node/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: sdk/node
+      - run: npm run test:build
+        working-directory: sdk/node
+      - run: node --test dist-test/test/durable-entity-workflow.test.js dist-test/test/durable-entity-visibility.test.js dist-test/test/durable-entity-session.test.js
+        working-directory: sdk/node
+      - run: npm run build
+        working-directory: sdk/node
+      - run: node --test test/durable-entity-starter.test.mjs
+        working-directory: sdk/node
+
+  go-source-workflow:
+    env:
+      GOMEMLIMIT: 3GiB
+      GOGC: '50'
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=2'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.9'
+          # Keep a workflow-specific cache including the API race build, rather
+          # than repeatedly restoring an immutable dependency-only cache.
+          cache-dependency-path: |
+            go.sum
+            .github/workflows/durable-entity-developer-workflow.yml
+          cache: ${{ github.event_name != 'pull_request' }}
+      # Pull requests restore main's setup-go cache read-only. Saving a ~1 GB
+      # copy per pull-request ref overflowed the 10 GB repository cache and
+      # evicted ci-light's main families, so light jobs compiled cold.
+      - name: restore Go cache from main (pull requests)
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: setup-go-${{ runner.os }}-x64-ubuntu24-go-pr-restore-only
+          restore-keys: |
+            setup-go-${{ runner.os }}-x64-ubuntu24-go-
+      - name: Verify generated durable entity protocol contracts
+        run: |
+          python3 scripts/gen-durable-entity-contract.py
+          git diff --exit-code
+      - name: Verify declared project artifacts and metadata diagnostics
+        run: go test -race ./pkg/durableentity ./pkg/durableentity/project ./pkg/durableentity/visibility ./pkg/durableentity/socket ./pkg/apid/durable
+      - name: Verify CLI workflow, read-only inspection and generated reference
+        run: go test -race ./cmd/gregale -run 'Test(DurableEntity|Entity|MarkdownReferenceFresh)' -count=1
+
+      - name: Verify authenticated entity sockets, quotas, alarms and restore admission
+        run: |
+          # Match the repository race-build bounds for the large API package.
+          # Cold API race compilation can be quiet for several minutes. Keep
+          # its progress visible without masking the test process exit status.
+          GOMEMLIMIT=2GiB GOGC=10 go test -race "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" ./pkg/apid/apidserver -run 'Test(DurableEntitySocket|DurableEntityAlarm|ApplicationValidatedRestore|EntityExportRestore)' -count=1 -v -timeout=2m &
+          api_check_pid=$!
+          while kill -0 "$api_check_pid" 2>/dev/null; do
+            sleep 30
+            if kill -0 "$api_check_pid" 2>/dev/null; then
+              echo 'API race verification is still active'
+              ps -eo comm,rss --sort=-rss | sed -n '1,6p'
+            fi
+          done
+          wait "$api_check_pid"
+
+  generated-management-clients:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - run: npm ci --ignore-scripts
+        working-directory: sdk/node
+      - run: npm run gen
+        working-directory: sdk/node
+      - run: python -m pip install ruamel.yaml 'openapi-python-client==0.29.0'
+      - run: python scripts/gen.py
+        working-directory: sdk/python
+      - name: Publish source drift for remote regeneration handoff
+        run: |
+          git add --intent-to-add sdk/node/src/generated sdk/python/faas_sdk
+          git diff --binary -- sdk/node/src/generated sdk/python/faas_sdk > /tmp/management-sdk.patch
+          python - <<'PYCODE'
+          import base64
+          data = open('/tmp/management-sdk.patch', 'rb').read()
+          encoded = base64.b64encode(data).decode()
+          for i in range(0, len(encoded), 6000):
+              print('SDK_PATCH_CHUNK ' + encoded[i:i+6000])
+          print('SDK_PATCH_BYTES ' + str(len(data)))
+          PYCODE
+          git diff --exit-code -- sdk/node/src/generated sdk/python/faas_sdk

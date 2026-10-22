@@ -1,6 +1,10 @@
-package main
+package main_test
 
 import (
+	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,16 +16,16 @@ func TestCmdMCPInitMaterializesEachLanguage(t *testing.T) {
 		language string
 		files    []string
 	}{
-		{language: "node", files: []string{"package.json", "server.js", "gregale-mcp.json", "gregale.yaml"}},
-		{language: "go", files: []string{"main.go", "auth.go", "tasks.go", "main_test.go", "go.mod", "go.sum", "gregale-mcp.json", "gregale.yaml"}},
-		{language: "python", files: []string{"server.py", "auth.py", "tasks.py", "test_server.py", "requirements.txt", "gregale-mcp.json", "gregale.yaml"}},
+		{language: "node", files: []string{"package.json", "server.js", "protocol-telemetry.js", "gregale-mcp.json", "gregale.yaml"}},
+		{language: "go", files: []string{"main.go", "auth.go", "tasks.go", "task_schema.go", "cors.go", "protocol_telemetry.go", "main_test.go", "go.mod", "go.sum", "gregale-mcp.json", "gregale.yaml"}},
+		{language: "python", files: []string{"server.py", "auth.py", "tasks.py", "task_schema.py", "protocol_telemetry.py", "test_server.py", "requirements.txt", "gregale-mcp.json", "gregale.yaml"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.language, func(t *testing.T) {
 			dest := filepath.Join(t.TempDir(), "mcp")
-			stdout, _, restore := swapIO(t)
+			stdout, _, restore := main.SwapIO(t)
 			defer restore()
-			if code := cmdMCPInit([]string{"--path", dest, "--language", tc.language}); code != 0 {
+			if code := main.CmdMCPInit([]string{"--path", dest, "--language", tc.language}); code != 0 {
 				t.Fatalf("cmdMCPInit() = %d; output=%q", code, stdout.String())
 			}
 			for _, file := range tc.files {
@@ -49,9 +53,9 @@ func TestCmdMCPInitMaterializesEachLanguage(t *testing.T) {
 
 func TestCmdMCPInitRejectsUnknownLanguage(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "mcp")
-	_, stderr, restore := swapIO(t)
+	_, stderr, restore := main.SwapIO(t)
 	defer restore()
-	if code := cmdMCPInit([]string{"--path", dest, "--language", "rust"}); code != 1 {
+	if code := main.CmdMCPInit([]string{"--path", dest, "--language", "rust"}); code != 1 {
 		t.Fatalf("cmdMCPInit() = %d, want 1", code)
 	}
 	if !strings.Contains(stderr(), "--language must be node, go, or python") {
@@ -59,5 +63,54 @@ func TestCmdMCPInitRejectsUnknownLanguage(t *testing.T) {
 	}
 	if _, err := os.Stat(dest); !os.IsNotExist(err) {
 		t.Fatalf("destination was created for invalid language: %v", err)
+	}
+}
+
+func TestCmdMCPInitUsesAGregaleAuthApp(t *testing.T) {
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
+	resetJSONEnv(t)
+	authIssuerServer(t, func(http.ResponseWriter, *http.Request) bool { return false })
+	registration := false
+	old := (*main.AuthAdminHTTPClient)
+	(*main.AuthAdminHTTPClient) = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
+		recorder := httptest.NewRecorder()
+		main.WriteJSONTest(recorder, map[string]any{"keys": map[string]any{"signing": "0A1B2C3D"}, "oauth": map[string]any{"enabled": r.URL.Host == "shop-auth.gregale.app", "dynamic_registration": registration, "issuer": "https://shop-auth.gregale.app/auth/v1"}})
+		return recorder.Result(), nil
+	})}
+	t.Cleanup(func() { (*main.AuthAdminHTTPClient) = old })
+	dest := filepath.Join(t.TempDir(), "mcp")
+	_, stderr, restore := main.SwapIO(t)
+	defer restore()
+	if code := main.CmdMCPInit([]string{"--path", dest, "--auth-app", "shop-auth", "--resource", "https://shop-mcp.gregale.app/mcp"}); code != 0 {
+		t.Fatalf("cmdMCPInit() = %d: %s", code, stderr())
+	}
+	raw, err := os.ReadFile(filepath.Join(dest, "gregale-mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Auth struct {
+			Mode, Issuer, Resource string
+			JWKSURL                string   `json:"jwks_url"`
+			Scopes                 []string `json:"scopes"`
+		} `json:"auth"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Auth.Mode != "external-oauth" || cfg.Auth.Issuer != "https://shop-auth.gregale.app/auth/v1" || cfg.Auth.JWKSURL != "https://shop-auth.gregale.app/auth/v1/.well-known/jwks.json" || strings.Join(cfg.Auth.Scopes, ",") != "openid" {
+		t.Fatalf("auth = %+v", cfg.Auth)
+	}
+	if !strings.Contains(stderr(), "does not let clients register themselves") {
+		t.Fatalf("no registration warning: %q", stderr())
+	}
+	for name, args := range map[string][]string{
+		"issuer as well":     {"--issuer", "https://idp.example.com"},
+		"open access":        {"--auth", "open"},
+		"a scope Auth lacks": {"--scopes", "mcp:tools"},
+	} {
+		if code := main.CmdMCPInit(append([]string{"--path", filepath.Join(t.TempDir(), "x"), "--auth-app", "shop-auth", "--resource", "https://shop-mcp.gregale.app/mcp"}, args...)); code == 0 {
+			t.Errorf("%s accepted", name)
+		}
 	}
 }

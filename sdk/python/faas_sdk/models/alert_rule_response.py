@@ -43,6 +43,7 @@ class AlertRuleResponse:
     threshold: float
     window_spec: AlertRuleResponseWindowSpec
     webhook_url: str
+    """Signed webhook destination; empty for a rule that delivers only to notification channels."""
     webhook_secret_sealed_masked: str
     """Literal "***" — the plaintext is never returned."""
     cooldown_minutes: int
@@ -56,14 +57,36 @@ class AlertRuleResponse:
     the rule's app back to its last live deployment. demote = pin the current canary step (no traffic advance).
     promote = short-circuit the canary ladder to 100%. Pre-auth target and MCP task, event consumer, and workflow
     metrics support webhook only."""
+    mcp_readiness_scope: str | Unset = UNSET
+    """Immutable readiness environment selector. Omitted or empty means every environment; default selects only
+    default. Valid only for mcp_readiness_unhealthy."""
+    mcp_min_calls: int | Unset = UNSET
+    """MCP protocol alerts only. Minimum observations in every rolling window; defaults to 20 on create. Latency
+    uses measured executions. Omit for other metrics."""
+    mcp_for_minutes: int | Unset = UNSET
+    """MCP protocol alerts only. Continuous breach duration sampled every 30 seconds; defaults to 10 on create.
+    Missing observations interrupt eligibility. Webhook action, app scope, gt/gte and windows 5m/15m/1h are
+    required. Error thresholds are percent (0..100), execution p95 thresholds are milliseconds (0..300000)."""
     event_subscription_id: UUID | Unset = UNSET
     """Immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to
     24h are required."""
+    edge_rule_id: UUID | Unset = UNSET
+    """ADR-1192. Immutable edge rule selector for edge_rule_hits, edge_rule_log_hits and edge_rule_activity; absent
+    means every rule of the app."""
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires
     deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage."""
     failure_source: AlertRuleResponseFailureSource | Unset = UNSET
     """Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk)."""
+    custom_metric_name: str | Unset = UNSET
+    """The pushed custom metric a custom_metric rule watches (ADR-745). Present only when metric is custom_metric."""
+    slo_id: UUID | Unset = UNSET
+    """The customer SLO an slo_budget_burn or slo_budget_remaining_pct rule watches (ADR-747); absent for other
+    metrics."""
+    synthetic_check_id: UUID | Unset = UNSET
+    """The synthetic check a synthetic_check_* rule watches (ADR-748); absent for other metrics."""
+    channel_ids: list[UUID] | Unset = UNSET
+    """Notification channels (ADR-749) the rule delivers fires and resolves to."""
     last_fired_at: datetime.datetime | Unset = UNSET
     last_evaluated_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -99,15 +122,42 @@ class AlertRuleResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        mcp_readiness_scope = self.mcp_readiness_scope
+
+        mcp_min_calls = self.mcp_min_calls
+
+        mcp_for_minutes = self.mcp_for_minutes
+
         event_subscription_id: str | Unset = UNSET
         if not isinstance(self.event_subscription_id, Unset):
             event_subscription_id = str(self.event_subscription_id)
+
+        edge_rule_id: str | Unset = UNSET
+        if not isinstance(self.edge_rule_id, Unset):
+            edge_rule_id = str(self.edge_rule_id)
 
         post_deploy_rollback_window_seconds = self.post_deploy_rollback_window_seconds
 
         failure_source: str | Unset = UNSET
         if not isinstance(self.failure_source, Unset):
             failure_source = self.failure_source
+
+        custom_metric_name = self.custom_metric_name
+
+        slo_id: str | Unset = UNSET
+        if not isinstance(self.slo_id, Unset):
+            slo_id = str(self.slo_id)
+
+        synthetic_check_id: str | Unset = UNSET
+        if not isinstance(self.synthetic_check_id, Unset):
+            synthetic_check_id = str(self.synthetic_check_id)
+
+        channel_ids: list[str] | Unset = UNSET
+        if not isinstance(self.channel_ids, Unset):
+            channel_ids = []
+            for channel_ids_item_data in self.channel_ids:
+                channel_ids_item = str(channel_ids_item_data)
+                channel_ids.append(channel_ids_item)
 
         last_fired_at: str | Unset = UNSET
         if not isinstance(self.last_fired_at, Unset):
@@ -138,12 +188,28 @@ class AlertRuleResponse:
                 "updated_at": updated_at,
             }
         )
+        if mcp_readiness_scope is not UNSET:
+            field_dict["mcp_readiness_scope"] = mcp_readiness_scope
+        if mcp_min_calls is not UNSET:
+            field_dict["mcp_min_calls"] = mcp_min_calls
+        if mcp_for_minutes is not UNSET:
+            field_dict["mcp_for_minutes"] = mcp_for_minutes
         if event_subscription_id is not UNSET:
             field_dict["event_subscription_id"] = event_subscription_id
+        if edge_rule_id is not UNSET:
+            field_dict["edge_rule_id"] = edge_rule_id
         if post_deploy_rollback_window_seconds is not UNSET:
             field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
         if failure_source is not UNSET:
             field_dict["failure_source"] = failure_source
+        if custom_metric_name is not UNSET:
+            field_dict["custom_metric_name"] = custom_metric_name
+        if slo_id is not UNSET:
+            field_dict["slo_id"] = slo_id
+        if synthetic_check_id is not UNSET:
+            field_dict["synthetic_check_id"] = synthetic_check_id
+        if channel_ids is not UNSET:
+            field_dict["channel_ids"] = channel_ids
         if last_fired_at is not UNSET:
             field_dict["last_fired_at"] = last_fired_at
         if last_evaluated_at is not UNSET:
@@ -184,12 +250,25 @@ class AlertRuleResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        mcp_readiness_scope = d.pop("mcp_readiness_scope", UNSET)
+
+        mcp_min_calls = d.pop("mcp_min_calls", UNSET)
+
+        mcp_for_minutes = d.pop("mcp_for_minutes", UNSET)
+
         _event_subscription_id = d.pop("event_subscription_id", UNSET)
         event_subscription_id: UUID | Unset
         if isinstance(_event_subscription_id, Unset):
             event_subscription_id = UNSET
         else:
             event_subscription_id = UUID(_event_subscription_id)
+
+        _edge_rule_id = d.pop("edge_rule_id", UNSET)
+        edge_rule_id: UUID | Unset
+        if isinstance(_edge_rule_id, Unset):
+            edge_rule_id = UNSET
+        else:
+            edge_rule_id = UUID(_edge_rule_id)
 
         post_deploy_rollback_window_seconds = d.pop("post_deploy_rollback_window_seconds", UNSET)
 
@@ -199,6 +278,31 @@ class AlertRuleResponse:
             failure_source = UNSET
         else:
             failure_source = check_alert_rule_response_failure_source(_failure_source)
+
+        custom_metric_name = d.pop("custom_metric_name", UNSET)
+
+        _slo_id = d.pop("slo_id", UNSET)
+        slo_id: UUID | Unset
+        if isinstance(_slo_id, Unset):
+            slo_id = UNSET
+        else:
+            slo_id = UUID(_slo_id)
+
+        _synthetic_check_id = d.pop("synthetic_check_id", UNSET)
+        synthetic_check_id: UUID | Unset
+        if isinstance(_synthetic_check_id, Unset):
+            synthetic_check_id = UNSET
+        else:
+            synthetic_check_id = UUID(_synthetic_check_id)
+
+        _channel_ids = d.pop("channel_ids", UNSET)
+        channel_ids: list[UUID] | Unset = UNSET
+        if _channel_ids is not UNSET:
+            channel_ids = []
+            for channel_ids_item_data in _channel_ids:
+                channel_ids_item = UUID(channel_ids_item_data)
+
+                channel_ids.append(channel_ids_item)
 
         _last_fired_at = d.pop("last_fired_at", UNSET)
         last_fired_at: datetime.datetime | Unset
@@ -230,9 +334,17 @@ class AlertRuleResponse:
             state=state,
             created_at=created_at,
             updated_at=updated_at,
+            mcp_readiness_scope=mcp_readiness_scope,
+            mcp_min_calls=mcp_min_calls,
+            mcp_for_minutes=mcp_for_minutes,
             event_subscription_id=event_subscription_id,
+            edge_rule_id=edge_rule_id,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             failure_source=failure_source,
+            custom_metric_name=custom_metric_name,
+            slo_id=slo_id,
+            synthetic_check_id=synthetic_check_id,
+            channel_ids=channel_ids,
             last_fired_at=last_fired_at,
             last_evaluated_at=last_evaluated_at,
         )

@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/managedpg"
+	managedpostgresapi "github.com/onebox-faas/faas/pkg/apid/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -19,10 +21,16 @@ func managedPostgresProblem(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, problem)
 		return
 	}
+	if managedpostgresapi.WriteCapacityProblem(w, err) {
+		return
+	}
 	status, code, title := http.StatusInternalServerError, "managed_postgres_error", "Managed PostgreSQL error"
+	detail := err.Error()
 	switch {
+	case errors.Is(err, managedpostgres.ErrProvisioningClosed):
+		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_provisioning_not_enabled", "Managed PostgreSQL provisioning is closed", managedpostgres.ProvisioningClosedDetail
 	case errors.Is(err, managedpostgres.ErrUnavailable):
-		status, code, title = http.StatusServiceUnavailable, "managed_postgres_unavailable", "Managed PostgreSQL unavailable"
+		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_unavailable", "Managed PostgreSQL unavailable", managedpostgres.UnavailableDetail
 	case errors.Is(err, managedpostgres.ErrNotFound):
 		status, code, title = http.StatusNotFound, "managed_postgres_not_found", "Managed PostgreSQL resource not found"
 	case errors.Is(err, managedpostgres.ErrConflict):
@@ -32,19 +40,24 @@ func managedPostgresProblem(w http.ResponseWriter, err error) {
 	case errors.Is(err, managedpostgres.ErrUnsupported):
 		status, code, title = http.StatusUnprocessableEntity, "managed_postgres_unsupported", "Managed PostgreSQL feature unsupported"
 	case errors.Is(err, managedpostgres.ErrQuotaExceeded):
-		status, code, title = http.StatusForbidden, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded"
+		status, code, title = managedpostgres.QuotaProblem(err)
 	case errors.Is(err, managedpostgres.ErrUsageStale):
-		status, code, title = http.StatusServiceUnavailable, "managed_postgres_usage_stale", "Managed PostgreSQL usage is stale"
+		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_usage_stale", "Managed PostgreSQL usage is stale", managedpostgres.UsageStaleDetail
 	}
-	detail := err.Error()
-	if errors.Is(err, managedpostgres.ErrUnavailable) {
-		detail = "Managed PostgreSQL is an operator preview. The configured provider is temporarily unavailable; retry later or contact the platform operator."
-	} else if status >= 500 {
+	if status >= 500 && !errors.Is(err, managedpostgres.ErrUsageStale) && !errors.Is(err, managedpostgres.ErrUnavailable) {
 		detail = "The managed PostgreSQL operation could not be completed."
 	}
 	problem := api.NewProblem(status, code, title, detail)
 	if errors.Is(err, managedpostgres.ErrUnavailable) {
 		problem = problem.WithDocs("https://gregale.dev/docs/managed-postgres")
+	}
+	// Without a server hint the CLI fell back to its generic 403 advice to
+	// check credentials, which cannot help with a plan entitlement or quota.
+	switch {
+	case errors.Is(err, managedpostgres.ErrNotInPlan):
+		problem = problem.WithHint("Choose what your plan includes (gregale postgres capabilities) or upgrade the plan.").WithDocs("https://gregale.dev/docs/plans")
+	case errors.Is(err, managedpostgres.ErrQuotaExceeded):
+		problem = problem.WithHint("Delete a database you no longer need or upgrade the plan.").WithDocs("https://gregale.dev/docs/plans")
 	}
 	api.WriteProblem(w, problem)
 }
@@ -80,7 +93,7 @@ func managedPostgresSpecFromRequest(req api.CreateManagedPostgresDatabaseRequest
 		scaleToZero = *req.ScaleToZero
 	}
 	if !scaleToZero && !limits.AlwaysOnAllowed {
-		return managedpostgres.Spec{}, managedpostgres.ErrQuotaExceeded
+		return managedpostgres.Spec{}, managedpostgres.ErrNotInPlan
 	}
 	storage := req.StorageLimitBytes
 	if storage == 0 {
@@ -94,8 +107,15 @@ func managedPostgresSpecFromRequest(req api.CreateManagedPostgresDatabaseRequest
 	if spec.PostgresMajor == 0 {
 		spec.PostgresMajor = 16
 	}
-	if !managedPostgresPlanAllows(limits, spec) || storage > limits.StorageLimitBytes || restoreWindow > limits.RestoreWindowSeconds {
-		return managedpostgres.Spec{}, managedpostgres.ErrQuotaExceeded
+	// Name the entitlement that refused the request; a bare "quota exceeded"
+	// read like usage and sent customers to check credentials (hunt #10).
+	switch {
+	case !managedPostgresPlanAllows(limits, spec):
+		return managedpostgres.Spec{}, managedpostgres.ErrNotInPlan
+	case storage > limits.StorageLimitBytes:
+		return managedpostgres.Spec{}, fmt.Errorf("%w: storage limit %d bytes is over the plan's %d", managedpostgres.ErrQuotaExceeded, storage, limits.StorageLimitBytes)
+	case restoreWindow > limits.RestoreWindowSeconds:
+		return managedpostgres.Spec{}, fmt.Errorf("%w: restore window %d s is over the plan's %d s", managedpostgres.ErrQuotaExceeded, restoreWindow, limits.RestoreWindowSeconds)
 	}
 	if err := spec.Validate(); err != nil {
 		return managedpostgres.Spec{}, err
@@ -167,7 +187,7 @@ func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.M
 	view := api.ManagedPostgresUsageResponse{
 		PeriodStart: summary.Snapshot.PeriodStart, PolicyEnabled: summary.PolicyEnabled,
 		Fresh: summary.Fresh, GuardrailState: state,
-		ReadyDatabases: summary.Snapshot.ReadyDatabases, DatabaseLimit: limits.DatabasesMax,
+		ReadyDatabases: summary.Snapshot.ReadyDatabases, DatabaseLimit: summary.EnforcedDatabaseLimit(limits.DatabasesMax),
 		StorageLimitBytes:       limits.StorageLimitBytes,
 		ComputeUnitSeconds:      summary.Snapshot.ComputeUnitSeconds,
 		StorageByteSeconds:      summary.Snapshot.StorageByteSeconds,
@@ -192,7 +212,7 @@ func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request,
 		managedPostgresPlanDenied(w, acct.Plan, "managed PostgreSQL usage is not available for this plan")
 		return
 	}
-	summary, err := s.managedPostgres.UsageSummary(r.Context(), acct.ID, time.Now().UTC(), managedPostgresUsageCeilings(limits))
+	summary, err := s.managedPostgres.UsageSummary(r.Context(), acct.ResourceOwnerID(), time.Now().UTC(), managedPostgresUsageCeilings(limits))
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return
@@ -250,7 +270,7 @@ func (s *server) getManagedPostgresUsageOperator(w http.ResponseWriter, r *http.
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid account_id", "account_id must be a UUID"))
 		return
 	}
-	target, err := s.store.AccountByID(r.Context(), targetID)
+	target, err := state.BillingResourceAccount(r.Context(), s.store, targetID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Account not found", "the target account does not exist"))
@@ -411,11 +431,16 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 		return
 	}
 	app, err := s.store.AppByID(r.Context(), req.AppID)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !postgresaccess.CanBind(r.Context(), app, acct) {
 		s.notFound(w, "app not found")
 		return
 	}
-	binding, err := s.managedPostgresBindings.Create(r.Context(), managedpostgres.CreateBindingRequest{AccountID: acct.ID, DatabaseID: r.PathValue("id"), AppID: req.AppID, Scope: req.Scope, EnvironmentKey: req.EnvironmentKey, Access: managedpostgres.CredentialAccess(req.Access)})
+	// Application Auth is a dark launch: without it the mode is unknown.
+	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(acct) {
+		managedPostgresProblem(w, managedpostgres.ErrInvalid)
+		return
+	}
+	binding, err := s.managedPostgresBindings.Create(r.Context(), managedpostgres.CreateBindingRequest{AccountID: app.AccountID, DatabaseAccountID: acct.ID, DatabaseID: r.PathValue("id"), AppID: req.AppID, Scope: req.Scope, EnvironmentKey: req.EnvironmentKey, Access: managedpostgres.CredentialAccess(req.Access)})
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return

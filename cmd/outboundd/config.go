@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -40,6 +41,39 @@ type Config struct {
 	// off, AI integrations and routes are refused. FAAS_AI_GATEWAY_ENABLED
 	// overrides it: "1" turns it on, any other value turns it off.
 	AIGatewayEnabled bool `toml:"ai_gateway_enabled"`
+	// AIGatewayAccounts limits customer AI integrations to these account IDs
+	// during a staged preview rollout (ADR-998); empty or "*" admits every
+	// entitled account. FAAS_AI_GATEWAY_ACCOUNTS overrides it.
+	AIGatewayAccounts []string `toml:"ai_gateway_accounts"`
+	// PublicListenAddr enables the AI gateway's public listener for callers
+	// outside Gregale that present an access token (ADR-1431). It must be a
+	// loopback address: Caddy terminates TLS in front of it.
+	PublicListenAddr string `toml:"public_listen_addr"`
+}
+
+// validatePublicListen refuses a public listener that is not on loopback.
+func (c *Config) validatePublicListen() error {
+	if c.PublicListenAddr == "" {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(c.PublicListenAddr)
+	if err != nil {
+		return fmt.Errorf("outboundd: public_listen_addr: %w", err)
+	}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("outboundd: public_listen_addr %q must be a loopback IP address behind the TLS proxy", c.PublicListenAddr)
+	}
+	return nil
+}
+
+// AIGatewayRollout resolves the staged rollout from the TOML setting and the
+// environment override (ADR-998).
+func (c *Config) AIGatewayRollout(getenv func(string) string) (outbound.AIGatewayRollout, error) {
+	override := ""
+	if getenv != nil {
+		override = getenv("FAAS_AI_GATEWAY_ACCOUNTS")
+	}
+	return outbound.ParseAIGatewayRollout(c.AIGatewayAccounts, override)
 }
 
 // AIGateway resolves the release gate from the TOML setting and the
@@ -53,19 +87,22 @@ func (c *Config) AIGateway(getenv func(string) string) bool {
 	return c.AIGatewayEnabled
 }
 
-// ValidateAIGateway refuses an operator integration that declares an AI
-// provider while the AI gateway is off, so a configuration mistake fails at
-// startup instead of refusing that integration's traffic.
-func ValidateAIGateway(items []configuredIntegration, enabled bool) error {
+// AIIntegrationsWhileGatewayOff lists operator integrations that declare an
+// AI provider while the AI gateway kill switch is off. outboundd logs them at
+// startup instead of refusing to start (ADR-1700): the switch is a live
+// platform flag, and refusing to boot after an incident turned it off would
+// crash-loop the daemon. Their calls return 503 until the flag is on.
+func AIIntegrationsWhileGatewayOff(items []configuredIntegration, enabled bool) []string {
 	if enabled {
 		return nil
 	}
+	var ids []string
 	for _, item := range items {
 		if item.Record.Policy.AIProvider != "" {
-			return fmt.Errorf("outboundd: integration %q sets ai_provider but the AI gateway is disabled; set ai_gateway_enabled or FAAS_AI_GATEWAY_ENABLED=1", item.Record.Policy.ID)
+			ids = append(ids, item.Record.Policy.ID)
 		}
 	}
-	return nil
+	return ids
 }
 
 func (c *Config) IdentityVerifier(items []configuredIntegration) (outbound.IdentityVerifier, error) {
@@ -120,7 +157,13 @@ type IntegrationConfig struct {
 	RetryBudgetPerMinute           int           `toml:"retry_budget_per_minute"`
 	AIProvider                     string        `toml:"ai_provider"`
 	AIDailyTokenLimit              int64         `toml:"ai_daily_token_limit"`
-	Enabled                        *bool         `toml:"enabled"`
+	// AIAllowUnmetered lets through writes the gateway cannot meter
+	// (ADR-1432).
+	AIAllowUnmetered bool `toml:"ai_allow_unmetered"`
+	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
+	// (ADR-1437).
+	AIAutoPromptCache bool  `toml:"ai_auto_prompt_cache"`
+	Enabled           *bool `toml:"enabled"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -166,6 +209,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if c.Integrations == nil {
 		c.Integrations = make(map[string]IntegrationConfig)
+	}
+	if err := c.validatePublicListen(); err != nil {
+		return nil, err
 	}
 	return c, nil
 }
@@ -246,6 +292,8 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 			limit := raw.AIDailyTokenLimit
 			policy.DailyAITokenLimit = &limit
 		}
+		policy.AIAllowUnmetered = raw.AIAllowUnmetered
+		policy.AIAutoPromptCache = raw.AIAutoPromptCache
 		policy.AllowedMethods = raw.AllowedMethods
 		policy.AllowedPathPrefixes = raw.AllowedPathPrefixes
 		if err := policy.Validate(); err != nil {

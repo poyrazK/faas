@@ -83,6 +83,9 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRestoreRuntime(ctx context.
 	if err != nil || !dep.EnvironmentWorkloadHeld() || app.RAMMB != original.Execution.RAMMB {
 		return fmt.Errorf("qualification restore app, deployment or RAM changed: %w", errors.Join(state.ErrConflict, err))
 	}
+	if err := e.checkFinancialBudgetAdmission(ctx, app, dep.ID); err != nil {
+		return err
+	}
 	if err := securityQuarantineErr(dep); err != nil {
 		return err
 	}
@@ -112,7 +115,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRestoreRuntime(ctx context.
 		return err
 	}
 	wakeID := uuid.NewString()
-	admission, err := restoreAdmission.CreateEnvironmentQualificationRestore(ctx, claimed, state.EnvironmentWorkloadQualificationPlacement{
+	admission, err := restoreAdmission.CreateEnvironmentQualificationRestore(nodePlacementContext(ctx, placement), claimed, state.EnvironmentWorkloadQualificationPlacement{
 		NodeID: placement.NodeID, WakeID: wakeID, RAMMB: app.RAMMB,
 	})
 	if err != nil {
@@ -207,13 +210,14 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRestoreRuntime(ctx context.
 	}
 	release()
 	locked = false
-	bootCtx, bootCancel := context.WithTimeout(ctx, e.budgetFor(state.StateColdBooting))
-	defer bootCancel()
-	if err := restoreAdmission.MarkEnvironmentQualificationRestoreDispatched(bootCtx, claimed, frame); err != nil {
-		return err
+	// Verified capture backings are copied before the guest can boot. That
+	// materialization is bounded by the qualification lease, while vmmd applies
+	// the guest readiness timeout after snapshot load and resume.
+	if err := restoreAdmission.MarkEnvironmentQualificationRestoreDispatched(ctx, claimed, frame); err != nil {
+		return errors.Join(err, context.Cause(ctx))
 	}
 	vmAttempted = true
-	out, err := vm.RestoreEnvironmentQualification(bootCtx, frame, prepared.Spec)
+	out, err := vm.RestoreEnvironmentQualification(ctx, frame, prepared.Spec)
 	if err != nil {
 		return errors.Join(err, context.Cause(ctx))
 	}

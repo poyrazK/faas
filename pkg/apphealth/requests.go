@@ -50,7 +50,7 @@ func assessRequests(out *api.AppHealthResponse, e Evidence) {
 	out.MetricsAsOf = at.UTC().Format(time.RFC3339Nano)
 	out.Requests.Known, out.Requests.RequestCount = true, m.RequestCount
 	out.Requests.ServerErrors, out.Requests.ErrorRatePct = m.ServerErrors, m.ErrorRatePct
-	detail := fmt.Sprintf("%d of %d requests returned 5xx (%.2f%%) in the last 5 minutes across the current default-scope serving releases.", m.ServerErrors, m.RequestCount, m.ErrorRatePct)
+	detail := fmt.Sprintf("%d of %d requests returned 5xx (%.2f%%) in the last 5 minutes across the current serving releases in the selected scope.", m.ServerErrors, m.RequestCount, m.ErrorRatePct)
 	switch {
 	case m.RequestCount == 0:
 		requestCheck(out, NotApplicable, "requests_unexercised", "No requests were observed for the current serving releases in the last 5 minutes; request success has not been exercised.", "")

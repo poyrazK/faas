@@ -68,6 +68,19 @@ from ..models.update_app_request_execution_mode_type_3_type_1 import (
     UpdateAppRequestExecutionModeType3Type1,
     check_update_app_request_execution_mode_type_3_type_1,
 )
+from ..models.update_app_request_pause import UpdateAppRequestPause, check_update_app_request_pause
+from ..models.update_app_request_release_policy_type_1 import (
+    UpdateAppRequestReleasePolicyType1,
+    check_update_app_request_release_policy_type_1,
+)
+from ..models.update_app_request_release_policy_type_2_type_1 import (
+    UpdateAppRequestReleasePolicyType2Type1,
+    check_update_app_request_release_policy_type_2_type_1,
+)
+from ..models.update_app_request_release_policy_type_3_type_1 import (
+    UpdateAppRequestReleasePolicyType3Type1,
+    check_update_app_request_release_policy_type_3_type_1,
+)
 from ..models.update_app_request_restart_policy_type_1 import (
     UpdateAppRequestRestartPolicyType1,
     check_update_app_request_restart_policy_type_1,
@@ -120,6 +133,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.after_restore_hook import AfterRestoreHook
+    from ..models.app_deploy_settings_condition import AppDeploySettingsCondition
     from ..models.before_checkpoint_hook import BeforeCheckpointHook
     from ..models.declared_route import DeclaredRoute
     from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
@@ -142,6 +156,13 @@ T = TypeVar("T", bound="UpdateAppRequest")
 class UpdateAppRequest:
     """Partial update — every field is optional; omitted fields are unchanged."""
 
+    deploy_settings_condition: AppDeploySettingsCondition | Unset = UNSET
+    """Atomic preconditions for single-app lifecycle/scaling recovery. The app must retain this identity and its
+    newest deployment must be the expected live deployment. Every targeted field must still match its observed
+    value, including targeted fields omitted from the partial update because they already match the desired value.
+    Checked in the same transaction as the update. A conflict returns 409 deploy_settings_conflict with field names,
+    without setting values. Cannot be combined with environment edits or other app fields. Ordinary updates can omit
+    this object."""
     profiling: ProfilingConfig | Unset = UNSET
     """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
     tracing: TracingConfig | Unset = UNSET
@@ -219,10 +240,16 @@ class UpdateAppRequest:
     ) = UNSET
     """Restart behavior for the workload. Omit for no change."""
     after_restore: AfterRestoreHook | Unset = UNSET
-    """Optional loopback callback that must succeed after snapshot restore before the instance becomes ready."""
+    """Optional loopback callback that must succeed after snapshot restore, or after a frozen instance resumes,
+    before the instance becomes ready."""
     before_checkpoint: BeforeCheckpointHook | Unset = UNSET
     """Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
     warm snapshots; snapshot reuse skips the callback."""
+    pause: UpdateAppRequestPause | Unset = UNSET
+    """When the platform may pause the app's VM (ADR-1151): between_requests pauses it between requests and freezes
+    it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the
+    default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution
+    modes accept only never. Omit to preserve; an empty string restores the default."""
     startup_deadline_s: int | None | Unset = UNSET
     """Upper bound on time-to-ready in seconds. Omit for no change; 0 uses the plan default."""
     stop_grace_period_s: int | None | Unset = UNSET
@@ -237,6 +264,10 @@ class UpdateAppRequest:
     """Replace the app-level invocation retry default. Omit for no change; an empty object clears it."""
     request_timeout_s: int | None | Unset = UNSET
     """Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default."""
+    function_concurrency: int | None | Unset = UNSET
+    """Changes how many requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 restores one
+    request per worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next
+    deploy."""
     request_rate_limit_rps: int | None | Unset = UNSET
     """Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values
     may only tighten the plan ceiling. Does not create a deployment."""
@@ -283,6 +314,16 @@ class UpdateAppRequest:
     change."""
     revision_pin_ttl_seconds: int | None | Unset = UNSET
     """Set the revision pin window in seconds; zero disables future retention. Omit for no change."""
+    release_policy: (
+        None
+        | Unset
+        | UpdateAppRequestReleasePolicyType1
+        | UpdateAppRequestReleasePolicyType2Type1
+        | UpdateAppRequestReleasePolicyType3Type1
+    ) = UNSET
+    """Set the default rollout for production releases (ADR-1446, ADR-1450). Omit for no change."""
+    release_probe_paths: list[str] | None | Unset = UNSET
+    """Replace the paths the default rollout probe checks (ADR-1449). An empty list restores /. Omit for no change."""
     min_instances: int | None | Unset = UNSET
     egress_allowlist: list[str] | Unset = UNSET
     """v4 or v6 CIDR allowlist; empty array clears to chain-default-accept."""
@@ -375,6 +416,9 @@ class UpdateAppRequest:
     the UUID. 404 on unknown name; 422 on inactive node."""
     cors_default_enabled: bool | None | Unset = UNSET
     cors_default_origins: list[str] | Unset = UNSET
+    expected_service_binding_fingerprint: str | Unset = UNSET
+    """Apply only if the locked app service settings still match this fingerprint. Supported only for app-level
+    service-only updates; returns 409 on conflict. Omit for the existing unguarded behavior."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -384,6 +428,10 @@ class UpdateAppRequest:
         from ..models.scaling_policy import ScalingPolicy
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
+
+        deploy_settings_condition: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.deploy_settings_condition, Unset):
+            deploy_settings_condition = self.deploy_settings_condition.to_dict()
 
         profiling: dict[str, Any] | Unset = UNSET
         if not isinstance(self.profiling, Unset):
@@ -533,6 +581,10 @@ class UpdateAppRequest:
         if not isinstance(self.before_checkpoint, Unset):
             before_checkpoint = self.before_checkpoint.to_dict()
 
+        pause: str | Unset = UNSET
+        if not isinstance(self.pause, Unset):
+            pause = self.pause
+
         startup_deadline_s: int | None | Unset
         if isinstance(self.startup_deadline_s, Unset):
             startup_deadline_s = UNSET
@@ -570,6 +622,12 @@ class UpdateAppRequest:
             request_timeout_s = UNSET
         else:
             request_timeout_s = self.request_timeout_s
+
+        function_concurrency: int | None | Unset
+        if isinstance(self.function_concurrency, Unset):
+            function_concurrency = UNSET
+        else:
+            function_concurrency = self.function_concurrency
 
         request_rate_limit_rps: int | None | Unset
         if isinstance(self.request_rate_limit_rps, Unset):
@@ -676,6 +734,27 @@ class UpdateAppRequest:
             revision_pin_ttl_seconds = UNSET
         else:
             revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
+
+        release_policy: None | str | Unset
+        if isinstance(self.release_policy, Unset):
+            release_policy = UNSET
+        elif isinstance(self.release_policy, str):
+            release_policy = self.release_policy
+        elif isinstance(self.release_policy, str):
+            release_policy = self.release_policy
+        elif isinstance(self.release_policy, str):
+            release_policy = self.release_policy
+        else:
+            release_policy = self.release_policy
+
+        release_probe_paths: list[str] | None | Unset
+        if isinstance(self.release_probe_paths, Unset):
+            release_probe_paths = UNSET
+        elif isinstance(self.release_probe_paths, list):
+            release_probe_paths = self.release_probe_paths
+
+        else:
+            release_probe_paths = self.release_probe_paths
 
         min_instances: int | None | Unset
         if isinstance(self.min_instances, Unset):
@@ -842,9 +921,13 @@ class UpdateAppRequest:
         if not isinstance(self.cors_default_origins, Unset):
             cors_default_origins = self.cors_default_origins
 
+        expected_service_binding_fingerprint = self.expected_service_binding_fingerprint
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if deploy_settings_condition is not UNSET:
+            field_dict["deploy_settings_condition"] = deploy_settings_condition
         if profiling is not UNSET:
             field_dict["profiling"] = profiling
         if tracing is not UNSET:
@@ -881,6 +964,8 @@ class UpdateAppRequest:
             field_dict["after_restore"] = after_restore
         if before_checkpoint is not UNSET:
             field_dict["before_checkpoint"] = before_checkpoint
+        if pause is not UNSET:
+            field_dict["pause"] = pause
         if startup_deadline_s is not UNSET:
             field_dict["startup_deadline_s"] = startup_deadline_s
         if stop_grace_period_s is not UNSET:
@@ -893,6 +978,8 @@ class UpdateAppRequest:
             field_dict["retry_policy"] = retry_policy
         if request_timeout_s is not UNSET:
             field_dict["request_timeout_s"] = request_timeout_s
+        if function_concurrency is not UNSET:
+            field_dict["function_concurrency"] = function_concurrency
         if request_rate_limit_rps is not UNSET:
             field_dict["request_rate_limit_rps"] = request_rate_limit_rps
         if request_rate_limit_burst is not UNSET:
@@ -925,6 +1012,10 @@ class UpdateAppRequest:
             field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
         if revision_pin_ttl_seconds is not UNSET:
             field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
+        if release_policy is not UNSET:
+            field_dict["release_policy"] = release_policy
+        if release_probe_paths is not UNSET:
+            field_dict["release_probe_paths"] = release_probe_paths
         if min_instances is not UNSET:
             field_dict["min_instances"] = min_instances
         if egress_allowlist is not UNSET:
@@ -977,12 +1068,15 @@ class UpdateAppRequest:
             field_dict["cors_default_enabled"] = cors_default_enabled
         if cors_default_origins is not UNSET:
             field_dict["cors_default_origins"] = cors_default_origins
+        if expected_service_binding_fingerprint is not UNSET:
+            field_dict["expected_service_binding_fingerprint"] = expected_service_binding_fingerprint
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.after_restore_hook import AfterRestoreHook
+        from ..models.app_deploy_settings_condition import AppDeploySettingsCondition
         from ..models.before_checkpoint_hook import BeforeCheckpointHook
         from ..models.declared_route import DeclaredRoute
         from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
@@ -998,6 +1092,13 @@ class UpdateAppRequest:
         from ..models.workload_port import WorkloadPort
 
         d = dict(src_dict)
+        _deploy_settings_condition = d.pop("deploy_settings_condition", UNSET)
+        deploy_settings_condition: AppDeploySettingsCondition | Unset
+        if isinstance(_deploy_settings_condition, Unset):
+            deploy_settings_condition = UNSET
+        else:
+            deploy_settings_condition = AppDeploySettingsCondition.from_dict(_deploy_settings_condition)
+
         _profiling = d.pop("profiling", UNSET)
         profiling: ProfilingConfig | Unset
         if isinstance(_profiling, Unset):
@@ -1434,6 +1535,13 @@ class UpdateAppRequest:
         else:
             before_checkpoint = BeforeCheckpointHook.from_dict(_before_checkpoint)
 
+        _pause = d.pop("pause", UNSET)
+        pause: UpdateAppRequestPause | Unset
+        if isinstance(_pause, Unset):
+            pause = UNSET
+        else:
+            pause = check_update_app_request_pause(_pause)
+
         def _parse_startup_deadline_s(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -1495,6 +1603,15 @@ class UpdateAppRequest:
             return cast(int | None | Unset, data)
 
         request_timeout_s = _parse_request_timeout_s(d.pop("request_timeout_s", UNSET))
+
+        def _parse_function_concurrency(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        function_concurrency = _parse_function_concurrency(d.pop("function_concurrency", UNSET))
 
         def _parse_request_rate_limit_rps(data: object) -> int | None | Unset:
             if data is None:
@@ -1697,6 +1814,71 @@ class UpdateAppRequest:
             return cast(int | None | Unset, data)
 
         revision_pin_ttl_seconds = _parse_revision_pin_ttl_seconds(d.pop("revision_pin_ttl_seconds", UNSET))
+
+        def _parse_release_policy(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestReleasePolicyType1
+            | UpdateAppRequestReleasePolicyType2Type1
+            | UpdateAppRequestReleasePolicyType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                release_policy_type_1 = check_update_app_request_release_policy_type_1(data)
+
+                return release_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                release_policy_type_2_type_1 = check_update_app_request_release_policy_type_2_type_1(data)
+
+                return release_policy_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                release_policy_type_3_type_1 = check_update_app_request_release_policy_type_3_type_1(data)
+
+                return release_policy_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestReleasePolicyType1
+                | UpdateAppRequestReleasePolicyType2Type1
+                | UpdateAppRequestReleasePolicyType3Type1,
+                data,
+            )
+
+        release_policy = _parse_release_policy(d.pop("release_policy", UNSET))
+
+        def _parse_release_probe_paths(data: object) -> list[str] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                release_probe_paths_type_0 = cast(list[str], data)
+
+                return release_probe_paths_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None | Unset, data)
+
+        release_probe_paths = _parse_release_probe_paths(d.pop("release_probe_paths", UNSET))
 
         def _parse_min_instances(data: object) -> int | None | Unset:
             if data is None:
@@ -2003,7 +2185,10 @@ class UpdateAppRequest:
 
         cors_default_origins = cast(list[str], d.pop("cors_default_origins", UNSET))
 
+        expected_service_binding_fingerprint = d.pop("expected_service_binding_fingerprint", UNSET)
+
         update_app_request = cls(
+            deploy_settings_condition=deploy_settings_condition,
             profiling=profiling,
             tracing=tracing,
             visibility=visibility,
@@ -2022,12 +2207,14 @@ class UpdateAppRequest:
             restart_policy=restart_policy,
             after_restore=after_restore,
             before_checkpoint=before_checkpoint,
+            pause=pause,
             startup_deadline_s=startup_deadline_s,
             stop_grace_period_s=stop_grace_period_s,
             stop_signal=stop_signal,
             max_retries=max_retries,
             retry_policy=retry_policy,
             request_timeout_s=request_timeout_s,
+            function_concurrency=function_concurrency,
             request_rate_limit_rps=request_rate_limit_rps,
             request_rate_limit_burst=request_rate_limit_burst,
             service_replicas=service_replicas,
@@ -2044,6 +2231,8 @@ class UpdateAppRequest:
             version_affinity_cookie=version_affinity_cookie,
             version_affinity_managed_cookie=version_affinity_managed_cookie,
             revision_pin_ttl_seconds=revision_pin_ttl_seconds,
+            release_policy=release_policy,
+            release_probe_paths=release_probe_paths,
             min_instances=min_instances,
             egress_allowlist=egress_allowlist,
             egress_ports=egress_ports,
@@ -2070,6 +2259,7 @@ class UpdateAppRequest:
             overflow_node=overflow_node,
             cors_default_enabled=cors_default_enabled,
             cors_default_origins=cors_default_origins,
+            expected_service_binding_fingerprint=expected_service_binding_fingerprint,
         )
 
         update_app_request.additional_properties = d

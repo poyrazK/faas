@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/objectchecksum"
 )
 
 // ObjectMultipartMetadata is the durable, provider-neutral object metadata
@@ -41,9 +42,11 @@ type ObjectMultipartUpload struct {
 	PartRevision                    int64
 	ContentType                     string
 	Metadata                        ObjectMultipartMetadata
+	Checksum                        objectchecksum.Snapshot       `json:"-"`
 	Protection                      ObjectWriteProtectionSnapshot `json:"-"`
 	Encryption                      ObjectEncryptionSnapshot      `json:"-"`
 	FixedAdmission                  bool                          `json:"-"`
+	QueueNodeSettlement             bool                          `json:"-"`
 	EncryptionDefaultRevision       int64                         `json:"-"`
 	ProviderUploadID                string
 	Parts                           []api.ObjectMultipartCompletedPart
@@ -94,11 +97,12 @@ type ObjectMultipartCompletionStore interface {
 
 type ObjectMultipartCompletionResult struct {
 	ETag               string
-	ProviderVersionID  string               `json:"-"`
-	RecoveryCursor     string               `json:"-"`
-	VersionsObserved   bool                 `json:"-"`
-	VerifiedProtection string               `json:"-"`
-	VerifiedEncryption api.ObjectEncryption `json:"-"`
+	Checksum           objectchecksum.Digest `json:"-"`
+	ProviderVersionID  string                `json:"-"`
+	RecoveryCursor     string                `json:"-"`
+	VersionsObserved   bool                  `json:"-"`
+	VerifiedProtection string                `json:"-"`
+	VerifiedEncryption api.ObjectEncryption  `json:"-"`
 }
 
 func validObjectMultipartOperation(operation string) bool {
@@ -210,6 +214,7 @@ func validMultipartCompletionFailure(code string) bool {
 }
 
 func cloneObjectMultipartUpload(u ObjectMultipartUpload) ObjectMultipartUpload {
+	u.Checksum = u.Checksum.Clone()
 	u.Parts = cloneMultipartParts(u.Parts)
 	u.Metadata = cloneObjectMultipartMetadata(u.Metadata)
 	u.Protection = u.Protection.Clone()

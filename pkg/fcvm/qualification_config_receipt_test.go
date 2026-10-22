@@ -2,6 +2,7 @@ package fcvm
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -11,6 +12,21 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestQualificationEmptySecretKeysMatchGuestEncoding(t *testing.T) {
+	key := make([]byte, sha256.Size)
+	guestMAC := hmac.New(sha256.New, key)
+	if _, err := guestMAC.Write([]byte("[]")); err != nil {
+		t.Fatal(err)
+	}
+	want := hex.EncodeToString(guestMAC.Sum(nil))
+	for _, keys := range [][]string{nil, {}} {
+		got, err := qualificationSecretKeysMAC(key, keys)
+		if err != nil || got != want {
+			t.Fatalf("empty secret key MAC = %q, %v; want guest MAC %q", got, err, want)
+		}
+	}
+}
 
 func TestQualificationConfigReceiptBindsGuestAndDeliveredInputs(t *testing.T) {
 	m := NewManager(&fakeRunner{}, nil, Paths{}, "test", nil, nil)

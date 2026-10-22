@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -114,6 +115,36 @@ func workflowRecoveryPreflightRead(ctx context.Context, q *sqlc.Queries, db sqlc
 		if !retry && item.State != "pending" {
 			continue
 		}
+		if !retry {
+			reason, err := initialReviewJobAuthority(ctx, q, db, job.ID, now)
+			if err != nil {
+				return err
+			}
+			if reason != "" {
+				row := workflowPreflightIdentity(item, false)
+				row.Reason = reason
+				appendWorkflowRecoveryPreflight(out, row, false)
+				continue
+			}
+		}
+		if !retry {
+			var target api.WorkflowRunRecoveryTarget
+			if err := json.Unmarshal(stored.ExpectedProgress, &target); err != nil {
+				return fmt.Errorf("decode recovery preflight evidence: %w", err)
+			}
+			if target.FailureEvidenceID != "" {
+				_, err := workflowRunRecoveryCandidates(ctx, q, db, account, job.AppID, api.EventRecoveryRequest{WorkflowRuns: &api.WorkflowRunRecoveryPlan{Name: job.Selection.WorkflowRuns.Name, Runs: []api.WorkflowRunRecoveryTarget{target}}})
+				if errors.Is(err, ErrEventRecoveryChanged) {
+					row := workflowPreflightIdentity(item, false)
+					row.Reason = "failure_evidence_unavailable"
+					appendWorkflowRecoveryPreflight(out, row, false)
+					continue
+				}
+				if err != nil {
+					return err
+				}
+			}
+		}
 		row := workflowPreflightIdentity(item, retry)
 		if execution, ok := observations[item.Position]; ok {
 			item.Execution = &execution
@@ -134,6 +165,29 @@ func workflowRecoveryPreflightRead(ctx context.Context, q *sqlc.Queries, db sqlc
 }
 func (m *MemStore) workflowRecoveryPreflightItemLocked(ctx context.Context, job *memEventRecoveryJob, item memEventRecoveryItem, now time.Time, retry bool) (api.EventRecoveryPreflightItem, error) {
 	row := workflowPreflightIdentity(item.EventRecoveryItem, retry)
+	if !retry {
+		reason, err := m.initialReviewJobAdmissionLocked(job, now)
+		if err != nil {
+			return row, err
+		}
+		if reason != "" {
+			row.Reason = reason
+			return row, nil
+		}
+	}
+	if !retry {
+		var target api.WorkflowRunRecoveryTarget
+		if err := json.Unmarshal(item.ExpectedProgress, &target); err != nil {
+			return row, fmt.Errorf("decode recovery preflight evidence: %w", err)
+		}
+		if target.FailureEvidenceID != "" {
+			run, exists := m.workflowRuns[target.RunID]
+			if !exists || !m.initialFailureMatchesLocked(job.Job.AppID, job.Job.Selection.WorkflowRuns.Name, target, run.Status, now) {
+				row.Reason = "failure_evidence_unavailable"
+				return row, nil
+			}
+		}
+	}
 	if retry {
 		execution := m.workflowRecoveryExecutionLocked(job, item, now)
 		item.Execution = &execution

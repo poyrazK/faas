@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type scheduleStepExecutor struct {
@@ -164,7 +165,7 @@ func TestWorkflowSchedulesHaveCapacityWhileHandlersAreBusy(t *testing.T) {
 }
 
 type pagedScheduleStore struct {
-	*state.MemStore
+	MemStore   *state.MemStore
 	candidates []state.WorkflowScheduleCandidate
 	seen       map[string]int
 	queries    int
@@ -198,7 +199,7 @@ func TestWorkflowScheduleRetriesWithoutStarvingLaterPages(t *testing.T) {
 		store.candidates = append(store.candidates, state.WorkflowScheduleCandidate{AppID: fmt.Sprintf("app-%04d", i),
 			Workflows: json.RawMessage(`[{"name":"report","trigger":{"type":"schedule","schedule":"* * * * *"},"steps":[{"name":"main","run":"report"}]}]`)})
 	}
-	engine, _ := makeEngine(t, store, &fakeWakeVMM{})
+	engine, _ := makeEngine(t, statetest.NewMem(store), &fakeWakeVMM{})
 	now := time.Date(2026, 10, 2, 10, 0, 30, 0, time.UTC)
 	loop := NewLoop(nil, engine, quietLog()).WithWorkflowsDispatched(true).WithClock(func() time.Time { return now })
 	ctx := context.Background()

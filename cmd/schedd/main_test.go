@@ -45,9 +45,11 @@ func shortDir(t *testing.T) string {
 }
 
 // migratedPool returns a pgtest pool with the schema migrated, or skips.
+// CI uses private databases so concurrent-index setup cannot wait on another
+// package's unrelated long-lived snapshot in the shared fixture database.
 func migratedPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

@@ -283,6 +283,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusForbidden, "InvalidAccessKeyId", "The AWS access key ID you provided does not exist in Gregale.", r.URL.Path, requestID)
 		return
 	}
+	if credential.IssuerAccountID != "" && bucket.OrgID != "" {
+		fenced, release := state.WithOrgAccessFence(ctx, state.OrgAccessFence{OrgID: bucket.OrgID, AccountID: credential.IssuerAccountID, Revision: credential.IssuerAccessRevision})
+		defer release(nil)
+		ctx = fenced
+		r = r.WithContext(ctx)
+	}
 	secret, err := h.openSecret(credential.SecretSealed)
 	if err != nil || presigned && verifyPresignedSigV4(ctx, r, parsed, secret, h.region) != nil || !presigned && verifySigV4(ctx, r, parsed, secret, h.region) != nil {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
@@ -400,9 +406,9 @@ func parsePath(escapedPath string) (bucket, key string, hasBucket, hasKey bool, 
 	if err != nil || bucket == "" || strings.Contains(bucket, "/") {
 		return "", "", false, false, errors.New("invalid bucket")
 	}
-	// "/bucket/" is the bucket itself: S3 has no empty key, and AWS SDK for
-	// JavaScript v3 sends every path-style bucket operation (ListObjectsV2,
-	// GetBucketVersioning, ...) with that trailing slash (H9-132).
+	// AWS JavaScript path-style bucket operations use /bucket/ (H9-132).
+	// Preserve the original URI for SigV4; classify its empty final segment
+	// as the bucket itself because S3 has no empty key.
 	if len(parts) == 1 || parts[1] == "" {
 		return bucket, "", true, false, nil
 	}
@@ -514,6 +520,14 @@ func validDelimiter(delimiter string) bool {
 func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
 	query := operationQuery(r.URL.Query())
 	query.Del("x-id")
+	if query.Has("attributes") {
+		if r.Method != http.MethodGet || !queryKeysOnly(query, "attributes", "versionId") || len(query["attributes"]) != 1 || query.Get("attributes") != "" || query.Has("versionId") && len(query["versionId"]) != 1 {
+			h.unsupported(w, r, req.requestID)
+			return
+		}
+		h.objectAttributes(w, r, req, key)
+		return
+	}
 	if query.Has("retention") || query.Has("legal-hold") {
 		kind := "retention"
 		if query.Has("legal-hold") {
@@ -637,7 +651,9 @@ func (h *Handler) admit(w http.ResponseWriter, r *http.Request, req requestConte
 func (h *Handler) writeAdmissionError(w http.ResponseWriter, r *http.Request, req requestContext, err error) bool {
 	if err != nil {
 		status, code, message := http.StatusServiceUnavailable, "ServiceUnavailable", "Object storage accounting is temporarily unavailable."
-		if errors.Is(err, state.ErrObjectBudget) {
+		if errors.Is(err, state.ErrOrgAccessRevoked) {
+			status, code, message = http.StatusForbidden, "AccessDenied", "The storage credential is no longer authorized."
+		} else if errors.Is(err, state.ErrObjectBudget) {
 			status, code, message = http.StatusPaymentRequired, "AccountProblem", "The object storage safety budget has been reached."
 		} else if errors.Is(err, state.ErrObjectCapacity) {
 			status, code, message = http.StatusConflict, "OperationAborted", "The object storage capacity reservation would be exceeded."
@@ -666,6 +682,9 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 	if r.ContentLength > h.maxPutBytes {
 		closeUnreadUploadConnection(w, r)
 		writeS3Error(w, http.StatusBadRequest, "EntityTooLarge", "Your proposed upload exceeds the maximum allowed object size for a single PUT.", r.URL.Path, req.requestID)
+		return
+	}
+	if req.credential.URL == nil && !h.checkWritePressure(w, r, req, "put", r.ContentLength) {
 		return
 	}
 	file, cleanup, ok := h.stageUpload(w, r, req)
@@ -851,6 +870,10 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestCo
 	if !h.downloadVersionHeaders(w, r, req, key, native, response) {
 		return
 	}
+	if !validReadChecksumHeaders(response.Header) {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
+		return
+	}
 	h.writeGatewayRead(w, r, req, key, response)
 }
 
@@ -897,7 +920,7 @@ func hasUnsupportedS3Semantics(r *http.Request) bool {
 		return true
 	}
 	for name := range r.Header {
-		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) && !supportedEncryptionHeader(r, name) && !supportedWriteProtectionHeader(r, name) {
+		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) && !supportedEncryptionHeader(r, name) && !supportedWriteProtectionHeader(r, name) && !supportedMultipartChecksumHeader(r, name) {
 			return true
 		}
 	}
@@ -947,6 +970,9 @@ func (h *Handler) recordProviderRequest(w http.ResponseWriter, r *http.Request, 
 		return h.writeAdmissionError(w, r, req, metrics.ReserveObjectStorageGatewayRequest(r.Context(), req.bucket.ID, h.now().UTC(), h.registry.Accounting))
 	}
 	if err := h.requestMetrics.RecordObjectStorageProviderRequest(r.Context(), req.bucket.ID, h.now().UTC()); err != nil {
+		if errors.Is(err, state.ErrOrgAccessRevoked) {
+			return h.writeAdmissionError(w, r, req, err)
+		}
 		h.log.Warn("S3 provider request metric write failed", "request_id", req.requestID)
 		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale could not record object storage usage.", r.URL.Path, req.requestID)
 		return false
@@ -958,6 +984,30 @@ func (h *Handler) closeResponseBody(body io.Closer, requestID string) {
 	if err := body.Close(); err != nil {
 		h.log.Warn("S3 provider response close failed", "request_id", requestID)
 	}
+}
+
+// keepEdgeFromRewritingHTML marks HTML object responses Cache-Control:
+// no-transform on the CDN-proxied profile. Behind Cloudflare a text/html GET
+// otherwise came back with the bot-detection script appended (H9-S161: a
+// 116-byte object served as 1,054 bytes); the edge leaves no-transform bodies
+// alone. The stored directives are kept and only no-transform is added.
+func keepEdgeFromRewritingHTML(headers http.Header, profile string) {
+	mediaType, _, _ := strings.Cut(headers.Get("Content-Type"), ";")
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	if profile != "proxied" || mediaType != "text/html" && mediaType != "application/xhtml+xml" {
+		return
+	}
+	value := strings.TrimSpace(headers.Get("Cache-Control"))
+	for _, directive := range strings.Split(value, ",") {
+		if strings.EqualFold(strings.TrimSpace(directive), "no-transform") {
+			return
+		}
+	}
+	if value == "" {
+		headers.Set("Cache-Control", "no-transform")
+		return
+	}
+	headers.Set("Cache-Control", value+", no-transform")
 }
 
 func copyObjectHeaders(dst, src http.Header) {
@@ -1079,6 +1129,7 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 	if response.StatusCode == http.StatusNotModified || response.StatusCode == http.StatusPreconditionFailed {
 		copyObjectHeaders(w.Header(), response.Header)
 		setURLDownloadHeaders(w.Header(), r, req)
+		keepEdgeFromRewritingHTML(w.Header(), h.registry.Transfer.Profile)
 		w.Header().Del("Content-Length")
 		w.WriteHeader(response.StatusCode)
 		return
@@ -1099,6 +1150,7 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 	}
 	copyObjectHeaders(w.Header(), response.Header)
 	setURLDownloadHeaders(w.Header(), r, req)
+	keepEdgeFromRewritingHTML(w.Header(), h.registry.Transfer.Profile)
 	writeEncryptionHeaders(w.Header(), encryption)
 	w.WriteHeader(response.StatusCode)
 	if r.Method == http.MethodGet {

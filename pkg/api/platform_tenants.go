@@ -340,8 +340,25 @@ type CreatePlatformTenantRateCardRequest struct {
 	IncludedUnitsPerMonth int64 `json:"included_units_per_month,omitempty"`
 	// Tiers is an optional graduated ladder counted per tenant per UTC month
 	// (ADR-975); it replaces the price and the allowance.
-	Tiers         []APIConsumerRateCardTier `json:"tiers,omitempty"`
-	EffectiveFrom *time.Time                `json:"effective_from,omitempty"`
+	Tiers []APIConsumerRateCardTier `json:"tiers,omitempty"`
+	// RouteWeights charge a request on a "METHOD /template" route that many
+	// units, surface and JWT-rule requests included (ADR-1307, ADR-1310);
+	// statements then cover calendar months.
+	RouteWeights  map[string]int64 `json:"route_weights,omitempty"`
+	EffectiveFrom *time.Time       `json:"effective_from,omitempty"`
+	// Unit is what the card prices (ADR-1310): request (default),
+	// compute_second, or response_megabyte, rounded per subject minute, or
+	// app:<meter> for units the app reports (ADR-1319). Cards of different
+	// units price side by side.
+	Unit string `json:"unit,omitempty"`
+	// TierMode is how tiers price a month (ADR-1309): graduated or volume.
+	TierMode string `json:"tier_mode,omitempty"`
+	// BaseFeeMillicentsPerMonth is a fixed charge per tenant per UTC month,
+	// and MinimumMillicentsPerMonth a minimum usage charge (ADR-1322);
+	// ProrateMonthlyFees scales both in the tenant's first month (ADR-1325).
+	BaseFeeMillicentsPerMonth int64 `json:"base_fee_millicents_per_month,omitempty"`
+	MinimumMillicentsPerMonth int64 `json:"minimum_millicents_per_month,omitempty"`
+	ProrateMonthlyFees        bool  `json:"prorate_monthly_fees,omitempty"`
 }
 
 // PlatformTenantRateCardResponse is one immutable tenant-wide request price.
@@ -354,8 +371,14 @@ type PlatformTenantRateCardResponse struct {
 	// IncludedUnitsPerMonth are free units per tenant per UTC month (ADR-975).
 	IncludedUnitsPerMonth int64                     `json:"included_units_per_month"`
 	Tiers                 []APIConsumerRateCardTier `json:"tiers,omitempty"`
-	EffectiveFrom         time.Time                 `json:"effective_from"`
-	CreatedAt             time.Time                 `json:"created_at"`
+	TierMode              string                    `json:"tier_mode"`
+	RouteWeights          map[string]int64          `json:"route_weights,omitempty"`
+	// Monthly base fee and minimum spend per tenant (ADR-1322, ADR-1325).
+	BaseFeeMillicentsPerMonth int64     `json:"base_fee_millicents_per_month,omitempty"`
+	MinimumMillicentsPerMonth int64     `json:"minimum_millicents_per_month,omitempty"`
+	ProrateMonthlyFees        bool      `json:"prorate_monthly_fees,omitempty"`
+	EffectiveFrom             time.Time `json:"effective_from"`
+	CreatedAt                 time.Time `json:"created_at"`
 }
 
 // PlatformTenantRateCardListResponse wraps a tenant's chronological tariff history.
@@ -527,9 +550,17 @@ type PlatformTenantStatementResponse struct {
 	UnpricedUnits    int64                                 `json:"unpriced_units"`
 	AmountMillicents int64                                 `json:"amount_millicents"`
 	Lines            []PlatformTenantStatementLineResponse `json:"lines"`
-	AsOf             time.Time                             `json:"as_of"`
-	CreatedAt        time.Time                             `json:"created_at"`
-	FinalizedAt      *time.Time                            `json:"finalized_at,omitempty"`
+	// Fees are the monthly base fee and minimum top-up this revision bills
+	// (ADR-1322); amount_millicents includes them.
+	Fees []APIConsumerStatementFeeResponse `json:"fees,omitempty"`
+	// CreditAppliedMillicents is prepaid credit drawn when the statement was
+	// finalized; AmountDueMillicents is what is left to invoice
+	// (ADR-20261019100331).
+	CreditAppliedMillicents int64      `json:"credit_applied_millicents"`
+	AmountDueMillicents     int64      `json:"amount_due_millicents"`
+	AsOf                    time.Time  `json:"as_of"`
+	CreatedAt               time.Time  `json:"created_at"`
+	FinalizedAt             *time.Time `json:"finalized_at,omitempty"`
 }
 
 type PlatformTenantStatementListResponse struct {

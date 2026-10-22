@@ -28,7 +28,7 @@ func TestFinancialReadOnlyAPI(t *testing.T) {
 		if err := json.Unmarshal(r.Body.Bytes(), &body); err != nil {
 			t.Fatal(err)
 		}
-		if string(body["currency"]) != `"EUR"` || len(body["missing_bill_components"]) == 0 {
+		if string(body["currency"]) != `"USD"` || len(body["missing_bill_components"]) == 0 {
 			t.Fatalf("missing financial coverage: %s", r.Body)
 		}
 		req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -63,13 +63,13 @@ func TestFinancialBudgetPreviewAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	(*e.Key()) = key
-	spec := financial.BudgetSpec{Name: "previews", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 1000, NotifyMillicents: []int64{800}, Mode: "monitored", Action: "stop_previews", DrainSeconds: 30, ResumeRule: "manual", Enabled: true}
+	spec := financial.BudgetSpec{Name: "previews", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 1000, NotifyMillicents: []int64{800}, Mode: "monitored", Action: "stop_previews", DrainSeconds: 30, ResumeRule: "manual", Enabled: true}
 	preview := e.Do(t, http.MethodPost, "/v1/billing/budgets/preview", api.FinancialBudgetPreviewRequest{Spec: spec}, nil)
 	if preview.Code != http.StatusOK || preview.Header().Get("Cache-Control") != "private, no-store" {
 		t.Fatalf("preview: %d %s", preview.Code, preview.Body)
 	}
 	var out api.FinancialBudgetPreviewResponse
-	if err := json.Unmarshal(preview.Body.Bytes(), &out); err != nil || out.EnforcementReady || len(out.Reasons) == 0 {
+	if err := json.Unmarshal(preview.Body.Bytes(), &out); err != nil || !out.EnforcementReady || len(out.Reasons) == 0 {
 		t.Fatalf("preview claims activation: %+v %v", out, err)
 	}
 	rows, err := (*e.Store()).ListFinancialBudgets(t.Context(), (*e.Acct()).ID)

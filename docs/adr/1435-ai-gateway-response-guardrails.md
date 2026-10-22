@@ -1,0 +1,48 @@
+# ADR-1435 · AI gateway phase 13: response guardrails
+
+- **Status:** accepted
+- **Date:** 2026-10-17
+- **Relates to:** ADR-997 (content guardrails), ADR-1340 (moderation), ADR-991 (OpenAI-format routes), ADR-996 (unknown usage)
+- **Decision:**
+  - **The content policy gains a `response` section** that checks the text a model sends back before the caller sees it:
+    - `email`, `payment_card`, `iban`, `secret`: `off`, `redact` or `block`, with the request detectors (ADR-997).
+    - `blocked_terms`: `off` or `block`. `block` refuses a response that contains one of the policy's blocked terms.
+    - `moderation`: `off`, `flag` or `block`. It runs the policy's moderation check (ADR-1340) on the response, with a prompt about text an AI produced, and without `prompt_injection`. The check's settings stay stored while only responses use them.
+  - **What is checked:** the generated text of successful (2xx) generation and transcription calls, by wire format:
+    - OpenAI chat and text completions, the Responses API (messages, refusals and their stream events) and transcriptions;
+    - Anthropic text blocks;
+    - Gemini and Vertex text parts;
+    - Bedrock Converse text, and the text fields of Bedrock invoke model families.
+  - **What is not checked:** tool call arguments, thinking and reasoning text (redacting it would break signed reasoning), citations, embeddings, images, speech, video and batch results. Replays and the gateway's own checks and evaluations are not checked either.
+  - **Whole responses** (JSON or text, Gemini's JSON-array stream included) are read in full before any byte reaches the caller, up to `OutboundAIResponseCheckMaxBytes`.
+    - Redactions rewrite the text in place, re-encoding the JSON. `X-Gregale-AI-Response-Redactions` names the counts.
+    - A blocked response is refused with `422 outbound_ai_response_blocked`, or `422 outbound_ai_response_flagged` after moderation.
+    - A flagged response names its categories in `X-Gregale-AI-Response-Moderation`.
+    - A failed check under `on_error: block` returns `503 outbound_ai_moderation_unavailable`.
+    - A response the gateway cannot read or bound returns `502 outbound_ai_response_unchecked`.
+  - **Streams** (server-sent events and Bedrock event streams) keep streaming.
+    - The gateway parses each event and keeps the text of each choice, output part or content block separately.
+    - It releases an event once `OutboundAIResponseHoldBackBytes` more text of that channel has arrived, or the stream ends. Before release, it scans the channel's recent text (`OutboundAIResponseScanLookbackBytes`), so a finding split across events is caught.
+    - Redactions rewrite the held events. A block ends the stream with an error event: SSE `event: error` with `{"type":"error","error":{...}}`, or a Bedrock exception frame. OpenAI-format routes turn it into an OpenAI error event.
+    - Stream moderation: `flag` checks the whole text when the stream ends. `block` holds the stream until the end and then releases it or ends it with the error event.
+  - **Uncompressed provider bytes.** AI calls no longer forward the caller's `Accept-Encoding`. The transport negotiates compression and decompresses, so usage and checks always read plain bytes.
+  - **Visibility:**
+    - `outbound_ai_response_checks_total{result}` counts results: `passed`, `redacted`, `blocked`, `flagged`, `error` or `unchecked`.
+    - `outbound_ai_response_findings_total{kind,action}` counts findings.
+    - The log-export line gains `response_check`, `response_findings` and `response_moderation_categories`.
+- **Why:**
+  - The request-side policy stops data from reaching a provider, but nothing checked what came back. A model can echo personal data from its context, leak a key from a tool result, or produce content the app must not show.
+  - Other AI gateways check outputs as well as inputs. Gregale's detectors, terms and moderation check already exist; applying them to responses reuses them.
+  - Compressed responses had also left usage unread for SDKs that ask for gzip, so those calls settled at their reservation.
+- **Consequences:**
+  - **Blocked responses are still paid for.** The provider bills the tokens, and the call settles its usage as usual. A stream the gateway ends settles like an aborted stream (ADR-996).
+  - **Streams arrive in steps.** Up to `OutboundAIResponseHoldBackBytes` of a channel's text waits for more text or the end of the stream. A stream with moderation `block` arrives at the end.
+  - **Findings longer than the lookback** (rare, such as a very long token) may be caught only partly in a stream. A whole response is always scanned whole.
+  - **Redacted JSON is re-encoded.** Key order and spacing can change; values do not.
+  - **A route's fallback** treats `502` and `503` as for any target. A `422` is returned as is.
+  - **New columns:** `outbound_integrations.ai_response_email`, `ai_response_payment_card`, `ai_response_iban`, `ai_response_secret`, `ai_response_blocked_terms` and `ai_response_moderation`.
+- **Rejected alternatives:**
+  - **Flag-only checks for streams.** The stream would be shown to the user before the gateway could act, which defeats redaction and blocking.
+  - **Buffering every stream.** It is correct but loses streaming for every checked call. Holding back a small window keeps the stream and still catches findings that span events.
+  - **Checking every string in the response.** IDs, signatures and tool arguments would be rewritten or blocked; only generated text is the model's answer.
+  - **A separate moderation check for responses.** One check's settings serve both directions; a second integration and model per policy adds configuration without a use.

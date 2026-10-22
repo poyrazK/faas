@@ -10,12 +10,17 @@ from ..models.source_ref_deploy_request_format import (
     SourceRefDeployRequestFormat,
     check_source_ref_deploy_request_format,
 )
+from ..models.source_ref_deploy_request_native_rollout import (
+    SourceRefDeployRequestNativeRollout,
+    check_source_ref_deploy_request_native_rollout,
+)
 from ..models.source_ref_deploy_request_tag import SourceRefDeployRequestTag, check_source_ref_deploy_request_tag
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.canary_preset_spec import CanaryPresetSpec
     from ..models.deployment_healthcheck import DeploymentHealthcheck
+    from ..models.source_review_response import SourceReviewResponse
 
 
 T = TypeVar("T", bound="SourceRefDeployRequest")
@@ -41,6 +46,11 @@ class SourceRefDeployRequest:
     caller's `ref` is preserved on the `deploy.source_ref`
     audit row for traceability).
     """
+    native_rollout: SourceRefDeployRequestNativeRollout | Unset = UNSET
+    """Reviewed native service handoff or worker generation activation. Requires expected_source, omitted traffic,
+    an unprotected target and matching workload mode."""
+    expected_source: SourceReviewResponse | Unset = UNSET
+    """Resolved repository identity and immutable commit bound to a release review."""
     healthcheck: DeploymentHealthcheck | Unset = UNSET
     """Startup healthcheck shape on the deploy-time override object (issue #460 /
     ADR-053). Exactly one of `path` (HTTP) or `grpc` (standard gRPC health
@@ -93,6 +103,9 @@ class SourceRefDeployRequest:
     mcp_task_migration_override: bool | Unset = UNSET
     """Source-ref deployment grant consumed once to permit cutover despite outstanding tasks requiring omitted
     handler versions."""
+    override_freeze: str | Unset = UNSET
+    """Release this source ref to production while a deploy freeze is active; the reason is audited
+    (ADR-20261019071733)."""
     disable_startup_cpu_boost: bool | None | Unset = UNSET
     """Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default
     boost."""
@@ -104,6 +117,14 @@ class SourceRefDeployRequest:
         repo = self.repo
 
         ref = self.ref
+
+        native_rollout: str | Unset = UNSET
+        if not isinstance(self.native_rollout, Unset):
+            native_rollout = self.native_rollout
+
+        expected_source: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.expected_source, Unset):
+            expected_source = self.expected_source.to_dict()
 
         healthcheck: dict[str, Any] | Unset = UNSET
         if not isinstance(self.healthcheck, Unset):
@@ -151,6 +172,8 @@ class SourceRefDeployRequest:
 
         mcp_task_migration_override = self.mcp_task_migration_override
 
+        override_freeze = self.override_freeze
+
         disable_startup_cpu_boost: bool | None | Unset
         if isinstance(self.disable_startup_cpu_boost, Unset):
             disable_startup_cpu_boost = UNSET
@@ -165,6 +188,10 @@ class SourceRefDeployRequest:
                 "ref": ref,
             }
         )
+        if native_rollout is not UNSET:
+            field_dict["native_rollout"] = native_rollout
+        if expected_source is not UNSET:
+            field_dict["expected_source"] = expected_source
         if healthcheck is not UNSET:
             field_dict["healthcheck"] = healthcheck
         if source_branch is not UNSET:
@@ -191,6 +218,8 @@ class SourceRefDeployRequest:
             field_dict["rollback_on_5xx"] = rollback_on_5xx
         if mcp_task_migration_override is not UNSET:
             field_dict["mcp_task_migration_override"] = mcp_task_migration_override
+        if override_freeze is not UNSET:
+            field_dict["override_freeze"] = override_freeze
         if disable_startup_cpu_boost is not UNSET:
             field_dict["disable_startup_cpu_boost"] = disable_startup_cpu_boost
 
@@ -200,11 +229,26 @@ class SourceRefDeployRequest:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.canary_preset_spec import CanaryPresetSpec
         from ..models.deployment_healthcheck import DeploymentHealthcheck
+        from ..models.source_review_response import SourceReviewResponse
 
         d = dict(src_dict)
         repo = d.pop("repo")
 
         ref = d.pop("ref")
+
+        _native_rollout = d.pop("native_rollout", UNSET)
+        native_rollout: SourceRefDeployRequestNativeRollout | Unset
+        if isinstance(_native_rollout, Unset):
+            native_rollout = UNSET
+        else:
+            native_rollout = check_source_ref_deploy_request_native_rollout(_native_rollout)
+
+        _expected_source = d.pop("expected_source", UNSET)
+        expected_source: SourceReviewResponse | Unset
+        if isinstance(_expected_source, Unset):
+            expected_source = UNSET
+        else:
+            expected_source = SourceReviewResponse.from_dict(_expected_source)
 
         _healthcheck = d.pop("healthcheck", UNSET)
         healthcheck: DeploymentHealthcheck | Unset
@@ -276,6 +320,8 @@ class SourceRefDeployRequest:
 
         mcp_task_migration_override = d.pop("mcp_task_migration_override", UNSET)
 
+        override_freeze = d.pop("override_freeze", UNSET)
+
         def _parse_disable_startup_cpu_boost(data: object) -> bool | None | Unset:
             if data is None:
                 return data
@@ -288,6 +334,8 @@ class SourceRefDeployRequest:
         source_ref_deploy_request = cls(
             repo=repo,
             ref=ref,
+            native_rollout=native_rollout,
+            expected_source=expected_source,
             healthcheck=healthcheck,
             source_branch=source_branch,
             format_=format_,
@@ -301,6 +349,7 @@ class SourceRefDeployRequest:
             canary=canary,
             rollback_on_5xx=rollback_on_5xx,
             mcp_task_migration_override=mcp_task_migration_override,
+            override_freeze=override_freeze,
             disable_startup_cpu_boost=disable_startup_cpu_boost,
         )
 

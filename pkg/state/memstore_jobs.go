@@ -120,7 +120,7 @@ func (m *MemStore) JobCreateIfUnderQuota(_ context.Context, accountID, name, kin
 	defer m.mu.Unlock()
 	count := 0
 	for _, j := range m.jobs {
-		if j.AccountID == accountID && j.Status != "deleted" {
+		if j.AccountID == accountID && j.Status != "deleted" && j.Kind != JobKindImageRun {
 			count++
 		}
 	}
@@ -137,7 +137,7 @@ func (m *MemStore) JobCreateScheduledIfUnderQuota(_ context.Context, job Job, li
 	defer m.mu.Unlock()
 	count := 0
 	for _, existing := range m.jobs {
-		if existing.AccountID == job.AccountID && existing.Status != "deleted" {
+		if existing.AccountID == job.AccountID && existing.Status != "deleted" && existing.Kind != JobKindImageRun {
 			count++
 		}
 	}
@@ -227,7 +227,7 @@ func (m *MemStore) JobListByAccount(_ context.Context, accountID string, limit, 
 	defer m.mu.Unlock()
 	var matched []Job
 	for _, j := range m.jobs {
-		if j.AccountID == accountID && j.Status != "deleted" {
+		if j.AccountID == accountID && j.Status != "deleted" && j.Kind != JobKindImageRun {
 			matched = append(matched, j)
 		}
 	}
@@ -335,6 +335,7 @@ func (m *MemStore) jobUpdateLocked(id string, command []string, imageRef *string
 		j.ImageMaterializedAt = nil
 		j.ImageMaterializationAttempts = 0
 		j.ImageMaterializationNextAttemptAt = nil
+		j.ImageEntrypoint, j.ImageCmd, j.ImageConfigRecorded = nil, nil, false
 		delete(m.jobMaterializationClaims, id)
 	}
 	if ramMB != nil {
@@ -382,7 +383,7 @@ func (m *MemStore) JobListPendingImageMaterialization(_ context.Context, limit i
 	defer m.mu.Unlock()
 	var out []Job
 	for _, j := range m.jobs {
-		if j.Status != "deleted" && j.ImageMaterializationStatus == "pending" &&
+		if j.Status != "deleted" && !isEnvironmentGitOpsSourceJob(j.ImageRef) && j.ImageMaterializationStatus == "pending" &&
 			(j.ImageMaterializationNextAttemptAt == nil || !j.ImageMaterializationNextAttemptAt.After(time.Now())) {
 			if claim, ok := m.jobMaterializationClaims[j.ID]; ok && claim.leaseUntil.After(time.Now()) {
 				continue
@@ -418,7 +419,7 @@ func (m *MemStore) JobClaimImageMaterialization(_ context.Context, id, owner str
 	}
 	now := time.Now().UTC()
 	j, ok := m.jobs[id]
-	if !ok || j.Status == "deleted" || j.ImageMaterializationStatus != "pending" {
+	if !ok || j.Status == "deleted" || isEnvironmentGitOpsSourceJob(j.ImageRef) || j.ImageMaterializationStatus != "pending" {
 		return Job{}, ErrNotFound
 	}
 	if j.ImageMaterializationNextAttemptAt != nil && j.ImageMaterializationNextAttemptAt.After(now) {
@@ -452,7 +453,7 @@ func (m *MemStore) JobClaimPendingImageMaterialization(_ context.Context, limit 
 	now := time.Now().UTC()
 	var out []Job
 	for _, j := range m.jobs {
-		if j.Status == "deleted" || j.ImageMaterializationStatus != "pending" {
+		if j.Status == "deleted" || isEnvironmentGitOpsSourceJob(j.ImageRef) || j.ImageMaterializationStatus != "pending" {
 			continue
 		}
 		if j.ImageMaterializationNextAttemptAt != nil && j.ImageMaterializationNextAttemptAt.After(now) {
@@ -517,7 +518,7 @@ func (m *MemStore) JobSetImageMaterialization(_ context.Context, id, sourceRef, 
 	if !ok || j.Status == "deleted" {
 		return Job{}, ErrNotFound
 	}
-	if j.ImageRef != sourceRef {
+	if isEnvironmentGitOpsSourceJob(j.ImageRef) || j.ImageRef != sourceRef {
 		return Job{}, ErrConflict
 	}
 	if status == "ready" {
@@ -560,7 +561,7 @@ func (m *MemStore) JobPublishImageMaterialization(_ context.Context, id, sourceR
 	if !ok || j.Status == "deleted" {
 		return Job{}, ErrNotFound
 	}
-	if j.ImageRef != sourceRef || j.ImageMaterializationStatus != "pending" || j.ImageMaterializationAttempts != attempt {
+	if isEnvironmentGitOpsSourceJob(j.ImageRef) || j.ImageRef != sourceRef || j.ImageMaterializationStatus != "pending" || j.ImageMaterializationAttempts != attempt {
 		return Job{}, ErrConflict
 	}
 	claim, ok := m.jobMaterializationClaims[id]
@@ -605,7 +606,7 @@ func (m *MemStore) JobRecordImageMaterializationFailure(_ context.Context, id, s
 	if !ok || j.Status == "deleted" {
 		return Job{}, ErrNotFound
 	}
-	if j.ImageRef != sourceRef {
+	if isEnvironmentGitOpsSourceJob(j.ImageRef) || j.ImageRef != sourceRef {
 		return Job{}, ErrConflict
 	}
 	claim, ok := m.jobMaterializationClaims[id]
@@ -729,7 +730,7 @@ func (m *MemStore) JobCountByAccount(_ context.Context, accountID string) (int, 
 	defer m.mu.Unlock()
 	count := 0
 	for _, j := range m.jobs {
-		if j.AccountID == accountID && j.Status != "deleted" {
+		if j.AccountID == accountID && j.Status != "deleted" && j.Kind != JobKindImageRun {
 			count++
 		}
 	}
@@ -788,6 +789,9 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.retirementJobBlockedLocked(jobID) {
+		return JobRun{}, nil, ErrEnvironmentWorkloadRetired
+	}
 	job, ok := m.jobs[jobID]
 	if !ok || job.AccountID != accountID || job.Status == "deleted" {
 		return JobRun{}, nil, ErrNotFound
@@ -826,6 +830,12 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 	}
 	if len(inputs) > 0 && len(inputs) != tasks {
 		return JobRun{}, nil, fmt.Errorf("state: input count %d must equal tasks %d", len(inputs), tasks)
+	}
+	if err := validateJobRunProcess(opts); err != nil {
+		return JobRun{}, nil, err
+	}
+	if err := validateJobRunAttach(opts, tasks, retryMaxOverride); err != nil {
+		return JobRun{}, nil, err
 	}
 	manifestVersion, inputDigest := jobInputDigest(inputs)
 	inputManifestURI, inputManifestSHA256 := "", ""
@@ -899,6 +909,8 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 		RetryMax:                    &retryMax,
 		TaskTimeoutS:                &timeout,
 		Command:                     command,
+		ProcessUser:                 opts.ProcessUser,
+		ProcessWorkdir:              opts.ProcessWorkdir,
 		ImageRefSnapshot:            job.ImageRef,
 		ImageResolvedDigestSnapshot: job.ImageResolvedDigest,
 		ImageStorageKeySnapshot:     job.ImageStorageKey,
@@ -931,6 +943,14 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 		taskMap[i] = t
 	}
 	m.jobTasks[run.ID] = taskMap
+	if attach := opts.Attach; attach != nil {
+		if m.jobRunAttach == nil {
+			m.jobRunAttach = make(map[string]JobRunAttach)
+		}
+		record := *attach
+		record.TokenSHA256 = append([]byte(nil), attach.TokenSHA256...)
+		m.jobRunAttach[run.ID] = record
+	}
 
 	return run, fanned, nil
 }
@@ -945,7 +965,7 @@ func (m *MemStore) JobRunReplayFailed(_ context.Context, sourceRunID, accountID 
 	if !ok || source.AccountID != accountID {
 		return JobRun{}, nil, ErrNotFound
 	}
-	if source.FinishedAt == nil {
+	if _, interactive := m.jobRunAttach[sourceRunID]; source.FinishedAt == nil || interactive {
 		return JobRun{}, nil, ErrConflict
 	}
 	job, ok := m.jobs[source.JobID]
@@ -980,7 +1000,8 @@ func (m *MemStore) JobRunReplayFailed(_ context.Context, sourceRunID, accountID 
 		Tasks: len(failed), Parallelism: source.Parallelism,
 		ExecutionClass: "standard", FailurePolicy: source.FailurePolicy,
 		RetryMax: source.RetryMax, TaskTimeoutS: source.TaskTimeoutS,
-		Command:          append([]string(nil), source.Command...),
+		Command:     append([]string(nil), source.Command...),
+		ProcessUser: source.ProcessUser, ProcessWorkdir: source.ProcessWorkdir,
 		ImageRefSnapshot: job.ImageRef, ImageResolvedDigestSnapshot: job.ImageResolvedDigest,
 		ImageStorageKeySnapshot: job.ImageStorageKey, RAMMBSnapshot: source.RAMMBSnapshot,
 		EffectiveEnvSnapshot: append(json.RawMessage(nil), source.EffectiveEnvSnapshot...),
@@ -1036,6 +1057,9 @@ func (m *MemStore) JobRunCreateScheduledOccurrence(_ context.Context, jobID, sch
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, managed := m.exclusiveTriggerBindings["job_schedule\x00"+jobID]; managed && options.Disposition == "" {
+		return JobRun{}, false, nil
+	}
+	if m.retirementJobBlockedLocked(jobID) {
 		return JobRun{}, false, nil
 	}
 	job, ok := m.jobs[jobID]
@@ -1494,8 +1518,11 @@ func (m *MemStore) JobTaskClaimBatch(_ context.Context, limit int) ([]JobTask, e
 		for _, t := range tasks {
 			run, runOK := m.jobRuns[t.RunID]
 			job, jobOK := m.jobs[run.JobID]
-			_, operationOwned := m.operationForJobLocked(run.ID)
-			if !runOK || !jobOK || (!operationOwned && (job.ImageMaterializationStatus != "ready" || job.ImageStorageKey == "")) || !m.exclusiveJobRunCurrentLocked(run) {
+			owner, operationOwned := m.operationForJobLocked(run.ID)
+			if operationOwned && m.operationQueuedLocked(owner.ID) {
+				continue // ADR-20261018210500: held until apid's releaser frees it.
+			}
+			if m.retirementJobBlockedLocked(run.JobID) || !runOK || !jobOK || (!operationOwned && (job.ImageMaterializationStatus != "ready" || job.ImageStorageKey == "")) || !m.exclusiveJobRunCurrentLocked(run) {
 				continue
 			}
 			if runHasPermanentFailure(run, tasks, job) {
@@ -1603,6 +1630,9 @@ func firstJobTaskStartedAt(tasks map[int]JobTask) *time.Time {
 func (m *MemStore) JobTaskMarkClaimed(_ context.Context, runID string, taskIndex int, instanceID, leaseToken string, leaseExpiresAt time.Time, nodeID string) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.retirementJobBlockedLocked(m.jobRuns[runID].JobID) {
+		return ErrEnvironmentWorkloadRetired
+	}
 	tasks, ok := m.jobTasks[runID]
 	if !ok {
 		return ErrNotFound
@@ -1613,6 +1643,19 @@ func (m *MemStore) JobTaskMarkClaimed(_ context.Context, runID string, taskIndex
 	}
 	if !m.exclusiveJobRunCurrentLocked(m.jobRuns[runID]) {
 		return ErrOperationStaleAttempt
+	}
+	run := m.jobRuns[runID]
+	if ins, ok := m.instances[instanceID]; ok {
+		if err := m.recordFinancialJobClaimLocked(financialComputeJobAttempt{AccountID: run.AccountID, JobID: run.JobID, RunID: runID, TaskIndex: taskIndex, InstanceID: instanceID, NodeID: ins.NodeID, RAMMB: ins.RAMMB, LeaseToken: leaseToken}); err != nil {
+			return err
+		}
+	} else {
+		// Preserve projection-only claims used by legacy memory test adapters.
+		// Strict claims and all native funding require a real instance binding.
+		policies, _ := newMemComputeTxn(m, run.AccountID).policies("job:" + run.JobID)
+		if len(strictComputePolicies(policies, "job:"+run.JobID)) > 0 {
+			return ErrNotFound
+		}
 	}
 	t.Status = "claimed"
 	t.InstanceID = &instanceID
@@ -1629,12 +1672,17 @@ func (m *MemStore) JobTaskMarkClaimed(_ context.Context, runID string, taskIndex
 	return m.syncOperationJobLocked(runID)
 }
 
-func (m *MemStore) CreateAndClaimJobInstance(_ context.Context, instanceID, jobID, runID string, taskIndex int, instanceState string, ramMB int, computeNodeID, wakeID, leaseToken string, leaseExpiresAt time.Time, leaseOwnerNodeID string) (Instance, error) {
+func (m *MemStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, jobID, runID string, taskIndex int, instanceState string, ramMB int, computeNodeID, wakeID, leaseToken string, leaseExpiresAt time.Time, leaseOwnerNodeID string) (Instance, error) {
 	if err := validateMemStoreCreateInstanceState(instanceState); err != nil {
 		return Instance{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if IsLive(instanceState) {
+		if err := m.checkNodeAdmissionLocked(ctx, computeNodeID); err != nil {
+			return Instance{}, err
+		}
+	}
 	job, ok := m.jobs[jobID]
 	if !ok {
 		return Instance{}, ErrNotFound
@@ -1695,6 +1743,9 @@ func (m *MemStore) CreateAndClaimJobInstance(_ context.Context, instanceID, jobI
 		ins.WakeID = wakeID
 	} else {
 		ins.WakeID = newID()
+	}
+	if err := m.recordFinancialJobClaimLocked(financialComputeJobAttempt{AccountID: run.AccountID, JobID: jobID, RunID: runID, TaskIndex: taskIndex, InstanceID: instanceID, NodeID: computeNodeID, RAMMB: ramMB, LeaseToken: leaseToken}); err != nil {
+		return Instance{}, err
 	}
 	task.Status = "claimed"
 	task.InstanceID = &instanceID
@@ -1824,6 +1875,10 @@ func (m *MemStore) JobTaskRetry(_ context.Context, runID string, taskIndex int, 
 		return ErrNotFound
 	} else if !m.exclusiveJobRunCurrentLocked(run) {
 		return exclusivework.ErrStaleOwner
+	}
+	// ADR-1330: a retry would run the command again with no client attached.
+	if _, interactive := m.jobRunAttach[runID]; interactive {
+		return ErrConflict
 	}
 	if t.Status != "failed" && t.Status != "timeout" && t.Status != "oom" && t.Status != "cancelled" {
 		return ErrConflict

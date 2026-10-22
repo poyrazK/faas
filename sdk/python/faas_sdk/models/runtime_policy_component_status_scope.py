@@ -1,10 +1,11 @@
 from typing import Literal
 
-RuntimePolicyComponentStatusScope = Literal["account", "app"]
+RuntimePolicyComponentStatusScope = Literal["account", "app", "fleet"]
 
 RUNTIME_POLICY_COMPONENT_STATUS_SCOPE_VALUES: set[RuntimePolicyComponentStatusScope] = {
     "account",
     "app",
+    "fleet",
 }
 
 

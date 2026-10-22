@@ -1,5 +1,5 @@
 // adr: 568 — environment intent and runtime ownership contracts.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -7,10 +7,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
-type heldEnvironmentPrimeStore struct{ state.Store }
+type heldEnvironmentPrimeStore struct{ Store state.Store }
 
 func (s heldEnvironmentPrimeStore) DeploymentByID(ctx context.Context, id string) (state.Deployment, error) {
 	dep, err := s.Store.DeploymentByID(ctx, id)
@@ -22,16 +24,16 @@ func (s heldEnvironmentPrimeStore) DeploymentByID(ctx context.Context, id string
 
 func TestEnvironmentWorkloadPrimeAndRecoveryHoldBeforeVMAdmission(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 256, 2)
-	engine := newEngine(t, heldEnvironmentPrimeStore{store}, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 256, 2)
+	engine := sched.XNewEngine(t, statetest.NewStore(heldEnvironmentPrimeStore{store}), &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 	if err := engine.Prime(t.Context(), app.ID, dep.ID); err != nil {
 		t.Fatal(err)
 	}
-	loop := NewLoop(nil, engine, testLog())
-	if err := loop.recoverPrimeCandidate(t.Context(), dep.ID, time.Now()); err != nil {
+	loop := sched.NewLoop(nil, engine, sched.TestLog())
+	if err := loop.RecoverPrimeCandidate(t.Context(), dep.ID, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	loop.waitPrimes()
+	loop.WaitPrimes()
 	instances, err := store.ListInstancesForApp(t.Context(), app.ID)
 	if err != nil || len(instances) != 0 {
 		t.Fatalf("held graph admitted a VM: %+v %v", instances, err)

@@ -2,16 +2,21 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppReleaseReview } from './AppReleaseReview.js';
 import type { BuildPlan } from './BuildPlan.js';
+import type { DeploymentConfigurationStatus } from './DeploymentConfigurationStatus.js';
 import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 import type { DeploymentPromotionHold } from './DeploymentPromotionHold.js';
 import type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
+import type { DeploymentRelease } from './DeploymentRelease.js';
+import type { DeploymentStageState } from './DeploymentStageState.js';
 import type { DeploymentWorkerDrainStatus } from './DeploymentWorkerDrainStatus.js';
 import type { DevPatchPreview } from './DevPatchPreview.js';
 import type { DurableEntityValidatorDeploymentInfo } from './DurableEntityValidatorDeploymentInfo.js';
 import type { LogExcerpt } from './LogExcerpt.js';
 import type { RollbackOperation } from './RollbackOperation.js';
+import type { RolloutDecision } from './RolloutDecision.js';
 import type { ScanResult } from './ScanResult.js';
 import type { SecretScanResult } from './SecretScanResult.js';
 import type { ServiceRolloutHandoffResponse } from './ServiceRolloutHandoffResponse.js';
@@ -21,6 +26,14 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design.
  */
 export type DeploymentResponse = {
+  /**
+   * Read-only diagnostics included by GET /v1/deployments/{id}; absent on older servers and other response surfaces.
+   */
+  configuration?: DeploymentConfigurationStatus;
+  /**
+   * Intent snapshot committed with a zero-traffic reviewed candidate.
+   */
+  staged_review?: AppReleaseReview;
   worker_drain?: DeploymentWorkerDrainStatus;
   /**
    * Latest blocked automatic MCP task promotion; omitted once the candidate becomes live or terminal. A hold is not a failed deployment.
@@ -28,9 +41,9 @@ export type DeploymentResponse = {
   promotion_hold?: DeploymentPromotionHold;
   durable_entity_validator?: DurableEntityValidatorDeploymentInfo;
   /**
-   * Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be rebuilt. Optional hosting_verification records started_at, deadline_at, attempts, last_error_code, retry_not_before and completed_at during unavailable candidate verification recovery (ADR-481, ADR-482). last_error_code distinguishes publication, gateway, transport and candidate-evidence failures; a transport failure does not attribute blame to the app or platform. retry_not_before is an eligibility floor, not a promised delivery time; completed_at means the attempt finished, while the hosting receipt records its verdict.
+   * Actual stage progress; the same document GET /v1/deployments/{id}/stages serves. retry_requested_stage and retry_restart_reason appear when prerequisites must be rebuilt; hosting_verification appears during unavailable candidate verification recovery (ADR-481, ADR-482).
    */
-  stage_state?: Record<string, any>;
+  stage_state?: DeploymentStageState;
   dev_patch?: DevPatchPreview;
   id: string;
   app_id: string;
@@ -222,7 +235,7 @@ export type DeploymentResponse = {
   /**
    * Canary preset used by the deployment's progressive rollout. `none` preserves the default 100% deployment path.
    */
-  canary_preset?: 'none' | 'slow' | 'balanced' | 'aggressive' | '1-10-50-100';
+  canary_preset?: 'none' | 'slow' | 'balanced' | 'aggressive' | '1-10-50-100' | 'adaptive';
   /**
    * Current zero-based canary ladder step.
    */
@@ -255,6 +268,18 @@ export type DeploymentResponse = {
    * Operator or orchestrator reason recorded when the rollout is aborted.
    */
   rollout_aborted_reason?: string;
+  /**
+   * Evidence recorded with the latest rollout transition (ADR-1447). It explains an outcome only when its kind matches: an advance record for completion, an abort record for an abort.
+   */
+  rollout_decision?: RolloutDecision;
+  /**
+   * The newest hold recorded since the current canary step started, while the rollout is in flight (ADR-1447). Filled on GET /v1/deployments/{id} and the deployment summary.
+   */
+  rollout_hold?: RolloutDecision;
+  /**
+   * The deployment's release command run, for a deployment that declares one (ADR-1448). Filled on GET /v1/deployments/{id} and the deployment summary.
+   */
+  release?: DeploymentRelease;
   rollback_operation?: RollbackOperation;
   service_rollout_handoff?: ServiceRolloutHandoffResponse;
 };

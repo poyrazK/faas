@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyarchive"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func cloneDataWorkerFixture(t *testing.T) (*verificationWorkerFixture, clonePostgresDataWorkConfig) {
@@ -21,7 +22,7 @@ func cloneDataWorkerFixture(t *testing.T) (*verificationWorkerFixture, clonePost
 	f := cloneImportWorkerFixtureWithPreparation(t, false)
 	v := &verificationWorkerFixture{f: f, store: &verificationWorkerFailureStore{importWorkerFailureStore: f.store}, cfg: cloneContentsReadConfig(t)}
 	x := f.db.x
-	x.f.srv.store, x.f.srv.clonePostgresContentsReadPool = v.store, v.cfg.ReadPool
+	x.f.srv.store, x.f.srv.clonePostgresContentsReadPool = statetest.NewPg(v.store), v.cfg.ReadPool
 	cfg := clonePostgresDataWorkConfig{Artifact: f.artifact, PGDump: os.Getenv("FAAS_COPY_PG_DUMP"), PGRestore: f.tool, ScratchRoot: t.TempDir(), MaxPlainBytes: 4 << 20,
 		ArchiveBytes: 8 << 20, ArchiveLimits: archiveWorkerLimits(), ContentsBytes: api.PostgresCopyCiphertextMaxBytes, ContentsLimits: contentsWorkerLimits(), Read: v.cfg}
 	return v, cfg
@@ -164,7 +165,7 @@ func TestPGClonePostgresDataWorkerCloseOnlyCannotFundUndispatchedImport(t *testi
 			var original state.ProjectEnvironmentClonePostgresImport
 			want := state.ErrNotFound
 			if reserved {
-				a, err := v.store.ProjectEnvironmentClonePostgresArchiveForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
+				a, err := v.store.PgStore.ProjectEnvironmentClonePostgresArchiveForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -180,7 +181,7 @@ func TestPGClonePostgresDataWorkerCloseOnlyCannotFundUndispatchedImport(t *testi
 			if got, err := x.f.srv.projectEnvironmentClonePostgresImportWork(t.Context(), x.f.lease, x.source, f.db.exports, f.sourceOID, f.target, cfg.Artifact, "", "", 0, true); !errors.Is(err, want) || !reflect.DeepEqual(got, copyarchive.RestoreExecution{}) || x.p.targetSQLCalls != calls || f.childCalls != 0 {
 				t.Fatal("close-only created/dispatched import", err)
 			}
-			owner, err := v.store.ProjectEnvironmentClonePostgresImportForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
+			owner, err := v.store.PgStore.ProjectEnvironmentClonePostgresImportForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
 			if reserved && (err != nil || !reflect.DeepEqual(owner, original)) || !reserved && !errors.Is(err, state.ErrNotFound) {
 				t.Fatal("close-only changed intent", err)
 			}

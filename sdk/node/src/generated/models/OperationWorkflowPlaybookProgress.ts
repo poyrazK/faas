@@ -4,6 +4,8 @@
 /* eslint-disable */
 import type { OperationWorkflowPlaybook } from './OperationWorkflowPlaybook.js';
 import type { OperationWorkflowPlaybookApplicability } from './OperationWorkflowPlaybookApplicability.js';
+import type { OperationWorkflowPlaybookBusinessOutcome } from './OperationWorkflowPlaybookBusinessOutcome.js';
+import type { OperationWorkflowPlaybookOutcomeFollowUp } from './OperationWorkflowPlaybookOutcomeFollowUp.js';
 import type { OperationWorkflowPlaybookProgressChange } from './OperationWorkflowPlaybookProgressChange.js';
 import type { OperationWorkflowPlaybookProgressItem } from './OperationWorkflowPlaybookProgressItem.js';
 import type { OperationWorkflowPlaybookReview } from './OperationWorkflowPlaybookReview.js';
@@ -11,6 +13,22 @@ import type { OperationWorkflowPlaybookReview } from './OperationWorkflowPlayboo
  * OperationWorkflowPlaybookProgress. Durable advisory checklist coordination, independent of application business success.
  */
 export type OperationWorkflowPlaybookProgress = {
+  /**
+   * OperationWorkflowPlaybookProgress.outcome_follow_ups. Human-reviewed outcome-specific follow-up lists; original checklist counts and business reports remain independent.
+   */
+  outcome_follow_ups?: Array<OperationWorkflowPlaybookOutcomeFollowUp>;
+  /**
+   * OperationWorkflowPlaybookProgress.outcome_deadline_at. Immutable checklist creation time plus the pinned application wait duration; human edits and watch enrollment do not reschedule it.
+   */
+  outcome_deadline_at?: string;
+  /**
+   * OperationWorkflowPlaybookProgress.start_state_revision. Original case state revision pinned when a playbook with an expected outcome starts; earlier reports cannot establish its business result.
+   */
+  start_state_revision?: number;
+  /**
+   * OperationWorkflowPlaybookProgress.business_outcome. Live exact-case result in case reads only; absent from durable progress, review history and mutation responses.
+   */
+  business_outcome?: OperationWorkflowPlaybookBusinessOutcome;
   /**
    * OperationWorkflowPlaybookProgress.disposition. Coordination disposition. Omitted legacy values mean active. Closed checklists reject item edits and further decisions; this is not business success.
    */

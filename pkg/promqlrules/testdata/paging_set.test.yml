@@ -1,0 +1,303 @@
+# ADR-1236 paging set: the pages the triage added (certificates within 72
+# hours of expiry; access-gating jwt/ip/waf edge rules that failed to compile
+# and are not enforced) and the kept pages that had no firing fixture.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: "a public cert with two days left pages"
+    input_series:
+      - series: 'gateway_tls_cert_expiry_seconds{job="gatewayd",instance="127.0.0.1:9092"}'
+        values: '172800x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasTLSCertExpiryImminent
+        exp_alerts:
+          - exp_labels:
+              job: "gatewayd"
+              instance: "127.0.0.1:9092"
+              severity: "page"
+              component: "gatewayd-public"
+              family: "tls_cert_expiry"
+            exp_annotations:
+              summary: "TLS cert expires in under 72 hours"
+              description: "The smallest remaining lifetime across cached certs is below 72 hours, so renewal has failed for at least eleven days. HTTPS for the affected hosts fails when the cert expires; renew it now."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
+
+  - interval: 1m
+    name: "a public cert with ten days left does not page"
+    input_series:
+      - series: 'gateway_tls_cert_expiry_seconds{job="gatewayd",instance="127.0.0.1:9092"}'
+        values: '864000x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasTLSCertExpiryImminent
+        exp_alerts: []
+
+  - interval: 1m
+    name: "an internal leaf with two days left pages"
+    input_series:
+      - series: 'faas_internal_mtls_leaf_earliest_expiry_timestamp_seconds{job="node-compute",instance="fsn-2.gregale.dev:9100",daemon="vmmd",host="fsn-2.faas"}'
+        values: '172800x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasInternalMTLSLeafExpiryImminent
+        exp_alerts:
+          - exp_labels:
+              job: "node-compute"
+              instance: "fsn-2.gregale.dev:9100"
+              daemon: "vmmd"
+              host: "fsn-2.faas"
+              severity: "page"
+              component: "gregalectl"
+              family: "internal_mtls_lifecycle"
+              public_status: "internal"
+            exp_annotations:
+              summary: "An internal mTLS leaf expires within 72 hours"
+              description: "Renewal has not restored a safe validity window for fsn-2.faas/vmmd, and the leaf expires within 72 hours. Internal RPCs to and from that daemon fail when it does; reissue it now."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
+
+  - interval: 1m
+    name: "an internal leaf with seven days left does not page"
+    input_series:
+      - series: 'faas_internal_mtls_leaf_earliest_expiry_timestamp_seconds{job="node-compute",instance="fsn-2.gregale.dev:9100",daemon="vmmd",host="fsn-2.faas"}'
+        values: '604800x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasInternalMTLSLeafExpiryImminent
+        exp_alerts: []
+
+  - interval: 1m
+    name: "a dropped jwt rule pages and stays out of the warn alert"
+    input_series:
+      - series: 'gateway_edge_rule_compile_error_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",kind="jwt"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasEdgeRuleAuthCompileError
+        exp_alerts:
+          - exp_labels:
+              kind: "jwt"
+              severity: "page"
+              component: "gatewayd-internal"
+              family: "edge_rules"
+              public_status: "internal"
+            exp_annotations:
+              summary: "An access-gating jwt edge rule failed to compile"
+              description: "gatewayd-internal dropped a jwt edge rule at load time in the last 10m. A dropped access rule is not enforced, so the route it protected is serving without that check. Fix or disable the rule now."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleCompileError.md"
+      - eval_time: 20m
+        alertname: FaasEdgeRuleCompileError
+        exp_alerts: []
+
+  - interval: 1m
+    name: "a dropped route rule warns without paging"
+    input_series:
+      - series: 'gateway_edge_rule_compile_error_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",kind="route"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasEdgeRuleCompileError
+        exp_alerts:
+          - exp_labels:
+              kind: "route"
+              severity: "warn"
+              component: "gatewayd-internal"
+              family: "edge_rules"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Edge rules of kind route are failing to compile"
+              description: "gatewayd-internal dropped at least one route edge rule at load time in the last 10m. A shipped rule is broken and is not being enforced; the counter is cumulative, so this alert reads new ticks only."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleCompileError.md"
+      - eval_time: 20m
+        alertname: FaasEdgeRuleAuthCompileError
+        exp_alerts: []
+
+  - interval: 1m
+    name: "a usage event that could not be journaled pages"
+    input_series:
+      - series: 'gateway_consumer_usage_outbox_failures_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasConsumerUsageOutboxAppendFailed
+        exp_alerts:
+          - exp_labels:
+              job: "gatewayd-internal"
+              instance: "fsn-2.gregale.dev:9092"
+              severity: "page"
+              component: "gatewayd-internal"
+              family: "consumer_usage_delivery"
+            exp_annotations:
+              summary: "Financial usage event could not be journaled"
+              description: "The gateway served a request whose usage fact could not be appended to its local durable outbox. Preserve the spool and inspect disk health and capacity before trusting usage totals."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
+
+  - interval: 1m
+    name: "a billable response aborted before durable usage pages immediately"
+    input_series:
+      - series: 'gateway_usage_commit_aborts_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '0x2 1x27'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: FaasUsageCommitAborted
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: FaasUsageCommitAborted
+        exp_alerts:
+          - exp_labels:
+              job: "gatewayd-internal"
+              instance: "fsn-2.gregale.dev:9092"
+              severity: "page"
+              component: "gatewayd-internal"
+              family: "consumer_usage_delivery"
+            exp_annotations:
+              summary: "Monetized responses withheld: usage could not be made durable"
+              description: "The gateway aborted billable responses because their usage events could not be fsynced to the local outbox (ADR-1505). Clients saw failed requests. Check outbox capacity and disk health; readiness should already be draining the node."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
+      - eval_time: 10m
+        alertname: FaasUsageCommitAborted
+        exp_alerts: []
+
+  - interval: 1m
+    name: "a usage outbox above 80% pages"
+    input_series:
+      - series: 'gateway_consumer_usage_outbox_pending_bytes{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '60000000x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasConsumerUsageOutboxNearCapacity
+        exp_alerts:
+          - exp_labels:
+              job: "gatewayd-internal"
+              instance: "fsn-2.gregale.dev:9092"
+              severity: "page"
+              component: "gatewayd-internal"
+              family: "consumer_usage_delivery"
+            exp_annotations:
+              summary: "Financial usage outbox is near capacity"
+              description: "The gateway has more than 80% of its 64 MiB durable usage outbox pending. It will leave rotation at 90%; restore apid delivery before the journal fills."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
+
+  - interval: 1m
+    name: "a healthy usage outbox stays quiet"
+    input_series:
+      - series: 'gateway_usage_commit_aborts_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '3x30'
+      - series: 'gateway_consumer_usage_outbox_failures_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '3x30'
+      - series: 'gateway_consumer_usage_outbox_pending_bytes{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '1000000x30'
+      - series: 'gateway_usage_commit_aborts_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '3x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasUsageCommitAborted
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FaasConsumerUsageOutboxAppendFailed
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FaasConsumerUsageOutboxNearCapacity
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FaasUsageCommitAborted
+        exp_alerts: []
+
+  - interval: 1m
+    name: "nodes reporting two signing kids page"
+    input_series:
+      - series: 'faas_fleet_cluster_signing_key_info{job="node-compute",instance="fsn-2.gregale.dev:9100",kid="k1"}'
+        values: '1x30'
+      - series: 'faas_fleet_cluster_signing_key_info{job="node-compute",instance="fsn-3.gregale.dev:9100",kid="k2"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasFleetSigningKIDDiverged
+        exp_alerts:
+          - exp_labels:
+              severity: "page"
+              component: "schedd"
+              family: "fleet_seal_domain"
+            exp_annotations:
+              summary: "Compute nodes report different cluster signing kids"
+              description: "More than one cluster signing kid is reported by verified fleet nodes. Internal-service JWTs can fail across nodes until every node verifies the current singleton key."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFleetSealDomain.md"
+
+  - interval: 1m
+    name: "nodes agreeing on one kid stay quiet"
+    input_series:
+      - series: 'faas_fleet_cluster_signing_key_info{job="node-compute",instance="fsn-2.gregale.dev:9100",kid="k1"}'
+        values: '1x30'
+      - series: 'faas_fleet_cluster_signing_key_info{job="node-compute",instance="fsn-3.gregale.dev:9100",kid="k1"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasFleetSigningKIDDiverged
+        exp_alerts: []
+
+  - interval: 1m
+    name: "a down events receiver pages"
+    input_series:
+      - series: 'vmmd_guest_vsock_receiver_up{job="vmmd",instance="fsn-2.gregale.dev:9104",receiver="events"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasVMMDGuestReceiverDown
+        exp_alerts:
+          - exp_labels:
+              job: "vmmd"
+              instance: "fsn-2.gregale.dev:9104"
+              receiver: "events"
+              severity: "page"
+              component: "vmmd"
+              family: "guest_receiver"
+            exp_annotations:
+              summary: "vmmd guest receiver events is unavailable"
+              description: "vmmd cannot accept the required events channel through a Firecracker per-instance Unix bridge. The node is not traffic-ready until the receiver recovers."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasVMMDGuestReceiverDown.md"
+
+  - interval: 1m
+    name: "a down optional receiver does not page"
+    input_series:
+      - series: 'vmmd_guest_vsock_receiver_up{job="vmmd",instance="fsn-2.gregale.dev:9104",receiver="events"}'
+        values: '1x30'
+      - series: 'vmmd_guest_vsock_receiver_up{job="vmmd",instance="fsn-2.gregale.dev:9104",receiver="logs"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasVMMDGuestReceiverDown
+        exp_alerts: []
+
+  - interval: 1m
+    name: "outbound admission failing closed pages"
+    input_series:
+      - series: 'outbound_admissions_total{job="outboundd",instance="127.0.0.1:9108",integration_id="int-1",outcome="error"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasOutboundAdmissionUnavailable
+        exp_alerts:
+          - exp_labels:
+              integration_id: "int-1"
+              severity: "page"
+              component: "outboundd"
+              family: "outbound_admission"
+            exp_annotations:
+              summary: "Outbound admission backend is unavailable"
+              description: "outboundd has failed closed while admitting integration int-1 for 5m. Check Postgres connectivity, pool saturation, and the outbound_admission_state/leases tables."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/outbound-integrations.md"
+
+  - interval: 1m
+    name: "admitted outbound calls stay quiet"
+    input_series:
+      - series: 'outbound_admissions_total{job="outboundd",instance="127.0.0.1:9108",integration_id="int-1",outcome="admitted"}'
+        values: '0+10x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasOutboundAdmissionUnavailable
+        exp_alerts: []

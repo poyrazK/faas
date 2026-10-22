@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestProjectReleaseInventoryAndEnvironmentState(t *testing.T) {
@@ -96,7 +97,7 @@ func TestProjectReleaseInventoryAndEnvironmentState(t *testing.T) {
 	}
 }
 
-type failedReleaseReader struct{ *state.MemStore }
+type failedReleaseReader struct{ MemStore *state.MemStore }
 
 func (s failedReleaseReader) ActiveProjectReleaseSet(context.Context, string, string, string) (state.ProjectReleaseSet, error) {
 	return state.ProjectReleaseSet{}, errors.New("database unavailable")
@@ -104,7 +105,7 @@ func (s failedReleaseReader) ActiveProjectReleaseSet(context.Context, string, st
 
 func TestEnvironmentStateDoesNotHideReleaseReadFailure(t *testing.T) {
 	srv, store, acct, project, _ := apidserver.NewProjectLifecycleFixture(t)
-	(*srv.Store()) = failedReleaseReader{store}
+	(*srv.Store()) = statetest.NewMem(failedReleaseReader{store})
 	if _, problem := srv.LoadProjectEnvironmentState(context.Background(), acct, project.Slug, "production"); problem == nil {
 		t.Fatal("failed release read was represented as no active release")
 	}

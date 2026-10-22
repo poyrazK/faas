@@ -19,7 +19,7 @@ func (s *server) getRoutePriorities(w http.ResponseWriter, r *http.Request, acct
 	if !ok {
 		return
 	}
-	s.writeRoutePriorities(w, r, acct, app)
+	s.writeRoutePriorities(w, r, acct, app, true)
 }
 
 // putRoutePriorities replaces the app's saved rules. apid is the only writer.
@@ -50,7 +50,7 @@ func (s *server) putRoutePriorities(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	s.audit.Emit(r.Context(), "route_priorities.updated", &acct.ID, map[string]any{"app_id": app.ID, "route_count": len(req.Routes)})
-	s.writeRoutePriorities(w, r, acct, app)
+	s.writeRoutePriorities(w, r, acct, app, false)
 }
 
 // deleteRoutePriorities removes saved rules, restoring the route-health default.
@@ -69,10 +69,12 @@ func (s *server) deleteRoutePriorities(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	s.audit.Emit(r.Context(), "route_priorities.reset", &acct.ID, map[string]any{"app_id": app.ID})
-	s.writeRoutePriorities(w, r, acct, app)
+	s.writeRoutePriorities(w, r, acct, app, false)
 }
 
-func (s *server) writeRoutePriorities(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App) {
+// writeRoutePriorities answers with the effective rules; GET also includes
+// the queue evidence (ADR-1152).
+func (s *server) writeRoutePriorities(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, withQueue bool) {
 	source, setting, err := state.EffectiveRoutePriorities(r.Context(), s.store, acct.ID, app.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("route priorities"))
@@ -81,6 +83,10 @@ func (s *server) writeRoutePriorities(w http.ResponseWriter, r *http.Request, ac
 	out := api.RoutePrioritiesResponse{Slug: app.Slug, Source: source, Routes: setting.Routes}
 	if !setting.UpdatedAt.IsZero() {
 		out.UpdatedAt = setting.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if withQueue {
+		queue := s.routeEvidence().PriorityQueue(r.Context(), app)
+		out.Queue = &queue
 	}
 	writeJSON(w, http.StatusOK, out)
 }

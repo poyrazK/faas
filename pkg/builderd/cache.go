@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/buildcache"
+	"github.com/onebox-faas/faas/pkg/issues"
 	"golang.org/x/sys/unix"
 )
 
@@ -35,11 +35,22 @@ type CacheEntry struct {
 // cache artifact. It is optional so cache entries written before provenance
 // metadata was introduced remain readable.
 type CacheToolchain struct {
-	BuildkitVer string `json:"buildkit_version,omitempty"`
-	RailpackVer string `json:"railpack_version,omitempty"`
+	// Unchanged GitOps reuse requires this origin to remain currently signed.
+	OriginDeploymentID string `json:"origin_deployment_id,omitempty"`
+	OriginBuildID      string `json:"origin_build_id,omitempty"`
+	// The latest target that reused the origin. It is tried only once the
+	// origin is no longer trusted, so a target that never goes live cannot
+	// displace a still-valid origin.
+	NextOriginDeploymentID string `json:"next_origin_deployment_id,omitempty"`
+	NextOriginBuildID      string `json:"next_origin_build_id,omitempty"`
+	BuildkitVer            string `json:"buildkit_version,omitempty"`
+	RailpackVer            string `json:"railpack_version,omitempty"`
 	// DevPatch keeps the producing build's ADR-740 source map so a cache hit
 	// reports the same map as the build it reuses.
-	DevPatch *api.DevPatchSourceMap `json:"dev_patch,omitempty"`
+	DevPatch                   *api.DevPatchSourceMap             `json:"dev_patch,omitempty"`
+	IssueSourceMaps            *api.PublishIssueSourceMapsRequest `json:"issue_source_maps,omitempty"`
+	IssueSourceMapsDigest      string                             `json:"issue_source_maps_digest,omitempty"`
+	IssueSourceMapsImageSHA256 string                             `json:"issue_source_maps_image_sha256,omitempty"`
 }
 
 // Cache stores produced OCI tarballs. Deployment builds use a versioned
@@ -54,6 +65,49 @@ type Cache struct {
 	root            string
 	mu              sync.RWMutex
 	leaseReferenced func(context.Context, string, string) (bool, error)
+	// minFreeFraction is the share of the cache filesystem Sweep keeps
+	// free by evicting oldest-first; 0 disables the floor.
+	minFreeFraction float64
+	// fsUsage reports the cache filesystem's available and total bytes.
+	// A seam so tests can drive the floor without filling a disk.
+	fsUsage func(path string) (avail, size uint64, err error)
+}
+
+// DefaultCacheMinFreeFraction keeps a fifth of the cache filesystem free.
+// The cache shares the host root filesystem with releases, logs and the
+// journal; the 50 GiB size cap alone exceeds a 48 GB root disk, which left
+// both production-us compute nodes at 86% used with FaasHostDiskSpaceLow
+// firing (hunt #10, H10-109). 20% keeps the sweep ahead of that 15% alert.
+const DefaultCacheMinFreeFraction = 0.20
+
+// WithMinFreeFraction sets the free-space floor Sweep enforces.
+func (c *Cache) WithMinFreeFraction(fraction float64) *Cache {
+	if c != nil {
+		c.minFreeFraction = fraction
+	}
+	return c
+}
+
+func statfsUsage(path string) (avail, size uint64, err error) {
+	var stat unix.Statfs_t
+	if err := unix.Statfs(path, &stat); err != nil {
+		return 0, 0, err
+	}
+	return uint64(stat.Bavail) * uint64(stat.Bsize), uint64(stat.Blocks) * uint64(stat.Bsize), nil
+}
+
+// belowFreeFloor reports whether the cache filesystem has less free space
+// than the configured floor.
+func (c *Cache) belowFreeFloor() (bool, error) {
+	usage := c.fsUsage
+	if usage == nil {
+		usage = statfsUsage
+	}
+	avail, size, err := usage(c.root)
+	if err != nil || size == 0 {
+		return false, err
+	}
+	return float64(avail)/float64(size) < c.minFreeFraction, nil
 }
 
 // cacheArtifactMode is the shared publication mode for cache artifacts.
@@ -142,8 +196,14 @@ func (c *Cache) lookupKey(sourceHash string, fw Framework, plan api.Plan) (Cache
 		return CacheEntry{}, false
 	}
 	var toolchain CacheToolchain
-	if metadata, err := os.ReadFile(filepath.Join(filepath.Dir(p), "toolchain.json")); err == nil {
-		_ = json.Unmarshal(metadata, &toolchain)
+	if root, err := os.OpenRoot(filepath.Dir(p)); err == nil {
+		if metadata, err := issues.ReadSourceMapBuildFile(root, "toolchain.json", api.IssueSourceMapBuildMetadataMaxBytes); err == nil {
+			var decoded CacheToolchain
+			if issues.DecodeSourceMapBuildJSON(metadata, &decoded) == nil {
+				toolchain = decoded
+			}
+		}
+		_ = root.Close()
 	}
 	return CacheEntry{Path: p, Bytes: st.Size(), Toolchain: toolchain}, true
 }
@@ -194,10 +254,10 @@ func (c *Cache) Store(sourceHash string, fw Framework, plan api.Plan, layerPath 
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.storeKey(sourceHash, fw, plan, layerPath, bytes, CacheToolchain{})
+	return c.storeKey(sourceHash, fw, plan, layerPath, bytes, CacheToolchain{}, false)
 }
 
-func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPath string, bytes int64, toolchain CacheToolchain) error {
+func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPath string, bytes int64, toolchain CacheToolchain, replace bool) error {
 	if c == nil || c.root == "" {
 		return errors.New("cache: not configured")
 	}
@@ -207,13 +267,13 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 	}
 	// Keep only an intact entry. A corrupt or legacy entry is rebuilt from
 	// the newly produced artifact, including all its integrity metadata.
-	if _, ok := c.lookupKey(sourceHash, fw, plan); ok {
+	if _, ok := c.lookupKey(sourceHash, fw, plan); ok && !replace {
 		for _, path := range []string{dst, c.checksumPath(sourceHash, fw, plan), filepath.Join(filepath.Dir(dst), "artifact.sha256")} {
 			if err := os.Chmod(path, cacheArtifactMode); err != nil {
 				return err
 			}
 		}
-		if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil {
+		if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil || toolchain.OriginDeploymentID != "" || toolchain.IssueSourceMaps != nil {
 			if err := writeCacheMetadata(filepath.Join(filepath.Dir(dst), "toolchain.json"), toolchain); err != nil {
 				return err
 			}
@@ -292,7 +352,7 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 	if err := writeCacheSidecar(filepath.Join(filepath.Dir(dst), "artifact.sha256"), hex.EncodeToString(digest.Sum(nil))); err != nil {
 		return err
 	}
-	if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil {
+	if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil || toolchain.OriginDeploymentID != "" || toolchain.IssueSourceMaps != nil {
 		if err := writeCacheMetadata(filepath.Join(filepath.Dir(dst), "toolchain.json"), toolchain); err != nil {
 			return err
 		}
@@ -352,7 +412,7 @@ func writeCacheSidecar(cs, value string) error {
 }
 
 func writeCacheMetadata(path string, toolchain CacheToolchain) error {
-	data, err := json.Marshal(toolchain)
+	data, err := boundedBuildCacheMetadata(toolchain)
 	if err != nil {
 		return fmt.Errorf("cache: marshal toolchain metadata: %w", err)
 	}
@@ -381,11 +441,16 @@ func CacheGCSweepLoop(ctx context.Context, c *Cache, interval time.Duration, max
 	}
 	t := time.NewTicker(interval)
 	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
+	// Sweep at startup, then on every tick. builderd restarts on every
+	// rollout, so a loop that only swept on its first daily tick never
+	// swept on a fleet releasing more often than daily (H10-109).
+	for first := true; ; first = false {
+		if !first {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
 		}
 		n, err := c.Sweep(maxBytes, maxAge, time.Now(), log)
 		if err != nil {
@@ -398,15 +463,18 @@ func CacheGCSweepLoop(ctx context.Context, c *Cache, interval time.Duration, max
 }
 
 // Sweep deletes cache entries that are older than maxAge OR pushes the
-// total cache size below maxBytes by deleting oldest-first.
+// total cache size below maxBytes OR the filesystem back above the
+// free-space floor, by deleting oldest-first.
 //
-// Two policies, applied in order:
+// Three policies, applied in order:
 //
 //  1. TTL eviction: every entry whose ModTime is before now.Add(-maxAge)
 //     is removed. Stable-sorted by (ModTime, path) so the same inputs
 //     produce the same deletion order on every tick.
 //  2. Size cap: if dirSize still exceeds maxBytes after TTL eviction,
 //     delete oldest-first by (ModTime, path) until under cap.
+//  3. Free-space floor: while the cache filesystem has less than the
+//     WithMinFreeFraction share free, keep deleting oldest-first.
 //
 // Errors are best-effort: per-entry os.RemoveAll failures are logged
 // via the cache's slog logger and the sweep continues. Returns the
@@ -481,6 +549,16 @@ func (c *Cache) Sweep(maxBytes int64, maxAge time.Duration, now time.Time, log *
 		swept++
 	}
 
+	// Policies 2 and 3 evict the surviving entries oldest-first; next is
+	// the first entry neither has removed yet.
+	sort.SliceStable(fresh, func(i, j int) bool {
+		if fresh[i].modTime.Equal(fresh[j].modTime) {
+			return fresh[i].path < fresh[j].path
+		}
+		return fresh[i].modTime.Before(fresh[j].modTime)
+	})
+	next := 0
+
 	// Policy 2: size cap. Only if maxBytes > 0 (zero means "no cap").
 	// Recompute total after TTL — the deleted entries no longer count.
 	if maxBytes > 0 {
@@ -488,30 +566,42 @@ func (c *Cache) Sweep(maxBytes int64, maxAge time.Duration, now time.Time, log *
 		for _, e := range fresh {
 			total += e.size
 		}
-		if total > maxBytes {
-			// Sort fresh oldest-first; delete until under cap.
-			sort.SliceStable(fresh, func(i, j int) bool {
-				if fresh[i].modTime.Equal(fresh[j].modTime) {
-					return fresh[i].path < fresh[j].path
-				}
-				return fresh[i].modTime.Before(fresh[j].modTime)
-			})
-			for _, e := range fresh {
-				if total <= maxBytes {
-					break
-				}
-				if err := os.RemoveAll(e.path); err != nil {
-					log.Warn("cache: sweep: size-cap remove", "path", e.path, "err", err)
-					continue
-				}
-				total -= e.size
-				swept++
+		for ; next < len(fresh) && total > maxBytes; next++ {
+			e := fresh[next]
+			if err := os.RemoveAll(e.path); err != nil {
+				log.Warn("cache: sweep: size-cap remove", "path", e.path, "err", err)
+				continue
 			}
+			total -= e.size
+			swept++
+		}
+	}
+
+	// Policy 3: free-space floor. The size cap bounds the cache, not the
+	// filesystem it shares with everything else on the host; evict until
+	// the filesystem is back above the floor. A leased entry frees no
+	// blocks until imaged releases it, so the floor may take more.
+	if c.minFreeFraction > 0 {
+		for ; next < len(fresh); next++ {
+			low, err := c.belowFreeFloor()
+			if err != nil {
+				log.Warn("cache: sweep: free-space check", "root", c.root, "err", err)
+				break
+			}
+			if !low {
+				break
+			}
+			e := fresh[next]
+			if err := os.RemoveAll(e.path); err != nil {
+				log.Warn("cache: sweep: free-space remove", "path", e.path, "err", err)
+				continue
+			}
+			swept++
 		}
 	}
 
 	if swept > 0 {
-		log.Info("cache: swept", "count", swept, "max_age", maxAge, "max_bytes", maxBytes)
+		log.Info("cache: swept", "count", swept, "max_age", maxAge, "max_bytes", maxBytes, "min_free_fraction", c.minFreeFraction)
 	}
 	return swept, nil
 }

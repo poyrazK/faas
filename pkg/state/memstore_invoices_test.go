@@ -1,7 +1,8 @@
-package state
+package state_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
@@ -9,9 +10,9 @@ import (
 // seedInvoice injects a row directly into the memstore's invoice map
 // so the tests can exercise ListInvoicesForAccount without going
 // through the production upsert path (PR B wires UpsertInvoice).
-func seedInvoice(t *testing.T, m *MemStore, accountID, provider, providerInvoiceID string, periodEnd time.Time, totalCents int64) Invoice {
+func seedInvoice(t *testing.T, m *state.MemStore, accountID, provider, providerInvoiceID string, periodEnd time.Time, totalCents int64) state.Invoice {
 	t.Helper()
-	inv := Invoice{
+	inv := state.Invoice{
 		ID:                "inv-" + providerInvoiceID,
 		AccountID:         accountID,
 		Provider:          provider,
@@ -20,17 +21,17 @@ func seedInvoice(t *testing.T, m *MemStore, accountID, provider, providerInvoice
 		PeriodStart:       periodEnd.AddDate(0, 0, -30),
 		PeriodEnd:         periodEnd,
 		TotalCents:        totalCents,
-		Currency:          "eur",
+		Currency:          "usd",
 		PDFAvailable:      true,
 	}
-	m.mu.Lock()
-	m.invoices[inv.ID] = inv
-	m.mu.Unlock()
+	(*m.Mu()).Lock()
+	(*m.Invoices())[inv.ID] = inv
+	(*m.Mu()).Unlock()
 	return inv
 }
 
 func TestMemStore_ListInvoicesForAccount_OrderingAndScope(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	seedInvoice(t, m, "alice", "stripe", "in_old", time.Date(2026, 7, 31, 23, 59, 59, 0, time.UTC), 900)
 	seedInvoice(t, m, "alice", "stripe", "in_new", time.Date(2026, 8, 31, 23, 59, 59, 0, time.UTC), 900)
 	seedInvoice(t, m, "bob", "stripe", "in_other", time.Date(2026, 8, 31, 23, 59, 59, 0, time.UTC), 100)
@@ -48,7 +49,7 @@ func TestMemStore_ListInvoicesForAccount_OrderingAndScope(t *testing.T) {
 }
 
 func TestMemStore_ListInvoicesForAccount_MonthFilter(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	seedInvoice(t, m, "alice", "stripe", "in_jul", time.Date(2026, 7, 31, 23, 59, 59, 0, time.UTC), 900)
 	seedInvoice(t, m, "alice", "stripe", "in_aug", time.Date(2026, 8, 31, 23, 59, 59, 0, time.UTC), 900)
 
@@ -66,7 +67,7 @@ func TestMemStore_ListInvoicesForAccount_MonthFilter(t *testing.T) {
 }
 
 func TestMemStore_ListInvoicesForAccount_Empty(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	rows, err := m.ListInvoicesForAccount(context.Background(), "alice", nil, time.Time{}, 25)
 	if err != nil {
 		t.Fatalf("ListInvoicesForAccount: %v", err)
@@ -78,12 +79,12 @@ func TestMemStore_ListInvoicesForAccount_Empty(t *testing.T) {
 
 func TestMemStore_UpsertInvoiceIsIdempotentAndUpdatesStatus(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
-	inv := Invoice{
+	inv := state.Invoice{
 		AccountID: "alice", Provider: "polar", ProviderInvoiceID: "order-1",
 		Status: "open", PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0),
-		TotalCents: 1000, Currency: "eur",
+		TotalCents: 1000, Currency: "usd",
 	}
 	if err := m.UpsertInvoice(ctx, inv); err != nil {
 		t.Fatal(err)

@@ -9,13 +9,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // seedTelemetryStore supplies retained route usage, which MemStore does not keep.
 type seedTelemetryStore struct {
-	*state.MemStore
-	rows  []sqlc.RequestTelemetryRouteCustomersRow
-	reads []string
+	MemStore *state.MemStore
+	rows     []sqlc.RequestTelemetryRouteCustomersRow
+	reads    []string
 }
 
 func (s *seedTelemetryStore) RequestTelemetryRouteCustomers(_ context.Context, arg sqlc.RequestTelemetryRouteCustomersParams) ([]sqlc.RequestTelemetryRouteCustomersRow, error) {
@@ -73,7 +74,7 @@ func TestAdvanceCanarySeedsReportModeRouteHealth(t *testing.T) {
 		seedUsageRow("POST", "/login", 9, 400),
 		seedUsageRow("GET", "/search?q", 50, 50), // not an exact selector
 	}}
-	e.s.store = store
+	e.s.store = statetest.NewMem(store)
 
 	rec := e.do(t, http.MethodPost, "/v1/deployments/"+canary.ID+"/canary/advance", api.AdvanceCanaryRequest{ExpectedStep: 0}, nil)
 	if rec.Code != http.StatusOK {
@@ -112,7 +113,7 @@ func TestSeedRouteHealthSkipsConfiguredAndIneligible(t *testing.T) {
 		if _, err := e.store.SetRouteHealthGate(ctx, e.acct.ID, app.ID, api.SetRouteHealthGateRequest{Mode: "report", ExpectedRevision: &zero, Routes: []api.RouteHealthRoute{}}); err != nil {
 			t.Fatal(err)
 		}
-		e.s.store = &seedTelemetryStore{MemStore: e.store, rows: rows}
+		e.s.store = statetest.NewMem(&seedTelemetryStore{MemStore: e.store, rows: rows})
 		e.s.seedDefaultRouteHealthGate(ctx, e.acct, app, canary)
 		if gate, _ := e.store.GetRouteHealthGate(ctx, e.acct.ID, app.ID); gate.Revision != 1 || len(gate.Routes) != 0 {
 			t.Fatalf("opted-out gate changed: %+v", gate)
@@ -123,7 +124,7 @@ func TestSeedRouteHealthSkipsConfiguredAndIneligible(t *testing.T) {
 		app, _, canary := seedCanaryFixture(t, e, "seed-later-stage")
 		ctx := t.Context()
 		canary.CanaryStep = 1
-		e.s.store = &seedTelemetryStore{MemStore: e.store, rows: rows}
+		e.s.store = statetest.NewMem(&seedTelemetryStore{MemStore: e.store, rows: rows})
 		e.s.seedDefaultRouteHealthGate(ctx, e.acct, app, canary)
 		if gate, _ := e.store.GetRouteHealthGate(ctx, e.acct.ID, app.ID); gate.Revision != 0 {
 			t.Fatalf("later stage seeded: %+v", gate)
@@ -133,7 +134,7 @@ func TestSeedRouteHealthSkipsConfiguredAndIneligible(t *testing.T) {
 		e := setup(t, api.PlanPro)
 		app, _, canary := seedCanaryFixture(t, e, "seed-no-traffic")
 		ctx := t.Context()
-		e.s.store = &seedTelemetryStore{MemStore: e.store}
+		e.s.store = statetest.NewMem(&seedTelemetryStore{MemStore: e.store})
 		e.s.seedDefaultRouteHealthGate(ctx, e.acct, app, canary)
 		if gate, _ := e.store.GetRouteHealthGate(ctx, e.acct.ID, app.ID); gate.Revision != 0 {
 			t.Fatalf("empty usage seeded: %+v", gate)
@@ -147,7 +148,7 @@ func TestSeedRouteHealthSkipsConfiguredAndIneligible(t *testing.T) {
 		app, _, canary := seedCanaryFixture(t, e, "seed-free")
 		ctx := t.Context()
 		store := &seedTelemetryStore{MemStore: e.store, rows: rows}
-		e.s.store = store
+		e.s.store = statetest.NewMem(store)
 		e.s.seedDefaultRouteHealthGate(ctx, e.acct, app, canary)
 		if gate, _ := e.store.GetRouteHealthGate(ctx, e.acct.ID, app.ID); gate.Revision != 0 || len(store.reads) != 0 {
 			t.Fatalf("unentitled plan seeded or read telemetry: %+v reads=%v", gate, store.reads)

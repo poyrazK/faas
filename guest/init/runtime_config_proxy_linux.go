@@ -16,9 +16,6 @@ import (
 )
 
 const (
-	metadataEnvPath             = "/v1/metadata/env"
-	metadataEnvEndpoint         = "http://169.254.169.254" + metadataEnvPath
-	metadataSecretReloadAckPath = "/v1/metadata/secrets/reload-ack"
 	// Must mirror pkg/fcvm.VsockRuntimeConfigHostPort. guest-init keeps this
 	// literal local to preserve the one-way package dependency.
 	metadataEnvHostPort   = 1031

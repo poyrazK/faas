@@ -3,6 +3,7 @@ package netns
 import (
 	"fmt"
 	"net/netip"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -100,12 +101,19 @@ func SetDefaultHostBridgeIP(addr netip.Addr) {
 //	                                  │  (veth pair)
 //	netns fc-<instance>:  vethPeer(10.100.x.y/16) ── [route/DNAT] ── tap0(10.0.0.1) ── guest(10.0.0.2)
 type Config struct {
-	Instance string     // instance id
-	Netns    string     // fc-<instance>
-	Tap      string     // tap0 (identical in every netns)
-	VethHost string     // root-ns end, enslaved to br-tenants
-	VethPeer string     // netns end, holds HostIP
-	HostIP   netip.Addr // routable identity, 10.100.x.y
+	RehearsalRunID string // immutable, retained run-scoped outbound containment (ADR-20261017201005)
+	// PublicForwarding installs the generation-owned host route used by
+	// native-recovery bridge sockets pinned to the original veth ifindex.
+	PublicForwarding bool
+	// EgressBudgetBytes bounds this network generation before any peer is up.
+	EgressBudgetBytes int64
+	EgressBudgetUntil time.Time
+	Instance          string     // instance id
+	Netns             string     // fc-<instance>
+	Tap               string     // tap0 (identical in every netns)
+	VethHost          string     // root-ns end, enslaved to br-tenants
+	VethPeer          string     // netns end, holds HostIP
+	HostIP            netip.Addr // routable identity, 10.100.x.y
 	// PrivateVethHost/PrivateVethPeer are an additive side-link for a
 	// Gregale-owned network. The public veth above remains attached to
 	// br-tenants; this pair is attached to the account-scoped gpn-* bridge.
@@ -293,7 +301,9 @@ func (c Config) guestAppPort() int {
 func (c Config) appPortDNATRules(nft func(...string) []string) [][]string {
 	port := strconv.Itoa(AppPort)
 	target := fmt.Sprintf("%s:%d", GuestIP, c.guestAppPort())
-	rules := [][]string{nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", target)}
+	rules := c.publicBridgeDNATRules(nft, true)
+	rules = append(rules, nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", target))
+	rules = append(rules, c.publicBridgeDNATRules(nft, false)...)
 	if c.privateNetworkEnabled() {
 		// Private ingress targets the stable allocated app address. DNAT
 		// happens before local-delivery routing, so the address can remain
@@ -362,6 +372,7 @@ func (c Config) SetupCommands() [][]string {
 		tap = append(tap, "user", strconv.Itoa(c.TapUID))
 	}
 
+	peerIntoNetns := cmd("ip", "link", "set", c.VethPeer, "netns", c.Netns)
 	cmds := [][]string{
 		// Namespace + loopback.
 		cmd("ip", "netns", "add", c.Netns),
@@ -370,7 +381,7 @@ func (c Config) SetupCommands() [][]string {
 		cmd("ip", "link", "add", c.VethHost, "type", "veth", "peer", "name", c.VethPeer),
 		cmd("ip", "link", "set", c.VethHost, "master", TenantBridge),
 		cmd("ip", "link", "set", c.VethHost, "up"),
-		cmd("ip", "link", "set", c.VethPeer, "netns", c.Netns),
+		peerIntoNetns,
 		// Lease IPs are reused with new veth MACs. Their bridge neighbor
 		// entries outlive veth teardown and can blackhole readiness traffic
 		// until ARP ages out. Invalidate only this lease before publishing it;
@@ -384,6 +395,24 @@ func (c Config) SetupCommands() [][]string {
 		inNetns(tap...),
 		inNetns("ip", "addr", "add", TapPrefix, "dev", c.Tap),
 		inNetns("ip", "link", "set", c.Tap, "up"),
+	}
+	// Install the monetary gate before raising the peer: even ARP and IPv6
+	// autoconfiguration must fit its financed interface-byte bound.
+	if c.EgressBudgetBytes > 0 {
+		// Build the no-offload ingress path while TAP is still down. The
+		// last original setup command raises TAP, after this path is ready.
+		tapUp := cmds[len(cmds)-1]
+		cmds = append(cmds[:len(cmds)-1], c.EgressBudgetSegmentationCommands()...)
+		cmds = append(cmds, tapUp)
+		gate := c.EgressBudgetSetupCommands()
+		at := slices.IndexFunc(cmds, func(s []string) bool { return slices.Equal(s, peerIntoNetns) }) + 1
+		cmds = append(cmds[:at], append(gate, cmds[at:]...)...)
+	}
+	if c.PublicForwarding {
+		// The marked-socket host guard fixes output to this generation. Its
+		// /32 route disappears with the owned device; the bridge's /16 must
+		// never become a fallback after this interface has been retired.
+		cmds = append(cmds, []string{"ip", "route", "add", c.HostIP.String() + "/32", "dev", c.VethHost, "scope", "link", "src", c.HostBridgeIP.String()})
 	}
 	cmds = append(cmds, c.PrivateNetworkSetupCommands()...)
 	// Provider-verified private destinations get an explicit route so they
@@ -609,6 +638,15 @@ func (c Config) NftCommands() [][]string {
 	// ever complete. Guest-INITIATED (ct state new) traffic still falls through
 	// to the denies, so lateral movement stays blocked.
 	add("add", "rule", "ip", "faas", "forward", "ct", "state", "established,related", "accept")
+	if c.QualificationOnly && c.HostBridgeIP.IsValid() {
+		// The node-local readiness and smoke probes use the bridge address as
+		// their source. Admit only a published DNAT to this candidate's app;
+		// the qualification chain remains closed to other ingress.
+		add("add", "rule", "ip", "faas", "forward", "iifname", c.VethPeer,
+			"oifname", c.Tap, "ip", "saddr", c.HostBridgeIP.String(),
+			"ip", "daddr", GuestIP, "tcp", "dport", strconv.Itoa(c.guestAppPort()),
+			"ct", "status", "dnat", "accept")
+	}
 
 	// ADR-201 §3: reject NEW connections to an upstream whose circuit is
 	// open. Deliberately placed AFTER the established/related accept — an
@@ -625,6 +663,9 @@ func (c Config) NftCommands() [][]string {
 		if c.QualificationOnly {
 			proxyPorts = []int{ServiceProxyPort}
 		}
+		if c.RehearsalRunID != "" && !c.QualificationOnly {
+			proxyPorts = append(proxyPorts, rehearsalPostgresProxyPort, rehearsalObjectProxyPort)
+		}
 		for _, port := range proxyPorts {
 			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(port), "accept")
@@ -633,10 +674,14 @@ func (c Config) NftCommands() [][]string {
 			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceProxyHTTPSPort), "accept")
 		}
+		dnsPort := ServiceDiscoveryDNSPort
+		if c.RehearsalRunID != "" {
+			dnsPort = RehearsalServiceDiscoveryDNSPort
+		}
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
-			"ip", "daddr", c.HostBridgeIP.String(), "udp", "dport", strconv.Itoa(ServiceDiscoveryDNSPort), "accept")
+			"ip", "daddr", c.HostBridgeIP.String(), "udp", "dport", strconv.Itoa(dnsPort), "accept")
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
-			"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceDiscoveryDNSPort), "accept")
+			"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(dnsPort), "accept")
 	}
 	// PR scale-out tier-1 residual (Gap #4): per-netns operator
 	// exception accept rules. Each entry emits
@@ -717,6 +762,11 @@ func (c Config) NftCommands() [][]string {
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.VethPeer,
 			"oifname", c.Tap, "ip", "daddr", GuestIP, "meta", "l4proto", "tcp",
 			"ct", "status", "dnat", "accept")
+		if c.PublicForwarding && c.HostBridgeIP.IsValid() && c.HostIP.IsValid() {
+			add("add", "rule", "ip", "faas", "forward", "iifname", c.VethPeer,
+				"oifname", c.Tap, "ip", "saddr", c.HostBridgeIP.String(), "ip", "daddr", GuestIP,
+				"meta", "l4proto", "udp", "ct", "status", "dnat", "accept")
+		}
 		cmds = append(cmds, c.serviceAddressRules(nft)...)
 		cmds = append(cmds, c.databaseRouteRules(nft)...)
 	}
@@ -868,6 +918,7 @@ func (c Config) NftCommands() [][]string {
 		add("add", "rule", "ip6", "faas", "forward", "iifname", c.Tap,
 			"counter", "name", EgressDenyCounterAllowlist, "drop")
 	}
+	cmds = append(cmds, c.RehearsalNftCommands()...)
 	return cmds
 }
 

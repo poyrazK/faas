@@ -58,3 +58,18 @@ recovery. Adapter fault injection covers lost mutation responses, asynchronous
 work, changed defaults, exact branch selection and configuration drift. API and
 SDK tests verify authorization, plan limits, safe output and progress polling.
 Live Neon qualification remains a rollout requirement.
+
+## Amendment (2026-10-12): usage admission follows cost direction
+
+Usage guardrails exist to stop spend, but they admitted no compute change at
+all once an account's usage was stale or at its guardrail. On production-us
+that held for hours after any database deletion (the deleted database's final
+usage correction keeps the account stale), so a customer could neither resize
+down nor turn scale-to-zero back on — the two changes that reduce spend.
+
+Usage admission now applies only when the target can consume more than the
+source: a higher service class (development < burstable < production, the
+order of the product promises) or turning scale-to-zero off (ADR-624). A
+smaller or equal class and turning scale-to-zero on skip usage admission.
+Capability, plan entitlement and database locking still admit every change,
+and accepted intents remain recoverable as before.

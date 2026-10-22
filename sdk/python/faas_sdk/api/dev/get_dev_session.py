@@ -62,6 +62,11 @@ def _parse_response(
 
         return response_429
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -87,8 +92,9 @@ def sync_detailed(
 ) -> Response[DevSessionResponse | Problem]:
     """Inspect a remote developer environment.
 
-     Returns the stable URL, app, lease expiry, and safe PostgreSQL binding state of one developer
-    environment. Unlike the upsert, this read never renews the lease or provisions resources.
+     Returns the stable URL, app, lease expiry, and safe PostgreSQL and automatic bucket binding state of
+    one developer environment. Unlike the upsert, this read never renews the lease or provisions
+    resources.
 
     Args:
         project (str):
@@ -122,8 +128,9 @@ def sync(
 ) -> DevSessionResponse | Problem | None:
     """Inspect a remote developer environment.
 
-     Returns the stable URL, app, lease expiry, and safe PostgreSQL binding state of one developer
-    environment. Unlike the upsert, this read never renews the lease or provisions resources.
+     Returns the stable URL, app, lease expiry, and safe PostgreSQL and automatic bucket binding state of
+    one developer environment. Unlike the upsert, this read never renews the lease or provisions
+    resources.
 
     Args:
         project (str):
@@ -152,8 +159,9 @@ async def asyncio_detailed(
 ) -> Response[DevSessionResponse | Problem]:
     """Inspect a remote developer environment.
 
-     Returns the stable URL, app, lease expiry, and safe PostgreSQL binding state of one developer
-    environment. Unlike the upsert, this read never renews the lease or provisions resources.
+     Returns the stable URL, app, lease expiry, and safe PostgreSQL and automatic bucket binding state of
+    one developer environment. Unlike the upsert, this read never renews the lease or provisions
+    resources.
 
     Args:
         project (str):
@@ -185,8 +193,9 @@ async def asyncio(
 ) -> DevSessionResponse | Problem | None:
     """Inspect a remote developer environment.
 
-     Returns the stable URL, app, lease expiry, and safe PostgreSQL binding state of one developer
-    environment. Unlike the upsert, this read never renews the lease or provisions resources.
+     Returns the stable URL, app, lease expiry, and safe PostgreSQL and automatic bucket binding state of
+    one developer environment. Unlike the upsert, this read never renews the lease or provisions
+    resources.
 
     Args:
         project (str):

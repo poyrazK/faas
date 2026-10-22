@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -12,6 +13,9 @@ import (
 var _ MigrationCommitRecoveryStore = (*PgStore)(nil)
 
 func (s *PgStore) ResolveInstanceMigrationCommit(ctx context.Context, attempt MigrationCommitAttempt) (MigrationCommitResolution, error) {
+	if strings.HasPrefix(attempt.LeaseToken, FunctionMigrationTokenPrefix) {
+		return resolveFunctionDestinationCommit(ctx, s, attempt)
+	}
 	if err := validateMigrationCommitAttempt(attempt); err != nil {
 		return MigrationCommitRetained, err
 	}
@@ -26,6 +30,16 @@ func (s *PgStore) ResolveInstanceMigrationCommit(ctx context.Context, attempt Mi
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	if err := q.LockNodeAdmissionPolicy(ctx, tx); err != nil {
+		return MigrationCommitRetained, err
+	}
+	pending, err := q.MigrationAdmissionPendingForInstance(ctx, tx, sqlc.MigrationAdmissionPendingForInstanceParams{InstanceID: mustPgUUID(attempt.InstanceID), LeaseToken: attempt.LeaseToken})
+	if err != nil {
+		return MigrationCommitRetained, mapErr(err)
+	}
+	if pending {
+		return MigrationCommitRetained, ErrMigrationCommitUnresolved
+	}
 	row, err := q.LockInstanceMigrationCommit(ctx, tx, mustPgUUID(attempt.InstanceID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return MigrationCommitObsolete, nil

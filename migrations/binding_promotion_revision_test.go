@@ -38,8 +38,11 @@ func TestBindingPromotionRevisionTriggersWatchExistingColumns(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if len(tables) != 23 {
+	if len(tables) != 24 {
 		t.Fatalf("revision triggers=%d: %v", len(tables), tables)
+	}
+	if _, ok := args["queue_binding_canaries"]; !ok {
+		t.Fatal("queue canary changes must invalidate binding promotion evidence")
 	}
 	for _, table := range tables {
 		for _, column := range args[table] {
@@ -102,6 +105,31 @@ func TestBindingPromotionRevisionMutationRollbackAndMigrationRoundTrip(t *testin
 		t.Fatal("account policy did not invalidate bound apps")
 	}
 	before = revision(app)
+	// Newer canary triggers depend on the original revision functions. Walk
+	// their actual downgrade/upgrade chain around the original migrations,
+	// and restore the consumer-poll successor after reinstalling the fence.
+	type successor struct{ name, up, down string }
+	var successors []successor
+	for _, name := range []string{
+		"20261016150020007_queue_binding_canaries.sql",
+		"20261016150020008_queue_canary_invocation_fences.sql",
+		"20261017002535947_binding_promotion_ignores_consumer_polls.sql",
+	} {
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		up, down, ok := strings.Cut(string(raw), "-- +goose Down")
+		if !ok {
+			t.Fatalf("missing successor rollback: %s", name)
+		}
+		successors = append(successors, successor{name, up, down})
+	}
+	for i := len(successors) - 1; i >= 0; i-- {
+		if _, err := pool.Exec(ctx, successors[i].down); err != nil {
+			t.Fatalf("%s Down: %v", successors[i].name, err)
+		}
+	}
 	dependency, err := os.ReadFile("20261004190339147_service_binding_dependency_revision.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -182,5 +210,63 @@ func TestBindingPromotionRevisionMutationRollbackAndMigrationRoundTrip(t *testin
 	}
 	if _, err := pool.Exec(ctx, dependencyUp); err != nil {
 		t.Fatal(err)
+	}
+	for _, successor := range successors {
+		if _, err := pool.Exec(ctx, successor.up); err != nil {
+			t.Fatalf("%s Up: %v", successor.name, err)
+		}
+	}
+	var healthArgs []byte
+	if err := pool.QueryRow(ctx, `SELECT tgargs FROM pg_trigger WHERE tgrelid='trigger_consumer_health'::regclass AND tgname='binding_promotion_revision'`).Scan(&healthArgs); err != nil || string(healthArgs) != "trigger_id,last_error_at\x00" {
+		t.Fatalf("round trip lost the consumer-poll successor: %q %v", healthArgs, err)
+	}
+}
+
+// TestBindingPromotionRevisionIgnoresConsumerPolls pins H10-111: a queue
+// consumer poll rewrites last_poll_at and last_success_at about three times
+// a second, and watching them invalidated every bindings-gated promotion of
+// a queue worker. Poll freshness is the fence's ValidUntil; only a new
+// consumer error may change the revision.
+func TestBindingPromotionRevisionIgnoresConsumerPolls(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	defer pool.Close()
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	acct := seedAccount(t, ctx, pool)
+	app := seedApp(t, ctx, pool, acct)
+	var trigger string
+	if err := pool.QueryRow(ctx, `INSERT INTO triggers(account_id,app_id,kind,slug) VALUES($1,$2,'queue','poll-revision') RETURNING id::text`, acct, app).Scan(&trigger); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO trigger_consumer_health(trigger_id,last_poll_at,last_success_at) VALUES($1,now(),now())`, trigger); err != nil {
+		t.Fatal(err)
+	}
+	revision := func() string {
+		t.Helper()
+		var revision string
+		if err := pool.QueryRow(ctx, `SELECT epoch::text||':'||revision::text FROM app_binding_promotion_revisions WHERE app_id=$1`, app).Scan(&revision); err != nil {
+			t.Fatal(err)
+		}
+		return revision
+	}
+	cases := []struct {
+		name   string
+		sql    string
+		bumped bool
+	}{
+		{"successful poll", `UPDATE trigger_consumer_health SET last_poll_at=now()+interval '1 second',last_success_at=now()+interval '1 second',lag_messages=3,updated_at=now() WHERE trigger_id=$1`, false},
+		{"consumer error", `UPDATE trigger_consumer_health SET last_poll_at=now()+interval '2 seconds',last_error_at=now()+interval '2 seconds',last_error='broker unavailable' WHERE trigger_id=$1`, true},
+		{"recovery poll", `UPDATE trigger_consumer_health SET last_poll_at=now()+interval '3 seconds',last_success_at=now()+interval '3 seconds' WHERE trigger_id=$1`, false},
+	}
+	for _, tc := range cases {
+		before := revision()
+		if _, err := pool.Exec(ctx, tc.sql, trigger); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if bumped := revision() != before; bumped != tc.bumped {
+			t.Errorf("%s: revision bumped=%v, want %v", tc.name, bumped, tc.bumped)
+		}
 	}
 }

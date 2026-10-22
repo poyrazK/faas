@@ -1,0 +1,177 @@
+name: function backend concurrency
+
+on:
+  pull_request:
+    paths:
+      - 'guest/runners/**'
+      - 'guest/init/**'
+      - 'pkg/functionlifetime/**'
+      - 'pkg/runtimeadmission/**'
+      - 'pkg/vmmdgrpc/**'
+      - 'api/proto/onebox/faas/vmmd/v1/**'
+      - 'pkg/fcvm/**'
+      - 'pkg/sched/**'
+      - 'pkg/state/**'
+      - 'migrations/**'
+      - 'schema.sql'
+      - 'sqlc.yaml'
+      - 'pkg/imaged/**'
+      - 'pkg/e2etest/functionsql/**'
+      - 'pkg/e2etest/functionmigration/**'
+      - 'cmd/e2e/function_resources_postgres_metal_test.go'
+      - 'cmd/e2e/function_migration_admission_postgres_metal_test.go'
+      - 'cmd/e2e/function_migration_destination_*_metal_test.go'
+      - 'cmd/e2e/sec11_sweep_test.go'
+      - 'scripts/ci/function-migration-native*.py'
+      - 'scripts/ci/test_function_migration_native.py'
+      - 'pkg/api/limits.go'
+      - 'cmd/vmmd/**'
+      - 'cmd/schedd/**'
+      - 'pkg/rootfs/**'
+      - 'sdk/node/src/postgres-pool-runtime.ts'
+      - 'sdk/node/src/binding-client-runtime.ts'
+      - 'sdk/node/src/secret-reload-runtime.ts'
+      - 'sdk/node/test/postgres-pool*'
+      - 'sdk/node/test/restore-aware-postgres-pool.test.ts'
+      - 'sdk/node/scripts/sync-binding-starters.mjs'
+      - 'sdk/node/package*.json'
+      - 'cmd/gregale/templates/rest-api-postgres/**'
+      - 'cmd/gregale/templates/secret-reload-node/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - '.github/workflows/function-backends.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: function-backends-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable:
+    name: shared workers and TLS PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GOMEMLIMIT: 2GiB
+      GOGC: 10
+      GOMAXPROCS: 2
+      # Each state fixture gets a private clone of the fully migrated schema.
+      # Migration-focused fixtures using pgtest.Open still start empty.
+      FAAS_PGTEST_TEMPLATE_DATABASE: '1'
+      # Keep the expanded state contracts within the runner's memory/disk budget.
+      GOFLAGS: '-gcflags=github.com/onebox-faas/faas/pkg/state=-dwarf=false'
+    services:
+      postgres:
+        image: postgres@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: function_fixture
+          POSTGRES_DB: faas
+          POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-function-backends-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-light-test-1-${{ runner.os }}-go1.26.9-${{ hashFiles('go.sum') }}-
+            go-e2e-${{ runner.os }}-
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            sdk/node/package-lock.json
+            cmd/gregale/templates/rest-api-postgres/package-lock.json
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: enable disposable SQL TLS
+        env:
+          SQL_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          set -eu
+          umask 077
+          mkdir -p "$RUNNER_TEMP/function-sql"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+            -keyout "$RUNNER_TEMP/function-sql/server.key" \
+            -out "$RUNNER_TEMP/function-sql/ca.pem" 2>/dev/null
+          docker cp "$RUNNER_TEMP/function-sql/ca.pem" "$SQL_CONTAINER:/var/lib/postgresql/data/server.crt"
+          docker cp "$RUNNER_TEMP/function-sql/server.key" "$SQL_CONTAINER:/var/lib/postgresql/data/server.key"
+          docker exec "$SQL_CONTAINER" sh -c 'chown postgres:postgres /var/lib/postgresql/data/server.crt /var/lib/postgresql/data/server.key && chmod 600 /var/lib/postgresql/data/server.key'
+          docker exec "$SQL_CONTAINER" psql -U faas -d faas -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET ssl = 'on'"
+          docker exec "$SQL_CONTAINER" psql -U faas -d faas -v ON_ERROR_STOP=1 -c 'SELECT pg_reload_conf()'
+      - name: check canonical SDK helper and package
+        working-directory: sdk/node
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          npm run test:build
+          npm run starter:sync -- --check
+          node --test dist-test/test/postgres-pool-runtime.test.js dist-test/test/restore-aware-postgres-pool.test.js
+          node --test test/postgres-pool-package.test.mjs
+      - name: compile portable and qualified test binaries
+        env:
+          # Compilation is serial on the 16 GiB runner. Keep the smaller
+          # runtime bounds below without making the compiler churn at 2 GiB.
+          GOMEMLIMIT: 5GiB
+          GOGC: 50
+        run: |
+          umask 022
+          mkdir -p "$RUNNER_TEMP/function-builds/ordinary" "$RUNNER_TEMP/function-builds/qualified"
+          go test -p 1 -race -c -o "$RUNNER_TEMP/function-builds/ordinary/" \
+            ./guest/runners/... ./pkg/rootfs \
+            ./pkg/e2etest/functionmigration ./pkg/e2etest/functionsql ./pkg/state/statetest \
+            ./pkg/functionlifetime ./pkg/fcvm/activity ./guest/init \
+            ./pkg/state ./pkg/fcvm ./pkg/sched ./pkg/vmmdgrpc ./pkg/imaged
+          go test -p 1 -race -tags metal,function_background_native -c -o "$RUNNER_TEMP/function-builds/qualified/" \
+            ./pkg/fcvm ./pkg/sched ./pkg/vmmdgrpc ./pkg/runtimeadmission
+      - name: runner, adapter and real SQL race checks
+        env:
+          DATABASE_URL: postgres://faas:function_fixture@127.0.0.1:5432/faas?sslmode=require
+          NODE_EXTRA_CA_CERTS: ${{ runner.temp }}/function-sql/ca.pem
+          FAAS_TEST_FUNCTION_POSTGRES: '1'
+        run: |
+          umask 022
+          go test -p 1 -race ./guest/runners/... ./pkg/rootfs -count=1 -timeout=3m
+      - name: execution ownership and checkpoint admission race checks
+        env:
+          DATABASE_URL: postgres://faas:function_fixture@127.0.0.1:5432/faas?sslmode=require
+          NODE_EXTRA_CA_CERTS: ${{ runner.temp }}/function-sql/ca.pem
+          FAAS_TEST_FUNCTION_POSTGRES: '1'
+        run: |
+          umask 022
+          python3 -B -m unittest discover -s scripts/ci -p test_function_migration_native.py
+          go test -p 1 -race ./pkg/e2etest/functionmigration ./pkg/e2etest/functionsql ./pkg/state/statetest -count=1 -timeout=2m
+          go test -p 1 -race ./pkg/functionlifetime ./pkg/fcvm/activity ./guest/init -count=1 -timeout=3m
+          go test -p 1 -race ./pkg/state ./pkg/fcvm ./pkg/sched ./pkg/vmmdgrpc -run '^Test(Function(Migration|Destination|Resource|Execution)|PgStoreFunctionMigrationSource)' -count=1 -timeout=3m
+          go test -p 1 -race -tags metal,function_background_native ./pkg/fcvm ./pkg/sched ./pkg/vmmdgrpc ./pkg/runtimeadmission -run '^Test(Function(Migration|Destination|Resource|Execution)|SnapshotGrant|SnapshotAcknowledgment)' -count=1 -timeout=3m
+          go test -p 1 -race ./pkg/imaged -run '^TestApplyAppLifecycle' -count=1 -timeout=3m
+      - name: compile the guarded two-host native suite (execution requires the native fixture)
+        env:
+          GOMEMLIMIT: 5GiB
+          GOGC: 50
+        run: go test -p 1 -race -tags metal,function_background_native -c -o "$RUNNER_TEMP/function-migration-native.test" ./cmd/e2e
+      - name: remove fixture private key and compiled test binary
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/function-sql/server.key" "$RUNNER_TEMP/function-migration-native.test"
+          rm -rf "$RUNNER_TEMP/function-builds"

@@ -41,6 +41,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -62,16 +63,20 @@ type statsFakeDialer struct {
 }
 
 type statsFakeRouter struct {
-	mu    sync.Mutex
-	calls []string
-	stats map[string]*sched.StatsSnapshot
-	errs  map[string]error
+	mu         sync.Mutex
+	calls      []string
+	noDeadline int // calls whose context carried no deadline
+	stats      map[string]*sched.StatsSnapshot
+	errs       map[string]error
 }
 
-func (r *statsFakeRouter) Stats(_ context.Context, nodeID string) (*sched.StatsSnapshot, error) {
+func (r *statsFakeRouter) Stats(ctx context.Context, nodeID string) (*sched.StatsSnapshot, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls = append(r.calls, nodeID)
+	if _, ok := ctx.Deadline(); !ok {
+		r.noDeadline++
+	}
 	if err := r.errs[nodeID]; err != nil {
 		return nil, err
 	}
@@ -246,7 +251,16 @@ func seedTwoNodes(t *testing.T, store *state.MemStore) (state.ComputeNode, state
 // durable-fallback tests seed it via that public API.
 func seedInstance(t *testing.T, store *state.MemStore, appID, nodeID string) state.Instance {
 	t.Helper()
-	ins, err := store.CreateInstance(context.Background(), appID, "deploy-1", string(state.StateRunning), 256, nodeID, "")
+	ctx := context.Background()
+	deploymentID := "deploy-1"
+	if app, err := store.AppByID(ctx, appID); err == nil && app.OrgID != "" {
+		deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage})
+		if err != nil {
+			t.Fatal(err)
+		}
+		deploymentID = deployment.ID
+	}
+	ins, err := store.CreateInstance(ctx, appID, deploymentID, string(state.StateRunning), 256, nodeID, "")
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -375,6 +389,7 @@ func TestPoller_PersistentTelemetryAvoidsPerNodeDials(t *testing.T) {
 	dialer := &statsFakeDialer{}
 	p := NewPoller(store, dialer, nil, NewReader(), wire.NewOpsMetrics("schedd"), nilLogger()).
 		WithTelemetry(cache).
+		WithOwnerNodeID(live.ID).
 		WithNodeRegistry(sched.NewNodeRegistry([]state.ComputeNode{live}))
 	p.Now = func() time.Time { return now }
 
@@ -393,6 +408,31 @@ func TestPoller_PersistentTelemetryAvoidsPerNodeDials(t *testing.T) {
 	}
 	if !rows[0].SampledAt.Equal(now) {
 		t.Fatalf("row SampledAt = %v, want telemetry sample time %v", rows[0].SampledAt, now)
+	}
+}
+
+// TestPoller_SingleBoxReadsStatsDespiteTelemetryCache pins the single-box
+// posture: vmmd publishes the capacity stream only with a node name, so a
+// poller with no owner node must read Stats directly. Projecting the empty
+// stream cache dropped every in-flight request, and the idle reaper parked
+// instances mid-request.
+func TestPoller_SingleBoxReadsStatsDespiteTelemetryCache(t *testing.T) {
+	store := state.NewMemStore()
+	local, _ := seedTwoNodes(t, store)
+	ins := seedInstance(t, store, "app1", local.ID)
+	dialer := &statsFakeDialer{stats: map[string]*sched.StatsSnapshot{
+		local.TargetURL: {Instances: []sched.VMInstanceStat{{InstanceID: ins.ID, InflightRequests: 1}}},
+	}}
+	p := NewPoller(store, dialer, nil, NewReader(), nil, nilLogger()).
+		WithTelemetry(sched.NewNodeTelemetryCache()).
+		WithNodeRegistry(sched.NewNodeRegistry([]state.ComputeNode{local}))
+
+	if err := p.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	activity, ok := p.Reader.SnapshotActivity(time.Now())[ins.ID]
+	if !ok || activity.Inflight != 1 {
+		t.Fatalf("activity = %+v (found %v), want the in-flight request vmmd Stats reported", activity, ok)
 	}
 }
 
@@ -486,8 +526,12 @@ func TestPoller_TwoOwnerTelemetryViewsFormFleetWithoutFalseErrors(t *testing.T) 
 func TestPoller_FleetStatsFollowsAppOwnershipAcrossPhysicalNodes(t *testing.T) {
 	store := state.NewMemStore()
 	owner, remote := seedTwoNodes(t, store)
+	account, err := store.CreateAccount(context.Background(), "fleet-stats@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
 	app, err := store.CreateApp(context.Background(), state.App{
-		Slug: "owned-app", RAMMB: 256, NodeID: owner.ID,
+		AccountID: account.ID, Slug: "owned-app", RAMMB: 256, NodeID: owner.ID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -498,7 +542,7 @@ func TestPoller_FleetStatsFollowsAppOwnershipAcrossPhysicalNodes(t *testing.T) {
 	// A foreign-owned app physically placed on the owner's node must not leak
 	// into the owner's scaling view.
 	foreign, err := store.CreateApp(context.Background(), state.App{
-		Slug: "foreign-app", RAMMB: 256, NodeID: remote.ID,
+		AccountID: account.ID, Slug: "foreign-app", RAMMB: 256, NodeID: remote.ID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1384,7 +1428,7 @@ func TestPoller_PersistentRequestRateSurvivesCachedTicksAndExpires(t *testing.T)
 	ins := seedInstance(t, store, "app1", node.ID)
 	cache := sched.NewNodeTelemetryCache()
 	now := time.Unix(500, 0)
-	p := NewPoller(store, &statsFakeDialer{}, nil, NewReader(), nil, nilLogger()).WithTelemetry(cache)
+	p := NewPoller(store, &statsFakeDialer{}, nil, NewReader(), nil, nilLogger()).WithTelemetry(cache).WithOwnerNodeID(node.ID)
 	p.Now = func() time.Time { return now }
 	publish := func(count *int64) {
 		cache.Replace(node.ID, now, now, []sched.NodeTelemetry{{InstanceID: ins.ID, RequestCountTotal: count}})
@@ -1425,4 +1469,43 @@ func TestPoller_PersistentRequestRateSurvivesCachedTicksAndExpires(t *testing.T)
 	count = -1
 	publish(&count)
 	tick(0, false)
+}
+
+// H10-84: the control-plane schedd has no owner node, so it skipped the
+// telemetry stream and dialed every vmmd afresh on each 200 ms tick, and each
+// new connection logged "unary gRPC call without deadline" (8/s on prod).
+// With a router wired, the sweep reuses the router's per-node clients, never
+// dials, and every Stats call carries a deadline.
+func TestPoller_StatsRouterReplacesPerTickDials(t *testing.T) {
+	store := state.NewMemStore()
+	a, b := seedTwoNodes(t, store)
+	instA := seedInstance(t, store, "app-1", a.ID)
+	instB := seedInstance(t, store, "app-1", b.ID)
+	cpuA, cpuB := 10.0, 20.0
+	router := &statsFakeRouter{stats: map[string]*sched.StatsSnapshot{
+		a.ID: {Instances: []sched.VMInstanceStat{{InstanceID: instA.ID, CPUPct: &cpuA}}},
+		b.ID: {Instances: []sched.VMInstanceStat{{InstanceID: instB.ID, CPUPct: &cpuB}}},
+	}}
+	dialer := &statsFakeDialer{}
+	reader := NewReader()
+	poller := NewPoller(store, dialer, nil, reader, nil, nilLogger()).
+		WithNodeRegistry(sched.NewNodeRegistry([]state.ComputeNode{a, b})).
+		WithStatsRouter(router)
+	for i := 0; i < 3; i++ {
+		if err := poller.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick %d: %v", i, err)
+		}
+	}
+	if len(dialer.dials) != 0 {
+		t.Fatalf("poller dialed %v; with a router it must reuse its clients", dialer.dials)
+	}
+	if len(router.calls) != 6 {
+		t.Fatalf("router Stats calls = %v, want 2 nodes x 3 ticks", router.calls)
+	}
+	if router.noDeadline != 0 {
+		t.Fatalf("%d Stats calls had no deadline", router.noDeadline)
+	}
+	if rows := reader.SnapshotAll(); len(rows) != 2 {
+		t.Fatalf("rows = %+v, want one per instance", rows)
+	}
 }

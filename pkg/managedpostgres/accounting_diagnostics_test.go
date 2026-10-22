@@ -31,6 +31,12 @@ func TestAccountingDiagnosticReasonsAndBoundaries(t *testing.T) {
 		{"unknown", UsageProgress{Unresolved: true}, StateFailed, false, []string{"identity_unknown"}},
 		{"legacy", UsageProgress{Unresolved: true, Terminal: true, EndedAt: now}, StateDeleted, false, []string{"legacy_identity_unknown"}},
 		{"uncollected", UsageProgress{}, StateReady, false, []string{"coverage_missing"}},
+		// H9-P113: a live resource created inside the current window owes no
+		// completed window yet; one created earlier, or already deleted, does.
+		{"created this window", UsageProgress{CreatedAt: now.Truncate(time.Hour).Add(3 * time.Minute)}, StateReady, false, []string{}},
+		{"created at window start", UsageProgress{CreatedAt: now.Truncate(time.Hour)}, StateReady, false, []string{}},
+		{"created last window", UsageProgress{CreatedAt: now.Truncate(time.Hour).Add(-time.Nanosecond)}, StateReady, false, []string{"coverage_missing"}},
+		{"deleted this window", UsageProgress{CreatedAt: now.Truncate(time.Hour), Terminal: true, EndedAt: now}, StateDeleted, false, []string{"coverage_missing"}},
 		{"changed window", UsageProgress{Window: 24 * time.Hour, ObservedAt: now}, StateReady, false, []string{"window_mismatch"}},
 		{"backlog", UsageProgress{Window: time.Hour, ObservedAt: now, CollectedUntil: now.Truncate(time.Hour).Add(-time.Hour)}, StateReady, false, []string{"coverage_incomplete"}},
 		{"stale", UsageProgress{Window: time.Hour, ObservedAt: now.Add(-policy.StaleAfter - time.Nanosecond), CollectedUntil: now.Truncate(time.Hour)}, StateReady, false, []string{"observation_stale"}},

@@ -14,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -91,9 +92,10 @@ func TestEngineTransition_AppendsEvent(t *testing.T) {
 
 // TestEngineTransition_EventWriteFailureDoesNotRollback (commit 4)
 // proves the audit-log emission is best-effort. Inject a fake store
-// whose AppendEvent always errors; run a happy Wake; expect the
-// transition to still complete (row RUNNING, no error returned) and
-// the events_write_failures counter to increment by one.
+// whose AppendEvent always errors. The wake's RUNNING event commits with
+// its publication (ADR-1151 wake path), so the wake never calls
+// AppendEvent; the park that follows does, and must still complete
+// (row PARKED) while the events_write_failures counter increments.
 //
 // We can't easily wrap the MemStore to make AppendEvent fail, so we
 // build a thin wrapper struct that delegates everything else and
@@ -104,7 +106,7 @@ func TestEngineTransition_EventWriteFailureDoesNotRollback(t *testing.T) {
 	wrapped := &failingEventStore{Store: inner}
 	vmm := &fakeVMM{}
 	ops := wire.NewOpsMetrics("schedd")
-	engine := newEngine(t, wrapped, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
+	engine := newEngine(t, statetest.NewStore(wrapped), vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
 
 	res, err := engine.Wake(context.Background(), app.ID, "", "", "")
 	if err != nil {
@@ -112,7 +114,17 @@ func TestEngineTransition_EventWriteFailureDoesNotRollback(t *testing.T) {
 	}
 	ins, _ := inner.InstanceByID(context.Background(), res.InstanceID)
 	if ins.State != string(state.StateRunning) {
-		t.Errorf("state = %q, want RUNNING (audit-log failure must not roll back)", ins.State)
+		t.Errorf("state = %q, want RUNNING", ins.State)
+	}
+	if got := testutil.ToFloat64(ops.EventsWriteFailures()); got != 0 {
+		t.Errorf("events_write_failures after the wake = %v, want 0 (its event commits with the publication)", got)
+	}
+	if err := engine.Park(context.Background(), res.InstanceID); err != nil {
+		t.Fatalf("Park returned err (must succeed despite audit failure): %v", err)
+	}
+	ins, _ = inner.InstanceByID(context.Background(), res.InstanceID)
+	if ins.State != string(state.StateParked) {
+		t.Errorf("state = %q, want PARKED (audit-log failure must not roll back)", ins.State)
 	}
 	if got := testutil.ToFloat64(ops.EventsWriteFailures()); got < 1 {
 		t.Errorf("events_write_failures = %v, want ≥1", got)
@@ -334,7 +346,7 @@ func TestMemStoreAppendEvent_HexSubjectRoundTrips(t *testing.T) {
 // transition is best-effort: an AppendEvent failure must NOT roll
 // back the state write.
 type failingEventStore struct {
-	state.Store
+	Store    state.Store
 	failures int64
 }
 

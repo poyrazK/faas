@@ -206,3 +206,16 @@
   acceptance gates).
 - `docs/scale_out_and_workload_classes.md` D4 (`service` class / reaper
   carve-out, reached here by observation rather than declaration).
+
+## Amendment (2026-10-15): several listeners
+
+When the app owns more than one listener (a private TCP port under ADR-576,
+a metrics or admin port), the observed port is the app's expected port
+(`AppManifest.EffectivePort()`) if it listens on it. Otherwise it is the first
+listener, after a `CharacterizationPreferredPortGrace` (500 ms) wait for the
+expected port to appear. Before this, the first row in `/proc/net/tcp{,6}` won.
+That row order is kernel hash order, so an app serving HTTP on 8080 and a
+private TCP service on 5432 could be characterized as HTTP on 5432 (H10-56).
+Readiness then probed the TCP port and every later cold boot timed out.
+Snapshot restores do not characterize, so only cold boots of apps that never
+bind their expected port pay the grace.

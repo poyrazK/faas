@@ -2,7 +2,7 @@
 // repo's pattern (memory: whitebox-test-file-pattern). The coordinator
 // is on the engine hot path and its lock discipline is load-bearing;
 // unexported surface is in scope here.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -13,30 +13,32 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestWakeCoord_ScopeIsolationAndAppDeletion(t *testing.T) {
-	coord := newWakeCoord()
-	production, leader, err := coord.EnterScoped("app", "production", WakeFanout{})
+	coord := sched.NewWakeCoord()
+	production, leader, err := coord.EnterScoped("app", "production", sched.WakeFanout{})
 	if err != nil || !leader {
 		t.Fatalf("production leader: %v, %v", leader, err)
 	}
-	staging, leader, err := coord.EnterScoped("app", "staging", WakeFanout{})
+	staging, leader, err := coord.EnterScoped("app", "staging", sched.WakeFanout{})
 	if err != nil || !leader || staging == production {
 		t.Fatalf("staging reused production wake: %v, %v", leader, err)
 	}
-	follower, leader, err := coord.EnterScoped("app", "staging", WakeFanout{})
+	follower, leader, err := coord.EnterScoped("app", "staging", sched.WakeFanout{})
 	if err != nil || leader || follower != staging {
 		t.Fatalf("same scope did not coalesce: %v, %v", leader, err)
 	}
-	production.Complete(CoordOutcome{Instance: &CoordInstance{InstanceID: "production-instance"}})
+	production.Complete(sched.CoordOutcome{Instance: &sched.CoordInstance{InstanceID: "production-instance"}})
 	coord.Release("app", production)
-	if len(coord.inflight["app"]) != 1 || coord.inflight["app"][0] != staging {
+	if len((*coord.Inflight())["app"]) != 1 || (*coord.Inflight())["app"][0] != staging {
 		t.Fatal("completing production removed the staging wake")
 	}
 	coord.Forget("app")
-	if got := staging.Await(context.Background()); !errors.Is(got.Err, ErrAppDeleted) {
+	if got := staging.Await(context.Background()); !errors.Is(got.Err, sched.ErrAppDeleted) {
 		t.Fatalf("app deletion did not fence scoped wake: %+v", got)
 	}
 	coord.Release("app", staging)
@@ -44,19 +46,19 @@ func TestWakeCoord_ScopeIsolationAndAppDeletion(t *testing.T) {
 }
 
 func TestWakeCoord_SingleFlightLeaderCallsEnsureOnce(t *testing.T) {
-	coord := newWakeCoord()
+	coord := sched.NewWakeCoord()
 	app := "app-A"
 
 	var (
 		ensureCount int32
 		seenMu      sync.Mutex
-		seenOut     []CoordOutcome
+		seenOut     []sched.CoordOutcome
 		wg          sync.WaitGroup
 	)
 	wg.Add(3)
 	go func() {
 		defer wg.Done()
-		call, isLeader, err := coord.Enter(app, WakeFanout{})
+		call, isLeader, err := coord.Enter(app, sched.WakeFanout{})
 		if err != nil {
 			t.Errorf("leader Enter: %v", err)
 			return
@@ -68,7 +70,7 @@ func TestWakeCoord_SingleFlightLeaderCallsEnsureOnce(t *testing.T) {
 		go func() {
 			atomic.AddInt32(&ensureCount, 1)
 			time.Sleep(50 * time.Millisecond)
-			call.Complete(CoordOutcome{Instance: &CoordInstance{InstanceID: "ins-1", NodeID: "node-1", ColdBoot: true}})
+			call.Complete(sched.CoordOutcome{Instance: &sched.CoordInstance{InstanceID: "ins-1", NodeID: "node-1", ColdBoot: true}})
 		}()
 		out := call.Await(context.Background())
 		seenMu.Lock()
@@ -79,7 +81,7 @@ func TestWakeCoord_SingleFlightLeaderCallsEnsureOnce(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		time.Sleep(5 * time.Millisecond) // ensure leader registered first
-		call, isLeader, err := coord.Enter(app, WakeFanout{})
+		call, isLeader, err := coord.Enter(app, sched.WakeFanout{})
 		if err != nil {
 			t.Errorf("follower1 Enter: %v", err)
 			return
@@ -97,7 +99,7 @@ func TestWakeCoord_SingleFlightLeaderCallsEnsureOnce(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		time.Sleep(5 * time.Millisecond)
-		call, isLeader, err := coord.Enter(app, WakeFanout{})
+		call, isLeader, err := coord.Enter(app, sched.WakeFanout{})
 		if err != nil {
 			t.Errorf("follower2 Enter: %v", err)
 			return
@@ -131,29 +133,29 @@ func TestWakeCoord_SingleFlightLeaderCallsEnsureOnce(t *testing.T) {
 }
 
 func TestWakeCoord_CompletedStaysParkedUntilLastFollowerDrains(t *testing.T) {
-	coord := newWakeCoord()
+	coord := sched.NewWakeCoord()
 	app := "app-C"
 
 	// Leader + 1 follower. Leader completes; coordinator entry must
 	// remain until the follower releases.
-	leaderCall, isLeader, err := coord.Enter(app, WakeFanout{})
+	leaderCall, isLeader, err := coord.Enter(app, sched.WakeFanout{})
 	if err != nil || !isLeader {
 		t.Fatalf("leader Enter: %v / isLeader=%v", err, isLeader)
 	}
 
-	followerCall, isLeader, err := coord.Enter(app, WakeFanout{})
+	followerCall, isLeader, err := coord.Enter(app, sched.WakeFanout{})
 	if err != nil || isLeader {
 		t.Fatalf("follower Enter: %v / isLeader=%v", err, isLeader)
 	}
 
-	leaderCall.Complete(CoordOutcome{Instance: &CoordInstance{InstanceID: "ins-1"}})
+	leaderCall.Complete(sched.CoordOutcome{Instance: &sched.CoordInstance{InstanceID: "ins-1"}})
 	// Entry must still be there: 1 follower is still parked.
-	if _, ok := coord.inflight[app]; !ok {
+	if _, ok := (*coord.Inflight())[app]; !ok {
 		t.Fatalf("entry removed before follower drained")
 	}
 	coord.Release(app, leaderCall)
 	// Leader is now gone but the follower still holds the entry.
-	if _, ok := coord.inflight[app]; !ok {
+	if _, ok := (*coord.Inflight())[app]; !ok {
 		t.Fatalf("entry removed after leader release; follower still parked")
 	}
 	// Await followed by release.
@@ -162,46 +164,46 @@ func TestWakeCoord_CompletedStaysParkedUntilLastFollowerDrains(t *testing.T) {
 		t.Fatalf("follower outcome err: %v", out.Err)
 	}
 	coord.Release(app, followerCall)
-	if _, ok := coord.inflight[app]; ok {
+	if _, ok := (*coord.Inflight())[app]; ok {
 		t.Errorf("entry should be deleted after final release")
 	}
 }
 
 func TestWakeCoord_QueueFullDoesNotAffectLeader(t *testing.T) {
-	coord := newWakeCoord()
+	coord := sched.NewWakeCoord()
 	app := "app-D"
 
-	leaderCall, isLeader, err := coord.Enter(app, WakeFanout{})
+	leaderCall, isLeader, err := coord.Enter(app, sched.WakeFanout{})
 	if err != nil || !isLeader {
 		t.Fatalf("leader Enter: %v / isLeader=%v", err, isLeader)
 	}
 	// Fill the rest of the cap. Leader already has waiters=1; the cap
 	// allows up to cap total, so we can add cap-1 more followers.
-	for i := 0; i < coord.cap-1; i++ {
-		_, _, err := coord.Enter(app, WakeFanout{})
+	for i := 0; i < (*coord.Cap())-1; i++ {
+		_, _, err := coord.Enter(app, sched.WakeFanout{})
 		if err != nil {
 			t.Fatalf("follower %d Enter: %v", i, err)
 		}
 	}
 	// (cap+1)'th total caller must get ErrQueueFull.
-	_, _, err = coord.Enter(app, WakeFanout{})
-	if !errors.Is(err, ErrQueueFull) {
+	_, _, err = coord.Enter(app, sched.WakeFanout{})
+	if !errors.Is(err, sched.ErrQueueFull) {
 		t.Fatalf("expected ErrQueueFull, got %v", err)
 	}
 	// Leader can still complete.
-	leaderCall.Complete(CoordOutcome{Instance: &CoordInstance{InstanceID: "ins-1"}})
+	leaderCall.Complete(sched.CoordOutcome{Instance: &sched.CoordInstance{InstanceID: "ins-1"}})
 }
 
 func TestWakeCoord_ForgetUnblocksFollowersWithErrAppDeleted(t *testing.T) {
-	coord := newWakeCoord()
+	coord := sched.NewWakeCoord()
 	app := "app-E"
 
-	leaderCall, isLeader, err := coord.Enter(app, WakeFanout{})
+	leaderCall, isLeader, err := coord.Enter(app, sched.WakeFanout{})
 	if err != nil || !isLeader {
 		t.Fatalf("leader Enter: %v / isLeader=%v", err, isLeader)
 	}
 
-	followerCall, isLeader, err := coord.Enter(app, WakeFanout{})
+	followerCall, isLeader, err := coord.Enter(app, sched.WakeFanout{})
 	if err != nil || isLeader {
 		t.Fatalf("follower Enter: %v / isLeader=%v", err, isLeader)
 	}
@@ -210,34 +212,34 @@ func TestWakeCoord_ForgetUnblocksFollowersWithErrAppDeleted(t *testing.T) {
 	coord.Forget(app)
 
 	out := followerCall.Await(context.Background())
-	if !errors.Is(out.Err, ErrAppDeleted) {
+	if !errors.Is(out.Err, sched.ErrAppDeleted) {
 		t.Fatalf("follower outcome err = %v, want ErrAppDeleted", out.Err)
 	}
 	// Leader's await must also unwind.
 	leaderOut := leaderCall.Await(context.Background())
-	if !errors.Is(leaderOut.Err, ErrAppDeleted) {
+	if !errors.Is(leaderOut.Err, sched.ErrAppDeleted) {
 		t.Fatalf("leader outcome err = %v, want ErrAppDeleted", leaderOut.Err)
 	}
 
 	// Release the followers — entry should have already been deleted by Forget.
 	coord.Release(app, leaderCall)
 	coord.Release(app, followerCall)
-	if _, ok := coord.inflight[app]; ok {
+	if _, ok := (*coord.Inflight())[app]; ok {
 		t.Errorf("entry should be gone after Forget")
 	}
 }
 
 func TestWakeCoord_CompleteIsIdempotent(t *testing.T) {
-	coord := newWakeCoord()
+	coord := sched.NewWakeCoord()
 	app := "app-F"
 
-	call, _, err := coord.Enter(app, WakeFanout{})
+	call, _, err := coord.Enter(app, sched.WakeFanout{})
 	if err != nil {
 		t.Fatalf("Enter: %v", err)
 	}
-	call.Complete(CoordOutcome{Instance: &CoordInstance{InstanceID: "ins-1"}})
+	call.Complete(sched.CoordOutcome{Instance: &sched.CoordInstance{InstanceID: "ins-1"}})
 	// Second call must not panic — done is already closed.
-	call.Complete(CoordOutcome{Err: errors.New("ignored")})
+	call.Complete(sched.CoordOutcome{Err: errors.New("ignored")})
 	out := call.Await(context.Background())
 	if out.Instance == nil || out.Instance.InstanceID != "ins-1" {
 		t.Errorf("second Complete overwrote first outcome: %+v", out)
@@ -245,16 +247,16 @@ func TestWakeCoord_CompleteIsIdempotent(t *testing.T) {
 }
 
 func TestWakeCoord_FollowerCtxCancelReturnsCtxErr(t *testing.T) {
-	coord := newWakeCoord()
+	coord := sched.NewWakeCoord()
 	app := "app-G"
 
 	// Leader never completes.
-	_, isLeader, err := coord.Enter(app, WakeFanout{})
+	_, isLeader, err := coord.Enter(app, sched.WakeFanout{})
 	if err != nil || !isLeader {
 		t.Fatalf("leader Enter: %v / isLeader=%v", err, isLeader)
 	}
 
-	followerCall, _, err := coord.Enter(app, WakeFanout{})
+	followerCall, _, err := coord.Enter(app, sched.WakeFanout{})
 	if err != nil {
 		t.Fatalf("follower Enter: %v", err)
 	}
@@ -267,7 +269,7 @@ func TestWakeCoord_FollowerCtxCancelReturnsCtxErr(t *testing.T) {
 }
 
 func TestWakeCoord_ForgetOnAbsentAppIsNoOp(t *testing.T) {
-	coord := newWakeCoord()
+	coord := sched.NewWakeCoord()
 	// No panic on a missing entry.
 	coord.Forget("never-existed")
 }
@@ -281,20 +283,20 @@ func TestWakeCoord_ForgetOnAbsentAppIsNoOp(t *testing.T) {
 // instance has parked since. The fix is to detect completion in
 // Enter and take leadership of a fresh wake.
 func TestWakeCoord_EnterAfterCompleteStartsFreshWake(t *testing.T) {
-	coord := newWakeCoord()
+	coord := sched.NewWakeCoord()
 	// Leader wakes, completes, and is the only entry.
-	leader, isLeader, err := coord.Enter("app1", WakeFanout{})
+	leader, isLeader, err := coord.Enter("app1", sched.WakeFanout{})
 	if err != nil || !isLeader {
 		t.Fatalf("first Enter err=%v isLeader=%v", err, isLeader)
 	}
-	leader.Complete(CoordOutcome{
-		Instance: &CoordInstance{InstanceID: "parked-1"},
+	leader.Complete(sched.CoordOutcome{
+		Instance: &sched.CoordInstance{InstanceID: "parked-1"},
 	})
 	// Pre-fix: a new caller would land here as a follower and
 	// receive {InstanceID: "parked-1"} — possibly stale. Post-fix:
 	// Enter detects completed=true, drops the entry, returns a new
 	// (true) leader.
-	leader2, isLeader2, err := coord.Enter("app1", WakeFanout{})
+	leader2, isLeader2, err := coord.Enter("app1", sched.WakeFanout{})
 	if err != nil {
 		t.Fatalf("second Enter err=%v", err)
 	}
@@ -315,7 +317,7 @@ func TestWakeCoord_EnterAfterCompleteStartsFreshWake(t *testing.T) {
 	if out := leader2.Await(ctx); !errors.Is(out.Err, context.DeadlineExceeded) {
 		t.Fatalf("fresh entry's pre-Complete Await = %+v, want DeadlineExceeded (pre-Complete done is closed)", out)
 	}
-	leader2.Complete(CoordOutcome{Instance: &CoordInstance{InstanceID: "fresh"}})
+	leader2.Complete(sched.CoordOutcome{Instance: &sched.CoordInstance{InstanceID: "fresh"}})
 	out := leader2.Await(context.Background())
 	if out.Err != nil {
 		t.Fatalf("fresh entry outcome err = %v", out.Err)
@@ -350,8 +352,8 @@ func TestWakeFanout_Wants(t *testing.T) {
 		{"in-flight wakes at app ceiling", 0, 20, 100000, false},
 	}
 	for _, tc := range cases {
-		f := WakeFanout{MaxInFlight: 20, PerVM: 80, Existing: tc.existing}
-		if got := f.wants(tc.inFlight, tc.waiting); got != tc.want {
+		f := sched.WakeFanout{MaxInFlight: 20, PerVM: 80, Existing: tc.existing}
+		if got := f.Wants(tc.inFlight, tc.waiting); got != tc.want {
 			t.Errorf("%s: wants(existing=%d, inFlight=%d, waiting=%d) = %v, want %v",
 				tc.name, tc.existing, tc.inFlight, tc.waiting, got, tc.want)
 		}
@@ -363,13 +365,13 @@ func TestWakeFanout_Wants(t *testing.T) {
 // must get the original one-wake-per-app behaviour rather than an
 // unbounded fan-out.
 func TestWakeFanout_ZeroPolicyIsStrictSingleFlight(t *testing.T) {
-	for _, f := range []WakeFanout{
+	for _, f := range []sched.WakeFanout{
 		{},
 		{MaxInFlight: 20},           // no PerVM
 		{PerVM: 80},                 // no MaxInFlight
 		{MaxInFlight: -1, PerVM: 8}, // nonsense
 	} {
-		if f.wants(1, 1_000_000) {
+		if f.Wants(1, 1_000_000) {
 			t.Errorf("WakeFanout%+v fanned out; an unresolved policy must stay single-flight", f)
 		}
 	}
@@ -385,9 +387,9 @@ func TestWakeFanout_ZeroPolicyIsStrictSingleFlight(t *testing.T) {
 // 1000 requests at 200 concurrency against a cold app, versus 99.9% for
 // the same app pre-warmed.
 func TestWakeCoord_FansOutWhenDemandExceedsOneInstance(t *testing.T) {
-	coord := newWakeCoord()
+	coord := sched.NewWakeCoord()
 	const app = "app-burst"
-	fanout := WakeFanout{MaxInFlight: 5, PerVM: 2}
+	fanout := sched.WakeFanout{MaxInFlight: 5, PerVM: 2}
 
 	// First caller leads.
 	if _, isLeader, err := coord.Enter(app, fanout); err != nil || !isLeader {
@@ -406,7 +408,7 @@ func TestWakeCoord_FansOutWhenDemandExceedsOneInstance(t *testing.T) {
 	if _, isLeader, err := coord.Enter(app, afterReservation); err != nil || !isLeader {
 		t.Fatalf("third Enter: leader=%v err=%v, want a SECOND leader; without fan-out the burst is stuck on one instance", isLeader, err)
 	}
-	if got := len(coord.inflight[app]); got != 2 {
+	if got := len((*coord.Inflight())[app]); got != 2 {
 		t.Fatalf("in-flight wakes = %d, want 2", got)
 	}
 }
@@ -415,9 +417,9 @@ func TestWakeCoord_FansOutWhenDemandExceedsOneInstance(t *testing.T) {
 // coordinator: a burst must never start more wakes than the app is
 // allowed instances, however many callers queue up.
 func TestWakeCoord_FanoutStopsAtInstanceCeiling(t *testing.T) {
-	coord := newWakeCoord()
+	coord := sched.NewWakeCoord()
 	const app = "app-ceiling"
-	fanout := WakeFanout{MaxInFlight: 3, PerVM: 1}
+	fanout := sched.WakeFanout{MaxInFlight: 3, PerVM: 1}
 
 	leaders := 0
 	for i := 0; i < 50; i++ {
@@ -430,7 +432,7 @@ func TestWakeCoord_FanoutStopsAtInstanceCeiling(t *testing.T) {
 	if leaders != 3 {
 		t.Errorf("started %d wakes, want 3 (the app's max_concurrency)", leaders)
 	}
-	if got := len(coord.inflight[app]); got != 3 {
+	if got := len((*coord.Inflight())[app]); got != 3 {
 		t.Errorf("in-flight = %d, want 3", got)
 	}
 }
@@ -448,9 +450,9 @@ func TestWakeCoord_FanoutStopsAtInstanceCeiling(t *testing.T) {
 // was restored, and keeps the §6.2-1 admission rule executable in the fast
 // unit suite.
 func TestWakeCoord_RunningInstancesAbsorbWaiters(t *testing.T) {
-	coord := newWakeCoord()
+	coord := sched.NewWakeCoord()
 	const app = "app-warm-burst"
-	fanout := WakeFanout{MaxInFlight: 20, PerVM: 80, Existing: 16}
+	fanout := sched.WakeFanout{MaxInFlight: 20, PerVM: 80, Existing: 16}
 
 	if _, isLeader, err := coord.Enter(app, fanout); err != nil || !isLeader {
 		t.Fatalf("first Enter: leader=%v err=%v, want leader", isLeader, err)
@@ -460,7 +462,7 @@ func TestWakeCoord_RunningInstancesAbsorbWaiters(t *testing.T) {
 			t.Fatalf("caller %d: leader=%v err=%v, want follower covered by existing capacity", i, isLeader, err)
 		}
 	}
-	if got := len(coord.inflight[app]); got != 1 {
+	if got := len((*coord.Inflight())[app]); got != 1 {
 		t.Fatalf("in-flight wakes = %d, want 1; existing instances must prevent leader fan-out", got)
 	}
 }
@@ -470,14 +472,14 @@ func TestWakeCoord_RunningInstancesAbsorbWaiters(t *testing.T) {
 // admission and must be read fresh.
 func TestEngineWakeFanoutForRefreshesExistingFromLedger(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanScale, 1024, 20)
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	_, app, _ := sched.SeedApp(t, store, api.PlanScale, 1024, 20)
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 
-	first := e.wakeFanoutFor(context.Background(), app.ID)
+	first := e.WakeFanoutFor(context.Background(), app.ID)
 	if first.Existing != 0 {
 		t.Fatalf("initial Existing = %d, want 0", first.Existing)
 	}
-	if err := e.ledger.Admit(Request{
+	if err := (*e.XLedger()).Admit(sched.Request{
 		Instance:       "already-running",
 		AppID:          app.ID,
 		Plan:           api.PlanScale,
@@ -488,14 +490,14 @@ func TestEngineWakeFanoutForRefreshesExistingFromLedger(t *testing.T) {
 		t.Fatalf("admit existing instance: %v", err)
 	}
 
-	refreshed := e.wakeFanoutFor(context.Background(), app.ID)
+	refreshed := e.WakeFanoutFor(context.Background(), app.ID)
 	if refreshed.Existing != 1 {
 		t.Fatalf("refreshed Existing = %d, want 1; live capacity must not be cached", refreshed.Existing)
 	}
 }
 
 type countingAppLookupStore struct {
-	state.Store
+	Store        state.Store
 	appByIDCalls atomic.Int32
 }
 
@@ -506,11 +508,11 @@ func (s *countingAppLookupStore) AppByID(ctx context.Context, id string) (state.
 
 func TestEngineWakeFanoutForAppReusesOwnerGateLookup(t *testing.T) {
 	mem := state.NewMemStore()
-	_, app, _ := seedApp(t, mem, api.PlanScale, 1024, 20)
+	_, app, _ := sched.SeedApp(t, mem, api.PlanScale, 1024, 20)
 	store := &countingAppLookupStore{Store: mem}
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := sched.XNewEngine(t, statetest.NewStore(store), &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 
-	got := e.wakeFanoutForApp(context.Background(), app.ID, &app)
+	got := e.WakeFanoutForApp(context.Background(), app.ID, &app)
 	if got.MaxInFlight != app.MaxConcurrency || got.PerVM != api.MustLimitsFor(api.PlanScale).ConcurrencyPerVMBound {
 		t.Fatalf("fanout = %#v, want app and plan limits", got)
 	}
@@ -524,9 +526,9 @@ func TestEngineWakeFanoutForAppReusesOwnerGateLookup(t *testing.T) {
 // would trip the per-call queue cap while its siblings sat idle, turning
 // a successful fan-out into ErrQueueFull.
 func TestWakeCoord_FollowersSpreadAcrossWakes(t *testing.T) {
-	coord := newWakeCoord()
+	coord := sched.NewWakeCoord()
 	const app = "app-spread"
-	fanout := WakeFanout{MaxInFlight: 2, PerVM: 1}
+	fanout := sched.WakeFanout{MaxInFlight: 2, PerVM: 1}
 
 	// Two leaders (second admitted once demand passes 1*1).
 	if _, l1, _ := coord.Enter(app, fanout); !l1 {
@@ -542,13 +544,13 @@ func TestWakeCoord_FollowersSpreadAcrossWakes(t *testing.T) {
 			t.Fatalf("caller %d: leader=%v err=%v, want follower", i, isLeader, err)
 		}
 	}
-	calls := coord.inflight[app]
+	calls := (*coord.Inflight())[app]
 	if len(calls) != 2 {
 		t.Fatalf("in-flight = %d, want 2", len(calls))
 	}
 	for i, c := range calls {
-		if c.waiters != 4 {
-			t.Errorf("wake %d has %d waiters, want 4 evenly spread; lopsided joins hit the queue cap early", i, c.waiters)
+		if (*c.Waiters()) != 4 {
+			t.Errorf("wake %d has %d waiters, want 4 evenly spread; lopsided joins hit the queue cap early", i, (*c.Waiters()))
 		}
 	}
 }
@@ -557,23 +559,23 @@ func TestWakeCoord_FollowersSpreadAcrossWakes(t *testing.T) {
 // of a fanned-out set does not evict its siblings — that would strand
 // their followers on an entry the coordinator no longer tracks.
 func TestWakeCoord_ReleaseDropsOnlyItsOwnWake(t *testing.T) {
-	coord := newWakeCoord()
+	coord := sched.NewWakeCoord()
 	const app = "app-release"
-	fanout := WakeFanout{MaxInFlight: 3, PerVM: 1}
+	fanout := sched.WakeFanout{MaxInFlight: 3, PerVM: 1}
 
 	c1, _, _ := coord.Enter(app, fanout)
 	c2, _, _ := coord.Enter(app, fanout)
-	if len(coord.inflight[app]) != 2 {
-		t.Fatalf("setup: in-flight = %d, want 2", len(coord.inflight[app]))
+	if len((*coord.Inflight())[app]) != 2 {
+		t.Fatalf("setup: in-flight = %d, want 2", len((*coord.Inflight())[app]))
 	}
-	c1.Complete(CoordOutcome{})
+	c1.Complete(sched.CoordOutcome{})
 	coord.Release(app, c1)
-	if got := len(coord.inflight[app]); got != 1 {
+	if got := len((*coord.Inflight())[app]); got != 1 {
 		t.Fatalf("after releasing one wake, in-flight = %d, want 1 (sibling must survive)", got)
 	}
-	c2.Complete(CoordOutcome{})
+	c2.Complete(sched.CoordOutcome{})
 	coord.Release(app, c2)
-	if _, ok := coord.inflight[app]; ok {
+	if _, ok := (*coord.Inflight())[app]; ok {
 		t.Error("entry should be gone once every wake has drained")
 	}
 }

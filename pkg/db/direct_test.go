@@ -172,12 +172,14 @@ func TestSameDSNSessionPoolPreservesJSONBEncoding(t *testing.T) {
 // client, and nothing fails loudly — so a new pinned Acquire has to be a
 // deliberate decision rather than something a reviewer has to notice.
 var sessionScopedAcquire = map[string]string{
+	"pkg/state/pgstore_org_access.go":           "authorization pool facade routes LISTEN acquisitions to the direct session pool",
 	"pkg/db/notify_hub.go":                      "LISTEN: the hub parks one connection per daemon",
 	"pkg/db/notify.go":                          "LISTEN: legacy per-subscriber path",
 	"pkg/db/wait_for.go":                        "LISTEN: short-lived per-request wait",
 	"pkg/db/migrate_advisory.go":                "session pg_advisory_lock held across statements",
 	"pkg/state/pgstore.go":                      "session pg_advisory_lock for the edge-rule mutation fence",
 	"pkg/state/pgstore_edge_rule_batch_lock.go": "session pg_advisory_lock for all apps in an environment policy batch",
+	"pkg/state/snapshot_restore_pressure_pg.go": "session pg_advisory_lock for the fleet-wide restore-pressure lock, taken with its counts in one call (ADR-1741)",
 }
 
 // pooledAcquireOK records Acquires that are deliberately on the ordinary
@@ -187,8 +189,13 @@ var pooledAcquireOK = map[string]string{
 	"pkg/db/warmup.go":                                   "pool warm-up: acquires and releases N connections to prove capacity; must exercise the POOLED path",
 	"pkg/db/pgtest/pgtest.go":                            "test harness; never runs against a pooler",
 	"pkg/db/pgtest/template.go":                          "test harness; never runs against a pooler",
+	"pkg/db/pgtest/migration_statements.go":              "test harness: one connection for a NO TRANSACTION migration file; never runs against a pooler",
 	"pkg/e2etest/postgresprobe/pool.go":                  "private customer pools: reads and explicit transactions are pooler-safe; Acquire only borrows semaphore permits",
 	"pkg/managedpostgres/neon/checkpoint_connections.go": "private customer maintenance pool: opened from the authenticated direct provider endpoint, never the control-plane transaction pooler",
+	"pkg/livequery/checkpoint.go":                        "livequeryd's own pool to the customer database it serves (beside it in the database VM, or the compiler's direct URL), never the control-plane transaction pooler; the pinned connection only describes statements (unnamed Prepare) and reads catalogs",
+	"pkg/livequery/compiler.go":                          "livequeryd's own pool to the customer database it serves (beside it in the database VM, or the compiler's direct URL), never the control-plane transaction pooler; the pinned connection only describes statements (unnamed Prepare) and reads catalogs",
+	"pkg/livequery/engine.go":                            "livequeryd's own pool to the customer database it serves (beside it in the database VM, or the compiler's direct URL), never the control-plane transaction pooler; the pinned connection only describes statements (unnamed Prepare) and reads catalogs",
+	"pkg/datapipeline/engine.go":                         "the pipeline engine's pool to the customer's source database, never the control-plane pooler; the acquired connection runs one transaction (CREATE PUBLICATION + COMMENT) and holds no session state",
 }
 
 // TestSessionScopedAcquiresRouteThroughDirectPool is the gate.

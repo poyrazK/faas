@@ -103,7 +103,7 @@ func TestPGClonePostgresVerificationReadPoolRefusalKeepsNeverOpenedOwner(t *test
 				id = history[1].VerificationID
 			}
 			x := v.f.db.x
-			budget, err := v.store.ProjectEnvironmentClonePostgresVerificationReadBudgetForLease(t.Context(), x.f.lease, x.source.source.ID, v.f.sourceOID)
+			budget, err := v.store.PgStore.ProjectEnvironmentClonePostgresVerificationReadBudgetForLease(t.Context(), x.f.lease, x.source.source.ID, v.f.sourceOID)
 			if err != nil || len(budget.Allocations) != attempt-1 {
 				t.Fatal("capacity denial spent read debit", err)
 			}

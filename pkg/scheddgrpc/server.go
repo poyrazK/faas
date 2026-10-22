@@ -34,6 +34,7 @@ import (
 )
 
 func withIncomingCorrelation(ctx context.Context) context.Context {
+	ctx = withPreferredInstanceIncoming(ctx)
 	fields, ok := wire.CorrelationFromIncoming(ctx)
 	if !ok {
 		return ctx
@@ -1461,6 +1462,8 @@ func nodeTelemetryFromProto(in []*scheddpb.InstanceTelemetry) []sched.NodeTeleme
 
 			EgressNewDestinationsLimitPerMin: row.GetEgressNewDestinationsLimitPerMin(),
 			EgressFloodDropsLimitPerMin:      row.GetEgressFloodDropsLimitPerMin(),
+			QuietPaused:                      row.GetQuietPaused(),
+			Frozen:                           row.GetFrozen(),
 		}
 		if value := row.GetEgressNewDestinationsPerMin(); value != nil {
 			v := value.GetValue()
@@ -1636,6 +1639,21 @@ func toProblem(err error) *api.Problem {
 	if errors.Is(err, sched.ErrAppDeleted) {
 		return api.NewProblem(int(codes.FailedPrecondition), "app_deleted",
 			"app was deleted while wake was in flight", err.Error())
+	}
+	// Both refusals reached customers as "500 schedd operation failed"
+	// (production-us hunt #9, H9-169). A worker never answers requests, so
+	// retrying cannot help; any other at-capacity refusal is transient.
+	if errors.Is(err, sched.ErrNoRequestListener) {
+		// The code is apid's ErrInvocationWorkloadClass code; the status
+		// is re-derived from it after the gRPC hop.
+		return api.NewProblem(api.StatusForCode(api.CodeValidation), api.CodeValidation,
+			"App does not serve requests",
+			"this app runs as a background worker or job and has no request listener; give the service a published port (compose ports:) or a request execution mode to serve HTTP").
+			WithDocs("https://gregale.dev/docs/event-driven#invocations")
+	}
+	if errors.Is(err, sched.ErrAtCapacity) {
+		return api.NewProblem(api.StatusForCode(api.CodeCapacity), api.CodeCapacity,
+			"Briefly at capacity", "the app is at its instance limit; retry shortly")
 	}
 	if p := api.AsProblem(err); p != nil {
 		return p

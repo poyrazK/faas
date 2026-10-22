@@ -7,6 +7,1710 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Event substrate benchmark (V12) — 2026-10-20
+
+`make bench-event-substrate` measures event publish, fanout routing, the
+invocation drain and webhook delivery on disposable PostgreSQL. The first run
+on `gregale-internal-test-1`, a busy 2 vCPU shared host
+([report](ops/evidence/20261020-event-substrate-bench/REPORT.md)), sustained
+**5 events/s end to end** (p95 publish-to-handler 1.2 s). Above that, fanout
+routing falls behind: it ran 14.8 events/s over a 2,000-event backlog and
+slows as the backlog grows, because `EventRecipientClaim` re-runs the
+ordering scan for every candidate. Publish (307/s) and the drain (48/s) are
+not the bottleneck; webhook delivery sits at its 6.2/s design ceiling. Event
+caps stay where they are until fanout routing is fixed and the benchmark is
+re-run on the reference node.
+
+## Tenant egress denies NAT64 — 2026-10-18 (branch, not released)
+
+The shared egress denylist adds the NAT64 prefixes `64:ff9b::/96` (RFC 6052)
+and `64:ff9b:1::/48` (RFC 8215): their addresses embed an IPv4 destination,
+so a translator on the path could carry a guest past the IPv4 denies, the
+same class as 6to4 and Teredo
+([ADR 20261018194214](adr/20261018194214-tenant-egress-deny-nat64.md)). The
+per-netns and host renders, the Ansible template, the user-space checks and
+`docs/denylist.md` all follow the catalog; `make egress-render-matrix` passes
+on all nine rows. No deployment uses NAT64. Open: `nft -c` validation of the
+rendered ruleset and a metal run of the egress sweep.
+
+## Checked binding retirement — 2026-10-17
+
+Complete reviewed GitOps graph removal can publish an empty release with binding
+policies still enforced. The private grant consumes reservation-time policy
+revisions and exact current source/lease/inventory authority. Surviving project
+workloads remain blocked by this path. Existing route withdrawal, consumer pause,
+gateway acknowledgements and execution drain still govern completion; accepted
+queue backlog and retained identities survive. See [ADR-1647](adr/1647-checked-binding-retirement.md).
+Portable owner/state fixtures cover this handoff; real native KVM retirement and
+independent leak qualification remain pending.
+
+## Candidate binding qualification — 2026-10-17
+
+Managed GitOps graphs can qualify supported HTTPS and push-worker bindings
+before candidates receive serving authority, with binding policies kept enforced.
+Private restored-candidate HTTPS exchanges and explicitly reviewed isolated queue
+smoke bind evidence to exact artifacts, policies, source generation and cohort.
+Graph publication rechecks that context atomically; serving cutover consumes the
+same bounded proof. Missing, stale, partial and unsupported evidence stays blocked.
+Ordinary active-release CLI receipts remain separate. Native execution and host
+leak qualification remain pending on a dedicated KVM host.
+See [ADR-1646](adr/1646-candidate-binding-qualification.md).
+
+## Reviewed source binding verification — 2026-10-17
+
+Managed HTTPS probes, push-worker canaries and single-app durable verification
+runs now share a validated immutable artifact revision covering OCI images and
+reviewed source builds. Frozen archive/build provenance and materialized rootfs
+identity replace the image-only assumption; source builds keep an empty OCI
+digest. Task admission and scheduler restore allow that shape only for current
+managed service probes. Rebuilds and existing release/policy/source fences revoke
+prior authority and evidence. An append-only task constraint migration retains
+ordinary-task eligibility and refuses downgrade while source history exists.
+Managed-service native contract version 4 adds a real Dockerfile-built worker
+and retains its source archive, build provenance and rootfs evidence. Native
+execution and host leak qualification remain pending on a dedicated KVM host.
+See [ADR-1645](adr/1645-reviewed-source-binding-verification.md).
+
+## Managed worker queue verification — 2026-10-17
+
+Active reviewed push workers can admit bounded queue canaries using their exact
+release, environment and frozen consumer contract, without HTTP traffic or
+revision pins. Frozen reviewed capability declarations and explicit publication
+consent remain required. Inventory and dry-run share admission eligibility;
+release, source, policy and consumer changes revoke completion evidence.
+Strict batch verification can now complete both HTTPS and queue checks.
+The managed-service native contract is version 3 and requires real handler
+completion plus release/policy invalidation and preservation of unrelated queue
+work. Native execution and host leak qualification remain pending on a dedicated
+KVM host. See [ADR-1644](adr/1644-managed-worker-queue-canaries.md).
+
+## Managed worker service verification — 2026-10-17
+
+Active managed worker callers can verify frozen HTTPS dependencies on
+request/service targets through the existing isolated task path. Eligibility
+uses the frozen class and effective execution mode. Tasks retain exact release,
+deployment, scope and policy fences without starting the worker entrypoint or
+listener. Single-service verification leaves queues untouched; strict batch
+verification retains blockers for unsupported queues. Managed zero-traffic worker
+queue-canary admission was a separate gap, subsequently addressed by ADR-1644. Reviewed graphs can
+qualify service-bound workers with a distinct policy that hashes
+their dependencies and effective transport, retaining atomic graph route checks.
+This change introduced managed-service native contract version 2 and requires worker
+coverage, separate release
+and policy invalidation, pending-message preservation and three-workload
+retirement. Real native execution and host leak qualification remain pending
+on a dedicated KVM host. See [ADR-1643](adr/1643-managed-worker-service-probes.md).
+
+## Managed HTTPS service verification — 2026-10-17
+
+Active managed request/service workloads with resolved frozen HTTPS bindings
+publish `managed-https-v1`. Server-selected context travels through the existing
+target-pinned task ledger to a distinct guest operation. The guest checks the
+custom environment key, caller identity, private TLS and exact gateway target
+and release confirmations. Inventory segregates ordinary and managed receipts;
+checks, planning and single/all CLI verification require current matching
+context, and the CLI refreshes evidence after completion. Named guest listeners
+authenticate task source addresses through vmmd's fresh live map and require a
+running task lease; old nodes reject managed probes before boot. Unsupported contexts
+and managed application smoke remain blocked. No production qualification or
+activation authority is established. Native acceptance requires a dedicated
+KVM host and host leak checks; this cloud workspace has no `/dev/kvm`.
+The self-contained [native journey](ops/managed-service-binding-native-acceptance.md)
+now owns its reviewed graph, private TLS, CLI checks, invalidation and retirement.
+It is the fourth required binding-native suite; the aggregate is version 2.
+Portable contracts and tagged compilation do not establish native qualification.
+See [ADR-1642](adr/1642-managed-https-service-probes.md).
+
+## Managed service gateway probe pins — 2026-10-17
+
+Marked gateway probes require a healthy replica of the exact deployment selected
+by the active reviewed environment graph. Malformed or conflicting deployment
+and release selectors fail before replica lookup; successful responses confirm
+both selected identities. Old or unattributed replicas cannot satisfy the probe,
+including after the active release changes while registry data is cached.
+Probes retain their no-wake, no-application-call behavior. This corrects route
+observation; managed task probes and binding receipt qualification remain
+unsupported. Focused gateway and daemon race regressions, gateway lint and
+documentation link checks pass. See
+[ADR-275](adr/275-https-service-binding-canary.md).
+
+## Frozen deployment service inventory — 2026-10-17
+
+Binding inventory uses the selected deployment's frozen service namespace for
+managed environments and reports logical names, physical target apps, exact
+reviewed routes and context revisions. App-level discovery cannot replace an
+empty or invalid frozen map. `gregale bindings APP --deployment ID|vN` selects
+that view. Context revisions participate in review digests; ordinary app probe
+receipts are excluded and managed service task probes remain unsupported.
+Checks, release-policy reviews and strict batch coverage block that gap without
+claiming environment qualification. See
+[ADR-1641](adr/1641-frozen-service-binding-inventory.md).
+
+## Deployment service binding explanations — 2026-10-17
+
+`gregale bindings service explain --deployment ID` observes app authorization
+and effective deployment routing through a read-only API. Managed callers use
+their frozen workload policy and active reviewed release, with no global app
+fallback on missing bindings. Optional scope assertions detect environment
+mismatches; explanations identify selected target deployments and releases when
+pinned, and preserve indeterminate results for unsupported or unreadable context.
+The gateway and API share app and alias authorization helpers. These metadata
+observations do not establish runtime adoption, connectivity or native acceptance.
+See [service binding configuration](service-binding-configuration.md) and
+[ADR-1640](adr/1640-deployment-service-binding-explanations.md).
+
+## Native binding CI orchestration — 2026-10-17
+
+The [binding-native lane](ops/binding-native-ci.md) runs PostgreSQL,
+storage, queue and managed HTTPS service guest acceptance runners serially, with clean exact-source
+Git/VCS provenance and a retained aggregate of validated non-secret reports.
+Go build constraints replace prefix-based test discovery. A portable actual-tree
+inventory gate rejects native tests missing from platform phases or specialized
+runner contracts. Native host classification, service isolation, per-runner
+locks, leak checks and independent provider/artifact approval remain required.
+Portable verification is separate from supported native execution. No native
+qualification or production admission is established by this implementation.
+
+## Post-release watch — 2026-10-17
+
+[ADR-1445](adr/1445-post-release-watch.md): for 30 minutes after a release
+reaches 100%, apid compares it with its predecessor's traffic from before the
+rollout. A clear 5xx or p95-latency regression (the canary's own rules) rolls
+back through the readiness-gated rollback with trigger `post_release`. The
+release is marked `post_release_regression` and records an explained decision.
+Releases that opted out of automatic rollback are not watched, and a rollback
+that would cross a release command is skipped. On the n2 node the
+safe-release drill's new case deployed a release without a canary that
+answers in 700 ms. The watch rolled it back 91 s after the deploy
+(`abort_post_release_p95_latency`, p95 720 ms against 10 ms), and the app
+served again at 92 s. All eight drill cases passed, leakcheck clean, with no
+local vmmd patch and no base-ref pins (the single-box startup fix included).
+The Postgres and MemStore conformance cases and the apidserver watch tests pass.
+
+## Guarded, reversible config changes — 2026-10-17
+
+[ADR-1451](adr/1451-guarded-reversible-config-changes.md): every customer env
+or secret write records a revision of the scope's config (`gregale env
+history`), and `gregale env rollback <revision>` restores its variables. A
+change to a scope with a live deployment opens a config guard. The guard judges
+the first traffic served with the new config against the old config and, when
+the new config fails, restores the previous variables and replaced secrets
+(sealed rows, never unsealed) and restarts the app. Deleted or rotated secrets
+are never restored automatically. Stage 2, config canaries through config-only
+deployments, is a follow-up. On the n2 node the safe-release drill's new case
+sets a variable that makes the hello app answer 500. The guard restored the
+previous config 20 s after the change (`fail_first_wake_5xx`, new config 17/17
+5xx), and the app served again at the same mark. All seven drill cases passed,
+leakcheck clean. The Postgres and MemStore conformance case, the clone schema
+registry on a migrated database, the apidserver guard, rollback and history
+tests, the CLI tests, spec compliance and the SDK coverage gate pass.
+
+## One rollout flag and a live rollout view — 2026-10-16
+
+[ADR-1450](adr/1450-one-rollout-flag-and-live-rollout.md): `gregale deploy
+--rollout safe|fast|immediate` chooses how a release reaches traffic, and the
+app's `release_policy` accepts the same three words (`fast` fills the
+`aggressive` ladder). At a terminal, `gregale deploy` follows a canary rollout
+to 100% or abort; Ctrl-C detaches with exit 0 and the rollout keeps running.
+`--safe`, `--canary-preset` and `--canary-stages` still work and are marked
+deprecated. CLI tests cover the mapping, the conflicts and the detach exit; the
+`pkg/apid/release` default-policy test covers `fast`.
+
+## App-chosen rollout probe routes — 2026-10-16
+
+[ADR-1449](adr/1449-app-chosen-rollout-probe-routes.md): an app may name up to
+three `GET` paths (`release_probe_paths`, `gregale app --release-probe-paths`)
+that the default rollout probe checks instead of `/`; each round splits the 20
+probes per revision across them. The apidserver round trip and probe test and
+the Postgres and MemStore probe-target tests pass on the n2 node.
+
+## Releases that change the database — 2026-10-15
+
+[ADR-1448](adr/1448-releases-that-change-the-database.md): a rollback whose
+target has not served since a later release command ran is refused with
+`rollback_crosses_release` unless acknowledged (`--acknowledge-releases`, a
+typed confirmation at a terminal, or `acknowledge_releases` in the API). The
+refusal lists the crossed releases and, for managed PostgreSQL databases the
+release commands can migrate, the `gregale postgres restore` command for the
+moment before the earliest of them. The usual rollback to the previous release
+crosses nothing; automated rollbacks never acknowledge. Deployment reads report
+the release run as `release`. Verified on the n2 node: apidserver rollback,
+state, CLI and spec tests pass, and the full safe-release drill passed with
+leakcheck clean.
+
+## Evidence-paced default rollouts — 2026-10-15
+
+[ADR-1321](adr/1321-evidence-paced-default-rollouts.md) makes the default
+production rollout `adaptive`: the balanced 1% → 10% → 50% → 100% ladder, but
+each stage advances as soon as the circuit breaker has conclusive, clean
+evidence against the serving predecessor, after at least one minute, instead
+of always waiting for its 2-minute timer. `gregale deploy --safe` uses it;
+explicit presets keep their timers. The default probe now sends 20 probes per
+revision per round, and each minute's round starts within about 15 s. On the
+n2 node a flag-free release of a quiet app reached 100% in 248 s, down from
+about 9 minutes; all six safe-release drill cases passed, leakcheck clean.
+
+## Explained rollout decisions — 2026-10-14
+
+[ADR-1447](adr/1447-explained-rollout-decisions.md) records the evidence behind
+every decision the safe-release circuit breaker makes: why a canary stage
+advanced, is held, or was aborted, with the request, 5xx, probe, latency, OOM
+and restart counts for both revisions. It is stored with the transition
+(`deployments.rollout_decision` and the deployment audit row), holds are
+deduplicated `deploy.rollout_held` audit rows, and the API, `gregale deployment
+wait --rollout`, `deployment summary`, and the `rollout.completed` /
+`rollout.aborted` webhooks show it. The safe-release drill passed on the n2
+node with the new assertions: the quiet canary completed on an
+`advance_probe_evidence` record (20 probes each side at the decision), the
+late-failing release aborted on `abort_5xx` with `probes_included` (candidate
+probe 5xx 20/20), the bad release on `abort_5xx` and the crash loop on
+`abort_crash_loop`; leakcheck clean. The Postgres state tests, conformance,
+spec parity, and the apidserver Safe Deploy tests pass on the node.
+
+## Safe releases by default — 2026-10-13
+
+[ADR-1446](adr/1446-safe-releases-by-default.md) makes the balanced health-gated
+canary with first-wake 5xx rollback the default for production releases,
+bounds low-traffic canary holds, judges quiet canaries on ADR-847 probes of
+`/`, adds a crash-loop gate, and fixes plain rollback of image, GitHub, and
+preview deployments, which the latest-revision promotion fence had silently
+superseded. The metal drill suite (`cmd/e2e/safe_release_drill_metal_test.go`)
+passed on the n2 node on 2026-10-13: safe default, low-traffic advance on
+probe evidence (132–182 s), probe-backed abort of a quiet release that fails
+after its smoke (72–176 s), 5xx abort, crash-loop abort, canary-worker
+fallback, and rollback recovery in 6.8–13.5 s with a verified `complete`
+rollback receipt ([drill record](drills/2026-10-10-safe-release-drill.md)). Progressive rollouts
+are `beta` in the product registry.
+
+## Two-generation hand-off on reload — 2026-10-18 (branch, not released)
+
+gatewayd-public, gatewayd-internal, apid and realtimed hand off on
+`systemctl reload`: the new release starts on the same sockets and serves new
+connections, and the old generation finishes requests and streams longer than
+the 25 s restart grace, for up to 30 minutes
+([ADR-1736](adr/1736-zero-downtime-daemon-restarts.md), "Two generations").
+deployctl reloads them when only the binary changed and both releases can
+hand off, and restarts otherwise. gatewayd-internal's egress ledger and usage
+outbox and realtimed's callback outbox use per-generation slots. realtimed
+closes its WebSocket sessions at the hand-off (fan-out is per process).
+Portable tests cover a 30 s request across a hand-off with no failed request,
+a refused hand-off, both gateways' drains with requests longer than the grace,
+store adoption across generations, a realtimed hand-off under load, and
+deployctl's reload-or-restart decision. Native run on fsn-4 (systemd 255,
+2026-10-18), with transient units using pkg/wire's hand-off and the real
+realtimed binary:
+- a reload under load: 235,434 requests, 0 failures; three 35 s requests and a
+  90 s SSE stream finished on the old process, and systemd adopted the new one
+  as main in 0.4 s with the watchdog satisfied;
+- two reloads 10 s apart: 0 failures;
+- a successor that never becomes ready: 0 failures, `STATUS=hand-off failed`;
+- realtimed reloaded twice under load: 0 failures;
+- a successor that crashes is restarted by systemd;
+- a restart after a hand-off drains for the 25 s grace.
+The first native run found that a successor started by the old process was an
+alien main process to systemd, which SIGKILLed it on restart; successors are
+now systemd's children. apid's cap rose to 512 M with a 256 MiB GOMEMLIMIT
+(ADR 20261018132058). Open: a WebSocket across a gateway hand-off on a real
+node, and a deploy through deployctl.
+
+## Zero-downtime daemon restarts — 2026-10-17 (branch, not released)
+
+gatewayd-internal (unix socket and compute data listener), realtimed and the
+control plane's schedd can restart behind systemd sockets that keep their
+listeners open, as apid and gatewayd-public already did (ADR-068). schedd's
+socket follows its configured address (`faas_schedd_listen_addr`, from the
+manifest's schedd bind); the compute sockets stay off
+(`faas_compute_durable_listeners`) until node_join manages them. Shutdown ends
+SSE and WebSocket sessions at once instead of holding the restart for the
+25 s grace, gRPC servers end watch streams so GracefulStop finishes, the
+public-to-internal H2C hop resends requests that crossed a graceful GOAWAY,
+wake RPCs wait out a schedd restart, outboundd and bridged drain before
+exiting, and HTTP daemons answer requests on connections accepted just before
+shutdown instead of closing them
+([ADR-1736](adr/1736-zero-downtime-daemon-restarts.md)). Portable
+restart-under-load tests show no failed requests. On fsn-4 (systemd 255),
+gatewayd-internal's synth server behind a socket unit and a TCP schedd
+listener behind a socket unit each restarted five times under load with 0 of
+138,179 and 0 of 127,987 requests failing; without the socket unit the gateway
+returned 103,323 502s. Open: the first socket conversion through `node_join`
+and deployctl, and the listeners the ADR leaves without socket activation.
+
+## Worker admission explanations — 2026-10-18
+
+Worker pool recovery now records the actual admission blockers per environment:
+account worker and concurrency limits, node RAM/vCPU/CPU constraints, unavailable
+nodes, placement changes, listener ports, spend caps and retry cooldowns. Account
+and concurrency decisions include usage/limits when observed; node evidence
+includes requested resources without host identities or fleet usage. Cooldowns
+retain earlier refusal times, and independent staleness stays visible even with
+fresh pool counts. Scoped passes preserve neighboring evidence; satisfied slots
+and zero targets clear blockers.
+
+The operational-summary API, `gregale inspect` and watch, generated Node/Python
+SDKs and recovery runbook expose these explanations and actions. Evidence reuses
+the existing pool JSON under the same lease/revision fences. No additional
+migration is needed; the two prior worker recovery migrations still precede the
+control plane. This change is not deployed. Native recovery qualification remains
+separate and pending.
+
+Portable validation passes 163 scheduler checks, including scheduler restart using
+PostgreSQL and node-generation admission safeguards, 32 CLI inspect/watch checks
+and 16 shared memory/PostgreSQL recovery contracts, with no skips. HTTP authorization/MFA,
+environment selection and read-only checks pass. Generated Node/Python SDK round
+trips cover new evidence and older responses; regeneration is deterministic.
+OpenAPI parity, protocol compatibility against the branch base and operator-doc
+gates pass. Scoped production lint passes with zero issues.
+
+## Worker recovery diagnostics — 2026-10-17
+
+Worker recovery now records per-environment scheduler targets and resident counts
+with observation times. The operational-summary API and CLI inspect/watch expose
+app-wide retry progress while keeping environment pool observations separate.
+Missing and stale evidence remain explicit. Owner-scoped aggregate metrics and
+internal warning alerts cover missing capacity, overdue retry/lease deadlines
+and unavailable observations; zero targets and inactive workloads do not create
+capacity deficits. The existing service/worker recovery runbook documents these
+signals and investigation steps. Apply the additive observation migration before
+upgrading schedd and apid. This change is not deployed.
+
+Portable validation includes 68 scheduler checks and 30 CLI inspect/watch checks
+with no skips, plus 16 shared worker/service recovery contracts on memory and
+PostgreSQL stores. API authorization/MFA, environment selection and read-only
+behavior pass; fresh schema replay, generated SQL, OpenAPI parity and protocol
+compatibility against the branch base are checked. Promtool fixtures and typed
+Node/Python SDK round trips pass, and SDK regeneration is deterministic. Native
+worker availability qualification remains separate as documented below. Scoped
+production lint passes with zero issues.
+
+## Durable worker-pool recovery — 2026-10-17
+
+Worker recovery now persists retry deadlines, failure counts and app leases.
+Bounded startup and periodic sweeps restore pools after capacity returns without
+another event. Existing scoped demand, account and node admission remain
+authoritative; cooldown still permits scale-in and zero floors. Captured worker
+environments and unfinished mode-change cleanup remain discoverable.
+
+Validation includes 64 scheduler checks with no skips, PostgreSQL restart
+recovery, and the shared worker/service recovery contracts on memory and
+PostgreSQL stores. Generated SQL, schema replay, migration compatibility and
+protocol compatibility against the branch base are checked. Apply the additive
+migration before upgrading schedd. Native KVM availability qualification remains
+separate and pending; this change is not deployed.
+
+## Native M9 automatic drain gate — 2026-10-18
+
+The [automatic drain drill](ops/native-m9-acceptance.md#automatic-node-drain-and-controller-restart)
+now drives the real admin drain/progress API and installed schedulers. It pauses
+the destination controller to verify a pending, non-admitting drain with retained
+source work, then replaces that controller and waits for automatic migration.
+The serving fixture must preserve its in-memory receipt. Maintenance completion
+requires physical source retirement, zero source resources/cleanup leases and the
+generation-bound immutable completion/audit receipt. Both peers must pass leak
+checks, and restoration verifies both vmmd and schedd. Successful runs leave the
+source in maintenance; no automatic activation or forced cleanup is performed.
+
+Portable drain verdict, API, peer guard/restoration and existing migration tests,
+race tests, tagged native compilation and scoped lint are verified. The existing
+CI target includes the new contracts in both tiers. Native execution remains
+pending because this workspace has no KVM device or designated fleet credentials.
+Nothing deployed; no native availability or customer traffic SLO is claimed.
+
+## Native M9 migration recovery gate — 2026-10-18
+
+The [first live migration drill](ops/native-m9-acceptance.md) now has a dedicated
+two-peer harness: real scheduler/vmmd migration, a discarded successful source
+acknowledgement, vmmd process death/restart, receipt replay, return migration and
+replacement-generation protection. An in-memory HTTP fixture detects cold
+fallback and duplicate operations. The drill observes retained source capacity,
+then requires zero residents/capacity/source leases and successful leak checks on
+both peers. Native host/artifact identities, phase proofs and independent
+restoration enter a strict private report; required skips cannot qualify.
+
+Portable gate/fixture/fault-guard tests and tagged native compilation are verified.
+Both CI tiers run these harness checks. Native execution remains pending: this
+workspace has no KVM device or designated peer credentials. Host power loss,
+partitions, automatic recovery-policy and drain qualification remain separate.
+The earlier heartbeat smoke is available separately. Nothing deployed.
+
+## Measured Node function migration destinations — 2026-10-17
+
+[ADR-20261018030615](adr/20261018030615-function-migration-destination.md) adds qualification-only
+measured destination restore, durable readiness and ownership epochs, a separate
+execution activation fence, and confirmed destination retirement before source
+recovery. Current configuration and artifact approval are rechecked at commit;
+pending destination RAM/CPU/vCPU claims survive scheduler restart in the database.
+Original native admission history remains immutable. Production activation and
+two-host Node 22/24 KVM/TLS SQL qualification remain pending. See the
+[evidence](ops/evidence/20261017-function-migration-destination/REPORT.md).
+
+## Measured Node function migration source permissions — 2026-10-17
+
+[ADR-20261018030614](adr/20261018030614-function-migration-admission.md) adds separate capture and
+recovery permissions to the qualification-only source path. Each permission
+binds the measured parent, original wake, source lease and capture files, and
+uses the existing current-input and artifact approval fences. Recovery permission
+is issued after schedd fences ownership; lease expiry cannot renew capture
+authority. Duplicate RPCs preserve a valid in-flight permission and reuse the
+single physical recovery result. RUNNING publication checks current recovery
+permission again. The Node 22/24 native SQL matrix now includes cancellation,
+expiry, failed probes and held recovery ACK timeout. Native execution is pending;
+production activation and destination adoption remain gated. See the
+[evidence](ops/evidence/20261017-function-migration-admission/REPORT.md).
+
+## Node function migration source rollback — 2026-10-17
+
+[ADR-20261018030613](adr/20261018030613-function-migration-source-rollback.md) adds a qualification-only
+source path: mandatory all-interpreter checkpoint drainage, paused publication,
+a durable scheduler rollback fence, and one acknowledged pool-recovery attempt.
+Cancellation and expired leases retain source capacity until recovery or physical
+retirement is confirmed. schedd completes RUNNING or STOPPED after that result;
+vmmd never writes the instance ownership row. ADR-20261018030614 above adds measured source
+permission; destination adoption remains refused. Native KVM/vsock, restart/private-environment
+acceptance and production activation remain pending. See the
+[evidence](ops/evidence/20261017-function-migration-source-rollback/REPORT.md).
+
+## Node function warm-snapshot recovery — 2026-10-17
+
+[ADR-20261018030612](adr/20261018030612-function-warm-snapshot-resource-recovery.md) adds qualified
+warm capture with PostgreSQL drainage, paused publication and all-worker recovery
+before the original VM admits traffic. Cancelled/failed capture also recovers;
+unconfirmed recovery seals admission and retires the original physical VM.
+Measured checkpoint authority is explicit, and schedd checks idleness again
+before terminal park or snapshot-reuse destruction. Migration remains refused.
+Portable host race and real TLS/SCRAM SQL tests pass on Node 22/24; see the
+[evidence](ops/evidence/20261017-function-warm-snapshot-recovery/REPORT.md).
+This is local implementation evidence. Native KVM/vsock and recovery
+qualification remain pending, and ordinary production builds keep activation off.
+## Product Control customer work history — 2026-10-17
+
+[ADR-1727](adr/1727-product-control-customer-work-history.md) adds a private
+customer API and explicit portal search over independently retained receipts.
+Exact run reference, original feature, outcome and inclusive UTC start dates
+combine with AND. Removed features and old plans stay discoverable. Pages use
+immutable admission time and UUID descending at microsecond precision; scope,
+Auth realm, role, effective permissions and all filters bind continuation.
+Missing and foreign exact references return the same empty scoped page.
+
+Both stores recheck current customer authority and View work. Billing-only and
+plan-manager roles cannot read history; pausing starts preserves authorized
+reads. PostgreSQL shares a read-only repeatable-read authorization/source
+snapshot; memory returns detached entries with bounded collection space. Limits
+are 25 entries, 2048 cursor bytes, 32 KiB JSON and a 20-second service read budget.
+Source scan cost still depends on retained history. There is no total count,
+new retention window, audit journal or snapshot across pages; outcome changes
+can enter/leave a filtered search and require a fresh first page.
+
+The shared Run details projection preserves settled outcomes after result expiry,
+keeps active Operations retention, and labels unavailable unresolved work without
+inventing failure. Entries contain no input/result bodies, prices or charges,
+allowance counts, execution diagnostics or owner billing evidence. View run
+details links to the independently permitted result/files, billing month and help.
+
+The portal adds next/first page and clear-filter actions, with no polling or
+search persistence. Editing filters, switching workspaces, permission changes,
+sign-out and access denial clear history and selected results/details. Request
+and workspace generations fence late responses and stale buttons. Timestamp
+parsing accepts the memory store's nanoseconds and PostgreSQL's microseconds.
+
+All 313 selected Go checks, 106 portal checks and 10 Chromium checks passed,
+including race-enabled domain/customer service and memory/PostgreSQL contracts.
+The full Product Control HTTP race suite passed after the final asset change.
+Chromium used the production router/customer middleware and SQLC/PostgreSQL with
+fictional Auth and state-only work, covering 28 tied-timestamp receipts, removed
+features, original plans, result expiry, filters, actions, access changes,
+workspace/sign-out clearing, default-off routes and desktop/mobile layout.
+Scoped changed-file lint, SQLC consistency, private spec/SDK coverage, repository
+policy, documentation paths and formatting passed. The disposable browser fixture
+stopped and its database was removed. Prior verification artifacts are preserved.
+
+The Product Control and independent email switches remain default off. No schema
+migration, worker, CLI/SDK implementation, email transport, real provider/Auth
+qualification, workload execution or deployment is introduced. See the
+[work-history runbook](ops/product-control.md#customer-work-history).
+
+## Product Control customer run details — 2026-10-17
+
+[ADR-1726](adr/1726-product-control-customer-run-details.md) adds a private,
+read-only customer API and Run details panel to Recent work and work activity
+links. The original receipt supplies the plan, admission month, one consumed
+start and optional historical allowance before/after admission. Current plan
+changes do not rewrite those terms. Older missing allowance is explicit, settled
+outcomes survive result expiry, and expired unresolved work establishes neither
+failure nor a zero charge. Active work follows existing Operations retention.
+
+Live Application Auth membership and current account/app/tenant/realm mapping
+remain mandatory. Both stores recheck current role permissions at the receipt
+boundary. View work is required; billing-only and plan-manager roles cannot read
+runs. The complete charge object is omitted without View billing. Billing members
+see provisional/finalized success charges, waivers, minimal statement references
+and signed credit aggregates for the exact run. Partial/full credits reduce the
+net amount. No statement or credit claims payment or a cash refund. Source
+selection excludes payloads, execution diagnostics, owner reasons and handoffs.
+
+PostgreSQL shares read-only repeatable-read authorization and source queries;
+memory returns detached values. JSON is limited to 16 KiB and the service read
+budget is 20 seconds. No migration, worker, journal or extra polling is added.
+The portal provides explicit result/files, original billing-month and contextual
+help actions. Selection, closing details, workspace/role changes, sign-out and
+access denials fence stale responses and old buttons and clear prior results.
+The panel is not persisted and shows its observation time with explicit refresh.
+
+All 297 selected Go checks passed, including race-enabled domain/customer service
+and memory/PostgreSQL contracts. The full Product Control HTTP race suite passed.
+All 96 portal checks and 10 Chromium checks passed. Chromium exercised the
+production router, customer middleware and SQLC/PostgreSQL with fictional Auth
+and state-only work fixtures. It covered original Starter terms under a current
+Pro plan, signed partial credits, result expiry, source links, role changes,
+foreign workspace reads, sign-out, default-off routes and desktop/mobile layouts.
+The local fixture stopped and its disposable database was removed. SQLC
+consistency, private-route spec/SDK coverage, schema-source binding, documentation
+paths, formatting and repository policy checks passed. Scoped lint, including tests and router wiring, passed with zero introduced
+issues. This check covers every line in every changed Go file; it does not claim
+a clean repository-wide lint.
+
+The default-off Product Control and independent email switches remain unchanged.
+Migrations, schema, Auth protocols/templates, CLI/SDKs, email transport and
+VM/scheduler source and earlier verification artifacts are preserved. No real
+credentials, email, workload execution, deployment, flag enablement or live
+provider/Auth/native qualification is claimed. See the
+[run-details runbook](ops/product-control.md#customer-run-details).
+
+## Product Control customer workspace activity — 2026-10-17
+
+[ADR-1725](adr/1725-product-control-workspace-activity.md) adds customer workspace
+activity to the existing Updates area. The read-only private API and portal join
+retained work outcomes, confirmed self-service plans, finalized statements,
+signed credit notes and the latest help updates. Source fields are selected
+explicitly; owner notes, reviews, assignment evidence, handoffs, work prices and
+billing snapshots are absent. No migration, journal or worker is added.
+
+Live Application Auth membership and current account/product/tenant/realm mapping
+remain mandatory. Both stores recheck current permissions before pagination.
+Work, plan, billing and help each retain their existing access rules; work-only
+members receive no billing amounts or plan confirmations. Plan/help history also
+checks its recorded organization. Cursors bind workspace, Auth app, organization,
+role, effective permissions, filter and the full descending time/kind/UUID key.
+Pages have 25 entries, 64 KiB responses and a 20-second service deadline. The
+SQLC query shares a read-only repeatable-read snapshot with authorization; memory
+collects at most a page plus lookahead. Source scan cost still depends on retained
+history. Signed credits remain negative, matching the original documents.
+
+Links open existing independently authorized readers: a run/result, exact plan
+confirmation, original billing month or help request. Looking at a previous plan
+confirmation preserves an unconfirmed new review. Browser ordering retains all
+six microsecond digits. Filters survive ordinary workspace refreshes; pending
+responses and old buttons are fenced across selection, sign-out and workspace
+or permission changes. The activity list is not persisted and adds no polling
+loop. The unread inbox and personal email consent remain separate. Available
+history is not a complete audit log; results may expire and help updates coalesce.
+
+All 304 selected Go checks passed, including race-enabled domain/customer service
+and memory/PostgreSQL contracts. The full Product Control HTTP race suite passed.
+All 82 portal checks and 10 Chromium checks passed. Chromium uses the production
+router, customer middleware and SQLC/PostgreSQL projection with fictional Auth
+and state-only workload fixtures. Its isolated Go overlay supplies equivalents
+of existing test accessors without changing repository source. It covers source
+links, pending reviews, signed credits, role visibility, cursor scope, workspace
+switching, sign-out, default-off routes and desktop/mobile layouts. Browser checks
+sent no external requests or email and executed no real workload. The fixture
+stopped cleanly and its disposable database was removed.
+
+SQLC consistency, private-route spec/SDK coverage, schema-source binding,
+formatting, documentation paths and repository policy checks passed. Scoped changed-file lint, including tests and router wiring, passed with zero
+introduced issues. The initial broad run exceeded its budget and reported twelve
+context warnings in unchanged legacy test helpers; the verification report records
+that baseline rather than claiming a repository-wide clean lint. The default-off Product Control flag and independent email
+switches remain unchanged. Existing migrations, schema, Auth templates/protocols,
+SDKs, outbox and VM/scheduler source, and earlier verification artifacts are
+preserved. No deployment, real credentials or live provider/Auth/native workload
+qualification is claimed. See the
+[activity runbook](ops/product-control.md#customer-workspace-activity).
+
+## Product Control notification unsubscribe — 2026-10-17
+
+[ADR-1724](adr/1724-product-control-notification-unsubscribe.md) adds unsubscribe
+without sign-in to new personal work/help notification emails. Each retained
+delivery has a separate random capability, persisted only as a lookup hash and a
+delivery-bound age envelope. Retries reuse the original capability and message
+body. Text/HTML links use a URL fragment; GET and HEAD show confirmation without
+reading or changing preferences. An explicit browser POST or standard mailbox
+one-click POST performs the same scoped action. Both supported mailbox form
+encodings are bounded and validated; cookies and Auth availability are unnecessary.
+
+Unsubscribe records one immutable confirmation per original consent version,
+turns both categories off, clears recipient authority and cancels queued mail.
+Leased work stops at the final readiness check. Requests already in flight may
+finish and retain their provider receipts. Bounce/complaint holds and recipient
+generations remain intact. Even the preference-version ceiling cannot prevent
+stopping mail. Repeats recover the same acknowledgement; old confirmed links
+report their historical result after later consent, while stale unconfirmed links
+cannot change newer choices. Re-enabling requires authenticated explicit consent
+and enables only future updates.
+
+The portal, owner console/private API and `gregale product email opt-outs` expose
+scoped historical receipts separately from current preferences. Public
+acknowledgements reveal only confirmation ID/time and whether that confirmation
+still matches current choices. Authenticated history exposes safe references,
+versions and generations without addresses, Auth actors, capabilities or message
+content. Pages have 25 entries and scoped time/UUID cursors. Receipts cascade with
+the original delivery's 30-day window and existing delivery cap; there is no new
+receipt quota that could refuse an opt-out. The append-only migration adds checked
+capability fields and receipt storage. Earlier migrations, Auth templates, SDKs
+and VM/scheduler code remain unchanged.
+
+All 3,008 unique selected Go checks passed, including 147 domain/outbox race
+checks, 184 CLI/completion checks, the full API client suite, private-route and
+schema checks. The two optional Fish/PowerShell syntax checks were skipped
+because those shells are unavailable. The full Product Control router race suite
+passed, including owner scope/session/MFA and all-method default-off routes.
+All 73 portal checks, nine confirmation-script checks and 11 Chromium checks
+passed. Browser checks use production customer/owner views and sender code with
+fictional Auth, a loopback provider and signed callbacks; they cover lost
+acknowledgements, same-tab fragment links, newer consent, queue cancellation,
+mailbox POSTs, complaint holds, sign-out and desktop/mobile layouts. A delayed
+response for an older link cannot replace a newer confirmation screen.
+
+Fresh schema generation/source binding, SQLC consistency, private-route SDK
+coverage, scoped lint with tests (zero issues), formatting and repository policy
+checks passed. The verification packet retains the source manifest, review files,
+logs and browser evidence. The disposable schema database and browser fixture
+were cleaned up. Product Control remains default off; email defaults disabled
+and real sending keeps its independent switch. No deployment, real credentials
+or external email was used. Real mailbox behavior, DKIM header coverage and proxy
+query redaction remain deployment qualification. See the
+[unsubscribe runbook](ops/product-control.md#unsubscribing-from-notification-email).
+
+## Product Control notification recovery — 2026-10-17
+
+[ADR-1723](adr/1723-product-control-notification-recovery.md) adds an explicit
+customer action to recover a personal hard-bounce pause after verifying a
+different sign-in address and renewing consent. Sender evidence is an encrypted,
+subscription-bound address digest; plaintext addresses and digests are omitted
+from platform records and public projections. Existing Auth protocols and
+migrations are unchanged. Historical pauses without evidence, inaccessible
+identity keys and complaint holds stay under review.
+
+An immutable scoped receipt records the confirmation, selected categories,
+preference versions and recipient generations. Concurrent unchanged requests
+converge on one confirmation. Recovery resets eligibility to future updates;
+cancelled messages, original deadlines and attempt budgets remain intact. Old
+recipient bounces cannot pause the replacement or cancel its queue. Current
+recipient bounces pause normally, and complaints from any retained generation
+still establish a hold. Replaying an old receipt cannot clear a new hold.
+
+Preference saves and recovery serialize per subscription before Auth grant
+rotation. PostgreSQL consent waiters release their connection between attempts;
+the holder uses a bounded request budget. Callbacks retain a separate short lock
+and can still prevent recovery during external verification. Owners inspect
+scoped confirmations in the console/API and `gregale product email recoveries`;
+there is no owner resume action. Customer history is personal. Pages are bounded
+to 25 records with scoped cursors; retention is 30 days and recovery capacity is
+50 per subscription in that window. The append-only platform migration adds
+checked generations, encrypted evidence and confirmation receipts.
+
+All 2,974 unique selected Go checks passed, including 127 domain/outbox race
+checks, 183 CLI/completion checks, the full API client suite, private-route
+compliance and schema-source binding. The two optional Fish/PowerShell syntax
+checks were skipped because those shells are unavailable. The full Product
+Control router race suite passed, including owner scope/session/MFA checks and
+all-method disabled recovery routes. All 71 portal checks and eight Chromium
+checks passed with same-address rejection, unchanged-request response recovery,
+consent serialization, old/new recipient feedback and complaint holds. Chromium
+used production customer/owner views, fictional Auth and a signed loopback
+provider on desktop and mobile. Fresh schema generation, SQLC consistency, SDK
+coverage, scoped lint with tests (zero issues) and repository policy checks
+passed. The source-bound verification packet retains the logs, review source
+and desktop/mobile browser evidence for this increment.
+
+Product Control remains default off; email defaults disabled and real sending
+keeps its independent switch. No deployment, real credentials or external email
+was used. Live Auth/address verification and provider qualification remain
+separate. See the [notification recovery runbook](ops/product-control.md#recovering-notifications-after-a-hard-bounce).
+
+## Product Control provider delivery feedback — 2026-10-17
+
+[ADR-1722](adr/1722-product-control-email-provider-feedback.md) adds signed Resend
+delivery, bounce and complaint reports above durable provider receipts. The
+portal, owner console and `gregale product email` show provider-reported states
+and report times. Receiving-server delivery does not establish inbox placement
+or reading. Semantic duplicates and out-of-order reports preserve one message,
+its attempt budget and complaint/bounce precedence. A bounded, expiring metadata
+buffer handles reports that arrive before the send receipt commits; matching
+checks expiry even when cleanup has a backlog. Previously accepted messages
+without provider IDs cannot acquire feedback retroactively.
+
+Permanent bounces and complaints pause the affected personal product/workspace
+subscription. Queued messages cancel and leased messages stop at the next
+readiness check; in-flight provider calls can complete. Other subscriptions
+remain independent. Preference saves, grant renewals, address changes and owner
+retries cannot clear the pause. This increment has no resume or force-send
+action. Temporary and unclassified bounces are visible without an automatic
+pause. The append-only migration adds checked pause/report fields, unique
+provider receipts and the bounded pending table; prior migrations are preserved.
+
+All 3,095 unique selected Go checks passed, including 249 domain/outbox/mail
+race checks, memory and real PostgreSQL feedback contracts, 182 CLI/completion
+checks, the API client suite, private-route compliance and schema-source binding.
+Two optional Fish/PowerShell syntax checks were skipped because those shells
+are unavailable. The full Product Control and existing platform-mail HTTP race
+suites passed. All 68 portal checks and eight Chromium checks passed across
+production customer/owner views on desktop and mobile, using fictional Auth and
+a signed loopback provider. Fresh migration/schema generation, SQLC consistency,
+SDK coverage, scoped lint with tests (zero issues), documentation links and
+repository policy checks passed.
+
+An initial API contract compile was killed when overlapping builds reached the
+workspace memory limit. Lint was stopped to release memory, and the contract
+suite and lint passed after rerunning with bounded memory and build concurrency.
+The initial resource failure and final source-bound verification evidence are
+retained with this increment.
+
+Product Control remains default off, email defaults disabled and real sending
+still needs its separate switch. The optional feedback secret neither enables
+sending nor shares the global platform-mail suppression path. No deployment,
+real credential setup, external email or live provider qualification was
+performed. See the [feedback runbook](ops/product-control.md#provider-delivery-feedback-and-paused-subscriptions).
+
+## Product Control owner notification controls — 2026-10-17
+
+[ADR-1721](adr/1721-product-control-owner-email-controls.md) adds owner console
+and `gregale product email` controls for whole-window queue totals, oldest
+pending age, customer-scoped delivery history and clear failure guidance.
+Counts cover the selected rolling 30-day product/customer window across all
+statuses; filtered 25-message pages use scoped keyset cursors. Safe projections
+omit addresses, Auth identities, recipient grants and private message bodies.
+
+Owners can requeue eligible provider-rejected failures against their observed
+failed attempt. Recovery preserves the delivery/provider key, original deadline,
+preference/source revisions and six-attempt budget. It rechecks current Auth
+authority, mapping, role/product permissions and source before queueing; the
+worker repeats those checks before sending. Transient outages retain automatic
+backoff and Retry-After. Atomic retry receipts make concurrent clicks and lost
+responses safe, including after a later attempt completes. The append-only
+platform migration adds bounded retry receipts and an owner scope index.
+
+All 2,953 unique selected Go checks passed, including 108 domain/outbox race
+checks, PostgreSQL and memory recovery contracts, 181 CLI/completion checks,
+the complete API client suite, shared Product Control validation, private route
+compliance and schema-source binding. Two optional Fish/PowerShell completion
+syntax checks were skipped because those shells are not installed. The full
+Product Control HTTP race suite passed with owner scope, session, MFA, verified
+email, CSRF and all-method disabled-route checks. Chromium passed eight
+desktop/mobile checks using production owner service/templates, fictional Auth
+and a private local sink. Fresh migration/schema generation, SQLC consistency,
+SDK coverage, scoped lint with tests and repository policy checks passed.
+
+Everything remains behind the default-off Product Control flag; email still
+defaults disabled and real sending requires its separate switch. No deployment,
+real credential setup or external email was performed. Existing Auth protocols,
+issued migrations, pilot evidence, work execution and commercial behavior are
+preserved. Real provider acceptance/inbox delivery qualification remains later
+internal release work and does not block implementation.
+
+See the [owner email runbook](ops/product-control.md#owner-notification-email-controls).
+
+## Product Control personal notification email — 2026-10-17
+
+[ADR-1720](adr/1720-product-control-personal-notification-email.md) adds personal
+Work outcomes and Help replies opt-ins above the workspace inbox, with a durable
+outbox, bounded retries, delivery status and a private local mail sink. Preferences
+start off, use version checks and apply only to new updates. Auth issues a narrow
+30-day recipient grant for the current verified address; the platform encrypts
+it and saves no customer login token or plaintext recipient address. Each send
+rechecks live membership/role, owned realm, mapping, current product permissions,
+source revision, preferences and lease. Messages omit help text and run payloads.
+
+All 2,921 unique selected Go checks passed, including 87 domain/outbox race
+checks, the full API client suite, shared Product Control validation, CLI/Auth
+runtime contracts, private route compliance and schema-source binding. The full
+Product Control HTTP race suite also passed. PostgreSQL verified outbox CAS,
+leases and send-time mapping checks; 79 Auth runtime tests passed, including live
+SQL grant checks for changed/unverified addresses, bans, membership removal and
+expiry. Chromium passed nine desktop/mobile checks through production portal and
+service code with fictional Auth responses and local capture. Scoped lint with
+tests, fresh migration/schema generation, SQLC consistency and repository policy
+checks passed. Earlier pilot and recovery evidence remains frozen.
+
+The Product Control flag stays default off. Email separately defaults disabled;
+local mode records captured messages, and real Resend mode requires an explicit
+send switch. Provider acceptance never claims inbox delivery. No deployment,
+real provider call or external email was performed. Deployed Auth rollout and
+real provider qualification remain later internal release work; credentials are
+not a prerequisite for continuing implementation.
+
+See the [personal email runbook](ops/product-control.md#personal-notification-email).
+
+## Product Control customer account recovery — 2026-10-17
+
+[ADR-1719](adr/1719-product-control-customer-account-recovery.md) adds **Forgot
+password?** to the customer sign-in page. It opens the latest product's owned
+Application Auth recovery UI in a separate tab, without passing credentials or
+requesting email on navigation. The existing Auth flow owns recovery mail,
+one-time links, password policy and session behavior. Customers return to the
+product afterward and sign in normally. Caller targets/queries are rejected;
+an explicit empty redirect fragment prevents fragment inheritance.
+
+All 841 selected API/domain/CLI/private-contract checks passed, along with the
+full Product Control HTTP race suite, scoped lint with tests and repository
+policy checks. Local Chromium exercised nine checks using the production
+recovery handler and portal/Auth UI assets with fictional Auth API responses:
+separate-tab privacy, explicit recovery/reset actions, missing tokens, fragment
+discarding, realm changes, mobile layout and disabled methods.
+
+Implementation continues while deployed pilot access is unavailable. The new
+entry point remains behind the default-off Product Control flag. Actual recovery
+delivery and deployed reset/session behavior remain separate live checks; no
+external messages, deployments or flag changes were performed. No schema,
+commercial receipt, Operations lifecycle or Auth implementation changed.
+
+See the [account recovery runbook](ops/product-control.md#customer-account-recovery).
+
+## Product Control complete internal pilot preparation — 2026-10-17
+
+[ADR-1718](adr/1718-product-control-complete-internal-pilot.md) adds an opt-in
+version-two manifest requiring three baseline downloads, three journeys linked
+to help about those same runs, and observed customer inbox pages. Both the
+selected successful work and latest help source must match retained evidence.
+Missing stages or older sources leave the journey incomplete; malformed or
+foreign pages are rejected. Version-one ledger workflows remain compatible.
+Reports retain only artifact paths/hashes/byte counts and keep live browser,
+read recovery and native qualification unverified.
+
+All 249 selected Product Control domain/CLI and help-dispatch checks passed,
+including the read-only HTTP verifier. The
+[pilot guide](../examples/customer-operation-export/product-control/README.md#customer-updates-inbox-pilot)
+includes inbox sharing, newer-source unread, stale updates, lost acknowledgements
+and current authority. The verified inbox runtime retains its earlier build/source
+evidence; updated pilot tooling is captured separately. No runtime API, schema,
+portal or default-off gate changes are part of this preparation.
+
+The live three-customer trial remains pending a selected internal deployment,
+access profile and qualified native Operations host. No live scenarios or actual
+downloads have been recorded during preparation.
+
+## Product Control customer notifications — 2026-10-17
+
+[ADR-1717](adr/1717-product-control-customer-notifications.md) adds an Updates
+inbox for retained work outcomes, runs needing attention and the latest owner
+help response/status. It uses a rolling thirty-day view with current workspace
+and kind-specific permissions applied before pages and unread counts. Read
+status is explicitly shared within the workspace, scoped to its Auth identity;
+newer source versions become unread and stale acknowledgements conflict.
+
+Local qualification passed all 103 Product Control memory/PostgreSQL cases,
+134 API/domain/service checks, 68 portal/recovery contracts, the HTTP race suite
+and nine migration regressions including the full apply/ledger walk. Chromium
+checked current source kinds, explicit read choices, lost-response recovery,
+workspace clearing, escaped text and mobile layout. Both binaries built; scoped
+Go lint, SQLC and private API contract checks passed. A local disk-exhaustion
+failure during the final storage attempt was resolved by reclaiming completed
+derived caches; the full rerun passed without prerequisite skips.
+
+The customer portal offers read/unread controls, filtering, pagination and links
+to existing help/run readers. Lost acknowledgements refresh through GET without
+POST replay. Read metadata has bounded capacity and expiry; inbox actions cannot
+execute work or change access, plans or billing. The existing default-off flag
+covers the routes and asset. Email delivery and the deployed three-customer
+Auth/browser/native-export pilot remain separate release work.
+
+## Product Control internal release candidate — 2026-10-17
+
+[ADR-1716](adr/1716-product-control-internal-pilot-evidence.md) extends
+`gregale product pilot verify` with optional scoped help expectations and
+three-customer journey records. Help snapshots must match reviewed hashes and,
+for run requests, the original admission terms. `product pilot help` inspects
+hashes without printing messages/responses. Journey records report observed time
+to first success, blocked steps and elapsed time to the latest help resolution.
+Local artifacts are bounded and hashed; contents are excluded from reports.
+Incomplete journeys and evidence mismatches have distinct nonzero exits.
+
+All 221 Product Control/API/CLI and selected help checks passed. The earlier
+migration-scoping failure is corrected without changing issued SQL: an already
+unqualified migration must retain its bytes, and PostgreSQL integration checks
+its actual function placement. The full migration apply/ledger walk passed.
+Broader database tests completed with existing prerequisite skips, recorded in
+the verification report rather than treated as executed acceptance.
+
+The service remains internal behind the default-off flag. Operator-recorded
+journeys retain unverified qualification; the deployed three-customer browser,
+Auth and native-export trial still needs a selected internal target and access.
+The [pilot guide](../examples/customer-operation-export/product-control/README.md#customer-help-and-complete-customer-journeys)
+now includes help creation/responses, interrupted acknowledgements, permissions,
+workspace changes and friction recording. No deployment or flag change occurs
+during preparation.
+
+## Product Control Customer Help — 2026-10-17
+
+[ADR-1715](adr/1715-product-control-customer-help.md) adds customer requests with
+server-generated diagnostic snapshots, an owner review queue and customer-visible
+status/response. Requests follow current workspace, role and Auth realm authority.
+Feature/run requests retain only permitted context; messages and responses are
+shared with authorized members of that workspace. Exact request retries preserve
+the initial snapshot; version checks prevent competing owner edits from losing
+updates. Help does not execute work or change permissions, plans or billing.
+
+All 87 Product Control memory/PostgreSQL cases passed without skips, alongside
+the HTTP race suite and 58 portal/recovery contracts. Chromium checked explicit
+submission, customer-visible responses, lost-acknowledgement recovery, workspace
+clearing, escaped text and mobile layouts. Both binaries built; SQLC, private API
+contract checks and scoped Go lint passed. Database package tests and the full
+migration apply/ledger walk passed against a clean disposable local database.
+
+The portal and owner APIs/pages remain internal behind the existing default-off
+flag. At this milestone, the historical migration scoping assertion failed for the unchanged
+`20261003160458628_application_standard_runtime_default_base.sql`; its source
+and scoping helper/test matched the preceding milestone. The release candidate
+recorded above corrects that assertion. The deployed pilot remains
+separate. See the [Customer Help runbook](ops/product-control.md#customer-help).
+
+## Local Product Control customer usage guidance — 2026-10-16
+
+[ADR-1714](adr/1714-product-control-customer-usage-guidance.md) adds customer
+usage progress, warnings from 80%, exact UTC resets and separate explanations
+for exhausted/zero allowances, paused access, permissions and unavailable
+features. The portal and private customer read API share existing accepted-start
+counts across plans/revisions. Authorized customers can open explicitly offered
+plan choices through the existing review and confirmation flow. No new storage
+schema, counters, automatic plan changes or work submissions are introduced.
+
+API/domain/service checks and the complete Product Control HTTP suite with race
+detection passed. All 49 portal/recovery contract cases passed. Local Chromium
+exercised six guidance states, authorized read-only plan review, escaped long
+feature labels, logout clearing and desktop/mobile widths without page overflow.
+SQLC generation, internal-route spec/SDK checks and repository policy gates
+passed. This milestone changes no storage implementation; the preceding
+milestone's memory/PostgreSQL storage evidence remains historical.
+
+The service remains internal behind its existing default-off flag. The live
+Auth/email/browser/native-export pilot still needs a selected deployment and
+access. See the [usage guidance runbook](ops/product-control.md#usage-and-next-steps).
+
+## Local Product Control customer activity timeline — 2026-10-16
+
+[ADR-1713](adr/1713-product-control-customer-activity.md) adds an owner-only
+activity timeline in the console, private read API, and `gregale product customers
+activity`. Ten event kinds combine retained setup/activation, reviewed assignment
+and self-service plan changes, original run terms and verified outcomes,
+waivers, billing documents and invoice handoffs. Scoped cursors preserve
+simultaneous events; each page is a fresh observation, bounded at fifty events,
+3 MiB and twenty seconds. No new journal, observation writes or Auth authority
+is introduced. Legacy direct assignments and Auth team events are not inferred.
+
+All 71 Product Control memory/PostgreSQL storage cases passed without skips,
+along with API/domain/service and CLI help/completion checks. The complete Product
+Control HTTP suite passed with the race detector, including disabled-method
+fallback protection. Both binaries built. Chromium checked all ten rendered event
+kinds, expandable details, source-text escaping and desktop/mobile widths using
+fictional data. These are local checks with simulated Auth/execution boundaries.
+
+The service stays internal and off by default. Local verification is separate
+from the live internal Auth/email/browser/native-export pilot, which still needs
+an approved target and access. The [runbook](ops/product-control.md#customer-activity-timeline)
+documents history coverage, source links and continuation semantics.
+
+## Local Product Control customer readiness overview — 2026-10-16
+
+[ADR-1712](adr/1712-product-control-customer-readiness-overview.md) adds an
+owner-only **Customer readiness and activation** page, private read API, and
+`gregale product customers overview`. Assigned customers combine pinned plans,
+existing feature/binding/allowance diagnostics, guided activation evidence, and
+work needing review across all retained months. Pages share a twenty-second
+deadline, contain at most ten customers and 3 MiB of JSON, and link to existing
+review flows. No new activation, membership, execution or billing writes occur.
+
+The 69 Product Control memory/PostgreSQL storage test cases passed without skips;
+Product Control API/domain/CLI checks and the complete HTTP boundary suite with
+the race detector passed. Chromium checked the rendered overview's five customer
+states, expandable checks, and desktop/mobile widths. These are local checks,
+with simulated Auth/execution at the HTTP boundary, not a deployed pilot.
+
+Product Control remains internal behind its existing default-off flag. The live
+internal Auth/email/browser/native-export pilot still needs a deployment target
+and access; this overview grants no native qualification and enables no flag.
+The [runbook](ops/product-control.md#customer-readiness-and-activation-overview)
+describes the observation and continuation contracts.
+
+## Durable migration source retirement — 2026-10-17
+
+[ADR-1530](adr/1530-durable-migration-source-retirement.md) binds production
+sources to their original native generation before capture. Ownership movement
+atomically records pending source retirement. Source RAM/CPU/vCPU remains charged
+until physical cleanup is proven, and source records/leases block maintenance,
+retirement and deletion. Retained receipts fence delayed capture, late resume,
+and instance-name reuse across daemon replacement.
+
+Shared memory/PostgreSQL contracts, ordinary and protected capacity, atomic
+ownership/retirement, source drain races, direct-writer guards and deferred/
+suppressed-write failures pass. Full scheduler/RPC regressions, portable native
+fixtures, targeted races, SQL generation, schema restore/down/up parity and
+scoped lint are verified. Failed preparation cannot erase uncertain binding
+commits or pin an unstarted lease; parked rollback never resumes an unaccounted VM.
+
+Release preparation also verifies replay of all nine recovery migrations against
+existing DDL. Replay preserves current operator claims and the newer source
+guards when an earlier incoming migration is replayed alone. The canonical schema
+and its migration-source checksum are regenerated from fresh PostgreSQL 16.
+
+Dedicated x86_64 KVM migration/process-death and leak qualification remains
+pending: this environment has no `/dev/kvm`, and leakcheck cannot inspect its
+kernel loop devices. The broader portable VM suite excludes the same 21 existing
+filesystem/source-mode/readiness failure families documented under ADR-1529.
+Nothing deployed. See the [source retirement guide](ops/migration-source-retirement.md).
+
+## Durable incoming migration reservations — 2026-10-17
+
+[ADR-1529](adr/1529-durable-inbound-migration-reservations.md) persists destination
+generation, resource bounds, both wakes and source-lease authority before adoption.
+Pending reservations consume capacity and block drain completion/retirement.
+One dispatch grant, retained response/cleanup receipts and an fsynced native
+generation binding fence delayed creation and late ownership commit. Source resume,
+lease deletion/replacement and the migration watchdog retain unresolved attempts.
+Ownership conversion preserves admitted resident resource floors atomically.
+
+Shared memory/PostgreSQL phases, replay, RAM/CPU/vCPU contention, source fencing,
+drain races, commit/cleanup races (including direct writers), suppressed writes and
+deferred commit failures pass. Full scheduler and vmmd RPC regressions, manager
+tests, targeted memory/scheduler/manager/RPC races, SQLC/protobuf regeneration,
+restored-schema parity, scoped production/test lint and schedd/vmmd link checks pass.
+
+The broader VM suite has 21 existing failure families involving filesystem,
+source-mode and readiness expectations; all reproduce with the incoming journal
+hooks removed. The portable VM suite excluding those failures passes. Dedicated
+x86_64 KVM migration/process-death and leak qualification remains pending; this
+environment has no `/dev/kvm`. Nothing deployed. Upgrade dispatchers/receivers
+together, preserve journals and inspect historical handoffs; see the
+[migration recovery guide](ops/inbound-migration-reservations.md), including
+conservative process-ledger recovery after a failed handoff.
+
+## Node admission generation fencing — 2026-10-17
+
+[ADR-1528](adr/1528-node-admission-generation-fencing.md) carries placement's
+selected lifecycle generation into instance and migration ownership transactions.
+New residency requires an admitting node at that generation. A database guard
+also protects direct writers, while existing residents can finish publication and
+cleanup. Definite stale placements trigger bounded fresh selection; failed
+attempts release restore pressure and job leases/ledger reservations. Migration
+uses its existing commit resolver and adopted-VM cleanup after a refusal.
+
+Memory/PostgreSQL admission, lifecycle-cycle, job/migration rollback, lock-order
+and both admission/drain race orderings pass. The full scheduler suite, targeted
+memory/scheduler/event/statetest race checks, scoped production/test lint, SQLC
+diff and restored-schema parity pass; schedd links. Nothing deployed. Coordinate
+the dispatcher upgrade and inspect historical closed-node inventory;
+see the [admission rollout guide](ops/node-admission-fencing.md). Native migration
+and evacuation qualification remains a separate fleet acceptance gate.
+
+## Generation-fenced node completion — 2026-10-17
+
+[ADR-1527](adr/1527-generation-fenced-node-completion.md) binds recovery-controller
+completion to the lifecycle generation captured before its sweep. The final work
+check, lifecycle transition, immutable cycle receipt and audit handoff share one
+transaction. Delayed workers cannot complete a later cycle with the same lifecycle;
+retries preserve the original result after later cycles, node deletion and outbox
+retention. Warm and frozen resident rows keep drains pending.
+
+Targeted memory/PostgreSQL generation, precondition, replay, concurrency and fault
+injection suites pass, including suppressed writes, deferred commit failure and
+capacity lock ordering. Scheduler/heartbeat/operator recovery and event/statetest
+regressions, memory-store and runner race detection, scoped production/test lint,
+SQLC compile/diff and restored-schema parity pass. Nothing deployed. Stop old
+recovery controllers before migration; see the
+[node completion guide](ops/node-lifecycle-completion.md). Native migration and
+evacuation qualification remains a separate fleet acceptance gate.
+
+## Atomic operator node maintenance — 2026-10-17
+
+[ADR-1526](adr/1526-atomic-operator-node-maintenance.md) makes node lifecycle
+transition, execution receipt, intent result and outcome audit handoff atomic.
+Claims fence obsolete workers and terminal replay preserves original outcomes
+after later maintenance cycles and outbox pruning. RecoveryRunner retains
+migration/evacuation ownership. Coordinated upgrade quarantines ambiguous legacy
+node actions; receipts and unresolved evidence block downgrade.
+
+Memory/PostgreSQL recovery, concurrency and fault injection, scheduler integration
+and recovery regressions, memory race detection, scoped production/test lint,
+SQLC and restored-schema parity pass. Nothing deployed. Stop old schedd writers
+before migration and reconcile quarantined legacy requests before another action;
+see the [node maintenance guide](ops/operator-node-maintenance.md).
+
+## Operator recovery submission receipts — 2026-10-17
+
+[ADR-1524](adr/1524-durable-operator-recovery-submissions.md) atomically accepts
+restart, park and cold-boot intents with their original 202 response and request
+audit handoff. Actor-scoped keys have no receipt TTL; replays precede mutable
+target checks, changed parameters return 409, and every replay runs current
+operator authentication. gregalectl exposes reusable --request-key and an
+instances wait --intent-id command that only polls.
+
+Targeted memory/PostgreSQL concurrency and fault-injection, HTTP authentication
+and replay, CLI and memory race tests pass. SQLC/schema/spec validation, scoped
+lint, SDK generation/request smoke checks, Node SDK build and API/CLI link
+builds pass. No deployment has been performed. Apply the migration and drain
+old API writers before rollout; uncertain pre-upgrade requests need
+reconciliation. See the [submission upgrade guide](ops/operator-recovery-submissions.md).
+This change adds no VM lifecycle behavior; native qualification of the earlier
+restart/cold-boot execution changes remains pending below.
+
+## Operator cold-boot recovery — 2026-10-17
+
+[ADR-1523](adr/1523-durable-operator-cold-boot-recovery.md) makes cold-boot
+invalidation, the deployment recovery generation, intent completion and audit
+handoff one transaction. Boot lineage fences delayed captures, and warm/frozen
+promotion cannot bypass recovery. Original results survive worker replacement,
+lost acknowledgements and outbox pruning. Memory/PostgreSQL recovery and failure
+injection, scheduler/publisher/RPC and HTTP regressions, memory race checks,
+SQLC/OpenAPI/schema validation, scoped lint and daemon/CLI builds pass.
+Native KVM lifecycle and leak qualification remains pending; no deployment has
+been performed. Migration and coordinated schedd/imaged rollout are required:
+[cold-boot recovery guide](ops/operator-cold-boot-recovery.md).
+
+## Operator restart execution recovery — 2026-10-17
+
+[ADR-1522](adr/1522-recoverable-operator-restart-execution.md) adds an immutable
+restart plan, per-claim ownership, a generation-bound vmmd teardown protocol and
+an independent durable acknowledgement. Confirmed teardown, STOPPED, operator
+completion and its audit handoff commit together; interrupted execution without
+proof is exposed as `outcome_unknown`. Late acknowledgements allow database-only
+reconciliation against the original target. Legacy unary restart propagates
+terminal-state write errors. See the [recovery and rollout guide](ops/operator-restart-recovery.md).
+
+Targeted memory/PostgreSQL, scheduler/manager/RPC, API/CLI and memory race suites
+pass. SQL/protobuf regeneration, restored-schema parity and changed-code lint
+pass; schedd, vmmd and gregalectl link successfully. State tests and their lint
+run as file suites to avoid unrelated state-test compiler memory pressure.
+The new metal test compiles and skips without staged VM images. Native
+`test-metal` and `leakcheck` qualification remain pending: this environment has
+neither `/dev/kvm` nor the acceptance images. Nothing deployed.
+
+## Read-only all-binding verification preview — 2026-10-16
+
+`gregale bindings verify APP --all --dry-run` shares preparation and selection
+with batch execution. Its separate preview report describes planned operations,
+consent flags, exclusions, prospective coverage, and structured blockers.
+`plan_ready` and `complete_coverage_possible` express metadata readiness and
+potential coverage, never a passed verification gate. Both queue and storage
+consent flags remain inert during preview. Strict mode evaluates whether the
+plan could cover every eligible binding; default partial-coverage behavior is
+preserved. See [preview before execution](bindings-verify-all-queues.md#preview-before-execution).
+
+## Writable storage in all-binding verification — 2026-10-16
+
+`gregale bindings verify APP --all --deployment ID|vN --object-storage-write`
+uses existing disposable-object canaries for writable bindings and read-only
+probes for read-only bindings. Upload, download where granted, and cleanup
+evidence must match the requested prefix and mode. The combined report and
+strict gate reject failed operations, failed cleanup, incompatible guest
+reports, and mismatched deployment/scope receipts. Storage write consent remains
+separate from queue publication; omitted consent preserves existing behavior.
+See [writable storage](bindings-verify-all-queues.md#verify-writable-object-storage).
+
+## Strict all-binding verification coverage — 2026-10-16
+
+`gregale bindings verify APP --all --require-complete` adds a CI gate to the
+existing batch verifier. Its JSON `gate` and human output explain failed probes,
+unsupported or unchecked eligible bindings, incomplete inventory, and empty
+eligible selections. Disabled, out-of-scope, and release-only bindings remain
+explicit exclusions. Default verification semantics, explicit write/publication
+consent, and interruption exit 130 are preserved. See
+[strict coverage](bindings-verify-all-queues.md#require-complete-coverage-in-ci).
+
+## Queue canaries in all-binding verification — 2026-10-16
+
+`gregale bindings verify APP --all --deployment ID|vN --queue-publish`
+includes eligible push queues in the existing combined report using the existing
+completion-canary runner. Publication is opt-in and deployment-pinned; receipts
+must match the selected scope, binding, and deployment and confirm handler
+completion. Missing consent or capability remains explicit partial coverage;
+disabled and out-of-scope bindings are skipped. Interrupted and unsuccessful
+canaries use existing cancellation cleanup. See
+[all-binding queue verification](bindings-verify-all-queues.md).
+
+## Service authorization explanation — 2026-10-16
+
+`gregale bindings service explain CALLER TARGET --method GET --path /path`
+reads app-level policies and reports allowed, denied, or indeterminate with
+structured rules, reasons, and settings to review. It uses the shared scope
+normalizer and gateway matcher, preserves caller-policy intersections, and
+makes no application requests. Previews, unavailable apps, and unsupported
+policy contracts remain indeterminate; runtime and environment resolution are
+outside this snapshot explanation. See
+[service binding configuration](service-binding-configuration.md).
+
+## Service policy export and drift checks — 2026-10-16
+
+`gregale bindings service export` produces reusable six-field policy JSON in a
+new private file or on stdout. `service check` compares normalized live values
+against supplied fields without mutation, retaining null versus deny-all caller
+semantics. CI exits distinguish match (0), drift (1), and errors (2). Checks are
+snapshots; reviewed plans remain the guarded write path. See
+[service binding configuration](service-binding-configuration.md).
+
+## Reviewed service binding plans — 2026-10-16
+
+[ADR-1386](adr/1386-reviewed-service-binding-plans.md) adds private saved plans
+with app/account/endpoint identity and service-settings fingerprints. Apply
+checks its precondition under the app lock in both ordinary and activity-aware
+store transactions. Stale plans conflict before mutation, and unrelated manifest
+edits survive guarded updates. Direct configuration retains its existing
+unguarded behavior. See the [workflow](service-binding-configuration.md#save-and-apply-a-reviewed-plan).
+
+## Service binding reliability and transport CLI — 2026-10-16
+
+[ADR-1384](adr/1384-service-binding-reliability-cli.md) extends the service policy
+file with dependency timeouts/retries and canonical URL transport. Validation
+uses the resulting target list before mutation; previews and saved receipts
+expose implicit reliability pruning when a target is removed. Omitted settings
+remain partial updates, non-idempotent retries require explicit per-target
+opt-in, and URL selection does not certify running-guest adoption.
+
+## Service binding CLI configuration — 2026-10-16
+
+[ADR-1383](adr/1383-service-binding-cli-configuration.md) adds policy-file
+configuration for standalone service targets, declared-only authorization,
+caller restrictions and method/path scopes. Read-only previews preserve the
+API's omitted/null/empty distinctions; apply uses one partial app update and
+reports saved values. See the [configuration guide](service-binding-configuration.md).
+Runtime adoption and connectivity still require inspection and verification.
+
+## Queue canary CLI setup — 2026-10-16
+
+[ADR-1382](adr/1382-queue-canary-cli-deployment-intent.md) adds bounded revision
+pin lifetime updates and repeatable per-deployment queue canary declarations.
+Source archive validation precedes deployment mutations, previews expose the
+selected bindings, and redeployments require fresh opt-in. The queue worker
+quickstart now uses the CLI throughout; message publication retains separate
+explicit consent. Native acceptance qualification remains pending below.
+
+## Queue worker completion acceptance — 2026-10-15
+
+[ADR-1381](adr/1381-queue-worker-completion-acceptance.md) gives the shipped
+queue worker a safe reserved canary path with exact deployment opt-in and
+publication consent. The [native queue journey](ops/queue-bindings-native-acceptance.md)
+requires nine phases covering real parked delivery, exact handler completion,
+scheduler restart, durable receipt/message recovery, cancellation, expiry,
+completed-work replay rejection and a zero-traffic candidate's release fence.
+Fresh completion on the old serving revision cannot qualify the candidate.
+Independent invocation counts, source/build/runtime provenance, published Node
+base hashes, registered cleanup and host leak checks constrain the report.
+Portable starter/source/artifact and PostgreSQL-backed authority race checks,
+CLI quickstart materialization, API consent/receipt-recovery regressions,
+13 queue runner/verdict regressions, the existing
+49 PostgreSQL/storage runner/verdict regressions, real fragmented Go JSON parsing,
+Python lint and combined native-tag compilation passed. Tagged Go lint has no
+new findings; the same 18 existing issues remain. This workspace has no `/dev/kvm`;
+supported native execution and host leak qualification remain pending. No
+provisioning or rollout gate is enabled.
+
+## Python PostgreSQL native acceptance — 2026-10-15
+
+[ADR-1380](adr/1380-python-postgres-native-acceptance.md) extends the
+[PostgreSQL native journey](ops/managed-postgres-native-acceptance.md) to the
+unchanged Python starter. Nineteen phases now require the probe and both shipped
+starters, private-CA trust, release-only migration credentials, disconnected-pool
+restore, failed-hook cold fallback, running/parked rotation and scheduler recovery.
+Starter reads require current credential/version/process adoption ACKs, and
+independent SQL checks preserve the shared Node/Python notes dataset. Version-3
+reports/manifests require separate Python source and deployed app-layer hashes;
+old or partial Node-only evidence must be regenerated. Portable Go race checks,
+the exact materialized Python lifecycle/SQL recovery suite, real pinned-driver
+TLS success and negative trust cases, 23 PostgreSQL verdict regressions, 26 storage
+runner/verdict regressions, rollout/CLI checks, real fragmented Go JSON parsing,
+canonical starter drift, Python lint and combined native-tag compilation passed.
+Tagged Go lint has no new findings; the same 18 existing issues remain. This
+workspace has no `/dev/kvm`; supported native execution and host leak qualification
+remain pending. No provisioning or rollout gate is enabled.
+
+## PostgreSQL native acceptance repair — 2026-10-15
+
+[ADR-1379](adr/1379-postgres-native-acceptance-repair.md) repairs the existing
+thirteen-phase [PostgreSQL native harness](ops/managed-postgres-native-acceptance.md):
+the fixture CA is packaged under the shipped runtime COPY, provenance identifies
+actual OCI app layers/source archives and the minimal base, and the verdict
+handles bounded fragmented Go cleanup logs. Version-2 guest reports/manifests
+replace the inapplicable function-runtime base identities; old guest evidence
+cannot satisfy combined readiness. Portable source/provenance and cross-language
+Go race tests, 21 PostgreSQL verdict regressions, the existing 26 storage
+runner/verdict tests, rollout/CLI checks, real Go JSON cleanup-log parsing,
+Python lint and combined native-tag compilation passed. Tagged Go lint has no
+new findings; 18 existing issues remain. This workspace has no `/dev/kvm`; supported native execution and
+host leak qualification remain pending. No provisioning or rollout gate is enabled.
+
+## Native storage starter runtime matrix — 2026-10-15
+
+[ADR-1378](adr/1378-native-storage-starter-runtime-matrix.md) extends the
+[deployed storage acceptance journey](ops/object-storage-native-acceptance.md) to
+both unchanged Node and Python starters. Each runs eight phases with isolated
+fixtures, strict TLS trust and its own source/build/app-layer evidence. The
+Dockerfile starters are full OCI apps; this replaces the earlier harness's
+inapplicable function-runtime release lookup with actual deployed artifacts. Version-2
+reports require both cleanup identities, the same revision and shared artifact
+hashes; Node-only or reused Node evidence cannot qualify Python. Portable Go race
+checks, 26 storage runner/verdict tests, real Go JSON cleanup-log parsing,
+Python lint and combined native-tag compilation passed. Changed-file Go lint is
+clean; full tagged lint retains 18 unrelated existing issues. This workspace has no `/dev/kvm`;
+supported native execution and host leak qualification remain pending for both
+starters. No feature or rollout gate is enabled.
+
+## Python storage explicit TLS trust — 2026-10-15
+
+[ADR-1377](adr/1377-python-storage-explicit-tls-trust.md) makes the Python storage
+starter honor its explicit `AWS_CA_BUNDLE` while preserving certificate-chain and
+hostname verification. Default public CA trust remains enabled; invalid bundles
+and certificates fail adoption/readiness. New transports reread the configured
+file on reload and restore. The exact materialized starter passed all 35 portable
+tests, including signed HTTPS operations, negative trust cases, the real handler
+process and corrected-bundle recovery. Fresh dependency isolation, canonical drift,
+Python/Go lint and packaging checks passed. Live-provider and native VM execution
+remain separate qualification work.
+
+## Object-storage starter native acceptance harness — 2026-10-15
+
+[ADR-1376](adr/1376-native-object-storage-starter-acceptance.md) adds a strict
+[deployed storage acceptance journey](ops/object-storage-native-acceptance.md)
+for the unchanged Node starter, public credential rotation, real snapshot/restore,
+failed-hook cold fallback, independent byte/replay checks and credential cleanup.
+Portable race, runner/verdict checks and tagged compilation passed; changed-file
+lint is clean. These checks are separate from native execution. This
+implementation workspace has no `/dev/kvm`; supported native
+execution and host leak qualification remain pending. No feature or rollout gate
+is enabled. Python guest and live-provider qualification remain separate.
+## Organization queues — local implementation, 2026-10-17
+
+[ADR-202610171908](adr/202610171908-organization-queue-ownership.md) gives queue bindings immutable
+organization ownership. Company backlogs, private consumers, stage runtime sets,
+receipt authority and dead-letter/replay history survive creator erasure.
+Reviewed organization routes enforce current roles, scopes and offboarding
+fences; existing workload identities keep processing the same accepted work.
+Company plans and quotas apply across creator namespaces after billing adoption,
+and reservation snapshots release the correct counter through retries and
+completion. Personal cleanup and inventories exclude company queues.
+
+Twenty organization operations are available in OpenAPI and the Go, Node and
+Python SDKs. Memory/PostgreSQL race and HTTP worker acceptance pass, including
+revocation during an enqueue request and retained stage configuration.
+See [implementation evidence](implementation/202610171908-organization-queue-validation.md).
+This supersedes ADR-202610171907's queue ownership restriction. External trigger
+administration, jobs, GitOps and full cloning retain their separate restrictions.
+
+The accumulated enterprise changes are under review in
+[PR #4882](https://github.com/poyrazK/faas/pull/4882). The migration requires a
+coordinated restart of async quota writers while admission and dispatch are
+paused. Deployment and native KVM acceptance remain pending.
+
+## Organization object storage — local implementation, 2026-10-17
+
+[ADR-202610171907](adr/202610171907-organization-object-storage-ownership.md) adds immutable company
+ownership to app/environment buckets, reviewed organization storage routes and
+aggregate usage. Human S3 credentials record their issuer and membership revision;
+role changes and departure revoke them. Application bindings retain their sealed
+credentials and bucket/provider identities through creator erasure. Shared quotas
+and provider exports use the company's financial subject after billing adoption.
+Personal cleanup/exports exclude company storage; organization deletion requires
+bucket cleanup. This supersedes ADR-202610171906's object-storage erasure restriction.
+Unreviewed storage settings, transfer control APIs, cloning, queues and GitHub/GitOps
+integration still require their own ownership review.
+
+Validation details are recorded in
+[the implementation evidence](implementation/202610171907-organization-object-storage-validation.md).
+Memory/PostgreSQL race and HTTP/S3 acceptance, schema/API/SDK contracts and
+configured Go static checks pass.
+Changes remain local; deployment and native KVM acceptance are pending.
+
+## Organization managed PostgreSQL — local implementation, 2026-10-17
+
+[ADR-202610171906](adr/202610171906-organization-managed-postgres-ownership.md) gives managed
+PostgreSQL databases an immutable organization owner. Company database and
+app/environment binding routes enforce current roles, credential scopes and
+membership fences before mutation or replay. Shared source manifests resolve
+company databases within their persisted organization. Database and binding
+storage namespaces remain distinct, preserving existing provider IDs, sealed
+credentials and operation history through creator erasure.
+
+Adopted company plans, quotas and usage aggregate across legacy namespaces.
+Personal inventories and exports exclude company databases and historical audit
+references. Creator erasure retains company accounting; organization deletion
+requires database cleanup. Unreviewed cutover/clone HTTP routes, object storage,
+queues and other unsupported services retain their existing shared-access or
+erasure restrictions. This entry supersedes ADR-202610171905's database restriction.
+
+Race regressions pass for ownership backfill and mixed-root rejection, concurrent
+quota admission, offboarding commit ordering, personal isolation, retained usage
+and creator erasure. A PostgreSQL HTTP regression verifies unchanged sealed
+credentials and usable SQL access after erasure, teammate image deployment and
+credential rotation, and denial of cached binding replay after demotion.
+
+Canonical schema and SQL generation, OpenAPI lint and route/schema parity,
+Node client build, Python SDK compilation and generated client regressions,
+Go SDK path tests, and runtime/customer documentation checks pass. Enabled Go
+static checks report zero findings across all eleven packages changed in this
+slice. The broad historical migration test package still has failures and hit
+its ten-minute timeout; focused migration checks pass. Details are recorded in
+[the implementation evidence](implementation/202610171906-organization-postgres-validation.md).
+
+Changes remain local. Deployment and native KVM acceptance are pending.
+
+## Organization projects and environments — local implementation, 2026-10-17
+
+[ADR-202610171905](adr/202610171905-organization-project-ownership.md) makes persisted project
+organization ownership independent of creator identities. Organization project
+URLs cover source deployment, environments, configuration, releases, protected
+plan approvals, promotions and rollback. Current roles, credential scopes and
+membership transaction fences apply before replay; legacy inventories hide
+company projects after departure. Stable resource namespaces preserve core
+project/environment history and sealed bindings through creator erasure.
+
+Migration backfill refuses mixed ownership. Unsupported data-service and
+GitHub/GitOps references remain erasure blockers. Shared source uploads cannot
+resolve personal database/async-route bindings, and resource cloning remains
+outside the reviewed shared surface. OpenAPI and Go/Node/Python clients expose
+the new organization routes.
+
+Focused MemStore/PostgreSQL and HTTP regressions pass with race detection for
+ownership backfill and isolation, raced offboarding, creator erasure (including
+empty projects), protected approvals, source/image deployment admission,
+promotion, rollback and authorization before cached response replay.
+Reconciliation, personal export filtering and Go client tests also pass with
+race detection.
+
+Canonical schema regeneration, SQL generation, OpenAPI route/schema parity and
+lint, generated Node/Python client builds and selected SDK regressions, and
+repository policy checks pass. Enabled Go static checks report zero findings
+across all ten packages changed in this slice.
+
+Changes remain local. Deployment and native KVM runtime acceptance are pending.
+
+## Organization core resource ownership — local implementation, 2026-10-17
+
+[ADR-202610171904](adr/202610171904-organization-resource-lifecycle.md) separates human identities
+from stable resource namespaces. Adopted organizations own core app policy,
+configuration, deployment lifecycle, request budgets, abuse controls and future
+usage; erasing a former creator preserves these resources. Paid adoption requires
+an organization-owned provider-qualified subscription. Existing billing and
+provider handles are preserved until confirmation, and adoption never reverts to
+a person after cancellation. Free organizations adopt immediately.
+
+MemStore/PostgreSQL and HTTP race regressions pass for creator erasure, sealed
+configuration preservation, permanent billing adoption, usage replay, owner
+safety, current-member access, credential revocation and personal export
+isolation. Scheduler, image, builder, metering, gateway, billing and Go API
+regressions also pass with race detection. A PostgreSQL runtime-admission
+snapshot remains unchanged after erasing the creator.
+
+Canonical schema regeneration, SQL generation, OpenAPI route/schema parity and
+lint, generated Node/Python clients and billing checks, and repository policy
+checks pass. Enabled Go static checks report zero issues across all 18 changed
+packages. Targeted network-usage and billing-adoption checks also pass after
+the final accounting cleanup.
+
+Changes remain local; no production rollout or native KVM acceptance is claimed.
+This environment lacks KVM and cannot inspect the host loop devices required by
+the native leak check. Unsupported project, data-service and installation
+bindings continue to block identity erasure. ADR-202610171905 above supersedes the core
+project/environment restriction recorded in this historical entry.
+
+
+## Local organization application quota ownership — 2026-10-17
+
+This entry records the original ADR-202610171903 boundary. ADR-202610171904 above supersedes its
+core lifecycle restrictions for adopted organizations.
+
+[ADR-202610171903](adr/202610171903-organization-application-quota-ownership.md) moves app
+admission from a creator-wide count to the persisted organization's shared plan
+pool. Production, developer and PR-preview caps remain in `pkg/api/limits.go`.
+Create/restore and plan changes serialize across different creators; personal
+app quotas, account/dashboard counts and scan preflight exclude company apps.
+Missing personal app attribution is repaired without rewriting existing shared
+ownership.
+
+Personal-account deletion scheduling and hard purge now refuse legacy shared-app
+storage/billing references before any child data can be removed. The API returns
+409 with the migration requirement. This change moves app quotas and prevents
+data loss. App child ownership, runtime/metering subjects and organization billing
+still need a coordinated migration. The creator's account cannot yet be erased
+while company apps depend on it.
+
+Focused MemStore/PostgreSQL race suites pass, including both plan-change orders,
+rollback, create/restore contention, separate quota pools, personal display counts
+and preservation during blocked erasure. API scan, account-count, creation,
+restoration, idempotency, offboarding and authorization regressions pass under the
+race detector. Static checks pass with zero issues for the state, app-access and
+API packages. SQL generation and repository policy/docs checks pass.
+
+Implementation and acceptance checks are local; no deployment is implied.
+
+## Local organization application offboarding — 2026-10-16
+
+[ADR-202610171902](adr/202610171902-organization-offboarding-fences.md) adds membership revisions
+and PostgreSQL transaction fences to the shared application and organization
+control plane. Member removal atomically revokes the member's organization keys,
+app deploy tokens and outstanding org invitations, including previously removed
+members in the migration backfill. Personal identities, other org credentials,
+deployed applications and accepted workloads remain intact.
+
+Live/archive logs and app debugger/task tunnels recheck access every second and
+cancel their upstream connections on removal, demotion, key revocation/expiry or
+lookup failure. Direct notification writes also take the membership fence.
+Indirect domain/cron/edge-rule/invocation URLs check their app, and app,
+deployment, build, domain, cron, instance, secret, invocation and app-metrics
+inventories filter resources the departed creator can no longer read. Filtered
+pagination preserves access to older personal resources without exposing hidden
+company cursor values.
+
+Acceptance covers real PostgreSQL commit ordering and rollback, raced credential
+issuance, membership restoration, CI OIDC credential checks, paused HTTP mutations,
+and active HTTP/WebSocket connection revocation. See the [team access
+guide](organization-app-access.md) for guarantees and migration boundaries.
+
+Focused race suites for state/database, API, gateway and authorization middleware
+pass, as do enabled static checks for all seven touched packages, SQL generation,
+documentation links and repository policy gates. CI bearer coverage also fixed
+an existing OIDC insert that omitted the token UUID without a database default.
+
+This is local implementation with no deployment. Additional shared permissions,
+account-owned jobs, projects/environments and other account-wide data services,
+organization billing/quotas, SSO/SCIM and service principals remain separate work.
+
+## Local organization application authorization — 2026-10-16
+
+[ADR-202610171901](adr/202610171901-organization-application-authorization.md) adds current
+organization membership and operation-specific role checks to 39 reviewed app,
+configuration, secret, deployment/build and gateway log routes. Authentication,
+key scopes, MFA and actor attribution remain attached to the caller; existing
+storage, plan limits and billing remain attached to the resource account.
+Authorization precedes mutation replay. Collaborator receipts and activity
+deduplication are partitioned by caller and credential; creator receipts retain
+their existing namespace for upgrade compatibility. Deployment cancellation also
+checks the named app, including when another organization's app shares its legacy
+account.
+
+Portable race checks cover the authorization/middleware packages, focused API
+regressions including real PostgreSQL role changes and owner-scoped storage, and
+gateway live/archive authorization. Touched-package static analysis and repository
+policy/docs checks pass. The [team access guide](organization-app-access.md)
+records the permission matrix and exact migration boundary.
+
+This was the initial authorization slice. The offboarding entry above adds
+stream revocation, transaction fencing and filtered core inventories. Shared
+access beyond the reviewed route list and organization billing/quotas remain
+separate work.
+
+## Managed Postgres data pipelines — 2026-10-16
+
+Onboarding follow-up (2026-10-17): durable private-worker connection checks now
+share replication's compatibility inspector and expose bounded table/column
+discovery with remediation. New reservations require fresh evidence for the
+current credential and selected tables; the CLI checks before provisioning and
+the dashboard provides account/CSRF-bound setup and health. The capacity follow-up
+adds measured, operator-qualified shared allocations, atomic durable reservations,
+and enforced credential ceilings covering initial copy, wake and rotation peaks.
+Unknown or expired evidence blocks new consumers. The
+[staging canary](../tests/data-pipelines/staging_canary.py) can record live-provider
+and signed Data API evidence; it has not run against a live provider here.
+
+Add-table onboarding follow-up (2026-10-17): dashboard selection, fresh discovery
+and explicit schema/reader approval extend an existing pipeline. New owned tables
+remain gated through native copy, scoped resumable verification and durable API
+refresh while existing read policies stay open. Existing publication, subscription
+and generation are retained. Qualified peak capacity is reused and actual native
+copy headroom is rechecked. Local 100,000-row acceptance exercises restart,
+concurrent mutations, lost publication/refresh acknowledgements, API visibility and reader
+restrictions. Removal, replacement, production rollout and provider qualification
+remain outside this staging-only, unreleased slice.
+
+New-column backfill follow-up (2026-10-17): approved additions can include
+defaults, stored missing values and required columns. Bounded transactions copy
+actual source values only into new columns and save verification progress
+atomically. Required constraints precede API contract refresh; source expressions
+are never installed on the mirror. Local acceptance covers 100,000 historical
+rows, stop/retry, lost leases/progress, restart, concurrent mutations and reader
+restrictions. Existing-column drift, unsupported DDL and unfinished-backfill
+schema conflicts still require explicit recovery. Staging-only and unreleased.
+
+Resumable verification follow-up (2026-10-17): manual checks and approved schema
+additions now scan bounded primary-key ranges with durable progress and
+destination-side change invalidation. Final fenced coverage checks prevent
+independent chunk scans from becoming false equality proof. Local 100,000-row
+acceptance covers cancellation/retry, lost progress, restart, concurrent writes,
+API refresh and previously checked-range corruption. Composite-key, split,
+truncate and tracking-integrity tests are local. No release or production/provider
+qualification is implied.
+
+Schema evolution follow-up (2026-10-17): dashboard previews and revision-bound
+approval support nullable column additions without a full table recopy. Reads
+remain gated through bounded data verification and durable API runtime refresh.
+Native local tests cover changed approvals, ambiguous DDL commits, source drift
+during refresh, renewed API contracts and historical-default recovery.
+Unsupported changes and inconclusive large-table verification still need explicit
+recovery. This remains staging-only and unreleased.
+
+[ADR-1591](adr/1591-managed-postgres-data-pipelines.md) adds an internal,
+staging-only source-to-mirror connector on top of the Data API release work.
+The [pipeline guide](data-pipelines.md) documents the single-command CLI,
+sealed source custody, native initial copy/change capture, explicit JWT reader
+allowlist, pause/resync/cleanup behavior, and bounded verification. The strict
+`make test-data-pipeline` runner uses disposable TLS PostgreSQL and real signed
+HTTP reads. Live-provider, resource-budget and deployed operational qualification
+remain open; production admission is disabled.
+
+## Containers: image runs, process identity and Compose build context — 2026-10-15
+
+- **Image runs.** [ADR-1161](adr/1161-image-runs.md) `gregale run --image` (#4663),
+  [ADR-1163](adr/1163-live-job-task-output.md) live output (#4694, edge routing
+  fixed in #4725) and [ADR-1330](adr/1330-interactive-image-runs.md)
+  `gregale run -it --image` (#4734) are merged.
+  - They stay operator-gated and off by default: `FAAS_IMAGE_RUNS`
+    (Ansible `faas_image_runs_enabled`) and `FAAS_INTERACTIVE_IMAGE_RUNS`.
+  - Unit, conformance and gateway tests pass. The metal tests
+    `TestImageRunsMetal`, `TestJobTaskLiveOutputMetal` and
+    `TestInteractiveImageRunMetal` are in the native `jobs` phase but have not
+    run. The `e2e-native` dispatch on 2026-10-14 failed because the acceptance
+    VM `faas-acceptance-1` no longer exists.
+- **Process identity.** [ADR-1239](adr/1239-docker-compatible-image-process-identity.md)
+  (#4704) keeps root-owned image files owned by root, runs images without
+  `USER` as root, and gives an unknown numeric UID GID 0, as Docker does.
+  - Unit tests pass.
+  - Native evidence must run imaged as its production service user. That
+    evidence is in open #4722, which also lets workloads serve port 80.
+- **Compose build context.** [ADR-1288](adr/1288-compose-declared-build-context.md)
+  (#4719): project apply stages a Compose-declared build service with its
+  declared context as the archive root. The release-gate e2e test pins both
+  that shape and the whole-repository shape.
+- **Compose build arguments and target.**
+  [ADR-20261019142544](adr/20261019142544-compose-build-args-and-target.md)
+  (2026-10-19): source-built Compose services pass `build.args` and
+  `build.target` to their Dockerfile build, captured per deployment, keyed into
+  the artifact cache and acknowledged by the builder guest.
+  - Unit tests pass. A native multi-stage build (with and without a target,
+    and a changed argument on identical source) has not run.
+- **Compose extends and include.**
+  [ADR-20261019190527](adr/20261019190527-compose-extends-and-include.md)
+  (2026-10-19): the scan resolves `extends` (same file, other file, chains)
+  and top-level `include` (with their own paths), replacing the ADR-1337
+  warnings. Unit tests pass; no native run.
+- **No native run recorded.** The `containers` native lane has no recorded
+  passing run; [container qualification](container-qualification.md) remains
+  the coverage plan.
+- No deployment setting changed. `faas_image_runs_enabled` defaults to
+  `false`.
+
+## Billing integrity: delivery finality, hard spend cap, plan history — 2026-10-13
+
+[ADR-1162](adr/1162-billing-delivery-finality-spend-cap-and-plan-history.md) closes four
+billing gaps. The provider pusher delivers an hour only once every minute up to its end
+is recorded compute-complete or older than the catch-up bound, so late catch-up rows
+can no longer land in a delivered hour. The spend cap bills exactly up to the cap,
+settles capped hours without later back-billing, and schedd parks capped accounts:
+explicit-deployment admissions check the cap, the reaper parks via `appMustPark`, warm
+pools are reclaimed and queued job tasks deferred. App purge keeps `usage_minutes` and
+`usage_daily`. The month's allowance follows recorded plan activations (largest grant
+so far) in the pusher, `CurrentMonthOverageCents` and `OverageMBSecondsForRange`.
+`pkg/meter`, `pkg/billing`, `pkg/billing/reconciler` and `pkg/api` tests pass locally
+(one known timing-flaky loop health test aside), as do the new `pkg/state` plan-history
+tests, the MemStore conformance suite and the full `pkg/sched` suite including the new
+spend-cap tests. PG-backed tests, `make lint` and a live Polar sandbox delivery remain
+unrun.
+No deployment setting or provider configuration changed.
+
 ## Combined PostgreSQL rollout readiness — 2026-10-12
 
 [ADR-992](adr/992-managed-postgres-combined-rollout-readiness.md) combines provider
@@ -18,10 +1722,94 @@ lint and tagged compilation checks passed; [evidence and limits](ops/evidence/20
 record the qualification boundary. Supported native execution remains pending; this change
 does not enable production provisioning or alter Neon resources or billing.
 
+## PostgreSQL starter checkpoint drain — 2026-10-17
+
+The Node and Python PostgreSQL starters' first capture happened right after
+readiness, so every wake restored the startup check's open SQL session and
+orphaned its server backend. Both adapters now drain every session in a
+`before_checkpoint` hook (idempotent, retried after a failed drain, rotation
+refused until restore) next to the existing `after_restore` replacement.
+`secret-reload-node` bundled the restore code but never called it; it now
+serves both hooks. Declaring the checkpoint hook turns off warm captures for
+those apps (ADR-351). Unit tests and the TLS/SCRAM suites (Node and Python
+starters, concurrent functions) check that no server session survives the
+drain. Native VM capture evidence is pending.
+
+## Concurrent backend cancellation — 2026-10-16
+
+The follow-up to PR #4768 holds shared-worker slots through cancellation
+cleanup. Node receives an abort signal, Python acknowledges completed cleanup,
+and function hook handlers receive socket-derived lifecycle context (ADR-1540).
+Portable interpreter/race tests and real TLS/SCRAM PostgreSQL integration check
+bounded admission, blocked-write rollback, healthy neighbours, pool replacement
+and worker-death recovery. [Portable evidence](ops/evidence/20261016-function-backend-concurrency/REPORT.md)
+and the [acceptance procedure](ops/function-backend-concurrency-acceptance.md)
+separate these process checks from native VM qualification. Native execution is
+pending: this workspace lacks KVM. Function hooks execute in one worker; this
+does not qualify VM-wide pool draining or durable post-response `waitUntil`.
+
+## Node background completion foundation — 2026-10-16
+
+ADR-20261018005023 adds a negotiated response/execution completion protocol. Portable
+runner and generated-adapter tests cover early HTTP/1 and HTTP/2 response EOF,
+registered promises and children, rejection, central plan limits, neighbour
+isolation, deadlines/disconnect cleanup, crash recovery and recycle retention.
+Worker slots remain occupied through actual completion or cancellation cleanup;
+uncooperative workers are retired after the existing acknowledgement grace.
+Production runner mains leave activation disabled. Acknowledged VM registration,
+VM-wide checkpoint protection, Python background execution and native snapshot
+qualification remain separate work. No deployment or durable execution is
+claimed. See [ADR-20261018005023](adr/20261018005023-function-background-completion-protocol.md) and
+the [acceptance procedure](ops/function-backend-concurrency-acceptance.md).
+[Portable evidence](ops/evidence/20261016-function-background-completion/REPORT.md)
+records the disabled activation boundary and native prerequisite failures.
+
+## Node VM execution lifetime and checkpoint admission — 2026-10-16
+
+[ADR-20261018030610](adr/20261018030610-function-vm-execution-lifetime.md) adds host-acknowledged,
+incarnation-scoped execution reservations before handler dispatch. HTTP EOF
+does not release them; actual worker completion/cancellation does. Lost replies,
+late messages and runner generation changes retain ownership conservatively.
+Host Stats and idle/freeze/quiet-pause gates observe the reservations. Schedd
+establishes idle admission before snapshot reuse, and capture seals admission
+before pause. Qualified lifecycle callbacks visit every loaded Node interpreter
+and wait for all cleanup fences. Expired ownership retires the original VM
+through existing teardown and schedd notification; vmmd adds no instance-row
+writes. Portable race and TLS/SCRAM SQL evidence is recorded in the
+[report](ops/evidence/20261016-function-vm-lifetime/REPORT.md).
+
+Activation exists only in `metal,function_background_native` acceptance builds;
+normal production builds remain off. A strict native deployed-function gate is
+implemented, but this workspace lacks root/KVM and cannot qualify its execution
+or native leak checks. Native fault injection and SQL pool draining across all
+interpreters remain required before activation. Private environment-qualification
+restores, Python background execution, durable work and performance parity are
+not qualified by these portable checks. No deployment was performed.
+
+## Automatic Node function PostgreSQL lifecycle — 2026-10-17
+
+[ADR-20261018030611](adr/20261018030611-function-postgres-resource-lifecycle.md) adds automatic SDK
+pool registration before driver creation in qualified generated adapters. It
+supplies default lifecycle endpoints, preserves custom hooks, consumes their
+response cleanup before drainage and waits for every registered pool in every
+loaded interpreter. Restore/thaw rebuilds pools and probes readiness before
+customer hooks or admission. Timed-out close retains ownership until actual
+drainage. Registration is bounded to 16 pool owners per interpreter; connection
+budgets remain per driver/worker/VM. Qualified warm and migration captures fail
+closed pending a continuing-VM recovery protocol.
+
+The portable and native SQL acceptance sources independently witness session
+closure while checkpoint acknowledgement is held. The native phase additionally
+requires deployed snapshot restore, thaw and worker/runner failure recovery.
+The [evidence report](ops/evidence/20261017-function-postgres-lifecycle/REPORT.md)
+records executed checks and outstanding gates. Production activation remains
+off. Native KVM execution, native faults and leak checks remain unqualified in
+this workspace. The prior PR remains closed and unmerged; no deployment occurred.
+
 ## Deployed PostgreSQL starter qualification — 2026-10-12
 
-The [native acceptance gate](ops/managed-postgres-native-acceptance.md) now requires
-thirteen phases, including the shipped Node starter, real public API rotation,
+That revision of the [native acceptance gate](ops/managed-postgres-native-acceptance.md)
+required thirteen phases, including the shipped Node starter, real public API rotation,
 restored pools and failed-hook cold fallback. The portable public API and restricted
 TLS/SCRAM SQL tests passed locally; [evidence and limits](ops/evidence/20261012-managed-postgres-deployed-starter/REPORT.md)
 record the narrowed API build and outstanding guest execution. The internal GCE
@@ -330,6 +2118,15 @@ full Linux/macOS race suites and three lifecycle leak checks.
 Customer cutover activation remains disabled, and supported native lifecycle
 acceptance remains pending.
 
+Managed PostgreSQL drain plans (2026-10-13, [ADR-1153](adr/1153-managed-postgres-durable-drain-plans.md))
+capture the app instance catalog and native member reservations atomically under
+an existing admission fence and ownership epoch. Restart recovery reuses the
+original receipts. Unsupported members, empty/oversized inventories and stale
+authority block the catalog verdict; terminal rows alone are never receipts.
+The `catalog_retired` observation remains separate from external SQL-session
+isolation, route convergence and customer activation. Production provisioning
+and customer activation remain disabled; native KVM acceptance is outstanding.
+
 Startup can now retire absent, fully checkpointed, unclaimed prepared-network
 reservations from a different kernel boot
 ([ADR-478](adr/478-managed-postgres-prior-boot-spare-retirement.md)). Current UID
@@ -549,6 +2346,48 @@ the client through the gateway with its first chunk 0.8 ms after the headers
 and the second 1.97 s later, matching the handler's 2 s pause, and with both
 `Set-Cookie` headers. `TestBinaryFunctionMetal` passed again on the shared
 runner core.
+Request timeouts have per-plan ceilings: Free 30 s, Hobby 1 min, Pro 5 min,
+Scale 15 min (ADR-1150, `Limits.RequestBudgetMaxMs`). The gateway passes the
+budget left to the guest in `X-Faas-Deadline-Ms`, and the runner bounds an
+invocation by the longer of that and 30 s. Evidence, 2026-10-12 on
+`gregale-internal-test-1` (`cmd/e2e` `TestFunctionLongRequestMetal`, full
+daemon set): a Pro function with `request_timeout_s=120` and the default
+30 s idle timeout streamed four ticks over 36.1 s through the gateway. Its
+handler saw `X-Faas-Deadline-Ms=119999`, not the 86400000 the client sent.
+The first attempt was cut at 29.5 s: on single-box installs schedd's stats
+poller read only the empty capacity-stream cache, so the idle reaper never
+saw the in-flight request. The poller now reads vmmd `Stats` directly when
+schedd has no owner node.
+Async, queue, cron and replay invocations run for the function's request
+timeout too, at least 30 s (ADR-1180). Their leases cover the run, and long
+ones are delivered off the drain tick and the cron loop. vmmd's stream
+bridge waits for the guest's response headers as long as
+`X-Faas-Deadline-Ms` allows; a fixed 30 s wait cut every response that
+started after 30 s with a 502. Evidence, 2026-10-13 on
+`gregale-internal-test-1` (`cmd/e2e` `TestFunctionLongRequestMetal`, full
+daemon set, daemons at 74b9225c29 with the bridge, runner and test at
+6d2e493e3a): the Pro function with `request_timeout_s=120` streamed for
+36.0 s, answered a synchronous 40 s request once with HTTP 200 after 40.0 s,
+and completed a 40 s async invocation in 40.7 s on its first attempt. Both
+40 s runs saw `X-Faas-Deadline-Ms=119999`. Before the bridge fix every
+attempt of that async invocation got a 502 about 32 s in and was retried.
+A function may set `function_concurrency` (ADR-1342): one Node or Python
+worker then serves that many requests at once, multiplexed by an id the
+adapter echoes, and an abandoned request is cancelled without restarting
+its worker. A `functions:` entry can set `ram_mb`, `request_timeout_s`,
+`min_instances`, `concurrency`, `env` and `secrets_from_env`, applied before
+the function's build, and `routes:` behind an `entry: true` function become
+`kind=route` edge rules on the entry app's hosts. Evidence, 2026-10-14 on
+`gregale-internal-test-1` (`cmd/e2e` `TestFunctionConcurrencyMetal`, full
+daemon set at f4a1972f8c): a binary function whose handler speaks the shared
+protocol, deployed with `function_concurrency=8`, answered eight concurrent
+2 s requests in 2.17 s from one worker process, and after a client abandoned
+a request the same worker reported one acknowledged cancel. The `gregale`
+CLI then deployed a two-function manifest: the new `users` function was
+reserved, configured and built with concurrency 4, its sealed
+`USERS_TOKEN` reached the guest, `/users/42` on the entry host reached
+`users` and `/about` reached the entry function, and a repeat deploy left
+exactly one managed route rule.
 `node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and
@@ -1530,9 +3369,12 @@ explicitly open issues that the doc otherwise implies are closed.
   traffic before the lateral-movement deny. Named TCP public multi-port routing
   now uses the `app--port-<name>` selector and the existing vmmd bridge
   (ADR-176); durable node-local host-port leasing now reserves declared TCP
-  and UDP listeners (ADR-177). Direct socket binding, UDP ingress, and custom
-  per-port TLS remain separate follow-ups. Loopback discovery within one task remains supported
-  (ADR-164 and ADR-165).
+  and UDP listeners (ADR-177). Opt-in raw TCP ingress with optional
+  per-listener TLS termination and opt-in UDP ingress (ADR-389) shipped with
+  the stateless container service (#4024, 2026-10-01). Both are disabled by
+  default, and their native acceptance is pending
+  ([container compatibility](container-compatibility.md)). Loopback discovery
+  within one task remains supported (ADR-164 and ADR-165).
 - **Resource and cost isolation** — named RAM/CPU profiles, per-node vCPU
   admission, ephemeral disk ceilings, and the account-level compute + S3 +
   managed-PostgreSQL usage projection are present; runtime per-container
@@ -1542,8 +3384,10 @@ explicitly open issues that the doc otherwise implies are closed.
   64 MiB default for inherited profiles. ADR-175 adds a customer-selectable
   16..512 MiB sidecar scratch quota and named per-workload guest `io.weight`
   policies (`low`, `standard`, `high`); omitted values preserve the inherited
-  defaults. Persistent volumes remain follow-up work; public named TCP listeners
-  are now covered by ADR-176 and host-port allocation by ADR-177.
+  defaults. Persistent volumes are out of scope for the stateless container
+  service ([container qualification](container-qualification.md)); public
+  named TCP listeners are now covered by ADR-176 and host-port allocation by
+  ADR-177.
 
 ### Open security & infrastructure issues
 
@@ -1843,3 +3687,129 @@ that unattributed gap. Open evidence: a `make test-metal` +
 `make leakcheck` run on a native KVM host, then a re-run of
 `scripts/ops/wake_performance_gate.py` to record the new
 `stage_pre_boot_files_ms` distribution against the rc.98 baseline.
+
+### Recoverable operator force-park (ADR-1525)
+
+Force-park now has an immutable VM-generation execution journal, fenced claims,
+verified capture/cleanup receipts and atomic terminal state, intent, audit and
+snapshot publication handoff. Fresh traffic cancels before execution; a proven
+stop requiring cold boot is distinct from a captured park and an uncertain
+outcome. Reclaim never repeats a started VM effect. See
+[operator park recovery](ops/operator-park-recovery.md) for coordinated rollout.
+Targeted portable memory/PostgreSQL, scheduler, manager, RPC, API/CLI and race
+checks pass, as do differential lint, SDK validation, OpenAPI parity and schema
+parity. Vmmd and the metal tests compile; the new metal tests skip without
+staged VM images. Native lifecycle qualification remains pending: this workspace
+has no `/dev/kvm`, and leak inspection fails because `/dev/loop0`–`/dev/loop7`
+are unavailable. Migration `20261017120000001` has not been deployed.
+
+Data pipeline freshness followup (local, staging only): status and dashboard now
+expose a generation-scoped applied WAL checkpoint lower bound plus read-time
+health and recovery guidance. Idle-source uncertainty is explicit; receiver
+activity and WAL bytes do not claim time freshness. Native provider qualification
+and customer-pilot enablement remain outstanding; no release is authorized.
+
+Data pipeline table recovery followup (local, staging only): an unfinished newly
+added table with a confirmed verification mismatch now has a separate exact preview
+and approved recopy. Durable native withdrawal, relation retirement, transactional
+clear, republish and copy stages preserve healthy table reads/storage and shared
+replication identities across restarts and lost acknowledgements. A fresh proof,
+API refresh and final fenced check precede read reopening. Source drift blocks
+recopy; shared WAL/replication loss still requires full recovery. Local native
+acceptance covers two 100k-row tables, healthy CDC during a stalled recopy, one
+committed clear, source drift, fault recovery and signed read gating. Dashboard
+CSRF/confirmation/revision checks and receipt fencing are tested. Provider
+qualification and production enablement remain outstanding; no release.
+
+Data pipeline initial-copy recovery followup (local, staging only): new-table
+onboarding now records native copy phases/counters and a durable five-minute
+progress clock. Explicit preview/approval can recover a stalled or untracked new
+table before verification exists. Native worker/relation retirement precedes
+transactional clearing; healthy reads/storage and the shared subscription remain
+in place. A request is withdrawn when copying resumes or finishes before durable
+recovery starts. Native acceptance covers an actively blocked COPY, temporary
+slot cleanup, lost acknowledgements, missing tracking through supported DDL,
+restarts, healthy 100k-row table CDC, and one clear per approved attempt. Provider
+qualification and production enablement remain outstanding; no release.
+
+Data pipeline provider qualification runner (local): fresh-copy, signed-read and
+recovery scenarios now have an operator-only staging harness with scoped fault
+adapter receipts, unconditional restore attempts, independent behavior checks and
+versioned evidence reports. Local harness tests do not qualify the provider.
+Live Neon execution is blocked on staging credentials, fixture identities and
+configured deployment fault controls. No pilot/production approval or release.
+
+
+Data pipeline dashboard setup (local, staging only): customers can save selected
+tables/readers, request automatic mirror provisioning, leave/reopen progress, retry
+blocked stages with stable IDs, and stop setup while retaining resources. Source
+rotation/removal and confirmed pipeline disconnect are available in the dashboard.
+Setup leases/revisions, shared discovery serialization, pipeline quota reservations
+and account/source/mirror lifecycle guards cover recovery. Optional Data API fields now continue the saved workflow through an owned Auth
+selection, a read-only binding, normal template build submission and deployment
+readiness. Lost replies reuse persisted identities; a terminal build retry keeps
+the working mirror/app/binding and records a new deployment attempt. Auth JWT
+settings are immutable public deployment overrides; database credentials remain
+managed encrypted secrets. Ready jobs expose an endpoint and query example. Live
+provider qualification and production enablement remain outstanding. No release.
+
+
+Data pipeline approved-table cancellation (local, staging only): exact dashboard
+preview/confirmation can abandon an unfinished new table without resetting the
+pipeline. Durable native retirement preserves healthy CDC and other tracked
+copies, archives committed rows privately, refreshes the API through the existing
+runtime outbox, and atomically reduces saved selection. Retained-table capacity is
+32 per mirror database; rows are never automatically deleted. Fresh re-adds use
+new tables and proofs. Local fault acceptance covers blocked COPY, temporary slot
+cleanup, lost replies, restart recovery, signed healthy reads, API exclusion,
+last-table cancellation and repeated 100k-row cancel/re-add. Live provider
+qualification and production enablement remain outstanding. No release.
+
+Data pipeline live-table removal (local, staging only): exact dashboard preview
+and confirmation can remove one already-live table while keeping remaining
+tables syncing and readable. The selected gate and durable retirement intent
+commit together; native cleanup, private retention and a distinct API refresh
+precede saved selection reduction. No recopy or generation reset is required.
+The last table uses ordinary pipeline disconnect. Local acceptance covers two
+100k-row tables, ongoing source updates, lost acknowledgements, worker restarts,
+signed access checks, unchanged healthy storage/shared identities and retained
+rows. Provider qualification and production enablement remain outstanding; no
+release.
+
+Data pipeline live-table repair (local, staging only): a confirmed row mismatch
+in an unchanged live table now gates only that table and preserves shared sync.
+A durable private quarantine recovers failed/lost intent acknowledgements before
+ordinary reads can reopen. Exact preview and separate recopy confirmation use the
+existing native retirement/copy stages, scoped proof, API refresh and final
+fence. Selection and generation stay unchanged; the partial proof does not imply
+whole-pipeline verification. Local acceptance covers two 100k-row tables,
+concurrent writes, a rolled-back quarantine, blocked COPY, lost acknowledgements,
+restarts, one clear and signed healthy reads/CDC. Provider qualification and
+production enablement remain outstanding; no release.
+
+
+### Pipeline reader access management (local/staging only)
+
+- Existing pipelines can preview and explicitly confirm exact JWT reader grants
+  and revocations in the dashboard, with approved/applied status and existing
+  session/CSRF checks. Grants still expose every row in every selected table.
+- A private authoritative receipt and fenced policy transaction survive lost
+  acknowledgements and worker restart. Later gate openings use the committed
+  readers. Initial-copy, schema and repair false gates stay closed; retained
+  private tables remain excluded. Source connectivity and new copy capacity are
+  unnecessary for the access transaction.
+- Local acceptance changes Alice to Bob during a live repair COPY with ongoing
+  mixed-table updates, loses the catalogue acknowledgement, restarts, then checks
+  that the repaired table opens for Bob only. Healthy storage and native resources
+  are preserved. Acceptance uses disposable local fixtures; production rollout remains gated.
+
+Pipeline health notifications (local/staging only): opt-in encrypted HTTPS
+webhooks and dashboard delivery history now use an independent catalog monitor,
+durable debounced incidents/recoveries, signed attempts, bounded retries, and
+receiver deduplication IDs. Stopped replication workers are detectable without
+source access; endpoint/key failures do not block monitoring. Pause does not
+claim recovery, and idle source checkpoints alone do not claim stale data. The
+new private worker unit is installed without enabling it. Local acceptance covers
+native PostgreSQL authentication rejection, receiver outage/restart, stopped
+worker observations, lost HTTP acknowledgment, and metadata minimization. Provider
+qualification and production rollout remain gated.

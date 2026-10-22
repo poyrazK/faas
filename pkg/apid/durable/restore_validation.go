@@ -16,7 +16,7 @@ import (
 func (s *Service) ValidateRestore(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
-	if !ok || !s.durableEntityRestoreValidationAvailable(w) || !s.durableEntityRetryAvailable(w, acct, app) {
+	if !ok || !s.durableEntityRestoreValidationAvailable(w) || !s.RetryAvailable(w, acct, app) {
 		return
 	}
 	var request api.DurableEntityRestoreRequest
@@ -125,7 +125,12 @@ func durableEntityValidationDeploymentProblem() *api.Problem {
 	return api.NewProblem(http.StatusConflict, "durable_entity_restore_validation_deployment_changed", "Validation deployment changed", "validate against the selected live deployment before starting a new restore operation")
 }
 
-func (s *Service) performDurableEntityRestore(ctx context.Context, acct state.Account, app state.App, scope string, id durableentity.ID, request api.DurableEntityRestoreRequest) (durableentity.Result, error) {
+func (s *Service) PerformRestore(ctx context.Context, acct state.Account, app state.App, scope string, id durableentity.ID, request api.DurableEntityRestoreRequest) (durableentity.Result, error) {
+	if s.TenantQuotas != nil {
+		if err := s.TenantQuotas.AdmitInvocation(ctx, id); err != nil {
+			return durableentity.Result{}, err
+		}
+	}
 	exported := durableEntityExportFromAPI(request.Export)
 	if request.ValidationDeploymentID == "" {
 		if request.ValidationBundleSHA256 != "" {

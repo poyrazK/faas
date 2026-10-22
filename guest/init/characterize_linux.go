@@ -36,7 +36,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -117,6 +119,10 @@ type RunArgs struct {
 	RingBufferTail func() string      // the supervisor's log ring buffer tail
 	Log            *slog.Logger
 	Now            func() time.Time // injectable for tests
+	// ProvenWorker shortens the window to
+	// api.ProvenWorkerCharacterizationWindow: vmmd booted a declared worker
+	// whose deployment already passed the full window (ADR-20261018101500).
+	ProvenWorker bool
 }
 
 // runCharacterization is the boot-side entry point. It observes the
@@ -260,11 +266,22 @@ func deriveGuestCharacterizationClass(port int, l7Hint string, exitCode int, exi
 // §"Characterization window"), the single source shared with the
 // host's wait in pkg/fcvm/manager.go.
 func waitForBind(ctx context.Context, args RunArgs, res *CharacterizationResult) (bool, string, int, bool) {
-	deadline := args.Now().Add(api.CharacterizationDeadline)
+	deadline := args.Now().Add(characterizationWindow(args))
+	want := args.Manifest.EffectivePort()
+	var firstSeen time.Time
 	for {
-		if port, addr, ok := probeListening(args.AppPID()); ok {
-			res.Port = port
-			return true, addr, 0, false
+		if port, addr, ok := probeListening(args.AppPID(), want); ok {
+			// Another listener (a private TCP or admin port) may come up
+			// before the serving port: give the expected port a short
+			// grace before settling on the first one.
+			now := args.Now()
+			if firstSeen.IsZero() {
+				firstSeen = now
+			}
+			if port == want || now.Sub(firstSeen) >= api.CharacterizationPreferredPortGrace || now.After(deadline) {
+				res.Port = port
+				return true, addr, 0, false
+			}
 		}
 		if args.ExitStatus != nil {
 			if code, exited := args.ExitStatus(); exited {
@@ -282,21 +299,52 @@ func waitForBind(ctx context.Context, args RunArgs, res *CharacterizationResult)
 	}
 }
 
+// bootProvenWorker reports whether vmmd booted this guest with
+// api.ProvenWorkerBootArg.
+var bootProvenWorker = sync.OnceValue(func() bool {
+	cmdline, err := os.ReadFile("/proc/cmdline")
+	return err == nil && hasBootArg(string(cmdline), api.ProvenWorkerBootArg)
+})
+
+func hasBootArg(cmdline, arg string) bool {
+	return slices.Contains(strings.Fields(cmdline), arg)
+}
+
+// characterizationWindow is how long waitForBind watches for a listener. A
+// declared worker booted with api.ProvenWorkerBootArg only has to show that
+// its process started and stayed up (ADR-20261018101500).
+func characterizationWindow(args RunArgs) time.Duration {
+	if args.ProvenWorker {
+		return api.ProvenWorkerCharacterizationWindow
+	}
+	return api.CharacterizationDeadline
+}
+
 // probeListeningLinux is the linux-only /proc walk. Called by
 // probeListening (characterize_common.go) on linux after the
 // no-child early-out passes. Cross-platform callers always go
 // through probeListening; the unit test pins the early-out
 // contract there.
-func probeListeningLinux(pid int) (int, string, bool) {
+func probeListeningLinux(pid, want int) (int, string, bool) {
 	ownedInodes := ownedSocketInodes(pid)
 	if len(ownedInodes) == 0 {
 		return 0, "", false
 	}
-	if port, addr, ok := scanListeningFile("/proc/net/tcp", ownedInodes); ok {
-		return port, addr, true
+	// The expected port wins in either family; otherwise the first IPv4
+	// listener, then the first IPv6 one, as before (H10-56).
+	port4, addr4, ok4, exact4 := scanListeningFileFor("/proc/net/tcp", ownedInodes, want)
+	if exact4 {
+		return port4, addr4, true
 	}
-	if port, addr, ok := scanListeningFile("/proc/net/tcp6", ownedInodes); ok {
-		return port, addr, true
+	port6, addr6, ok6, exact6 := scanListeningFileFor("/proc/net/tcp6", ownedInodes, want)
+	if exact6 {
+		return port6, addr6, true
+	}
+	if ok4 {
+		return port4, addr4, true
+	}
+	if ok6 {
+		return port6, addr6, true
 	}
 	return 0, "", false
 }

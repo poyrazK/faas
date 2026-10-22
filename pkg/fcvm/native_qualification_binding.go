@@ -58,6 +58,9 @@ func (j *nativeLaunchJournal) lockQualificationProducer(ctx context.Context, ins
 	fail := func(err error) (*os.File, *nativeQualificationProducer, error) {
 		return nil, nil, errors.Join(err, lock.Close())
 	}
+	if err := j.requireCheckpointWakeAbsent(id.String()); err != nil {
+		return fail(err)
+	}
 	path, _ := q.path(id.String())
 	restorePath, _ := q.restores().path(id.String())
 	if _, err := os.Lstat(restorePath); !errors.Is(err, os.ErrNotExist) {
@@ -159,6 +162,14 @@ func (j *nativeQualificationJournal) noNativeEffectsRetirement(ctx context.Conte
 // Any existing physical spelling, including a damaged record, prevents a
 // qualification claim from borrowing the instance's previous native owner.
 func (j *nativeQualificationJournal) requireNativeAbsent(instance string) error {
+	if err := j.owner.requireCheckpointWakeAbsent(instance); err != nil {
+		return err
+	}
+	return j.requirePhysicalNativeAbsent(instance)
+}
+
+// The caller separately validates incoming ownership under the incoming lock.
+func (j *nativeQualificationJournal) requirePhysicalNativeAbsent(instance string) error {
 	entries, err := os.ReadDir(j.owner.root)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

@@ -12,11 +12,15 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
+	"github.com/onebox-faas/faas/pkg/genslot"
+	"github.com/onebox-faas/faas/pkg/livequery/liveproxy"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -30,10 +34,15 @@ const defaultSocket = "/run/faas/realtimed.sock"
 const defaultHealthListen = "127.0.0.1:9107"
 
 func main() {
-	wire.Daemon("realtimed", run)
+	wire.HandoffDaemon("realtimed", run)
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// stopping is the unit's SIGTERM. ctx also ends once a two-generation
+	// hand-off's successor serves (ADR-1736).
+	stopping := ctx
+	ctx, endGeneration := context.WithCancel(ctx)
+	defer endGeneration()
 	ops := wire.NewOpsMetrics("realtimed")
 	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "realtimed", wire.Version, log, ops.Registry(), ops.MetricPrefix())
 	if traceErr != nil {
@@ -54,12 +63,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	socketPath := getenv("FAAS_REALTIME_SOCKET", defaultSocket)
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0o750); err != nil {
-		return err
-	}
-	if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
 
 	callbackTimeout := envDuration("FAAS_REALTIME_CALLBACK_TIMEOUT", 30*time.Second)
 	outboxRoot := getenv("FAAS_REALTIME_CALLBACK_OUTBOX", realtime.DefaultCallbackOutboxRoot)
@@ -68,8 +71,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("realtimed: migrate callback outbox: %w", err)
 		}
 	}
+	// Each generation owns a slot of the outbox, so a hand-off's two
+	// generations never deliver the same callback file (ADR-1736).
+	outboxSlot, err := genslot.Acquire(outboxRoot)
+	if err != nil {
+		return fmt.Errorf("realtimed: claim callback outbox: %w", err)
+	}
+	handedOff := false
+	defer func() { returnCallbackOutboxHome(outboxSlot, handedOff, log) }()
 	outbox, err := realtime.NewCallbackOutbox(realtime.CallbackOutboxConfig{
-		Root:               outboxRoot,
+		Root:               outboxSlot.Dir(),
 		DeadLetterMaxBytes: int64(envInt("FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES", int(realtime.DefaultCallbackDeadLetterMaxBytes))),
 		ReplayWorkers:      envInt("FAAS_REALTIME_CALLBACK_REPLAY_WORKERS", realtime.DefaultCallbackOutboxReplayWorkers),
 		MaxRetryInterval:   envDuration("FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL", realtime.DefaultCallbackOutboxMaxRetryInterval),
@@ -77,15 +88,52 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	adoptCallbackOutboxes(outboxSlot, outbox, log)
+	go func() {
+		t := time.NewTicker(genslot.AdoptInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				adoptCallbackOutboxes(outboxSlot, outbox, log)
+			}
+		}
+	}()
 	hooks := realtime.HTTPHooks{
 		Client:       newCallbackHTTPClient(callbackTimeout),
 		DurableQueue: outbox,
 	}
 	resumePreview := os.Getenv("FAAS_REALTIME_RESUME_PREVIEW_ENABLED") == "1"
+	ticketPreview := os.Getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1"
+	accessPreview := os.Getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1"
+	// ADR-1323: record per-endpoint usage with apid. Recorded only; nothing
+	// bills or limits from it yet.
+	usageEnabled := os.Getenv("FAAS_REALTIME_USAGE_ENABLED") == "1"
+	// ADR-1323 fair use and node outbound budget, and ADR-1324 occupancy, stay
+	// off until realtime has been tested end to end.
+	fairUse := os.Getenv("FAAS_REALTIME_FAIR_USE_ENABLED") == "1"
+	outboundBudget := os.Getenv("FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED") == "1"
+	occupancyPreview := os.Getenv("FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED") == "1"
+	var outboundNodeBytes int64
+	if outboundBudget {
+		outboundNodeBytes = int64(envInt("FAAS_REALTIME_OUTBOUND_NODE_BYTES", api.RealtimeNodeOutboundBytesDefault))
+		// The budget is sized against this soft limit; an explicit
+		// GOMEMLIMIT wins.
+		if strings.TrimSpace(os.Getenv("GOMEMLIMIT")) == "" {
+			debug.SetMemoryLimit(api.RealtimeMemoryLimitBytes)
+		}
+	}
+	var ticketReader realtime.SubscriptionTicketReader
+	var accessReader realtime.ManagedRealtimeAccessReader
 	var historyReader realtime.ManagedRealtimeHistoryReader
 	var routeReporter realtime.ManagedRealtimeChannelRouteReporter
 	var fleetClient realtime.ManagedRealtimeFleetClient
-	if resumePreview {
+	var usageReporter realtime.UsageReporter
+	var connectionSync realtime.ConnectionSyncer
+	var occupancyClient realtime.ManagedRealtimeOccupancyClient
+	if resumePreview || accessPreview || ticketPreview || usageEnabled || fairUse || occupancyPreview {
 		historyTLS, tlsErr := wire.LoadClientTLSConfigWithPrefix("realtime_history_",
 			os.Getenv("FAAS_REALTIME_HISTORY_TLS_CERT_PATH"),
 			os.Getenv("FAAS_REALTIME_HISTORY_TLS_KEY_PATH"),
@@ -104,14 +152,39 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 		defer func() { _ = reader.Close() }()
 		historyReader = reader
+		accessReader = reader
+		ticketReader = reader
 		routeReporter = reader
 		fleetClient = reader
+		if usageEnabled {
+			usageReporter = reader
+		}
+		// Counts feed fair use and the customer usage API's open connections.
+		if fairUse || usageEnabled {
+			connectionSync = reader
+		}
+		// A single box has one realtime node, whose own counts are exact
+		// (ADR-1324); only split nodes ask apid for the others.
+		if occupancyPreview && observedRole == role.RoleComputeOnly {
+			occupancyClient = reader
+		}
 	}
+	// Live queries (ADR-20261016151947): apid registers each endpoint with the live
+	// routes of databases bound to its app.
+	proxy, err := liveProxy(os.Getenv, log)
+	if err != nil {
+		return err
+	}
+	proxy.Metrics = liveproxy.NewMetrics(ops.Registry())
+	defer proxy.Close()
 	manager := realtime.NewManager(realtime.Config{
-		MaxConnections:       envInt("FAAS_REALTIME_MAX_CONNECTIONS", 10_000),
+		Live: liveproxy.ForRealtime(proxy),
+		// Zero selects the package default, which depends on FairUse.
+		MaxConnections:       envInt("FAAS_REALTIME_MAX_CONNECTIONS", 0),
 		MaxMessageBytes:      int64(envInt("FAAS_REALTIME_MAX_MESSAGE_BYTES", 1<<20)),
 		OutboundQueue:        envInt("FAAS_REALTIME_OUTBOUND_QUEUE", 64),
 		OutboundQueueBytes:   int64(envInt("FAAS_REALTIME_OUTBOUND_QUEUE_BYTES", 4<<20)),
+		OutboundNodeBytes:    outboundNodeBytes,
 		Heartbeat:            envDuration("FAAS_REALTIME_HEARTBEAT", 30*time.Second),
 		PongWait:             envDuration("FAAS_REALTIME_PONG_WAIT", 10*time.Second),
 		WriteWait:            envDuration("FAAS_REALTIME_WRITE_WAIT", 5*time.Second),
@@ -119,14 +192,31 @@ func run(ctx context.Context, log *slog.Logger) error {
 		CallbackTimeout:      callbackTimeout,
 		JWTAuthorizer:        newRealtimeJWTAuthorizer(log),
 		ResumePreview:        resumePreview,
+		TicketPreview:        ticketPreview,
+		TicketReader:         ticketReader,
+		AccessPreview:        accessPreview,
+		AccessReader:         accessReader,
 		HistoryReader:        historyReader,
 		ChannelRouteReporter: routeReporter,
+		OccupancyPreview:     occupancyPreview,
+		OccupancyClient:      occupancyClient,
 		FleetClient:          fleetClient,
 		FleetReportFailure: func(err error) {
 			log.Warn("realtimed: fleet presence or ephemeral relay failed", "err", err)
 		},
 		ChannelRouteReportFailure: func(err error) {
 			log.Warn("realtimed: channel route report failed; apid reconciliation will repair it", "err", err)
+		},
+		UsageReporter: usageReporter,
+		FairUse:       fairUse,
+		// Plan connection limits hold fleet-wide whenever apid is reachable;
+		// without it they hold per node (ADR-1323).
+		ConnectionSync: connectionSync,
+		ConnectionSyncFailure: func(err error) {
+			log.Warn("realtimed: connection count sync failed; account limits use local counts until it recovers", "err", err)
+		},
+		UsageReportFailure: func(err error) {
+			log.Warn("realtimed: usage report failed; the hour is kept and retried", "err", err)
 		},
 	}, hooks)
 	defer func() { _ = manager.Close() }()
@@ -142,17 +232,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 	})
 	defer readyProbe.Drain("realtimed", log)
 
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := listenRealtimeSocket(socketPath)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = listener.Close() }()
-	if err := os.Chmod(socketPath, 0o660); err != nil {
-		return err
-	}
-	healthListener, err := net.Listen("tcp", getenv("FAAS_REALTIME_HEALTH_LISTEN", defaultHealthListen))
+	healthListener, err := wire.ListenInherited("tcp", getenv("FAAS_REALTIME_HEALTH_LISTEN", defaultHealthListen))
 	if err != nil {
 		_ = listener.Close()
+		return err
+	}
+	if err := wire.RequireInheritedListenersClaimed("realtimed"); err != nil {
+		_ = listener.Close()
+		_ = healthListener.Close()
 		return err
 	}
 
@@ -171,7 +263,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		ReadHeaderTimeout: 5 * time.Second,
 		MaxHeaderBytes:    64 << 10,
 	}
+	replayDone := make(chan struct{})
+	// The outbox returns home (deferred above) only after replay stops.
+	defer func() { endGeneration(); <-replayDone }()
 	go func() {
+		defer close(replayDone)
 		superviseCallbackReplay(ctx, log, callbackReplayRetryInitial, callbackReplayRetryMax, func(replayCtx context.Context) error {
 			return outbox.Run(replayCtx, func(deliveryCtx context.Context, event realtime.Event) error {
 				callbackCtx, cancel := context.WithTimeout(deliveryCtx, callbackTimeout)
@@ -180,10 +276,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 			})
 		}, callbackReplayRestarts.Inc)
 	}()
+	// The drains let a connection accepted just before shutdown deliver its
+	// request; net/http drops one it reads after Shutdown began (ADR-1736).
+	// During a hand-off the successor accepts on the same sockets.
+	serverDrain, healthDrain := wire.NewHTTPDrain(server), wire.NewHTTPDrain(healthServer)
 	serverErr := make(chan error, 2)
 	go func() {
 		log.Info("realtimed listening", "socket", socketPath)
-		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := serverDrain.ServeErr(server.Serve(serverDrain.Listener(listener))); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 			return
 		}
@@ -192,22 +292,105 @@ func run(ctx context.Context, log *slog.Logger) error {
 	readySignal.Set(true, "")
 	go func() {
 		log.Info("realtimed health listening", "address", healthListener.Addr().String())
-		if err := healthServer.Serve(healthListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := healthDrain.ServeErr(healthServer.Serve(healthDrain.Listener(healthListener))); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 			return
 		}
 		serverErr <- nil
 	}()
 
+	notifyStop := wire.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())
+	defer notifyStop()
+	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
+	// WebSocket fan-out is per process: a session left on the old generation
+	// would miss what is published to the successor. A hand-off therefore
+	// closes the old generation's sessions once the successor serves, and
+	// their clients reconnect to it at once.
+	handoff := make(chan struct{})
+	wire.WatchHandoffs(ctx, "realtimed", log, func() {
+		close(handoff)
+		endGeneration()
+	})
 	select {
 	case err := <-serverErr:
 		return err
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		select {
+		case <-handoff:
+			handedOff = true
+		default:
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(stopping), 10*time.Second)
 		defer cancel()
 		_ = manager.Close()
-		_ = healthServer.Shutdown(shutdownCtx)
-		return server.Shutdown(shutdownCtx)
+		healthDone := make(chan struct{})
+		go func() { defer close(healthDone); _ = healthDrain.Shutdown(shutdownCtx, healthServer) }()
+		err := serverDrain.Shutdown(shutdownCtx, server)
+		<-healthDone
+		return err
+	}
+}
+
+// listenRealtimeSocket prefers the socket faas-realtimed.socket keeps open
+// across restarts: gatewayd-internal's realtime connects and management
+// calls then wait for the replacement instead of failing.
+func listenRealtimeSocket(path string) (net.Listener, error) {
+	if l, ok, err := wire.InheritedListener("unix", path); err != nil {
+		return nil, err
+	} else if ok {
+		return l, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return nil, err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, 0o660); err != nil {
+		_ = l.Close()
+		return nil, err
+	}
+	wire.Share(l) // a hand-off successor serves the same socket (ADR-1736)
+	return l, nil
+}
+
+// adoptCallbackOutboxes moves callbacks an exited generation left in its
+// outbox slot into this generation's outbox.
+func adoptCallbackOutboxes(slot *genslot.Slot, outbox *realtime.CallbackOutbox, log *slog.Logger) {
+	err := slot.AdoptOrphans(func(dir string) error {
+		n, err := outbox.Absorb(dir)
+		if n > 0 {
+			log.Info("realtimed: adopted an exited generation's callbacks", "callbacks", n, "dir", dir)
+		}
+		return err
+	})
+	if err != nil {
+		log.Warn("realtimed: adopt callbacks; retrying", "err", err)
+	}
+}
+
+// returnCallbackOutboxHome moves this generation's callbacks to the root
+// slot at exit, where a release without slots looks. A handed-off generation
+// does not wait: its successor adopts them.
+func returnCallbackOutboxHome(slot *genslot.Slot, handedOff bool, log *slog.Logger) {
+	wait := 5 * time.Second
+	if handedOff {
+		wait = 0
+	}
+	err := slot.ReturnHome(wait, func(from, home string) error {
+		q, err := realtime.NewCallbackOutbox(realtime.CallbackOutboxConfig{Root: home})
+		if err != nil {
+			return err
+		}
+		_, err = q.Absorb(from)
+		return err
+	})
+	if err != nil {
+		log.Warn("realtimed: callbacks stay for the next generation", "err", err)
 	}
 }
 

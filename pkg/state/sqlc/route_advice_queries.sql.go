@@ -95,7 +95,7 @@ const routeAdviceRouteStats = `-- name: RouteAdviceRouteStats :many
 
 WITH filtered AS MATERIALIZED (
     SELECT rt.route, rt.method, rt.status, rt.latency_ms, rt.cold_boot, rt.guest_outcome,
-           rt.count::bigint AS requests, rt.received_at,
+           rt.content_outcome, rt.count::bigint AS requests, rt.received_at,
            (rt.consumer_id IS NULL AND rt.platform_tenant_id IS NULL) AS anonymous
     FROM request_telemetry rt
     WHERE rt.app_id = $1
@@ -111,10 +111,19 @@ WITH filtered AS MATERIALIZED (
            COALESCE(SUM(requests) FILTER (WHERE status >= 500), 0)::bigint AS server_errors,
            COALESCE(SUM(requests) FILTER (WHERE guest_outcome = 'timeout' OR status = 504), 0)::bigint AS timeouts,
            COALESCE(SUM(requests) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots,
-           COALESCE(percentile_disc(0.95) WITHIN GROUP (ORDER BY latency_ms), 0)::int AS p95_latency_ms
+           COALESCE(percentile_disc(0.95) WITHIN GROUP (ORDER BY latency_ms), 0)::int AS p95_latency_ms,
+           COALESCE(SUM(requests) FILTER (WHERE content_outcome = 'first'), 0)::bigint AS content_first,
+           COALESCE(SUM(requests) FILTER (WHERE content_outcome = 'uncacheable'), 0)::bigint AS content_uncacheable,
+           COALESCE(SUM(requests) FILTER (WHERE content_outcome = 'same_60'), 0)::bigint AS content_same_60,
+           COALESCE(SUM(requests) FILTER (WHERE content_outcome = 'same_300'), 0)::bigint AS content_same_300,
+           COALESCE(SUM(requests) FILTER (WHERE content_outcome = 'same_3600'), 0)::bigint AS content_same_3600,
+           COALESCE(SUM(requests) FILTER (WHERE content_outcome = 'changed_60'), 0)::bigint AS content_changed_60,
+           COALESCE(SUM(requests) FILTER (WHERE content_outcome = 'changed_300'), 0)::bigint AS content_changed_300,
+           COALESCE(SUM(requests) FILTER (WHERE content_outcome = 'changed_3600'), 0)::bigint AS content_changed_3600,
+           COALESCE(SUM(requests) FILTER (WHERE content_outcome = 'stale'), 0)::bigint AS content_stale
     FROM filtered GROUP BY route, method
 ), top_routes AS (
-    SELECT route, method, requests, anonymous_requests, anonymous_success, server_errors, timeouts, cold_boots, p95_latency_ms FROM totals
+    SELECT route, method, requests, anonymous_requests, anonymous_success, server_errors, timeouts, cold_boots, p95_latency_ms, content_first, content_uncacheable, content_same_60, content_same_300, content_same_3600, content_changed_60, content_changed_300, content_changed_3600, content_stale FROM totals
     ORDER BY requests DESC, route ASC, method ASC
     LIMIT $5::int
 ), cacheable AS (
@@ -133,6 +142,9 @@ WITH filtered AS MATERIALIZED (
 )
 SELECT t.route, t.method, t.requests, t.anonymous_requests, t.anonymous_success,
        t.server_errors, t.timeouts, t.cold_boots, t.p95_latency_ms,
+       t.content_first, t.content_uncacheable,
+       t.content_same_60, t.content_same_300, t.content_same_3600,
+       t.content_changed_60, t.content_changed_300, t.content_changed_3600, t.content_stale,
        COALESCE(c.cache_hits, 0)::bigint AS cache_hits,
        COALESCE(c.wakes_avoided, 0)::bigint AS wakes_avoided
 FROM top_routes t LEFT JOIN cache_estimate c USING (route, method)
@@ -149,17 +161,26 @@ type RouteAdviceRouteStatsParams struct {
 }
 
 type RouteAdviceRouteStatsRow struct {
-	Route             string
-	Method            string
-	Requests          int64
-	AnonymousRequests int64
-	AnonymousSuccess  int64
-	ServerErrors      int64
-	Timeouts          int64
-	ColdBoots         int64
-	P95LatencyMs      int32
-	CacheHits         int64
-	WakesAvoided      int64
+	Route              string
+	Method             string
+	Requests           int64
+	AnonymousRequests  int64
+	AnonymousSuccess   int64
+	ServerErrors       int64
+	Timeouts           int64
+	ColdBoots          int64
+	P95LatencyMs       int32
+	ContentFirst       int64
+	ContentUncacheable int64
+	ContentSame60      int64
+	ContentSame300     int64
+	ContentSame3600    int64
+	ContentChanged60   int64
+	ContentChanged300  int64
+	ContentChanged3600 int64
+	ContentStale       int64
+	CacheHits          int64
+	WakesAvoided       int64
 }
 
 // Route advisor reads (ADR-976). Retained debugger telemetry only; nothing
@@ -168,6 +189,11 @@ type RouteAdviceRouteStatsRow struct {
 // anonymous 2xx GET/HEAD requests into cache-lifetime windows: the first
 // request of a window fills the cache, the rest are hits, and a cold boot
 // that is not first in its window is a wake the cache would have avoided.
+// The content_* counts are learned cacheability (ADR-1188): how observed
+// anonymous GET bodies compared with the previous response for their URL,
+// bucketed by api.RouteContentWindows (60 s, 300 s, 3600 s). content_stale
+// counts refills under a cache rule whose body changed within the rule's
+// max-age (ADR-1199).
 func (q *Queries) RouteAdviceRouteStats(ctx context.Context, db DBTX, arg RouteAdviceRouteStatsParams) ([]RouteAdviceRouteStatsRow, error) {
 	rows, err := db.Query(ctx, routeAdviceRouteStats,
 		arg.AppID,
@@ -194,6 +220,15 @@ func (q *Queries) RouteAdviceRouteStats(ctx context.Context, db DBTX, arg RouteA
 			&i.Timeouts,
 			&i.ColdBoots,
 			&i.P95LatencyMs,
+			&i.ContentFirst,
+			&i.ContentUncacheable,
+			&i.ContentSame60,
+			&i.ContentSame300,
+			&i.ContentSame3600,
+			&i.ContentChanged60,
+			&i.ContentChanged300,
+			&i.ContentChanged3600,
+			&i.ContentStale,
 			&i.CacheHits,
 			&i.WakesAvoided,
 		); err != nil {

@@ -12,7 +12,7 @@ export type DevPatchPreview = {
    */
   reason?: 'not_railpack' | 'plan_unreadable' | 'no_source_layer' | 'build_command' | 'source_not_deployed' | 'no_live_build' | 'no_base_manifest' | 'full_snapshot' | 'rebuild_input_changed' | 'unsupported_entry' | 'patch_too_large' | 'unsupported_source_map';
   /**
-   * Files added
+   * Files added, modified or deleted inside the build's source root.
    */
   changed_paths: number;
   /**

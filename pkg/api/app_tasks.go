@@ -50,7 +50,8 @@ const (
 	// AppTaskServiceBindingProbeCommand is a reserved argv[0] handled directly
 	// by guest-init. It runs a bounded HTTPS canary without requiring utilities
 	// or a language runtime in the customer image.
-	AppTaskServiceBindingProbeCommand = "__gregale_service_binding_probe_v1__"
+	AppTaskServiceBindingProbeCommand       = "__gregale_service_binding_probe_v1__"
+	AppTaskServiceBindingTargetProbeCommand = "__gregale_service_binding_probe_v2__"
 	// AppTaskPostgresBindingProbeCommand is a reserved argv[0] handled directly
 	// by guest-init. It runs a bounded, read-only PostgreSQL connectivity canary
 	// using an environment key injected into the customer's deployment.
@@ -58,7 +59,9 @@ const (
 	// AppTaskObjectStorageBindingProbeCommand runs a bounded, read-only S3
 	// canary using the selected binding's six injected environment variables.
 	AppTaskObjectStorageBindingProbeCommand = "__gregale_object_storage_binding_probe_v1__"
-	AppTaskOutboundBindingProbeCommand      = "__gregale_outbound_binding_probe_v1__"
+	// V2 opts into a tiny disposable object and carries the selected permission.
+	AppTaskObjectStorageWriteProbeCommand = "__gregale_object_storage_binding_probe_v2__"
+	AppTaskOutboundBindingProbeCommand    = "__gregale_outbound_binding_probe_v1__"
 	// AppTaskServiceBindingSmokeCommand is a reserved argv[0] handled directly
 	// by guest-init. It sends one bounded GET through a declared HTTPS service
 	// binding to an explicitly pinned target deployment.
@@ -87,6 +90,10 @@ type CreateAppTaskRequest struct {
 	CommandShell             bool     `json:"command_shell,omitempty"`
 	TimeoutSeconds           int      `json:"timeout_seconds,omitempty"`
 	MaxOutputBytes           int      `json:"max_output_bytes,omitempty"`
+	// Interactive admits an ADR-1037 session: one client attaches to the
+	// process's stdin and output. TTY allocates a pseudo-terminal.
+	Interactive bool `json:"interactive,omitempty"`
+	TTY         bool `json:"tty,omitempty"`
 }
 
 // ResolvedCreateAppTaskRequest contains validated limits and defensive copies
@@ -98,10 +105,34 @@ type ResolvedCreateAppTaskRequest struct {
 	CommandShell             bool
 	TimeoutSeconds           int
 	MaxOutputBytes           int
+	Interactive              bool
+	TTY                      bool
 }
 
 // Resolve validates all caller-controlled fields and fills bounded defaults.
 func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem) {
+	if len(r.Command) > 0 && r.Command[0] == AppTaskMigrationDependenciesCommand {
+		if _, valid := ParseMigrationDependenciesCommand(r.Command, r.CommandShell); !valid || r.Interactive || r.VerificationDeploymentID != "" || r.SmokeDeploymentID != "" {
+			return ResolvedCreateAppTaskRequest{}, appTaskInvalid("invalid migration dependency command")
+		}
+	}
+	if r.TTY && !r.Interactive {
+		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("tty requires interactive")
+	}
+	if r.Interactive {
+		if r.VerificationDeploymentID != "" || r.SmokeDeploymentID != "" {
+			return ResolvedCreateAppTaskRequest{}, appTaskInvalid("interactive sessions cannot select a verification or smoke deployment")
+		}
+		if r.MaxOutputBytes != 0 {
+			return ResolvedCreateAppTaskRequest{}, appTaskInvalid("interactive sessions do not retain output; omit max_output_bytes")
+		}
+		if len(r.Command) == 0 {
+			r.Command = []string{AppTaskInteractiveDefaultCommand}
+		}
+		if r.TimeoutSeconds == 0 {
+			r.TimeoutSeconds = AppTaskInteractiveDefaultTimeoutSeconds
+		}
+	}
 	if r.VerificationDeploymentID != "" && r.SmokeDeploymentID != "" {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("verification_deployment_id and smoke_deployment_id are mutually exclusive")
 	}
@@ -115,6 +146,19 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 	}
 	if len(r.Command) > 0 && r.Command[0] == AppTaskServiceBindingSmokeCommand && !IsServiceBindingSmokeCommand(r.Command, r.CommandShell) {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("invalid service binding smoke command")
+	}
+	if len(r.Command) > 0 && r.Command[0] == AppTaskObjectStorageWriteProbeCommand && !IsObjectStorageWriteProbeCommand(r.Command, r.CommandShell) {
+		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("invalid object-storage write probe command")
+	}
+	if len(r.Command) > 0 && r.Command[0] == AppTaskServiceBindingTargetProbeCommand && (r.VerificationDeploymentID == "" || !IsServiceBindingTargetProbeCommand(r.Command, r.CommandShell)) {
+		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("target service probe requires an exact caller deployment and a canonical target UUID")
+	}
+	if r.Interactive && (IsServiceBindingSmokeCommand(r.Command, r.CommandShell) || IsBindingVerificationCommand(r.Command, r.CommandShell) ||
+		IsObjectStorageWriteProbeCommand(r.Command, r.CommandShell)) {
+		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("platform probe commands cannot run interactively")
+	}
+	if IsAppTaskSessionBuiltin(r.Command) && (!r.Interactive || !ValidAppTaskSessionBuiltin(r.Command, r.CommandShell, r.TTY)) {
+		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("copy and port-forward sessions require an interactive, non-tty request with one argument")
 	}
 	deploymentID := r.VerificationDeploymentID
 	if deploymentID != "" {
@@ -175,12 +219,17 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 		CommandShell:             r.CommandShell,
 		TimeoutSeconds:           timeoutSeconds,
 		MaxOutputBytes:           maxOutputBytes,
+		Interactive:              r.Interactive,
+		TTY:                      r.TTY,
 	}, nil
 }
 
 // IsBindingVerificationCommand excludes generic commands and service smoke
 // requests; explicit deployment selection is limited to these four probes.
 func IsBindingVerificationCommand(command []string, shell bool) bool {
+	if IsServiceBindingTargetProbeCommand(command, shell) || IsObjectStorageWriteProbeCommand(command, shell) {
+		return true
+	}
 	if shell || len(command) != 2 || command[1] == "" {
 		return false
 	}
@@ -190,6 +239,20 @@ func IsBindingVerificationCommand(command []string, shell bool) bool {
 	default:
 		return false
 	}
+}
+
+func IsServiceBindingTargetProbeCommand(command []string, shell bool) bool {
+	if shell || len(command) != 3 || command[0] != AppTaskServiceBindingTargetProbeCommand {
+		return false
+	}
+	names, err := NormalizeServiceBindingTargets([]string{command[1]})
+	id, parseErr := uuid.Parse(command[2])
+	return err == nil && len(names) == 1 && names[0] == command[1] && parseErr == nil && id != uuid.Nil && id.String() == command[2]
+}
+
+func IsObjectStorageWriteProbeCommand(command []string, shell bool) bool {
+	return !shell && len(command) == 3 && command[0] == AppTaskObjectStorageWriteProbeCommand &&
+		ValidObjectStorageBindingPrefix(command[1]) && ValidObjectStorageWriteProbeMode(command[2])
 }
 
 // IsServiceBindingSmokeCommand admits only a bounded platform GET with an exact
@@ -254,6 +317,17 @@ type AppTaskResponse struct {
 	FinishedAt          *string              `json:"finished_at,omitempty"`
 	CreatedAt           string               `json:"created_at"`
 	UpdatedAt           string               `json:"updated_at"`
+	// Interactive and Attach describe an ADR-1037 session. Attach is present
+	// only in the create response: its token is shown once.
+	Interactive bool               `json:"interactive,omitempty"`
+	Attach      *AppTaskAttachInfo `json:"attach,omitempty"`
+}
+
+// AppTaskAttachInfo is returned once, when an interactive task is created.
+type AppTaskAttachInfo struct {
+	Token       string `json:"token"`
+	Path        string `json:"path"`
+	Subprotocol string `json:"subprotocol"`
 }
 
 type AppTaskListResponse struct {

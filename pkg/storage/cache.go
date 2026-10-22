@@ -181,6 +181,24 @@ func (f FuncCacheObserver) OnStaleFallback() {
 // that had otherwise been prepositioned successfully.
 const DefaultCacheMaxBytes int64 = 8 << 30
 
+type deferredDurabilityKey struct{}
+
+// WithDeferredCacheDurability marks ctx so that a LocalCacheBackend cache miss
+// hands the fetched bytes to the caller before they are durable. The cache
+// fill is fsynced and installed as a cache entry in the background, so the
+// entry still appears only once its bytes are on disk. Wake paths use it:
+// on a throughput-capped disk the fsync of a fetched snapshot took most of a
+// cache-miss restore, while the caller reads the same bytes from the page
+// cache either way.
+func WithDeferredCacheDurability(ctx context.Context) context.Context {
+	return context.WithValue(ctx, deferredDurabilityKey{}, true)
+}
+
+func deferredCacheDurability(ctx context.Context) bool {
+	deferred, _ := ctx.Value(deferredDurabilityKey{}).(bool)
+	return deferred
+}
+
 // cacheTouchQueueSize bounds best-effort LRU timestamp work. Cache reads must
 // never wait for a metadata write: on a cold or contended filesystem even a
 // single Chtimes can take longer than the complete snapshot-restore budget.
@@ -207,6 +225,26 @@ type LocalCacheBackend struct {
 	// to concurrent Get calls without an extra synchronisation
 	// barrier on the hot path.
 	observer CacheObserver
+	// pending maps a key to the temp file of a deferred fill whose bytes a
+	// caller already holds but which is not durable or installed yet.
+	// Guarded by mu.
+	pending   map[string]string
+	publishes sync.WaitGroup
+	syncFile  func(*os.File) error
+	// minFreeBytes is the free space the cache leaves on its filesystem;
+	// zero disables the check. diskSpace reports free and total bytes.
+	// Both are guarded by mu.
+	minFreeBytes int64
+	diskSpace    func(string) (free, total int64, err error)
+}
+
+// SetMinFreeBytes makes the cache evict its oldest entries, beyond its byte
+// budget, while its filesystem has less than n bytes free. Daemons set it to
+// api.ArtifactCacheMinFreeBytes; zero disables the check.
+func (c *LocalCacheBackend) SetMinFreeBytes(n int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.minFreeBytes = n
 }
 
 // NewLocalCacheBackend wires a LocalCacheBackend rooted at
@@ -239,6 +277,9 @@ func NewLocalCacheBackend(parent StorageBackend, root string, maxBytes int64) (*
 		maxBytes:   maxBytes,
 		touchQueue: make(chan string, cacheTouchQueueSize),
 		chtimes:    os.Chtimes,
+		pending:    map[string]string{},
+		syncFile:   (*os.File).Sync,
+		diskSpace:  cacheDiskSpace,
 	}
 	go cache.runCacheTouches()
 	return cache, nil
@@ -470,6 +511,9 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// The parent has accepted this write. An older deferred read must no
+	// longer mask it in openCache or replace it when its fsync finishes.
+	delete(c.pending, key)
 	if err := os.Rename(tmpPath, path); err != nil {
 		return nil // spool file is removed by the deferred cleanup
 	}
@@ -480,7 +524,7 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 		// Sidecar failure is non-fatal but degrades List.
 		_ = err
 	}
-	if err := c.enforceBudgetLocked(); err != nil {
+	if err := c.enforceBudgetLocked(key); err != nil {
 		_ = err
 	}
 	return nil
@@ -548,7 +592,8 @@ func (c *LocalCacheBackend) get(ctx context.Context, key string, refresh bool) (
 		return nil, fmt.Errorf("storage: cache: get %q: parent: %w", key, err)
 	}
 	defer func() { _ = rc.Close() }()
-	cached, err := c.materializeCache(ctx, key, rc)
+	// A refresh promises an installed entry when it returns, so it never defers.
+	cached, err := c.materializeCache(ctx, key, rc, !refresh && deferredCacheDurability(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("storage: cache: get %q: parent read: %w", key, err)
 	}
@@ -790,6 +835,13 @@ type cacheEntry struct {
 func (c *LocalCacheBackend) openCache(key string) (io.ReadCloser, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if tmpPath, ok := c.pending[key]; ok {
+		// A deferred fill of this key is still being made durable: share it
+		// instead of fetching the same bytes again.
+		if f, err := os.Open(tmpPath); err == nil { //nolint:forbidigo // tmpPath was created by os.CreateTemp in this cache directory.
+			return &cacheFillReader{File: f, cache: c, key: key}, true
+		}
+	}
 	path, metaPath := c.cacheFileFor(key)
 	if _, err := os.Stat(metaPath); err != nil {
 		return nil, false
@@ -836,8 +888,10 @@ func (c *LocalCacheBackend) runCacheTouches() {
 // materializeCache streams a parent response into the cache and returns a
 // file reader for the resulting blob. It deliberately avoids a byte slice so
 // an OCI cache miss remains bounded by the copy buffer, not by layer size.
-func (c *LocalCacheBackend) materializeCache(ctx context.Context, key string, src io.Reader) (io.ReadCloser, error) {
-	path, metaPath := c.cacheFileFor(key)
+// With deferDurability the reader is returned as soon as the bytes are
+// written; publishDeferred makes them durable and installs the entry.
+func (c *LocalCacheBackend) materializeCache(ctx context.Context, key string, src io.Reader, deferDurability bool) (io.ReadCloser, error) {
+	path, _ := c.cacheFileFor(key)
 	if err := ensureSharedCacheDir(filepath.Dir(path)); err != nil {
 		return nil, fmt.Errorf("cache prepare directory %q: %w", filepath.Dir(path), err)
 	}
@@ -858,7 +912,20 @@ func (c *LocalCacheBackend) materializeCache(ctx context.Context, key string, sr
 	if err != nil {
 		return nil, err
 	}
-	if err := tmp.Sync(); err != nil {
+	if deferDurability && n <= c.maxBytes {
+		f, err := os.Open(tmpPath) //nolint:forbidigo // tmpPath was created by os.CreateTemp in this cache directory.
+		if err != nil {
+			return nil, fmt.Errorf("cache reopen %q: %w", tmpPath, err)
+		}
+		c.mu.Lock()
+		c.pending[key] = tmpPath
+		c.mu.Unlock()
+		keep = true
+		c.publishes.Add(1)
+		go c.publishDeferred(key, tmp)
+		return &cacheFillReader{File: f, cache: c, key: key}, nil
+	}
+	if err := c.syncFile(tmp); err != nil {
 		return nil, fmt.Errorf("cache sync %q: %w", tmpPath, err)
 	}
 	if err := tmp.Close(); err != nil {
@@ -879,25 +946,89 @@ func (c *LocalCacheBackend) materializeCache(ctx context.Context, key string, sr
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// This durable fill supersedes any deferred fill of the same key.
+	delete(c.pending, key)
+	if err := c.installLocked(key, tmpPath); err != nil {
+		return nil, err
+	}
+	keep = true
+	f, err := os.Open(path) //nolint:forbidigo // path is derived from the validated cache key under the backend root.
+	if err != nil {
+		return nil, fmt.Errorf("cache open %q: %w", path, err)
+	}
+	return &cacheFileReader{File: f, cache: c}, nil
+}
+
+// installLocked renames a durable fill into place as the entry for key and
+// enforces the budget. Caller holds c.mu.
+func (c *LocalCacheBackend) installLocked(key, tmpPath string) error {
+	path, metaPath := c.cacheFileFor(key)
 	if err := os.Rename(tmpPath, path); err != nil {
-		return nil, fmt.Errorf("cache install %q: %w", path, err)
+		return fmt.Errorf("cache install %q: %w", path, err)
 	}
 	_ = os.Chmod(path, 0o664)
-	keep = true
 	_ = os.Remove(path + ".generation")
 	if err := os.WriteFile(metaPath, []byte(key), 0o644); err != nil {
 		// The blob remains usable; without its sidecar it is simply
 		// invisible to List and will be treated as a cache miss later.
 		_ = err
 	}
-	if err := c.enforceBudgetLocked(); err != nil {
+	if err := c.enforceBudgetLocked(key); err != nil {
 		_ = err
 	}
-	f, err := os.Open(path) //nolint:forbidigo // path is derived from the validated cache key under the backend root.
-	if err != nil {
-		return nil, fmt.Errorf("cache open %q: %w", path, err)
+	return nil
+}
+
+// publishDeferred makes a deferred fill durable and installs it, unless a
+// later fill, refresh or delete of the key has superseded it. A fill that
+// fails to sync is dropped: its caller already has the bytes, and the next
+// miss fetches the key again.
+func (c *LocalCacheBackend) publishDeferred(key string, tmp *os.File) {
+	defer c.publishes.Done()
+	tmpPath := tmp.Name()
+	err := c.syncFile(tmp)
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
 	}
-	return &cacheFileReader{File: f, cache: c}, nil
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.pending[key] != tmpPath {
+		_ = os.Remove(tmpPath)
+		return
+	}
+	delete(c.pending, key)
+	if err == nil {
+		err = c.installLocked(key, tmpPath)
+	}
+	if err != nil {
+		_ = os.Remove(tmpPath)
+		slog.Default().Warn("storage cache: deferred fill not cached", "key", key, "err", err)
+	}
+}
+
+// cacheFillReader is a deferred fill handed to its caller. Its file is the
+// temp file until publishDeferred installs it, and the cache entry after.
+type cacheFillReader struct {
+	*os.File
+	cache *LocalCacheBackend
+	key   string
+}
+
+func (r *cacheFillReader) LinkTo(path string) error {
+	r.cache.mu.Lock()
+	defer r.cache.mu.Unlock()
+	name := r.Name()
+	if _, err := os.Lstat(name); err != nil {
+		name, _ = r.cache.cacheFileFor(r.key)
+	}
+	// linkCacheFile refuses the link if name is no longer this file.
+	return linkCacheFile(r.File, name, path)
+}
+
+// WaitDeferred blocks until every deferred fill started so far is installed
+// or dropped.
+func (c *LocalCacheBackend) WaitDeferred() {
+	c.publishes.Wait()
 }
 
 // cacheFileReader can retain its opened inode without another full copy.
@@ -915,6 +1046,12 @@ func (r *cacheFileReader) LinkTo(path string) error {
 }
 
 func linkOpenCacheFile(file *os.File, path string) error {
+	return linkCacheFile(file, file.Name(), path)
+}
+
+// linkCacheFile links name to path and verifies that the link is the opened
+// file, so a replaced or evicted name is never retained in its place.
+func linkCacheFile(file *os.File, name, path string) error {
 	opened, err := file.Stat()
 	if err != nil {
 		return fmt.Errorf("cache stat opened file: %w", err)
@@ -922,7 +1059,7 @@ func linkOpenCacheFile(file *os.File, path string) error {
 	if !opened.Mode().IsRegular() {
 		return fmt.Errorf("cache link: opened file is not regular")
 	}
-	if err := os.Link(file.Name(), path); err != nil {
+	if err := os.Link(name, path); err != nil {
 		return fmt.Errorf("cache retain opened file: %w", err)
 	}
 	linked, err := os.Lstat(path)
@@ -960,6 +1097,8 @@ func (r *cacheTempReader) Close() error {
 func (c *LocalCacheBackend) evictCache(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// A deferred fill of a deleted key must not be installed afterwards.
+	delete(c.pending, key)
 	path, metaPath := c.cacheFileFor(key)
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		_ = err
@@ -979,8 +1118,11 @@ func (c *LocalCacheBackend) evictCache(key string) {
 // stay resident so an unrelated snapshot write cannot turn the next daemon
 // restart into a multi-gigabyte registry download. Generation-marked entries
 // backed by a canonical local parent remain evictable because the parent is
-// already the local fast path. Caller holds c.mu.
-func (c *LocalCacheBackend) enforceBudgetLocked() error {
+// already the local fast path. The same oldest-first eviction also runs while
+// the cache filesystem has less than minFreeBytes free, so a large budget
+// cannot fill the disk that builder drives and capture staging share; that
+// eviction spares protect, the entry just installed. Caller holds c.mu.
+func (c *LocalCacheBackend) enforceBudgetLocked(protect string) error {
 	entries, err := c.snapshotCacheLocked()
 	if err != nil {
 		return err
@@ -989,7 +1131,7 @@ func (c *LocalCacheBackend) enforceBudgetLocked() error {
 	for _, e := range entries {
 		allocated += e.size
 	}
-	if allocated <= c.maxBytes {
+	if allocated <= c.maxBytes && !c.diskLowLocked() {
 		// Per-file allocation never undercounts shared blocks, so a cache
 		// under budget by that measure needs no extent scan.
 		return nil
@@ -1002,10 +1144,13 @@ func (c *LocalCacheBackend) enforceBudgetLocked() error {
 	// its app layer) once.
 	footprint := newCacheFootprint(entries)
 	for i, e := range entries {
-		if footprint.total() <= c.maxBytes {
+		withinBudget := footprint.total() <= c.maxBytes
+		if withinBudget && !c.diskLowLocked() {
 			break
 		}
-		if e.pinned {
+		if e.pinned || (withinBudget && e.key == protect) {
+			// Low disk alone never evicts the entry being installed:
+			// that would only refetch it on the next miss.
 			continue
 		}
 		if err := os.Remove(e.path); err == nil {
@@ -1020,6 +1165,20 @@ func (c *LocalCacheBackend) enforceBudgetLocked() error {
 		}
 	}
 	return nil
+}
+
+// diskLowLocked reports whether the cache filesystem has less free space than
+// minFreeBytes. A filesystem that cannot report its space is never low.
+// Caller holds c.mu.
+func (c *LocalCacheBackend) diskLowLocked() bool {
+	if c.minFreeBytes <= 0 {
+		return false
+	}
+	free, total, err := c.diskSpace(c.root)
+	if err != nil || total <= 0 {
+		return false
+	}
+	return free < c.minFreeBytes
 }
 
 // snapshotCacheLocked walks the cache directory and returns

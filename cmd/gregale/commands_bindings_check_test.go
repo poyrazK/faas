@@ -157,7 +157,7 @@ func TestCmdBindingsCheckPassingProbeStillBlocksOldServingInstance(t *testing.T)
 					t.Fatalf("old serving instance hidden: %+v", report)
 				}
 			} else {
-				for _, want := range []string{"Bindings preflight blocked", "serving current=0 stale=1", "resident credential use", "bucket-list read access only"} {
+				for _, want := range []string{"Bindings preflight blocked", "serving current=0 stale=1", "resident credential use", "operations checked"} {
 					if !strings.Contains(stdout, want) {
 						t.Fatalf("missing %q: %s", want, stdout)
 					}

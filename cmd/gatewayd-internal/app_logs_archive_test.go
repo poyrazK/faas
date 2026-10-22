@@ -37,6 +37,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -219,6 +220,7 @@ func TestArchiveStream_HappyPath(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	h := &ArchiveLogsHandler{
+		Scope:    ownedArchiveScope(),
 		S3:       newArchiveTestClient(t, srv),
 		Bucket:   "test-bucket",
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -257,6 +259,7 @@ func TestArchiveStream_HappyPath(t *testing.T) {
 func TestArchiveStream_FreePlan_OneDayWindow(t *testing.T) {
 	srv := newFakeS3(t, http.StatusOK, gzipJSONL(t, []string{`{"seq":1,"stream":"stdout","ts":"2026-08-07T12:00:00Z","msg":"free"}`}))
 	h := &ArchiveLogsHandler{
+		Scope:    ownedArchiveScope(),
 		S3:       newArchiveTestClient(t, srv),
 		Bucket:   "test-bucket",
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -283,6 +286,7 @@ func TestArchiveStream_FreePlan_OneDayWindow(t *testing.T) {
 // Known Free is enabled, but an unknown plan must never reach S3.
 func TestArchiveStream_UnknownPlan_Returns402(t *testing.T) {
 	h := &ArchiveLogsHandler{
+		Scope:  ownedArchiveScope(),
 		S3:     nil,
 		Bucket: "test-bucket",
 		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -305,6 +309,7 @@ func TestArchiveStream_UnknownPlan_Returns402(t *testing.T) {
 func TestArchiveStream_S3NotFound_ArchiveMissing(t *testing.T) {
 	srv := newFakeS3(t, http.StatusNotFound, []byte(`<Error><Code>NoSuchKey</Code></Error>`))
 	h := &ArchiveLogsHandler{
+		Scope:    ownedArchiveScope(),
 		S3:       newArchiveTestClient(t, srv),
 		Bucket:   "test-bucket",
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -325,6 +330,7 @@ func TestArchiveStream_S3NotFound_ArchiveMissing(t *testing.T) {
 func TestArchiveStream_S3ServerError_ArchiveDegraded(t *testing.T) {
 	srv := newFakeS3(t, http.StatusInternalServerError, []byte(`<Error><Code>InternalError</Code></Error>`))
 	h := &ArchiveLogsHandler{
+		Scope:    ownedArchiveScope(),
 		S3:       newArchiveTestClient(t, srv),
 		Bucket:   "test-bucket",
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -343,6 +349,7 @@ func TestArchiveStream_S3ServerError_ArchiveDegraded(t *testing.T) {
 // fetch — defends against path-traversal-shaped strings.
 func TestArchiveStream_InvalidDate(t *testing.T) {
 	h := &ArchiveLogsHandler{
+		Scope: ownedArchiveScope(),
 		// Placeholder S3: validation fires before S3 is touched.
 		S3:     newArchivePlaceholderClient(t),
 		Bucket: "test-bucket",
@@ -363,6 +370,7 @@ func TestArchiveStream_InvalidDate(t *testing.T) {
 // hard limit; anything else fails validation.
 func TestArchiveStream_InvalidInstance(t *testing.T) {
 	h := &ArchiveLogsHandler{
+		Scope:  ownedArchiveScope(),
 		S3:     newArchivePlaceholderClient(t),
 		Bucket: "test-bucket",
 		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -386,6 +394,7 @@ func TestArchiveStream_RetentionCap_HobbyBoundary(t *testing.T) {
 	withinStamp := time.Now().UTC().AddDate(0, 0, -6).Format("2006-01-02") + "T12:00:00Z"
 	srv := newFakeS3(t, http.StatusOK, gzipJSONL(t, []string{`{"seq":1,"stream":"stdout","ts":"` + withinStamp + `","msg":"x"}`}))
 	h := &ArchiveLogsHandler{
+		Scope:    ownedArchiveScope(),
 		S3:       newArchiveTestClient(t, srv),
 		Bucket:   "test-bucket",
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -420,6 +429,7 @@ func TestArchiveStream_RetentionCap_HobbyBoundary(t *testing.T) {
 // window — there's no archive for a future day.
 func TestArchiveStream_FutureDateRefused(t *testing.T) {
 	h := &ArchiveLogsHandler{
+		Scope:  ownedArchiveScope(),
 		S3:     newArchivePlaceholderClient(t),
 		Bucket: "test-bucket",
 		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -441,6 +451,7 @@ func TestArchiveStream_FutureDateRefused(t *testing.T) {
 // 400 + log_archive_invalid_query.
 func TestArchiveStream_MissingQueryParams(t *testing.T) {
 	h := &ArchiveLogsHandler{
+		Scope:  ownedArchiveScope(),
 		S3:     newArchivePlaceholderClient(t),
 		Bucket: "test-bucket",
 		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -483,6 +494,7 @@ func TestArchiveStream_MalformedJSONLine(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	h := &ArchiveLogsHandler{
+		Scope:    ownedArchiveScope(),
 		S3:       newArchiveTestClient(t, srv),
 		Bucket:   "test-bucket",
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -504,6 +516,7 @@ func TestArchiveStream_MalformedJSONLine(t *testing.T) {
 // FIRST, so this branch is only reachable on Hobby+.
 func TestArchiveStream_NilS3AndBucket_ServiceUnavailable(t *testing.T) {
 	h := &ArchiveLogsHandler{
+		Scope:  ownedArchiveScope(),
 		S3:     nil,
 		Bucket: "",
 		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -586,6 +599,7 @@ func TestArchiveStream_FramePayloadShape(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	h := &ArchiveLogsHandler{
+		Scope:    ownedArchiveScope(),
 		S3:       newArchiveTestClient(t, srv),
 		Bucket:   "test-bucket",
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -627,5 +641,135 @@ func TestArchiveStream_FramePayloadShape(t *testing.T) {
 	}
 	if got["instance"].(string) != "inst-abc" {
 		t.Errorf("instance: got %v, want inst-abc", got["instance"])
+	}
+}
+
+// archiveScopeFake answers the ownership check and records its window.
+type archiveScopeFake struct {
+	owned bool
+	err   error
+	calls *[]archiveScopeCall
+}
+
+type archiveScopeCall struct {
+	account, app, instance string
+	from, to               time.Time
+}
+
+func ownedArchiveScope() archiveScopeFake { return archiveScopeFake{owned: true} }
+
+func (f archiveScopeFake) InstanceLogsOwnedByApp(_ context.Context, account, app, instance string, from, to time.Time) (bool, error) {
+	if f.calls != nil {
+		*f.calls = append(*f.calls, archiveScopeCall{account, app, instance, from, to})
+	}
+	return f.owned, f.err
+}
+
+// TestArchiveStream_InstanceOutsideAppIsMissing pins that an instance the
+// app does not own reads exactly like an absent archive and never reaches
+// the bucket.
+func TestArchiveStream_InstanceOutsideAppIsMissing(t *testing.T) {
+	day := archiveTestDate()
+	cases := map[string]struct {
+		scope state.LogArchiveScopeStore
+		want  string
+	}{
+		"another app's instance": {archiveScopeFake{owned: false}, archiveReasonMissing},
+		"no scope store wired":   {nil, archiveReasonMissing},
+		"ownership lookup fails": {archiveScopeFake{err: errors.New("db down")}, archiveReasonDegraded},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			fetched := false
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fetched = true
+				_, _ = w.Write(gzipJSONL(t, []string{`{"seq":1,"stream":"stdout","ts":"2026-08-07T12:00:00Z","msg":"secret"}`}))
+			}))
+			t.Cleanup(srv.Close)
+			h := &ArchiveLogsHandler{
+				Scope:    tc.scope,
+				S3:       newArchiveTestClient(t, srv),
+				Bucket:   "test-bucket",
+				Backstop: 5 * time.Second,
+			}
+			rec := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodGet, "/v1/apps/test-app/logs?archive=1&instance=inst-other&date="+day, nil)
+			h.streamUnauth(rec, r, state.Account{ID: "acct-1", Plan: api.PlanHobby}, "test-app-id")
+			body := rec.Body.String()
+			if fetched || strings.Contains(body, "secret") || !strings.Contains(body, `"reason":"`+tc.want+`"`) {
+				t.Fatalf("fetched=%v body=%s; want %s without touching the bucket", fetched, body, tc.want)
+			}
+		})
+	}
+}
+
+// TestArchiveStream_ScopeCheckUsesAccountAppAndDayWindow pins the arguments
+// the ownership check receives.
+func TestArchiveStream_ScopeCheckUsesAccountAppAndDayWindow(t *testing.T) {
+	day := archiveTestDate()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(gzipJSONL(t, []string{`{"seq":1,"stream":"stdout","ts":"2026-08-07T12:00:00Z","msg":"hi"}`}))
+	}))
+	t.Cleanup(srv.Close)
+	var calls []archiveScopeCall
+	h := &ArchiveLogsHandler{
+		Scope:    archiveScopeFake{owned: true, calls: &calls},
+		S3:       newArchiveTestClient(t, srv),
+		Bucket:   "test-bucket",
+		Backstop: 5 * time.Second,
+	}
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/v1/apps/test-app/logs?archive=1&instance=inst-abc&date="+day, nil)
+	h.streamUnauth(rec, r, state.Account{ID: "acct-1", Plan: api.PlanHobby}, "test-app-id")
+	start, _ := time.Parse("2006-01-02", day)
+	want := archiveScopeCall{"acct-1", "test-app-id", "inst-abc", start.AddDate(0, 0, -1), start.AddDate(0, 0, 2)}
+	if len(calls) != 1 || calls[0] != want {
+		t.Fatalf("scope calls = %+v, want [%+v]", calls, want)
+	}
+	if !strings.Contains(rec.Body.String(), `"reason":"`+archiveReasonComplete+`"`) {
+		t.Fatalf("owned archive did not stream: %s", rec.Body.String())
+	}
+}
+
+// TestArchiveStream_ReadErrorsAreLoggedByCause: the terminal folds 404 and
+// 403 into archive_missing, so the log line must say which one it was
+// (Hunt #11 H11-8: every parked instance's archive looked like a gap and
+// nothing was logged).
+func TestArchiveStream_ReadErrorsAreLoggedByCause(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   []string
+		reason string
+	}{
+		{"not found", http.StatusNotFound, `<Error><Code>NoSuchKey</Code></Error>`,
+			[]string{"level=INFO", "logarchive.readback.missing", "status=404"}, "archive_missing"},
+		{"access denied", http.StatusForbidden, `<Error><Code>AccessDenied</Code></Error>`,
+			[]string{"level=WARN", "logarchive.readback.rejected", "status=403"}, "archive_missing"},
+		{"server error", http.StatusInternalServerError, `<Error><Code>InternalError</Code></Error>`,
+			[]string{"level=WARN", "logarchive.readback.unavailable"}, "archive_degraded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			srv := newFakeS3(t, tc.status, []byte(tc.body))
+			h := &ArchiveLogsHandler{
+				Scope:    ownedArchiveScope(),
+				S3:       newArchiveTestClient(t, srv),
+				Bucket:   "test-bucket",
+				Log:      slog.New(slog.NewTextHandler(&logs, nil)),
+				Backstop: 5 * time.Second,
+			}
+			out := driveStream(t, h, state.Account{ID: "acct-1", Plan: api.PlanHobby},
+				"archive=1&instance=inst-abc&date="+archiveTestDate())
+			if !strings.Contains(out, `"reason":"`+tc.reason+`"`) {
+				t.Errorf("terminal = %s, want %s", out, tc.reason)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(logs.String(), want) {
+					t.Errorf("log %q missing %q", logs.String(), want)
+				}
+			}
+		})
 	}
 }

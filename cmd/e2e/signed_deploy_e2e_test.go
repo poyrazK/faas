@@ -54,7 +54,7 @@ import (
 )
 
 // countAuditRows scans the `events` table for rows matching
-// (kind, app_id). The test harness writes audit rows into the
+// (kind, owning account, app_id in data). The test harness writes audit rows into the
 // test's per-t sub-schema (pgtest.SchemaOf), so the query is
 // schema-scoped by the connection's search_path — no explicit
 // schema prefix needed.
@@ -62,7 +62,8 @@ func countAuditRows(ctx context.Context, t *testing.T, h *e2etest.Harness, kind,
 	t.Helper()
 	var n int
 	if err := h.Pool.QueryRow(ctx,
-		`select count(*) from events where kind = $1 and subject = $2::uuid`,
+		`select count(*) from events e join apps a on a.id = $2::uuid
+		 where e.kind = $1 and e.subject = a.account_id and e.data->>'app_id' = a.id::text`,
 		kind, appID).Scan(&n); err != nil {
 		t.Fatalf("count audit rows kind=%q app=%q: %v", kind, appID, err)
 	}

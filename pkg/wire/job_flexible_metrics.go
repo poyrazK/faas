@@ -43,7 +43,7 @@ func (m *JobFlexibleMetrics) DeferredTask(reason string) {
 		return
 	}
 	switch reason {
-	case "account_capacity", "wake_error":
+	case "account_capacity", "spend_cap", "wake_error":
 	default:
 		reason = "wake_error"
 	}

@@ -10,12 +10,13 @@ import (
 
 var _ OutboundAIRouteStore = (*MemStore)(nil)
 
-func (m *MemStore) memOutboundAIProviders(accountID string, targets []OutboundAIRouteTarget) map[string]string {
-	providers := make(map[string]string, len(targets))
+func (m *MemStore) memOutboundAIProviders(accountID string, targets []OutboundAIRouteTarget) map[string]outboundAIRouteTarget {
+	providers := make(map[string]outboundAIRouteTarget, len(targets))
 	for _, target := range targets {
 		offer, ok := m.outboundIntegrationOffers[target.IntegrationID]
 		if ok && offer.AccountID == accountID && offer.Enabled {
-			providers[target.IntegrationID] = offer.AIProvider
+			providers[target.IntegrationID] = outboundAIRouteTarget{provider: offer.AIProvider,
+				pathPrefixes: append([]string(nil), offer.AllowedPathPrefixes...)}
 		}
 	}
 	return providers
@@ -67,18 +68,21 @@ func (m *MemStore) CreateOutboundAIRoute(_ context.Context, route OutboundAIRout
 		return OutboundAIRoute{}, ErrOutboundAIRouteLimit
 	}
 	format, ok := normalizeOutboundAIRouteFormat(route.Format)
-	if !ok || !outboundAIRouteTargetsAllowed(format, route.Targets, m.memOutboundAIProviders(route.AccountID, route.Targets)) {
+	routing, routingOK := normalizeOutboundAIRouteRouting(OutboundAIRouteRouting{Strategy: route.Strategy, MaxTTFBMS: route.MaxTTFBMS}, route.Targets)
+	if !ok || !routingOK || !outboundAIRouteTargetsAllowed(format, route.Targets, m.memOutboundAIProviders(route.AccountID, route.Targets)) {
 		return OutboundAIRoute{}, ErrInvalidArgument
 	}
-	route.Format = format
+	route.Format, route.Strategy, route.MaxTTFBMS = format, routing.Strategy, routing.MaxTTFBMS
 	now := time.Now().UTC()
 	route.CreatedAt, route.UpdatedAt = now, now
 	m.outboundAIRoutes[route.ID] = copyOutboundAIRoute(route)
 	return copyOutboundAIRoute(route), nil
 }
 
-func (m *MemStore) SetOutboundAIRouteTargets(_ context.Context, accountID, routeID string, targets []OutboundAIRouteTarget) error {
-	if !validOutboundAIRouteShape(targets) {
+func (m *MemStore) SetOutboundAIRouteTargets(_ context.Context, accountID, routeID string, targets []OutboundAIRouteTarget,
+	routing OutboundAIRouteRouting) error {
+	routing, routingOK := normalizeOutboundAIRouteRouting(routing, targets)
+	if !routingOK || !validOutboundAIRouteShape(targets) {
 		return ErrInvalidArgument
 	}
 	m.mu.Lock()
@@ -91,9 +95,29 @@ func (m *MemStore) SetOutboundAIRouteTargets(_ context.Context, accountID, route
 		return ErrInvalidArgument
 	}
 	route.Targets = append([]OutboundAIRouteTarget(nil), targets...)
+	route.Canary = nil
+	route.Strategy, route.MaxTTFBMS = routing.Strategy, routing.MaxTTFBMS
 	route.UpdatedAt = time.Now().UTC()
-	m.outboundAIRoutes[routeID] = route
+	m.outboundAIRoutes[routeID] = copyOutboundAIRoute(route)
 	return nil
+}
+
+// OutboundAIRouteStats reports no attempts: the memory store keeps no
+// per-minute rows (ADR-1434).
+func (m *MemStore) OutboundAIRouteStats(_ context.Context, accountID, routeID string) (OutboundAIRouteStatsWindow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	route, ok := m.outboundAIRoutes[routeID]
+	if !ok || route.AccountID != accountID {
+		return OutboundAIRouteStatsWindow{}, ErrNotFound
+	}
+	window := OutboundAIRouteStatsWindow{Strategy: route.Strategy,
+		WindowStart: time.Now().UTC().Add(-api.OutboundAIRouteStatsWindowMinutes * time.Minute).Truncate(time.Minute),
+		Targets:     make([]OutboundAIRouteTargetStats, len(route.Targets))}
+	for index := range window.Targets {
+		window.Targets[index].Position = index + 1
+	}
+	return window, nil
 }
 
 func (m *MemStore) DeleteOutboundAIRoute(_ context.Context, accountID, routeID string) error {

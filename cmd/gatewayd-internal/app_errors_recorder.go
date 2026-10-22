@@ -231,6 +231,14 @@ func (r *appErrorsRecorder) record(status int, req *http.Request) {
 		// Out-of-range status; recorder ignores.
 		return
 	}
+	// A response the gateway produced before resolving an app (unknown host,
+	// edge deny) has no owner to file it under. apid rejects such rows as
+	// invalid, which surfaced as the redaction_failed tripwire (production-us
+	// hunt #9, H9-154), so they are not recorded.
+	accountID, appID := resolveAccountID(req), resolveAppID(req)
+	if accountID == "" || appID == "" {
+		return
+	}
 
 	// Resolve the route TEMPLATE (Go-mux pattern), never the
 	// expanded URL. Load-bearing for cardinality. The
@@ -257,7 +265,13 @@ func (r *appErrorsRecorder) record(status int, req *http.Request) {
 	// headers_sample + no redactions on the merge path (which is
 	// the correct behaviour — the drill-down view shows the FIRST
 	// sample only).
-	cacheHit := r.cacheHit(fp)
+	// The fingerprint (route|status|class) is the same for every app, so the
+	// cache is keyed per app. A shared key made one app's first error on a
+	// route another app had already failed on look like a repeat: it was
+	// stored without its sample message and headers, and the sample is frozen
+	// at the first insert, so that error group never got one (H9-154).
+	cacheKey := appID + "\x00" + fp
+	cacheHit := r.cacheHit(cacheKey)
 	if cacheHit {
 		if r.ops != nil {
 			r.ops.ObserveAppErrorsFingerprintCacheHit()
@@ -266,7 +280,7 @@ func (r *appErrorsRecorder) record(status int, req *http.Request) {
 
 	// Cardinality backstop: past the LRU cap, drop + emit
 	// rate_limited.
-	if !r.cacheAdmit(fp) {
+	if !r.cacheAdmit(cacheKey) {
 		if r.ops != nil {
 			r.ops.ObserveAppErrorsRecorded("rate_limited")
 		}
@@ -301,8 +315,8 @@ func (r *appErrorsRecorder) record(status int, req *http.Request) {
 	// the request context with a derived copy.
 	identity := resolvePlatformIdentity(req)
 	row := appErrorRow{
-		AccountID:           resolveAccountID(req),
-		AppID:               resolveAppID(req),
+		AccountID:           accountID,
+		AppID:               appID,
 		DeploymentID:        firstNonEmpty(resolveDeploymentID(req), identity.DeploymentID),
 		Fingerprint:         fp,
 		Route:               route,
@@ -330,11 +344,11 @@ func (r *appErrorsRecorder) record(status int, req *http.Request) {
 	}
 }
 
-// cacheHit reports whether fp is in the LRU. Bumps last_seen.
-func (r *appErrorsRecorder) cacheHit(fp string) bool {
+// cacheHit reports whether key (app + fingerprint) is in the LRU. Bumps last_seen.
+func (r *appErrorsRecorder) cacheHit(key string) bool {
 	r.cacheMu.Lock()
 	defer r.cacheMu.Unlock()
-	row, ok := r.cache[fp]
+	row, ok := r.cache[key]
 	if !ok {
 		return false
 	}
@@ -342,14 +356,14 @@ func (r *appErrorsRecorder) cacheHit(fp string) bool {
 	return true
 }
 
-// cacheAdmit inserts fp into the LRU, evicting the oldest
+// cacheAdmit inserts key (app + fingerprint) into the LRU, evicting the oldest
 // entry past CardinalityLimit. Returns false when the
 // admission was rate_limited (the LRU was already full and
 // fp was not present).
-func (r *appErrorsRecorder) cacheAdmit(fp string) bool {
+func (r *appErrorsRecorder) cacheAdmit(key string) bool {
 	r.cacheMu.Lock()
 	defer r.cacheMu.Unlock()
-	if _, ok := r.cache[fp]; ok {
+	if _, ok := r.cache[key]; ok {
 		return true
 	}
 	if len(r.cache) >= r.cfg.CardinalityLimit {
@@ -377,7 +391,7 @@ func (r *appErrorsRecorder) cacheAdmit(fp string) bool {
 			return false
 		}
 	}
-	r.cache[fp] = &appErrorRow{
+	r.cache[key] = &appErrorRow{
 		LastSeen: r.cfg.Now().UTC(),
 	}
 	return true
@@ -663,26 +677,39 @@ type statusRecorder struct {
 }
 
 func (r *statusRecorder) WriteHeader(code int) {
-	if !r.wroteHeader {
-		r.status = code
-		r.wroteHeader = true
+	if r.wroteHeader {
+		return
 	}
+	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
+		r.ResponseWriter.WriteHeader(code)
+		return
+	}
+	r.status = code
+	r.wroteHeader = true
 	r.ResponseWriter.WriteHeader(code)
 }
 
 // lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; gatewayd-internal serves application/json (api.WriteProblem via cmd/apid handlers) or text/event-stream SSE (cmd/gatewayd-internal/app_logs.go::ServeHTTP), never HTML — the XSS sink is unreachable. Mirrors the pattern at pkg/middleware/authlimit.go:81 and pkg/gateway/handler.go:3973.
 func (r *statusRecorder) Write(p []byte) (int, error) {
 	if !r.wroteHeader {
+		r.status = http.StatusOK
 		r.wroteHeader = true
 	}
 	// lgtm[go/reflected-xss] false-positive: see doc-comment above; pass-through forwards bytes unchanged to the underlying ResponseWriter.
 	return r.ResponseWriter.Write(p)
 }
 
+// Unwrap lets the gateway extend stream deadlines through error recording.
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 // Flush forwards to the underlying writer if it implements
 // http.Flusher (SSE / streaming responses need this).
 func (r *statusRecorder) Flush() {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		if !r.wroteHeader {
+			r.status = http.StatusOK
+			r.wroteHeader = true
+		}
 		f.Flush()
 	}
 }

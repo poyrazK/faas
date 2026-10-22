@@ -69,7 +69,7 @@ func AdmitResize(plan api.Plan, request api.ResizeManagedPostgresDatabaseRequest
 	}
 	limits, ok := api.ManagedPostgresLimitsFor(plan)
 	if !ok || limits.DatabasesMax == 0 || class != "" && !PlanAllowsClass(limits, class) {
-		return managedpostgres.ErrQuotaExceeded
+		return managedpostgres.ErrNotInPlan
 	}
 	if request.StorageLimitBytes > limits.StorageLimitBytes {
 		return &StorageLimitError{Limit: limits.StorageLimitBytes, Observed: request.StorageLimitBytes}

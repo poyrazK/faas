@@ -183,7 +183,7 @@ func TestWhoamiIncludesTriggerCapabilities(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	wantKinds := []api.TriggerKind{api.TriggerKindSQSCompat, api.TriggerKindQueue}
+	wantKinds := []api.TriggerKind{api.TriggerKindSQSCompat, api.TriggerKindQueue, api.TriggerKindRealtime}
 	if !reflect.DeepEqual(out.Limits.TriggerKinds, wantKinds) {
 		t.Errorf("trigger_kinds = %v, want %v", out.Limits.TriggerKinds, wantKinds)
 	}
@@ -253,8 +253,8 @@ func TestCreateAppSuccess(t *testing.T) {
 	}
 	var out api.AppResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	if out.RAMMB != 512 { // Pro default
-		t.Errorf("ram default = %d, want 512", out.RAMMB)
+	if want := api.MustLimitsFor(api.PlanPro).RAMMB; out.RAMMB != want { // Pro default
+		t.Errorf("ram default = %d, want %d", out.RAMMB, want)
 	}
 	if out.URL != "https://my-api.gregale.dev" {
 		t.Errorf("url = %q", out.URL)

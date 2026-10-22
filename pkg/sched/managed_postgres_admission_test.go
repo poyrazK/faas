@@ -9,11 +9,12 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type cutoverFencedStore struct {
-	*state.MemStore
-	readErr error
+	MemStore *state.MemStore
+	readErr  error
 }
 
 func (s *cutoverFencedStore) ManagedPostgresAdmissionFenced(context.Context, string) (bool, error) {
@@ -24,14 +25,14 @@ func TestManagedPostgresAdmissionBlocksSchedulerPaths(t *testing.T) {
 	for _, lookupErr := range []error{nil, errors.New("catalog unavailable")} {
 		t.Run(cutoverAdmissionErrorName(lookupErr), func(t *testing.T) {
 			store := &cutoverFencedStore{MemStore: state.NewMemStore(), readErr: lookupErr}
-			_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
+			_, app, dep := seedApp(t, statetest.NewMem(store), api.PlanPro, 256, 5)
 			ctx := context.Background()
 			// Wake's fast path must not reuse an existing running writer.
-			if _, err := store.CreateInstance(ctx, app.ID, dep.ID, "running", 256, state.DefaultLocalNodeName, ""); err != nil {
+			if _, err := store.MemStore.CreateInstance(ctx, app.ID, dep.ID, "running", 256, state.DefaultLocalNodeName, ""); err != nil {
 				t.Fatal(err)
 			}
 			vmm := &fakeVMM{}
-			e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+			e := newEngine(t, statetest.NewMem(store), vmm, &fakeNotifier{}, "1.10.0")
 			want := state.ErrManagedPostgresAdmissionFenced
 			if lookupErr != nil {
 				want = lookupErr
@@ -75,8 +76,8 @@ func cutoverAdmissionErrorName(err error) string {
 }
 
 type cutoverAdmissionRaceStore struct {
-	*state.MemStore
-	fenced atomic.Bool
+	MemStore *state.MemStore
+	fenced   atomic.Bool
 }
 
 func (s *cutoverAdmissionRaceStore) ManagedPostgresAdmissionFenced(context.Context, string) (bool, error) {
@@ -92,16 +93,16 @@ func (s *cutoverAdmissionRaceStore) PublishOwnedInstanceRuntime(ctx context.Cont
 
 func TestManagedPostgresAdmissionFenceDuringBootDestroysCandidate(t *testing.T) {
 	store := &cutoverAdmissionRaceStore{MemStore: state.NewMemStore()}
-	_, app, _ := seedApp(t, store, api.PlanPro, 256, 5)
+	_, app, _ := seedApp(t, statetest.NewMem(store), api.PlanPro, 256, 5)
 	vmm := &fakeVMM{coldBootHook: func() { store.fenced.Store(true) }}
-	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, statetest.NewMem(store), vmm, &fakeNotifier{}, "1.10.0")
 	if _, err := e.Wake(context.Background(), app.ID, "", "", ""); !errors.Is(err, state.ErrManagedPostgresAdmissionFenced) {
 		t.Fatalf("boot raced the fence: %v", err)
 	}
 	if vmm.coldBoots != 1 || vmm.destroys != 1 || e.Ledger().Concurrency(app.ID) != 0 {
 		t.Fatalf("cold=%d destroy=%d concurrency=%d", vmm.coldBoots, vmm.destroys, e.Ledger().Concurrency(app.ID))
 	}
-	instances, err := store.ListInstancesForApp(context.Background(), app.ID)
+	instances, err := store.MemStore.ListInstancesForApp(context.Background(), app.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,8 +6,10 @@ package vmmdgrpc
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"net/netip"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -15,6 +17,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/ociidentity"
+	"github.com/onebox-faas/faas/pkg/wakeownershipwire"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -85,7 +89,18 @@ func jobBootRequestFromProto(req *vmmdpb.JobColdBootRequest) (fcvm.JobBootReques
 		return fcvm.JobBootRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Invalid job request", "task_timeout_sec exceeds the host limit")
 	}
+	interactive, problem := jobInteractiveFromProto(req)
+	if problem != nil {
+		return fcvm.JobBootRequest{}, problem
+	}
+	if problem := validateJobImageProcess(req); problem != nil {
+		return fcvm.JobBootRequest{}, problem
+	}
 	return fcvm.JobBootRequest{
+		Interactive:      interactive,
+		ImageProcess:     req.GetImageProcess(),
+		ProcessUser:      req.GetProcessUser(),
+		ProcessWorkdir:   req.GetProcessWorkdir(),
 		Instance:         req.GetInstance(),
 		AccountID:        req.GetAccountId(),
 		NodeID:           req.GetNodeId(),
@@ -103,6 +118,55 @@ func jobBootRequestFromProto(req *vmmdpb.JobColdBootRequest) (fcvm.JobBootReques
 		TaskTimeoutSec:   int(req.GetTaskTimeoutSec()),
 		LeaseToken:       req.GetLeaseToken(),
 	}, nil
+}
+
+// jobInteractiveFromProto validates ADR-1330's attach contract. The token
+// digest stays in vmmd's rendezvous; only the TTY flag and the attach window
+// reach the guest.
+func jobInteractiveFromProto(req *vmmdpb.JobColdBootRequest) (*fcvm.JobInteractive, *api.Problem) {
+	in := req.GetInteractive()
+	if in == nil {
+		return nil, nil
+	}
+	invalid := func(detail string) *api.Problem {
+		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid interactive job", detail)
+	}
+	if len(in.GetAttachTokenSha256()) != sha256.Size {
+		return nil, invalid("attach_token_sha256 must be a SHA-256 digest")
+	}
+	if req.GetTaskTimeoutSec() > fcvm.JobInteractiveMaxTaskTimeoutSec {
+		return nil, invalid("task_timeout_sec exceeds the interactive session limit")
+	}
+	window := fcvm.JobInteractiveDefaultAttachTimeout
+	switch seconds := in.GetAttachTimeoutSeconds(); {
+	case seconds < 0:
+		return nil, invalid("attach_timeout_seconds must not be negative")
+	case seconds > 0:
+		window = min(time.Duration(seconds)*time.Second, fcvm.JobInteractiveMaxAttachTimeout)
+	}
+	return &fcvm.JobInteractive{TTY: in.GetTty(), AttachTimeoutSec: int(window / time.Second)}, nil
+}
+
+// validateJobImageProcess checks ADR-1790's user and workdir overrides, which
+// apply only to an image process.
+func validateJobImageProcess(req *vmmdpb.JobColdBootRequest) *api.Problem {
+	invalid := func(detail string) *api.Problem {
+		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid job process", detail)
+	}
+	user, workdir := req.GetProcessUser(), req.GetProcessWorkdir()
+	if !req.GetImageProcess() {
+		if user != "" || workdir != "" {
+			return invalid("process_user and process_workdir require image_process")
+		}
+		return nil
+	}
+	if len(user) > api.ImageRunUserMaxBytes || ociidentity.ValidateSpec(user) != nil {
+		return invalid("process_user is not a valid user[:group]")
+	}
+	if err := api.ValidateImageRunWorkdir(workdir); err != nil {
+		return invalid(err.Error())
+	}
+	return nil
 }
 
 func cloneStringMap(in map[string]string) map[string]string {
@@ -278,6 +342,11 @@ func withIncomingCorrelation(ctx context.Context) context.Context {
 // toWakeRequest flattens CreateFromSnapshotRequest into an fcvm.WakeRequest.
 // The caller resolves (app) here; vmmd stores none of it (ADR-014).
 func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (fcvm.WakeRequest, error) {
+	if wakeownershipwire.IncomingPresent(ctx) {
+		return fcvm.WakeRequest{}, api.NewProblem(int(codes.FailedPrecondition), api.CodeEnvironmentQualificationUnconfirmed,
+			"Native wake ownership unavailable", "Durable native incoming wake ownership is not implemented")
+	}
+
 	if req.GetInstance() == "" {
 		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Missing instance", "instance is required").
@@ -332,7 +401,8 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// it was woken for. The scheduler already knows the app
 		// when it calls CreateFromSnapshot; passing it on the wire
 		// means vmmd doesn't have to round-trip back to apid.
-		AppID: app.GetAppId(),
+		AppID:          app.GetAppId(),
+		RehearsalRunID: app.GetRehearsalRunId(),
 		// issue #301 / ADR-044 — Plan + AccountID thread the
 		// apps-row context onto the wire so vmmd can land the VM
 		// under the per-plan cgroup sub-slice
@@ -358,6 +428,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
 		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
 		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
+		QuietPauseAfter:          quietPauseAfterFromWire(app.GetQuietPauseAfterMs()),
 		// ADR-138: carry the per-app readiness budget to vmmd. 0 is
 		// retained for pre-M3 callers, which use vmmd.readyTimeout.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
@@ -452,6 +523,11 @@ func toMigrationWakeRequest(ctx context.Context, req *vmmdpb.AdoptMigratedInstan
 // toColdBootRequest flattens CreateColdBootRequest into an fcvm.WakeRequest
 // with no snapshot. Same validations as toWakeRequest minus snapshot.
 func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (fcvm.WakeRequest, error) {
+	if wakeownershipwire.IncomingPresent(ctx) {
+		return fcvm.WakeRequest{}, api.NewProblem(int(codes.FailedPrecondition), api.CodeEnvironmentQualificationUnconfirmed,
+			"Native wake ownership unavailable", "Durable native incoming wake ownership is not implemented")
+	}
+
 	if req.GetInstance() == "" {
 		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Missing instance", "instance is required").
@@ -500,7 +576,8 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// the very first UpdateEgressAllowlist fan-out finds the
 		// instance via m.live[].AppID without a separate
 		// bootstrap path.
-		AppID: app.GetAppId(),
+		AppID:          app.GetAppId(),
+		RehearsalRunID: app.GetRehearsalRunId(),
 		// issue #301 / ADR-044 — see toWakeRequest. Cold-boot
 		// mirrors Plan + AccountID so deploy's first boot on a
 		// fresh VM lands under the per-plan cgroup sub-slice
@@ -521,6 +598,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
 		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
 		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
+		QuietPauseAfter:          quietPauseAfterFromWire(app.GetQuietPauseAfterMs()),
 		// ADR-138: cold-boot mirrors the snapshot wake's readiness budget.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
 		DisableStartupCPUBoost: app.GetDisableStartupCpuBoost(),
@@ -743,6 +821,7 @@ func workloadDependenciesFromProto(pbs []*vmmdpb.WorkloadDependency) []api.Workl
 // is inherited from the apps row captured in the original cold boot).
 func wakeResponseFromInstance(instance string, req fcvm.WakeRequest, inst *fcvm.Instance, requestMethod vmmdpb.WakeMethod) *vmmdpb.WakeResponse {
 	resp := &vmmdpb.WakeResponse{
+		RehearsalRunId:                     inst.Net.RehearsalRunID,
 		SupportsSecretAliases:              true,
 		SupportsImageHealthcheck:           true,
 		SupportsImageHealthcheckMonitoring: true,
@@ -935,4 +1014,19 @@ func egressPortsFromWire(ports []uint32) []uint16 {
 		}
 	}
 	return out
+}
+
+// maxQuietPauseAfter bounds a caller-supplied quiet pause delay. A longer
+// one is pointless: the reaper parks an idle function long before it.
+const maxQuietPauseAfter = time.Hour
+
+// quietPauseAfterFromWire converts AppSpec.quiet_pause_after_ms (ADR-1151).
+// Zero, negative and out-of-range values keep the instance running between
+// requests rather than failing the wake.
+func quietPauseAfterFromWire(ms int64) time.Duration {
+	d := time.Duration(ms) * time.Millisecond
+	if ms <= 0 || d > maxQuietPauseAfter {
+		return 0
+	}
+	return d
 }

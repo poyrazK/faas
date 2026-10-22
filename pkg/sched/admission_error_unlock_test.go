@@ -1,6 +1,6 @@
 // spec: §6.2
 // adr: 590
-package sched
+package sched_test
 
 import (
 	"context"
@@ -10,11 +10,13 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type admissionSpecFailureStore struct {
-	state.Store
+	Store      state.Store
 	secretErr  error
 	sidecarErr error
 }
@@ -52,22 +54,22 @@ func TestAdmissionSpecFailureReleasesAppLockAndAllowsRetry(t *testing.T) {
 					t.Fatal(err)
 				}
 				store := &admissionSpecFailureStore{Store: mem}
-				vmm := &fakeVMM{}
-				e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+				vmm := &sched.FakeVMM{}
+				e := sched.XNewEngine(t, statetest.NewStore(store), vmm, &sched.FakeNotifier{}, "1.10.0")
 				injected := errors.New("temporary boot-spec read failure")
 				if failure == "secrets" {
 					store.secretErr = injected
 				} else {
 					store.sidecarErr = injected
 				}
-				admit := func() (WakeResult, error) {
+				admit := func() (sched.WakeResult, error) {
 					switch path {
 					case "wake":
-						return e.Wake(ctx, app.ID, "", "", TriggerGateway)
+						return e.Wake(ctx, app.ID, "", "", sched.TriggerGateway)
 					case "deployment":
-						return e.AdmitInstanceForDeployment(ctx, app.ID, dep.ID, "", TriggerFloorDep)
+						return e.AdmitInstanceForDeployment(ctx, app.ID, dep.ID, "", sched.TriggerFloorDep)
 					default:
-						return e.AdmitInstance(ctx, app.ID, "", "", TriggerGateway)
+						return e.AdmitInstance(ctx, app.ID, "", "", sched.TriggerGateway)
 					}
 				}
 				if _, err := admit(); (failure == "secrets" && !errors.Is(err, injected)) ||
@@ -87,12 +89,12 @@ func TestAdmissionSpecFailureReleasesAppLockAndAllowsRetry(t *testing.T) {
 				if failure == "sidecars" && (len(rows) != 1 || rows[0].State != string(state.StateFailed)) {
 					t.Fatalf("failed admission rows = %+v", rows)
 				}
-				if vmm.coldBoots != 0 || vmm.restores != 0 {
+				if (*vmm.ColdBoots()) != 0 || (*vmm.Restores()) != 0 {
 					t.Fatal("invalid boot spec reached vmmd")
 				}
 				// Check synchronously so the broken code fails immediately instead of
 				// leaving an uncancellable retry blocked inside sync.Mutex.Lock.
-				mu := e.appMutex(app.ID)
+				mu := e.AppMutex(app.ID)
 				if !mu.TryLock() {
 					t.Fatal("failed admission left the app mutex locked; subsequent wakes would hang")
 				}

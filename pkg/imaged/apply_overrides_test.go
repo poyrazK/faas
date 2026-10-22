@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -319,6 +320,18 @@ func TestApplyAppLifecycle(t *testing.T) {
 	}
 }
 
+func TestApplyAppLifecycleFunctionResources(t *testing.T) {
+	for _, kind := range []state.AppType{state.AppTypeFunction, state.AppTypeApp} {
+		for _, runtime := range []string{"node22", "node24", "python312"} {
+			got := applyAppLifecycle(api.AppManifest{}, state.App{Type: kind, Runtime: runtime})
+			want := kind == state.AppTypeFunction && functionlifetime.NativeNode(runtime)
+			if (got.BeforeCheckpoint != nil) != want || (got.AfterRestore != nil) != want {
+				t.Fatalf("automatic resources kind=%s runtime=%s before=%v after=%v", kind, runtime, got.BeforeCheckpoint, got.AfterRestore)
+			}
+		}
+	}
+}
+
 func TestApplyOverridesImageTimingGrace(t *testing.T) {
 	base := api.AppManifest{Entrypoint: []string{"/server"}, Healthcheck: &api.AppManifestHealthcheck{
 		Test: []string{"CMD", "/check"}, StartPeriodS: 1,
@@ -344,5 +357,24 @@ func TestApplyOverridesRejectsGraceDurationOverflow(t *testing.T) {
 		if _, err := applyOverrides(base, dep); err == nil {
 			t.Errorf("accepted unrepresentable grace seconds=%d", seconds)
 		}
+	}
+}
+
+// ADR-1342: a function app's function_concurrency reaches its adapter as
+// FAAS_FUNCTION_CONCURRENCY; one, the default, leaves the env untouched.
+func TestApplyFunctionConcurrency(t *testing.T) {
+	base := api.AppManifest{Env: map[string]string{"A": "1"}}
+	for _, n := range []int{0, 1} {
+		got := applyFunctionConcurrency(base, state.App{Manifest: state.AppManifest{FunctionConcurrency: n}})
+		if !reflect.DeepEqual(got.Env, base.Env) {
+			t.Fatalf("concurrency %d changed env: %v", n, got.Env)
+		}
+	}
+	got := applyFunctionConcurrency(base, state.App{Manifest: state.AppManifest{FunctionConcurrency: 16}})
+	if want := map[string]string{"A": "1", api.FunctionConcurrencyEnv: "16"}; !reflect.DeepEqual(got.Env, want) {
+		t.Fatalf("env = %v, want %v", got.Env, want)
+	}
+	if _, shared := base.Env[api.FunctionConcurrencyEnv]; shared {
+		t.Fatal("stamp mutated the input manifest's env")
 	}
 }

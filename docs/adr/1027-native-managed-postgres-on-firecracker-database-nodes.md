@@ -1091,7 +1091,7 @@ with apid's client certificate and writes verifiers through `pkg/dbcreds`.
   one fenced operation per database, so a storage change serializes with
   every other catalogue mutation and recovers like them.
   `managed_postgres_resizes.target_storage_limit_bytes` (migration
-  `20261013192154603`) is null for no change; a CHECK requires it to exceed
+  `20261021225216283`) is null for no change; a CHECK requires it to exceed
   a positive source limit and forbids it on an idle-policy change, and the
   receipt trigger merges it into the target spec it compares with the
   database row at completion. `ResizeOperation.TargetStorageLimitBytes`
@@ -1276,7 +1276,7 @@ through, and a plain 17 boot then served it.
 
 **Orchestration (schedd).** `Scheduler.StartUpgrade` parks a running
 database and marks it `upgrading` (migration
-`20261017134138512_database_vm_major_upgrades`). The upgrade is recorded
+`20261021225220358_database_vm_major_upgrades`). The upgrade is recorded
 as `upgrade_from`, `upgrade_major` (the target) and `upgrade_operation`,
 its name. It runs under `upgrade_lease_until`, a lease on the database's
 clock that the running replica renews. The upgrade's outcome is kept in
@@ -1356,7 +1356,7 @@ so there is no schedd-only operator path.
 **The customer surface.** An upgrade is apid's journaled compute change,
 in the same journal (`managed_postgres_resizes`) as resizes and
 compute-policy changes, so one change runs at a time and the reconciler
-drives it (migration `20261017145204318_managed_postgres_major_upgrade`):
+drives it (migration `20261021225221946_managed_postgres_major_upgrade`):
 
 - **The journal.** `target_postgres_major` names the major. A CHECK keeps it
   above the source's and every other target unchanged.

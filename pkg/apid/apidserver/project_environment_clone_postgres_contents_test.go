@@ -19,10 +19,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copycontents"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type contentsWorkerFailureStore struct {
-	*state.PgStore
+	PgStore                 *state.PgStore
 	loseReserve, loseRecord bool
 	hideCapturedOnce        bool
 }
@@ -68,7 +69,7 @@ func newContentsWorkerFixture(t *testing.T) *contentsWorkerFixture {
 	t.Helper()
 	f, p, source, exports, oid, key, artifact, _, _ := cloneOwnedReaderArchiveFixture(t)
 	store := &contentsWorkerFailureStore{PgStore: f.store.PgStore}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	x := &contentsWorkerFixture{f: f, store: store, provider: p, plan: exports, identity: key, reads: new(int)}
 	inputs, err := exports.RequirementsForWorker()
 	if err != nil {
@@ -82,7 +83,7 @@ func newContentsWorkerFixture(t *testing.T) *contentsWorkerFixture {
 	if x.d.Database.OID == 0 {
 		t.Fatal("selected source was omitted")
 	}
-	if _, _, err := store.ReserveProjectEnvironmentClonePostgresArchive(t.Context(), f.lease, state.ProjectEnvironmentClonePostgresArchiveRequest{
+	if _, _, err := store.PgStore.ReserveProjectEnvironmentClonePostgresArchive(t.Context(), f.lease, state.ProjectEnvironmentClonePostgresArchiveRequest{
 		Scope: x.d.Scope, DatabaseOID: oid, InventoryFingerprint: x.d.InventoryFingerprint, KeyID: key.Recipient().String(), StorageID: artifact.ID, StorageFingerprint: artifact.Fingerprint, ReservedBytes: 32 << 20}, archiveWorkerLimits()); err != nil {
 		t.Fatal(err)
 	}
@@ -96,15 +97,15 @@ func newContentsWorkerFixture(t *testing.T) *contentsWorkerFixture {
 		if err != nil || owner.State != "reserved" {
 			return copycontents.Manifest{}, managedpostgres.ErrConflict
 		}
-		reader, err := store.ProjectEnvironmentClonePostgresCopyReaderForLease(ctx, x.f.lease, d.Scope.SourceDatabaseID)
+		reader, err := store.PgStore.ProjectEnvironmentClonePostgresCopyReaderForLease(ctx, x.f.lease, d.Scope.SourceDatabaseID)
 		if err != nil {
 			return copycontents.Manifest{}, err
 		}
-		snapshot, err := store.ProjectEnvironmentClonePostgresSnapshotForLease(ctx, x.f.lease, d.Scope.SourceDatabaseID)
+		snapshot, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotForLease(ctx, x.f.lease, d.Scope.SourceDatabaseID)
 		if err != nil {
 			return copycontents.Manifest{}, err
 		}
-		capture, err := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(ctx, x.f.lease, d.Scope.SourceDatabaseID)
+		capture, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(ctx, x.f.lease, d.Scope.SourceDatabaseID)
 		if err != nil {
 			return copycontents.Manifest{}, err
 		}
@@ -160,11 +161,11 @@ func TestPGClonePostgresContentsWorkerRecoversCommittedReplyWithOriginalKeyAndNo
 	}
 	first := x.owner(t)
 	old := x.f.lease
-	if err := x.store.ReleaseProjectEnvironmentCloneLease(t.Context(), x.f.lease, 0); err != nil {
+	if err := x.store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), x.f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
 	var err error
-	x.f.lease, err = x.store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	x.f.lease, err = x.store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +283,7 @@ func TestPGClonePostgresContentsWorkerRejectsForeignManifestHandoffAndBudgetFail
 					return copycontents.Manifest{}, err
 				}
 				if mode == "handoff" {
-					if err := x.store.ReleaseProjectEnvironmentCloneLease(ctx, x.f.lease, 0); err != nil {
+					if err := x.store.PgStore.ReleaseProjectEnvironmentCloneLease(ctx, x.f.lease, 0); err != nil {
 						return copycontents.Manifest{}, err
 					}
 				}
@@ -300,7 +301,7 @@ func TestPGClonePostgresContentsWorkerRejectsForeignManifestHandoffAndBudgetFail
 				t.Fatal("invalid result published original manifest", err)
 			}
 			if mode == "handoff" {
-				x.f.lease, err = x.store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+				x.f.lease, err = x.store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 				if err != nil {
 					t.Fatal(err)
 				}

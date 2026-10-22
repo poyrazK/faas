@@ -85,6 +85,9 @@ func (e *Engine) withEnvironmentWorkloadQualificationJob(ctx context.Context,
 	if err != nil || !dep.EnvironmentWorkloadHeld() {
 		return result, errors.Join(state.ErrConflict, err)
 	}
+	if err := e.checkFinancialBudgetAdmission(ctx, app, dep.ID); err != nil {
+		return result, err
+	}
 	if err := securityQuarantineErr(dep); err != nil {
 		return result, err
 	}
@@ -101,7 +104,7 @@ func (e *Engine) withEnvironmentWorkloadQualificationJob(ctx context.Context,
 	if graphNodePinned && graphNodeID != "" && placement.NodeID != graphNodeID {
 		return result, fmt.Errorf("qualification job placement escaped its private node: %w", state.ErrConflict)
 	}
-	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(ctx, claimed, state.EnvironmentWorkloadQualificationPlacement{
+	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(nodePlacementContext(ctx, placement), claimed, state.EnvironmentWorkloadQualificationPlacement{
 		NodeID: placement.NodeID, WakeID: uuid.NewString(), RAMMB: app.RAMMB,
 	})
 	if err != nil {

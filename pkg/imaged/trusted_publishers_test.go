@@ -17,14 +17,15 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // signerStore overrides the trusted-signer read so tests can return rows
 // apid's validation would refuse, or a database error.
 type signerStore struct {
-	state.Store
-	rows []state.AppTrustedSigner
-	err  error
+	Store state.Store
+	rows  []state.AppTrustedSigner
+	err   error
 }
 
 func (s signerStore) ListAppTrustedSignersForApp(context.Context, string) ([]state.AppTrustedSigner, error) {
@@ -43,6 +44,17 @@ func trustedSignerApp(t *testing.T, store *state.MemStore) state.App {
 		t.Fatal(err)
 	}
 	return app
+}
+
+func seedTestTrustedPublisher(t *testing.T, store *state.MemStore, app state.App, name string, key *ecdsa.PrivateKey) {
+	t.Helper()
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.UpsertAppTrustedSigner(t.Context(), app.AccountID, app.ID, name, der, app.AccountID); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func publisherDER(t *testing.T) (*ecdsa.PrivateKey, []byte) {
@@ -88,11 +100,11 @@ func TestTrustedPublishersUnavailable(t *testing.T) {
 		store state.Store
 	}{
 		{name: "no store"},
-		{name: "database error", store: signerStore{err: errors.New("connection reset")}},
-		{name: "corrupt key fails closed", store: signerStore{rows: []state.AppTrustedSigner{
+		{name: "database error", store: statetest.NewStore(signerStore{err: errors.New("connection reset")})},
+		{name: "corrupt key fails closed", store: statetest.NewStore(signerStore{rows: []state.AppTrustedSigner{
 			{SignerName: "good", CosignPublicKey: der},
 			{SignerName: "bad", CosignPublicKey: []byte("not a key")},
-		}}},
+		}})},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := &Handler{store: tc.store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -125,7 +137,7 @@ func TestReconcileSecuritySignaturesSkipsUnreadableTrustList(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	loop := &Loop{
 		store:   store,
-		handler: &Handler{store: signerStore{Store: store, err: errors.New("connection reset")}, notif: &fakeNotifier{}, log: logger},
+		handler: &Handler{store: statetest.NewStore(signerStore{Store: store, err: errors.New("connection reset")}), notif: &fakeNotifier{}, log: logger},
 		log:     logger,
 	}
 	loop.reconcileSecuritySignatures(ctx, time.Date(2026, 10, 11, 18, 0, 0, 0, time.UTC))

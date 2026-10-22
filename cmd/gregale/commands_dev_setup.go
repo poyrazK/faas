@@ -7,18 +7,23 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/markers"
+	"gopkg.in/yaml.v3"
 )
 
-// devSetupReceipt is the local, side-effect-free plan produced by
-// `gregale dev setup`. It deliberately contains only paths, filenames, and
-// counts: config files are validated but their values never enter the receipt.
+// devSetupReceipt is the local plan produced by `gregale dev setup`.
+// Optional --save records its local write in SavedConfig. It contains paths,
+// filenames, counts and safe resource
+// plans: config files are validated but secret values never enter the receipt.
 type devSetupReceipt struct {
+	Buckets                 []api.DevBucketRequest `json:"buckets,omitempty"`
 	Version                 int                    `json:"version"`
 	Path                    string                 `json:"path"`
 	Project                 string                 `json:"project"`
@@ -42,6 +47,7 @@ type devSetupReceipt struct {
 	Warnings                []string               `json:"warnings,omitempty"`
 	ConfigPresent           bool                   `json:"config_present"`
 	Doctor                  *devSetupDoctorSummary `json:"doctor,omitempty"`
+	SavedConfig             *devSetupSavedConfig   `json:"saved_config,omitempty"`
 }
 
 type devSetupHosting struct {
@@ -59,7 +65,7 @@ type devSetupDoctorSummary struct {
 	Errors   int           `json:"errors"`
 }
 
-const devSetupUsage = "usage: gregale dev setup [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--start] [--once] [--no-logs] [--open] [--postgres [--postgres-region REGION]] [--ttl DURATION]"
+const devSetupUsage = "usage: gregale dev setup [--path DIR] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--bucket NAME] [--start] [--save [--dry-run]] [--once] [--no-logs] [--open] [--postgres [--postgres-region REGION]] [--ttl DURATION]"
 
 // cmdDevSetup prepares the first developer environment without making a
 // remote mutation. --start hands the validated, exact plan to cmdDev, which
@@ -71,9 +77,13 @@ func cmdDevSetup(args []string) int {
 	envFile := fs.String("env-file", "", "validate and sync KEY=VALUE entries as developer secrets")
 	serviceOverrideFile := fs.String("service-override-file", "", "validate and sync service URLs as developer secrets")
 	start := fs.Bool("start", false, "start the developer environment after preflight")
+	save := fs.Bool("save", false, "save portable developer defaults in gregale.yaml")
+	dryRun := fs.Bool("dry-run", false, "preview saved developer defaults; requires --save")
 	once := fs.Bool("once", false, "start, sync once, and exit")
 	noLogs := fs.Bool("no-logs", false, "do not attach the live runtime log stream when starting")
 	open := fs.Bool("open", false, "open the developer environment URL after the first live sync")
+	var bucketNames devBucketNames
+	fs.Var(&bucketNames, "bucket", "provision a private workspace bucket when starting; repeatable")
 	withPostgres := fs.Bool("postgres", false, "provision an isolated PostgreSQL database when starting")
 	postgresRegion := fs.String("postgres-region", "", "managed PostgreSQL region (default: platform default)")
 	ttl := fs.String("ttl", "", "keep the environment this long after the latest sync, e.g. 72h (default 24h; plan maximum applies)")
@@ -86,6 +96,9 @@ func cmdDevSetup(args []string) int {
 		return 2
 	}
 	explicitFlags := flagSetWasSet(fs)
+	if *dryRun && (!*save || *start) {
+		return printErr("Invalid flags", errors.New("--dry-run requires --save and cannot be combined with --start"))
+	}
 	if *once && !*start {
 		return printErr("Invalid flags", errors.New("--once requires --start"))
 	}
@@ -99,13 +112,17 @@ func cmdDevSetup(args []string) int {
 	if err != nil {
 		return printErr("Could not read current directory", err)
 	}
-	linkedContext, _, linkedErr := linkedProjectContext(cwd)
-	if linkedErr != nil && !errors.Is(linkedErr, errProjectContextNotFound) {
-		return printErr("Could not read local project context", linkedErr)
-	}
 	sourceDir, err := resolveDeploySourceDir(cwd, *sourcePath)
 	if err != nil {
 		return printErr("Invalid developer source", err)
+	}
+	var linkedContext localProjectContext
+	linkedErr := errProjectContextNotFound
+	if *name == "" {
+		linkedContext, _, linkedErr = linkedProjectContext(sourceDir)
+		if linkedErr != nil && !errors.Is(linkedErr, errProjectContextNotFound) {
+			return printErr("Could not read local project context", linkedErr)
+		}
 	}
 	manifest, err := loadDevManifest(sourceDir)
 	if err != nil {
@@ -114,6 +131,10 @@ func cmdDevSetup(args []string) int {
 	applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion, ttl)
 	if !*withPostgres && *postgresRegion != "" {
 		return printErr("Invalid flags", errors.New("--postgres-region requires --postgres"))
+	}
+	buckets, err := resolveDevBuckets(manifest, bucketNames, explicitFlags["bucket"])
+	if err != nil {
+		return printErr("Invalid developer buckets", err)
 	}
 	lease, err := resolveDevTTL(*ttl)
 	if err != nil {
@@ -161,14 +182,30 @@ func cmdDevSetup(args []string) int {
 	}
 	receipt := buildDevSetupReceipt(cwd, sourceDir, project, config, envFilePath, envKeyCount, serviceOverrideFilePath, serviceOverrideKeyCount, *start, *once, *noLogs, *open, *withPostgres, *postgresRegion, lease)
 
+	receipt.Buckets = buckets
+	receipt.StartCommand = appendDevBucketArgs(receipt.StartCommand, bucketNames)
+	receipt.StartCommand = devSetupPreserveExplicitArgs(receipt.StartCommand, fs)
+	devArgs := receipt.StartCommand[2:]
+	receipt.Next = devSetupNextSteps(receipt, *start)
+	receipt.StartCommand = devSetupProfileArgs(receipt.StartCommand)
+
 	if !receipt.Authenticated {
-		receipt.Warnings = append(receipt.Warnings, "not logged in; run `gregale login` before starting")
+		receipt.Warnings = append(receipt.Warnings, fmt.Sprintf("not logged in; run `%s` before starting", receipt.Next[0]))
 	}
 	if receipt.Doctor != nil && receipt.Doctor.Errors > 0 {
 		receipt.Ready = false
 		receipt.Warnings = append(receipt.Warnings, "local source checks found errors; fix them before starting")
 	}
-	receipt.Next = devSetupNextSteps(receipt, *start)
+	if *save && receipt.Doctor.Errors == 0 {
+		receipt.SavedConfig, err = saveDevSetup(receipt, *withPostgres, *postgresRegion, *dryRun)
+		if err != nil {
+			return printErr("Could not save developer setup", err)
+		}
+		if explicitFlags["name"] {
+			receipt.Warnings = append(receipt.Warnings, "--name selects this local developer session; teammates can choose their own session name")
+		}
+	}
+	localSaveReady := *save && !*start && receipt.Doctor.Errors == 0
 
 	if jsonOutput {
 		if *start {
@@ -178,24 +215,33 @@ func cmdDevSetup(args []string) int {
 		} else if err := writeJSON(receipt); err != nil {
 			return jsonOut(err)
 		}
-		if !receipt.Ready {
+		if !receipt.Ready && !localSaveReady {
 			return 1
 		}
 		if *start {
-			return cmdDev(devSetupDevArgs(*sourcePath, *name, envFilePath, serviceOverrideFilePath, *once, *noLogs, *open, *withPostgres, *postgresRegion, lease))
+			return cmdDev(devArgs)
 		}
 		return 0
 	}
 
 	renderDevSetup(osStdout, osStderr, receipt)
-	if !receipt.Ready {
+	if receipt.SavedConfig != nil {
+		action := "Saved"
+		if *dryRun {
+			action = "Would save"
+		}
+		PrintProgress(osStdout, "%s portable developer defaults in %s", action, receipt.SavedConfig.Path)
+		data, _ := yaml.Marshal(receipt.SavedConfig.Values)
+		_, _ = fmt.Fprint(osStdout, string(data))
+	}
+	if !receipt.Ready && !localSaveReady {
 		return 1
 	}
 	if !*start {
 		return 0
 	}
 	PrintProgress(osStdout, "Starting the developer environment")
-	return cmdDev(devSetupDevArgs(*sourcePath, *name, envFilePath, serviceOverrideFilePath, *once, *noLogs, *open, *withPostgres, *postgresRegion, lease))
+	return cmdDev(devArgs)
 }
 
 func resolveDevSetupSource(sourceDir string) (devSourceConfig, error) {
@@ -332,50 +378,46 @@ func devSetupDependencyFiles(sourceDir string) []string {
 }
 
 func devSetupNextSteps(receipt devSetupReceipt, start bool) []string {
+	// Reuse the effective dev options, including manifest defaults and buckets,
+	// before adding the selected connection profile to either command.
+	retry := append([]string{"gregale", "dev", "setup", "--start"}, receipt.StartCommand[2:]...)
+	retryCommand := devSetupShellCommand(devSetupProfileArgs(retry))
 	if !receipt.Authenticated {
-		return []string{"gregale login", "gregale dev setup --start"}
+		login := devSetupShellCommand(devSetupProfileArgs([]string{"gregale", "login"}))
+		return []string{login, retryCommand}
 	}
 	if receipt.Doctor.Errors > 0 {
-		return []string{"fix the local source check errors above", "gregale dev setup --start"}
+		return []string{"fix the local source check errors above", retryCommand}
 	}
 	if start {
 		return nil
 	}
-	return []string{devSetupShellCommand(receipt.StartCommand)}
+	return []string{devSetupShellCommand(devSetupProfileArgs(receipt.StartCommand))}
 }
 
-func devSetupDevArgs(sourcePath, name, envFile, serviceOverrideFile string, once, noLogs, open, postgres bool, postgresRegion string, lease time.Duration) []string {
-	args := make([]string, 0, 16)
-	if sourcePath != "" {
-		args = append(args, "--path", sourcePath)
+func devSetupProfileArgs(args []string) []string {
+	if profile := currentProfile(); profile != "default" || profileOverride != "" {
+		return append([]string{args[0], "--profile", profile}, args[1:]...)
 	}
-	if name != "" {
-		args = append(args, "--name", name)
-	}
-	if envFile != "" {
-		args = append(args, "--env-file", envFile)
-	}
-	if serviceOverrideFile != "" {
-		args = append(args, "--service-override-file", serviceOverrideFile)
-	}
-	if once {
-		args = append(args, "--once")
-	}
-	if noLogs {
-		args = append(args, "--no-logs")
-	}
-	if open {
-		args = append(args, "--open")
-	}
-	if postgres {
-		args = append(args, "--postgres")
-		if postgresRegion != "" {
-			args = append(args, "--postgres-region", postgresRegion)
+	return args
+}
+
+// Keep explicit empty/false values and selectors that the concise display
+// omits. Dropping them would re-enable manifest or linked-project defaults.
+func devSetupPreserveExplicitArgs(args []string, fs *flag.FlagSet) []string {
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "path", "name", "env-file", "service-override-file", "postgres", "postgres-region":
+			if slices.Contains(args, "--"+f.Name) {
+				return
+			}
+			if f.Name == "postgres" {
+				args = append(args, "--postgres="+f.Value.String())
+			} else {
+				args = append(args, "--"+f.Name, f.Value.String())
+			}
 		}
-	}
-	if lease > 0 {
-		args = append(args, "--ttl", formatDevLease(lease))
-	}
+	})
 	return args
 }
 
@@ -384,6 +426,8 @@ func devSetupDevArgsForDisplay(cwd, sourceDir, project, envFile, serviceOverride
 	rel, err := filepath.Rel(cwd, sourceDir)
 	if err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
 		args = append(args, "--path", filepath.ToSlash(rel))
+	} else if sourceDir != cwd {
+		args = append(args, "--path", sourceDir)
 	}
 	if project != sanitizeSlug(filepath.Base(cwd)) || sourceDir != cwd {
 		args = append(args, "--name", project)
@@ -426,11 +470,7 @@ func devSetupDevArgsForDisplay(cwd, sourceDir, project, envFile, serviceOverride
 func devSetupShellCommand(args []string) string {
 	quoted := make([]string, len(args))
 	for i, arg := range args {
-		if i == 0 || strings.IndexFunc(arg, func(r rune) bool { return r == ' ' || r == '\t' || r == '\'' || r == '"' }) < 0 {
-			quoted[i] = arg
-			continue
-		}
-		quoted[i] = "'" + strings.ReplaceAll(arg, "'", "'\\''") + "'"
+		quoted[i] = recoveryArgument(arg)
 	}
 	return strings.Join(quoted, " ")
 }
@@ -468,7 +508,7 @@ func renderDevSetup(stdout, stderr io.Writer, receipt devSetupReceipt) {
 		PrintProgress(stdout, "hosting overrides: start=%q port=%d health=%s", receipt.Hosting.Start, receipt.Hosting.Port, receipt.Hosting.Health)
 	}
 	if !receipt.Authenticated {
-		PrintWarn(stderr, "not logged in; run `gregale login` before starting")
+		PrintWarn(stderr, "not logged in; run `%s` before starting", receipt.Next[0])
 	}
 	if receipt.Doctor.Errors > 0 {
 		PrintWarn(stderr, "local source checks: %d error(s), %d warning(s)", receipt.Doctor.Errors, receipt.Doctor.Warnings)

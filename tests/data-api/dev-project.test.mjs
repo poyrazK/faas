@@ -59,3 +59,22 @@ test('types cannot overwrite project sources or verification through hardlinks',
   f.definition.output = 'alias.json'; await link(join(f.directory, 'checks.json'), join(f.directory, 'alias.json')); await f.save()
   await assert.rejects(projectModule.loadDevProject(f), /must not replace/)
 })
+
+test('read-only identities preserve defaults and cannot forge the reserved read-only JWT claim', {skip:!runtime},async t=>{
+ const f=await fixture(t);f.definition.identities.buyer.read_only=true;await f.save()
+ const project=await projectModule.loadDevProject(f);assert.equal(project.identities.buyer.read_only,true);assert.equal(project.identities.other.read_only,undefined)
+ for(const value of ['true',1,null]){f.definition.identities.buyer.read_only=value;await f.save();await assert.rejects(projectModule.loadDevProject(f))}
+ f.definition.identities.buyer.read_only=true;f.definition.identities.buyer.claims={gregale_read_only:false};await f.save();await assert.rejects(projectModule.loadDevProject(f))
+})
+
+test('anonymous settings use the hosted allowlist formats', { skip: !runtime }, async t => {
+  const f = await fixture(t)
+  f.definition.public_read = ['api.products']; f.definition.public_rpc = ['api.search_products', 'api.featured']; await f.save()
+  const project = await projectModule.loadDevProject(f)
+  assert.equal(project.publicRead, 'api.products')
+  assert.equal(project.publicRpc, 'api.search_products,api.featured')
+  for (const value of [[], 'api.search_products', [1]]) {
+    f.definition.public_rpc = value; await f.save()
+    await assert.rejects(projectModule.loadDevProject(f), /public_rpc/)
+  }
+})

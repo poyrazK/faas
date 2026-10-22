@@ -12,6 +12,15 @@ gatewayd_route_metrics_enabled: true
 # ADR-143: streaming responses are a paid Hobby+ feature; production is on.
 gatewayd_streaming_enabled: true
 gatewayd_ratelimit_mode: central
+# ADR-1520 rate-limit token leasing; requires gatewayd_ratelimit_mode central.
+gatewayd_ratelimit_lease: false
+
+# ADR-1736: hold gatewayd-internal's unix socket and split-box data listener
+# (faas_gateway_listen), and realtimed's socket, in systemd sockets so a
+# restart queues callers instead of refusing them. Off until node_join stops
+# and starts these sockets with their services; while a socket is active, a
+# connection to it restarts a service node_join stopped.
+faas_compute_durable_listeners: false
 
 # Set this URL once for the gateway fleet through Ansible Vault. The role
 # copies it to a root-only systemd credential on each gateway node. Set
@@ -88,3 +97,11 @@ gatewayd_app_errors_tls_cert_path: /etc/faas/tls/gatewayd/apid-client.crt
 gatewayd_app_errors_tls_key_path: /etc/faas/tls/gatewayd/apid-client.key
 gatewayd_app_errors_tls_ca_path: /etc/faas/tls/ca/ca.crt
 faas_dev_bridge_enabled: false
+
+# Live queries (ADR-20261016151947): with faas_realtime_live_tls_managed,
+# realtimed dials livequeryd hubs with the fleet PKI's live client leaf
+# (tasks/live_tls.yml), issued on the control plane, and verifies every hub as
+# livequeryd.faas. Off, the faas_realtime_live_tls_* paths, when set, are used
+# as given.
+faas_realtime_live_tls_managed: false
+faas_realtime_live_tls_issuer_host: "{{ groups['control_plane'] | default([]) | first | default('') }}"

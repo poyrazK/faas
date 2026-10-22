@@ -35,6 +35,39 @@ type FinancialPriceSnapshot struct {
 	RecordedAt    time.Time       `json:"recorded_at"`
 }
 
+// MonthComputeIncludedMBSeconds returns the compute allowance (mb_seconds)
+// that applies to a calendar month's usage up to through, from that month's
+// recorded price activations (ADR-1162). It is the largest compute grant whose
+// activation precedes through, so a mid-month downgrade never shrinks the
+// month's allowance and an upgrade applies from its recorded activation, not
+// retroactively. Usage before the first recorded activation uses the earliest
+// one. With no recorded activation the current plan applies, which is the
+// legacy single-plan behaviour.
+func MonthComputeIncludedMBSeconds(current api.Plan, snapshots []FinancialPriceSnapshot, through time.Time) int64 {
+	var earliest *FinancialPriceSnapshot
+	best := int64(-1)
+	for i := range snapshots {
+		s := &snapshots[i]
+		if s.Price.Meter != "compute" {
+			continue
+		}
+		if earliest == nil || s.EffectiveFrom.Before(earliest.EffectiveFrom) {
+			earliest = s
+		}
+		if s.EffectiveFrom.Before(through) {
+			best = max(best, s.Price.IncludedQuantity)
+		}
+	}
+	switch {
+	case best >= 0:
+		return best
+	case earliest != nil:
+		return earliest.Price.IncludedQuantity
+	default:
+		return api.IncludedMBSeconds(current)
+	}
+}
+
 // FinancialStore is the additive ADR-566 store seam. ThroughID fixes an
 // immutable read snapshot across pages even while meterd appends new evidence.
 type FinancialStore interface {
@@ -88,6 +121,18 @@ func validFinancialSamplingWindow(start, end time.Time) bool {
 
 func validFinancialWindow(account string, start, end time.Time) bool {
 	return account != "" && !start.IsZero() && start.Before(end) && end.Sub(start) <= 32*24*time.Hour
+}
+
+// validStoredFinancialPrice validates a persisted price snapshot. Snapshots
+// written before the USD switch carry the legacy currency and stay valid
+// history (ADR-1430); every other rule is the one a new snapshot must meet.
+// Without this, one pre-switch row made the whole period unreadable and
+// meterd's pricing capture never became ready (rc.279 rollout).
+func validStoredFinancialPrice(p FinancialPriceSnapshot) bool {
+	if p.Price.Currency == financial.LegacyBillingCurrency {
+		p.Price.Currency = financial.BillingCurrency
+	}
+	return validFinancialPrice(p)
 }
 
 func validFinancialPrice(p FinancialPriceSnapshot) bool {

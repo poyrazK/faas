@@ -1,0 +1,41 @@
+name: Scenario resilience native acceptance
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: scenario-restart-native-acceptance
+  cancel-in-progress: false
+jobs:
+  native:
+    runs-on: [self-hosted, linux, x64, gregale-scenario-acceptance]
+    environment: scenario-acceptance
+    timeout-minutes: 800
+    env:
+      FAAS_API: ${{ vars.GREGALE_ACCEPTANCE_API_URL }}
+      GREGALE_DEPENDENCY_DATABASE_URL: ${{ secrets.GREGALE_DEPENDENCY_DATABASE_URL }}
+      GREGALE_DEPENDENCY_DATABASE_DISPOSABLE: "1"
+      FAAS_TOKEN: ${{ secrets.GREGALE_ACCEPTANCE_TOKEN }}
+      FAAS_SCENARIO_ACCEPTANCE_ACCOUNT: ${{ vars.GREGALE_SCENARIO_ACCEPTANCE_ACCOUNT }}
+      FAAS_SCENARIO_ACCEPTANCE_PROJECT: native-checkout
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.9"
+          cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Verify harness contracts
+        run: make test-scenario-restart-acceptance
+      - name: Exercise native restart, concurrent checkout, pending recovery, caller/dependency restart matrices, TLS authentication stalls, lost COMMIT acknowledgements, COMMIT deadlines, bandwidth restrictions, read interruption, SSLRequest stalls, shared application retry budgets, circuit breakers, bulkheads, combined policies, repeated outage/recovery cycles, dependency isolation and cleanup
+        run: make native-scenario-restart-acceptance
+      - name: Upload reports and verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scenario-restart-native-${{ github.sha }}
+          path: scenario-restart-native-evidence/
+          if-no-files-found: warn
+          retention-days: 14

@@ -119,6 +119,148 @@ described in the [workflow export starter](../examples/customer-operation-workfl
 See [ADR-672](adr/672-customer-workflow-operation-starter.md) and
 [ADR-676](adr/676-workflow-customer-operations.md). Admission remains closed.
 
+## Waits and approvals
+
+A workflow operation can pause without holding an app instance. Besides HTTP
+actions, its linear chain may contain a `wait_for_duration` timer or a
+`wait_for_callback` step that the definition declares as an approval:
+
+```yaml
+workflows:
+  - name: refund-chain
+    steps:
+      - {name: validate, path: /refunds/validate}
+      - {name: manager-approval, wait_for_callback: true, timeout: 72h, depends_on: [validate]}
+      - {name: cooling-off, wait_for_duration: 24h, depends_on: [manager-approval]}
+      - {name: refund, path: /refunds/execute, depends_on: [cooling-off]}
+operations:
+  - name: refund
+    workflow: refund-chain
+    progress_stages: [validate, manager-approval, cooling-off, refund]
+    approvals:
+      - {step: manager-approval, approver: account}
+```
+
+While parked, the operation is `waiting` with `waiting: {kind, step, since,
+until, approver}`; history records `waiting` and `resumed` events. The declared
+approver decides with `POST /v1/apps/{slug}/operations/{id}/approvals/{step}`
+(account) or `POST /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}`
+(customer), sending `expected_generation`, `decision` (`approved` or `rejected`)
+and an optional comment, or run `gregale customer-operations approve OP_ID --app
+SLUG --expected-generation N --step STEP --decision approved` (`--self` with a
+customer token). The decision and the deciding key or token are recorded as an
+`approval_decided` event. Repeating a decision is idempotent; a different
+decision conflicts. Rejection settles the operation `failed` with
+`approval_rejected`; a passed approval timeout settles `approval_expired`. Waits
+never require reconciliation, and cancelling a waiting operation settles it
+`cancelled`. Generic workflow callback completion is refused for operation runs,
+so only the approval endpoints can resume an approval. Condition checks and
+branches remain unavailable to operations. See
+[ADR-1194](adr/1194-operation-waits-and-approvals.md).
+
+### Event waits and signals
+
+A step can also wait for something outside the app, such as a payment provider
+confirming a charge:
+
+```yaml
+      - {name: payment, wait_for_event: payment.succeeded, timeout: 24h, depends_on: [validate]}
+      - {name: ship, path: /orders/ship, depends_on: [payment], input: {charge: '{{steps.payment.output.charge}}'}}
+```
+
+An event wait needs a `timeout`. While parked, the operation is `waiting` with
+`waiting.kind: event` and `waiting.event`. Deliver the event with a signal:
+
+```sh
+gregale customer-operations signal OP_ID --app shop --event payment.succeeded \
+  --signal-id evt_3Nx --payload '{"charge":"ch_1"}'
+# Or reach every active operation about one business subject:
+gregale customer-operations signal --app shop --scope production --operation fulfil \
+  --subject order:ord_42 --event payment.succeeded --signal-id evt_3Nx
+```
+
+The API routes are `POST /v1/apps/{slug}/operations/{id}/signals` and
+`POST /v1/apps/{slug}/operation-signals`. Both take deploy-write scope and MFA.
+The payload becomes the wait step's output. `signal_id` makes delivery
+idempotent: repeating a signal returns its original receipt, and reusing the ID
+with a different event or payload is `409 operation_signal_conflict`.
+
+- An event the workflow never waits for is `422 operation_signal_unexpected`.
+- A settled operation takes no new signals (`409 operation_not_active`).
+- A signal that arrives before its wait is held and used when the wait starts.
+- A subject signal reaches at most 16 active operations of that definition,
+  matched by the [subject](#business-references) fixed at acceptance.
+- History records each delivery as a `signal_received` event, with its
+  `source`: `account`, `customer` or `webhook`.
+- A wait that times out settles `failed` with `event_timeout`.
+- Native workflow event injection is refused for operation runs, so every event
+  appears in the operation's history.
+
+See [ADR-1197](adr/1197-operation-event-waits-and-signals.md).
+
+A customer resumes its own operations with its tenant credentials and the
+`platform_tenant:operations:manage` scope, without the account's token:
+
+```sh
+gregale customer-operations signal OP_ID --self --event payment.succeeded --signal-id evt_3Nx
+gregale customer-operations signal --self --definition DEF_ID --subject order:ord_42 \
+  --event payment.succeeded --signal-id evt_3Nx
+```
+
+The routes are `POST /v1/platform-tenant-self/customer-operations/{id}/signals`
+and `POST /v1/platform-tenant-self/customer-operation-signals`. The subject
+route names the definition, which fixes the app, environment and operation, and
+reaches only the customer's own operations; another customer's operation about
+the same subject ID is never signalled. A `signal_id` is per operation whichever
+route delivers it. See
+[ADR-20261017100853](adr/20261017100853-customer-self-service-operation-signals.md).
+
+## Deadlines and budgets
+
+A definition can bound each Operation it accepts:
+
+```yaml
+operations:
+  - name: refund
+    # ...contract fields...
+    limits:
+      deadline_seconds: 3600       # wall clock from acceptance, waits included
+      max_attempts: 5              # automatic attempts of one HTTP execution
+      max_execution_seconds: 300   # attempt runtime summed across generations
+```
+
+Each field is optional and bounded by the plan (see [Limits](#limits)). Limits
+are fixed when an Operation is accepted; a later definition does not change
+accepted work.
+
+- **Deadline.** The Operation settles `failed` with `failure_code:
+  deadline_exceeded` when its deadline passes, whether it is queued, retrying,
+  running or waiting for a timer or approval. Its completion callback fires.
+  An HTTP attempt still running at the deadline is cut. Unless the definition
+  declares `recovery: safe_retry`, that attempt needs reconciliation,
+  because Gregale cannot know whether it took effect. Workflow Operations
+  settle within one minute of the deadline.
+- **Attempts.** `max_attempts` becomes the HTTP execution's retry policy.
+- **Execution budget.** HTTP attempts are cut when the summed runtime reaches
+  `max_execution_seconds`; a retry that would start with no budget left settles
+  the Operation `failed` with `budget_exhausted`.
+- **Recovery** with `safe_to_retry` is refused (`409 operation_limit_exceeded`)
+  once a deadline has passed or the budget is spent. Recording an outcome is
+  still allowed.
+
+Workflow definitions accept `deadline_seconds` and `max_execution_seconds`
+([ADR-20261016110803](adr/20261016110803-workflow-operation-execution-budget.md)). The budget sums
+the runtime of the HTTP step attempts; timer, approval and event waits do not
+count. Each attempt is cut at the earlier of its step timeout and the budget
+still unspent. A cut step, like any failed workflow step, needs reconciliation,
+and `safe_to_retry` recovery is refused once the budget is spent. Workflow steps
+never retry automatically, so `max_attempts` is HTTP-only.
+
+Job definitions accept no limits. Reads return `limits`, `deadline_at` and
+`usage {execution_ms, attempts}`, and `gregale customer-operations get` prints
+the deadline and budget. See
+[ADR-1196](adr/1196-operation-deadlines-and-budgets.md).
+
 ## Contract
 
 `OperationDefinitionSpec` captures an HTTP target or named workflow, platform-tenant ownership,
@@ -291,6 +433,9 @@ allowance. The following are contract bounds, not a rollout announcement.
 | Artifacts per operation | 8 | 16 | 32 |
 | Bytes per artifact | 8 MiB | 32 MiB | 64 MiB |
 | Total artifact bytes per operation | 32 MiB | 128 MiB | 256 MiB |
+| Maximum `deadline_seconds` | 1 day | 7 days | 30 days |
+| Maximum `max_attempts` | 3 | 10 | 25 |
+| Maximum `max_execution_seconds` | 1 hour | 1 day | 7 days |
 
 Schemas are capped at 64 KiB, submission JSON at 1 MiB, and idempotency keys at
 128 bytes. Retained idempotency receipts outlive results. A replay during that
@@ -372,6 +517,13 @@ Customer bearer tokens use a separate namespace:
   requires the read scope and downloads a verified retained result. Its SHA-256
   is exposed through `X-Gregale-Artifact-SHA256`. Results can expire independently
   of the operation's successful business outcome.
+
+While the owning account suspends a customer, that customer's reads close at
+once: listing, status, events, milestones, identity, submission lookup and
+artifact downloads return `403`, and an open event stream ends with
+`auth_expired` at its next credential recheck. Suspension does not cancel
+admitted work, and the account keeps reading every outcome. Resuming the
+customer reopens its reads.
 
 Runtime `POST /v1/runtime/operations/{id}/progress` and `.../{id}/artifacts`
 require a fresh workload JWT for audience `gregale:operations`, plus the current
@@ -522,6 +674,29 @@ again. An identical accepted recovery request remains replayable with its origin
 revision. Completion notification recovery stays independent.
 See [ADR-660](adr/660-operation-recovery-inspection.md).
 
+## Read one operation's history
+
+`GET /v1/apps/{slug}/operations/{id}/timeline` merges an Operation's events, HTTP
+execution attempts, workflow step attempts and completion delivery attempts into
+one page ordered by time. It requires account read scope and MFA; platform tenants
+read events instead.
+
+```sh
+gregale customer-operations timeline OPERATION_ID --app exports --all
+gregale customer-operations timeline OPERATION_ID --app exports --all --logs
+```
+
+Each source pages after its own position, so following `next_cursor` never skips
+or repeats a record while the Operation runs. Attempt entries are read-time
+snapshots: a running attempt is not repeated once it ends, so follow live work
+with events. Each HTTP attempt names the instance that ran it, its time window
+and the UTC archive days to read with `gregale logs --archive`. That is an
+instance window, not request-exact correlation. Workflow step attempts carry
+timing and outcome only, because the gateway chooses their instance. When event
+history has expired, `events_expired` is set and attempts and deliveries remain.
+Attempt history is kept for at most 30 days. See
+[ADR-1195](adr/1195-unified-operation-timeline.md).
+
 ## Bounded preview admission
 
 The local continuation adds the operator TOML setting
@@ -543,7 +718,8 @@ Update every API and gateway binary before native rollout; older binaries fail
 closed on the new field. See [ADR-666](adr/666-operation-execution-preview-admission.md).
 
 The policy is capped at 64 KiB, ten cohorts, ten customers per cohort and a
-one-hour window. Each admission reads the file again. Missing, unreadable,
+30-day window (raised from one hour so a pilot can run without hourly file
+rotation). Each admission reads the file again. Missing, unreadable,
 malformed, expired or group/world-writable files close admission, without a
 cached open fallback. Changes use atomic file replacement and require no daemon
 restart. The allowed cohort covers definition registration and source deployment;
@@ -562,7 +738,9 @@ closure on every serving node and inspect accepted work separately.
 No production cohort is enabled and no replacement PR is open. Native lifecycle
 and fleet rollout qualification remain required before a customer preview. The
 [preview runbook](ops/operations-http-preview.md) describes preparation,
-admission verification and rollback.
+admission verification and rollback. The proposed
+[ADR-20261017102231](adr/20261017102231-operations-preview-exit.md) sets the evidence for the first
+cohort, for each native execution kind and for general admission per kind.
 
 Owning accounts can observe submission prerequisites with
 `gregale customer-operations doctor --app SLUG --deployment DEPLOYMENT_UUID
@@ -597,6 +775,80 @@ as current business status. Account-only `POST .../{id}/recover-receipt` returns
 conflicts fail, expired unconfirmed receipts cannot apply, and preview never
 creates receipts. See the [operator examples](ops/customer-operations-cli.md#resume-a-recovery-decision-after-losing-its-response)
 and [ADR-662](adr/662-operation-recovery-decision-receipts.md).
+
+## Webhook-submitted Operations
+
+A signed provider event can start an Operation directly. Create an inbound
+webhook endpoint (ADR-212), then bind it to an operation and the customer that
+owns the resulting work:
+
+```sh
+curl -X PUT "$GREGALE_API/v1/apps/billing/inbound-webhooks/$ENDPOINT/operation-binding" \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"expected_version":0,"operation":"invoice-paid","platform_tenant_id":"'$TENANT'",
+       "event_types":["invoice.paid"],"take_over_delivery":true}'
+```
+
+The owner is fixed by the binding; Gregale never reads a customer from the
+provider payload. The tenant must be active and linked to the app through an
+active tenant surface. The operation must exist on the environment's live
+deployment when you bind; each event resolves it again and admission pins the
+definition exactly as for a customer submission.
+
+Each verified event becomes this input, so the definition's input schema and
+`subject.id_from` pointer describe the envelope:
+
+```json
+{"webhook": {"endpoint": "stripe-invoices", "provider": "stripe",
+             "event_id": "evt_123", "event_type": "invoice.paid"},
+ "payload": {"id": "evt_123", "type": "invoice.paid", "data": {"object": {}}}}
+```
+
+The same input reaches HTTP, workflow and Job adapters. A provider retry returns
+the original operation with `duplicate: true`, even after the binding changes;
+the same event ID with a different body returns 409. Event types outside a
+non-empty `event_types` list are acknowledged as `ignored` and create no work.
+Closed preview admission, a missing definition or capacity limits return 503
+with `Retry-After`, so the provider keeps the event and retries. Deleting the
+binding with its `expected_version` returns the endpoint to ordinary delivery;
+admitted operations and their receipts are retained. An endpoint has one
+delivery mode: remove an automation or exclusive operation binding first. See
+[ADR-1193](adr/1193-webhook-submitted-customer-operations.md).
+
+### Resume waiting Operations from a webhook
+
+A binding with `"mode":"signal"` starts nothing. It delivers provider events as
+signals to Operations already waiting on a `wait_for_event` step:
+
+```sh
+curl -X PUT "$GREGALE_API/v1/apps/shop/inbound-webhooks/$ENDPOINT/operation-binding" \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"expected_version":0,"operation":"fulfil","platform_tenant_id":"'$TENANT'",
+       "take_over_delivery":true,"mode":"signal",
+       "subject":{"type":"order","id_from":"/data/object/metadata/order_id"},
+       "signals":[{"provider_event":"payment_intent.succeeded","event":"payment.succeeded"}]}'
+```
+
+`subject.id_from` points into the provider payload, and `subject.type` must
+match the type the operation declares. Each `signals` entry maps a provider
+event type to the event a wait step names. When you bind, the operation must be
+a workflow that waits for every mapped event. Leave `event_types` empty;
+`signals` is the filter.
+
+A mapped event reaches the bound customer's active Operations of that
+definition about that subject, at most 16. Other customers' Operations with the
+same subject ID are never reached. The provider body becomes the wait step's
+output, so it must be at most 64 KiB.
+
+| Answer | Meaning |
+|---|---|
+| `202 signaled` | At least one Operation received the signal. A provider retry is the same signal, so it lands once and returns `duplicate: true`. |
+| `202 unmatched` | No active Operation is waiting on that subject. The event is dropped. |
+| `202 ignored` | The event type is unmapped, or the payload lacks the subject. |
+| non-2xx | Any other refusal. The provider retries the event. |
+
+Operations whose pinned workflow does not wait for the event are skipped. See
+[ADR-20261016100929](adr/20261016100929-webhook-delivered-operation-signals.md).
 
 ## Batch Job Operations (closed preview)
 
@@ -2355,6 +2607,236 @@ not imply that reversal occurred. Receipt replay republishes queued observations
 without rerunning the callback or repeating external actions. Report only public
 customer-visible recovery metadata. No migration or new endpoint is required.
 
+Managed realtime consumer groups can opt into dead-letter retention (one hour to
+30 days; zero defaults to indefinite). Ordered groups require `skip`. Configure
+through the admin/MFA `dead-letter-retention` route. Signed
+`realtime.consumer_group.dead_letter_expiring` warnings precede cleanup by at least
+five minutes from the persisted decision; delivery failure does not block cleanup.
+The inspector and dead-letter API expose upcoming expiry and cumulative removals.
+Pause/drain do not suspend retention. Replay must commit before cleanup to protect
+the snapshot. Migration/runtime validation is pending; see
+[ADR 1041](adr/1041-realtime-consumer-group-dead-letter-retention.md).
+
+Consumer-group retry policies support opt-in exponential backoff with jitter and
+exact permanent failure codes. Configure the admin/MFA `retry-policy` route with
+an enabled flag, 1–300 second base/cap delays, jitter flag, and optional code list.
+Reported failures without an explicit delay use policy backoff; explicit delays
+(including zero) override it. Permanent codes and attempt exhaustion dead-letter
+immediately. Policies do not change already scheduled retries or lease-expiry
+reclamation. Node helpers use `useGroupRetryPolicy: true` to omit their default
+delay. The inspector shows the earliest delayed ready snapshot. See
+[ADR 1042](adr/1042-realtime-consumer-group-retry-policies.md); migration/runtime
+validation remains pending.
+
+Bulk realtime dead-letter recovery provides bounded preview and replay APIs.
+POST a code/range filter to a group's `dead-letters/preview` route (read scope/MFA),
+review up to 32 materialized failures, then POST explicit sequence/dead_since pairs
+and the returned group UUID to `dead-letters/replay` (deploy-write scope/MFA).
+Preserve timestamps exactly; old selections report stale instead of replaying a
+later failure. Per-item ordering conflicts allow eligible messages to proceed.
+Missing messages may have expired, but the API does not infer their removal cause.
+Pause/drain, external idempotency and fencing remain relevant after replay. No new
+migration is needed; runtime validation is deferred. See
+[ADR 1043](adr/1043-realtime-consumer-group-bulk-dead-letter-recovery.md).
+
+Realtime consumer-group delivery deadlines are opt-in at creation through immutable
+`deadline_metadata_key`. Values are RFC3339 timestamps frozen from message metadata;
+missing values have no deadline, malformed values become terminal failures. Ordered
+groups require skip policy. Expired work becomes dead during claim/replay maintenance,
+leases are capped at the deadline, and replay cannot extend it. The Node helper
+cooperatively aborts handlers at expiry; external writes still need their existing
+idempotency/fencing controls. Signed `realtime.consumer_group.delivery_expired`
+events and inspector `expired_deliveries` counters record both expired and invalid
+rejections. There is no background expiry timer; configure compatible dead-letter
+retention to reclaim snapshot capacity. Migration/runtime validation is pending.
+See [ADR 1044](adr/1044-realtime-consumer-group-delivery-deadlines.md).
+
+Consumer-group claim rate limits can protect downstream services during replay or
+backlog recovery. Configure the admin/MFA `claim-rate` route with a rate of 1–1000
+new leases per second and burst 1–32; zero rate disables it. Admission state is
+persisted and shared across all workers and replicas. Renewals and settlements
+continue normally. Batch claims can return admitted work plus a millisecond retry
+hint; single claims use a specific 429 with Retry-After. Node helpers wait for these
+hints. Inspector counters track throttle decisions rather than withheld messages.
+Migration/runtime validation is pending; see
+[ADR 1045](adr/1045-realtime-consumer-group-claim-rate-limits.md).
+
+Consumer groups support immutable creation filters over `metadata.event_type` and
+exact metadata values. Event types use OR; metadata predicates and the type condition
+use AND. Nonmatches advance assignment without creating snapshots and increment
+`filtered_messages`, visible with the filter in group status and the inspector.
+Up to 128 assignment events are scanned per batch transaction; `filter_scan_limited`
+indicates committed progress and clients can poll again. Retention gaps still require
+explicit recovery, and raw lag may include nonmatching unscanned events. Existing
+pause/drain, capacity, rate and ordering controls remain in force. Migration/runtime
+validation is pending; see
+[ADR 1046](adr/1046-realtime-consumer-group-message-filters.md).
+
+Consumer-group worker heartbeats distinguish idle live workers from stale reporters.
+Account POST/GET `heartbeats` routes require ownership and MFA; scoped POST requires
+an explicit heartbeat grant. Report readiness and a short diagnostic every 15 seconds;
+timeout is 60 seconds. Node helpers opt in with `heartbeat: true`. Sharing credentials
+aggregates identity, so use separate credentials for independent processes.
+
+Inspector health counts include only reporting workers and flag raw pending work
+with no ready reporters. Signed worker_lost/worker_recovered events record sampled
+liveness transitions, independently of readiness. Reporting does not renew leases
+or consume claim credit. Tracking is capped at 32 identities; lost history is bounded
+and may be replaced. Migration/runtime validation remains pending; see
+[ADR 1047](adr/1047-realtime-consumer-group-worker-heartbeats.md).
+
+Python receive-only realtime can opt into `RealtimeFallbackClient` for HTTPS SSE
+when WebSocket connections fail. Deploy the SSE subscription history bounds
+(ADR 1098) before enabling Python fallback. Configure proxy streaming without
+response buffering and allow SSE heartbeats through. Fallback rejects features
+requiring socket control messages; filtered SSE still transfers all channel
+messages and filters locally. Transport snapshots can be included in redacted
+realtime diagnostics. Runtime fallback validation remains deferred.
+
+Python realtime channel handles support `pause()` and `resume()` (ADR 1099).
+Paused channels retain their completed cursor and capacity reservation while
+unsubscribing from delivery. Resume replays retained history, using snapshot
+recovery if required. Pausing the last active channel releases the shared socket;
+an unsubscribe failure may trigger shared connection recovery. Pause can wait for
+an active handler indefinitely; use explicit unsubscribe to cancel stuck work.
+Standalone recovery coordinators support the same pause boundary for WebSocket
+and SSE. Runtime concurrency validation remains deferred.
+
+Python realtime exposes local queue backpressure (ADR 1100). Each WebSocket
+subscription reports queue depth/capacity, oldest queued age and overflow count.
+Default busy/overloaded thresholds are 50%/90% occupancy or 5/30 seconds waiting.
+Callbacks can drive UI warnings or application pause decisions; the monitor does
+not change delivery or ACK policy. Channel diagnostics include these payload-free
+measurements. Disconnect and pause clear queued observations and stop age timers.
+SSE users can report coordinator handler timing separately; this is not a measure
+of server lag or intermediary buffering. Runtime monitoring checks remain deferred.
+
+Python retained-channel workers can use graceful drain (ADR 1101) during shutdown.
+`subscription.drain(deadline_seconds=30)` freezes local admission, processes its
+buffer and flushes the final ACK before closing and releasing the channel slot.
+Dedicated native WebSocket coordinators expose the same operation. Inspect the
+returned completion, cursor, durable confirmation, expiry and unfinished local
+entry count; transport failure does not reconnect while draining. Events arriving
+after cutoff remain for later replay. SSE, inboxes and ephemeral helpers are not
+covered by this retained-channel drain. Budget time for cleanup after a deadline
+and require cooperative handler cancellation. Runtime shutdown checks are deferred.
+
+Retained channel message TTL (ADR 1102) adds `ttl_seconds` to account-authenticated
+single retained appends/publishes. Zero disables expiry; 1–86400 seconds produces a
+first-commit deadline preserved across retries and edits. Expired stream events
+become checkpoints, preserving cursor continuity; REST history suppresses their
+payload/metadata. TTL does not delete log rows or roll back previously delivered
+state/reducer effects. Normal retention pruning cascades expiration rows.
+
+Roll out migration 20261012102700541 before updated apid/realtimed readers and SDKs,
+then enable TTL publishers. Mixed old readers or unfiltered clients may fail to
+honor expiry/checkpoints. Legacy fan-out drops expired queued messages; stream
+expiry is checked when selecting output, so already selected/in-flight data is not
+retracted. Inbox/job processing is outside this delivery-expiry scope. Batch, scheduled,
+transactional and scoped-publisher message TTL are described below. Rollback removes deadlines and can expose old
+payloads again. Migration application and runtime validation remain deferred.
+
+Retained batch publishing supports TTL defaults and item overrides (ADR 1103).
+Batch `ttl_seconds` defaults to zero; omitted/null item overrides inherit, while
+zero explicitly disables expiry. Every effective TTL must be 0–86400. Deadlines
+share the original batch creation timestamp, are committed atomically with all
+messages, and are preserved by idempotent retries. Equivalent resolved TTLs retain
+the same batch identity; changed effective lifetimes conflict. Existing no-TTL
+batch hashes remain compatible. No additional migration is introduced beyond
+ADR 1102's companion table, which remains unapplied in this session. Expired batch
+positions use existing WebSocket/SSE/REST checkpoints. Runtime checks are deferred.
+
+Scheduled realtime messages also accept `ttl_seconds` (0–86400, default 0).
+Each recurring occurrence expires relative to actual publication, so delayed
+execution and failed attempts do not consume its lifetime. The TTL is immutable
+for a schedule ID; rescheduling and retrying preserve it. Apply migration
+`20261012102700544_realtime_schedule_message_ttl.sql` after the retained-message
+TTL migration and before deploying updated scheduler workers.
+
+
+Transactional realtime TTL (ADR 1105) uses an optional customer outbox
+`ttl_seconds` column. New installations include it; existing owners explicitly
+apply `pkg/commit/realtime_ttl_upgrade.sql` in their own database. The relay reads
+older outboxes with TTL zero, so the column upgrade is required only before opting
+into TTL. No platform migration or automatic customer DDL is needed beyond the
+retained-message expiration migration. Upgrade relay/readers and checkpoint-capable
+clients before enabling expiring publishers.
+
+Inside an active business transaction, Node `setRealtimeCommitTTL(tx, seconds)`
+sets a connection-local default for subsequent realtime inserts and changefeed
+captures. `insertRealtimeCommitEvent` accepts `ttlSeconds` overrides; omitted
+inherits, explicit zero disables expiry. Defaults clear on commit/rollback. The
+helper does not begin or commit transactions. TTL starts when the relay publishes
+the retained message, not when the customer writes the outbox or commits its
+business transaction. There is no exact customer commit timestamp in this outbox.
+Publication receipt retries preserve the original deadline even after retained
+history pruning; changing effective TTL for an accepted event conflicts.
+
+Scoped realtime publisher messages accept `ttl_seconds` (0–86400, default zero)
+for delivery expiry. This differs from credential issue/rotation `ttl_seconds`,
+which controls token lifetime. Issuance can set `max_message_ttl_seconds`; zero
+means uncapped. A positive cap requires every message to supply a positive TTL
+at or below the cap: omission and zero are denied with the existing 403 grant
+error. Credential rotation preserves the cap. Use a newly issued credential to
+change policy. Retried idempotency keys must keep the same TTL and preserve the
+original deadline while the existing receipt is retained. Keys may be accepted
+anew after normal receipt expiry. Token revocation does not retract accepted events.
+
+Apply `20261012102700546_realtime_publisher_message_ttl.sql` after the retained
+expiry migration and before deploying updated apid. Existing credentials remain
+uncapped and existing messages default to no expiry. Checkpoint-capable readers
+and SDKs must precede opt-in TTL publishers. Runtime checks and migration
+application remain deferred.
+
+Expiry diagnostics (ADR 1107) show TTL, UTC deadline and current status in the
+realtime event inspector. Expired payloads and metadata are suppressed; the
+status is evaluated when the page loads. Retained rows and cursors remain intact.
+
+`realtimed_expired_checkpoints_total{transport="websocket"|"sse"}` counts successful
+WebSocket queue admissions or SSE writes of `message_expired` checkpoints.
+`realtimed_expired_outbound_drops_total` counts live payloads discarded after
+expiry when dequeued. These process-local counters count delivery attempts per
+subscriber, including repeat observations; they do not count unique events or
+confirm client receipt. Sum across realtime nodes; restart resets them. Existing
+queue-capacity drop metrics retain their meaning. No endpoint/channel labels or
+payloads are added to metrics.
+
+Node `onMessageExpired` and Python `on_message_expired` are optional synchronous
+observers on native retained WebSocket and SSE clients. Node fallback forwards the
+same observer to both transports. Hooks receive only code, channel, sequence and
+transport after validation, before cursor persistence/ACK and checkpoint
+coalescing. Keep hooks brief; exceptions are isolated, and hooks must not perform
+business effects. Reconnects or failed cursor persistence can repeat observations.
+SDK `RealtimeExpiryDiagnostics` collectors retain only bounded counters, with no
+payloads or identifiers. Python `export_realtime_diagnostics(..., expiry=status)`
+includes those counts as decimal strings. No new migration is required.
+
+Retained direct inbox sends now accept `ttl_seconds` (0–86400, default zero).
+Positive TTL requires `delivery=retained`. `delivery_expires_at` is the delivery
+deadline; history `expires_at` still means retention expiry. Retries and message
+edits preserve the original delivery deadline. Expired REST rows have
+`expired: true` and empty `data_base64`; skip their payload while advancing the
+sequence. TTL expiry does not prune positions or advance the retention floor.
+
+Inbox WebSocket clients receive payload-free `inbox_checkpoint` frames with
+`message_expired` and acknowledge through normal per-device cursors. Updated
+Node/Python clients skip processors and expose expiry observations, with separate
+inbox diagnostic counts. `realtimed_expired_checkpoints_total` adds the fixed
+`inbox_websocket` label. Counts describe observations, including replay repeats,
+not confirmed client delivery. Frames selected before expiry cannot be retracted.
+SSE inbox delivery is not supported.
+
+The owner realtime inspector accepts an explicit inbox principal and separate
+inbox cursor after endpoint ownership checks. It displays lifetime/deadline/status
+and suppresses expired payloads. It does not enumerate principal identities.
+
+Notification fallback TTL (`notification_ttl_seconds`) remains independent:
+inbox delivery TTL does not cancel fallback/push work. Configure both lifetimes
+when both online delivery and fallback alerts must expire. Apply migration
+`20261012102700548_realtime_inbox_message_ttl.sql` before updated apid; upgrade
+realtime nodes and SDKs before enabling inbox TTL. Schema application and runtime
+validation remain deferred. Removing TTL data can expose old payloads again.
+
 
 ### Blocker acknowledgement and follow-up
 
@@ -3049,3 +3531,621 @@ Case overviews derive `replaces_progress_ids` from retained predecessor decision
 these inverse links are not stored or accepted in requests. Dashboard controls show
 closure, review context and links, and SDKs expose the review endpoint. Timeline
 entries retain the decision, reason, reviewer, clock and replacement identity.
+
+### Live evidence requirements for checklist items
+
+A playbook can bind each `required_evidence` label to one optional
+`evidence_requirements` selector. Selectors are frozen when a checklist starts:
+
+```yaml
+playbooks:
+  - id: payment-review
+    version: 1
+    match_kind: blocker
+    match_code: payment
+    summary: Review payment before fulfillment.
+    required_evidence:
+      - Payment verified
+    evidence_requirements:
+      - label: Payment verified
+        kind: prerequisite
+        operation: fulfill-order
+        from_state: paid
+        to_state: fulfilled
+        prerequisite_operation: capture-payment
+        milestone: payment-captured
+```
+
+The transition and retained prerequisite must already exist in the contract.
+`prerequisite` uses the exact current-state transition and producer/milestone;
+optional `group_id` and `path_id` select an alternative group and named path.
+The single fact uses existing freshness/invalidation policies. Its satisfaction
+does not assert that the whole path or decision is satisfied. Unevaluated edges
+are unavailable.
+
+`milestone` needs `operation` and `milestone`, and checks the selected contract's
+declared step and latest retained fact without adding age/invalidation policy.
+`verification` needs `operation` and `blocker_code`, and requires every matching
+obligation on the exact current report to have retained verification. Absence of
+a current obligation or a verification observation from a different report is
+unavailable, not successful verification. Fields from
+other kinds are rejected; each selector uses a unique existing label, with the
+existing 16-label limit. YAML and TOML support the same fields.
+
+Case reads add `items[].evidence_check` for configured labels. Status is
+`satisfied`, `missing`, `stale`, `invalidated` or `unavailable`, with a diagnostic
+reason, observation clock and current report identity. Prerequisites include
+existing freshness and invalidating-fact diagnostics. Stale state, changed
+contract/guidance, incomplete verification coverage or missing declarations
+cannot establish satisfaction. Completed human items in active checklists without satisfaction set
+`review_suggested`; the dashboard shows this beside the preserved review and
+links current milestone evidence.
+
+These observations evaluate declared requirements, not the validity of attached
+human references. They do not edit checklist status, revisions, history or
+business state, and are absent from stored progress and mutation responses.
+Reload the case to refresh them. Satisfaction means retained application-reported
+evidence, not external correctness, business success or execution permission.
+Existing playbooks without selectors remain human-only.
+
+### Monitor checklist evidence in a durable inbox
+
+Explicitly enroll a pinned checklist through
+`POST /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/evidence-watch`
+or its `/v1/platform-tenant-self/...` counterpart. Use the same exact case query
+selectors as checklist edits, an existing readiness subscription in the same app,
+environment and caller role, and the current human checklist revision:
+
+```json
+{
+  "subscription_id": "00000000-0000-4000-8000-000000000001",
+  "progress_revision": 2,
+  "revision": 0,
+  "enabled": true,
+  "owner": "payments"
+}
+```
+
+The example UUID is a placeholder; use your existing subscription ID. Enabling
+requires an active checklist with live evidence selectors. A customer-scoped
+subscription must match that customer; a declared subscription workflow must
+match the checklist. Other readiness discovery filters do not constrain an
+explicit checklist watch. Account writes require existing write scope and MFA;
+customer writes use tenant operations-manage scope and authenticated identity.
+
+The response provides a watch UUID, configuration revision and saved observations.
+For subsequent configuration changes, include `watch_id`, the current watch
+`revision`, the current `progress_revision`, and the desired `enabled` and `owner`.
+Read `playbook_evidence_watches` from subscription lists or inbox metadata to get
+current configuration. The dashboard's checklist controls load inbox destinations,
+show monitoring status and enable or stop the selected watch. Polling does not
+advance configuration revisions. Enabling or editing configuration captures a
+new silent baseline; changes while disabled are not replayed.
+
+Watches are durable in the subscription, independently of the latest-100 inbox
+retention window. Each subscription retains at most 20 watches. New enrollment
+may reclaim a stopped slot; a fresh watch UUID prevents old configuration tokens
+from affecting a recreated watch. The existing worker rotates through five active
+watches per pass, nominally every 30 seconds. This is bounded polling and can miss
+short-lived states; failures retain previous observations and retry while healthy
+watches can publish. Watch changes invalidate in-flight subscription leases.
+
+A later requirement status or diagnostic-reason change produces one grouped
+`playbook_evidence_changed` notification, including missing/stale/invalidated/
+unavailable evidence, recovery to satisfied, and changed-contract/guidance reasons.
+Observation clocks, report revisions, human completion flags and evidence-ID
+renewal alone do not produce repeat notices. Each notice preserves the exact case,
+pinned playbook identity and before/after requirement observations. New notices
+are unread with the configured owner; older coordination is never reassigned.
+The dashboard renders changed labels and can open the current workflow case.
+Retained notices also appear in the exact case timeline. Manually scheduled
+follow-ups keep the same case attribution in both stores.
+
+Publication rechecks checklist identity, active disposition and observed human
+revision under the shared writer lock. A prior retirement/replacement prevents
+publication and stops monitoring; a concurrent item/review edit defers the poll
+until another observation. Disabling or deleting the subscription also prevents
+stale worker publication. Missing checklist records stop the watch. No automatic
+item reopen, checklist completion, application action or external delivery occurs.
+The notification is a saved observation, not a current transition-readiness
+baseline; open the case for fresh requirements. Completion references on these
+notices remain scoped to the notification's exact customer and subject.
+
+No migration or new worker is required: existing JSON subscription and inbox
+storage retain configurations and observations. Existing subscriptions without
+explicit checklist watches preserve their behavior.
+
+### Track the application result expected by a playbook
+
+Playbooks may declare `expected_outcome_code`, using the same bounded lowercase
+outcome slug as application reports (for example, `payment-confirmed`):
+
+```yaml
+playbooks:
+  - id: payment-review
+    version: 2
+    match_kind: blocker
+    match_code: payment
+    summary: Confirm payment and review fulfillment.
+    expected_outcome_code: payment-confirmed
+    required_evidence:
+      - Payment verified
+```
+
+The code is part of the immutable rule and definition fingerprint. Starting a
+matched checklist freezes the expectation and original `start_state_revision`.
+Later deployments do not change this goal. Live `business_outcome` appears beside
+progress in case reads, independently of checklist completion and evidence
+satisfaction. The dashboard links the result's reporting operation.
+
+Status is `pending` for fresh comparable nonterminal state, `achieved` when an
+explicit fresh terminal outcome equals the expectation, `different_outcome` for
+another explicit terminal code, or `unavailable` when state is missing/stale,
+the contract differs, retained state precedes the start revision, the pinned rule
+is invalid, or terminal state has no outcome code. The nested `evidence` contains
+the shared outcome evaluator's report identity, revision, clock, reported code
+and explanation; its `unknown` maps to playbook `unavailable`. Diagnostic codes
+under unavailable are not comparable business results. Changed guidance is shown
+by applicability separately; it does not silently replace the frozen expectation.
+
+The existing opt-in evidence-watch endpoint also accepts playbooks with only an
+expected outcome and no live checklist selectors. Enabling captures a silent
+result baseline. Subsequent result status/reason changes, or a different comparable
+terminal outcome code, produce `playbook_outcome_changed` in the chosen durable
+inbox. The notice may also contain simultaneous requirement changes. Clock,
+report-counter and description-only updates stay quiet. Watches retain their
+highest comparable `outcome_state_revision`, including across configuration edits
+and unavailable observations, so pruning cannot make an older report establish a
+new result. Current case reads compare with the start revision; watch observations
+also compare with this retained latest-observation revision.
+
+Retirement/replacement and stale human revisions use the same publication fences
+as evidence notices. The worker reuses its scoped evidence read and introduces no
+additional queries or polling phase. Result observations are ephemeral on progress
+and durable only in watch baselines/inbox notices. Neither achieved results nor
+human completion closes the other, and neither establishes that playbook work
+caused the application's outcome. Legacy playbooks omit the expectation and keep
+their existing behavior. No migration, external delivery or business action is
+introduced.
+
+### Declare a playbook business deadline and assigned follow-up
+
+Add an optional `outcome_deadline` policy to a playbook that already declares an
+`expected_outcome_code`:
+
+```yaml
+expected_outcome_code: payment-confirmed
+outcome_deadline:
+  after_seconds: 1800
+  owner: payments
+  follow_up_after_seconds: 900
+  note: Review the payment result and retained application evidence.
+```
+
+Durations are whole seconds. The expected wait is 1 second to ten years; the
+assigned follow-up delay is 1 second to one week. Owner is a required existing-style
+team label (at most 256 bytes); note is optional plain text (at most 1024 bytes).
+The policy enters the immutable rule fingerprint. Canonicalization copies the
+policy so callers cannot mutate pinned guidance through their input pointer.
+YAML/TOML and all SDKs expose the same fields.
+
+Starting a checklist freezes `outcome_deadline_at` as its creation time plus
+`after_seconds`. Deployment changes, item edits, coordination reviews, watch
+configuration and enrollment do not reschedule it. Case results expose the due
+clock and whether the current observation is at/past it; this does not prove when
+an application result historically arrived or declare business failure.
+
+Enable the existing opt-in checklist watch to receive deadline attention. The
+first successful due poll records `deadline_checked_at`. If the expected result
+is not currently observed as achieved, it publishes one
+`playbook_outcome_deadline_reached` notice per watch. Pending, different-outcome
+and unavailable evidence can require review; source read failures retain previous
+observations and defer the check. The notice is unread and assigned to the frozen
+policy owner, with the policy note and follow-up time equal to actual delivery
+plus `follow_up_after_seconds`. This owner is independent of the ordinary watch
+notification owner. Simultaneous evidence/result changes share the same notice.
+
+An achieved result at the first due poll suppresses deadline escalation, including
+later evidence loss. An already-achieved due enrollment/configuration observation
+also records fulfillment after the retained-revision guard. A later unmet
+observation is not retroactively declared a missed deadline. Disabled monitoring
+sends nothing; re-enabling retains any previous due marker and escalation reference.
+A new watch in another inbox or after a reclaimed stopped slot has its own identity
+and first due check. There is no global escalation deduplication across explicit
+inbox destinations.
+
+Late result observations refresh `playbook_escalation.current` on the retained
+assigned notification and keep its first `success_observed_at` flag, even through
+later corrections/evidence loss. Its original `playbook_evidence.business_outcome`
+and deadline are delivery evidence. Human owner, note, acknowledgment, reminders,
+follow-up time, coordination revision and completion snapshots remain untouched.
+The existing inbox/follow-up controls and reminder worker handle this assigned
+work. Completion references retain exact-case customer/subject validation.
+
+Deadline checks, baseline updates, assigned notice creation and retained evidence
+refresh use the existing subscription lease and shared checklist-writer fences.
+Retirement/replacement before publication stops monitoring; human revision drift
+defers it. An escalation reference survives latest-100 inbox pruning; a pruned row
+is not recreated and its lost evidence/history cannot be reconstructed. Refresh
+ends when the watch stops or subscription is deleted. Dashboard, follow-up queues
+and all SDKs show the deadline and separate current evidence/human coordination.
+No migration, additional worker, external delivery or application action is added.
+
+### Require acknowledgment of a playbook deadline escalation
+
+A playbook's `outcome_deadline` can set `acknowledge_after_seconds` (1–604800 seconds) and an optional `fallback_owner`, distinct from `owner`. For example, use `owner: payments`, `acknowledge_after_seconds: 900`, and `fallback_owner: operations` to request acknowledgment within 15 minutes of the assigned escalation's actual delivery. Omission or zero disables this response target; a fallback requires a positive target. These fields are frozen with the playbook policy.
+
+The existing subscription worker monitors the retained assigned inbox row independently of live business reports or checklist-watch retirement. It sends one `escalation_response_overdue` notice when the response deadline passes. Fallback assignment occurs only if the owner is still the initial team and no manual assignment history exists. It increments the coordination revision and records assignment history, preserving notes, scheduled follow-up time, reminders, and completion. Human acknowledgment or completion takes precedence under the publication lock. Clearing the follow-up closes response monitoring; rescheduling it does not reset the original acknowledgment clock.
+
+The first acknowledgment fulfills the target even if someone later marks the notice unread. Business success neither acknowledges nor closes the assigned escalation. Inbox expiration or subscription deletion ends response monitoring. The dashboard and SDKs expose the response status, original target, first acknowledgment, overdue notice time, and bounded assignment history. An overdue event identifies either its readiness `source` or its exact scoped `playbook`; playbook events do not manufacture a readiness baseline.
+
+### Record a playbook escalation's business resolution
+
+Complete an assigned playbook escalation through the existing notification coordination endpoint with `completion.playbook_resolution`: `expected_outcome_achieved`, `alternative_accepted`, or `follow_up_canceled`. Use coordination `outcome: resolved` for the first two and `outcome: no_longer_applicable` for cancellation. Supply `note` and `evidence_operation_ids` (empty string and empty array are allowed in this mode). Optional evidence references must still belong to the exact account, application, scope, tenant and subject. This mode excludes caller-selected expected outcomes and new verification or outcome watches; the application's frozen escalation expectation is authoritative.
+
+The server reads current application state for the exact source workflow and records `completion.playbook_outcome`, including the human resolution, application observation and alignment. Expected success matches only a fresh explicit expected terminal outcome. An accepted alternative matches only a fresh different terminal outcome permitted by any explicit pinned acceptance policy. Nonterminal or contrary results produce `mismatch`; missing, stale, older or different-contract reports produce `unavailable`. Cancellation records `not_applicable` and asserts no business result. These results inform the reviewer and do not block human closure. Storage or report-read failures fail the request, preserving the open follow-up.
+
+The evidence is an advisory observation before the coordination write, not an atomic application-state assertion. Optimistic coordination revisions still guard concurrent human edits and fallback assignments. Closing stops reminders and acknowledgment monitoring; subsequent live escalation observations do not rewrite the immutable completion record. Inbox and timeline views retain the disposition and captured report identity. Legacy generic completion remains supported with its existing evidence and note requirements.
+
+### Review business results after playbook completion
+
+Business-aware playbook completion can set `playbook_review_after_seconds` from 1 to 604800 (up to seven days); omission or zero disables review. The window starts at the actual completion write. The source notification exposes `playbook_review`, with its frozen owner, expiration, status, highest comparable revision and latest observation. Its initial baseline is the immutable evidence captured at closure, so enrollment sends no notice.
+
+The existing subscription worker rotates through retained reviews together with business outcome watches. Meaningful status, reason or comparable terminal-code changes produce a `playbook_outcome_changed` notice with `playbook_review_event`, linking the original closed notification and recording before/after evidence and the original human resolution. Clock changes, refreshed report identities and unchanged results stay quiet. A pending result becoming achieved, a reported result correction, evidence loss and recovery can each notify the frozen owner. Notifications do not reopen the original escalation or assert application execution authority.
+
+Missing, stale, different-contract or older retained reports are recorded as unavailable. Infrastructure read failures preserve the prior observation and retry without manufacturing evidence loss. The highest comparable revision survives unavailable observations. Publication rechecks the exact review identity/revision and expiration under the existing lease and source row lock; expired reviews publish no further notices. No expiration notice is sent. Source inbox expiration or subscription deletion also ends review; stopped checklist watches do not. The original completion and evidence remain unchanged even when live observations change.
+
+### Declare acceptable alternative business outcomes
+
+A playbook can define `outcome_acceptance: {alternative_outcome_codes: [payment-refunded, payment-voided]}` alongside `expected_outcome_code: payment-confirmed`. Up to 16 distinct lowercase outcome slugs are allowed; the primary expected code cannot appear in the alternatives. Codes are copied and sorted during canonical validation. Explicit `alternative_outcome_codes: []` permits only the expected result. An absent policy preserves legacy reviewer acceptance of any different terminal result.
+
+The policy is pinned with the checklist and retained on its business observations as `acceptance_policy`. Explicit policies classify fresh comparable reports as `expected`, `acceptable_alternative`, or `unexpected`; nonterminal and unavailable evidence are classified separately. The underlying business status remains `different_outcome` for any alternative. An allowed alternative does not satisfy the primary expected-outcome deadline or claim success.
+
+Business-aware `alternative_accepted` completion matches only an explicitly allowed terminal alternative when a policy is present. Unexpected results produce a mismatch, while human closure remains allowed. Completion and post-completion reviews use the frozen policy, including through evidence loss and recovery; later deployments cannot silently rewrite the acceptance rules. Changes in reported terminal codes notify during the existing bounded review window, and the dashboard exposes application acceptance separately from the human resolution. Legacy saved closures are unchanged.
+
+### Explain playbook business outcomes
+
+A playbook can declare `outcome_guidance`, with up to 17 entries: one for its expected outcome and one for each explicitly acceptable alternative. Each entry has `outcome_code`, a required `description`, and an optional `suggested_follow_up`. For example, describe `payment-refunded` as “Payment returned to the customer” with a suggestion “Notify the customer and release inventory.” Guidance does not change acceptance, the primary outcome deadline, or application execution authority.
+
+Codes must refer to the expected outcome or a code in the explicit `outcome_acceptance.alternative_outcome_codes` policy; duplicate or unknown codes are rejected. Text is trimmed UTF-8 with no control characters and at most 1024 bytes per field. Canonicalization copies and sorts entries by code, preserving caller input. Guidance is optional, and existing playbooks remain unchanged.
+
+Descriptions and suggestions are pinned with the checklist version. Business observations retain the complete `outcome_guidance` set so later result changes use the same meanings, even after deployments or checklist-watch retirement. The `guidance` observation field selects only a fresh comparable reported terminal outcome. Pending, stale, missing, different-contract and older retained reports do not get matching current-outcome guidance. Cases show the declared meanings; escalations, immutable completion records and post-completion notices show matching guidance as literal text. No suggested follow-up is executed automatically.
+
+### Track outcome-specific follow-up steps
+
+Each `outcome_guidance` entry can declare an ordered `follow_up_steps` list, for example `[notify-customer, release-inventory]`. Up to 16 unique, nonempty plain-text labels are allowed per outcome; labels must be trimmed UTF-8, control-free, and at most 256 bytes. Order is preserved, copied and pinned with the original checklist. Steps are optional and never executed by Gregale.
+
+Use the existing playbook progress update endpoint with optional `outcome_code` to review a step in that outcome's list. `item_index` is local to the selected list. Omit the selector to retain the original checklist behavior. On the first successful review, the server requires a fresh comparable terminal report of that exact outcome and saves its advisory pre-write observation. The original guidance must have declared steps for that outcome. Subsequent reviews keep that original report and guidance, even if application results change.
+
+`outcome_follow_ups` on progress records contains each started list, its original observation, reviewed items, completed count and checklist-complete flag. Notes are required, and completed steps require scoped operation or milestone evidence using the existing reference validation. The original progress revision fences all edits; shared bounded review history records the outcome selector and timeline entries distinguish outcome-step reviews. Original evidence checklist counts do not include outcome steps. Retiring or replacing progress makes both types of review read-only; historical work stays visible.
+
+The case dashboard shows declared steps before work begins and permits first review only when that outcome is freshly observed. A state change between the displayed case and submission can require refresh. First-review evidence is observed before the coordination write and does not make an atomic claim about application state. Step completion records human review, not proof of application execution, workflow readiness or business success.
+
+### Assign outcome follow-up teams and deadlines
+
+Outcome guidance can add `follow_up_assignments`, for example `[{label: notify-customer, owner: support, complete_after_seconds: 3600}]`. Labels must select declared `follow_up_steps` and be unique within the outcome. Owner labels are required, trimmed, control-free UTF-8 up to 256 bytes; windows range from 1 to 604800 seconds. At most 16 assigned steps are allowed across the entire playbook. Canonicalization copies and sorts assignment policies while preserving step order.
+
+The first successful list review pins every configured step's `owner` and `due_at`; each deadline starts at that review, independent of later deployment, item review, or inbox delivery. The existing step update accepts optional `owner` with `outcome_code`: omission preserves ownership and an empty string clears it. Reviews and ownership changes share the original progress revision and bounded review history.
+
+Enable a playbook evidence watch to deliver pending assigned steps into its durable inbox as `playbook_outcome_step_assigned` notices. Existing follow-up queues show the team, original deadline, step and outcome. Existing due reminders mark overdue work once per scheduled deadline. Delivery is at most once per step and watch identity; saved references survive disabling, re-enabling and inbox pruning. Different explicitly configured watches can deliver to different destinations. Completed steps are not newly assigned.
+
+Successful, revision-fenced polls synchronize step status and checklist ownership into retained notices. A manual inbox ownership change preserves that queue override even if the checklist assignment changes later. Notes, acknowledgment, human inbox completion and manual scheduling remain untouched. Human step completion clears its queued follow-up on the next accepted poll without manufacturing an inbox completion record. Reopening a step does not reset its deadline or automatically reschedule a previously cleared queue item; operators can reschedule the retained notice. Queue ownership history is bounded to 16 changes, alongside the original step review history.
+
+Watch disablement, retirement or replacement stops checklist synchronization; retained queue entries remain under human coordination and reminders can continue until cleared. Infrastructure read failures retain assignments and retry. As with other watches, publication rechecks progress identity/revision and the subscription lease. No application action is executed by assignment, reminders or human review.
+
+### Require acknowledgment of an assigned outcome step
+
+Step assignment policies can set `acknowledge_after_seconds` (1–604800 seconds) and optional `fallback_owner`, for example `acknowledge_after_seconds: 900` and `fallback_owner: operations`. The fallback must be a distinct trimmed control-free UTF-8 team label, at most 256 bytes, and requires a positive window. Omission or zero disables the target. Configuration is pinned with the playbook; the acknowledgment clock starts when the queue assignment is delivered, independently of its original completion deadline.
+
+Assigned step notices expose the same retained `response` model as escalations: target, first acknowledgment, missed-target notice time and bounded assignment history. The existing response worker emits one `escalation_response_overdue` notice and applies fallback once only when queue ownership still matches its delivery-time owner and no ownership changes were recorded. A fallback protects the queue assignment from later automatic checklist synchronization. Manual queue assignments, notes, reminders, scheduling and human completion are preserved.
+
+Before publication, both backends refresh active checklist ownership and completed-step state under their existing writer locks, using retained progress without consulting application business reports. This lets concurrent checklist reassignment or completion take precedence even when business evidence fails. Checklist and inbox ownership changes prevent fallback, including changes later reverted to the original owner. First acknowledgment fulfills the target even after a later unread edit; completion or clearing follow-up closes it. Rescheduling does not reset the acknowledgment clock. Completion of a checklist step closes its response target when synchronized, without claiming business success or fabricating inbox completion.
+
+Response checks can continue after a watch is disabled while the assigned notice remains retained. They refresh active source progress for the response target; general watch synchronization still follows the watch lifetime. Missing or retired progress does not manufacture acknowledgment or completion. Retention or subscription deletion ends monitoring. New response policies do not retrofit legacy assignment notices.
+
+### Sequence outcome follow-up work with prerequisites
+
+Outcome guidance can add `follow_up_dependencies`, for example `[{label: release-inventory, prerequisites: [confirm-refund]}]` alongside its declared follow-up steps. Each dependent label is unique and may name up to 15 unique prerequisites in the same outcome list. Unknown labels, self-dependencies, duplicate edges and cycles are rejected. Canonicalization copies and sorts the graph without reordering the declared steps. Omission preserves independent-step behavior.
+
+The case exposes ephemeral step `readiness` with `ready` or `waiting`, direct `waiting_for` labels and `review_suggested`. A prerequisite must be reviewed complete and its own prerequisite chain satisfied. The update endpoint rejects completing a waiting step with a conflict, while pending reviews and ownership edits remain possible. Review, note and scoped evidence requirements still apply; this is human work sequencing, not application transition authorization.
+
+Independent assigned steps start their completion window on first list review as before. Dependent assigned steps receive their immutable `due_at` when they first become ready during a successful review write. Opted-in watches publish their queue assignment only while ready. This prevents waiting work from consuming its completion window before prerequisites finish. A dependent's acknowledgment clock still starts at its eventual queue delivery.
+
+Reopening a prerequisite makes downstream readiness waiting transitively. Completed reviews are preserved and flagged for review; they are never silently erased. Existing assignments, owner overrides, acknowledgment targets and deadlines remain unchanged. A previously queued waiting step remains visible with its blockers, and operators can use existing rescheduling controls. Regaining readiness neither recreates an assignment nor restarts its deadline. Case readiness is recomputed; retained queue readiness refreshes on accepted polls. Legacy playbooks without dependencies keep their existing timing and review behavior.
+
+### Notify owners when follow-up prerequisites regress
+
+Enabled playbook evidence watches now retain `dependency_states` for started outcome follow-up lists. Enabling or re-enabling saves a silent current baseline, including steps already waiting; a newly observed list also acquires its baseline silently. Successful accepted polls emit `playbook_dependency_regressed` when downstream work changes from ready to waiting, gains an unmet prerequisite, or is affected by another newly reopened ancestor while already waiting.
+
+Each `dependency_regression` notice groups affected steps by their current checklist owner, using the watch owner for unassigned steps. It records the observation time, relevant reopened prerequisites (including transitive causes), affected outcome/step labels and completed-step review suggestions. The notice links to the exact existing workflow case through its playbook evidence identity. Inbox ownership overrides remain separate and are not rewritten. Notices have no automatic follow-up deadline and do not create duplicate step queue assignments.
+
+The baseline and notice are committed together under the existing subscription lease and exact progress revision checks. Stale polls, retired/replaced progress and infrastructure failures do not advance the baseline or invent regressions. Unchanged waiting states, notes, ownership changes and clock refreshes stay quiet. Recovery advances the baseline, allowing a later distinct regression to notify again; saved regression references also enable linked recovery notices. A sampled change that is reopened and resolved entirely between polls is not reconstructed; this is retained observation monitoring, not a complete review audit.
+
+Existing step reviews, human inbox coordination, assignments and all clocks remain intact. The inbox and timeline show regression context, while the current case supplies the latest prerequisite state. Delivery remains scoped to explicit watches and bounded by inbox retention.
+
+### Notify owners when regressed dependencies recover
+
+Watches now retain the latest delivered regression reference on affected `dependency_states`. A successful accepted waiting-to-ready observation with that reference emits `playbook_dependency_recovered`, grouped by current checklist owner and linked regression notice. Initial prerequisite completion without a delivered regression stays quiet; newly eligible assignments still use the existing queue publisher.
+
+The `dependency_recovery` payload records the observation time, regression notification UUID/sequence/creation time, and recovered steps. Partial recovery reports only the ready subset. Pending steps can resume; previously completed reviews remain completed. Different steps may link different regression notices if additional blockers were observed while already waiting. A current owner change routes the recovery to that owner, using the watch owner when a step is unassigned; inbox ownership overrides remain separate.
+
+Reference clearing, recovery delivery and the new baseline are atomic under the existing progress revision and subscription lease fences. Repeated ready observations do not duplicate notices. Errors or stale polls retain waiting references. Edits to an already active watch preserve the prior dependency baseline so routing changes cannot consume an undelivered recovery. Re-enabling stays silent: still-waiting steps keep their known regression links, while steps already ready at re-enrollment do not produce retroactive recovery notices. Historical regressions without saved references are not backfilled. A referenced notice may be outside inbox retention; recovery keeps the saved identity without reconstructing missing rows.
+
+The inbox links the prior regression and the current case; timeline entries identify the recovered work and prior sequence. No existing notice is auto-acknowledged or completed, and no review, assignment, original deadline or acknowledgment target is reset. Changes fully reopened and resolved between polls remain outside this sampled observation model.
+
+### Reviewing completed steps after prerequisite regression
+
+Reopening an outcome follow-up prerequisite durably marks every completed downstream step with `dependency_review_revision`, in the same revision-fenced write. The prior completion, note and evidence remain intact. Restoring prerequisites does not clear this requirement. Unreviewed work does not count toward follow-up checklist completion and cannot satisfy downstream prerequisites.
+
+Use the existing progress update endpoint with `outcome_code`, `item_index` and the current progress revision. Mark the step `completed` with an explanation and scoped evidence to confirm the work remains valid, after its prerequisites are satisfied; mark it `pending` with an explanation to request a redo. Both decisions clear its review obligation and retain the preceding review in history. Repeated upstream regressions renew the obligation at the latest progress revision. Owners and original deadlines are preserved.
+
+### Assigned dependency validity reviews
+
+An enabled playbook evidence watch delivers a durable inbox task for each observed `dependency_review_revision`. It routes to the checklist step owner, falling back to the watch owner, and enters the follow-up queue with immediate attention unless a pinned review window is declared. The task captures the prior completion note, actor and scoped evidence references; it also captures the reopened ancestor label if the corresponding progress history entry is retained. Recovery alone leaves the task open.
+
+Review the exact workflow case to confirm validity with a note and evidence, or mark the step pending for redo. On the next accepted watch poll, the task leaves the follow-up queue and records `confirmed` or `redo_requested`. A newer unresolved regression supersedes the preceding episode and delivers a new task. Resolution uses the first retained source review after the obligation; if that history is unavailable, the old episode is marked superseded without claiming a specific human decision. Stable polls, recovery, watch configuration changes and disable/re-enable do not duplicate the same episode. Manual inbox ownership overrides remain protected. Inbox acknowledgment does not validate checklist work.
+
+Delivery and source synchronization require an active watch and retained inbox rows. A regression reviewed before any poll does not create a retroactive task. A stopped watch does not auto-resolve retained tasks. Each watch retains up to 272 review delivery references; use another subscription/watch for additional episodes after that limit. Notification retention can remove older tasks without deleting the durable checklist obligation.
+
+### Dependency review deadlines and fallback ownership
+
+Applications may add `review_after_seconds` (1–604800) and optional `review_fallback_owner` to a frozen outcome `follow_up_assignments` policy. The fallback must differ from the declared step owner; it requires a positive review window. Omitted or zero windows preserve immediate review attention without automatic review escalation.
+
+```yaml
+follow_up_assignments:
+  - label: Verify downstream delivery
+    owner: fulfillment
+    complete_after_seconds: 3600
+    review_after_seconds: 1800
+    review_fallback_owner: operations
+```
+
+When a prerequisite reopens, the server stores `dependency_review_due_at` on the affected completed step in the same revision-fenced write as its obligation. This clock starts at reopening, not watch delivery; recovery, watch reconfiguration, acknowledgment and inbox rescheduling cannot extend it. Each new regression creates a new episode with its own deadline, independent of the step's original completion deadline. Existing obligations are not retroactively assigned new clocks.
+
+Active watches deliver the review task with its pinned follow-up time and deadline target. The retained-inbox response worker rechecks exact active progress before escalation, even if the delivery watch is disabled, without requiring fresh application reports. An unresolved target emits one `escalation_response_overdue` notice. It transfers the task to the fallback only if the original owner is unchanged, assignment history is complete and empty, and the task has not been manually completed. Source owner changes, manual routing and automatic fallback remain recorded and protected.
+
+Inbox acknowledgment, manual completion or clearing/rescheduling inbox attention do not validate the checklist and do not satisfy this review target. A source confirmation, redo request or superseding episode closes it. Notification retention and inactive source progress retain their existing limits; retired progress does not manufacture a review decision.
+
+### Business impact of unresolved validity reviews
+
+Applications can add `review_impact` to a frozen outcome follow-up assignment policy. It declares `kind` (`milestone` or `outcome`), a result `code`, a required business-risk `description`, and `priority` (`normal`, `high` or `critical`). Outcome targets must be the pinned expected outcome or an explicitly acceptable alternative. Milestone targets use workflow milestone slugs; the declaration itself does not establish milestone existence or completion. Descriptions are trimmed, control-free UTF-8 text limited to 1024 bytes.
+
+```yaml
+follow_up_assignments:
+  - label: Verify downstream delivery
+    owner: fulfillment
+    complete_after_seconds: 3600
+    review_after_seconds: 1800
+    review_fallback_owner: operations
+    review_impact:
+      kind: milestone
+      code: delivery_confirmed
+      description: Confirm that the delivery remains valid after payment verification reopens.
+      priority: critical
+```
+
+The impact is copied from the pinned policy when the outcome follow-up list is first enrolled and preserved through subsequent reviews. Review inbox tasks retain the same declaration alongside prior completion evidence, effective inbox owner and review deadline. Case views group unresolved validity obligations by protected business result, show contributing steps, their declared risk, checklist owner and deadline, and list critical results first. The highest declared priority represents a group containing several review steps. Effective inbox ownership may differ after fallback or manual routing.
+
+These groups describe human confidence awaiting review, independently of fresh or unavailable application outcome reports. They disappear after explicit validity confirmation or redo requests clear the obligations; redeployments, prerequisite recovery, acknowledgment and inbox retention cannot silently revalidate the work. Existing playbooks without impact declarations retain their current behavior. Priority changes presentation only and does not authorize execution, alter deadlines or replace the reported business outcome.
+
+### Triage follow-ups by business impact
+
+Account and tenant-self follow-up queues accept `impact_priority` (`normal`, `high`, `critical`), `impact_kind` (`milestone`, `outcome`) and `impact_code`. Code filtering requires a kind so milestone and outcome names cannot be confused. These filters match the pinned impact of retained, unresolved dependency validity review tasks; ordinary follow-ups and resolved review episodes do not match. They compose with existing environment, customer, owner, workflow, due and reminder filters.
+
+Use `sort=business_impact` to order overdue follow-ups first, then unresolved review priority (critical, high, normal, undeclared), then follow-up time and stable subscription/notification identity. The default `sort=due` preserves existing due-time ordering. For example, append `impact_priority=critical&impact_kind=milestone&impact_code=delivery_confirmed&sort=business_impact` to a scoped follow-up queue request to find critical reviews protecting that milestone. The dashboard exposes the same controls.
+
+Filtering, counts and ordering happen before live pagination through the shared memory/PostgreSQL projection. Results remain limited to retained inbox notifications and the existing bounded candidate window; live pages can move after edits or watch updates. Due filters and ordering use the current inbox follow-up schedule. Pinned validity review deadlines remain visible and authoritative for review escalation even if an operator reschedules inbox attention. Effective inbox ownership remains visible alongside declared business impact.
+
+### Business impact summaries across workflow cases
+
+Follow-up queue responses now include optional `business_impact_summary`, computed across the full matching retained candidate window before pagination. Groups use workflow plus protected result kind and code, so identical milestone names in different workflows remain distinct. Existing environment, customer, workflow, owner, due, reminder and impact filters apply to the summary.
+
+Each group reports unique unresolved reviews, retained inbox tasks, affected workflow cases, critical and high-priority reviews, overdue reviews and critical overdue reviews. A review is identified by its progress ID, outcome list, step index and regression revision; multiple subscriptions delivering that obligation count once as a review. A case uses tenant, subject and workflow instance identity rather than playbook or inbox identity. A unique review is overdue if any matching delivery has overdue queue attention.
+
+Owner breakdowns count actual queue tasks using effective inbox ownership, including manual changes and fallback teams. They can therefore total more than the unique review count. Groups put critical overdue reviews first, then critical reviews and review volume, with stable workflow/result ties. Owners sort by overdue tasks, task volume and label. The dashboard shows these counts and offers group/owner drill-down controls that load the matching filtered queue while retaining the other active selectors.
+
+These summaries reflect retained unresolved human confidence work, not application business failure. Notification retention, disabled watchers, live source synchronization and the 2000-candidate queue limit still apply. Changing pages does not narrow the summary to visible rows. Queue attention dates retain their current coordination meaning, independently of pinned review escalation deadlines.
+
+### Live watches for protected business results
+
+Subscription creation accepts up to 16 unique `business_impact_watches`, each declaring a workflow, result `kind` and `code`, and optional notification `owner`. Watches share the subscription's application, customer and environment scope; transition operation/owner discovery filters do not narrow impact sampling. Configuration is fixed until the subscription is deleted and recreated. The dashboard offers one optional watch during subscription creation; SDKs support the full list.
+
+```json
+{"name":"delivery-impact","scope":"prod","business_impact_watches":[{"workflow":"fulfillment","kind":"milestone","code":"delivery_confirmed","owner":"operations"}]}
+```
+
+The initial successful observation is silent. Later zero-to-positive critical or overdue review transitions emit one durable `business_impact_changed` inbox notification, with before/after summaries and reasons `critical_review_added` or `review_became_overdue`. Stable counts, owner changes, priority changes that keep critical counts positive, and repeated polling do not duplicate those notices. Once a condition returns to zero, a later first occurrence can notify again. Notices include a control to open the matching review queue and preserve advisory sample times rather than asserting application business success.
+
+A `reviews_cleared` reason requires both an empty matching retained review queue and source confirmation that every tracked obligation is resolved. Clearing inbox attention, manual inbox completion or pruning notifications cannot manufacture this transition. The worker reads exact scoped progress for tracked cases and also checks for ongoing matching review obligations in those retained case rows. Missing progress or unresolved source work preserves the prior baseline and marks `coverage_incomplete`. Infrastructure read errors retry without advancing the affected watch baseline.
+
+Monitoring is sampled and retained: changes between polls can be missed; newly queued playbook work is observed on a subsequent poll. Each watch tracks up to 64 distinct source obligations per active review episode. Exceeding this bound or the 2000-candidate queue window prevents a clearance assertion for that episode. Group baselines and notifications publish together behind the subscription lease, and deleting the subscription invalidates pending publication. Clearance covers tracked retained reviews, not unseen cases or application execution.
+
+### Acknowledgment targets for business-impact alerts
+
+A business-impact watch can declare `acknowledge_after_seconds` (1–604800) and optional `fallback_owner`. A positive target requires a nonempty notification `owner`; the fallback must be distinct and requires a positive target. Omitted or zero targets preserve existing informational notices. The dashboard exposes these fields during subscription creation, and SDKs accept them on watch definitions.
+
+Critical-review and overdue-review alerts receive a frozen response deadline starting at notification delivery. Clearance notices do not receive acknowledgment targets. Targeted alerts enter the existing follow-up/reminder queue with their protected-result context, effective owner and deadline; they have no invented individual subject or application transition. Alert follow-ups do not contribute to underlying review impact counts or match review-impact filters, avoiding feedback loops.
+
+The retained-inbox response worker emits one `escalation_response_overdue` notice after a missed deadline and transfers ownership to the fallback only when original ownership is unchanged and assignment history is complete and empty. Manual routing, including reverting an owner change, prevents automatic takeover. An acknowledgment satisfies the response target even when the notification is later marked unread; it does not clear source review obligations or change business outcomes. Source review clearance does not automatically acknowledge a previously delivered alert.
+
+Manual completion or clearing inbox follow-up attention closes the target under the existing coordination rules. Rescheduling attention does not extend the original acknowledgment deadline. Acknowledgment alone leaves the scheduled follow-up under human control; clear or reschedule it as appropriate. Escalation evaluates retained coordination without needing current business reports and preserves notification retention, subscription deletion and polling limits.
+
+### Owning the response to a business-impact alert
+
+The existing notification coordination update accepts optional `review_response` on an original critical/overdue `business_impact_changed` alert. Declare a responsible `owner`, nonblank `plan`, `status` (`active` or `resolved`) and a future `check_in_at` for active work. On first creation, provide 1–16 `reviews` references containing source `subscription_id` and `sequence`. Each must identify an authorized retained dependency review task in the same application/environment and match the alert's protected workflow, result category and code. A customer-scoped alert cannot link a different customer's case.
+
+Saving a response acknowledges the alert and assigns inbox attention to the responsible team at the check-in time. This fulfills the alert response target but does not validate the underlying checklist work. The response records authenticated creation/update actors and times plus the latest 16 owner/plan/status/check-in changes. Plans permit line breaks and tabs within the 1024-byte UTF-8 bound. The dashboard offers an affected-review picker and can claim/edit the response in the original inbox; the follow-up queue shows its plan, check-in and linked review identities.
+
+Review links are fixed after creation. Omit them on later edits, or supply exactly the existing set; dropping or replacing links is rejected. The server captures exact source progress/case identities and the original obligation revision, so a response can be resolved after linked notification rows are pruned if its source progress remains available. The parent alert and response remain subject to inbox retention. Account responses can include captured source customer IDs; customer responses omit those IDs and derive identity from authentication.
+
+Set `status=resolved` and omit the check-in only after every linked source step has cleared its dependency review obligation through a validity confirmation or redo decision. Missing progress or a currently reopened linked step rejects resolution. A successful resolution clears response queue attention and records `resolution_checked_at`, an advisory pre-write source observation rather than execution authority. Later regressions do not rewrite historical closure; an explicit response reopen requires a future check-in and retains the fixed links.
+
+The existing coordination revision fence protects plan edits and reassignments. While a response is active, generic completion, owner changes or clearing/rescheduling attention without an explicit response update are rejected, so accountability cannot silently disappear. Use the response form to make those changes. Alert acknowledgment, response disposition and application business success retain separate meanings.
+
+### Missed check-ins for active review responses
+
+Review response updates accept optional `fallback_owner`: omit it to preserve the existing policy, send an empty string to clear it, or declare a different team. When an active check-in is first scheduled or explicitly rescheduled, the server records its initial responsible team and starts a new check-in period. Human owner changes within that period prevent automatic takeover, including changes that later revert to the original owner.
+
+The existing retained-inbox worker checks active responses independently of application reports and impact discovery. A missed check-in produces one durable `review_response_check_in_overdue` notice with the original deadline, plan, fixed review links and ownership snapshot. It transfers both response responsibility and inbox ownership only when a distinct fallback exists, the initial response owner is known and unchanged, coordination ownership still agrees, and the coordination revision is writable. The plan, review links and missed check-in time are preserved; the source response remains active and overdue until an explicit human update.
+
+The notification marker, fallback and notice publish together under the subscription lease and notification lock. Source resolution or a newly scheduled check-in cancels a stale read-phase publication. Stable overdue polls do not duplicate notices. Rescheduling starts a new period and permits one later missed-check-in notice. Resolving stops checks. An older response window without a recorded initial owner can notify but cannot automatically transfer until explicitly rescheduled.
+
+Both human edits and system missed-check-in events appear in the bounded response history. The dashboard exposes fallback policy and links overdue notices to the original response. Existing due-reminder markers remain available for queue attention; this feature adds accountable handoff and an inbox notice without treating acknowledgment or business outcome changes as response resolution. Parent inbox retention, subscription deletion and bounded periodic evaluation retain their existing limits.
+
+
+Active response plans also sample their fixed linked reviews before check-ins. The first successful sample establishes a silent baseline. New blocked prerequisites, unsatisfied application-declared checklist evidence requirements, and retired, replaced or unavailable progress produce a durable `review_response_blocked` inbox notice routed to the current response owner. Notices link back to the original plan and identify new blockers by linked review position. Stable blockers stay quiet; a blocker that clears and later returns can notify again. Resolution stops sampling. Plan edits and ownership changes fence stale publication; baseline and notice commit together.
+
+Sampling rotates through at most five retained active plans per subscription pass and reads only their scoped cases. Source read failures retry without advancing that plan's baseline. Baselines are bounded by retained active inbox plans. Evidence checks cover pinned, declared live checklist requirements across the linked playbook, not human attachments or a guarantee that a particular follow-up cannot execute. Observations are advisory samples: they do not change the plan, deadline, review disposition, ownership or application business result, and may miss changes between samples.
+
+
+Response plans also deliver `review_response_recovered` notices to the current owner when previously observed blockers are positively verified as cleared. Fresh active source progress must expose the linked step before prerequisite or source-availability recovery can be reported; declared checklist evidence must explicitly become satisfied. Missing progress, read errors, absent evidence checks and changed failure reasons cannot establish recovery. Unverified disappearances remain in the baseline for later verification. Partial recovery lists only cleared blockers, and simultaneous new blockers produce a separate warning. The first sample stays silent, stable recovery does not repeat, and notices link to the original plan without resolving it or changing its check-in.
+
+
+Response records expose a `health` summary in inbox and follow-up responses, with matching SDK types and dashboard rendering. The bounded worker samples active plans and reports `unavailable`, `blocked`, `review_required` or `clear` in that precedence order. It includes remaining blockers (including unverified disappearances), the most recent verified recoveries, and each fixed linked review's latest attempt and last available observation. Returned blockers are removed from the recovery list. No summary is present before the first attempt. Source errors publish unavailable health without advancing blocker baselines or emitting recovery notices; backend error details are not exposed. The last complete check means all scoped reads completed, even if a source was missing or retired.
+
+Health updates preserve human response timestamps, history and coordination revision. Human edits retain the latest observation; resolution freezes it as historical context. Clear observations do not prove workflow completion or business success, and source observations may change between polls. Existing owner and check-in fields remain the accountability record.
+
+
+Existing active response plans accept optional `decision` intent (`continue`, `revise`, `pause`) with a nonblank reason and the `health_fingerprint` the operator reviewed. The server captures authenticated actor, responsible team, decision time and an immutable health snapshot. Latest decisions remain on the response; explicit decisions also appear in its bounded 16-entry human history. Saving without a decision preserves the latest decision and does not duplicate it into history. Decisions use the existing owner, plan and future check-in fields; pause leaves the response active and monitored. No decision executes, authorizes or stops application work.
+
+Health fingerprints include sampled progress and application state revisions, source availability, blockers and validity obligations, excluding polling clocks and recovery-display history. Legacy observations without a fingerprint must refresh first. Decision preparation re-reads scoped linked sources and rejects a changed fingerprint; publication also checks the stored health digest under the notification lock and existing coordination revision fence. These are advisory pre-write source samples, not an atomic lock on application state: a later or concurrent application report can still change conditions after sampling. The dashboard requests refreshed health when a decision conflicts. Resolving responses remains a separate explicit action requiring source-review clearance.
+
+
+Active responses with an explicit decision now latch `decision_review` when sampled health differs from that decision's reviewed fingerprint. The existing bounded health worker atomically records the first changed condition and one `review_response_decision_review_required` notification under its subscription lease and source lock. The notice goes to the response's current responsible team and captures the prior immutable decision, changed health and differences in blockers, availability, progress or application-state revisions and review obligations. Read failures can require revalidation without establishing business failure. Polling timestamps alone do not trigger the alert.
+
+Subsequent condition changes and a return to the original condition remain quiet for that decision; live health continues updating. Acknowledgment, ordinary plan edits, owner changes and rescheduling preserve the review flag. A new explicit decision against freshly checked health clears it and starts a new episode. Resolution stops monitoring and retains the flag as historical context. Inbox and queue views show the requirement and link to the response decision form. Original intent, check-ins, human audit history, source review obligations and application execution are not changed automatically. Notifications and response context remain subject to existing inbox retention and sampled observations.
+
+
+Decision revalidation uses a response-level `decision_review_after_seconds` window, defaulting to 24 hours and configurable from 60 seconds to seven days. Each newly required review pins `due_at` from its original `required_at`; later policy changes affect future review episodes. Legacy flags without deadlines derive and persist a deadline from their original requirement time and effective policy. Human edits preserve the pinned episode before changing its policy.
+
+The retained-inbox worker independently rotates through at most five pending review deadlines per subscription pass, without application-state reads. An active episode that passes its deadline receives exactly one `review_response_decision_review_overdue` notice routed to the current response owner; the deadline and overdue marker commit together under source and subscription locks. A new explicit decision or response resolution wins against stale publication. Acknowledgment, attention edits, owner changes, a rescheduled check-in and condition recovery do not satisfy the review. New decisions reset the episode; resolution ends monitoring and retains historical context.
+
+Follow-up queues expose `attention_due_at`, the earlier of the existing check-in and active review deadline, and use it for due filters, counts and ordering before pagination. Coordination's original follow-up timestamp remains the human check-in, so existing acknowledgment and edit requests preserve their contract. Review deadline alerts are separate from check-in reminders. Dashboard views show both dates and the immutable overdue marker. These are retained, bounded advisory workflows; application execution remains application-owned.
+
+
+Responses accept an optional `decision_review_fallback_owner` for future revalidation episodes. Request omission preserves it, explicit empty string clears the future policy, and a provided nonempty team must be distinct from the submitted owner and satisfy existing owner-label limits. A newly required review pins its initial owner and fallback alongside its deadline. Existing or legacy episodes do not gain a retroactive fallback; unknown initial ownership prevents automatic reassignment.
+
+At the one-time overdue evaluation, a distinct pinned fallback takes over both response and inbox ownership only if the initial owner remains unchanged, no ownership-change flag was recorded, coordination still agrees, no completion exists, and its revision can advance. Human ownership moves (including a move away and back) and automatic check-in handoffs latch protection independently of retained history. A decision-review handoff also protects the existing check-in period from another automatic takeover. The response history records `decision_review_overdue`, and the episode and alert preserve previous/effective owners and whether reassignment occurred. Failed guards still publish the overdue alert to the current owner. Plans, check-ins, deadlines, immutable decisions and validity review obligations remain intact. A new explicit decision starts a fresh episode; ordinary future-policy edits do not rewrite an active episode.
+
+
+Handed-off reviews expose explicit acceptance through the existing response update: `handoff_acceptance` supplies the exact episode decision and requirement timestamps plus a nonblank note. The response must stay active, retain the handed-off owner in both response and coordination, and commit a future check-in. Acceptance and a new decision cannot be combined. Preparation and locked publication reject stale episodes, ownership changes, resolved responses and repeated acceptance. Existing account/tenant authorization applies; the authenticated actor records acceptance for the team label rather than proving team membership.
+
+The episode stores immutable accepting owner, actor, time, note and committed check-in. Human history records `handoff_accepted` and retains the acceptance snapshot even when a later explicit decision supersedes the episode, within the existing 16-entry history bound. Ordinary edits retain the original acceptance; later check-in edits or ownership moves do not rewrite it. Dashboard inbox and queue views distinguish a current handoff awaiting acceptance from accepted or historical handoffs. Acknowledgment alone is insufficient, and acceptance does not clear decision review, reset its deadline or overdue marker, verify business completion, or execute application work.
+
+
+Handoff acceptance uses `handoff_accept_after_seconds`, defaulting to one hour and configurable from one minute to seven days. The actual overdue transfer pins `acceptance_due_at` from the handoff timestamp. Future policy changes and check-in rescheduling do not extend it. Legacy reassigned episodes with a known handoff timestamp derive and persist a deadline from that original timestamp and effective policy; unknown handoff time cannot invent an acceptance clock. Ordinary edits pin legacy deadlines before changing future policy.
+
+An independent retained-inbox cursor checks at most five pending handoffs per subscription pass without reading application state. An active handoff still owned by its assigned team and lacking explicit acceptance receives one `review_response_handoff_acceptance_overdue` alert when its pinned window expires. Publication atomically stores the overdue marker with the notice and rechecks decision/requirement/handoff timestamps, deadline, owner agreement and acceptance under source/subscription locks. Acceptance, a new decision, resolution or an ownership move wins against stale publication. Notification acknowledgment never counts as acceptance. Alerts do not reassign ownership or alter the original decision-review deadline, plan, check-in or business execution. Late acceptance remains allowed and retains its overdue history.
+
+Dashboard inbox and follow-up views show time awaiting acceptance, the pinned acceptance deadline and overdue alert time alongside the original review deadline. Existing queue urgency remains based on the earlier check-in or review deadline; acceptance does not remove an unresolved review from the overdue queue. Monitoring and historical context remain subject to retained inbox bounds.
+
+
+A current unaccepted handoff can be explicitly declined with matching decision/requirement timestamps and a nonblank reason. Existing account/tenant authorization applies; an authenticated operator records the decline for the responsible team label without proving team membership. Preparation and locked publication reject accepted, already declined, stale, resolved or differently owned episodes. Decline cannot combine with acceptance or a new decision and must retain the owner, plan and exact saved check-in, even if overdue. It does not extend either deadline or automatically return ownership to the previous team.
+
+The episode latches `reassignment_required` and stores immutable decline owner, previous owner, actor, time and reason. History records `handoff_declined`. Acceptance and its reminder clock stop for that declined episode. Manual ownership reassignment clears the routing flag; a new decision supersedes the episode, and retained decline history remains available for audit. The original decision-review obligation remains until a new decision or explicit resolution.
+
+An independent bounded cursor publishes one `review_response_handoff_declined` notice to the captured previous owner and commits its notification marker with the source under the existing subscription lease and notification locks. It scans retained decline history so immediate reassignment, resolution or a new decision does not discard the notification intent. Notifications are historical and link to current ownership for manual routing; no automatic reassignment occurs. Original inbox pruning or the existing 16-entry history bound can limit delivery. Dashboard forms distinguish decline from acceptance and show pending manual reassignment.
+
+
+A declined handoff requiring routing now accepts explicit `handoff_reassignment` with matching decision, requirement and decline timestamps, a reason, and a different responsible team in the parent owner field. Authorized operators retain the exact plan and check-in (including an overdue one), and cannot combine routing with a decision, acceptance or another decline. Preparation and locked publication recheck the current declining owner and episode. The existing owner-label authorization model applies without proof of team membership.
+
+Reassignment atomically transfers response and coordination ownership, preserves original review requirement/deadline and immutable decline history, and starts a fresh acceptance window at its own `handed_off_at`. The old acceptance-overdue marker is replaced for the new route; the new team is not automatically accepted. Acceptance and decline must supply the current handoff timestamp after manual routing, preventing old route requests from applying to a later route. Legacy automatic handoffs can omit the timestamp. The decision-review overdue marker remains historical and is not restarted. Current routing clears the manual-reassignment flag; a new decline can require another explicit route.
+
+A bounded independent history cursor publishes one `review_response_handoff_reassigned` notification to the new team with reason and prior decline context, committing its marker with the source under existing locks and lease. Later decision changes or immediate re-decline do not discard retained notification intent; history and inbox bounds can still limit delivery. Dashboard forms offer explicit reassignment, show the new handoff clock and required acceptance, and preserve audit records. Plain owner edits remain available but do not create a new handoff/acceptance episode. Application execution and business outcomes remain application-owned.
+
+
+Future handoffs can configure `handoff_acceptance_escalation_owner`: a control-free team label, at most 256 UTF-8 bytes, distinct from the explicitly submitted response owner. Omission preserves policy and an empty string clears it. Each automatic or manual handoff pins the destination in `acceptance_escalation_owner`; later policy edits do not reroute that handoff. Legacy handoffs without a pinned destination receive their existing overdue notice only.
+
+When an active, unaccepted and undeclined handoff misses its acceptance deadline, the existing bounded deadline worker atomically records `acceptance_deadline_notified_at` and, for a distinct pinned team, `acceptance_escalated_at`, publishing both the assigned-team reminder and one `review_response_handoff_acceptance_escalated` inbox notice. The escalation includes the decision, original review deadline, current route, reason and prior decline snapshot when manually routed. Acceptance, decline, resolution, ownership changes or superseding decisions are rechecked under the existing locks before publishing. No ownership transfer or deadline extension occurs. A destination equal to the current owner is deduplicated to the ordinary notice. A fresh explicit handoff resets escalation for its own acceptance window. Dashboard controls configure future policy and show the pinned destination and historical delivery marker.
+
+
+An active, escalated and still-unaccepted handoff can record one explicit `escalation_acknowledgment` through the original response. Supply matching decision, requirement, handoff and escalation timestamps, a coordinator label, action plan and future `due_at` within seven days. The parent response must retain its exact owner, plan and check-in, including an overdue check-in. Acknowledgment cannot combine with a decision, acceptance, decline or reassignment; notification acknowledgment alone creates no commitment. Preparation and locked publication validate the episode and reject duplicate commitments. Existing operator authorization applies; coordinator labels do not prove team membership.
+
+The immutable record captures coordinator, plan, deadline, actor and server time in the current review and `escalation_acknowledged` history. An independent bounded cursor publishes one `review_response_escalation_commitment_overdue` notice to the coordinator if the deadline passes while this handoff remains escalated and unaccepted. Final publication rechecks coordination revision, decision and route identity, acknowledgment and deadline. Acceptance, decline, resolution, owner changes or a superseding decision suppress follow-up; a new manual route resets the current commitment while retaining history. The delivery marker is committed with the notice and mirrored in retained history without changing human update times. History and inbox retention bounds still apply. Acknowledgment never transfers response ownership, extends original deadlines, accepts the handoff or satisfies decision revalidation. Dashboard controls distinguish the commitment from acceptance and show the action deadline and delivery marker.
+
+
+Explicit `escalation_completion` closes one retained coordinator commitment on an active response. Supply exact decision, requirement, handoff, escalation and acknowledgment timestamps, a nonblank action summary (UTF-8, at most 1024 bytes) and one to eight distinct zero-based `review_indices` from the current response. The server copies those saved references into immutable evidence, recording actor and time; it does not infer fresh application verification or business success. Parent owner, plan and exact check-in are preserved, even when overdue, and parent reviews must be omitted. Completion cannot combine with acknowledgment, decision, acceptance, decline or reassignment.
+
+Preparation and locked publication reject stale episodes, changed ownership and duplicate completion. Work can still be recorded after acceptance or decline for the same retained episode; a new route, decision or resolved response supersedes it. The current acknowledgment and its retained history entry receive the completion record, and a separate `escalation_commitment_completed` history entry preserves the audit. Pending follow-up publication rechecks completion under existing locks, so closing the commitment prevents a stale deadline alert. Previously published overdue markers and notices remain historical. Ownership, handoff acceptance, review obligations and their deadlines are unchanged. Dashboard forms distinguish completing coordinator work from resolving the response and link the saved evidence.
+
+
+Explicit `escalation_action_review` observes only the current completion's immutable evidence references using the existing scoped playbook observation logic. Exact episode and completion timestamps, original owner/plan/check-in and omitted parent reviews fence the request. The recorded actor/time and health snapshot distinguish clear, blocked, review-required and unavailable evidence; source indices refer to completion evidence order. Read failures and unavailable backend produce unavailable observations, never success. Cancellation aborts publication. This is a scoped observation, not proof of causality or business completion, and application state can change after the read. The current completion keeps the latest review and retained `escalation_action_reviewed` history preserves prior snapshots.
+
+When the handoff is still unaccepted and undeclined and its completed action has a recorded non-clear review, explicit `escalation_revision` can create a revised coordinator commitment. It supplies the recorded review timestamp, coordinator, revised plan and future deadline within seven days. Preparation reads completion evidence again and rejects newly clear conditions; locked publication fences current episode, completion and prior review. The new commitment records the fresh basis and previous completion time, resets its own follow-up delivery marker, and appends `escalation_commitment_revised` history while retaining the previous completed work. Repeated revisions form bounded audit history rather than nested chains. Ownership, acceptance and original review/check-in deadlines remain unchanged. All response actions are mutually exclusive. Existing notification and history retention limits apply.
+
+
+Coordinator completion can opt into one scheduled evidence check with `review_after_seconds` (60–604800 seconds). Server completion time pins `review_due_at`; omission leaves checks manual. An independent timeout and bounded rotation read at most five due retained actions per pass using the same scoped observation as manual reviews. Read failures produce unavailable observations; timeout never infers clear evidence. The check occurs on the next successful worker evaluation at or after its due time, rather than at an exact wall-clock instant.
+
+Locked publication rechecks coordination revision, decision, handoff, escalation, acknowledgment, completion and due time, and current ownership. Resolved responses, superseding decisions/routes or revised commitments suppress an obsolete check. Acceptance or decline alone still permits observation of completed work in the same retained episode. Ordinary plan edits and manual reviews do not consume or postpone the schedule. The worker commits its `scheduled_review_at` marker, fresh evidence snapshot and one `review_response_escalation_action_checked` notice to the captured coordinator together, mirroring retained completion history and recording a system review history entry without changing human update timestamps. Notifications show clear, blocked, review-required or unavailable evidence and never infer causality or business success. A revised commitment remains an explicit operator action; the scheduled check does not change ownership, acceptance or original deadlines. Inbox pruning and bounded history still limit retained evidence.
+
+
+Explicit `scheduled_review_cancellation` cancels one pending scheduled check on the current completed coordinator action. Supply matching episode, acknowledgment, completion and due timestamps and a nonblank UTF-8 reason (at most 1024 bytes, line breaks and tabs allowed). Parent owner, plan and exact check-in remain unchanged, including an overdue check-in; parent reviews must be omitted. All response actions remain mutually exclusive. The existing authorized operator model applies; cancellation does not require reading application sources.
+
+Preparation and locked publication require an active retained episode, matching current ownership, a scheduled due time and no published or canceled check. Due or in-flight checks can still be canceled before publication. The immutable audit captures original completion/due times, actor, server time and reason in the completion, mirrored history and a `scheduled_review_canceled` change. The worker checks cancellation again under the same lock before committing observation, delivery marker and notice. If cancellation wins, no scheduled result is published; if publication wins, cancellation returns conflict and preserves that historical result. Manual evidence reviews remain available. Cancellation changes neither coordinator completion, evidence, ownership, handoff acceptance nor review deadlines, and cannot restart the schedule. Superseding or resolved episodes reject stale cancellation; history and inbox retention limits still apply. Dashboard forms distinguish a canceled schedule from a published check and retain the cancellation audit.
+
+
+Explicit `scheduled_review_reschedule` moves a pending evidence check to a distinct future time within seven days. Supply exact current episode/completion timestamps, the current `due_at`, replacement `new_due_at` and a nonblank UTF-8 reason (at most 1024 bytes, line breaks and tabs allowed). Preserve parent owner, plan and exact check-in, even when overdue; omit parent reviews and do not combine other response actions. Published, canceled, superseded or resolved checks reject rescheduling. Due or in-flight checks can be moved before publication without reading application sources.
+
+Preparation and locked publication fence current ownership, coordination revision, completion and due time. The completion retains `original_review_due_at`, the current `review_due_at` and immutable latest `review_reschedule`; each `scheduled_review_rescheduled` history entry records completion identity, previous and replacement due times, actor, server time and reason. Legacy pending checks pin their existing due time as original on first reschedule. Repeated reschedules preserve the original even after bounded history pruning. Matching completion/acknowledgment history is mirrored. The worker's existing revision and due-time checks reject observations captured against an older schedule, even if a later change returns to the same due time. If publication wins first, rescheduling conflicts and preserves that result. Ordinary edits and manual reviews still cannot move the schedule. Cancellation uses the current replacement due time. Completed work, evidence, ownership, handoff acceptance and original review/check-in deadlines remain unchanged. Dashboard forms show current and original schedule times and the change audit.
+
+
+The exact workflow case overview now returns `next_actions`, `next_action_count` and `next_actions_truncated`. It projects current source follow-ups before the existing follow-up page cap, matching aggregate response plans through their immutable linked review identities (customer, subject, workflow and instance). Matching completion evidence is filtered to the case, and `shared_plan` identifies actions whose source also spans other cases. It reads no additional inboxes and never derives work from historical delivery snapshots.
+
+Rows bring together response check-ins, decision revalidation, unaccepted or declined handoffs, escalation acknowledgment, incomplete coordinator commitments, pending scheduled evidence checks and optional evidence-review/revision suggestions, plus exact-case prerequisite reviews and other follow-ups. Each carries a responsible label, its own deadline/overdue flag, a human/automatic/suggested trigger and source subscription/sequence; available linked review references support inspection. Resolved plans, fulfilled commitments and canceled/published scheduled checks do not recreate completed obligations. Suggested revision requires a current non-clear completion review and an unaccepted, undeclined handoff.
+
+Actions are sorted overdue first, then dated work by due time, with deterministic source/kind ties. The response caps at 100 action rows; count covers retained matching rows before the cap rather than global tasks or workflow count. Existing coordination retention, independent-read and authorization limitations remain. The dashboard shows the unified list, distinguishes scheduled work from human obligations and suggestions, and links to source action controls and case evidence. It does not perform or authorize application actions and an empty retained list does not establish business completion. Go, Node and Python SDKs expose the same projection.
+
+
+The readiness work-queue endpoint now supports `view=next_actions` with owner, workflow, customer, due, `action_kind` and `action_trigger` selectors. It reuses the exact-case action projection over retained source records without additional case/evidence reads. Shared source actions are deduplicated by subscription, sequence and kind; affected matching cases and evidence are combined, and `shared_plan` warns that source controls can affect other cases. Account customer selectors match linked case identities rather than aggregate notification ownership. Platform scopes remain implicit and omit customer identifiers.
+
+Owner and overdue/upcoming filters use each action's owner and own deadline, after projection; undated items appear only in all-due views. Rows distinguish human obligations, automatic checks and optional suggestions and sort overdue first, then due time and stable source/kind ties. Pagination/counts describe matching action rows, not workflow cases; next-action pages use `next_actions` and leave `items` empty. Offset is bounded by the existing retained source candidate limit times the eleven action kinds (22000); follow-up view keeps its existing 2000 bound. Reminder and business-impact selectors are rejected in action view, while action selectors require that view. Existing follow-up behavior remains the default when view is omitted. Retention and independent live-read limitations remain; live edits can move pages. The dashboard defaults its work-queue selector to next actions, links to existing source controls and evidence, and retains the follow-up/reminder view. Go, Node and Python SDKs expose query selectors and queue rows.
+
+
+The dashboard next-action queue now supports up to 20 named team-view presets per browser/application context. Presets store only validated filter strings (environment, customer, owner, workflow, action kind/trigger, due selector and page size), never task snapshots, pagination offsets, credentials or application results. Saving an existing name updates its filters; deletion removes only that browser preset. Browser storage can be unavailable, in which case sharing still works. These presets are browser-local rather than server-managed team configuration.
+
+A shareable/bookmarkable `#readiness-work?…` fragment opens the same next-action filters in the existing application dashboard, then performs a fresh authenticated queue read from offset zero. Links carry the application identity, reject a mismatched application context, and do not grant access or alter the account/application endpoint. Unsupported, duplicate, oversized or invalid filter choices are rejected before use, and the backend retains normal query and authorization validation. Shared views can be saved under a local name. Task edits and saved-filter edits remain separate; stale in-flight reads are discarded when a view changes. Other tabs refresh their preset selector on browser storage changes. Filter names and labels are rendered as text; links include filter metadata, so share them only with intended recipients. Existing live-pagination and retained-coordination limitations still apply.
+
+
+Readiness subscriptions can configure immutable `next_action_digest` policy with a required exact owner/team label, optional workflow/action-kind/trigger selectors, cadence (60–604800 seconds, default 3600) and approaching-deadline window (60–604800 seconds, default 86400). Owner is both action filter and inbox recipient; existing operator authorization applies without proving team membership. Subscription customer/environment scope is inherited while transition discovery filters remain independent. The first digest evaluation is due one cadence after creation. Policy changes require a new subscription; deleting one removes its inbox and fingerprint tracking.
+
+A separate worker timeout reads retained source work once and projects the same cross-case queue. Overdue items, deadlines through the approaching window and unaccepted handoffs qualify; undated suggestions do not. It tracks fingerprints by source subscription/sequence/action kind, including owner, summary, deadline/overdue phase, case identities and immutable review links, excluding polling times. Stable delivered items are not repeated. Newly qualifying, changed, newly overdue or reappearing work can notify. At most 20 changed rows enter one `next_action_digest` notice; undelivered changed rows remain eligible at later cadences. Tracking is bounded by retained queue candidates and retired when work no longer qualifies. Empty/unchanged evaluations are silent and advance cadence; read failures preserve the due time and mark retrying. Evaluation/delivery times and next due time are exposed on the subscription.
+
+Digest fingerprints, cadence state and the unread notice are saved together under existing subscription leases and persistence transactions. Source records are read independently, so digest items are historical snapshots and can change before publication; source links require inspection before action. No source ownership, deadline, acceptance, commitment or business outcome is changed. Digest deliveries are not projected back into source work, preventing notification feedback. Counts cover retained qualifying actions rather than all global tasks, and source/inbox pruning still limits coverage. Dashboard controls configure cadence and filters and render grouped action links; Go, Node and Python SDKs expose policy, delivery metadata and payloads.
+
+Digest entries include source-keyed explanations: overdue, approaching deadline, and/or waiting for handoff acceptance; changed projected fields compared with the last delivered snapshot; and advisory next steps pointing to existing source controls. Snapshots are saved atomically with delivery, not on undelivered evaluations. Existing fingerprint-only records report unavailable history on their next changed delivery; older notices remain readable without explanations. Retired qualifying items lose comparison history, so later re-entry is a first retained delivery. Evidence changes compare linked references, not live evidence health or hidden escalation state. Team filtering can hide reassignment to another owner; absence never proves completion. Explanations grant no execution permission and never mutate source work.
+
+Checking a digest notification reconciles at most 20 saved entries through retained source inbox reads using the original application, environment and customer boundary. Current action projection preserves the subscription workflow filter and omits the digest owner and deadline filters, so reassignment and postponed deadlines remain visible. Results distinguish outstanding, changed, explicitly completed source follow-ups, no longer outstanding, and unavailable. Resolved source coordination returns its immutable completion receipt; canceled or otherwise vanished action projections never imply completion. Reads are independent snapshots and preserve the delivered digest. Expired/deleted/missing or inaccessible source records are unavailable; unexpected backend failures fail the check. The dashboard performs this check when opening a digest and offers refresh. No state writes, ownership changes, execution decisions, or live evidence-health claims occur.
+
+Next actions now carry deterministic obligation identities from source subscription, sequence, kind and persisted epoch timestamps (and dependency-review revision where available). Review requirements, handoff attempts, coordinator commitments and completion evidence checks remain distinct across repeated cycles. Deadline edits and owner changes preserve the epoch; a new response check-in deadline defines a new check-in obligation. Digest deduplication includes identity. Reconciliation distinguishes a replaced obligation from changed details and exposes only lifecycle receipts anchored to the saved epoch. Coordinator completion receipts match acknowledgment time; scheduled check cancellation/reschedule/review receipts match completed-action time; current handoff receipts match the handoff epoch; reassignment receipts match the declined-at epoch. Unanchored historical acceptance/decline entries are omitted. Retained receipts can establish an old obligation's completion even while a newer action is outstanding. Receipt coverage is partial and limited by source history; legacy actions without identity cannot be assigned an epoch retroactively. Source-level resolved closure remains distinct from precise per-obligation lifecycle evidence. No workflow mutation or execution permission is introduced.
+
+Source mutations now save obligation-linked receipts in the same notification JSON as the source update, under its existing lock/transaction. Human coordination writes, leased worker source updates, playbook assignment synchronization and new notification publication share capture logic. New obligations receive assignments; ownership/deadline/plan changes receive linked receipts; removed obligations record matched completion/cancellation or an explicit supersession without asserting fulfillment. A new explicit response decision can fulfill the exact prior latched review. Digest reconciliation prefers retained ID-linked receipts across later source cycles. Each source retains at most 128 receipts with a persistent truncation flag; legacy history is not backfilled, deleted sources remain unavailable, and bounded lifecycle coverage is always explicit. Receipt capture adds no destinations, application authorization or source execution.
+
+The exact workflow case includes an obligation history view grouped by source subscription, sequence and obligation identity. New receipts retain affected case identities at mutation time, including shared plans; history selection uses those saved identities rather than the source plan's current reviews. The case page reuses the retained inbox scan already used for its timeline, including closed source follow-ups, then joins current actions from the independent next-action projection. At most 100 most-recent obligation groups and 40 latest events per group are shown, with counts, timestamps, caps/pruning indicators and bounded-history warnings. Customer views omit tenant identifiers and unrelated case references; operator views require the exact selected customer. Legacy unscoped receipts are excluded, deleted/pruned sources are unavailable, and no current action never proves completion. Existing source controls are linked, with shared-source warnings; no source state or application authorization changes.
+
+Mutation-time receipts now record paired same-source predecessor/successor links. Same-kind removed/new obligations and explicit handoff reassignment, reviewed coordinator revision, or decision-to-check-in transitions can link when their saved case coverage overlaps. A later cycle may link the most recent retained terminal same-kind predecessor. Existing identities reactivated later are not linked again, preventing cyclic lineage. Links retain a recorded decision/reassignment reason when changed in this write, an explicit revised-commitment context, or a clearly labeled mechanical new-cycle explanation; succession never proves business causation or fulfillment. Edge receipts carry only intersecting case coverage, so case views do not expose relationships to unrelated cases. The case history can expand and jump to a related retained obligation; missing/pruned groups remain explicitly unavailable. Links share the source write transaction and existing receipt caps; legacy history is not reconstructed.
+
+Digest lifecycle results include successor edges only when saved edge coverage matches a delivered case and customer identity; unrelated shared-source edges are omitted.
+
+Outstanding case obligations now have coordination assessments alongside a shared current workflow-requirement context. Acceptance, human routing, scheduled worker checks and evidence reviews are distinguished; fresh reports enable review while missing/stale reports remain explicit. Free-form response/check-in and coordinator plans remain fulfillment-unassessed because no transition binding is declared. Workflow context reuses the existing exact-case instance readiness, including missing milestones, prerequisites, policies, blockers and verifications, with links to named dependency cases. Unknown/stale evidence cannot produce a positive transition verdict; partial transition/report/verification coverage remains explicit. Blocking transition requirements do not automatically block human review or ownership decisions, and overdue work remains independently dated. The view performs no new source reads, infers no dependencies from history and grants no application execution permission.
+
+Free-form response check-ins, coordinator commitments and generic follow-ups can now bind an exact obligation cycle/case to a declared current-state transition and pinned contract version. The case page lets users select a declared transition or explicitly clear a binding with a reason. The existing revision-checked inbox PATCH prepares the binding using fresh exact-case evidence and verifies the active source obligation under its write lock. Binding-only writes preserve status, owner, note and deadline and cannot combine with plan/completion changes. Source coordination retains at most 32 case-specific active-cycle bindings; unrelated edits preserve them and new cycles never inherit them. Obsolete cycles can be pruned during later binding writes; their bounded receipt snapshots remain available. Binding changes and clear reasons are captured atomically in case-scoped history. Current assessments distinguish satisfied target requirements, unmet prerequisites and unavailable/changed/stale declarations, exposing the exact readiness evidence. Observations and persistence are independent; binding never authorizes execution, establishes fulfillment, or automatically closes work.
+
+Bound obligation targets are observed automatically by the readiness subscription worker, rotating through at most five retained sources per pass. The first observation establishes a baseline. Later changes between waiting, requirements satisfied and target unavailable create an owner-addressed durable inbox notice with the exact case, cycle, target and observation time. Unchanged observations produce no notice; cleared or retired bindings stop producing notices. Read failures retain the previous observation for retry rather than asserting recovery. Source revision and binding validation fence concurrent edits, and observations commit atomically with delivery. Notices are retained advisory evidence: inspect the current case before acting. Requirements satisfied never completes an obligation or authorizes or executes its transition.
+
+Bound obligations support explicit fulfillment through the revision-checked source inbox PATCH. Supply the full saved binding, a reason, and a reporting operation/report ID. The server verifies that the exact case and obligation cycle remain active, that the binding is unchanged, and that the retained report belongs to the same application, environment, customer and subject. Its operation name, workflow/instance, from/to states and contract version must match the target, and it must be published after binding; metadata-only reports and readiness alone cannot fulfill work. Lookup scans at most 1000 exact-case reports. Evidence is checked independently before the locked source write and retained with the human actor/time and responsible owner; it does not assert current business success. Fulfillment removes only that case/cycle from current next actions and target monitoring, preserving other cases and source plan controls. New cycles remain outstanding. Case history shows the immutable receipt and evidence; saved digest checks count a cycle completed only when all delivered cases have fulfillment receipts. Source coordination keeps up to 128 immutable receipts and rejects further fulfillment at capacity instead of pruning into reopened work. Fulfillment cannot be combined with plan, source completion or binding edits and never authorizes or executes application transitions.
+
+Fulfilled bound obligations can be explicitly reopened with the full saved binding, the exact latest fulfillment time, and a reason through the source inbox PATCH. The source revision and current unsuppressed action projection must still match that case/cycle; cleared or changed bindings, superseded cycles, closed sources and removed cases reject reopening. Other action edits cannot be combined, and owner, status, note and deadline are preserved. The immutable reopening receipt records the actor, time, current responsible owner and original fulfillment identity; original receipts and evidence remain retained. Only this case/cycle returns to next actions and target observation. Re-fulfillment requires matching application evidence published after the latest reopening. Case history exposes reopening controls and receipts, and saved digest checks consult the latest fulfillment/reopening state for each delivered case. The worker rotates through five retained sources and publishes at most 20 pending owner notices per pass, committing delivery checkpoints atomically with durable notices; source revision and receipt validation fence stale observations. Notices retain the reopening observation and link to current case/source controls; subsequent source changes are not hidden. At most 128 reopenings are retained per source; capacity exhaustion rejects further reopening instead of losing prior decisions. Application evidence never automatically reopens obligations or authorizes execution.
+
+The readiness worker now reviews the latest retained non-reopened fulfillment for each exact case/cycle, rotating through five cases per pass even on large shared plans. It checks the original proof or latest reaffirmation against retained operation/report coverage, fresh current state and contract version, and explicitly named resolution/verification evidence. Missing reports or stale/unavailable current state, contract changes, reopened named resolutions and unavailable formerly verified proof flag human review; ordinary workflow progression is not invalidation. Each exact-case report lookup scans at most 1000 reports; outside-coverage evidence is unavailable, not proven deleted. Unexpected read errors retain prior observations for retry. Reasons remain latched even after evidence recovers, and semantic fingerprints suppress unchanged owner notices. Review writes, notices and source-scoped receipts commit together under lease/source revision checks; outdated bases cannot overwrite later reaffirmation or reopening. Fulfillment remains intact and no current task is automatically reopened.
+
+Case history exposes current retained review flags and explicit reaffirmation controls alongside reopening. Reaffirmation requires the original binding/fulfillment identity, saved review fingerprint, reason and fresh full application state report published after review became required. The report must belong to the same application, scope, customer and subject, attest the exact workflow/instance under the fresh current contract, and pass a separate current-evidence observation before the revision-checked write. The server retains the original fulfillment and all immutable reaffirmations, clears only the matching flag, and monitors the new proof thereafter. At most 128 reaffirmations are retained per source; exhausted capacity rejects writes without pruning decisions. Case history and digest lifecycle views filter these receipts to their saved case coverage. Closed source plans can still receive evidence reaffirmation, while reopening continues to require an active source cycle. These are human review receipts, not application execution permission or assertions of current business success.
+
+Pending fulfillment reviews are independent human work items in case and team next-action queues. Their identities include the exact saved case, fulfillment, evidence basis and first-required time; the original obligation remains fulfilled. Owners, latched reasons, evidence-check time and case links expose reaffirm/reopen controls. Reviews have no inferred deadline and qualify for team digests even when undated or their source plan is closed. Digest comparison ignores poll timestamps and ordinary report revisions, while reasons, owner and semantic review changes remain deliverable. Multiple reviews on shared sources retain separate identities and explanations, with customer case boundaries preserved. Each source contributes at most 128 reviews plus ordinary actions; the bounded next-action offset is 278000. Case pages retain their 100-row display cap. Explicit reaffirmation completes the exact review cycle; reopening cancels that review while restoring original work. Closed source coordination alone never counts as completing a saved review. Recovered evidence remains pending until an explicit decision.
+
+Pending fulfillment reviews can be assigned and scheduled independently through `review_coordination`. Supply the review work-item ID, saved review fingerprint, source coordination revision, owner and reason while preserving the source's status, owner, note and follow-up deadline. An empty review owner explicitly unassigns it; omitting the review deadline clears it. The worker preserves these choices for that pending review cycle. New review cycles start without a manually chosen owner or deadline. Dated reviews participate in overdue and due-soon queues/digests; undated reviews remain eligible for review digests. Immutable changes retain the previous and new owner/deadline, actor and reason (up to 128 per source). Stale, resolved or superseded reviews reject changes. Original work ownership and fulfillment receipts remain intact.
+
+An active readiness subscription now delivers `fulfillment_review_overdue` inbox notices for missed explicit review deadlines. A separate cursor rotates at most five overdue reviews per pass, independently of evidence observation and discovery filters. Under the source/subscription locks it rechecks the exact review cycle, saved fingerprint, deadline and active fulfillment; reaffirmation, reopening, supersession and changed deadlines suppress stale work. The notice routes to the current review owner (or remains unassigned) and includes the saved case, reasons and evidence context with explicit reaffirm/reopen controls. Publication and `fulfillment_review_reminders` receipts commit atomically. Each review ID/deadline is delivered once across retries, restarts and restoring an already notified deadline; different deadlines and new review cycles are eligible independently. History retains delivery time, notification ID and saved review owner/context. Reminder delivery does not change the semantic review fingerprint or mark work complete. Coverage remains limited to retained inbox sources and active subscriptions; each source retains at most 128 immutable reminder receipts and stops publishing further reminders at capacity.
+
+Fulfillment review coordination supports optional `escalation_owner` and `escalate_after_seconds` (1–604800 seconds). The team must differ from the review owner and requires an explicit deadline. Omitted policy fields preserve the policy when the reviewer stays the same and a deadline remains, including rescheduling; empty escalation owner or zero grace clears it. Reassignment or removing the deadline clears policy when both fields are omitted. Changes record prior/new policy with the assignment reason and actor; worker observations preserve policy for that pending review cycle, and new cycles start without it.
+
+The escalation grace begins at durable overdue-reminder delivery, so late worker runs do not shorten the response window. A separate bounded cursor checks at most five eligible reviews per pass. Final source/subscription locks recheck review identity, fingerprint, current owner, deadline, policy, reminder receipt and grace expiry before atomically saving one `fulfillment_review_escalated` inbox notice and immutable `fulfillment_review_escalations` receipt. Reassignment after the reminder permanently cancels its escalation window even if reverted; choose a new deadline for a new window. Reaffirmation, reopening, supersession and rescheduling suppress stale delivery. Policy changes may defer or redirect an unsent escalation but never repeat a delivered escalation for the same review ID/deadline. Destination notices retain original reviewer, case, reasons and evidence context; they do not transfer ownership or change fulfillment. Case/digest history includes destination, triggering reminder, scheduled escalation time and delivery time. Coverage depends on retained sources and active subscriptions, with 128 immutable escalation receipts per source; at capacity further escalation delivery stops.

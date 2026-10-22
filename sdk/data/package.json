@@ -8,8 +8,14 @@
   "types": "./dist/index.d.ts",
   "files": ["dist", "README.md", "LICENSE"],
   "engines": {"node": ">=22"},
-  "exports": {".": {"types": "./dist/index.d.ts", "import": "./dist/index.js"}},
+  "exports": {
+    ".": {"types": "./dist/index.d.ts", "import": "./dist/index.js"},
+    "./live": {"types": "./dist/live/index.d.ts", "import": "./dist/live/index.js"},
+    "./live/react": {"types": "./dist/live/react.d.ts", "import": "./dist/live/react.js"}
+  },
   "scripts": {"build": "tsc -p tsconfig.json", "test": "npm run build && tsc -p tsconfig.declarations.json && tsc -p tsconfig.test.json && node --test test/*.test.mjs"},
   "dependencies": {"@supabase/postgrest-js": "2.117.3"},
-  "devDependencies": {"typescript": "5.9.3"}
+  "peerDependencies": {"react": ">=18"},
+  "peerDependenciesMeta": {"react": {"optional": true}},
+  "devDependencies": {"@types/react": "19.1.8", "@types/react-dom": "19.1.6", "react": "19.1.0", "react-dom": "19.1.0", "typescript": "5.9.3"}
 }

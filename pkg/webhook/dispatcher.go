@@ -20,6 +20,12 @@
 //     MarkAppWebhookDelivery{Succeeded,Failed,Dead} based on
 //     the outcome + retry budget.
 //
+//   - While a claim keeps finding due rows, each finished delivery wakes
+//     another claim immediately, so a backlog drains at delivery speed
+//     within the slot limit rather than at one DefaultCap batch per tick
+//     (spec Appendix D V12 measured that ceiling at 6.2 deliveries/s).
+//     An empty claim hands pacing back to the ticker.
+//
 //   - A process-wide slot limit bounds claimed and in-flight deliveries
 //     across ticks. In-flight goroutines track through d.inflight (sync.WaitGroup).
 //     On ctx.Done() the Run loop blocks on d.inflight.Wait() with a
@@ -69,6 +75,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -271,6 +278,14 @@ type Dispatcher struct {
 	loadMu      sync.Mutex
 	reserved    int
 	active      int
+	// backlog records that the last claim found due deliveries, so more
+	// may be waiting; guarded by loadMu. While it holds, each finished
+	// delivery signals wake and Run claims again at once instead of at the
+	// next Tick, so a backlog drains at delivery speed rather than at one
+	// Cap-sized batch per Tick. wake is created by Run and holds at most
+	// one pending signal.
+	backlog bool
+	wake    chan struct{}
 
 	// Backoffs overrides the per-retry-policy schedule. When nil,
 	// the dispatcher consults DefaultBackoffs. Tests install
@@ -367,6 +382,9 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 		d.HTTPClient.Timeout = d.PerAttempt
 	}
 
+	d.loadMu.Lock()
+	d.wake = make(chan struct{}, 1)
+	d.loadMu.Unlock()
 	ticker := time.NewTicker(d.Tick)
 	defer ticker.Stop()
 	var healthTicker *time.Ticker
@@ -386,6 +404,10 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 			d.refreshHealth(ctx)
 		case <-ticker.C:
 			d.cycle(ctx)
+		case <-d.wake:
+			// Backlog re-claims skip the tick's relay drains; they stay
+			// on the Tick cadence.
+			d.claim(ctx)
 		}
 	}
 }
@@ -461,6 +483,15 @@ func (d *Dispatcher) cycle(ctx context.Context) {
 			d.HealthMetrics.setOutboxRelaySuccess(parkRelayOK && wakeRelayOK)
 		}
 	}
+	d.claim(ctx)
+}
+
+// claim reserves dispatch capacity, claims due deliveries and starts them.
+// Finding any due rows marks a backlog (see Dispatcher.backlog); an empty or
+// failed claim clears it, so the Tick drives the next attempt. When no
+// capacity is free the backlog flag is left as is: a finishing delivery
+// frees a slot and wakes the next claim.
+func (d *Dispatcher) claim(ctx context.Context) {
 	limit := d.reserveClaimSlots()
 	if limit == 0 {
 		return
@@ -469,16 +500,19 @@ func (d *Dispatcher) cycle(ctx context.Context) {
 	claimed, err := d.store.ClaimDueAppWebhookDeliveries(ctx, limit, now)
 	if err != nil {
 		d.finishClaim(limit, 0)
+		d.setBacklog(false)
 		d.log.Warn("webhook: claim", "err", err)
 		return
 	}
 	if len(claimed) > limit {
 		d.finishClaim(limit, 0)
+		d.setBacklog(false)
 		d.log.Error("webhook: claim returned more rows than requested", "limit", limit, "returned", len(claimed))
 		return
 	}
 	d.inflight.Add(len(claimed))
 	d.finishClaim(limit, len(claimed))
+	d.setBacklog(len(claimed) > 0)
 	for _, row := range claimed {
 		// Capture the loop variable — Go 1.22+ per-loop semantics
 		// make this explicit; we do it the explicit way for
@@ -517,6 +551,18 @@ func (d *Dispatcher) finishDelivery() {
 	defer d.loadMu.Unlock()
 	d.active--
 	d.HealthMetrics.setDispatchLoad(d.active, d.reserved+d.active, d.maxInFlight)
+	if d.backlog && d.wake != nil {
+		select {
+		case d.wake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (d *Dispatcher) setBacklog(backlog bool) {
+	d.loadMu.Lock()
+	defer d.loadMu.Unlock()
+	d.backlog = backlog
 }
 
 // deliverOne POSTs one row through pkg/webhookout.Dispatcher, then
@@ -524,6 +570,15 @@ func (d *Dispatcher) finishDelivery() {
 // returns — the run loop does not abort on individual delivery
 // failures.
 func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDelivery) {
+	blocked, err := d.store.ScenarioWebhookDeliveryBlocked(ctx, row.AppID, row.WebhookID)
+	if err != nil {
+		d.log.WarnContext(ctx, "webhook: rehearsal policy check failed", "delivery_id", row.ID)
+		return // Unknown authority never permits transmission; the lease can retry.
+	}
+	if blocked {
+		d.markDead(ctx, row, state.ScenarioWebhookSuppressed)
+		return
+	}
 	// Load the subscription row so we know the target_url + secret +
 	// retry_policy. The store guarantees the webhook row exists
 	// (FK CASCADE on the delivery ledger would have prevented the
@@ -645,6 +700,9 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	if hook.Scope == state.AppWebhookScopePlatformTenant {
 		source = "urn:gregale:platform-tenant:" + hook.PlatformTenantID
 		subject = "platform-tenants/" + hook.PlatformTenantID
+	} else if hook.Scope == state.AppWebhookScopeAccount && row.AppID == "" {
+		source = "urn:gregale:account:" + row.AccountID
+		subject = "accounts/" + row.AccountID
 	}
 	evt := webhookout.Event{
 		ID:         row.ID,
@@ -664,6 +722,19 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 			"attempt":     row.Attempt,
 			"data":        json.RawMessage(row.Payload),
 		},
+	}
+
+	// ADR-752: a datadog webhook sends its secret as a Datadog API key, so
+	// it must only ever reach a Datadog Events API endpoint. apid enforces
+	// this on write; re-check here so a stored row cannot redirect the key.
+	if hook.DeliveryFormat == state.AppWebhookDeliveryFormat(webhookout.DeliveryFormatDatadog) {
+		if !api.IsDatadogEventsURL(hook.TargetURL) {
+			d.markDead(ctx, row, "webhook: datadog delivery target is not a Datadog Events API endpoint")
+			return
+		}
+		if app, appErr := d.store.AppByID(ctx, row.AppID); appErr == nil {
+			evt.Service = app.Slug
+		}
 	}
 
 	// Per-delivery dispatcher. We construct one per call so the
@@ -704,7 +775,6 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		return
 	}
 	if errors.Is(res.Err, webhookout.ErrTerminal) ||
-		errors.Is(res.Err, webhookout.ErrBodyTooLarge) ||
 		errors.Is(res.Err, oci.ErrImageEgressDenied) {
 		if d.markDead(ctx, row, fmt.Sprintf("webhook: terminal delivery error: %v", res.Err), meta) {
 			d.emitAudit(ctx, "webhook.dead", row, hook, res.Err, res.StatusCode)

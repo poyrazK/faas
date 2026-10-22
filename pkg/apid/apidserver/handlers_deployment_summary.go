@@ -33,7 +33,7 @@ func (s *server) getAppDeploymentSummary(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	currentResponse := s.deploymentResponse(r.Context(), deployment, app)
+	currentResponse := s.withRelease(r.Context(), s.withRolloutHold(r.Context(), s.deploymentResponse(r.Context(), deployment, app)), deployment)
 	var previousResponse *api.DeploymentResponse
 	if previous != nil {
 		projected := s.deploymentResponse(r.Context(), *previous, app)
@@ -91,6 +91,11 @@ func (s *server) previousAppDeployment(ctx context.Context, appID string, curren
 // retype. A pre-ADR-198 row has revision 0, which callers must treat as "no
 // revision" and fall back to the id.
 func (s *server) rollbackTarget(ctx context.Context, appID, currentID string) (string, int, error) {
+	if _, split := s.trafficSplitEarlierRelease(ctx, appID); split {
+		// A plain rollback refuses during a split (H10-10); there is no
+		// target to advertise.
+		return "", 0, nil
+	}
 	target, err := s.store.LatestSupersededDeployment(ctx, appID)
 	if errors.Is(err, state.ErrNotFound) {
 		return "", 0, nil

@@ -1,5 +1,5 @@
 // adr: 380
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -25,9 +26,9 @@ func TestFOCUSCLIExportsAndPreservesExistingFiles(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	path := filepath.Join(t.TempDir(), "billing.zip")
-	stderr, restore := captureStderr(t)
+	stderr, restore := main.CaptureStderr(t)
 	defer restore()
-	if code := cmdBilling([]string{"export", "--month", "2026-09", "--out", path}); code != 0 {
+	if code := main.CmdBilling([]string{"export", "--month", "2026-09", "--out", path}); code != 0 {
 		t.Fatalf("export exit=%d stderr=%s", code, stderr.String())
 	}
 	got, err := os.ReadFile(path)
@@ -38,7 +39,7 @@ func TestFOCUSCLIExportsAndPreservesExistingFiles(t *testing.T) {
 	if err != nil || info.Mode().Perm() != 0o600 || !strings.Contains(stderr.String(), "partial") {
 		t.Fatalf("file permissions or conformance notice: %v %s", err, stderr.String())
 	}
-	if code := cmdBillingExport([]string{"--month", "2026-09", "--out", path}); code == 0 {
+	if code := main.CmdBillingExport([]string{"--month", "2026-09", "--out", path}); code == 0 {
 		t.Fatalf("overwrote existing file, exit=%d", code)
 	}
 	got, err = os.ReadFile(path)
@@ -61,7 +62,7 @@ func TestFOCUSCLIValidationAndAPIFailureLeaveNoFile(t *testing.T) {
 		{"--month", "2026-09", "--out", path, "unexpected"},
 		{"--month", "2026-09", "--out", path},
 	} {
-		if code := cmdBillingExport(args); code == 0 {
+		if code := main.CmdBillingExport(args); code == 0 {
 			t.Errorf("unexpected success: %v", args)
 		}
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -80,9 +81,9 @@ func TestFOCUSCLICSVStdout(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdBillingExport([]string{"--month", "2026-09", "--format", "csv"}); code != 0 || stdout.String() != "BilledCost,BillingAccountId\n1.00,account-1\n" {
+	if code := main.CmdBillingExport([]string{"--month", "2026-09", "--format", "csv"}); code != 0 || stdout.String() != "BilledCost,BillingAccountId\n1.00,account-1\n" {
 		t.Fatalf("stdout=%q exit=%d", stdout.String(), code)
 	}
 }

@@ -21,10 +21,12 @@ import (
 
 func cmdAutomations(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale automations <init|check|diff|list|get|health|history|report|runs|diagnose|recovery-preview|recover|recovery-plan|recovery-start|recovery-retry-plan|event-recovery-plan|event-recovery-start|event-recover|pause|resume|revisions|restore|delete|validate|simulate|apply|publish|publish-policy|failure-policy|failure-resume|recovery-health|recovery-cancel-preview|recovery-cancel|recovery-response-plan|recovery-response-preview|recovery-response-apply|recovery-response-status|recovery-policy|recovery-policy-evaluate|recovery-policy-reviews|recovery-suppress>", "automations")
+		PrintUsage(os.Stderr, "usage: gregale automations <live|init|check|diff|list|get|health|history|report|runs|diagnose|recovery-preview|recover|recovery-plan|recovery-start|recovery-retry-plan|event-recovery-plan|event-recovery-start|event-recover|pause|resume|revisions|restore|delete|validate|simulate|apply|publish|publish-policy|failure-policy|failure-resume|recovery-health|recovery-cancel-preview|recovery-cancel|recovery-response-plan|recovery-response-preview|recovery-response-apply|recovery-response-status|recovery-policy|recovery-policy-evaluate|recovery-policy-reviews|recovery-suppress|failures|failure-recovery-plan|failure-recovery-review|failure-recovery-reviews|failure-recovery-evidence|recovery-retry-evidence>", "automations")
 		return 1
 	}
 	switch args[0] {
+	case "live":
+		return cmdAutomationsLive(args[1:])
 	case "recovery-policy-evaluate":
 		return cmdAutomationsRecoveryPolicyEvaluate(args[1:])
 	case "recovery-policy":
@@ -41,6 +43,18 @@ func cmdAutomations(args []string) int {
 		return cmdAutomationsResponseExecute(args[1:], "apply")
 	case "recovery-response-status":
 		return cmdAutomationsResponseExecute(args[1:], "status")
+	case "failures":
+		return cmdAutomationsFailures(args[1:])
+	case "failure-recovery-reviews":
+		return cmdAutomationsFailureRecoveryReviews(args[1:])
+	case "recovery-retry-evidence":
+		return cmdAutomationsRetryEvidence(args[1:])
+	case "failure-recovery-evidence":
+		return cmdAutomationsInitialEvidence(args[1:])
+	case "failure-recovery-review":
+		return cmdAutomationsFailureRecoveryReview(args[1:])
+	case "failure-recovery-plan":
+		return cmdAutomationsFailureRecoveryPlan(args[1:])
 	case "recovery-retry-plan":
 		return cmdAutomationsRecoveryRetryPlan(args[1:])
 	case "recovery-start":

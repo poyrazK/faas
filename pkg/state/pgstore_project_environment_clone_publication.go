@@ -18,11 +18,19 @@ func (s *PgStore) ProjectEnvironmentCloneTargetOperation(ctx context.Context, ac
 }
 
 func cloneWorkloadProofsTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation) ([]projectCloneWorkloadProof, error) {
-	q := new(sqlc.Queries)
 	records, err := cloneWorkloadRecordsDB(ctx, tx, op.AccountID, op.ProjectID, op.ID)
 	if err != nil {
 		return nil, err
 	}
+	return cloneWorkloadProofsForRecordsTx(ctx, tx, op, records)
+}
+
+func cloneWorkloadProofsForRecordsTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, records []projectCloneWorkloadRecord) ([]projectCloneWorkloadProof, error) {
+	return cloneWorkloadProofsWithRetiredSettingsTx(ctx, tx, op, records, false)
+}
+
+func cloneWorkloadProofsWithRetiredSettingsTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, records []projectCloneWorkloadRecord, removed bool) ([]projectCloneWorkloadProof, error) {
+	q := new(sqlc.Queries)
 	if len(records) == 0 {
 		return nil, nil
 	}
@@ -48,16 +56,20 @@ func cloneWorkloadProofsTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironment
 			return nil, err
 		}
 		p := projectCloneWorkloadProof{view: record.ProjectEnvironmentCloneWorkload, live: d.AppID == record.AppID && d.Scope == op.TargetEnvironment && d.Status == DeployLive}
-		head, err := q.ReadProjectEnvironmentCloneTargetSettings(ctx, tx, sqlc.ReadProjectEnvironmentCloneTargetSettingsParams{AccountID: mustPgUUID(op.AccountID), ProjectID: mustPgUUID(op.ProjectID), AppID: mustPgUUID(record.AppID), Environment: op.TargetEnvironment})
-		if err != nil {
-			return nil, mapErr(err)
+		if removed {
+			p.headHash, p.pinHash = record.TargetSettingsHash, record.TargetSettingsHash
+		} else {
+			head, err := q.ReadProjectEnvironmentCloneTargetSettings(ctx, tx, sqlc.ReadProjectEnvironmentCloneTargetSettingsParams{AccountID: mustPgUUID(op.AccountID), ProjectID: mustPgUUID(op.ProjectID), AppID: mustPgUUID(record.AppID), Environment: op.TargetEnvironment})
+			if err != nil {
+				return nil, mapErr(err)
+			}
+			p.headHash = head.ConfigHash
+			pin, err := q.ReadProjectEnvironmentCloneDeployedSettings(ctx, tx, mustPgUUID(d.ID))
+			if err != nil {
+				return nil, mapErr(err)
+			}
+			p.pinHash = pin.ConfigHash
 		}
-		p.headHash = head.ConfigHash
-		pin, err := q.ReadProjectEnvironmentCloneDeployedSettings(ctx, tx, mustPgUUID(d.ID))
-		if err != nil {
-			return nil, mapErr(err)
-		}
-		p.pinHash = pin.ConfigHash
 		var layers []DeploymentSidecarLayer
 		rawLayers, err := q.ReadProjectEnvironmentCloneSidecarLayers(ctx, tx, mustPgUUID(d.ID))
 		if err != nil {

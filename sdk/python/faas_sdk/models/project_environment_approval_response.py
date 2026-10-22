@@ -22,7 +22,10 @@ T = TypeVar("T", bound="ProjectEnvironmentApprovalResponse")
 
 @_attrs_define
 class ProjectEnvironmentApprovalResponse:
-    """Short-lived, single-use credential for applying the approved plan. The approval token is returned only here."""
+    """Short-lived, single-use credential for applying the approved plan. The approval token is returned only to the
+    approving caller or the private browser-review exchange.
+
+    """
 
     approval_id: UUID
     approval_token: str

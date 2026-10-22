@@ -39,7 +39,7 @@ class TenantWorkflowScheduleResponse:
     catch_up: TenantWorkflowScheduleResponseCatchUp | Unset = UNSET
     """Inherited owner-controlled recovery policy."""
     catch_up_window: str | Unset = UNSET
-    """Inherited recovery duration"""
+    """Inherited recovery duration, present only for latest."""
 
     def to_dict(self) -> dict[str, Any]:
         workflow_name = self.workflow_name

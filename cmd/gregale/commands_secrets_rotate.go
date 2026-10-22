@@ -93,8 +93,7 @@ func secretsRotate(args []string) int {
 			fmt.Fprintln(os.Stderr, "secret rotate: --from-stdin takes no positional pair")
 			return 1
 		}
-		scanner := bufio.NewScanner(osStdin)
-		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+		scanner := newKeyValueScanner(bufio.NewScanner(osStdin))
 		// Read the first non-empty, non-comment line; ignore
 		// everything after (rotation is single-key by design).
 		for scanner.Scan() {
@@ -111,7 +110,7 @@ func secretsRotate(args []string) int {
 			break
 		}
 		if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
-			fmt.Fprintln(os.Stderr, "read stdin:", err)
+			fmt.Fprintln(os.Stderr, "read stdin:", keyValueScanErr(err))
 			return 1
 		}
 		if pair.Key == "" {

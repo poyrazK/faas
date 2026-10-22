@@ -9,12 +9,11 @@
 //     openapi-typescript-codegen@0.31.0 calls `fetch(url, request)`
 //     directly (no `OpenAPI.fetch` seam). This is the documented seam
 //     for the generator — see `src/generated/core/request.ts:219`.
-//   * Stack ordering (outermost → innermost), matching the Go SDK's
-//     RoundTripper chain at `sdk/go/client.go:74-79`:
-//       1. retry      — bounded exponential backoff on 5xx + 429
-//       2. rfc7807    — decode Problem bodies, raise typed errors
-//       3. logger     — emit one log line per attempt
-//       4. idempotency — auto-mint Idempotency-Key on mutating calls
+//   * Stack ordering (outermost → innermost):
+//       1. idempotency — one Idempotency-Key per logical mutating call
+//       2. rfc7807    — decode the final Problem, raise typed errors
+//       3. retry      — bounded exponential backoff on 5xx + 429
+//       4. logger     — emit one log line per attempt
 //       5. user fetch — globalThis.fetch (or a test-supplied fetch)
 //
 // Why the stack installs on globalThis.fetch instead of monkey-
@@ -25,6 +24,7 @@
 // once per `FaaSClient` instance and `uninstall()` is exported for
 // tests that need to swap the underlying transport.
 
+import timers from 'node:timers/promises';
 import { OpenAPI } from './generated/index.js';
 import { RunsService } from './generated/services/RunsService.js';
 import {
@@ -68,6 +68,30 @@ const noopLogger: SdkLogger = {
   warn: () => {},
   error: () => {},
 };
+
+/** Retry-After accepts delta seconds or an HTTP date. Invalid values use the policy backoff. */
+function retryAfterMs(value: string | null): number {
+  if (!value) return 0;
+  const raw = value.trim();
+  const delay = /^\d+$/.test(raw) ? Number(raw) * 1000 : Date.parse(raw) - Date.now();
+  return Number.isFinite(delay) ? Math.max(0, delay) : 0;
+}
+
+async function waitForRetry(delayMs: number, signal?: AbortSignal | null): Promise<void> {
+  signal?.throwIfAborted();
+  // Node clamps timers above this limit to 1 ms. Split long Retry-After waits
+  // so they remain cancellable and never send an early retry.
+  while (delayMs > 0) {
+    const chunk = Math.min(delayMs, 2 ** 31 - 1);
+    try {
+      await timers.setTimeout(chunk, undefined, { signal: signal ?? undefined });
+    } catch (error) {
+      signal?.throwIfAborted();
+      throw error;
+    }
+    delayMs -= chunk;
+  }
+}
 
 /** Read `OpenAPI.HEADERS` as a plain `Record<string, string>`. The
  *  generator types the slot as `Headers | Resolver<Headers> | undefined`
@@ -139,13 +163,13 @@ export class FaaSClient {
     OpenAPI.BASE = baseURL.replace(/\/$/, '');
     OpenAPI.TOKEN = opts.token ?? undefined;
     OpenAPI.WITH_CREDENTIALS = false;
+    // Resource identifiers stay within one path segment, including organization routes.
+    OpenAPI.ENCODE_PATH = encodeURIComponent;
     OpenAPI.HEADERS = opts.token
       ? { Authorization: `Bearer ${opts.token}` }
       : {};
-    // No default Idempotency-Key here. The wrapper's idempotencyLayer
-    // mints a fresh UUIDv4 per attempt at request time, so a value
-    // stashed at construction time would be wasted — the very first
-    // mutating attempt would overwrite it anyway.
+    // Without an explicit key, the wrapper mints once per logical mutating
+    // call and preserves that key across all of the call's retry attempts.
 
     this.logger = opts.logger ?? noopLogger;
     this.retry = opts.retry ?? { maxAttempts: 1, backoffMs: 0 };
@@ -186,10 +210,9 @@ export class FaaSClient {
     OpenAPI.HEADERS = headers;
   }
 
-  /** Pin a stable Idempotency-Key for the next mutating call.
-   *  Per-call keys override the auto-mint; the wrapper reads the
-   *  HEADERS slot at send time and replaces it with a fresh UUIDv4
-   *  after a successful response. */
+  /** Pin a stable Idempotency-Key until explicitly replaced.
+   *  Per-request headers take precedence. Use a new key for each independent
+   *  operation, and reuse the key when resuming the same logical operation. */
   setIdempotencyKey(key: IdempotencyKey): void {
     const headers = readHeaders();
     headers['Idempotency-Key'] = key;
@@ -252,31 +275,30 @@ export class FaaSClient {
     return runExecutionRequest(requestBody, options);
   }
 
-  /** Build the wrapped fetch. Exported via `install()` above; the
-   *  composition is: retry(rfc7807(logger(idempotency(userFetch)))). */
+  /** Build the wrapped fetch: idempotency(rfc7807(retry(logger(userFetch)))). */
   private makeWrappedFetch(): typeof globalThis.fetch {
     const userFetch = this.originalFetch;
     const retry = this.retry;
     const logger = this.logger;
     const timeoutMs = this.timeoutMs;
 
-    // idempotency layer — innermost of the four wrappers.
+    // Prepare request identity once, outside the per-attempt transport.
     const idempotencyLayer: typeof globalThis.fetch = async (input, init) => {
-      // `init` is `RequestInit | undefined`. We mutate a copy so
-      // the caller's headers object is not touched (cf. Go SDK's
-      // "Body rewind" pattern — the request is single-use on retry).
       const reqInit = init ? { ...init } : {};
-      const headers = new Headers(reqInit.headers ?? {});
-      const method = (reqInit.method ?? 'GET').toUpperCase();
+      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+      const method = (reqInit.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+      reqInit.method = method;
+      if (reqInit.signal === undefined && input instanceof Request) reqInit.signal = input.signal;
       if (isMutating(method) && !headers.has('Idempotency-Key')) {
-        // Read the client-wide default, but stamp a fresh key per
-        // attempt (the server's 24h replay window keys on the
-        // header value — a fresh UUID means a fresh retry budget).
         const defaultKey = readHeaders()['Idempotency-Key'];
         headers.set('Idempotency-Key', defaultKey ?? mintIdempotencyKey());
       }
       reqInit.headers = headers;
-      return userFetch(input, reqInit);
+      if (timeoutMs && timeoutMs > 0) {
+        const timeout = AbortSignal.timeout(timeoutMs);
+        reqInit.signal = reqInit.signal ? AbortSignal.any([reqInit.signal, timeout]) : timeout;
+      }
+      return rfc7807Layer(input, reqInit);
     };
 
     // logger layer — one log line per attempt.
@@ -287,7 +309,7 @@ export class FaaSClient {
         : input instanceof URL ? input.toString() : input.url;
       logger.debug('faas http request', { method: init?.method ?? 'GET', url });
       try {
-        const resp = await idempotencyLayer(input, init);
+        const resp = await userFetch(input, init);
         const elapsed = Date.now() - start;
         logger.debug('faas http response', {
           method: init?.method ?? 'GET',
@@ -320,7 +342,8 @@ export class FaaSClient {
 
     // rfc7807 layer — decode Problem bodies, raise typed errors.
     const rfc7807Layer: typeof globalThis.fetch = async (input, init) => {
-      const resp = await loggerLayer(input, init);
+      const resp = await retryLayer(input, init);
+      init?.signal?.throwIfAborted();
       if (resp.status >= 400) {
         // Decode Problem bodies and raise typed sentinels. We
         // throw here, so the generator's `request.ts` never reads
@@ -333,103 +356,54 @@ export class FaaSClient {
           try {
             body = await resp.json();
           } catch {
+            init?.signal?.throwIfAborted();
             // Malformed body — fall through to status-based error.
           }
           const problem = (body && typeof body === 'object' ? body : {}) as Problem;
           const err = problemToError(problem, resp.status);
+          const retryAfter = resp.headers.get('Retry-After');
+          if (retryAfter) Object.defineProperty(err, 'retryAfter', { value: retryAfter, enumerable: true });
           // If the wrapper already produced a typed error, throw it.
           // The generator's `catchErrorCodes` would otherwise raise
           // its own `ApiError`; we want customers to see our typed
           // sentinels.
           throw err satisfies FaasError;
         }
-        // Non-JSON error body — return as-is so the generator's
+        const retryAfter = resp.headers.get('Retry-After');
+        if (retryAfter) {
+          await resp.body?.cancel().catch(() => undefined);
+          const err = problemToError({}, resp.status);
+          Object.defineProperty(err, 'retryAfter', { value: retryAfter, enumerable: true });
+          throw err;
+        }
+        // Non-JSON error body without Retry-After — return as-is so the generator's
         // own ApiError path takes over. (Authlimiter returns
         // text/plain; that's the canonical case for "no Problem".)
       }
       return resp;
     };
 
-    // retry layer — outermost; sees every attempt.
+    // Classify raw HTTP statuses before decoding the final Problem body.
     const retryLayer: typeof globalThis.fetch = async (input, init) => {
-      if (retry.maxAttempts <= 1) {
-        // No-op identity.
-        return rfc7807Layer(input, init);
-      }
-      const baseBackoff = retry.backoffMs;
-      let lastErr: unknown;
-      let lastResp: Response | undefined;
-      // Subscribe to caller cancellation ONCE. The signal is a
-      // one-shot event source; we listen at retry start so the
-      // very first sleep can abort immediately. The listener
-      // outlives the loop — `ac.signal` would otherwise fail to
-      // fire on the first attempt if the caller aborts before
-      // we entered the generator.
       const signal = init?.signal;
-      let cancelReason: unknown = undefined;
-      const onAbort = () => { cancelReason = signal?.reason ?? new Error('aborted'); };
-      if (signal) {
-        if (signal.aborted) {
-          throw signal.reason ?? new Error('aborted');
-        }
-        signal.addEventListener('abort', onAbort, { once: true });
+      // Fetch consumes Request and ReadableStream bodies. Do not replay a
+      // one-shot upload; generated JSON/FormData bodies are reusable.
+      const body = init?.body ?? (input instanceof Request ? input.body : undefined);
+      const attempts = body instanceof ReadableStream ? 1 : Math.max(1, retry.maxAttempts);
+      for (let attempt = 0; attempt < attempts; attempt++) {
+        signal?.throwIfAborted();
+        // Transport errors propagate unchanged; only HTTP 429/5xx retry.
+        const response = await loggerLayer(input, init);
+        if ((response.status < 500 && response.status !== 429) || attempt + 1 === attempts) return response;
+        const delay = Math.max(retry.backoffMs * 2 ** attempt, retryAfterMs(response.headers.get('Retry-After')));
+        // Release intermediate bodies only. The final body must remain intact
+        // for typed errors and the generated client's normal response parser.
+        await response.body?.cancel().catch(() => undefined);
+        await waitForRetry(delay, signal);
       }
-      try {
-        for (let attempt = 0; attempt < retry.maxAttempts; attempt++) {
-          if (attempt > 0) {
-            const delay = baseBackoff * Math.pow(2, attempt - 1);
-            // Sleep with mid-sleep cancellation. We rasterize the
-            // sleep into 50ms ticks so a caller abort at T+0.05
-            // terminates within 50ms, not at the full `delay`.
-            // 50ms is the same resolution the Go SDK uses
-            // (pkg/api/sse.go::Decoder) so behaviour is consistent
-            // across SDKs.
-            const tickMs = 50;
-            let slept = 0;
-            while (slept < delay) {
-              if (cancelReason !== undefined) break;
-              const step = Math.min(tickMs, delay - slept);
-              await new Promise<void>((resolve) => setTimeout(resolve, step));
-              slept += step;
-            }
-            if (cancelReason !== undefined) throw cancelReason;
-          }
-          try {
-            const resp = await rfc7807Layer(input, init);
-            if (resp.status < 500 && resp.status !== 429) {
-              return resp;
-            }
-            // Drain the body so the connection can be reused.
-            try { await resp.arrayBuffer(); } catch { /* ignore */ }
-            lastResp = resp;
-          } catch (err) {
-            // rfc7807Layer threw a typed FaasError — surface immediately.
-            // Network errors bubble up the same way (the SDK caller
-            // owns cancellation via context.AbortSignal).
-            throw err;
-          }
-        }
-      } finally {
-        if (signal) signal.removeEventListener('abort', onAbort);
-      }
-      // Budget exhausted — return the last response so the generator
-      // surfaces it via its own error path, OR rethrow the last error.
-      if (lastErr) throw lastErr;
-      if (lastResp) return lastResp;
-      // Should be unreachable.
       throw new Error('retry: budget exhausted without response');
     };
-
-    // Wrap the whole stack with the caller's optional timeout.
-    if (timeoutMs && timeoutMs > 0) {
-      return async (input, init) => {
-        const signal = init?.signal
-          ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
-          : AbortSignal.timeout(timeoutMs);
-        return retryLayer(input, { ...init, signal });
-      };
-    }
-    return retryLayer;
+    return idempotencyLayer;
   }
 
   /** Read the daemon's tx_id off the most recent typed error.

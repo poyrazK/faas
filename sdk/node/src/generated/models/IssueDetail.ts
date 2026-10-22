@@ -7,11 +7,20 @@ import type { IssueActivity } from './IssueActivity.js';
 import type { IssueImpact } from './IssueImpact.js';
 import type { IssueOccurrence } from './IssueOccurrence.js';
 import type { IssueRelease } from './IssueRelease.js';
+import type { IssueSplitRule } from './IssueSplitRule.js';
 /**
- * Issue metadata and independently paginated occurrence, release, and activity collections.
+ * Canonical issue metadata and independently paginated combined history. Linked IDs resolve to their current canonical issue; original identities and counters appear in group_members.
  */
 export type IssueDetail = {
+  /**
+   * Routing rules associated with the displayed original identities or derived branches; lower priority wins per source.
+   */
+  split_rules?: Array<IssueSplitRule>;
   issue: Issue;
+  /**
+   * Original fingerprint identities with their own lifetime counters.
+   */
+  group_members?: Array<Issue>;
   events: Array<IssueOccurrence>;
   releases: Array<IssueRelease>;
   activity: Array<IssueActivity>;

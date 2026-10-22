@@ -91,7 +91,7 @@ func (s *PgStore) AppendManagedRealtimeChannelMetadata(ctx context.Context, endp
 func (s *PgStore) AppendManagedRealtimeChannelConditional(ctx context.Context, endpointID, channel string, data []byte, binary bool, idempotencyKey string, metadata map[string]string, expected *int64) (ManagedRealtimeChannelMessage, error) {
 	return s.appendManagedRealtimeChannel(ctx, endpointID, channel, data, binary, idempotencyKey, metadata, expected, nil, nil)
 }
-func (s *PgStore) appendManagedRealtimeChannel(ctx context.Context, endpointID, channel string, data []byte, binary bool, idempotencyKey string, metadata map[string]string, expected *int64, expiration *ManagedRealtimeEntityExpiration, schedule *ManagedRealtimeSchedule) (ManagedRealtimeChannelMessage, error) {
+func (s *PgStore) appendManagedRealtimeChannel(ctx context.Context, endpointID, channel string, data []byte, binary bool, idempotencyKey string, metadata map[string]string, expected *int64, expiration *ManagedRealtimeEntityExpiration, schedule *ManagedRealtimeSchedule, commits ...*ManagedRealtimeCommit) (ManagedRealtimeChannelMessage, error) {
 	if expected != nil && *expected < 0 {
 		return ManagedRealtimeChannelMessage{}, ErrManagedRealtimeHistoryInvalid
 	}
@@ -106,6 +106,29 @@ func (s *PgStore) appendManagedRealtimeChannel(ctx context.Context, endpointID, 
 		return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: begin realtime history append: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	publisher, _ := ctx.Value(realtimePublisherAppendKey{}).(*realtimePublisherAppend)
+	if publisher != nil {
+		previous, found, err := lockRealtimePublisherAppend(ctx, tx, publisher, endpointID, channel, data)
+		if err != nil {
+			return ManagedRealtimeChannelMessage{}, err
+		}
+		if found {
+			return previous, tx.Commit(ctx)
+		}
+	}
+	var commit *ManagedRealtimeCommit
+	if len(commits) > 0 {
+		commit = commits[0]
+	}
+	if commit != nil {
+		previous, found, err := lockRealtimeCommit(ctx, tx, *commit)
+		if err != nil {
+			return ManagedRealtimeChannelMessage{}, err
+		}
+		if found {
+			return previous, tx.Commit(ctx)
+		}
+	}
 	var exists bool
 	if err := tx.QueryRow(ctx, `
 		select exists(select 1 from managed_realtime_channel_heads where endpoint_id = $1 and channel = $2)
@@ -198,10 +221,26 @@ func (s *PgStore) appendManagedRealtimeChannel(ctx context.Context, endpointID, 
 			where endpoint_id = $1 and channel = $2 and target_message_id = $3 order by sequence desc limit 1
 		`, endpointID, channel, idempotencyKey).Scan(&existing.Sequence, &existing.Data, &existing.Binary, &existing.CreatedAt, &existing.TargetMessageID, &existing.Version, &existing.MessageEvent, &existing.Deleted, &existing.Metadata)
 		if err == nil {
+			messages := []ManagedRealtimeChannelMessage{existing}
+			if err := loadRealtimeExpirations(ctx, tx, endpointID, channel, messages); err != nil {
+				return ManagedRealtimeChannelMessage{}, err
+			}
+			existing = messages[0]
+			if existing.TTLSeconds != realtimeMessageTTL(ctx) {
+				return ManagedRealtimeChannelMessage{}, ErrConflict
+			}
+			if publisher != nil {
+				return ManagedRealtimeChannelMessage{}, ErrConflict
+			}
 			if !equalRealtimeMetadata(existing.Metadata, metadata) || existing.Version > 1 || existing.Deleted || existing.Binary != binary || !bytes.Equal(existing.Data, data) {
 				return ManagedRealtimeChannelMessage{}, ErrConflict
 			}
 			existing.EndpointID, existing.Channel, existing.IdempotencyKey = endpointID, channel, idempotencyKey
+			if commit != nil {
+				if err := saveRealtimeCommit(ctx, tx, *commit, existing); err != nil {
+					return ManagedRealtimeChannelMessage{}, err
+				}
+			}
 			if err := tx.Commit(ctx); err != nil {
 				return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: commit idempotent realtime history append: %w", err)
 			}
@@ -289,6 +328,10 @@ func (s *PgStore) appendManagedRealtimeChannel(ctx context.Context, endpointID, 
 	`, endpointID, channel, next, data, binary, key, metadataJSON(metadata)).Scan(&message.CreatedAt); err != nil {
 		return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: insert realtime channel message: %w", err)
 	}
+	message.TTLSeconds = realtimeMessageTTL(ctx)
+	if err := saveRealtimeExpiration(ctx, tx, &message); err != nil {
+		return ManagedRealtimeChannelMessage{}, err
+	}
 	if err := applyReducerPG(ctx, tx, endpointID, channel, []ManagedRealtimeChannelMessage{message}); err != nil {
 		return ManagedRealtimeChannelMessage{}, err
 	}
@@ -322,6 +365,16 @@ func (s *PgStore) appendManagedRealtimeChannel(ctx context.Context, endpointID, 
 		}
 	}
 
+	if commit != nil {
+		if err := saveRealtimeCommit(ctx, tx, *commit, message); err != nil {
+			return ManagedRealtimeChannelMessage{}, err
+		}
+	}
+	if publisher != nil {
+		if err := saveRealtimePublisherAppend(ctx, tx, publisher, message); err != nil {
+			return ManagedRealtimeChannelMessage{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: commit realtime history append: %w", err)
 	}
@@ -409,6 +462,9 @@ func (s *PgStore) ReadManagedRealtimeChannelHistory(ctx context.Context, endpoin
 	rows.Close()
 	if err != nil {
 		return ManagedRealtimeChannelHistory{}, fmt.Errorf("state: iterate realtime channel history: %w", err)
+	}
+	if err := loadRealtimeExpirations(ctx, tx, endpointID, channel, history.Messages); err != nil {
+		return ManagedRealtimeChannelHistory{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ManagedRealtimeChannelHistory{}, fmt.Errorf("state: commit realtime history read: %w", err)

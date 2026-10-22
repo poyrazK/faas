@@ -79,38 +79,11 @@ func (s *PgStore) putProjectEnvironmentCloneObjectManifest(ctx context.Context, 
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return ProjectEnvironmentCloneObjectManifest{}, mapErr(err)
 	}
-	if op.Status != CloneOperationCapturing {
+	if op.Status != CloneOperationCapturing || cloneHasCommonCheckpoint(op) {
 		return ProjectEnvironmentCloneObjectManifest{}, ErrConflict
 	}
-	if err := q.InsertProjectEnvironmentCloneObjectManifestHeader(ctx, tx, sqlc.InsertProjectEnvironmentCloneObjectManifestHeaderParams{
-		OperationID: mustPgUUID(manifest.OperationID), SourceBucketID: mustPgUUID(manifest.SourceBucketID), TargetBucketID: mustPgUUID(manifest.TargetBucketID),
-		CapturedAt: pgtype.Timestamptz{Time: manifest.CapturedAt, Valid: true}, CapturedAtExact: manifest.CapturedAt.UTC().Format(time.RFC3339Nano),
-		ManifestHash: manifest.Hash, ObjectCount: int32(len(manifest.Objects)),
-	}); err != nil {
-		return ProjectEnvironmentCloneObjectManifest{}, mapErr(err)
-	}
-	if len(manifest.Objects) > 0 {
-		entries := make([]struct {
-			Key     string                               `json:"object_key"`
-			Version string                               `json:"source_version"`
-			Source  ProjectEnvironmentCloneObjectVersion `json:"source_object"`
-		}, len(manifest.Objects))
-		for i, checkpoint := range manifest.Objects {
-			entries[i].Key, entries[i].Version, entries[i].Source = checkpoint.Source.Key, checkpoint.Source.VersionID, checkpoint.Source
-		}
-		raw, err := json.Marshal(entries)
-		if err != nil {
-			return ProjectEnvironmentCloneObjectManifest{}, err
-		}
-		count, err := q.InsertProjectEnvironmentCloneObjectManifestEntries(ctx, tx, sqlc.InsertProjectEnvironmentCloneObjectManifestEntriesParams{
-			OperationID: mustPgUUID(manifest.OperationID), SourceBucketID: mustPgUUID(manifest.SourceBucketID), Entries: raw,
-		})
-		if err != nil {
-			return ProjectEnvironmentCloneObjectManifest{}, mapErr(err)
-		}
-		if count != int64(len(manifest.Objects)) {
-			return ProjectEnvironmentCloneObjectManifest{}, ErrConflict
-		}
+	if err := insertCloneObjectManifestTx(ctx, tx, manifest); err != nil {
+		return ProjectEnvironmentCloneObjectManifest{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ProjectEnvironmentCloneObjectManifest{}, fmt.Errorf("state: commit clone object manifest: %w", err)
@@ -207,4 +180,40 @@ func (s *PgStore) markProjectEnvironmentCloneObjectCopied(ctx context.Context, a
 		return lookupErr
 	}
 	return ErrConflict
+}
+
+// Shared by ordinary manifest capture and atomic common-checkpoint adoption.
+func insertCloneObjectManifestTx(ctx context.Context, tx pgx.Tx, manifest ProjectEnvironmentCloneObjectManifest) error {
+	q := new(sqlc.Queries)
+	if err := q.InsertProjectEnvironmentCloneObjectManifestHeader(ctx, tx, sqlc.InsertProjectEnvironmentCloneObjectManifestHeaderParams{
+		OperationID: mustPgUUID(manifest.OperationID), SourceBucketID: mustPgUUID(manifest.SourceBucketID), TargetBucketID: mustPgUUID(manifest.TargetBucketID),
+		CapturedAt: pgtype.Timestamptz{Time: manifest.CapturedAt, Valid: true}, CapturedAtExact: manifest.CapturedAt.UTC().Format(time.RFC3339Nano),
+		ManifestHash: manifest.Hash, ObjectCount: int32(len(manifest.Objects)),
+	}); err != nil {
+		return mapErr(err)
+	}
+	if len(manifest.Objects) > 0 {
+		entries := make([]struct {
+			Key     string                               `json:"object_key"`
+			Version string                               `json:"source_version"`
+			Source  ProjectEnvironmentCloneObjectVersion `json:"source_object"`
+		}, len(manifest.Objects))
+		for i, checkpoint := range manifest.Objects {
+			entries[i].Key, entries[i].Version, entries[i].Source = checkpoint.Source.Key, checkpoint.Source.VersionID, checkpoint.Source
+		}
+		raw, err := json.Marshal(entries)
+		if err != nil {
+			return err
+		}
+		count, err := q.InsertProjectEnvironmentCloneObjectManifestEntries(ctx, tx, sqlc.InsertProjectEnvironmentCloneObjectManifestEntriesParams{
+			OperationID: mustPgUUID(manifest.OperationID), SourceBucketID: mustPgUUID(manifest.SourceBucketID), Entries: raw,
+		})
+		if err != nil {
+			return mapErr(err)
+		}
+		if count != int64(len(manifest.Objects)) {
+			return ErrConflict
+		}
+	}
+	return nil
 }

@@ -29,12 +29,15 @@ class DeploymentAuditResponse:
     """RFC3339Nano UTC timestamp at which the row was emitted. Sequence-pointed — sorting by (at DESC) gives the
     canonical timeline order."""
     kind: DeploymentAuditResponseKind
-    """Closed-set event kind (migrations/00477 enforces the same CHECK on the deployments_audit table)."""
+    """Deployment audit event kind. Includes the current deployment_audit CHECK values and retained legacy SDK
+    spellings."""
     actor: str
     """Service-account UUID or operator CLI sentinel (`operator:cli:recover_rollout`, `meterd:safedeploy`,
     `meterd:canary_progression`). Operators identify who did what from this column."""
     data: Any | Unset = UNSET
-    """Verbatim jsonb payload at emit time (kind-specific shape — see description)."""
+    """Verbatim jsonb payload at emit time. For deploy.mcp_admission, mcp_admission contains MCPAdmissionEvidence:
+    a committed or rejected traffic decision with policy digests and gateway replay metadata. No private JWT actions
+    or credentials are retained."""
     account_id: str | Unset = UNSET
     """Owning account UUID (cross-tenant IDOR posture)."""
     alert_rule_id: UUID | Unset = UNSET

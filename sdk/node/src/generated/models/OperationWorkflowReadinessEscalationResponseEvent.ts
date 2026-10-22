@@ -2,11 +2,17 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowPlaybookEvidenceEvent } from './OperationWorkflowPlaybookEvidenceEvent.js';
+import type { OperationWorkflowReadinessImpactEvent } from './OperationWorkflowReadinessImpactEvent.js';
 import type { OperationWorkflowReadinessSnapshotEntry } from './OperationWorkflowReadinessSnapshotEntry.js';
 /**
  * Single durable acknowledgment-deadline notice for an assigned escalation, with exact scoped source identity. Does not automatically schedule a second follow-up or indicate business failure.
  */
 export type OperationWorkflowReadinessEscalationResponseEvent = {
+  /**
+   * OperationWorkflowReadinessEscalationResponseEvent.business_impact. Original protected-result alert context, without a new response target or fabricated transition baseline.
+   */
+  business_impact?: OperationWorkflowReadinessImpactEvent;
   /**
    * OperationWorkflowReadinessEscalationResponseEvent.escalation_notification_id. Retained acknowledgment target or assignment observation; never modifies application business reports.
    */
@@ -15,7 +21,8 @@ export type OperationWorkflowReadinessEscalationResponseEvent = {
    * OperationWorkflowReadinessEscalationResponseEvent.escalation_sequence. Retained acknowledgment target or assignment observation; never modifies application business reports.
    */
   escalation_sequence: number;
-  source: OperationWorkflowReadinessSnapshotEntry;
+  source?: OperationWorkflowReadinessSnapshotEntry;
+  playbook?: OperationWorkflowPlaybookEvidenceEvent;
   /**
    * OperationWorkflowReadinessEscalationResponseEvent.checked_at. Retained acknowledgment target or assignment observation; never modifies application business reports.
    */

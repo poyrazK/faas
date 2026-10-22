@@ -56,7 +56,7 @@ func testConfig(baseURL string) Config {
 }
 
 func catalogProductJSON(id string, fixedCents int64) string {
-	return `{"id":"` + id + `","recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":"eur","price_amount":` + strconv.FormatInt(fixedCents, 10) + `,"is_archived":false},{"amount_type":"metered_unit","price_currency":"eur","unit_amount":"1","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`
+	return `{"id":"` + id + `","recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":"usd","price_amount":` + strconv.FormatInt(fixedCents, 10) + `,"is_archived":false},{"amount_type":"metered_unit","price_currency":"usd","unit_amount":"1","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`
 }
 
 func catalogMeterJSON() string {
@@ -177,19 +177,23 @@ func TestPublishObjectStorageLineItemUsesExactMillicentQuantity(t *testing.T) {
 	}
 	period := time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)
 	record := state.ObjectStorageBillingRecord{
-		ID: "record-1", AccountID: "acct-1", PeriodStart: period, PeriodEnd: period.AddDate(0, 1, 0), Currency: "EUR",
+		ID: "record-1", AccountID: "acct-1", PeriodStart: period, PeriodEnd: period.AddDate(0, 1, 0), Currency: "USD",
 		StoredByteHours: 99, RequestCount: 88, EgressBytes: 77, ProviderCostMillicents: 66,
 		StorageMillicentsPerGiBMonth: 1000, RequestsMillicentsPerMillion: 2000, EgressMillicentsPerGiB: 3000,
 		StorageMillicents: 1200, RequestsMillicents: 34, EgressMillicents: 5, TotalMillicents: 1239,
 		FinalizedAt: period.AddDate(0, 1, 0).Add(time.Minute),
 	}
-	if err := p.PublishObjectStorageLineItem(context.Background(), record); err != nil {
+	if err := p.PublishObjectStorageLineItem(context.Background(), record, record.TotalMillicents+1); err == nil {
+		t.Fatal("a charge above the record total was published")
+	}
+	// ADR-1320: the overage cap held the charge to 1000 of 1239 millicents.
+	if err := p.PublishObjectStorageLineItem(context.Background(), record, 1000); err != nil {
 		t.Fatal(err)
 	}
 	if got.Name != "object_storage_usage" || got.ExternalID != "faas-object-storage-record-1" || got.ExternalCustomerID != "acct-1" {
 		t.Fatalf("object storage event = %+v", got)
 	}
-	if got.Metadata["charge_millicents"] != float64(1239) || got.Metadata["storage_millicents"] != float64(1200) {
+	if got.Metadata["charge_millicents"] != float64(1000) || got.Metadata["uncapped_millicents"] != float64(1239) || got.Metadata["storage_millicents"] != float64(1200) {
 		t.Fatalf("object storage event metadata = %+v", got.Metadata)
 	}
 }
@@ -199,7 +203,7 @@ func TestObjectStorageShadowCannotPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.PublishObjectStorageLineItem(context.Background(), state.ObjectStorageBillingRecord{}); err == nil || !strings.Contains(err.Error(), "not live") {
+	if err := p.PublishObjectStorageLineItem(context.Background(), state.ObjectStorageBillingRecord{}, 0); err == nil || !strings.Contains(err.Error(), "not live") {
 		t.Fatalf("shadow publish error = %v", err)
 	}
 }
@@ -266,14 +270,14 @@ func TestEnsurePlanProductsValidatesSeparateEgressCatalog(t *testing.T) {
 		}
 		if strings.HasPrefix(r.URL.Path, "/v1/products/") {
 			id := strings.TrimPrefix(r.URL.Path, "/v1/products/")
-			fixed := int64(900)
+			fixed := int64(1000)
 			switch id {
 			case "pro-product":
-				fixed = 2900
+				fixed = 3000
 			case "scale-product":
 				fixed = 9900
 			}
-			product := strings.Replace(catalogProductJSON(id, fixed), `],"benefits"`, `,{"amount_type":"metered_unit","price_currency":"eur","unit_amount":"2","meter_id":"meter-egress","cap_amount":null,"is_archived":false}],"benefits"`, 1)
+			product := strings.Replace(catalogProductJSON(id, fixed), `],"benefits"`, `,{"amount_type":"metered_unit","price_currency":"usd","unit_amount":"2","meter_id":"meter-egress","cap_amount":null,"is_archived":false}],"benefits"`, 1)
 			_, _ = io.WriteString(w, product)
 			return
 		}
@@ -307,14 +311,14 @@ func TestEnsurePlanProductsValidatesObjectStorageCatalog(t *testing.T) {
 		}
 		if strings.HasPrefix(r.URL.Path, "/v1/products/") {
 			id := strings.TrimPrefix(r.URL.Path, "/v1/products/")
-			fixed := int64(900)
+			fixed := int64(1000)
 			switch id {
 			case "pro-product":
-				fixed = 2900
+				fixed = 3000
 			case "scale-product":
 				fixed = 9900
 			}
-			product := strings.Replace(catalogProductJSON(id, fixed), `],"benefits"`, `,{"amount_type":"metered_unit","price_currency":"eur","unit_amount":"0.001","meter_id":"meter-object-storage","cap_amount":null,"is_archived":false}],"benefits"`, 1)
+			product := strings.Replace(catalogProductJSON(id, fixed), `],"benefits"`, `,{"amount_type":"metered_unit","price_currency":"usd","unit_amount":"0.001","meter_id":"meter-object-storage","cap_amount":null,"is_archived":false}],"benefits"`, 1)
 			_, _ = io.WriteString(w, product)
 			return
 		}
@@ -364,10 +368,10 @@ func TestEnsurePlanProductsValidatesConfiguredCatalog(t *testing.T) {
 		}
 		productRequests++
 		id := strings.TrimPrefix(r.URL.Path, "/v1/products/")
-		fixed := int64(900)
+		fixed := int64(1000)
 		switch id {
 		case "pro-product":
-			fixed = 2900
+			fixed = 3000
 		case "scale-product":
 			fixed = 9900
 		}
@@ -429,10 +433,10 @@ func TestEnsurePlanProductsRejectsPolarMeterCredits(t *testing.T) {
 		}
 		if strings.HasPrefix(r.URL.Path, "/v1/products/") {
 			id := strings.TrimPrefix(r.URL.Path, "/v1/products/")
-			fixed := int64(900)
+			fixed := int64(1000)
 			switch id {
 			case "pro-product":
-				fixed = 2900
+				fixed = 3000
 			case "scale-product":
 				fixed = 9900
 			}
@@ -472,7 +476,7 @@ func TestVerifyWebhookAcceptsRawPolarSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	when := time.Now().UTC()
-	body := []byte(`{"type":"order.paid","data":{"id":"order-raw","customer_id":"customer-1","total_amount":100,"currency":"eur"}}`)
+	body := []byte(`{"type":"order.paid","data":{"id":"order-raw","customer_id":"customer-1","total_amount":100,"currency":"usd"}}`)
 	headers := map[string]string{
 		"webhook-id":        "raw-1",
 		"webhook-timestamp": strconv.FormatInt(when.Unix(), 10),
@@ -493,7 +497,7 @@ func TestVerifyWebhookProjectsPolarOrderInvoice(t *testing.T) {
 		t.Fatal(err)
 	}
 	when := time.Now().UTC()
-	body := []byte(`{"type":"order.created","data":{"id":"order-1","customer_id":"customer-1","invoice_number":"INV-1","status":"pending","paid":false,"subtotal_amount":900,"tax_amount":100,"total_amount":1000,"currency":"eur","current_period_start":"2026-08-01T00:00:00Z","current_period_end":"2026-09-01T00:00:00Z","is_invoice_generated":false}}`)
+	body := []byte(`{"type":"order.created","data":{"id":"order-1","customer_id":"customer-1","invoice_number":"INV-1","status":"pending","paid":false,"subtotal_amount":900,"tax_amount":100,"total_amount":1000,"currency":"usd","current_period_start":"2026-08-01T00:00:00Z","current_period_end":"2026-09-01T00:00:00Z","is_invoice_generated":false}}`)
 	headers := map[string]string{
 		"webhook-id":        "invoice-1",
 		"webhook-timestamp": strconv.FormatInt(when.Unix(), 10),
@@ -967,7 +971,7 @@ func TestCancelAndRefund(t *testing.T) {
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			refundIdempotencyKey = body.Metadata[refundMetadataKey]
-			_, _ = io.WriteString(w, `{"id":"refund-1","amount":500,"currency":"eur"}`)
+			_, _ = io.WriteString(w, `{"id":"refund-1","amount":500,"currency":"usd"}`)
 			return
 		}
 		http.NotFound(w, r)
@@ -1012,7 +1016,7 @@ func TestRefundUsesContextIdempotencyKey(t *testing.T) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		got = body.Metadata[refundMetadataKey]
-		_, _ = io.WriteString(w, `{"id":"refund-operator","amount":250,"currency":"eur","status":"pending"}`)
+		_, _ = io.WriteString(w, `{"id":"refund-operator","amount":250,"currency":"usd","status":"pending"}`)
 	}))
 	defer server.Close()
 	p, err := NewProvider(testConfig(server.URL), nil)

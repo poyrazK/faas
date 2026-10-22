@@ -16,10 +16,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type dashboardErrorsStore struct {
-	*state.MemStore
+	MemStore *state.MemStore
 	groups   []state.AppErrorGroup
 	requests []state.AppErrorRequestRow
 	sample   state.AppErrorSampleRow
@@ -56,7 +57,7 @@ func TestDashboardHandler_AppErrorsSummaryAndDetail(t *testing.T) {
 		requests: []state.AppErrorRequestRow{{ID: uuid.New(), RequestID: requestID, ReceivedAt: now, Route: "GET /api", HTTPStatus: 504, ErrorClass: "upstream_timeout", SampleMessage: "upstream timed out"}},
 		sample:   state.AppErrorSampleRow{AppErrorRequestRow: state.AppErrorRequestRow{ID: uuid.New(), RequestID: requestID, ReceivedAt: now.Add(-2 * time.Hour), Route: "GET /api", HTTPStatus: 504, ErrorClass: "upstream_timeout", SampleMessage: "upstream timed out"}, HeadersSample: []byte(`{"content-type":"application/json","x-request-id":"redacted"}`), Redactions: []string{"authorization"}},
 	}
-	srv := apidserver.NewServerWithDeps(wrapped, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, mgr, nil, 15*time.Minute, "")
+	srv := apidserver.NewServerWithDeps(statetest.NewMem(wrapped), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, mgr, nil, 15*time.Minute, "")
 	h := srv.Handler()
 
 	rec := httptest.NewRecorder()

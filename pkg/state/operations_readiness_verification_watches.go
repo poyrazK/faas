@@ -9,16 +9,31 @@ import (
 )
 
 type readinessWatchUpdate struct {
-	ResponseWatchID string
-	OutcomeWatch    *api.OperationWorkflowReadinessBusinessOutcomeWatch
-	OutcomeEvents   []api.OperationWorkflowReadinessBusinessOutcomeEvent
-	SourceID        string
-	Sequence        int64
-	WatchID         string
-	Revision        int64
-	Watch           api.OperationWorkflowReadinessVerificationWatch
-	Events          []api.OperationWorkflowReadinessVerificationEvent
-	Kinds           []string
+	FulfillmentReviewEscalation *fulfillmentReviewEscalationUpdate
+	FulfillmentReviewReminder   *fulfillmentReviewReminderUpdate
+	FulfillmentReview           *api.OperationWorkflowObligationFulfillmentReview
+	Reopening                   *api.OperationWorkflowObligationReopening
+	TargetAssessment            *api.OperationWorkflowObligationAssessment
+	ScheduledActionReview       *scheduledActionReviewUpdate
+	EscalationCommitment        *reviewEscalationCommitmentUpdate
+	HandoffReassignment         *reviewHandoffReassignmentUpdate
+	HandoffDecline              *reviewHandoffDeclineUpdate
+	HandoffDeadline             *reviewHandoffDeadlineUpdate
+	DecisionDeadline            *reviewDecisionDeadlineUpdate
+	ReviewBlockage              *reviewResponseBlockageUpdate
+	ReviewCheckInAt             *time.Time
+	CompletionReview            *api.OperationWorkflowPlaybookCompletionReview
+	Playbook                    *playbookEvidenceWatchUpdate
+	ResponseWatchID             string
+	OutcomeWatch                *api.OperationWorkflowReadinessBusinessOutcomeWatch
+	OutcomeEvents               []api.OperationWorkflowReadinessBusinessOutcomeEvent
+	SourceID                    string
+	Sequence                    int64
+	WatchID                     string
+	Revision                    int64
+	Watch                       api.OperationWorkflowReadinessVerificationWatch
+	Events                      []api.OperationWorkflowReadinessVerificationEvent
+	Kinds                       []string
 }
 
 // Rotate through retained source notifications independently of readiness discovery filters.
@@ -138,7 +153,49 @@ func readinessVerificationItem(prior api.OperationWorkflowReadinessVerificationW
 }
 
 // Called only while the source row and subscription are locked. Coordination is preserved.
-func applyReadinessWatchUpdate(r *readinessSubscriptionRecord, n api.OperationWorkflowReadinessNotification, u readinessWatchUpdate) (api.OperationWorkflowReadinessNotification, []api.OperationWorkflowReadinessNotification, bool) {
+func applyReadinessWatchUpdate(ctx context.Context, r *readinessSubscriptionRecord, n api.OperationWorkflowReadinessNotification, u readinessWatchUpdate) (api.OperationWorkflowReadinessNotification, []api.OperationWorkflowReadinessNotification, bool) {
+	if u.FulfillmentReviewEscalation != nil {
+		return applyFulfillmentReviewEscalation(r, n, u)
+	}
+	if u.FulfillmentReviewReminder != nil {
+		return applyFulfillmentReviewReminder(r, n, u)
+	}
+	if u.FulfillmentReview != nil {
+		return applyFulfillmentReview(r, n, u)
+	}
+	if u.Reopening != nil {
+		return applyObligationReopeningNotice(r, n, u)
+	}
+	if u.TargetAssessment != nil {
+		return applyObligationTargetObservation(ctx, r, n, u)
+	}
+	if u.ScheduledActionReview != nil {
+		return applyScheduledActionReview(r, n, u)
+	}
+	if u.EscalationCommitment != nil {
+		return applyReviewEscalationCommitmentDeadline(r, n, u)
+	}
+	if u.HandoffReassignment != nil {
+		return applyReviewHandoffReassignmentNotice(r, n, u)
+	}
+	if u.HandoffDecline != nil {
+		return applyReviewHandoffDeclineNotice(r, n, u)
+	}
+	if u.HandoffDeadline != nil {
+		return applyReviewHandoffDeadline(r, n, u)
+	}
+	if u.DecisionDeadline != nil {
+		return applyReviewDecisionDeadline(r, n, u)
+	}
+	if u.ReviewBlockage != nil {
+		return applyReviewResponseBlockage(r, n, u)
+	}
+	if u.ReviewCheckInAt != nil {
+		return applyReviewResponseCheckIn(r, n, u)
+	}
+	if u.CompletionReview != nil {
+		return applyPlaybookCompletionReview(r, n, u)
+	}
 	if u.ResponseWatchID != "" {
 		return applyReadinessEscalationResponse(r, n, u)
 	}

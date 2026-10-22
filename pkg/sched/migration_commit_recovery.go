@@ -3,12 +3,16 @@ package sched
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func (h *MigrationHarness) resolveMigrationCommit(ctx context.Context, id, from, lease string, spec AppSpec) (state.MigrationCommitResolution, error) {
+	if spec.migrationAdmissionID != "" {
+		return h.resolveMigrationAdmission(ctx, id, from, lease, spec)
+	}
 	resolver, ok := h.store.(state.MigrationCommitRecoveryStore)
 	if !ok {
 		return state.MigrationCommitRetained, state.ErrMigrationCommitUnresolved
@@ -27,12 +31,26 @@ func (h *MigrationHarness) resolveMigrationCommit(ctx context.Context, id, from,
 	case state.MigrationCommitRecovered:
 		return resolution, nil
 	case state.MigrationCommitAborted:
+		if strings.HasPrefix(lease, state.FunctionMigrationTokenPrefix) {
+			h.cancelSource(recoveryCtx, from, id, lease)
+			if !functionDestinationCleanupConfirmed(recoveryCtx, h.store, id, lease) {
+				return state.MigrationCommitRetained, state.ErrMigrationCommitUnresolved
+			}
+			h.ledger.Release(id)
+			return resolution, nil
+		}
 		h.cleanupAdopted(ctx, id)
 		h.ledger.Release(id)
 		h.cancelSource(ctx, from, id, lease)
 		return resolution, nil
 	case state.MigrationCommitObsolete:
-		h.cleanupAdopted(ctx, id)
+		if strings.HasPrefix(lease, state.FunctionMigrationTokenPrefix) {
+			if err := retireFunctionMigrationDestination(recoveryCtx, h.store, h.vmm, id, lease); err != nil {
+				return state.MigrationCommitRetained, err
+			}
+		} else {
+			h.cleanupAdopted(ctx, id)
+		}
 		h.ledger.Release(id)
 		// A lease-bound acknowledgement removes the paused source. A generic
 		// Destroy(instanceID) could target a newer source process.

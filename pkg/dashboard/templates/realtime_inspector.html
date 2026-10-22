@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}}</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, sans-serif; max-width: 1200px; margin: auto; padding: 1.5rem; }
+    nav, form { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+    label { display: flex; flex-direction: column; gap: .3rem; }
+    input, select, button { padding: .5rem; max-width: 28rem; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    th, td { text-align: left; vertical-align: top; border-bottom: 1px solid #8885; padding: .6rem; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24rem; overflow: auto; padding: .75rem; background: #8881; }
+    code { overflow-wrap: anywhere; }
+    .notice { border: 1px solid #888; padding: 1rem; }
+  </style>
+</head>
+<body>
+<nav><a href="/dashboard/apps/{{.Data.Slug}}">Back to app</a><a href="{{.Data.WebhookURL}}">Webhook deliveries and retries</a></nav>
+<h1>Realtime events</h1>
+{{if not .Data.Enabled}}<p>Retained event inspection requires realtime plan access and the history preview.</p>
+{{else}}
+{{if .Data.ErrorMessage}}<p class="notice" role="alert">{{.Data.ErrorMessage}}</p>{{end}}
+<form method="GET" action="/dashboard/apps/{{.Data.Slug}}/realtime">
+  <label>Endpoint<select name="endpoint_id">{{range .Data.Endpoints}}<option value="{{.ID}}" {{if eq .ID $.Data.EndpointID}}selected{{end}}>{{.ID}}{{if not .Enabled}} (disabled){{end}}</option>{{end}}</select></label>
+  <label>Channel<input name="channel" list="channels" value="{{.Data.Channel}}" maxlength="256"><datalist id="channels">{{range .Data.Channels}}<option value="{{.Channel}}">{{if .LatestSequence}}Sequences {{.OldestSequence}}–{{.LatestSequence}}{{else}}No published events yet{{end}}</option>{{end}}</datalist></label>
+  <label>After sequence<input name="after" value="{{.Data.After}}" inputmode="numeric" pattern="[0-9]+" required></label>
+  <label>Inbox principal<input name="inbox_principal" value="{{.Data.InboxPrincipal}}" maxlength="256" placeholder="Optional verified principal"></label>
+  <label>Inbox after sequence<input name="inbox_after" value="{{.Data.InboxAfter}}" inputmode="numeric" pattern="[0-9]+" placeholder="0"></label>
+  <label>Outbox source<select name="source_id"><option value="">Choose source</option>{{range .Data.Sources}}<option value="{{.ID}}" {{if eq .ID $.Data.SourceID}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+  <label>Webhook<select name="webhook_id"><option value="">Choose webhook</option>{{range .Data.Webhooks}}<option value="{{.ID}}" {{if eq .ID $.Data.WebhookID}}selected{{end}}>{{.TargetURL}}</option>{{end}}</select></label>
+  <label>Consumer group<select name="group"><option value="">Choose group for failures</option>{{range .Data.Groups}}<option value="{{.Name}}" {{if eq .Name $.Data.GroupName}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+  <label>Delivery timeline sequence<input name="delivery_sequence" value="{{.Data.DeliverySequence}}" inputmode="numeric" pattern="[0-9]+" placeholder="Choose a group and sequence"></label>
+  <button type="submit">Inspect</button>
+</form>
+{{if not .Data.Endpoints}}<p>No realtime endpoints are configured for this app.</p>{{end}}
+{{if .Data.Channel}}
+<h2>Scheduled events</h2>
+{{if .Data.ScheduleError}}<p class="notice" role="alert">{{.Data.ScheduleError}}</p>{{else}}
+<p>Pending: {{.Data.PendingSchedules}} · Paused: {{.Data.PausedSchedules}} · Failed: {{.Data.FailedSchedules}} · Total: {{.Data.ScheduleTotal}}</p>
+<p>Events enter channel history when released. Delivery can be late during outages. Pending and paused schedules remain visible; recent terminal schedules are shown for 24 hours.</p>
+<table><thead><tr><th>Schedule</th><th>Status / version</th><th>Delivery (UTC)</th><th>Attempts / next retry (UTC)</th><th>Recurrence</th><th>Published sequence / error</th></tr></thead><tbody>
+{{range .Data.Schedules}}<tr><td><code>{{.ID}}</code>{{if .Group}}<br>Group: {{.Group}}{{end}}</td><td>{{.Status}} · v{{.Version}}</td><td>{{.DeliverAt}}</td><td>{{.Attempts}}{{if .NextAttemptAt}}<br>{{.NextAttemptAt}}{{end}}</td><td>{{if .IntervalSeconds}}Every {{.IntervalSeconds}} seconds · occurrence {{.Occurrence}}{{else}}One-time{{end}}</td><td>{{if .Sequence}}{{.Sequence}}{{end}}{{if .LastError}}<br><code>{{.LastError}}</code>{{end}}</td></tr>{{else}}<tr><td colspan="6">No scheduled events for this channel.</td></tr>{{end}}
+</tbody></table>{{end}}
+<h2>Retained channel history</h2>
+{{if .Data.Oldest}}<p>Oldest retained sequence: <code>{{.Data.Oldest}}</code>. Latest sequence: <code>{{.Data.Latest}}</code>.</p>{{end}}
+{{if .Data.Gap}}<p class="notice">This cursor is outside retained history. Clients must resynchronize from an application snapshot.</p>{{end}}
+{{if .Data.BrowseURL}}<p><a href="{{.Data.BrowseURL}}">Browse from the oldest retained event</a></p>{{end}}
+{{range .Data.Messages}}<article>
+  <h3>Sequence {{.Sequence}} · {{.Event}}{{if .Deleted}} · deleted{{end}}</h3>
+  <p>{{.CreatedAt}} · version {{.Version}}{{if .TargetID}} · message <code>{{.TargetID}}</code>{{end}}</p>
+  {{if .ExpiresAt}}<p>Lifetime {{.TTLSeconds}} seconds · expires <time datetime="{{.ExpiresAt}}">{{.ExpiresAt}}</time> · {{if .Expired}}expired{{else}}unexpired when this page loaded{{end}}</p>{{else}}<p>No delivery expiry</p>{{end}}
+  {{if .Expired}}<p>Expired payload and metadata are suppressed. Clients advance past this position through a <code>message_expired</code> checkpoint.</p>{{else}}
+  <details><summary>Metadata</summary><pre>{{.Metadata}}</pre></details>
+  <details><summary>Payload{{if .Binary}} (base64){{end}}</summary><pre>{{.Payload}}</pre></details>{{end}}
+</article>{{else}}<p>No events in this page.</p>{{end}}
+{{if .Data.NextURL}}<p><a href="{{.Data.NextURL}}">Next page of events →</a></p>{{end}}
+{{end}}
+{{if .Data.InboxPrincipal}}
+<h2>Retained inbox history</h2>
+<p>Inbox retention and delivery lifetime are separate. Expired delivery payloads are suppressed; positions remain available until normal retention pruning.</p>
+{{if .Data.InboxError}}<p class="notice" role="alert">{{.Data.InboxError}}</p>{{else}}
+<p>Oldest retained sequence: <code>{{.Data.InboxOldest}}</code>. Latest: <code>{{.Data.InboxLatest}}</code>.</p>
+{{if .Data.InboxGap}}<p class="notice">The inbox cursor is outside retained history; resynchronize from an application snapshot.</p>{{end}}
+{{range .Data.InboxMessages}}<article>
+<h3>Sequence {{.Sequence}} · {{.Event}}{{if .Deleted}} · deleted{{end}}</h3>
+<p>{{.CreatedAt}} · version {{.Version}} · message <code>{{.TargetID}}</code></p>
+{{if .ExpiresAt}}<p>Lifetime {{.TTLSeconds}} seconds · expires <time datetime="{{.ExpiresAt}}">{{.ExpiresAt}}</time> · {{if .Expired}}expired{{else}}unexpired when this page loaded{{end}}</p>{{else}}<p>No delivery expiry</p>{{end}}
+{{if .Expired}}<p>Expired payload is suppressed. Clients advance through an <code>inbox_checkpoint</code> with <code>message_expired</code>.</p>{{else}}<details><summary>Payload{{if .Binary}} (base64){{end}}</summary><pre>{{.Payload}}</pre></details>{{end}}
+</article>{{else}}<p>No inbox events in this page.</p>{{end}}
+{{if .Data.InboxNextURL}}<p><a href="{{.Data.InboxNextURL}}">Next inbox page</a></p>{{end}}
+{{end}}{{end}}
+<h2>Publisher credentials</h2>
+<p>Secrets and receipt fingerprints are never displayed. Counts cover committed publications and matching retries. Limits apply to decoded payload bytes and accepted publications per clock-minute window.</p>
+<table><thead><tr><th>Publisher / credential</th><th>Status / generation</th><th>Channels / event types</th><th>Limits</th><th>Expires</th><th>Accepted / replays</th><th>Last use</th></tr></thead><tbody>
+{{range .Data.PublisherCredentials}}<tr><td>{{.Info.Name}}<br><code>{{.Info.ID}}</code></td><td>{{.Status}} · {{.Info.Generation}}{{if .Info.RevokedAt}}<br>{{.Info.RevokedAt}}{{end}}</td><td>{{range .Info.Channels}}{{.}} {{end}}<br>{{range .Info.EventTypes}}{{.}} {{end}}</td><td>{{.Info.PublishesPerMinute}}/minute · {{.Info.MaxPayloadBytes}} bytes</td><td>{{.Info.ExpiresAt}}</td><td>{{.Info.AcceptedCount}} / {{.Info.ReplayCount}}</td><td>{{if .Info.LastUsedAt}}{{.Info.LastUsedAt}}<br>{{.Info.LastChannel}} · sequence {{.Info.LastSequence}}{{else}}Not used{{end}}</td></tr>{{else}}<tr><td colspan="7">No publisher credentials.</td></tr>{{end}}</tbody></table>
+<h2>Consumer groups</h2>
+{{if .Data.GroupError}}<p class="notice" role="alert">{{.Data.GroupError}}</p>{{end}}
+<p>Unassigned counts events beyond the assignment cursor. Expired leases are retried or dead-lettered on the next claim. A retention gap requires explicit recovery. Claims can finish out of order.</p>
+<table><thead><tr><th>Group</th><th>Unassigned</th><th>Ready / delayed</th><th>Leased</th><th>Expired leases</th><th>Dead</th><th>Active workers</th><th>Completed</th><th>Status</th></tr></thead><tbody>
+{{range .Data.Groups}}<tr><td><a href="{{index $.Data.GroupURLs .Name}}">{{.Name}}</a></td><td>{{.Unassigned}}</td><td>{{.Ready}}</td><td>{{.Leased}}</td><td>{{.ExpiredLeases}}</td><td>{{.Dead}}</td><td>{{.ActiveWorkers}}</td><td>{{.Completed}}</td><td>{{if .DeadlineMetadataKey}}Deadline field {{.DeadlineMetadataKey}} · rejected deliveries {{.ExpiredDeliveries}}<br>{{end}}Filtered out {{.FilteredMessages}}<br>{{if .DeduplicationMetadataKey}}Deduplicate by {{.DeduplicationMetadataKey}} · window {{.DeduplicationWindowSeconds}} seconds<br>Duplicates skipped {{.DuplicateMessages}} · remembered IDs {{.DeduplicationKeys}}<br>{{end}}{{if .Filter.EventTypes}}Event types: {{range .Filter.EventTypes}}{{.}} {{end}}<br>{{end}}{{if .Filter.Metadata}}Metadata: {{range $key, $value := .Filter.Metadata}}{{$key}}={{$value}} {{end}}<br>{{end}}Last fence {{.LastFencingToken}}<br>Dead retention {{if .DeadLetterRetentionSeconds}}{{.DeadLetterRetentionSeconds}} seconds{{else}}indefinite{{end}} · expired {{.ExpiredDeadLetters}}<br>{{if .OrderingMetadataKey}}Ordered by {{.OrderingMetadataKey}} · dead policy {{.DeadLetterPolicy}} · blocked {{.OrderingBlocked}}<br>{{end}}{{if .Drained}}Drained {{else if .Draining}}Draining {{else if .Paused}}Paused {{end}}{{if .PausedAt}}since {{.PausedAt}} {{end}}{{if .HistoryUnavailable}}Retention gap {{end}}{{if .CapacityBlocked}}At capacity{{end}}</td></tr>{{else}}<tr><td colspan="9">No consumer groups for this channel.</td></tr>{{end}}</tbody></table>
+{{if .Data.DeliveryHistoryError}}<p class="notice" role="alert">{{.Data.DeliveryHistoryError}}</p>{{end}}
+{{if .Data.DeliveryHistory}}<h3>Delivery timeline · sequence {{.Data.DeliverySequence}}</h3><p>Retained for 24 hours, up to 1,024 events shared across this group. History starts with this feature; renewals are omitted. Empty or partial history does not prove a message was never processed.</p>{{if ne .Data.DeliveryHistory.GroupPrunedEvents "0"}}<p>This group has pruned {{.Data.DeliveryHistory.GroupPrunedEvents}} events. Some may belong to other messages.</p>{{end}}<table><thead><tr><th>Time (UTC)</th><th>Event</th><th>Attempt</th><th>Fencing token</th><th>Failure code</th></tr></thead><tbody>{{range .Data.DeliveryHistory.Events}}<tr><td>{{.RecordedAt.Format "2006-01-02 15:04:05.000000 UTC"}}</td><td>{{.Event}}</td><td>{{.Attempt}}</td><td>{{if .FencingToken}}<code>{{.FencingToken}}</code>{{end}}</td><td><code>{{.FailureCode}}</code></td></tr>{{else}}<tr><td colspan="5">No retained observations for this message.</td></tr>{{end}}</tbody></table>{{if .Data.DeliveryHistoryNextURL}}<p><a href="{{.Data.DeliveryHistoryNextURL}}">Next timeline page</a></p>{{end}}{{end}}
+{{if .Data.GroupCircuit}}<h3>Processing circuit breaker</h3><p>Enabled: {{.Data.GroupCircuit.Enabled}} · State: {{.Data.GroupCircuit.State}} · Reason: {{.Data.GroupCircuit.Reason}} · Failures: {{.Data.GroupCircuit.ConsecutiveFailures}} / {{.Data.GroupCircuit.FailureThreshold}} · Cooldown: {{.Data.GroupCircuit.CooldownSeconds}} seconds.</p>{{if .Data.GroupCircuit.NextProbeAt}}<p>Next probe eligible at {{.Data.GroupCircuit.NextProbeAt}}. Cooldown transitions are evaluated when claims arrive.</p>{{end}}{{if .Data.GroupCircuit.ProbeSequence}}<p>Active probe sequence: {{.Data.GroupCircuit.ProbeSequence}}</p>{{end}}<p>Manual pause and drain still block new claims. Existing leases may settle.</p>{{end}}
+{{if .Data.GroupPriority}}<h3>Priority backlog</h3><p>{{if .Data.GroupPriority.MetadataKey}}Metadata field: <code>{{.Data.GroupPriority.MetadataKey}}</code>. Higher values claim first; every {{.Data.GroupPriority.FairTurns}}th claim chooses the oldest eligible message. Next claim chooses oldest: {{.Data.GroupPriority.NextClaimOldest}}.{{else}}Priority is disabled; claims use sequence order.{{end}}</p><p>Counts cover materialized snapshots only. Ready includes delayed and ordering-blocked messages; leased includes leases awaiting expiry maintenance.</p><table><thead><tr><th>Priority</th><th>Ready</th><th>Leased</th><th>Dead</th></tr></thead><tbody>{{range .Data.GroupPriority.Backlog}}<tr><td>{{.Priority}}</td><td>{{.Ready}}</td><td>{{.Leased}}</td><td>{{.Dead}}</td></tr>{{else}}<tr><td colspan="4">No outstanding snapshots.</td></tr>{{end}}</tbody></table>{{end}}
+{{if .Data.GroupMetrics}}<h3>Processing trends · last hour</h3><p>Minute buckets; the current minute is partial. Queue wait averages publication to first claim. Processing averages successful attempts, including renewal time. Zero means no samples when the corresponding count is zero. Retry counts include lease expiry; dead-letter counts include deadline expiry. Replays can produce another completion or dead-letter transition.</p><table><thead><tr><th>Minute (UTC)</th><th>First claims</th><th>Completed samples</th><th>Average wait (ms)</th><th>Average processing (ms)</th><th>Retries / minute</th><th>Dead letters / minute</th></tr></thead><tbody>{{range .Data.GroupMetrics.Buckets}}<tr><td>{{.BucketAt.Format "15:04"}}</td><td>{{.FirstClaims}}</td><td>{{.Completed}}</td><td>{{printf "%.1f" .QueueWaitMilliseconds}}</td><td>{{printf "%.1f" .ProcessingMilliseconds}}</td><td>{{.Retries}}</td><td>{{.DeadLetters}}</td></tr>{{end}}</tbody></table>{{end}}
+{{if .Data.WorkerHealth}}<h3>Worker health</h3><p>Live: {{.Data.WorkerHealth.LiveWorkers}} · Ready: {{.Data.WorkerHealth.ReadyWorkers}} · Timeout: {{.Data.WorkerHealth.TimeoutSeconds}} seconds</p>{{if .Data.NoReadyWorkers}}<p>Pending work has no ready heartbeat-reporting workers. Workers without heartbeat reporting are unobserved.</p>{{end}}{{range .Data.WorkerHealth.Workers}}<p>{{.Worker}} · Live: {{.Live}} · Ready: {{.Ready}} · {{.StatusCode}} · Last seen: {{.LastSeenAt}}</p>{{else}}<p>No workers have reported heartbeats.</p>{{end}}{{end}}
+{{if .Data.GroupClaimRate}}<h3>Claim rate</h3><p>{{if .Data.GroupClaimRate.RatePerSecond}}Rate: {{.Data.GroupClaimRate.RatePerSecond}} claims per second · Burst: {{.Data.GroupClaimRate.Burst}}{{else}}Unlimited{{end}} · Throttled requests: {{.Data.GroupClaimRate.ThrottledClaimRequests}} · Retry after: {{.Data.GroupClaimRate.RetryAfterMilliseconds}} milliseconds</p>{{end}}
+{{if .Data.GroupRetryPolicy}}<h3>Retry policy</h3><p>Enabled: {{.Data.GroupRetryPolicy.Enabled}} · Base delay: {{.Data.GroupRetryPolicy.BaseDelaySeconds}} seconds · Maximum: {{.Data.GroupRetryPolicy.MaxDelaySeconds}} seconds · Jitter: {{.Data.GroupRetryPolicy.Jitter}}</p><p>Permanent failures: {{range .Data.GroupRetryPolicy.PermanentFailureCodes}}{{.}} {{else}}None{{end}}</p>{{if .Data.GroupRetryPolicy.NextRetryAt}}<p>Next scheduled retry: {{.Data.GroupRetryPolicy.NextRetryAt}}</p>{{else}}<p>No delayed retries scheduled.</p>{{end}}{{end}}
+{{if .Data.GroupAlert}}<h3>Lag alert</h3><p>Enabled: {{.Data.GroupAlert.Enabled}} · Breached: {{.Data.GroupAlert.Breached}}</p>{{if .Data.GroupAlert.ObservedAt}}<p>Backlog: {{.Data.GroupAlert.Unassigned}} · Oldest pending age: {{.Data.GroupAlert.OldestPendingAgeSeconds}} seconds · Dead letters: {{.Data.GroupAlert.DeadLetters}}</p><p>Observed: {{.Data.GroupAlert.ObservedAt}} · Last event decision: {{.Data.GroupAlert.LastEventAt}}</p>{{else}}<p>Not observed yet.</p>{{end}}<p>Thresholds: backlog {{.Data.GroupAlert.UnassignedThreshold}}, pending age {{.Data.GroupAlert.OldestPendingSeconds}} seconds, dead letters {{.Data.GroupAlert.DeadLetterThreshold}} · Cooldown: {{.Data.GroupAlert.CooldownSeconds}} seconds</p>{{end}}
+{{if .Data.GroupName}}<h3>Worker credentials for {{.Data.GroupName}}</h3>
+<p>Credential secrets are never displayed here. Usage counts committed worker operations, including empty claims; rejected requests and rolled-back operations are excluded. Use the credential API to rotate or revoke access.</p>
+<table><thead><tr><th>Worker / credential</th><th>Status</th><th>Permissions</th><th>Generation</th><th>Expires</th><th>Last used / operation</th><th>Uses</th></tr></thead><tbody>
+{{range .Data.WorkerCredentials}}<tr><td>{{.Info.Name}}<br><code>{{.Info.ID}}</code></td><td>{{.Status}}{{if .Info.RevokedAt}} · {{.Info.RevokedAt}}{{end}}</td><td>{{range .Info.Permissions}}{{.}} {{end}}</td><td>{{.Info.Generation}}</td><td>{{.Info.ExpiresAt}}</td><td>{{if .Info.LastUsedAt}}{{.Info.LastUsedAt}} · {{.Info.LastOperation}}{{else}}Not used{{end}}</td><td>{{.Info.UseCount}}</td></tr>{{else}}<tr><td colspan="7">No worker credentials.</td></tr>{{end}}
+</tbody></table>{{end}}
+{{if .Data.GroupName}}<h3>Dead letters for {{.Data.GroupName}}</h3>
+{{if .Data.ReplayJobURL}}<h3>Background replay jobs</h3>
+{{if .Data.ReplayJobError}}<p role="alert">{{.Data.ReplayJobError}}</p>{{end}}
+<p>Capture current failures and replay them gradually. Rates are upper limits; skipped failures remain untouched. Group pause and circuit gates still control worker claims. Subscribe to replay-job completion, cancellation and processing-failure events through <a href="{{.Data.WebhookURL}}">app webhooks</a>.</p>
+{{if .Data.ReplayJobCSRF}}<form method="POST" action="{{.Data.ReplayJobURL}}"><input type="hidden" name="csrf_token" value="{{.Data.ReplayJobCSRF}}"><label>Rate per second <input type="number" name="rate" min="1" max="32" value="1" required></label><label>Failure codes (space separated) <input name="failure_codes"></label><label>After sequence <input name="after_sequence" value="0"></label><label>Through sequence <input name="through_sequence"></label><button type="submit" formaction="{{.Data.ReplayDryRunURL}}">Check eligibility with a dry run</button><button type="submit">Start replay job</button></form>{{end}}
+{{range .Data.ReplayJobs}}<details id="replay-job-{{.ID}}"><summary>{{if .DryRun}}Dry run{{else}}Replay{{end}} {{.ID}} · {{.State}} · {{.Processed}} / {{.Selected}} · {{if .DryRun}}{{.Eligible}} eligible{{else}}{{.Replayed}} replayed{{end}} · {{.Skipped}} skipped</summary><p>Rate limit {{.Rate}} per second · Updated {{.UpdatedAt}} · Processing errors {{.ErrorCount}}{{if .LastError}} · {{.LastError}}{{end}}</p>
+{{if and $.Data.ReplayJobCSRF (or (eq .State "running") (eq .State "paused") (eq .State "checking") (eq .State "check_paused"))}}<form method="POST" action="{{$.Data.ReplayJobURL}}"><input type="hidden" name="csrf_token" value="{{$.Data.ReplayJobCSRF}}"><input type="hidden" name="job" value="{{.ID}}">{{if or (eq .State "running") (eq .State "checking")}}<button name="action" value="pause">Pause</button>{{else}}<button name="action" value="resume">Resume</button>{{end}}<button name="action" value="cancel">Cancel remaining replay</button></form>{{end}}
+{{if .DryRun}}<p>Eligibility reflects each item’s check time and can change. Starting replay uses only reviewed eligible failures and rechecks their identities. Worker claim pause, circuit and rate settings still apply.</p>{{end}}
+{{if .ReviewedJobID}}<p>Reviewed selection: <a href="#replay-job-{{.ReviewedJobID}}">{{.ReviewedJobID}}</a> (may no longer be retained).</p>{{end}}
+{{if .StartedJobID}}<p>Replay started: <a href="#replay-job-{{.StartedJobID}}">{{.StartedJobID}}</a> (may no longer be retained).</p>{{end}}
+{{if and $.Data.ReplayJobCSRF .DryRun (eq .State "completed") (gt .Eligible 0) (not .StartedJobID)}}<form method="POST" action="{{$.Data.ReplayJobURL}}"><input type="hidden" name="csrf_token" value="{{$.Data.ReplayJobCSRF}}"><input type="hidden" name="job" value="{{.ID}}"><button name="action" value="start">Replay reviewed eligible failures</button></form>{{end}}
+<ul>{{range .Outcomes}}<li>Sequence {{.Sequence}} · {{.Status}}{{if .CheckedAt}} · Checked {{.CheckedAt.Format "2006-01-02 15:04:05.000000 UTC"}}{{end}}</li>{{end}}</ul></details>{{else}}<p>No replay jobs.</p>{{end}}{{end}}
+{{if .Data.DeadLetterExportURL}}<p><a href="{{.Data.DeadLetterExportURL}}">Download dead letters as JSONL</a></p>{{end}}
+<p>Replay a failed sequence through the consumer group API after repairing the worker. Deleting the group removes its retained failure payloads.</p>
+{{range .Data.GroupDeadLetters}}<details id="dead-letter-{{.Sequence}}"><summary>Sequence {{.Sequence}} · {{.FailureCode}} · {{.Attempts}} attempts</summary>{{if .ExpiresAt}}<p>Nominal expiry: {{.ExpiresAt}}{{if .WarningAt}} · Warning: {{.WarningAt}} · Cleanup after: {{.CleanupAfter}}{{end}}</p>{{end}}{{if .URL}}<p><a href="{{.URL}}">Inspect retained event</a> (may have expired from channel history)</p>{{end}}<pre>{{.Payload}}</pre></details>{{else}}<p>No dead letters.</p>{{end}}{{end}}
+<h2>Source health</h2>
+<p>Counts cover the source’s Commit and realtime backlog. Unknown counts have not been observed successfully.</p>
+<table><thead><tr><th>Source</th><th>Status</th><th>Pending</th><th>Blocked</th><th>Last checked</th></tr></thead><tbody>
+{{range .Data.Sources}}<tr><td>{{.Name}}</td><td>{{.Status}}</td><td>{{if .Pending}}{{.Pending}}{{else}}Unknown{{end}}</td><td>{{if .Blocked}}{{.Blocked}}{{else}}Unknown{{end}}</td><td>{{if .CheckedAt}}{{.CheckedAt}}{{else}}Not observed{{end}}</td></tr>{{else}}<tr><td colspan="5">No source observations available.</td></tr>{{end}}
+</tbody></table>
+{{if .Data.SourceID}}<h3>Observed outbox rows for this channel</h3>
+<p>This is a sample of up to 32 unpublished events per source, prioritizing blocked events. It can become stale between relay checks; an empty sample is not proof of delivery. Published events appear in retained history. Repair and retry blocked rows through the application database helpers.</p>
+<table><thead><tr><th>Event</th><th>Observed status</th><th>Attempts</th><th>Created</th><th>Observed</th></tr></thead><tbody>
+{{range .Data.Outbox}}<tr><td><code>{{.EventID}}</code></td><td>{{if .BlockedCode}}Blocked: {{.BlockedCode}}{{else}}Pending{{end}}</td><td>{{.Attempts}}</td><td>{{.CreatedAt}}</td><td>{{.ObservedAt}}</td></tr>{{else}}<tr><td colspan="5">No matching rows in the observed sample.</td></tr>{{end}}</tbody></table>{{end}}
+{{if .Data.WebhookID}}<h2>Related webhook deliveries</h2>
+<p>Matching channel events among this webhook’s latest 20 deliveries. Open a delivery to inspect attempts; failed deliveries can be retried from the webhook page.</p>
+<table><thead><tr><th>Delivery</th><th>Status</th><th>Attempt</th><th>Created</th></tr></thead><tbody>
+{{range .Data.Deliveries}}<tr><td><a href="{{.URL}}">{{.ID}}</a></td><td>{{.Status}}</td><td>{{.Attempts}}</td><td>{{.CreatedAt}}</td></tr>{{else}}<tr><td colspan="4">No matching deliveries in the latest page.</td></tr>{{end}}</tbody></table>{{end}}
+{{end}}
+</body></html>

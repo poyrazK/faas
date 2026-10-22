@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { RoutePriorityQueueStats } from './RoutePriorityQueueStats.js';
 import type { RoutePriorityRule } from './RoutePriorityRule.js';
 /**
  * An app's effective route priorities and where they come from.
@@ -14,5 +15,6 @@ export type RoutePrioritiesResponse = {
    * When saved rules last changed; omitted for the route-health default.
    */
   updated_at?: string;
+  queue?: RoutePriorityQueueStats;
 };
 

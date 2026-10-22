@@ -138,7 +138,7 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 }
 
 func (s *Service) reservationLimit(ctx context.Context, accountID string) (int, error) {
-	limit, err := s.maxDatabasesPerAccount(ctx, accountID)
+	limit, err := s.maxDatabasesPerAccount(ctx, PolicySubject(ctx, accountID))
 	if err != nil {
 		return 0, err
 	}
@@ -149,39 +149,57 @@ func (s *Service) reservationLimit(ctx context.Context, accountID string) (int, 
 }
 
 func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, error) {
-	if !s.provisioningEnabled() {
-		return Database{}, ErrUnavailable
-	}
-	if request.AccountID == "" || !ValidName(request.Name) {
+	return s.create(ctx, request, "")
+}
+
+// CreateWithID is for durable workflows which reserve a resource identity
+// before asking the provider to create it. A name collision must not adopt a
+// different database, even if its configuration happens to match.
+func (s *Service) CreateWithID(ctx context.Context, request CreateRequest, id string) (Database, error) {
+	if _, err := uuid.Parse(id); err != nil {
 		return Database{}, ErrInvalid
+	}
+	return s.create(ctx, request, id)
+}
+
+func (s *Service) create(ctx context.Context, request CreateRequest, reservedID string) (Database, error) {
+	if !s.provisioningEnabled() {
+		return Database{}, ErrProvisioningClosed
+	}
+	if request.AccountID == "" {
+		return Database{}, ErrInvalid
+	}
+	if !ValidName(request.Name) {
+		return Database{}, errInvalidName
 	}
 	if err := request.Spec.Validate(); err != nil {
 		return Database{}, err
 	}
 	if !s.provisioningAllowed(ctx, request.AccountID) {
-		return Database{}, ErrUnavailable
+		return Database{}, ErrProvisioningClosed
 	}
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
-		if _, err := s.Get(ctx, request.AccountID, existing.ID); err != nil {
+		if reservedID != "" && existing.ID != reservedID {
+			return Database{}, ErrConflict
+		}
+		if _, err := s.Get(ctx, existing.AccountID, existing.ID); err != nil {
 			return Database{}, err
 		}
 		if existing.Spec != request.Spec {
-			return Database{}, ErrConflict
+			return Database{}, fmt.Errorf("%w: a database named %q already exists with a different configuration", ErrConflict, request.Name)
 		}
 		if existing.State == StateReady {
 			return existing, nil
 		}
-		return s.Reconcile(ctx, request.AccountID, existing.ID)
+		return s.Reconcile(ctx, existing.AccountID, existing.ID)
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return Database{}, err
 	}
-	if s.admit != nil {
-		if err := s.admit(ctx, request.AccountID); err != nil {
-			return Database{}, err
-		}
-	}
+	// Resolve placement before admission: a region with no backend or an
+	// unsupported major is a request error, and must not surface as an
+	// account-wide usage rejection (production-us hunt #9, H9-P101).
 	backend, err := s.registry.Default(request.Spec.Region)
 	if err != nil {
 		return Database{}, err
@@ -189,14 +207,24 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	if err := backend.Capabilities.Supports(request.Spec); err != nil {
 		return Database{}, err
 	}
+	if s.admit != nil {
+		if err := s.admit(ctx, PolicySubject(ctx, request.AccountID)); err != nil {
+			return Database{}, err
+		}
+	}
 	now := s.now()
 	reservationLimit, err := s.reservationLimit(ctx, request.AccountID)
 	if err != nil {
 		return Database{}, err
 	}
+	databaseID := reservedID
+	if databaseID == "" {
+		databaseID = s.newID()
+	}
 	database, _, err := s.store.Reserve(ctx, Database{
-		ID:                 s.newID(),
+		ID:                 databaseID,
 		AccountID:          request.AccountID,
+		OrgID:              Organization(ctx),
 		Name:               request.Name,
 		Spec:               request.Spec,
 		BackendID:          backend.ID,
@@ -207,7 +235,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 		UpdatedAt:          now,
 	}, reservationLimit)
 	if err != nil {
-		return Database{}, err
+		return Database{}, quotaDetail(err, reservationLimit)
 	}
 	if database.Spec != request.Spec {
 		return Database{}, ErrConflict
@@ -215,7 +243,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	if database.State == StateReady {
 		return database, nil
 	}
-	return s.Reconcile(ctx, request.AccountID, database.ID)
+	return s.Reconcile(ctx, database.AccountID, database.ID)
 }
 
 // Restore creates a new database from a ready source without changing the
@@ -231,13 +259,13 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 // Callers must compensate only resources they created, never adopted restores.
 func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabaseRequest) (Database, bool, error) {
 	if !s.provisioningEnabled() {
-		return Database{}, false, ErrUnavailable
+		return Database{}, false, ErrProvisioningClosed
 	}
 	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() {
 		return Database{}, false, ErrInvalid
 	}
 	if !s.provisioningAllowed(ctx, request.AccountID) {
-		return Database{}, false, ErrUnavailable
+		return Database{}, false, ErrProvisioningClosed
 	}
 	source, err := s.Get(ctx, request.AccountID, request.SourceDatabaseID)
 	if err != nil {
@@ -262,7 +290,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	// remain in retention: the durable target has already been reserved.
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
-		if _, err := s.Get(ctx, request.AccountID, existing.ID); err != nil {
+		if _, err := s.Get(ctx, existing.AccountID, existing.ID); err != nil {
 			return Database{}, false, err
 		}
 		if existing.RestoreSourceDatabaseID != request.SourceDatabaseID || !existing.RestorePointInTime.Equal(request.PointInTime) {
@@ -274,7 +302,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		if existing.State == StateReady {
 			return existing, false, nil
 		}
-		database, err := s.Reconcile(ctx, request.AccountID, existing.ID)
+		database, err := s.Reconcile(ctx, existing.AccountID, existing.ID)
 		return database, false, err
 	}
 	if !errors.Is(err, ErrNotFound) {
@@ -283,7 +311,13 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if !request.PointInTime.Before(now) || currentRestoreWindow <= 0 || source.Spec.RestoreWindowSeconds <= 0 ||
 		now.Sub(request.PointInTime) > time.Duration(currentRestoreWindow)*time.Second ||
 		now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
-		return Database{}, false, ErrInvalid
+		return Database{}, false, fmt.Errorf("%w: point in time must be in the past and within the source's %s restore window", ErrInvalid, time.Duration(min(currentRestoreWindow, source.Spec.RestoreWindowSeconds))*time.Second)
+	}
+	// No database has history from before it existed. The provider rejects
+	// such a point only after the target is reserved, leaving a failed row
+	// on the account's database quota (production-us hunt #9).
+	if request.PointInTime.Before(source.CreatedAt) {
+		return Database{}, false, fmt.Errorf("%w: point in time is before the source database was created (%s)", ErrInvalid, source.CreatedAt.UTC().Format(time.RFC3339))
 	}
 	reservationLimit, err := s.AdmitRestoreReservation(ctx, request.AccountID, RestoreSourceDefinition{
 		Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID, DataResourceID: source.DataResourceID})
@@ -293,6 +327,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	database, created, err := s.store.Reserve(ctx, Database{
 		ID:                      s.newID(),
 		AccountID:               request.AccountID,
+		OrgID:                   source.OrgID,
 		Name:                    request.Name,
 		Spec:                    source.Spec,
 		BackendID:               source.BackendID,
@@ -306,7 +341,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		UpdatedAt:               now,
 	}, reservationLimit)
 	if err != nil {
-		return Database{}, false, err
+		return Database{}, false, quotaDetail(err, reservationLimit)
 	}
 	if database.RestoreSourceDatabaseID != request.SourceDatabaseID || !database.RestorePointInTime.Equal(request.PointInTime.UTC()) {
 		return Database{}, false, ErrConflict
@@ -317,7 +352,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if database.State == StateReady {
 		return database, created, nil
 	}
-	ready, err := s.Reconcile(ctx, request.AccountID, database.ID)
+	ready, err := s.Reconcile(ctx, database.AccountID, database.ID)
 	if err != nil {
 		return database, created, err
 	}
@@ -331,14 +366,14 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 // an existing private database.
 func (s *Service) AdmitRestoreReservation(ctx context.Context, accountID string, definition RestoreSourceDefinition) (int, error) {
 	if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
-		return 0, ErrUnavailable
+		return 0, ErrProvisioningClosed
 	}
 	if accountID == "" || definition.Spec.Validate() != nil || definition.Spec.RestoreWindowSeconds <= 0 || definition.ProviderResourceID == "" ||
 		definition.DataResourceID != "" && !validDataResourceID(definition.DataResourceID) {
 		return 0, ErrInvalid
 	}
 	if s.admit != nil {
-		if err := s.admit(ctx, accountID); err != nil {
+		if err := s.admit(ctx, PolicySubject(ctx, accountID)); err != nil {
 			return 0, err
 		}
 	}
@@ -439,9 +474,14 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 		}
 	} else {
 		if inspector, ok := backend.Provider.(RestoreInspector); ok && database.RestoreSourceResourceID != "" {
+			recorded, recordedErr := s.restoreVerification(ctx, database)
+			if recordedErr != nil {
+				return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, recordedErr)
+			}
 			observed, err = inspector.InspectRestore(providerContext, database.ProviderResourceID, RestoreRequest{
 				ResourceID: database.ID, SourceResourceID: database.RestoreSourceResourceID,
 				Spec: database.Spec, PointInTime: database.RestorePointInTime, IdempotencyKey: "restore-" + database.ID,
+				Verification: recorded,
 			})
 		} else {
 			observed, err = backend.Provider.Inspect(providerContext, database.ProviderResourceID)
@@ -473,6 +513,9 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 			return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
 		}
 		database.ProviderResourceID = observed.ProviderResourceID
+	}
+	if err := s.recordRestoreVerification(ctx, database, observed); err != nil {
+		return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
 	}
 	switch observed.Status {
 	case ProviderStatusPending, ProviderStatusDeleting:
@@ -633,6 +676,16 @@ func (s *Service) Get(ctx context.Context, accountID, databaseID string) (Databa
 	return rows[0], nil
 }
 
+// LiveHub returns the livequeryd hub serving database's live queries
+// (ADR-20261016151947), or "" when its backend runs none.
+func (s *Service) LiveHub(database Database) (string, error) {
+	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
+	if err != nil {
+		return "", err
+	}
+	return backend.LiveHub(database.ID), nil
+}
+
 // FindByName locates an account-owned durable reservation. Clone workers use
 // their operation-specific name to recover after a crash before checkpointing
 // the target ID, including after a completed restore's PITR window has expired.
@@ -665,7 +718,11 @@ func (s *Service) List(ctx context.Context, accountID string) ([]Database, error
 
 func (s *Service) releaseProviderError(ctx context.Context, database Database, next State, providerErr error) error {
 	normalized := normalizeProviderError(providerErr)
-	return s.releaseKnownError(ctx, database, next, providerErrorCode(providerErr), normalized, retryDelay(normalized, database.AttemptCount))
+	code, delay := providerErrorCode(providerErr), retryDelay(normalized, database.AttemptCount)
+	if errors.Is(providerErr, ErrLineageUnproven) {
+		code, delay = "restore_lineage_unavailable", lineageRetryDelay(s.pollInterval, database.AttemptCount)
+	}
+	return s.releaseKnownError(ctx, database, next, code, withLoggableReason(normalized, providerErr), delay)
 }
 
 func (s *Service) releaseKnownError(ctx context.Context, database Database, next State, code string, operationErr error, delay time.Duration) error {
@@ -700,6 +757,18 @@ func (s *Service) finishDelete(ctx context.Context, databaseID, leaseToken strin
 	return s.store.FinishDelete(finishContext, databaseID, leaseToken, s.now())
 }
 
+// lineagePollAttempts bounds how long an unproven restore lineage is retried
+// at the poll interval before the ordinary backoff applies (ADR-1259). Each
+// attempt opens a provider historical connection, so it is not unbounded.
+const lineagePollAttempts = 20
+
+func lineageRetryDelay(poll time.Duration, attempt int32) time.Duration {
+	if attempt <= lineagePollAttempts {
+		return poll
+	}
+	return retryDelay(ErrUnavailable, attempt-lineagePollAttempts)
+}
+
 func retryDelay(err error, attempt int32) time.Duration {
 	if errors.Is(err, ErrInvalid) || errors.Is(err, ErrUnsupported) || errors.Is(err, ErrQuotaExceeded) {
 		return time.Hour
@@ -709,4 +778,15 @@ func retryDelay(err error, attempt int32) time.Duration {
 		delay *= 2
 	}
 	return min(delay, 15*time.Minute)
+}
+
+// quotaDetail names the database-count limit a reservation hit. The bare
+// sentinel left "quota exceeded" without the limit or what counts toward it
+// (production-us live test 2026-10-14; CLAUDE.md: limit errors carry the
+// limit and the observed value).
+func quotaDetail(err error, limit int) error {
+	if !errors.Is(err, ErrQuotaExceeded) {
+		return err
+	}
+	return fmt.Errorf("%w: the account already has %d of %d databases (provisioning and restoring ones count); delete one or upgrade the plan", err, limit, limit)
 }

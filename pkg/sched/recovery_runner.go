@@ -20,7 +20,6 @@ type RecoveryRunner struct {
 	arbiter *Arbiter
 	events  *events.Platform
 	log     *slog.Logger
-	now     func() time.Time
 	// Interval is the recovery sweep cadence. Zero uses the one-second
 	// recovery budget from ADR-137.
 	Interval time.Duration
@@ -36,15 +35,14 @@ func NewRecoveryRunner(store state.Store, arbiter *Arbiter, eventPlatform *event
 		arbiter:  arbiter,
 		events:   eventPlatform,
 		log:      log,
-		now:      time.Now,
 		Interval: time.Second,
 	}
 }
 
 // Tick runs one complete recovery sweep. Each node is handled independently
 // so a transient query or dispatch failure on one node does not starve the
-// rest of the fleet. A node is marked active only after a fresh read confirms
-// that no actionable or in-flight instances remain.
+// rest of the fleet. Completion validates the captured generation and remaining
+// work atomically with the transition, receipt and audit handoff (ADR-1527).
 func (r *RecoveryRunner) Tick(ctx context.Context) error {
 	if r == nil || r.store == nil || r.arbiter == nil {
 		return nil
@@ -67,20 +65,29 @@ func (r *RecoveryRunner) Tick(ctx context.Context) error {
 			r.rememberError(&firstErr, fmt.Errorf("sched: recovery: list instances for node %s: %w", node.ID, listErr))
 			continue
 		}
-		liveMig, recreated, _, tickErr := r.arbiter.Tick(ctx, []state.ComputeNode{node}, map[string][]state.RecoveryInstance{
-			node.ID: instances,
-		})
-		if tickErr != nil {
-			r.rememberError(&firstErr, fmt.Errorf("sched: recovery: dispatch node %s: %w", node.ID, tickErr))
-			continue
-		}
+		// An empty node has nothing to dispatch and nothing to recheck. A
+		// node that stays unavailable is swept every second for as long as
+		// it is registered, so this halves its reads.
+		remaining := instances
+		var liveMig, recreated int
+		if len(instances) > 0 {
+			var tickErr error
+			liveMig, recreated, _, tickErr = r.arbiter.Tick(ctx, []state.ComputeNode{node}, map[string][]state.RecoveryInstance{
+				node.ID: instances,
+			})
+			if tickErr != nil {
+				r.rememberError(&firstErr, fmt.Errorf("sched: recovery: dispatch node %s: %w", node.ID, tickErr))
+				continue
+			}
 
-		// The arbiter may have migrated or recreated rows during the tick.
-		// Never use the pre-dispatch slice to declare completion.
-		remaining, readErr := r.store.InstanceListByNodeForRecovery(ctx, node.ID)
-		if readErr != nil {
-			r.rememberError(&firstErr, fmt.Errorf("sched: recovery: recheck node %s: %w", node.ID, readErr))
-			continue
+			// The arbiter may have migrated or recreated rows during the tick.
+			// Never use the pre-dispatch slice to declare completion.
+			var readErr error
+			remaining, readErr = r.store.InstanceListByNodeForRecovery(ctx, node.ID)
+			if readErr != nil {
+				r.rememberError(&firstErr, fmt.Errorf("sched: recovery: recheck node %s: %w", node.ID, readErr))
+				continue
+			}
 		}
 		if !recoveryComplete(node.Lifecycle, remaining) {
 			r.log.Debug("sched: recovery: node still has live instances",
@@ -89,42 +96,14 @@ func (r *RecoveryRunner) Tick(ctx context.Context) error {
 			continue
 		}
 
-		completedAt := r.now().UTC()
-		switch node.Lifecycle {
-		case state.NodeLifecycleDraining, state.NodeLifecycleForceDraining:
-			if err := r.store.NodeMarkDrainCompleted(ctx, node.ID, completedAt); err != nil {
-				if !errors.Is(err, state.ErrConflict) && !errors.Is(err, state.ErrNotFound) {
-					r.rememberError(&firstErr, fmt.Errorf("sched: recovery: complete drain %s: %w", node.ID, err))
-				}
-				continue
-			}
-			if r.events != nil {
-				r.events.EmitRecovery(ctx, events.NodeDrainedEvent{
-					EmitAt:               completedAt,
-					NodeID:               node.ID,
-					NodeName:             node.Name,
-					InitiatedAt:          nodeTime(node.DrainInitiatedAt, completedAt),
-					CompletedAt:          completedAt,
-					DrainedInstanceCount: len(instances),
-				})
-			}
-		case state.NodeLifecycleRecovering:
-			if err := r.store.NodeMarkRecovered(ctx, node.ID); err != nil {
-				if !errors.Is(err, state.ErrConflict) && !errors.Is(err, state.ErrNotFound) {
-					r.rememberError(&firstErr, fmt.Errorf("sched: recovery: complete recovery %s: %w", node.ID, err))
-				}
-				continue
-			}
-			if r.events != nil {
-				r.events.EmitRecovery(ctx, events.NodeRecoveredEvent{
-					EmitAt:              completedAt,
-					NodeID:              node.ID,
-					NodeName:            node.Name,
-					RecoveryInitiatedAt: nodeTime(node.RecoveryInitiatedAt, completedAt),
-					MigratedCount:       liveMig,
-					RecreatedCount:      recreated,
-				})
-			}
+		if node.Lifecycle == state.NodeLifecycleUnavailable {
+			continue
+		}
+		if err := r.completeNodeLifecycle(ctx, state.NodeLifecycleCompletion{
+			NodeID: node.ID, Generation: node.LifecycleGeneration, Lifecycle: node.Lifecycle,
+			DrainedCount: int64(len(instances)), MigratedCount: int64(liveMig), RecreatedCount: int64(recreated),
+		}); err != nil && !errors.Is(err, state.ErrConflict) && !errors.Is(err, state.ErrNotFound) {
+			r.rememberError(&firstErr, fmt.Errorf("sched: recovery: complete node %s: %w", node.ID, err))
 		}
 	}
 	return firstErr
@@ -181,11 +160,4 @@ func (r *RecoveryRunner) rememberError(firstErr *error, err error) {
 	if r.log != nil {
 		r.log.Warn("sched: recovery: node work failed", "err", err)
 	}
-}
-
-func nodeTime(value *time.Time, fallback time.Time) time.Time {
-	if value != nil && !value.IsZero() {
-		return value.UTC()
-	}
-	return fallback
 }

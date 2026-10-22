@@ -36,6 +36,16 @@ type AIRoute struct {
 	AccountID string
 	Format    string
 	Targets   []AIRouteTarget
+	// Canary is the route's active model canary, if any (ADR-1340).
+	Canary *AIRouteCanary
+	// Strategy picks the target each call tries first; MaxTTFBMS is a cost
+	// route's latency target. Weights hold a weighted route's target
+	// weights and Stats a latency or cost route's window counts, both by
+	// position (ADR-1434).
+	Strategy  string
+	MaxTTFBMS *int
+	Weights   []int
+	Stats     []AIRouteTargetCounts
 }
 
 // RouteResolver loads AI routes; apid owns their lifecycle.
@@ -43,16 +53,10 @@ type RouteResolver interface {
 	Route(ctx context.Context, routeID string) (AIRoute, error)
 }
 
-type routeIDContextKey struct{}
-
-// withRouteID marks a route attempt so its settlement can log the route.
-func withRouteID(ctx context.Context, routeID string) context.Context {
-	return context.WithValue(ctx, routeIDContextKey{}, routeID)
-}
-
+// routeIDFromContext names the route of a route attempt so its settlement
+// can log the route.
 func routeIDFromContext(ctx context.Context) string {
-	routeID, _ := ctx.Value(routeIDContextKey{}).(string)
-	return routeID
+	return routeAttemptFromContext(ctx).routeID
 }
 
 // routeAttemptWriter holds a target's response back while it is retryable
@@ -73,7 +77,12 @@ func newRouteAttemptWriter(dst http.ResponseWriter, target string, canFall bool)
 	return &routeAttemptWriter{dst: dst, header: make(http.Header), target: target, canFall: canFall}
 }
 
-func (w *routeAttemptWriter) Header() http.Header { return w.header }
+func (w *routeAttemptWriter) Header() http.Header {
+	if w.committed {
+		return w.dst.Header()
+	}
+	return w.header
+}
 
 func (w *routeAttemptWriter) WriteHeader(status int) {
 	if w.committed || w.discarded {
@@ -137,23 +146,41 @@ func parseRoutePath(escapedPath string) (string, string, bool) {
 	return routeID, "/" + rest, true
 }
 
+// routeCallerAccount names the account of a caller that may use routes:
+// a relay caller (ADR-989) or an access token's app (ADR-1431). Their
+// identity is not tied to one integration.
+func routeCallerAccount(ctx context.Context) (string, bool) {
+	if token, ok := accessTokenFromContext(ctx); ok {
+		return token.AccountID, true
+	}
+	if principal, ok := relayPrincipalFromContext(ctx); ok {
+		return principal.accountID(), true
+	}
+	return "", false
+}
+
 // serveRoute tries a route's targets in order through the ordinary
 // integration path, so each attempt keeps its own bindings, budgets,
-// retries and AI accounting. Only relay callers can use routes: their
-// identity is not tied to one integration.
+// retries and AI accounting.
 func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
-	principal, ok := relayPrincipalFromContext(r.Context())
+	callerAccount, ok := routeCallerAccount(r.Context())
 	if !ok {
-		writeProblem(w, http.StatusForbidden, "outbound_route_requires_relay", "AI routes are available only through GREGALE_OUTBOUND_URL", "")
+		writeProblem(w, http.StatusForbidden, "outbound_route_requires_relay", "AI routes are available only through GREGALE_OUTBOUND_URL or an access token", "")
+		return
+	}
+	if isWebSocketUpgrade(r) {
+		// ADR 20261019072722: a session cannot fall back to another target
+		// midway.
+		writeProblem(w, realtimeRouteRejection.status, realtimeRouteRejection.code, realtimeRouteRejection.title, "")
 		return
 	}
 	routeID, providerPath, ok := parseRoutePath(r.URL.EscapedPath())
-	if !ok || h.Routes == nil || !h.AIGatewayEnabled {
+	if !ok || h.Routes == nil || !h.aiGatewayOn() {
 		writeProblem(w, http.StatusNotFound, "outbound_route_not_found", "AI route not found", "")
 		return
 	}
 	route, err := h.Routes.Route(r.Context(), routeID)
-	if errors.Is(err, ErrRouteNotFound) || (err == nil && route.AccountID != principal.accountID()) || (err == nil && len(route.Targets) == 0) {
+	if errors.Is(err, ErrRouteNotFound) || (err == nil && route.AccountID != callerAccount) || (err == nil && len(route.Targets) == 0) {
 		writeProblem(w, http.StatusNotFound, "outbound_route_not_found", "AI route not found", "")
 		return
 	}
@@ -167,25 +194,39 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	translated := route.Format == api.OutboundAIRouteFormatOpenAI
-	if translated && (!replayable || r.Method != http.MethodPost || !strings.HasSuffix(providerPath, "/chat/completions")) {
+	if translated && (!replayable || r.Method != http.MethodPost || !openAIRoutePath(providerPath)) {
 		writeProblem(w, http.StatusBadRequest, "outbound_ai_translation_unsupported",
-			"OpenAI-format routes accept buffered chat completions requests only", "")
+			"OpenAI-format routes accept buffered chat completions, Responses and embeddings requests only", "")
 		return
 	}
-	targets := route.Targets
-	if !replayable {
-		targets = targets[:1]
+	canaryFirst := chooseRouteCanary(route, r)
+	if route.Canary != nil {
+		h.Metrics.ObserveAIRouteCanaryCall(canaryFirst)
 	}
-	ctx := withRouteID(r.Context(), route.ID)
-	for index, target := range targets {
+	if canaryFirst {
+		w.Header().Set(RouteCanaryHeader, "1")
+	}
+	// ADR-1434: the strategy orders the targets; a chosen canary goes first.
+	steps, pick := planRouteSteps(route, r, canaryFirst, h.routeIntN)
+	h.Metrics.ObserveAIRouteCall(route.Strategy, pick)
+	if !replayable {
+		steps = steps[:1]
+	}
+	tracked := routeTracksStats(route)
+	for index, step := range steps {
+		target := step.target
+		ctx := withRouteAttempt(r.Context(), routeAttempt{routeID: route.ID, position: step.position, tracked: tracked,
+			canary: route.Canary != nil && step.position == route.Canary.Position})
 		attemptBody, attemptPath, attemptQuery := body, providerPath, r.URL.RawQuery
 		var translator aiResponseTranslator
 		if translated {
 			translation, translateErr := h.translateRouteTarget(ctx, target, providerPath, r.URL.RawQuery, body)
 			if translateErr != nil {
 				h.Metrics.ObserveAITranslation("unknown", "unsupported")
-				writeProblem(w, http.StatusBadRequest, "outbound_ai_translation_unsupported",
-					"The request cannot be translated for this route's targets", "")
+				problem := api.NewProblem(http.StatusBadRequest, "outbound_ai_translation_unsupported",
+					"The request cannot be translated for this route's targets", translationRefusalDetail(translateErr))
+				problem.Type = "https://gregale.dev/docs/errors/outbound_ai_translation_unsupported"
+				api.WriteProblem(w, problem)
 				return
 			}
 			attemptBody, attemptPath, attemptQuery, translator = translation.body, translation.path, translation.rawQuery, translation.translator
@@ -195,14 +236,8 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		attempt := routeAttemptRequest(r.WithContext(ctx), target.IntegrationID, attemptPath, attemptQuery, attemptBody, replayable)
-		writer := newRouteAttemptWriter(w, target.IntegrationID, index < len(targets)-1)
-		if translator != nil {
-			translating := newTranslatingWriter(writer, translator)
-			h.ServeHTTP(translating, attempt)
-			translating.finish()
-		} else {
-			h.ServeHTTP(writer, attempt)
-		}
+		writer := newRouteAttemptWriter(w, target.IntegrationID, index < len(steps)-1)
+		h.serveRouteAttempt(writer, attempt, translator)
 		if !writer.discarded {
 			if !writer.committed {
 				writer.WriteHeader(http.StatusOK)
@@ -215,6 +250,35 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 		}
 		h.Metrics.ObserveAIRouteFallback(reason)
 	}
+}
+
+// A retryable response is withheld while another target remains. A stream
+// abort while consuming that discarded response ends only this attempt;
+// the route can still serve a complete response from its next target.
+func (h *Handler) serveRouteAttempt(writer *routeAttemptWriter, attempt *http.Request, translator aiResponseTranslator) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if recovered == http.ErrAbortHandler && writer.discarded && attempt.Context().Err() == nil { //nolint:errorlint // net/http recognizes this exact panic sentinel.
+				return
+			}
+			panic(recovered)
+		}
+	}()
+	if translator != nil {
+		translating := newTranslatingWriter(writer, translator)
+		h.ServeHTTP(translating, attempt)
+		translating.finish()
+		return
+	}
+	h.ServeHTTP(writer, attempt)
+}
+
+// openAIRoutePath reports whether an openai-format route can translate the
+// provider path: chat completions (ADR-991), embeddings (ADR-995) or
+// Responses API requests (ADR-996).
+func openAIRoutePath(providerPath string) bool {
+	return strings.HasSuffix(providerPath, "/chat/completions") || strings.HasSuffix(providerPath, "/embeddings") ||
+		strings.HasSuffix(providerPath, "/responses")
 }
 
 // bufferRouteBody keeps a body of at most the AI buffer bound for replay
@@ -242,7 +306,7 @@ func (h *Handler) translateRouteTarget(ctx context.Context, target AIRouteTarget
 	if err != nil {
 		return routeTranslation{path: providerPath, rawQuery: rawQuery, body: body}, nil //nolint:nilerr // the ordinary path reports the lookup failure and the route falls back past it.
 	}
-	translation, err := translateRouteRequest(integration.AIProvider, providerPath, rawQuery, body, target.Model)
+	translation, err := translateRouteRequest(integration, providerPath, rawQuery, body, target.Model)
 	if err != nil {
 		return routeTranslation{}, err
 	}
@@ -252,10 +316,18 @@ func (h *Handler) translateRouteTarget(ctx context.Context, target AIRouteTarget
 	return translation, nil
 }
 
+// routeAttemptRequest addresses one target. providerPath is escaped, as the
+// caller sent it or as translation built it, so a model ID such as a Bedrock
+// ARN keeps its %2F instead of being escaped twice.
 func routeAttemptRequest(r *http.Request, integrationID, providerPath, rawQuery string, body []byte, replayable bool) *http.Request {
 	attempt := r.Clone(r.Context())
-	attempt.URL = &url.URL{Path: Prefix + integrationID + providerPath, RawQuery: rawQuery}
-	if escaped := Prefix + url.PathEscape(integrationID) + providerPath; escaped != attempt.URL.Path {
+	escaped := Prefix + url.PathEscape(integrationID) + providerPath
+	path, err := url.PathUnescape(escaped)
+	if err != nil {
+		path = escaped
+	}
+	attempt.URL = &url.URL{Path: path, RawQuery: rawQuery}
+	if escaped != path {
 		attempt.URL.RawPath = escaped
 	}
 	attempt.RequestURI = ""

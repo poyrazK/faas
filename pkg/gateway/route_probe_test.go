@@ -144,3 +144,68 @@ func TestRouteProbeKeepsCustomerAuthGates(t *testing.T) {
 		t.Fatalf("unauthenticated probe reached the app: candidate=%d stable=%d", candidate.hits, stable.hits)
 	}
 }
+
+func TestProjectRouteProbeScopeBoundToToken(t *testing.T) {
+	b := &PGBackend{}
+	b.AuthorizeRouteProbeForScope("app", "candidate", "token", "production", time.Now().Add(time.Minute))
+	if !b.ValidateRouteProbe("app", "candidate", "token") || b.RouteProbeScope("app", "candidate", "token") != "production" {
+		t.Fatal("production probe scope was not retained")
+	}
+	if b.RouteProbeScope("app", "candidate", "wrong") != "" || b.RouteProbeScope("other", "candidate", "token") != "" {
+		t.Fatal("scope leaked across challenges")
+	}
+}
+
+type scopedRouteProbeBackend struct {
+	*routeProbeBackend
+	scope string
+}
+
+func (b *scopedRouteProbeBackend) RouteProbeScope(appID, deploymentID, token string) string {
+	if b.ValidateRouteProbe(appID, deploymentID, token) {
+		if b.scope != "" {
+			return b.scope
+		}
+		return "production"
+	}
+	return ""
+}
+func TestProjectRouteProbeColdWakeUsesNamedProductionScope(t *testing.T) {
+	upstream := newProbeUpstream(t, &probeUpstream{}, http.StatusNoContent)
+	backend := &fakeBackend{app: App{ID: uuid.NewString(), AccountID: uuid.NewString(), Plan: api.PlanPro, MaxConcurrency: 2}, host: "demo.apps.dom", upstream: upstream.Listener.Addr().String()}
+	probeBackend := &scopedRouteProbeBackend{routeProbeBackend: &routeProbeBackend{fakeBackend: backend, deploymentID: "dep-candidate", token: "probe-token"}}
+	handler := NewHandlerWith(probeBackend, NewMetrics(), nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, probeRequest("probe-token"))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("cold probe=%d %s", rec.Code, rec.Body)
+	}
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if backend.lastAdmitScope != "production" || backend.lastAdmitDeployment != "dep-candidate" {
+		t.Fatalf("cold target=%s scope=%s", backend.lastAdmitDeployment, backend.lastAdmitScope)
+	}
+	if rec.Header().Get(apihostingreceipt.ServedResponseHeader) != apihostingreceipt.CandidateResponseProof("dep-candidate", "probe-token") {
+		t.Fatal("cold probe lost deployment attribution")
+	}
+}
+
+func TestProjectRouteProbeColdWakeUsesDestinationScope(t *testing.T) {
+	upstream := newProbeUpstream(t, &probeUpstream{}, http.StatusNoContent)
+	backend := &fakeBackend{app: App{ID: uuid.NewString(), AccountID: uuid.NewString(), Plan: api.PlanPro, MaxConcurrency: 2}, host: "demo.apps.dom", upstream: upstream.Listener.Addr().String()}
+	probeBackend := &scopedRouteProbeBackend{scope: "staging", routeProbeBackend: &routeProbeBackend{fakeBackend: backend, deploymentID: "dep-candidate", token: "probe-token"}}
+	handler := NewHandlerWith(probeBackend, NewMetrics(), nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, probeRequest("probe-token"))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("cold probe=%d %s", rec.Code, rec.Body)
+	}
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if backend.lastAdmitScope != "staging" || backend.lastAdmitDeployment != "dep-candidate" {
+		t.Fatalf("cold target=%s scope=%s", backend.lastAdmitDeployment, backend.lastAdmitScope)
+	}
+	if rec.Header().Get(apihostingreceipt.ServedResponseHeader) != apihostingreceipt.CandidateResponseProof("dep-candidate", "probe-token") {
+		t.Fatal("cold probe lost deployment attribution")
+	}
+}

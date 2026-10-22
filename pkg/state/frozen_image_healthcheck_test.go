@@ -31,7 +31,7 @@ func TestFrozenImageHealthcheckSurvivesProfileUpdatesAndRetries(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, check := range []*api.ComposeHealthcheck{nil, {Test: []string{"NONE"}}, {TimeoutNS: int64(250 * time.Millisecond)}} {
-				profile, err := frameworkprofile.CaptureImageRuntime(nil, check)
+				profile, err := frameworkprofile.CaptureImageRuntime(nil, check, nil)
 				if err != nil {
 					t.Fatal(err)
 				}

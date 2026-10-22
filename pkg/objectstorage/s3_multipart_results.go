@@ -26,6 +26,9 @@ func multipartBeforeRequest(ctx context.Context, r MultipartCompleteRequest) err
 
 func (p *S3) CompleteMultipartWithResult(ctx context.Context, bucket string, r MultipartCompleteRequest, c ObjectWriteConditions) (MultipartCompletionResult, error) {
 	result := MultipartCompletionResult{RecoveryCursor: r.RecoveryCursor}
+	if p.ownedNodeReceipts && (ownedMultipartID(r.SessionID) != r.ProviderUploadID || r.Encryption != nil || !capturedWriteProtection(ctx).Empty()) {
+		return result, ErrConfiguration
+	}
 	if r.Encryption != nil {
 		if err := p.verifyEncryption(*r.Encryption); err != nil {
 			return result, err
@@ -35,10 +38,23 @@ func (p *S3) CompleteMultipartWithResult(ctx context.Context, bucket string, r M
 	if err != nil {
 		return result, err
 	}
+	if p.ownedNodeReceipts && r.Recovering {
+		proof, found, probeErr := p.confirmOwnedMultipart(ctx, bucket, r, c)
+		if found || probeErr != nil {
+			return proof, probeErr
+		}
+	}
 	if err = multipartBeforeRequest(ctx, r); err != nil {
 		return result, err
 	}
 	out, err := p.client.CompleteMultipartUpload(ctx, in, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
+	if err != nil && p.ownedNodeReceipts {
+		proof, found, probeErr := p.confirmOwnedMultipart(ctx, bucket, r, c)
+		if found || probeErr != nil {
+			return proof, probeErr
+		}
+		return result, ErrUnavailable
+	}
 	if err == nil {
 		if out != nil {
 			if response, ok := awsmiddleware.GetRawResponse(out.ResultMetadata).(*smithyhttp.Response); ok && response != nil && response.Response != nil {
@@ -49,6 +65,11 @@ func (p *S3) CompleteMultipartWithResult(ctx context.Context, bucket string, r M
 			return result, ErrUnavailable
 		}
 		result.UploadResult = UploadResult{Encryption: publicObjectEncryption(r.Encryption), ETag: aws.ToString(out.ETag), ProviderVersionID: aws.ToString(out.VersionId)}
+		result.Checksum, err = checkedCompletionDigest(r.Checksum, string(out.ChecksumType), out.ChecksumCRC32, out.ChecksumCRC32C, out.ChecksumCRC64NVME, out.ChecksumSHA1, out.ChecksumSHA256)
+		if err != nil {
+			result.UploadResult = UploadResult{}
+			return result, err
+		}
 		if err = p.confirmEncryptedMultipartResult(ctx, bucket, r, result.UploadResult); err != nil {
 			result.UploadResult = UploadResult{}
 			return result, err
@@ -96,7 +117,7 @@ func (p *S3) CompleteMultipartWithResult(ctx context.Context, bucket string, r M
 }
 
 func multipartCompletionInput(bucket string, r MultipartCompleteRequest, c ObjectWriteConditions) (*s3.CompleteMultipartUploadInput, error) {
-	if !c.Valid() || r.SessionID == "" || !ValidKey(r.Key) || r.ProviderUploadID == "" || r.SizeBytes <= 0 || r.SizeBytes > api.MaxObjectUploadBytes || len(r.Parts) < 1 || len(r.Parts) > api.MaxMultipartParts {
+	if !r.Checksum.Complete() || !c.Valid() || r.SessionID == "" || !ValidKey(r.Key) || r.ProviderUploadID == "" || r.SizeBytes <= 0 || r.SizeBytes > api.MaxObjectUploadBytes || len(r.Parts) < 1 || len(r.Parts) > api.MaxMultipartParts {
 		return nil, ErrInvalid
 	}
 	if r.RecoveryCursor != "" {
@@ -106,14 +127,26 @@ func multipartCompletionInput(bucket string, r MultipartCompleteRequest, c Objec
 	}
 	parts := make([]types.CompletedPart, 0, len(r.Parts))
 	var previous int32
-	for _, part := range r.Parts {
+	for i, part := range r.Parts {
 		if part.PartNumber < 1 || part.PartNumber > api.MaxMultipartParts || part.PartNumber <= previous || !validUploadETag(part.ETag) {
 			return nil, ErrInvalid
 		}
 		previous = part.PartNumber
-		parts = append(parts, types.CompletedPart{PartNumber: aws.Int32(part.PartNumber), ETag: aws.String(part.ETag)})
+		nativePart := types.CompletedPart{PartNumber: aws.Int32(part.PartNumber), ETag: aws.String(part.ETag)}
+		if !r.Checksum.Empty() {
+			if len(r.Parts) != len(r.Checksum.Parts) || r.Checksum.Parts[i].Number != part.PartNumber {
+				return nil, ErrInvalid
+			}
+			setCompletedPartChecksum(&nativePart, r.Checksum.Algorithm, r.Checksum.Parts[i].Value)
+		}
+		parts = append(parts, nativePart)
 	}
-	return &s3.CompleteMultipartUploadInput{Bucket: aws.String(bucket), Key: aws.String(r.Key), UploadId: aws.String(r.ProviderUploadID), MultipartUpload: &types.CompletedMultipartUpload{Parts: parts}, IfMatch: stringPtrOrNil(c.IfMatch), IfNoneMatch: stringPtrOrNil(c.IfNoneMatch)}, nil
+	in := &s3.CompleteMultipartUploadInput{Bucket: aws.String(bucket), Key: aws.String(r.Key), UploadId: aws.String(r.ProviderUploadID), MultipartUpload: &types.CompletedMultipartUpload{Parts: parts}, IfMatch: stringPtrOrNil(c.IfMatch), IfNoneMatch: stringPtrOrNil(c.IfNoneMatch)}
+	if !r.Checksum.Empty() {
+		setCompletionChecksum(in, r.Checksum.Digest)
+		in.MpuObjectSize = aws.Int64(r.SizeBytes)
+	}
+	return in, nil
 }
 
 func multipartHistoryRequest(r MultipartCompleteRequest) ObjectHistoryProofRequest {
@@ -146,6 +179,11 @@ func (p *S3) recoverMultipartResult(ctx context.Context, bucket string, r Multip
 				return result, ErrUnavailable
 			}
 			result.UploadResult = UploadResult{VerifiedProtection: capturedWriteProtection(ctx).Proof(), Encryption: publicObjectEncryption(r.Encryption), ETag: aws.ToString(head.ETag), ProviderVersionID: aws.ToString(head.VersionId)}
+			result.Checksum, err = p.confirmMultipartChecksum(ctx, bucket, r, result.UploadResult)
+			if err != nil {
+				result.UploadResult = UploadResult{}
+				return result, err
+			}
 			result.RecoveryCursor = ""
 			return result, nil
 		}
@@ -173,6 +211,11 @@ func (p *S3) recoverMultipartResult(ctx context.Context, bucket string, r Multip
 	result.RecoveryCursor, result.VersionsObserved = page.Cursor, result.VersionsObserved || page.VersionsObserved
 	if err == nil {
 		result.UploadResult = page.UploadResult
+		result.Checksum, err = p.confirmMultipartChecksum(ctx, bucket, r, result.UploadResult)
+		if err != nil {
+			result.UploadResult = UploadResult{}
+			return result, err
+		}
 		return result, nil
 	}
 	if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {

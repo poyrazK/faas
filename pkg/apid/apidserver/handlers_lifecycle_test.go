@@ -177,6 +177,42 @@ func TestBeforeCheckpointUpdateInvalidatesOldSnapshots(t *testing.T) {
 	}
 }
 
+// adr: 1151 — an app's declared pause is created, updated, cleared to the
+// default and validated through the app API.
+func TestAppPauseLifecycleRoundTrip(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "pause-app", Pause: api.PauseNever}, nil)
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Manifest.Pause != api.PauseNever {
+		t.Fatalf("create response pause = %q, want never", out.Manifest.Pause)
+	}
+	for _, want := range []string{api.PauseBetweenRequests, ""} {
+		pause := want
+		if rec := e.Do(t, "PATCH", "/v1/apps/pause-app", api.UpdateAppRequest{Pause: &pause}, nil); rec.Code != 200 {
+			t.Fatalf("update pause %q: %d %s", want, rec.Code, rec.Body)
+		}
+		stored, err := (*e.Store()).AppBySlug(t.Context(), "pause-app")
+		if err != nil || stored.Manifest.Pause != want {
+			t.Fatalf("stored pause = %q, err=%v; want %q", stored.Manifest.Pause, err, want)
+		}
+	}
+	for name, req := range map[string]api.CreateAppRequest{
+		"unknown value":    {Slug: "pause-bad", Pause: "sometimes"},
+		"service app idle": {Slug: "pause-service", ExecutionMode: api.ExecutionModeService, Pause: api.PauseWhenIdle},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := e.Do(t, "POST", "/v1/apps", req, nil)
+			apidserver.AssertProblem(t, rec, 400, api.CodeValidation)
+		})
+	}
+}
+
 func TestAppAfterRestoreRejectsUnsupportedModeAndPath(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	for _, tc := range []struct {
@@ -196,9 +232,10 @@ func TestAppAfterRestoreRejectsUnsupportedModeAndPath(t *testing.T) {
 	}
 }
 
+// adr: 1150 — Pro allows a request_timeout_s of up to 5 minutes.
 func TestCreateApp_RequestTimeoutIsBounded(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
-	rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "timeout-too-large", RequestTimeoutS: 31}, nil)
+	rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "timeout-too-large", RequestTimeoutS: 301}, nil)
 	if rec.Code != 422 {
 		t.Fatalf("request timeout: %d %s", rec.Code, rec.Body)
 	}
@@ -488,5 +525,36 @@ func TestStateManifestForUpdate_PreservesProjectMetadataAndUpdatesPorts(t *testi
 	if updated.ProjectSourceSHA256 != "source-digest" || updated.BuildDockerfile != "deploy/Dockerfile.production" ||
 		updated.WorkingDir != "/workspace/service" || updated.Env["DATABASE_URL"] != "secret" {
 		t.Fatalf("project metadata was not preserved: %+v", *updated)
+	}
+}
+
+// adr: 1342 — function_concurrency round-trips and stays within the plan's
+// per-VM concurrency bound.
+func TestAppFunctionConcurrencyRoundTripAndBound(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "multiplexed", FunctionConcurrency: 8}, nil)
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.FunctionConcurrency != 8 || out.Manifest.FunctionConcurrency != 8 {
+		t.Fatalf("response function_concurrency = %d / %d, want 8", out.FunctionConcurrency, out.Manifest.FunctionConcurrency)
+	}
+	over := api.PlanPro.ConcurrencyPerVMBound() + 1
+	rec = e.Do(t, "PATCH", "/v1/apps/multiplexed", api.UpdateAppRequest{FunctionConcurrency: &over}, nil)
+	apidserver.AssertProblem(t, rec, 400, api.CodeValidation)
+	reset := 0
+	if rec = e.Do(t, "PATCH", "/v1/apps/multiplexed", api.UpdateAppRequest{FunctionConcurrency: &reset}, nil); rec.Code != 200 {
+		t.Fatalf("reset: %d %s", rec.Code, rec.Body)
+	}
+	stored, err := (*e.Store()).AppBySlug(t.Context(), "multiplexed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Manifest.FunctionConcurrency != 0 {
+		t.Fatalf("stored function_concurrency = %d after reset, want 0", stored.Manifest.FunctionConcurrency)
 	}
 }

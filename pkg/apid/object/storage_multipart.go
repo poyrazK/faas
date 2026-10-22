@@ -413,7 +413,7 @@ func (s *Service) ExecuteObjectMultipartOperation(ctx context.Context, store sta
 		switch upload.State {
 		case state.ObjectMultipartInitiating:
 			var providerID string
-			providerID, err = s.EnsureAdmittedObjectMultipart(callCtx, store, backend.Provider, bucket, upload, objectstorage.MultipartCreateRequest{
+			providerID, err = s.EnsureAdmittedObjectMultipart(callCtx, store, backend.Provider, bucket, upload, objectstorage.MultipartCreateRequest{Checksum: upload.Checksum.Policy,
 				SessionID: upload.ID, Key: upload.Key, SizeBytes: upload.SizeBytes,
 				Metadata: objectstorage.ObjectMetadata{
 					ContentType: upload.ContentType, CacheControl: upload.Metadata.CacheControl,
@@ -519,7 +519,8 @@ func (s *Service) executeObjectMultipartAbort(ctx context.Context, store state.O
 	if err = objectstorage.VerifyMultipartAbort(ctx, provider, bucket.PhysicalName, request); err != nil {
 		return err
 	}
-	return finishObjectMultipartOperation(ctx, func(finishCtx context.Context) error {
+	err = finishObjectMultipartOperation(ctx, func(finishCtx context.Context) error {
 		return transfers.FinishVerifiedObjectMultipartAbort(finishCtx, u.ID, u.LeaseToken)
 	})
+	return err
 }

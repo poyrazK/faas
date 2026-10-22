@@ -29,12 +29,12 @@ These numbers come from the financial model and are **not negotiable at implemen
 | Free first-week defaults (env vars / secrets / idle / per-VM concurrency / log archive) | 16 / 8 / 60 s / 4 / 1 day | `apid` plan limits, gateway archive read-back, and the customer-facing CLI/dashboard quota surfaces |
 | Plan per-VM concurrency bound (`concurrency_per_vm`) | Free 4 · Hobby 5 · Pro 25 · Scale 80 | `apid` validation on `GET /v1/apps/{slug}`; CLI `gregale app <slug> --concurrency`; **listener-level only** — handler-process concurrency is the customer's responsibility (§4.9.1, issue #559) |
 | Per-deployment `require_authn` opt-in (issue #560) | Free no · Hobby no · Pro yes · Scale yes | `apid` PATCH validator via `Plan.RequireAuthnAllowed()`; column default `false` so every existing customer is unaffected; `gatewayd-internal` enforces after Host→app resolution and before the wake gate, cross-account tokens receive 403 |
-| Spend cap (`accounts.overage_cap_cents`, issue #561) | Free 0 (no overage) · Hobby NULL · Pro NULL · Scale NULL; customer-mutable via `POST /v1/account/overage-cap` and the dashboard `Spend cap` form | storage layer #279 (`migrations/00054_account_credits.sql`); enforcement at `schedd.Engine.admitGate` via `pkg/sched/OverageChecker` (5 s TTL cache, fail-open); wire surface `CodeAdmissionRefused` (HTTP 402); meterd's quota tick is the unchanged advisory-skip signal (#279 PR-A) |
+| Spend cap (`accounts.overage_cap_cents`, issue #561) | Free 0 (no overage) · Hobby NULL · Pro NULL · Scale NULL; customer-mutable via `POST /v1/account/overage-cap` and the dashboard `Spend cap` form | storage layer #279 (`migrations/00054_account_credits.sql`); enforcement at `schedd.Engine.admitGate` via `pkg/sched/OverageChecker` (5 s TTL cache, fail-open); wire surface `CodeAdmissionRefused` (HTTP 402); ADR-1162: a hard monthly ceiling — usage is billed only up to the cap, never back-billed, and schedd parks the account's workloads while it holds |
 | Capacity-pressure rebalancer (Tier A9 / ADR-087) | `PressureAtCapacityThresholdPerMin=5`, `PressureReassessmentIntervalSeconds=30`, `PressureMigrationPolicy="migrate_after_2"` (closed set ∈ {skip_live, migrate_after_1, migrate_after_2}); env-overridable via `FAAS_PRESSURE_*`; surface lives in `pkg/api/limits.go` and `pkg/sched/pressure_aggregator.go` + `pressure_rebalancer.go` | `schedd` engine-side `IncAtCapacity` at every `WakeResult{AtCapacity:true}` return; aggregator + watcher poll for sustained apps; `Engine.RebalancePressuredApps` reassigns to peer with headroom; `app_changed{pressure_rebalanced}` notify on the rebalance — see ADR-087 |
 | Expected resident concurrency (planning) | 0.02 / 0.15 / 0.60 / 3.00 | telemetry comparison only |
 | Continuous app ownership recovery (ADR-421) | `OwnershipRecoveryIntervalSeconds=5`, `OwnershipRecoveryTimeoutSeconds=30`, `OwnershipRecoveryStoreTimeoutSeconds=5`; existing rebalance cooldown 60 s and batch limit 50 | `schedd` startup and periodic scan, fair app-ID pages, node-health-fenced ownership transfer, existing routing invalidation and durable service recovery |
 | Bare-metal service recovery capacity (ADR-422) | `ServiceCapacityMinimumHosts=2`; existing VM overhead, startup CPU, plan guest vCPU and CPU overcommit; heartbeat freshness 90 s | Atomic fleet policy and desired-intent reservations; conservative slots preserve one-host recovery; existing declared replicas may recover while degraded |
-| Overage meter | €0.01 per GB-RAM-hour | `meterd` → the selected `billing.Provider` (Polar by default) |
+| Overage meter | $0.01 per GB-RAM-hour (USD, ADR-1430) | `meterd` → the selected `billing.Provider` (Polar by default) |
 | Build cost envelope | builds fit inside control-plane + headroom, never tenant RAM | `builderd` admission §9 |
 
 **Three numbers the business is fragile to** (founding doc §5): fleet snapshot size, resident concurrency per customer, churn. The first two are produced by this system — §12 makes them first-class metrics from day one.
@@ -137,7 +137,7 @@ the upstream Caddy/Cloudflare edge.
 - **Rate limits (ADR-040 / issues #292 and #1680):** `gatewayd-internal` runs two token buckets per request in series, both before the wake gate so abuse doesn't burn the schedd gRPC admission queue. The **per-account** bucket (`RateLimitPerAccountRPM` — Free 300/min, Hobby 1200/min, Pro 6000/min, Scale 30000/min; key = `apps.account_id` joined in `pgRouter.toApp`) runs first and bounds attacks spread across one customer's apps. Every plan obeys `RateLimitPerAccountRPM >= 60 * RateLimitRPS`, so the shared account boundary can sustain at least one app at its advertised per-app rate. The **per-app** bucket (`RateLimitRPS`/`RateLimitBurst`) runs second as the inner cap. Each 429 carries `Retry-After: 1` and `x-faas-rate-limit-scope: {account,app}` so observability tooling can split the two populations. The counter is `gateway_per_account_rate_limited_total{account_id, plan}`, pre-instantiated under `__other__`; the `FaasPerAccountRateLimitSpike` alert fires above 300 rejected requests/min fleet-wide for 5 minutes.
 - **Per-deployment `require_authn` opt-in (issue #560):** an app may opt into per-deployment authentication by setting `apps.require_authn=true` (PATCH via `UpdateAppRequest`; Pro/Scale only). When set, the routing layer in `gatewayd-internal` requires a valid `Authorization: Bearer <token>` header on every incoming request — tokens are account-scoped API keys (`fp_live_…`, SHA-256 verified through `pkg/auth.Middleware.RequireSession`). The check runs **after** Host→app resolution (so the app's `require_authn` flag is known) and **before** the wake gate / forwarder (so unauthenticated traffic cannot trigger cold-boot on a token-gated app). Cross-account tokens — token valid for *any* account other than the app's owning account — receive 403 `insufficient_scope` and never reach the wake path. Audit rows: `app.authn_required` on the PATCH that flips the flag on, `app.authn_disabled` on the true→false transition, and `instances.authn_missing` / `instances.authn_invalid` / `instances.authn_scope` per denied request. The default is `false`; every existing customer is unaffected.
 - **Per-app wire-protocol selector (issue #67 / ADR-124, hardened ADR-127):** an app may pick the wire protocol its customer-facing edge speaks via `apps.app_protocol` (closed-set `{http1, http2, grpc}`; migration `00382_apps_app_protocol.sql` + `apps_app_protocol_chk` CHECK). Default is `http1` (universal — every pre-ADR-124 app keeps its current behaviour); `http1` and `http2` are permitted on every plan; `grpc` is gated to Hobby+/Pro/Scale and rejected on Free with 403 `plan_app_protocol_grpc_not_allowed`. Invalid values (anything outside the closed set) are rejected at `apid` with 400 `app_protocol_invalid` — the column-level CHECK is the belt-and-braces backstop, not the primary validator. `apid` writes via `CreateAppRequest.AppProtocol` (closed-set pointer; apid-floor coerces empty→`"http1"` so legacy callers stay green) and `UpdateAppRequest.AppProtocol` (same Set\*/optional-pointer convention as every other field). On the read side, `gatewayd-internal` plumbs `state.App.AppProtocol` through `pgRouter.toApp` onto `gateway.App.AppProtocol`, and the handler stamps `x-faas-protocol: <http1|http2|grpc>` on every inbound request at the same site `x-faas-stream` and `x-faas-upgrade` are stamped today (`pkg/gateway/handler.go` ~5131 streaming, ~5261 buffered). The forwarder reads the header at `pkg/gateway/forwardproxy.go::fwdStreamOnceWithEvents` and emits a `slog.Debug` framing-selection line so operators with debug logging on can correlate per-app protocol choice with bridge-side framing behaviour. **Wire-shape is now in fleet (ADR-126, PR #1050).** The per-app framing switch reaches the guest's `:8080` as native H2 frames (for `app_protocol=http2`) or native gRPC trailers (for `app_protocol=grpc`) via the bridge-side H2C terminator (`cmd/vmmd-stream-bridge/h2c_terminator.go::handleH2CStream`); `app_protocol=http1` rides the legacy `handleH1Stream` path verbatim (zero behaviour change). Two rollback switches (`FAAS_BRIDGE_PROTOCOL=h1` surgical, `FAAS_STREAM_BRIDGE_VERSION=v1` wholesale) and the runbook at `docs/ops/h2c-rollback.md` are the operator's levers. **Hardening follow-on (ADR-127, G19.1).** The four production-readiness gaps surfaced by the post-#1050 audit are addressed: snapshot invalidation on `app_protocol ∈ {http2, grpc}` adoption (`FAAS_BASE_IMAGE_VERSION` + `MarkAllSnapshotsStaleByAppProtocol` + F3 sweep in `pkg/imaged/loop.go::runFCSweep`); listener + transport security pins (`MaxConcurrentStreams=100`, `MaxReadFrameSize=1 MiB`, `MaxHeaderListSize=1 MiB`, `ReadIdleTimeout`, `PingTimeout`, `WriteByteTimeout`, `defer recover()` + `defer transport.CloseIdleConnections()` on `handleH2CStream`); observability (`vmmd_bridge_framing_total{app_protocol, bridge_protocol, framing}` counter pre-instantiated across the closed cross-product + `slog.Info` framing-selection line on every request + `bridge-protection` Grafana dashboard + `FaasBridgeFramingMismatch` / `FaasBridgeRollbackStuck` Prometheus alerts); and these docs (spec §4.1 + STATUS M8.6 + `docs/ops/h2c-rollout.md` + `docs/ops/h2c-rollback.md`). Layer 12 (metal acceptance: 5 unconditional `t.Skip`s in `cmd/e2e/bridge_h2c_terminator_metal_test.go`) is **deliberately out of scope** and lands in two follow-on issues (G19.2 un-stub the tests; G19.3 add `deploy/ansible/roles/metal-h2c-acceptance/`).
-- **Spend cap → workload refuse (issue #561):** a customer may set `accounts.overage_cap_cents` (storage layer #279, `migrations/00054_account_credits.sql`) to a monthly ceiling on overage spending. The schedd enforces the gate at `Engine.admitGate` via the `pkg/sched/OverageChecker` seam (5 s TTL cache, fail-open on transient PG errors; meterd's quota loop is the safety net for sustained outages). When the cap is reached, the wake path lifts to `CodeAdmissionRefused` (`pkg/api/errors.go`) — HTTP 402 on the gateway edge, `FailedPrecondition` on the gRPC ingress. Existing live instances are **not** auto-parked by the cap alone; parking is the M7 free-stop path (`pkg/meter/quota.go::EnforceQuota` case "stop"). Customers manage the cap via `POST /v1/account/overage-cap` (account-self-scoped) or the dashboard `Spend cap` form (CSRF-envelope POST `/dashboard/raise-overage-cap`); the API surface carries the precise current `cap_cents` / `current_overage_cents` in the RFC 7807 body so a script can compute "how much to raise" without parsing prose. Audit row `overage.cap_reached` is emitted the first time each (account, UTC day) the gate refuses; UTC-day dedupe chosen over the issue body's calendar-month wording to prevent audit-table flooding.
+- **Spend cap → workload refuse (issue #561):** a customer may set `accounts.overage_cap_cents` (storage layer #279, `migrations/00054_account_credits.sql`) to a monthly ceiling on overage spending. The schedd enforces the gate at `Engine.admitGate` via the `pkg/sched/OverageChecker` seam (5 s TTL cache, fail-open on transient PG errors; meterd's quota loop is the safety net for sustained outages). When the cap is reached, the wake path lifts to `CodeAdmissionRefused` (`pkg/api/errors.go`) — HTTP 402 on the gateway edge, `FailedPrecondition` on the gRPC ingress. ADR-1162 makes the cap a hard ceiling: explicit-deployment admissions (floors, service replicas, workers, per-deployment wakes) check it too, the reaper parks every app of a capped account (`Engine.appMustPark`), warm pools are reclaimed, queued job tasks are deferred, and meterd bills usage only up to the cap and never back-bills it when the cap is raised. Customers manage the cap via `POST /v1/account/overage-cap` (account-self-scoped) or the dashboard `Spend cap` form (CSRF-envelope POST `/dashboard/raise-overage-cap`); the API surface carries the precise current `cap_cents` / `current_overage_cents` in the RFC 7807 body so a script can compute "how much to raise" without parsing prose. Audit row `overage.cap_reached` is emitted the first time each (account, UTC day) the gate refuses; UTC-day dedupe chosen over the issue body's calendar-month wording to prevent audit-table flooding.
 - Records `last_request_at[instance]` (in-memory, flushed to PG every 15 s) — this drives idle parking.
 - Rate limits (token bucket, per app): Free 5 rps burst 20; Hobby 20 rps burst 100; Pro 100 rps burst 500; Scale 500 rps burst 2000. Over-limit → `429`.
 - Request/response size caps (per-plan, ADR-047):
@@ -393,7 +393,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 
 - **Hard bypass on authed requests (the load-bearing safety property).** A request with `Authorization` header or a session cookie MUST bypass the cache entirely — never stored, never served. This is correct-by-construction: an unauthed populate cannot leak to an authed request because authed responses are never stored in the first place. The `vary_on` closed vocabulary is `Accept-Language | Accept-Encoding | query` — `Authorization` is deliberately NOT a vary dimension; it is a hard bypass. Per-principal caching is a follow-on ADR (deferred, ADR-122 §Out of scope).
 - **Cacheability predicate (deny-by-default).** Store only when ALL hold: `method ∈ {GET, HEAD}`; request has no `Authorization` header AND no session cookie; response status ∈ {200, 203, 300, 301, 308, 404, 410}; response has no `Set-Cookie`; response lacks `Cache-Control: no-store|private`; body ≤ per-entry cap (`ResponseCachePerEntryMaxBytes = 1 MiB`); no concurrent in-flight write to the same key. A `Cache-Control: no-store` / `private` from the origin is an absolute veto — the app always wins over a platform-level rule.
-- **Cache key.** `appID | ruleID | method | normalizedPath | sha256(sorted(vary_on header values)) | sortedQuery`. NOT bound to `deploymentID` in v1 — deploy invalidation is wired via `NotifyAppChanged → InvalidateByApp` (the `cacheRuleSnapshot.DeploymentID` slot is reserved for a follow-on). `appID` isolation prevents cross-tenant leakage when two apps share a path glob (e2e unit pin: `TestCacheSecurity_6_AppIsolation`).
+- **Cache key.** `appID | ruleID | deploymentID | method | normalizedPath | rawPath | rawQuery | forceQuery | sha256(host + vary_on values)`. Query order, path escaping and an explicit empty query delimiter remain distinct; methods are case-sensitive. Decoded `normalizedPath` still controls rule matching and path purges. The deployment dimension holds a resolved rollout/revision cohort when available; unkeyed traffic uses app invalidation on deploy. `appID` and host isolation prevent cross-app or cross-host serving. [ADR-20261017214848](adr/20261017214848-response-cache-request-identity.md) replaces the earlier sorted-query identity, and a versioned encoding isolates older shared entries.
 - **Store: local L1 plus optional distributed L2.** `sync.Mutex` + `container/list` LRU + byte ceiling forms the always-available 64 MiB per-gateway L1. Setting `FAAS_GATEWAY_RESPONSE_CACHE_REDIS_URL` attaches a TTL-bound Redis L2 shared by gateway instances. Redis is never authoritative: connection or operation failure falls through to L1/origin, and no cache error may fail a request. Entries are not persisted to Postgres or gateway disks. App/rule/deploy invalidations and `gregale cache purge` evict both tiers.
 - **Stale while revalidate (ADR-214).** `stale_while_revalidate_seconds` is optional and capped at 300 seconds. After freshness expires, the gateway returns the cached response immediately with `x-faas-cache: stale-while-revalidate` and `Warning: 110`, then refreshes the exact key in a detached, singleflight-coalesced request. A zero value disables this behavior.
 - **Serve stale on failure (ADR-122 §Decision).** Retain entries past `max_age` for `stale_if_error` (capped at 5 min at the apid validator; a rule with `stale_if_error == 0` disables stale-on-error). Serve stale ONLY on a genuine origin failure (`gate.Wait` wake failure or upstream 5xx/timeout), never on a cache miss. Stamps `Warning: 110 - "Response is Stale"` per RFC 7234 §5.5.2 and a platform-internal `X-From-Cache: stale` debug surface. `outcome="stale_if_error_served"` is its own metric label so stale hits are never conflated with fresh hits in the hit-rate number (the dashboard surfaces stale serves separately so operators see when their cache is being relied on as a fallback).
@@ -483,7 +483,7 @@ Two operator-side addenda on top of the §4.7 quota ladder:
 
 - **`POST /v1/admin/accounts/{id}/credits`** (admin scope + `FAAS_ADMIN_EMAILS` allowlist, idempotent via the `Idempotency-Key` header) inserts one row in `account_credits` and one immutable row in `credit_ledger`, then emits a `credit.issued` audit event. Reason is `3..500` chars (CHECK at the column + handler 400). Migration `00054_account_credits.sql` adds both tables with `ON DELETE CASCADE` on `account_id` so GDPR delete is a single transaction (slot walked past 00050 → 00051 → 00053 → 00054 to dodge collisions with PR #325 / #322 / #341 / #340; memory: `migration-slot-collisions-across-prs.md`). Credits are surfaced in `usageSummary` as `credits_remaining_cents` but are **not** applied at the per-minute derivation.
 - **`POST /v1/invoices/{id}/consume-credits`** (issue #279 PR-C; admin scope + `FAAS_ADMIN_EMAILS` allowlist + MFA-gated, idempotent via the `Idempotency-Key` header) is the operator trigger for the credit consumption reducer. The reducer reads `usage_minutes.mb_seconds` for the invoice's billing period `[period_start, period_end)`, converts to integer cents via `floor(mb_seconds × 100 / 3600)` at `OverageMillicentsPerGBHour` (€0.01/GB-h, floored; same formula as `pgstore.CurrentMonthOverageCents`), and drains the account's active credits FIFO (`created_at ASC`) against the overage. `cents_remaining` never goes negative: each credit decrement is `UPDATE … WHERE cents_remaining >= $amt RETURNING cents_remaining`, conditional inside a single PgStore transaction. The `consume_credits` loop is the same reducer that a future `meterd` cron and the PR-B `UpsertInvoice` webhook Tx both call — the HTTP endpoint is just one trigger. Idempotent under webhook redelivery via the `UNIQUE (provider, provider_invoice_id, credit_id) WHERE provider_invoice_id IS NOT NULL AND delta_cents < 0` partial index on `credit_ledger` (ADR-220); a second reducer call for the same account, provider and `provider_invoice_id` returns `already_consumed_for_invoice=true` with the same `consumed_cents` and writes no new ledger rows. Migration `00058` adds the invoice ID and initial partial unique index; ADR-220 and migration `20260922183947369` qualify the receipt by provider and fail closed on legacy rows whose provider cannot be resolved safely. Issuance rows leave `provider_invoice_id` NULL so the partial constraint does not apply.
-- **`accounts.overage_cap_cents`** (nullable `bigint`, optional per-account ceiling; zero is a valid cap) is read by `meterd`'s quota tick once per account per cycle. The tick computes the current-month derived overage (`SUM(usage_minutes.mb_seconds) since date_trunc('month', now()) at UTC`) and skips the overage-row insert when `month_cents >= cap_cents`. The Free hard-stop / paid warning ladder is unchanged — the cap is layered on top of in-budget usage. Per-hit increments of `meterd_billing_cap_exceeded_total{plan=…}` (cardinality 4) provide the alert signal. **Race scope**: meterd is the sole writer to `usage_minutes` today (spec §6.1), so the cap check + overage-row insert is serialised by the single-writer invariant. A future meterd-replica deploy would need a per-account `SELECT … FOR UPDATE` on `accounts` around the cap check + insert decision — that locking is the obvious follow-up; until then, the worst-case is one minute's overage-row insertion past the cap.
+- **`accounts.overage_cap_cents`** (nullable `bigint`, optional per-account ceiling; zero is a valid cap) is read by `meterd`'s quota tick once per account per cycle. The tick computes the current-month derived overage (`SUM(usage_minutes.mb_seconds) since date_trunc('month', now()) at UTC`, net of the month's largest recorded plan grant, ADR-1162) and skips the overage-row insert when `month_cents >= cap_cents`. The provider pusher bills an hour that crosses the cap exactly up to it and settles it; capped usage is never back-billed when the cap is raised, and schedd parks the account's workloads while the cap holds (ADR-1162). The Free hard-stop / paid warning ladder is unchanged — the cap is layered on top of in-budget usage. Per-hit increments of `meterd_billing_cap_exceeded_total{plan=…}` (cardinality 4) provide the alert signal. **Race scope**: meterd is the sole writer to `usage_minutes` today (spec §6.1), so the cap check + overage-row insert is serialised by the single-writer invariant. A future meterd-replica deploy would need a per-account `SELECT … FOR UPDATE` on `accounts` around the cap check + insert decision — that locking is the obvious follow-up; until then, the worst-case is one minute's overage-row insertion past the cap.
 - **Provider refund seam**: `billing.Provider.Refund(ctx, chargeID, amountCents)` is on the interface. The operator route `POST /v1/admin/accounts/{id}/refunds` currently supports Polar order IDs, binds the provider order to a paid local invoice, requires MFA for session principals plus the admin allowlist, and forwards the explicit `Idempotency-Key` through the provider context. Polar ignores the `Idempotency-Key` request header, so the Polar adapter stamps the key into refund metadata, lists the order's refunds before writing, sends the refund POST exactly once (no transport retry), and re-lists on an ambiguous failure to recover a committed refund — a redelivered operator request with the same key never moves money twice. Stripe and Paddle retain their adapter implementations for compatibility deployments; a provider without `CapRefund` returns 501. Provider refund webhooks remain observational and emit a `refund.processed` audit row after verification.
 
 #### 4.7.2 Post-response tail metering (issue #667 / ADR-078 — informational only)
@@ -563,7 +563,7 @@ Resume path (post-restore, triggered by host signal via vsock): re-seed `/dev/ur
 `runner-node22`, `runner-node24`, `runner-python312`, `runner-python313`, `runner-go124`, `runner-go124-alpine`: a 15-line HTTP host on `:8080` that loads the customer handler and adapts request/response.
 
 Contract (identical across languages): handler receives `{method, path, headers, query, body_b64}`; returns `{status, headers, body_b64}` or a plain body. Node: `export default async function handler(event, ctx)` or a Fetch API object, `export default { fetch(request, env, ctx) }`; Fetch API requests and responses are translated to and from the envelope by the generated adapter. Python: `def handler(request) -> Response | dict | str`.
-A response header value may be a string or a list of strings, one header line per element; a repeated request header arrives joined with `", "` (`"; "` for `Cookie`). Streamed responses (ADR-999): instead of one response line, a handler may send a `{"frame":"head",status,headers}` line, `{"frame":"chunk",body_b64}` lines and a final `{"frame":"end"}` (or `{"frame":"error",message}` to abort); the runner sends the head at once and flushes each chunk, and the gateway's ADR-102 path carries the stream to the client. Node Fetch bodies still being produced, async-iterable bodies, Python generator bodies and Go handlers that `Flush` stream; every other response is sent whole as before. All runners share `guest/runners/internal.Serve`. Websockets: not for functions (fine for Apps — `gatewayd-internal` proxies them transparently).
+A response header value may be a string or a list of strings, one header line per element; a repeated request header arrives joined with `", "` (`"; "` for `Cookie`). Streamed responses (ADR-999): instead of one response line, a handler may send a `{"frame":"head",status,headers}` line, `{"frame":"chunk",body_b64}` lines and a final `{"frame":"end"}` (or `{"frame":"error",message}` to abort); the runner sends the head at once and flushes each chunk, and the gateway's ADR-102 path carries the stream to the client. Node Fetch bodies still being produced, async-iterable bodies, Python generator bodies and Go handlers that `Flush` stream; every other response is sent whole as before. All runners share `guest/runners/internal.Serve`. Request timeouts (ADR-1150): the gateway appends `X-Faas-Deadline-Ms`, the request budget left at dispatch, to every guest request, and the runner bounds an invocation, a stream included, by the longer of that and 30 s, capped at 15 min; per-plan ceilings on `request_timeout_s` are Free 30 s, Hobby 60 s, Pro 5 min, Scale 15 min. Async, queue, cron and replay invocations get the same timeout, never less than 30 s (ADR-1180): gatewayd-internal sends it as their deadline, and schedd sizes their leases and delivers long ones off the drain tick and the cron loop. Websockets: not for functions (fine for Apps — `gatewayd-internal` proxies them transparently).
 Adding a runtime is a 7-layer procedure (migrations, schema, apid handler whitelist, openapi enums, runner shim, imaged handler surfaces, base Dockerfile + auto-stage wiring) — see ADR-052 for the canonical touch-list. The worked example for `node24` and `python313` is Tier 1 PR 1 + PR 2.
 
 #### 4.9.1 Per-VM concurrency model (issue #559)
@@ -577,7 +577,7 @@ The runner's HTTP listener (`http.ListenAndServe` on `:8080`) dispatches each ac
 - **Go `net/http`** — a Go handler achieves the bound.
 - **Synchronous subprocess-per-request** (e.g. a Python `read-stdin → write-stdout` script) — does NOT achieve the bound; one subprocess handles one request at a time regardless of the listener's goroutine count.
 
-Generated Node and Python adapters use a persistent interpreter pool. Each adapter pool permits at most four active or idle workers (`api.FunctionInterpreterMaxWorkers`); excess requests wait for a reusable worker within their invocation deadline. This bounds process startup and memory pressure during bursts. Cancellation removes only the affected worker when necessary. Custom adapters without the persistent protocol retain subprocess-per-request execution. The advertised `concurrency_per_vm` bound remains the HTTP listener's fan-out; interpreter parallelism and the per-app live-VM cap are separate limits. Existing function images must be rebuilt to receive runner changes. Each scheduler verifies the live deployment layers of the apps it owns in the background, at startup and again every minute so apps re-homed to it after a restart or newly deployed are covered, using two workers and a two-minute per-layer deadline; a failed layer is retried after five minutes (`api.AttestationWarmWorkers`, `api.AttestationWarmLayerTimeout`, `api.AttestationWarmInterval`, `api.AttestationWarmRetryBackoff`). This primes the existing successful-verification cache without starting VMs; concurrent verifications of one layer share a single read and hash (`api.LayerVerifyTimeout`). Failed artifacts retain the normal fail-closed verification on wake; a tenant artifact failure does not block unrelated valid deployments.
+Generated Node and Python adapters use a persistent interpreter pool. Each adapter pool permits at most four active or idle workers (`api.FunctionInterpreterMaxWorkers`); excess requests wait for a reusable worker within their invocation deadline. This bounds process startup and memory pressure during bursts. Cancellation removes only the affected worker when necessary. Custom adapters without the persistent protocol retain subprocess-per-request execution. An app may set `function_concurrency` (ADR-1342), up to its plan's `concurrency_per_vm`: imaged stamps `FAAS_FUNCTION_CONCURRENCY` on the function deployment, the adapter advertises that many slots in its ready handshake, and the pool multiplexes requests over each worker by a `__faas_id` the adapter echoes on every response line, starting another worker only when every slot is busy. Python runs `async def` handlers as asyncio tasks and sync handlers on a thread pool, acknowledging a sync request's cancel once its handler returns. An abandoned request is cancelled with `{"__faas_cancel": id}` rather than killing its worker; a worker that does not acknowledge within 5 s is restarted. The advertised `concurrency_per_vm` bound remains the HTTP listener's fan-out; interpreter parallelism and the per-app live-VM cap are separate limits. Existing function images must be rebuilt to receive runner changes. Each scheduler verifies the live deployment layers of the apps it owns in the background, at startup and again every minute so apps re-homed to it after a restart or newly deployed are covered, using two workers and a two-minute per-layer deadline; a failed layer is retried after five minutes (`api.AttestationWarmWorkers`, `api.AttestationWarmLayerTimeout`, `api.AttestationWarmInterval`, `api.AttestationWarmRetryBackoff`). This primes the existing successful-verification cache without starting VMs; concurrent verifications of one layer share a single read and hash (`api.LayerVerifyTimeout`). Failed artifacts retain the normal fail-closed verification on wake; a tenant artifact failure does not block unrelated valid deployments.
 
 The runner-level concurrency claim is pinned by `guest/runners/internal/runnerparity/concurrency_test.go::TestRunner_HandleIsConcurrent` — 20 parallel GETs against a slow handler complete in ~1× handler-sleep, not 20× (the serialized floor). A regression to single-threaded accept would surface there.
 
@@ -1091,6 +1091,31 @@ App timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s the
 4. A parked app consumes zero resident RAM (verify: cgroup gone).
 5. Two concurrent instances restored from one snapshot never share an IP, netns, jail uid, or RNG stream. **ADR-680:** "RNG stream" includes userspace generators: guest-init reseeds registered Node and Python processes before the resume ACK and fails the resume closed (cold boot) when one cannot confirm. **Issue #168:** `gatewayd-internal` picks per-instance `x-faas-instance` (overwriting inbound) so the per-node vmmd forwarder attributes every byte to the correct microVM even when multiple restored siblings share one compute_node.
 
+Worker pools also have scheduler-owned durable recovery. A bounded startup and
+five-second sweep retries due active owned worker apps through the scoped
+planner, including captured environment settings. Persist retry deadlines,
+failure counts and expiring app leases independently of desired capacity.
+Failure backoff is 5–300 seconds; full healthy pools are checked every 30 seconds.
+Events honor admission cooldown while permitting scale-in and zero floors.
+Suspension, abuse holds, ownership and existing account/node admission fences
+remain authoritative. See [durable worker recovery](adr/20261017221000-durable-worker-recovery.md).
+
+Worker recovery diagnostics persist the scheduler's environment target and
+resident counts under the same lease, with observation timestamps. The existing
+operational-summary API and `gregale inspect` expose app-wide retry state and
+separate environment observations. Missing or fifteen-minute-old observations
+remain unknown; fresh owner-scoped metrics distinguish deficits, overdue
+reconciliation and unavailable collection. Intentional zero targets do not
+contribute a capacity deficit. See [worker recovery diagnostics](adr/20261017223000-worker-recovery-diagnostics.md).
+
+Worker pool observations also record bounded admission blockers from actual
+account, concurrency, node resource and retry decisions. Each refusal retains its
+own observation time; cooldowns preserve earlier evidence and the app-wide retry
+deadline. Environment selection filters blockers, and satisfied target slots
+clear them. Optional API/CLI evidence includes relevant account/app usage and
+limits while omitting host identities and fleet usage. See
+[worker admission explanations](adr/20261018090000-worker-admission-explanations.md).
+
 ### 6.3 Wake latency budget (p50 targets)
 
 | Step | ms |
@@ -1157,6 +1182,7 @@ This subsection is the cross-reference page for the three v1.1 ADRs. Steady-stat
 | Dependency install step (npm/pip/go mod/cargo) exited non-zero | `pkg/builderd/vm_metal.go::classifyBuildFailure` extended with the `pkg` discriminator | RFC 7807 `dep_install_failed` 422 with `pkg` (npm/pip/go/cargo) on the wire. CLI recommends `npm install` locally to reproduce | error-explanations cluster, amendment 1 |
 | App boot timeout (readiness probe waited the full `startup_timeout_s` and `/healthz` never returned 200) | `pkg/sched/engine.go::KillStuck` carries `StuckReason` into the typed Problem | RFC 7807 `app_startup_timeout` 422 distinct from idle timeout (which parks). CLI hints to increase `startup_timeout_s` or defer boot work until after the `/healthz` listener is up | error-explanations cluster, amendment 1 |
 | App process exited during startup (crash loop, or a non-zero exit in the characterization report) | `pkg/fcvm/vmm.go::guestStoppedDuringStartup` requires guest-init's supervisor restart/crash-loop lines; `characterizationBootOutcome` reads the reported exit code | RFC 7807 `app_startup_crash` 422 carrying the workload's last output lines. A guest that died without supervisor output (overlay/pivot/init failure) stays a platform error. Customer-caused codes (`api.CustomerCausedDeploymentFailureCodes`) are excluded from the public status page's deployment-success SLO (§12) | error-explanations cluster, amendment 1 |
+| Workload behavior contradicts its declared `execution_mode` (a worker bound a port or exited cleanly, a job served) | `pkg/fcvm/vmm.go::characterizationBootOutcome` compares the mode with the characterized class | RFC 7807 `execution_mode_conflict` 422, customer-caused (excluded from the public status page like `app_startup_crash`); production-us hunt #10 (H10-135) found it surfacing as `internal` | error-explanations cluster, amendment 1 |
 | Tarball or base image is a stateful shape (Dockerfile `VOLUME`, top-level `data/` / `db/` / `var/`, or a stateful base image) | `pkg/oci` + G13 stateless-only gate | RFC 7807 `stateless_only_violation` 422 (already shipped pre-cluster). Now flows through the same 5-line renderer from `pkg/whycopy` row `stateless_only_violation` so the prose is uniform with the new codes | error-explanations cluster, amendment 1 |
 
 **Operator runbook pointers:**
@@ -1218,9 +1244,12 @@ without re-running the build.
   every catalog row must have non-empty Title/Hint/Fix (and
   Hint ≤200 bytes, Why ≤512 bytes).
 - `cmd/gregale/lint_tripwires_test.go::TestLintTripwire_NoGlyphLiteralOutsideOutput` —
-  every customer-facing glyph (`✓ ✗ → ! — 💡 ┌─ │ └─`) is
+  every customer-facing glyph (`✓ ✗ → ! — ┌─ │ └─`) is
   centralised in `cmd/gregale/output.go`; no other file may
   use them verbatim.
+- `cmd/gregale/lint_tripwires_test.go::TestLintTripwire_NoEmojiInCLIOutput` —
+  no CLI string literal carries an emoji (UX spec §3.2). The hint
+  row renders as plain `hint:`.
 - `cmd/gregale/lint_tripwires_test.go::TestLintTripwire_NoLiteralDocsDomainEverywhere` —
   every docs URL routes through `wire.DocsHost`.
 
@@ -1506,9 +1535,10 @@ The §9.A payoff multiplies with each compute box added at M9. On a single-node 
 ## 10. Metering and billing detail
 
 - Unit: GB-RAM-hour, billed on provisioned `ram_mb + 8` per running second (§4.7). Definition published verbatim in docs — no surprise-RSS billing.
-- Included quotas per plan per calendar month (UTC): 5 / 50 / 250 / 1,500 GB-h. Overage €0.01/GB-h, metered in millicents, provider usage records hourly, idempotent by `(subscription_item, hour)`.
+- Included quotas per plan per calendar month (UTC): 20 / 200 / 1,000 / 3,000 GB-h (ADR-1430). Overage $0.01/GB-h, metered in USD millicents, provider usage records hourly, idempotent by `(subscription_item, hour)`. An hour is delivered only once every minute up to its end is final — recorded compute-complete or older than `MeterUsageFinalAfter` — so a late catch-up row never lands in a delivered hour (ADR-1162). Deleting an app keeps its usage rows; they are the month's billing evidence.
+- When the plan changes mid-month, the month's allowance for usage up to an instant is the largest plan grant recorded before it (financial price activations): a downgrade never shrinks the month's allowance, an upgrade applies from its activation and does not refund overage already billed (ADR-1162).
 - Requests are counted but not billed (v1). Canonical customer egress is `usage_minutes.net_tx_bytes`; gateway `tx_bytes` remains a diagnostic subset and is never added. Polar egress billing is independently gated `off` (default) / `shadow` / `live`, with explicit per-plan monthly GiB allowances and a whole-cent per-GiB price. Shadow records local, non-retroactive receipts and sends no provider events. Live uses a separate Polar meter. Stripe/Paddle remain compute-only. The host uplink and per-plan shaping (10/25/100/250 Mbit, §7) are unchanged.
-- Plan changes: upgrade immediate with provider-managed proration; downgrade at period end; quota checks (deployed count, RAM sizes) run pre-downgrade and block with a task list ("delete 3 apps or reduce RAM…").
+- Plan changes: upgrade immediate with provider-managed proration (Polar schedules paid-to-paid changes for the subscription period end; the local plan flips on its webhook); downgrade at period end; quota checks (deployed count, RAM sizes) run pre-downgrade and block with a task list ("delete 3 apps or reduce RAM…").
 - The `usage` API (`GET /v1/usage?month=`) returns compute billing math plus canonical egress usage. When the Polar egress policy is configured, the summary also returns its mode, included amount, current overage, and unit price. `cpu_usec`, gateway `tx_bytes`, ingress `net_rx_bytes`, requests, and cold boots remain informational.
 
 ---
@@ -1550,7 +1580,8 @@ The inline `onclick="return confirm(…)"` in `pkg/dashboard/templates/account.h
 control-plane schedd cluster member carries a `StandbyState` gauge
 (`warming | warm | draining`) and the standby side redirects writes to the
 active leader. The redirection rate is exposed as
-`gatewayd_internal_write_redirect_total{outcome,auth_kind}` per ADR-083
+`gatewayd_write_redirect_total{outcome,auth_kind}` (gatewayd-internal's
+OpsMetrics prefix is `gatewayd`) per ADR-083
 §"Open #2". Failure drill runbook at
 `docs/runbooks/active-passive-ha.md`; the native two-node acceptance harness
 is documented in `docs/ops/native-m9-acceptance.md`. Probe timeout bounded by
@@ -1584,19 +1615,19 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `gateway_queue_depth{app}` alert metric | plan queue cap | > 50 / 15 m (queue backlog) |
 | `daily_cost_cents` alert metric | n/a (per-app) | > 100 cents / 24 h (usage_daily RAM burn rate) |
 | `slo_burn_rate` alert metric | 99.5% API availability SLO | > 14.4x / 1 h **and** > 6x / 6 h (0.5% error budget, Google SRE multi-window) |
-| `schedd_instance_cpu_pct{app,node}` | max over siblings | > 90 sustained page (hot loop) |
+| `schedd_instance_cpu_pct{app,node}` | max over siblings | > 90 for 15 m warn (hot loop; `FaasInstanceHotLoop`, ADR-1235) |
 | `gateway_service_call_total{outcome}` | n/a (fleet) | `transport_denied` counts HTTPS-first callers rejected before endpoint lookup or wake; `woken / (woken+forwarded)` is the internal cold-start rate (ADR-196/197/248) |
 | `gateway_service_preview_to_preview_total` | increasing when sibling previews exist | none yet — the positive signal that PR traffic stayed inside its account/project/PR scope |
 | `gateway_service_preview_to_production_total` | 0 for accounts that expect preview isolation | none yet — a non-zero rate means PR traffic is exercising production services |
 | `gateway_service_wake_latency_seconds` p95 | ≤ 0.35 s (§6.3 platform wake budget) | none yet — collect before setting a threshold (ADR-196 defers `depends_on` wake-ahead on this evidence) |
-| `schedd_instance_rss_mb{app,node}` | sum over siblings | > plan × max_concurrency page |
-| `schedd_instance_inflight_requests{app,node}` | sum over siblings | > max_concurrency × 2 page |
+| `schedd_instance_rss_mb{app,node}` | sum over siblings | > plan × max_concurrency page — not implemented: needs per-app plan limits in Prometheus (ADR-1235) |
+| `schedd_instance_inflight_requests{app,node}` | sum over siblings | > max_concurrency × 2 page — not implemented: needs per-app plan limits in Prometheus (ADR-1235) |
 | `schedd_instance_stats_collect_seconds` p95 | < 0.05 s | > 0.2 s warn (dialer saturation) |
 | `schedd_instance_stats_partial_errors_total{node}` | 0 | > 5 / min page (vmmd unreachable) |
-| `gatewayd_internal_write_redirect_total{outcome,auth_kind}` rate | n/a (per-outcome) | `outcome="leader_unreachable"` > 0.1 / min page (ADR-083 §Open #2 closure); `outcome="loop_prevented"` > 1 / min page (redirect-storm DoS); `outcome="mTLS_failure"` > 0 page (cert / clock-skew); `outcome="cookie_blocked"` rate tracked (deferred, ADR-025 Tier 2 unblocks) |
-| `gatewayd_internal_write_redirect_latency_seconds` p95 | ≤ 1.5 s | > 3 s warn (overlay degradation), > 5 s page (StandbyWriteRedirectTimeoutMS fires) |
+| `gatewayd_write_redirect_total{outcome,auth_kind}` rate | n/a (per-outcome) | `outcome="leader_unreachable"` > 0.1 / min page (ADR-083 §Open #2 closure); `outcome="loop_prevented"` > 1 / min page (redirect-storm DoS); `outcome="mTLS_failure"` > 0 page (cert / clock-skew); `outcome="cookie_blocked"` rate tracked (deferred, ADR-025 Tier 2 unblocks). The three alerts ship as warn (ADR-1235) |
+| `gatewayd_write_redirect_latency_seconds` p95 | ≤ 1.5 s | > 3 s warn (overlay degradation); above 5 s StandbyWriteRedirectTimeoutMS fails the write. The 5 s page is not separate (ADR-1235) |
 | `gateway_edge_rule_apply_total{kind,result}` rate | n/a (per-kind) | per-kind `result="error"` rate > 1 / min warn (runbook `FaasEdgeRuleApplyHigh.md`) |
-| `gateway_edge_rule_compile_error_total{kind}` rate | 0 | any non-zero page (runbook `FaasEdgeRuleCompileError.md`; ADR-091 Amendment 1: compile error = correctness signal, not headroom) |
+| `gateway_edge_rule_compile_error_total{kind}` rate | 0 | any non-zero, shipped as warn (ADR-1235; runbook `FaasEdgeRuleCompileError.md`; ADR-091 Amendment 1: compile error = correctness signal, not headroom) |
 | `gateway_edge_rule_match_total{kind,outcome}` rate | n/a (per-kind) | per-kind `outcome="failed"` for kind=jwt > 5 / min warn (runbook `FaasEdgeRuleJWTFailures.md`; audit-grep `data.err` for `context deadline exceeded` separates timeout from verifier error; CORS preflight short-circuits IP+JWT gates — filter `method != "OPTIONS"` before counting) |
 | `gateway_response_cache_total{outcome}` rate | n/a (per-outcome) | global operator surface; `outcome="bypass_authed" > 5 % / 5 m` warn; `outcome="bypass_uncacheable"` is informational; `outcome="store_skipped"` rate > 50 % warn; `outcome="stale_while_revalidate_served"` reports intentional SWR serves; `outcome="stale_if_error_served"` rate > 5 % / 5 m warns that the origin is flapping (runbook `FaasResponseCache.md`) |
 | `gateway_response_cache_app_total{app,outcome}` rate | n/a (per-app) | customer hit rate is `outcome="hit" / (outcome="hit" + outcome="miss")`; bypass and stale outcomes are excluded from the ratio, and absence means no cache telemetry for the app/window |
@@ -1609,10 +1640,10 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `safedeploy_orchestrator_started_total` rate | n/a (fleet rollup) | none (PR-B's `canary_fleet_in_flight_high` alert pair) — paired with `_completed_total` / `_aborted_total` for the rollout-state panel |
 | `safedeploy_orchestrator_completed_total` rate | n/a (fleet rollup) | none — per-rollout termination is the §12.6 audit timeline |
 | `safedeploy_orchestrator_aborted_total` rate | n/a (fleet rollup) | rate > 1 / 5 m warn (runbook `FaasSafedeployAbortSurge.md` — fleet-wide abort signal, distinct from PR-B's per-rollout stuck detection) |
-| `safedeploy_orchestrator_stuck_detected_total` rate | 0 | > 0 / 5 m page (PR-B's `canary_stuck_step` alert — orchestrator detected a rollout past StuckAfterDuration at the same step) |
-| `safedeploy_orchestrator_audit_emit_failed_total` rate | 0 | > 0.1 / s for 10 m page (PR-B's `safedeploy_audit_emit_failing` alert — audit writes failing; rollout state machine advances anyway, audit trail silently broken) |
+| `safedeploy_orchestrator_stuck_detected_total` rate | 0 | > 0 / 5 m, shipped as warn `FaasCanaryStuckStep` (ADR-1235; PR-B's `canary_stuck_step` alert — orchestrator detected a rollout past StuckAfterDuration at the same step) |
+| `safedeploy_orchestrator_audit_emit_failed_total` rate | 0 | > 0.1 / s for 10 m, shipped as warn `FaasSafedeployAuditEmitFailing` (ADR-1235; PR-B's `safedeploy_audit_emit_failing` alert — audit writes failing; rollout state machine advances anyway, audit trail silently broken) |
 | `safedeploy_orchestrator_stuck_check_missing_timestamp_total` rate | 0 | > 0 / 15 m warn (runbook `FaasSafedeployMissingTimestamp.md` — deployments rows landing without `canary_step_started_at`, the stuck-detection predicate becomes a no-op for that row) |
-| `deployment_audit_emitted_total{kind,outcome}` rate | n/a (per-kind × {ok,failed}) | `outcome="failed"` rate > 0.1 / s for 10 m page (PR-B's `safedeploy_audit_emit_failing` aggregate — single source of truth across all 13 audit emit sites, not just the orchestrator) |
+| `deployment_audit_emitted_total{kind,outcome}` rate | n/a (per-kind × {ok,failed}) | `outcome="failed"` rate > 0.1 / s for 10 m, warn via `FaasSafedeployAuditEmitFailing` (ADR-1235; PR-B's `safedeploy_audit_emit_failing` aggregate — single source of truth across all 13 audit emit sites, not just the orchestrator) |
 | `deployment_audit_gc_failed_total` rate | 0 | > 0 / 1 h warn (PR-B's `deployment_audit_gc_failing` alert — 90-day GC cron failing, disk-fill risk) |
 | `<daemon>_loop_stalled{loop}` gauge | 0 | == 1 for 30 s page (`FaasDaemonLoopStalled`, runbook `FaasDaemonLoopStalled.md`; ADR-190 — the daemon is up and ready but its named loop has not beaten within budget; systemd restarts the unit after `WatchdogSec`) |
 | `<daemon>_loop_last_beat_age_seconds{loop}` gauge | ≪ loop budget | none (ADR-190 diagnostic; pairs with the stalled gauge) |
@@ -1623,6 +1654,7 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `vmmd_snapshot_materialize_seconds{artifact,source}` p95 | `source="materialized"` rare; local sources ≪ 10 ms | `histogram_quantile(0.95, sum by (le) (rate(vmmd_snapshot_materialize_seconds_bucket{artifact="mem",source="materialized"}[5m]))) > 0.2` for 15 m warn — wakes are fetching the memory blob across the network. At the 130 MB fleet snapshot target one fetch can exceed the whole §6.3 wake budget, so a sustained rate means placement is landing away from snapshot replicas (ADR-063). Compare against the local-source quantile to price locality |
 | `vmmd_snapshot_materialize_bytes_total{artifact,source}` rate | n/a | none — diagnostic. Divided by the histogram it gives effective fetch throughput, which separates "the object is large" from "the fetch was slow". The `source="materialized"` series is the fleet's remote snapshot read volume |
 | `vmmd_restore_phase_duration_seconds{phase}` p50/p95 | quiet-node floor per phase (metal harness: stage_drives/stage_snapshot ≈ 0, resume_hook ≈ 33 ms) | none — diagnostic, operator-only. Splits the restore window, including the sub-phases the customer `wake.restore_breakdown` event omits (`stage_writable`, `pre_boot_join_wait`, `network_wait`), so a regression in one phase is attributable without Debug logs (hunt #9) |
+| `vmmd_resume_guest_stage_duration_seconds{stage}` p50/p95 | Go guest `total` ≪ `resume_hook`; Node/Python dominated by `userspace_reseed` | none — diagnostic, operator-only. The guest's own split of `resume_hook` from the ADR-022 timing frame: kernel reseed (`entropy`, `hwrng`), `clock`, `uuid_marker`, the ADR-687 `userspace_reseed` barrier, `after_restore`, the guest `total`, and `outside_guest` (the host's ack wait minus `total`: vsock transport plus the time before guest-init's handler ran). Guests captured before the frame shipped are not observed |
 | `vmmd_restore_pre_boot_files_total{outcome}` ratio | `skipped` dominates once captures are learned (#3490) | none — diagnostic. A `written` share near 100 % means the learned pre-boot skip is not firing |
 | `<daemon>_db_notify_hub_delivered_total{channel}` rate | n/a | none — diagnostic. `pg_notify` carries no routing, so one emit fans out to every interested subscriber on every daemon on every node. `sum by (channel) (rate(...))` divided by the channel's emit rate is the **broadcast amplification factor**; it grows linearly with fleet size while useful work stays flat |
 | `schedd_app_ownership_checks_total{outcome}` rate | `not_owned` ≈ (N-1)/N of the total on an N-node fleet | none — diagnostic, and the consumer-side half of the above. ADR-062 shards apps by `apps.node_id`; every schedd still receives every app-scoped notification and all but the owner discard it at `ownsApp`. A `not_owned` share materially **above** (N-1)/N means ownership is skewed, not merely broadcast. Read both series before deciding whether per-owner notify channels are worth building |
@@ -1632,8 +1664,20 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `<daemon>_db_pool_acquire_wait_seconds_total` rate | ≈ 0 | none — diagnostic. Near-zero growth on a busy daemon is the positive evidence that a cap has headroom to give back |
 | `<daemon>_db_notify_hub_conns` / `_subscribers` / `_channels` gauges | conns == 1, subscribers ≫ 1 | `<daemon>_db_notify_hub_conns == 0` while subscribers > 0 warn — `FAAS_DB_NOTIFY_HUB=0` is set and the daemon is back to one parked LISTEN connection per subscriber. Not an outage: the daemon's pool budget follows the switch (`db.DaemonMaxConnectionsNotifyHubDisabled`), so it is sized for that mode. It is a capacity signal — that daemon is consuming its pre-hub connection count against the fleet's `max_connections`, and the gap between `_conns` and `_subscribers` is the headroom the hub would return |
 | `schedd_instance_divergence_total{outcome}` rate | 0 | > 0 / 15 m warn (`FaasInstanceDivergence`, runbook `FaasInstanceDivergence.md`; ADR-191 §1 — live rows the owning vmmd is not reporting, after the node-reporting, grace and confirm-twice gates. `suppressed` is report-only mode counting what enforcement would repair; promote to page in the change that sets `FAAS_SCHEDD_RECONCILE_ENFORCE=1`) |
-| `schedd_loop_work_total{kind,outcome}` rate | n/a (per-kind) | `outcome="dropped"` sustained > 1 / min warn (ADR-191 §2 — a reconcile kind's slot budget is too small for the notification rate; the durable table plus its safety ticker still recover the work); any `outcome="panicked"` page (a handler bug, not a capacity signal) |
+| `schedd_loop_work_total{kind,outcome}` rate | n/a (per-kind) | `outcome="dropped"` sustained > 1 / min warn (ADR-191 §2 — a reconcile kind's slot budget is too small for the notification rate; the durable table plus its safety ticker still recover the work); any `outcome="panicked"`, shipped as warn (ADR-1235; a handler bug, not a capacity signal) |
 | `schedd_loop_work_duration_seconds{kind}` p95 | `kind="prime"` ≤ 110 s; every other kind ≤ 1 s | none (ADR-191 §2 diagnostic; the prime tail carries cold boot plus snapshot capture by design, so alert on `gateway_wake_latency_seconds` instead) |
+
+**Alert implementation (ADR-1235).** The rows above that promised an alert
+with no rule behind it now have one, in the `faas_spec12_operator_signals`
+group of `deploy/ansible/roles/prometheus/files/faas.rules.yml`, each with a
+promtool fixture. The two `schedd_instance_*` rows marked not implemented are
+the exceptions. These rules all ship at warn with `public_status: internal`,
+including rows that say page. ADR-1236 then triaged the whole paging set:
+where a severity in this table differs from the rule, the rule and ADR-1236
+are authoritative. The safe-deploy
+and deployment-audit counters are registered per daemon; only meterd runs the
+orchestrator, so rules and dashboards read `meterd_safedeploy_*` and
+`meterd_deployment_audit_*`.
 
 The four `schedd_instance_*` gauges (ADR-036, issue #170) are the
 new per-`(app,node)` rolled-up surfaces — max CPU, sum RSS, sum
@@ -1876,6 +1920,11 @@ last successful live response (or returns 204). `head_wakes` is the
 per-app opt-in for the legacy wake behaviour. These responses do not
 create instance transitions or `usage_minutes` rows.
 
+The parked HEAD header cache excludes requests carrying Authorization or
+application cookies, and responses carrying Set-Cookie or Cache-Control
+`private`/`no-store`. Response-header rules cannot erase the origin's privacy
+veto. An ineligible response leaves the last safe public headers intact.
+
 | Metric name | Labels | Producer | Semantics |
 |---|---|---|---|
 | `gateway_edge_answered_total` | `kind` | `pkg/gateway/metrics.go::ObserveEdgeAnswered` | Counter of gateway answers that bypass an app instance. `kind` is closed to `favicon`, `robots`, and `head`; edge answers are telemetry-only and never billed as resident compute. |
@@ -1902,6 +1951,25 @@ request therefore does not create an instance transition or resident usage.
 |---|---|---|---|
 | `gateway_cors_preflight_edge_total` | `app` | `pkg/gateway/metrics.go::ObserveCORSPreflightEdge` | Counter of matching CORS preflights answered by the gateway without waking the resolved app. |
 
+### 12.9 Customer Operations (ADR-20261016123221)
+
+schedd reads fleet-wide Operation state from Postgres in its 60-second
+retention tick and serves one snapshot per scrape. Every schedd reports the
+same values, so rules and panels aggregate with `max`. Alerts are `warn`
+(ADR-1235); dashboard `deploy/grafana/customer-operations.json`, runbook
+`docs/runbooks/FaasCustomerOperations.md`.
+
+| Metric name | Labels | Producer | Semantics |
+|---|---|---|---|
+| `schedd_customer_operations` | `state` | `pkg/sched/operation_telemetry.go` | Operations `accepted`, `running`, `waiting` or `requires_reconciliation`. |
+| `schedd_customer_operations_waiting` | `kind` | same | Waiting Operations by `timer`, `approval`, `event`. |
+| `schedd_customer_operations_oldest_update_seconds` | `state` | same | Time since the least recently changed Operation in that state changed. |
+| `schedd_customer_operations_overdue` | — | same | Active Operations more than 180 s past their deadline. Alert `FaasCustomerOperationDeadlinesOverdue`: > 0 for 10m. |
+| `schedd_customer_operations_settled_recent` | `outcome`, `failure_code` | same | Outcomes in the last 900 s; `failure_code` is a closed set plus `none` and `other`. |
+| `schedd_customer_operations_outcome_unknown_accounts` | — | same | Accounts with an `execution_outcome_unknown` reconciliation in the last 900 s. Alert `FaasCustomerOperationOutcomesUnknown`: ≥ 3 for 5m. |
+| `schedd_customer_operations_telemetry_refreshed_timestamp_seconds` | — | same | When the snapshot was last read. |
+| `apid_customer_operation_webhook_events_total` | `mode`, `result` | `pkg/apid/operation/metrics.go` | Verified provider events on operation-bound endpoints; `result` is `accepted`, `duplicate`, `ignored`, `signaled`, `unmatched` or `refused` (non-2xx). |
+
 ---
 
 ## 13. RAM budget ledger (enforced as systemd slices)
@@ -1909,11 +1977,13 @@ request therefore does not create an instance transition or resident usage.
 | Slice | Budget | Contents |
 |---|---|---|
 | `system.slice` | 2,048 MB | OS, sshd, journald, node_exporter, chrony |
-| `faas-cp.slice` | 6,144 MB | postgres 1,536 · gatewayd-public + gatewayd-internal 512 · apid 256 · schedd 128 · vmmd 256 · builderd 128 · meterd 256 · imaged 512 (spikes during flatten) · loki/promtail agents 256 · slack 2,304 → **1 guaranteed builder VM (2,048 + 8) lives here** |
+| `faas-cp.slice` | 6,144 MB | postgres 1,536 · gatewayd-public + gatewayd-internal 512 · apid 384 (two generations during a reload, ADR 20261018132058) · schedd 128 · vmmd 256 · builderd 128 · meterd 256 · imaged 512 (spikes during flatten) · loki/promtail agents 256 · slack 2,176 → **1 guaranteed builder VM (2,048 + 8) lives here** |
 | `faas-tenant.slice` | 57,344 MB (`memory.max`, hard fence) | tenant microVMs; **schedd admits measured memory only to 47,600 MB** (85 % of the model's 56 GB budget; reservations up to twice that, ADR-909) |
 | headroom (inside tenant slice, above admission line) | ≈ 8.4 GB | tenant spike absorption and restore safety margin; builder VMs do not borrow from this slice |
 
 `memory.max` on each slice makes the ledger real: a control-plane leak OOMs the control plane, never tenants — and vice versa.
+
+A multi-box compute host derives its own slice from the same arithmetic with a smaller reserve (`ComputeNodeDaemonReserveMB` + `BuilderSlotReserveMB`, `pkg/api/limits.go`). A compute host that runs the app edge (ADR-1343) reserves `ComputeEdgeDaemonReserveMB` (256 MB) more, and registers its CPUs less `ComputeEdgeCPUHoldbackMillicores` (1,000, rounded up to whole CPUs) for tenant admission.
 
 The per-VM request-concurrency bound (`concurrency_per_vm`, issue #559) is independent of the RAM ledger — a customer's `concurrency_per_vm` ceiling is the platform-advertised listener-level bound (Free 4 / Hobby 5 / Pro 25 / Scale 80), set by plan tier rather than by VM RAM. See §4.9.1 for the runner-level concurrency model.
 
@@ -2024,7 +2094,7 @@ Conventions (agents: treat as lint): errors wrapped with `%w` + operation contex
 
 | # | Gap | Resolution lean | Decide by |
 |---|---|---|---|
-| G1 | **Registry unspecced** — §4.2 accepts `image: registry.gregale.dev/...` but no registry component exists | v1: accept **public registries only** (Docker Hub, ghcr.io), digest-pinned, pulled by imaged through the build egress policy. Own registry (CNCF `distribution` behind the public edge) only if private images become a paid ask | M5 |
+| G1 | **Registry unspecced** — §4.2 accepts `image: registry.gregale.dev/...` but no registry component exists | v1: accept **public registries only** (Docker Hub, ghcr.io), digest-pinned, pulled by imaged through the build egress policy. Own registry (CNCF `distribution` behind the public edge) only if private images become a paid ask | **Resolved without a platform registry:** private images are pulled from the customer's own registry with credentials stored per `(app, registry host)` on Hobby+ plans ([ADR-062](adr/062-per-app-private-registry-auth.md), HTTPS only, egress policy unchanged) and per Job (`gregale jobs registry`). imaged supports Basic Auth and the registry token flow (`pkg/oci/auth.go`). |
 | G2 | **Customer secrets** — apps need env secrets; no encryption/injection/redaction design | `gregale secrets set KEY=…` → sealed with a host age key, stored encrypted in PG, injected into `/etc/faas/app.json` env at boot only, values redacted from build/app logs by pattern; never in snapshots of *other* deployments | **Closed by ADR-020 (PR #73 + M8 readiness PR for vmmd host-key lifecycle).** Sealed with X25519 host age key (filippo.io/age); injected into `/etc/faas/secrets.env` on every wake; values never cross the VM boundary in cleartext; vmmd generates/loads the host key at boot. |
 | G3 | **Dashboard/web UI** — spec is API+CLI only | **RESOLVED (ADR-011, `ux_spec.md` §4/§11):** CLI-first, but a *thin* server-rendered dashboard (apid, Go templates + HTMX) ships **at launch** because GitHub connect-repo needs an OAuth callback + repo picker. Scope kept minimal: auth, GitHub connect, apps/logs, usage/billing, account | M7.5 (was post-M8) |
 | G8 | **GitHub push-to-deploy** — chosen at launch; no component exists | **RESOLVED (ADR-012, `ux_spec.md` §5):** `githubd` (or apid module) — push-webhook receiver on `gatewayd-public /webhooks/github` (signature-verified), Checks-API status writer, per-repo install-token cache, least-privilege scopes. PR-preview envs deferred to v1.1 | M7.5 |
@@ -2039,7 +2109,7 @@ Conventions (agents: treat as lint): errors wrapped with `%w` + operation contex
 | G13 | **Stateless contract unenforced** — the platform is year-one stateless-only but a customer can `gregale deploy` a `postgres:16` base image, a Dockerfile with `VOLUME /data`, or a tarball with a top-level `data/` directory and only discover the data is gone after the first park. Today nothing in apid or imaged encodes "this platform is stateless" | **RESOLVED (Wave 0 PR-A, no ADR — the architecture is unchanged, we add a check):** new RFC 7807 code `CodeStatelessOnlyViolation` (422, mapped in `pkg/api/errors.go::StatusForCode`), apid tarball scan rejects `VOLUME`, `mkfs.ext4/xfs`, `mount -t ext4/xfs`, and top-level `data/`/`db/` at accept time (before any build slot is consumed), and imaged's `buildImageLayer` consults `pkg/imaged/base.go::StatefulDenyListMatch` against the resolved OCI ref (8 well-known stateful bases: postgres / redis / mysql / mariadb / mongo / cockroach / cassandra / clickhouse). Both paths feed `pkg/oci::SentinelToCode` → `deployments.error_code`. PR-B adds `gregale init --template={s3-uploader,slack-bot,rest-api-postgres,cron-worker}` to teach the pattern. **PR-C (ADR-047) under review (draft PR #421):** guest-init `fanotify` advisory on runtime writes to state-shaped paths (`/data`, `/db`, `/var/lib/postgresql`, etc.) shipped over AF_VSOCK DGRAM (`port=1025, msg_type=2`, distinct from `VsockResumePort=1024`) to the host, debounced 1s per `(path, mask-set)`. vmmd forwards each batch to apid over a new `/run/faas/apid.sock` gRPC seam (`api/proto/onebox/faas/apid/v1/advisory.proto`), which writes one `stateless.advisory` audit row via `pkg/audit.Auditor.Emit`. Surfaced at `GET /v1/audit-events?kind_prefix=stateless.advisory` (plus `?app_id=` and `?include_anonymous=` for the dashboard drill-down) and the new `db.NotifyStatelessAdvisory` SSE channel. Customer surface: `gregale audit-events [--kind-prefix=…] [--app-id=…] [--include-anonymous]`; `gregale tail --include-stateless`; dashboard `/dashboard/audit-events` (+ app_detail.html "Stateless advisories" link). Advisory-only — spec §17 G13 explicitly forbids EROFS for Wave 0. vmmd becomes a gRPC client for the first time; default-local stays DB-less (Manager.advisoryClient == nil is a no-op). | M8 |
 | G14 | **Account is the only tenant — no org / team abstraction** — `accounts.id` owns resources, carries the plan and provider identifiers, scopes gateway limits, and drives scheduler / metering admission. A 5-engineer team has no way to share a single billing identity, role-gate access, or rotate a colleague's key without nuking the host session key. Sales stalls at the first team-sized customer | **RESOLVED (ADR-061, issue #190 / IAM-6, 9-PR staged rollout across 5 migration phases: expansion, backfill, dual-write, cut-over, contraction):** introduce an `orgs` table as the tenant for ownership, plan, quota, billing, and audit. Keep `accounts` as a human authentication identity that belongs to one or more orgs. Path-scoped APIs under `/v1/orgs/{org_slug}/...`, automatic personal-org compatibility for every account, and one existing plan/quota pool per org. Paid per-seat charging and SSO are deferred to follow-up issues. Each `Limits` row gains `OrgMembersMax` and `OrgPendingInvitationsMax` (PR 1 ships 0/0 fail-closed; **PR 2 populates from the existing per-plan ladder — Free 0/0 (gate closed at the abuse-floor tier), Hobby 10/5, Pro 50/25, Scale 200/100, with the fail-closed `active >= limit` guard as the load-bearing invariant; the open follow-up is reconciliation against `ex44_faas_financial_model.xlsx` once the workbook is updated**). Twelve new RFC 7807 codes (`org_not_found`, `org_slug_invalid`, `org_slug_taken`, `org_member_cap_exceeded`, `org_invitation_cap_exceeded`, `org_role_forbidden`, `org_already_member`, `org_invitation_invalid`, `org_invitation_expired`, `org_last_owner`, `org_personal_immutable`, `org_api_key_requires_org`) added to `pkg/api/errors.go` with full `StatusForCode` mapping. Shared `OrgSlugPattern` constant exported for PR 5's handler validator. Roles: `owner`, `admin`, `developer`, `viewer`, `billing` — exactly one owner per non-personal org; ownership transfer is the only way to vacate the role. Personal orgs are immutable. Cookie sessions remain account-bound; org selection is per-request via URL. Detailed ownership inventory checked in at `docs/iam-6-ownership-inventory.md` | M8 (IAM-6 PR 1–9) |
 | G15 | **Per-deployment auth is opt-in, not default (issue #560, scope-limited)** — every `{slug}.gregale.dev` route is public-by-default. Customers deploying internal APIs, B2B services, or anything with PII must `PATCH require_authn=true` on every app; the global default is unchanged to avoid breaking existing customers. Out of scope for this PR: (a) flipping the global default to `true` and migrating every existing app to opt-out (different migration problem; ADR-061-style dual-write window required), (b) OAuth / IAP / SSO in front of the gateway (orgs/teams story, see G14), (c) mTLS for customer→gateway (terminated by the platform cert; per-app client certs is a customer-runtime concern). | **PARTIAL (issue #560, this PR):** new `apps.require_authn` column default `false`, per-app PATCH/CLI, gatewayd-internal authz branch, three audit kinds. **Open follow-ups:** (a) global default flip + grand-father migration, (b) OAuth/IAP via the post-G14 org identity, (c) per-app mTLS option (decide with §11 ship-blocking review). | M8 follow-up |
-| G16 | **Spend cap is advisory, not workload-pausing (issue #561)** — `accounts.overage_cap_cents` (storage layer #279, `migrations/00054_account_credits.sql`) stopped meterd from pushing overage rows once the cap was reached, but `schedd` kept waking live instances and serving requests. Customers who set a spend cap expected Cloud-Run-style "budget pauses workload" behaviour. Issue #279 storage stayed unchanged; issue #561 layers the workload-side gate. | **RESOLVED (issue #561, this PR):** `schedd.Engine.admitGate` consults `pkg/sched/OverageChecker` (5 s TTL cache, fail-open on transient PG errors; meterd's quota loop is the safety net for sustained outages). When the cap is reached, the wake path lifts to `CodeAdmissionRefused` (`pkg/api/errors.go`) — HTTP 402 on the gateway edge, `FailedPrecondition` on the gRPC ingress. Existing live instances are **not** auto-parked by the cap alone (that path lives in `pkg/meter/quota.go::EnforceQuota` case "stop", out of scope for #561). Customers manage the cap via `POST /v1/account/overage-cap` (account-self-scoped) or the dashboard `Spend cap` form (CSRF-envelope POST `/dashboard/raise-overage-cap`). Audit row `overage.cap_reached` is emitted the first time each (account, UTC day) the gate refuses; UTC-day dedupe chosen over the issue body's calendar-month wording to prevent audit-table flooding. Cache invalidation via TTL only — explicit pg_notify-driven invalidation is a follow-up if 5 s proves too coarse in practice. | M7 (M7.5 follow-up) |
+| G16 | **Spend cap is advisory, not workload-pausing (issue #561)** — `accounts.overage_cap_cents` (storage layer #279, `migrations/00054_account_credits.sql`) stopped meterd from pushing overage rows once the cap was reached, but `schedd` kept waking live instances and serving requests. Customers who set a spend cap expected Cloud-Run-style "budget pauses workload" behaviour. Issue #279 storage stayed unchanged; issue #561 layers the workload-side gate. | **RESOLVED (issue #561, this PR):** `schedd.Engine.admitGate` consults `pkg/sched/OverageChecker` (5 s TTL cache, fail-open on transient PG errors; meterd's quota loop is the safety net for sustained outages). When the cap is reached, the wake path lifts to `CodeAdmissionRefused` (`pkg/api/errors.go`) — HTTP 402 on the gateway edge, `FailedPrecondition` on the gRPC ingress. Live instances are parked by the reaper while the cap holds, and capped usage is never billed (ADR-1162; #561 originally left both out of scope). Customers manage the cap via `POST /v1/account/overage-cap` (account-self-scoped) or the dashboard `Spend cap` form (CSRF-envelope POST `/dashboard/raise-overage-cap`). Audit row `overage.cap_reached` is emitted the first time each (account, UTC day) the gate refuses; UTC-day dedupe chosen over the issue body's calendar-month wording to prevent audit-table flooding. Cache invalidation via TTL only — explicit pg_notify-driven invalidation is a follow-up if 5 s proves too coarse in practice. | M7 (M7.5 follow-up) |
 | G17 | **Wake-boot telemetry is blind** — `wake.boot_started` / `wake.boot_completed` events carry no info on *why* an instance started or what was queueing when it admitted. Cloud Run's per-cold-start `trigger` field has no Gregale analog; operators investigating Hobby-tier latency regressions cannot distinguish a request-driven cold-boot from a cron fire from a scale-up | **RESOLVED (ADR-123, this PR + PR-A follow-on):** additive fields on `BootStarted` + `BootCompleted` payloads — closed `trigger` enum (`gateway` / `floor` / `floor.deployment` / `scaleup` / `targets` / `cron.schedule` / `cron.manual` / `meterd`, see `pkg/sched/triggers.go`), `queued_count` (`ledger.Concurrency(app.ID)` at admit), `concurrency_at_admit` (same reading; 0 is cold start), `at_capacity` (true when `admitGate`'s `wakeAdmit` branch observed `concurrency+1 >= maxConc`, PR-A), `ready_in_ms` (`boot_completed.at - boot_started.at` via LEFT JOIN LATERAL, PR-A). Stamped via new `bootInput` fields + new `trigger string` parameter on `Engine.Wake` / `Engine.AdmitInstance` / `Engine.AdmitInstanceForDeployment` / `Engine.EnsureWake` / `scheddgrpc.Server.{Wake,AdmitInstance,EnsureWake}` / `gateway.Backend.Admit` / `gateway.Scheduler.{AdmitInstance,EnsureWake}` / `scheddgrpc.Client.{AdmitInstance,EnsureWake}`. Gated by the existing `events_wake_id_idx` partial index (migration 00114); no new migration strictly required (the optional analytics index is deferred). Surfaced via the existing `/v1/apps/{slug}/wakes/{wake_id}/timeline` endpoint, the CLI `gregale wake-timeline` (new `triggers: …` histogram header + per-event `trigger=… q=N c=N` context line), the dashboard "Recent wakes" table on `/dashboard/apps/{slug}` (five columns: Trigger / Queued / Concurrency / At cap / Ready), the new dedicated `/dashboard/apps/{slug}/wake-timeline` per-app wake-narrative page (24h summary card + 50-row table, PR-A), and the wake-boot telemetry pre-fill on `RecentInstanceItem`. Wire is additive per ADR-016 — pre-ADR-123 schedd + gateway pairs observe byte-identical behaviour | M8.5 |
 | G18 | **`gregalectl` operator CLI surface drift** — the operator-only CLI (`cmd/gregalectl/`, 15 top-level commands, 44 leaf verbs) shipped per issue #911 / ADR-110 PR-6.5 is referenced by `Makefile` (build-clis, manifest-ansible, native-m9-acceptance), 5 ansible roles (`control_plane_service`, `vmmd_service`, `log_archive`, `compute_only_service`, `githubd_service`, `builderd_service`, `firecracker`), `cmd/deployctl/upgrade.go` (4 verbs), `scripts/pre-release-check.sh`, and 4 e2e suites — but had no spec row, no docs/ops coverage beyond ~5 verbs, and no CI-pinned wire-shape discipline. The pre-investigation audit found: `backup init` dispatched-but-unimplemented; `manifest ansible` referenced by Makefile but absent from `cli_meta.go`; `release kgv init` aliased-but-deprecated with no deprecation line; `host-age status` / `prune-previous` / `sign-keys status` / `sign-keys rotate` had explicit "future patch" TODOs for `--json`; `compute-nodes list|show` and `pki list` (--daemon filter) were missing read-only introspection leaves; the doctor had literal panics in argument parsing; the operator quickstart covered ~10% of the binary | **RESOLVED (this mega-PR, no ADR — no architecture change):** wired `backup init` (Cluster A1); added `manifest ansible` to `cli_meta.go` (A2); corrected the stale header comment (A3); added `release kgv init` alias with deprecation line (A4); added `--json` to host-age status/prune-previous + sign-keys status/rotate + `--keep-old-pub` archive (B1-B4); added `compute-nodes list|show --json [--active-only]` + `pki list --json [--daemon] [--box-role]` (C1-C2); replaced doctor panics with error-returning parse + defensive-default finding (E1); rewrote `docs/ops/gregalectl-operator-quickstart.md` to cover all 44 verbs across 8 lifecycle sections (D1); added `gregalectl checks` section to `docs/ci-required-checks.md` (D2); documented the gate matrix here (G18 row, D3). Drift guards `commands_completion_test.go::TestCompletion_ManifestDrift` (dispatcher ↔ cli_meta ↔ comment header) and `json_parity_test.go::TestJSONOutputHonored` (every `--json`-honouring dispatcher has a `_test.go` exercise) prevent regressions on future PRs | M8 |
 | G19 | **Per-deployment protocol selector knob never reached the wire** — PR #1023 / ADR-124 landed the customer-facing `apps.app_protocol ∈ {http1, http2, grpc}` closed-set field (default `http1`), and `gatewayd-internal` stamps `x-faas-protocol` for downstream observability, but the framing the guest's `:8080` actually receives is still HTTP/1.1 + chunked regardless of the customer's choice. A customer running `app_protocol=grpc` gets their gRPC trailers back through the edge as plain `Trailer:` headers over H1+chunked; the in-guest server only sees H1. The reason is `cmd/vmmd-stream-bridge` (issue #686 / PR #750): it speaks H2C inbound from the vmmd side but **re-frames to H1+chunked** before talking to the guest at `10.0.0.2:<port>`. The framing transition is the load-bearing gap; ADR-124 was the customer-side knob, the inner-leg wire-shape follow-on was always a separate ADR | **RESOLVED (ADR-126, this PR):** the bridge grew a per-stream framing switch (`FAAS_BRIDGE_PROTOCOL ∈ {h1, h2c}` read per-request from env, mirroring `FAAS_STREAM_BRIDGE_VERSION` per ADR-028). `app_protocol=http1` rides the legacy H1+chunked path verbatim (zero behavior change for every existing customer); `app_protocol ∈ {http2, grpc}` rides the new H2C terminator (`handleH2CStream` in `cmd/vmmd-stream-bridge/h2c_terminator.go`) which originates HTTP/2 prior-knowledge frames to the guest via `golang.org/x/net/http2.Transport{AllowHTTP:true}`. Wire-additive proto bump per ADR-016 (`ForwardHTTPRequestInit.app_protocol = string`; `ForwardHTTPResponseInit.trailers` for gRPC trailer HEADERS forwarding). Guest-side listener opts into H2C via stdlib `srv.Protocols.SetUnencryptedHTTP2(true)` (Go 1.24+); every shipped runner (`go124`, `node22`, `node24`, `python312`, `python313`) routes through the shared `internal.ListenAndServeH2C` helper so the closed-set behavior is uniform. Two rollback switches: `FAAS_BRIDGE_PROTOCOL=h1` (per-vmmd surgical, per ADR-126 §Decision 7) and `FAAS_STREAM_BRIDGE_VERSION=v1` (wholesale shell-bridge fallback, pre-existing ADR-028 amendment). Snapshot invalidation is contained to the opt-in slice — every app adopting `app_protocol ∈ {http2, grpc}` must adopt the new h2c-capable base image; the `app_protocol=http1` slice stays valid forever. Coverage: `pkg/vmmdgrpc/forward_v2_internal_test.go::TestStreamBridgeEnv_AppProtocolWiring`, `TestAppProtocolToBridgeProtocol_ClosedSet`; `cmd/vmmd-stream-bridge/framing_test.go` (per-stream env lookup + hop-by-hop); `cmd/vmmd-stream-bridge/h2c_terminator_test.go` (unary + gRPC trailers + dial-failure); `guest/runners/internal/h2c_listener_test.go` (H2 prior-knowledge + H1 fallback); `cmd/e2e/bridge_h2c_terminator_e2e_test.go` (real bridge binary against a loopback H2C guest listener); metal sibling at `cmd/e2e/bridge_h2c_terminator_metal_test.go` documents the §14 M8 row 5 acceptance gates for `make test-metal` | M8.5 |
@@ -2142,6 +2212,7 @@ Every row is an experiment with a pre-committed pass threshold. Run V1–V5 on a
 | V8 | 5 % churn, 55/40/5 mix, 4 free riders (C-grade) | Cohort curves from first 90 days; monthly sheet re-run with observed values | Documented monthly; sheet updated | beta+ |
 | V9 | Payment path & fees (provider fees) | Confirm Polar catalog and fee schedule for the incorporation country; retain provider-neutral fallback pricing in the sheet | Fee delta reflected in model before launch | pre-incorporation |
 | V10 | Server quote €44 + €39 | Re-quote a comparable bare-metal x86_64 host at order time (post-June-2026 price adjustment) | Within §9.9 sensitivity range (€39–50) | at order |
+| V12 | Event substrate keeps up with the plan event caps | `make bench-event-substrate` on the reference node: publish, fanout, drain and webhook stages plus offered end-to-end rates ([event-substrate-benchmark.md](ops/event-substrate-benchmark.md)) | Event storage, queue depth and workflow caps sit at ≤ 50 % of the highest offered rate the pipeline sustains (achieved ≥ 95 % of offered, nothing pending after the settle window, p95 publish-to-handler ≤ 5 s). 2026-10-20 on `gregale-internal-test-1`: sustains 5 events/s; fanout routing is O(backlog²) ([report](ops/evidence/20261020-event-substrate-bench/REPORT.md)) | before raising event caps |
 
 Standing rules: (1) no number graduates from "assumption" to "fact" without a row here; (2) the §6.2 invariants are enforced as property-based tests, not prose; (3) each ADR gets one adversarial review pass before acceptance.
 
@@ -2824,3 +2895,177 @@ Readiness follow-up queue (ADR-519): account and customer readers can aggregate 
 
 
 Readiness due reminders (ADR-519): one durable marker per original notification/normalized deadline is published by a separate apid worker, with a 100-reminder batch budget, 30-second polling interval and 10-second publication timeout. Retries and restarts preserve stable reminder identity. Coordination edits and publication serialize on the notification row; rescheduling or clearing retires the marker, while unchanged deadlines preserve it. Follow-up queue reads expose optional reminder metadata, filtered due-reminder counts and reminder-only selection under existing account/customer/environment authorization. Dashboard counts and the reminder view link to original notifications and current evidence. Reminders share source notification retention and do not advance inbox sequences, mutate application evidence or authorize execution. No new migration is required.
+
+
+## Operator cold-boot recovery (ADR-1523, 2026-10-17)
+
+A claimed `force_cold_boot` advances the deployment snapshot recovery generation,
+invalidates both tiers and their replicas, clears snapshot-miss backoff, saves
+its exact IDs and generation, completes the intent and enqueues its outcome in
+one transaction. Replays return the original receipt after outbox pruning.
+Wake and prime bind immutable instance/wake lineage before vmmd dispatch;
+publication and warm/frozen promotion require the current generation. Delayed
+captures and late readiness cannot turn a pre-recovery process into a fresh
+source. Running processes remain serving; new boots use rootfs until a capture
+of the new generation is published. Generation zero preserves legacy behavior.
+See [ADR-1523](adr/1523-durable-operator-cold-boot-recovery.md) and its
+[recovery/rollout guide](ops/operator-cold-boot-recovery.md). Native KVM and leak
+qualification remains pending.
+
+## Operator restart execution recovery (ADR-1522, 2026-10-17)
+
+For `force_restart` operator intents, schedd commits the original instance, node,
+wake, vmmd generation and exact snapshot invalidation before authorizing teardown.
+Vmmd alone records physical acknowledgement. Schedd atomically commits the proven
+STOPPED transition, command outcome and audit handoff; it releases admission after
+commit. Started work without an acknowledgement is `outcome_unknown` and cannot
+be redispatched automatically. Late physical evidence permits completion only
+against the original target. See [ADR-1522](adr/1522-recoverable-operator-restart-execution.md)
+and its [operator guide](ops/operator-restart-recovery.md) for the protocol, limits
+and coordinated rollout. Native lifecycle qualification remains required.
+
+## Operator recovery submission receipts (ADR-1524, 2026-10-17)
+
+Force-restart, force-park and force-cold-boot HTTP acceptance commits the intent,
+original response bytes and attributed request audit handoff in one transaction.
+Actor-scoped request keys bind the action, requested target and normalized reason.
+Matching retries replay before mutable target validation; changed parameters
+return 409. Receipts have no TTL and survive audit queue pruning. Every request,
+including replay, retains MFA, admin scope, operator allowlist, recent session
+step-up and origin checks. gregalectl exposes --request-key and instances wait
+--intent-id. See [ADR-1524](adr/1524-durable-operator-recovery-submissions.md) and
+its [upgrade and retry guide](ops/operator-recovery-submissions.md) for the
+legacy request boundary and coordinated API rollout.
+
+### ADR-1525 operator force-park execution
+
+Asynchronous `force_park` intents follow
+[ADR-1525](adr/1525-recoverable-operator-park-execution.md): claim-fenced immutable
+VM generation plans, explicit fresh-traffic cancellation, generation-bound
+capture/stop, durable cleanup evidence, and atomic terminal state, intent, audit
+and snapshot publication handoff. PARKED requires capture plus confirmed cleanup;
+STOPPED reports `cold_boot_required`. Started effects without receipts remain
+`outcome_unknown` and are never automatically repeated. Admission is released
+after the completion commit. Native lifecycle and leak qualification remain a
+rollout gate; see [operator park recovery](ops/operator-park-recovery.md).
+
+
+## Atomic operator node maintenance (ADR-1526, 2026-10-17)
+
+Schedd executes node drain, force-drain, activation and retirement intents in one
+transaction with current-claim validation, node lifecycle/precondition checks,
+an immutable execution receipt, terminal result and durable outcome audit handoff.
+Retries return the original receipt before inspecting current node lifecycle;
+reclaimed workers cannot mutate or complete. A successful drain intent acknowledges
+the lifecycle request; the recovery controller separately completes evacuation.
+Retirement rechecks live instances and protects default-local; retired nodes
+cannot be revived by force-drain. Unfinished legacy node intents are quarantined
+as outcome_unknown during coordinated upgrade. See
+[ADR-1526](adr/1526-atomic-operator-node-maintenance.md) and the
+[rollout guide](ops/operator-node-maintenance.md).
+
+## Generation-fenced node completion (ADR-1527, 2026-10-17)
+
+RecoveryRunner captures the node's separate lifecycle generation before a sweep.
+The database owns this positive generation and advances it on lifecycle or drain/
+recovery initiation changes. Completion validates that cycle and current remaining
+work under the capacity-policy lock before the node lock, then commits the target
+lifecycle, immutable receipt and completion audit handoff together. Drain reaches
+maintenance only with zero resident rows, including warm/frozen; recovery retains
+its existing migrating/snapshotting exclusion and healthy local-running behavior.
+Legacy unfenced completion writes are rejected. Retries return the original receipt
+before inspecting mutable node state, even after node deletion or audit retention.
+Completion persistence is database-only and does not expand migration/recreation
+RPC behavior. ADR-1528 below adds transactional fencing to later admissions.
+
+Old schedulers must be quiesced during the coordinated migration. Existing nodes
+begin at generation 1 without invented historical receipts; advanced generations
+and completion receipts block downgrade. See
+[ADR-1527](adr/1527-generation-fenced-node-completion.md) and the
+[node completion guide](ops/node-lifecycle-completion.md).
+
+## Node admission generation fencing (ADR-1528, 2026-10-17)
+
+Placement carries the selected node's lifecycle generation through instance
+creation and migration destination ownership. The admitting transaction takes the
+capacity-policy lock before the node and reservation locks, requires an active or
+recovering node, and validates the captured generation. Its node share lock holds
+that decision stable through commit. Disabled capacity protection retains shared
+policy locking. Existing operation/qualification authority locks keep their order.
+
+A database trigger guards every resident insert, destination change and
+nonresident-to-resident transition. Existing residents may continue transitions
+on the same node during maintenance so publication and cleanup can finish. Direct
+calls without a placement binding perform a fresh lifecycle check; cached scheduler
+decisions also require their original generation, including after a node returns
+to active in a later cycle.
+
+Wake, prime and warm-fill admission retry definite stale-placement refusals at
+most three times, select current database inventory and release failed restore
+pressure. Job retries release their preclaimed lease and ledger slot while leaving
+the task queued. Uncertain writes do not authorize replay. Qualification flows
+retain their private-node restrictions. Migration validates its destination before
+pausing the source and again at ownership commit, then uses existing durable
+resolution and adopted-VM cleanup on refusal. ADR-1529 below adds a durable
+destination reservation before the VM RPC; native migration qualification remains required.
+
+Quiesce old admission/job/migration/recovery dispatchers for the coordinated
+migration and inspect historical resident inventory before removing a host.
+See [ADR-1528](adr/1528-node-admission-generation-fencing.md) and the
+[admission rollout guide](ops/node-admission-fencing.md).
+
+## Durable incoming migration reservations (ADR-1529, 2026-10-17)
+
+Schedd persists destination generation, both node/wake identities, source lease,
+snapshot keys, resource bounds, request digest and deadline before adoption.
+Pending reservations consume destination RAM/CPU/vCPU and protected fleet
+headroom, and block maintenance completion, retirement and destination deletion.
+Ordinary admission shares their transactional capacity guard.
+
+An atomic reserved-to-adopting transition grants one physical dispatch. Unknown
+dispatches retain capacity; acknowledged requests replay their original response.
+The destination uses an fsynced incoming journal and per-instance lock shared by
+native preparation and retirement. Physical generation binding precedes launch
+effects. Cleanup revokes delayed creation and requires original generation exit
+and resource-removal proof; missing/corrupt evidence or a replacement generation
+cannot authorize cleanup acknowledgement.
+
+Ownership and runtime-input publication validate the adopted reservation and
+consume it in one transaction. Admitted resource floors remain on the resident
+instance, and placement/RAM admission retain any charge above legacy row values.
+Cleanup fences a late commit. Source resume, lease
+replacement/deletion and watchdog transitions retain unresolved attempts. Expiry
+only schedules bounded destination reconciliation; it never releases capacity.
+Internal adoption/retirement RPCs carry admission authority. Production dispatchers
+and registered receivers refuse missing durable ownership support.
+
+Upgrade schedd and vmmd together after settling historical handoffs. Preserve
+native journals and retained receipts. Native migration, daemon/process-death and
+leak qualification remains a deployment gate. See
+[ADR-1529](adr/1529-durable-inbound-migration-reservations.md) and the
+[migration recovery guide](ops/inbound-migration-reservations.md).
+
+## Durable migration source retirement (ADR-1530, 2026-10-17)
+
+Before source capture, registered vmmd binds its lease to the source node/wake,
+native generation and original physical lease digest. A durable source record
+captures RAM/CPU/vCPU bounds. Ownership commit atomically marks that source
+retiring. Its physical resources remain charged after the routing row moves,
+including ordinary/incoming admission and protected fleet capacity. Matching
+original live rows count once. Pending source records and source leases block
+maintenance completion, retirement and node deletion.
+
+Cleanup requires original native revocation, exit and resource-removal proof.
+Private fsynced source receipts survive daemon replacement and are replayed
+without touching later VM generations. Ordinary preparation retains old cleanup
+proof before replacing its native frame. Source resume and retirement require their matching durable authority. Only a
+running or draining source owner can resume; parked rollbacks retire their
+original physical VM. Delayed capture cannot follow a terminal source receipt.
+
+Source reconciliation runs at startup and in bounded sweeps, including committed
+retirements whose lease has not expired. Failed cleanup or acknowledgement retains
+durable authority; expiry never releases it. Upgrade both sides together after
+settling historical handoffs, preserve journals and receipts, and qualify native
+migration/process-death/leak behavior before deployment. See
+[ADR-1530](adr/1530-durable-migration-source-retirement.md) and the
+[source retirement guide](ops/migration-source-retirement.md).

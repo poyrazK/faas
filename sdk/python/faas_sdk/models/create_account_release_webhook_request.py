@@ -25,7 +25,7 @@ T = TypeVar("T", bound="CreateAccountReleaseWebhookRequest")
 
 @_attrs_define
 class CreateAccountReleaseWebhookRequest:
-    """Subscribe a target to release events emitted by every app owned by the active account.
+    """Subscribe to account release outcomes and environment GitOps status transitions.
 
     Example:
         {'target_url': 'https://example.com/releases', 'webhook_secret': 'replace-with-random-secret', 'event_filter':

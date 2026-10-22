@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // ADR-140: POST /dashboard/account/set-password picks its proof of
@@ -410,7 +411,7 @@ func newSetPasswordServer(t *testing.T, store state.Store, accountID string) (ht
 // failingPasswordStore fails the password read or write on demand;
 // everything else is the real MemStore.
 type failingPasswordStore struct {
-	*state.MemStore
+	MemStore  *state.MemStore
 	failRead  bool
 	failWrite bool
 }
@@ -527,7 +528,7 @@ func TestSetPassword_PasswordLookupFailureIs500(t *testing.T) {
 		t.Fatalf("seed account: %v", err)
 	}
 	store := &failingPasswordStore{MemStore: inner, failRead: true}
-	h, sid, mgr := newSetPasswordServer(t, store, acct.ID)
+	h, sid, mgr := newSetPasswordServer(t, statetest.NewMem(store), acct.ID)
 
 	rec := postSetPasswordForm(t, h, sid, mgr, acct.ID, url.Values{"password": {chosenPassword}})
 
@@ -546,7 +547,7 @@ func TestSetPassword_PasswordWriteFailureIs500(t *testing.T) {
 		t.Fatalf("seed account: %v", err)
 	}
 	store := &failingPasswordStore{MemStore: inner, failWrite: true}
-	h, sid, mgr := newSetPasswordServer(t, store, acct.ID)
+	h, sid, mgr := newSetPasswordServer(t, statetest.NewMem(store), acct.ID)
 
 	rec := postSetPasswordForm(t, h, sid, mgr, acct.ID, url.Values{"password": {chosenPassword}})
 

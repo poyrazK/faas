@@ -19,14 +19,14 @@ func TestAdmitResize(t *testing.T) {
 		want    error
 	}{
 		{"class", api.PlanPro, "burstable", 0, nil},
-		{"storage", api.PlanPro, "", 50 << 30, nil},
-		{"both", api.PlanPro, "burstable", 20 << 30, nil},
+		{"storage", api.PlanPro, "", 5 << 30, nil},
+		{"both", api.PlanPro, "burstable", 2 << 30, nil},
 		{"nothing", api.PlanPro, "", 0, managedpostgres.ErrInvalid},
 		{"negative storage", api.PlanPro, "", -1, managedpostgres.ErrInvalid},
 		{"unknown class", api.PlanPro, "huge", 0, managedpostgres.ErrInvalid},
-		{"class outside plan", api.PlanHobby, "burstable", 0, managedpostgres.ErrQuotaExceeded},
-		{"storage above plan", api.PlanPro, "", 50<<30 + 1, managedpostgres.ErrQuotaExceeded},
-		{"no databases in plan", api.PlanFree, "", 1 << 30, managedpostgres.ErrQuotaExceeded},
+		{"class outside plan", api.PlanHobby, "burstable", 0, managedpostgres.ErrNotInPlan},
+		{"storage above plan", api.PlanPro, "", 5<<30 + 1, managedpostgres.ErrQuotaExceeded},
+		{"no databases in plan", api.Plan("unlisted"), "", 1 << 30, managedpostgres.ErrNotInPlan},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := AdmitResize(tc.plan, api.ResizeManagedPostgresDatabaseRequest{RequestID: "r", ServiceClass: tc.class, StorageLimitBytes: tc.storage})
@@ -38,10 +38,10 @@ func TestAdmitResize(t *testing.T) {
 }
 
 func TestLimitProblemCarriesLimitAndObserved(t *testing.T) {
-	err := AdmitResize(api.PlanPro, api.ResizeManagedPostgresDatabaseRequest{RequestID: "r", StorageLimitBytes: 60 << 30})
+	err := AdmitResize(api.PlanPro, api.ResizeManagedPostgresDatabaseRequest{RequestID: "r", StorageLimitBytes: 6 << 30})
 	problem := LimitProblem(err)
-	if problem == nil || problem.Status != http.StatusForbidden || *problem.Limit != 50<<30 || *problem.Observed != 60<<30 ||
-		*problem.LimitBytes != 50<<30 || problem.DocsURL != StorageDocsURL {
+	if problem == nil || problem.Status != http.StatusForbidden || *problem.Limit != 5<<30 || *problem.Observed != 6<<30 ||
+		*problem.LimitBytes != 5<<30 || problem.DocsURL != StorageDocsURL {
 		t.Fatalf("problem = %+v", problem)
 	}
 	if LimitProblem(managedpostgres.ErrQuotaExceeded) != nil {

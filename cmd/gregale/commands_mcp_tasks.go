@@ -25,10 +25,12 @@ const (
 func cmdMCPTasks(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		PrintUsage(os.Stderr,
-			"usage: gregale mcp tasks <setup|status|observer|release> [flags]", "mcp")
+			"usage: gregale mcp tasks <configure|setup|status|observer|release> [flags]", "mcp")
 		return 0
 	}
 	switch args[0] {
+	case "configure":
+		return cmdMCPTasksConfigure(args[1:])
 	case "release":
 		return cmdMCPTaskRelease(args[1:])
 	case "setup":

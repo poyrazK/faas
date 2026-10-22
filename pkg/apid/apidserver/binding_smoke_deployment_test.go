@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func smokeCommandForTest() []string {
@@ -83,10 +84,10 @@ func TestBindingSmokeRejectsUnsafeCallerSelections(t *testing.T) {
 	}
 }
 
-type retiringSmokeCallerStore struct{ *state.MemStore }
+type retiringSmokeCallerStore struct{ MemStore *state.MemStore }
 
 func (s retiringSmokeCallerStore) CreateAppTask(ctx context.Context, params state.CreateAppTaskParams) (state.AppTask, error) {
-	if err := s.UpdateDeploymentStatus(ctx, params.DeploymentID, state.DeploySuperseded, ""); err != nil {
+	if err := s.MemStore.UpdateDeploymentStatus(ctx, params.DeploymentID, state.DeploySuperseded, ""); err != nil {
 		return state.AppTask{}, err
 	}
 	return s.MemStore.CreateAppTask(ctx, params)
@@ -97,7 +98,7 @@ func TestBindingSmokeCallerMustRemainLiveAtAdmission(t *testing.T) {
 	apidserver.EnableAppTaskAPIForTest(&e)
 	app, candidate := apidserver.SeedAppTaskDeployment(t, e, "smoke-race")
 	declareSmokeBinding(t, e, app)
-	(*(*e.S()).Store()) = retiringSmokeCallerStore{(*e.Store())}
+	(*(*e.S()).Store()) = statetest.NewMem(retiringSmokeCallerStore{(*e.Store())})
 	r := e.Do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/tasks", api.CreateAppTaskRequest{SmokeDeploymentID: candidate.ID, Command: smokeCommandForTest()}, nil)
 	if r.Code != http.StatusConflict {
 		t.Fatalf("retired caller admitted: %d %s", r.Code, r.Body.String())

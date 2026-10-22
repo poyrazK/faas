@@ -39,6 +39,30 @@ type OutboundIntegrationOffer struct {
 	AIMonthlyCostLimit   *int64
 	// AIRequestLogEnabled records per-call metadata (ADR-991).
 	AIRequestLogEnabled bool
+	// Per-end-user UTC-day limits (ADR-994).
+	AIUserDailyTokenLimit *int64
+	AIUserDailyCostLimit  *int64
+	// AIRequestLogContent also captures logged calls' bodies (ADR-996).
+	AIRequestLogContent bool
+	// AIContentPolicy is the integration's content guardrails (ADR-997)
+	// and moderation check (ADR-1340).
+	AIContentPolicy api.OutboundAIContentPolicy
+	// AIAllowUnmetered lets through writes the gateway cannot meter
+	// (ADR-1432).
+	AIAllowUnmetered bool
+	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
+	// (ADR-1437).
+	AIAutoPromptCache bool
+	// AILogExport sends settled app calls to the app's log drains
+	// (ADR-1340).
+	AILogExport bool
+}
+
+// OutboundAIContentPolicyStore owns an integration's content guardrails
+// (ADR-997). It is separate from OutboundAIStore so existing
+// implementations do not change.
+type OutboundAIContentPolicyStore interface {
+	SetOutboundAIContentPolicy(ctx context.Context, accountID, integrationID string, policy api.OutboundAIContentPolicy) error
 }
 
 // OutboundAIUsageItem is one UTC-day AI usage rollup written by outboundd
@@ -54,6 +78,23 @@ type OutboundAIUsageItem struct {
 	CacheWriteTokens     int64
 	OutputTokens         int64
 	CostMillicents       int64
+	// Media usage (ADR-997).
+	Images       int64
+	AudioSeconds int64
+	Characters   int64
+	// VideoSeconds is seconds of generated video (ADR-1432).
+	VideoSeconds int64
+	// Built-in tool uses (ADR-1433).
+	WebSearches   int64
+	FileSearches  int64
+	CodeSessionGB int64
+	// Cache hits and what caching saved (ADR-1440).
+	CachedRequests             int64
+	CacheSavedMillicents       int64
+	PromptCacheSavedMillicents int64
+	// Audio tokens (ADR 20261019072722).
+	InputAudioTokens  int64
+	OutputAudioTokens int64
 }
 
 // OutboundAIUsage is one UTC day of AI usage for an integration.
@@ -82,12 +123,31 @@ type OutboundAIPolicy struct {
 	DailyCostLimit    *int64
 	MonthlyCostLimit  *int64
 	RequestLogEnabled bool
+	// UserDailyTokenLimit and UserDailyCostLimit cap each end user named by
+	// X-Gregale-AI-User per UTC day (ADR-994).
+	UserDailyTokenLimit *int64
+	UserDailyCostLimit  *int64
+	// RequestLogContent also captures logged calls' bodies; it requires
+	// the request log (ADR-996).
+	RequestLogContent bool
+	// LogExport sends settled app calls to the app's log drains; it
+	// requires a provider (ADR-1340).
+	LogExport bool
+	// AllowUnmetered lets through writes the gateway cannot meter; it
+	// requires a provider (ADR-1432).
+	AllowUnmetered bool
+	// AutoPromptCache adds prompt-cache breakpoints to Claude requests; it
+	// requires a provider (ADR-1437).
+	AutoPromptCache bool
 }
 
 func (p OutboundAIPolicy) valid() bool {
 	return api.ValidOutboundAIPolicy(p.Provider, p.DailyTokenLimit) &&
 		api.ValidOutboundAICostLimits(p.Provider, p.DailyCostLimit, p.MonthlyCostLimit) &&
-		(!p.RequestLogEnabled || p.Provider != "")
+		api.ValidOutboundAIUserLimits(p.Provider, p.UserDailyTokenLimit, p.UserDailyCostLimit) &&
+		(!p.RequestLogEnabled || p.Provider != "") && (!p.RequestLogContent || p.RequestLogEnabled) &&
+		(!p.LogExport || p.Provider != "") && (!p.AllowUnmetered || p.Provider != "") &&
+		(!p.AutoPromptCache || p.Provider != "")
 }
 
 // OutboundAIPriceList is the current price list; EffectiveFrom is nil when

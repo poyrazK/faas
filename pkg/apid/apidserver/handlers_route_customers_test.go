@@ -17,14 +17,15 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type routeCustomerTestStore struct {
-	*state.MemStore
-	query sqlc.RequestTelemetryRouteCustomersParams
-	rows  []sqlc.RequestTelemetryRouteCustomersRow
-	err   error
-	calls int
+	MemStore *state.MemStore
+	query    sqlc.RequestTelemetryRouteCustomersParams
+	rows     []sqlc.RequestTelemetryRouteCustomersRow
+	err      error
+	calls    int
 }
 
 func (s *routeCustomerTestStore) RequestTelemetryRouteCustomers(_ context.Context, query sqlc.RequestTelemetryRouteCustomersParams) ([]sqlc.RequestTelemetryRouteCustomersRow, error) {
@@ -45,7 +46,7 @@ func TestRouteCustomerUsageBindingAndBounds(t *testing.T) {
 		ConsumerCount: 23, PlatformTenantCount: 2, LastObservedAt: at, MatchedRoutes: 201,
 		CustomerGroups: 23, OtherCustomerRequests: 10, ConsumerID: uuid.NewString(), CustomerRequests: 20, CustomerLastObservedAt: at,
 	}}}
-	(*(*e.S()).Store()) = store
+	(*(*e.S()).Store()) = statetest.NewMem(store)
 	res := e.Do(t, "GET", "/v1/apps/customer-impact/analytics/route-customers?deployment_id="+d.ID+"&since=720h", nil, nil)
 	if res.Code != http.StatusOK {
 		t.Fatalf("%d: %s", res.Code, res.Body.String())
@@ -75,7 +76,7 @@ func TestRouteCustomerUsageRejectsInvalidForeignAndUnavailableReads(t *testing.T
 		t.Fatal(err)
 	}
 	store := &routeCustomerTestStore{MemStore: (*e.Store())}
-	(*(*e.S()).Store()) = store
+	(*(*e.S()).Store()) = statetest.NewMem(store)
 	for _, tc := range []struct {
 		id     string
 		status int
@@ -111,12 +112,11 @@ func TestRouteCustomerUsagePlanAndAccountBoundary(t *testing.T) {
 				t.Fatal(err)
 			}
 			store := &routeCustomerTestStore{MemStore: (*e.Store())}
-			(*(*e.S()).Store()) = store
+			(*(*e.S()).Store()) = statetest.NewMem(store)
 			res := e.Do(t, "GET", "/v1/apps/foreign-app/analytics/route-customers?deployment_id="+uuid.NewString(), nil, nil)
+			// App access answers a foreign app before any plan gate (#4882), so
+			// every plan sees the same 404 as for a missing app.
 			want := 404
-			if plan == api.PlanFree {
-				want = 402
-			}
 			if res.Code != want || store.calls != 0 {
 				t.Fatalf("%d: %s; queries %d", res.Code, res.Body.String(), store.calls)
 			}

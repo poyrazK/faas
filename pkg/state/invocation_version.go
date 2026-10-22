@@ -60,12 +60,50 @@ func ResolveInvocationVersionForEnvironment(ctx context.Context, store invocatio
 }
 
 func resolveInvocationVersion(ctx context.Context, store invocationAppReader, inv Invocation, environment string, ingress bool) (Invocation, InvocationVersion, error) {
+	// Only the workflow resolver below may assert a step's Operation identity.
+	inv.WorkflowOperation = nil
 	app, err := store.AppByID(ctx, inv.AppID)
 	if err != nil {
 		return inv, InvocationVersion{}, err
 	}
 	if inv.AccountID != "" && inv.AccountID != app.AccountID {
 		return inv, InvocationVersion{}, ErrNotFound
+	}
+	// PgStore and MemStore combine persisted canary membership with the owner
+	// read already required for durable dispatch. Never trust inv.Source or a
+	// payload/header marker as a negative membership assertion.
+	ownerRead := false
+	if reader, ok := store.(invocationDispatchAuthorityReader); ok && canonicalStateUUID(inv.ID) {
+		authority, readErr := reader.invocationDispatchAuthority(ctx, inv.ID)
+		if readErr != nil && !errors.Is(readErr, ErrNotFound) {
+			return inv, InvocationVersion{}, readErr
+		}
+		ownerRead = true
+		if readErr == nil {
+			if authority.EnvironmentID != inv.EnvironmentID {
+				return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
+			}
+			if authority.QueueCanary {
+				// The gateway authenticates ESM claims against the durable row.
+				// Its transport omits QueueName; recover that private identity
+				// before applying bound-queue environment and release checks.
+				if inv.Source == InvocationSource("esm") && inv.QueueName == "" {
+					inv.QueueName = authority.QueueName
+					inv.Source = InvocationQueue
+				}
+				if authority.AppID != app.ID || authority.AccountID != app.AccountID || ingress || inv.Source != InvocationQueue || authority.QueueBindingID != inv.QueueBindingID || authority.QueueName != inv.QueueName || authority.Scope != inv.DeploymentScope {
+					return inv, InvocationVersion{}, ErrConflict
+				}
+				if err := validateQueueCanaryDispatch(ctx, store, app, inv, true); err != nil {
+					return inv, InvocationVersion{}, err
+				}
+			}
+		}
+	} else if !ingress {
+		// Older store adapters retain the conservative persisted lookup.
+		if err := validateQueueCanaryDispatch(ctx, store, app, inv, false); err != nil {
+			return inv, InvocationVersion{}, err
+		}
 	}
 	headers := map[string]string{}
 	if len(inv.Headers) > 0 {
@@ -94,7 +132,7 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	}
 	// Durable private work must retain its original marker and explicit pin.
 	// Never repair a damaged envelope by resolving today's active release.
-	if reader, ok := store.(InvocationEnvironmentOwnerReader); ok && inv.ID != "" && !syntheticTriggerInvocation(inv) {
+	if reader, ok := store.(InvocationEnvironmentOwnerReader); ok && !ownerRead && inv.ID != "" && !syntheticTriggerInvocation(inv) {
 		stored, readErr := reader.InvocationEnvironmentID(ctx, inv.ID)
 		if readErr != nil && !errors.Is(readErr, ErrNotFound) {
 			return inv, InvocationVersion{}, readErr
@@ -190,14 +228,35 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if !ok {
 		return inv, InvocationVersion{}, ErrConflict
 	}
-	if revision != "" {
+	jobPinned := false
+	if !ingress && projectApp && scope == "production" && inv.QueueBindingID != "" && inv.Attempts > 0 && app.Manifest.ExecutionMode == api.ExecutionModeWorker && (inv.Source == InvocationQueue || inv.Source == InvocationReplay || inv.Source == InvocationSource("esm")) {
+		if pins, supported := store.(projectWorkerReleasePinStore); supported {
+			claimed := inv
+			claimed.AccountID = app.AccountID
+			version, jobPinned, err = pins.ResolveProjectWorkerJobRelease(ctx, claimed, revision, release)
+			if err != nil {
+				return inv, InvocationVersion{}, err
+			}
+		}
+	}
+	if jobPinned {
+		// Durable lineage authority has already resolved and validated the graph.
+	} else if revision != "" {
 		dep, err := resolver.ResolveRevisionPin(ctx, app.ID, scope, revision)
 		if err != nil {
 			return inv, InvocationVersion{}, err
 		}
 		version.DeploymentID = dep.ID
 	} else {
-		version.ReleaseID, version.DeploymentID, err = resolver.ResolveProjectRelease(ctx, app.ID, scope, release)
+		if ingress && release == "" && projectApp && app.Manifest.ExecutionMode != api.ExecutionModeWorker {
+			if canary, ok := store.(ProjectCanaryStore); ok {
+				version.ReleaseID, version.DeploymentID, err = canary.ResolveProjectCanary(ctx, app.ID, scope, uuid.NewString())
+			} else {
+				version.ReleaseID, version.DeploymentID, err = resolver.ResolveProjectRelease(ctx, app.ID, scope, release)
+			}
+		} else {
+			version.ReleaseID, version.DeploymentID, err = resolver.ResolveProjectRelease(ctx, app.ID, scope, release)
+		}
 		if err != nil {
 			return inv, InvocationVersion{}, err
 		}

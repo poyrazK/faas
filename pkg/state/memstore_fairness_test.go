@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // --- B2.2 (issue #196): claim fairness ---
@@ -17,16 +18,16 @@ import (
 // deployments × queued builds, then runs N claims (returning the
 // build IDs picked in order). Used by the per-account fairness +
 // starvation-fallback tests below.
-func seedFairnessFixture(t *testing.T, buildsPerAccount int) (m *MemStore, accounts [3]string, appIDs [3]string, buildIDsByAcct map[string][]string) {
+func seedFairnessFixture(t *testing.T, buildsPerAccount int) (m *state.MemStore, accounts [3]string, appIDs [3]string, buildIDsByAcct map[string][]string) {
 	t.Helper()
-	m = NewMemStore()
+	m = state.NewMemStore()
 	buildIDsByAcct = map[string][]string{}
 	for i := 0; i < 3; i++ {
 		acct, err := m.CreateAccount(context.Background(), "acct-"+uuid.NewString()[:8]+"@example.com", api.PlanPro)
 		if err != nil {
 			t.Fatalf("CreateAccount[%d]: %v", i, err)
 		}
-		app, err := m.CreateApp(context.Background(), App{
+		app, err := m.CreateApp(context.Background(), state.App{
 			AccountID:      acct.ID,
 			Slug:           "app-" + uuid.NewString()[:8],
 			RAMMB:          256,
@@ -41,9 +42,9 @@ func seedFairnessFixture(t *testing.T, buildsPerAccount int) (m *MemStore, accou
 
 		buildIDsByAcct[acct.ID] = make([]string, 0, buildsPerAccount)
 		for b := 0; b < buildsPerAccount; b++ {
-			dep, err := m.CreateDeployment(context.Background(), Deployment{
+			dep, err := m.CreateDeployment(context.Background(), state.Deployment{
 				AppID:       app.ID,
-				Kind:        DeploymentKindTarball,
+				Kind:        state.DeploymentKindTarball,
 				SourcePath:  "/tmp/fake.tar.gz",
 				SourceBytes: 100,
 				LogPath:     "/tmp/build.log",
@@ -51,7 +52,7 @@ func seedFairnessFixture(t *testing.T, buildsPerAccount int) (m *MemStore, accou
 			if err != nil {
 				t.Fatalf("CreateDeployment[%d/%d]: %v", i, b, err)
 			}
-			build, err := m.CreateBuild(context.Background(), dep.ID, DeploymentKindTarball, 100, dep.LogPath)
+			build, err := m.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 100, dep.LogPath)
 			if err != nil {
 				t.Fatalf("CreateBuild[%d/%d]: %v", i, b, err)
 			}
@@ -104,12 +105,12 @@ func TestMemStore_ClaimNextQueuedBuildWithFairness_NoStarvationWhenAllRecent(t *
 		if err != nil {
 			t.Fatalf("claim %d: %v", i, err)
 		}
-		if got.Status != BuildRunning {
+		if got.Status != state.BuildRunning {
 			t.Errorf("claim %d status = %s, want running", i, got.Status)
 		}
 	}
 	// Queue should now be empty.
-	if _, err := m.ClaimNextQueuedBuildWithFairness(context.Background(), 30*time.Second); !errors.Is(err, ErrNotFound) {
+	if _, err := m.ClaimNextQueuedBuildWithFairness(context.Background(), 30*time.Second); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("after draining, claim = %v, want ErrNotFound", err)
 	}
 }
@@ -155,7 +156,7 @@ func TestMemStore_ClaimNextQueuedBuildWithFairness_PreferQuietAccount(t *testing
 		if err != nil {
 			t.Fatalf("BuildByID(%s): %v", bid, err)
 		}
-		if b.Status != BuildQueued {
+		if b.Status != state.BuildQueued {
 			t.Errorf("A's build %s status = %s, want queued (fairness filter must not touch skipped rows)", bid, b.Status)
 		}
 	}
@@ -166,7 +167,7 @@ func TestMemStore_ClaimNextQueuedBuildWithFairness_PreferQuietAccount(t *testing
 // column; MemStore mirrors the same API contract by returning an
 // error on empty.
 func TestMemStore_RecordRecentBuildClaim_EmptyAccountIDRejects(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	if err := m.RecordRecentBuildClaim(context.Background(), "", uuid.NewString()); err == nil {
 		t.Error("empty account_id should be rejected")
 	}

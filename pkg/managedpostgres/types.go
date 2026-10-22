@@ -6,8 +6,12 @@ package managedpostgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
@@ -35,6 +39,57 @@ type ChangeRejectedError struct {
 func (e *ChangeRejectedError) Error() string { return "managed postgres: change rejected: " + e.Code }
 
 func (e *ChangeRejectedError) Unwrap() error { return ErrConflict }
+
+// ErrProvisioningClosed reports that the operator rollout gate (canary
+// window, qualification or account allowlist) is closed for this account.
+// It wraps ErrUnavailable so retry semantics and existing errors.Is checks
+// hold, but it is not a provider outage: on production-us an expired canary
+// window answered "the configured provider is temporarily unavailable" with
+// outage advice (hunt #9, H9-P107).
+var ErrProvisioningClosed = fmt.Errorf("%w: provisioning is not open for this account", ErrUnavailable)
+
+// ErrLineageUnproven reports a restore target whose lineage could not be
+// proven on this observation but may be on a later one: Neon maps a timestamp
+// to a drifting LSN inside the commit-free interval after it (ADR-1259). It
+// wraps ErrUnavailable; the service retries it at the poll interval.
+var ErrLineageUnproven = fmt.Errorf("%w: restore lineage not proven yet", ErrUnavailable)
+
+// ErrNotInPlan refuses a compute target the account's plan does not include
+// (a class or always-on compute). It unwraps to ErrQuotaExceeded for existing
+// checks, but it is an entitlement, not a usage quota: on production-us
+// `compute-policy --scale-to-zero false` answered "quota exceeded" with a
+// hint about credentials (hunt #9, H9-P114).
+var ErrNotInPlan error = notInPlanError{}
+
+type notInPlanError struct{}
+
+func (notInPlanError) Error() string {
+	return "the requested service class or always-on compute is not included in this plan"
+}
+
+func (notInPlanError) Unwrap() error { return ErrQuotaExceeded }
+
+// QuotaProblem names an ErrQuotaExceeded refusal for API problems, telling a
+// plan entitlement apart from a usage quota.
+func QuotaProblem(err error) (status int, code, title string) {
+	if errors.Is(err, ErrNotInPlan) {
+		return 403, "managed_postgres_not_in_plan", "Managed PostgreSQL is not included in this plan"
+	}
+	return 403, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded"
+}
+
+// ProvisioningClosedDetail and UnavailableDetail are the customer-facing
+// explanations for ErrProvisioningClosed and a real provider outage.
+const (
+	ProvisioningClosedDetail = "Managed PostgreSQL is an operator preview and provisioning is not open for this account right now. Existing databases and bindings keep working; ask the platform operator to open provisioning."
+	UnavailableDetail        = "Managed PostgreSQL is an operator preview. The configured provider is temporarily unavailable; retry later or contact the platform operator."
+)
+
+// UsageStaleDetail is the customer-facing explanation for ErrUsageStale. A
+// deleted database holds the gate until its final usage correction lands, so
+// without it a timed wait reads like an outage (production-us hunt #9,
+// H9-P101).
+const UsageStaleDetail = "Usage collection for this account has not caught up, so new databases, restores and resizes are paused. After a database is deleted this lasts until its final usage correction is collected, up to a few hours. Existing databases keep running; retry later."
 
 type State string
 
@@ -74,19 +129,21 @@ type Spec struct {
 	RestoreWindowSeconds int64
 }
 
+// Validate wraps ErrInvalid with the offending field so API problems can
+// say what to change; the bare sentinel left customers guessing.
 func (s Spec) Validate() error {
 	validRegion := regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
-	if !validRegion.MatchString(s.Region) || s.PostgresMajor < 12 || s.PostgresMajor > 99 {
-		return ErrInvalid
-	}
-	if s.Class != ClassDevelopment && s.Class != ClassBurstable && s.Class != ClassProduction {
-		return ErrInvalid
-	}
-	if s.Availability != AvailabilitySingleZone && s.Availability != AvailabilityHighlyAvailable {
-		return ErrInvalid
-	}
-	if s.StorageLimitBytes < 0 || s.RestoreWindowSeconds < 0 {
-		return ErrInvalid
+	switch {
+	case !validRegion.MatchString(s.Region):
+		return fmt.Errorf("%w: region must be lowercase letters, digits and hyphens", ErrInvalid)
+	case s.PostgresMajor < 12 || s.PostgresMajor > 99:
+		return fmt.Errorf("%w: postgres major %d is outside 12-99", ErrInvalid, s.PostgresMajor)
+	case s.Class != ClassDevelopment && s.Class != ClassBurstable && s.Class != ClassProduction:
+		return fmt.Errorf("%w: service class must be development, burstable or production", ErrInvalid)
+	case s.Availability != AvailabilitySingleZone && s.Availability != AvailabilityHighlyAvailable:
+		return fmt.Errorf("%w: availability must be single_zone or high_availability", ErrInvalid)
+	case s.StorageLimitBytes < 0 || s.RestoreWindowSeconds < 0:
+		return fmt.Errorf("%w: storage limit and restore window must not be negative", ErrInvalid)
 	}
 	return nil
 }
@@ -145,6 +202,42 @@ type ObservedDatabase struct {
 	// isolated stage database. SourceResourceID must identify the exact source
 	// (for example a Neon branch), not a mutable default selector.
 	RestoreLineage *RestoreLineage
+	// RestoreVerification is set when this observation independently verified
+	// the lineage, or confirmed a supplied record (ADR-1259).
+	RestoreVerification *RestoreVerification
+}
+
+// RestoreVerification is durable evidence that an adapter independently
+// verified a restore target's lineage (ADR-1259). Evidence fingerprints the
+// target's immutable provider metadata; it is opaque to the service and never
+// carries credentials. Later observations confirm the fingerprint instead of
+// remapping a historical position that the provider resolves inexactly.
+type RestoreVerification struct {
+	ProviderResourceID string
+	SourceResourceID   string
+	PointInTime        time.Time
+	Evidence           string
+}
+
+// Validate checks the record's shape and that it describes request against
+// providerResourceID. It proves nothing about the provider's current state.
+func (v RestoreVerification) Validate(providerResourceID string, request RestoreRequest) error {
+	if !validOpaqueID(v.ProviderResourceID) || !validOpaqueID(v.SourceResourceID) || v.PointInTime.IsZero() ||
+		v.Evidence == "" || len(v.Evidence) > 1024 || strings.ContainsFunc(v.Evidence, unicode.IsControl) {
+		return ErrInvalid
+	}
+	if v.ProviderResourceID != providerResourceID || v.SourceResourceID != request.SourceResourceID || !v.PointInTime.Equal(request.PointInTime) {
+		return ErrConflict
+	}
+	return nil
+}
+
+// RestoreVerificationStore keeps one verification per restore target. A write
+// needs the target's current provisioning lease; a different record for the
+// same target is ErrConflict.
+type RestoreVerificationStore interface {
+	RecordRestoreVerification(context.Context, Database, RestoreVerification) error
+	GetRestoreVerification(ctx context.Context, accountID, databaseID string) (RestoreVerification, error)
 }
 
 type RestoreLineage struct {
@@ -220,6 +313,9 @@ type RestoreRequest struct {
 	Spec             Spec
 	PointInTime      time.Time
 	IdempotencyKey   string
+	// Verification, when recorded, is confirmed against the target's current
+	// immutable metadata instead of remapping PointInTime (ADR-1259).
+	Verification *RestoreVerification
 }
 
 // ImportSource is a PostgreSQL database on another backend to copy into a
@@ -327,7 +423,21 @@ const (
 	CredentialMigration CredentialAccess = "migration"
 	// Data API logins receive only api-schema DML, without owner memberships.
 	CredentialDataAPI CredentialAccess = "data_api"
+	// Auth logins act as a separate owner of only the auth and gregale_auth
+	// schemas (ADR-1190). GoTrue enables RLS on its tables, so its runtime
+	// must own them; no customer schema is reachable.
+	CredentialAuth CredentialAccess = "auth"
 )
+
+// Known reports whether access is a portable credential mode. Every
+// validation site uses it so a new mode cannot be missed by one of them.
+func (a CredentialAccess) Known() bool {
+	switch a {
+	case CredentialReadWrite, CredentialReadOnly, CredentialMigration, CredentialDataAPI, CredentialAuth:
+		return true
+	}
+	return false
+}
 
 type EndpointRole string
 
@@ -388,6 +498,11 @@ func (c CredentialMaterial) Validate() error {
 
 type CredentialRequest struct {
 	ProviderResourceID string
+	// Nonzero only when a durable capacity reservation bounds this login.
+	ConnectionLimit int64
+	// BindingID identifies owner-approved policies across credential generations.
+	// Standalone provider qualification requests may omit it.
+	BindingID string
 	// IdentityKey is a stable, non-secret identity for one credential
 	// generation. Rotation uses a new key; revocation repeats the key that
 	// created the credential.
@@ -578,6 +693,10 @@ type UsageProgress struct {
 	// Unresolved is snapshot metadata for an accounting obligation whose
 	// provider identity is still unknown. Ledger observations cannot settle it.
 	Unresolved bool
+	// CreatedAt is snapshot metadata: when the accounting root was reserved.
+	// A resource created inside the current window has no completed window
+	// to collect yet, so its missing first observation is not a gap.
+	CreatedAt time.Time
 }
 
 // UsageLineItem is a normalized, provider-neutral meter line. It is an
@@ -721,7 +840,7 @@ func (c Capabilities) Validate() error {
 		}
 	}
 	for _, access := range c.CredentialAccess {
-		if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration && access != CredentialDataAPI {
+		if !access.Known() {
 			return ErrInvalid
 		}
 	}
@@ -738,7 +857,7 @@ func (c Capabilities) Validate() error {
 // the backend prevents Gregale from reserving work that the provider can never
 // reconcile.
 func (c Capabilities) SupportsCredentialAccess(access CredentialAccess) error {
-	if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration && access != CredentialDataAPI {
+	if !access.Known() {
 		return ErrInvalid
 	}
 	if !contains(c.CredentialAccess, access) {
@@ -747,23 +866,40 @@ func (c Capabilities) SupportsCredentialAccess(access CredentialAccess) error {
 	return nil
 }
 
+// Supports wraps ErrUnsupported with what the backend offers instead, so a
+// request for an unoffered major or class names the alternatives.
 func (c Capabilities) Supports(spec Spec) error {
 	if err := spec.Validate(); err != nil {
 		return err
 	}
-	if !contains(c.PostgresMajors, spec.PostgresMajor) || !contains(c.ServiceClasses, spec.Class) || !contains(c.Availability, spec.Availability) {
-		return ErrUnsupported
-	}
-	if spec.ScaleToZero && !c.ScaleToZero {
-		return ErrUnsupported
-	}
-	if spec.RestoreWindowSeconds > 0 && (!c.PointInTimeRestore || (c.MaxRestoreWindowSeconds > 0 && spec.RestoreWindowSeconds > c.MaxRestoreWindowSeconds)) {
-		return ErrUnsupported
-	}
-	if spec.StorageLimitBytes > 0 && c.MaxStorageBytes > 0 && spec.StorageLimitBytes > c.MaxStorageBytes {
-		return ErrUnsupported
+	switch {
+	case !contains(c.PostgresMajors, spec.PostgresMajor):
+		return fmt.Errorf("%w: postgres major %d is not offered here (offered: %s)", ErrUnsupported, spec.PostgresMajor, joinOffered(c.PostgresMajors, strconv.Itoa))
+	case !contains(c.ServiceClasses, spec.Class):
+		return fmt.Errorf("%w: service class %s is not offered here (offered: %s)", ErrUnsupported, spec.Class, joinOffered(c.ServiceClasses, func(v ServiceClass) string { return string(v) }))
+	case !contains(c.Availability, spec.Availability):
+		return fmt.Errorf("%w: availability %s is not offered here (offered: %s)", ErrUnsupported, spec.Availability, joinOffered(c.Availability, func(v Availability) string { return string(v) }))
+	case spec.ScaleToZero && !c.ScaleToZero:
+		return fmt.Errorf("%w: scale-to-zero is not offered here", ErrUnsupported)
+	case spec.RestoreWindowSeconds > 0 && !c.PointInTimeRestore:
+		return fmt.Errorf("%w: point-in-time restore is not offered here", ErrUnsupported)
+	case spec.RestoreWindowSeconds > 0 && c.MaxRestoreWindowSeconds > 0 && spec.RestoreWindowSeconds > c.MaxRestoreWindowSeconds:
+		return fmt.Errorf("%w: restore window %d s exceeds the %d s maximum", ErrUnsupported, spec.RestoreWindowSeconds, c.MaxRestoreWindowSeconds)
+	case spec.StorageLimitBytes > 0 && c.MaxStorageBytes > 0 && spec.StorageLimitBytes > c.MaxStorageBytes:
+		return fmt.Errorf("%w: storage limit %d bytes exceeds the %d byte maximum", ErrUnsupported, spec.StorageLimitBytes, c.MaxStorageBytes)
 	}
 	return nil
+}
+
+func joinOffered[T any](values []T, format func(T) string) string {
+	if len(values) == 0 {
+		return "none"
+	}
+	out := make([]string, len(values))
+	for i, v := range values {
+		out[i] = format(v)
+	}
+	return strings.Join(out, ", ")
 }
 
 // Provider is the complete vendor boundary. Mutating methods must be
@@ -827,6 +963,12 @@ type DataAPICredentialProber interface {
 	ProbeDataAPICredentials(context.Context, string) (DataAPICredentialEvidence, error)
 }
 
+// AuthCredentialProber verifies auth-schema ownership, customer-schema
+// isolation, recovery and retirement before the backend can advertise auth.
+type AuthCredentialProber interface {
+	ProbeAuthCredentials(context.Context, string) (AuthCredentialEvidence, error)
+}
+
 // RestoreCredentialIsolationProber verifies that the source login cannot
 // authenticate against the restored target.
 type RestoreCredentialIsolationProber interface {
@@ -854,6 +996,7 @@ type Database struct {
 	Health             *HealthSummary
 	ID                 string
 	AccountID          string
+	OrgID              string
 	Name               string
 	Spec               Spec
 	BackendID          string
@@ -892,8 +1035,10 @@ const (
 )
 
 type Binding struct {
+	ConnectionLimit      int64
 	ID                   string
 	AccountID            string
+	DatabaseAccountID    string
 	DatabaseID           string
 	AppID                string
 	Scope                string
@@ -1008,6 +1153,9 @@ func ValidName(name string) bool {
 	validName := regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	return validName.MatchString(name)
 }
+
+// errInvalidName explains ValidName's rule in API problems.
+var errInvalidName = fmt.Errorf("%w: name must start with a lowercase letter and use at most 63 lowercase letters, digits and hyphens", ErrInvalid)
 
 func validBindingScope(scope string) bool {
 	if !utf8.ValidString(scope) {

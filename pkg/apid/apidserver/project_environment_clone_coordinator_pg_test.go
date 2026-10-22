@@ -433,7 +433,7 @@ func TestPGCloneMaterializationRejectsEditedHeadsAndRecreatedEnvironment(t *test
 	}
 }
 
-func TestPGCloneMaterializationRetainsFlagEditsOnReplay(t *testing.T) {
+func TestPGCloneMaterializationPreservesFlagEditsWhenReplayConflicts(t *testing.T) {
 	f := newCloneCoordinatorFixture(t, false)
 	ctx := t.Context()
 	op := f.lease.Operation
@@ -452,8 +452,10 @@ func TestPGCloneMaterializationRetainsFlagEditsOnReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	replayed, err := f.store.MaterializeProjectEnvironmentCloneForLease(ctx, f.lease, nil, 0, api.MustLimitsFor(api.PlanPro))
-	if err != nil || replayed.ID != env.ID {
-		t.Fatalf("materialization replay: %v", err)
+	// The original ownership receipt includes feature flags. Replay must
+	// reject changed configuration while preserving the developer's edit.
+	if !errors.Is(err, state.ErrConflict) || replayed.ID != "" {
+		t.Fatalf("edited flags adopted by materialization replay: %v", err)
 	}
 	current, err := f.store.GetFeatureFlags(ctx, scope, 0)
 	if err != nil || current.Version != edited.Version || len(current.Flags) != 1 || current.Flags[0].Key != "stage_edit" {

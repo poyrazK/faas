@@ -181,3 +181,41 @@ only by that task. Engine methods already serve concurrent work-pool callers
 (prime, reconciles) and take the per-app engine lock, so a wake for the same
 app still waits for that app's park, while wakes for every other app no
 longer do. Test: `pkg/sched/loop_reaper_dispatch_test.go`.
+
+## Amendment (2026-10-12): the other direction while vmmd is up
+
+Decision 1 left the "VM runs, row is not live" direction to vmmd's boot reap.
+On production-us that was not enough. For 36 minutes a starved control plane
+timed out one heartbeat ping after another, and every timeout marked a node
+unavailable. Each node.failed sent the recovery arbiter's Recreate verdict to
+`RecreateInstance`, which parks the rows as if their VMs had died with the
+node. The VMs had not died: the nodes were healthy. Each later wake booted a
+new VM that the next flap orphaned in turn. After about 22 flaps per node, 53 VMs
+(5.5 GB on two 16 GB nodes) were running behind parked rows. Admission could
+not see them, and nothing reclaimed them until an operator did (production-us
+hunt #9, H9-171).
+
+Three changes, each covering a different failure:
+
+1. **The trigger.** The heartbeat marks a node unavailable only after
+   `DefaultHeartbeatFailureThreshold` (3) consecutive failed pings. At the
+   30 s interval that is within the 90 s staleness budget the stale-peer
+   observer already uses, so a dead node is still failed over in the same
+   time.
+2. **The arbiter's own leftovers.** `RecreateInstance` records each instance
+   it parks. When the node answers a ping again, schedd destroys those VMs
+   through vmmd, unless the row is live again. Retries last up to an hour.
+3. **Every other cause.** vmmd sweeps its ordinary app VMs once a minute
+   (builder, execution, app-task, qualification, job and warm-pool VMs are
+   excluded). It destroys a VM whose instance row exists and is not live on
+   two consecutive sweeps. A missing row is not evidence, so those VMs stay
+   with the boot reap. The two-sweep rule keeps it from racing a park whose
+   own destroy is still in flight. Unlike decision 1 this is enforcing from
+   the start: a non-live row (parked, stopped, failed, evicting) never owns a
+   running VM, and the live set (`state.IsLive`) includes draining,
+   snapshotting, migrating and warm.
+
+Tests: `TestHeartbeat_FailureThreshold`,
+`TestLostVMsAreDestroyedWhenTheNodeAnswers`, `TestLostVMDestroyFailureIsRetried`,
+`TestLiveVMReapDestroysVMsWhoseRowIsNotLive`, `TestLiveVMReapRetriesAFailedDestroy`,
+`TestManagerAppInstanceIDsListsOnlyOrdinaryAppVMs`.

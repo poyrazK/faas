@@ -13,10 +13,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
-	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -35,7 +37,7 @@ import (
 // example, when OCI layers omitted the empty /proc and /sys mountpoints).
 // Keeping this in the sidecar makes upgrades self-healing even when the
 // remote image digest is unchanged and the old artifact is already cached.
-const baseLayoutVersion = "faas-base-layout-v3"
+const baseLayoutVersion = imagechain.BaseLayoutVersion
 
 const baseSourceRefPrefix = "source-ref="
 
@@ -55,6 +57,7 @@ type BaseStageResult struct {
 	StorageKey   string
 	ConfigDigest string // empty when Skip
 	Skipped      bool
+	Producer     state.BaseImageProducer `json:"-"` // private immutable evidence, never scan/admission authority
 }
 
 // EnsureBaseExt4 guarantees baseKey exists and reflects ref's current
@@ -128,6 +131,9 @@ func (h *Handler) ensureBaseExt4(
 	guestInitDigest, err := guestInitBinaryDigest(h.guestInitPath)
 	if err != nil {
 		return BaseStageResult{}, fmt.Errorf("imaged: hash guest-init %q: %w", h.guestInitPath, err)
+	}
+	if resolver, ok := h.oci.(oci.ImageResolver); ok {
+		return h.ensureVerifiedBaseExt4(ctx, verifiedBaseRequest{ref: ref, key: baseKey, digestKey: digestKey, out: outImage, parentRef: parentRef, parentKey: parentBaseKey, guestDigest: guestInitDigest, be: be, mp: mp}, resolver)
 	}
 
 	// Production base refs are immutable manifest digests. Once a staged
@@ -589,10 +595,6 @@ func (h *Handler) ensureBaseExt4ParentRef(
 			"imaged: parent-ref layer count mismatch: manifest=%d config=%d",
 			len(manifest.Layers), len(runtimeCfg.DiffIDs))
 	}
-	blobByDiff := make(map[string]oci.Descriptor, len(manifest.Layers))
-	for i, l := range manifest.Layers {
-		blobByDiff[runtimeCfg.DiffIDs[i]] = l
-	}
 
 	// Ask vmmd to mount the parent ext4 and copy its contents into a shared
 	// ordinary-file staging tree. Mount visibility is scoped to vmmd's service
@@ -621,11 +623,8 @@ func (h *Handler) ensureBaseExt4ParentRef(
 			_ = c.Close()
 		}
 	}()
-	for _, diffID := range delta {
-		desc, ok := blobByDiff[diffID]
-		if !ok {
-			return BaseStageResult{}, fmt.Errorf("imaged: parent-ref missing blob for diff %s", diffID)
-		}
+	for i := range delta {
+		desc := manifest.Layers[len(parentCfg.DiffIDs)+i]
 		rc, err := mp.PullBlob(ctx, ociRef.Registry+"/"+ociRef.Repository, desc.Digest)
 		if err != nil {
 			return BaseStageResult{}, fmt.Errorf("imaged: parent-ref pull blob %s: %w", desc.Digest, err)
@@ -1002,7 +1001,7 @@ func (h *Handler) scanSidecarSourceCurrent(ctx context.Context, be storage.Stora
 type RuntimeBaseRef struct {
 	// Runtime is the apps.runtime constant the function deploy stores
 	// in the database (e.g. "node24"). It is also the base key's path
-	// component: sched.BaseKeyForArch(runtime, arch) →
+	// component: storagekey.BaseForArch(runtime, arch) →
 	// "base/runner-<runtime>-<arch>.ext4".
 	Runtime string
 	// Ref is the default OCI ref for the runtime base. The `:latest`
@@ -1070,6 +1069,7 @@ var DefaultRuntimeBaseRefs = []RuntimeBaseRef{
 // row. Used by the imaged-ready log line so the §12 dashboard sees a
 // per-runtime summary at startup (skip vs rebuild, observed digest).
 type EnsureBasesResult struct {
+	Producer state.BaseImageProducer `json:"-"`
 	// Runtime is the apps.runtime constant the row belongs to.
 	Runtime string
 	// Ref is the OCI ref that was actually staged (defaults from the
@@ -1159,9 +1159,9 @@ func (h *Handler) EnsureBases(ctx context.Context, arch string, refs []RuntimeBa
 				return nil, err
 			}
 		}
-		baseKey := sched.BaseKeyForArch(row.Runtime, arch)
-		digestKey := sched.BaseDigestKeyForArch(row.Runtime, arch)
-		outImage := sched.BaseKeyForArch(row.Runtime, arch) // LocalStorageBackend joins under FAAS_STORAGE_ROOT
+		baseKey := storagekey.BaseForArch(row.Runtime, arch)
+		digestKey := storagekey.BaseDigestForArch(row.Runtime, arch)
+		outImage := storagekey.BaseForArch(row.Runtime, arch) // LocalStorageBackend joins under FAAS_STORAGE_ROOT
 		// ADR-053: when the row declares a parent runtime, pass its
 		// resolved OCI ref + StorageBackend key so EnsureBaseExt4
 		// can take the parent-ref branch. The parent row's
@@ -1183,13 +1183,14 @@ func (h *Handler) EnsureBases(ctx context.Context, arch string, refs []RuntimeBa
 		}
 		parentBaseKey := ""
 		if row.ParentRef != "" {
-			parentBaseKey = sched.BaseKeyForArch(RuntimeDebianParent, arch)
+			parentBaseKey = storagekey.BaseForArch(RuntimeDebianParent, arch)
 		}
 		res, err := h.EnsureBaseExt4(ctx, ref, baseKey, digestKey, outImage, parentRef, parentBaseKey)
 		if err != nil {
 			return nil, fmt.Errorf("imaged: stage runtime base %s (%s → %s): %w", row.Runtime, ref, baseKey, err)
 		}
 		out = append(out, EnsureBasesResult{
+			Producer:     res.Producer,
 			Runtime:      row.Runtime,
 			Ref:          ref,
 			ConfigDigest: res.ConfigDigest,
@@ -1227,8 +1228,9 @@ func (h *Handler) EnsureMinimalBase(ctx context.Context, arch string, envLookup 
 	}
 	result := results[0]
 	return BaseStageResult{
-		OutImage:     sched.BaseKeyForArch("", arch),
-		StorageKey:   sched.BaseKeyForArch("", arch),
+		OutImage:     storagekey.BaseForArch("", arch),
+		Producer:     result.Producer,
+		StorageKey:   storagekey.BaseForArch("", arch),
 		ConfigDigest: result.ConfigDigest,
 		Skipped:      result.Skipped,
 	}, nil
@@ -1288,7 +1290,8 @@ func (h *Handler) EnsureRuntimeBase(ctx context.Context, runtime, arch string, e
 	}
 	last := results[len(results)-1]
 	return BaseStageResult{
-		StorageKey:   sched.BaseKeyForArch(last.Runtime, arch),
+		StorageKey:   storagekey.BaseForArch(last.Runtime, arch),
+		Producer:     last.Producer,
 		ConfigDigest: last.ConfigDigest,
 		Skipped:      last.Skipped,
 	}, nil

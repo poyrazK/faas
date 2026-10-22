@@ -42,6 +42,12 @@ type nativeSnapshotPublicationIntent struct {
 	Keys      nativeSnapshotPublicationObjectKeys `json:"keys"`
 }
 
+func (r nativeSnapshotPublicationIntent) Equal(other nativeSnapshotPublicationIntent) bool {
+	return r.Version == other.Version && r.Directory == other.Directory && r.File == other.File &&
+		r.JailBase == other.JailBase && r.Incoming == other.Incoming && r.Capture.Equal(other.Capture) &&
+		r.Physical == other.Physical && r.Keys == other.Keys
+}
+
 func (r *nativeSnapshotPublicationIntent) UnmarshalJSON(data []byte) error {
 	fields, err := nativeJournalObjectFields(data, []string{"version", "directory", "file", "jail_base", "incoming", "capture", "physical", "keys"})
 	if err != nil {
@@ -156,7 +162,7 @@ func (v *JailerVMM) requireNativeSnapshotPublication(ctx context.Context, lease 
 		return p, err
 	}
 	capture.Incoming.NativeLease.processGeneration = 0
-	if p.intent.Capture != capture.Capture || p.intent.Incoming != capture.Incoming || !sameNativeSnapshotProcess(p.intent.Physical, capture.Physical) {
+	if !p.intent.Capture.Equal(capture.Capture) || p.intent.Incoming != capture.Incoming || !sameNativeSnapshotProcess(p.intent.Physical, capture.Physical) {
 		return p, state.ErrConflict
 	}
 	return p, p.journal.Require(ctx, p.intent)

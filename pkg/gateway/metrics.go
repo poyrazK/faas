@@ -27,6 +27,12 @@
 //     requests decided locally after a central consume failed or while the
 //     consult breaker is open; scope is a
 //     closed app|account|rule|other set)
+//   - gateway_ratelimit_lease_requests_total{scope, result}  counter
+//     (ADR-1520 lease statements: granted|partial|empty|failed)
+//   - gateway_ratelimit_lease_tokens_total{scope, outcome}   counter
+//     (granted|spent|allowance|over_admitted|expired|returned)
+//   - gateway_ratelimit_sync_consults_total{scope}           counter
+//     (requests that waited for Postgres; only traffic at its limit should)
 //   - gateway_cold_boot_total{app}                   counter (renamed from
 //     gateway_cold_wake_total in #273 / ADR-042; zero external consumers so
 //     it is a straight rename, not a dual-emit migration)
@@ -112,7 +118,10 @@ import (
 // Metrics is the gatewayd-internal Prometheus bundle. Construct once per Handler via
 // NewMetrics and pass into NewHandlerWith.
 type Metrics struct {
-	registry *prometheus.Registry
+	mcpRequests *prometheus.CounterVec
+	mcpDuration *prometheus.HistogramVec
+	mcpActive   *prometheus.GaugeVec
+	registry    *prometheus.Registry
 
 	requests                    *prometheus.CounterVec
 	platformErrors              *prometheus.CounterVec
@@ -129,6 +138,7 @@ type Metrics struct {
 	usageOutboxPending          prometheus.Gauge
 	usageOutboxBytes            prometheus.Gauge
 	usageOutboxFailures         prometheus.Counter
+	usageCommitAborts           prometheus.Counter
 	usageDelivered              prometheus.Counter
 	usageDeliveryFailures       prometheus.Counter
 	wakeLatency                 prometheus.Histogram
@@ -232,12 +242,18 @@ type Metrics struct {
 	wafRuleMatches        *prometheus.CounterVec
 	wafInline             *prometheus.CounterVec
 	wafInlineSeconds      prometheus.Histogram
+	edgeChallenge         *prometheus.CounterVec
 	wafInspectionSeconds  prometheus.Histogram
 	preAuthPolicyShadow   *prometheus.CounterVec
 	// rateLimitDegraded counts every central-counter error that caused a
 	// process-local fallback. The closed scope label keeps cardinality fixed;
 	// warning logs and audit events are separately cooled down by Handler.
 	rateLimitDegraded *prometheus.CounterVec
+	// ADR-1520 token leasing: lease statements, token outcomes, and requests
+	// that waited for Postgres. Scope is the closed app|account|rule|other set.
+	rateLimitLeaseRequests *prometheus.CounterVec
+	rateLimitLeaseTokens   *prometheus.CounterVec
+	rateLimitSyncConsults  *prometheus.CounterVec
 	// leaderBootstrapAborts (ADR-098 C7): counter labelled by
 	// reason — closed set {queue_empty_no_instance, ttl_expired,
 	// app_deleted}. Pre-instantiated in NewMetrics so the §12
@@ -719,7 +735,15 @@ type Metrics struct {
 	// are intentionally not labels.
 	serviceDependencyCalls *prometheus.CounterVec
 	// Unsampled caller-to-target outcome and latency, labelled only by UUIDs.
-	serviceDependencyEdges    *prometheus.CounterVec
+	serviceDependencyEdges *prometheus.CounterVec
+	// serviceDependencyEdgeWakes counts the edge calls that had to restore a
+	// parked target (ADR-196); the service map divides it by the edge calls
+	// for its cold-call share (ADR-1131).
+	serviceDependencyEdgeWakes *prometheus.CounterVec
+	// serviceTCPEdgeSessions and serviceTCPEdgeWakes put private TCP
+	// sessions (ADR-576) on the service map's caller -> target edges.
+	serviceTCPEdgeSessions    *prometheus.CounterVec
+	serviceTCPEdgeWakes       *prometheus.CounterVec
 	serviceDependencyDuration *prometheus.HistogramVec
 	// serviceWakeLatency (ADR-196) observes how long an internal caller was
 	// held while a parked target service was restored. ADR-196 defers
@@ -729,9 +753,18 @@ type Metrics struct {
 	// serviceWakeAhead (ADR-977) counts speculative wake-ahead decisions by
 	// outcome. used/unused close the loop on whether a prediction helped.
 	serviceWakeAhead *prometheus.CounterVec
+	// Per-edge wake-ahead evidence (ADR-1152), labelled by caller and target
+	// app UUID. Bounded by the learner: top edges of callers with enough
+	// wakes, and outcomes only for edges that were actually woken ahead.
+	serviceWakeAheadEdgeShare   *prometheus.GaugeVec
+	serviceWakeAheadCallerWakes *prometheus.GaugeVec
+	serviceWakeAheadEdgeTotal   *prometheus.CounterVec
 	// routePriorityQueue (ADR-978) counts warm-capacity queue entries by route
 	// priority class and outcome.
 	routePriorityQueue *prometheus.CounterVec
+	// routePriorityWake (ADR-20261018181846) counts cold-wake queue outcomes
+	// that route priority decided.
+	routePriorityWake *prometheus.CounterVec
 	// servicePreviewToProduction counts internal calls made by a PR preview
 	// app into a production service because no same-PR sibling was available.
 	// This is the fleet-wide signal that preview traffic is exercising live
@@ -831,6 +864,23 @@ const (
 	tierInit = "init"
 	tierCold = "cold"
 )
+
+// wakeLatencyBuckets is the shared envelope of gateway_wake_latency_seconds,
+// its _by_node twin and gateway_wake_phase_duration_seconds. The finite
+// buckets reach past the wake gate's 30 s TTL so a stalled wake reads as its
+// real duration: with 10 s on top, every slower wake landed in +Inf and
+// histogram_quantile reported 10 s. The added buckets sit above 10 s, so
+// quantiles below 10 s are unchanged and the §12 calibration still holds.
+func wakeLatencyBuckets() []float64 {
+	return []float64{0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0, 20.0, 30.0, 60.0}
+}
+
+// platformWakeLatencyBuckets keeps the fine resolution around the 0.35 s
+// public-beta gate and extends the tail to the same 60 s ceiling, so a
+// regression past 3 s reads as its real duration rather than 3 s.
+func platformWakeLatencyBuckets() []float64 {
+	return []float64{0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.325, 0.35, 0.4, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0, 30.0, 60.0}
+}
 
 func NewMetrics() *Metrics {
 	reg := prometheus.NewRegistry()
@@ -963,16 +1013,17 @@ func NewMetrics() *Metrics {
 		}),
 		requestIDJournalWrites: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_request_id_journal_write_total",
-			Help: "Exact public request-ID journal write outcomes; result is recorded, failed, or dropped (the asynchronous queue was full, ADR-634).",
+			Help: "Exact public request-ID journal records by outcome; result is recorded, rejected (apid refused the record), failed, or dropped (the asynchronous queue was full, ADR-634).",
 		}, []string{"result"}),
 		requestIDJournalWriteTime: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "gateway_request_id_journal_write_duration_seconds",
-			Help:    "Time spent writing one exact public request-ID mapping to apid (asynchronous since ADR-634).",
+			Help:    "Time spent writing one batch of exact public request-ID mappings to apid (asynchronous since ADR-634, batched since ADR-1521).",
 			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2},
 		}),
 		usageOutboxPending:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "gateway_consumer_usage_outbox_pending_records", Help: "Unacknowledged financial usage events on local disk."}),
 		usageOutboxBytes:      prometheus.NewGauge(prometheus.GaugeOpts{Name: "gateway_consumer_usage_outbox_pending_bytes", Help: "Unacknowledged financial usage bytes on local disk."}),
 		usageOutboxFailures:   prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_consumer_usage_outbox_failures_total", Help: "Financial usage events that could not be appended to the durable outbox."}),
+		usageCommitAborts:     prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_usage_commit_aborts_total", Help: "Billable responses withheld because their usage could not be made durable (ADR-1505)."}),
 		usageDelivered:        prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_consumer_usage_delivered_total", Help: "Financial usage events acknowledged by apid."}),
 		usageDeliveryFailures: prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_consumer_usage_delivery_failures_total", Help: "Failed financial usage delivery attempts retained for replay."}),
 		// ADR-089 PR 3 — kind=route substitution outcomes.
@@ -1208,16 +1259,12 @@ func NewMetrics() *Metrics {
 			Name: "gateway_wake_latency_seconds",
 			Help: "End-to-end latency from request received to first upstream byte after a cold wake.",
 			// Buckets target the §12 SLO: p50 ≤ 0.35 s, p95 ≤ 0.8 s, page > 1.5 s.
-			Buckets: []float64{
-				0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0,
-			},
+			Buckets: wakeLatencyBuckets(),
 		}),
 		platformWakeLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Name: "gateway_platform_wake_latency_seconds",
-			Help: "Platform-only wake latency from gateway capacity-admission start to first upstream byte. Excludes pre-admission routing/auth, CDN, Internet, and client latency. Public-beta SSD gate: p95 < 0.35 seconds.",
-			Buckets: []float64{
-				0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.325, 0.35, 0.4, 0.5, 0.8, 1.0, 1.5, 3.0,
-			},
+			Name:    "gateway_platform_wake_latency_seconds",
+			Help:    "Platform-only wake latency from gateway capacity-admission start to first upstream byte. Excludes pre-admission routing/auth, CDN, Internet, and client latency. Public-beta SSD gate: p95 < 0.35 seconds.",
+			Buckets: platformWakeLatencyBuckets(),
 		}),
 		// PR #4 / ADR-092 §3.5. Same bucket layout as wakeLatency
 		// — same distribution, same SLO targets — just labelled
@@ -1226,11 +1273,9 @@ func NewMetrics() *Metrics {
 		// without re-running the §12 fleet p95 calibration; the
 		// new histogram is opt-in and not part of any SLO.
 		wakeLatencyByNode: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "gateway_wake_latency_seconds_by_node",
-			Help: "Per-node wake latency (operator-side only; the unlabeled gateway_wake_latency_seconds remains the §12 fleet p95 source). ADR-092 §3.5. node_id is the compute_nodes.id UUID; the obs handler resolves id to name via ListComputeNodes.",
-			Buckets: []float64{
-				0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0,
-			},
+			Name:    "gateway_wake_latency_seconds_by_node",
+			Help:    "Per-node wake latency (operator-side only; the unlabeled gateway_wake_latency_seconds remains the §12 fleet p95 source). ADR-092 §3.5. node_id is the compute_nodes.id UUID; the obs handler resolves id to name via ListComputeNodes.",
+			Buckets: wakeLatencyBuckets(),
 		}, []string{"node_id"}),
 		// Spec §12 row "wake queue wait p95". Observed by WakeGate.Wait
 		// on every caller that joins a single-flight coalescing wake. The
@@ -1269,9 +1314,7 @@ func NewMetrics() *Metrics {
 			// Same bucket envelope as wakeLatency so the dashboards
 			// can compare phase histograms to the aggregate without
 			// re-bucketing.
-			Buckets: []float64{
-				0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0,
-			},
+			Buckets: wakeLatencyBuckets(),
 		}, []string{"phase"}),
 		queueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "gateway_queue_depth",
@@ -1347,6 +1390,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_waf_inline_checks_total",
 			Help: "In-path header/URI checks for kind=waf warn and block rules (ADR-831 amendment 4), by app and outcome (clean|warned|blocked|skipped|error). skipped means the app's inline budget or the node's check slots were exhausted and the request passed unchecked.",
 		}, []string{"app", "outcome"}),
+		edgeChallenge: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_edge_challenge_total",
+			Help: "kind=challenge decisions (ADR-831 amendment 7), by app and outcome: passed (valid pass), bypassed (verified credential), issued (challenge page served), rejected (403 challenge_required), solved (pass set), invalid (bad solution), expired (solution after the token expired).",
+		}, []string{"app", "outcome"}),
 		wafInlineSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "gateway_waf_inline_seconds",
 			Help:    "Time to check one request's headers and URI in-path for a kind=waf warn or block rule; added to that request's latency.",
@@ -1364,6 +1411,18 @@ func NewMetrics() *Metrics {
 		rateLimitDegraded: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ratelimit_degraded_total",
 			Help: "Requests the rate limiter decided with process-local counters because a central consume failed or recently failed (breaker open), labelled by closed scope (app|account|rule|preauth|other).",
+		}, []string{"scope"}),
+		rateLimitLeaseRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_ratelimit_lease_requests_total",
+			Help: "Central rate-limit lease statements (ADR-1520) by closed scope (app|account|rule|other) and result (granted|partial|empty|failed).",
+		}, []string{"scope", "result"}),
+		rateLimitLeaseTokens: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_ratelimit_lease_tokens_total",
+			Help: "Central rate-limit tokens by closed scope and outcome (ADR-1520): granted by a lease, spent from one, admitted by the local allowance, over_admitted when a grant could not cover the allowance, expired unspent, or returned to the shared bucket.",
+		}, []string{"scope", "outcome"}),
+		rateLimitSyncConsults: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_ratelimit_sync_consults_total",
+			Help: "Requests that waited for a central rate-limit lease (ADR-1520), by closed scope. Only counters at or near their limit should wait.",
 		}, []string{"scope"}),
 		// ADR-046 PR-2 producer observability. Counter is
 		// registered on the gatewayd-internal-local registry (this
@@ -1588,6 +1647,24 @@ func NewMetrics() *Metrics {
 				Help: "Unsampled service calls by trusted caller and target app UUID and final outcome; excludes identity and authorization failures.",
 			}, []string{"caller_app", "target_app", "outcome"},
 		),
+		serviceDependencyEdgeWakes: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_dependency_edge_wakes_total",
+				Help: "Unsampled service calls, by trusted caller and target app UUID, that found the target parked and were held while it was restored (ADR-196). Divided by gateway_service_dependency_edge_calls_total it is the edge's cold-call share (ADR-1131).",
+			}, []string{"caller_app", "target_app"},
+		),
+		serviceTCPEdgeSessions: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_tcp_edge_sessions_total",
+				Help: "Authorized private TCP service sessions (ADR-576) by trusted caller and target app UUID and outcome (success or error); excludes identity, authorization and plan-limit refusals (ADR-1131).",
+			}, []string{"caller_app", "target_app", "outcome"},
+		),
+		serviceTCPEdgeWakes: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_tcp_edge_wakes_total",
+				Help: "Authorized private TCP service sessions that found the target parked and waited for it to restore, by trusted caller and target app UUID (ADR-1131).",
+			}, []string{"caller_app", "target_app"},
+		),
 		serviceDependencyDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Name:    "gateway_service_dependency_duration_seconds",
@@ -1605,11 +1682,35 @@ func NewMetrics() *Metrics {
 				Help: "Opt-in service wake-ahead decisions (ADR-977) by outcome: started, used (the caller called the target while the wake-ahead was fresh), unused, skipped_residency, failed.",
 			}, []string{"outcome"},
 		),
+		serviceWakeAheadEdgeShare: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "gateway_service_wake_ahead_edge_share",
+				Help: "Learned wake-ahead evidence per caller and target app UUID (ADR-1152): kind=call is the share of caller cold wakes followed by a call to the target, kind=cold the share of those calls that found it parked or pre-woken.",
+			}, []string{"caller_app", "target_app", "kind"},
+		),
+		serviceWakeAheadCallerWakes: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "gateway_service_wake_ahead_caller_wakes",
+				Help: "Cold wakes of a caller app the wake-ahead learner holds evidence for (decayed; ADR-1152).",
+			}, []string{"caller_app"},
+		),
+		serviceWakeAheadEdgeTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_wake_ahead_edge_total",
+				Help: "Wake-ahead outcomes per caller and target app UUID (ADR-1152): started, used, unused, skipped_residency, failed.",
+			}, []string{"caller_app", "target_app", "outcome"},
+		),
 		routePriorityQueue: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "gateway_route_priority_queue_total",
 				Help: "Warm-capacity queue entries by route priority class (critical, normal, bulk) and outcome: queued, displacing (entered by taking a lower-class waiter's place), displaced (lost its place to a higher class), rejected (queue full).",
-			}, []string{"class", "outcome"},
+			}, []string{"app", "class", "outcome"},
+		),
+		routePriorityWake: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_route_priority_wake_total",
+				Help: "Cold-wake queue outcomes decided by route priority class (critical, normal, bulk) (ADR-20261018181846): displacing (joined a full queue by taking a lower-class waiter's place), displaced (turned away for a higher class), rejected (full queue, no lower class to displace), released_later (released after a higher class when the wake finished).",
+			}, []string{"app", "class", "outcome"},
 		),
 		serviceWakeLatency: prometheus.NewHistogram(
 			prometheus.HistogramOpts{
@@ -1679,7 +1780,7 @@ func NewMetrics() *Metrics {
 	for _, outcome := range ServiceCallOutcomes {
 		m.serviceCallTotal.WithLabelValues(string(outcome))
 	}
-	for _, kind := range []string{chaos.KindLatency, chaos.KindHTTPStatus} {
+	for _, kind := range []string{chaos.KindLatency, chaos.KindHTTPStatus, chaos.KindHTTPMalformedJSON, chaos.KindHTTPTruncatedBody, chaos.KindHTTPResponseLost} {
 		m.serviceChaosInjected.WithLabelValues(kind)
 	}
 	// The sentinel keeps the metric family visible even when no workload has
@@ -1772,7 +1873,7 @@ func NewMetrics() *Metrics {
 	// closed set guarantees the §12 dashboard panel "edge rule
 	// match rate" surfaces every (kind, outcome) tuple from
 	// first scrape.
-	for _, kind := range []string{"route", "rewrite", "redirect", "headers", "cors", "ip", "validate", "limit", "maintenance", "geo", "throttle", "async", "waf", "ingress_ip"} {
+	for _, kind := range []string{"route", "rewrite", "redirect", "headers", "cors", "ip", "validate", "limit", "maintenance", "geo", "throttle", "async", "waf", "challenge", "ingress_ip"} {
 		for _, outcome := range []string{"match", "miss", "blocked", "failed"} {
 			m.edgeRuleMatch.WithLabelValues(kind, outcome)
 		}
@@ -1802,6 +1903,15 @@ func NewMetrics() *Metrics {
 	}
 	for _, scope := range []string{"app", "account", "rule", "preauth", "other"} {
 		m.rateLimitDegraded.WithLabelValues(scope)
+	}
+	for _, scope := range []string{"app", "account", "rule", "other"} {
+		for _, result := range []string{LeaseResultGranted, LeaseResultPartial, LeaseResultEmpty, LeaseResultFailed} {
+			m.rateLimitLeaseRequests.WithLabelValues(scope, result)
+		}
+		for _, outcome := range []string{LeaseTokensGranted, LeaseTokensSpent, LeaseTokensAllowance, LeaseTokensOverAdmitted, LeaseTokensExpired, LeaseTokensReturned} {
+			m.rateLimitLeaseTokens.WithLabelValues(scope, outcome)
+		}
+		m.rateLimitSyncConsults.WithLabelValues(scope)
 	}
 	for _, outcome := range []string{"match", "miss", "blocked", "failed", "missing"} {
 		m.edgeRuleMatch.WithLabelValues("jwt", outcome)
@@ -1974,16 +2084,17 @@ func NewMetrics() *Metrics {
 	for _, result := range []string{"recorded", "failed"} {
 		m.requestIDJournalWrites.WithLabelValues(result)
 	}
-	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
-	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSeconds)
+	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSeconds, m.edgeChallenge)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
-	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration)
+	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration, m.serviceDependencyEdgeWakes)
+	reg.MustRegister(m.serviceTCPEdgeSessions, m.serviceTCPEdgeWakes)
 	reg.MustRegister(m.serviceWakeAhead)
-	reg.MustRegister(m.routePriorityQueue)
-	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
+	reg.MustRegister(m.routePriorityQueue, m.routePriorityWake, m.serviceWakeAheadEdgeShare, m.serviceWakeAheadCallerWakes, m.serviceWakeAheadEdgeTotal)
+	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageCommitAborts, m.usageDelivered, m.usageDeliveryFailures)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -2017,6 +2128,7 @@ func NewMetrics() *Metrics {
 		Name: "gateway_route_lookup_stale_served_total",
 		Help: "Requests routed from the last-known-good route tier because the authoritative route lookup errored (ADR-190). Bounded by FAAS_GATEWAY_ROUTE_STALE_TTL; a sustained rate means Postgres is unreachable from this gateway.",
 	})
+	m.initMCPMetrics(reg)
 	reg.MustRegister(m.drainWaitSeconds, m.inflightRequests, m.routeLookupStaleServed)
 	return m
 }
@@ -2586,6 +2698,14 @@ func (m *Metrics) ObserveWAFInline(appID, outcome string, seconds float64) {
 	}
 }
 
+// ObserveEdgeChallenge counts one kind=challenge decision.
+func (m *Metrics) ObserveEdgeChallenge(appID, outcome string) {
+	if m == nil || m.edgeChallenge == nil {
+		return
+	}
+	m.edgeChallenge.WithLabelValues(appID, outcome).Inc()
+}
+
 // ObserveWAFRuleMatch counts one CRS rule that scored in a detection.
 func (m *Metrics) ObserveWAFRuleMatch(appID string, ruleID int) {
 	if m == nil || m.wafRuleMatches == nil {
@@ -2621,6 +2741,50 @@ func (m *Metrics) ObserveRateLimitDegraded(scope string) {
 		scope = "other"
 	}
 	m.rateLimitDegraded.WithLabelValues(scope).Inc()
+}
+
+// leaseScope closes the scope label of the leasing metrics.
+func leaseScope(scope string) string {
+	switch scope {
+	case "app", "account", "rule":
+		return scope
+	}
+	return "other"
+}
+
+// ObserveLeaseRequest records one central lease statement (ADR-1520).
+func (m *Metrics) ObserveLeaseRequest(scope, result string) {
+	if m == nil || m.rateLimitLeaseRequests == nil {
+		return
+	}
+	switch result {
+	case LeaseResultGranted, LeaseResultPartial, LeaseResultEmpty, LeaseResultFailed:
+	default:
+		return
+	}
+	m.rateLimitLeaseRequests.WithLabelValues(leaseScope(scope), result).Inc()
+}
+
+// ObserveLeaseTokens records n central tokens with one outcome (ADR-1520).
+func (m *Metrics) ObserveLeaseTokens(scope, outcome string, n int) {
+	if m == nil || m.rateLimitLeaseTokens == nil || n <= 0 {
+		return
+	}
+	switch outcome {
+	case LeaseTokensGranted, LeaseTokensSpent, LeaseTokensAllowance, LeaseTokensOverAdmitted, LeaseTokensExpired, LeaseTokensReturned:
+	default:
+		return
+	}
+	m.rateLimitLeaseTokens.WithLabelValues(leaseScope(scope), outcome).Add(float64(n))
+}
+
+// ObserveRateLimitSyncConsult records a request that waited for a central
+// lease (ADR-1520).
+func (m *Metrics) ObserveRateLimitSyncConsult(scope string) {
+	if m == nil || m.rateLimitSyncConsults == nil {
+		return
+	}
+	m.rateLimitSyncConsults.WithLabelValues(leaseScope(scope)).Inc()
 }
 
 // ObserveEdgeAnswered records a response completed by the gateway without an
@@ -3596,13 +3760,13 @@ func (m *Metrics) IncServiceCall(outcome ServiceCallOutcome) {
 }
 
 // ObserveServiceChaosInjection records one injected scenario fault. Only the
-// two validated rule kinds are admitted as labels.
+// validated HTTP fault kinds are admitted as labels.
 func (m *Metrics) ObserveServiceChaosInjection(kind string) {
 	if m == nil {
 		return
 	}
 	switch kind {
-	case chaos.KindLatency, chaos.KindHTTPStatus:
+	case chaos.KindLatency, chaos.KindHTTPStatus, chaos.KindHTTPMalformedJSON, chaos.KindHTTPTruncatedBody, chaos.KindHTTPResponseLost:
 		m.serviceChaosInjected.WithLabelValues(kind).Inc()
 	default:
 		return
@@ -3658,6 +3822,47 @@ func (m *Metrics) ObserveServiceDependencyEdge(callerAppID, targetAppID string, 
 	observeWithTraceExemplar(m.serviceDependencyDuration.WithLabelValues(labels...), duration.Seconds(), traceID)
 }
 
+// ObserveServiceTCPEdge records one authorized private TCP session on its
+// caller -> target edge. Labels are trusted UUIDs only.
+func (m *Metrics) ObserveServiceTCPEdge(callerAppID, targetAppID string, failed, woke bool) {
+	if m == nil || m.serviceTCPEdgeSessions == nil || m.serviceTCPEdgeWakes == nil {
+		return
+	}
+	caller, err := uuid.Parse(callerAppID)
+	if err != nil {
+		return
+	}
+	target, err := uuid.Parse(targetAppID)
+	if err != nil {
+		return
+	}
+	outcome := "success"
+	if failed {
+		outcome = "error"
+	}
+	m.serviceTCPEdgeSessions.WithLabelValues(caller.String(), target.String(), outcome).Inc()
+	if woke {
+		m.serviceTCPEdgeWakes.WithLabelValues(caller.String(), target.String()).Inc()
+	}
+}
+
+// IncServiceDependencyEdgeWake counts one edge call that restored a parked
+// target. Labels follow ObserveServiceDependencyEdge: trusted UUIDs only.
+func (m *Metrics) IncServiceDependencyEdgeWake(callerAppID, targetAppID string) {
+	if m == nil || m.serviceDependencyEdgeWakes == nil {
+		return
+	}
+	caller, err := uuid.Parse(callerAppID)
+	if err != nil {
+		return
+	}
+	target, err := uuid.Parse(targetAppID)
+	if err != nil {
+		return
+	}
+	m.serviceDependencyEdgeWakes.WithLabelValues(caller.String(), target.String()).Inc()
+}
+
 // ObserveServiceWakeLatency records how long an internal caller waited for a
 // parked target to come back. Only the cold path calls this.
 // IncServiceWakeAhead counts one wake-ahead outcome (ADR-977).
@@ -3668,12 +3873,76 @@ func (m *Metrics) IncServiceWakeAhead(outcome string) {
 	m.serviceWakeAhead.WithLabelValues(outcome).Inc()
 }
 
-// IncRoutePriorityQueue counts one warm-capacity queue outcome (ADR-978).
-func (m *Metrics) IncRoutePriorityQueue(class, outcome string) {
+// IncRoutePriorityQueue counts one warm-capacity queue outcome for an app
+// (ADR-978, ADR-1152).
+func (m *Metrics) IncRoutePriorityQueue(appID, class, outcome string) {
 	if m == nil || m.routePriorityQueue == nil {
 		return
 	}
-	m.routePriorityQueue.WithLabelValues(class, outcome).Inc()
+	m.routePriorityQueue.WithLabelValues(appID, class, outcome).Inc()
+}
+
+// IncRoutePriorityWake counts a cold-wake queue outcome decided by route
+// priority (ADR-20261018181846). Nil-safe for gates without metrics.
+func (m *Metrics) IncRoutePriorityWake(appID, class, outcome string) {
+	if m == nil || m.routePriorityWake == nil {
+		return
+	}
+	m.routePriorityWake.WithLabelValues(appID, class, outcome).Inc()
+}
+
+func wakeAheadAppIDs(ids ...string) bool {
+	for _, id := range ids {
+		if _, err := uuid.Parse(id); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// WakeAheadOutcome counts one wake-ahead outcome fleet-wide and per edge.
+func (m *Metrics) WakeAheadOutcome(caller, target, outcome string) {
+	if m == nil {
+		return
+	}
+	m.IncServiceWakeAhead(outcome)
+	if m.serviceWakeAheadEdgeTotal != nil && wakeAheadAppIDs(caller, target) {
+		m.serviceWakeAheadEdgeTotal.WithLabelValues(caller, target, outcome).Inc()
+	}
+}
+
+// WakeAheadEdge publishes one learned edge.
+func (m *Metrics) WakeAheadEdge(caller, target string, callShare, coldShare float64) {
+	if m == nil || m.serviceWakeAheadEdgeShare == nil || !wakeAheadAppIDs(caller, target) {
+		return
+	}
+	m.serviceWakeAheadEdgeShare.WithLabelValues(caller, target, "call").Set(callShare)
+	m.serviceWakeAheadEdgeShare.WithLabelValues(caller, target, "cold").Set(coldShare)
+}
+
+// WakeAheadEdgeGone withdraws an edge that left the caller's top edges.
+func (m *Metrics) WakeAheadEdgeGone(caller, target string) {
+	if m == nil || m.serviceWakeAheadEdgeShare == nil {
+		return
+	}
+	m.serviceWakeAheadEdgeShare.DeleteLabelValues(caller, target, "call")
+	m.serviceWakeAheadEdgeShare.DeleteLabelValues(caller, target, "cold")
+}
+
+// WakeAheadCallerWakes publishes a caller's observed wake count.
+func (m *Metrics) WakeAheadCallerWakes(caller string, wakes float64) {
+	if m == nil || m.serviceWakeAheadCallerWakes == nil || !wakeAheadAppIDs(caller) {
+		return
+	}
+	m.serviceWakeAheadCallerWakes.WithLabelValues(caller).Set(wakes)
+}
+
+// WakeAheadCallerGone withdraws an evicted caller.
+func (m *Metrics) WakeAheadCallerGone(caller string) {
+	if m == nil || m.serviceWakeAheadCallerWakes == nil {
+		return
+	}
+	m.serviceWakeAheadCallerWakes.DeleteLabelValues(caller)
 }
 
 func (m *Metrics) ObserveServiceWakeLatency(d time.Duration) {
@@ -3778,18 +4047,28 @@ func (m *Metrics) AddRequestTelemetryShipped(n int64) {
 	m.requestTelemetryShipped.Add(float64(n))
 }
 
-// ObserveRequestIDJournalWrite records the mandatory pre-proxy journal RPC.
-// Labels are a closed outcome set and intentionally omit tenant/request IDs.
-func (m *Metrics) ObserveRequestIDJournalWrite(duration time.Duration, err error) {
-	if m == nil || m.requestIDJournalWrites == nil || m.requestIDJournalWriteTime == nil {
+// ObserveRequestIDJournalBatch records one batch write (ADR-1521): every
+// record counts once as recorded, rejected or failed, and the duration is the
+// batch's. A batch error counts all of its records as failed. Labels are a
+// closed outcome set and intentionally omit tenant/request IDs.
+func (m *Metrics) ObserveRequestIDJournalBatch(duration time.Duration, records int, result RequestIDJournalBatchResult, err error) {
+	if m == nil || m.requestIDJournalWrites == nil || m.requestIDJournalWriteTime == nil || records <= 0 {
 		return
 	}
-	result := "recorded"
-	if err != nil {
-		result = "failed"
-	}
-	m.requestIDJournalWrites.WithLabelValues(result).Inc()
 	m.requestIDJournalWriteTime.Observe(duration.Seconds())
+	if err != nil {
+		m.requestIDJournalWrites.WithLabelValues("failed").Add(float64(records))
+		return
+	}
+	// Clamp to the batch so a miscounting writer cannot inflate the counters;
+	// whatever is left over (result.Failed included) counts as failed.
+	recorded := min(result.Recorded, records)
+	rejected := min(result.Rejected, records-recorded)
+	m.requestIDJournalWrites.WithLabelValues("recorded").Add(float64(recorded))
+	m.requestIDJournalWrites.WithLabelValues("rejected").Add(float64(rejected))
+	if failed := records - recorded - rejected; failed > 0 {
+		m.requestIDJournalWrites.WithLabelValues("failed").Add(float64(failed))
+	}
 }
 
 // IncRequestIDJournalDropped counts a journal record the queue had no room
@@ -3804,6 +4083,14 @@ func (m *Metrics) IncRequestIDJournalDropped() {
 func (m *Metrics) IncUsageOutboxFailure() {
 	if m != nil {
 		m.usageOutboxFailures.Inc()
+	}
+}
+
+// IncUsageCommitAbort counts a billable response withheld because its usage
+// could not be made durable (ADR-1505).
+func (m *Metrics) IncUsageCommitAbort() {
+	if m != nil {
+		m.usageCommitAborts.Inc()
 	}
 }
 

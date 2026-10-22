@@ -4,9 +4,17 @@
 /* eslint-disable */
 import type { OperationWorkflowReadinessOutcomeEscalationPolicy } from './OperationWorkflowReadinessOutcomeEscalationPolicy.js';
 /**
- * An asserted coordination outcome with a required note; resolved requires at least one retained evidence Operation. Closing does not prove business resolution.
+ * An asserted coordination outcome. Generic completion requires a note and resolved requires retained evidence; playbook business completion captures its own current evidence. Closing does not prove business resolution.
  */
 export type OperationWorkflowReadinessCompletionRequest = {
+  /**
+   * OperationWorkflowReadinessCompletionRequest.playbook_review_after_seconds. Optional review window after business-aware playbook completion; zero disables. Monitoring also ends with source inbox retention.
+   */
+  playbook_review_after_seconds?: number;
+  /**
+   * OperationWorkflowReadinessCompletionRequest.playbook_resolution. Optional business disposition for assigned playbook escalations. Expected or alternative resolutions require outcome resolved; canceled requires no_longer_applicable. Uses the frozen expectation, permits empty note and evidence IDs, and excludes extra outcome or verification watches.
+   */
+  playbook_resolution?: 'expected_outcome_achieved' | 'alternative_accepted' | 'follow_up_canceled';
   escalation_policy?: OperationWorkflowReadinessOutcomeEscalationPolicy;
   /**
    * OperationWorkflowReadinessCompletionRequest.watch_outcome. Opt in at completion to observe a pending or unknown business result; requires expected_outcome_code and a source workflow. The watch expires with source inbox retention.

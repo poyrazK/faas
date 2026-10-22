@@ -52,7 +52,9 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -76,8 +78,9 @@ type activeMigration struct {
 // results.
 // The lease-expiry loop is the only background consumer.
 type migrationTracker struct {
-	mu    sync.Mutex
-	state map[string]*activeMigration
+	mu      sync.Mutex
+	state   map[string]*activeMigration
+	flights map[string]chan struct{}
 }
 
 func newMigrationTracker() *migrationTracker {
@@ -92,13 +95,14 @@ func (t *migrationTracker) put(m *activeMigration) error {
 	if _, ok := t.state[m.instanceID]; ok {
 		return errAlreadyActive{instanceID: m.instanceID}
 	}
-	t.state[m.instanceID] = m
+	copy := *m
+	t.state[m.instanceID] = &copy
 	return nil
 }
 
-// reserve claims an instance before the snapshot side effect starts.
+// reserveSource claims an instance before the snapshot side effect starts.
 // complete fills in the storage metadata after SnapshotKeepAlive succeeds.
-func (t *migrationTracker) reserve(instanceID string, createdAt time.Time) (*activeMigration, error) {
+func (t *migrationTracker) reserveSource(instanceID string, createdAt time.Time, qualified bool) (*activeMigration, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if _, ok := t.state[instanceID]; ok {
@@ -111,8 +115,26 @@ func (t *migrationTracker) reserve(instanceID string, createdAt time.Time) (*act
 		leaseExpiresAt: createdAt.Add(time.Duration(api.MigrateLiveLeaseSeconds) * time.Second),
 		pending:        true,
 	}
+	if qualified {
+		m.leaseToken = state.FunctionMigrationTokenPrefix + m.leaseToken
+	}
 	t.state[instanceID] = m
-	return m, nil
+	copy := *m
+	return &copy, nil
+}
+
+// recordKeys stores the capture's storage keys on the tracked entry while it
+// is still pending. reserveSource hands callers a copy, so writes to that copy
+// never reach the cleanup paths that read the tracker.
+func (t *migrationTracker) recordKeys(leaseToken, memKey, vmstateKey string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, m := range t.state {
+		if m.leaseToken == leaseToken {
+			m.memKey, m.vmstateKey = memKey, vmstateKey
+			return
+		}
+	}
 }
 
 func (t *migrationTracker) complete(leaseToken, memKey, vmstateKey string) error {
@@ -130,7 +152,7 @@ func (t *migrationTracker) complete(leaseToken, memKey, vmstateKey string) error
 	return errNoLease{}
 }
 
-// get fetches by instanceID + leaseToken. errNoLease on
+// get returns a snapshot by instanceID + leaseToken. errNoLease on
 // unknown instance, errLeaseMismatch on token mismatch.
 func (t *migrationTracker) get(instanceID, leaseToken string) (*activeMigration, error) {
 	t.mu.Lock()
@@ -142,7 +164,8 @@ func (t *migrationTracker) get(instanceID, leaseToken string) (*activeMigration,
 	if m.leaseToken != leaseToken {
 		return nil, errLeaseMismatch{instanceID: instanceID}
 	}
-	return m, nil
+	copy := *m
+	return &copy, nil
 }
 
 // findByLeaseToken returns a copy of the entry held by leaseToken. Returning
@@ -209,6 +232,15 @@ type errNoLease struct{ instanceID string }
 
 func (e errNoLease) Error() string {
 	return "vmmd: no active migration for instance " + e.instanceID
+}
+
+// staleMigrationLease reports lookups that name no current lease: the lease
+// is gone, or a newer lease superseded the caller's token. Ack and cancel
+// treat both as an idempotent retry; store failures still surface.
+func staleMigrationLease(err error) bool {
+	var missing errNoLease
+	var mismatch errLeaseMismatch
+	return errors.As(err, &missing) || errors.As(err, &mismatch)
 }
 
 type errLeaseMismatch struct{ instanceID string }
@@ -287,6 +319,17 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
+	qualifiedSource := false
+	if vmm, ok := s.vmm.(functionMigrationVMM); ok {
+		qualifiedSource = vmm.FunctionMigrationSourceRequired(req.GetInstanceId())
+	}
+	if s.durableMigrationSource() && !qualifiedSource {
+		vmm, ok := s.vmm.(migrationSourceVMM)
+		if !ok || s.migrationSources == nil || s.migrationLeases == nil || !vmm.MigrationAdmissionAvailable(s.nodeID) {
+			err := api.NewProblem(int(codes.FailedPrecondition), api.CodeConflict, "Migration unavailable", "durable native source ownership is required")
+			return nil, grpcerr.ToStatus(err)
+		}
+	}
 	snapshotter, ok := s.vmm.(migrationSnapshotter)
 	if !ok {
 		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
@@ -309,7 +352,7 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 
 	// Reserve the instance before touching Firecracker. A second Prepare
 	// must not snapshot the same VM while the first call is in flight.
-	m, err := s.migrations.reserve(req.GetInstanceId(), start)
+	m, err := s.migrations.reserveSource(req.GetInstanceId(), start, qualifiedSource)
 	if err != nil {
 		err2 := api.NewProblem(int(codes.AlreadyExists), api.CodeConflict,
 			"Migration already active", err.Error()).WithDocs(wire.DocsBaseURL + "/vmmd#prepare")
@@ -322,6 +365,7 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 			LeaseToken:     m.leaseToken,
 			SourceNodeID:   s.nodeID,
 			CreatedAt:      m.createdAt,
+			Pending:        true,
 			LeaseExpiresAt: m.leaseExpiresAt,
 		}); err != nil {
 			s.migrations.deleteByLeaseToken(m.leaseToken)
@@ -334,30 +378,53 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 		}
 	}
 
-	_, err = snapshotter.SnapshotKeepAlive(ctx, req.GetInstanceId(), fcvm.SnapshotSpec{
-		StageMemPath:      "",
-		VMStatePath:       "",
-		StorageKey:        memKey,
-		VMStateStorageKey: vmstateKey,
-	})
-	if err != nil {
-		s.migrations.deleteByLeaseToken(m.leaseToken)
-		if s.migrationLeases != nil {
-			_ = s.migrationLeases.DeleteMigrationLease(ctx, m.leaseToken)
+	spec := fcvm.SnapshotSpec{StorageKey: memKey, VMStateStorageKey: vmstateKey}
+	functionSource, err := s.prepareFunctionSource(ctx, m, spec)
+	if err == nil && !functionSource {
+		if s.durableMigrationSource() {
+			err = s.prepareMigrationSource(ctx, m, spec)
+		} else {
+			_, err = snapshotter.SnapshotKeepAlive(ctx, req.GetInstanceId(), spec)
 		}
+	}
+	if err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.MigrateLiveCommitRecoveryTimeout)
+		defer cancel()
+		_, found, lookupErr := s.functionSource(cleanupCtx, m.instanceID, m.leaseToken)
+		if functionSource || found || lookupErr != nil {
+			// Capture may have changed the function source. Preserve its exact
+			// token for fenced recovery or confirmed physical retirement.
+			_ = s.migrations.complete(m.leaseToken, memKey, vmstateKey)
+			if s.migrationLeases != nil {
+				_ = s.migrationLeases.CompleteMigrationLease(cleanupCtx, m.leaseToken, memKey, vmstateKey)
+			}
+		} else if s.durableMigrationSource() && !qualifiedSource {
+			// Generic native sources retain main's generation-bound journal.
+			s.releaseUnboundMigrationPrepare(cleanupCtx, m.leaseToken)
+		} else {
+			s.migrations.deleteByLeaseToken(m.leaseToken)
+			if s.migrationLeases != nil {
+				_ = s.migrationLeases.DeleteMigrationLease(cleanupCtx, m.leaseToken)
+			}
+		}
+		err = errors.Join(err, lookupErr)
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+
 	if err := s.migrations.complete(m.leaseToken, memKey, vmstateKey); err != nil {
+		if functionSource {
+			return nil, grpcerr.ToStatus(toProblem(err))
+		}
 		// A tracker race here means the snapshot succeeded but its lease
 		// cannot be returned. Resume the source so it is never left paused.
-		if resumer, ok := s.vmm.(migrationResumer); ok {
+		if s.durableMigrationSource() {
+			_, resumeErr := s.resumeMigrationVM(ctx, req.GetInstanceId(), m.leaseToken)
+			err = errors.Join(err, resumeErr)
+		} else if resumer, ok := s.vmm.(migrationResumer); ok {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			resumeErr := resumer.ResumeVM(cleanupCtx, req.GetInstanceId())
+			err = errors.Join(err, resumer.ResumeVM(cleanupCtx, req.GetInstanceId()))
 			cancel()
-			if resumeErr != nil {
-				err = errors.Join(err, fmt.Errorf("resume after tracker failure: %w", resumeErr))
-			}
 		}
 		s.migrations.deleteByLeaseToken(m.leaseToken)
 		if s.migrationLeases != nil {
@@ -414,13 +481,15 @@ func (s *Server) validateMigrationLease(ctx context.Context, instanceID, leaseTo
 	return err
 }
 
-// migrationLeaseForPhase loads the paused-VM metadata from the in-memory
-// cache first and falls back to the durable lease table after a vmmd restart.
-// The fallback is deliberately scoped to Ack/Cancel/expiry; Adopt validates
+// migrationLeaseForPhase loads persisted capture metadata for registered sources.
+// Legacy fixtures read the cache first and fall back to the durable lease table.
+// This lookup is deliberately scoped to Ack/Cancel/expiry; Adopt validates
 // ownership against the durable instance row because the destination has no
 // source-side tracker.
 func (s *Server) migrationLeaseForPhase(ctx context.Context, instanceID, leaseToken string) (*activeMigration, error) {
-	if s.migrations != nil {
+	// Registered sources read persisted capture keys even while Prepare is
+	// filling the hot cache. Cleanup must not observe an incomplete cache entry.
+	if !s.durableMigrationSource() && s.migrations != nil {
 		if m, err := s.migrations.get(instanceID, leaseToken); err == nil {
 			return m, nil
 		}
@@ -450,9 +519,25 @@ func (s *Server) deleteDurableMigrationLease(ctx context.Context, leaseToken str
 	if s.migrationLeases == nil {
 		return nil
 	}
-	err := s.migrationLeases.DeleteMigrationLease(ctx, leaseToken)
-	if errors.Is(err, state.ErrNotFound) {
+	lease, lookupErr := s.migrationLeases.GetMigrationLeaseByToken(ctx, leaseToken)
+	if errors.Is(lookupErr, state.ErrNotFound) {
 		return nil
+	}
+	if lookupErr != nil {
+		return lookupErr
+	}
+	source, qualified, err := s.functionSource(ctx, lease.InstanceID, leaseToken)
+	if err != nil {
+		return err
+	}
+	err = s.migrationLeases.DeleteMigrationLease(ctx, leaseToken)
+	if errors.Is(err, state.ErrNotFound) {
+		err = nil
+	}
+	if err == nil && qualified {
+		if vmm, ok := s.vmm.(functionMigrationVMM); ok {
+			vmm.ForgetFunctionMigrationSource(functionSourceBinding(source))
+		}
 	}
 	return err
 }
@@ -480,9 +565,21 @@ func (s *Server) destroyMigrationVM(ctx context.Context, instanceID string) erro
 	return s.vmm.Destroy(cleanupCtx, instanceID)
 }
 
-func (s *Server) resumeMigrationVM(ctx context.Context, instanceID string) (bool, error) {
+func (s *Server) resumeMigrationVM(ctx context.Context, instanceID, leaseToken string) (bool, error) {
 	if s == nil || s.vmm == nil {
 		return false, nil
+	}
+	if s.durableMigrationSource() {
+		return true, s.finishMigrationSource(ctx, instanceID, leaseToken, false)
+	}
+	if s.migrationAdmissions != nil {
+		safe, err := s.migrationAdmissions.FenceMigrationSourceResume(ctx, instanceID, leaseToken)
+		if err != nil {
+			return false, err
+		}
+		if !safe {
+			return false, state.ErrMigrationAdoptionUnresolved
+		}
 	}
 	resumer, ok := s.vmm.(migrationResumer)
 	if !ok {
@@ -507,6 +604,12 @@ func (s *Server) resumeMigrationVM(ctx context.Context, instanceID string) (bool
 //	                        lease expired)
 //	codes.PermissionDenied  lease token mismatch
 func (s *Server) AdoptMigratedInstance(ctx context.Context, req *vmmdpb.AdoptMigratedInstanceRequest) (*vmmdpb.AdoptMigratedInstanceResponse, error) {
+	if req.GetAdmissionId() != "" || s.migrationAdmissions != nil && s.nodeID != "" {
+		start := time.Now()
+		out, err := s.adoptMigrationAdmission(ctx, req)
+		s.ops.Observe("AdoptMigratedInstance", time.Since(start), err)
+		return out, err
+	}
 	const op = "AdoptMigratedInstance"
 	start := time.Now()
 	if req.GetWakeId() != "" {
@@ -525,6 +628,18 @@ func (s *Server) AdoptMigratedInstance(ctx context.Context, req *vmmdpb.AdoptMig
 			WithDocs(wire.DocsBaseURL + "/vmmd#adopt")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
+	}
+	if _, qualified, err := s.functionSource(ctx, req.GetInstanceId(), req.GetLeaseToken()); err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	} else if qualified || strings.HasPrefix(req.GetLeaseToken(), state.FunctionMigrationTokenPrefix) {
+		response, err := s.adoptFunctionDestination(ctx, req)
+		if err != nil {
+			return nil, admissionStatus(err)
+		}
+		return response, nil
+	}
+	if functionlifetime.NativeNode(req.GetAppSpec().GetRuntime()) {
+		return nil, grpcerr.ToStatus(toProblem(runtimeadmission.ErrUnavailable))
 	}
 	if err := s.validateMigrationLease(ctx, req.GetInstanceId(), req.GetLeaseToken()); err != nil {
 		err2 := migrationLeaseProblem(err, "adopt")
@@ -601,8 +716,24 @@ func (s *Server) AcknowledgeMigration(ctx context.Context, req *vmmdpb.Acknowled
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
+	finishPhase, phaseErr := s.migrations.beginPhase(ctx, req.GetInstanceId())
+	if phaseErr != nil {
+		return nil, grpcerr.ToStatus(toProblem(phaseErr))
+	}
+	defer finishPhase()
 	m, getErr := s.migrationLeaseForPhase(ctx, req.GetInstanceId(), req.GetLeaseToken())
 	if getErr != nil {
+		if !staleMigrationLease(getErr) {
+			return nil, grpcerr.ToStatus(toProblem(getErr))
+		}
+
+		if s.durableMigrationSource() && !strings.HasPrefix(req.GetLeaseToken(), state.FunctionMigrationTokenPrefix) {
+			err := s.finishMigrationSource(ctx, req.GetInstanceId(), req.GetLeaseToken(), true)
+			if err != nil {
+				return nil, grpcerr.ToStatus(toProblem(err))
+			}
+			return &vmmdpb.AcknowledgeMigrationResponse{}, nil
+		}
 		// Stale ack — lease already cleared. Idempotent
 		// success. The error is intentionally swallowed so
 		// a peer that re-sends the ack on a stale lease
@@ -610,8 +741,26 @@ func (s *Server) AcknowledgeMigration(ctx context.Context, req *vmmdpb.Acknowled
 		s.ops.Observe(op, time.Since(start), nil)
 		return &vmmdpb.AcknowledgeMigrationResponse{}, nil //nolint:nilerr
 	}
-	if err := s.destroyMigrationVM(ctx, req.GetInstanceId()); err != nil {
-		// Retain the lease so the expiry loop can retry source cleanup.
+	if m.pending && !s.durableMigrationSource() {
+		return nil, grpcerr.ToStatus(toProblem(runtimeadmission.ErrUnavailable))
+	}
+
+	source, qualified, err := s.functionSource(ctx, m.instanceID, m.leaseToken)
+	if err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	if qualified {
+		err = s.retireFunctionSource(ctx, m, source)
+	} else if strings.HasPrefix(m.leaseToken, state.FunctionMigrationTokenPrefix) {
+		err = runtimeadmission.ErrUnavailable
+	} else if vmm, ok := s.vmm.(functionMigrationVMM); ok && vmm.FunctionMigrationSourceRequired(m.instanceID) {
+		err = runtimeadmission.ErrUnavailable
+	} else if s.durableMigrationSource() {
+		err = s.finishMigrationSource(ctx, m.instanceID, m.leaseToken, true)
+	} else {
+		err = s.destroyMigrationVM(ctx, req.GetInstanceId())
+	}
+	if err != nil {
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
@@ -658,15 +807,61 @@ func (s *Server) CancelLiveMigration(ctx context.Context, req *vmmdpb.CancelLive
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
+	// Destination retirement shares the phase with ack, cancel and expiry for
+	// the same instance.
+	finishPhase, phaseErr := s.migrations.beginPhase(ctx, req.GetInstanceId())
+	if phaseErr != nil {
+		return nil, grpcerr.ToStatus(toProblem(phaseErr))
+	}
+	defer finishPhase()
+	if handled, err := s.cancelFunctionDestination(ctx, req); handled {
+		if err != nil {
+			return nil, admissionStatus(err)
+		}
+		return &vmmdpb.CancelLiveMigrationResponse{}, nil
+	}
 	m, getErr := s.migrationLeaseForPhase(ctx, req.GetInstanceId(), req.GetLeaseToken())
 	if getErr != nil {
+		if !staleMigrationLease(getErr) {
+			return nil, grpcerr.ToStatus(toProblem(getErr))
+		}
+
+		if s.durableMigrationSource() && !strings.HasPrefix(req.GetLeaseToken(), state.FunctionMigrationTokenPrefix) {
+			err := s.finishMigrationSource(ctx, req.GetInstanceId(), req.GetLeaseToken(), false)
+			if err != nil {
+				return nil, grpcerr.ToStatus(toProblem(err))
+			}
+			return &vmmdpb.CancelLiveMigrationResponse{}, nil
+		}
 		// Stale cancel — idempotent success. The error is
 		// intentionally swallowed: a re-sent cancel on a
 		// stale lease is a no-op (the lease is gone).
 		s.ops.Observe(op, time.Since(start), nil)
 		return &vmmdpb.CancelLiveMigrationResponse{}, nil //nolint:nilerr
 	}
-	attempted, err := s.resumeMigrationVM(ctx, req.GetInstanceId())
+
+	source, qualified, err := s.functionSource(ctx, m.instanceID, m.leaseToken)
+	if err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	if qualified {
+		response, err := s.cancelFunctionSource(ctx, m, source)
+		s.ops.Observe(op, time.Since(start), err)
+		if err != nil {
+			return nil, grpcerr.ToStatus(toProblem(err))
+		}
+		return response, nil
+	}
+	if strings.HasPrefix(m.leaseToken, state.FunctionMigrationTokenPrefix) {
+		return nil, grpcerr.ToStatus(toProblem(runtimeadmission.ErrUnavailable))
+	}
+	if vmm, ok := s.vmm.(functionMigrationVMM); ok && vmm.FunctionMigrationSourceRequired(m.instanceID) {
+		return nil, grpcerr.ToStatus(toProblem(runtimeadmission.ErrUnavailable))
+	}
+	if m.pending && !s.durableMigrationSource() {
+		return nil, grpcerr.ToStatus(toProblem(runtimeadmission.ErrUnavailable))
+	}
+	attempted, err := s.resumeMigrationVM(ctx, req.GetInstanceId(), req.GetLeaseToken())
 	if err != nil {
 		// Retain the lease so expiry can retry the resume rather than
 		// dropping the only reference to a paused source VM.
@@ -721,6 +916,44 @@ func (s *Server) deleteMigrationSnapshot(ctx context.Context, m *activeMigration
 // source-side action. A committed row means the paused source must be
 // destroyed; a still-migrating/rolled-back row means it must be resumed.
 func (s *Server) cleanupExpiredMigration(ctx context.Context, m *activeMigration) error {
+	finishPhase, err := s.migrations.beginPhase(ctx, m.instanceID)
+	if err != nil {
+		return err
+	}
+	defer finishPhase()
+	source, qualified, err := s.functionSource(ctx, m.instanceID, m.leaseToken)
+	if err != nil {
+		return err
+	}
+	if qualified {
+		return s.cleanupExpiredFunctionSource(ctx, m, source)
+	}
+	if strings.HasPrefix(m.leaseToken, state.FunctionMigrationTokenPrefix) {
+		return runtimeadmission.ErrUnavailable
+	}
+	if vmm, ok := s.vmm.(functionMigrationVMM); ok && vmm.FunctionMigrationSourceRequired(m.instanceID) {
+		return runtimeadmission.ErrUnavailable
+	}
+	if s.durableMigrationSource() {
+		if s.migrationSources == nil {
+			return fmt.Errorf("vmmd: durable migration source store unavailable")
+		}
+		r, err := s.recoverMigrationSourceBinding(ctx, m)
+		if err != nil {
+			return err
+		}
+		if r.InstanceID != m.instanceID || r.SourceNodeID != s.nodeID {
+			return state.ErrConflict
+		}
+		if r.Phase == state.MigrationSourceRetiring || r.Phase == state.MigrationSourceRetired {
+			return s.finishMigrationSource(ctx, m.instanceID, m.leaseToken, true)
+		}
+		if r.Phase == state.MigrationSourceResumed {
+			return nil
+		}
+		return s.finishMigrationSource(ctx, m.instanceID, m.leaseToken, false)
+	}
+
 	if s.migrationStore != nil {
 		reader, ok := s.migrationStore.(migrationInstanceReader)
 		if !ok {
@@ -729,7 +962,7 @@ func (s *Server) cleanupExpiredMigration(ctx context.Context, m *activeMigration
 		ins, err := reader.MigrationInstanceByID(ctx, m.instanceID)
 		if err != nil {
 			if errors.Is(err, state.ErrNotFound) {
-				return s.destroyMigrationVM(ctx, m.instanceID)
+				return s.retireExpiredMigrationSource(ctx, m)
 			}
 			return fmt.Errorf("vmmd: expired migration row lookup: %w", err)
 		}
@@ -740,13 +973,13 @@ func (s *Server) cleanupExpiredMigration(ctx context.Context, m *activeMigration
 		// later migration has started. Destroy is safe and idempotent;
 		// resuming would create a second serving VM.
 		if s.nodeID != "" && ins.NodeID != "" && ins.NodeID != s.nodeID {
-			return s.destroyMigrationVM(ctx, m.instanceID)
+			return s.retireExpiredMigrationSource(ctx, m)
 		}
 		if stateName == string(state.StateRunning) && ins.LeaseToken == m.leaseToken {
-			return s.destroyMigrationVM(ctx, m.instanceID)
+			return s.retireExpiredMigrationSource(ctx, m)
 		}
 		if stateName == string(state.StateMigrating) && ins.LeaseToken == m.leaseToken {
-			attempted, err := s.resumeMigrationVM(ctx, m.instanceID)
+			attempted, err := s.resumeMigrationVM(ctx, m.instanceID, m.leaseToken)
 			if !attempted && err == nil && s.vmm != nil {
 				return fmt.Errorf("vmmd: expired migration cannot resume source VM")
 			}
@@ -758,7 +991,7 @@ func (s *Server) cleanupExpiredMigration(ctx context.Context, m *activeMigration
 		// the row is still ours, resume the paused VM instead of
 		// dropping the in-memory lease and stranding it.
 		if stateName == string(state.StateRunning) && s.nodeID != "" && ins.NodeID == s.nodeID && ins.LeaseToken != m.leaseToken {
-			attempted, err := s.resumeMigrationVM(ctx, m.instanceID)
+			attempted, err := s.resumeMigrationVM(ctx, m.instanceID, m.leaseToken)
 			if !attempted && err == nil && s.vmm != nil {
 				return fmt.Errorf("vmmd: expired pre-Phase-2 migration cannot resume source VM")
 			}
@@ -769,7 +1002,7 @@ func (s *Server) cleanupExpiredMigration(ctx context.Context, m *activeMigration
 		// needs the source VM resumed. Other token/state combinations are
 		// stale ownership and must not cause us to destroy a peer's VM.
 		if strings.EqualFold(ins.State, string(state.StateParked)) && ins.LeaseToken == "" {
-			attempted, err := s.resumeMigrationVM(ctx, m.instanceID)
+			attempted, err := s.resumeMigrationVM(ctx, m.instanceID, m.leaseToken)
 			if !attempted && err == nil && s.vmm != nil {
 				return fmt.Errorf("vmmd: expired rolled-back migration cannot resume source VM")
 			}
@@ -780,12 +1013,12 @@ func (s *Server) cleanupExpiredMigration(ctx context.Context, m *activeMigration
 		// remove the paused source VM as part of expiry cleanup.
 		if stateName == string(state.StateStopped) || stateName == string(state.StateFailed) ||
 			stateName == string(state.StateEvictingAccountDeleting) {
-			return s.destroyMigrationVM(ctx, m.instanceID)
+			return s.retireExpiredMigrationSource(ctx, m)
 		}
 		return nil
 	}
 
-	_, err := s.resumeMigrationVM(ctx, m.instanceID)
+	_, err = s.resumeMigrationVM(ctx, m.instanceID, m.leaseToken)
 	return err
 }
 
@@ -800,6 +1033,8 @@ func (s *Server) LeaseExpiryLoop(ctx context.Context) {
 	if s == nil || (s.migrations == nil && s.migrationLeases == nil) {
 		return
 	}
+	s.reconcileMigrationAdmissions(ctx, time.Now())
+	s.reconcileMigrationSources(ctx, time.Now())
 	tick := time.NewTicker(5 * time.Second)
 	defer tick.Stop()
 	for {
@@ -807,6 +1042,11 @@ func (s *Server) LeaseExpiryLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-tick.C:
+			s.reconcileMigrationAdmissions(ctx, now)
+			s.reconcileMigrationSources(ctx, now)
+			if s.durableMigrationSource() {
+				continue // All production source leases use the bounded, fair page above.
+			}
 			var entries []*activeMigration
 			seen := make(map[string]struct{})
 			if s.migrations != nil {
@@ -823,6 +1063,9 @@ func (s *Server) LeaseExpiryLoop(ctx context.Context) {
 					}
 				} else {
 					for _, lease := range leases {
+						if s.nodeID != "" && lease.SourceNodeID != s.nodeID {
+							continue
+						}
 						if _, ok := seen[lease.LeaseToken]; ok {
 							continue
 						}

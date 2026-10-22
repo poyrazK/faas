@@ -20,17 +20,17 @@ func (s *Service) Export(w http.ResponseWriter, r *http.Request, acct state.Acco
 		return
 	}
 	if s.Engine == nil || !s.Apps[app.ID] {
-		writeDurableEntityProblem(w, durableentity.ErrUnsupported)
+		WriteProblem(w, durableentity.ErrUnsupported)
 		return
 	}
-	request, err := durableEntityInspectionQuery(r.URL.RawQuery)
+	request, err := InspectionQuery(r.URL.RawQuery)
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation("export requires namespace and key with unique supported selectors"))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.DurableEntityInvokeTimeout)
 	defer cancel()
-	id, _, problem := s.resolveDurableEntityIdentity(r.WithContext(ctx), acct, app, api.DurableEntityInvokeRequest{Namespace: request.Namespace, Key: request.Key, Environment: request.Environment, PlatformTenantID: request.PlatformTenantID}, true)
+	id, _, problem := s.ResolveIdentity(r.WithContext(ctx), acct, app, api.DurableEntityInvokeRequest{Namespace: request.Namespace, Key: request.Key, Environment: request.Environment, PlatformTenantID: request.PlatformTenantID}, true)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -49,7 +49,7 @@ func (s *Service) Export(w http.ResponseWriter, r *http.Request, acct state.Acco
 func (s *Service) Restore(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
-	if !ok || !s.durableEntityRetryAvailable(w, acct, app) {
+	if !ok || !s.RetryAvailable(w, acct, app) {
 		return
 	}
 	var request api.DurableEntityRestoreRequest
@@ -65,7 +65,7 @@ func (s *Service) Restore(w http.ResponseWriter, r *http.Request, acct state.Acc
 	}
 	e := request.Export
 	started := time.Now()
-	result, err := s.performDurableEntityRestore(ctx, acct, app, scope, id, request)
+	result, err := s.PerformRestore(ctx, acct, app, scope, id, request)
 	s.Metrics.observeDuration("restore", started)
 	s.Metrics.observeResult("restore", result, err)
 	if err != nil {
@@ -89,5 +89,5 @@ func writeDurableEntityRestoreProblem(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Entity not found", "no committed entity exists in this scope"))
 		return
 	}
-	writeDurableEntityProblem(w, err)
+	WriteProblem(w, err)
 }

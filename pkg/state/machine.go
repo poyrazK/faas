@@ -52,6 +52,13 @@ const (
 	// It continues consuming app concurrency and node capacity until its
 	// in-flight requests drain and schedd destroys it.
 	StateDraining State = "draining"
+	// StateFrozen (ADR-1151) is an idle VM schedd keeps paused in memory
+	// after the idle timeout instead of parking it, when the deployment
+	// already has a usable snapshot. The next request thaws it in place.
+	// It holds RAM (its measured memory) but no concurrency, vCPU or
+	// CPU, and it is not billed. It parks after FrozenTTL, under memory
+	// pressure, or when a thaw fails.
+	StateFrozen State = "frozen"
 )
 
 // States lists every state (deterministic order for tests + CHECK generation).
@@ -59,6 +66,7 @@ var States = []State{
 	StateParked, StateWaking, StateColdBooting, StateRunning,
 	StateSnapshotting, StateStopped, StateFailed,
 	StateEvictingAccountDeleting, StateMigrating, StateWarm, StateDraining,
+	StateFrozen,
 }
 
 // validateInstanceState mirrors the instances.state CHECK constraint. The
@@ -81,7 +89,7 @@ func validateMemStoreCreateInstanceState(raw string) error {
 		return nil
 	} else {
 		switch raw {
-		case "PARKED", "WAKING", "COLD_BOOTING", "RUNNING", "SNAPSHOTTING", "STOPPED", "FAILED", "EVICTING_ACCOUNT_DELETING", "MIGRATING", "WARM", "DRAINING", "snapshotted":
+		case "PARKED", "WAKING", "COLD_BOOTING", "RUNNING", "SNAPSHOTTING", "STOPPED", "FAILED", "EVICTING_ACCOUNT_DELETING", "MIGRATING", "WARM", "DRAINING", "FROZEN", "snapshotted":
 			return nil
 		}
 		return err
@@ -108,7 +116,7 @@ var transitions = map[State][]State{
 	StateParked:       {StateWaking, StateColdBooting},
 	StateWaking:       {StateRunning, StateWarm, StateColdBooting, StateFailed, StateStopped, StateEvictingAccountDeleting, StateParked},
 	StateColdBooting:  {StateRunning, StateWarm, StateFailed, StateStopped, StateEvictingAccountDeleting, StateParked},
-	StateRunning:      {StateSnapshotting, StateStopped, StateFailed, StateEvictingAccountDeleting, StateMigrating, StateParked, StateDraining},
+	StateRunning:      {StateSnapshotting, StateStopped, StateFailed, StateEvictingAccountDeleting, StateMigrating, StateParked, StateDraining, StateFrozen},
 	StateSnapshotting: {StateParked, StateStopped, StateEvictingAccountDeleting},
 	StateStopped:      {StateColdBooting},
 	StateFailed:       {StateParked, StateColdBooting, StateStopped}, // manual recovery / lazy cold-boot
@@ -130,6 +138,11 @@ var transitions = map[State][]State{
 	// Draining instances retain their serving/concurrency and RAM reservation
 	// until schedd has confirmed route convergence and request quiescence.
 	StateDraining: {StateStopped, StateFailed, StateEvictingAccountDeleting},
+	// A frozen VM thaws back to RUNNING for a request. It parks (the VM is
+	// destroyed; the deployment's snapshot stays) after FrozenTTL, under
+	// memory pressure, when its deployment is superseded or its config
+	// changed, when a thaw fails, or when its node or vmmd restarted.
+	StateFrozen: {StateRunning, StateParked, StateStopped, StateFailed, StateEvictingAccountDeleting},
 }
 
 // Valid reports whether s is a known state.
@@ -163,7 +176,9 @@ func (s State) CountsForConcurrency() bool {
 
 // CountsForRAM reports whether s holds resident RAM and so counts against the
 // admission ceiling (invariant §6.2-2: Σ(ram+8) over {WAKING, COLD_BOOTING,
-// RUNNING, DRAINING, SNAPSHOTTING, MIGRATING, WARM} ≤ 47,600 MB).
+// RUNNING, DRAINING, SNAPSHOTTING, MIGRATING, WARM} ≤ 47,600 MB). A FROZEN
+// instance also holds RAM, but admission books its measured memory, not
+// ram+8 (ADR-1151).
 //
 // StateMigrating holds the paused-VM snapshot resident on the dying
 // node during the four-phase handoff (ADR-066). It counts as live
@@ -173,7 +188,15 @@ func (s State) CountsForConcurrency() bool {
 // holds a paused resident warm-pool VM until it is resumed or
 // reclaimed.
 func (s State) CountsForRAM() bool {
-	return s.CountsForConcurrency() || s == StateSnapshotting || s == StateMigrating || s == StateWarm
+	return s.CountsForConcurrency() || s == StateSnapshotting || s == StateMigrating || s == StateWarm || s == StateFrozen
+}
+
+// Billable reports whether a resident instance in s is billed plan RAM + 8 MB
+// per second (§4.7). It is CountsForRAM less FROZEN: a frozen instance is
+// resident but unbilled, like a parked one (ADR-1151, ADR-906 decision 4).
+// The instance_billing_intervals trigger encodes the same set.
+func (s State) Billable() bool {
+	return s.CountsForRAM() && s != StateFrozen
 }
 
 // IsLive reports whether the named state is a live row that the
@@ -186,6 +209,17 @@ func (s State) CountsForRAM() bool {
 // MemStore-backed test helpers all read through this predicate so
 // that adding a future state to the live set is a one-line change.
 func IsLive(s string) bool { return State(s).CountsForRAM() }
+
+// liveStates lists every state IsLive accepts, for queries that filter live
+// rows at the database boundary. TestLiveStatesMatchIsLive keeps the two in
+// step.
+var liveStates = []string{
+	string(StateWaking), string(StateColdBooting), string(StateRunning), string(StateDraining),
+	string(StateSnapshotting), string(StateMigrating), string(StateWarm), string(StateFrozen),
+}
+
+// LiveStates returns the states IsLive accepts.
+func LiveStates() []string { return append([]string(nil), liveStates...) }
 
 // IsMeteredSkippableMode reports whether an instance in `mode` should
 // be skipped by the meter sampler (issue #72 / ADR-125 + ADR-137).

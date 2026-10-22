@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -57,7 +58,7 @@ func TestCmdBindingsVerifyAllUsesInventoryLiveScope(t *testing.T) {
 							DNS: api.ServiceBindingProbeCheck{Status: "passed"}, TLS: api.ServiceBindingProbeCheck{Status: "passed"},
 							Authorization: api.ServiceBindingProbeCheck{Status: "passed"}, Routing: api.ServiceBindingProbeCheck{Status: "passed"}}
 					} else if request.Command[0] == api.AppTaskObjectStorageBindingProbeCommand {
-						report = passedObjectStorageCLIReport(request.Command[1])
+						report = main.PassedObjectStorageCLIReport(request.Command[1])
 					} else if request.Command[0] == api.AppTaskOutboundBindingProbeCommand {
 						check := api.OutboundBindingProbeCheck{Status: "passed"}
 						report = api.OutboundBindingProbeReport{IntegrationID: outboundID, Configuration: check, Identity: check, Gateway: check, Response: check}
@@ -75,20 +76,22 @@ func TestCmdBindingsVerifyAllUsesInventoryLiveScope(t *testing.T) {
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_test")
 			var stdout, stderr bytes.Buffer
-			previousOut, previousErr, previousJSON := osStdout, osStderr, jsonOutput
-			osStdout, osStderr, jsonOutput = &stdout, &stderr, true
-			t.Cleanup(func() { osStdout, osStderr, jsonOutput = previousOut, previousErr, previousJSON })
+			previousOut, previousErr, previousJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+			(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &stdout, &stderr, true
+			t.Cleanup(func() {
+				(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = previousOut, previousErr, previousJSON
+			})
 			wantExit := 0
 			if severity == "error" {
 				wantExit = 1
 			}
-			if code := run([]string{"bindings", "verify", "api", "--all"}); code != wantExit {
+			if code := main.Run([]string{"bindings", "verify", "api", "--all"}); code != wantExit {
 				t.Fatalf("exit=%d, output=%s %s", code, stdout.String(), stderr.String())
 			}
 			if inventoryCalls != 1 || !reflect.DeepEqual(created, []string{"ASSETS", outboundID, "DATABASE_URL", "billing"}) {
 				t.Fatalf("inventory calls=%d probes=%v", inventoryCalls, created)
 			}
-			var report serviceBindingProbeBatchReport
+			var report main.ServiceBindingProbeBatchReport
 			if err := json.Unmarshal(stdout.Bytes(), &report); err != nil || report.Scope != "production" || report.Passed != 4 || report.Checked != 4 || report.Total != 7 || report.Unsupported != 1 || report.Skipped != 2 || report.Coverage != "partial" {
 				t.Fatalf("batch=%+v err=%v", report, err)
 			}
@@ -146,7 +149,7 @@ func TestCmdBindingsVerifyRejectsUnsafeSuccessfulReports(t *testing.T) {
 				if kind == api.BindingTypePostgres {
 					args = []string{"bindings", "verify", "api", "--postgres", "DATABASE_URL"}
 				}
-				if code := run(args); code != 1 {
+				if code := main.Run(args); code != 1 {
 					t.Fatalf("unsafe report accepted: exit=%d", code)
 				}
 			})
@@ -169,13 +172,15 @@ func TestCmdBindingsVerifyAllReportsUnreadableEmptySelection(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var stdout, stderr bytes.Buffer
-	previousOut, previousErr, previousJSON := osStdout, osStderr, jsonOutput
-	osStdout, osStderr, jsonOutput = &stdout, &stderr, true
-	t.Cleanup(func() { osStdout, osStderr, jsonOutput = previousOut, previousErr, previousJSON })
-	if code := run([]string{"bindings", "verify", "api", "--all"}); code != 1 {
+	previousOut, previousErr, previousJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &stdout, &stderr, true
+	t.Cleanup(func() {
+		(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = previousOut, previousErr, previousJSON
+	})
+	if code := main.Run([]string{"bindings", "verify", "api", "--all"}); code != 1 {
 		t.Fatalf("exit=%d", code)
 	}
-	var report serviceBindingProbeBatchReport
+	var report main.ServiceBindingProbeBatchReport
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil || report.Total != 0 || len(report.Issues) != 1 || report.Issues[0].Code != "forbidden" || calls != 1 {
 		t.Fatalf("missing partial result: %+v err=%v output=%s", report, err, stdout.String())
 	}
@@ -222,18 +227,20 @@ func TestCmdBindingsVerifyRejectsDeploymentSelectionChanges(t *testing.T) {
 				t.Setenv("FAAS_API", srv.URL)
 				t.Setenv("FAAS_TOKEN", "fp_live_test")
 				var stdout, stderr bytes.Buffer
-				previousOut, previousErr, previousJSON := osStdout, osStderr, jsonOutput
-				osStdout, osStderr, jsonOutput = &stdout, &stderr, true
-				t.Cleanup(func() { osStdout, osStderr, jsonOutput = previousOut, previousErr, previousJSON })
+				previousOut, previousErr, previousJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+				(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &stdout, &stderr, true
+				t.Cleanup(func() {
+					(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = previousOut, previousErr, previousJSON
+				})
 				args := []string{"bindings", "verify", "api", "--postgres", "DATABASE_URL"}
 				if all {
 					args = []string{"bindings", "verify", "api", "--all"}
 				}
-				if code := run(args); code != 1 || !strings.Contains(stdout.String(), "deployment changed") {
+				if code := main.Run(args); code != 1 || !strings.Contains(stdout.String(), "deployment changed") {
 					t.Fatalf("changed deployment accepted: exit=%d output=%s %s", code, stdout.String(), stderr.String())
 				}
 				if all {
-					var report serviceBindingProbeBatchReport
+					var report main.ServiceBindingProbeBatchReport
 					if err := json.Unmarshal(stdout.Bytes(), &report); err != nil || report.Failed != 2 || report.Passed != 0 {
 						t.Fatalf("batch=%+v err=%v", report, err)
 					}
@@ -269,18 +276,18 @@ func TestCmdBindingsVerifyAllReportsEveryOmission(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_test")
-			oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
+			oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
 			var out, errs bytes.Buffer
-			osStdout, osStderr, jsonOutput = &out, &errs, asJSON
-			defer func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON }()
-			if code := cmdBindingsVerify([]string{"api", "--all"}); code != 1 {
+			(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &out, &errs, asJSON
+			defer func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON }()
+			if code := main.CmdBindingsVerify([]string{"api", "--all"}); code != 1 {
 				t.Fatalf("exit=%d output=%s", code, out.String())
 			}
 			if calls != 1 {
 				t.Fatalf("requests=%d", calls)
 			}
 			if asJSON {
-				var report serviceBindingProbeBatchReport
+				var report main.ServiceBindingProbeBatchReport
 				if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 					t.Fatal(err)
 				}
@@ -293,7 +300,7 @@ func TestCmdBindingsVerifyAllReportsEveryOmission(t *testing.T) {
 					}
 				}
 			} else {
-				for _, reason := range []string{"queue_probe_unsupported", "outbound_probe_unconfigured", "binding_disabled", "outside_deployment_scope", "unknown_binding_type"} {
+				for _, reason := range []string{"queue_delivery_unsupported", "outbound_probe_unconfigured", "binding_disabled", "outside_deployment_scope", "unknown_binding_type"} {
 					if !strings.Contains(out.String(), reason) {
 						t.Fatalf("missing %s: %s", reason, out.String())
 					}
@@ -331,14 +338,14 @@ func TestCmdBindingsVerifyAllPreservesResultsWhenOutboundLookupFails(t *testing.
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
 	var out, errs bytes.Buffer
-	osStdout, osStderr, jsonOutput = &out, &errs, true
-	defer func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON }()
-	if code := cmdBindingsVerify([]string{"api", "--all"}); code != 1 {
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &out, &errs, true
+	defer func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON }()
+	if code := main.CmdBindingsVerify([]string{"api", "--all"}); code != 1 {
 		t.Fatalf("exit=%d", code)
 	}
-	var report serviceBindingProbeBatchReport
+	var report main.ServiceBindingProbeBatchReport
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}

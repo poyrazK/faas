@@ -96,10 +96,11 @@ func (b *Builder) PatchBaseGuestInit(ctx context.Context, in BasePatchInput) (Ba
 	if err != nil {
 		return BaseBuildResult{}, fmt.Errorf("rootfs: stat patched base: %w", err)
 	}
-	if err := b.publishBaseFile(ctx, in.Storage, in.StorageKey, tmpPath); err != nil {
+	identity, err := b.publishBaseFile(ctx, in.Storage, in.StorageKey, tmpPath)
+	if err != nil {
 		return BaseBuildResult{}, err
 	}
-	return BaseBuildResult{ImageKey: in.StorageKey, SizeBytes: info.Size()}, nil
+	return BaseBuildResult{ImageKey: in.StorageKey, SizeBytes: info.Size(), ArtifactDigest: identity.Digest, ArtifactBytes: identity.Bytes, GuestInitDigest: "sha256:" + in.GuestInitSHA256}, nil
 }
 
 // debugfsPathRE bounds every path interpolated into a debugfs request or

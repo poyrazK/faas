@@ -1109,6 +1109,15 @@ func resolveDeployShape(srcDir string, explicitFunction, explicitApp, jsonOutput
 				"OR a single handler.{js,ts,py,go} for a *function* — "+
 				"or pass --image, --tarball, --template, --repo, --function, or --app",
 			filepath.Base(srcDir))
+		// A Compose file at the root is a project, which deploys with
+		// --project; the bare error never said so (H10-55).
+		if compose := composeFileIn(srcDir); compose != "" {
+			return shapeUnknown, "", "", &NestedMarkerHintError{
+				Dir:  filepath.Base(srcDir),
+				Hint: fmt.Sprintf("Hint: %s is a Compose project. Deploy it with `gregale deploy --project`.", compose),
+				Err:  baseErr,
+			}
+		}
 		// Issue #744 / ADR-086: if the cwd has app markers at depth 1 (a
 		// common monorepo layout — apps/web/package.json, services/api/go.mod),
 		// surface a customer-visible hint pointing at `gregale scan --path .`.
@@ -1320,8 +1329,8 @@ func functionGoBuildOnlyFiles(detectDir, packDir string) (map[string][]byte, err
 //
 // 2 checks:
 //
-//  1. Loopback bind: app.listen("127.0.0.1"...) or bind("127.0.0.1")
-//     patterns in source — would trip app_loopback_bound post-deploy.
+//  1. Loopback bind: listeners bound to 127.0.0.1, localhost or ::1
+//     (loopbackBindRegex) in source — would trip app_loopback_bound post-deploy.
 //  2. Arch mismatch: tarball contains a Mach-O / ARM aarch64 binary
 //     — would trip app_arch_mismatch post-deploy (ENOEXEC in the
 //     build VM's linux/amd64 kernel).

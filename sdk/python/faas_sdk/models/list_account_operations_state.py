@@ -1,7 +1,7 @@
 from typing import Literal
 
 ListAccountOperationsState = Literal[
-    "accepted", "cancelled", "failed", "requires_reconciliation", "running", "succeeded"
+    "accepted", "cancelled", "failed", "requires_reconciliation", "running", "succeeded", "waiting"
 ]
 
 LIST_ACCOUNT_OPERATIONS_STATE_VALUES: set[ListAccountOperationsState] = {
@@ -11,6 +11,7 @@ LIST_ACCOUNT_OPERATIONS_STATE_VALUES: set[ListAccountOperationsState] = {
     "requires_reconciliation",
     "running",
     "succeeded",
+    "waiting",
 }
 
 

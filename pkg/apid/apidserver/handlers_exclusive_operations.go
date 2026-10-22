@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apptaskattach"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
 	"io"
@@ -368,6 +369,10 @@ func (s *server) createExclusiveAppTaskOperation(w http.ResponseWriter, r *http.
 	resolved, problem := req.Task.Resolve()
 	if problem != nil {
 		api.WriteProblem(w, problem)
+		return
+	}
+	if resolved.Interactive {
+		api.WriteProblem(w, apptaskattach.RejectExclusive())
 		return
 	}
 	deployment, err := s.store.LiveDeployment(r.Context(), app.ID)

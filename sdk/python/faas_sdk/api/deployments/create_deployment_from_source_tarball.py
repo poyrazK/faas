@@ -17,10 +17,14 @@ def _get_kwargs(
     *,
     body: CreateDeploymentFromSourceTarballBody,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
+
+    if not isinstance(deployment_attempt_id, Unset):
+        headers["Deployment-Attempt-ID"] = deployment_attempt_id
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -65,6 +69,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 413:
         response_413 = Problem.from_dict(response.json())
 
@@ -98,6 +107,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CreateDeploymentFromSourceTarballBody,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> Response[DeploymentResponse | Problem]:
     r"""Create a deployment from a CLI-uploaded local tarball (zero-config).
 
@@ -149,6 +159,7 @@ def sync_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        deployment_attempt_id (str | Unset):
         body (CreateDeploymentFromSourceTarballBody):
 
     Raises:
@@ -163,6 +174,7 @@ def sync_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        deployment_attempt_id=deployment_attempt_id,
     )
 
     response = client.get_httpx_client().request(
@@ -178,6 +190,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CreateDeploymentFromSourceTarballBody,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> DeploymentResponse | Problem | None:
     r"""Create a deployment from a CLI-uploaded local tarball (zero-config).
 
@@ -229,6 +242,7 @@ def sync(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        deployment_attempt_id (str | Unset):
         body (CreateDeploymentFromSourceTarballBody):
 
     Raises:
@@ -244,6 +258,7 @@ def sync(
         client=client,
         body=body,
         idempotency_key=idempotency_key,
+        deployment_attempt_id=deployment_attempt_id,
     ).parsed
 
 
@@ -253,6 +268,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CreateDeploymentFromSourceTarballBody,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> Response[DeploymentResponse | Problem]:
     r"""Create a deployment from a CLI-uploaded local tarball (zero-config).
 
@@ -304,6 +320,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        deployment_attempt_id (str | Unset):
         body (CreateDeploymentFromSourceTarballBody):
 
     Raises:
@@ -318,6 +335,7 @@ async def asyncio_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        deployment_attempt_id=deployment_attempt_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -331,6 +349,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CreateDeploymentFromSourceTarballBody,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> DeploymentResponse | Problem | None:
     r"""Create a deployment from a CLI-uploaded local tarball (zero-config).
 
@@ -382,6 +401,7 @@ async def asyncio(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        deployment_attempt_id (str | Unset):
         body (CreateDeploymentFromSourceTarballBody):
 
     Raises:
@@ -398,5 +418,6 @@ async def asyncio(
             client=client,
             body=body,
             idempotency_key=idempotency_key,
+            deployment_attempt_id=deployment_attempt_id,
         )
     ).parsed

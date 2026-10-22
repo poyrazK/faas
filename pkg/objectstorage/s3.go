@@ -26,15 +26,19 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
+	"github.com/onebox-faas/faas/pkg/objectchecksum"
 )
 
 type S3 struct {
-	encryption EncryptionConfig
-	kms        *kms.Client
-	client     *s3.Client
-	signer     *s3.PresignClient
-	region     string
-	origins    []string
+	ownedNodeReceipts      bool
+	ownedNodeSettlements   bool
+	ownedNodeUsageCounters bool
+	encryption             EncryptionConfig
+	kms                    *kms.Client
+	client                 *s3.Client
+	signer                 *s3.PresignClient
+	region                 string
+	origins                []string
 }
 
 func NewS3(c BackendConfig, getenv func(string) string) (Provider, error) {
@@ -59,7 +63,9 @@ func NewS3(c BackendConfig, getenv func(string) string) (Provider, error) {
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	})
-	p := &S3{client: client, signer: s3.NewPresignClient(client), region: c.S3Region, origins: append([]string(nil), c.AllowedOrigins...), encryption: cloneEncryptionConfig(c.Encryption)}
+	p := &S3{ownedNodeReceipts: c.OwnedNodeReceipts, client: client, signer: s3.NewPresignClient(client), region: c.S3Region, origins: append([]string(nil), c.AllowedOrigins...), encryption: cloneEncryptionConfig(c.Encryption)}
+	p.ownedNodeSettlements = c.OwnedNodeSettlements
+	p.ownedNodeUsageCounters = c.OwnedNodeUsageCounters
 	if len(c.Encryption.Keys) != 0 {
 		p.kms = kms.New(kms.Options{Region: c.S3Region, BaseEndpoint: stringPtrOrNil(c.Encryption.KMSEndpoint), Credentials: client.Options().Credentials, HTTPClient: encryptionKeyReadClient{base: httpClient}, RetryMaxAttempts: 1})
 	}
@@ -340,7 +346,7 @@ func (p *S3) writeObjectEncrypted(ctx context.Context, bucket, key string, body 
 		}
 	})
 	if err != nil {
-		if receipt != "" && definiteS3WriteRejection(err) {
+		if receipt != "" && definiteS3WriteRejection(err) && !p.ownedReceiptConflict(err) {
 			if encryption != nil {
 				return UploadResult{}, errors.Join(ErrWriteRejected, normalize(err))
 			}
@@ -603,6 +609,9 @@ func (p *S3) ensureMultipartEncrypted(ctx context.Context, bucket string, r Mult
 		return "", err
 	}
 	if found != "" {
+		if p.ownedNodeReceipts && found != ownedMultipartID(r.SessionID) {
+			return "", ErrConflict
+		}
 		return found, nil
 	}
 	return p.createMultipartEncrypted(ctx, bucket, r, encryption, nil)
@@ -635,6 +644,11 @@ func (p *S3) createMultipartEncrypted(ctx context.Context, bucket string, r Mult
 		ContentEncoding: stringPtrOrNil(r.Metadata.ContentEncoding), ContentLanguage: stringPtrOrNil(r.Metadata.ContentLanguage),
 		Metadata: metadata,
 	}
+	if !r.Checksum.Valid() {
+		return "", ErrInvalid
+	}
+	in.ChecksumAlgorithm = types.ChecksumAlgorithm(r.Checksum.Algorithm)
+	in.ChecksumType = types.ChecksumType(r.Checksum.Type)
 	applyMultipartEncryption(in, encryption)
 	applyMultipartProtection(ctx, in)
 	if tagging != "" {
@@ -685,6 +699,12 @@ func (p *S3) PresignMultipartPart(ctx context.Context, bucket string, r Multipar
 			return SignedRequest{}, ErrConfiguration
 		}
 		in.ContentMD5 = aws.String(checksum)
+	}
+	if !r.Checksum.Empty() {
+		if !r.Checksum.Policy.Valid() || !objectchecksum.ValidPart(r.Checksum.Algorithm, r.Checksum.Value) {
+			return SignedRequest{}, ErrInvalid
+		}
+		setPartChecksum(in, r.Checksum)
 	}
 	out, err := p.signer.PresignUploadPart(ctx, in, func(o *s3.PresignOptions) { o.Expires = ttl })
 	if err != nil || out.SignedHeader.Get("Content-Length") == "" {

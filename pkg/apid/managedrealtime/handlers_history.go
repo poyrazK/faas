@@ -5,12 +5,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -50,8 +50,13 @@ func (s *Service) managedRealtimeHistoryStore(w http.ResponseWriter) (state.Mana
 }
 
 func retainedMessageResponse(message state.ManagedRealtimeChannelMessage) api.ManagedRealtimeRetainedMessageResponse {
+	expired := message.Expired(time.Now().UTC())
+	if expired {
+		message.Data = nil
+		message.Metadata = nil
+	}
 	return api.ManagedRealtimeRetainedMessageResponse{
-		Metadata: message.Metadata, TargetMessageID: message.TargetMessageID, Version: message.Version, Event: message.MessageEvent, Deleted: message.Deleted,
+		ExpiresAt: message.ExpiresAt, Expired: expired, Metadata: message.Metadata, TargetMessageID: message.TargetMessageID, Version: message.Version, Event: message.MessageEvent, Deleted: message.Deleted,
 		Sequence: message.Sequence, DataBase64: base64.StdEncoding.EncodeToString(message.Data),
 		Binary: message.Binary, CreatedAt: message.CreatedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"),
 	}
@@ -86,7 +91,17 @@ func (s *Service) AppendManagedRealtimeRetainedMessage(w http.ResponseWriter, r 
 		return
 	}
 	var message state.ManagedRealtimeChannelMessage
-	if request.ExpectedSequence != nil {
+	if request.TTLSeconds < 0 || request.TTLSeconds > api.RealtimeMessageTTLMaxSeconds {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("ttl_seconds must be between zero and 86400"))
+		return
+	}
+	if request.TTLSeconds > 0 {
+		if expiring, ok := s.Host.Store().(state.ManagedRealtimeExpiringStore); ok {
+			message, err = expiring.AppendManagedRealtimeChannelExpiring(r.Context(), row.ID, channel, data, request.Binary, request.IdempotencyKey, request.Metadata, request.ExpectedSequence, request.TTLSeconds)
+		} else {
+			err = state.ErrManagedRealtimeHistoryInvalid
+		}
+	} else if request.ExpectedSequence != nil {
 		if conditional, ok := s.Host.Store().(state.ManagedRealtimeConditionalStore); ok {
 			message, err = conditional.AppendManagedRealtimeChannelConditional(r.Context(), row.ID, channel, data, request.Binary, request.IdempotencyKey, request.Metadata, request.ExpectedSequence)
 		} else {

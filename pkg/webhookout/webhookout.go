@@ -49,26 +49,21 @@ import (
 )
 
 // Sentinel errors. errors.Is is the public contract so callers can
-// branch on the four terminal states (success, 4xx terminal, attempts
-// exhausted, body too large, SSRF rejected).
+// branch on the terminal states (success, terminal status, attempts
+// exhausted, SSRF rejected).
 var (
 	// ErrTerminal is returned when the first attempt produced a
-	// non-408/429 4xx. The retry policy gives up on those — most
-	// commonly because the customer pointed us at a stale endpoint
-	// that returned 410 Gone.
-	ErrTerminal = errors.New("webhookout: terminal failure (non-retryable 4xx)")
+	// non-408/429 4xx, a 3xx (redirects are never followed), or any
+	// other unexpected final status. The retry policy gives up on
+	// those — most commonly because the customer pointed us at a
+	// stale endpoint that returned 410 Gone or moved it behind a
+	// redirect.
+	ErrTerminal = errors.New("webhookout: terminal failure (non-retryable status)")
 
 	// ErrAttemptsExhausted is returned after MaxAttempts retries on
 	// a 5xx/408/429/network failure. The meterd layer will record
 	// the failure and surface it on the alert-rule's history page.
 	ErrAttemptsExhausted = errors.New("webhookout: retryable failure after MaxAttempts")
-
-	// ErrBodyTooLarge is returned when a response body exceeds 32 KiB.
-	// Bodies that big almost always mean a misconfigured endpoint
-	// (a customer pointed us at an HTML page by mistake). Truncating
-	// without flagging it would hide the misconfiguration; returning
-	// the truncated prefix is best-effort observability.
-	ErrBodyTooLarge = errors.New("webhookout: response body exceeds 32 KiB")
 )
 
 // HeaderSet picks which header names the dispatcher emits. Two sets
@@ -123,13 +118,16 @@ type DeliveryFormat string
 const (
 	DeliveryFormatJSON        DeliveryFormat = "json"
 	DeliveryFormatCloudEvents DeliveryFormat = "cloudevents"
+	// DeliveryFormatDatadog posts a Datadog Events API body and sends the
+	// sealed secret as DD-API-KEY instead of signing (ADR-752).
+	DeliveryFormatDatadog DeliveryFormat = "datadog"
 )
 
 // ValidDeliveryFormat reports whether format is one of the supported webhook
 // wire envelopes. The empty value is accepted by callers as the legacy JSON
 // default and is normalised by NewDispatcher.
 func ValidDeliveryFormat(format DeliveryFormat) bool {
-	return format == "" || format == DeliveryFormatJSON || format == DeliveryFormatCloudEvents
+	return format == "" || format == DeliveryFormatJSON || format == DeliveryFormatCloudEvents || format == DeliveryFormatDatadog
 }
 
 // Legacy alert header constants. Kept as exported package consts so
@@ -250,13 +248,15 @@ type Event struct {
 	Subject   string          `json:"-"`
 	AccountID string          `json:"-"`
 	Data      json.RawMessage `json:"-"`
+	// Service is the app slug, used as the Datadog service tag when the
+	// delivery format is datadog (ADR-752).
+	Service string `json:"-"`
 }
 
 // Result is the return value of Dispatch. Err is one of:
-//   - nil                       (success: 2xx or 3xx)
-//   - ErrTerminal               (first attempt returned a non-408/429 4xx)
+//   - nil                       (success: 2xx, whatever the body size; a body that breaks mid-read retries)
+//   - ErrTerminal               (first attempt returned a 3xx, a non-408/429 4xx, or another unexpected status)
 //   - ErrAttemptsExhausted      (MaxAttempts retries on a retryable failure)
-//   - ErrBodyTooLarge           (response body exceeded 32 KiB)
 //   - errors.Is(wrapping oci.ErrImageEgressDenied)  (SSRF rejected)
 //   - context.Canceled or context.DeadlineExceeded (delivery stopped)
 //
@@ -385,6 +385,7 @@ func NewDispatcher(opts DispatcherOptions) *Dispatcher {
 	if !callerHTTPClient {
 		opts.HTTPClient.Timeout = opts.PerAttempt
 	}
+	opts.HTTPClient = withoutRedirects(opts.HTTPClient)
 	sig, id, ts, att := opts.HeaderSet.headerNames()
 	return &Dispatcher{
 		opts:          opts,
@@ -393,6 +394,21 @@ func NewDispatcher(opts DispatcherOptions) *Dispatcher {
 		headerTime:    ts,
 		headerAttempt: att,
 	}
+}
+
+// withoutRedirects returns a shallow copy of hc that stops at the
+// first redirect and hands the 3xx back to attempt. Following one
+// would replay the signed delivery to a URL the customer never
+// registered, and Go rewrites a 301/302/303 POST into a body-less
+// GET whose 2xx would otherwise be recorded as delivered. The copy
+// keeps the caller's Transport (and its dial-time SSRF guard) and
+// Timeout, and leaves the caller's own client untouched.
+func withoutRedirects(hc *http.Client) *http.Client {
+	c := *hc
+	c.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &c
 }
 
 // Dispatch posts evt to target with retry+backoff. See Result for
@@ -475,8 +491,16 @@ func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
 		if d.opts.HeaderSet == HeaderSetWebhook {
 			unix = d.opts.Now().Unix()
 		}
-		sig := t.Signer.Sign(unix, evt.ID, body)
-		lastResult = d.attempt(ctx, t.URL, sig, unix, evt.ID, max(d.opts.FirstAttempt, 1)+attempt, body)
+		// Datadog authenticates with its API key and ignores Gregale
+		// signatures (ADR-752): the sealed secret is the key, sent as a
+		// header instead of an HMAC input.
+		sig, apiKey := "", ""
+		if d.opts.Format == DeliveryFormatDatadog {
+			apiKey = string(t.Signer.secret)
+		} else {
+			sig = t.Signer.Sign(unix, evt.ID, body)
+		}
+		lastResult = d.attempt(ctx, t.URL, sig, apiKey, unix, evt.ID, max(d.opts.FirstAttempt, 1)+attempt, body)
 		lastResult.Attempts = attempt + 1
 		if lastResult.Err == nil {
 			return lastResult
@@ -484,11 +508,6 @@ func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
 		if errors.Is(lastResult.Err, ErrTerminal) {
 			// First attempt's 4xx is the terminal signal — bail
 			// before logging the retry.
-			break
-		}
-		if errors.Is(lastResult.Err, ErrBodyTooLarge) {
-			// Body too large is a misconfiguration; no point in
-			// retrying — the next attempt will hit the same cap.
 			break
 		}
 		if errors.Is(lastResult.Err, oci.ErrImageEgressDenied) {
@@ -512,7 +531,6 @@ func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
 	// for retry-budget exhaustion and still see the root cause.
 	if lastResult.Err == nil ||
 		errors.Is(lastResult.Err, ErrTerminal) ||
-		errors.Is(lastResult.Err, ErrBodyTooLarge) ||
 		errors.Is(lastResult.Err, oci.ErrImageEgressDenied) {
 		return lastResult
 	}
@@ -552,6 +570,8 @@ func marshalEvent(evt Event, format DeliveryFormat) ([]byte, error) {
 		return json.Marshal(evt)
 	case DeliveryFormatCloudEvents:
 		return marshalCloudEvent(evt)
+	case DeliveryFormatDatadog:
+		return marshalDatadogEvent(evt)
 	default:
 		return nil, fmt.Errorf("webhookout: unsupported delivery format %q", format)
 	}
@@ -633,10 +653,12 @@ func (d *Dispatcher) logExhausted(evt Event, r Result) {
 }
 
 // attempt performs a single POST with all headers attached. Returns
-// a Result whose Err is nil on 2xx/3xx, ErrTerminal on a non-408/429
-// 4xx, ErrBodyTooLarge on a body > MaxBodyBytes, or a wrapped error
-// on retryable failures (5xx, 408, 429, network).
-func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, deliveryID string, attempt int, body []byte) Result {
+// a Result whose Err is nil on 2xx, ErrTerminal on a 3xx or a
+// non-408/429 4xx, or a wrapped error on retryable failures (5xx,
+// 408, 429, network, a body that breaks mid-read). A body larger than
+// MaxBodyBytes is truncated rather than failing the delivery, because
+// the receiver has already acted on it by the time it answers.
+func (d *Dispatcher) attempt(ctx context.Context, url, sig, apiKey string, unix int64, deliveryID string, attempt int, body []byte) Result {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		// Malformed URL — permanent.
@@ -646,7 +668,11 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, d
 	if d.opts.Format == DeliveryFormatCloudEvents {
 		req.Header.Set("Content-Type", "application/cloudevents+json")
 	}
-	req.Header.Set(d.headerSig, "sha256="+sig)
+	if apiKey != "" {
+		req.Header.Set(datadogAPIKeyHeader, apiKey)
+	} else {
+		req.Header.Set(d.headerSig, "sha256="+sig)
+	}
 	req.Header.Set(d.headerID, deliveryID)
 	req.Header.Set(d.headerTime, fmt.Sprintf("%d", unix))
 	req.Header.Set(d.headerAttempt, fmt.Sprintf("%d", attempt))
@@ -672,23 +698,16 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, d
 
 	// Read up to MaxBodyBytes+1 — the extra byte is the "body too
 	// large" probe. io.LimitReader ensures we don't block on the
-	// extra read past the cap, and the bounded drain step on the
-	// body-too-large branch lets the underlying conn return to the
-	// keep-alive pool instead of hanging.
+	// extra read past the cap. An oversized body is diagnostic only:
+	// keep the prefix and classify by status like any other response.
 	prefix, readErr := io.ReadAll(io.LimitReader(resp.Body, MaxBodyBytes+1))
 	if len(prefix) > MaxBodyBytes {
-		// Drain the remainder so the conn is reusable. Bounded by
-		// the larger of (MaxBodyBytes, 1<<20) — a misconfigured
-		// endpoint that streams indefinitely can't keep us here
-		// forever; 1 MiB is enough to release the keep-alive slot
-		// on any sane server while bounding the worst case.
+		// Drain the remainder so the conn is reusable. Bounded at
+		// 1 MiB — an endpoint that streams indefinitely can't keep
+		// us here forever; 1 MiB is enough to release the keep-alive
+		// slot on any sane server while bounding the worst case.
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
-		return Result{
-			StatusCode: resp.StatusCode,
-			BodyPrefix: prefix[:MaxBodyBytes],
-			RetryAfter: retryAfter,
-			Err:        ErrBodyTooLarge,
-		}
+		prefix = prefix[:MaxBodyBytes]
 	}
 
 	switch {
@@ -703,7 +722,7 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, d
 			RetryAfter: retryAfter,
 			Err:        fmt.Errorf("webhookout: read response: %w", readErr),
 		}
-	case resp.StatusCode >= 200 && resp.StatusCode < 400:
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		return Result{StatusCode: resp.StatusCode, BodyPrefix: prefix}
 	case resp.StatusCode == 408 || resp.StatusCode == 429:
 		return Result{
@@ -720,7 +739,9 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, d
 			Err:        fmt.Errorf("webhookout: retryable %d", resp.StatusCode),
 		}
 	default:
-		// Unexpected final statuses are also terminal.
+		// Unexpected final statuses are also terminal. This includes
+		// 3xx: withoutRedirects stops the client on the redirect, so
+		// the receiver never accepted the delivery.
 		return Result{
 			StatusCode: resp.StatusCode,
 			BodyPrefix: prefix,

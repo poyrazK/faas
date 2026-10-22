@@ -11,10 +11,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type failingPingStore struct {
-	state.Store
+	Store state.Store
 }
 
 func (f *failingPingStore) Ping(_ context.Context) error {
@@ -48,7 +49,7 @@ func TestReadyz_Healthy(t *testing.T) {
 
 func TestReadyz_UnhealthyWhenStoreFails(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanFree)
-	(*(*e.S()).Store()) = &failingPingStore{Store: (*(*e.S()).Store())}
+	(*(*e.S()).Store()) = statetest.NewStore(&failingPingStore{Store: (*(*e.S()).Store())})
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()

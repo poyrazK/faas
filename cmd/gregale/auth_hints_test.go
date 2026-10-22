@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -25,7 +26,7 @@ func TestRequireAuthnStillOnHint(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := requireAuthnStillOnHint(tc.req, tc.updated) != ""; got != tc.wantHint {
+			if got := main.RequireAuthnStillOnHint(tc.req, tc.updated) != ""; got != tc.wantHint {
 				t.Fatalf("hint shown = %v, want %v", got, tc.wantHint)
 			}
 		})
@@ -43,9 +44,20 @@ func TestOpenPublicAuthAfterTokenRemovalKeepsOtherModes(t *testing.T) {
 		api.AppPublicAuthModeIPAllowlist:  false,
 		api.AppPublicAuthModeInternalOnly: false,
 	} {
-		got := openPublicAuthAfterTokenRemoval(api.AppResponse{PublicAuth: api.PublicAuthStatus{Mode: mode}})
+		got := main.OpenPublicAuthAfterTokenRemoval(api.AppResponse{PublicAuth: api.PublicAuthStatus{Mode: mode}})
 		if (got != nil) != wantOpen {
 			t.Fatalf("mode %q: opened=%v, want %v", mode, got != nil, wantOpen)
 		}
+	}
+}
+
+// ADR-1342: function_concurrency reaches workers only through a new build.
+func TestFunctionConcurrencyDeployHint(t *testing.T) {
+	eight := 8
+	if got := main.FunctionConcurrencyDeployHint(api.UpdateAppRequest{FunctionConcurrency: &eight}, api.AppResponse{Slug: "shop-users", Type: "function"}); got != "function_concurrency=8 applies from the next deploy; run `gregale deploy` to rebuild shop-users with it." {
+		t.Fatalf("hint = %q", got)
+	}
+	if got := main.FunctionConcurrencyDeployHint(api.UpdateAppRequest{}, api.AppResponse{Slug: "shop-users", Type: "function"}); got != "" {
+		t.Fatalf("hint without the flag = %q", got)
 	}
 }

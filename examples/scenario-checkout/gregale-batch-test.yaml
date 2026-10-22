@@ -1,0 +1,272 @@
+version: 1
+suites:
+  checkout-batch:
+    scenarios:
+      - {scenario: checkout-batch, engine: real-vm, profile: warm}
+scenarios:
+  checkout-batch:
+    project: batch-checkout-example
+    source: ./app
+    timeout: 5m
+    secrets:
+      PAYMENT_HOST: ${service.payment.host}
+      PAYMENT_PORT: ${service.payment.port}
+      ORDER_LEDGER_URL: ${service.payment.url}
+      ORDER_LEDGER_TOKEN: ${run.secret}
+    services:
+      payment:
+        source: ./payment
+        tcp_ports: [6379]
+        secrets:
+          ORDER_LEDGER_TOKEN: ${run.secret}
+    steps:
+      - name: baseline
+        command: [node, ../test/acceptance.mjs, baseline]
+        requests:
+          - name: ledger-before-batch
+            method: GET
+            path: /durability
+            expect: {status: 200, json: {'/orders': 1, '/pending_orders': 0}}
+            capture: {ledger_id: '/ledger_id'}
+      - name: concurrent-outage
+        chaos:
+          duration: 2m
+          rules:
+            - to: payment
+              kind: tcp_timeout
+              port: 6379
+              direction: downstream
+              percent: 100
+              min_matches: 6
+        command: [node, ../test/batch-acceptance.mjs, outage]
+        checks:
+          - name: all-customer-intents-persisted
+            method: GET
+            path: /durability
+            expect: {status: 200, json: {'/orders': 1, '/pending_orders': 6}}
+          - name: customer-0-pending
+            method: GET
+            path: /orders/batch-0
+            expect:
+              status: 200
+              json:
+                '/id': batch-0
+                '/status': pending
+                '/order/customer': customer-0
+                '/order/sku': item-0
+                '/order/quantity': 1
+          - name: customer-1-pending
+            method: GET
+            path: /orders/batch-1
+            expect:
+              status: 200
+              json:
+                '/id': batch-1
+                '/status': pending
+                '/order/customer': customer-1
+                '/order/sku': item-1
+                '/order/quantity': 2
+          - name: customer-2-pending
+            method: GET
+            path: /orders/batch-2
+            expect:
+              status: 200
+              json:
+                '/id': batch-2
+                '/status': pending
+                '/order/customer': customer-2
+                '/order/sku': item-2
+                '/order/quantity': 3
+          - name: customer-3-pending
+            method: GET
+            path: /orders/batch-3
+            expect:
+              status: 200
+              json:
+                '/id': batch-3
+                '/status': pending
+                '/order/customer': customer-3
+                '/order/sku': item-0
+                '/order/quantity': 4
+          - name: customer-4-pending
+            method: GET
+            path: /orders/batch-4
+            expect:
+              status: 200
+              json:
+                '/id': batch-4
+                '/status': pending
+                '/order/customer': customer-4
+                '/order/sku': item-1
+                '/order/quantity': 5
+          - name: customer-5-pending
+            method: GET
+            path: /orders/batch-5
+            expect:
+              status: 200
+              json:
+                '/id': batch-5
+                '/status': pending
+                '/order/customer': customer-5
+                '/order/sku': item-2
+                '/order/quantity': 6
+      - name: restart-checkout
+        restart:
+          workload: app
+          timeout: 1m
+          readiness:
+            name: batch-checkout-ready
+            method: GET
+            path: /catalog
+            expect: {status: 200, json: {'/available': true}}
+          storage_checks:
+            - name: preserved-customer-intents
+              method: GET
+              path: /durability
+              expect:
+                status: 200
+                json:
+                  '/ledger_id': '${steps.ledger-before-batch.ledger_id}'
+                  '/orders': 1
+                  '/pending_orders': 6
+            - name: preserved-customer-0-pending
+              method: GET
+              path: /orders/batch-0
+              expect:
+                status: 200
+                json:
+                  '/id': batch-0
+                  '/status': pending
+                  '/order/customer': customer-0
+                  '/order/sku': item-0
+                  '/order/quantity': 1
+            - name: preserved-customer-1-pending
+              method: GET
+              path: /orders/batch-1
+              expect:
+                status: 200
+                json:
+                  '/id': batch-1
+                  '/status': pending
+                  '/order/customer': customer-1
+                  '/order/sku': item-1
+                  '/order/quantity': 2
+            - name: preserved-customer-2-pending
+              method: GET
+              path: /orders/batch-2
+              expect:
+                status: 200
+                json:
+                  '/id': batch-2
+                  '/status': pending
+                  '/order/customer': customer-2
+                  '/order/sku': item-2
+                  '/order/quantity': 3
+            - name: preserved-customer-3-pending
+              method: GET
+              path: /orders/batch-3
+              expect:
+                status: 200
+                json:
+                  '/id': batch-3
+                  '/status': pending
+                  '/order/customer': customer-3
+                  '/order/sku': item-0
+                  '/order/quantity': 4
+            - name: preserved-customer-4-pending
+              method: GET
+              path: /orders/batch-4
+              expect:
+                status: 200
+                json:
+                  '/id': batch-4
+                  '/status': pending
+                  '/order/customer': customer-4
+                  '/order/sku': item-1
+                  '/order/quantity': 5
+            - name: preserved-customer-5-pending
+              method: GET
+              path: /orders/batch-5
+              expect:
+                status: 200
+                json:
+                  '/id': batch-5
+                  '/status': pending
+                  '/order/customer': customer-5
+                  '/order/sku': item-2
+                  '/order/quantity': 6
+      - name: restore-payment
+        clear_chaos: true
+      - name: recover-customers
+        command: [node, ../test/batch-acceptance.mjs, recovery]
+        checks:
+          - name: every-order-confirmed
+            method: GET
+            path: /durability
+            expect: {status: 200, json: {'/orders': 7, '/pending_orders': 0}}
+          - name: customer-0-confirmed
+            method: GET
+            path: /orders/batch-0
+            expect:
+              status: 200
+              json:
+                '/id': batch-0
+                '/status': confirmed
+                '/order/customer': customer-0
+                '/order/sku': item-0
+                '/order/quantity': 1
+          - name: customer-1-confirmed
+            method: GET
+            path: /orders/batch-1
+            expect:
+              status: 200
+              json:
+                '/id': batch-1
+                '/status': confirmed
+                '/order/customer': customer-1
+                '/order/sku': item-1
+                '/order/quantity': 2
+          - name: customer-2-confirmed
+            method: GET
+            path: /orders/batch-2
+            expect:
+              status: 200
+              json:
+                '/id': batch-2
+                '/status': confirmed
+                '/order/customer': customer-2
+                '/order/sku': item-2
+                '/order/quantity': 3
+          - name: customer-3-confirmed
+            method: GET
+            path: /orders/batch-3
+            expect:
+              status: 200
+              json:
+                '/id': batch-3
+                '/status': confirmed
+                '/order/customer': customer-3
+                '/order/sku': item-0
+                '/order/quantity': 4
+          - name: customer-4-confirmed
+            method: GET
+            path: /orders/batch-4
+            expect:
+              status: 200
+              json:
+                '/id': batch-4
+                '/status': confirmed
+                '/order/customer': customer-4
+                '/order/sku': item-1
+                '/order/quantity': 5
+          - name: customer-5-confirmed
+            method: GET
+            path: /orders/batch-5
+            expect:
+              status: 200
+              json:
+                '/id': batch-5
+                '/status': confirmed
+                '/order/customer': customer-5
+                '/order/sku': item-2
+                '/order/quantity': 6

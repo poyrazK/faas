@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/jobresult"
@@ -16,7 +18,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: job-fixture success|fail|sleep|oom|contract|customer-operation|customer-workflow")
+		fmt.Fprintln(os.Stderr, "usage: job-fixture success|fail|sleep|ticks|oom|contract|customer-operation|customer-workflow|customer-http|interactive|whoami")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -36,6 +38,13 @@ func main() {
 			}
 		}
 		time.Sleep(duration)
+	case "ticks":
+		// ADR-1163: lines spaced out in time, so a live reader sees the
+		// first one well before the task ends.
+		for i := 1; i <= 3; i++ {
+			fmt.Printf("tick %d\n", i)
+			time.Sleep(3 * time.Second)
+		}
 	case "oom":
 		// Retain and touch more than the test VM's 512 MiB allocation.
 		// Disabling GC prevents the runtime from reclaiming older chunks.
@@ -61,10 +70,43 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+	case "customer-http":
+		if err := serveCustomerHTTP(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "interactive":
+		os.Exit(runInteractive())
+	case "whoami":
+		// ADR-1790: report the process identity, directory and environment
+		// the guest gave the command.
+		cwd, _ := os.Getwd()
+		fmt.Printf("uid=%d gid=%d cwd=%s home=%s from_image=%s\n",
+			os.Getuid(), os.Getgid(), cwd, os.Getenv("HOME"), os.Getenv("FIXTURE_FROM_IMAGE"))
 	default:
 		fmt.Fprintf(os.Stderr, "unknown job fixture mode %q\n", os.Args[1])
 		os.Exit(2)
 	}
+}
+
+// runInteractive (ADR-1330) reports whether stdin is a terminal, echoes each
+// stdin line as "got:<line>", and exits with N on "exit N" (0 at EOF).
+func runInteractive() int {
+	info, err := os.Stdin.Stat()
+	fmt.Printf("tty:%v\n", err == nil && info.Mode()&os.ModeCharDevice != 0)
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if code, ok := strings.CutPrefix(line, "exit "); ok {
+			n, err := strconv.Atoi(code)
+			if err != nil {
+				return 2
+			}
+			return n
+		}
+		fmt.Printf("got:%s\n", line)
+	}
+	return 0
 }
 
 func runContract() {

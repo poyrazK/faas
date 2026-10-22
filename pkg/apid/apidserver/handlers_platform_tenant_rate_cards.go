@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -13,8 +14,10 @@ import (
 func platformTenantRateCardResponse(card state.PlatformTenantRateCard) api.PlatformTenantRateCardResponse {
 	return api.PlatformTenantRateCardResponse{ID: card.ID, TenantID: card.TenantID,
 		Currency: card.Currency, Unit: card.Unit, PriceMillicentsPerUnit: card.PriceMillicentsPerUnit,
-		IncludedUnitsPerMonth: card.IncludedUnitsPerMonth, Tiers: apiRateCardTiers(card.Tiers),
-		EffectiveFrom: card.EffectiveFrom.UTC(), CreatedAt: card.CreatedAt.UTC()}
+		IncludedUnitsPerMonth: card.IncludedUnitsPerMonth, Tiers: apiRateCardTiers(card.Tiers), TierMode: rateCardTierMode(card.TierMode),
+		RouteWeights: card.RouteWeights, EffectiveFrom: card.EffectiveFrom.UTC(), CreatedAt: card.CreatedAt.UTC(),
+		BaseFeeMillicentsPerMonth: card.BaseFeeMillicentsPerMonth, MinimumMillicentsPerMonth: card.MinimumMillicentsPerMonth,
+		ProrateMonthlyFees: card.ProrateMonthlyFees}
 }
 
 func (s *server) platformTenantRateCardStore(w http.ResponseWriter, r *http.Request, acct state.Account) (state.PlatformTenant, state.PlatformTenantRateCardStore, bool) {
@@ -60,28 +63,39 @@ func (s *server) createPlatformTenantRateCard(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
-	existing, err := store.ListPlatformTenantRateCards(r.Context(), acct.ID, tenant.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not load platform tenant rate cards"))
-		return
-	}
-	input, problem := platformTenantRateCardInput(req, acct.ID, tenant.ID, existing)
+	card, problem := s.createTenantRateCard(r.Context(), acct, tenant.ID, store, req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
-	card, err := store.CreatePlatformTenantRateCardVersion(r.Context(), input)
-	if problem := platformTenantRateCardError(err); problem != nil {
-		api.WriteProblem(w, problem)
-		return
+	writeJSON(w, http.StatusCreated, platformTenantRateCardResponse(card))
+}
+
+// createTenantRateCard validates and stores a tenant price version and
+// audits it. The handler and tenant plan assignment (ADR-1307) share it.
+func (s *server) createTenantRateCard(ctx context.Context, acct state.Account, tenantID string, store state.PlatformTenantRateCardStore,
+	req api.CreatePlatformTenantRateCardRequest) (state.PlatformTenantRateCard, *api.Problem) {
+	existing, err := store.ListPlatformTenantRateCards(ctx, acct.ID, tenantID)
+	if err != nil {
+		return state.PlatformTenantRateCard{}, api.ErrInternal("could not load platform tenant rate cards")
 	}
-	s.audit.Emit(r.Context(), "platform_tenant_rate_card.created", &acct.ID, map[string]any{
-		"platform_tenant_id": tenant.ID, "rate_card_id": card.ID, "currency": card.Currency,
+	input, problem := platformTenantRateCardInput(req, acct.ID, tenantID, existing)
+	if problem != nil {
+		return state.PlatformTenantRateCard{}, problem
+	}
+	card, err := store.CreatePlatformTenantRateCardVersion(ctx, input)
+	if problem := platformTenantRateCardError(err); problem != nil {
+		return state.PlatformTenantRateCard{}, problem
+	}
+	s.audit.Emit(ctx, "platform_tenant_rate_card.created", &acct.ID, map[string]any{
+		"platform_tenant_id": tenantID, "rate_card_id": card.ID, "currency": card.Currency,
 		"price_millicents_per_unit": card.PriceMillicentsPerUnit,
-		"included_units_per_month":  card.IncludedUnitsPerMonth, "tiers": len(card.Tiers),
+		"included_units_per_month":  card.IncludedUnitsPerMonth, "tiers": len(card.Tiers), "route_weight_count": len(card.RouteWeights),
+		"unit": card.Unit, "base_fee_millicents_per_month": card.BaseFeeMillicentsPerMonth,
+		"minimum_millicents_per_month": card.MinimumMillicentsPerMonth, "prorate_monthly_fees": card.ProrateMonthlyFees,
 		"effective_from": card.EffectiveFrom.UTC().Format(time.RFC3339),
 	})
-	writeJSON(w, http.StatusCreated, platformTenantRateCardResponse(card))
+	return card, nil
 }
 
 // platformTenantRateCardInput validates a tenant price version. Once any
@@ -95,8 +109,10 @@ func platformTenantRateCardInput(req api.CreatePlatformTenantRateCardRequest, ac
 	}
 	in := state.PlatformTenantRateCardInput{AccountID: accountID, TenantID: tenantID,
 		Currency: strings.ToUpper(strings.TrimSpace(req.Currency)), PriceMillicentsPerUnit: req.PriceMillicentsPerUnit,
-		IncludedUnitsPerMonth: req.IncludedUnitsPerMonth, Tiers: stateRateCardTiers(req.Tiers),
-		EffectiveFrom: time.Now().UTC().Truncate(time.Minute).Add(time.Minute)}
+		IncludedUnitsPerMonth: req.IncludedUnitsPerMonth, Tiers: stateRateCardTiers(req.Tiers), RouteWeights: req.RouteWeights,
+		EffectiveFrom: time.Now().UTC().Truncate(time.Minute).Add(time.Minute), Unit: req.Unit, TierMode: req.TierMode,
+		BaseFeeMillicentsPerMonth: req.BaseFeeMillicentsPerMonth, MinimumMillicentsPerMonth: req.MinimumMillicentsPerMonth,
+		ProrateMonthlyFees: req.ProrateMonthlyFees}
 	if in.Currency == "" {
 		in.Currency = "EUR"
 	}
@@ -107,11 +123,16 @@ func platformTenantRateCardInput(req api.CreatePlatformTenantRateCardRequest, ac
 		return in, invalid("price_millicents_per_unit must be non-negative")
 	case req.IncludedUnitsPerMonth < 0:
 		return in, invalid("included_units_per_month must be non-negative")
+	case req.BaseFeeMillicentsPerMonth < 0 || req.MinimumMillicentsPerMonth < 0:
+		return in, invalid("base_fee_millicents_per_month and minimum_millicents_per_month must be non-negative")
 	case len(req.Tiers) > 0 && req.IncludedUnitsPerMonth != 0:
 		return in, invalid("tiers replace included_units_per_month; make the first step free instead")
 	}
 	if err := state.ValidateAPIConsumerRateCardTiers(in.Tiers); err != nil {
 		return in, invalid(strings.TrimPrefix(err.Error(), "rate card tiers: ") + " (tiers)")
+	}
+	if err := state.ValidateAPIConsumerRouteWeights(in.RouteWeights); err != nil {
+		return in, invalid(strings.TrimPrefix(err.Error(), "rate card route weights: ") + " (route_weights)")
 	}
 	if req.EffectiveFrom != nil {
 		in.EffectiveFrom = req.EffectiveFrom.UTC()
@@ -119,14 +140,41 @@ func platformTenantRateCardInput(req api.CreatePlatformTenantRateCardRequest, ac
 			return in, invalid("effective_from must be a UTC minute")
 		}
 	}
-	monthly := req.IncludedUnitsPerMonth > 0 || len(req.Tiers) > 0
+	if detail := tenantCardUnitProblem(in); detail != "" {
+		return in, invalid(detail)
+	}
+	monthly := state.PlatformTenantRateCard{IncludedUnitsPerMonth: in.IncludedUnitsPerMonth, Tiers: in.Tiers,
+		RouteWeights: in.RouteWeights, Unit: in.Unit, BaseFeeMillicentsPerMonth: in.BaseFeeMillicentsPerMonth,
+		MinimumMillicentsPerMonth: in.MinimumMillicentsPerMonth}.MonthlyPricing()
 	for _, card := range existing {
 		monthly = monthly || card.MonthlyPricing()
 	}
 	if monthly && in.EffectiveFrom.Before(time.Now().UTC().Truncate(time.Minute)) {
-		return in, invalid("effective_from cannot be in the past once a tenant rate card includes units or tiers")
+		return in, invalid("effective_from cannot be in the past once a tenant rate card includes units, tiers, route weights, monthly fees, or a unit other than requests")
 	}
 	return in, nil
+}
+
+// tenantCardUnitProblem checks a tenant card's unit (ADR-1310, ADR-1319)
+// and ladder mode (ADR-1309): known values and route weights only on
+// request cards. Each unit is its own price history, so a card of a new
+// unit adds a price rather than replacing the old one (ADR-1319).
+func tenantCardUnitProblem(in state.PlatformTenantRateCardInput) string {
+	unit := in.Unit
+	if unit == "" {
+		unit = state.PlatformTenantRateCardUnitRequest
+	}
+	switch {
+	case !state.ValidAPIConsumerRateCardUnit(unit):
+		return "unit must be request, compute_second, response_megabyte or app:<meter> (lowercase letters, digits and underscores)"
+	case unit != state.PlatformTenantRateCardUnitRequest && len(in.RouteWeights) > 0:
+		return "route_weights apply to request cards only"
+	case in.TierMode != "" && in.TierMode != state.RateCardTierModeGraduated && in.TierMode != state.RateCardTierModeVolume:
+		return "tier_mode must be graduated or volume"
+	case in.TierMode == state.RateCardTierModeVolume && len(in.Tiers) == 0:
+		return "tier_mode volume needs tiers"
+	}
+	return ""
 }
 
 func platformTenantRateCardError(err error) *api.Problem {
@@ -135,7 +183,7 @@ func platformTenantRateCardError(err error) *api.Problem {
 		return nil
 	case errors.Is(err, state.ErrConflict):
 		return api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Tenant rate card already exists", "another rate card already uses this effective_from")
+			"Tenant rate card already exists", "another rate card of this unit already uses this effective_from")
 	case errors.Is(err, state.ErrInvalidArgument):
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"Invalid tenant rate card", "all versions for a tenant must use the same currency")

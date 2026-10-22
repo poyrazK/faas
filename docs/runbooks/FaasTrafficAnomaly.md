@@ -8,7 +8,8 @@ Metric: `apid_request_total{account_id, route, code}` (paired with
 `apid_request_failures_total{account_id, route, code}` for the
 per-account error-rate view, `code="err"` invariant, issue #278).
 
-Severity: page (`mode=fleet|platform`), warn (`mode=account`). The
+Severity: warn in every mode (ADR-1236 demoted the fleet and platform
+pages). The
 `family` label is `traffic_anomaly`, so the existing `family`-based
 inhibition / silencing rules compose with this alert.
 

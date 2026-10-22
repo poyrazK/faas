@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -40,7 +41,7 @@ import (
 // review fix #3 contract). Same shape as failingFlushStore in
 // audit_async_test.go but kept here so this file is self-contained.
 type failingAppendStore struct {
-	state.Store
+	Store state.Store
 }
 
 func (failingAppendStore) AppendEvent(_ context.Context, _, _ string, _ *string, _ []byte) error {
@@ -176,7 +177,7 @@ func TestAuditLifecycle_CloseDrainsInFlightRows(t *testing.T) {
 func TestAuditLifecycle_FailingStoreIncrementsDedicatedCounter(t *testing.T) {
 	store := failingAppendStore{Store: state.NewMemStore()}
 	ops := wire.NewOpsMetrics("apid")
-	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).
+	srv := apidserver.NewServer(statetest.NewStore(store), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).
 		WithOpsMetrics(context.Background(), ops)
 	defer (*srv.Audit()).Close()
 

@@ -13,6 +13,12 @@ probe_url="$1"
 shift 2
 probe_interval_seconds="${ROLLOUT_PROBE_INTERVAL_SECONDS:-0.25}"
 baseline_sample_count="${ROLLOUT_BASELINE_SAMPLE_COUNT:-3}"
+# Every rollout proves a healthy baseline before it starts: no release may
+# rely on stopped writers or a maintenance window (ADR-202610171900).
+if ! [[ "$baseline_sample_count" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ROLLOUT_BASELINE_SAMPLE_COUNT must be a positive integer, got '$baseline_sample_count'" >&2
+  exit 2
+fi
 probe_proxy="${ROLLOUT_PROBE_PROXY:-}"
 app_url="${ROLLOUT_APP_PROBE_URL:-}"
 status_url="${ROLLOUT_STATUS_PROBE_URL:-}"
@@ -44,9 +50,13 @@ sample() {
   local observed_at
   observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   error_file="$(mktemp)"
+  # The connect phase includes the TLS handshake. This observer runs on the
+  # control-plane host it measures, which is CPU-saturated during activation;
+  # a 1 s connect budget failed rc.263 and rc.264 rollouts on handshakes that
+  # finished late on the client (H10-52). The request keeps its total budget.
   if result="$(curl "${curl_args[@]}" \
     --output /dev/null --write-out $'%{http_code}\t%{time_total}\t%{time_connect}\t%{time_starttransfer}' \
-    --connect-timeout 1 --max-time "$timeout" \
+    --connect-timeout "$timeout" --max-time "$timeout" \
     --header 'Cache-Control: no-cache' "$request_url" 2>"$error_file")"; then
     curl_exit=0
   else
@@ -78,7 +88,7 @@ if [[ -n "$status_url" ]]; then
   sample baseline status "$status_url" 1 "$status_log" 3
 fi
 
-if [[ "${ROLLOUT_REQUIRE_API_BASELINE:-false}" == true ]] && (( baseline_sample_count > 0 )); then
+if [[ "${ROLLOUT_REQUIRE_API_BASELINE:-false}" == true ]]; then
   if ! awk -F '\t' 'BEGIN { healthy=1 } $5 < 200 || $5 >= 300 || $9 != 0 { healthy=0 } END { exit !(NR > 0 && healthy) }' "$primary_log"; then
     echo "API readiness baseline failed; activation was not started" >&2
     exit 1

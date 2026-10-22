@@ -1,5 +1,7 @@
 package fcvm
 
+import "github.com/onebox-faas/faas/pkg/runtimeadmission"
+
 // FAAS_BASE_IMAGE_VERSION is the per-image-version stamp the
 // h2c-capable base rootfs image is published under. Mirrors
 // Snapshot.FCVersion (ADR-005) but for the wire-protocol-capable
@@ -140,8 +142,11 @@ func PlanWake(snap *Snapshot, currentFCVersion string) WakeMethod {
 // the legacy VMStatePath branch untouched. Default-local single-box
 // always sends the empty value so the host-path behaviour is preserved.
 type RestoreSpec struct {
-	VMStatePath string
-	Tap         string
+	// Only RestoreSnapshotVerified can attach protected catalog inputs. This
+	// private carrier is not a wire capability or a measured restore receipt.
+	verifiedSnapshot *verifiedSnapshotRestore
+	VMStatePath      string
+	Tap              string
 	// Issue #96 / ADR-025 axis 2 (PR #116): KernelKey / BaseKey /
 	// LayerKey are the StorageBackend keys that the restore path
 	// materializes via Storage.Get before re-staging as basenames
@@ -244,8 +249,15 @@ type WakePrepareTimings struct {
 // is left unused (logged as metadata only). When empty, the VMM keeps
 // the legacy moveOut(VMStatePath) behaviour bit-for-bit.
 type SnapshotSpec struct {
-	StageMemPath string // vmmd-allocated; never caller-supplied post-#96 slice 3
-	VMStatePath  string // host location vmmd hands to the FC socket during pause
+	operatorGeneration string // ADR-1525: checked before quiet resume or snapshot.
+	// Only Manager can populate the retained parent. Wire callers never supply
+	// an admission receipt as authority for a snapshot of another live VM.
+	admittedParent         runtimeadmission.Receipt
+	admittedGrant          *runtimeadmission.SnapshotGrant
+	functionMigrationGrant *runtimeadmission.FunctionMigrationGrant
+	functionMigration      *FunctionMigrationBinding
+	StageMemPath           string // vmmd-allocated; never caller-supplied post-#96 slice 3
+	VMStatePath            string // host location vmmd hands to the FC socket during pause
 	// StorageKey (mem only) is the storage key the mem blob is published
 	// under post-snapshot.
 	StorageKey string
@@ -258,11 +270,12 @@ type SnapshotSpec struct {
 	// ResumeBeforePublish is set only by the warm-snapshot path. Once
 	// Firecracker has atomically created the local snapshot files, resume
 	// the guest before slower shared-storage uploads so ordinary traffic is
-	// paused for snapshot creation rather than registry latency. Migration
-	// and terminal park captures leave this false and remain paused.
+	// paused for snapshot creation rather than registry latency. Qualified
+	// Node resource recovery, migration and terminal park leave this false.
 	ResumeBeforePublish bool
-	// BeforeCheckpoint requests the guest-local callback for a new terminal
-	// init capture. Warm and migration captures must leave this false.
+	// BeforeCheckpoint requests the guest-local callback before capture.
+	// Qualified Node warm captures recover resources under the same flight;
+	// ordinary warm and unqualified migration captures must leave this false.
 	BeforeCheckpoint bool
 }
 
@@ -274,4 +287,16 @@ type SnapshotInfo struct {
 	// memory, vmstate, and coupled private-drive artifacts. It intentionally
 	// differs from the logical lengths above for sparse filesystems.
 	StoredBytes int64
+	// Native byte evidence only; current approval and durable restore admission
+	// remain separate gates. Legacy captures leave this zero.
+	Capture runtimeadmission.SnapshotCapture `json:"Capture,omitzero"`
+}
+
+func (s SnapshotInfo) Equal(other SnapshotInfo) bool {
+	return s.MemBytes == other.MemBytes && s.VMStateBytes == other.VMStateBytes &&
+		s.StoredBytes == other.StoredBytes && s.Capture.Equal(other.Capture)
+}
+
+func (s SnapshotInfo) IsZero() bool {
+	return s.MemBytes == 0 && s.VMStateBytes == 0 && s.StoredBytes == 0 && s.Capture.IsZero()
 }

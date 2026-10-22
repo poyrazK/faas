@@ -18,7 +18,7 @@ T = TypeVar("T", bound="CommitEventRequest")
 @_attrs_define
 class CommitEventRequest:
     """At-least-once handoff. Repeating the identity with identical JSON data and routing returns the original receipt;
-    changed type, data or routing conflicts.
+    changed type, schema version, data or routing conflicts.
 
     """
 
@@ -29,6 +29,8 @@ class CommitEventRequest:
     """Version 2 routing authority is granted by the account owner on the source. Customer identity is separate
     from untrusted event data. Business keys share a queue only within the same policy and customer scope; scalar
     types remain distinct. Canonical keys are limited to 256 bytes including the type prefix."""
+    schema_version: str | Unset = UNSET
+    """Optional registered application event schema version. Only event destinations support this field."""
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)
@@ -41,6 +43,8 @@ class CommitEventRequest:
         if not isinstance(self.routing, Unset):
             routing = self.routing.to_dict()
 
+        schema_version = self.schema_version
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -52,6 +56,8 @@ class CommitEventRequest:
         )
         if routing is not UNSET:
             field_dict["routing"] = routing
+        if schema_version is not UNSET:
+            field_dict["schema_version"] = schema_version
 
         return field_dict
 
@@ -73,11 +79,14 @@ class CommitEventRequest:
         else:
             routing = CommitRouting.from_dict(_routing)
 
+        schema_version = d.pop("schema_version", UNSET)
+
         commit_event_request = cls(
             id=id,
             type_=type_,
             data=data,
             routing=routing,
+            schema_version=schema_version,
         )
 
         return commit_event_request

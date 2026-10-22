@@ -12,5 +12,5 @@ import (
 
 // vmmd runs only on Linux; this stub keeps developer builds and tooling
 // working on other platforms.
-func startAppReadinessProbeLoop(context.Context, *slog.Logger, *events.Platform, string, string, fcvm.ReadinessProbeConfig, string) {
+func startAppReadinessProbeLoop(context.Context, *slog.Logger, *events.Platform, string, string, fcvm.ReadinessProbeConfig, string, func() (bool, uint64)) {
 }

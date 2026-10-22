@@ -3,12 +3,16 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A sanitized application stack frame used by grouping version 1.
+ * A sanitized stack frame. Grouping excludes line numbers; in_app selects application evidence.
  */
 export type IssueFrame = {
   file: string;
   function: string;
   line?: number;
+  /**
+   * One-based generated or original column; omitted when unknown. Excluded from grouping identity.
+   */
+  column?: number;
   in_app: boolean;
 };
 

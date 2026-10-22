@@ -38,6 +38,11 @@ The SDK also verifies inbound Gregale webhook deliveries. See
 [`docs/webhook-receiver-verification.md`](../../docs/webhook-receiver-verification.md)
 for raw-body handling and delivery-ID deduplication guidance.
 
+`github.com/poyrazK/faas/sdk/go/auth` verifies application Auth access tokens
+and checks permissions in your backend: `auth.New`, `Verify`, `Require`
+middleware and `Authorize`. See
+[Application Auth](../../docs/application-auth.md#in-your-backend).
+
 Managed Go workloads can use the runtime Flags client, request middleware, and
 service transport. See [the Go Flags guide](../../docs/flags.md#use-flags-in-a-go-http-application)
 for customer targeting, decision evidence, and propagation examples.
@@ -111,6 +116,12 @@ Call `Flush(ctx)` or `Close(ctx)` during graceful shutdown, and inspect
 `Stats()` for queued, accepted, and dropped events. Delivery is best effort and
 an ungraceful process exit can lose queued events. See
 [`docs/issues.md`](../../docs/issues.md) for the full privacy and token guidance.
+
+Set `IssueReporterOptions.GroupingStrategy` to `"failure-site-v1"` to group by
+the nearest application reporting frame and a normalized message, or a stable
+`IssueContext.ErrorCode`. `FingerprintOverride` takes precedence. The default
+remains legacy grouping. Opting in creates version 2 groups without migrating
+existing issue history; see the grouping transition guidance in `docs/issues.md`.
 
 ## Disposable agent executions
 
@@ -303,6 +314,41 @@ dep, err := c.Deploy(ctx, slug, req)
 A retried call with the same key returns the cached response from
 the server's replay middleware (24h window).
 
+## Service binding configuration
+
+Create and read app policies with `ServiceCallerScopes`, `ServiceCallScope`,
+and `ServiceBindingTransportHTTP` / `ServiceBindingTransportHTTPS`.
+`AllowedServiceCallers` and `AllowedServiceCallScopes` in app responses preserve
+unrestricted (`nil`) versus deny-all (non-nil empty) policies.
+
+PATCH caller policies use `json.RawMessage` to preserve three states: leave the
+field nil to retain its value, use `json.RawMessage("null")` to remove its
+restriction, or use `json.RawMessage("[]")` for callers / `json.RawMessage("{}")`
+for scopes to deny all. For grants, marshal typed values:
+
+```go
+scopes, err := json.Marshal(faas.ServiceCallerScopes{
+    "frontend": {Methods: []string{"GET"}, PathPrefixes: []string{"/api"}},
+})
+if err != nil {
+    return err
+}
+transport := faas.ServiceBindingTransportHTTPS
+_, err = c.UpdateApp(ctx, "billing", faas.UpdateAppRequest{
+    AllowedServiceCallScopes: scopes,
+    ServiceBindingTransport: &transport,
+})
+```
+
+Caller lists and scopes both apply when configured. HTTPS selects the canonical
+injected URL scheme; it does not enforce HTTPS-only access. Set
+`ExpectedServiceBindingFingerprint` from a reviewed app snapshot to reject an
+update if its service configuration has changed.
+
+`AppResponse.Manifest.ServiceBindingTransport` also exposes the scheme stored in
+the workload manifest. Shared [SDK contract fixtures](../service-binding-contracts/README.md)
+check these fields against Node, Python and OpenAPI in CI.
+
 ## Project release context
 
 For app-to-app calls, capture the inbound release once and let the SDK
@@ -429,6 +475,26 @@ home for the wire DTOs.
 - ADR-038 (issue #266): documents the split contract between the SDK and the daemon.
 - PR plan: `/.claude/plans/lets-create-imp-plan-bubbly-engelbart.md` (the 14-PR sequence).
 
+
+### Application standards
+
+`PreviewApplicationStandardAssignment` saves affected applications, effective
+settings and blockers without activating a change. `GetApplicationStandardReview`
+reads that saved preview; its expiry and hash do not replace fresh approval
+validation. `GetApplicationStandardOperation` returns queued/persisted/observed
+progress. `GetApplicationStandardEnrollment` separates desired, persisted and
+observed revisions and includes the installed exception deadline when present.
+`ListApplicationStandardExceptions` returns UUID-ordered approval, revocation
+and expiry history, including the server's `AsOf` time and an exclusive cursor.
+
+Request and response types are exported from the SDK package, including
+`ApplicationStandardReviewRequest`, `ApplicationStandardReview`,
+`ApplicationStandardOperation`, and `ApplicationStandardExceptionList`.
+`ApplicationStandardSettings` stores normalized `json.RawMessage` values by
+field; `ApplicationStandardDefinition` stores typed rules with a JSON value.
+Read routes require read scope and active organization membership; preview
+requires write scope and owner/admin authority. Activation and exception
+mutation APIs remain gated pending runtime acceptance.
 ## Object lifecycle
 
 The public client exposes `GetObjectBucketLifecycle`,
@@ -758,6 +824,196 @@ A private receipt is published on host-confirmed success with a typed result
 or explicit account success recovery. Approved Job retry clears file receipts.
 Published files use the existing customer-scoped artifact download methods.
 
+### Transactional event consumers
+
+Install `EventConsumerReceiptSchema` in your application PostgreSQL database.
+For authenticated internal subscription deliveries, construct an immutable
+request with `EventConsumerRequestFromHTTP(r, body, accountID, appID)` and call
+`WithEventConsumerTransaction(ctx, db, input, handler)`. The handler receives an
+`EventConsumerSQLTransaction` and returns `json.RawMessage`. Business writes and
+the receipt commit together; duplicate deliveries return the exact saved
+`EventConsumerTransactionResult.Body` with `Replayed=true`. Acknowledge only after
+the helper succeeds. The helper never installs or prunes application receipts.
+
+Identity includes the subscription and durable acceptance ID, so consumers remain
+independent and later reuse of a producer event ID is a new acceptance. Preserve
+original body bytes on retry. Old deliveries without an acceptance header fail
+closed. Authenticate the route; the header factory is not authentication for an
+arbitrary public server. Callback code must use only its supplied transaction and
+must not perform external effects or control the transaction lifecycle.
+
+See [the transaction contract and retention rules](../../docs/event-consumer-transactions.md).
+
+For long-running preparation, the opt-in [processing lease helper](../../docs/event-consumer-processing.md) provides durable claims, renewal and fenced transactional completion. HTTP success still follows completion.
+
+Enqueue follow-up Commit work inside the event-consumer callback with `InsertCommitEventInTransaction(ctx, tx, event)`. Install both schemas in the same database and configure a Commit source. Business writes, follow-up work and the receipt commit together; duplicate inputs return the saved result. See [the combined transaction examples](../../docs/event-consumer-transactions.md#update-and-enqueue-follow-up-work-atomically).
+
+For transactional publication to subscribers, configure an immutable `event` Commit destination with contract version 3. The existing insert helpers accept an optional schema version and run in the consumer callback transaction. See [publication setup and receipt recovery](../../docs/gregale-commit.md#version-3-application-event-publication-adr-935).
+
+For Commit event publications, `WaitCommitSubscriber` waits for one original
+application subscriber using guarded, paginated receipt reads. Supply a context
+deadline; only `result.Status == "completed"` proves original execution success.
+See [subscriber waits](../../docs/gregale-commit.md#wait-for-an-individual-publication-subscriber).
+
+`GetCommitDeliveryReport` samples recent publication receipts and their original
+subscriber outcomes. Counts cover sampled evidence only; use `NextAfter` and
+`NextBefore` to continue. Read errors return the partial report alongside the error.
+
+Use `GetCommitDeliveryReportWithPages` to traverse more recipient pages, or
+`ResumeCommitDeliveryReport(ctx, saved, pages)` to continue the saved selection.
+The per-publication budget is 1–20 pages. Resume merges subscribers without
+counting an observation twice; saved completed coverage is not refreshed.
+
+`RefreshCommitDeliveryReport(ctx, saved, pages)` rereads the saved selection,
+returning fresh counts, observation timestamps, and changes against the baseline.
+Missing evidence does not carry forward saved successes. Resume and refresh
+have separate coverage semantics; see the Commit documentation.
+
+Delivery report rows now separate original `status` from latest retained replay
+`recovery` evidence. `recovery_counts` and refresh changes with `kind: recovery`
+help identify remaining failures; missing evidence does not prove no replay occurred.
+
+Use `PlanCommitRecovery(ctx, savedReport, pages)` to build a read-only recovery plan from fresh guarded receipt evidence. Plans include skip reasons and publication coverage issues; they never execute recovery actions.
+
+Use `ApplyCommitRecovery(ctx, reviewedPlan, limit, pages)` for sequential, freshly revalidated execution recovery. Unknown writes stop the batch and require inspection. Routing apply now submits the matching acceptance guard from a fresh server offer; older unguarded offers remain skipped. See the Commit documentation for limits and partial results.
+
+Selective routing replay accepts `expected_accepted_at`; a replaced acceptance returns 409 without requeuing the consumer. Refresh and review older plans before using guarded routing apply.
+
+Routing recovery offers include an `expected_generation` guard when available.
+Commit recovery apply skips changed generations as `generation_changed`, and
+missing guards as `generation_guard_unavailable`. Direct selective replay can
+supply the nonnegative generation together with `expected_accepted_at`; the
+server checks both and failed state atomically before requeue.
+
+Read-only recovery status accepts the reviewed plan and saved apply result.
+It retains each attempt alongside fresh delivery state and routing generation;
+unknown attempts remain unknown even if delivery advances. Missing evidence
+stays unresolved, and partial read failures retain output. The helper never
+submits replay or follows saved action URLs. See
+[the recovery-status guide](../../docs/gregale-commit.md#inspecting-recovery-results-without-replay).
+
+Use client.GetCommitRecoveryStatus(ctx, plan, applied, 50, 5).
+
+Recovery status can resume saved output, preserving successful observations
+and their timestamps. Unread items are inspected before failed reads are
+retried. Selection snapshots bind resume to the original plan, apply result,
+publication acceptance and subscriber filter. Counts and remaining coverage
+are recomputed, and unknown attempts remain unknown.
+
+Use client.ResumeCommitRecoveryStatus(ctx, plan, applied, previous, 50, 5).
+
+Older status files without selection snapshots require a fresh status read. Resume keeps historical samples; omit resume to reread them.
+
+
+Refresh saved Commit recovery observations with `RefreshCommitRecoveryStatus(ctx, plan, applied, previous, 50, 5)`. Refresh clears current evidence and reports before/after changes against a compact saved baseline. Use resume to finish a bounded refresh pass; refresh and resume are mutually exclusive. Unknown apply attempts remain unknown. See [the Commit guide](../../docs/gregale-commit.md#refresh-saved-recovery-observations).
+
+
+Use `WatchCommitRecoveryStatus` for bounded recovery monitoring with detached progress callbacks. Partial passes resume before the next refresh. Queued attempts require matching terminal execution evidence; unknown attempts remain unknown. Timeout/read errors retain the last or partial status. See [monitoring usage](../../docs/gregale-commit.md#monitor-acknowledged-recovery-executions).
+
+
+Opt into transient recovery-watch read retries with `WatchCommitRecoveryStatusWithRetry`. The total budget is 0..20, defaults to zero, and shares the overall timeout. Partial results reach progress callbacks before backoff; permanent errors stop immediately. See [retry behavior](../../docs/gregale-commit.md#retry-transient-monitoring-reads).
+
+
+Recovery watch results include `monitoring` with stop reason, started passes, consumed retries, elapsed milliseconds and conservative terminal coverage. Progress snapshots report running; final results and attached errors report the outcome. Counters restart on resume. See [structured outcomes](../../docs/gregale-commit.md#structured-monitoring-outcomes).
+
+
+Optionally require recent recovery evidence with `CommitRecoveryWatchOptions.MaxObservationAge` (default disabled; 100ms..24h). Stale and missing/future-timestamp observations are reread within existing budgets before settlement. Monitoring includes freshness counts. See [freshness policy](../../docs/gregale-commit.md#require-recent-recovery-observations).
+
+Optional `CommitRecoveryWatchOptions.Diagnostics` includes bounded exact-recipient delivery blocker diagnostics, separate from replay attribution. Missing evidence and settled routing never prove handler completion. See [diagnostics](../../docs/gregale-commit.md#diagnose-recovery-delivery-blockers).
+
+Exact routing lookup: `GetEventRecipientBlocker(ctx, EventRecipientBlockerQuery{Source: source, ID: eventID, SubscriptionID: subscriptionID, ExpectedAcceptedAt: acceptedAt})`. Inspect `Status`, `Reason`, `RoutingState` and optional `Recipient`; `not_waiting` describes routing only.
+
+Diagnostic coverage rotates within the 50-read cap and resumes from checkpoints. `diagnostics_progress` reports separate coverage counts; `retained` samples keep their original timestamps. Diagnostic completeness never gates delivery settlement. See [resumable coverage](../../docs/gregale-commit.md#resume-diagnostic-coverage-across-large-selections).
+
+Recipient diagnostic monitoring batches up to 50 exact acceptance-guarded lookups per request. The read-only `/v1/events/recipient-blockers` endpoint preserves ordered independent results and errors, with a shared five-second deadline. Diagnostic read counts remain recipient counts. A batch is not an atomic snapshot or proof of handler completion.
+
+Use `CommitRecoveryWatchOptions{Diagnostics: true, MaxDiagnosticAge: 30*time.Second}` for watch, or `DiagnoseCommitRecoveryStatusWithOptions(ctx, status, previous, CommitRecoveryDiagnosticsOptions{MaxDiagnosticAge: 30*time.Second})` for standalone/resumed diagnostics. Zero disables the policy; enabled ages range from 100ms to 24h. `diagnostics_progress.freshness` separates fresh, stale and unread samples and records the check time; `fresh_complete` is independent of historical coverage and delivery settlement. Stale samples refresh before fresh ones within the covered refresh pool. Saved counters and age policies are recomputed on resume.
+
+Repeated diagnostic samples expose `comparison`, compact `previous_observation`, and field-level `changes` with both observation timestamps. Comparisons require the same exact acceptance and increasing timestamps. Missing evidence resets the baseline; routing changes never imply handler completion. Checkpoints retain only the latest pair and recompute saved changes. `diagnostics_progress.compared` and `changed` count newly compared and changed recipients per pass, excluding retained samples. See [routing blocker change tracking](../../docs/gregale-commit.md#track-routing-blocker-changes).
+
+`WatchCommitRecoveryStatusWithOptions` accepts `CommitRecoveryWatchOptions{WatchDiagnostics: true, MaxDiagnosticAge: 30*time.Second}`. This enables diagnostics and waits for complete, fresh diagnostic coverage independently of delivery settlement. Monitoring exposes `watch_mode`, `diagnostic_coverage_complete` and stop reason `diagnostic_coverage_complete`. Age is rechecked after callbacks; the recorded check time defines completion. Resume retains existing coverage and cursors. Batch transport failures use the shared read retry budget; individual item failures rotate until timeout. Unavailable answers count as coverage, and coverage never proves handler success.
+
+Diagnostic watches expose `monitoring.diagnostic_estimate`: remaining initial samples, actual sampling rate, average samples per pass, estimated remaining passes/milliseconds, and a full-refresh span estimate. States distinguish insufficient timing, deferred receipt evidence, estimates, and already-covered selections. `refresh_exceeds_max_age` is advisory; forecasts never predict delivery success or fresh coverage completion. Performance measurements reset on resume while coverage/cursors persist. See [coverage estimates](../../docs/gregale-commit.md#estimate-diagnostic-coverage-time).
+
+### Inspect selected consumers
+
+Diagnostic progress includes `consumers`, sorted by subscription ID. Each summary counts relevant selected recipients, fresh/stale/unread coverage, validated sample statuses, fresh and stale waiting reasons separately, and newly compared/changed recipients in this pass. Waiting reasons expose paused subscriptions, circuits, ordering, capacity and other routing conditions without additional requests. Unsupported recipients are excluded. A valid unavailable or replaced answer counts as sampled coverage but contributes no waiting reason.
+
+`oldest_waiting` identifies the earliest accepted event among validated available samples, with its exact query, observation timestamp, freshness and waiting reason. Acceptance time is not the time a blocker started. Stale waiting reasons describe historical samples; these summaries are neither account-wide backlog totals nor delivery success. Saved totals are ignored and recomputed from validated rows at the progress freshness check time. CLI watch output includes these summaries when consumer evidence changes, without timestamp-only polling updates.
+
+### Detect persistent sampled blockers
+
+Enable watch stall detection with `--stall-threshold 30s --watch --diagnostics --max-diagnostic-age 10s` (both duration policies accept 100ms–24h; zero disables detection). Go watch options use `StallThreshold`, Node uses `stallThresholdMs`, and Python uses `stall_threshold` in seconds. Watch results include `monitoring.stall_threshold_ms` and `monitoring.consumer_stalls`, grouped by selected subscription. CLI alerts once per confirmed blocker episode and can alert again after confirmation breaks. Detection does not change watch completion, timeouts, retries or delivery actions. A coverage watch can complete before the stall threshold is reached.
+
+Each consumer has recipient counts for `insufficient_evidence`, `not_blocked`, `observing` and `stalled`, plus overlapping indicators `routing_changed` and `advancing` for the most recent confirmed pair. Advancing specifically means pending to processing, or available to enqueued; it does not prove handler success. Other routing changes can improve or worsen conditions. Blocker details contain the exact query, reason, first/last sample timestamps, sample count and `monitored_ms`: the monotonic span between distinct samples in this invocation, never the original blocker duration.
+
+At least two strictly increasing fresh samples of the same routing observation must span the threshold. Pauses, circuit/rate limits, ordering, capacity and retry backoff are eligible; ready and processing indicators are not blockers. Changes in routing state, target availability, capacity scope or exact ordering blocker reset the episode. Stale, future, unavailable, replaced, invalid and non-monotonic evidence interrupt confirmation; a gap exceeding the age limit also resets it. Retained samples cannot start an episode or extend its duration. Resume starts a new tracker and ignores checkpoint stall aggregates. Counts describe sampled selected recipients, not account-wide stalled consumers.
+
+### Consume blocker incident transitions
+
+Stall-enabled watch results include `monitoring.blocker_incidents` (currently confirmed incidents) and `monitoring.blocker_transitions` (events from the current pass). An incident opens when fresh samples reach the stall threshold. Its opaque ID stays fixed during that episode within this watch. Each transition has an increasing invocation-local sequence, incident ID, exact guarded query, original waiting reason, notification timestamp and optional compact routing evidence. Deduplicate repeated snapshots by incident ID and sequence. A newly confirmed episode receives a new ID. Without durable alerts, resume starts a new invocation and does not adopt saved incidents or replay their transitions.
+
+Transitions are `opened` / `persistent_blocker`, `resolved` / `routing_not_blocked`, or `confirmation_lost`. Resolution requires a newly sampled, strictly later, fresh observation without an evidence gap: either retained routing has ended (`not_waiting`) or the sampled waiting reason is no longer an eligible blocker. This includes terminal routing failures/filters and never proves handler success. Changed blockers or episode resets report `confirmation_lost` / `episode_reset`; stale, unavailable, invalid or replaced evidence reports `evidence_unavailable`, excessive sampling gaps report `sample_gap`, and missing selected evidence reports `selection_unavailable`. Missing evidence never implies resolution.
+
+Add `--alerts-json` to a stall-enabled CLI watch to emit one JSON transition per line on stderr and suppress routine watch progress text. The final status JSON remains on stdout; command errors retain their existing error reporting. The CLI deduplicates callback/final snapshot events and emits transitions discovered by final freshness checks. Without this flag, lifecycle alerts use readable text. Watch completion and deadlines are unchanged: a stopped watch may still have active confirmed incidents. Active state and current-pass events are bounded by the selected recipients; these results are not a durable incident history or a delivery success signal.
+
+### Resume pending incident notifications
+
+A stall-enabled CLI watch with `--checkpoint PATH` now enables a durable alert outbox. SDK watch options enable it with Go `DurableAlerts: true`, Node `durableAlerts: true`, or Python `durable_alerts=True`. SDK callers must persist progress and final snapshots themselves, before handing alerts to a consumer. `monitoring.alert_outbox` contains version 1, a notification session, its latest sequence, ordered `pending` transitions and saved `active` incidents. Consume `pending` when durable mode is enabled; `blocker_transitions` remains a per-pass view.
+
+Resume validates saved alerts against the same frozen publication/acceptance/subscription selection and reviewed attempts, checks episode lineage and bounded queue shape, and preserves pending IDs, sequences and the notification session. This extends the invocation-only lifecycle behavior above for durable notification streams. Previously active episodes emit `confirmation_lost` with reason `watch_resumed`; saved samples never restore live confirmation. New episodes require fresh samples and receive new IDs in the continued stream. Historical pending alerts remain historical notifications even when current evidence has disappeared.
+
+Printing or writing an alert is not acknowledgement from the consumer. After processing an alert, acknowledge its exact incident ID and transition sequence. CLI accepts an array such as `[{"incident_id":"0123456789abcdef0123456789abcdef-1","sequence":1}]` via `--ack-alerts PATH` with checkpoint and resume/refresh. The acknowledgement file is protected from checkpoint overwrite. SDKs accept initial `AlertAcknowledgements` / `alertAcknowledgements` / `alert_acknowledgements` and synchronous per-pass `OnAlertAcknowledgements` / `onAlertAcknowledgements` / `on_alert_acknowledgements` callbacks that return acknowledgement arrays after progress. Acknowledgements validate as a whole; duplicate pairs within a batch, wrong-stream IDs, future sequences and conflicting IDs for pending sequences fail without removing entries. Repeating an acknowledgement for an already removed sequence in this stream is an idempotent no-op. Callbacks should return promptly and acknowledge only completed consumer processing. Persist the next/final snapshot to commit removals; a crash before that save can replay acknowledged work.
+
+The CLI saves each snapshot before emitting alerts, including final-check transitions, and re-emits unacknowledged pending entries once per resumed invocation. This is at-least-once delivery of checkpointed notifications, not exactly-once processing; deduplicate by incident ID and sequence, and apply only transitions newer than the last sequence processed for that incident. Partial acknowledgements can replay an older transition after a newer one was processed. Resume the latest snapshot of a single checkpoint stream; SDK callers must serialize checkpoint ownership and writes. Notifications that were never checkpointed have no durability guarantee. Consumer acknowledgements are explicit; stderr success does not remove pending alerts.
+
+The queue is bounded at 1,024 slots, including a reserved closing transition for every active incident. If a new opening cannot reserve both slots, monitoring stops with `alert_queue_full` and retains queued notifications and the sampled status. Acknowledge pending work and resume. No queued transition is evicted. Notification sequences are bounded to the exact integer range shared by the SDKs. Invalid saved state/acknowledgements are rejected and do not overwrite the CLI checkpoint. Non-durable watches retain the previous per-pass behavior. Delivery mutations, receipt budgets and ordinary watch completion are unchanged.
+
+For offline alert queue management, `AcknowledgeCommitRecoveryAlerts(status, acks)`
+validates the historical outbox against its saved selection and returns a snapshot
+with exact acknowledged pending entries removed. The input is unchanged. It does
+not poll or restore live incident confirmation. Persist the returned snapshot
+atomically under exclusive checkpoint ownership before treating acknowledgements
+as durable. Passing no acknowledgements validates the queue for inspection/replay.
+
+`client.GetEventConsumerDeliveryHealth(ctx, app, subscriptionID, "15m")` returns
+routing health, bounded retained execution health, and an oldest-first pending
+blocker sample in one request. Component timestamps describe independent reads.
+Pending sample reason counts are sampled when truncated; execution history is
+always incomplete. Latest successful completion is a retained observation, not
+an all-time delivery watermark.
+
+For local health threshold monitoring, call
+`client.WatchEventConsumerDeliveryHealth(ctx, app, subscriptionID, options)` with
+`EventDeliveryHealthWatchOptions`. Set `Interval`, `Timeout`, and `MaxAge`, and at
+least one of `OldestPending`, `Retrying`, `DeadLetters`, `Paused`, `CircuitBlocked`,
+or `CapacityBlocked`. Duration fields use `time.Duration`; count fields use int64;
+zero disables a threshold. `OnProgress` receives detached health/condition snapshots
+and latest-pass `Alerts` (`opened`, `resolved`, or `confirmation_lost`). Return an
+error to stop. Deduplicate by incident ID and sequence, and persist externally if
+needed: this watch is invocation-local and does not use a durable alert outbox.
+Circuit/capacity durations require consecutive fresh samples; missing/incomplete capacity
+aggregates and incomplete execution evidence cannot resolve alerts. Deadline/read/
+callback failures return a partial result and error.
+
+Delivery health `CapacityWaits` exposes complete effective capacity-reason counts
+by scope with independent freshness and subscription binding. Local capacity watches
+use these counts even when the pending event sample is truncated. Missing aggregates
+from older servers remain unknown rather than becoming zero counts.
+
+Delivery health `WaitingReasons` exposes the complete pending waiting-reason
+partition, including zero entries, its own pending total, completeness, coverage,
+observation time, and acceptance cutoff. `EventPendingWaitingReasonCountsComplete`
+checks that a dictionary has the known keys, nonnegative counts, and an exact sum.
+A nil aggregate from an older server means unavailable evidence. Backlog consumer
+`PendingWaitingReasons` counts matching pending recipients before pagination.
+
+Delivery-health watch options also accept `WaitingReasonCounts: map[string]int64{"ordering_blocked": 10, "retry_backoff": 100}` and `WaitingReasonDurations: map[string]time.Duration{"subscription_rate_limited": 5 * time.Minute}`. These use complete pending reason counts, independent of sample truncation. Duration thresholds measure consecutive fresh local nonzero observations (at least two), not individual recipient duration. Missing or invalid evidence loses confirmation. Both options use the existing invocation-local lifecycle notifications; see ADR-964.
+
+For checkpointed delivery-health watches, set `DurableAlerts: true` and atomically persist `progress.Checkpoint` in `OnProgress` before sending its alert notifications. Resume with `Resume: &saved` and the same app, subscription, window and threshold selection. Saved incidents remain unknown until fresh evidence confirms or clears them; sustained durations restart while preserving incident IDs. `ValidateEventDeliveryHealthCheckpoint` checks historical state; `AcknowledgeEventDeliveryHealthAlerts` returns a copy with exact pending incident ID/sequence pairs removed. For offline acknowledgement, stop the watch, persist the returned checkpoint and resume it. For live acknowledgement, provide `PollAcknowledgements(ctx, checkpoint)` returning exact incident/sequence pairs. The watch proposes removals through `OnProgress` before adopting them in memory; persist that progress atomically. Repeated exact pairs are idempotent within the last 1,024 removed transitions, including across resumes. Foreign, future, fabricated or older evicted pairs fail without removing anything. The bounded outbox reserves closing capacity, never evicts notifications, and stops new openings when full. Replay is at least once: use session/sequence for consumer deduplication. Enabling durable alerts does not itself write files or deliver notifications. See ADR-965.
+
+Configure watch `SLO: &EventDeliveryHealthSLOOptions{RoutingLatency: time.Second, RoutingFailureBudgetPct: 1, MinimumSamples: 10, Sustain: time.Minute}` for sustained window targets. `EvaluateEventConsumerDeliverySLO` exposes metric scope, sample counts and evidence eligibility; the watch separately enforces fresh advancing observations and at least two samples across the sustain duration. Retry and dead-letter targets are outcomes per second. Routing targets cover recorded outcomes only and become unknown when history was compacted. Execution window targets use durable per-subscription outcomes retained for 30 days, independently of receipt, invocation and attempt-history deletion. The response exposes `window_coverage`, window completeness, collection start, loss high-water mark and earliest evidence expiry. Retained invocation-state truncation does not disqualify complete ledger windows. Later windows can qualify once they start strictly after a loss boundary; legacy ledger baselines remain unknown pending reconciliation. Older responses retain the conservative ADR-968 checks. See ADR-969. Resume requires identical targets, minimum samples and sustain duration. See ADR-967.
+
 ## Inspect durable entity metadata
 
 The owner-only preview endpoint `GET /v1/apps/{slug}/entities/inspect` accepts
@@ -1021,3 +1277,351 @@ Use the attention reason `sla_breached` to find known breaches. Performance coho
 Workflow steps optionally accept `state_sla_warning_percent`, mapping budgeted nonterminal states to whole percentages 1–99. For example, an 80% warning on a 1,800-second budget starts at 1,440 seconds. Pin threshold changes to a new workflow contract version.
 
 Current `sla` data includes optional `warning_percent` and, when retained entry history is known, `warning_at`. Status becomes `at_risk` at that time, then `breached` at the due time. Unknown history implies neither status. Use attention reason `sla_at_risk`; matching summaries expose `sla_at_risk_workflow_count`. These observations do not enforce application actions.
+
+## Reversible issue grouping
+
+Issue actions support `merge` with `target_issue_id` and `split` with
+`member_issue_id`. Canonical details expose `group_members`; occurrences and
+activity retain `original_issue_id`. See [manual grouping and retained history](../../docs/issues.md#reversible-manual-grouping).
+
+Use `cause-chain-v1` to group wrapped exceptions by the deepest complete reported
+cause. The dashboard preserves the outer exception and cause chain. See
+[Issues cause-aware grouping](../../docs/issues.md#cause-aware-grouping) for
+language semantics, incomplete chains, and compatibility.
+
+Managed compute storage client loading and rotation are described in the
+[object storage compute guide](../../docs/object-storage-compute.md).
+Use `NewSecretReloadCoordinator` with `storage.SecretConsumer()` to adopt atomic
+credential snapshots on startup, SIGHUP and manual refresh. Start with the
+workload's lifetime context before serving requests. Opt into
+`ObjectStorageBindingOptions[T]{Retire: ...}` and use `Acquire()`/`Release()`
+through response-body closure to retire old clients safely. Managed bindings
+reject raw `Current()` acquisition. After stopping admission and the coordinator,
+use `WaitForRetirement(ctx)` with a fresh shutdown budget. Without a retirement
+hook, `Current()` keeps caller-owned lifetime behavior. All registered consumers
+must succeed before a revision is ACKed.
+
+Checked project release graphs use the preparation and activation endpoints.
+Preparation returns a manifest with exact members, expected routing and policy
+revisions; activation independently rechecks binding evidence and service
+readiness. Internal service evidence is selected by `service_targets` together
+with an exact caller deployment. See the [qualification and activation workflow](../../docs/networking.md#qualify-and-activate-a-project-release-graph)
+for the CLI steps, consent requirements and graph limitations.
+
+
+Checked graph recovery uses `Client.PrepareCheckedProjectRollback` and
+`Client.RollbackCheckedProjectRelease` to select retained history
+and commit the verified manifest. Historical membership and expiry are checked
+atomically under current binding policies. The new release records
+`rollback_source_release_id` and `rollback_previous_release_id`. See the
+[recovery workflow](../../docs/networking.md#recover-a-retained-project-release-graph).
+
+
+Checked graph deactivation uses `Client.PrepareCheckedProjectDeactivation` and `Client.DeactivateCheckedProjectRelease`.
+Preparation freezes one 100% weighted fallback per workload with current policy
+and service targets. Qualify this `deactivate: true`, `ttl_seconds: 0` manifest,
+then deactivate explicitly. Missing fallbacks, splits, stale intent and missing
+readiness block the switch. The retired release's `deactivation` field contains
+the durable receipt and exact fallback members. See the
+[deactivation workflow](../../docs/networking.md#deactivate-a-project-graph-with-checked-fallback-routing).
+
+Candidate service staging uses `POST .../release-sets/staging` with a complete
+prepared forward or rollback manifest and a 1–1800 second `ttl_seconds` lease.
+Read or cancel the stage with `GET` / `DELETE .../release-sets/staging/{stage}`.
+Staging capacity is billable, preserves current routes, uses ordinary admission
+limits, and excludes GitOps-managed workloads. Repeating the same manifest reuses
+its original expiry. `ready` is observed replica readiness, not binding proof;
+run verification and explicit activation/rollback afterwards. Cancellation or
+expiry removes temporary capacity while active graph allocations remain.
+
+
+Push queue canaries require an exact deployment, a declared safe `GREGALE_QUEUE_CANARY_BINDINGS` override and explicit publication consent. Create, get and cancel operations expose bounded publication/dispatch/completion status. The `handler_completion` queue release requirement checks fresh completion on the selected deployment plus normal consumer readiness. See [queue completion canaries](../../docs/networking.md#push-queue-binding-completion-canaries).
+
+Durable single-app binding verification exposes create, status, resume, atomic
+step admission, complete and cancel operations. Supply a stable run UUID and
+review digest; original consent and deadlines are immutable, and observing an
+existing task/message does not acquire ownership. See
+[durable verification runs](../../docs/networking.md#durable-single-app-binding-verification).
+
+Durable graph qualification preserves the reviewed manifest, member receipts and exact service targets. See [durable project graph verification](../../docs/networking.md#durable-project-graph-verification) for status, resume and cancel.
+
+Binding verification review endpoints return an executable plan and opaque digests without admitting work. Call `ReviewBindingVerification` / `reviewBindingVerification` / `review_binding_verification`, or the corresponding project review method. Check `ready`, show blockers and required consent, then forward the returned selection and digest to receipt creation. Graph creation also forwards the aggregate `review_digest`, member `review_digests` and unchanged consent. No client-side digest calculation is required. A ready review is not a passing verification result.
+
+### Run a durable binding verification receipt
+
+Save the receipt UUID before calling the existing review and create methods. Resume that same UUID after response loss:
+
+```go
+run, err := client.RunBindingVerification(ctx, "api", savedRunID,
+    faas.BindingVerificationRunnerOptions{Concurrency: 2, PollInterval: time.Second})
+// For a prepared project graph:
+graph, err := client.RunProjectBindingVerification(ctx, "project", "production", savedGraphRunID,
+    faas.BindingVerificationRunnerOptions{Concurrency: 2})
+```
+
+The runner returns success only after server-confirmed completion. One budget covers unfinished resources across all graph members. `OnProgress func(faas.BindingVerificationProgress) error` receives serial changes with receipt, member and resource IDs and statuses. Returning an error stops observation and preserves work. A persisted passed receipt reports `qualifying` until completion is reconfirmed.
+
+Context cancellation and transport errors preserve work. Errors unwrap their original cause and expose the root ID through `*faas.BindingVerificationRecoveryError`; resume that ID without changing consent, targets or expiry. To cancel server work, call the existing cancel method explicitly. The runner does not create receipts or activate routes. Callbacks must return promptly; Go cannot interrupt a callback supplied by the caller.
+
+### Diagnose a stopped verification run
+
+```go
+diag, err := client.GetBindingVerificationRunDiagnostics(ctx, "api", savedRunID)
+graphDiag, err := client.GetProjectBindingVerificationRunDiagnostics(ctx, "project", "production", savedGraphRunID)
+```
+
+Inspect `blockers`, whitelisted public `changes` and suggested `recovery` actions after a runner error. `complete` describes diagnostic read completeness; optional `check_passed` describes public evidence and conveys no admission or completion authority. Diagnostics preserve the original deadline and perform no execution, cancellation or receipt mutation. Missing domain permission fails the read. Continue with the same run ID only when current server checks allow it, or explicitly cancel and obtain a new reviewed receipt as directed.
+
+Verification receipt creation accepts `max_concurrency` (`MaxConcurrency` in Go), default two with a range of one through eight. This budget is frozen and enforced by the server across all drivers and graph members. Local runner concurrency can be lower; resume never changes the server budget. Runners wait and reread on `binding_verification_budget_full`, preserving the original receipt and deadline. Other capacity errors retain their recovery behavior. Diagnostics expose `budget` with the shared run ID, limit, unfinished resource count, waiting steps and fullness.
+
+Runner recovery errors now attach typed optional `Diagnostics` / `ProjectDiagnostics` containing server blockers, public changes and recovery suggestions. The read-only lookup has a two-second cap and respects the original receipt/caller deadlines. Unavailable, forbidden or mismatched diagnostics preserve the original cause and run ID. Cancellation and callback failures skip enrichment; no recovery action is executed automatically. Use `SkipDiagnostics: true` to disable it.
+
+### Create from a reviewed binding selection
+
+Persist a canonical nonzero run UUID before creation. Pass a ready server review, lifetime and explicit effect consent; digests and selections are forwarded unchanged. Typed creation errors retain the UUID, original cause and whether creation was invoked. This flag does not prove acceptance. Reconcile uncertain creation by reading the same ID with the same review/options. Reconciliation never writes, resumes or replaces work; a failed read does not establish noncreation. Run a confirmed receipt explicitly using the existing runner.
+
+```go
+options := faas.BindingVerificationCreationOptions{RunID: savedID, TTLSeconds: 60, MaxConcurrency: 2, QueuePublish: true}
+run, err := client.CreateBindingVerificationFromReview(ctx, "api", review, options)
+// After an uncertain creation error, inspect the same identity:
+run, err = client.ReconcileBindingVerificationCreation(ctx, "api", review, options)
+```
+
+Graph methods are `CreateProjectBindingVerificationFromReview` and `ReconcileProjectBindingVerificationCreation`. Use `errors.As` with `*BindingVerificationCreationError` (`RunID`, `Attempted`, `Unwrap`).
+
+Durable runner status GETs now retry temporary connection failures and HTTP 502/503/504 with bounded exponential jitter. Configure `StatusReadRetries` (nil defaults to three; pointer to zero disables), maximum eight retries per read. Retry waits obey the original expiry and caller stop controls. Progress exposes `retrying`, `retry_attempt` and `retry_delay_ms`; callback failures stop observation. Lifecycle writes and invalid responses retain explicit recovery behavior.
+
+### Discover retained verification receipts
+
+Use `ListBindingVerificationRuns(ctx, app, BindingVerificationRunListOptions{Limit: 20})` and `ListProjectBindingVerificationRuns(ctx, project, environment, options)`. Options include `Cursor`, `DeploymentID`, `Status`, and app-only `Scope`/`IncludeMembers`. Follow `NextCursor` with the same filters. Results contain `Runs` and `ObservedAt`; summaries omit protected snapshots and resource output. Listed stored/expired states do not assert current qualification. App lists default to standalone receipts; included members identify `GraphRunID`. Project lists contain roots only. Receipt retention remains unchanged.
+
+Durable runners wait for recognized final `qualification` conditions after successful probes. Progress reports `waiting_for_qualification` with typed public conditions; polling stays within the original receipt expiry and caller deadline/stop controls. Unknown conditions or review drift stop observation. Waiting does not admit new work or renew receipts. See [ADR-1365](../../docs/adr/1365-verification-qualification-waiting.md).
+
+After an eligible admission/completion transport failure or HTTP 502/503/504, durable runners reconcile through a bounded GET of the original receipt. They continue only after validating proof of the exact owned admission or fresh passed completion, and never automatically replay the uncertain write. Progress exposes `reconciling` with `operation` and admission selectors. Reads obey existing status retry settings, original expiry and caller stop controls. Unproved results preserve explicit recovery with the original ID and write cause. See [ADR-1366](../../docs/adr/1366-verification-write-reconciliation.md).
+
+Reviewed creation now reconciles eligible transport failures and HTTP 502/503/504 through bounded reads of the original UUID. It returns only a matching usable receipt, without repeating creation or generating another UUID. Configure `StatusReadRetries` and `OnProgress`; read retries default to three, with zero disabling extra attempts. Progress emits `reconciling` with `operation: creation` and bounded `retrying` events. Recovery is capped at five seconds and the requested TTL measured from the attempt, plus caller context/stop controls. Unproved results preserve the typed creation error, attempted flag, original UUID and write cause. Explicit reconciliation remains a single read that can inspect terminal or expired receipts. See [ADR-1368](../../docs/adr/1368-verification-creation-reconciliation.md).
+
+### Go PostgreSQL pools
+
+Use `PostgresPoolBinding` to validate a fresh pool before atomic secret adoption and
+retire old pools after their transaction leases release. Validation and retirement
+callbacks are required; the application supplies its driver. Register the secret
+consumer with the reload coordinator, hold each lease through driver connection
+release, and invalidate before waiting for retirement at shutdown. See the
+[pool lifecycle and SDK examples](../../docs/postgres-pool-runtime.md) and the
+[runnable Node pg.Pool service](../../examples/postgres-pool-rotation/README.md).
+
+### Deferred delivery acknowledgments
+
+Configure future subscription acceptances with `SetEventAcknowledgmentPolicy`.
+An opted-in handler durably enqueues processing before returning HTTP 202; its
+worker uses `RenewEventAcknowledgment` and `CompleteEventAcknowledgment` with the
+secret delivery token and an appropriately scoped API credential. Inspect state
+with `GetEventAcknowledgment`. See [the protocol and rollout requirements](../../docs/event-deferred-acknowledgments.md).
+
+For saved application-owned callback intents,
+`RecoverEventAcknowledgmentIntents` runs a finite pass with bounded attempts and
+concurrency, joined context cancellation and scalar progress returned alongside
+errors. It preserves committed settlements even when their callbacks return
+uncertainty. See the [Go recovery pass contract](../../docs/event-acknowledgment-go-recovery-pass.md)
+and [buildable host example](examples/event-acknowledgment-recovery/README.md).
+
+Set `RetryPolicy: &faas.EventAcknowledgmentIntentRetryPolicy{}` on the pass for
+capped exponential full jitter based on persisted recovery claims. Single-intent
+recovery and claims expose `WithRetryPolicy` variants. Leave `Backoff` zero when
+enabling the policy; omitted policies retain fixed delays. See the
+[adaptive retry contract](../../docs/event-acknowledgment-go-retry-policy.md).
+
+Use `RunDurableWithRetryPolicy` and the other binding-aware staging variants to
+save a versioned policy atomically with a new intent. Captured bindings override
+worker fallback and appear in `Intent.RetryPolicy` / listing metadata. Existing
+installs need an explicit application schema upgrade before current Go intent
+staging/recovery. See [stored policies and compatible-worker rollout](../../docs/event-acknowledgment-stored-retry-policy.md).
+
+Use `AdoptEventAcknowledgmentIntentRetryPolicy` for existing unbound backlog,
+guarded by the selected timestamp/count and absence of a live claim. Install the
+optional `EventAcknowledgmentIntentPolicyAdoptionSchema` first and retain the
+command UUID/original inputs for idempotent resolution of unknown commits. It
+preserves callback data, count and due time. See the
+[policy adoption contract](../../docs/event-acknowledgment-policy-adoption.md).
+
+Use `RunDurableWithRetryBudget` and the other budget-aware staging variants to
+bind a v2 total recovery-claim budget. Exhausted callbacks are durably parked
+with their protected inputs retained; `ResumeEventAcknowledgmentIntentRetryBudget`
+grants a larger total with timestamp/count/limit guards and idempotent receipts.
+Listing, pass progress and bounded health expose parked work. Upgrade the schema
+before current Go helpers and use current budget-aware Go, Node or Python hosts
+exclusively for enabled scopes. See the
+[budget, parking and resume contract](../../docs/event-acknowledgment-retry-budgets.md).
+
+`WatchEventAcknowledgmentIntentHealthWithCheckpoint` retains stable incidents and
+pending lifecycle alerts in application-persisted metadata. It provides exact
+acknowledgments, fresh confirmation after resume and final state alongside context
+cancellation. See the [Go checkpoint contract](../../docs/event-acknowledgment-go-checkpoints.md).
+
+Set `EventAcknowledgmentIntentWatchOptions.ParkedThreshold` to enable sustained
+`parked_intents` alerts in either Go watch, including a parked-only selection.
+Checkpointed parked alerts use version 2 and the existing replay/acknowledgment
+outbox; disabled parked alerts preserve version 1. Incomplete evidence stays
+unknown, and a lower parked count does not prove callback confirmation. See
+[rollout and evidence rules](../../docs/event-acknowledgment-go-checkpoints.md#parked-intent-alerts).
+
+`NewEventAcknowledgmentIntentHealthMetrics` adds a concurrency-safe bounded cache,
+with explicit `WatchEventAcknowledgmentIntentHealthMetrics` polling and a
+cache-only `NewEventAcknowledgmentIntentHealthMetricsHandler` for `net/http`.
+The thirteen Prometheus gauges share Node/Python evidence and missing-data rules;
+failed reads omit backlog, and scraping starts no SQL or callback work. Reuse the
+shared alerts/dashboard with the distinct Go target on loopback 9468. See
+[metrics and host ownership](../../docs/event-acknowledgment-go-recovery-prometheus.md)
+and the [buildable host](examples/event-acknowledgment-recovery/README.md#export-recovery-health-to-prometheus).
+
+`RecoverEventAcknowledgmentIntentsWithMetrics` adds actual pass start/joined-return
+observation with a separate scoped worker cache. It preserves original recovery
+progress/errors and excludes health reads/scrapes from worker activity. Idle and
+in-flight expectations, latest-pass outcomes and opt-in worker alerts distinguish
+an overdue recovery host from failed database evidence. See
+[Go worker liveness](../../docs/event-acknowledgment-go-worker-liveness.md).
+
+For application event publication, `SaveEventOutbox` stages a producer-key request
+in the business transaction; `RecoverNextEventOutbox` publishes retained due work
+with leased recovery. Install the application-owned `EventOutboxSchema` explicitly.
+See [the event outbox contract](../../docs/event-outbox.md), including the required
+server identity guard and bounded retry/retention policy.
+
+Use `ReconcileEventOutbox` to confirm a saved request from retained matching
+acceptance without publishing, `ResumeEventOutbox` for explicit guarded control
+within the original deadline, and `ListEventOutbox` for paginated unresolved
+metadata. Unavailable verification never automatically resumes publication.
+
+`GetEventOutboxHealth` summarizes retained unpublished work and
+`WatchEventOutboxHealth` emits sustained local backlog, stall, blocked and expiry
+alerts. See [the health guide](../../docs/event-outbox-health.md) for completeness,
+freshness and existing-installation index requirements.
+
+Set `CommandID` on outbox reconciliation/resume options for atomic retained
+control results. `GetEventOutboxControlReceipt` recovers a command result and
+`ListEventOutboxControlHistory` paginates one publication's retained controls.
+See [command replay and retention](../../docs/event-outbox-control-history.md).
+
+Outbox recovery can opt into `EventOutboxRetryPolicy` for capped exponential
+jitter, Retry-After guidance, and lifetime claim limits. See
+[policy and schema upgrade](../../docs/event-outbox-retry-policy.md) before enabling
+it on an existing application outbox.
+
+`RunEventOutboxWorker` adds bounded concurrent recovery, idle polling backoff and
+cooperative shutdown draining around the existing outbox helpers. See
+[worker lifecycle and callbacks](../../docs/event-outbox-worker.md) before wiring
+it into application supervision.
+
+Use `SaveEventOutboxWithRetryPolicy` for per-publication retry settings and
+`GetEventOutboxRetryPolicy` to read their current revision. Guarded
+`SetEventOutboxRetryPolicy` changes are always recorded in control history.
+See [saved policies and required migration](../../docs/event-outbox-stored-retry-policy.md).
+
+`SetEventOutboxPublishingPaused` controls app-scoped publishing with guarded,
+replayable command receipts. `GetEventOutboxPublishingControl` reads current
+state; command lookup/history APIs retain interventions separately from per-row
+controls. See [pause fencing and upgrade](../../docs/event-outbox-publishing-control.md).
+
+`SetEventOutboxRateLimit` configures an app-scoped token bucket shared by recovery
+workers. Claim commit consumes capacity atomically with its lease and attempt;
+rate-limited polls spend no attempts. Configuration uses revision guards and
+replayable command receipts. Health exposes throttled work separately from due or
+stalled work. Install the opt-in schema and replace older workers before relying
+on enforcement. See [rate limits](../../docs/event-outbox-rate-limit.md).
+
+For consumer admission, `SetEventSubscriptionRateLimit` configures a durable
+per-subscription interval/burst bucket. Revision-guarded UUID commands return
+applied or rejected receipts; lookup and bounded history support uncertain retries.
+Existing pause, circuit and per-second caps remain in force. See
+[consumer rate controls](../../docs/event-subscription-rate-limits.md).
+
+`PreviewEventSubscriptionRateLimit` reviews proposed consumer bucket settings
+without changing state. It returns the reviewed revision, projected capacity,
+current overlapping controls and bounded deadline-risk evidence. Its rate-only
+drain model is advisory and does not guarantee ordering or completion. See
+[preview semantics](../../docs/event-subscription-rate-preview.md).
+
+Set delivery-health watch `RateRisk: &EventDeliveryRateRiskOptions{ThrottledGrowth: 1,
+DeadlineRisk: 1, DeadlineWithin: 5*time.Minute, Sustain: time.Minute, RecoverySustain: time.Minute}` to monitor
+shared-bucket throttling with growing backlog, modeled deadline risk and approaching
+effective deadlines. Both
+warning and recovery require fresh sustained evidence. Progress exposes preview
+coverage and contributors; incomplete pending samples become unknown. The conditions
+support existing durable checkpoints and acknowledgements. See
+[rate-risk alerts](../../docs/event-delivery-rate-risk-alerts.md).
+
+`GetEventSubscriptionPendingSummary` reads full retained captured pending counts
+and effective deadlines under fixed read budgets. Growth and approaching-deadline
+watch conditions use that complete evidence beyond the preview's 1000-row cap;
+modeled-risk conditions retain the cap. See [full summaries and checkpoint
+compatibility](../../docs/event-subscription-pending-summary.md).
+
+`ListEventSubscriptionDeadlines` lists retained pending delivery identities by
+effective deadline with absolute bounds, expired/upcoming classification and
+scoped cursors. Pages are live and read-only; no payloads or recovery actions are
+included. See [deadline triage](../../docs/event-subscription-deadline-triage.md).
+
+`GetEventSubscriptionDeadlineWindow` counts upcoming deadlines within a selected
+horizon and partitions upcoming/expired cohorts by observed waiting reason. Set
+`RateRisk.DeadlineWindow` to `EventDeliveryDeadlineWindowOptions{Within: 5*time.Minute,
+Upcoming: 50, Expired: 1}` for sustained count alerts. The selected endpoint replaces
+the standalone summary read. See [window counts and alert semantics](../../docs/event-subscription-deadline-window.md).
+
+Set `DeadlineWindow.UpcomingReasons` and/or `.ExpiredReasons` to known-reason count
+maps for independent sustained incidents, such as `subscription_paused: 10`. These
+reuse the existing aggregate read and retain total-alert compatibility. See
+[reason-specific deadline alerts](../../docs/event-subscription-deadline-window.md#alerts-for-selected-waiting-reasons).
+
+Delivery-health `Confirmations` now explain rate/deadline warning and recovery
+sustain, growth baseline waits, resume requirements and notification capacity.
+Entries join conditions by metric and add no requests or checkpoint proof. See
+[confirmation diagnostics](../../docs/event-delivery-confirmation-progress.md).
+
+Deadline count alerts accept `UpcomingRecovery` / `ExpiredRecovery` pointers and
+`UpcomingReasonsRecovery` / `ExpiredReasonsRecovery` maps for separate inclusive
+recovery boundaries. Defaults remain warning minus one; explicit zero requires
+zero. Recovery must be below an enabled warning count. See
+[configuration and checkpoint compatibility](../../docs/event-subscription-deadline-window.md#separate-opening-and-recovery-counts).
+
+Set `DeadlineWindow.ExpiredRatio` to `EventDeliveryDeadlineRatioOptions` for an
+expired / pending-with-deadlines ratio condition. Select integer basis-point warning
+and recovery thresholds plus an explicit `MinimumRecipients`; insufficient cohorts
+remain unknown, never fabricated zero. The same full-count read and version 2
+checkpoint handling apply. See [ratio alerts and exact comparisons](../../docs/event-deadline-ratio-alerts.md).
+
+`InvestigateEventDeadlineAlert(ctx, app, alert, EventDeadlineInvestigationOptions{Limit: 25})`
+maps a Go/CLI count or ratio alert to one read-only page of current deadline triage.
+It preserves reason filters, scope checks and opaque pagination, returning a separate
+alert reference and current observation timestamps. It does not reconstruct historical
+membership or perform recovery actions. See [investigation usage and limits](../../docs/event-deadline-alert-investigation.md).
+
+Set `EventDeadlineInvestigationOptions{Limit: 25, Explain: true}` to add one
+acceptance-guarded blocker batch within the same five-second read budget. Explanation
+mode requires a page limit at most 50 and preserves one result per triage row,
+including unavailable/replaced evidence and independent read errors. Diagnostic
+timestamps and ordering-blocker identities remain separate from triage observations.
+Check `Explanations.ReadComplete` for read coverage. See
+[blocker explanation semantics](../../docs/event-deadline-alert-investigation.md#blocker-explanations).
+
+### MCP readiness notification queues
+
+MCP readiness notification queues expose separate `Destinations` with independent
+heads and retry status. Use `ListMCPReadinessNotificationQueues` to inspect them,
+then `ActMCPReadinessNotification` with `Destination: "primary"` or `"fallback"`,
+the head's `DeliveryVersion`, a stable request UUID and operator reason. Omit
+`Destination` for the whole-event action. `GetMCPReadinessFallback` and
+`SetMCPReadinessFallback` manage the rule's optional signed fallback;
+`ListMCPReadinessIncidents` includes per-receiver delivery history. These APIs
+require the normal app ownership, scopes and MFA checks.
+
+### Adopt claim budgets for existing callback backlog
+
+`AdoptEventAcknowledgmentIntentRetryBudget` attaches v2 to a selected active unbound/
+v1 intent with exact timestamp/count/policy guards, no live claim and no newer
+invocation attempt. Nil `ExpectedPolicy` requires unbound work; a v1 expectation
+must preserve timing. The total must exceed consumed claims; counts and due times
+remain unchanged. Install `EventAcknowledgmentIntentBudgetAdoptionSchema` beside
+the budget-upgraded table and durably save each command before execution. Exact
+retries resolve uncertain commits through historical receipts without another
+COMMIT. See the [budget-adoption contract](../../docs/event-acknowledgment-budget-adoption.md).

@@ -20,6 +20,7 @@ import (
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"google.golang.org/grpc/codes"
@@ -195,3 +196,36 @@ func TestEnsureWake_GenericEngineError(t *testing.T) {
 // satisfies scheddgrpc.SchedAPI (it forwards every method to the
 // inner *fakeEngine and overrides EnsureWake).
 var _ scheddgrpc.SchedAPI = (*ensureWakeEngine)(nil)
+
+// TestEnsureWake_AtCapacityRefusalsAreTyped pins production-us hunt #9,
+// H9-169: both refusals reached a worker app's visitors as
+// "500 schedd operation failed: sched: at capacity".
+func TestEnsureWake_AtCapacityRefusalsAreTyped(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		code   string
+		status int
+	}{
+		{"no request listener", sched.ErrNoRequestListener, api.CodeValidation, api.StatusForCode(api.CodeValidation)},
+		{"at capacity", sched.ErrAtCapacity, api.CodeCapacity, 503},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cli := newServer(t, &ensureWakeEngine{
+				fakeEngine: &fakeEngine{},
+				ensureWakeFn: func(context.Context, string, string) (sched.CoordOutcome, error) {
+					return sched.CoordOutcome{Err: tc.err}, tc.err
+				},
+			})
+			_, err := cli.EnsureWake(context.Background(), &scheddpb.EnsureWakeRequest{AppId: "app-x"})
+			p, ok := grpcerr.FromStatus(err)
+			if !ok || p == nil {
+				t.Fatalf("EnsureWake err = %v; want a typed problem", err)
+			}
+			if p.Code != tc.code || p.Status != tc.status {
+				t.Fatalf("problem = %s %d %q; want %s %d", p.Code, p.Status, p.Title, tc.code, tc.status)
+			}
+		})
+	}
+}

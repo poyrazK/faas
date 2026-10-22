@@ -37,7 +37,10 @@ func TestManagedPostgresComputePolicyRoutesAndReplay(t *testing.T) {
 	}
 	id := uuid.NewString()
 	path := "/v1/postgres/databases/" + d.ID + "/compute-policy"
-	if rec := e.Do(t, http.MethodPost, path, map[string]any{"request_id": uuid.NewString(), "scale_to_zero": false}, nil); rec.Code != http.StatusForbidden {
+	// Hunt #10: the handler's own plan check answered "quota exceeded"; a
+	// plan entitlement must say so.
+	if rec := e.Do(t, http.MethodPost, path, map[string]any{"request_id": uuid.NewString(), "scale_to_zero": false}, nil); rec.Code != http.StatusForbidden ||
+		!strings.Contains(rec.Body.String(), "managed_postgres_not_in_plan") {
 		t.Fatal("unentitled always-on request", rec.Code, rec.Body.String())
 	}
 	payload := map[string]any{"request_id": id, "scale_to_zero": true}
@@ -91,8 +94,10 @@ func TestManagedPostgresComputePolicyRoutesAndReplay(t *testing.T) {
 }
 func TestManagedPostgresComputePolicyValidationAndPlan(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanHobby)
-	(*(*e.S()).ManagedPostgres()), _, _ = resizeAPIService(t, (*e.Acct()).ID)
-	path := "/v1/postgres/databases/anything/compute-policy"
+	// ADR-202610171906 authorizes the persisted owner before validating the payload.
+	service, database, _ := resizeAPIService(t, (*e.Acct()).ID)
+	(*(*e.S()).ManagedPostgres()) = service
+	path := "/v1/postgres/databases/" + database.ID + "/compute-policy"
 	for _, tc := range []struct {
 		body   map[string]any
 		status int
@@ -105,6 +110,37 @@ func TestManagedPostgresComputePolicyValidationAndPlan(t *testing.T) {
 	} {
 		if rec := e.Do(t, http.MethodPost, path, tc.body, nil); rec.Code != tc.status {
 			t.Fatal(tc.body, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := e.Do(t, http.MethodPost, "/v1/postgres/databases/unknown/compute-policy", map[string]any{"request_id": "invalid"}, nil); rec.Code != http.StatusNotFound {
+		t.Fatal("unknown database bypassed ownership lookup", rec.Code, rec.Body.String())
+	}
+}
+
+// TestManagedPostgresCreatePlanRefusalsNameTheEntitlement pins the create
+// path's plan checks: always-on and a class outside the plan are entitlements
+// (not_in_plan), and a storage request over the plan cap names the cap.
+func TestManagedPostgresCreatePlanRefusalsNameTheEntitlement(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	service, _, _ := resizeAPIService(t, (*e.Acct()).ID)
+	(*(*e.S()).ManagedPostgres()) = service
+	for _, tc := range []struct {
+		name string
+		body map[string]any
+		want []string
+	}{
+		{"always-on", map[string]any{"name": "always-on", "region": "us-east-1", "scale_to_zero": false}, []string{"managed_postgres_not_in_plan"}},
+		{"class", map[string]any{"name": "big-class", "region": "us-east-1", "service_class": "production"}, []string{"managed_postgres_not_in_plan"}},
+		{"storage", map[string]any{"name": "big-disk", "region": "us-east-1", "storage_limit_bytes": int64(1) << 50}, []string{"managed_postgres_not_in_plan", "exceeds the plan allowance"}},
+	} {
+		rec := e.Do(t, http.MethodPost, "/v1/postgres/databases", tc.body, nil)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s: status %d body %s", tc.name, rec.Code, rec.Body.String())
+		}
+		for _, want := range tc.want {
+			if !strings.Contains(rec.Body.String(), want) {
+				t.Errorf("%s: body %s lacks %q", tc.name, rec.Body.String(), want)
+			}
 		}
 	}
 }

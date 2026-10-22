@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func checkMCPNativePrevious(ctx context.Context, c *Client, p mcpNativeReleasePlan, s *mcpNativeReleaseState) error {
@@ -177,7 +179,11 @@ func restoreMCPNativeWeb(ctx context.Context, c *Client, p mcpNativeReleasePlan,
 		if err := checkMCPNativePrevious(ctx, c, p, s); err != nil {
 			return err
 		}
-		if _, err := c.PatchDeploymentTrafficIfServing(ctx, s.ServingDeployment, 100, s.WebDeployment); err != nil {
+		if _, err := c.PatchDeploymentTrafficIfServingWithMCPAccess(ctx, s.ServingDeployment, 100, s.WebDeployment, previous.AccessPolicyExpectation); err != nil {
+			var apiErr *api.APIError
+			if errors.As(err, &apiErr) && api.IsMCPPromotionConditionFailure(apiErr.Problem.Code) {
+				return err
+			}
 			actual, e := mcpServingDeployment(ctx, c, p.WebApp, "")
 			if e != nil || actual != s.ServingDeployment {
 				return err

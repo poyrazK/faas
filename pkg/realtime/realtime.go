@@ -35,7 +35,6 @@ const (
 	// admission, so an open managed connection never pins an application VM.
 	ManagedPathPrefix = "/__gregale/realtime/"
 
-	defaultMaxConnections     = 10_000
 	defaultMaxMessageSize     = 1 << 20 // 1 MiB
 	defaultOutboundQueue      = 64
 	defaultOutboundQueueBytes = 4 << 20 // 4 MiB per connection, including an in-flight write
@@ -88,11 +87,15 @@ type pendingSignalKey struct{ channel, member, name string }
 type pendingSignal struct{ message Message }
 
 type Message struct {
-	signalKey     pendingSignalKey
-	signalToken   *pendingSignal
-	signalUpdated time.Time
-	signalExpires *time.Time
+	accessChannel        string
+	channelAuthorization bool
+	signalKey            pendingSignalKey
+	signalToken          *pendingSignal
+	signalUpdated        time.Time
+	signalExpires        *time.Time
 
+	ExpiresAt        *time.Time        `json:"expires_at,omitempty"`
+	TTLSeconds       int               `json:"ttl_seconds,omitempty"`
 	ExpectedSequence *int64            `json:"-"`
 	Metadata         map[string]string `json:"metadata,omitempty"`
 	Data             []byte
@@ -133,6 +136,7 @@ type Event struct {
 	AccountID             string    `json:"account_id"`
 	ConnectionID          string    `json:"connection_id"`
 	Principal             string    `json:"principal,omitempty"`
+	SessionID             string    `json:"session_id,omitempty"`
 	Channel               string    `json:"channel,omitempty"`
 	Permission            string    `json:"permission,omitempty"`
 	Sequence              uint64    `json:"sequence"`
@@ -193,6 +197,14 @@ type Endpoint struct {
 	MaxConnections   int
 	MaxMessageBytes  int64
 	MaxConnectionAge time.Duration
+	// AccountMaxConnections is the account's plan allowance of concurrent
+	// connections across the fleet (ADR-1323). Zero enforces no account limit.
+	AccountMaxConnections int
+
+	// LiveRoutes are the live-query keys this endpoint's connections may use
+	// (ADR-20261016151947): those of databases bound to the endpoint's app. A seal
+	// whose key is not listed is refused before it reaches a hub.
+	LiveRoutes []LiveRoute
 }
 
 // Hooks receives connection lifecycle events. Connect is synchronous with
@@ -223,22 +235,32 @@ func (NopHooks) Disconnect(context.Context, Event) error      { return nil }
 // Config contains bounded resource and lifecycle settings. Zero values use
 // conservative defaults; all limits are enforced at the data-plane boundary.
 type Config struct {
+	// Live, when set, carries live-query frames on v2 connections (ADR-20261016151947).
+	Live LiveQueries
+
 	MaxConnections  int
 	MaxMessageBytes int64
 	OutboundQueue   int // Maximum queued frames per connection.
 	// Maximum outbound payload bytes per connection, including a frame being
 	// written. Zero selects the conservative default.
 	OutboundQueueBytes int64
-	Heartbeat          time.Duration
-	PongWait           time.Duration
-	WriteWait          time.Duration
-	MaxConnectionAge   time.Duration
-	CallbackTimeout    time.Duration
+	// Maximum outbound payload bytes queued across every connection on the
+	// node (ADR-1323). Zero disables the node budget and its shedder.
+	OutboundNodeBytes int64
+	Heartbeat         time.Duration
+	PongWait          time.Duration
+	WriteWait         time.Duration
+	MaxConnectionAge  time.Duration
+	CallbackTimeout   time.Duration
 	// JWTAuthorizer verifies endpoint policies using oidc_jwt. A nil authorizer
 	// deliberately fails closed for JWT-configured endpoints.
 	JWTAuthorizer JWTAuthorizer
+	TicketPreview bool
+	TicketReader  SubscriptionTicketReader
 	// ResumePreview admits the opt-in v2 protocol only when a private history
 	// reader and synchronous channel authorizer are available.
+	AccessPreview      bool
+	AccessReader       ManagedRealtimeAccessReader
 	ResumePreview      bool
 	HistoryReader      ManagedRealtimeHistoryReader
 	ResumePollInterval time.Duration
@@ -253,11 +275,42 @@ type Config struct {
 	PresenceSyncInterval       time.Duration
 	PresenceLeaseRenewInterval time.Duration
 	FleetReportFailure         func(error)
+	// UsageReporter records per-endpoint usage with the control plane
+	// (ADR-1323). Nil disables usage recording.
+	UsageReporter       UsageReporter
+	UsageSampleInterval time.Duration
+	UsageReportInterval time.Duration
+	UsageReportFailure  func(error)
+	// usageClock replaces time.Now in usage tests.
+	usageClock func() time.Time
+	// FairUse enforces endpoints' account connection limits and the per-node
+	// account share (ADR-1323). Off, accounts are counted, and synced when
+	// ConnectionSync is set, but never refused.
+	FairUse bool
+	// ConnectionSync shares per-account connection counts with the other
+	// nodes so plan connection limits hold fleet-wide (ADR-1323). Nil
+	// enforces them against this node's connections only.
+	ConnectionSync         ConnectionSyncer
+	ConnectionSyncInterval time.Duration
+	ConnectionSyncFailure  func(error)
+	// OccupancyPreview enables the internal occupancy read and live occupancy
+	// frames (ADR-1324). Off, subscribe requests for occupancy are ignored.
+	OccupancyPreview bool
+	// OccupancyClient reads the other nodes' channel occupancy for live
+	// occupancy frames (ADR-1324). Nil counts this node only, which is exact
+	// when it is the only realtime node.
+	OccupancyClient ManagedRealtimeOccupancyClient
+	// occupancyManual stops the occupancy loops so tests drive flushes and
+	// refreshes themselves.
+	occupancyManual bool
 }
 
 func (c Config) withDefaults() Config {
 	if c.MaxConnections <= 0 {
-		c.MaxConnections = defaultMaxConnections
+		c.MaxConnections = api.RealtimeNodeConnectionsWithoutFairUse
+		if c.FairUse {
+			c.MaxConnections = api.RealtimeNodeConnectionsDefault
+		}
 	}
 	if c.MaxMessageBytes <= 0 {
 		c.MaxMessageBytes = defaultMaxMessageSize
@@ -267,6 +320,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.OutboundQueueBytes <= 0 {
 		c.OutboundQueueBytes = defaultOutboundQueueBytes
+	}
+	if c.OutboundNodeBytes < 0 {
+		c.OutboundNodeBytes = 0
 	}
 	if c.Heartbeat <= 0 {
 		c.Heartbeat = defaultHeartbeat
@@ -288,6 +344,15 @@ func (c Config) withDefaults() Config {
 	}
 	if c.PresenceSyncInterval <= 0 {
 		c.PresenceSyncInterval = 5 * time.Second
+	}
+	if c.UsageSampleInterval <= 0 {
+		c.UsageSampleInterval = defaultUsageSampleInterval
+	}
+	if c.UsageReportInterval <= 0 {
+		c.UsageReportInterval = api.RealtimeUsageReportInterval
+	}
+	if c.ConnectionSyncInterval <= 0 {
+		c.ConnectionSyncInterval = api.RealtimeConnectionSyncInterval
 	}
 	if c.PresenceLeaseRenewInterval <= 0 {
 		c.PresenceLeaseRenewInterval = 15 * time.Second
@@ -345,6 +410,10 @@ type EndpointInventory struct {
 // Stats is a point-in-time view of the bounded realtime data plane. Counters
 // are process-local; operators should aggregate them across realtimed nodes.
 type Stats struct {
+	ExpiredInboxCheckpoints            uint64  `json:"expired_inbox_checkpoints"`
+	ExpiredWebSocketCheckpoints        uint64  `json:"expired_websocket_checkpoints"`
+	ExpiredSSECheckpoints              uint64  `json:"expired_sse_checkpoints"`
+	ExpiredOutboundDrops               uint64  `json:"expired_outbound_drops"`
 	CurrentConnections                 uint64  `json:"current_connections"`
 	CurrentResumeSubscriptions         uint64  `json:"current_resume_subscriptions"`
 	AcceptedConnections                uint64  `json:"accepted_connections"`
@@ -358,6 +427,9 @@ type Stats struct {
 	OutboundQueueBytesLimit            uint64  `json:"outbound_queue_bytes_limit"`
 	OutboundQueueCountDrops            uint64  `json:"outbound_queue_count_drops"`
 	OutboundQueueByteDrops             uint64  `json:"outbound_queue_byte_drops"`
+	OutboundNodeBytesLimit             uint64  `json:"outbound_node_bytes_limit"`
+	OutboundNodeBudgetDrops            uint64  `json:"outbound_node_budget_drops"`
+	OutboundShedDisconnects            uint64  `json:"outbound_shed_disconnects"`
 	CallbackErrors                     uint64  `json:"callback_errors"`
 	CallbackOutboxFull                 uint64  `json:"callback_outbox_full"`
 	CallbackOutboxAdmissionErrors      uint64  `json:"callback_outbox_admission_errors"`
@@ -376,10 +448,27 @@ type Stats struct {
 	CallbackDeadLetterEvictions        uint64  `json:"callback_dead_letter_evictions"`
 	CallbackDeadLetterLastEvictionUnix int64   `json:"callback_dead_letter_last_eviction_unix"`
 	CallbackDeadLetterDiscards         uint64  `json:"callback_dead_letter_discards"`
+	UsageReports                       uint64  `json:"usage_reports"`
+	UsageReportFailures                uint64  `json:"usage_report_failures"`
+	UsageDroppedHours                  uint64  `json:"usage_dropped_hours"`
+	UsageHeldHours                     uint64  `json:"usage_held_hours"`
+	AccountLimitRefusals               uint64  `json:"account_limit_refusals"`
+	AccountNodeLimitRefusals           uint64  `json:"account_node_limit_refusals"`
+	ConnectionSyncFailures             uint64  `json:"connection_sync_failures"`
+	ConnectionSyncs                    uint64  `json:"connection_syncs"`
+	ConnectionSyncedAtUnix             int64   `json:"connection_synced_at_unix"`
 }
 
 type connection struct {
-	info ConnectionInfo
+	identity      *connectionIdentity
+	issuedAt      time.Time
+	ticketToken   string
+	ticketClaims  state.RealtimeSubscriptionTicket
+	ticketChecked time.Time
+	accessMu      sync.Mutex
+	access        state.ManagedRealtimeAccess
+	accessChecked time.Time
+	info          ConnectionInfo
 	// presenceID is a per-connection candidate member ID. Principal-scoped
 	// subscriptions may receive a shared opaque member ID from the lease store.
 	presenceID string
@@ -389,6 +478,17 @@ type connection struct {
 	callbackAuth atomic.Pointer[callbackAuthSnapshot]
 	ws           *websocket.Conn
 	m            *Manager
+
+	// live is the connection's live-query session, started by its first
+	// live frame.
+	live     LiveSession
+	liveOnce sync.Once
+	// browser is set before the read loop when the upgrade carried an Origin
+	// header; Data API server keys are refused on such connections.
+	browser bool
+	// liveOnly marks a v2 connection without OIDC: it carries live frames
+	// only, and channel frames are refused.
+	liveOnly bool
 
 	outbound       chan Message
 	outboundMu     sync.Mutex
@@ -401,6 +501,7 @@ type connection struct {
 	sequence                atomic.Uint64
 	mu                      sync.RWMutex
 	channels                map[string]struct{}
+	channelsReleased        bool // occupancy stops counting once the connection is removed
 	closeCode               int
 	closeReason             string
 	v2                      bool
@@ -434,6 +535,10 @@ type endpointState struct {
 	// to release against the count used during admission.
 	reserved *atomic.Int64
 	revoked  atomic.Bool
+	// usage is shared across policy refreshes like reserved (ADR-1323).
+	usage *usageCounters
+	// account counts the endpoint's account's connections on this node.
+	account *accountConnections
 }
 
 // Manager is the owner of managed realtime sockets for one process/node.
@@ -472,6 +577,21 @@ type Manager struct {
 
 	upgrader websocket.Upgrader
 
+	// accounts maps account ID to *accountConnections (ADR-1323 fair use).
+	accounts               sync.Map
+	connectionSyncedAt     atomic.Int64
+	connectionSyncFailures atomic.Uint64
+	connectionSyncs        atomic.Uint64
+	accountLimitRefusals   atomic.Uint64
+	accountNodeRefusals    atomic.Uint64
+
+	// usage records per-endpoint usage when Config.UsageReporter is set.
+	usage               *usageRecorder
+	usageReports        atomic.Uint64
+	usageReportFailures atomic.Uint64
+	usageDroppedHours   atomic.Uint64
+	usageHeldHours      atomic.Int64
+
 	acceptedConnections           atomic.Uint64
 	rejectedConnections           atomic.Uint64
 	receivedMessages              atomic.Uint64
@@ -479,9 +599,18 @@ type Manager struct {
 	sentMessages                  atomic.Uint64
 	sentBytes                     atomic.Uint64
 	droppedMessages               atomic.Uint64
+	expiredWebSocketCheckpoints   atomic.Uint64
+	expiredInboxCheckpoints       atomic.Uint64
+	expiredSSECheckpoints         atomic.Uint64
+	expiredOutboundDrops          atomic.Uint64
 	outboundPendingBytes          atomic.Int64
 	outboundQueueCountDrops       atomic.Uint64
 	outboundQueueByteDrops        atomic.Uint64
+	outboundNodeBudgetDrops       atomic.Uint64
+	outboundShedDisconnects       atomic.Uint64
+	outboundShed                  chan struct{}
+	occupancy                     occupancyIndex
+	occupancyLive                 occupancyLive
 	callbackErrors                atomic.Uint64
 	callbackOutboxFull            atomic.Uint64
 	callbackOutboxAdmissionErrors atomic.Uint64
@@ -497,7 +626,7 @@ func NewManager(cfg Config, hooks Hooks) *Manager {
 		hooks = NopHooks{}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Manager{
+	m := &Manager{
 		cfg:                     cfg,
 		hooks:                   hooks,
 		ctx:                     ctx,
@@ -513,12 +642,20 @@ func NewManager(cfg Config, hooks Hooks) *Manager {
 		resumeSignalRates:       make(map[channelKey]*resumeSignalRate),
 		channelRouteInstance:    uuid.NewString(),
 		resumeMetrics:           newResumeMetrics(),
+		outboundShed:            make(chan struct{}, 1),
+		occupancyLive:           newOccupancyLive(),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
 			CheckOrigin:     func(*http.Request) bool { return true },
 		},
 	}
+	m.startUsageRecorder()
+	m.startConnectionSync()
+	m.startOutboundShed()
+	m.occupancy.changed = m.occupancyChanged
+	m.startOccupancyFrames()
+	return m
 }
 
 // RegisterEndpoint publishes an endpoint to the local ingress route.
@@ -579,6 +716,11 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 		allowedOrigins = append(allowedOrigins, normalized)
 	}
 	e.AllowedOrigins = allowedOrigins
+	routes, err := validLiveRoutes(e.LiveRoutes)
+	if err != nil {
+		return err
+	}
+	e.LiveRoutes = routes
 	if e.MaxConnections <= 0 || e.MaxConnections > m.cfg.MaxConnections {
 		e.MaxConnections = m.cfg.MaxConnections
 	}
@@ -634,7 +776,7 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 			return err
 		}
 	}
-	state := &endpointState{reserved: new(atomic.Int64)}
+	state := &endpointState{reserved: new(atomic.Int64), usage: new(usageCounters), account: m.accountFor(e.AccountID)}
 	state.config.Store(&e)
 	m.endpoints.Store(e.ID, state)
 	return nil
@@ -700,6 +842,10 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "realtime service unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if r.URL.Query().Get("transport") == "sse" {
+		m.serveSSE(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -716,7 +862,8 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := value.(*endpointState)
-	endpoint := *state.config.Load()
+	endpointSnapshot := state.config.Load()
+	endpoint := *endpointSnapshot
 	protocols := websocket.Subprotocols(r)
 	wantsResume := false
 	for _, protocol := range protocols {
@@ -749,58 +896,102 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			r.Header.Set("Sec-WebSocket-Protocol", strings.Join(remainingProtocols, ", "))
 		}
 	}
+	ticketToken, _ := bearerToken(r)
+	if browserCredential {
+		ticketToken = browserToken
+	}
+	usesTicket := isTicket(ticketToken)
+	liveOnly := false
+	if usesTicket && (!wantsResume || !m.cfg.TicketPreview || m.cfg.TicketReader == nil) {
+		http.Error(w, "ticket unavailable", http.StatusUnauthorized)
+		return
+	}
 	if wantsResume {
 		if !m.cfg.ResumePreview || m.cfg.HistoryReader == nil {
 			http.Error(w, "realtime resume unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		if endpoint.ClientAuth.Mode != AuthModeOIDCJWT {
-			http.Error(w, "realtime resume requires OIDC authentication", http.StatusForbidden)
-			return
+		if !usesTicket && endpoint.ClientAuth.Mode != AuthModeOIDCJWT {
+			// ADR-20261016151947: an endpoint with live routes accepts v2 without
+			// OIDC for live frames only. Anonymous and server-key Data API reads
+			// are admitted frame by frame; channels need an authenticated
+			// connection.
+			if len(endpoint.LiveRoutes) == 0 {
+				http.Error(w, "realtime resume requires OIDC authentication", http.StatusForbidden)
+				return
+			}
+			liveOnly = true
 		}
-		if _, ok := m.hooks.(ChannelAuthorizer); !ok {
+		if _, ok := m.hooks.(ChannelAuthorizer); !ok && !usesTicket && !liveOnly {
 			http.Error(w, "realtime channel authorization unavailable", http.StatusServiceUnavailable)
 			return
 		}
 	}
 	authMetricMode := authMetricModeForEndpoint(endpoint)
 	principal := ""
-	switch endpoint.ClientAuth.Mode {
-	case AuthModeStaticBearer:
-		token, ok := bearerToken(r)
-		valid := ok && subtle.ConstantTimeCompare([]byte(token), []byte(endpoint.AuthToken)) == 1
-		if !valid && ok && endpoint.AuthTokenPrevious != "" &&
-			(endpoint.AuthTokenPreviousExpiresAt.IsZero() || time.Now().Before(endpoint.AuthTokenPreviousExpiresAt)) {
-			valid = subtle.ConstantTimeCompare([]byte(token), []byte(endpoint.AuthTokenPrevious)) == 1
-		}
-		if !valid {
-			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
-			m.rejectedConnections.Add(1)
+	var issuedAt time.Time
+	var identity JWTIdentity
+	var identityToken string
+	identityAt := time.Now()
+	if usesTicket {
+		claims, err := m.readTicket(r.Context(), endpoint.ID, ticketToken)
+		if err != nil {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		principal = "token"
-	case AuthModeOIDCJWT:
-		token, ok := bearerToken(r)
-		if browserCredential {
-			token, ok = browserToken, true
-		}
-		if !ok || m.cfg.JWTAuthorizer == nil {
-			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
-			m.rejectedConnections.Add(1)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		var err error
-		principal, err = m.cfg.JWTAuthorizer.Authorize(r.Context(), token, endpoint.ClientAuth)
-		if err != nil || strings.TrimSpace(principal) == "" {
-			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
-			m.rejectedConnections.Add(1)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
+		principal, issuedAt = claims.Principal, claims.IssuedAt
+	} else {
+		switch endpoint.ClientAuth.Mode {
+		case AuthModeStaticBearer:
+			token, ok := bearerToken(r)
+			valid := ok && subtle.ConstantTimeCompare([]byte(token), []byte(endpoint.AuthToken)) == 1
+			if !valid && ok && endpoint.AuthTokenPrevious != "" &&
+				(endpoint.AuthTokenPreviousExpiresAt.IsZero() || time.Now().Before(endpoint.AuthTokenPreviousExpiresAt)) {
+				valid = subtle.ConstantTimeCompare([]byte(token), []byte(endpoint.AuthTokenPrevious)) == 1
+			}
+			if !valid {
+				m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
+				m.rejectedConnections.Add(1)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			principal = "token"
+		case AuthModeOIDCJWT:
+			token, ok := bearerToken(r)
+			if browserCredential {
+				token, ok = browserToken, true
+			}
+			if !ok || m.cfg.JWTAuthorizer == nil {
+				m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
+				m.rejectedConnections.Add(1)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			var err error
+			if wantsResume {
+				identity, err = m.authorizeIdentity(r.Context(), token, endpoint.ClientAuth)
+				principal, identityToken = identity.Principal, token
+			} else {
+				principal, err = m.cfg.JWTAuthorizer.Authorize(r.Context(), token, endpoint.ClientAuth)
+			}
+			if err != nil || strings.TrimSpace(principal) == "" {
+				m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
+				m.rejectedConnections.Add(1)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			if m.cfg.AccessPreview {
+				issuedAt, err = verifiedTokenIssuedAt(token)
+				if err != nil {
+					m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
+					m.rejectedConnections.Add(1)
+					http.Error(w, "token issued-at required", http.StatusUnauthorized)
+					return
+				}
+			}
 		}
 	}
-	if endpoint.Authorize != nil {
+	if endpoint.Authorize != nil && !usesTicket {
 		var err error
 		principal, err = endpoint.Authorize(r.Context(), r)
 		if err != nil {
@@ -810,11 +1001,37 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if liveOnly && strings.TrimSpace(principal) == "" {
+		principal = "live" // a visitor without a session; live frames carry their own credential
+	}
 	if wantsResume && strings.TrimSpace(principal) == "" {
 		m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
 		m.rejectedConnections.Add(1)
 		http.Error(w, "realtime resume requires a stable principal", http.StatusUnauthorized)
 		return
+	}
+	if !usesTicket && m.cfg.AccessPreview && endpoint.ClientAuth.Mode == AuthModeOIDCJWT {
+		if m.cfg.AccessReader == nil {
+			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
+			m.rejectedConnections.Add(1)
+			http.Error(w, "realtime access unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		accessCtx, cancel := context.WithTimeout(r.Context(), realtimeAccessReadTimeout)
+		access, err := m.cfg.AccessReader.ReadRealtimeAccess(accessCtx, endpoint.ID, principal)
+		cancel()
+		if err != nil {
+			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
+			m.rejectedConnections.Add(1)
+			http.Error(w, "realtime access unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if sessionRevoked(access, issuedAt) {
+			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
+			m.rejectedConnections.Add(1)
+			http.Error(w, "session revoked", http.StatusUnauthorized)
+			return
+		}
 	}
 	m.recordAuthOutcome(authMetricMode, authMetricOutcomeAccepted)
 	upgrader := m.upgrader
@@ -824,9 +1041,9 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if endpoint.CheckOrigin != nil {
 		upgrader.CheckOrigin = endpoint.CheckOrigin
 	}
-	if !m.tryReserve(state) {
+	if refusal, ok := m.tryReserve(state); !ok {
 		m.rejectedConnections.Add(1)
-		http.Error(w, "realtime connection limit reached", http.StatusTooManyRequests)
+		refuseConnection(w, refusal)
 		return
 	}
 	defer m.release(state)
@@ -843,38 +1060,80 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = ws.Close()
 		return
 	}
-	conn := m.addConnectionWithProtocol(state, endpoint, principal, ws, wantsResume)
+	var verifiedConnection *connectionIdentity
+	if identityToken != "" {
+		verifiedConnection = &connectionIdentity{token: identityToken, identity: identity, request: r,
+			endpoint: endpointSnapshot, checkedAt: identityAt}
+	}
+	conn := m.addAuthenticatedConnection(state, endpoint, principal, ws, wantsResume, issuedAt, func() string {
+		if usesTicket {
+			return ticketToken
+		}
+		return ""
+	}(), verifiedConnection)
 	state.gate.Unlock()
+	conn.browser = r.Header.Get("Origin") != ""
+	conn.liveOnly = liveOnly
 	m.runConnection(r.Context(), conn)
 }
 
-func (m *Manager) tryReserve(state *endpointState) bool {
+// tryReserve admits one connection against the node, endpoint and account
+// limits. A refusal with a scope is an account fair-use limit (ADR-1323); the
+// caller answers it with the problem the refusal describes.
+func (m *Manager) tryReserve(state *endpointState) (connectionRefusal, bool) {
 	if state.revoked.Load() {
-		return false
+		return connectionRefusal{}, false
 	}
 	for {
 		current := m.reserved.Load()
 		if current >= int64(m.cfg.MaxConnections) {
-			return false
+			return connectionRefusal{}, false
 		}
 		if m.reserved.CompareAndSwap(current, current+1) {
 			for {
 				endpointCurrent := state.reserved.Load()
 				if state.revoked.Load() || endpointCurrent >= int64(state.config.Load().MaxConnections) {
 					m.reserved.Add(-1)
-					return false
+					return connectionRefusal{}, false
 				}
 				if state.reserved.CompareAndSwap(endpointCurrent, endpointCurrent+1) {
-					return true
+					if refusal, ok := m.reserveAccount(state); !ok {
+						state.reserved.Add(-1)
+						m.reserved.Add(-1)
+						m.countRefusal(refusal)
+						return refusal, false
+					}
+					state.usage.observeConnections(endpointCurrent + 1)
+					return connectionRefusal{}, true
 				}
 			}
 		}
 	}
 }
 
+func (m *Manager) countRefusal(r connectionRefusal) {
+	switch r.scope {
+	case api.RealtimeConnectionLimitAccount:
+		m.accountLimitRefusals.Add(1)
+	case api.RealtimeConnectionLimitAccountNode:
+		m.accountNodeRefusals.Add(1)
+	}
+}
+
+// refuseConnection answers a refused reservation: an account limit as an RFC
+// 7807 problem with the limit and observed count, anything else as before.
+func refuseConnection(w http.ResponseWriter, r connectionRefusal) {
+	if r.scope != "" {
+		api.WriteProblem(w, r.problem())
+		return
+	}
+	http.Error(w, "realtime connection limit reached", http.StatusTooManyRequests)
+}
+
 func (m *Manager) release(state *endpointState) {
 	m.reserved.Add(-1)
 	state.reserved.Add(-1)
+	state.account.local.Add(-1)
 }
 
 func normalizeOrigin(raw string) (string, error) {
@@ -919,10 +1178,21 @@ func (m *Manager) addConnection(state *endpointState, endpoint Endpoint, princip
 	return m.addConnectionWithProtocol(state, endpoint, principal, ws, false)
 }
 
-func (m *Manager) addConnectionWithProtocol(state *endpointState, endpoint Endpoint, principal string, ws *websocket.Conn, v2 bool) *connection {
+func (m *Manager) addConnectionWithProtocol(state *endpointState, endpoint Endpoint, principal string, ws *websocket.Conn, v2 bool, issuedAts ...time.Time) *connection {
+	var issuedAt time.Time
+	if len(issuedAts) > 0 {
+		issuedAt = issuedAts[0]
+	}
+	return m.addAuthenticatedConnection(state, endpoint, principal, ws, v2, issuedAt, "", nil)
+}
+
+func (m *Manager) addAuthenticatedConnection(state *endpointState, endpoint Endpoint, principal string, ws *websocket.Conn, v2 bool, issuedAt time.Time, ticket string, identity *connectionIdentity) *connection {
 	now := time.Now().UTC()
 	id := "rt_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	conn := &connection{
+		identity:    identity,
+		issuedAt:    issuedAt,
+		ticketToken: ticket,
 		info: ConnectionInfo{
 			ID:         id,
 			EndpointID: endpoint.ID,
@@ -959,6 +1229,24 @@ func (m *Manager) addConnectionWithProtocol(state *endpointState, endpoint Endpo
 func (m *Manager) runConnection(ctx context.Context, c *connection) {
 	defer m.removeConnection(ctx, c)
 
+	if c.identity != nil {
+		if !c.identityAllows(ctx) {
+			return
+		}
+		go c.monitorIdentity()
+	}
+	if c.accessEnabled() {
+		if !c.accessAllows(ctx, "") {
+			return
+		}
+		go c.monitorAccess()
+	}
+	if c.ticketToken != "" {
+		if !c.ticketAllows(ctx, "") {
+			return
+		}
+		go c.monitorTicket()
+	}
 	go c.writePump()
 
 	connect := Event{
@@ -974,7 +1262,12 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 	connect.CallbackURL = c.endpoint.CallbackURL
 	connect.CallbackPath = c.endpoint.ConnectPath
 	connect.CallbackAuthToken = c.currentCallbackAuthToken()
-	accepted, err := m.callConnect(ctx, connect)
+	accepted, err := true, error(nil)
+	// A live-only connection carries no identity for the app to judge; each
+	// live frame brings its own credential, so the app is not asked.
+	if c.ticketToken == "" && !c.liveOnly {
+		accepted, err = m.callConnect(ctx, connect)
+	}
 	if err != nil {
 		m.callbackErrors.Add(1)
 	}
@@ -1012,6 +1305,9 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 			}
 			return
 		}
+		if !c.accessAllows(ctx, "") {
+			return
+		}
 		lastSeen := time.Now().UTC()
 		c.mu.Lock()
 		c.info.LastSeen = lastSeen
@@ -1034,6 +1330,7 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 		event.CallbackAuthToken = c.currentCallbackAuthToken()
 		m.receivedMessages.Add(1)
 		m.receivedBytes.Add(uint64(len(data)))
+		c.state.usage.received(len(data))
 		callbackCtx, cancel := context.WithTimeout(ctx, m.cfg.CallbackTimeout)
 		callbackErr := m.hooks.Message(callbackCtx, event)
 		cancel()
@@ -1073,7 +1370,24 @@ func (c *connection) writePump() {
 			c.outboundMu.Lock()
 			msg = c.resolvePendingSignalLocked(msg)
 			c.outboundMu.Unlock()
+			if msg.ExpiresAt != nil && !time.Now().Before(*msg.ExpiresAt) {
+				c.m.expiredOutboundDrops.Add(1)
+				c.releaseOutboundBytes(int64(len(msg.Data)))
+				continue
+			}
 			if msg.signalExpires != nil && msg.signalExpires.After(msg.signalUpdated) && !msg.signalExpires.After(time.Now()) {
+				c.releaseOutboundBytes(int64(len(msg.Data)))
+				continue
+			}
+			if !c.identityAllows(c.m.ctx) {
+				c.releaseOutboundBytes(int64(len(msg.Data)))
+				return
+			}
+			if !c.accessAllows(c.m.ctx, msg.accessChannel) {
+				c.releaseOutboundBytes(int64(len(msg.Data)))
+				continue
+			}
+			if msg.channelAuthorization && !c.m.admitOutboundResumeChannel(c.m.ctx, c, msg.accessChannel) {
 				c.releaseOutboundBytes(int64(len(msg.Data)))
 				continue
 			}
@@ -1183,12 +1497,14 @@ func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 				}
 			}
 		}
+		c.releaseChannelsLocked()
 		c.mu.Unlock()
 		delete(m.conns, c.info.ID)
 	}
 	callbackAuthToken := c.currentCallbackAuthToken()
 	m.mu.Unlock()
 	c.state.gate.Unlock()
+	m.unwatchOccupancyConnection(c)
 	for _, slow := range fullPresenceQueues {
 		m.closeResumeOnQueueFull(slow, ErrOutboundQueueFull)
 	}
@@ -1223,6 +1539,9 @@ func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 	disconnect.CallbackAuthToken = callbackAuthToken
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), m.cfg.CallbackTimeout)
 	defer cancel()
+	if c.ticketToken != "" || c.liveOnly {
+		return
+	}
 	if err := m.hooks.Disconnect(ctx, disconnect); err != nil {
 		m.callbackErrors.Add(1)
 		if errors.Is(err, ErrCallbackNotPersisted) {
@@ -1296,6 +1615,7 @@ func (m *Manager) Send(ctx context.Context, connectionID string, msg Message) er
 	}
 	m.sentMessages.Add(1)
 	m.sentBytes.Add(uint64(len(msg.Data)))
+	c.state.usage.delivered(len(msg.Data))
 	return nil
 }
 
@@ -1431,12 +1751,17 @@ func (m *Manager) SendToPrincipal(ctx context.Context, endpointID, principal, me
 	return status, nil
 }
 
-// queueOutbound applies both the item-count and byte budgets to legacy and
-// resumable protocol frames. The byte budget includes a frame currently being
-// written, bounding buffered payload memory per connection.
+// queueOutbound applies the item-count, per-connection byte and node byte
+// budgets to legacy and resumable protocol frames. The byte budgets include a
+// frame currently being written, bounding buffered payload memory per
+// connection and across the node.
 func (m *Manager) queueOutbound(ctx context.Context, c *connection, msg Message) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if msg.ExpiresAt != nil {
+		expiry := *msg.ExpiresAt
+		msg.ExpiresAt = &expiry
 	}
 	size := int64(len(msg.Data))
 	c.outboundMu.Lock()
@@ -1458,10 +1783,14 @@ func (m *Manager) queueOutbound(ctx context.Context, c *connection, msg Message)
 				m.outboundQueueByteDrops.Add(1)
 				return ErrOutboundQueueFull
 			}
+			if !m.reserveNodeOutbound(delta) {
+				m.droppedMessages.Add(1)
+				m.outboundNodeBudgetDrops.Add(1)
+				return ErrOutboundQueueFull
+			}
 			msg.Data = append([]byte(nil), msg.Data...)
 			pending.message = msg
 			c.outboundBytes += delta
-			m.outboundPendingBytes.Add(delta)
 			return nil
 		}
 	}
@@ -1473,6 +1802,11 @@ func (m *Manager) queueOutbound(ctx context.Context, c *connection, msg Message)
 	if size > m.cfg.OutboundQueueBytes || c.outboundBytes > m.cfg.OutboundQueueBytes-size {
 		m.droppedMessages.Add(1)
 		m.outboundQueueByteDrops.Add(1)
+		return ErrOutboundQueueFull
+	}
+	if !m.reserveNodeOutbound(size) {
+		m.droppedMessages.Add(1)
+		m.outboundNodeBudgetDrops.Add(1)
 		return ErrOutboundQueueFull
 	}
 	msg.Data = append([]byte(nil), msg.Data...)
@@ -1491,13 +1825,15 @@ func (m *Manager) queueOutbound(ctx context.Context, c *connection, msg Message)
 			c.pendingSignals[msg.signalKey] = pending
 		}
 		c.outboundBytes += size
-		m.outboundPendingBytes.Add(size)
 		return nil
 	case <-ctx.Done():
+		m.outboundPendingBytes.Add(-size)
 		return ctx.Err()
 	case <-c.done:
+		m.outboundPendingBytes.Add(-size)
 		return ErrConnectionClosed
 	default:
+		m.outboundPendingBytes.Add(-size)
 		m.droppedMessages.Add(1)
 		m.outboundQueueCountDrops.Add(1)
 		return ErrOutboundQueueFull
@@ -1568,6 +1904,13 @@ func (m *Manager) Subscribe(connectionID, channel string) error {
 	if !validChannel(channel) {
 		return ErrInvalidChannel
 	}
+	m.mu.RLock()
+	candidate := m.conns[connectionID]
+	m.mu.RUnlock()
+	if candidate != nil && !candidate.accessAllows(m.ctx, channel) {
+		return ErrUnauthorized
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.conns[connectionID]
@@ -1584,7 +1927,7 @@ func (m *Manager) Subscribe(connectionID, channel string) error {
 	}
 	c.mu.Lock()
 	if _, subscribed := c.channels[channel]; !subscribed {
-		c.channels[channel] = struct{}{}
+		c.addChannelLocked(channel)
 		key := channelKey{endpointID: c.info.EndpointID, channel: channel}
 		members := m.subscribers[key]
 		if members == nil {
@@ -1627,7 +1970,7 @@ func (m *Manager) UnsubscribeWithRouteState(connectionID, channel string) (bool,
 	key := channelKey{endpointID: c.info.EndpointID, channel: channel}
 	if _, subscribed := c.channels[channel]; subscribed {
 		hadSubscribers := m.hasChannelSubscribersLocked(key)
-		delete(c.channels, channel)
+		c.removeChannelLocked(channel)
 		members := m.subscribers[key]
 		delete(members, connectionID)
 		if len(members) == 0 {
@@ -1652,6 +1995,7 @@ func (m *Manager) Publish(ctx context.Context, endpointID, channel string, msg M
 // PublishWithStatus reports per-connection queue admission and failures for
 // the local endpoint owner. It does not wait for clients to read the messages.
 func (m *Manager) PublishWithStatus(ctx context.Context, endpointID, channel string, msg Message) (PublishStatus, error) {
+	msg.accessChannel = channel
 	if !validChannel(channel) {
 		return PublishStatus{}, ErrInvalidChannel
 	}
@@ -1892,14 +2236,30 @@ func (m *Manager) Stats() Stats {
 		SentMessages:                  m.sentMessages.Load(),
 		SentBytes:                     m.sentBytes.Load(),
 		DroppedMessages:               m.droppedMessages.Load(),
+		ExpiredWebSocketCheckpoints:   m.expiredWebSocketCheckpoints.Load(),
+		ExpiredInboxCheckpoints:       m.expiredInboxCheckpoints.Load(),
+		ExpiredSSECheckpoints:         m.expiredSSECheckpoints.Load(),
+		ExpiredOutboundDrops:          m.expiredOutboundDrops.Load(),
 		OutboundPendingBytes:          uint64(maxInt64(m.outboundPendingBytes.Load(), 0)),
 		OutboundQueueBytesLimit:       uint64(m.cfg.OutboundQueueBytes),
 		OutboundQueueCountDrops:       m.outboundQueueCountDrops.Load(),
 		OutboundQueueByteDrops:        m.outboundQueueByteDrops.Load(),
+		OutboundNodeBytesLimit:        uint64(m.cfg.OutboundNodeBytes),
+		OutboundNodeBudgetDrops:       m.outboundNodeBudgetDrops.Load(),
+		OutboundShedDisconnects:       m.outboundShedDisconnects.Load(),
 		CallbackErrors:                m.callbackErrors.Load(),
 		CallbackOutboxFull:            m.callbackOutboxFull.Load(),
 		CallbackOutboxAdmissionErrors: m.callbackOutboxAdmissionErrors.Load(),
 		CallbackUnpersistedFailures:   m.callbackUnpersistedFailures.Load(),
+		UsageReports:                  m.usageReports.Load(),
+		UsageReportFailures:           m.usageReportFailures.Load(),
+		UsageDroppedHours:             m.usageDroppedHours.Load(),
+		AccountLimitRefusals:          m.accountLimitRefusals.Load(),
+		AccountNodeLimitRefusals:      m.accountNodeRefusals.Load(),
+		ConnectionSyncFailures:        m.connectionSyncFailures.Load(),
+		ConnectionSyncs:               m.connectionSyncs.Load(),
+		ConnectionSyncedAtUnix:        m.connectionSyncedAt.Load() / int64(time.Second),
+		UsageHeldHours:                uint64(maxInt64(m.usageHeldHours.Load(), 0)),
 	}
 	if provider, ok := m.hooks.(interface{ OutboxStats() CallbackOutboxStats }); ok {
 		outbox := provider.OutboxStats()
@@ -1949,6 +2309,13 @@ func (m *Manager) Close() error {
 	m.mu.RUnlock()
 	for _, c := range connections {
 		_ = c.close(websocket.CloseGoingAway, "service shutdown")
+	}
+	if m.usage != nil {
+		// Give the recorder its final report, bounded by its own timeout.
+		select {
+		case <-m.usage.done:
+		case <-time.After(usageFinalReportTimeout + time.Second):
+		}
 	}
 	return nil
 }

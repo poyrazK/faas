@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // BackendFromEnv is the shared seaming point for imaged / vmmd / any
@@ -80,6 +82,10 @@ import (
 //	                                memory: "none" (default) | "zstd". Readers
 //	                                always accept both formats, allowing a safe
 //	                                reader-first rolling deployment.
+//	FAAS_STORAGE_SPARSE_EXTENTS   gcs-only — "1" writes compressed drives,
+//	                                rootfs images and snapshot memory in the
+//	                                extent encoding (ADR-1135). Readers always
+//	                                accept it; enable after every node reads it.
 //	FAAS_REQUIRE_SHARED_ARTIFACTS  when "1"/"true", require a remote backend
 //	                                with FAAS_STORAGE_LOCAL_PREFIXES=none.
 //	                                This is the production split-node gate:
@@ -187,11 +193,13 @@ func wrapWithCache(parent StorageBackend, kind string) (StorageBackend, error) {
 	// remote fetch. An operator diagnosing wake latency should not have to
 	// infer it from the machine shape.
 	slog.Default().Info("storage: artifact cache budget resolved",
-		"dir", dir, "max_bytes", maxBytes, "source", source)
+		"dir", dir, "max_bytes", maxBytes, "source", source,
+		"min_free_bytes", api.ArtifactCacheMinFreeBytes)
 	cache, err := NewLocalCacheBackend(parent, dir, maxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("storage: cache backend: %w", err)
 	}
+	cache.SetMinFreeBytes(api.ArtifactCacheMinFreeBytes)
 	return cache, nil
 }
 
@@ -397,10 +405,15 @@ func gcsBackendFromEnv(ctx context.Context) (StorageBackend, error) {
 	if fallback != "" && fallback != "oci" {
 		return nil, fmt.Errorf("storage: unsupported FAAS_STORAGE_FALLBACK_BACKEND=%q (want \"oci\")", fallback)
 	}
+	sparseExtents, err := sparseExtentsFromEnv()
+	if err != nil {
+		return nil, err
+	}
 	gcsRemote, err := NewGCSStorageBackend(ctx, os.Getenv("FAAS_GCS_BUCKET"), compression)
 	if err != nil {
 		return nil, fmt.Errorf("storage: gcs backend: %w", err)
 	}
+	gcsRemote.WithSparseExtents(sparseExtents)
 	var remote StorageBackend = gcsRemote
 	if fallback != "" {
 		legacy, legacyErr := ociRemoteFromEnv()
@@ -413,6 +426,20 @@ func gcsBackendFromEnv(ctx context.Context) (StorageBackend, error) {
 		}
 	}
 	return routeRemoteBackend(remote)
+}
+
+// sparseExtentsFromEnv reads FAAS_STORAGE_SPARSE_EXTENTS, the writer opt-in
+// for the ADR-1135 extent encoding. Readers accept it regardless.
+func sparseExtentsFromEnv() (bool, error) {
+	raw := strings.TrimSpace(os.Getenv("FAAS_STORAGE_SPARSE_EXTENTS"))
+	switch {
+	case raw == "" || raw == "0" || strings.EqualFold(raw, "false"):
+		return false, nil
+	case raw == "1" || strings.EqualFold(raw, "true"):
+		return true, nil
+	default:
+		return false, fmt.Errorf("storage: FAAS_STORAGE_SPARSE_EXTENTS=%q: want \"1\" or \"0\"", raw)
+	}
 }
 
 func snapshotCompressionFromEnv() (string, error) {

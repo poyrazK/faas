@@ -1,4 +1,5 @@
 // adr: 137
+// adr: 1528
 // deadnode_reconciler_test.go — engine-level tests for the
 // stale-RUNNING billing-leak self-healer.
 //
@@ -35,7 +36,7 @@
 //   - List / Fail arg guards (empty instanceID, empty nodeID,
 //     limit ≤ 0) match pgstore.
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -47,6 +48,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -85,7 +87,7 @@ func readDeadNodeReconcileMetric(t *testing.T, ops *wire.OpsMetrics, outcome str
 	if ops == nil {
 		return 0
 	}
-	body := getMetricsBody(t, ops)
+	body := sched.GetMetricsBody(t, ops)
 	want := `schedd_dead_node_reconcile_total{outcome="` + outcome + `"}`
 	for _, line := range strings.Split(body, "\n") {
 		if strings.HasPrefix(line, want) {
@@ -106,7 +108,7 @@ func readDeadNodeReconcileMetric(t *testing.T, ops *wire.OpsMetrics, outcome str
 func TestReconcileDeadNodeInstances_DeadNodeRowFailed(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("schedd")
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 	e.WithOpsMetrics(ops)
 	nodeID := seedStaleComputeNodeForReconcile(t, store)
 	appID, insID := seedRunningInstance(t, store, nodeID)
@@ -152,7 +154,7 @@ func TestReconcileDeadNodeInstances_DeadNodeRowFailed(t *testing.T) {
 func TestReconcileDeadNodeInstances_ActiveNodeUntouched(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("schedd")
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 	e.WithOpsMetrics(ops)
 	nodeID := seedComputeNodeForReconcile(t, store, true) // active=true, fresh heartbeat
 	appID, _ := seedRunningInstance(t, store, nodeID)
@@ -179,7 +181,7 @@ func TestReconcileDeadNodeInstances_ActiveNodeUntouched(t *testing.T) {
 func TestReconcileDeadNodeInstances_NoOpOnEmptyStore(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("schedd")
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 	e.WithOpsMetrics(ops)
 
 	reconciled, err := e.ReconcileDeadNodeInstances(context.Background())
@@ -209,10 +211,13 @@ func TestReconcileDeadNodeInstances_NoOpOnEmptyStore(t *testing.T) {
 func TestReconcileDeadNodeInstances_PeerRaceWinner(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("schedd")
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 	e.WithOpsMetrics(ops)
-	nodeID := seedComputeNodeForReconcile(t, store, false)
+	nodeID := seedComputeNodeForReconcile(t, store, true)
 	_, insID := seedRunningInstance(t, store, nodeID)
+	if err := store.NodeSetLifecycle(t.Context(), nodeID, state.NodeLifecycleActive, state.NodeLifecycleUnavailable); err != nil {
+		t.Fatal(err)
+	}
 
 	// Peer wins: park the row before the reconciler ticks. We use
 	// UpdateInstanceState directly to skip the full snapshot path
@@ -238,7 +243,7 @@ func TestReconcileDeadNodeInstances_PeerRaceWinner(t *testing.T) {
 func TestReconcileDeadNodeInstances_TickCapHonoured(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("schedd")
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 	e.WithOpsMetrics(ops)
 
 	// Two dead nodes, one RUNNING instance each. ReconcileDeadNodeInstances
@@ -269,7 +274,7 @@ func TestReconcileDeadNodeInstances_TickCapHonoured(t *testing.T) {
 func TestReconcileDeadNodeInstances_OrphanNodeRowFailed(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("schedd")
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 	e.WithOpsMetrics(ops)
 
 	// MemStore.CreateInstance takes a nodeID with no FK validation
@@ -306,7 +311,7 @@ func TestReconcileDeadNodeInstances_RecoveryManagedAppRowsUntouched(t *testing.T
 		t.Run(string(lifecycle), func(t *testing.T) {
 			store := state.NewMemStore()
 			node, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
-				Name: "managed-" + uuid.NewString(), Lifecycle: lifecycle,
+				Name: "managed-" + uuid.NewString(), Lifecycle: state.NodeLifecycleActive,
 				LastHeartbeatAt: time.Now().UTC().Add(-10 * time.Minute),
 				MemMB:           8192, MaxConcurrency: 16,
 			})
@@ -314,6 +319,9 @@ func TestReconcileDeadNodeInstances_RecoveryManagedAppRowsUntouched(t *testing.T
 				t.Fatalf("CreateComputeNode: %v", err)
 			}
 			appID, insID := seedRunningInstance(t, store, node.ID)
+			if err := store.NodeSetLifecycle(t.Context(), node.ID, state.NodeLifecycleActive, lifecycle); err != nil {
+				t.Fatal(err)
+			}
 			threshold := time.Now().UTC().Add(-2 * time.Minute)
 			rows, err := store.ListRunningInstancesOnDeadNodes(context.Background(), threshold, 50)
 			if err != nil {
@@ -336,17 +344,20 @@ func TestReconcileDeadNodeInstances_RecoveryManagedAppRowsUntouched(t *testing.T
 func TestReconcileDeadNodeInstances_JobTaskEligibleDuringDrain(t *testing.T) {
 	store := state.NewMemStore()
 	node, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
-		Name: "job-drain-" + uuid.NewString(), Lifecycle: state.NodeLifecycleDraining,
+		Name: "job-drain-" + uuid.NewString(), Lifecycle: state.NodeLifecycleActive,
 		MemMB: 8192, MaxConcurrency: 16,
 	})
 	if err != nil {
 		t.Fatalf("CreateComputeNode: %v", err)
 	}
-	_, job, run := seedJobRun(t, store, nil, nil)
+	_, job, run := sched.SeedJobRun(t, store, nil, nil)
 	ins, err := store.CreateJobInstance(context.Background(), uuid.NewString(), job.ID, run.ID, 0,
 		string(state.StateRunning), 256, node.ID, uuid.NewString())
 	if err != nil {
 		t.Fatalf("CreateJobInstance: %v", err)
+	}
+	if err := store.NodeSetLifecycle(t.Context(), node.ID, state.NodeLifecycleActive, state.NodeLifecycleDraining); err != nil {
+		t.Fatal(err)
 	}
 	threshold := time.Now().UTC().Add(-2 * time.Minute)
 	rows, err := store.ListRunningInstancesOnDeadNodes(context.Background(), threshold, 50)

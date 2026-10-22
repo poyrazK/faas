@@ -25,7 +25,7 @@ const (
 func (s *Service) PreviewEvent(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.PreviewEventRequest
 	if err := httpkit.DecodeJSON(r, &req); err != nil {
-		api.WriteProblem(w, api.ErrValidation("invalid JSON body"))
+		api.WriteProblem(w, eventDecodeProblem(r, err))
 		return
 	}
 

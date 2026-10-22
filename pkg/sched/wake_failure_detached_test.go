@@ -10,10 +10,11 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // ctxStore refuses work on a finished context, as PgStore does.
-type ctxStore struct{ state.Store }
+type ctxStore struct{ Store state.Store }
 
 func (s ctxStore) InstanceByID(ctx context.Context, id string) (state.Instance, error) {
 	if err := ctx.Err(); err != nil {
@@ -36,7 +37,7 @@ func TestWakeBootFailureRecordsFailedAfterCallerDeadline(t *testing.T) {
 	base := state.NewMemStore()
 	_, app, _ := seedApp(t, base, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{sleepFor: 5 * time.Second}
-	e := newEngine(t, ctxStore{Store: base}, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, statetest.NewStore(ctxStore{Store: base}), vmm, &fakeNotifier{}, "1.10.0")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()

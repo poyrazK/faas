@@ -57,9 +57,9 @@ func TestComputeInvoiceOverageCents_Floor(t *testing.T) {
 		t.Fatalf("prior-month usage: %v", err)
 	}
 
-	// Inside the window — 50 included GB-hours plus 3 billable GB-hours.
+	// Inside the window — 200 included GB-hours plus 3 billable GB-hours.
 	if err := store.AppendUsage(ctx, acct.ID, "app-1", "inst-1",
-		periodStart.Add(2*time.Hour), 53*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		periodStart.Add(2*time.Hour), 203*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("mid-month usage: %v", err)
 	}
 
@@ -72,7 +72,7 @@ func TestComputeInvoiceOverageCents_Floor(t *testing.T) {
 		t.Fatalf("got %d cents, want %d", got, wantCents)
 	}
 
-	// Add half a GB-hour. The total is 53.5 GB-hours, which still floors
+	// Add half a GB-hour. The total is 203.5 GB-hours, which still floors
 	// to 3 cents of overage.
 	inv2 := inv
 	inv2.ID = uuid.NewString()
@@ -154,9 +154,9 @@ func TestConsumeCreditsForInvoice_EndToEnd(t *testing.T) {
 	}
 	store.SeedInvoiceForTest(inv)
 
-	// Plant 50 included GB-hours plus 250 billable GB-hours.
+	// Plant 200 included GB-hours plus 250 billable GB-hours.
 	if err := store.AppendUsage(ctx, acct.ID, "app-1", "inst-1",
-		periodStart.Add(24*time.Hour), 300*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		periodStart.Add(24*time.Hour), 450*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("usage: %v", err)
 	}
 

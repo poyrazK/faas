@@ -1,7 +1,9 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -19,16 +21,20 @@ func apiConsumerUsageStatementResponse(statement state.APIConsumerUsageStatement
 		BillableUnits: statement.BillableUnits, UnpricedUnits: statement.UnpricedUnits,
 		AmountMillicents: statement.AmountMillicents, Priced: statement.Priced,
 		AsOf: statement.AsOf.UTC().Format(time.RFC3339Nano), CreatedAt: statement.CreatedAt.UTC(),
-		FinalizedAt: statement.FinalizedAt,
-		Buckets:     make([]api.APIConsumerUsageStatementBucketResponse, 0, len(statement.Buckets)),
+		FinalizedAt:             statement.FinalizedAt,
+		Buckets:                 make([]api.APIConsumerUsageStatementBucketResponse, 0, len(statement.Buckets)),
+		CreditAppliedMillicents: statement.CreditAppliedMillicents, AmountDueMillicents: statement.AmountDueMillicents(),
 	}
 	for _, bucket := range statement.Buckets {
 		out.Buckets = append(out.Buckets, api.APIConsumerUsageStatementBucketResponse{
 			WindowStart: bucket.WindowStart.UTC(), BillableUnits: bucket.BillableUnits,
 			RateCardID: bucket.RateCardID, Currency: bucket.Currency,
 			PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit, ChargedUnits: bucket.Charged(),
-			TierUnits: bucket.TierUnits, AmountMillicents: bucket.AmountMillicents,
+			TierUnits: bucket.TierUnits, AmountMillicents: bucket.AmountMillicents, Trial: bucket.Trial, Unit: bucket.Unit,
 		})
+	}
+	for _, fee := range statement.Fees {
+		out.Fees = append(out.Fees, api.APIConsumerStatementFeeResponse{Kind: fee.Kind, RateCardID: fee.RateCardID, AmountMillicents: fee.AmountMillicents})
 	}
 	return out
 }
@@ -71,10 +77,7 @@ func (s *server) listAPIConsumerUsageStatements(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, out)
 }
 
-// createAPIConsumerUsageStatement plans the period against its existing
-// revisions (ADR-949). Unchanged usage replays the latest revision. A changed
-// draft is superseded by a new draft, and usage that arrives after
-// finalization becomes a new revision holding only the uncovered units.
+// createAPIConsumerUsageStatement drafts the period's statement (ADR-949).
 func (s *server) createAPIConsumerUsageStatement(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, consumer, store, ok := s.apiConsumerUsageStatementStore(w, r, acct)
 	if !ok {
@@ -84,35 +87,68 @@ func (s *server) createAPIConsumerUsageStatement(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	revisions, err := store.ListAPIConsumerUsageStatementRevisions(r.Context(), acct.ID, app.ID, consumer.ID, periodStart, periodEnd)
+	statement, created, err := s.draftAPIConsumerStatement(r.Context(), acct, app.ID, consumer.ID, store, periodStart, periodEnd)
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not load API consumer usage statements"))
+		api.WriteProblem(w, apiConsumerStatementDraftProblem(err))
 		return
 	}
-	input, unchanged, err := s.planAPIConsumerUsageStatement(r, acct.ID, app.ID, consumer.ID, periodStart, periodEnd, revisions)
-	switch {
-	case errors.Is(err, billing.ErrAPIConsumerUsageRegressed):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Usage coverage conflict", "current usage is below an earlier finalized statement"))
-		return
-	case errors.Is(err, billing.ErrAPIConsumerChargeDecreased):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Charge would decrease", "re-rating this period's tiers would lower charges below finalized statements; Gregale does not issue credits"))
-		return
-	case errors.Is(err, errTieredStatementPeriod):
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid statement period", "a tiered rate card prices this period, so it must be exactly one UTC calendar month"))
-		return
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
 	}
+	writeJSON(w, status, apiConsumerUsageStatementResponse(statement))
+}
+
+// draftAPIConsumerStatement plans the period against its existing revisions
+// (ADR-949). Unchanged usage replays the latest revision (created is false).
+// A changed draft is superseded by a new draft, and usage that arrives after
+// finalization becomes a new revision holding only the uncovered units. The
+// handler and billing runs (ADR-1503) share it.
+func (s *server) draftAPIConsumerStatement(ctx context.Context, acct state.Account, appID, consumerID string,
+	store state.APIConsumerUsageStatementStore, start, end time.Time) (state.APIConsumerUsageStatement, bool, error) {
+	revisions, err := store.ListAPIConsumerUsageStatementRevisions(ctx, acct.ID, appID, consumerID, start, end)
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not calculate API consumer usage quote"))
-		return
+		return state.APIConsumerUsageStatement{}, false, fmt.Errorf("list statement revisions: %w", err)
+	}
+	input, unchanged, err := s.planAPIConsumerUsageStatement(ctx, acct.ID, appID, consumerID, start, end, revisions)
+	if err != nil {
+		return state.APIConsumerUsageStatement{}, false, err
 	}
 	if unchanged {
-		writeJSON(w, http.StatusOK, apiConsumerUsageStatementResponse(revisions[len(revisions)-1]))
-		return
+		return revisions[len(revisions)-1], false, nil
 	}
-	s.persistAPIConsumerUsageStatement(w, r, acct, store, input)
+	statement, created, err := store.CreateAPIConsumerUsageStatement(ctx, input)
+	if err != nil || !created {
+		return statement, false, err
+	}
+	s.audit.Emit(ctx, "api_consumer_usage_statement.created", &acct.ID, map[string]any{
+		"app_id": input.AppID, "consumer_id": input.ConsumerID, "statement_id": statement.ID,
+		"revision":     statement.Revision,
+		"period_start": input.PeriodStart.Format(time.RFC3339), "period_end": input.PeriodEnd.Format(time.RFC3339),
+		"amount_millicents": statement.AmountMillicents, "unpriced_units": statement.UnpricedUnits,
+	})
+	return statement, true, nil
+}
+
+// apiConsumerStatementDraftProblem explains why a statement could not be
+// drafted. Billing runs record its detail as the item's reason.
+func apiConsumerStatementDraftProblem(err error) *api.Problem {
+	switch {
+	case errors.Is(err, billing.ErrAPIConsumerUsageRegressed):
+		return api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Usage coverage conflict", "current usage is below an earlier finalized statement")
+	case errors.Is(err, billing.ErrAPIConsumerChargeDecreased):
+		return api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Charge would decrease", "re-rating this period's tiers would lower charges below finalized statements; Gregale does not issue credits")
+	case errors.Is(err, errTieredStatementPeriod):
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid statement period", "a tiered rate card prices this period, so it must be exactly one UTC calendar month")
+	case errors.Is(err, state.ErrConflict):
+		return api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Statement revision conflict", "statement state changed; reload the period and retry")
+	default:
+		return api.ErrInternal("could not create API consumer usage statement")
+	}
 }
 
 func decodeAPIConsumerUsageStatementPeriod(w http.ResponseWriter, r *http.Request) (time.Time, time.Time, bool) {
@@ -144,7 +180,7 @@ func decodeAPIConsumerUsageStatementPeriod(w http.ResponseWriter, r *http.Reques
 // planAPIConsumerUsageStatement prices the usage not yet covered by a
 // finalized revision. unchanged is true when there is no such usage and the
 // period already has a revision to replay.
-func (s *server) planAPIConsumerUsageStatement(r *http.Request, accountID, appID, consumerID string, start, end time.Time,
+func (s *server) planAPIConsumerUsageStatement(ctx context.Context, accountID, appID, consumerID string, start, end time.Time,
 	revisions []state.APIConsumerUsageStatement) (state.APIConsumerUsageStatementInput, bool, error) {
 	usageStore, ok := s.store.(state.ConsumerUsageStore)
 	if !ok {
@@ -155,40 +191,56 @@ func (s *server) planAPIConsumerUsageStatement(r *http.Request, accountID, appID
 		return state.APIConsumerUsageStatementInput{}, false, errors.New("API consumer pricing is unavailable")
 	}
 	// Monthly allowances count from the start of start's month (ADR-950).
-	usage, err := usageStore.ListAPIConsumerUsage(r.Context(), accountID, appID, consumerID, billing.MonthStart(start), end)
+	usage, err := usageStore.ListAPIConsumerUsage(ctx, accountID, appID, consumerID, billing.MonthStart(start), end)
 	if err != nil {
 		return state.APIConsumerUsageStatementInput{}, false, err
 	}
-	cards, err := cardsStore.ListAPIConsumerRateCardsForApp(r.Context(), accountID, appID)
+	cards, err := cardsStore.ListAPIConsumerRateCardsForApp(ctx, accountID, appID)
 	if err == nil {
-		cards, err = s.consumerPriceHistory(r, cards, accountID, appID, consumerID)
+		cards, err = s.consumerPriceHistory(ctx, cards, accountID, appID, consumerID)
 	}
 	if err != nil {
 		return state.APIConsumerUsageStatementInput{}, false, err
 	}
-	if billing.TieredCardEffectiveIn(cards, start, end) && !billing.IsCalendarMonth(start, end) {
+	if (billing.TieredCardEffectiveIn(cards, start, end) || billing.MonthlyFeeCardEffectiveIn(cards, start, end)) && !billing.IsCalendarMonth(start, end) {
 		return state.APIConsumerUsageStatementInput{}, false, errTieredStatementPeriod
 	}
-	if usage, err = s.weightConsumerUsage(r, cards, usage, accountID, appID, consumerID, billing.MonthStart(start), end); err != nil {
-		return state.APIConsumerUsageStatementInput{}, false, err
-	}
-	current, err := billing.QuoteAPIConsumerUsageFrom(cards, usage, start)
+	inputs, err := s.consumerUsageInputs(ctx, cards, accountID, appID, consumerID, billing.MonthStart(start), end)
 	if err != nil {
 		return state.APIConsumerUsageStatementInput{}, false, err
 	}
-	quote, err := billing.APIConsumerStatementDelta(current, revisions)
+	opts, err := s.consumerQuoteOptions(ctx, accountID, appID, consumerID)
 	if err != nil {
 		return state.APIConsumerUsageStatementInput{}, false, err
 	}
-	if len(quote.Buckets) == 0 && len(revisions) > 0 {
+	quote, err := consumerStatementDelta(cards, usage, inputs, start, revisions, opts)
+	if err != nil {
+		return state.APIConsumerUsageStatementInput{}, false, err
+	}
+	consumer, err := s.store.GetAPIConsumerByID(ctx, accountID, consumerID)
+	if err != nil {
+		return state.APIConsumerUsageStatementInput{}, false, err
+	}
+	var fees []state.APIConsumerStatementFee
+	if consumer.RevokedAt == nil || !consumer.RevokedAt.Before(start) {
+		if consumer.RevokedAt != nil {
+			// Prorating cards stop at the revocation (ADR-20261019100332).
+			opts.EndedAt = consumer.RevokedAt.UTC()
+		}
+		fees = billing.APIConsumerStatementFees(cards, start, end, consumer.CreatedAt, opts, revisions, quote.Buckets)
+	}
+	if len(quote.Buckets) == 0 && len(fees) == 0 && len(revisions) > 0 {
 		return state.APIConsumerUsageStatementInput{}, true, nil
 	}
 	input := state.APIConsumerUsageStatementInput{
 		AccountID: accountID, AppID: appID, ConsumerID: consumerID,
 		PeriodStart: start, PeriodEnd: end, Revision: len(revisions) + 1, Currency: quote.Currency,
 		BillableUnits: quote.BillableUnits, UnpricedUnits: quote.UnpricedUnits,
-		AmountMillicents: quote.AmountMillicents, Priced: quote.Priced,
-		Buckets: make([]state.APIConsumerUsageStatementBucket, 0, len(quote.Buckets)), AsOf: time.Now().UTC(),
+		AmountMillicents: quote.AmountMillicents, Priced: quote.Priced || (len(fees) > 0 && quote.UnpricedUnits == 0),
+		Buckets: make([]state.APIConsumerUsageStatementBucket, 0, len(quote.Buckets)), Fees: fees, AsOf: time.Now().UTC(),
+	}
+	for _, fee := range fees {
+		input.AmountMillicents += fee.AmountMillicents
 	}
 	if len(revisions) > 0 {
 		input.PriorStatus = revisions[len(revisions)-1].Status
@@ -199,6 +251,48 @@ func (s *server) planAPIConsumerUsageStatement(r *http.Request, accountID, appID
 	return input, false, nil
 }
 
+// consumerStatementDelta prices a period and bills what finalized revisions
+// have not. If exact re-rating would lower what they charged, because late
+// usage moved a volume month into a cheaper step, the volume cards keep the
+// step those revisions billed (ADR-1312).
+func consumerStatementDelta(cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket, inputs billing.ConsumerUsageInputs,
+	start time.Time, revisions []state.APIConsumerUsageStatement, opts billing.QuoteOptions) (billing.APIConsumerUsageQuote, error) {
+	current, err := billing.QuoteConsumerUsage(cards, usage, inputs, start, opts)
+	if err != nil {
+		return billing.APIConsumerUsageQuote{}, err
+	}
+	quote, err := billing.APIConsumerStatementDelta(current, revisions)
+	if !errors.Is(err, billing.ErrAPIConsumerChargeDecreased) {
+		return quote, err
+	}
+	locked := billing.LockedVolumeSteps(cards, revisions)
+	if len(locked) == 0 {
+		return quote, err
+	}
+	opts.VolumeSteps = locked
+	if current, err = billing.QuoteConsumerUsage(cards, usage, inputs, start, opts); err != nil {
+		return billing.APIConsumerUsageQuote{}, err
+	}
+	return billing.APIConsumerStatementDelta(current, revisions)
+}
+
+// consumerQuoteOptions are how a consumer's usage is priced beyond its
+// cards: its trial (ADR-1314).
+func (s *server) consumerQuoteOptions(ctx context.Context, accountID, appID, consumerID string) (billing.QuoteOptions, error) {
+	trials, ok := s.store.(state.APIConsumerTrialStore)
+	if !ok {
+		return billing.QuoteOptions{}, nil
+	}
+	trial, err := trials.GetAPIConsumerTrial(ctx, accountID, appID, consumerID)
+	if errors.Is(err, state.ErrNotFound) {
+		return billing.QuoteOptions{}, nil
+	}
+	if err != nil {
+		return billing.QuoteOptions{}, fmt.Errorf("load consumer trial: %w", err)
+	}
+	return billing.QuoteOptions{TrialStart: trial.StartsAt, TrialEnd: trial.EndsAt}, nil
+}
+
 // statementBucketFromCharge persists a priced minute; charged_units is
 // recorded only for priced buckets, where it determines the amount.
 func statementBucketFromCharge(bucket billing.APIConsumerUsageChargeBucket) state.APIConsumerUsageStatementBucket {
@@ -206,7 +300,7 @@ func statementBucketFromCharge(bucket billing.APIConsumerUsageChargeBucket) stat
 		WindowStart: bucket.WindowStart, BillableUnits: bucket.BillableUnits,
 		RateCardID: bucket.RateCardID, Currency: bucket.Currency,
 		PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit, AmountMillicents: bucket.AmountMillicents,
-		TierUnits: bucket.TierUnits,
+		TierUnits: bucket.TierUnits, Trial: bucket.Trial, Unit: bucket.Unit,
 	}
 	if bucket.RateCardID != "" {
 		charged := bucket.ChargedUnits
@@ -216,34 +310,10 @@ func statementBucketFromCharge(bucket billing.APIConsumerUsageChargeBucket) stat
 }
 
 // errTieredStatementPeriod rejects a non-month period priced by a tiered
-// card: re-rating across statements of one month would need credits
-// (ADR-951).
-var errTieredStatementPeriod = errors.New("tiered rate cards require calendar-month statement periods")
-
-func (s *server) persistAPIConsumerUsageStatement(w http.ResponseWriter, r *http.Request, acct state.Account,
-	store state.APIConsumerUsageStatementStore, input state.APIConsumerUsageStatementInput) {
-	statement, created, err := store.CreateAPIConsumerUsageStatement(r.Context(), input)
-	if errors.Is(err, state.ErrConflict) {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Statement revision conflict", "statement state changed; reload the period and retry"))
-		return
-	}
-	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not create API consumer usage statement"))
-		return
-	}
-	if !created {
-		writeJSON(w, http.StatusOK, apiConsumerUsageStatementResponse(statement))
-		return
-	}
-	s.audit.Emit(r.Context(), "api_consumer_usage_statement.created", &acct.ID, map[string]any{
-		"app_id": input.AppID, "consumer_id": input.ConsumerID, "statement_id": statement.ID,
-		"revision":     statement.Revision,
-		"period_start": input.PeriodStart.Format(time.RFC3339), "period_end": input.PeriodEnd.Format(time.RFC3339),
-		"amount_millicents": statement.AmountMillicents, "unpriced_units": statement.UnpricedUnits,
-	})
-	writeJSON(w, http.StatusCreated, apiConsumerUsageStatementResponse(statement))
-}
+// card, where re-rating across statements of one month would need credits
+// (ADR-951), or by a card with monthly fees, billed once per month
+// (ADR-1316).
+var errTieredStatementPeriod = errors.New("tiered rate cards and monthly fees require calendar-month statement periods")
 
 func (s *server) getAPIConsumerUsageStatement(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, consumer, store, ok := s.apiConsumerUsageStatementStore(w, r, acct)
@@ -267,33 +337,46 @@ func (s *server) finalizeAPIConsumerUsageStatement(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	statement, changed, err := store.FinalizeAPIConsumerUsageStatement(r.Context(), acct.ID, app.ID, consumer.ID, r.PathValue("statement_id"))
+	statement, err := s.finalizeAPIConsumerStatement(r.Context(), acct, app.ID, consumer.ID, store, r.PathValue("statement_id"))
 	if errors.Is(err, state.ErrNotFound) {
 		s.notFound(w, "no such usage statement")
 		return
 	}
-	if errors.Is(err, state.ErrConflict) {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Usage statement cannot be finalized", "all usage must have an effective rate card before finalization"))
-		return
-	}
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not finalize API consumer usage statement"))
+		api.WriteProblem(w, apiConsumerStatementFinalizeProblem(err))
 		return
-	}
-	if changed {
-		s.audit.Emit(r.Context(), "api_consumer_usage_statement.finalized", &acct.ID, map[string]any{
-			"app_id": app.ID, "consumer_id": consumer.ID, "statement_id": statement.ID,
-			"finalized_at": statement.FinalizedAt.UTC().Format(time.RFC3339Nano),
-		})
-		if outbox, ok := s.store.(state.AppWebhookEventOutboxStore); ok {
-			if _, err := outbox.RelayAppWebhookEventOutboxSource(r.Context(), state.AppWebhookEventUsageStatementFinalized, statement.ID); err != nil {
-				s.log.WarnContext(r.Context(), "relay usage statement finalized webhook",
-					"app_id", app.ID, "statement_id", statement.ID, "err", err.Error())
-			}
-		}
 	}
 	writeJSON(w, http.StatusOK, apiConsumerUsageStatementResponse(statement))
+}
+
+// finalizeAPIConsumerStatement freezes a statement. The first finalization
+// is audited and relays the usage_statement.finalized webhook; finalizing
+// again is a no-op. The handler and billing runs (ADR-1503) share it.
+func (s *server) finalizeAPIConsumerStatement(ctx context.Context, acct state.Account, appID, consumerID string,
+	store state.APIConsumerUsageStatementStore, statementID string) (state.APIConsumerUsageStatement, error) {
+	statement, changed, err := store.FinalizeAPIConsumerUsageStatement(ctx, acct.ID, appID, consumerID, statementID)
+	if err != nil || !changed {
+		return statement, err
+	}
+	s.audit.Emit(ctx, "api_consumer_usage_statement.finalized", &acct.ID, map[string]any{
+		"app_id": appID, "consumer_id": consumerID, "statement_id": statement.ID,
+		"finalized_at": statement.FinalizedAt.UTC().Format(time.RFC3339Nano),
+	})
+	if outbox, ok := s.store.(state.AppWebhookEventOutboxStore); ok {
+		if _, err := outbox.RelayAppWebhookEventOutboxSource(ctx, state.AppWebhookEventUsageStatementFinalized, statement.ID); err != nil {
+			s.log.WarnContext(ctx, "relay usage statement finalized webhook",
+				"app_id", appID, "statement_id", statement.ID, "err", err.Error())
+		}
+	}
+	return statement, nil
+}
+
+func apiConsumerStatementFinalizeProblem(err error) *api.Problem {
+	if errors.Is(err, state.ErrConflict) {
+		return api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Usage statement cannot be finalized", "all usage must have an effective rate card before finalization")
+	}
+	return api.ErrInternal("could not finalize API consumer usage statement")
 }
 
 func apiConsumerUsageStatementHandoffResponse(handoff state.APIConsumerUsageStatementHandoff) api.APIConsumerUsageStatementHandoffResponse {

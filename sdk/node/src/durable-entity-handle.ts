@@ -1,6 +1,7 @@
 // ADR-938: scope-bound clients. Uses the existing FaaSClient global configuration.
 import { InvocationsService } from './generated/services/InvocationsService.js';
 import { inspectDurableEntity, retryDurableEntity } from './durable-entities.js';
+import { observeDurableEntity } from './durable-entity-visibility.js';
 import { durableEntityJSON } from './durable-entity-handler.js';
 import type { DurableEntityRetryRequest } from './generated/models/DurableEntityRetryRequest.js';
 
@@ -37,6 +38,7 @@ export function durableEntityHandle<Payload, Result>(scope: DurableEntityHandleS
       catch (cause) { throw new DurableEntityResultDecodeError(result.version, result.replayed, cause); }
     },
     inspect() { return inspectDurableEntity(bound); },
+    observe() { return observeDurableEntity(bound); },
     retry(request: Omit<DurableEntityRetryRequest, 'namespace' | 'key' | 'environment' | 'platform_tenant_id'>) {
       return retryDurableEntity({ slug: bound.slug, requestBody: { ...request, ...selectors } });
     },

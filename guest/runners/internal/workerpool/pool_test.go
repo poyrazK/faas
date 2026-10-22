@@ -25,6 +25,11 @@ type testResponse struct {
 }
 
 func TestInvokeIfSupportedReusesMarkedWorker(t *testing.T) {
+	// The pool is keyed by command, which every helper-backed test shares, so
+	// an idle worker left by another test (or a -count repeat) would answer
+	// with its own count. Start and finish with no idle workers.
+	Recycle()
+	t.Cleanup(func() { Recycle() })
 	marker := t.TempDir() + "/handler"
 	if err := os.WriteFile(marker, []byte("# "+protocolMarker+"\n"), 0o600); err != nil {
 		t.Fatal(err)

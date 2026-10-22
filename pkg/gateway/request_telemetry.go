@@ -59,6 +59,9 @@ type RequestTelemetryRow struct {
 	// ordinary production aggregation or the bounded ring (ADR-429).
 	preserveExact    bool
 	FlagEvidenceJSON string
+	// ContentOutcome is how an anonymous GET body compared with the previous
+	// response for its URL (ADR-1188); empty when not observed.
+	ContentOutcome string
 	// EventID identifies the collapsed usage increment represented by this
 	// row. It is generated once at the recorder boundary and retained through
 	// publisher retries for idempotent apid ledger writes.
@@ -80,6 +83,9 @@ type RequestTelemetryRow struct {
 	// and never contain customer payloads.
 	WakeID     string
 	InstanceID string
+	// TraceInferred marks a TraceID that Gregale inferred for a service call
+	// whose caller sent no traceparent (ADR-1138), not propagated context.
+	TraceInferred bool
 	// ConsumerID is the stable API consumer identity resolved by the
 	// consumer-key middleware. It is empty for anonymous/legacy traffic.
 	// Credentials are deliberately never persisted in telemetry.

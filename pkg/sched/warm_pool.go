@@ -121,7 +121,10 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 	if !e.ownsApp(app) {
 		return nil
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
+		return err
+	}
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: load account: %w", err)
 	}
@@ -158,8 +161,11 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 	if depErr != nil && !reaperProductionScope(scope) && app.Status == state.AppActive && acct.Active() && api.Plan(acct.Plan).WarmPoolAllowed() {
 		return e.reclaimWarmPool(ctx, obsolete, 0)
 	}
+	// A paused warm VM holds resident RAM and is billed, so an account at its
+	// spend cap keeps no pool until the cap is raised or the month rolls over
+	// (ADR-1162).
 	if desired == 0 || app.Status != state.AppActive || !acct.Active() || !api.Plan(acct.Plan).WarmPoolAllowed() ||
-		!instanceModeUsesSnapshots(instanceModeForApp(app)) {
+		!instanceModeUsesSnapshots(instanceModeForApp(app)) || e.spendCapReached(ctx, acct.ID) {
 		return e.reclaimWarmPool(ctx, append(warm, obsolete...), 0)
 	}
 	if depErr != nil {
@@ -169,6 +175,12 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 	values, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: owned runtime values: %w", err)
+	}
+	if budgetErr := e.checkFinancialBudgetAdmission(ctx, app, dep.ID); budgetErr != nil {
+		if errors.Is(budgetErr, state.ErrFinancialBudgetHeld) {
+			return e.reclaimWarmPool(ctx, append(warm, obsolete...), 0)
+		}
+		return budgetErr
 	}
 	if securityQuarantineErr(dep) != nil || runtimeValuesHaveEphemeralSecrets(values.Snapshot) {
 		return e.reclaimWarmPool(ctx, append(warm, obsolete...), 0)
@@ -342,15 +354,14 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	if e.warmAffinity != nil {
 		warmHint, _ = e.warmAffinity.LastWarmNode(app.ID)
 	}
-	placement, err := e.choosePlacementLocked(ctx, Request{
+	placementRequest := Request{
 		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
 		MaxConcurrency: app.MaxConcurrency, PreferredNodeID: warmHint,
-	})
-	if err != nil {
-		return err
 	}
 	wakeID := uuid.NewString()
-	ins, err := e.store.CreateInstanceWithMode(ctx, app.ID, dep.ID, string(state.StateWaking), app.RAMMB, placement.NodeID, wakeID, instanceModeForApp(app))
+	ins, placement, _, err := e.createWithNodePlacement(ctx, placementRequest, false, func(admitCtx context.Context, p Placement) (state.Instance, error) {
+		return e.store.CreateInstanceWithMode(admitCtx, app.ID, dep.ID, string(state.StateWaking), app.RAMMB, p.NodeID, wakeID, instanceModeForApp(app))
+	})
 	if err != nil {
 		// ADR-193: a warm-pool fill must never outrank a customer wake for
 		// node RAM. A durable refusal returns the typed capacity Problem so
@@ -373,6 +384,10 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 				e.recordCommittedInstanceTransition(context.WithoutCancel(ctx), current, state.StateWaking, state.StateStopped, app.ID, "warm_pool_restore_failed", reason)
 			}
 		}
+	}
+	if err := e.checkCapturedApplicationStandardAdmission(ctx, ins.ID, app, acct, dep); err != nil {
+		_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
+		return err
 	}
 	if err := e.acquireHostPortLeases(ctx, placement.NodeID, ins.ID, hostPortRequestsForManifest(app.Manifest)); err != nil {
 		_ = e.store.DeleteInstance(ctx, ins.ID)
@@ -411,10 +426,13 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	}
 	vmstatePath, vmstateStorageKey := e.snapshotStateLocators(placement.NodeID, snap)
 	restoreCtx, cancel := context.WithTimeout(ctx, e.budgetForWake(bootInput{haveSnap: true, snapKey: snap.StorageKey}))
-	out, err := paused.CreatePausedFromSnapshot(restoreCtx, placement.NodeID, ins.ID, spec, SnapshotRef{
+	out, err := e.createRuntimeWithStandards(restoreCtx, placement.NodeID, ins.ID, string(state.StateWaking), spec, &SnapshotRef{
 		DeploymentID: dep.ID, FCVersion: snap.FCVersion, StorageKey: snap.StorageKey,
-		VMStatePath: vmstatePath, VMStateStorageKey: vmstateStorageKey, MemBytes: snap.MemBytes,
-	})
+		ApplicationStandardCaptureToken: snap.ApplicationStandardCaptureToken,
+		VMStatePath:                     vmstatePath,
+		VMStateStorageKey:               vmstateStorageKey,
+		MemBytes:                        snap.MemBytes,
+	}, true)
 	cancel()
 	if err != nil {
 		cleanup("paused_restore_failed")
@@ -437,12 +455,15 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 		cleanup("runtime_fence_failed")
 		return err
 	}
-	fresh, err := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
+	fresh, err := e.publishOwnedRuntimeWithStandards(ctx, out, state.RuntimeInstancePublication{
 		AccountID: acct.ID, AppID: app.ID, InstanceID: ins.ID, NodeID: ins.NodeID, WakeID: ins.WakeID,
 		ExpectedState: string(state.StateWaking), TargetState: string(state.StateWarm), Fence: fence.SecretFence, ConfigFence: fence,
 		Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID),
 	})
 	if err != nil {
+		if errors.Is(err, state.ErrFinancialBudgetHeld) {
+			return errors.Join(err, e.retireFinancialBudgetRuntime(ctx, ins))
+		}
 		cleanup("publish_warm_state_failed")
 		return err
 	}

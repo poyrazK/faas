@@ -32,6 +32,9 @@ class RuntimePolicyComponentStatus:
     applied_gateways: int
     pending_gateways: int
     stale_gateways: int
+    legacy_fleet_revision: int | Unset = UNSET
+    """Unknown historical ownership requires replay through this fleet-wide position; later known unrelated
+    mutations do not raise it."""
     scope: RuntimePolicyComponentStatusScope | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -47,6 +50,8 @@ class RuntimePolicyComponentStatus:
         pending_gateways = self.pending_gateways
 
         stale_gateways = self.stale_gateways
+
+        legacy_fleet_revision = self.legacy_fleet_revision
 
         scope: str | Unset = UNSET
         if not isinstance(self.scope, Unset):
@@ -64,6 +69,8 @@ class RuntimePolicyComponentStatus:
                 "stale_gateways": stale_gateways,
             }
         )
+        if legacy_fleet_revision is not UNSET:
+            field_dict["legacy_fleet_revision"] = legacy_fleet_revision
         if scope is not UNSET:
             field_dict["scope"] = scope
 
@@ -84,6 +91,8 @@ class RuntimePolicyComponentStatus:
 
         stale_gateways = d.pop("stale_gateways")
 
+        legacy_fleet_revision = d.pop("legacy_fleet_revision", UNSET)
+
         _scope = d.pop("scope", UNSET)
         scope: RuntimePolicyComponentStatusScope | Unset
         if isinstance(_scope, Unset):
@@ -98,6 +107,7 @@ class RuntimePolicyComponentStatus:
             applied_gateways=applied_gateways,
             pending_gateways=pending_gateways,
             stale_gateways=stale_gateways,
+            legacy_fleet_revision=legacy_fleet_revision,
             scope=scope,
         )
 

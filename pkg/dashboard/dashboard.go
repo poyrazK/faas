@@ -133,6 +133,10 @@ type EnvironmentGitOpsData struct {
 	CSRFToken               string
 	Status                  *api.EnvironmentGitOpsStatusResponse
 	Review                  *api.PreviewEnvironmentGitRevisionResponse
+	Recovery                *api.ListEnvironmentGitReleasesResponse
+	RecoveryError           string
+	RecoveryCommit          string
+	PlanPreview             *api.PreviewEnvironmentGitPlanResponse
 	Definition              string
 	Adoption                *api.EnvironmentGitOpsPlan
 	Runs                    []EnvironmentGitOpsRunView
@@ -977,6 +981,64 @@ type AppEdgeRulesData struct {
 	Protection api.EdgeProtectionResponse
 	// Events is the ADR-964 security-events section.
 	Events EdgeRuleEventsPageData
+	// Recipes is the protection-recipes section (ADR-986).
+	Recipes []EdgeRuleRecipeView
+	// RecipeAlerts is set when the plan includes alert rules, so recipe
+	// forms offer "alert me".
+	RecipeAlerts bool
+	// Suggestions recommends recipes from the app's own traffic (ADR-20261020105000).
+	Suggestions []EdgeRuleSuggestionView
+	// Hosts lists the hostnames the app serves and how many enabled rules
+	// apply to each (ADR-1191), so an uncovered custom domain stands out.
+	Hosts []EdgeRuleHostCoverage
+	// Review lists log-mode rules to decide on and rules that went quiet
+	// (ADR-20261020105001).
+	Review []EdgeRuleReviewView
+}
+
+// EdgeRuleReviewView is one rule in the rule review (ADR-20261020105001). Status is
+// one of the api.EdgeRuleReview* values; Matches and PerDay count from
+// Since, the rule's last change or the start of the 7-day window.
+type EdgeRuleReviewView struct {
+	ID            string
+	Label         string
+	Match         string
+	Status        string
+	Since         string
+	ObservedHours int64
+	Matches       int64
+	PerDay        int64
+}
+
+// EdgeRuleHostCoverage is one hostname of the app and the number of
+// enabled edge rules that apply to it.
+type EdgeRuleHostCoverage struct {
+	Host   string
+	Custom bool
+	Rules  int
+}
+
+// EdgeRuleRecipeView is one protection recipe on the edge-rules page.
+// Added is set when a rule created from the recipe already exists; Blocked
+// explains why the account's plan cannot use the recipe's rule kind.
+type EdgeRuleRecipeView struct {
+	ID      string
+	Title   string
+	Summary string
+	LogNote string
+	Params  []EdgeRuleRecipeParamView
+	Added   bool
+	Blocked string
+}
+
+// EdgeRuleRecipeParamView is one input of a protection recipe form.
+type EdgeRuleRecipeParamView struct {
+	Name        string
+	Label       string
+	Help        string
+	Default     string
+	Placeholder string
+	Required    bool
 }
 
 // EdgeRuleEventsPageData is the filterable security-events table (ADR-964).
@@ -1003,6 +1065,8 @@ type EdgeRuleEventPageItem struct {
 	Country    string
 	UserAgent  string
 	RequestID  string
+	// WAF summarizes a kind=waf detection (categories, CRS rules, score).
+	WAF string
 }
 
 // EdgeRuleTraceFormData keeps the submitted request context and read-only
@@ -1037,11 +1101,17 @@ type EdgeRulePageItem struct {
 	CreatedAt      string
 	UpdatedAt      string
 	SecurityPreset bool
+	// AppWide is set for a match_host "@app" rule (ADR-1191).
+	AppWide bool
 	// ADR-960/964: name, mode and 24 h hit counts.
 	Name       string
 	Mode       string
 	Matched24h int64
 	Logged24h  int64
+	// ADR-20261020105001: matches over the last 7 days, as an SVG polyline of
+	// 6-hour totals and their sum.
+	SparkPoints string
+	Matches7d   int64
 }
 
 // CorsPresetPageItem is the read-only preset summary shown beside an app's
@@ -1428,10 +1498,14 @@ type AppCostOverviewRow struct {
 
 // AppDetailData combines the bits the app detail page renders.
 type AppDetailData struct {
+	ProductControlURL  string
 	ProfilingAvailable bool
-	App                AppListItem
-	Manifest           ManifestView
-	AppCosts           *AppCostsView
+	// ApplicationAuth shows the application Auth screens' link, a dark
+	// launch (api.ApplicationAuthEnabled).
+	ApplicationAuth bool
+	App             AppListItem
+	Manifest        ManifestView
+	AppCosts        *AppCostsView
 	// RefreshQuery preserves the selected app-detail filters when an SSE
 	// event refreshes the page content.
 	RefreshQuery     string
@@ -1509,6 +1583,12 @@ type AppDetailData struct {
 	// card uses. The window is echoed via SLODuration so the
 	// page's window-selector tab strip knows which tab is active.
 	SLOApp *views.AppSLOView
+	// CustomSLOs are the app's ADR-747 SLOs with their budget position;
+	// nil skips the "Your SLOs" table.
+	CustomSLOs []views.CustomSLOView
+	// SyntheticChecks are the app's ADR-748 checks with recent results;
+	// nil skips the "Synthetic checks" table.
+	SyntheticChecks []views.SyntheticCheckView
 	// SLODuration is the page-level helper that surfaces the
 	// current SLO window ("1h" / "24h" / "7d") and the as-of
 	// timestamp. The template uses the window to mark the
@@ -1523,6 +1603,9 @@ type AppDetailData struct {
 	// DiscoveredRoutes is the persistent, opt-in API route catalog. The
 	// dashboard keeps the rest of the app page available if this read fails.
 	DiscoveredRoutes DiscoveredRoutesView
+	// RouteInsights is the route insights panel (ADR-20261020161310); nil
+	// when the plan has no request telemetry, so no insights are evaluated.
+	RouteInsights *RouteInsightsView
 	// Alerts is the per-app (and account-wide) alert-rule snapshot
 	// (issue #396 / ADR-045, PR 4). nil means the apid dashboard
 	// query failed non-fatally (the page renders the "Alerts"
@@ -2034,6 +2117,17 @@ type AlertDetailData struct {
 	// down to rule.AppID == app.ID || rule.AppID == "" — the same
 	// visibility filter the public API uses (handlers_alerts.go).
 	Rules []AlertItem
+	// Channels are the account's ADR-749 notification channels with their
+	// last delivery outcome; empty hides the table.
+	Channels []AlertChannelItem
+}
+
+// AlertChannelItem is one row of the dashboard's "Notification channels"
+// table. Fields are pre-formatted at the handler edge.
+type AlertChannelItem struct {
+	Name, Kind, Target string
+	LastResult         string // "delivered 3m ago", "failed 1h ago: …", "never used"
+	LastClass          string // "ok" | "bad" | "dim"
 }
 
 // AlertItem is one row on the dashboard's "Alerts" panel. RecentDeliveries
@@ -2050,6 +2144,9 @@ type AlertItem struct {
 	// the template stays a pure renderer. Empty until LastFiredAt
 	// goes non-zero.
 	LastFiredAtLabel string
+	// DeliversTo names the rule's destinations: "webhook" and/or its
+	// notification channel names (ADR-749).
+	DeliversTo string
 }
 
 // AlertPresetItem is one card on the dashboard's "Alert presets"
@@ -2358,6 +2455,36 @@ type DiscoveredRouteItem struct {
 	Policy       string
 }
 
+// RouteInsightsView is the app page's route insights panel
+// (ADR-20261020161310): active insights with their one-click fixes, and the
+// ones resolved in the last seven days.
+type RouteInsightsView struct {
+	// Available is false when the best-effort read failed.
+	Available bool
+	Active    []RouteInsightItem
+	Resolved  []RouteInsightItem
+	// CSRF is the named token the fix forms post.
+	CSRF string
+	// Flash reports the last fix: "fixed", "changed" or "error".
+	Flash       string
+	FlashDetail string
+}
+
+// RouteInsightItem is one insight; FixID and FixSummary are empty when the
+// platform has no fix to apply.
+type RouteInsightItem struct {
+	ID              string
+	KindLabel       string
+	Method          string
+	Route           string
+	Message         string
+	FirstDetectedAt string
+	ResolvedAt      string
+	FixedAt         string
+	FixID           string
+	FixSummary      string
+}
+
 // DebugPageData is the server-rendered production debugger surface for one
 // app. The API/CLI remain the automation interface, while the dashboard adds
 // a CSRF-protected replay action and a bounded status projection for the
@@ -2587,6 +2714,15 @@ type DebugRegressionView struct {
 	LastDetectedAt  string
 	RequestsURL     string
 	CompareURL      string
+	// Kind is latency, errors or latency_and_errors; ErrorRatePct and
+	// ErrorRateBasePct are the route's HTTP 5xx share after and before the
+	// deployment, preformatted ("12.5").
+	Kind             string
+	HasErrors        bool
+	HasLatency       bool
+	ErrorRatePct     string
+	ErrorRateBasePct string
+	ErrorCount       int
 }
 
 // DebugRequestView is one row in the debugger request table.
@@ -3023,7 +3159,7 @@ type UsageData struct {
 // sourced from the most recent row in state.Invoices (LIMIT 1). The
 // fields are pre-formatted at the handler edge so the template is a
 // pure renderer. Currency is the provider's three-letter code (USD /
-// EUR / etc.); empty when no invoice exists.
+// USD / etc.); empty when no invoice exists.
 type BillingData struct {
 	Plan     string
 	RAMMB    int
@@ -3093,7 +3229,7 @@ type BillingData struct {
 }
 
 // UpgradeOption is one paid plan the account can upgrade to. Money is
-// formatted at the handler boundary (formatPriceEuros) so the template
+// formatted at the handler boundary (formatPlanPrice) so the template
 // never touches integer millicents.
 type UpgradeOption struct {
 	Plan            string
@@ -3138,7 +3274,7 @@ type UpgradeData struct {
 // Plans is the four-plan table authoritative from pkg/api/limits.go;
 // Highlighted marks the row that matches the current account's plan
 // so the dashboard can render a "Your plan" badge. PriceFormatted is
-// the on-the-wire "€X.YY" / "Free" string — money stays integer
+// the on-the-wire "$X.YY" / "Free" string — money stays integer
 // millicents upstream and is divided into euros at template time only.
 type PricingData struct {
 	Plans []PricingPlanView
@@ -3182,7 +3318,7 @@ type InvoicesData struct {
 }
 
 // InvoiceRow is one dashboard row. TotalFormatted is pre-formatted at
-// the handler edge (integer cents → "€X.YY" / "€0.00"; never float).
+// the handler edge (integer cents → "$X.YY" / "$0.00"; never float).
 // PDFAvailable shows the marker (Y / -) but never exposes the provider
 // PDF URL. HostedURL is intentionally absent: the column lives in
 // invoices.hosted_url for PR-B audit only; PR A never puts it on the
@@ -3193,7 +3329,7 @@ type InvoiceRow struct {
 	Provider       string
 	Status         string
 	Period         string // "2026-07"
-	TotalFormatted string // "€X.YY" — pre-formatted at the handler edge
+	TotalFormatted string // "$X.YY" — pre-formatted at the handler edge
 	Currency       string
 	PDFAvailable   bool
 }
@@ -3244,7 +3380,11 @@ type AccountData struct {
 	// /dashboard/install/connect with this token + the matching named
 	// faas_csrf_github_connect sidecar cookie. Same envelope shape as
 	// the delete / restore tokens above — sealed by (action, account_id).
-	ConnectGithubConfirmToken string
+	ConnectGithubConfirmToken    string
+	GitLabOAuthAvailable         bool
+	GitLabUsername               string
+	GitLabConnectConfirmToken    string
+	GitLabDisconnectConfirmToken string
 	// PlanConfirmToken backs the account-page plan form. Its sidecar uses
 	// a dedicated cookie name because the account page renders several
 	// independently action-bound forms at once.
@@ -3331,10 +3471,10 @@ type AuthCapabilitiesView struct {
 	GitHubEnabled bool
 }
 
-// AdminData is the operator-only dashboard payload. It currently carries the
-// durable TLS cutover state so an operator can see that a rollback was tested
-// without losing the context when the edge returns to its normal state.
+// AdminData carries operator-only repair health and durable TLS cutover state.
 type AdminData struct {
+	RepairHealth        *api.DataRepairHealth
+	RepairHealthError   string
 	TLSCutover          TLSCutoverState
 	TLSCutoverStateFile string
 	TLSCutoverPresent   bool
@@ -3727,4 +3867,25 @@ type OrgActivityItem struct {
 	OccurredAt string
 	Kind       string
 	Summary    string
+}
+
+// EdgeRuleSuggestionView is one suggested recipe (ADR-20261020105000): the observation
+// behind it, the parameters it is added with (Hidden), the required inputs
+// the user still has to give (Inputs), and the plan gate if any (Blocked).
+type EdgeRuleSuggestionView struct {
+	Recipe  string
+	Title   string
+	Reason  string
+	Hidden  []EdgeRuleSuggestionField
+	Inputs  []EdgeRuleRecipeParamView
+	Blocked string
+	// Alternative is a softer recipe for the same observation, such as a
+	// challenge instead of a rate limit (ADR-831 amendment 7).
+	Alternative *EdgeRuleSuggestionView
+}
+
+// EdgeRuleSuggestionField is one pre-filled recipe parameter.
+type EdgeRuleSuggestionField struct {
+	Name  string
+	Value string
 }

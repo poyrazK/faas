@@ -21,6 +21,7 @@ for the Makefile and CI invocations.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -123,6 +124,14 @@ def pre_normalize_spec(spec: Path) -> Path:
         if schema is not None:
             for keyword in ("oneOf", "anyOf", "not"):
                 schema.pop(keyword, None)
+    # 0.29 rejects boolean enums and otherwise drops the entire preflight DTO.
+    # Preserve its boolean wire type; the canonical spec and server still
+    # require false while customer activation is disabled (ADR-1333).
+    preflight = fixed["components"]["schemas"]["ManagedPostgresCutoverPreflight"]
+    activation = preflight["properties"]["activation_allowed"]
+    if activation.get("enum") != [False]:
+        raise ValueError("Preflight activation gate generator adaptation needs review")
+    activation.pop("enum")
     # The pinned generator discards object properties when a oneOf contains
     # only required-field constraints, producing body: Any instead of the
     # existing typed request model. Keep its wire shape in generated clients;
@@ -133,6 +142,21 @@ def pre_normalize_spec(spec: Path) -> Path:
         if constraints != [{"required": ["enabled"]}, {"required": ["tls"]}]:
             raise ValueError("UpdateTCPListenerRequest generator adaptation needs review")
         del update["oneOf"]
+    # The pinned generator ignores standalone application/x-ndjson responses.
+    # Treat this binary attachment as opaque bytes for generation only; the
+    # canonical API continues to return JSONL with its original content type.
+    export_path = "/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/export"
+    export_operation = fixed.get("paths", {}).get(export_path, {}).get("get")
+    if export_operation is not None:
+        if export_operation.get("operationId") != "exportRealtimeConsumerGroupDeadLetters":
+            raise ValueError("dead-letter export generator adaptation needs review")
+        content = export_operation["responses"]["200"]["content"]
+        if set(content) != {"application/x-ndjson"} or content["application/x-ndjson"]["schema"] != {
+            "type": "string",
+            "format": "binary",
+        }:
+            raise ValueError("dead-letter export binary response adaptation needs review")
+        export_operation["responses"]["200"]["content"] = {"application/octet-stream": content["application/x-ndjson"]}
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", prefix="openapi-", delete=False) as fh:
         tmp = Path(fh.name)
         json.dump(fixed, fh, indent=2, sort_keys=False, default=str)
@@ -140,6 +164,37 @@ def pre_normalize_spec(spec: Path) -> Path:
 
 
 WRAPPER_MODULES = (
+    "_binding_qualification.py",
+    "_binding_creation.py",
+    "_binding_runner.py",
+    "_binding_runner_diagnostics.py",
+    "realtime_workers.py",
+    "realtime_activity.py",
+    "realtime_presence.py",
+    "realtime_publisher.py",
+    "realtime_scopes.py",
+    "realtime_read_progress.py",
+    "realtime_read_publisher.py",
+    "realtime_read_refresh.py",
+    "realtime_connection_status.py",
+    "realtime_health.py",
+    "realtime_catch_up.py",
+    "realtime_subscriptions.py",
+    "realtime_readiness.py",
+    "realtime_diagnostics.py",
+    "realtime_timeline.py",
+    "realtime_recovery.py",
+    "realtime_websocket.py",
+    "realtime_channels.py",
+    "realtime_websocket_presence.py",
+    "realtime_filters.py",
+    "realtime_websocket_reads.py",
+    "realtime_direct_messages.py",
+    "realtime_expiry.py",
+    "realtime_sse.py",
+    "realtime_transport.py",
+    "realtime_backpressure.py",
+    "realtime_drain.py",
     "_wrapper.py",
     "_rfc7807.py",
     "_sse.py",
@@ -149,13 +204,84 @@ WRAPPER_MODULES = (
     "release_context.py",
     "dev_bridge.py",
     "webhook.py",
+    "auth.py",
     "pre_auth_target.py",
+    "ai_gateway.py",
     "issues.py",
     "flags.py",
     "commit.py",
     "operations_runtime.py",
     "job_operations_runtime.py",
+    "object_storage_runtime.py",
+    "_binding_client_runtime.py",
+    "postgres_pool_runtime.py",
+    "async_postgres_pool_runtime.py",
+    "_async_binding_client_runtime.py",
+    "async_object_storage_runtime.py",
+    "async_secret_reload_runtime.py",
+    "secret_reload_runtime.py",
+    "queue_consumer.py",
+    "trigger_batch.py",
     "operations.py",
+    "data_repair.py",
+    "data_repair_limits.py",
+    "data_repair_readiness.py",
+    "data_repair_readiness_probe.json",
+    "data_repair_transactions.py",
+    "event_consumer_transactions.py",
+    "event_consumer_processing.py",
+    "event_consumer_processing_inspection.py",
+    "_event_consumer_processing_store.py",
+    "event_consumer_delivery_context.py",
+    "event_acknowledgment_worker.py",
+    "event_acknowledgment_preparation.py",
+    "event_acknowledgment_preparation_events.py",
+    "event_acknowledgment_preparation_metrics.py",
+    "_event_acknowledgment_preparation_metric_events.py",
+    "event_acknowledgment_preparation_prometheus.py",
+    "_event_acknowledgment_preparation_prometheus_validation.py",
+    "_event_acknowledgment_preparation_runtime.py",
+    "event_acknowledgment_intents.py",
+    "event_acknowledgment_intent_recovery.py",
+    "event_acknowledgment_intent_retry_policy.py",
+    "event_acknowledgment_intent_policy_adoption.py",
+    "_event_acknowledgment_intent_policy_adoption_state.py",
+    "_event_acknowledgment_intent_command_transaction.py",
+    "_event_acknowledgment_intent_retry_resume_state.py",
+    "event_acknowledgment_intent_retry_resume.py",
+    "_event_acknowledgment_intent_budget_adoption_state.py",
+    "event_acknowledgment_intent_budget_adoption.py",
+    "event_acknowledgment_intent_recovery_pass.py",
+    "_event_acknowledgment_intent_recovery_pass_runtime.py",
+    "event_acknowledgment_intent_health.py",
+    "event_acknowledgment_intent_health_metrics.py",
+    "event_acknowledgment_intent_health_prometheus.py",
+    "event_acknowledgment_intent_health_metrics_watch.py",
+    "event_acknowledgment_intent_watch.py",
+    "_event_acknowledgment_intent_watch_policy.py",
+    "event_acknowledgment_intent_checkpoint.py",
+    "_event_acknowledgment_intent_checkpoint_state.py",
+    "event_acknowledgment_intent_checkpoint_watch.py",
+    "event_acknowledgment_intent_schema.sql",
+    "event_acknowledgment_intent_stored_retry_policy_schema.sql",
+    "event_acknowledgment_intent_policy_adoption_schema.sql",
+    "event_acknowledgment_intent_retry_budget_schema.sql",
+    "event_acknowledgment_intent_retry_resume_schema.sql",
+    "event_acknowledgment_intent_budget_adoption_schema.sql",
+    "_event_acknowledgment_protocol.py",
+    "_event_acknowledgment_callbacks.py",
+    "_event_deadline_policy.py",
+    "event_deadline_checkpoint.py",
+    "event_deadline_watch.py",
+    "event_deadline_investigation.py",
+    "commit_subscriber_wait.py",
+    "commit_delivery_report.py",
+    "commit_recovery_plan.py",
+    "commit_recovery_apply.py",
+    "commit_recovery_status.py",
+    "_event_consumer_contract.py",
+    "event_consumer_schema.sql",
+    "event_consumer_processing_schema.sql",
     "_operation_contract.py",
     "customer_operation_schema.sql",
     "operation_schema.sql",
@@ -185,6 +311,9 @@ def _preserve_handwritten_sdk(output: Path):
         for relative in [
             *(Path("faas_sdk") / name for name in WRAPPER_MODULES),
             *(Path(name) for name in PROJECT_FILES),
+            # Tests are authored inputs too. Formatter/import rewrites must
+            # not replace their current bytes, including uncommitted edits.
+            *(path.relative_to(output) for path in (output / "tests").rglob("*.py")),
         ]:
             source = output / relative
             if source.exists():
@@ -306,6 +435,7 @@ def regen(overwrite: bool = True) -> None:
 
         _rewrite_init_py(OUT / "faas_sdk" / "__init__.py")
         _patch_generator_bugs(OUT / "faas_sdk")
+        _preserve_routing_replay_guard_precision(OUT / "faas_sdk")
 
         # Preserve the previous inline request model import after naming the schema.
         models = OUT / "faas_sdk" / "models"
@@ -327,8 +457,9 @@ def regen(overwrite: bool = True) -> None:
             )
         )
 
-        # Run `ruff check --fix` over the generated tree + the
-        # hand-written test files so import ordering stays canonical.
+        # Run `ruff check --fix` over the generated tree so import ordering
+        # stays canonical. Hand-written tests are inputs to verification;
+        # regeneration must not rewrite them as a formatter side effect.
         # `gen.py` is run by CI as a dirty-diff gate; if a future
         # generator version emits a new import order that ruff flags,
         # this brings the tree back to green without making the
@@ -381,34 +512,7 @@ def regen(overwrite: bool = True) -> None:
                         "--quiet",
                         str(sdk_root),
                         "--exclude",
-                        "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,dev_bridge.py,webhook.py,flags.py,__init__.py",
-                    ],
-                    check=False,
-                    capture_output=True,
-                )
-            tests_root = OUT / "tests"
-            if tests_root.exists():
-                subprocess.run(
-                    [
-                        sys.executable,
-                        "-m",
-                        "ruff",
-                        "check",
-                        "--fix",
-                        "--quiet",
-                        str(tests_root),
-                    ],
-                    check=False,
-                    capture_output=True,
-                )
-                subprocess.run(
-                    [
-                        sys.executable,
-                        "-m",
-                        "ruff",
-                        "format",
-                        "--quiet",
-                        str(tests_root),
+                        "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,dev_bridge.py,webhook.py,flags.py,realtime_workers.py,realtime_activity.py,realtime_presence.py,realtime_publisher.py,realtime_scopes.py,realtime_read_progress.py,realtime_read_publisher.py,realtime_read_refresh.py,realtime_connection_status.py,realtime_health.py,realtime_catch_up.py,realtime_subscriptions.py,realtime_readiness.py,realtime_diagnostics.py,realtime_timeline.py,realtime_recovery.py,realtime_websocket.py,realtime_channels.py,realtime_websocket_presence.py,realtime_filters.py,realtime_websocket_reads.py,realtime_direct_messages.py,realtime_expiry.py,realtime_sse.py,realtime_transport.py,realtime_backpressure.py,realtime_drain.py,__init__.py",
                     ],
                     check=False,
                     capture_output=True,
@@ -696,6 +800,8 @@ Public surface:
   responses on opt-in pre-auth routes.
 * Runtime flags client, ASGI middleware and HTTPX transport for Python apps.
 * `GregaleOperations` and Customer Operation transaction support for async HTTP handlers.
+* `ai_gateway_url`, `ai_gateway_headers`, `opaque_ai_user_id` - AI gateway
+  relay URLs and end-user / session headers for app calls.
 """
 
 from ._rfc7807 import (
@@ -715,16 +821,20 @@ from ._sse import SseEvent, aiter_sse, iter_sse
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
-from .commit import CommitEventRouting, insert_commit_event
+from .commit import CommitEventRouting, ainsert_commit_event, insert_commit_event
 from .customer_operations import (
     CustomerOperationConflictError,
     CustomerOperationPublicationError,
-    CustomerOperationRequest,
     CustomerOperationTransaction,
-    awith_customer_operation_transaction,
-    customer_operation_receipt_schema,
-    customer_operation_request_digest,
-    customer_operation_request_from_headers,
+)
+from .data_repair import awith_data_repair_capture, with_data_repair_capture
+from .data_repair_readiness import acheck_data_repair_capture, check_data_repair_capture
+from .data_repair_transactions import (
+    DataRepairCaptureError,
+    awith_repairable_customer_operation_transaction,
+    awith_repairable_operation_transaction,
+    with_repairable_customer_operation_transaction,
+    with_repairable_operation_transaction,
 )
 from .dev_bridge import (
     DEV_BRIDGE_CONTEXT_HEADER,
@@ -778,6 +888,15 @@ from .operations import (
     with_operation_transaction,
 )
 from .operations_runtime import GregaleOperations, OperationExecutionContext, OperationHTTPError
+from .ai_gateway import (
+    AI_SESSION_HEADER,
+    AI_USER_HEADER,
+    AIGatewayError,
+    ai_gateway_headers,
+    ai_gateway_url,
+    is_valid_ai_user_id,
+    opaque_ai_user_id,
+)
 from .pre_auth_target import PRE_AUTH_TARGET_HEADER, pre_auth_target_digest
 from .release_context import (
     GREGALE_RELEASE_HEADER,
@@ -801,6 +920,13 @@ from .webhook import (
 __version__ = "0.1.0"
 
 __all__ = (
+    "AI_SESSION_HEADER",
+    "AI_USER_HEADER",
+    "AIGatewayError",
+    "ai_gateway_headers",
+    "ai_gateway_url",
+    "is_valid_ai_user_id",
+    "opaque_ai_user_id",
     "IssueReporter",
     "FaaSClient",
     "FaaSClientOptions",
@@ -870,6 +996,7 @@ __all__ = (
     "current_dev_bridge_context",
     "with_dev_bridge_context",
     "insert_commit_event",
+    "ainsert_commit_event",
     "CommitEventRouting",
     "CustomerOperationRequest",
     "customer_operation_request_from_headers",
@@ -888,6 +1015,15 @@ __all__ = (
     "operation_request_digest",
     "operation_request_from_headers",
     "with_operation_transaction",
+    "with_data_repair_capture",
+    "awith_data_repair_capture",
+    "check_data_repair_capture",
+    "acheck_data_repair_capture",
+    "DataRepairCaptureError",
+    "with_repairable_operation_transaction",
+    "awith_repairable_operation_transaction",
+    "with_repairable_customer_operation_transaction",
+    "awith_repairable_customer_operation_transaction",
     "CustomerOperationConflictError",
     "CustomerOperationPublicationError",
     "CustomerOperationRequest",
@@ -932,6 +1068,561 @@ __all__ += ("OperationWorkflowDependency",)
 
 from .models.operation_workflow_related_instance import OperationWorkflowRelatedInstance
 __all__ += ("OperationWorkflowRelatedInstance",)
+
+
+from .realtime_direct_messages import RealtimeDirectMessage, RealtimeWebSocketDirectMessages
+from .realtime_drain import RealtimeDrainResult
+from .realtime_backpressure import RealtimeBackpressureMonitor, RealtimeBackpressureStatus, RealtimeProcessingStatus
+from .realtime_expiry import RealtimeExpiryDiagnostics, RealtimeExpiryStatus, RealtimeMessageExpiry
+from .realtime_sse import RealtimeSSEClient, RealtimeSSEMessage
+from .realtime_transport import RealtimeFallbackClient, RealtimeTransportStatus
+
+__all__ += (
+    "RealtimeDrainResult",
+    "RealtimeBackpressureMonitor",
+    "RealtimeBackpressureStatus",
+    "RealtimeProcessingStatus",
+    "RealtimeExpiryDiagnostics",
+    "RealtimeExpiryStatus",
+    "RealtimeMessageExpiry",
+    "RealtimeSSEClient",
+    "RealtimeSSEMessage",
+    "RealtimeFallbackClient",
+    "RealtimeTransportStatus",
+    "RealtimeDirectMessage", "RealtimeWebSocketDirectMessages")
+
+
+from .realtime_websocket_reads import RealtimeWebSocketReadProgress
+
+__all__ += ("RealtimeWebSocketReadProgress",)
+
+
+from .realtime_filters import RealtimeEventFilter
+
+__all__ += ("RealtimeEventFilter",)
+
+
+from .realtime_websocket_presence import RealtimeWebSocketPresence, RealtimeWebSocketSignal
+
+__all__ += ("RealtimeWebSocketPresence", "RealtimeWebSocketSignal")
+
+
+from .realtime_channels import RealtimeChannelSubscription, RealtimeMultiChannelClient
+
+__all__ += ("RealtimeChannelSubscription", "RealtimeMultiChannelClient")
+
+
+from .realtime_websocket import RealtimeWebSocketClient, RealtimeWebSocketMessage, RealtimeWebSocketSession
+
+__all__ += ("RealtimeWebSocketClient", "RealtimeWebSocketMessage", "RealtimeWebSocketSession")
+
+
+from .realtime_recovery import (
+    RealtimeRecoveryCoordinator,
+    RealtimeRecoveryError,
+    RealtimeRecoveryEvent,
+    RealtimeRecoveryRetry,
+    RealtimeRecoverySession,
+    RealtimeRecoveryTarget,
+)
+
+__all__ += (
+    "RealtimeRecoveryCoordinator",
+    "RealtimeRecoveryError",
+    "RealtimeRecoveryEvent",
+    "RealtimeRecoveryRetry",
+    "RealtimeRecoverySession",
+    "RealtimeRecoveryTarget",
+)
+
+
+from .realtime_timeline import RealtimeIncidentEvent, RealtimeIncidentTimeline
+
+__all__ += ("RealtimeIncidentEvent", "RealtimeIncidentTimeline")
+
+
+from .realtime_diagnostics import export_realtime_diagnostics
+
+__all__ += ("export_realtime_diagnostics",)
+
+
+from .realtime_readiness import (
+    RealtimeCatchUpRequirement,
+    RealtimeReadinessError,
+    RealtimeReadinessResult,
+    wait_realtime_ready,
+)
+
+__all__ += (
+    "RealtimeCatchUpRequirement",
+    "RealtimeReadinessError",
+    "RealtimeReadinessResult",
+    "wait_realtime_ready",
+)
+
+
+from .realtime_subscriptions import (
+    RealtimeSubscriptionStatus,
+    RealtimeSubscriptionSummary,
+    RealtimeSubscriptionTracker,
+    RealtimeSubscriptionWaitError,
+)
+
+__all__ += (
+    "RealtimeSubscriptionStatus",
+    "RealtimeSubscriptionSummary",
+    "RealtimeSubscriptionTracker",
+    "RealtimeSubscriptionWaitError",
+)
+
+
+from .realtime_catch_up import RealtimeCatchUpStatus, RealtimeCatchUpTracker, RealtimeCatchUpWaitError
+
+__all__ += ("RealtimeCatchUpStatus", "RealtimeCatchUpTracker", "RealtimeCatchUpWaitError")
+
+
+from .realtime_health import RealtimeHealthSummary, summarize_realtime_health
+
+__all__ += ("RealtimeHealthSummary", "summarize_realtime_health")
+
+
+from .realtime_connection_status import (
+    RealtimeConnectionStatus,
+    RealtimeConnectionStatusTracker,
+    RealtimeConnectionQuality,
+    RealtimeConnectionQualityTracker,
+)
+
+__all__ += (
+    "RealtimeConnectionStatus",
+    "RealtimeConnectionStatusTracker",
+    "RealtimeConnectionQuality",
+    "RealtimeConnectionQualityTracker",
+)
+
+
+from .realtime_read_refresh import RealtimeReadRefreshCoordinator, RealtimeReadRefreshError
+
+__all__ += ("RealtimeReadRefreshCoordinator", "RealtimeReadRefreshError")
+
+
+from .realtime_read_publisher import (
+    RealtimeReadProgressPublisher,
+    RealtimeReadPublishError,
+    create_managed_realtime_read_publisher,
+)
+
+__all__ += (
+    "RealtimeReadProgressPublisher",
+    "RealtimeReadPublishError",
+    "create_managed_realtime_read_publisher",
+)
+
+
+from .realtime_read_progress import (
+    RealtimeReadProgress,
+    RealtimeReadProgressTracker,
+    RealtimeReadProgressFreshness,
+    RealtimeUnreadSummary,
+    RealtimeUnreadBadge,
+    format_realtime_unread_badge,
+    summarize_realtime_unread,
+)
+
+__all__ += (
+    "RealtimeReadProgress",
+    "RealtimeReadProgressTracker",
+    "RealtimeReadProgressFreshness",
+    "RealtimeUnreadSummary",
+    "RealtimeUnreadBadge",
+    "format_realtime_unread_badge",
+    "summarize_realtime_unread",
+)
+
+
+from .realtime_scopes import (
+    REALTIME_ACTIVITY_SCOPE_PREFIX,
+    parse_realtime_activity_scope,
+    realtime_activity_scope_channel,
+)
+
+__all__ += (
+    "REALTIME_ACTIVITY_SCOPE_PREFIX",
+    "parse_realtime_activity_scope",
+    "realtime_activity_scope_channel",
+)
+
+
+from .realtime_publisher import (
+    RealtimeActivityPublishError,
+    RealtimeActivityPublisher,
+    create_managed_realtime_activity_publisher,
+)
+
+__all__ += (
+    "RealtimeActivityPublishError",
+    "RealtimeActivityPublisher",
+    "create_managed_realtime_activity_publisher",
+)
+
+
+from .realtime_presence import (
+    RealtimeActivitySummary,
+    RealtimeLabeledActivityParticipant,
+    summarize_realtime_activity,
+    format_realtime_typing_summary,
+    RealtimeActivityParticipant,
+    RealtimePresenceDirectory,
+    RealtimePresenceEvent,
+    RealtimePresenceMember,
+    RealtimePresenceSummary,
+)
+
+__all__ += (
+    "RealtimeActivitySummary",
+    "RealtimeLabeledActivityParticipant",
+    "summarize_realtime_activity",
+    "format_realtime_typing_summary",
+    "RealtimeActivityParticipant",
+    "RealtimePresenceDirectory",
+    "RealtimePresenceEvent",
+    "RealtimePresenceMember",
+    "RealtimePresenceSummary",
+)
+
+
+from .realtime_activity import RealtimeActivity, RealtimeActivityTracker
+
+__all__ += ("RealtimeActivity", "RealtimeActivityTracker")
+
+
+from .realtime_workers import (
+    RealtimeLeaseLostError,
+    RealtimeWorkerContext,
+    RealtimeWorkerError,
+    RealtimeWorkerEvent,
+    RealtimeWorkerOptions,
+    consume_realtime_consumer_group,
+    consume_realtime_consumer_group_with_credential,
+)
+
+__all__ += (
+    "RealtimeLeaseLostError",
+    "RealtimeWorkerContext",
+    "RealtimeWorkerError",
+    "RealtimeWorkerEvent",
+    "RealtimeWorkerOptions",
+    "consume_realtime_consumer_group",
+    "consume_realtime_consumer_group_with_credential",
+)
+
+from .event_consumer_transactions import (
+    EventConsumerCommitUnknownError,
+    EventConsumerConflictError,
+    EventConsumerRequest,
+    EventConsumerTransactionResult,
+    awith_event_consumer_transaction,
+    event_consumer_receipt_schema,
+    event_consumer_request_from_headers,
+    new_event_consumer_request,
+    with_event_consumer_transaction,
+)
+
+__all__ += (
+    "EventConsumerCommitUnknownError", "EventConsumerConflictError", "EventConsumerRequest",
+    "EventConsumerTransactionResult", "awith_event_consumer_transaction", "event_consumer_receipt_schema",
+    "event_consumer_request_from_headers", "new_event_consumer_request", "with_event_consumer_transaction",
+)
+from .commit_subscriber_wait import await_commit_subscriber
+__all__ += ("await_commit_subscriber",)
+
+from .commit_delivery_report import CommitDeliveryReportError, aget_commit_delivery_report
+__all__ += ("CommitDeliveryReportError", "aget_commit_delivery_report")
+from .commit_recovery_plan import CommitRecoveryPlanError, aplan_commit_recovery
+__all__ += ("CommitRecoveryPlanError", "aplan_commit_recovery")
+from .commit_recovery_apply import CommitRecoveryApplyError, aapply_commit_recovery
+__all__ += ("CommitRecoveryApplyError", "aapply_commit_recovery")
+from .commit_recovery_status import adiagnose_commit_recovery_status, CommitRecoveryStatusError, aget_commit_recovery_status, awatch_commit_recovery_status, commit_recovery_status_settled
+__all__ += ("adiagnose_commit_recovery_status", "CommitRecoveryStatusError", "aget_commit_recovery_status", "awatch_commit_recovery_status", "commit_recovery_status_settled")
+
+from ._binding_runner import (
+    BindingVerificationRecoveryError, BindingVerificationProgress,
+    run_binding_verification, run_project_binding_verification,
+    arun_binding_verification, arun_project_binding_verification,
+)
+__all__ += (
+    "BindingVerificationRecoveryError", "BindingVerificationProgress",
+    "run_binding_verification", "run_project_binding_verification",
+    "arun_binding_verification", "arun_project_binding_verification",
+)
+from ._binding_creation import (
+    BindingVerificationCreationError,
+    create_binding_verification_from_review,
+    reconcile_binding_verification_creation,
+    create_project_binding_verification_from_review,
+    reconcile_project_binding_verification_creation,
+    acreate_binding_verification_from_review,
+    areconcile_binding_verification_creation,
+    acreate_project_binding_verification_from_review,
+    areconcile_project_binding_verification_creation,
+)
+__all__ += ('BindingVerificationCreationError', 'create_binding_verification_from_review', 'reconcile_binding_verification_creation', 'create_project_binding_verification_from_review', 'reconcile_project_binding_verification_creation', 'acreate_binding_verification_from_review', 'areconcile_binding_verification_creation', 'acreate_project_binding_verification_from_review', 'areconcile_project_binding_verification_creation')
+
+from .event_consumer_delivery_context import (EventConsumerDeliveryContext, EventConsumerDeliveryContextUnavailableError,
+                                              event_consumer_delivery_context_from_headers)
+__all__ += ("EventConsumerDeliveryContext", "EventConsumerDeliveryContextUnavailableError", "event_consumer_delivery_context_from_headers")
+
+from ._event_deadline_policy import EVENT_DEADLINE_REASONS, EventDeadlinePolicyOptions, EventDeadlineTarget
+from .event_deadline_checkpoint import acknowledge_event_deadline_alerts, validate_event_deadline_checkpoint
+from .event_deadline_watch import (
+    EventDeadlineWatchCallbackError,
+    EventDeadlineWatchCancelled,
+    EventDeadlineWatchOptions,
+    awatch_event_subscription_deadlines,
+)
+
+__all__ += (
+    "EVENT_DEADLINE_REASONS", "EventDeadlinePolicyOptions", "EventDeadlineTarget",
+    "EventDeadlineWatchOptions", "EventDeadlineWatchCallbackError", "EventDeadlineWatchCancelled",
+    "awatch_event_subscription_deadlines", "validate_event_deadline_checkpoint", "acknowledge_event_deadline_alerts",
+)
+
+from ._event_deadline_policy import EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX, EventDeadlineRatioOptions
+
+__all__ += ("EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX", "EventDeadlineRatioOptions")
+
+from .event_deadline_investigation import (
+    EventDeadlineInvestigationOptions,
+    EventDeadlineInvestigationReadError,
+    ainvestigate_event_deadline_alert,
+)
+
+__all__ += (
+    "EventDeadlineInvestigationOptions", "EventDeadlineInvestigationReadError", "ainvestigate_event_deadline_alert",
+)
+
+from ._event_acknowledgment_protocol import (
+    EventAcknowledgmentWorkerCancellation,
+    EventAcknowledgmentWorkerCancelled,
+    EventAcknowledgmentWorkerError,
+    EventAcknowledgmentWorkerOptions,
+    EventAcknowledgmentWorkerResult,
+    EventAcknowledgmentWorkerStatus,
+)
+from .event_acknowledgment_worker import AsyncEventAcknowledgmentWorker
+
+__all__ += (
+    "AsyncEventAcknowledgmentWorker", "EventAcknowledgmentWorkerOptions", "EventAcknowledgmentWorkerResult",
+    "EventAcknowledgmentWorkerStatus", "EventAcknowledgmentWorkerError", "EventAcknowledgmentWorkerCancelled",
+    "EventAcknowledgmentWorkerCancellation",
+)
+
+from .event_acknowledgment_intent_recovery import (
+    EventAcknowledgmentIntentClaim,
+    aclaim_event_acknowledgment_intent,
+    arecover_next_event_acknowledgment_intent,
+)
+from .event_acknowledgment_intent_retry_policy import (
+    EventAcknowledgmentIntentRetryPolicy,
+    EventAcknowledgmentIntentRetryBudget,
+    EventAcknowledgmentIntentStoredRetryPolicy,
+)
+from .event_acknowledgment_intents import (
+    EventAcknowledgmentIntentError,
+    EventAcknowledgmentIntentParkedError,
+    EventAcknowledgmentIntentResult,
+    EventAcknowledgmentIntentStatus,
+    alist_event_acknowledgment_intents,
+    event_acknowledgment_intent_schema,
+    event_acknowledgment_intent_stored_retry_policy_schema,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentError", "EventAcknowledgmentIntentResult", "EventAcknowledgmentIntentStatus",
+    "EventAcknowledgmentIntentClaim", "aclaim_event_acknowledgment_intent",
+    "arecover_next_event_acknowledgment_intent", "alist_event_acknowledgment_intents",
+    "event_acknowledgment_intent_schema",
+    "EventAcknowledgmentIntentRetryPolicy", "EventAcknowledgmentIntentRetryBudget", "EventAcknowledgmentIntentParkedError",
+    "EventAcknowledgmentIntentStoredRetryPolicy", "event_acknowledgment_intent_stored_retry_policy_schema",
+)
+
+from .event_acknowledgment_intent_policy_adoption import (
+    EventAcknowledgmentIntentAdoptRetryPolicyOptions,
+    EventAcknowledgmentIntentPolicyAdoptionError,
+    EventAcknowledgmentIntentPolicyAdoptionReceipt,
+    aadopt_event_acknowledgment_intent_retry_policy,
+    event_acknowledgment_intent_policy_adoption_schema,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentAdoptRetryPolicyOptions", "EventAcknowledgmentIntentPolicyAdoptionError",
+    "EventAcknowledgmentIntentPolicyAdoptionReceipt", "aadopt_event_acknowledgment_intent_retry_policy",
+    "event_acknowledgment_intent_policy_adoption_schema",
+)
+
+from .event_acknowledgment_intent_retry_resume import (
+    EventAcknowledgmentIntentResumeRetryBudgetOptions,
+    EventAcknowledgmentIntentRetryResumeError,
+    EventAcknowledgmentIntentRetryResumeReceipt,
+    aget_event_acknowledgment_intent_retry_resume_candidate,
+    aresume_event_acknowledgment_intent_retry_budget,
+    event_acknowledgment_intent_retry_budget_schema,
+    event_acknowledgment_intent_retry_resume_schema,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentResumeRetryBudgetOptions", "EventAcknowledgmentIntentRetryResumeError",
+    "EventAcknowledgmentIntentRetryResumeReceipt", "aget_event_acknowledgment_intent_retry_resume_candidate",
+    "aresume_event_acknowledgment_intent_retry_budget", "event_acknowledgment_intent_retry_budget_schema",
+    "event_acknowledgment_intent_retry_resume_schema",
+)
+
+from .event_acknowledgment_intent_budget_adoption import (
+    EventAcknowledgmentIntentAdoptRetryBudgetOptions,
+    EventAcknowledgmentIntentBudgetAdoptionError,
+    EventAcknowledgmentIntentBudgetAdoptionReceipt,
+    aadopt_event_acknowledgment_intent_retry_budget,
+    aget_event_acknowledgment_intent_budget_adoption_candidate,
+    event_acknowledgment_intent_budget_adoption_schema,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentAdoptRetryBudgetOptions", "EventAcknowledgmentIntentBudgetAdoptionError",
+    "EventAcknowledgmentIntentBudgetAdoptionReceipt", "aadopt_event_acknowledgment_intent_retry_budget",
+    "aget_event_acknowledgment_intent_budget_adoption_candidate", "event_acknowledgment_intent_budget_adoption_schema",
+)
+
+from .event_acknowledgment_intent_health import (
+    EventAcknowledgmentIntentHealth,
+    EventAcknowledgmentIntentHealthOptions,
+    aget_event_acknowledgment_intent_health,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentHealth", "EventAcknowledgmentIntentHealthOptions",
+    "aget_event_acknowledgment_intent_health",
+)
+
+from .event_acknowledgment_intent_health_metrics import (
+    EventAcknowledgmentIntentHealthMetrics,
+    EventAcknowledgmentIntentHealthMetricsOptions,
+    EventAcknowledgmentIntentHealthMetricsSample,
+    EventAcknowledgmentIntentHealthMetricsSnapshot,
+)
+from .event_acknowledgment_intent_health_metrics_watch import awatch_event_acknowledgment_intent_health_metrics
+from .event_acknowledgment_intent_health_prometheus import (
+    EVENT_ACKNOWLEDGMENT_INTENT_HEALTH_PROMETHEUS_CONTENT_TYPE,
+    format_event_acknowledgment_intent_health_metrics,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentHealthMetrics", "EventAcknowledgmentIntentHealthMetricsOptions",
+    "EventAcknowledgmentIntentHealthMetricsSample", "EventAcknowledgmentIntentHealthMetricsSnapshot",
+    "awatch_event_acknowledgment_intent_health_metrics", "EVENT_ACKNOWLEDGMENT_INTENT_HEALTH_PROMETHEUS_CONTENT_TYPE",
+    "format_event_acknowledgment_intent_health_metrics",
+)
+
+from .event_acknowledgment_intent_watch import (
+    EventAcknowledgmentIntentAlert,
+    EventAcknowledgmentIntentWatchCallbackError,
+    EventAcknowledgmentIntentWatchOptions,
+    awatch_event_acknowledgment_intent_health,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentAlert", "EventAcknowledgmentIntentWatchCallbackError",
+    "EventAcknowledgmentIntentWatchOptions", "awatch_event_acknowledgment_intent_health",
+)
+
+from .event_acknowledgment_intent_checkpoint import (
+    EVENT_ACKNOWLEDGMENT_INTENT_OUTBOX_MAX,
+    acknowledge_event_acknowledgment_intent_alerts,
+    validate_event_acknowledgment_intent_checkpoint,
+)
+from .event_acknowledgment_intent_checkpoint_watch import (
+    EventAcknowledgmentIntentCheckpointWatchCallbackError,
+    EventAcknowledgmentIntentCheckpointWatchCancelled,
+    EventAcknowledgmentIntentCheckpointWatchOptions,
+    awatch_event_acknowledgment_intent_health_with_checkpoint,
+)
+
+__all__ += (
+    "EVENT_ACKNOWLEDGMENT_INTENT_OUTBOX_MAX", "acknowledge_event_acknowledgment_intent_alerts",
+    "validate_event_acknowledgment_intent_checkpoint", "EventAcknowledgmentIntentCheckpointWatchCallbackError",
+    "EventAcknowledgmentIntentCheckpointWatchCancelled", "EventAcknowledgmentIntentCheckpointWatchOptions",
+    "awatch_event_acknowledgment_intent_health_with_checkpoint",
+)
+
+from .event_consumer_processing import (
+    EventConsumerProcessingError,
+    EventConsumerProcessingLease,
+    aclaim_event_consumer_processing,
+    event_consumer_processing_schema,
+)
+
+__all__ += (
+    "EventConsumerProcessingError", "EventConsumerProcessingLease",
+    "aclaim_event_consumer_processing", "event_consumer_processing_schema",
+)
+
+from .event_acknowledgment_preparation import EventAcknowledgmentPreparedOptions
+
+__all__ += ("EventAcknowledgmentPreparedOptions",)
+
+from .event_consumer_processing_inspection import (
+    EventConsumerProcessingInspection,
+    ainspect_event_consumer_processing,
+)
+
+__all__ += ("EventConsumerProcessingInspection", "ainspect_event_consumer_processing")
+
+from .event_acknowledgment_preparation_events import (
+    EventAcknowledgmentPreparationEvent,
+    EventAcknowledgmentPreparationOutcome,
+    EventAcknowledgmentPreparationReason,
+    EventAcknowledgmentPreparationStage,
+)
+
+__all__ += (
+    "EventAcknowledgmentPreparationEvent", "EventAcknowledgmentPreparationOutcome",
+    "EventAcknowledgmentPreparationReason", "EventAcknowledgmentPreparationStage",
+)
+
+from .event_acknowledgment_preparation_metrics import (
+    EVENT_ACKNOWLEDGMENT_PREPARATION_DURATION_BUCKETS_MS,
+    EventAcknowledgmentPreparationHistogram,
+    EventAcknowledgmentPreparationMetrics,
+    EventAcknowledgmentPreparationMetricsSnapshot,
+)
+
+__all__ += (
+    "EVENT_ACKNOWLEDGMENT_PREPARATION_DURATION_BUCKETS_MS", "EventAcknowledgmentPreparationHistogram",
+    "EventAcknowledgmentPreparationMetrics", "EventAcknowledgmentPreparationMetricsSnapshot",
+)
+
+from .event_acknowledgment_preparation_prometheus import (
+    EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE,
+    format_event_acknowledgment_preparation_metrics,
+)
+
+__all__ += (
+    "EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE", "format_event_acknowledgment_preparation_metrics",
+)
+
+from .event_acknowledgment_intent_recovery_pass import (
+    EventAcknowledgmentIntentRecoveryPassCancelled,
+    EventAcknowledgmentIntentRecoveryPassCommitUnknownError,
+    EventAcknowledgmentIntentRecoveryPassError,
+    EventAcknowledgmentIntentRecoveryPassOptions,
+    EventAcknowledgmentIntentRecoveryPassResult,
+    arecover_event_acknowledgment_intents,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentRecoveryPassCancelled", "EventAcknowledgmentIntentRecoveryPassCommitUnknownError",
+    "EventAcknowledgmentIntentRecoveryPassError", "EventAcknowledgmentIntentRecoveryPassOptions",
+    "EventAcknowledgmentIntentRecoveryPassResult", "arecover_event_acknowledgment_intents",
+)
 '''
 
 
@@ -943,6 +1634,39 @@ def _rewrite_init_py(init_path: Path) -> None:
     release context, runtime flags, and webhook verification.
     """
     init_path.write_text(_INIT_PY_TEMPLATE)
+
+
+def _git_blob_hashes(paths: list[Path], repo_root: Path) -> list[str]:
+    """Hash raw files in one Git invocation, including Git's blob header.
+
+    --no-filters preserves the old --stdin byte semantics. Git's stdin path
+    protocol accepts C-quoted bytes, so spaces, controls and Unicode paths
+    remain unambiguous without launching a process for every generated file.
+    """
+    if not paths:
+        return []
+    quoted = []
+    for path in paths:
+        pieces = []
+        for value in os.fsencode(path):
+            if value in (34, 92):
+                pieces.append(b"\\" + bytes([value]))
+            elif value < 32 or value >= 127:
+                pieces.append(f"\\{value:03o}".encode("ascii"))
+            else:
+                pieces.append(bytes([value]))
+        quoted.append(b'"' + b"".join(pieces) + b'"')
+    proc = subprocess.run(
+        ["git", "hash-object", "--no-filters", "--stdin-paths"],
+        cwd=repo_root,
+        input=b"\n".join(quoted) + b"\n",
+        check=True,
+        capture_output=True,
+    )
+    hashes = proc.stdout.decode("ascii").splitlines()
+    if len(hashes) != len(paths):
+        raise RuntimeError("git returned an incomplete generated-file hash batch")
+    return hashes
 
 
 def _canonicalise_to_head(
@@ -1012,22 +1736,16 @@ def _canonicalise_to_head(
     #    NOT apply that header and would never match — we use git's
     #    hashing primitives so the comparison is apples-to-apples.
     mismatches: list[tuple[Path, bytes, str]] = []
+    candidates = []
     for regen_path in sdk_root.rglob("*.py"):
         rel = regen_path.relative_to(repo_root).as_posix()
         head_sha = head_blobs.get(rel)
-        if head_sha is None:
-            continue  # untracked (e.g. wrapper) — leave alone
-        regen_bytes = regen_path.read_bytes()
-        regen_sha_proc = subprocess.run(
-            ["git", "hash-object", "--stdin"],
-            cwd=repo_root,
-            input=regen_bytes,
-            check=True,
-            capture_output=True,
-        )
-        if regen_sha_proc.stdout.decode("ascii").strip() == head_sha:
-            continue  # regen equals HEAD — no reconciliation needed
-        mismatches.append((regen_path, regen_bytes, head_sha))
+        if head_sha is not None:
+            candidates.append((regen_path, head_sha))
+    hashes = _git_blob_hashes([path for path, _ in candidates], repo_root)
+    for (regen_path, head_sha), regen_sha in zip(candidates, hashes, strict=True):
+        if regen_sha != head_sha:
+            mismatches.append((regen_path, regen_path.read_bytes(), head_sha))
 
     # 3. Pass B — batch-fetch HEAD bytes for all mismatched SHAs in
     #    one `git cat-file --batch` invocation. The output format
@@ -1102,6 +1820,17 @@ def _canonicalise_to_head(
             file=sys.stderr,
         )
     return reconciled
+
+
+def _preserve_routing_replay_guard_precision(package: Path) -> None:
+    """Keep a receipt guard's RFC3339 text intact, including nanosecond precision."""
+    path = package / "models" / "replay_event_fanout_failure_request.py"
+    text = path.read_text()
+    text = text.replace("import datetime\n", "")
+    text = text.replace("datetime.datetime | Unset", "str | Unset")
+    text = text.replace("self.expected_accepted_at.isoformat()", "self.expected_accepted_at")
+    text = text.replace("datetime.datetime.fromisoformat(_expected_accepted_at)", "_expected_accepted_at")
+    path.write_text(text)
 
 
 def main() -> None:

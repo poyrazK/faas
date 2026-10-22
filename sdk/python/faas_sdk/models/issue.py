@@ -33,6 +33,8 @@ class Issue:
     last_seen_at: datetime.datetime
     event_count: int
     regression_count: int
+    split_source_issue_id: UUID | Unset = UNSET
+    """Original fingerprint source for a branch created by an occurrence split rule."""
     assignee_account_id: UUID | Unset = UNSET
     impact_24h: IssueImpactSummary | Unset = UNSET
     """Observed retained occurrences, verified distinct customers, and unattributed events from the previous 24
@@ -41,6 +43,8 @@ class Issue:
     fixed_deployment_id: UUID | Unset = UNSET
     fixed_deployment_created_at: datetime.datetime | Unset = UNSET
     ignored_until: datetime.datetime | Unset = UNSET
+    assignee_team_id: UUID | Unset = UNSET
+    """Current team assignment within this app, mutually exclusive with the account assignee."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -66,6 +70,10 @@ class Issue:
 
         regression_count = self.regression_count
 
+        split_source_issue_id: str | Unset = UNSET
+        if not isinstance(self.split_source_issue_id, Unset):
+            split_source_issue_id = str(self.split_source_issue_id)
+
         assignee_account_id: str | Unset = UNSET
         if not isinstance(self.assignee_account_id, Unset):
             assignee_account_id = str(self.assignee_account_id)
@@ -90,6 +98,10 @@ class Issue:
         if not isinstance(self.ignored_until, Unset):
             ignored_until = self.ignored_until.isoformat()
 
+        assignee_team_id: str | Unset = UNSET
+        if not isinstance(self.assignee_team_id, Unset):
+            assignee_team_id = str(self.assignee_team_id)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -107,6 +119,8 @@ class Issue:
                 "regression_count": regression_count,
             }
         )
+        if split_source_issue_id is not UNSET:
+            field_dict["split_source_issue_id"] = split_source_issue_id
         if assignee_account_id is not UNSET:
             field_dict["assignee_account_id"] = assignee_account_id
         if impact_24h is not UNSET:
@@ -119,6 +133,8 @@ class Issue:
             field_dict["fixed_deployment_created_at"] = fixed_deployment_created_at
         if ignored_until is not UNSET:
             field_dict["ignored_until"] = ignored_until
+        if assignee_team_id is not UNSET:
+            field_dict["assignee_team_id"] = assignee_team_id
 
         return field_dict
 
@@ -148,6 +164,13 @@ class Issue:
         event_count = d.pop("event_count")
 
         regression_count = d.pop("regression_count")
+
+        _split_source_issue_id = d.pop("split_source_issue_id", UNSET)
+        split_source_issue_id: UUID | Unset
+        if isinstance(_split_source_issue_id, Unset):
+            split_source_issue_id = UNSET
+        else:
+            split_source_issue_id = UUID(_split_source_issue_id)
 
         _assignee_account_id = d.pop("assignee_account_id", UNSET)
         assignee_account_id: UUID | Unset
@@ -191,6 +214,13 @@ class Issue:
         else:
             ignored_until = datetime.datetime.fromisoformat(_ignored_until)
 
+        _assignee_team_id = d.pop("assignee_team_id", UNSET)
+        assignee_team_id: UUID | Unset
+        if isinstance(_assignee_team_id, Unset):
+            assignee_team_id = UNSET
+        else:
+            assignee_team_id = UUID(_assignee_team_id)
+
         issue = cls(
             id=id,
             app_id=app_id,
@@ -203,12 +233,14 @@ class Issue:
             last_seen_at=last_seen_at,
             event_count=event_count,
             regression_count=regression_count,
+            split_source_issue_id=split_source_issue_id,
             assignee_account_id=assignee_account_id,
             impact_24h=impact_24h,
             resolved_at=resolved_at,
             fixed_deployment_id=fixed_deployment_id,
             fixed_deployment_created_at=fixed_deployment_created_at,
             ignored_until=ignored_until,
+            assignee_team_id=assignee_team_id,
         )
 
         issue.additional_properties = d

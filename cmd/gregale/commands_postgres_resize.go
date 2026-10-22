@@ -23,6 +23,9 @@ func cmdPostgresResize(args []string) int {
 		return 1
 	}
 	id, err := uuid.Parse(*request)
+	if *class != "" && invalidPostgresChoice("postgres resize", "class", *class) {
+		return 1
+	}
 	if fs.NArg() != 1 || (*class != "" && !postgresServiceClassOK(*class)) || *storage < 0 || (*class == "" && *storage == 0) ||
 		err != nil || id == uuid.Nil || id.String() != *request {
 		PrintUsage(os.Stderr, usage, "postgres")

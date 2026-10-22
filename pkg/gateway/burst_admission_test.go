@@ -4,10 +4,12 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -532,5 +534,46 @@ func TestBurstCapacityReturnsWhenFirstTargetBecomesRoutable(t *testing.T) {
 	}
 	if waited := time.Since(started); waited > 2*time.Second {
 		t.Fatalf("caller waited %s for the burst generation; want it released once a target is routable", waited)
+	}
+}
+
+// TestBurstCapacityWaitsOutARestartLongerThanTheWarmQueue pins H9-166. On
+// production-us `app restart` left an app with no routable target for 2-3 s;
+// requests held in maybeBurstCapacity were bounded by the 2 s warm-queue wait
+// and answered 503 "wake failed" just before the replacement became routable.
+// The hold is a wake, so it uses the wake budget.
+func TestBurstCapacityWaitsOutARestartLongerThanTheWarmQueue(t *testing.T) {
+	app := App{ID: "app-1", Plan: api.PlanScale}
+	warm := ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth).MaxWait
+	wait := burstCapacityWait(app)
+	if wait != WakeAdmissionPolicyForPlan(app.Plan).MaxWait || wait <= warm {
+		t.Fatalf("burst wait = %v, want the wake budget %v (warm queue %v)", wait, WakeAdmissionPolicyForPlan(app.Plan).MaxWait, warm)
+	}
+
+	b := &cappedBurstBackend{fakeBackend: &fakeBackend{app: app}}
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h.burstPressure.state(b.app.ID).inflight.Store(1)
+	go func() {
+		for b.burstCalls.Load() == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		time.Sleep(warm + 500*time.Millisecond) // the restarted instance outlasts the warm queue
+		b.AddTarget(Target{NodeID: "node-2", InstanceID: "restarted"})
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	if _, err := h.maybeBurstCapacity(ctx, b.app, 1, 80); err != nil {
+		t.Fatalf("maybeBurstCapacity = %v, want the restarted target to serve the request", err)
+	}
+}
+
+// A burst hold that does run out of its budget answers the wake-queue timeout
+// problem with Retry-After, not the generic unlogged "wake failed".
+func TestBurstCapacityTimeoutIsAWakeQueueTimeout(t *testing.T) {
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	writeBurstCapacityError(rec, r, fmt.Errorf("%w: %w", ErrWakeQueueWaitTimeout, context.DeadlineExceeded))
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" || !strings.Contains(rec.Body.String(), "Wake queue wait budget exceeded") {
+		t.Fatalf("burst timeout = %d %q %s, want 503 wake-queue timeout with Retry-After", rec.Code, rec.Header().Get("Retry-After"), rec.Body.String())
 	}
 }

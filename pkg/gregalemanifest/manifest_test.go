@@ -280,7 +280,7 @@ func TestLoad_HostingOverridesAreStrict(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	_, _, err := Load(dir)
-	if err == nil || !strings.Contains(err.Error(), "field command not found") {
+	if err == nil || !strings.Contains(err.Error(), `unknown key "command" under hosting:`) {
 		t.Fatalf("error = %v, want unknown hosting field", err)
 	}
 }
@@ -647,9 +647,9 @@ func TestValidate_HappyPath(t *testing.T) {
 }
 
 func TestValidate_UnknownKind(t *testing.T) {
-	// "rabbitmq" is a kind we genuinely don't support — neither in
-	// ADR-0NN and subsequent widening added rabbitmq/amqp as valid kinds,
-	// so "pulsar" is used here to exercise the unknown-kind rejection branch.
+	// amqp/rabbitmq are recognised but not available yet (see
+	// TestValidate_AMQP_NotAvailable), so "pulsar" exercises the
+	// unknown-kind rejection branch.
 	m := &Manifest{Triggers: []Trigger{
 		{Kind: "pulsar", App: "x", Schedule: "0 3 * * *", Path: "/y"},
 	}}
@@ -876,23 +876,25 @@ func TestValidate_Queue_RejectsReservedBindingIdentity(t *testing.T) {
 	}
 }
 
-func TestValidate_AMQP_Happy(t *testing.T) {
-	m := &Manifest{Triggers: []Trigger{{
-		Kind: TriggerKindRabbitMQ, App: "my-api", Slug: "rabbit-orders",
-		Config: map[string]any{"url": "amqp://guest:guest@localhost:5672/", "queue": "orders"},
-	}}}
-	if err := m.Validate(); err != nil {
-		t.Errorf("err = %v, want nil", err)
-	}
-}
-
-func TestValidate_AMQP_BadScheme(t *testing.T) {
-	m := &Manifest{Triggers: []Trigger{{
-		Kind: TriggerKindAMQP, App: "my-api", Slug: "rabbit-bad",
-		Config: map[string]any{"url": "http://localhost:5672/", "queue": "orders"},
-	}}}
-	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "url must be amqp:// or amqps://") {
-		t.Errorf("err = %v, want bad scheme error", err)
+// apid's trigger API, plan allowlist and the triggers.kind CHECK accept no
+// AMQP kind, so the manifest must reject it up front instead of letting the
+// deploy fail later with "not available on the <plan> plan".
+func TestValidate_AMQP_NotAvailable(t *testing.T) {
+	for _, kind := range []TriggerKind{TriggerKindAMQP, TriggerKindRabbitMQ} {
+		m := &Manifest{Triggers: []Trigger{{
+			Kind: kind, App: "my-api", Slug: "rabbit-orders",
+			Config: map[string]any{"url": "amqp://guest:guest@localhost:5672/", "queue": "orders"},
+		}}}
+		err := m.Validate()
+		if err == nil || !strings.Contains(err.Error(), string(kind)+" triggers are not available yet") {
+			t.Errorf("%s: err = %v, want not-available error", kind, err)
+		}
+		if err != nil && strings.Contains(err.Error(), "amqp, rabbitmq") {
+			t.Errorf("%s: err = %v, must not list amqp/rabbitmq as supported", kind, err)
+		}
+		if validExclusiveBrokerKind(string(kind)) {
+			t.Errorf("%s: exclusive broker bindings must not accept a kind no trigger can have", kind)
+		}
 	}
 }
 
@@ -1523,6 +1525,14 @@ func TestWorkerManifest_ValidationErrors(t *testing.T) {
 			want: "unsupported kind",
 		},
 		{
+			name: "amqp source kind not available yet",
+			spec: WorkerSpec{
+				Scale:  WorkerScaleSpec{Min: 0, Max: 10, Metric: "queue_lag", Target: 100},
+				Source: &Trigger{Kind: TriggerKindAMQP, Config: map[string]any{"url": "amqp://broker.example/", "queue": "orders"}},
+			},
+			want: "amqp triggers are not available yet",
+		},
+		{
 			name: "negative drain_timeout_s",
 			spec: WorkerSpec{
 				DrainTimeoutS: -5,
@@ -1664,6 +1674,10 @@ func TestParseManifestErrorsNameKeysNotGoTypes(t *testing.T) {
 	}{
 		{yaml: "trigers: []\n", want: []string{`line 1: unknown key "trigers"`, `did you mean "triggers"?`}},
 		{yaml: "function:\n  runtime: node22\n  memory_mb: 1\n", want: []string{`line 3: unknown key "memory_mb" under function:`}},
+		// H10-76: the hosting section's type is hostingconfig.Config, outside
+		// this package, so the error named the Go type with no suggestion.
+		{yaml: "hosting:\n  health_path: /healthz\n", want: []string{`line 2: unknown key "health_path" under hosting:`, `did you mean "health"?`}},
+		{yaml: "hosting:\n  prot: 8080\n", want: []string{`unknown key "prot" under hosting:`, `did you mean "port"?`}},
 	} {
 		_, err := ParseBytes([]byte(tc.yaml))
 		if err == nil {
@@ -1674,8 +1688,44 @@ func TestParseManifestErrorsNameKeysNotGoTypes(t *testing.T) {
 				t.Errorf("ParseBytes(%q) error = %q, want it to contain %q", tc.yaml, err, want)
 			}
 		}
-		if strings.Contains(err.Error(), "gregalemanifest.") || strings.Contains(err.Error(), "unmarshal errors") {
+		if strings.Contains(err.Error(), "gregalemanifest.") || strings.Contains(err.Error(), "hostingconfig.") || strings.Contains(err.Error(), "unmarshal errors") {
 			t.Errorf("error still names Go internals: %q", err)
+		}
+	}
+}
+
+func TestContractCommandManifest(t *testing.T) {
+	for _, command := range []string{"node migrate.js contract", "echo\x00invalid", strings.Repeat("x", api.AppTaskMaxCommandArgBytes+1)} {
+		config := &ReleaseConfig{Command: "node migrate.js expand", ContractCommand: command}
+		err := config.Validate()
+		if command == "node migrate.js contract" && err != nil {
+			t.Fatal(err)
+		}
+		if command != "node migrate.js contract" && err == nil {
+			t.Fatal("invalid cleanup command accepted")
+		}
+	}
+	if err := (&ReleaseConfig{ContractCommand: "node migrate.js contract"}).Validate(); err != nil {
+		t.Fatalf("Procfile expansion owner cannot declare cleanup: %v", err)
+	}
+}
+
+// adr: 1036
+func TestValidateBucketComputeTriggers(t *testing.T) {
+	for _, decl := range []string{"", "    triggers: []\n", "    triggers:\n      - id: incoming\n        prefix: uploads/\n"} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte("buckets:\n  - bucket: assets\n"+decl), 0600); err != nil {
+			t.Fatal(err)
+		}
+		m, _, err := Load(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = m.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		if (m.Buckets[0].Triggers != nil) != (decl != "") {
+			t.Fatal("declaration intent lost", m.Buckets)
 		}
 	}
 }

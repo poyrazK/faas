@@ -6,8 +6,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func (s *PgStore) CreateAppLogDrain(ctx context.Context, in AppLogDrain) (AppLogDrain, error) {
@@ -23,7 +23,7 @@ func (s *PgStore) CreateAppLogDrain(ctx context.Context, in AppLogDrain) (AppLog
 		if isUniqueViolation(err) {
 			return AppLogDrain{}, ErrConflict
 		}
-		return AppLogDrain{}, fmt.Errorf("state: insert app_log_drain: %w", err)
+		return AppLogDrain{}, fmt.Errorf("state: insert app_log_drain: %w", mapErr(err))
 	}
 	return drain, nil
 }
@@ -80,7 +80,7 @@ func (s *PgStore) CreateAppLogDrainIfUnderQuota(ctx context.Context, in AppLogDr
 		if isUniqueViolation(err) {
 			return AppLogDrain{}, ErrConflict
 		}
-		return AppLogDrain{}, fmt.Errorf("state: insert app_log_drain: %w", err)
+		return AppLogDrain{}, fmt.Errorf("state: insert app_log_drain: %w", mapErr(err))
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return AppLogDrain{}, fmt.Errorf("state: commit app_log_drain: %w", err)
@@ -137,7 +137,7 @@ func (s *PgStore) UpdateAppLogDrain(ctx context.Context, id string, p UpdateAppL
 		if isUniqueViolation(err) {
 			return AppLogDrain{}, ErrConflict
 		}
-		return AppLogDrain{}, fmt.Errorf("state: update app_log_drain: %w", err)
+		return AppLogDrain{}, fmt.Errorf("state: update app_log_drain: %w", mapErr(err))
 	}
 	return drain, nil
 }
@@ -145,7 +145,7 @@ func (s *PgStore) UpdateAppLogDrain(ctx context.Context, id string, p UpdateAppL
 func (s *PgStore) DeleteAppLogDrain(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx, `delete from app_log_drains where id = $1`, id)
 	if err != nil {
-		return fmt.Errorf("state: delete app_log_drain: %w", err)
+		return fmt.Errorf("state: delete app_log_drain: %w", mapErr(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -162,11 +162,19 @@ func (s *PgStore) ListAppLogDrainsForApp(ctx context.Context, appID string) ([]A
 }
 
 func (s *PgStore) ListEnabledAppLogDrains(ctx context.Context) ([]AppLogDrain, error) {
-	return s.listAppLogDrains(ctx, `
-		select id, app_id, account_id, kind, target_url,
-		       auth_header_sealed, enabled, created_at, updated_at
-		from app_log_drains where enabled order by created_at, id
-	`)
+	rows, err := sqlc.New().ListEnabledAppLogDrainsWithStandardBinding(ctx, s.pool)
+	if err != nil {
+		return nil, fmt.Errorf("list enabled app log drains: %w", err)
+	}
+	result := make([]AppLogDrain, 0, len(rows))
+	for _, row := range rows {
+		d, err := appLogDrainWithStandardBinding(row)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, d)
+	}
+	return result, nil
 }
 
 func (s *PgStore) listAppLogDrains(ctx context.Context, query string, args ...any) ([]AppLogDrain, error) {

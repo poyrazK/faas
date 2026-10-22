@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // ErrMigrationLeaseExpired distinguishes a live lease from one that can no
@@ -66,7 +67,11 @@ func (s *PgStore) ReserveMigrationLease(ctx context.Context, lease MigrationLeas
 	`, lease.InstanceID, lease.LeaseToken, lease.SourceNodeID,
 		lease.CreatedAt.UTC(), lease.LeaseExpiresAt.UTC())
 	if err != nil {
-		return fmt.Errorf("state: reserve migration lease: %w", err)
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.ConstraintName == "function_migration_sources_lease_token_fkey" {
+			return ErrConflict
+		}
+		return fmt.Errorf("state: reserve migration lease: %w", mapErr(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrConflict
@@ -85,7 +90,7 @@ func (s *PgStore) CompleteMigrationLease(ctx context.Context, leaseToken, memSto
 		       pending = false
 		 where lease_token = $1`, leaseToken, memStorageKey, vmstateStorageKey)
 	if err != nil {
-		return fmt.Errorf("state: complete migration lease: %w", err)
+		return fmt.Errorf("state: complete migration lease: %w", mapErr(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -137,7 +142,7 @@ func (s *PgStore) RenewMigrationLease(ctx context.Context, leaseToken, sourceNod
 		 where lease_token = $1 and source_node_id = $2 and lease_expires_at > now()`,
 		leaseToken, sourceNodeID, leaseExpiresAt.UTC())
 	if err != nil {
-		return fmt.Errorf("state: renew migration lease: %w", err)
+		return fmt.Errorf("state: renew migration lease: %w", mapErr(err))
 	}
 	if tag.RowsAffected() == 0 {
 		lease, lookupErr := s.GetMigrationLeaseByToken(ctx, leaseToken)
@@ -160,7 +165,7 @@ func (s *PgStore) RenewMigrationLease(ctx context.Context, leaseToken, sourceNod
 func (s *PgStore) DeleteMigrationLease(ctx context.Context, leaseToken string) error {
 	tag, err := s.pool.Exec(ctx, `delete from migration_leases where lease_token = $1`, leaseToken)
 	if err != nil {
-		return fmt.Errorf("state: delete migration lease: %w", err)
+		return fmt.Errorf("state: delete migration lease: %w", mapErr(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound

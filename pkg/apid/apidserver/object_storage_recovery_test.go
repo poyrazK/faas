@@ -29,7 +29,7 @@ func setS3Flag(t *testing.T, e testEnv, enabled bool) {
 func TestObjectStorageHotFlag(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	createApp(t, e, "hot-storage")
-	a, b := &fakeObjectProvider{}, &fakeObjectProvider{}
+	a, b := &fakeObjectProvider{objects: map[string][]byte{"file": []byte("x")}}, &fakeObjectProvider{}
 	e.s.WithObjectStorage(objectRegistry(t, a, b, "external"))
 	path := "/v1/apps/hot-storage/buckets"
 	if r := e.do(t, "POST", path, map[string]any{"name": "assets"}, nil); r.Code != 503 {

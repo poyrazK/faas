@@ -63,11 +63,36 @@ func (s *server) getRouteAdvice(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("route advice"))
 		return
 	}
+	suggestions := append(routeadvisor.Advise(in), s.routeAdviceSettings(r.Context(), acct, app, in.Routes)...)
 	writeJSON(w, http.StatusOK, api.RouteAdviceResponse{
 		Slug: app.Slug, From: window.From.Format(time.RFC3339Nano), Until: window.Until.Format(time.RFC3339Nano),
 		WindowClamped: window.WindowClamped, CacheMaxAgeSeconds: maxAge,
-		RoutesAnalyzed: len(in.Routes), Suggestions: routeadvisor.Advise(in),
+		RoutesAnalyzed: len(in.Routes), Suggestions: suggestions,
 	})
+}
+
+// routeAdviceSettings adds the app-level wake-ahead and route-priority
+// suggestions (ADR-1152). A setting that cannot be read yields no suggestion.
+func (s *server) routeAdviceSettings(ctx context.Context, acct state.Account, app state.App, routes []routeadvisor.RouteStats) []api.RouteAdviceSuggestion {
+	in := routeadvisor.SettingInputs{App: app.Slug, Routes: routes}
+	wake, ok := s.store.(state.ServiceWakeAheadStore)
+	if !ok {
+		return nil
+	}
+	setting, err := wake.GetServiceWakeAhead(ctx, acct.ID, app.ID)
+	if err != nil {
+		return nil
+	}
+	in.WakeAheadEnabled = setting.Enabled
+	source, _, err := state.EffectiveRoutePriorities(ctx, s.store, acct.ID, app.ID)
+	if err != nil {
+		return nil
+	}
+	in.PrioritySource = source
+	evidence := s.routeEvidence()
+	in.Learned = evidence.WakeAheadLearned(ctx, acct, app)
+	in.Queue = evidence.PriorityQueue(ctx, app)
+	return routeadvisor.SettingSuggestions(in)
 }
 
 // routeAdviceCacheMaxAge parses the what-if cache lifetime; empty means the
@@ -100,7 +125,7 @@ func (s *server) routeAdviceInputs(ctx context.Context, reader routeAdviceReader
 	if err != nil {
 		return in, fmt.Errorf("route advice stats: %w", err)
 	}
-	in.Routes = routeAdviceRoutes(stats)
+	in.Routes = routeadvisor.RoutesFromStats(stats)
 	consumers, err := reader.RouteAdviceConsumers(ctx, sqlc.RouteAdviceConsumersParams{AppID: appID, AccountID: accountID, SinceAt: since, UntilAt: until})
 	if err != nil {
 		return in, fmt.Errorf("route advice consumers: %w", err)
@@ -145,19 +170,6 @@ func (s *server) routeAdviceRulesAndHosts(ctx context.Context, app state.App) ([
 		}
 	}
 	return existing, hosts, nil
-}
-
-func routeAdviceRoutes(rows []sqlc.RouteAdviceRouteStatsRow) []routeadvisor.RouteStats {
-	out := make([]routeadvisor.RouteStats, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, routeadvisor.RouteStats{
-			Method: row.Method, Path: strings.TrimPrefix(row.Route, row.Method+" "),
-			Requests: row.Requests, AnonymousRequests: row.AnonymousRequests, AnonymousSuccess: row.AnonymousSuccess,
-			ServerErrors: row.ServerErrors, Timeouts: row.Timeouts, ColdBoots: row.ColdBoots,
-			P95LatencyMs: int(row.P95LatencyMs), CacheHits: row.CacheHits, WakesAvoided: row.WakesAvoided,
-		})
-	}
-	return out
 }
 
 func routeAdviceConsumers(rows []sqlc.RouteAdviceConsumersRow) []routeadvisor.ConsumerStats {

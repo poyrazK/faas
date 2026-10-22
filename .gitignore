@@ -1,5 +1,8 @@
-# Build artifacts
-/bin/
+# Build artifacts. No trailing slash: a bin symlink or file must stay out of
+# the tree too (#4880 committed bin -> /tmp/..., which broke make build).
+/bin
+/scenario-restart-native-evidence/
+/start-native-evidence/
 *.test
 *.out
 coverage.*
@@ -43,12 +46,14 @@ vmlinux-*
 /gatewayd
 /gatewayd-public
 /gatewayd-internal
+/outboundd
 /gregale
 /gregale-mfa-qr.png
 
 # JavaScript dependencies and generated Data API client output
 node_modules/
 sdk/data/dist/
+sdk/auth/dist/
 
 # Manifest-derived Ansible inventory (generated; never hand-edit)
 /deploy/ansible/.generated/
@@ -71,3 +76,5 @@ __pycache__/
 
 # Cloudflare Worker deploy copies (the pinned values live in wrangler.toml.example)
 deploy/cloudflare/*/wrangler.toml
+# Local owned-object-storage development data; never commit object bytes.
+/object-data/

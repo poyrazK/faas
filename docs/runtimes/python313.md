@@ -51,7 +51,10 @@ def handler(event, ctx):
 ```
 
 An exception after streaming starts aborts the response; the client sees
-a truncated body. The invocation deadline (30 s) covers the whole stream,
+a truncated body.
+The whole invocation, the stream included, may run for the longer of the
+app's request timeout and 30 s (`gregale app APP --request-timeout SECONDS`,
+up to 1 min on Hobby, 5 min on Pro and 15 min on Scale; ADR-1150),
 and the gateway carries it to the client on Hobby, Pro and Scale (Free
 buffers it). A header value may be a list, one header line each, so
 several `Set-Cookie` headers are sent.

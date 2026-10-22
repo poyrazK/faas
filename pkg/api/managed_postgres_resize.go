@@ -13,10 +13,10 @@ type ResizeManagedPostgresDatabaseRequest struct {
 
 // ManagedPostgresResize exposes only logical identity and observed progress.
 type ManagedPostgresResize struct {
-	ID                             string `json:"id"`
-	DatabaseID                     string `json:"database_id"`
-	FromClass                      string `json:"from_class"`
-	TargetClass                    string `json:"target_class"`
+	ID          string `json:"id"`
+	DatabaseID  string `json:"database_id"`
+	FromClass   string `json:"from_class"`
+	TargetClass string `json:"target_class"`
 	// The storage limits are shown only to accounts in the storage preview.
 	FromStorageLimitBytes          int64  `json:"from_storage_limit_bytes,omitempty"`
 	TargetStorageLimitBytes        int64  `json:"target_storage_limit_bytes,omitempty"`

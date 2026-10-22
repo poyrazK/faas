@@ -211,7 +211,7 @@ func collectTestRecoveryTrendValues(s testScenario, root *testRunReceipt, minSam
 		for _, leaf := range group.Resilience.History {
 			state := leaf.CampaignSeed.Seed
 			for cycle := 1; cycle <= load.FaultCampaign.Count; cycle++ {
-				choice := int(testFaultCampaignDraw(&state) % uint64(len(load.FaultCampaign.Choices)))
+				choice := testFaultCampaignChoiceIndex(load.FaultCampaign, &state, cycle-1)
 				_ = testFaultCampaignDraw(&state)
 				fault := uniqueTestCampaignPhase(leaf, spec.Step, load.ChaosSchedule[2*cycle-1].Name)
 				phase := uniqueTestCampaignPhase(leaf, spec.Step, load.ChaosSchedule[2*cycle].Name)

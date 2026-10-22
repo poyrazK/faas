@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/chaos"
 )
@@ -18,6 +19,7 @@ func TestRunTestChaosScheduleChangesPlansAndCapturesPerPhaseMatches(t *testing.T
 	var generation, ruleID string
 	var nextGeneration int
 	var events []string
+	var clock *main.TestLoadPhaseClock
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -29,6 +31,9 @@ func TestRunTestChaosScheduleChangesPlansAndCapturesPerPhaseMatches(t *testing.T
 				return
 			}
 			nextGeneration++
+			if clock == nil || clock.PhaseAt(time.Now()) != nextGeneration {
+				t.Errorf("install generation %d observed phase %d; want the phase boundary before the API mutation", nextGeneration, clock.PhaseAt(time.Now()))
+			}
 			generation = "generation-" + string(rune('0'+nextGeneration))
 			if len(request.Rules) != 1 {
 				http.Error(w, "expected one rule", http.StatusBadRequest)
@@ -42,6 +47,9 @@ func TestRunTestChaosScheduleChangesPlansAndCapturesPerPhaseMatches(t *testing.T
 				ExpiresAt: time.Now().Add(time.Minute), RulesInstalled: len(request.Rules), Generation: generation,
 			})
 		case http.MethodDelete:
+			if clock == nil || clock.PhaseAt(time.Now()) != 1 {
+				t.Errorf("clear observed phase %d; want the fault phase until the API clears it", clock.PhaseAt(time.Now()))
+			}
 			events = append(events, "clear")
 			w.WriteHeader(http.StatusNoContent)
 		case http.MethodGet:
@@ -58,15 +66,15 @@ func TestRunTestChaosScheduleChangesPlansAndCapturesPerPhaseMatches(t *testing.T
 	}))
 	defer server.Close()
 
-	fault := testChaosRule{To: "cache", Kind: chaos.KindHTTPStatus, Percent: 100, StatusCode: 503, MinMatches: 1}
-	phases := []testLoadChaosPhase{
+	fault := main.TestChaosRule{To: "cache", Kind: chaos.KindHTTPStatus, Percent: 100, StatusCode: 503, MinMatches: 1}
+	phases := []main.TestLoadChaosPhase{
 		{Name: "baseline", Duration: time.Second},
-		{Name: "fault", Duration: time.Second, Rules: []testChaosRule{fault}},
+		{Name: "fault", Duration: time.Second, Rules: []main.TestChaosRule{fault}},
 		{Name: "recovery", Duration: time.Second},
 	}
-	clock := newTestLoadPhaseClock(len(phases))
+	clock = main.NewTestLoadPhaseClock(len(phases))
 	started := time.Now()
-	result, err := runTestChaosSchedule(context.Background(), NewClient(server.URL, "test-token"), "0123456789abcdef0123456789abcdef", phases, clock, started)
+	result, err := main.RunTestChaosSchedule(context.Background(), main.NewClient(server.URL, "test-token"), "0123456789abcdef0123456789abcdef", phases, clock, started)
 	if err != nil {
 		t.Fatalf("run chaos schedule: %v", err)
 	}
@@ -76,7 +84,7 @@ func TestRunTestChaosScheduleChangesPlansAndCapturesPerPhaseMatches(t *testing.T
 	if len(result.Phases[1].Matches) != 1 || result.Phases[1].Matches[0].Matches != 1 {
 		t.Fatalf("fault phase matches = %+v", result.Phases[1].Matches)
 	}
-	if window := clock.window(2); window.StartedAt.IsZero() || window.FinishedAt.IsZero() {
+	if window := clock.Window(2); window.StartedAt.IsZero() || window.FinishedAt.IsZero() {
 		t.Fatalf("recovery phase window = %+v", window)
 	}
 	mu.Lock()

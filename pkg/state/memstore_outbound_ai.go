@@ -33,6 +33,15 @@ func (m *MemStore) SetOutboundAIPolicy(_ context.Context, accountID, integration
 	offer.AIDailyCostLimit = copyInt64Ptr(policy.DailyCostLimit)
 	offer.AIMonthlyCostLimit = copyInt64Ptr(policy.MonthlyCostLimit)
 	offer.AIRequestLogEnabled = policy.RequestLogEnabled
+	offer.AIRequestLogContent = policy.RequestLogContent
+	offer.AILogExport = policy.LogExport
+	offer.AIAllowUnmetered = policy.AllowUnmetered
+	offer.AIAutoPromptCache = policy.AutoPromptCache
+	if policy.Provider == "" {
+		offer.AIContentPolicy = api.OutboundAIContentPolicy{}
+	}
+	offer.AIUserDailyTokenLimit = copyInt64Ptr(policy.UserDailyTokenLimit)
+	offer.AIUserDailyCostLimit = copyInt64Ptr(policy.UserDailyCostLimit)
 	m.outboundIntegrationOffers[integrationID] = offer
 	return nil
 }
@@ -136,5 +145,37 @@ func (m *MemStore) SetOutboundAIPrices(_ context.Context, accountID, integration
 	}
 	now := time.Now().UTC()
 	m.outboundAIPrices[integrationID] = OutboundAIPriceList{EffectiveFrom: &now, Entries: append([]api.OutboundAIPriceEntry{}, entries...)}
+	return nil
+}
+
+var _ OutboundAIContentPolicyStore = (*MemStore)(nil)
+
+// SetOutboundAIContentPolicy mirrors the PgStore content policy update
+// (ADR-997).
+func (m *MemStore) SetOutboundAIContentPolicy(_ context.Context, accountID, integrationID string, policy api.OutboundAIContentPolicy) error {
+	if !policy.Valid() {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	offer, ok := m.outboundIntegrationOffers[integrationID]
+	if !ok || offer.AccountID != accountID || offer.OwnerKind != "customer" || !offer.Enabled {
+		return ErrNotFound
+	}
+	if (policy.Active() || policy.Moderation.Active() || policy.Response.Active()) && offer.AIProvider == "" {
+		return ErrInvalidArgument
+	}
+	policy = policy.Normalized()
+	if policy.Moderation.Active() || policy.Response.Moderation != api.OutboundAIModerationOff {
+		moderator, ok := m.outboundIntegrationOffers[policy.Moderation.IntegrationID]
+		if !ok || moderator.AccountID != accountID || moderator.OwnerKind != "customer" || !moderator.Enabled || moderator.AIProvider == "" ||
+			(policy.Moderation.Kind == api.OutboundAIModerationKindOpenAI && moderator.AIProvider != api.OutboundAIProviderOpenAI) {
+			return ErrInvalidArgument
+		}
+		policy.Moderation.Categories = append([]string{}, policy.Moderation.Categories...)
+	}
+	policy.BlockedTerms = append([]string{}, policy.BlockedTerms...)
+	offer.AIContentPolicy = policy
+	m.outboundIntegrationOffers[integrationID] = offer
 	return nil
 }

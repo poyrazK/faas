@@ -16,12 +16,17 @@ deletion reconciliation remain safe while provisioning is disabled.
 Plan entitlements are enforced before provider work and again at the atomic
 database reservation boundary:
 
-| Plan | Databases | Storage | Restore window | Classes |
-| --- | ---: | ---: | ---: | --- |
-| Free | 0 | — | — | — |
-| Hobby | 1 | 10 GiB | 7 days | development |
-| Pro | 3 | 50 GiB | 7 days | development, burstable |
-| Scale | 10 | 100 GiB | 7 days | development, burstable, production |
+| Plan | Databases | Pooled storage | Compute per month | Restore window | Classes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Free | 1 | 0.5 GiB | 5 CU-hours | 7 days | development |
+| Hobby | 1 | 1 GiB | 25 CU-hours | 7 days | development |
+| Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
+| Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
+
+Storage is pooled across the account's databases: one database may use the
+whole pool. Storage and compute are limits, not billed overage, until managed
+PostgreSQL is invoiced
+([ADR-1430](adr/1430-plan-entitlements-from-october-2026-cogs-report.md)).
 
 All current plans use provider-managed compute suspension. Always-on database
 compute is not included in the bundled plans, and requests that disable
@@ -154,7 +159,9 @@ restore callback; both must succeed before it accepts traffic.
 
 The [combined rollout verifier](ops/managed-postgres-native-acceptance.md#combined-rollout-verification)
 joins provider v8 evidence with a versioned report from actual execution of all
-thirteen guest phases. `managed-postgres-qualify --verify --rollout` checks the
+twenty guest phases (suite version 4), including both shipped Node and Python
+starters and the Node frozen-thaw recovery witness.
+`managed-postgres-qualify --verify --rollout` checks the
 approved qualification-bundle manifest, PostgreSQL major, native host class,
 cleanup and expiry without making provider or SQL calls. Before a staging
 canary, opt in with `FAAS_MANAGED_POSTGRES_REQUIRE_GUEST_QUALIFICATION=true`
@@ -349,6 +356,7 @@ codes without response bodies, connection strings, endpoint hosts, or API keys.
 | `read_write` (default) | Pooled, with direct fallback | Public-schema SELECT, INSERT, UPDATE, DELETE; sequence usage; RLS enforced |
 | `migration` | Direct required; release tasks only | Schema changes through a stable non-login schema owner; no role/database administration or replication |
 | `read_only` | Replica when available, otherwise pooled/direct primary | Public-schema SELECT and sequence inspection; no sequence advancement, DML, DDL, administration or RLS bypass |
+| `data_api` | Pooled, with direct fallback | `api`-schema DML only for the [Data API](data-api.md); RLS enforced |
 
 Runtime logins cannot create tables, temporary objects, schemas, or roles,
 truncate tables, or bypass row-level security. Runtime grants cover existing
@@ -410,6 +418,14 @@ committed database changes. The PostgreSQL starters use direct
 and a 120-second statement timeout. Serving startup performs no DDL. For other
 frameworks, declare your migration tool as the release command and configure it
 to use the migration connection.
+
+A rollback never undoes a migration. A rollback to a release that has not
+served since a later release command ran is refused with
+`rollback_crosses_release`, which gives the `gregale postgres restore`
+command for each database the release commands can migrate, at the moment
+before the earliest of them
+([ADR-1448](adr/1448-releases-that-change-the-database.md); see
+[Releases that change the database](deploys.md#releases-that-change-the-database)).
 
 Migration sessions automatically switch to the schema owner. `SET ROLE NONE`
 removes DDL access until that owner is selected again, so normal migrations do
@@ -550,12 +566,15 @@ When enabled, a new database reservation is admitted only if the account has a
 complete usage coverage for every provider resource and no unresolved accounting
 obligation, with fresh active observations and bounded final correction evidence
 for deleted resources and has not crossed its
-monthly cost, compute, storage, history (when configured), or egress ceiling. Missing or stale observations fail
+monthly cost, compute, storage, history (when configured), or egress ceiling. A live
+resource created inside the current, still-open window owes no completed window yet,
+so its missing first observation does not block; once that window closes it needs
+coverage like any other resource. Missing or stale observations fail
 closed; an existing named database remains idempotent and can still be
-reconciled. The plan's per-database storage entitlement is multiplied by the
-plan's database-count allowance, converted to the canonical byte-second meter,
-and intersected with the operator ceiling; compute, history,
-egress, and spend remain operator-configured COGS ceilings. This keeps the
+reconciled. The plan's pooled storage, held for a whole billing month, becomes
+the canonical byte-second ceiling, and its monthly compute units the
+compute-unit-second ceiling; both are intersected with the operator ceilings,
+while history, egress, and spend remain operator-configured COGS ceilings. This keeps the
 admission path provider-neutral and prevents a plan or provider adapter from
 raising the operator's safety budget.
 
@@ -759,15 +778,73 @@ every member's evidence to be no older than five minutes. Request `verify` again
 to refresh it. These checks do not prove application VM reachability, data
 correctness, or application compatibility.
 
-Workloads keep using the source throughout this workflow. The current API has
-no activation operation; scheduler writer draining and atomic publication remain
+To inspect the remaining activation blockers, send
+`POST /v1/postgres/cutovers/{id}/preflight`, then poll
+`GET /v1/postgres/cutovers/{id}/preflight`. The request starts `pending` and
+finishes `blocked`, with affected source binding IDs, target and binding checks,
+credential verification findings, and the remaining runtime safety requirements.
+Manage scope is required to request a check; read scope can inspect it.
+
+Preflight requests survive control-plane restarts and work while provisioning is
+disabled. Repeating a pending request preserves its revision; requesting a
+completed check starts a new revision. Findings describe the catalog at
+`checked_at`. Inspect `stale` and `expires_at` before relying on those findings;
+positive fields remain historical after expiry or cutover changes. An HTTP
+idempotency replay returns the original response; use GET for latest progress.
+
+Completed checks include `runtime_drain`, a historical observation of the existing
+scheduler drain plan. It reports captured workload counts and each instance's
+deployment, scope, mode, retirement state and blocker. `not_fenced` means admission
+has not been fenced; `missing` means no drain plan exists. These checks initiate
+neither operation. A `stopped` instance without a matching native retirement
+receipt remains pending. Unsupported workloads retain specific blockers.
+
+GET also checks current runtime authority and receipts. Changes mark the saved
+report `stale`; request a new preflight to refresh its counts and findings.
+Reports created before runtime observations were supported require a new check.
+`catalog_retired` covers only the captured instance catalog and does not establish
+complete writer isolation, SQL-session drainage or permission to switch bindings.
+
+Completed reports also include `source_sessions`, a historical observation of
+an explicitly requested internal SQL fence. It reports connection-admission
+closure, selected database count, active sessions, prepared transactions and
+unselected database count. Missing requests, incomplete coverage, failed refresh
+and expired evidence retain specific blockers. GET marks the report stale after
+SQL evidence changes; request a new preflight to refresh the saved findings.
+Database names, OIDs and private ownership tokens are never returned. Preflight
+reads the durable journal and makes no provider calls.
+
+`source_sessions.writer_isolation` adds the SQL writer inventory and optional
+provider evidence. Client, background, replication and unknown backend counts
+cover the observed source cluster; hidden or unrecognized backend types remain
+unknown and prevent confirmation. `catalog_matches` compares the complete native
+catalog with an immutable original fingerprint. Detected drift is permanent for
+the operation, including when settings later return to their original values.
+Cancellation and a new cutover are required to establish a new baseline.
+
+An unchanged fingerprint and zero counts do not prove future isolation.
+`confirmed` additionally requires fresh provider evidence that a durable guard
+covers database creation/replacement and all write paths across the dataset's
+endpoints. Its expiry also bounds the parent report. This is an internal provider
+contract, not deployed-provider qualification or permission to activate. Neon
+currently lacks that stronger guarantee and remains blocked; its SQL inventory
+is diagnostic. Preflight never acquires these guards. Private owner tokens,
+catalog fingerprints and provider receipts remain in the operational journal.
+See [ADR-1335](adr/1335-managed-postgres-source-writer-isolation.md).
+
+`activation_allowed` is always false. Preflight does not install admission
+fences, drain writers, publish credentials or resume workloads. See
+[ADR-1333](adr/1333-managed-postgres-activation-preflight.md).
+
+Preparation, verification and preflight keep bindings on the source. The current API has
+no activation operation; complete writer draining and atomic publication remain
 pending. Both databases and the selected source bindings stay pinned until
 `gregale postgres cutover cancel CUTOVER_ID` finishes revoking every staged role.
 Cancellation and status remain available when provisioning is disabled. Required
 host age/HMAC keys must remain available while envelopes are staged; cancel and
 reprepare before retiring those keys. See [ADR-465](adr/465-managed-postgres-cutover-verification.md).
 
-The next cutover prerequisite is an internal, durable app-wide admission fence
+An internal, durable app-wide admission fence
 ([ADR-466](adr/466-managed-postgres-cutover-admission-fence.md)). It requires fresh
 verification and blocks new instance admission and running-state publication,
 including worker, job, mirror, and warm-pool paths. It persists through retries
@@ -783,6 +860,63 @@ resources. Delayed boot RPCs must read the fence again, including after a daemon
 restart. Warm and migration resume/capture operations use the same admission check
 and destruction join. Default-local nodes honor a configured `db_url` or
 `FAAS_VMMD_DBURL`; DB-less nodes cannot participate in cutover drains.
+
+Internal scheduler plumbing can now explicitly request retirement of one fenced
+VM incarnation and persist a native drain receipt ([ADR-993](adr/993-managed-postgres-cutover-drain-receipts.md)).
+The frame pins its cutover, fence timestamp, app owner/revision, deployment, node,
+instance and wake ID. vmmd holds authoritative database locks while joining boot
+and stopping the original native generation. Process exit and resource cleanup
+must both be confirmed in the host journal. schedd commits the receipt with the
+terminal state before releasing capacity. Lost replies, failed cleanup and
+failed database writes leave work pending for bounded recovery. Missing journal
+records, DB-less/legacy hosts, changed ownership and migrated lineage fail closed.
+These per-instance receipts do not prove all app writers, cached routes or
+external SQL sessions stopped. Complete writer coverage and customer activation
+remain pending, as does physical native KVM qualification for this step.
+
+An explicit internal scheduler request can now capture a durable app-instance
+drain plan across every deployment, scope and mode
+([ADR-1153](adr/1153-managed-postgres-durable-drain-plans.md)). Capture and native
+member reservations commit atomically under the current owner and admission
+fence; the existing bounded recovery worker resumes the same members after
+restart. The atomic inventory limit is 512 members. Empty or oversized catalogs
+queue no partial drain. Parked, undispatched, migrated, private qualification,
+unsupported-kind and incomplete-identity members remain visible blockers.
+While the plan's epoch is current, catalog guards reject late instance insertion,
+incarnation changes and deletion without a matching native receipt. Confirmed
+retirement evidence survives ordinary terminal retention. Completed cancellation
+releases the catalog fence along with the existing admission barrier.
+
+Read-only plan status reports each member and its pending, retired or blocked
+condition. `catalog_retired` requires matching native receipts for the entire
+captured catalog and current ownership/fence authority. It does not prove
+external SQL-session isolation, empty host inventory, route convergence or
+permission to publish target credentials. Prepare/Verify do not create plans;
+there is still no customer activation operation. Production provisioning and
+customer cutover activation remain disabled.
+
+An explicit internal controller can reserve a durable source SQL connection
+fence after the complete native catalog has retired
+([ADR-1334](adr/1334-managed-postgres-cutover-source-fences.md)). It requires
+fresh credential verification, independently recorded dataset identity and
+exclusive source bindings for the selected app/scope. Private maintenance and
+operation owners, the exact database selection and possible close dispatch are
+persisted before provider I/O. Recovery observes the same operation after lost
+replies or restart. Existing sessions and prepared transactions remain visible;
+the controller does not forcibly terminate them. Clone and cutover fences cannot
+hold the same source dataset concurrently.
+
+Cancellation retains the source pin and admission fence until SQL cleanup is
+confirmed. Once close dispatch is possible, an authenticated remote terminal
+tombstone must fence delayed requests before the local hold is released. Cleanup
+and observation continue with provisioning disabled. Maintenance owners persist
+for reuse. `selected_databases_drained` describes the frozen selection at the
+observation time; stronger writer isolation requires separate provider evidence
+and qualification.
+There is no customer SQL-fence endpoint, and activation remains disabled pending
+complete isolation, route convergence, snapshot invalidation and controlled
+publication/resume qualification.
+
 See [ADR-468](adr/468-managed-postgres-vmmd-admission.md). Teardown now retains
 live and failed-boot ownership until process exit and cleanup are confirmed;
 concurrent stops wait, failed cleanup blocks reuse, and Destroy can retry the
@@ -1086,3 +1220,23 @@ replay and restoration of the original class whenever resizing is advertised.
 Requalify Neon before reopening provisioning; prior approvals cannot prove this
 new capability. Local tests do not replace live Neon qualification.
 
+### PostgreSQL starter credential adoption
+
+New `rest-api-postgres` and `secret-reload-node` scaffolds use the canonical pool
+binding and secret coordinator. They validate fresh credentials before applied
+ACKs, drain pools after leased transactions release their driver connections,
+and block new work on failed adoption or revocation. The REST starter preserves
+TLS verification, migration isolation and its bounded restore hook; restores read
+the latest atomic snapshot rather than stale startup environment values. Existing
+apps need redeployment to adopt these changes. See the
+[pool runtime and starter guide](postgres-pool-runtime.md#built-in-postgresql-starters).
+
+Python applications can start with
+`gregale init --template rest-api-postgres-python --path notes-api`. This
+self-contained FastAPI/psycopg starter uses the canonical async runtime, verified
+TLS, schema-backed readiness, managed release-only migration credentials and a
+two-second restore hook with a 1.5-second application budget. It fences captured
+SQL work, rereads current credentials even at the same revision, validates a new
+pool and drains old resources before reopening readiness. A failed hook stays
+unready for the existing cold-boot fallback. See the
+[Python deployment and recovery guide](../cmd/gregale/templates/rest-api-postgres-python/README.md).

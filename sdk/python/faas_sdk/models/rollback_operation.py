@@ -9,6 +9,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.rollback_operation_status import RollbackOperationStatus, check_rollback_operation_status
+from ..models.rollback_operation_trigger import RollbackOperationTrigger, check_rollback_operation_trigger
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -20,8 +21,10 @@ T = TypeVar("T", bound="RollbackOperation")
 
 @_attrs_define
 class RollbackOperation:
-    """Durable progress of a checked historical rollback. This receipt grants no authority to reuse binding evidence or
-    move traffic for another operation.
+    """Durable progress of a rollback. A checked historical rollback reports its binding gates; a plain rollback (manual,
+    dashboard, alert, or first-wake 5xx auto-rollback, ADR-1446) reports preparing until its target serves (complete,
+    with recovery_ms) or fails. This receipt grants no authority to reuse binding evidence or move traffic for another
+    operation.
 
     """
 
@@ -39,6 +42,13 @@ class RollbackOperation:
     blockers: list[BindingCheckFinding] | Unset = UNSET
     completed_at: datetime.datetime | None | Unset = UNSET
     audit_id: str | Unset = UNSET
+    trigger: RollbackOperationTrigger | Unset = UNSET
+    """What started a plain rollback. Absent for a checked rollback."""
+    recovery_ms: int | Unset = UNSET
+    """Milliseconds from the plain rollback request until its target served. Present once a plain rollback is
+    complete."""
+    error: str | Unset = UNSET
+    """Why a failed plain rollback did not restore the previous release; code carries the stable error code."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -81,6 +91,14 @@ class RollbackOperation:
 
         audit_id = self.audit_id
 
+        trigger: str | Unset = UNSET
+        if not isinstance(self.trigger, Unset):
+            trigger = self.trigger
+
+        recovery_ms = self.recovery_ms
+
+        error = self.error
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -106,6 +124,12 @@ class RollbackOperation:
             field_dict["completed_at"] = completed_at
         if audit_id is not UNSET:
             field_dict["audit_id"] = audit_id
+        if trigger is not UNSET:
+            field_dict["trigger"] = trigger
+        if recovery_ms is not UNSET:
+            field_dict["recovery_ms"] = recovery_ms
+        if error is not UNSET:
+            field_dict["error"] = error
 
         return field_dict
 
@@ -164,6 +188,17 @@ class RollbackOperation:
 
         audit_id = d.pop("audit_id", UNSET)
 
+        _trigger = d.pop("trigger", UNSET)
+        trigger: RollbackOperationTrigger | Unset
+        if isinstance(_trigger, Unset):
+            trigger = UNSET
+        else:
+            trigger = check_rollback_operation_trigger(_trigger)
+
+        recovery_ms = d.pop("recovery_ms", UNSET)
+
+        error = d.pop("error", UNSET)
+
         rollback_operation = cls(
             id=id,
             app_id=app_id,
@@ -179,6 +214,9 @@ class RollbackOperation:
             blockers=blockers,
             completed_at=completed_at,
             audit_id=audit_id,
+            trigger=trigger,
+            recovery_ms=recovery_ms,
+            error=error,
         )
 
         rollback_operation.additional_properties = d

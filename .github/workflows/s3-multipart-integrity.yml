@@ -1,0 +1,79 @@
+name: S3 multipart integrity
+
+on:
+  pull_request:
+    # Only this suite's own code. Shared hot paths (pkg/api, pkg/state,
+    # pkg/apid, migrations, go.mod, cmd/gregale) changed on nearly every
+    # pull request; ci.yml runs this suite nightly and on dispatch.
+    paths:
+      - 'pkg/objectchecksum/**'
+      - 'pkg/objectstorage/**'
+      - 'pkg/apid/object/**'
+      - 'pkg/s3gateway/**'
+      - 'pkg/state/*multipart*'
+      - '.github/workflows/s3-multipart-integrity.yml'
+  # Nightly and on dispatch: ci.yml calls this workflow.
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A literal name: when ci.yml calls this workflow, github.workflow is the
+  # caller's name, which the other called suites would share.
+  group: s3-multipart-integrity-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  integrity:
+    name: S3 checksum SDK and PostgreSQL contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: local-test-only
+          POSTGRES_DB: checksum_tests
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U faas -d checksum_tests"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:local-test-only@127.0.0.1:5432/checksum_tests?sslmode=disable
+      GOMEMLIMIT: 6GiB
+      GOMAXPROCS: '2'
+      GOFLAGS: >-
+        -p=1
+        "-gcflags=github.com/onebox-faas/faas/pkg/state=-c=1 -dwarf=false"
+        "-gcflags=github.com/onebox-faas/faas/pkg/s3gateway=-c=1 -dwarf=false"
+      GREGALE_S3_CHECKSUM_INTEROP_REQUIRED: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.9'
+          cache: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Install isolated stock S3 clients
+        run: |
+          set -euo pipefail
+          cp -R pkg/s3gateway/testdata/interop "$RUNNER_TEMP/s3-checksum-interop"
+          npm ci --prefix "$RUNNER_TEMP/s3-checksum-interop" --ignore-scripts --no-audit --no-fund
+          python -m venv "$RUNNER_TEMP/s3-checksum-python"
+          "$RUNNER_TEMP/s3-checksum-python/bin/python" -m pip install -r pkg/s3gateway/testdata/interop/requirements.txt
+          echo "GREGALE_S3_CHECKSUM_NODE_MODULES=$RUNNER_TEMP/s3-checksum-interop/node_modules" >> "$GITHUB_ENV"
+          echo "GREGALE_S3_CHECKSUM_PYTHON=$RUNNER_TEMP/s3-checksum-python/bin/python" >> "$GITHUB_ENV"
+          echo "GREGALE_S3_CHECKSUM_AWSCLI=$RUNNER_TEMP/s3-checksum-python/bin/aws" >> "$GITHUB_ENV"
+      - name: Run complete-source checksum contracts
+        run: >-
+          go test -race -p=1 -count=1 -timeout=20m
+          ./pkg/objectchecksum ./pkg/state ./pkg/objectstorage ./pkg/s3gateway
+          -run 'Checksum|Integrity|ObjectAttributes'

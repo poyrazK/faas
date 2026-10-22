@@ -112,24 +112,36 @@ func readJobRetryTarget(ctx context.Context, client *api.Client, job api.JobResp
 	if run.ID != runID || run.JobID != job.ID || run.AccountID != job.AccountID {
 		return run, api.JobTaskResponse{}, errors.New("run no longer matches the selected Job")
 	}
+	if index < 0 || index >= run.Tasks {
+		return run, api.JobTaskResponse{}, errors.New("selected task index is outside the source run")
+	}
 	offset := 0
+	seen := map[int]bool{}
 	for page := 0; page < 100; page++ {
 		tasks, err := client.ListJobRunTasksPage(ctx, job.Name, runID, 200, offset)
 		if err != nil {
 			return run, api.JobTaskResponse{}, err
 		}
+		if len(tasks.Tasks) > 200 {
+			return run, api.JobTaskResponse{}, errors.New("task page exceeded its requested limit")
+		}
+		var selected *api.JobTaskResponse
 		for _, task := range tasks.Tasks {
-			if task.RunID != runID {
-				return run, task, errors.New("task belongs to another run")
+			if task.RunID != runID || task.TaskIndex < 0 || task.TaskIndex >= run.Tasks || seen[task.TaskIndex] || task.Attempt < 0 {
+				return run, task, errors.New("task identity, index, or attempt is invalid or repeated")
 			}
+			seen[task.TaskIndex] = true
 			if task.TaskIndex == index {
-				return run, task, nil
+				selected = &task
 			}
+		}
+		if selected != nil {
+			return run, *selected, nil
 		}
 		if tasks.NextOffset < 0 {
 			break
 		}
-		if tasks.NextOffset <= offset {
+		if tasks.NextOffset <= offset || len(tasks.Tasks) == 0 {
 			return run, api.JobTaskResponse{}, errors.New("invalid task page offset")
 		}
 		offset = tasks.NextOffset

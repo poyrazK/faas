@@ -22,6 +22,7 @@ from ..models.outbound_integration_offer_owner_kind import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.outbound_ai_content_policy import OutboundAIContentPolicy
     from ..models.outbound_request_policy import OutboundRequestPolicy
 
 
@@ -62,7 +63,23 @@ class OutboundIntegrationOffer:
     ai_monthly_cost_limit_millicents: int | None | Unset = UNSET
     """Calendar-month cost limit priced from the integration's price list (ADR-990)."""
     ai_request_log_enabled: bool | Unset = UNSET
-    """Whether every settled AI call writes one metadata row to the request log (ADR-991). Never stores content."""
+    """Whether every settled AI call writes one metadata row to the request log (ADR-991)."""
+    ai_request_log_content: bool | Unset = UNSET
+    """Whether logged calls also keep the first 32 KiB of their request and response bodies for 3 days (ADR-996)."""
+    ai_content_policy: OutboundAIContentPolicy | Unset = UNSET
+    """An integration's content guardrails (ADR-997). Each detector is off, redacts its findings before the request
+    reaches the provider, or blocks the request. A request containing a blocked term, compared without case, is
+    blocked. The gateway checks the string values of JSON bodies and the text fields of forms."""
+    ai_log_export: bool | Unset = UNSET
+    """Whether each settled app call writes one metadata line to the app's log drains (ADR-1340)."""
+    ai_allow_unmetered: bool | Unset = UNSET
+    """Whether writes the gateway can neither meter nor knows to be free go through, outside the caps (ADR-1432)."""
+    ai_auto_prompt_cache: bool | Unset = UNSET
+    """Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none (ADR-1437)."""
+    ai_user_daily_token_limit: int | None | Unset = UNSET
+    """UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-994)."""
+    ai_user_daily_cost_limit_millicents: int | None | Unset = UNSET
+    """UTC-day cost limit for each end user named by X-Gregale-AI-User (ADR-994)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -115,6 +132,30 @@ class OutboundIntegrationOffer:
 
         ai_request_log_enabled = self.ai_request_log_enabled
 
+        ai_request_log_content = self.ai_request_log_content
+
+        ai_content_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.ai_content_policy, Unset):
+            ai_content_policy = self.ai_content_policy.to_dict()
+
+        ai_log_export = self.ai_log_export
+
+        ai_allow_unmetered = self.ai_allow_unmetered
+
+        ai_auto_prompt_cache = self.ai_auto_prompt_cache
+
+        ai_user_daily_token_limit: int | None | Unset
+        if isinstance(self.ai_user_daily_token_limit, Unset):
+            ai_user_daily_token_limit = UNSET
+        else:
+            ai_user_daily_token_limit = self.ai_user_daily_token_limit
+
+        ai_user_daily_cost_limit_millicents: int | None | Unset
+        if isinstance(self.ai_user_daily_cost_limit_millicents, Unset):
+            ai_user_daily_cost_limit_millicents = UNSET
+        else:
+            ai_user_daily_cost_limit_millicents = self.ai_user_daily_cost_limit_millicents
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -143,11 +184,26 @@ class OutboundIntegrationOffer:
             field_dict["ai_monthly_cost_limit_millicents"] = ai_monthly_cost_limit_millicents
         if ai_request_log_enabled is not UNSET:
             field_dict["ai_request_log_enabled"] = ai_request_log_enabled
+        if ai_request_log_content is not UNSET:
+            field_dict["ai_request_log_content"] = ai_request_log_content
+        if ai_content_policy is not UNSET:
+            field_dict["ai_content_policy"] = ai_content_policy
+        if ai_log_export is not UNSET:
+            field_dict["ai_log_export"] = ai_log_export
+        if ai_allow_unmetered is not UNSET:
+            field_dict["ai_allow_unmetered"] = ai_allow_unmetered
+        if ai_auto_prompt_cache is not UNSET:
+            field_dict["ai_auto_prompt_cache"] = ai_auto_prompt_cache
+        if ai_user_daily_token_limit is not UNSET:
+            field_dict["ai_user_daily_token_limit"] = ai_user_daily_token_limit
+        if ai_user_daily_cost_limit_millicents is not UNSET:
+            field_dict["ai_user_daily_cost_limit_millicents"] = ai_user_daily_cost_limit_millicents
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.outbound_ai_content_policy import OutboundAIContentPolicy
         from ..models.outbound_request_policy import OutboundRequestPolicy
 
         d = dict(src_dict)
@@ -220,6 +276,41 @@ class OutboundIntegrationOffer:
 
         ai_request_log_enabled = d.pop("ai_request_log_enabled", UNSET)
 
+        ai_request_log_content = d.pop("ai_request_log_content", UNSET)
+
+        _ai_content_policy = d.pop("ai_content_policy", UNSET)
+        ai_content_policy: OutboundAIContentPolicy | Unset
+        if isinstance(_ai_content_policy, Unset):
+            ai_content_policy = UNSET
+        else:
+            ai_content_policy = OutboundAIContentPolicy.from_dict(_ai_content_policy)
+
+        ai_log_export = d.pop("ai_log_export", UNSET)
+
+        ai_allow_unmetered = d.pop("ai_allow_unmetered", UNSET)
+
+        ai_auto_prompt_cache = d.pop("ai_auto_prompt_cache", UNSET)
+
+        def _parse_ai_user_daily_token_limit(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        ai_user_daily_token_limit = _parse_ai_user_daily_token_limit(d.pop("ai_user_daily_token_limit", UNSET))
+
+        def _parse_ai_user_daily_cost_limit_millicents(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        ai_user_daily_cost_limit_millicents = _parse_ai_user_daily_cost_limit_millicents(
+            d.pop("ai_user_daily_cost_limit_millicents", UNSET)
+        )
+
         outbound_integration_offer = cls(
             id=id,
             name=name,
@@ -238,6 +329,13 @@ class OutboundIntegrationOffer:
             ai_daily_cost_limit_millicents=ai_daily_cost_limit_millicents,
             ai_monthly_cost_limit_millicents=ai_monthly_cost_limit_millicents,
             ai_request_log_enabled=ai_request_log_enabled,
+            ai_request_log_content=ai_request_log_content,
+            ai_content_policy=ai_content_policy,
+            ai_log_export=ai_log_export,
+            ai_allow_unmetered=ai_allow_unmetered,
+            ai_auto_prompt_cache=ai_auto_prompt_cache,
+            ai_user_daily_token_limit=ai_user_daily_token_limit,
+            ai_user_daily_cost_limit_millicents=ai_user_daily_cost_limit_millicents,
         )
 
         outbound_integration_offer.additional_properties = d

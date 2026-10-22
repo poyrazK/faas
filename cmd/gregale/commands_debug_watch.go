@@ -274,6 +274,10 @@ func runDebugRegressionsStream(ctx context.Context, client *api.Client, slug str
 				AppID          string                        `json:"app_id"`
 				DeploymentID   string                        `json:"deployment_id"`
 				Route          string                        `json:"route"`
+				Kind           string                        `json:"kind"`
+				ErrorRate      float64                       `json:"error_rate_pct"`
+				ErrorRateBase  float64                       `json:"error_rate_base_pct"`
+				ErrorCount     int                           `json:"error_count"`
 				P95MS          int                           `json:"p95_ms"`
 				P95BaseMS      int                           `json:"p95_base_ms"`
 				AffectedCount  int                           `json:"affected_count"`
@@ -297,6 +301,8 @@ func runDebugRegressionsStream(ctx context.Context, client *api.Client, slug str
 				LastDetectedAt: payload.LastDetected, AcknowledgedAt: payload.AcknowledgedAt,
 				DismissedUntil: payload.DismissedUntil, ResolvedAt: payload.ResolvedAt,
 				SuspectedDependency: payload.Suspected,
+				Kind:                payload.Kind, ErrorRatePct: payload.ErrorRate,
+				ErrorRateBasePct: payload.ErrorRateBase, ErrorCount: payload.ErrorCount,
 			}
 			displaySlug := slug
 			if all {

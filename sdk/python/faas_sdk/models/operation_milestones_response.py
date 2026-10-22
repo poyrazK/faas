@@ -37,7 +37,8 @@ class OperationMilestonesResponse:
     milestone cursor; retention-wide step summaries cover all matching facts still retained under the normal
     Operation retention rules."""
     next_cursor: str | Unset = UNSET
-    """Opaque continuation bound to the same account"""
+    """Opaque continuation bound to the same account, customer, app, environment, reference or Operation, and feed
+    role."""
     next_workflow_state_cursor: str | Unset = UNSET
     """Independent continuation for workflow_state_history, bound to the same run and ownership filters."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

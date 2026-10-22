@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // TailCount MemStore tests (issue #667 / ADR-078). Mirrors the
 // FrameworkReadyAt test pattern (memstore_framework_ready_test.go):
@@ -18,25 +18,32 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // seedTailCountInstanceRow inserts a single instance row in the
 // "running" state inside an app+deployment root. The IDs are
 // fixed but distinct from the framework-ready seed so the two
 // test files can run in parallel without fixture collisions.
-func seedTailCountInstanceRow(t *testing.T, m *MemStore) Instance {
+func seedTailCountInstanceRow(t *testing.T, m *state.MemStore) state.Instance {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := m.CreateApp(ctx, App{
-		ID: "00000000-0000-0000-0000-0000000000d1", AccountID: "00000000-0000-0000-0000-0000000000a1",
-		Slug: "tail-count-app", Type: AppTypeApp, RAMMB: 256, MaxConcurrency: 1,
-		Status: AppActive, CreatedAt: time.Now(),
+	account, err := m.CreateAccount(ctx, "tail-count@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CreateApp(ctx, state.App{
+		ID: "00000000-0000-0000-0000-0000000000d1", AccountID: account.ID,
+		Slug: "tail-count-app", Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1,
+		Status: state.AppActive, CreatedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("seed app: %v", err)
 	}
-	if _, err := m.CreateDeployment(ctx, Deployment{
+	if _, err := m.CreateDeployment(ctx, state.Deployment{
 		ID: "00000000-0000-0000-0000-0000000000e1", AppID: "00000000-0000-0000-0000-0000000000d1",
-		ImageDigest: "sha256:tailcount", Status: DeployLive, CreatedAt: time.Now(),
+		ImageDigest: "sha256:tailcount", Status: state.DeployLive, CreatedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("seed deployment: %v", err)
 	}
@@ -56,7 +63,7 @@ func seedTailCountInstanceRow(t *testing.T, m *MemStore) Instance {
 // read matches the receipt path's view).
 func TestMemStore_BumpInstanceTailCount_AddsAndReturnsPostValue(t *testing.T) {
 	ctx := context.Background()
-	m := newMemStoreForTest()
+	m := state.NewMemStoreForTest()
 	ins := seedTailCountInstanceRow(t, m)
 
 	// Fresh row starts at 0 (DEFAULT 0 from migration 00151).
@@ -104,7 +111,7 @@ func TestMemStore_BumpInstanceTailCount_AddsAndReturnsPostValue(t *testing.T) {
 // underflow to negative).
 func TestMemStore_DecrementInstanceTailCount_DecrementsAndFloors(t *testing.T) {
 	ctx := context.Background()
-	m := newMemStoreForTest()
+	m := state.NewMemStoreForTest()
 	ins := seedTailCountInstanceRow(t, m)
 
 	// Seed: 3 active tails.
@@ -162,7 +169,7 @@ func TestMemStore_DecrementInstanceTailCount_DecrementsAndFloors(t *testing.T) {
 // same so future call sites don't accidentally underflow.)
 func TestMemStore_BumpInstanceTailCount_NegativeDeltaFloorsAtZero(t *testing.T) {
 	ctx := context.Background()
-	m := newMemStoreForTest()
+	m := state.NewMemStoreForTest()
 	ins := seedTailCountInstanceRow(t, m)
 
 	post, err := m.BumpInstanceTailCount(ctx, ins.ID, -5)
@@ -181,13 +188,13 @@ func TestMemStore_BumpInstanceTailCount_NegativeDeltaFloorsAtZero(t *testing.T) 
 // receipt path translates this to a Debug drop.
 func TestMemStore_BumpDecrement_MissingRowReturnsErrNotFound(t *testing.T) {
 	ctx := context.Background()
-	m := newMemStoreForTest()
+	m := state.NewMemStoreForTest()
 	const missing = "00000000-0000-0000-0000-deadbeefdead"
 
-	if _, err := m.BumpInstanceTailCount(ctx, missing, 1); !errors.Is(err, ErrNotFound) {
+	if _, err := m.BumpInstanceTailCount(ctx, missing, 1); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("BumpInstanceTailCount on missing = %v, want ErrNotFound", err)
 	}
-	if err := m.DecrementInstanceTailCount(ctx, missing, 1); !errors.Is(err, ErrNotFound) {
+	if err := m.DecrementInstanceTailCount(ctx, missing, 1); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("DecrementInstanceTailCount on missing = %v, want ErrNotFound", err)
 	}
 }

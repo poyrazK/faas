@@ -39,6 +39,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"github.com/onebox-faas/faas/pkg/executionproto"
+	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wakeownershipwire"
 )
 
 // RoutedVMM is the multi-node vmmd surface schedd's engine consumes.
@@ -183,6 +185,33 @@ type WarmResumeVMM interface {
 	ResumeWarmInstance(ctx context.Context, nodeID, instance string) error
 }
 
+// FrozenVMM is the additive frozen-tier capability (ADR-1151): freeze an idle
+// instance in place and thaw it after admission. Separate from RoutedVMM so
+// older vmmd clients and test doubles keep serving the existing lifecycle
+// surface; a node whose client lacks it answers 501 CodeNotImplemented.
+type FrozenVMM interface {
+	FreezeInstance(ctx context.Context, nodeID, instance string, reclaim bool) (FreezeReport, error)
+	ThawInstance(ctx context.Context, nodeID, instance string, req ThawRequest) (ThawResult, error)
+}
+
+// ThawRequest is the work schedd asks an in-place thaw to run before it
+// returns (ADR-1151).
+type ThawRequest struct {
+	// ImageHealthcheckRequired runs the image healthcheck the deployment
+	// requires, as a warm-pool resume does.
+	ImageHealthcheckRequired bool
+	// RunAfterRestore runs the guest's resume hook, and with it the app's
+	// after_restore callback, as a snapshot restore does.
+	RunAfterRestore bool
+}
+
+// ThawResult is the work vmmd confirmed the thaw ran. A vmmd that predates a
+// ThawRequest field leaves its confirmation false.
+type ThawResult struct {
+	HealthcheckVerified bool
+	AfterRestoreRan     bool
+}
+
 // DialFunc is the factory VMMRouter uses to open a per-target VMM
 // client. cmd/schedd wires the production sched.DialVMMContext;
 // tests inject a recording stub so they don't need a real socket.
@@ -222,14 +251,19 @@ type LiveMigrationAdopt struct {
 // (nodeID, targetURL) tuple is fixed at startup via
 // ActiveComputeNodes.
 type VMMRouter struct {
-	mu      sync.Mutex
-	cache   map[string]VMM    // nodeID -> dialed client (targetURL stored separately for the dial path)
-	targets map[string]string // nodeID -> target_url (filled at construction; lookup before dial)
-	dial    DialFunc
-	tls     *tls.Config
+	computeAuthority state.FinancialComputeStore
+	mu               sync.Mutex
+	cache            map[string]VMM    // nodeID -> dialed client (targetURL stored separately for the dial path)
+	targets          map[string]string // nodeID -> target_url (filled at construction; lookup before dial)
+	dial             DialFunc
+	tls              *tls.Config
 	// outboundRelay is the schedd-local path to outboundd. It is attached to
 	// every per-node execution stream and never travels to vmmd or the guest.
-	outboundRelay ExecutionOutboundRelay
+	outboundRelay     ExecutionOutboundRelay
+	wakeDispatch      func(context.Context, string, string, string, string, string) error
+	wakePrepare       func(context.Context, string, string, string, string, string) (*state.ProjectEnvironmentCloneWakeDispatch, error)
+	migrationResume   func(context.Context, string, string, string) error
+	migrationAdoption func(context.Context, string, string, string, string, string, string, string) error
 }
 
 // NewVMMRouter builds a router pre-populated with the (nodeID →
@@ -262,6 +296,74 @@ func (r *VMMRouter) WithExecutionOutboundRelay(relay ExecutionOutboundRelay) *VM
 	if r != nil {
 		r.outboundRelay = relay
 	}
+	return r
+}
+
+// WithCloneWakeDispatchRecorder installs the durable ordinary-wake admission gate.
+// Production wires PgStore; configure it before serving scheduler requests.
+func (r *VMMRouter) WithCloneWakeDispatchRecorder(record func(context.Context, string, string, string, string, string) error) *VMMRouter {
+	r.wakeDispatch = record
+	return r
+}
+
+// A separate private capability prevents older clients from silently dropping
+// tagged ownership. Production clients remain unsupported until native binding.
+type checkpointWakeOwnershipVMM interface {
+	CheckCheckpointWakeOwnershipSupport(context.Context) error
+}
+
+func (r *VMMRouter) checkCheckpointWakeOwnershipSupport(ctx context.Context, cli VMM) error {
+	if r.wakePrepare == nil {
+		return nil
+	}
+	capable, ok := cli.(checkpointWakeOwnershipVMM)
+	if !ok {
+		return fmt.Errorf("checkpoint wake ownership: client is unsupported: %w", state.ErrConflict)
+	}
+	return capable.CheckCheckpointWakeOwnershipSupport(ctx)
+}
+
+// WithCloneWakeDispatchPreparer opts into original ownership transport. Do not
+// enable production until vmmd durably binds and fences this incoming protocol.
+// This replaces the recorder for admission; it must not record the same wake twice.
+func (r *VMMRouter) WithCloneWakeDispatchPreparer(prepare func(context.Context, string, string, string, string, string) (*state.ProjectEnvironmentCloneWakeDispatch, error)) *VMMRouter {
+	r.wakePrepare = prepare
+	return r
+}
+
+func (r *VMMRouter) prepareCloneWakeDispatch(ctx context.Context, nodeID, instance string, app AppSpec, method string) (context.Context, error) {
+	if r.wakePrepare != nil {
+		frame, err := r.wakePrepare(ctx, instance, app.AppID, app.DeploymentID, nodeID, method)
+		if err != nil {
+			return nil, fmt.Errorf("prepare wake ownership: %w", err)
+		}
+		if frame == nil {
+			return ctx, nil
+		}
+		if frame.InstanceID != instance || frame.AppID != app.AppID || frame.DeploymentID != app.DeploymentID || frame.NodeID != nodeID || frame.Method != method {
+			return nil, fmt.Errorf("prepare wake ownership: original dispatch changed: %w", state.ErrConflict)
+		}
+		return wakeownershipwire.Outgoing(ctx, *frame)
+	}
+	if r.wakeDispatch != nil {
+		if err := r.wakeDispatch(ctx, instance, app.AppID, app.DeploymentID, nodeID, method); err != nil {
+			return nil, err
+		}
+	}
+	return ctx, nil
+}
+
+// WithCloneMigrationAdoptionRecorder installs durable destination dispatch admission.
+// Production wires PgStore before serving migration requests.
+func (r *VMMRouter) WithCloneMigrationAdoptionRecorder(record func(context.Context, string, string, string, string, string, string, string) error) *VMMRouter {
+	r.migrationAdoption = record
+	return r
+}
+
+// WithCloneMigrationResumeRecorder installs source cancel/resume dispatch admission.
+// Production wires PgStore before serving migration requests.
+func (r *VMMRouter) WithCloneMigrationResumeRecorder(record func(context.Context, string, string, string) error) *VMMRouter {
+	r.migrationResume = record
 	return r
 }
 
@@ -429,7 +531,17 @@ func (r *VMMRouter) resolveFor(ctx context.Context, nodeID string) (VMM, error) 
 
 // CreateColdBoot implements RoutedVMM.
 func (r *VMMRouter) CreateColdBoot(ctx context.Context, nodeID, instance string, app AppSpec) (*WakeOutcome, error) {
+	if err := r.checkFinancialComputeOwner(ctx, nodeID, app); err != nil {
+		return nil, err
+	}
 	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if err = r.checkCheckpointWakeOwnershipSupport(ctx, cli); err != nil {
+		return nil, err
+	}
+	ctx, err = r.prepareCloneWakeDispatch(ctx, nodeID, instance, app, "cold_boot")
 	if err != nil {
 		return nil, err
 	}
@@ -454,6 +566,10 @@ type appTaskVMMClient interface {
 
 type appTaskOutputVMMClient interface {
 	ExecuteAppTaskWithOutput(context.Context, string, apptaskproto.Request, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
+}
+
+type appTaskInteractiveVMMClient interface {
+	ExecuteInteractiveAppTask(context.Context, string, apptaskproto.Request, AppTaskAttachSpec) (apptaskproto.Result, error)
 }
 
 type appTaskRestoreVMMClient interface {
@@ -528,6 +644,9 @@ func (r *VMMRouter) RestoreExecution(ctx context.Context, nodeID string, req Exe
 
 // RestoreAppTask routes the command-free app runtime envelope to one node.
 func (r *VMMRouter) RestoreAppTask(ctx context.Context, nodeID string, spec AppTaskRestoreSpec) (*AppTaskRestoreOutcome, error) {
+	if err := r.checkFinancialComputeOwner(ctx, nodeID, spec.App); err != nil {
+		return nil, err
+	}
 	cli, err := r.resolveFor(ctx, nodeID)
 	if err != nil {
 		return nil, err
@@ -569,6 +688,21 @@ func (r *VMMRouter) ExecuteAppTaskWithOutput(ctx context.Context, nodeID, instan
 	return taskClient.ExecuteAppTaskWithOutput(ctx, instance, req, receive)
 }
 
+// ExecuteInteractiveAppTask routes an interactive app task (ADR-1037) to the
+// node owning its VM; vmmd waits there for the attached client.
+func (r *VMMRouter) ExecuteInteractiveAppTask(ctx context.Context, nodeID, instance string, req apptaskproto.Request, attach AppTaskAttachSpec) (apptaskproto.Result, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return apptaskproto.Result{}, err
+	}
+	taskClient, ok := cli.(appTaskInteractiveVMMClient)
+	if !ok {
+		return apptaskproto.Result{}, api.NewProblem(501, api.CodeNotImplemented,
+			"Interactive app tasks unavailable", "vmmd client does not support interactive app tasks")
+	}
+	return taskClient.ExecuteInteractiveAppTask(ctx, instance, req, attach)
+}
+
 type jobVMMClient interface {
 	JobColdBoot(context.Context, JobVmmSpec) (JobVmmResult, error)
 	WaitJobExit(context.Context, JobExitSpec) (JobExitResult, error)
@@ -582,6 +716,9 @@ type heldJobVMMClient interface {
 // optional on the per-node client interface so older test doubles and nodes
 // can continue serving the ordinary VM lifecycle surface.
 func (r *VMMRouter) JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmResult, error) {
+	if err := r.checkFinancialComputeOwnerForScope(ctx, spec.NodeID, spec.AccountID, "job:"+spec.JobID); err != nil {
+		return JobVmmResult{}, err
+	}
 	cli, err := r.resolveFor(ctx, spec.NodeID)
 	if err != nil {
 		return JobVmmResult{}, err
@@ -629,7 +766,20 @@ func (r *VMMRouter) ReleaseJobStart(ctx context.Context, spec JobStartSpec) erro
 
 // CreateFromSnapshot implements RoutedVMM.
 func (r *VMMRouter) CreateFromSnapshot(ctx context.Context, nodeID, instance string, app AppSpec, snap SnapshotRef) (*WakeOutcome, error) {
+	if err := r.checkFinancialComputeOwner(ctx, nodeID, app); err != nil {
+		return nil, err
+	}
 	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if snap.DeploymentID != app.DeploymentID && (r.wakeDispatch != nil || r.wakePrepare != nil) {
+		return nil, fmt.Errorf("wake snapshot deployment ownership changed")
+	}
+	if err = r.checkCheckpointWakeOwnershipSupport(ctx, cli); err != nil {
+		return nil, err
+	}
+	ctx, err = r.prepareCloneWakeDispatch(ctx, nodeID, instance, app, "restore")
 	if err != nil {
 		return nil, err
 	}
@@ -638,6 +788,9 @@ func (r *VMMRouter) CreateFromSnapshot(ctx context.Context, nodeID, instance str
 
 // CreatePausedFromSnapshot implements the additive warm-pool capability.
 func (r *VMMRouter) CreatePausedFromSnapshot(ctx context.Context, nodeID, instance string, app AppSpec, snap SnapshotRef) (*WakeOutcome, error) {
+	if err := r.checkFinancialComputeOwner(ctx, nodeID, app); err != nil {
+		return nil, err
+	}
 	cli, err := r.resolveFor(ctx, nodeID)
 	if err != nil {
 		return nil, err
@@ -648,6 +801,16 @@ func (r *VMMRouter) CreatePausedFromSnapshot(ctx context.Context, nodeID, instan
 	if !ok {
 		return nil, api.NewProblem(501, api.CodeNotImplemented,
 			"Warm-pool restore unavailable", "vmmd client does not support paused snapshot restore")
+	}
+	if snap.DeploymentID != app.DeploymentID && (r.wakeDispatch != nil || r.wakePrepare != nil) {
+		return nil, fmt.Errorf("wake snapshot deployment ownership changed")
+	}
+	if err = r.checkCheckpointWakeOwnershipSupport(ctx, cli); err != nil {
+		return nil, err
+	}
+	ctx, err = r.prepareCloneWakeDispatch(ctx, nodeID, instance, app, "restore")
+	if err != nil {
+		return nil, err
 	}
 	return paused.CreatePausedFromSnapshot(ctx, instance, app, snap)
 }
@@ -703,6 +866,42 @@ func (r *VMMRouter) ResumeWarmInstanceWithImageHealthcheck(ctx context.Context, 
 		return errors.New("sched: warm resume cannot enforce image healthcheck")
 	}
 	return resumer.ResumeWarmInstanceWithImageHealthcheck(ctx, instance)
+}
+
+// FreezeInstance implements FrozenVMM (ADR-1151). The scheduler commits the
+// durable RUNNING -> FROZEN transition separately; this only forwards the
+// vmmd-side pause.
+func (r *VMMRouter) FreezeInstance(ctx context.Context, nodeID, instance string, reclaim bool) (FreezeReport, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return FreezeReport{}, err
+	}
+	f, ok := cli.(interface {
+		FreezeInstance(context.Context, string, bool) (FreezeReport, error)
+	})
+	if !ok {
+		return FreezeReport{}, api.NewProblem(501, api.CodeNotImplemented,
+			"Freeze unavailable", "vmmd client does not support in-place freeze")
+	}
+	return f.FreezeInstance(ctx, instance, reclaim)
+}
+
+// ThawInstance implements FrozenVMM (ADR-1151). The scheduler admits the thaw
+// and commits FROZEN -> RUNNING separately; this only forwards the vmmd-side
+// resume.
+func (r *VMMRouter) ThawInstance(ctx context.Context, nodeID, instance string, req ThawRequest) (ThawResult, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return ThawResult{}, err
+	}
+	t, ok := cli.(interface {
+		ThawInstance(context.Context, string, ThawRequest) (ThawResult, error)
+	})
+	if !ok {
+		return ThawResult{}, api.NewProblem(501, api.CodeNotImplemented,
+			"Thaw unavailable", "vmmd client does not support in-place thaw")
+	}
+	return t.ThawInstance(ctx, instance, req)
 }
 
 // Destroy implements RoutedVMM.
@@ -794,6 +993,11 @@ func (r *VMMRouter) AdoptMigratedInstance(ctx context.Context, newOwnerNodeID, i
 	if err != nil {
 		return LiveMigrationAdopt{}, err
 	}
+	if r.migrationAdoption != nil {
+		if err := r.migrationAdoption(ctx, instanceID, app.AppID, app.DeploymentID, newOwnerNodeID, memKey, vmstateKey, leaseToken); err != nil {
+			return LiveMigrationAdopt{}, err
+		}
+	}
 	return cli.AdoptMigratedInstance(ctx, newOwnerNodeID, instanceID, app, memKey, vmstateKey, leaseToken)
 }
 
@@ -821,7 +1025,29 @@ func (r *VMMRouter) CancelLiveMigration(ctx context.Context, dyingNodeID, instan
 	if err != nil {
 		return err
 	}
+	if r.migrationResume != nil {
+		if err := r.migrationResume(ctx, instanceID, dyingNodeID, leaseToken); err != nil {
+			return err
+		}
+	}
 	return cli.CancelLiveMigration(ctx, dyingNodeID, instanceID, leaseToken)
+}
+
+func (r *VMMRouter) CancelFunctionMigrationSource(ctx context.Context, node, id, token string) (bool, error) {
+	client, err := r.resolveFor(ctx, node)
+	if err != nil {
+		return false, err
+	}
+	qualified, ok := client.(functionMigrationCanceller)
+	if !ok {
+		return false, state.ErrMigrationCommitUnresolved
+	}
+	if r.migrationResume != nil {
+		if err := r.migrationResume(ctx, id, node, token); err != nil {
+			return false, err
+		}
+	}
+	return qualified.CancelFunctionMigrationSource(ctx, node, id, token)
 }
 
 // UpdateEgressAllowlist (ADR-031 + ADR-033, tier-2 PR-B) routes the
@@ -838,6 +1064,22 @@ func (r *VMMRouter) UpdateEgressAllowlist(ctx context.Context, nodeID, appID str
 		return err
 	}
 	return cli.UpdateEgressAllowlist(ctx, appID, allowlist, egressPorts)
+}
+
+// UpdateAppEgressPolicy routes a complete policy without falling back to an
+// unrevisioned update on nodes that cannot fence physical writes.
+func (r *VMMRouter) UpdateAppEgressPolicy(ctx context.Context, nodeID, appID string, revision int64, allowlist []netip.Prefix, ports []int) error {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	updater, ok := cli.(interface {
+		UpdateAppEgressPolicy(context.Context, string, int64, []netip.Prefix, []int) error
+	})
+	if !ok {
+		return fmt.Errorf("vmm router: revisioned egress unsupported by node %q", nodeID)
+	}
+	return updater.UpdateAppEgressPolicy(ctx, appID, revision, allowlist, ports)
 }
 
 // UpdateAppCPULimit routes a live app CPU policy to the owning vmmd. Kept
@@ -1012,3 +1254,13 @@ func (r *VMMRouter) Logs(ctx context.Context, nodeID, instance string, sinceSeq 
 // fails the build here, before it surfaces as a runtime nil-method
 // panic in the wake loop.
 var _ RoutedVMM = (*VMMRouter)(nil)
+
+// VMMRouter carries the frozen-tier capability (ADR-1151), and so does the
+// per-node client it forwards to.
+var (
+	_ FrozenVMM = (*VMMRouter)(nil)
+	_           = interface {
+		FreezeInstance(context.Context, string, bool) (FreezeReport, error)
+		ThawInstance(context.Context, string, ThawRequest) (ThawResult, error)
+	}((*VMMClient)(nil))
+)

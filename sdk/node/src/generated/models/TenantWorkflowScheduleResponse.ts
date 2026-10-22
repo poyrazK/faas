@@ -22,7 +22,7 @@ export type TenantWorkflowScheduleResponse = {
    */
   catch_up?: 'skip' | 'latest';
   /**
-   * Inherited recovery duration
+   * Inherited recovery duration, present only for latest.
    */
   catch_up_window?: string;
   enabled: boolean;

@@ -1,11 +1,13 @@
 from typing import Literal
 
-RouteAdviceSuggestionKind = Literal["async", "cache", "throttle"]
+RouteAdviceSuggestionKind = Literal["async", "cache", "priority", "throttle", "wake_ahead"]
 
 ROUTE_ADVICE_SUGGESTION_KIND_VALUES: set[RouteAdviceSuggestionKind] = {
     "async",
     "cache",
+    "priority",
     "throttle",
+    "wake_ahead",
 }
 
 

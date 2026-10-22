@@ -170,6 +170,7 @@ func (m *MemStore) CreatePlatformTenantStatement(_ context.Context, in PlatformT
 		Status: APIConsumerUsageStatementDraft, Currency: in.Currency, BillableUnits: in.BillableUnits,
 		UnpricedUnits: in.UnpricedUnits, AmountMillicents: in.AmountMillicents,
 		Lines:    append([]PlatformTenantStatementLine(nil), in.Lines...),
+		Fees:     append([]APIConsumerStatementFee(nil), in.Fees...),
 		Coverage: append([]PlatformTenantStatementCoverage(nil), in.Coverage...),
 		AsOf:     in.AsOf, CreatedAt: now}
 	m.platformTenantStatements[out.ID] = out
@@ -289,6 +290,7 @@ func (m *MemStore) FinalizePlatformTenantStatement(_ context.Context, accountID,
 	}
 	now := time.Now().UTC()
 	out.Status, out.FinalizedAt = APIConsumerUsageStatementFinalized, &now
+	out.CreditAppliedMillicents = m.applyPlatformTenantCreditsLocked(out, now)
 	m.platformTenantStatements[out.ID] = out
 	m.enqueuePlatformTenantStatementFinalizedWebhooksLocked(out, now)
 	return clonePlatformTenantStatementHeader(out), true, nil
@@ -314,7 +316,8 @@ func (m *MemStore) enqueuePlatformTenantStatementFinalizedWebhooksLocked(stateme
 		Revision: statement.Revision, Status: string(statement.Status), PeriodStart: statement.PeriodStart,
 		PeriodEnd: statement.PeriodEnd, Currency: statement.Currency, BillableUnits: statement.BillableUnits,
 		UnpricedUnits: statement.UnpricedUnits, AmountMillicents: statement.AmountMillicents,
-		Priced: statement.UnpricedUnits == 0 && statement.Currency != "", Lines: lines,
+		CreditAppliedMillicents: statement.CreditAppliedMillicents, AmountDueMillicents: statement.AmountDueMillicents(),
+		Priced: statement.UnpricedUnits == 0 && statement.Currency != "", Lines: lines, Fees: statementFeeResponses(statement.Fees),
 		AsOf: statement.AsOf, FinalizedAt: *statement.FinalizedAt,
 	})
 	if err != nil {
@@ -394,35 +397,8 @@ func (m *MemStore) CreatePlatformTenantStatementHandoff(_ context.Context, in Pl
 	if statement.Status != APIConsumerUsageStatementFinalized || statement.Currency == "" {
 		return PlatformTenantStatementHandoff{}, false, ErrConflict
 	}
-	for _, h := range m.apiConsumerUsageStatementHandoffs {
-		other := m.apiConsumerUsageStatements[h.StatementID]
-		if h.AccountID == in.AccountID && (h.ExternalInvoiceID == in.ExternalInvoiceID ||
-			(windowsOverlap(statement.PeriodStart, statement.PeriodEnd, other.PeriodStart, other.PeriodEnd) &&
-				tenantStatementIncludesConsumer(statement, other.AppID, other.ConsumerID))) {
-			return PlatformTenantStatementHandoff{}, false, ErrConflict
-		}
-	}
-	for _, h := range m.platformTenantStatementHandoffs {
-		other := m.platformTenantStatements[h.StatementID]
-		if h.AccountID != in.AccountID {
-			continue
-		}
-		if h.ExternalInvoiceID == in.ExternalInvoiceID {
-			return PlatformTenantStatementHandoff{}, false, ErrConflict
-		}
-		if other.TenantID == statement.TenantID && other.PeriodStart.Equal(statement.PeriodStart) && other.PeriodEnd.Equal(statement.PeriodEnd) {
-			continue
-		}
-		if !windowsOverlap(statement.PeriodStart, statement.PeriodEnd, other.PeriodStart, other.PeriodEnd) {
-			continue
-		}
-		for _, line := range statement.Lines {
-			if tenantStatementIncludesConsumer(other, line.AppID, line.ConsumerID) ||
-				tenantStatementIncludesSurface(other, line.AppID, line.SurfaceID) ||
-				tenantStatementIncludesJWTAuthorizationRule(other, line.AppID, line.JWTAuthorizationRuleID) {
-				return PlatformTenantStatementHandoff{}, false, ErrConflict
-			}
-		}
+	if m.externalInvoiceHandedOffLocked(in.AccountID, in.ExternalInvoiceID) || m.tenantHandoffOverlapLocked(statement) {
+		return PlatformTenantStatementHandoff{}, false, ErrConflict
 	}
 	out := PlatformTenantStatementHandoff{ID: uuid.NewString(), AccountID: in.AccountID, TenantID: in.TenantID,
 		StatementID: in.StatementID, ExternalInvoiceID: in.ExternalInvoiceID, Currency: statement.Currency,
@@ -439,4 +415,14 @@ func (m *MemStore) GetPlatformTenantStatementHandoff(_ context.Context, accountI
 		return PlatformTenantStatementHandoff{}, ErrNotFound
 	}
 	return out, nil
+}
+
+// statementFeeResponses renders fees for a webhook payload; never nil, so
+// the payload carries an empty list like the Postgres trigger does.
+func statementFeeResponses(fees []APIConsumerStatementFee) []api.APIConsumerStatementFeeResponse {
+	out := make([]api.APIConsumerStatementFeeResponse, 0, len(fees))
+	for _, fee := range fees {
+		out = append(out, api.APIConsumerStatementFeeResponse{Kind: fee.Kind, RateCardID: fee.RateCardID, AmountMillicents: fee.AmountMillicents})
+	}
+	return out
 }

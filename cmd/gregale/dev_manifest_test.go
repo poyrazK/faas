@@ -108,10 +108,10 @@ func TestFormatDevLease(t *testing.T) {
 
 func TestDevSessionRequestCarriesLease(t *testing.T) {
 	config := devSourceConfig{shape: shapeApp}
-	if got := config.sessionRequest("", false, "", 72*time.Hour).LeaseSeconds; got != 72*3600 {
+	if got := config.sessionRequest("", false, "", 72*time.Hour, nil).LeaseSeconds; got != 72*3600 {
 		t.Fatalf("lease_seconds = %d, want %d", got, 72*3600)
 	}
-	if got := config.sessionRequest("", false, "", 0).LeaseSeconds; got != 0 {
+	if got := config.sessionRequest("", false, "", 0, nil).LeaseSeconds; got != 0 {
 		t.Fatalf("lease_seconds without --ttl = %d, want omitted", got)
 	}
 }

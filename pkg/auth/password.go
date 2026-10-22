@@ -254,5 +254,10 @@ func parsePHC(phc string) (mem uint32, time uint32, threads uint8, salt, hash []
 	if err != nil {
 		return 0, 0, 0, nil, nil, fmt.Errorf("hash b64: %w", errors.Join(ErrMalformedPHC, err))
 	}
+	// An empty hash would make Verify accept any password:
+	// ConstantTimeCompare reports two empty slices as equal.
+	if len(salt) == 0 || len(hash) < 16 {
+		return 0, 0, 0, nil, nil, fmt.Errorf("%w: salt=%d hash=%d bytes", ErrMalformedPHC, len(salt), len(hash))
+	}
 	return m, t, uint8(p), salt, hash, nil
 }

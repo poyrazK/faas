@@ -130,7 +130,13 @@ func (*tenantIngressBackend) ScheduleMirror(context.Context, string, string, str
 	return "", "", errors.New("unexpected mirror scheduling")
 }
 
-type tenantIngressConsumerStore struct{ state.Store }
+type tenantIngressConsumerStore struct{ Store state.Store }
+
+// TouchConsumerKeyLastUsed completes gateway.ConsumerAuthStore; the adapter no longer
+// embeds the store, so it delegates explicitly.
+func (s tenantIngressConsumerStore) TouchConsumerKeyLastUsed(ctx context.Context, keyID string) error {
+	return s.Store.TouchConsumerKeyLastUsed(ctx, keyID)
+}
 
 func (s tenantIngressConsumerStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, appID, prefix string) (gateway.ConsumerAuthKey, error) {
 	key, err := s.Store.ConsumerKeyByAppAndPrefix(ctx, accountID, appID, prefix)

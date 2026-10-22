@@ -1,0 +1,6 @@
+bash scripts/ci/check_adr_number_uniqueness.sh
+adr-number-uniqueness: OK — 1332 ADRs, 1128 distinct numbers, 164 pre-existing duplicates held at the baseline
+sealed-env-scope-check: OK (only faas-apid.service loads sealed.env)
+runbook SQL gate: no mutating SQL outside docs/break-glass/
+shell-quoting-check: clean
+text-encoding-check: clean

@@ -25,6 +25,6 @@ export type OperationWorkflowReadinessAssignmentChange = {
   /**
    * OperationWorkflowReadinessAssignmentChange.reason. Retained acknowledgment target or assignment observation; never modifies application business reports.
    */
-  reason: 'manual_assignment' | 'response_deadline_fallback';
+  reason: 'manual_assignment' | 'response_deadline_fallback' | 'step_assignment';
 };
 

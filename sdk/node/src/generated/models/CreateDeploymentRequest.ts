@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppReleaseReview } from './AppReleaseReview.js';
 import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
 import type { CreateDeploymentOverrides } from './CreateDeploymentOverrides.js';
 import type { Sidecar } from './Sidecar.js';
@@ -10,6 +11,14 @@ import type { WorkflowSpec } from './WorkflowSpec.js';
  * Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / startup healthcheck / readiness_probe / liveness_probe without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients.
  */
 export type CreateDeploymentRequest = {
+  /**
+   * Reviewed native activation. Requires expected_review, matching target execution mode, an unprotected environment and omitted traffic_percent. Services switch through readiness, routing acknowledgement and drain barriers. Workers activate the newest live generation; this is not zero-traffic staging.
+   */
+  native_rollout?: 'service' | 'worker';
+  /**
+   * Atomically require this review before zero-traffic image staging or native_rollout activation in the reviewed default or named environment. A changed review returns 409 release_review_changed.
+   */
+  expected_review?: AppReleaseReview;
   /**
    * registry.gregale.dev/...@sha256:... — digest-pinned OCI reference.
    */
@@ -75,6 +84,10 @@ export type CreateDeploymentRequest = {
    * One-use operator override to allow this deployment to cut over while outstanding MCP tasks still need handler versions it does not provide.
    */
   mcp_task_migration_override?: boolean;
+  /**
+   * Release this deployment to production while a deploy freeze is active; the reason is audited with the freezes it overrode (ADR-20261019071733).
+   */
+  override_freeze?: string;
   /**
    * Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost.
    */

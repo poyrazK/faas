@@ -1,7 +1,8 @@
 {
-  "version": 1,
+  "version": 4,
   "package": "github.com/onebox-faas/faas/cmd/e2e",
   "root": "TestManagedPostgresNativeMetal",
+  "workloads": ["probe", "node22", "python312"],
   "phases": [
     "release_and_initial_restore",
     "manual_task_without_migration_secret",
@@ -12,15 +13,24 @@
     "starter_release_and_initial_restore",
     "starter_manual_task_without_migration_secret",
     "starter_pooled_disconnect_recovery",
+    "starter_frozen_pool_recovery",
     "starter_failed_hook_cold_boot",
     "starter_running_rotation_and_retirement",
     "starter_parked_rotation_scheduler_recovery",
+    "python_starter_release_and_initial_restore",
+    "python_starter_manual_task_without_migration_secret",
+    "python_starter_pooled_disconnect_recovery",
+    "python_starter_failed_hook_cold_boot",
+    "python_starter_running_rotation_and_retirement",
+    "python_starter_parked_rotation_scheduler_recovery",
     "independent_cleanup"
   ],
   "artifacts": [
     "apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "gatewayd-public",
     "meterd", "builderd", "vmmd-stream-bridge", "vmmd-raw-bridge", "vmmd-tcp-bridge",
     "vmmd-udp-bridge", "vmmd-jail-helper", "guest_init", "kernel", "builder_base",
-    "firecracker", "jailer", "e2e_test", "probe_base", "node22_base"
+    "firecracker", "jailer", "e2e_test", "deploy_base",
+    "probe_app_layer", "probe_source_archive", "node22_app_layer", "node22_source_archive",
+    "python312_app_layer", "python312_source_archive"
   ]
 }

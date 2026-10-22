@@ -109,6 +109,10 @@ func (e *Engine) RecreateInstance(ctx context.Context, instanceID string) error 
 		}
 		return fmt.Errorf("sched: recreate: load %s: %w", instanceID, err)
 	}
+	if state.State(ins.State) == state.StateFrozen {
+		// ADR-1151: recovery parks a frozen VM rather than recreating it.
+		return e.ParkFrozen(ctx, ins.ID, "node_restart")
+	}
 	if state.State(ins.State) == state.StateDraining {
 		// A draining runtime-config predecessor must never be restored after
 		// node loss: its process carries the superseded environment, and the
@@ -183,6 +187,8 @@ func (e *Engine) RecreateInstance(ctx context.Context, instanceID string) error 
 	if e.ledger != nil {
 		e.ledger.Release(ins.ID)
 	}
+	// The node may only have been slow to answer, so the VM may still run.
+	e.noteLostVM(ins.NodeID, ins.ID)
 	if e.ops != nil {
 		e.ops.RecreateDecisions("succeeded").Inc()
 	}

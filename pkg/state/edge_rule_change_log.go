@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // EdgeRuleChange is one durable edge-rule mutation. The gateway repair loop
@@ -95,8 +98,8 @@ func (s *PgStore) ListEdgeRuleChangesAfter(ctx context.Context, afterID int64, l
 	return changes, nil
 }
 
-// PruneEdgeRuleChangeLog bounds retained history without deleting changes a
-// serving gateway has not replayed. A restarted gateway has empty caches and
+// PruneEdgeRuleChangeLog retains each account revision and the legacy fleet floor while bounding history.
+// It does not delete changes a serving gateway has not replayed. A restarted gateway has empty caches and
 // baselines to the current high-water mark; a still-serving lagging gateway
 // holds pruning at its last durable watermark.
 func (s *PgStore) PruneEdgeRuleChangeLog(ctx context.Context, before time.Time) (int64, error) {
@@ -106,21 +109,27 @@ func (s *PgStore) PruneEdgeRuleChangeLog(ctx context.Context, before time.Time) 
 	if before.IsZero() {
 		return 0, fmt.Errorf("state: edge-rule change log prune requires cutoff")
 	}
-	tag, err := s.pool.Exec(ctx, `
-		DELETE FROM edge_rule_change_log
-		WHERE created_at < $1
-		  AND id <= COALESCE((
-		      SELECT MIN(COALESCE(w.last_change_id, 0))
-		      FROM compute_nodes n
-		      LEFT JOIN gateway_edge_rule_watermarks w ON w.node_name = n.name
-		      WHERE n.active = true
-		        AND n.role IN ('compute-only', 'compute-node')
-		        AND n.gateway_target_url IS NOT NULL
-		        AND btrim(n.gateway_target_url) <> ''
-		  ), 9223372036854775807::bigint)
-	`, before.UTC())
+	removed, err := sqlc.New().PruneEdgeRuleReplayHistory(ctx, s.pool, pgtype.Timestamptz{Time: before.UTC(), Valid: true})
 	if err != nil {
 		return 0, fmt.Errorf("state: prune edge-rule change log: %w", err)
 	}
-	return tag.RowsAffected(), nil
+	return removed, nil
+}
+
+// EdgeRulePolicyPosition uses global commit-ordered IDs. Unknown historical
+// owners affect every account; later known unrelated mutations do not.
+type EdgeRulePolicyPosition struct {
+	DesiredRevision     int64
+	LegacyFleetRevision int64
+}
+
+func (s *PgStore) LatestAccountEdgeRulePolicyPosition(ctx context.Context, accountID string) (EdgeRulePolicyPosition, error) {
+	if s == nil || s.pool == nil {
+		return EdgeRulePolicyPosition{}, fmt.Errorf("state: edge-rule policy position has nil pool")
+	}
+	row, err := sqlc.New().ReadAccountEdgeRulePolicyPosition(ctx, s.pool, mustPgUUID(accountID))
+	if err != nil {
+		return EdgeRulePolicyPosition{}, fmt.Errorf("state: account edge-rule policy position: %w", err)
+	}
+	return EdgeRulePolicyPosition{DesiredRevision: row.DesiredRevision, LegacyFleetRevision: row.LegacyFleetRevision}, nil
 }

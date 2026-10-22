@@ -39,7 +39,7 @@ func RecoverMultipartUpload(ctx context.Context, provider Provider, bucket strin
 }
 
 func validMultipartCreateRequest(r MultipartCreateRequest) bool {
-	return r.SessionID != "" && len(r.SessionID) <= 128 && ValidKey(r.Key) && r.SizeBytes >= 0 && r.SizeBytes <= api.MaxObjectUploadBytes && ValidateObjectMetadata(r.Metadata) == nil
+	return r.Checksum.Valid() && r.SessionID != "" && len(r.SessionID) <= 128 && ValidKey(r.Key) && r.SizeBytes >= 0 && r.SizeBytes <= api.MaxObjectUploadBytes && ValidateObjectMetadata(r.Metadata) == nil
 }
 
 func (p *S3) RecoverMultipartUpload(ctx context.Context, bucket string, r MultipartCreateRequest) (string, error) {
@@ -52,6 +52,9 @@ func (p *S3) RecoverMultipartUpload(ctx context.Context, bucket string, r Multip
 	}
 	if id == "" {
 		return "", ErrNotFound
+	}
+	if p.ownedNodeReceipts && id != ownedMultipartID(r.SessionID) {
+		return "", ErrConflict
 	}
 	return id, nil
 }

@@ -10,12 +10,12 @@ import (
 )
 
 func (m *MemStore) routePolicySnapshotLocked(accountID, appID string) (RoutePolicySnapshot, error) {
-	account, ok := m.accounts[accountID]
-	if !ok {
-		return RoutePolicySnapshot{}, ErrNotFound
-	}
 	app, ok := m.apps[appID]
 	if !ok || app.AccountID != accountID || app.Status == AppDeleted {
+		return RoutePolicySnapshot{}, ErrNotFound
+	}
+	account, ok := m.appResourceAccountLocked(app)
+	if !ok {
 		return RoutePolicySnapshot{}, ErrNotFound
 	}
 	snapshot := RoutePolicySnapshot{Account: account, App: app, Rules: []api.EdgeRuleResponse{}}

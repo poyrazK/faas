@@ -12,6 +12,27 @@ The service is intentionally separate from the raw application WebSocket
 bridge. Restarting it closes managed connections and emits disconnect events;
 application-owned raw Upgrade sessions are unaffected.
 
+## Rollout flags
+
+These features stay off until realtime has been tested end to end. Each flag
+defaults to `0`; with all of them off, realtimed, apid and schedd behave as
+they did before the features existed.
+
+| Flag | Daemons | Turns on |
+|---|---|---|
+| `FAAS_REALTIME_FAIR_USE_ENABLED` | apid, realtimed | plan connection limits per account, the 50% per-node account share, and the 6,000 node connection default (otherwise 10,000) (ADR-1323) |
+| `FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED` | realtimed | the node outbound budget, slow-consumer shedding, and a 384 MiB soft memory limit unless `GOMEMLIMIT` is set (ADR-1323) |
+| `FAAS_REALTIME_USAGE_ENABLED` | apid, realtimed | usage recording on realtimed and `GET /v1/usage/realtime` on apid (ADR-1323) |
+| `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` | apid, realtimed | `GET …/occupancy` on apid, live occupancy frames and SSE events on realtimed (ADR-1324) |
+| `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` | apid | `delivery: batch` on triggers; off, apid refuses it with 422 (ADR-1321) |
+| `FAAS_TRIGGER_LEDGER_RETENTION_ENABLED` | schedd | the `trigger_records` reaper (default ages 7 days, 30 for dead letters) |
+
+Set a two-daemon flag on apid and on every realtime node. Realtime function
+triggers (ADR-1322) stay behind `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED`, and
+the v2 protocol behind `FAAS_REALTIME_RESUME_PREVIEW_ENABLED`.
+
+## Endpoints
+
 Disabling or deleting an endpoint stops new handshakes and closes its existing
 managed sockets on every node reached by the control-plane operation. The
 control plane compares the credential-free registration inventory on active
@@ -467,7 +488,8 @@ must implement `POST <callback_url>/realtime/authorize-channel`: Gregale sends
 and `permission: "read"`, using the configured callback bearer credential.
 Any 2xx grants that channel for this connection; all other responses and
 callback failures deny it. To revoke a grant already in use, close the
-matching connection through the management API.
+matching connection through the management API, or enable the
+[principal access controls preview](#principal-access-controls-preview).
 
 A v2 client requests the `gregale.realtime.v2` WebSocket subprotocol and sends
 JSON text frames:
@@ -520,6 +542,24 @@ and a relay failure is reported to the sending client; a presence snapshot
 repairs presence event delivery after a transient relay failure. These frames
 remain behind the v2 preview flags and the endpoint's channel authorization
 callback.
+
+With `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED=1` on realtimed, add
+`"occupancy": true` to a subscribe frame to receive the channel's fleet-wide
+subscriber count (ADR-1324); without it the field is ignored:
+
+```json
+{"type":"subscribe","channel":"room-a","after":0,"occupancy":true}
+{"type":"occupancy","channel":"room-a","subscribers":23}
+```
+
+The count covers every transport and node and is sent after subscribing and on
+each change, at most once a second. SSE streams ask with `&occupancy=1` and get
+`event: occupancy` with the same data. Compute-only realtimed reads the other
+nodes' counts from apid over `RealtimeFleet/OccupancyOperation` every 5 seconds
+(apid caches each channel for 2 seconds); single-box realtimed counts locally.
+A node follows at most 1,000 live-count channels; past that, subscribers get an
+`occupancy_limit` error frame and no counts. `GET …/occupancy` answers the same
+question for backends once apid has the same flag; until then it returns 404.
 
 To let Gregale keep the checkpoint, add a stable name for each logical
 consumer. Optionally send `after` as that name's first-use baseline:
@@ -681,7 +721,21 @@ reported by `realtimed_outbound_pending_bytes` and the per-connection
 `realtimed_outbound_queue_bytes_limit` gauge. Separate
 `realtimed_outbound_queue_count_limit_drops_total` and
 `realtimed_outbound_queue_byte_limit_drops_total` counters identify which
-bounded queue limit rejected a frame. In a split deployment, the control-plane
+bounded queue limit rejected a frame.
+
+The node outbound budget (ADR-1323, `FAAS_REALTIME_OUTBOUND_NODE_BYTES`,
+default 64 MiB) bounds queued bytes across every connection on the node, shown
+by `realtimed_outbound_node_bytes_limit`. It applies only with
+`FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED=1`, which also sets a 384 MiB soft memory
+limit unless `GOMEMLIMIT` is set; without it the limit metric is 0 and nothing
+is shed. Above 75% of it, realtimed closes the
+connections holding the largest backlogs (at least 1/16 of the per-connection
+byte limit) with close code 1013 until queued bytes fall to 50%, counted by
+`realtimed_outbound_shed_disconnects_total`. A frame that would exceed the
+budget is refused and counted by `realtimed_outbound_node_budget_drops_total`.
+Sustained shedding means slow clients or broadcasts larger than the node can
+buffer; raise the budget only together with the unit's `MemoryMax` and
+`GOMEMLIMIT`. In a split deployment, the control-plane
 Prometheus discovers active realtime owners from apid; sum counters across
 nodes and sum the pending-bytes gauge for fleet usage.
 
@@ -689,6 +743,9 @@ nodes and sum the pending-bytes gauge for fleet usage.
 sum(rate(realtimed_outbound_queue_count_limit_drops_total[5m]))
 sum(rate(realtimed_outbound_queue_byte_limit_drops_total[5m]))
 sum(realtimed_outbound_pending_bytes)
+max(realtimed_outbound_pending_bytes / realtimed_outbound_node_bytes_limit)
+sum(rate(realtimed_outbound_shed_disconnects_total[5m]))
+sum(rate(realtimed_outbound_node_budget_drops_total[5m]))
 ```
 
 Resumable-channel health is visible through `realtimed_current_resume_subscriptions`,
@@ -718,7 +775,7 @@ sum(rate(realtimed_resume_slow_consumer_disconnects_total[5m]))
 
 Set `FAAS_REALTIME_MAX_CONNECTIONS`,
 `FAAS_REALTIME_MAX_MESSAGE_BYTES`, `FAAS_REALTIME_OUTBOUND_QUEUE`,
-`FAAS_REALTIME_OUTBOUND_QUEUE_BYTES`,
+`FAAS_REALTIME_OUTBOUND_QUEUE_BYTES`, `FAAS_REALTIME_OUTBOUND_NODE_BYTES`,
 `FAAS_REALTIME_HEARTBEAT`, `FAAS_REALTIME_PONG_WAIT`,
 `FAAS_REALTIME_WRITE_WAIT`, `FAAS_REALTIME_MAX_AGE`, and
 `FAAS_REALTIME_CALLBACK_TIMEOUT` in the realtimed environment file when
@@ -1033,7 +1090,7 @@ MFA. GET uses the read scope. Both return `sequence`, `unread`,
 `updated_at`. A missing marker returns sequence zero without creating storage.
 Writes are monotonic: repeats and older sequences return current progress,
 without another durable read event. Future sequences are rejected. Markers
-persist for the endpoint's lifetime, with a cap of 1024 principal/stream
+persist for the endpoint's lifetime, with a cap of 1115 principal/stream
 markers per endpoint; deleting the endpoint removes them.
 
 Unread counts cover distinct, undeleted logical messages in the retained
@@ -1181,7 +1238,7 @@ fetch the inbox on open and deduplicate by delivery ID. Delivery is at least onc
 a worker crash after provider acceptance can cause a retry. `sent` means accepted
 by the provider, not displayed, read, or acknowledged by the user.
 
-Each endpoint supports 16 devices per principal and 1024 devices total. The ledger
+Each endpoint supports 16 devices per principal and 1115 devices total. The ledger
 holds at most 4096 deliveries per endpoint. Completed history lasts up to seven
 days and is evicted oldest first when space is needed. Pending work expires after
 24 hours; when all capacity is occupied by unfinished jobs, fallback deadlines
@@ -1764,7 +1821,7 @@ original sequence allocation without appending messages. Different content retur
 normal sequence deduplication. Idempotency survives event eviction and edits;
 the response confirms original publication, not that original data remains in the
 current log. IDs can be reused after 24 hours. Up to 256 batch IDs are retained
-per endpoint; new batches return 429 at capacity. Existing 1024-message/24-hour
+per endpoint; new batches return 429 at capacity. Existing 1115-message/24-hour
 channel retention still applies. Batch-created message IDs use a reserved derived
 `batch:<SHA256(batch_id)>:<zero-based-index>` convention; avoid these IDs for
 independent single publishes.
@@ -2626,7 +2683,7 @@ past/future clock window are ignored. Expiry follows the server's timestamp usin
 the client's clock, so clock alignment matters. Data follows the existing 2 KiB
 JSON limit, and snapshots clone data to keep UI mutations isolated.
 
-Capacity defaults to 1024 identities including ordering markers; configure
+Capacity defaults to 1115 identities including ordering markers; configure
 `maxEntries` from 1 to 8192. Additional identities throw rather than silently
 evicting active activity. Reset a channel on unsubscribe/reconnect to clear its
 activity and ordering memory; signals do not replay across reconnects. `dispose`
@@ -2649,7 +2706,7 @@ and ordering memory. Reconnect starts empty and uses new live signals; there is
 no activity replay. Cleanup resets every channel even if an activity callback
 throws. Expiry notifications remain timer-driven and activity callbacks are
 synchronous; applications should handle UI exceptions inside the callback.
-Capacity defaults to 1024 identities including ordering markers, configurable
+Capacity defaults to 1115 identities including ordering markers, configurable
 from 1 to 8192 when activity tracking is enabled. Standalone trackers expose
 `removeMember(channel, memberId)` for equivalent custom lifecycle integration.
 No server migration or new API is required.
@@ -2677,7 +2734,7 @@ a clear or expiry rather than a specific arbitrary data payload.
 membership events, returning isolated snapshots and emitting per-channel changes.
 Incomplete snapshots do not replace visible presence. Reset it on reconnect,
 unsubscribe, and teardown; it is independently owned from lifecycle activity
-trackers. Capacity defaults to 1024 stored members, including staging, configurable
+trackers. Capacity defaults to 1115 stored members, including staging, configurable
 from 1 to 8192. Capacity failures preserve previous state. Aggregation helpers are
 local UI projections and require no migration or new server API.
 
@@ -2700,6 +2757,10 @@ principal belongs to the requested audience. There is no fallback to parent
 permission; callback failure or rejection denies the subscription. Existing
 callbacks must explicitly implement this permission and must not blindly grant
 all channel requests. Membership changes follow existing subscription semantics:
+revoke/disconnect a live connection to immediately remove access, or use the
+[principal access controls preview](#principal-access-controls-preview) for a
+durable deny across nodes. Application authorization runs again when it reconnects.
+
 revoke/disconnect a live connection to immediately remove access; authorization
 runs again when it reconnects. No new membership database is created.
 
@@ -2720,3 +2781,1845 @@ the application callback. Client sends use existing scoped channel actions.
 Activity clears through existing lifecycle handling when the scope subscription
 ends; independently owned presence directories must also be reset. No migration
 is needed.
+## Transactional publishing preview
+
+Use a customer PostgreSQL outbox when a business write and its realtime event
+must commit together. See [ADR-1112](../adr/1112-transactional-realtime-publishing.md)
+and [Gregale Commit setup](../gregale-commit.md) for the existing source registration,
+database binding, credentials and network qualification.
+
+1. Apply `20261012102700452_realtime_commit_receipts.sql` on the control plane.
+2. Install `pkg/commit/realtime_schema.sql` explicitly in the customer database,
+   alongside the existing Commit schema and source binding. Grant the managed
+   relay role SELECT, UPDATE and DELETE on `public.gregale_realtime_outbox`; grant
+   the application writer INSERT. The relay never installs or repairs tables.
+3. Set `FAAS_COMMIT_RELAY_ENABLED=true` and
+   `FAAS_REALTIME_TRANSACTIONAL_PREVIEW_ENABLED=1` on schedd. The separate
+   realtime resume preview must be enabled for v2 subscribers. Existing apid
+   retained-history preview gates still control management reads.
+4. Write your business change and enqueue its event with the same transaction:
+
+See the [customer transaction example](../realtime-customer-examples.md#transactional-publication) for business writes and outbox insertion on one connection.
+
+The managed dispatcher scans at the existing five-second source cadence and
+claims up to 32 realtime events per source tick. It publishes UTF-8 text frames
+of at most 4096 bytes to retained history, preserving schema/reducer validation
+and endpoint message limits. The target endpoint must be enabled and belong to
+the source's account and app. V2 subscribers recover through existing polling;
+publication is not proof of client receipt. Raw live-only subscribers are not
+targets of this preview.
+
+Delivery inspection reads metadata directly from the application database,
+without returning payloads. `published` means the platform committed the channel
+message and its durable receipt. Sequences are decimal strings in the Node SDK.
+The preview aggregates this queue into Commit source backlog, but the existing
+Commit blocked-event and replay APIs address invocation events only. Use the
+realtime database helpers to inspect and retry realtime rows. Retry does nothing
+for missing, published, unblocked or actively leased rows.
+
+Transient failures retry with a five-second delay; `invalid_event`,
+`destination_unqualified`, and `identity_conflict` block for repair. Pending and
+blocked rows are retained until handled; published rows are cleaned after the
+configured Commit retention window (seven days by default). Platform receipts
+survive channel expiry and customer cleanup until source deletion. Never edit an
+accepted identity's endpoint, channel, data or metadata; publish a new event ID.
+Different events can be dispatched out of business-commit order. This preview
+does not provide CDC or exactly-once client processing.
+## Principal access controls (preview)
+
+Managed access controls remove the need to enumerate sockets when a user leaves
+a workspace or logs out across devices. The endpoint must use `oidc_jwt`.
+Apply `20261012102700456_realtime_principal_access.sql`, then enable
+`FAAS_REALTIME_ACCESS_PREVIEW_ENABLED=1` on every realtimed node **before** enabling
+the flag on apid. Each node needs the existing private history/fleet connection,
+including nodes serving live-only OIDC clients. Keep enforcement enabled while
+stored revocations must remain effective. See [ADR-1113](../adr/1113-managed-realtime-access-revocation.md).
+
+Use the account-authenticated, app-scoped API (MFA and the normal read/write
+scopes are required):
+
+```typescript
+import { revokeRealtimeChannelAccess, restoreRealtimeChannelAccess,
+  revokeRealtimeSessions, RealtimeService } from '@gregale/sdk-node';
+
+const user = { slug: 'workspace', id: endpointId, principal: 'user-123' };
+await revokeRealtimeChannelAccess(user, 'project-42');
+await revokeRealtimeSessions(user);
+const controls = await RealtimeService.getManagedRealtimeAccess(user);
+
+// After membership is restored, remove the deny. Your authorize-channel
+// callback must still grant access, and the client must subscribe again.
+await restoreRealtimeChannelAccess(user, 'project-42');
+```
+
+The equivalent HTTP surface is GET/POST
+`/v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access`.
+POST accepts `action: revoke_channel | restore_channel | revoke_sessions`.
+Channel actions require `channel`; session revocation must omit it. A response
+contains `denied_channels`, an optional `sessions_revoked_before`, `revision`,
+and `updated_at`. Revision zero means no stored controls.
+
+Revoking a channel removes matching subscriptions on nodes after they refresh
+access state, and prevents new subscriptions. The deny also covers that
+channel's private activity scopes. Queued frames from the denied channel are
+dropped; frames already sent cannot be recalled. Other channels and direct
+inbox messages remain available. V2 clients receive an `error` frame with
+`code: access_revoked`. The current SDK channel consumer treats this as a
+terminal subscription error; restart the consumer after restoring membership.
+
+Revoking sessions disconnects OIDC sockets whose signed token `iat` is at or
+before the server cutoff, and rejects those tokens on reconnect. With this
+preview enabled, OIDC tokens need a positive integer `iat` no later than the
+node clock. A replacement token needs `iat` strictly **after** the cutoff;
+minting it in the same second may still be rejected. Synchronize issuer and node
+clocks. A fresh token can reconnect, so permanent bans remain an application
+authentication decision. Restoring a channel never clears the session cutoff.
+
+Nodes refresh per connection every second with a two-second RPC timeout.
+Admission and delivery fail closed when controls cannot be read; a recovered
+node reads durable state before resuming delivery. API success confirms a
+database commit, not instantaneous fleet convergence. Qualification must account
+for one access read per active OIDC connection per second.
+
+Preview guards allow 1115 principal records per endpoint and 64 denied channels
+per principal. Session cutoffs and principal records remain until endpoint
+deletion; they are not expired automatically. Static bearer and unauthenticated
+endpoints do not support per-user revocation.
+
+### Retained WebSocket channel authorization refresh
+
+Retained v2 WebSocket subscriptions reuse SSE's 30-second application channel
+grant lifetime ([ADR-1385](../adr/1385-retained-channel-authorization-refresh.md)).
+The history pump checks idle subscriptions, and the writer rechecks expired
+grants before sending queued channel messages, presence, signals, read receipts
+or checkpoints. Channel commands also refresh an expired grant before executing.
+Concurrent checks of one subscription share a callback. Changes
+to endpoint policy invalidate its cached grant and use the current callback
+address and token. No positive grant is extended while a refresh is unavailable.
+
+HTTP 401/403 from the authorization callback remove that subscription and emit
+`access_revoked`, including its presence and route cleanup. Other non-2xx statuses,
+transport errors and timeouts close the connection with WebSocket code 1013 so
+clients may reconnect; they do not assert permanent revocation. Idle cleanup
+includes the configured history poll interval and callback deadline. Already
+written frames cannot be recalled. These callbacks may wake the application and
+keep it billable while subscriptions remain active.
+
+Retained JWT connections also cache verification of their pinned subject and
+session for up to 30 seconds ([ADR-1332](../adr/1332-session-bound-retained-realtime.md)). An
+expiry timer closes idle sockets, and all output checks token validity. Expired
+or changed identities close with code 1008; verification outages use 1013.
+Custom principal projections must still match. Tokens require `exp` in the
+production retained transports; clients reconnect with a refreshed token.
+Signing-key removal follows the existing JWKS cache freshness/grace contract.
+
+The Auth template now requires a verified `session_id` in channel callbacks and
+uses `gregale_auth.authorize` in a transaction scoped to that session. Upgrade
+the daemon, redeploy Auth apps from the new template and reconnect clients. An
+older Auth app still uses subject-wide checks; an updated app fails closed on
+callbacks from daemons that omit the session ID. Legacy management and
+inbox/direct-message session authorization retain their existing contracts.
+Ticket subscriptions continue using their existing one-second durable checks.
+Before deployment qualification, exercise membership removal, bans/global
+sign-out, callback outages, policy rotation and slow consumers across nodes.
+Existing preview gates and production qualification requirements still apply.
+
+### PostgreSQL table-change feeds (operator preview)
+
+A table-change feed queues selected row changes automatically into the transactional
+realtime outbox. Enable and qualify the transactional realtime source described
+above first. The same relay, receipts, retry inspection, endpoint ownership and
+retention rules apply. This is explicit trigger capture, not WAL CDC or a backfill.
+
+As the customer database owner, install `pkg/commit/realtime_changefeeds.sql`
+**after** the Commit binding and realtime outbox schemas. Go callers can obtain
+that SQL from `commit.RealtimeChangefeedSchema`. The platform never installs it
+for you. Use a regular table with a primary key; partitioned tables are unsupported.
+
+```ts
+import { installRealtimeChangefeed, removeRealtimeChangefeed } from '@gregale/sdk-node';
+
+// Run using the customer database owner connection, inside its own transaction.
+await installRealtimeChangefeed(ownerTx, 'public.orders', {
+  name: 'order_status',
+  endpointId,
+  channel: 'orders:', // followed by tenant_id, e.g. orders:tenant-42
+  tenantColumn: 'tenant_id',
+  columns: ['id', 'tenant_id', 'status'],
+});
+// To stop future capture (existing events remain queued):
+await removeRealtimeChangefeed(ownerTx, 'public.orders', 'order_status');
+```
+
+Omit `tenantColumn` for a static channel. Allowlist every primary key and tenant
+field explicitly. Do not include secrets. Channel names must satisfy realtime's
+existing validation; tenant values must be nonempty and contain no whitespace,
+control characters, `/`, `?` or `#`. Application authorization must independently
+verify each subscriber's tenant membership. Feeds do not grant channel access.
+
+Each event is a JSON text frame with this shape:
+
+```json
+{"type":"database.change","feed":"order_status","operation":"update","key":{"id":42},"before":{"id":42,"tenant_id":"tenant-42","status":"pending"},"after":{"id":42,"tenant_id":"tenant-42","status":"shipped"}}
+```
+
+Inserts have `before: null`; deletes have `after: null`. Updates to fields outside
+the allowlist, or unchanged selected values, do not emit. Tenant changes are
+rejected: use an explicit delete/insert in one transaction to notify both channels.
+A changed primary key appears in the before and after images. PostgreSQL JSON
+numbers may exceed JavaScript integer precision; use text keys where required.
+Subscribe using existing retained v2 channel SDKs. Raw live-only subscribers do not
+receive outbox publication. Multiple feeds produce separate events without a
+cross-channel ordering guarantee.
+
+The business writer requires SELECT/INSERT privileges needed by its operation and
+INSERT access to `public.gregale_realtime_outbox`; functions run as the writer,
+never with owner privileges. Invalid routing, missing privileges, or an event
+exceeding the existing 4096-byte frame bound abort the business write. That bound
+includes the envelope and both selected row images. Monitor outbox backlog and
+blocked deliveries using the existing delivery helpers.
+
+Remove and reinstall a binding inside one owner transaction to change its config.
+Review bindings before table/column migrations; dropping or renaming configured
+columns can cause writes to fail. TRUNCATE produces no row events. Existing rows
+are not emitted on installation. Owners must not disable triggers or use a
+replication write mode that bypasses them. No platform migrations or production
+activation are part of installing these source files.
+
+### HTTP SSE channel subscriptions (operator preview)
+
+Receive retained channel events over HTTP using the same managed endpoint URL:
+
+```text
+GET /__gregale/realtime/{endpoint_id}?transport=sse&channel=orders%3Atenant-42
+Authorization: Bearer <OIDC JWT>
+Accept: text/event-stream
+Last-Event-ID: 123
+```
+
+Requires the existing realtime resume preview and private history client. Managed
+access preview, when enabled, enforces channel denies and session cutoffs too.
+Without a subscription ticket, static bearer and unauthenticated endpoints are unsupported. Browser requests
+require an explicit matching `AllowedOrigins` policy; OPTIONS preflight permits
+Authorization and Last-Event-ID. Tokens are never accepted in query parameters.
+
+The initial cursor defaults to zero; `after` overrides Last-Event-ID. SSE IDs and
+message `sequence` values are decimal strings, avoiding integer precision loss.
+`message` frames contain channel, sequence, data_base64, binary, metadata,
+target_message_id, version, message_event and deleted. `subscribed` and heartbeat
+frames contain no cursor. Expired history, ahead-of-head cursors and sequence gaps
+produce `resync_required` and close the stream. Refresh your application snapshot
+and explicitly choose the subsequent cursor; do not automatically skip history.
+
+```ts
+import { subscribeRealtimeSSE } from '@gregale/sdk-node/browser';
+
+for await (const message of subscribeRealtimeSSE({
+  url: `https://your-gateway/__gregale/realtime/${endpointId}`,
+  channel: 'orders:tenant-42',
+  token: () => getFreshOIDCToken(),
+  after: savedSequence,
+  signal: abortController.signal,
+})) {
+  await applyEvent(message); // decode data_base64 according to binary
+  savedSequence = message.sequence;
+}
+```
+
+The fetch-based helper reconnects network failures, HTTP 429 and server errors
+with jittered exponential backoff, capped at ten seconds. It obtains a new token
+on each attempt. Authentication, protocol, access and resync errors stop iteration
+with `RealtimeSSEError`. Streams rotate at most every five minutes. Delivery may
+repeat; apply events idempotently. Cancellation uses AbortSignal.
+
+SSE is receive-only, with one retained channel per HTTP connection. It shares
+connection and node subscription limits with WebSockets, and retains one bounded
+history page rather than a growing output queue. Slow writes hit the existing
+write deadline and disconnect. Identity/channel authorization is rechecked at most
+every 30 seconds and durable access controls before each event (snapshot at most one
+second old). A definitive deny sends `access_revoked`; transient lookup, callback or
+history failures close the stream without an error event so clients reconnect.
+SSE connections are not represented in the WebSocket connection directory,
+presence or connect/disconnect callbacks. No ACK, durable server checkpoint,
+inbox, signal or client publish operation is provided by this transport.
+
+The managed gateway proxy supports HTTP streaming. Before production activation,
+qualify proxy flushing, idle timeouts, cancellation, reconnect/replay, revocation
+and slow-client behavior across the deployed route. Runtime tests and fleet
+qualification have not been executed for this preview implementation.
+
+### Retained channel-event webhooks
+
+Forward retained channel events to existing signed app webhooks. Apply
+`20261012102700459_realtime_channel_webhooks.sql` before upgrading apid or accepting
+these bindings, and run the existing webhook event-outbox relay and dispatcher.
+No customer database installation is required for this platform feature.
+
+Create or update an app webhook to explicitly include `realtime.channel.published`
+in its event_filter. Then configure its exact route:
+
+```http
+PUT /v1/apps/demo/webhooks/{webhook_id}/realtime-channel
+Authorization: Bearer <platform token>
+Content-Type: application/json
+
+{"endpoint_id":"0123456789abcdef0123456789abcdef","channel":"orders:tenant-42","metadata":{"kind":"order"}}
+```
+
+The endpoint must belong to the same app/account. Omit metadata or supply `{}` to
+accept all events on that channel; otherwise every supplied key/value must match.
+One route per webhook; use separate webhooks for additional exact channels within
+existing webhook quotas. No glob/prefix channel matching. Empty catch-all webhook
+event_filter does **not** opt into channel payload delivery.
+
+GET on the same route reads the binding; DELETE stops future capture and returns
+204. PUT replaces the route and metadata filter. GET of an unbound hook returns
+404. Changing bindings/event filters does not rewrite already queued recipient
+lists or payloads. These operations use existing account/app authorization, MFA,
+read/write scopes and webhook plan eligibility.
+
+The webhook payload contains event_id, app_id, endpoint_id, channel, sequence
+(decimal string), data_base64, binary, metadata, target_message_id, version,
+message_event, deleted and occurred_at. The existing signed webhook envelope and
+receiver-verification contract apply. Review the allowlisted data and destination:
+this event explicitly forwards retained message payloads to an external backend.
+
+Capture and retained acceptance are atomic. It includes scheduled publications,
+transactional outbox/table feeds, batch items and channel message edits/deletes.
+Each new retained sequence gets an event; rejected or rolled-back writes and
+idempotent retries of an existing accepted message get none. Empty recipient sets
+produce no webhook outbox row. Existing history is not backfilled. Live-only
+publishes, ephemeral activity, signals and inbox messages use their existing
+separate contracts and do not emit this event.
+
+Use the existing webhook deliveries/attempts/retry API or CLI for inspection and
+manual retry. Delivery is at least once and may be out of order; deduplicate using
+payload event_id. Decouple receiver processing from HTTP acknowledgement. Avoid
+republishing a webhook back into its matched channel without a loop guard. Later
+redaction or history expiry cannot recall captured webhook payloads. Database
+migration, runtime acceptance and production activation remain unexecuted.
+
+### Short-lived subscription tickets (operator preview)
+
+Your backend can authorize a user and issue a short-lived realtime credential
+without configuring an OIDC provider. Apply
+`20261012102700462_realtime_subscription_tickets.sql` and the preceding principal
+access migration. Set `FAAS_REALTIME_TICKETS_PREVIEW_ENABLED=1` on apid and all
+realtimed nodes, with resume preview and the private history RPC configured.
+Keep these gates off until operator acceptance. No migrations or activation were
+executed during implementation.
+
+Issue a ticket using your backend's app-scoped platform credential:
+
+```http
+POST /v1/apps/demo/realtime/endpoints/{endpoint_id}/tickets
+Authorization: Bearer <backend platform token>
+Content-Type: application/json
+
+{"principal":"customer-42","channels":["orders:tenant-42"],"ttl_seconds":120}
+```
+
+The API requires normal app ownership, realtime plan eligibility, MFA and write
+scopes. Returns 201 with `{ "ticket": "grt_...", "ticket_id": "...", "expires_at": "..." }` and
+Cache-Control: no-store. TTL is 1-300 seconds, with 1-32 unique exact channels.
+Endpoint must be enabled. At most 1115 unexpired tickets per endpoint; expired
+records are pruned on subsequent issuance and endpoint deletion removes all.
+These are operator-preview bounds, not a new pricing tier.
+
+**The backend is the authorization authority.** Authenticate the caller with your
+own login system, derive the principal from that session, and check each requested
+channel before issuance. Never put a platform credential in the browser or forward
+an unchecked user-supplied principal/channel list. The ticket replaces application
+connect/channel callbacks for its subscription path. It does not change existing
+endpoint authentication for other clients: a static-bearer endpoint with a
+backend-held secret can keep the legacy path restricted without an OIDC provider.
+
+Browser WebSocket example:
+
+```ts
+import { createBrowserRealtimeTicketSocketFactory, consumeRealtimeChannel }
+  from '@gregale/sdk-node/browser';
+
+const createSocket = createBrowserRealtimeTicketSocketFactory(async () => {
+  const response = await fetch('/api/realtime-ticket', { method: 'POST' });
+  if (!response.ok) throw new Error('Could not obtain realtime ticket');
+  return (await response.json()).ticket; // your authenticated backend endpoint
+});
+// Supply webSocketFactory: createSocket to consumeRealtimeChannel's options.
+```
+
+The factory obtains a fresh ticket on every reconnect. Use the existing v2 channel
+consumer and client-held cursor. Browser handshakes still require explicit matching
+AllowedOrigins. Ticket connections allow subscribe, unsubscribe and non-durable
+ack only; exclude durable subscription names, read receipts, direct messages,
+inboxes, signals and presence state. They do not create presence leases, send
+connect/disconnect callbacks or receive ephemeral channel fanout. New retained
+messages arrive through the existing history poll interval.
+
+For SSE, pass an authenticated backend ticket provider as `subscribeRealtimeSSE`'s
+`token` callback. Tickets travel in Authorization headers (or the existing browser
+WebSocket bearer subprotocol), never query strings. SSE terminates at expiry and
+reconnects with a new ticket. WebSocket tickets expire and close active sockets;
+the normal channel consumer reconnects using the factory. Renewal changes neither
+history retention nor resync requirements. A ticket may be reused before expiry;
+it is not a single-use nonce.
+
+Revoke a ticket before it expires with the `ticket_id` returned at issue, so the
+backend never keeps the bearer token, or revoke every live ticket of a principal
+(for example at logout). Migration `20261014223807582_realtime_ticket_ids.sql`
+adds the ID. Both require the same app ownership, MFA and write scopes as
+issuance:
+
+```http
+DELETE /v1/apps/demo/realtime/endpoints/{endpoint_id}/tickets/{ticket_id}
+DELETE /v1/apps/demo/realtime/endpoints/{endpoint_id}/tickets?principal=customer-42
+```
+
+The first returns 204, or 404 when the ticket is unknown or already expired; the
+second returns `{"revoked": n}`. WebSockets and SSE streams re-read their ticket
+every second, so a revoked ticket's connections close within about a second and
+reconnecting with it returns 401. Revocation does not touch other tickets of the
+same principal unless they are revoked by principal.
+
+Set `FAAS_REALTIME_ACCESS_PREVIEW_ENABLED=1` on apid to use the existing principal
+access APIs for ticket endpoints, including non-OIDC endpoints. Session revocation
+rejects tickets issued at/before the cutoff; channel revocation removes that
+channel from ticket permissions. Fresh tickets still respect channel denies.
+Granting a parent channel does not grant its private activity scopes; explicit
+child grants are required, and a parent deny also blocks child scopes. Nodes
+recheck tickets at most once per second; verification failure closes the stream.
+Revocation cannot recall an in-flight frame. Restoring channel access requires
+resubscription. Individual ticket revocation is not provided; use principal session
+revocation or wait for expiry.
+
+Store tickets only in client memory. Issuance returns the credential once; platform
+storage contains its hash, and audit events omit credentials and principals. The
+private apid lookup must be available throughout a session; failure is closed.
+Qualify expiry/renewal, scope denial, revocation, concurrency admission, slow readers,
+browser origins and private RPC failures before production activation. Runtime
+tests remain deferred.
+
+### Automatic receive-only transport fallback
+
+The SDK exports `consumeRealtimeChannelWithFallback` from its main and browser
+entries. It starts with WebSocket and switches to SSE after repeated connection
+or subscription failures, preserving the last fully processed client cursor.
+Requires the existing server resume/SSE preview and matching browser allowed
+origins; ticket authentication also requires ticket preview.
+
+```ts
+import { consumeRealtimeChannelWithFallback } from '@gregale/sdk-node/browser';
+
+await consumeRealtimeChannelWithFallback({
+  url: `https://your-gateway/__gregale/realtime/${endpointId}`,
+  channel: 'orders:tenant-42',
+  token: getFreshRealtimeCredential, // OIDC JWT or backend-issued ticket
+  cursorStore, // existing numeric load()/save(sequence) contract
+  onMessage: async (message) => {
+    await applyEvent(message); // data is Uint8Array on both transports
+  },
+  onTransportChange: ({ transport, reason }) => {
+    console.log('Realtime transport selected', transport, reason);
+  },
+  signal: abortController.signal,
+});
+```
+
+HTTP(S) and WS(S) endpoint URLs are accepted and converted to matching schemes
+without changing the host/path. Node callers provide an authenticated
+`webSocketFactory`; the browser default obtains a fresh token or ticket on each
+attempt. SSE also refreshes credentials for every reconnect. Do not use URL query
+parameters to carry credentials.
+
+The defaults are two failed WebSocket attempts and a five-second connection/
+subscription deadline. `fallbackAfter` accepts 1-10; `connectTimeoutMs` accepts
+100-60000. A subscription healthy for thirty seconds resets the failure streak.
+Normal ticket-expiry closure renews the WebSocket credential without counting as
+a transport failure. SSE selection is sticky until a new helper invocation.
+`onTransportChange` reports selection, not successful connection or health.
+
+Only one transport consumes at a time. The helper waits for active message/cursor
+callbacks before handing off. Message processing completes before cursor save;
+failures in either callback terminate without falling back. Both transports yield
+channel, sequence, data, binary, metadata, targetMessageId, version, event and
+deleted. WebSocket-specific messageId is omitted; deduplicate by channel/sequence.
+The shared numeric cursor contract requires safe JavaScript integers. Use direct
+SSE with decimal strings if sequences exceed that range.
+
+Expired history raises `RealtimeResyncRequiredError` on either transport. Optional
+`onResync` can rebuild your application snapshot and return its represented
+sequence; that cursor is persisted before reconnecting. The helper does not
+silently reset or skip retained history. Presence, ephemeral signals, read progress,
+inboxes, direct messages, metadata filters and named durable subscriptions are
+unsupported by this receive-only API; use their existing transport-specific APIs.
+
+Explicit WebSocket policy/protocol rejection, protocol error frames, credential
+provider failures and SSE 401/403 are terminal. Browsers hide failed handshake
+status, so an ambiguous failure may lead to an SSE attempt; SSE independently
+authenticates and will not bypass denial. Tokens and tickets retain identical
+channel permissions across both transports. Cancellation closes active streams;
+application callbacks must implement their own cancellation if necessary.
+Runtime transport/failure tests remain deferred.
+
+### Dashboard realtime event inspector
+
+Open `/dashboard/apps/{slug}/realtime` from the app’s “Inspect realtime events”
+link. The page uses existing dashboard sessions, app permissions, realtime plan
+eligibility and history preview. Responses are no-store, payloads are HTML-escaped,
+and event data is not placed in query parameters or audit logs.
+
+Choose an endpoint, channel and after-sequence to browse up to 50 retained events
+per page. Each event shows sequence, UTC timestamp, mutation version/event and
+publisher message ID, with expandable metadata and payload. JSON is formatted;
+binary payloads are base64. Oldest/latest bounds and next-page controls are shown.
+An expired or ahead-of-head cursor displays a resync notice. “Browse from the oldest
+retained event” is an explicit inspection action, not a client checkpoint reset.
+
+For transactional publishing, apply
+`20261012102700465_realtime_inspector_observations.sql` before running this version
+of schedd with transactional preview enabled. The relay copies no payloads or
+credentials: only a sample of event IDs, endpoint/channel, attempt count, blocked
+code, creation time and observation time. Up to 32 unpublished rows per source are
+mirrored, prioritizing blocked events. Source health counters cover both ordinary
+Commit and realtime events. Choose a source to filter its sample to this channel.
+
+Observations can be stale or incomplete, especially while the source is offline,
+paused or unqualified. An empty sample is not proof of publication. Use the
+customer database delivery helpers for authoritative per-event status and for
+repair/retry of blocked rows. The inspector does not connect to customer databases,
+expose sealed source credentials or add an outbox mutation operation.
+
+Choose a webhook to see matching channel events among its latest 20 deliveries.
+Open a delivery to inspect attempts; use existing webhook page controls to retry
+eligible dead deliveries with normal CSRF, MFA and app authorization. Older
+webhook deliveries remain available on the full webhook page. Channel and source
+listings are bounded, and no automatic polling runs while this page is open.
+
+Source observation storage requires the PostgreSQL managed Commit implementation;
+in-memory deployments can inspect retained history only. Database migration,
+runtime UI verification and production activation remain unexecuted in this session.
+
+### Backend-visible processing acknowledgement status
+
+For an authenticated WebSocket consumer using `durableSubscription`, the existing
+Node SDK acknowledges each message after its handler resolves. Your backend can
+inspect the latest actual advancing ACK:
+
+```http
+GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/acknowledgement?principal={principal}&subscription={name}
+Authorization: Bearer <account-api-key>
+```
+
+The response contains decimal-string `checkpoint_sequence`, nullable
+`acknowledged_sequence` and `acknowledged_at`, and `updated_at`. The endpoint is
+read-only and requires the history preview, the endpoint's app permissions, MFA
+and read scope. Missing/expired checkpoints return 404. Queries do not renew the
+30-day inactivity retention. A new baseline has null ACK fields; reset clears
+them. Existing checkpoints receive no historical ACK backfill.
+
+To receive receipts, create or update an enabled **app-scoped webhook** with an
+explicit `event_filter` containing `realtime.channel.acknowledged`. No channel
+binding is needed. This opts into receipts across the app's endpoints/channels.
+Each advancing ACK atomically queues `event_id`, `app_id`, `endpoint_id`,
+`principal`, `subscription`, `channel`, decimal-string `sequence` and `occurred_at`.
+Message payloads are excluded. Duplicate/stale ACKs, initial checkpoints, load
+refreshes and resets do not queue receipts. Existing signature verification,
+retry policy, delivery history and manual retry controls apply. Deduplicate on
+`event_id`; deliveries may arrive out of order.
+
+Use the ACK sequence as a consumer assertion about that delivery. Status preserves
+only the latest advancing ACK: it is not an individual-message receipt ledger and
+must not imply that all preceding messages were processed (filters or recovery
+may have skipped them). A custom client can acknowledge without performing work.
+Use distinct subscription names for independent devices. Human read progress
+remains separate; there is no exactly-once side-effect guarantee. SSE and
+subscription-ticket connections do not participate in named durable ACKs.
+
+Apply `20261012102700468_realtime_channel_acknowledgements.sql` before deploying the
+updated cursor writer. Migration execution and runtime checks are still deferred.
+
+### Shared backend-worker consumer groups
+
+Consumer groups let several backend workers compete for the same channel's work.
+Each claim has one current lease, and expired claims can be reassigned. This is an
+account-authenticated HTTP pull API under the existing history preview, with
+realtime plan/app permissions and MFA. Reads require read scope; worker operations
+require write scope. The preview requires the durable PostgreSQL store. Use a
+backend account API key; do not expose it to browsers or mobile clients.
+
+Create a group with an explicit assignment baseline:
+
+```http
+POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups
+Authorization: Bearer <backend-account-api-key>
+Content-Type: application/json
+
+{"name":"email-workers","after_sequence":"0","lease_seconds":30,"max_attempts":5}
+```
+
+`after_sequence` is a decimal string and must not exceed the latest sequence.
+Zero starts at the beginning if still retained; a cursor below the retention
+floor creates a group requiring explicit recovery. Creation is exclusive: using
+an existing name returns 409. Configuration is immutable; deleting a group also
+removes all its outstanding payloads and invalidates its claims.
+
+Under `/groups/{group}`:
+
+| Method and suffix | Behavior |
+| --- | --- |
+| `GET` | Assignment cursor, unassigned lag, completion count, ready/delayed work, live/expired leases, dead letters, active worker names and retention/capacity indicators |
+| `POST /claims` | Body `{"worker":"worker-a"}`; return one message, attempt, opaque `claim_token` and `lease_until` |
+| `POST /claims/settle` | Sequence/token and action `complete`, `retry` or `renew` |
+| `GET /dead-letters` | Bounded original message snapshots, attempts and diagnostic codes |
+| `POST /dead-letters/{sequence}/replay` | Queue a dead letter again with a fresh attempt budget |
+| `POST /resync` | Explicit recovery with expected cursor and the retained floor minus one |
+| `DELETE` | Remove group, claims and dead-letter payloads |
+
+The collection `GET /groups` lists all groups for the channel. The realtime
+inspector shows group lag, lease counts, active workers and dead letters; choose
+a consumer group to inspect its failures. Active workers means distinct names on
+currently unexpired leases, rather than socket/process presence.
+
+A claim snapshots the original retained frame, including metadata and mutation
+information. That snapshot survives channel expiry until completion or deletion.
+Claims prefer eligible retries, then assign the next channel sequence. There is
+no payload filter in the first version. Sequences and counts that can grow beyond
+JavaScript precision are decimal strings. Workers may complete out of order.
+
+Completion example:
+
+```json
+{"sequence":"42","claim_token":"<opaque-token>","action":"complete"}
+```
+
+For long work, send `renew` before the lease expires. Renewing keeps the same token
+and does not consume another attempt. To retry a failed handler:
+
+```json
+{"sequence":"42","claim_token":"<opaque-token>","action":"retry","retry_after_seconds":5,"failure_code":"handler_failed"}
+```
+
+Do not put payloads, secrets or exception text in `failure_code`. It is a printable
+ASCII code of at most 64 bytes. Tokens are credentials; never log them. The server
+stores only their hashes and excludes claim responses from generic response
+caching. Lost/expired/replaced/already-completed claims return 409 with
+`realtime_group_lease_lost`; stop work and do not complete with the old token.
+Duplicate completion is deliberately not an exactly-once receipt.
+
+Default lease/attempt settings are 30 seconds and 5 attempts; bounds are 1–300
+seconds and 1–10 attempts. Retry delay is 0–300 seconds. Admission allows 8 groups
+per endpoint, 32 live leases and 128 outstanding snapshots per group. Dead letters
+count against that snapshot cap. Claims return 204 when caught up, delayed work
+is not ready, or all lease slots are busy, and 429 if the outstanding cap prevents
+new assignment. Completion frees capacity. Replay or delete unused groups to
+resolve retained failure backlogs. Polling drives expiry normalization; exhausted
+expired leases are also visible in the dead-letter listing before the next claim.
+
+A group below retained history returns 409 `realtime_group_resync_required` when
+trying to assign new work, while existing snapshot retries can still be claimed.
+First finish pending work and recover missing effects from your application state.
+Read `assigned_sequence` and `oldest_sequence`, then send:
+
+```json
+{"expected_sequence":"<current-assigned-sequence>","after_sequence":"<oldest-sequence-minus-one>"}
+```
+
+Recovery is permitted only with no ready/leased snapshots and a matching expected
+cursor, advancing exactly to the retained floor minus one. Dead letters and the
+completion count survive. A reset does not assert skipped work was completed.
+
+The Node worker helper renews leases while a handler runs and ACKs after success:
+
+```ts
+import { consumeRealtimeConsumerGroup, RealtimeService } from '@gregale/sdk-node';
+
+const target = { slug: 'my-app', id: endpointId, channel: 'tasks', group: 'email-workers' };
+await consumeRealtimeConsumerGroup({
+  ...target,
+  worker: 'worker-a',
+  signal: shutdown.signal,
+  async onMessage(message, { signal }) {
+    await processIdempotently(message.sequence, message.data_base64, signal);
+  },
+});
+```
+
+Configure the SDK's backend account credentials as usual. Handler errors request
+retry with `handler_failed`; optional `onHandlerError` observes them without
+sending error text to the server. Network/auth/lease errors terminate the helper;
+restart it with your normal process backoff. Shutdown aborts the handler signal,
+stops renewal and leaves the outstanding lease to expire. The handler must honor
+that signal. Each helper processes one message at a time; run several workers to
+increase concurrency. Node and Python generated clients expose individual claim,
+settlement, retry/replay and recovery methods.
+Python workers can use `consume_realtime_consumer_group` or its scoped-credential
+variant for the managed async lifecycle. Low-level callers should use the generated
+`sync_detailed` / `asyncio_detailed` methods and inspect `status_code`: a null parsed body alone cannot distinguish a
+204 empty claim from a documented error response.
+
+Use idempotent effects keyed by endpoint/channel/sequence: a crash after effects
+and before completion, or a handler ignoring lease loss, can duplicate processing.
+Shared group completion is separate from per-principal durable ACKs and human read
+receipts; it does not emit `realtime.channel.acknowledged`. This is not an exactly-once
+queue or an indefinite archive for work that was never claimed.
+
+Apply `20261012102700470_realtime_consumer_groups.sql` before deploying this apid
+version. Runtime concurrency, database migration and UI checks remain deferred.
+
+### Scoped consumer-group worker credentials
+
+Backends can now give each worker a credential for **one existing group** rather
+than an account API key. The credential's group UUID also fixes its endpoint and
+channel. It cannot publish events, create groups, administer credentials or call
+account APIs. Deleting/recreating a group with the same name does not restore old
+access. These APIs require the PostgreSQL store and the existing history preview.
+
+An account admin issues a credential under the group's existing app path:
+
+```http
+POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials
+Authorization: Bearer <account-admin-api-key>
+Content-Type: application/json
+
+{"name":"worker-a","permissions":["status","claim","renew","complete","retry"],"ttl_seconds":86400}
+```
+
+The response includes one-time plaintext `credential` (`grw_…`) and `info` with
+its ID, immutable `group_id`, permission list, generation and expiry. Name becomes
+the worker identity displayed for its claims; use distinct names to track workers
+independently. Store the credential in your backend secret manager. Never log it
+or the claim tokens, put it in URLs or distribute it to browsers/mobile clients.
+
+Under `/groups/{group}/credentials`:
+
+| Method and suffix | Authorization and result |
+| --- | --- |
+| `GET` | App read scope; metadata only, no secret or hash |
+| `POST` | Account admin scope and MFA; issue one group-bound credential |
+| `POST /{credential_id}/rotate` | Admin scope and MFA; body `{"ttl_seconds":86400}` (or `{}` for default), return a new one-time secret |
+| `POST /{credential_id}/revoke` | Admin scope and MFA; idempotently revoke access, no body |
+
+Rotation immediately invalidates the old secret when committed, preserves
+credential ID/permissions and increments `generation`. A new secret can settle
+that credential's existing unexpired leases. Expired unrevoked credentials can be
+rotated; revoked credentials cannot. Issuance and rotation require an enabled
+endpoint and the history preview. Revocation remains available when either is
+disabled. It does not cancel side effects already running outside Gregale.
+
+Workers use **only** their credential at `/v1/realtime/workers/groups/{group_id}`:
+
+| Method and suffix | Exact required permission |
+| --- | --- |
+| `GET` | `status` |
+| `POST /claims` | `claim`; send `{}` or a `worker` matching the issued name |
+| `POST /claims/settle` | `complete`, `retry` or `renew`, according to the action |
+| `GET /dead-letters` | `dead_letters` (includes original failed payloads) |
+| `POST /dead-letters/{sequence}/replay` | `replay` |
+| `POST /resync` | `resync` |
+| `DELETE` | `delete` |
+
+Use `Authorization: Bearer <grw_credential>`. Account keys, session cookies,
+subscription tickets and URL tokens cannot authenticate this worker surface.
+Worker grant permissions are explicit: normal workers should omit the four
+administrative/read-failure grants `dead_letters`, `replay`, `resync` and `delete`.
+Each settlement still requires an unexpired claim token; a worker can settle only
+leases issued to **its own credential ID**. The original account-key APIs remain
+available for group recovery and administration.
+
+Authentication failures return 401 and count toward the existing shared per-IP
+failure budget. Missing operation permissions return 403. Store failures fail
+closed. The group transaction rechecks the current secret hash, permission,
+revocation, expiry, enabled endpoint and live account/app state before operating.
+Rotation/revocation waits for an already-authorized group transaction to finish;
+once committed, subsequent operations cannot pass with the old/revoked secret.
+External work can continue until it observes cancellation, so handlers must still
+be idempotent. On expiry/revocation the worker cannot renew or complete; unfinished
+leases recover through the usual lease-expiry retry policy.
+
+The isolated Node client does not change global SDK credentials:
+
+```ts
+import {
+  createRealtimeConsumerGroupWorkerClient,
+  consumeRealtimeConsumerGroupWithCredential,
+} from '@gregale/sdk-node';
+
+const client = createRealtimeConsumerGroupWorkerClient({
+  groupId: issued.info.group_id,
+  credential: async () => secretManager.currentWorkerCredential(),
+});
+await consumeRealtimeConsumerGroupWithCredential({
+  client,
+  signal: shutdown.signal,
+  async onMessage(message, { signal }) {
+    await processIdempotently(message.sequence, message.data_base64, signal);
+  },
+});
+```
+
+A credential provider runs for each request, allowing rotation without changing
+account-key configuration. The helper requires `status`, `claim`, `renew`,
+`complete` and `retry`; other permissions are not inferred. It uses the existing
+lease renewal, success ACK, bounded retry and shutdown behavior. Renewal/auth/network
+failures stop the helper and abort its handler signal. Restart it using normal
+process backoff. `client.status()`, `claim()`, `settle()`, `deadLetters()`,
+`replay()`, `resync()` and `deleteGroup()` expose individual operations. Generated
+Node/Python APIs also expose the worker and credential-administration endpoints;
+configure only the worker secret when calling the worker methods. Python callers
+should inspect detailed response status to distinguish an empty claim from an error.
+
+The inspector shows credential status, generation, expiry/revocation, latest use
+and operation, and a cumulative decimal-string `use_count`. Usage counts committed
+worker operations, including 204 empty claims; rejected requests and rolled-back
+operations do not increment it. Rotation preserves this usage history. Credential
+issue/rotation/revocation and destructive worker actions emit audit IDs, never
+secrets. This is operational evidence rather than a log of all attempted requests.
+
+Admission allows 64 credential metadata records per endpoint and 128-byte names.
+Default lifetime is 1 day; supported lifetime is 1 second–30 days. On issuance,
+records expired/revoked more than 7 days ago are removed before admission; otherwise
+inactive metadata still consumes the cap. Group deletion removes its credentials.
+Cleanup does not delete message snapshots or reassign in-flight work. An endpoint
+at the credential cap returns 429 with its limit and observed count.
+
+Apply `20261012102700473_realtime_worker_credentials.sql` before deploying this
+apid version, including for existing account-key group claims. Migration execution,
+runtime concurrency/auth tests and UI checks remain deferred.
+
+## Channel-scoped publisher credentials
+
+Account administrators can issue, rotate or revoke credentials under
+`/v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials`. Issue responses reveal
+the `grp_` secret once; metadata lists and the inspector never reveal it. Configure
+exact `channels` and `event_types`, optional `publishes_per_minute`,
+`max_payload_bytes` and `ttl_seconds`. Defaults are 60 accepted events per fixed
+minute, 4096 bytes and one day; maxima are 600, 4096 and 30 days. The endpoint's
+smaller payload limit also applies. Each endpoint permits 64 credential records.
+
+Producers send Bearer credentials to
+`POST /v1/realtime/publishers/endpoints/{endpoint_id}/channels/{channel}/publish`
+with a required `Idempotency-Key` and JSON `event_type`, `data_base64`, optional
+`binary` and `metadata`. `event_type` is reserved in metadata and must agree with
+the explicit event label. This retained-only API preserves schema, reducer and
+channel-webhook validation. History preview and an eligible enabled endpoint are
+required. Exact grants do not interpret wildcards.
+
+Reuse the same key and decoded content after an uncertain response. A matching
+retry returns the original decimal-string sequence with `replayed: true`, even
+if channel history has been trimmed. Changed content returns 409. Receipts last
+24 hours and have a hard cap of 1115 per credential, so sustained publishing can
+reach this cap before the rate limit. Capacity/rate failures return 429. Matching
+retries do not consume accepted publish quota. Minute windows permit bursts across
+a boundary; this is not a rolling rate limit. Beyond receipt retention, reuse is
+not guaranteed to deduplicate and can conflict with an existing retained frame.
+
+Rotation preserves grants, receipt identity and rate counters. Revocation or
+expiry prevents subsequent authorized transactions; an operation already holding
+the authorization lock may complete before revocation. Inspector metadata shows
+accepted/replayed counts and latest use. `durable: true, partial: true` means the
+event committed but live fanout was incomplete; subscribers recover from history.
+
+Migration `20261012102700476_realtime_publisher_credentials.sql`, runtime checks
+and inspector rendering remain pending. See ADR-1032 for the preview bounds.
+
+## Consumer-group dead-letter webhooks
+
+Select `realtime.consumer_group.dead_lettered` explicitly on an enabled app
+webhook to receive signed alerts when a group message becomes dead. Existing
+webhook delivery/retry controls apply. The event contains `event_id`, `app_id`,
+`endpoint_id`, `group_id`, `group`, `channel`, decimal-string `sequence`, `attempts`,
+`max_attempts`, bounded `failure_code` and `occurred_at`. It excludes payloads and
+credentials. Deduplicate the webhook delivery ID; retries can deliver again.
+
+Exhausted explicit retries alert at settlement. Exhausted leases alert when the
+next claim detects expiry, so inactive groups do not produce immediate expiry
+alerts. Listing dead letters may show an exhausted expired lease before a claim
+materializes its dead transition. No existing dead letters are backfilled. A
+replayed message that exhausts its new budget produces a new alert. The enqueue
+and dead transition commit together; failures roll both back.
+
+Use the inspector's group links to view failures, and each failure's history link
+to inspect its retained event. Expired source history can be absent while the
+consumer-group failure snapshot remains available. Repair the worker, then use
+the existing authorized dead-letter replay API. Alerts do not automatically
+replay work. To construct an inspector URL from a webhook, URL-encode the app slug,
+channel and group name in `/dashboard/apps/{slug}/realtime?endpoint_id={endpoint_id}&channel={channel}&group={group}`.
+The dashboard requires normal account authentication.
+
+Node processing helpers accept `failureCode(error, message)`, defaulting to
+`handler_failed`. Return a safe code of 1–64 printable ASCII bytes, such as
+`upstream_unavailable`; do not return exception messages. A throwing/invalid
+callback stops the helper and leaves the claim to expire. Direct SDK settlement
+requests continue to use the existing `failure_code` field.
+
+Migration `20261012102700479_realtime_consumer_group_dead_letter_webhooks.sql`
+and runtime/UI verification remain pending. See ADR-1033.
+
+## Realtime function triggers
+
+ADR-1322 delivers a consumer group's messages to a function instead of a
+customer-run worker. It requires the retained-realtime preview
+(`FAAS_REALTIME_RETAINED_PREVIEW_ENABLED`) on apid, migration
+`20261013210513485_realtime_function_triggers.sql`, and a schedd that
+registers the `realtime` poller. Hobby, Pro and Scale may create the kind; it
+counts against the per-app trigger caps.
+
+```http
+POST /v1/triggers
+Authorization: Bearer <backend-account-api-key>
+Content-Type: application/json
+
+{"app_id":"<app>","kind":"realtime","slug":"orders",
+ "config":{"endpoint_id":"<endpoint>","channel":"orders","group":"billing","max_concurrency":4}}
+```
+
+Creation checks that the account owns the endpoint, that the group exists with
+`lease_seconds` of at least `RealtimeTriggerMinLeaseSeconds` (120, a 30 s
+invocation plus wake), and that no other trigger consumes it. The trigger is
+created disabled, bound, then enabled; a failed binding deletes it again.
+`batch_window_ms`, `max_attempts`, `retry_policy`, `broker_poison_strategy`
+and `filter_criteria` are rejected (configure them on the group).
+`batch_size_max` is 1 unless the trigger uses `delivery: batch` (ADR-1321,
+`FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED=1` on apid), which allows up to 16
+(default 10). The binding is immutable; PATCH may change
+`max_concurrency`, `delivery` and `batch_size_max`.
+
+With `delivery: batch`, one invocation receives `{"records": [...]}` with up to
+`batch_size_max` messages (each as `data`, the JSON body below, plus
+`item_identifier`) and reports failures in `batchItemFailures`; the gateway
+retries only the listed messages. Otherwise each message is one invocation with
+a JSON body carrying `endpoint_id`,
+`channel`, `group`, `sequence`, `message_id`, `event`, `version`, `deleted`,
+`data_base64`, `binary`, `metadata`, `created_at`, `attempt` and
+`fencing_token`. Handlers return an empty or JSON body.
+
+| Dispatch result | Group settlement |
+| --- | --- |
+| succeeded | `complete` |
+| `function_failed`, `function_state_<state>`, `invoke_timeout`, `response_malformed` | `retry` with that `failure_code` |
+| `invoke_error`, `batch_timeout`, wake rate limit, transport or claim failure | `release`; the attempt is returned |
+
+Permanent failure codes in the group's retry policy (for example
+`function_failed`) dead-letter on the first failure. Dead letters, export and
+replay jobs stay on the group; realtime triggers write no `trigger_dead_letter`
+rows. Each delivery has its own trigger ledger record, which ends `succeeded`
+or `superseded`.
+
+Lanes run up to `min(max_concurrency, plan MaxConcurrency, 32)` messages in
+parallel and share the push-queue dispatch pool. The group serializes messages
+that share an ordering key. While bound, worker and account claims or
+settlements on the group return 409 `realtime_group_bound_to_trigger`; status,
+metrics, dead letters, replay, export, pause, drain and resume remain
+available, and pause or drain stops dispatch. Deleting the trigger unbinds the
+group and keeps its messages. Delivery metrics use `schedd_esm_*` with
+`source="realtime"`; group status reports `trigger_id`.
+
+A message inserted on a bound channel notifies `trigger_ready` at commit, so
+dispatch starts immediately instead of on the next 1 s tick. The group's
+waiting work (unassigned plus ready) is reported as broker lag, so an app with a
+`queue_lag` scaling target scales out ahead of a realtime backlog.
+
+Rollback: delete realtime triggers before running the migration's Down step,
+which refuses while any exist.
+
+## Fair-use connection limits
+
+Realtime is free (ADR-1323); plans cap the resource it holds. Enforcement
+needs `FAAS_REALTIME_FAIR_USE_ENABLED=1` on apid and every realtime node;
+without it apid sends no allowance and realtimed refuses only at the node and
+endpoint caps. apid sends each endpoint's account allowance (`ConnectionsPerAccount` in `pkg/api/limits.go`:
+Hobby 200, Pro 1,000, Scale 5,000) to realtimed with the endpoint, so plan
+changes apply at the next endpoint reconcile (30 s). realtimed refuses a
+connection with HTTP 429 `realtime_connection_limit` when:
+
+- the account's connections on this node plus the other nodes' last reported
+  connections reach the plan allowance, or
+- the account already holds `RealtimeAccountNodeSharePercent` (50%) of this
+  node's connection cap.
+
+Each realtimed exchanges per-account counts with apid every 5 s over the
+private `RealtimeFleet` service, using the same target and TLS settings as the
+resume preview; the exchange runs with `FAAS_REALTIME_FAIR_USE_ENABLED=1` or
+`FAAS_REALTIME_USAGE_ENABLED=1`. Without a fresh exchange (none in the
+last 30 s), a node enforces the allowance against its own connections only, so
+an apid outage never refuses connections a node could hold; the allowance then
+holds per node rather than per fleet. Multi-node deployments should therefore
+enable the exchange.
+
+With fair use on, the node cap defaults to 6,000 connections
+(`FAAS_REALTIME_MAX_CONNECTIONS`; 10,000 without it).
+An idle connection measured about 52 KB of realtimed memory on 2026-10-14, so
+6,000 idle connections use about 310 MB of the unit's 512 MB `MemoryMax`, leaving
+room for queued frames and subscription pumps. Raise the cap only with
+`MemoryMax`.
+
+Watch `realtimed_connection_limit_refusals_total{scope}` (`account` is the plan
+allowance, `account_node` the per-node share),
+`realtimed_connection_sync_failures_total`, and
+`realtimed_connection_sync_last_success_timestamp_seconds`: more than 30 s old
+means accounts are capped per node. apid stores the counts in
+`realtime_node_connections`; a node silent for an hour is removed.
+
+## Realtime usage recording
+
+ADR-1323 records realtime usage per endpoint to review the fair-use limits and
+spot abuse. Realtime is free; nothing bills from these rows. Enable it on every realtimed node with
+`FAAS_REALTIME_USAGE_ENABLED=1`; realtimed then reaches apid's private
+listener exactly like the resume preview (`FAAS_REALTIME_HISTORY_TARGET` and,
+for a TCP target, the `FAAS_REALTIME_HISTORY_TLS_*` paths). The node name
+(`FAAS_NODE_NAME`) must be a registered compute node, or apid refuses the
+report with `NotFound`.
+
+Each realtimed process sends its cumulative totals for the current UTC hour
+once a minute, and on shutdown. apid stores one row per endpoint, hour,
+node and process run in `realtime_usage_hours`; a repeated or late report can
+only raise a row's values. meterd deletes rows older than 13 months.
+
+| Column | Meaning |
+|---|---|
+| `minute_peak_connections` | 60 values: the most connections open at once on that process in each minute |
+| `connection_seconds` | connections held × seconds, sampled every second |
+| `delivered_messages`, `delivered_bytes` | payload frames sent to clients, one per recipient (control frames excluded) |
+| `received_messages`, `received_bytes` | client messages forwarded to the app |
+
+An account's fleet usage per endpoint and hour, with the peak taken as the
+largest per-minute sum across nodes:
+
+```sql
+WITH m AS (
+  SELECT endpoint_id, hour, i, sum(v) AS connections
+  FROM realtime_usage_hours, unnest(minute_peak_connections) WITH ORDINALITY AS u(v, i)
+  WHERE account_id = $1 AND hour >= now() - interval '1 day'
+  GROUP BY endpoint_id, hour, i)
+SELECT endpoint_id, hour, max(connections) AS peak_connections
+FROM m GROUP BY endpoint_id, hour ORDER BY hour;
+```
+
+Customers read the same data, plus their open connections and plan limit,
+through `GET /v1/usage/realtime` and `gregale realtime usage`, served once apid
+also has `FAAS_REALTIME_USAGE_ENABLED=1` (404 until then).
+
+Watch `realtimed_usage_report_failures_total` (apid unreachable or rejecting
+reports), `realtimed_usage_held_hours` (above 1 means completed hours are
+waiting to be delivered) and `realtimed_usage_dropped_hours_total` (hours lost
+after 24 h undelivered).
+
+## Batch claims and concurrent workers
+
+Account and scoped-worker group APIs expose `POST .../claims/batch`. Supply a
+required `limit` from 1 to 16; account callers also supply `worker`. Scoped-worker
+identity remains fixed by the credential and requires the existing `claim`
+permission. Each result is independently leased and uses the existing renew,
+complete and retry operations. The group-wide 32 active leases and 128 outstanding
+snapshot limits still apply across every worker and API replica.
+
+The batch response is always 200 with `claims`, `history_unavailable` and
+`capacity_blocked`. A partial batch can contain valid committed claims plus a
+blocker: process those claims before recovering the retention gap or freeing
+snapshot capacity. Empty claims can also mean caught up, delayed retries or all
+lease slots occupied. Unexpected transaction errors roll back every new claim.
+Tokens are returned once; do not automatically retry a claim with an uncertain
+outcome. Unobserved leases eventually expire. Single-claim APIs retain their
+existing behavior.
+
+Node `consumeRealtimeConsumerGroup` and
+`consumeRealtimeConsumerGroupWithCredential` accept `concurrency` (1–32, default
+1) and `batchSize` (1–16, default min(concurrency,16)). They request only available
+handler slots, renew each lease, and settle each message independently. Completion
+can be out of order. Keep concurrency 1 for sequential local processing; multiple
+workers can still reorder group completion. Use idempotent effects.
+
+Partial-batch blockers stop new claims while returned work finishes, then the
+helper reports an error. Fatal network/auth/lease failures stop claims and cancel
+other handlers. Shutdown cancels processing and renewals and waits for handlers
+to exit; unsettled messages become available after lease expiry. Honor the handler
+signal, because ignored cancellation can delay shutdown and cannot undo effects.
+No additional migration is required. Runtime verification remains pending; the
+existing consumer-group/credential migrations must already be deployed. See ADR-1034.
+
+## Pause and resume consumer groups
+
+Use account `POST .../groups/{group}/pause` and `.../resume`, or scoped-worker
+`POST /v1/realtime/workers/groups/{group_id}/pause` and `.../resume`. Account callers
+need app ownership, admin scope and MFA. Workers need separate explicit `pause`
+or `resume` permissions; existing credentials receive neither automatically.
+Both operations return `paused` and nullable `paused_at`. Repeated pause preserves
+the timestamp; repeated resume is safe.
+
+After pause commits, new single claims return 204 and batch claims return an empty
+200 result with `paused: true`. No new assignment or lease starts. Work claimed
+before pause may still return and run; existing leases can renew, complete and
+retry. Pausing does not cancel handlers, freeze lease clocks or reset attempts.
+A claim while paused still detects expired leases and can emit an exhaustion
+webhook, but does not lease those messages again.
+
+Resume preserves the cursor, snapshots, retry counts and delays. Channel retention
+continues during pause; long pauses can require explicit gap recovery. Replay,
+resync and deletion remain separate administrative operations. The inspector shows
+paused status and its timestamp. Node helpers keep polling empty paused responses
+and automatically resume claiming; the isolated worker client exposes `pause()`
+and `resume()` for credentials granted those operations.
+
+Apply `20261012102700481_realtime_consumer_group_pause.sql` before activating the
+updated server or issuing pause/resume grants. Downgrade is blocked if credential
+records still contain the new grants or last-operation values. Runtime/migration
+and UI checks remain pending. See ADR-1035.
+
+## Drain consumer-group leases
+
+Start with account `POST .../groups/{group}/drain` (admin scope and MFA) or worker
+`POST /v1/realtime/workers/groups/{group_id}/drain` (explicit `drain` grant). The
+response includes `draining`, `drained`, `active_leases` and `paused_at`. Group
+status and the inspector show draining/drained. Starting again is safe and
+preserves the pause timestamp. Existing credentials gain no new grant.
+
+Drain stops new claims while existing leases can renew, complete or retry.
+`drained` means no unexpired leases remain; ready/delayed/dead/unassigned messages
+are preserved. Expired handlers may still perform external effects. Stop old
+worker processes and ensure handlers exit before replacing them; use idempotent
+or fenced effects. The status is an observation, not a processing receipt.
+
+Drain stays active after completion. Resume explicitly to restart claims;
+ordinary pause cancels drain mode while keeping claims stopped. Retention and
+lease clocks continue, and renewing workers can extend drain beyond a timeout.
+
+Node `drainRealtimeConsumerGroup({ slug, id, channel, group, timeoutMs, signal })`
+and `drainRealtimeConsumerGroupWithCredential({ client, timeoutMs, signal })`
+initiate once and poll status. The default timeout is 30 seconds across initiation,
+status requests and polling; `pollIntervalMs` defaults to one second. Scoped
+credentials require `drain` and `status`. Helpers report observed cancellation by
+pause/resume. Timeout, cancellation and errors stop waiting without resuming the
+group; inspect status after uncertain outcomes. Generated Python exposes initiation
+and status APIs for custom deployment tooling.
+
+Apply `20261012102700484_realtime_consumer_group_drain.sql` before activation.
+Downgrade blocks incompatible drain credential records and preserves paused state.
+Runtime/migration and inspector checks remain pending. See ADR-1036.
+
+## Long-poll consumer-group claims
+
+Single and batch claim bodies accept `wait_seconds` from 0 to 20, default 0.
+A waiting request returns when it obtains work, observes pause/drain or a blocker,
+reaches its wait deadline, or is cancelled. Nonempty batches return immediately
+without waiting to fill. Existing single 204/error and batch empty/partial response
+shapes remain unchanged. Configure client/proxy timeouts above the wait plus overhead.
+
+This preview checks availability every 500 ms. It releases its database transaction
+between attempts, so there is no held row lock or connection during sleeps. Each
+attempt rechecks scoped worker authorization; committed attempts count separately
+in credential usage. This reduces HTTP polling, but database polling remains.
+At most 64 requests wait per apid process; excess waiting requests receive 429.
+Immediate claims remain available. The cap is per process, not fleet-wide.
+
+The deadline bounds sleeps; a database attempt is governed by the parent request
+budget and can extend duration. Cancellation releases the waiting slot. If a claim
+committed before cancellation or a lost response, its unobserved lease expires
+normally. Do not automatically retry uncertain claim outcomes. Use idempotent
+handlers and continue respecting pause/drain and retention recovery semantics.
+
+Node helpers default to `waitSeconds: 10`; choose 0 for immediate polling, or up to
+20. Empty-result backoff still applies, including paused groups. Direct worker
+clients accept `claim(worker, waitSeconds)` and `claimBatch(limit, worker,
+waitSeconds)`. Generated Node/Python request models expose `wait_seconds`.
+Claim routes use the existing 30-second request-budget ceiling; shorter caller
+deadlines still apply. No new migration is required; runtime verification remains
+pending. See ADR-1037.
+
+## Consumer-group lag alerts
+
+Read or replace one policy with GET/PUT
+`.../channels/{channel}/groups/{group}/lag-alert`. Read requires app read access
+and MFA; PUT requires admin scope and MFA. For example:
+
+```json
+{"enabled":true,"unassigned_threshold":"100","oldest_pending_seconds":60,"dead_letter_threshold":1,"cooldown_seconds":300}
+```
+
+Zero disables each threshold; enabled policies require a nonzero metric. Backlog
+accepts decimal strings up to 1000000000, age up to seven days, dead-letter count
+up to 128, and cooldown 30–86400 seconds (default 300). Breach means any configured
+metric meets/exceeds its threshold; recovery means all configured metrics clear.
+Identical PUT preserves state. Changed configuration rearms the policy and clears
+observations. Disable silences future evaluation without synthesizing recovery.
+
+Subscribe app webhooks explicitly to `realtime.consumer_group.lag_exceeded` and
+`realtime.consumer_group.lag_recovered`. Signed events include app/endpoint/group
+IDs, group name, channel, decimal-string `unassigned`, oldest pending age, dead
+count, thresholds, pause/drain flags and occurrence time; no message bodies or
+credentials. Existing delivery retries apply; deduplicate delivery IDs. Ongoing
+breach reminders obey cooldown; actual breach/recovery transitions alert promptly
+and can recur faster during flapping. `last_event_at` is an event decision even
+when no receiver subscribed. New subscriptions do not backfill prior events.
+
+The inspector shows policy status and observations for the selected group.
+`observed_at` and metrics are null until evaluation. Monitoring continues through
+pause/drain; endpoint/account/app/plan ineligibility suspends evaluation and can
+leave older observations. Unassigned backlog includes unrecovered sequence gaps;
+oldest age uses original timestamps of ready/leased snapshots and retained
+unassigned events, excluding dead snapshots. Exhausted expired leases count toward
+dead letters before a claim materializes them. These are sampled observations.
+
+Preview evaluation runs every 15 seconds, at most 64 due groups per pass with a
+20-second pass budget. Replicas coordinate through group/policy locks and durable
+next-check times. Busy fleets, contention or outages can delay observations. Group
+deletion removes its policy; already queued deliveries follow existing controls.
+
+Apply `20261012102700487_realtime_consumer_group_lag_alerts.sql` before activation.
+Runtime, migration and UI checks remain pending. See ADR-1038.
+
+## Per-entity consumer-group ordering
+
+Create a group with `ordering_metadata_key: "job_id"` and
+`dead_letter_policy: "block"` (default), or `"skip"`. Empty ordering field keeps
+ordinary concurrent behavior; existing groups remain unordered. The field must
+be a valid exact metadata key (lowercase letters, digits, underscore, hyphen or
+period, at most 64 bytes). Values are case sensitive; missing/empty values share
+one bucket. Policies are immutable: choose a new group/cursor to change them.
+
+For one key, only the earliest eligible event can lease and only one lease can be
+active across all workers, replicas and batches. Delayed retries hold later events
+for the same key. Different keys can run concurrently using existing SDK concurrency
+options. Completion releases the key; retry preserves its position. Under `block`,
+a dead predecessor holds later events until replay/repair. Under `skip`, later
+work proceeds; replay can then run older failed work after successors completed.
+Skip retains dead snapshots, which still consume group capacity.
+Replay conflicts while another same-key lease is active. Effects still need
+idempotency/fencing because expired handlers may continue running.
+
+The inspector and group status show policy and `ordering_blocked` ready count.
+Ready counts include blocked snapshots. Batch `ordering_blocked: true` indicates
+normal backpressure; helpers keep waiting, and empty single claims return 204.
+Long polling rechecks when predecessors settle. Assignment looks ahead within the
+existing 128-snapshot window; a hot or dead-blocked key can fill it and prevent
+reaching independent keys further ahead. Repair/replay the predecessor rather
+than expecting unbounded discovery. Retention-gap recovery remains explicit.
+
+Ordering keys are captured with the message snapshot. Before assignment, retained
+metadata edits can affect its key; afterward edits do not change the snapshot.
+Missing IDs are serialized in the shared bucket, so publish the configured metadata
+consistently. Pause/drain and lag alerts continue to apply to blocked work.
+
+Apply `20261012102700490_realtime_consumer_group_ordering.sql` before activation.
+Downgrade removes ordering guarantees; stop ordered workers before reverting.
+Runtime, migration and UI checks remain pending. See ADR-1039.
+
+## Lease fencing tokens
+
+Every new consumer-group claim includes immutable `group_id` and a positive
+`fencing_token` decimal string. The group's persistent counter increases across
+completion, retries, expiration and dead-letter replay; renewal preserves a token.
+Group status and the inspector show `last_fencing_token`, initially `"0"`.
+Numbers do not wrap at the signed 64-bit ceiling. Existing opaque `claim_token`
+continues to authorize lease operations; fencing numbers are public, not credentials.
+
+For ordered workers, enforce the highest fence per downstream entity and group
+UUID atomically with each write. For example, with a downstream row already bound
+to the authorized consumer group:
+
+See the [customer-storage fencing example](../realtime-customer-examples.md#lease-fencing-in-customer-storage). These writes belong to the application database, not platform operator runbooks.
+
+Initialize that row's fence to zero; check affected rows and reject stale writes.
+The group UUID must already be authorized for that resource, rather than accepting
+an arbitrary incoming namespace. Register/enforce higher tokens before effects.
+A newer Gregale claim alone cannot block an old writer until downstream storage
+records its higher token. Equality can support multiple writes from one claim;
+separate idempotency controls are still needed for repeated effects. All writers
+must participate. Keep tokens as strings or BigInt, not JavaScript Number.
+
+Do not compare unrelated groups or use one global downstream high-water mark for
+concurrent independent entities. Recreating a group changes its UUID and requires
+an explicit downstream ownership transition. Fencing does not prove expiry or
+handler termination and cannot fence an external service that ignores the token.
+
+Apply `20261012102700492_realtime_consumer_group_fencing.sql` before activation.
+Legacy issued leases have no retroactive number. Drain/stop old workers, upgrade
+all API replicas and clients, then use fresh claims with downstream enforcement.
+Downgrade refuses to remove counters from groups that issued tokens; retaining
+schema supports code rollback. Coordinate restored counters with downstream state.
+Runtime, migration and UI checks remain pending. See ADR-1040.
+
+
+## Delayed publishing in the inspector
+
+The realtime inspector now includes scheduled events for the selected channel:
+pending, paused and failed counts, delivery times, next retry, recurrence,
+last error, current version and last published sequence. Channel discovery also
+includes pending/paused schedules and terminal schedules from the last 24 hours,
+even before the channel has any published history. Discovery shows at most 32
+channels; enter a channel name directly to inspect another. Schedule lists are
+bounded by the existing endpoint capacity of 256, shared across channels.
+
+Use the existing account-owned schedule API for a one-time delayed event:
+
+```http
+PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/reminder-123
+Content-Type: application/json
+Authorization: Bearer <account-token>
+
+{"data_base64":"aGVsbG8=","binary":false,"deliver_at":"2026-10-12T12:00:00Z"}
+```
+
+Choose a future RFC3339 time within 30 days. The schedule ID is the idempotency
+identity: retry with the same ID and identical contents to get the existing record;
+changed contents conflict. Pending/paused records remain available; terminal
+receipts remain available for 24 hours. Reusing a pruned terminal ID can create a
+new schedule, so keep IDs unique beyond that receipt window.
+
+Cancel a pending or paused schedule using the current returned version:
+
+```http
+DELETE /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/reminder-123?expected_version=1
+Authorization: Bearer <account-token>
+```
+
+Cancellation races publication under a row lock. If publication wins, cancellation
+conflicts and cannot retract the published message. Use PATCH with `deliver_at`
+and `expected_version` to reschedule pending work. Account writes require the
+existing deploy-write scope and MFA; scoped publisher tokens cannot manage schedules.
+
+The existing Node helper `realtimeScheduledEvent` builds the schedule request;
+Node/Python generated SDKs expose put/list/reschedule/cancel operations. Scheduling
+reserves no channel sequence. Publication enters retained history atomically with
+the schedule outcome when due, followed by best-effort live fanout. The existing
+five-second dispatcher can be delayed by outages, capacity or validation failures;
+clients recover missed fanout through retained replay. Schema/reducer checks occur
+at release. Inspector reads reveal no schedule payload or credential secret and
+provide observation only; use the schedule API for mutations.
+
+## Priority-aware consumer groups
+
+Opt in when creating a new group:
+
+```json
+{"name":"notifications","after_sequence":"0","priority_metadata_key":"priority"}
+```
+
+Publish metadata such as `{"priority":"9"}` for urgent messages and
+`{"priority":"0"}` for routine work. Accepted priorities are exact single digits
+0 through 9. Invalid or absent values use zero. The field is immutable; create a
+new group to change it. Frozen snapshot priorities survive retry and replay.
+Existing groups keep sequence order by default.
+
+Within the bounded 128-snapshot window, eligible messages are selected by descending
+priority with sequence as a tie-breaker. Every eighth successful lease instead
+selects the oldest eligible message, shared across workers and batches. This gives
+older eligible routine work regular turns while urgent traffic continues. Entity
+ordering still requires predecessors to settle; priority never bypasses retry
+availability, pause/drain, leases, capacity, rate limits or delivery deadlines.
+Urgent messages outside the assignment window cannot jump into it. Long scans and
+filter skips use the existing batch scan budget and recovery hints.
+
+GET the group's `/priority` route to inspect its field and backlog by priority,
+or select the group in the realtime inspector. Ready counts include delayed and
+blocked snapshots; leased counts include expirations not yet maintained. Unassigned
+channel history is excluded. `next_claim_oldest` is an observation, not a reservation.
+Account reads require ownership, read scope and MFA. Worker claim permissions
+already cover priority selection; no extra worker grant is required.
+
+Apply migration `20261012102700515` and upgrade all apid replicas before creating
+priority groups. Runtime/migration checks remain pending.
+
+## Batch settlement
+
+POST account group `claims/settle/batch` or scoped worker group
+`claims/settle/batch` to complete, retry or renew up to 32 claims together:
+
+```json
+{"settlements":[
+  {"sequence":"42","claim_token":"<claim-token>","action":"complete"},
+  {"sequence":"43","claim_token":"<claim-token>","action":"retry","failure_code":"dependency_unavailable"}
+]}
+```
+
+Results stay in request order, echo sequence/action, and report `completed`, `ready`,
+`dead`, `leased` or `lease_lost`. A lost claim does not prevent the others from
+settling. Invalid input or duplicate numeric sequences rejects the request before
+mutation; database errors roll back the transaction. Retry policy, omitted versus
+explicit retry delay, deadlines, lease renewal and per-item processing metrics are
+identical to single settlement. Body size is capped at 16 KiB.
+
+Account writes require ownership, MFA and deploy-write scope. Scoped workers need
+all requested action grants (`complete`, `retry`, `renew` as applicable), checked
+against the fresh credential under the group lock; no new grant is introduced.
+Each lease remains bound to its token and issuing credential. One batch counts as
+one credential transaction use with its first action as `last_operation`.
+
+Generated SDKs expose `settleRealtimeConsumerGroupBatch` and
+`settleRealtimeWorkerGroupBatch`; isolated Node workers have `client.settleBatch`.
+Opt-in helper coalescing uses `settlementBatchSize: 16` and optionally
+`settlementFlushMs: 10`. Default batch size 1 preserves single settlement.
+Complete/retry waits at most the configured timer target (0..25 ms, default 10);
+renewals remain immediate. Timer scheduling/network congestion can delay actual
+transmission. Leases keep renewing and deadlines remain observed during batching.
+Handler slots stay occupied until settlement finishes, so low concurrency can
+produce small batches. Processing latency measurements include the batch wait.
+
+A lost response can hide successful settlement. The helper stops on uncertain or
+lost-lease outcomes instead of automatically resubmitting; valid peers in a batch
+may already have committed. Cancellation cannot undo server commits or handler
+side effects. Keep handlers idempotent and use fencing for external writes.
+No new migration is required for this addition; runtime validation remains pending.
+
+## Automatic processing circuit breaker
+
+Configure the account group `/circuit` route using PUT (ownership, admin scope and
+MFA), or use the generated SDK configuration operation:
+
+```json
+{"enabled":true,"failure_threshold":5,"cooldown_seconds":30}
+```
+
+Defaults are disabled, threshold 5, cooldown 30 seconds. Threshold range is 1..100;
+cooldown 1..3600. Identical writes keep state. Changing any field resets closed,
+clears the failure streak and probe, and leaves manual pause/drain and leases alone.
+GET uses read scope and MFA. The realtime inspector shows current policy/state.
+
+While closed, successful completions reset consecutive failures; reported retry or
+dead failures and lease expiry increment the streak in settlement/observation order.
+Deadline expiry and invalid deadlines do not normally count. At threshold, new
+claims stop for the cooldown. Already leased work can still renew/settle and may
+still become dead-lettered; the breaker does not cancel handlers.
+
+After cooldown, a claim lazily moves to `half_open` and can lease one eligible probe.
+The probe uses normal attempt, retry, rate, priority, ordering, capacity, deadline
+and lease rules. Its matching sequence/fencing token identifies recovery. Success
+closes the breaker; failure or expiry reopens for another cooldown, including a
+probe's deadline expiry. Renewal can keep a probe active. Other in-flight outcomes
+cannot close an open/half-open breaker. If a probe snapshot was explicitly removed,
+the next claim reopens with reason `probe_missing`. Manual pause/drain blocks probes
+until resumed. No probe is issued merely because time passed or a status was read.
+
+Single claims return 429 `realtime_group_circuit_open` and Retry-After. Batch claims
+return `circuit_open` and `retry_after_milliseconds`, possibly alongside a probe
+claim. These fields describe observed admission, not a dependency health check.
+An active probe uses a one-second polling hint so recovery need not wait for its
+full lease duration. Node helper workers wait on these hints automatically. A group protects its entire
+processing path; isolate workloads if unrelated dependencies should have separate
+breakers. Per-message dead-letter limits and handler idempotency still apply.
+
+Subscribe app webhooks explicitly to:
+
+- `realtime.consumer_group.circuit_opened`
+- `realtime.consumer_group.circuit_half_open`
+- `realtime.consumer_group.circuit_closed`
+
+Signed transition payloads include group/channel/endpoint/app IDs, state, reason,
+enabled policy, consecutive failures, threshold/cooldown, next_probe_at and time.
+They exclude message data and secrets. Policy changes can emit closure with reason
+`configured`. State/outbox commit atomically; queued delivery can lag the latest
+state. Newly enabled webhook recipients do not receive historical transitions.
+
+Apply migration `20261012102700517` before upgrading the server, then upgrade all
+apid replicas before enabling policies. Runtime validation and migration application
+are pending; no deployment has been performed.
+
+## Delivery-attempt timelines
+
+Use GET group `/messages/{sequence}/history?after_id=0&limit=32` (account ownership,
+read scope, MFA and retained preview) or the generated SDK operation
+`getRealtimeConsumerGroupDeliveryHistory`. Choose a consumer group and delivery
+sequence in the realtime inspector to browse the same timeline and next page.
+
+History records claims, retries, lease expiration, dead letters, deadline failures,
+completion and replay, with observation timestamps, attempts, fencing tokens and
+safe failure codes. Renewals are omitted. Dead lease/deadline failures can produce
+both their cause and a `dead_lettered` event. Retry/replay retains the snapshot's
+fencing context; the next claimed attempt receives a new fence. Replayed rows show
+reset attempt zero. Completion remains inspectable after its snapshot is removed.
+No payload, metadata, worker identity, credential token/hash or lease token is stored.
+
+Each group keeps at most 1115 events shared across all messages for 24 hours.
+Heavy traffic can evict a message's observations sooner. Reads and new observations
+prune expired history; idle physical rows stay bounded until cleanup is triggered.
+`group_pruned_events` is a decimal lifetime total across the whole group, not proof
+that any particular message lost history. Group deletion removes its timeline;
+resync keeps existing diagnostic history with the same group identity.
+
+Use decimal string IDs and the exclusive `next_after_id` cursor, with limit 1..100.
+`has_more` indicates another retained page. Event IDs may have gaps for a message,
+and timestamps reflect observation time: lease/deadline expiration can be detected
+later during lazy maintenance. Pagination is observational and pruning can remove
+records between requests. Keep large IDs/fencing tokens as strings or BigInt.
+
+Empty history is inconclusive: a message may be unattempted, filtered, completed
+before this feature, or pruned. This is bounded troubleshooting data, not a complete
+audit or exactly-once proof. Administrative snapshot removal and failed/stale
+settlements do not appear as successful delivery. Scoped workers do not get history
+access or a new permission.
+
+Apply migration `20261012102700520` before the new server and upgrade all apid
+replicas for completion coverage. Runtime tests, UI rendering, migration application
+and deployment remain deferred.
+
+### Cooperative lease release
+
+Single and batch settlement accept `action: release`. Scoped credentials need the
+explicit `release` permission. Supply the current sequence and claim_token; expired,
+stale or differently owned claims follow existing lease-loss responses. Release
+returns `status: ready` and `available_at`, clears ownership, refunds the claim attempt,
+and records `released` in delivery history. It does not increment retry metrics or
+circuit failures. The next claim gets a new fencing token; deadlines, ordering and
+claim admission policies still apply.
+
+Node `consumeRealtimeConsumerGroup` and scoped worker helpers support
+`releaseOnShutdown: true`. Abort the supplied signal, then await the worker promise.
+The helper awaits each handler before releasing, bypasses cancelled settlement
+batches, and gives each release request five seconds. Release failures reject the
+shutdown promise; no automatic retry is attempted. Internal failures and known lease
+loss keep lease-expiry recovery. Handlers must await all work and stop cooperatively;
+release cannot undo writes or safely recover detached side effects.
+
+Apply migration `20261012102700522_realtime_cooperative_lease_release.sql` before
+rolling out the binary. Migration execution and runtime validation remain deferred.
+
+### Settlement receipts and safe retries
+
+Single settlement accepts an optional UUID `idempotency_key`; batch settlement uses
+one top-level key for the entire ordered request. Omit keys on individual batch items.
+Repeat the same request with the same key to recover a lost settlement response.
+The server returns the original result for 24 hours without repeating settlement,
+metrics or delivery-history entries. Reuse with different contents returns
+409 `realtime_settlement_key_conflict`. Current ownership/permissions still apply;
+worker receipts are scoped to the credential identity. Saved renewal expiry is the
+original expiry, so use a new key for each new renewal.
+
+Receipts are limited to 1115 per group across all principals. Full capacity returns
+429 before mutation; existing-key replay still works. Live receipts are never evicted,
+replays do not refresh expiry, and expired rows are pruned on keyed requests. Keys
+have no replay protection after expiry. Requests without keys keep existing behavior.
+Receipts store result JSON and a request fingerprint, with no raw claim tokens.
+
+Node processing helpers support `settlementRetries: 2` (0–3, default 0). This generates
+one UUID for each terminal single request or whole batch and retries transport errors
+and HTTP 408/500/502/503/504 using the same contents/key. Auth, validation, conflicts,
+429 and cancellation do not retry. Renewals are not automatically retried. Combined
+with `releaseOnShutdown: true`, release retries stay within the five-second request
+budget. Handler side effects still require idempotency or atomic fencing.
+
+Apply `20261012102700527_realtime_settlement_receipts.sql` and roll out all API replicas
+before enabling SDK retries. Downgrade requires live receipts to expire first.
+Runtime tests and migration execution remain deferred.
+
+### Consumer-group event deduplication
+
+Create a group with `deduplication_metadata_key: event_id` to suppress additional
+published copies of the same logical event. `deduplication_window_seconds` defaults
+to 3600 when enabled; choose 60–86400 explicitly. The settings are immutable, and
+existing groups stay disabled. Without a key, the window must be zero. IDs compare
+exactly; missing/empty values process normally. Use distinct IDs for distinct logical
+events and intended corrections. The first filter-matching assigned copy wins,
+including copies admitted into dead-letter state; payload differences are not compared.
+
+Duplicates advance the source cursor without allocating snapshots or leases.
+`duplicate_messages` counts skipped copies; `deduplication_keys` counts live hashes.
+Both appear in group status and the inspector. Filtering runs first and does not
+reserve IDs. Existing snapshots retain retry, release and explicit dead-letter replay
+behavior. Deduplication does not establish successful processing or fence side effects.
+
+At most 4096 IDs per group are remembered until their window expires. Duplicate hits
+do not extend expiry, and live IDs are never evicted. A new ID at capacity waits without
+advancing its cursor; already remembered duplicates can still skip and existing
+snapshots remain claimable. Single claims return 429 `realtime_group_deduplication_full`
+with a retry hint; batches use `deduplication_blocked`, may contain partial claims,
+and include `retry_after_milliseconds`. Node processing polls within these admission
+hints using `pollIntervalMs` (default one second) to discover existing ready snapshots.
+Assignment still scans at most 128 source events per request. A blocked new ID can
+hold later source events. After expiry, another copy can be assigned again; resync
+preserves remembered hashes until expiry. Group deletion clears them.
+
+Apply `20261012102700530_realtime_consumer_group_event_deduplication.sql` and upgrade
+all API replicas before creating enabled groups. Downgrade cannot restore skipped
+source events. Runtime tests, inspector rendering and migration execution remain deferred.
+
+### Dead-letter JSONL export and external archival
+
+GET `/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/export`
+returns a JSONL attachment. It requires account ownership, read scope, MFA and the
+history preview gate. The inspector's Download dead letters as JSONL action uses
+the same checks; worker credentials cannot export.
+
+The first line is a versioned manifest. Subsequent lines contain retained payloads
+(base64 data and metadata), failure code, attempt count, dead_since and fencing/
+deadline/ordering context. No claim tokens or credentials are included. Export is
+read-only: it does not claim, replay, clean up, extend retention or update counters.
+Save the downloaded files externally when a longer archive is needed.
+
+Default page size is 32; `limit` accepts 1–128. Repeat `failure_code` for exact filters
+and use `after_sequence` for an exclusive cursor. Resume with the manifest's
+`group_id`, `through_sequence`, `snapshot_at` and `next_after_sequence`, retaining the
+same filters. These resume identity/boundary/cutoff fields must be supplied together.
+The `Link` header points to the next page; `X-Realtime-Export-*` headers mirror cursor
+metadata. Empty results still contain a manifest. Verify a complete transfer and
+manifest record count before advancing a saved cursor.
+
+Each page is consistent within a read-only repeatable-read transaction. Between pages,
+replay or retention cleanup can remove failures; later failure transitions are excluded
+by the original cutoff. Export is not a frozen server archive or a recovery/import
+endpoint. For periodic archival, start fresh from sequence zero and deduplicate on
+`group_id`, sequence and `dead_since`; old sequences can fail again after replay.
+Group recreation or a rewound export boundary returns 409
+`realtime_dead_letter_export_changed`; restart the export deliberately.
+
+No new migration is required. Runtime tests and inspector rendering remain deferred.
+
+
+### Background dead-letter replay jobs
+
+Use `POST .../groups/{group}/replay-jobs` with `rate` (1–32), optional `failure_codes`, `after_sequence` (exclusive) and `through_sequence` (inclusive). Creation captures current failures only, up to 128; an empty selection is invalid. `GET .../replay-jobs` shows active jobs first and recent terminal jobs. `POST .../replay-jobs/{job}/{action}` accepts `pause`, `resume` or `cancel`. Account ownership and MFA apply; mutations require deploy-write scope. The inspector offers the same controls.
+
+Rate is an upper limit per job; multiple jobs have independent limits. Known outcomes include replayed, stale, missing, not_dead, ordering_blocked, invalid_deadline and deadline_expired. Skips require a new recovery job. Safe processing errors and cumulative counts appear in status; database errors retry without advancing progress. Cancellation does not undo completed replay. Inspect recent jobs before retrying an uncertain creation response. Disabled endpoints suspend execution; group claim pause/circuit/rate settings still govern subsequent processing.
+
+Apply migration `20261012102700533_realtime_dead_letter_replay_jobs.sql` before enabling jobs, with all API replicas upgraded. Cancel active jobs before downgrade. Migration and runtime/UI checks are currently deferred.
+
+
+### Replay-job notifications
+
+Create or update an app webhook with event filters `realtime.replay_job.completed`, `realtime.replay_job.cancelled` and/or `realtime.replay_job.processing_failed`. Existing webhook signing, retry policy, delivery status and dead-letter inspection apply. The inspector links to app webhook configuration.
+
+Completion and cancellation notify once per transition. The processing warning notifies once per job when cumulative recorded processing errors first reach three; the job continues retrying. Known skips are not processing errors. No backfill for past transitions or newly added subscribers. Deduplicate the payload's `event_id` across delivery retries and do not assume delivery order.
+
+`RealtimeReplayJobWebhookPayload` documents recovery counts, safe error diagnostics and a relative `inspector_path` to resolve against your console origin. Payloads exclude failed messages and credential secrets. Job history can be pruned after notification. Migration `20261012102700536_realtime_replay_job_notifications.sql` is required and currently unapplied.
+
+### Dry-run replay jobs
+
+`POST .../groups/{group}/replay-jobs/dry-run` accepts the same rate and failure-code/sequence filters as job creation. It captures failure identities, checks eligibility and stores a report without expiring leases or mutating the queue. Dry runs use `checking`/`check_paused`; pause, resume and cancel work normally. Both modes share active-job quotas and bounded history. Disabled endpoints suspend checks. Dry runs do not emit replay lifecycle webhooks.
+
+Inspect `dry_run`, `eligible`, `skipped` and per-item `checked_at`/status. Results reflect individual observation times and can change. `POST .../replay-jobs/{report}/start` creates a real replay from only the report's eligible identities, preserving its rate and rechecking every item before mutation. The source report gains `started_job_id`; the new replay has `reviewed_job_id`. Repeated start returns the same replay while retained; a pruned replay returns 409 and a pruned report 404. It never silently starts a second recovery from one retained report. Create a new dry run to reassess skipped failures.
+
+Apply migration `20261012102700538_realtime_replay_job_dry_runs.sql` and upgrade all API replicas before enabling the feature. It is currently unapplied. Before downgrade cancel active dry runs; terminal dry-run reports are discarded on downgrade. Real replays continue under existing claim pause/circuit/rate controls.
+
+### Python worker lifecycle
+
+The Python SDK exports account and scoped-credential async consumer-group helpers in `faas_sdk.realtime_workers` and at the package root. They handle bounded concurrent batch claims, lease renewal/expiry, handler complete/retry settlement and optional readiness heartbeats. Supply an async handler that awaits every effect and observes its context stop event; enforce idempotency and fencing at downstream writes. Callers own the async HTTP client and must disable custom mutation retries.
+
+Use an asyncio.Event for graceful shutdown. Opt-in release waits for handlers and lease monitors to stop and only releases valid leases after caller shutdown. Task cancellation joins the same owned tasks before propagating. Expired/lost leases and uncertain terminal settlements are not followed by release. Python `settlement_retries=0` is the default; opt in to 1–3 receipt-backed retries for complete/retry/release on temporary network errors or HTTP 408/500/502/503/504. Each logical settlement reuses one UUID key and body, with 100/200/400 ms backoff. Claims and renewals never retry automatically. Cancellation interrupts requests/backoff; release still has a total five-second budget. Auth, validation, conflicts, capacity and malformed responses stop retries. Requires server settlement receipt support (ADR 1055). Scoped workers require status/claim/renew/complete/retry grants and optional heartbeat/release grants. SDK runtime validation remains deferred; this addition needs no migration.
+
+### Python worker settlement batching
+
+Set `settlement_batch_size=2..32` to coalesce completed/failed handler settlements (default 1 is disabled). `settlement_flush_milliseconds=1..100` defaults to 10. The queue retains handler concurrency slots; size or delay triggers a batch. Renewals and shutdown releases bypass batching. With receipt retries enabled, one top-level UUID covers the exact ordered batch, with no item keys. Validate all item identities/actions/statuses before notifying handlers; confirmed successes survive another item's lease loss. A lease-lost item stops further claims.
+
+Graceful caller shutdown flushes queued terminal settlements and awaits batches; each batch has a five-second total request/retry budget. Internal failures cancel in-flight batches and discard unsent entries. Queued or uncertain terminal requests never lead to release. Flush delay can exceed remaining lease time; expiry is reported rather than replayed. No server migration is added. Runtime validation remains deferred.
+
+### Python worker lifecycle monitoring
+
+Set `RealtimeWorkerOptions(on_event=record_event)` with a synchronous callback taking exported `RealtimeWorkerEvent`. Events report claims, confirmed complete/retry/release settlements, lease loss (once per claim) and final shutdown. Claim identifiers are group UUID/sequence/attempt; monotonic duration covers processing through settlement or loss. Shutdown reasons are stopped/cancelled/failed/blocked. Events exclude payloads, metadata, worker identity, fences, claim tokens, credentials and exception details.
+
+Enqueue into a bounded nonblocking monitoring queue; callback exceptions are ignored and asynchronous callbacks are not awaited. Blocking callbacks still block the event loop, so keep them short. Successful batch items emit independently, receipt retries do not duplicate notifications, and uncertain requests have no settlement confirmation event. Shutdown fires after task cleanup. This is best-effort local telemetry, not durable history; avoid high-cardinality sequence metric labels. No migration is added; runtime validation remains deferred.
+
+### Python worker processing timeout
+
+`processing_timeout_seconds=None` disables processing limits by default. Opt in with a finite value 0.1–86400 seconds. The monotonic budget starts at handler invocation and excludes settlement time. Timeout sets the handler context stop event, cancels renewal and emits one `handler_timeout` lifecycle event, while continuing to await the handler's safe exit. Retry a still-valid lease with reserved `handler_timeout` code, bypassing the custom failure classifier; existing retry policy/batching apply. Confirmed retry/dead results notify `on_handler_error` with TimeoutError.
+
+Keep lease/deadline monitoring active. If expiry occurs before safe handler exit, stop the worker without a known-expired settlement. Do not force-cancel or release a running handler. Ignoring stop can still hold a slot indefinitely, and event-loop blocking delays timeout signalling. An accepted renewal cannot be undone by cancellation. Caller shutdown retains normal safe-release rules. No migration is needed; runtime checks remain deferred.
+
+### Python worker deployment draining
+
+Supply a separate `drain_event` asyncio.Event to either Python worker entry point. Setting it permanently stops new claim requests for that invocation. Keep lease renewal, active handlers, processing timeouts, heartbeats and settlement running; flush pending batches immediately. An already-issued claim completes normally and its returned leases join owned work. Successful drain exits after every owned task/settlement completes, emitting draining then shutdown/drained lifecycle events. An already-set drain returns without network calls.
+
+Drain does not signal handler context stop events, release healthy work, pause the server group or empty the whole backlog. Clearing the signal does not resume consumption. Urgent stop/task cancellation overrides draining; internal/lease failures and retention/capacity blockers remain errors. No automatic drain deadline is imposed; use existing stop signalling and processing timeouts as needed. No migration or runtime checks are added.
+
+### Python expiring activity tracker
+
+Existing managed realtime presence/signals already provide server-side ephemeral activity and principal-scoped multi-session grouping. Python `RealtimeActivityTracker` consumes named authenticated signal frames through `RealtimeActivity`, keyed by channel/member/name. It expires state with an asyncio timer, preserves nanosecond timestamp ordering, ignores duplicates/stale revisions, handles zero-TTL clears and retains bounded 30-second tombstones. Default capacity is 1115 identities including tombstones (configurable 1–8192); TTL is at most 30 seconds and JSON data at most 2048 UTF-8 bytes.
+
+Construct/use on one running asyncio loop. Supply a synchronous nonblocking on_change callback; exceptions are ignored. Wire presence departure to remove_member, reconnect/unsubscribe to reset, and client shutdown to dispose. Feed the verified server member_id unchanged; principal-scoped subscriptions group sessions while connection-scoped subscriptions keep them separate. Synchronize clocks because updates outside a 30-second clock window are ignored. This helper opens no connection, issues no presence lease and changes no authorization. No migration or runtime checks are added.
+
+### Python combined presence directory
+
+`RealtimePresenceDirectory` owns an expiring activity tracker and reports combined `RealtimePresenceSummary` snapshots through one synchronous callback. Feed verified presence frames as RealtimePresenceEvent/RealtimePresenceMember and named signals via apply_activity. Member/connection counts stay distinct; principal-scoped member IDs aggregate sessions. State is presentation data, not verified identity. Unknown activity senders are excluded from summaries.
+
+Stage incomplete snapshot chunks until complete=True, apply live changes to visible and staged membership, and remove departed members' activity on leave or completed replacement. Bound visible plus staged entries and channel count with max_members (default 1115, range 1–8192), and activity independently with max_activities. Invalid or overflowing presence events do not commit replacement state. Reset on transport loss/reconnect/unsubscribe; dispose at shutdown cancels timers. Presence follows server events rather than a local guessed TTL. No migration or runtime checks are added.
+
+### Python temporary activity publishing
+
+RealtimeActivityPublisher uses an application-provided authenticated async sender to coalesce latest values and refresh named activity at half TTL. Default TTL 5000 ms (100–30000) and interval 250 ms (50..half TTL); data stays within 2048 JSON UTF-8 bytes. It owns one refresh/write task, bounds writes to five seconds and serializes clear after an active write under a five-second total budget. Explicit clear sends null/TTL zero. Close clears by default or cancels locally with send_clear=False.
+
+Transport failure stops refresh and reports a sanitized error through error/on_error; it does not retry ephemeral sends. Supply a cancellation-cooperative sender and await close before closing the transport. Activity remains active until clear/close or a configured idle timeout; throttling alone does not infer user inactivity. Slow writes can exceed TTL and cancellation leaves remote results uncertain.
+
+create_managed_realtime_activity_publisher wraps account HTTP channel/scope signal routes. These publish as backend, with existing deploy-write/MFA checks, and do not represent a presence user. Use a standalone activity tracker for backend signals. User typing requires your authenticated user transport sender. No migration or runtime tests are added.
+
+### Python activity publisher idle timeout
+
+Set idle_timeout_seconds on RealtimeActivityPublisher or its HTTP factory to automatically clear after no accepted update calls (finite 0.1–86400 seconds; default None disables). Every update resets a monotonic deadline even for unchanged data; periodic refreshes do not. The existing owned task wakes at the earlier refresh/throttle/idle deadline. On idle, serialize a null/TTL-zero clear after previous writes, then stop. Later updates restart; updates during the clear are retained and sent afterward if still active.
+
+Remote TTL stays independent, providing eventual expiry on failed clears. Slow or blocked sends can delay idle processing; existing five-second write limits, failure callbacks and cancellation cleanup apply. No additional task, server migration or runtime validation is added.
+
+### Python activity presentation
+
+Use summarize_realtime_activity on a directory snapshot/callback to filter named activities, exclude the current member and assign labels. It returns isolated, sorted viewers and active members, plus viewer/session counts. Activity filters retain online viewers; exclusion removes the chosen member entirely. Ignore expired activity at projection time. Labels default to member IDs and are untrusted presentation text, never authorization inputs.
+
+format_realtime_typing_summary produces English typing text with 1–10 displayed labels and an overflow count, returning empty text when no unexpired typing remains. Use active members for localized/editing status UI. These helpers own no timers or transport; directory/activity expiry callbacks drive updates. No backend change or runtime validation is added.
+
+### Python activity-scope encoding
+
+realtime_activity_scope_channel(parent, scope) builds the server's canonical private activity channel using unpadded UTF-8 base64url parts. parse_realtime_activity_scope returns the parent/scope pair for canonical reserved channels, None for ordinary channels, and rejects malformed reserved encodings. Parent/scope byte limits, trimming/forbidden characters, nested scopes and total encoded length match pkg/api/realtime_activity_scopes.go.
+
+Use the canonical channel for subscriptions and directory/tracker input. The HTTP factory continues accepting the original parent channel plus activity_scope and now validates both before requests. Encoding does not grant read_activity permission or inherit parent access; existing server authorization applies. No migration or runtime validation is added.
+
+### Python confirmed read-progress tracker
+
+RealtimeReadProgressTracker tracks server-confirmed channel/inbox receipts by stream and hashed reader ID. It ignores exact duplicates or backward read/latest/oldest bounds, preserves history_unavailable, and accepts equal bounds when unread/count status changes after edits/deletions. There is no revision for equal-bound count updates; refresh authoritative read state if your transport may reorder them. Do not derive a user's read position from connection ACKs or mere receipt of a message.
+
+Capacity defaults to 1115 entries (1–8192); malformed/overflow updates fail without replacing state. Immutable snapshots expose server unread counts directly. Reset local ordering on reconnect/stream replacement; durable server markers remain intact. Callback failures are isolated, and no timers, connection, authorization or server writes are introduced. No migration or runtime tests are added.
+
+### Python coalesced read assertions
+
+RealtimeReadProgressPublisher binds one reader/stream to an authenticated sender. mark_read accepts only explicitly viewed positions, retains the highest pending value and ignores duplicate/older calls. A single task serializes writes with configurable 50–30000 ms throttle (250 default). flush bypasses throttle under a five-second total budget; aclose flushes by default or cancels when flush=False. Each write also has a five-second timeout.
+
+No automatic retries or confirmed-state updates are introduced. Failures stop publication, preserve pending diagnostic position and expose a sanitized error/callback. Refresh authoritative state before replacing a failed publisher. Cancellation can leave a remotely accepted write uncertain. Keep pending values separate from RealtimeReadProgressTracker receipts. The HTTP factory uses existing account channel/inbox routes and deploy-write/MFA authorization, with explicit principal assertions. No migration or runtime validation is added.
+
+### Python unread aggregation
+
+Use summarize_realtime_unread on one endpoint's confirmed receipt snapshot with one hashed reader_id. Filter channels and optionally inbox; sum known per-stream unread counts, expose unread-stream counts and history-gap receipts. Other readers are excluded and duplicate stream/reader entries are rejected. Totals are per-stream sums, not globally deduplicated message counts.
+
+Explicit requested channels enable missing_channels reporting; include_inbox=True reports inbox_missing when not loaded. complete is None without an explicit channel selection and otherwise indicates requested receipt coverage only. Missing receipts are not fabricated as zero; complete does not guarantee freshness or gap-free retained history. This helper makes no requests or read assertions. No migration or runtime validation is added.
+
+### Python read-progress freshness
+
+Optional stale_after_seconds (finite 0.1–86400, default None) tracks monotonic age of confirmed receipt arrivals. freshness_snapshot exposes age/stale per receipt; mark_stale immediately flags matching streams on disconnect without discarding counts. Valid duplicates renew freshness; backward sequence bounds do not. reset/dispose clear freshness memory.
+
+refresh_stale returns stale receipts and invokes an optional synchronous on_refresh hook to enqueue authenticated refreshes. It never marks data fresh or advances server read positions. Drive checks from existing UI/transport polling; no timer/network loop is added. Debounce repeated refresh requests in the application.
+
+Pass a current freshness snapshot to summarize_realtime_unread to obtain stale_streams while retaining confirmed totals. Missing/mismatched metadata counts as stale; omitted metadata gives None. Freshness snapshots are point-in-time observations, separate from requested-stream completeness and retained-history gaps. No migration or runtime validation is added.
+
+### Python bounded read-refresh coordination
+
+Wire tracker on_refresh to RealtimeReadRefreshCoordinator.request, with an application-owned authenticated fetcher returning confirmed RealtimeReadProgress. Bound concurrency (default 4, 1–32), total queued/active identities (default 1115, 1–8192) and request timeout (default 5 seconds, 0.1–60). Repeated queued/in-flight identities coalesce; overflowing batches fail admission atomically.
+
+Validate response identity/bounds and apply through the tracker. Reset increments a tracker generation, invalidating all previously admitted refreshes even for a scoped reset. Request errors use an isolated sanitized callback without automatic retries. wait_idle waits for admitted work; aclose cancels/joins requests and drops queued work before transport closure. No automatic poll loop, read writes, migration or runtime checks are added.
+
+### Python unread badge formatting
+
+format_realtime_unread_badge returns structured capped count text, visible text, exact known total, accessible English label and updating/gap/visibility flags. Defaults cap at 99 and hide confirmed zero. Missing coverage or unknown/stale freshness shows Updating…; this display state does not issue refreshes. Retention gaps remain separate and keep confirmed-zero badges visible with a retained-history caveat. Use structured fields for localization. No migration or runtime validation is added.
+
+### Python realtime connection status
+
+RealtimeConnectionStatusTracker observes caller-owned connection attempts through begin_connect, connected(attempt_id) and disconnected(attempt_id). Capture attempt IDs in transport callbacks to ignore events from superseded connections. It exposes immutable connection/reconnect/offline state, successful UTC connection time and reconnect count since success, without implementing another retry layer.
+
+on_invalidate runs before nonconnected status notifications: mark unread data stale and reset ephemeral presence using existing helpers. Connected transport status does not imply refreshed unread counts or a complete presence snapshot. Callbacks must be synchronous, fast and idempotent; errors are isolated. Dispose marks offline and prevents later admission. No network tasks, migration or runtime checks are added.
+
+### Python realtime connection quality
+
+RealtimeConnectionQualityTracker observes current-attempt frames and locally correlated heartbeat sends/responses. It exposes latency, receive silence, oldest unanswered heartbeat age and unknown/healthy/degraded/offline status. Default degradation/recovery thresholds are 1000/500 ms, silence 30 seconds and heartbeat timeout 10 seconds. Recovery hysteresis avoids threshold flicker. Repeated sends preserve the oldest unanswered age; old attempts/probes are ignored.
+
+Drive snapshot from existing lifecycle ticks to detect silence; no timer, heartbeat or reconnect layer is added. Frame receipt does not clear an unanswered probe or high-latency warning. Callback errors are isolated. Degraded is an observation, not proof of outage or a disconnect action. No migration or runtime validation is added.
+
+### Python combined realtime health
+
+Use summarize_realtime_health to project existing status/quality/unread/presence snapshots into one UI state. Connection outage takes priority, then degraded current-attempt quality, then incomplete/stale data; history gaps remain a separate warning. Ignore older-attempt quality rather than reporting it as current. Omitted optional features are untracked.
+
+PresenceSummary.ready distinguishes empty complete snapshots from pending data. Completed snapshots set readiness; chunked refresh marks pending while preserving visible state. Reset clears readiness and notifies even for an empty channel. Health treats nonconnected presence as waiting. Keep reset wired to connection invalidation so prior-attempt presence is not reused. No transport policy, migration or runtime validation is added.
+
+### Python reconnect catch-up observation
+
+RealtimeCatchUpTracker freezes an explicit authoritative target for one channel/inbox and observes successfully processed ordered positions. Subscribe ACK cursors are not targets. Unknown target remains waiting_target; sequence distance is not message count. Local generations reject late callbacks across resubscription, including same-attempt recovery. Server resync-required blocks progress until application recovery starts a new generation.
+
+Pass snapshots into summarize_realtime_health for Catching up/Resync required UI. Older-attempt observations are unknown. This changes no replay, ACK, read-position or recovery behavior. No migration or runtime tests are added.
+
+### Python catch-up stall warnings
+
+Optional stall_after_seconds (finite 0.1–86400, default None) detects no successfully processed progress while below a known replay target. Begin/first target/strict progress advancement restart monotonic timing; duplicate/backward updates do not. snapshot evaluates age, emits the stalled transition and exposes progress_age_seconds plus threshold-exceeding stall_seconds. Progress resumes normal classification.
+
+Use existing ticks, not another timer layer. Health displays Catch-up stalled after connection/resync priority and before degraded quality. Unknown target, completed replay and resync states do not accumulate stalls. Warning changes no retry/ACK/recovery behavior. No migration or runtime validation is added.
+
+### Python subscription readiness
+
+RealtimeSubscriptionTracker observes a bounded requested channel/inbox set with per-stream pending/subscribed/denied/resync-required state. New begin generations reject late callbacks and may replace requirements on the same connection attempt. Reset clears readiness; reestablish the full required set via begin. Missing ACK timeout is optional and observed on snapshot ticks, never classified as denial. No subscribe/authorization/retry policy is added.
+
+Pass summaries to health projection for pending/denied/resync visibility; readiness is separate from connection, presence and processed replay progress. Existing server grants remain authoritative. No migration or runtime validation is added.
+
+### Python subscription readiness waits
+
+wait_ready(generation, channels=..., include_inbox=..., timeout_seconds=...) awaits all or selected already-requested acknowledgements. Terminal denial/resync yields sanitized RealtimeSubscriptionWaitError; new begin/reset makes prior waits obsolete, and disposal terminates them. Success returns a selected ready summary without implying replay/data readiness.
+
+Timeout/cancellation remove only the waiter and do not alter subscription state. Default timeout is None; finite 0–86400 is supported. Bound active waits with max_waiters (128 default, 1–8192), using one asyncio loop. No polling/network/retry layer, migration or runtime tests are added.
+
+### Python catch-up completion waits
+
+wait_caught_up(generation, timeout_seconds=..., fail_on_stall=True) awaits successfully processed replay against its known frozen target. It reports typed stalled/resync/obsolete/disposed outcomes. Configured stall deadlines wake active fail-on-stall waits without an external tick; fail_on_stall=False waits through warnings. Unknown target remains pending.
+
+Timeout/cancellation clean waiter futures only. Bound active waits to max_waiters (128 default, 1–8192), using one asyncio loop. Completion does not imply later live messages or pending effects outside the ordered cursor are processed. No transport/retry/ACK/recovery policy, migration or runtime validation is added.
+
+### Python combined readiness gate
+
+wait_realtime_ready combines current-attempt connection, selected subscription ACKs and up to 32 frozen catch-up targets under one deadline. It observes completed stages until all requirements are ready and rechecks generations/states before success. Structured errors identify connection/subscriptions/catch-up stage and safe reason. Offline, disposal, obsolete generation, denial, resync and optionally stall terminate waits.
+
+Only bounded futures/deadline waits are owned. Cancellation/timeout unregister gate listeners without changing transport, ACK, replay or retry policy. Bind trackers to one endpoint/account/loop. Success is a point-in-time readiness observation. No migration or runtime validation is added.
+
+### Python local realtime diagnostics
+
+export_realtime_diagnostics serializes an explicit whitelist from current health/unread snapshots into version-1 JSON with UTC capture time. Default channel/reader aliases are local to the report; include_identifiers=True is an explicit opt-in. Payloads, presence state, tokens, credentials, transport URLs, exception bodies, arbitrary codes and labels are always omitted. The helper never uploads or reads external state.
+
+Bound arrays with max_entries (256 default, 1–8192) and report truncated counts; total JSON is capped at 256 KiB. Sequences/unread counts use decimal strings. Counts/timestamps remain potentially descriptive even when identifiers are redacted. No migration or runtime validation is added.
+
+### Python realtime incident timeline
+
+RealtimeIncidentTimeline records connection, subscription/ACK-warning and catch-up state transitions from application callbacks into a ring (256 default, 1–8192). Deduplication memory is separately bounded (1115 default, 1–8192) with oldest-observation eviction. Capture UTC plus monotonic elapsed time, safe states and attempt/generation/channel identity only; never copy payloads, tokens, arbitrary codes or error bodies.
+
+Pass timeline to diagnostics export for default channel redaction and newest-event truncation. Distinguish ring evicted_count from export omitted counts. Raw snapshots contain supplied channel IDs; no upload/storage occurs. clear resets local history. No migration or runtime validation is added.
+
+Python reconnect/replay orchestration is available via
+`RealtimeRecoveryCoordinator` (ADR 1090). Supply an authenticated session adapter
+with ordered replay and bounded live buffering, and optionally an atomic snapshot
+loader for retention gaps. Only explicit transient transport failures reconnect;
+application failures and operation deadlines stop. Readiness follows full replay,
+not connection establishment. Optional incident timelines record recovery states.
+See the Python SDK README for the adapter and cursor durability contracts.
+
+The Python `realtime` installation extra adds native `RealtimeWebSocketClient`
+(ADR 1091). Supply its `connect` method to the recovery coordinator for a retained
+channel or named inbox consumer. It uses v2 server replay, bounded buffering,
+processing ACKs and native Ping/Pong; read-state queries capture history bounds
+without marking messages read. WSS, verified bearer identity and read-state support
+are required. See the SDK README for inbox cursor and snapshot-reset semantics.
+
+Python `RealtimeMultiChannelClient` (ADR 1092) multiplexes up to eight retained
+channels over one authenticated native WebSocket. Each channel has independent
+completed progress, replay/snapshot recovery, bounded buffering, readiness and
+redacted diagnostics. Dynamic unsubscribe confirms wire removal before channel
+reuse; uncertain cleanup closes the socket and surviving channels recover.
+Connection loss affects the shared socket; application processing failures remain
+local to their channel. Inbox subscriptions continue through the dedicated client.
+
+Python native dedicated and multiplexed channel clients support
+`RealtimeWebSocketPresence` (ADR 1093): online member snapshots/updates, verified
+connection counts, expiring named activity and presence/signal publishing.
+Transport/session failure clears local presence and activity before reconnect
+rebuilds it. Retained replay readiness and presence snapshot readiness are separate.
+Rate-limit/relay rejections are safe callbacks, not retained-stream failures.
+Per-channel redacted diagnostics expose presence readiness/counts, excluding state
+and signal data. See the SDK README for callback ownership and publisher cleanup.
+
+Python native channel clients support optional named durable subscriptions
+(ADR 1094). Set a name on the dedicated client or explicitly per multiplexed
+channel. Resume uses the server's principal-scoped checkpoint; confirmed_sequence
+tracks persisted ACKs separately from locally completed processing. Retention-gap
+snapshots reset/confirm the checkpoint before resubscription. Unsubscribe retains
+stored state. Use one logical processor per identity and idempotent effects for
+commit/ACK crash windows; a stored cursor cannot rebuild lost application state.
+
+Python channel clients accept immutable `RealtimeEventFilter` metadata selection
+(ADR 1095). Ordered skipped checkpoints advance/ACK progress without message-handler
+side effects; adjacent skips coalesce in bounded queues while preserving replay
+boundaries. Persist local filtered cursors with their fingerprint. Nonempty filtered
+durable names derive a distinct checkpoint identity for each selection; this SDK
+binding is not enforced by the server for other clients. Filters do not grant
+channel access and do not select presence/activity or inbox events. Diagnostics
+omit filter values and fingerprints.
+
+Python native channel/inbox clients support `RealtimeWebSocketReadProgress`
+(ADR 1096), including explicit mark-read/refresh actions, confirmed unread badges
+and selected-principal redacted diagnostics. Supply the verified server reader key;
+channel broadcasts can describe other readers. Reconnect refreshes state, while
+new events coalesce bounded queries and disconnect preserves stale counts.
+Processing/durable/filter ACKs never imply user visibility. Read-action errors do
+not stop retained delivery after its authoritative target is established. Combined
+refresh and mark-read traffic shares the existing socket read-operation rate limit.
+
+Python native clients support socket-wide live direct messages through
+`RealtimeWebSocketDirectMessages` (ADR 1097). A bounded async worker invokes the
+handler once per message/socket and confirms requested receipts after successful
+processing; retries resend only ACKs. Handler failures stop connection recovery,
+while receipt exhaustion reports a safe error. Disconnect cancels/discards live
+work, independently of retained/read/durable cursors. Use inboxes when messages
+must survive disconnects. Shared clients attach one handler per physical socket.

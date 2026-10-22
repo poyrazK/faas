@@ -10,8 +10,10 @@ from ..models.runtime_policy_status_response_state import (
     RuntimePolicyStatusResponseState,
     check_runtime_policy_status_response_state,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.mcp_policy_convergence_snapshot import MCPPolicyConvergenceSnapshot
     from ..models.runtime_policy_component_status import RuntimePolicyComponentStatus
     from ..models.runtime_policy_node_status import RuntimePolicyNodeStatus
     from ..models.runtime_policy_scheduler_status import RuntimePolicySchedulerStatus
@@ -58,6 +60,9 @@ class RuntimePolicyStatusResponse:
     scheduler_scaling: RuntimePolicySchedulerStatus
     """Fresh observation of the desired scaling policy by the owning schedd. Active means the policy was loaded,
     not that a metric-driven replica target has been reached."""
+    mcp_convergence: MCPPolicyConvergenceSnapshot | Unset = UNSET
+    """Account-scoped live gateway replay observation for an active HTTP deployment. Snapshot metadata only; token
+    enforcement is not attested. Correlates retained admission evidence when available."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -91,6 +96,10 @@ class RuntimePolicyStatusResponse:
 
         scheduler_scaling = self.scheduler_scaling.to_dict()
 
+        mcp_convergence: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.mcp_convergence, Unset):
+            mcp_convergence = self.mcp_convergence.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -112,11 +121,14 @@ class RuntimePolicyStatusResponse:
                 "scheduler_scaling": scheduler_scaling,
             }
         )
+        if mcp_convergence is not UNSET:
+            field_dict["mcp_convergence"] = mcp_convergence
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.mcp_policy_convergence_snapshot import MCPPolicyConvergenceSnapshot
         from ..models.runtime_policy_component_status import RuntimePolicyComponentStatus
         from ..models.runtime_policy_node_status import RuntimePolicyNodeStatus
         from ..models.runtime_policy_scheduler_status import RuntimePolicySchedulerStatus
@@ -152,6 +164,13 @@ class RuntimePolicyStatusResponse:
 
         scheduler_scaling = RuntimePolicySchedulerStatus.from_dict(d.pop("scheduler_scaling"))
 
+        _mcp_convergence = d.pop("mcp_convergence", UNSET)
+        mcp_convergence: MCPPolicyConvergenceSnapshot | Unset
+        if isinstance(_mcp_convergence, Unset):
+            mcp_convergence = UNSET
+        else:
+            mcp_convergence = MCPPolicyConvergenceSnapshot.from_dict(_mcp_convergence)
+
         runtime_policy_status_response = cls(
             app_id=app_id,
             desired_revision=desired_revision,
@@ -168,6 +187,7 @@ class RuntimePolicyStatusResponse:
             egress_allowlist=egress_allowlist,
             cpu_limit=cpu_limit,
             scheduler_scaling=scheduler_scaling,
+            mcp_convergence=mcp_convergence,
         )
 
         runtime_policy_status_response.additional_properties = d

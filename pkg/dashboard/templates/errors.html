@@ -86,7 +86,7 @@
           <p><code>{{.Data.Detail.Fingerprint}}</code> · <code>{{.Data.Detail.ErrorClass}}</code> · <code>{{.Data.Detail.Route}}</code> · HTTP {{.Data.Detail.HTTPStatus}} · <span class="badge open">{{.Data.Detail.TriageState}}</span></p>
           {{if .Data.Detail.Sample}}
             <h3>First occurrence</h3>
-            <p><code>{{.Data.Detail.Sample.ReceivedAt}}</code> · request <code>{{.Data.Detail.Sample.RequestID}}</code></p>
+            <p><code>{{.Data.Detail.Sample.ReceivedAt}}</code> · request <code>{{.Data.Detail.Sample.RequestID}}</code> · <a href="/dashboard/apps/{{.Data.AppSlug}}/debug?since=365d&amp;request_id={{.Data.Detail.Sample.RequestID}}">open request evidence →</a></p>
             <p class="sample">{{.Data.Detail.Sample.SampleMessage}}</p>
             {{if .Data.Detail.Sample.HeadersSample}}
               <h4>Redacted headers</h4>
@@ -98,7 +98,7 @@
           {{if .Data.Detail.Requests}}
             <table aria-label="Requests for error fingerprint">
               <thead><tr><th>Received</th><th>Request</th><th>Route</th><th>Status</th><th>Message</th></tr></thead>
-              <tbody>{{range .Data.Detail.Requests}}<tr><td>{{.ReceivedAt}}</td><td><code>{{.RequestID}}</code></td><td><code>{{.Route}}</code></td><td>{{.HTTPStatus}}</td><td class="sample">{{.SampleMessage}}</td></tr>{{end}}</tbody>
+              <tbody>{{range .Data.Detail.Requests}}<tr><td>{{.ReceivedAt}}</td><td><a href="/dashboard/apps/{{$.Data.AppSlug}}/debug?since=365d&amp;request_id={{.RequestID}}" title="Open request evidence"><code>{{.RequestID}}</code></a></td><td><code>{{.Route}}</code></td><td>{{.HTTPStatus}}</td><td class="sample">{{.SampleMessage}}</td></tr>{{end}}</tbody>
             </table>
             {{if .Data.Detail.NextRequestsURL}}<p><a href="{{.Data.Detail.NextRequestsURL}}">Next requests →</a></p>{{end}}
           {{else}}

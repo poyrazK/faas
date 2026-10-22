@@ -22,6 +22,7 @@ type qualificationRuntimeVMM struct {
 	changeEvidence func(*EnvironmentQualificationRetirementEvidence)
 	beforeBoot     func(state.EnvironmentQualificationExecution) error
 	lastRetired    state.EnvironmentQualificationExecution
+	createDeadline time.Time
 }
 
 func newQualificationRuntimeVMM(v *fakeVMM) *qualificationRuntimeVMM {
@@ -31,6 +32,7 @@ func newQualificationRuntimeVMM(v *fakeVMM) *qualificationRuntimeVMM {
 }
 
 func (v *qualificationRuntimeVMM) CreateEnvironmentQualification(ctx context.Context, frame state.EnvironmentQualificationExecution, spec AppSpec) (*WakeOutcome, error) {
+	v.createDeadline, _ = ctx.Deadline()
 	if v.beforeBoot != nil {
 		if err := v.beforeBoot(frame); err != nil {
 			return nil, err

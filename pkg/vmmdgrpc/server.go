@@ -33,11 +33,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm/leakcheck"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/fcvm/netstats"
+	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
+	"github.com/onebox-faas/faas/pkg/leaser"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -46,6 +48,7 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
@@ -217,6 +220,18 @@ type AppTaskOutputVMMAPI interface {
 	ExecuteAppTaskWithOutput(context.Context, string, apptaskproto.Request, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
 }
 
+// AppTaskInteractiveVMMAPI runs an interactive app-task session (ADR-1037)
+// whose input and output belong to one attached client.
+type AppTaskInteractiveVMMAPI interface {
+	ExecuteInteractiveAppTask(context.Context, string, apptaskproto.Request, <-chan apptaskproto.InputEvent, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
+}
+
+// JobInteractiveVMMAPI runs ADR-1330's attached session against a live
+// interactive job guest without tearing the VM down.
+type JobInteractiveVMMAPI interface {
+	ExecuteInteractiveJob(context.Context, string, apptaskproto.Request, <-chan apptaskproto.InputEvent, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
+}
+
 // AppTaskRestoreVMMAPI is deliberately command-free. A successful return is
 // the scheduler's proof that a fresh app-task-only guest exists.
 type AppTaskRestoreVMMAPI interface {
@@ -247,7 +262,15 @@ type flowSnapshotter interface {
 
 // Server implements vmmdpb.VmmdServer.
 type Server struct {
+	parkStore     state.OperatorParkStore
+	parkNodeID    string
+	restartStore  state.OperatorRestartStore
+	restartNodeID string
 	vmmdpb.UnimplementedVmmdServer
+
+	// appTaskAttach pairs interactive app tasks with their attached client
+	// (ADR-1037). The zero value is ready to use.
+	appTaskAttach appTaskAttachRegistry
 
 	vmm   VmmdAPI
 	ops   *wire.OpsMetrics
@@ -286,6 +309,9 @@ type Server struct {
 	// constructors; production cmd/vmmd uses
 	// NewWithCPUAndNetAndActivity.
 	activity *activity.ActivityTracker
+	// inflightTraces holds each in-flight HTTP forward's traceparent for
+	// InflightRequestTrace (ADR-1138).
+	inflightTraces inflightTraces
 	// identitySigner mints execution-only assertions for the scheduler's
 	// outbound relay. Tokens are sent only over the vmmd↔schedd stream.
 	identitySigner *workloadidentity.Signer
@@ -313,13 +339,22 @@ type Server struct {
 	// migrationLeases is the optional durable source-side lease record. The
 	// in-memory tracker remains the hot cache for paused-VM handles; this store
 	// survives vmmd restarts and supplies those handles to Ack/Cancel/expiry.
-	migrationLeases state.MigrationLeaseStore
+	migrationLeases         state.MigrationLeaseStore
+	migrationAdmissions     state.MigrationAdmissionStore
+	migrationAdmissionAfter string // owned by LeaseExpiryLoop
+	migrationSources        state.MigrationSourceStore
+	migrationSourceAfter    string // owned by LeaseExpiryLoop
 	// nodeID is this vmmd's registered compute-node identity. Lease
 	// expiry uses it to distinguish a source VM that still belongs
 	// here from a row already committed to a peer; without that
 	// distinction it could either strand a paused source or resume
 	// a VM after ownership moved away.
 	nodeID string
+	// qualificationNodeID is the durable local compute identity used by the
+	// attempt-aware qualification RPCs. A legacy single-box vmmd can use its
+	// seeded default-local row without enabling multi-node migration paths.
+	qualificationNodeID           string
+	managedPostgresDrainAuthority state.ManagedPostgresDrainAuthority
 	// streamBridges owns the reusable v2 bridge process and H2C transport for
 	// each live instance. It is lazy so tests and legacy/v1 traffic pay no
 	// startup cost until the optimized path is actually used.
@@ -401,6 +436,8 @@ func (s *Server) WithEvents(p *events.Platform) *Server {
 func (s *Server) WithMigrationStore(store state.Store) *Server {
 	if s != nil {
 		s.migrationStore = store
+		s.migrationAdmissions, _ = store.(state.MigrationAdmissionStore)
+		s.migrationSources, _ = store.(state.MigrationSourceStore)
 		s.migrationLeases = nil
 		if leases, ok := store.(state.MigrationLeaseStore); ok {
 			s.migrationLeases = leases
@@ -428,6 +465,15 @@ func (s *Server) WithNodeID(nodeID string) *Server {
 	return s
 }
 
+// WithQualificationNodeID binds private qualification RPCs to the local
+// compute row, including the seeded default-local row in single-box mode.
+func (s *Server) WithQualificationNodeID(nodeID string) *Server {
+	if s != nil {
+		s.qualificationNodeID = strings.TrimSpace(nodeID)
+	}
+	return s
+}
+
 // WithExecutionIdentitySigner enables the host-only Runs outbound identity
 // minting path. A nil signer leaves broker RPCs unavailable.
 func (s *Server) WithExecutionIdentitySigner(signer *workloadidentity.Signer) *Server {
@@ -441,7 +487,7 @@ func (s *Server) WithExecutionIdentitySigner(signer *workloadidentity.Signer) *S
 // common lease interface. Durable storage is preferred when configured so
 // callers retain lease state across vmmd restarts; the hot tracker remains the
 // compatibility fallback for in-memory/unit-test fixtures.
-func (s *Server) MigrationLeaser() sched.Leaser[any] {
+func (s *Server) MigrationLeaser() leaser.Leaser[any] {
 	if s == nil {
 		return nil
 	}
@@ -661,8 +707,8 @@ func (s *Server) wakeWithBridgePrewarm(ctx context.Context, wr fcvm.WakeRequest,
 	if s.streamBridges == nil {
 		s.streamBridges = newStreamBridgeManager(s.log)
 	}
-	inst, err := fastVMM.WakeWithNetworkReady(ctx, wr, func(ready fcvm.WakeNetworkReady) { //nolint:contextcheck // The persistent bridge follows vmmd's lifecycle, not the short wake RPC.
-		s.streamBridges.prewarm(&vmmdpb.ForwardHTTPRequestInit{
+	inst, err := fastVMM.WakeWithNetworkReady(ctx, wr, func(ready fcvm.WakeNetworkReady) {
+		s.streamBridges.prewarm(withPublicTarget(ctx, ready.PublicTarget), &vmmdpb.ForwardHTTPRequestInit{
 			Instance:    ready.Instance,
 			Port:        uint32(wr.Port),
 			AppProtocol: appProtocol,
@@ -739,6 +785,15 @@ func (s *Server) jobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	boot.StartHeld = startHeld
+	var interactiveVMM JobInteractiveVMMAPI
+	var attach *pendingAppTaskAttach
+	if boot.Interactive != nil {
+		interactiveVMM, attach, err = s.registerInteractiveJob(req, startHeld)
+		if err != nil {
+			s.ops.Observe(op, time.Since(start), err)
+			return nil, err
+		}
+	}
 	var inst *fcvm.Instance
 	if req.GetQualificationExecution() != nil {
 		qualifier, supported := s.vmm.(environmentQualificationJobVMMAPI)
@@ -756,35 +811,76 @@ func (s *Server) jobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest
 		inst, err = jobVMM.BootJob(ctx, boot)
 	}
 	s.ops.Observe(op, time.Since(start), err)
+	var problem *api.Problem
 	if err != nil {
 		s.log.Error("vmmd: job cold boot failed", "instance", req.GetInstance(),
 			"run", req.GetRunId(), "task", req.GetTaskIndex(), "err", err.Error())
-		return nil, grpcerr.ToStatus(toProblem(err))
+		problem = toProblem(err)
+	} else {
+		problem = jobBootContractProblem(inst, startHeld)
 	}
-	if inst == nil {
-		err := api.NewProblem(int(codes.Internal), api.CodeInternal,
-			"Job boot failed", "vmmd returned an empty instance")
-		return nil, grpcerr.ToStatus(err)
+	if problem != nil {
+		if attach != nil {
+			s.appTaskAttach.unregister(req.GetInstance(), attach)
+		}
+		return nil, grpcerr.ToStatus(problem)
 	}
-	if inst.Lease.Netns == "" || !inst.Lease.HostIP.Is4() || inst.Lease.UID <= 0 ||
-		int64(int32(inst.Lease.UID)) != int64(inst.Lease.UID) {
-		err := api.NewProblem(int(codes.Internal), api.CodeInternal,
-			"Job boot failed", "vmmd returned an incomplete runtime identity")
-		return nil, grpcerr.ToStatus(err)
-	}
-	if inst.JobStartGateEnabled != startHeld {
-		err := api.NewProblem(int(codes.Internal), api.CodeInternal,
-			"Job boot failed", "vmmd did not honor the requested held-start contract")
-		return nil, grpcerr.ToStatus(err)
+	if attach != nil {
+		go s.serveInteractiveJob(context.WithoutCancel(ctx), interactiveVMM, req.GetInstance(), attach, boot.Interactive, boot.TaskTimeoutSec)
 	}
 	return &vmmdpb.JobColdBootResponse{
-		Instance:  inst.Lease.Instance,
-		NodeId:    boot.NodeID,
-		Netns:     inst.Lease.Netns,
-		HostIp:    inst.Lease.HostIP.String(),
-		GuestUid:  int32(inst.Lease.UID),
-		StartHeld: startHeld,
+		Instance:     inst.Lease.Instance,
+		NodeId:       boot.NodeID,
+		Netns:        inst.Lease.Netns,
+		HostIp:       inst.Lease.HostIP.String(),
+		GuestUid:     int32(inst.Lease.UID),
+		StartHeld:    startHeld,
+		Interactive:  attach != nil,
+		ImageProcess: boot.ImageProcess,
 	}, nil
+}
+
+// jobBootContractProblem rejects a booted job instance that lacks what schedd
+// needs to publish it.
+func jobBootContractProblem(inst *fcvm.Instance, startHeld bool) *api.Problem {
+	switch {
+	case inst == nil:
+		return api.NewProblem(int(codes.Internal), api.CodeInternal,
+			"Job boot failed", "vmmd returned an empty instance")
+	case inst.Lease.Netns == "" || !inst.Lease.HostIP.Is4() || inst.Lease.UID <= 0 ||
+		int64(int32(inst.Lease.UID)) != int64(inst.Lease.UID):
+		return api.NewProblem(int(codes.Internal), api.CodeInternal,
+			"Job boot failed", "vmmd returned an incomplete runtime identity")
+	case inst.JobStartGateEnabled != startHeld:
+		return api.NewProblem(int(codes.Internal), api.CodeInternal,
+			"Job boot failed", "vmmd did not honor the requested held-start contract")
+	}
+	return nil
+}
+
+// registerInteractiveJob checks that this vmmd can serve ADR-1330's session
+// and registers the instance's rendezvous before the VM boots. Errors are
+// gRPC statuses: a duplicate registration is AlreadyExists, which a Problem's
+// validation code would flatten to InvalidArgument.
+func (s *Server) registerInteractiveJob(req *vmmdpb.JobColdBootRequest, startHeld bool) (JobInteractiveVMMAPI, *pendingAppTaskAttach, error) {
+	jobVMM, ok := s.vmm.(JobInteractiveVMMAPI)
+	if !ok {
+		return nil, nil, grpcerr.ToStatus(api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Interactive jobs unavailable", "vmmd interactive job sessions are not configured"))
+	}
+	if startHeld || req.GetQualificationExecution() != nil {
+		return nil, nil, grpcerr.ToStatus(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid interactive job", "an interactive job cannot be start-held or a qualification attempt"))
+	}
+	entry, err := s.appTaskAttach.register(req.GetInstance(), req.GetInteractive().GetAttachTokenSha256())
+	if err != nil {
+		code := codes.InvalidArgument
+		if errors.Is(err, errAppTaskAttachDuplicate) {
+			code = codes.AlreadyExists
+		}
+		return nil, nil, status.Error(code, err.Error())
+	}
+	return jobVMM, entry, nil
 }
 
 func (s *Server) ReleaseJobStart(ctx context.Context, req *vmmdpb.ReleaseJobStartRequest) (*vmmdpb.ReleaseJobStartResponse, error) {
@@ -969,6 +1065,7 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 		VmstateBytes:              info.VMStateBytes,
 		StoredBytes:               info.StoredBytes,
 		BeforeCheckpointCompleted: req.GetBeforeCheckpoint(),
+		Capture:                   info.Capture.ToProto(),
 	}, nil
 }
 
@@ -1025,6 +1122,7 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 		MemBytes:     info.MemBytes,
 		VmstateBytes: info.VMStateBytes,
 		StoredBytes:  info.StoredBytes,
+		Capture:      info.Capture.ToProto(),
 	}, nil
 }
 
@@ -1050,14 +1148,8 @@ func (s *Server) ResumeWarmInstance(ctx context.Context, req *vmmdpb.ResumeWarmI
 		return nil, grpcerr.ToStatus(err)
 	}
 	if req.GetImageHealthcheckRequired() {
-		reader, ok := s.vmm.(interface {
-			ImageHealthcheckRequiredFor(string) bool
-		})
-		if !ok {
-			return nil, grpcerr.ToStatus(api.NewProblem(409, api.CodeValidation, "Image healthcheck contract unavailable", "vmmd cannot verify the stored instance contract"))
-		}
-		if !reader.ImageHealthcheckRequiredFor(req.GetInstance()) {
-			return nil, grpcerr.ToStatus(api.NewProblem(409, api.CodeValidation, "Image healthcheck contract missing", "the instance was not created with required image healthcheck readiness"))
+		if p := s.imageHealthcheckContractProblem(req.GetInstance()); p != nil {
+			return nil, grpcerr.ToStatus(p)
 		}
 	}
 	err := resumer.ResumeVM(ctx, req.GetInstance())
@@ -1066,6 +1158,22 @@ func (s *Server) ResumeWarmInstance(ctx context.Context, req *vmmdpb.ResumeWarmI
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	return &vmmdpb.ResumeWarmInstanceResponse{Instance: req.GetInstance(), ImageHealthcheckVerified: req.GetImageHealthcheckRequired(), SupportsImageHealthcheckMonitoring: true}, nil
+}
+
+// imageHealthcheckContractProblem refuses a resume that asks for a fresh
+// image healthcheck of an instance whose stored boot contract does not
+// require one. A caller cannot upgrade an older instance by setting a flag.
+func (s *Server) imageHealthcheckContractProblem(instance string) *api.Problem {
+	reader, ok := s.vmm.(interface {
+		ImageHealthcheckRequiredFor(string) bool
+	})
+	if !ok {
+		return api.NewProblem(409, api.CodeValidation, "Image healthcheck contract unavailable", "vmmd cannot verify the stored instance contract")
+	}
+	if !reader.ImageHealthcheckRequiredFor(instance) {
+		return api.NewProblem(409, api.CodeValidation, "Image healthcheck contract missing", "the instance was not created with required image healthcheck readiness")
+	}
+	return nil
 }
 
 // WaitBuilderReady exposes the vmmd-owned serial handoff to builderd. The
@@ -1216,9 +1324,37 @@ func (s *Server) FrameworkReady(ctx context.Context, req *vmmdpb.FrameworkReadyR
 // unbounded across the vmmd process lifetime. issue #279.
 func (s *Server) Destroy(ctx context.Context, req *vmmdpb.DestroyRequest) (*vmmdpb.DestroyResponse, error) {
 	const op = "Destroy"
+	ctx = withIncomingCorrelation(ctx)
 	start := time.Now()
 	exportDir := s.exportDirFor(req.GetInstance())
-	code, err := s.vmm.DestroyWithExport(ctx, req.GetInstance(), exportDir)
+	var code int
+	var err error
+	if req.GetRehearsalColdPreparationId() != "" && req.GetRehearsalWorkerFaultId() != "" {
+		return nil, status.Error(codes.InvalidArgument, "one rehearsal retirement authority is required")
+	}
+	if prep := req.GetRehearsalColdPreparationId(); prep != "" {
+		owner, ok := s.vmm.(interface {
+			RetireRehearsalCold(context.Context, string, string) error
+		})
+		if !ok {
+			err = status.Error(codes.Unimplemented, "cold-start rehearsal retirement unavailable")
+			s.ops.Observe(op, time.Since(start), err)
+			return nil, err
+		}
+		err = owner.RetireRehearsalCold(ctx, req.GetInstance(), prep)
+	} else if fault := req.GetRehearsalWorkerFaultId(); fault != "" {
+		terminator, ok := s.vmm.(interface {
+			TerminateRehearsalWorker(context.Context, string, string) error
+		})
+		if !ok {
+			err = status.Error(codes.Unimplemented, "rehearsal worker termination unavailable")
+			s.ops.Observe(op, time.Since(start), err)
+			return nil, err
+		}
+		err = terminator.TerminateRehearsalWorker(ctx, req.GetInstance(), fault)
+	} else {
+		code, err = s.vmm.DestroyWithExport(ctx, req.GetInstance(), exportDir)
+	}
 	if err != nil {
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
@@ -1229,7 +1365,7 @@ func (s *Server) Destroy(ctx context.Context, req *vmmdpb.DestroyRequest) (*vmmd
 	s.ForgetActivity(req.GetInstance())
 	s.diverged.Forget(req.GetInstance())
 	s.ops.Observe(op, time.Since(start), nil)
-	return &vmmdpb.DestroyResponse{Instance: req.GetInstance(), ExitCode: int32(code)}, nil
+	return &vmmdpb.DestroyResponse{Instance: req.GetInstance(), ExitCode: int32(code), RehearsalWorkerFaultId: req.GetRehearsalWorkerFaultId(), RehearsalColdPreparationId: req.GetRehearsalColdPreparationId()}, nil
 }
 
 // StopInstance (M-2 / ADR-138 §Decision 1) is the graceful
@@ -1334,6 +1470,8 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 	for inst, b := range resident {
 		total += b
 		row := buildInstanceStatsRow(inst, b, s.cpuCache, s.netCache, s.activity, s.ops)
+		s.addQuietPauseState(row)
+		s.addFrozenState(row)
 		if provider, ok := s.vmm.(interface {
 			DiskUsage(string) (fcvm.DiskUsage, bool)
 		}); ok {
@@ -1909,7 +2047,7 @@ func (s *Server) SeccompStatus(ctx context.Context, req *vmmdpb.SeccompStatusReq
 //     a misbehaving caller or a leaked token from another
 //     `faas`-group member cannot read arbitrary storage bytes
 //     through vmmd's loopback mount; the allow-list is the
-//     host-arch + sibling-arch set from sched.IsParentBaseKey).
+//     host-arch + sibling-arch set from storagekey.IsParentBase).
 //  3. vmm.MountParentExt4 returns vmmdmount.ErrNotFound →
 //     NotFound (the storage backend has no such key — the
 //     load-bearing wire code for imaged's pre-staging checks).
@@ -1931,8 +2069,8 @@ func (s *Server) MountParentExt4ReadOnly(ctx context.Context, req *vmmdpb.MountP
 	// Allow-list check (review finding #4): only the canonical
 	// parent-base storage keys may be loopback-mounted. The set
 	// is per-arch (host + sibling for heterogenous clusters);
-	// see sched.IsParentBaseKey.
-	if !sched.IsParentBaseKey(req.GetStorageKey()) {
+	// see storagekey.IsParentBase.
+	if !storagekey.IsParentBase(req.GetStorageKey()) {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"storage_key not in allow-list",
 			"only the canonical parent base ext4 key may be mounted").
@@ -1955,7 +2093,7 @@ func (s *Server) MountParentExt4ReadOnly(ctx context.Context, req *vmmdpb.MountP
 			s.ops.Observe(op, time.Since(start), p)
 			return nil, grpcerr.ToStatus(p)
 		}
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, parentMountStatus(err)
 	}
 	return &vmmdpb.MountParentExt4ReadOnlyResponse{Mountpoint: mp}, nil
 }
@@ -1973,7 +2111,7 @@ func (s *Server) MaterializeParentExt4(ctx context.Context, req *vmmdpb.Material
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
-	if !sched.IsParentBaseKey(req.GetStorageKey()) {
+	if !storagekey.IsParentBase(req.GetStorageKey()) {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"storage_key not in allow-list",
 			"only the canonical parent base ext4 key may be materialized").
@@ -1997,7 +2135,7 @@ func (s *Server) MaterializeParentExt4(ctx context.Context, req *vmmdpb.Material
 				WithDocs(wire.DocsBaseURL + "/vmmd#materialize-parent-ext4")
 			return nil, grpcerr.ToStatus(p)
 		}
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, parentMountStatus(err)
 	}
 	return &vmmdpb.MaterializeParentExt4Response{}, nil
 }
@@ -2021,7 +2159,7 @@ func (s *Server) UmountParentExt4(ctx context.Context, req *vmmdpb.UmountParentE
 	}
 	if err := s.vmm.UmountParentExt4(ctx, req.GetMountpoint()); err != nil {
 		s.ops.Observe(op, time.Since(start), err)
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, parentMountStatus(err)
 	}
 	s.ops.Observe(op, time.Since(start), nil)
 	return &vmmdpb.UmountParentExt4Response{}, nil
@@ -2068,7 +2206,7 @@ func (s *Server) MountOverlayParent(ctx context.Context, req *vmmdpb.MountOverla
 			s.ops.Observe(op, time.Since(start), p)
 			return nil, grpcerr.ToStatus(p)
 		}
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, parentMountStatus(err)
 	}
 	return &vmmdpb.MountOverlayParentResponse{}, nil
 }
@@ -2099,7 +2237,7 @@ func (s *Server) UmountOverlayParent(ctx context.Context, req *vmmdpb.UmountOver
 			// blocker.
 			return &vmmdpb.UmountOverlayParentResponse{}, nil
 		}
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, parentMountStatus(err)
 	}
 	return &vmmdpb.UmountOverlayParentResponse{}, nil
 }
@@ -2211,6 +2349,17 @@ func toProblem(err error) *api.Problem {
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, fcvm.ErrFunctionWarmCapture) {
+		return api.NewProblem(500, api.CodeInternal,
+			"Function warm capture failed", "function checkpoint or resource recovery did not complete; retire the source VM before replacing it")
+	}
+	if errors.Is(err, financial.ErrComputeUnavailable) || errors.Is(err, financial.ErrComputeFence) {
+		return api.NewProblem(503, "financial_compute_unavailable", "Compute admission unavailable", "The VM compute authority or stable execution attempt could not be verified.")
+	}
+	if errors.Is(err, financial.ErrComputeBudget) {
+		return api.NewProblem(402, "financial_budget_held", "Compute budget held", "The workload cannot reserve its next compute execution window.")
+	}
+
 	if errors.Is(err, fcvm.ErrAppAdmissionFenced) {
 		return api.NewProblem(409, api.CodeDatabaseCutoverFenced,
 			"Database cutover in progress", "app admission is fenced for a managed PostgreSQL cutover")
@@ -2218,6 +2367,22 @@ func toProblem(err error) *api.Problem {
 	if errors.Is(err, fcvm.ErrAppAdmissionUnavailable) {
 		return api.NewProblem(503, api.CodeAppAdmissionUnavailable,
 			"App admission unavailable", "vmmd could not verify durable app admission")
+	}
+	if errors.Is(err, fcvm.ErrNotFreezable) {
+		return api.NewProblem(409, api.CodeInstanceNotFreezable,
+			"Instance cannot be frozen", err.Error())
+	}
+	if errors.Is(err, fcvm.ErrInstanceBusy) {
+		return api.NewProblem(409, api.CodeInstanceBusy,
+			"Instance busy", "the instance is serving a request, stream or session; it keeps running")
+	}
+	if errors.Is(err, fcvm.ErrInstanceFrozen) {
+		return api.NewProblem(409, api.CodeFrozenInstanceRefused,
+			"Instance frozen", "the instance is frozen; thaw or destroy it instead")
+	}
+	if errors.Is(err, fcvm.ErrCompressUnavailable) {
+		return api.NewProblem(409, api.CodeFrozenCompressUnavailable,
+			"Compression unavailable", "this host has no memory-only swap to compress a frozen instance into")
 	}
 	if errors.Is(err, fcvm.ErrBeforeCheckpointFailed) {
 		return api.NewProblem(422, api.CodeBeforeCheckpointFailed,

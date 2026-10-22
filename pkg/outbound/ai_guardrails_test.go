@@ -238,15 +238,15 @@ func TestPerMinuteLimits(t *testing.T) {
 func TestPlanRefusesUnbufferedBodiesItMustInspect(t *testing.T) {
 	integration := Integration{AIProvider: api.OutboundAIProviderBedrock}
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/i/x/model/m/converse", strings.NewReader("{}"))
-	if _, rejection := planAICall(request, integration, "", "/model/m/converse", nil); rejection == nil || rejection.status != http.StatusRequestEntityTooLarge {
+	if _, rejection := planAICall(request, integration, "", "/model/m/converse", nil, nil); rejection == nil || rejection.status != http.StatusRequestEntityTooLarge {
 		t.Fatalf("unbuffered Bedrock body = %+v", rejection)
 	}
 	integration = Integration{AIProvider: api.OutboundAIProviderOpenAI,
 		BindingAIGuardrails: map[string]AIGuardrails{"app-1": {AllowedModels: []string{"m"}}}}
-	if _, rejection := planAICall(request, integration, "app-1", "/v1/chat/completions", nil); rejection == nil {
+	if _, rejection := planAICall(request, integration, "app-1", "/v1/chat/completions", nil, nil); rejection == nil {
 		t.Fatal("a guarded app's unbuffered body was not refused")
 	}
-	if plan, rejection := planAICall(request, integration, "app-2", "/v1/chat/completions", nil); rejection != nil || plan.reserve.tokens != 1+api.OutboundAIDefaultOutputReserveTokens {
+	if plan, rejection := planAICall(request, integration, "app-2", "/v1/chat/completions", nil, nil); rejection != nil || plan.reserve.tokens != 1+api.OutboundAIDefaultOutputReserveTokens {
 		t.Fatalf("unguarded unbuffered plan = %+v %+v", plan, rejection)
 	}
 }
@@ -258,7 +258,7 @@ func TestReservationPricesTheEstimate(t *testing.T) {
 	body := `{"model":"gpt-4o","max_tokens":1000}`
 	ai := &aiRequest{body: []byte(body)}
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/", strings.NewReader(body))
-	plan, rejection := planAICall(request, integration, "", "/v1/chat/completions", ai)
+	plan, rejection := planAICall(request, integration, "", "/v1/chat/completions", ai, nil)
 	if rejection != nil {
 		t.Fatal(rejection)
 	}

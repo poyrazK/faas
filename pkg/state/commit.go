@@ -9,12 +9,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
+	commitwork "github.com/onebox-faas/faas/pkg/commit"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var ErrCommitQueueFull = errors.New("state: commit queue full")
 
 type CommitSource struct {
+	Destination          string     `json:"destination"`
 	ID                   string     `json:"id"`
 	AccountID            string     `json:"-"`
 	AppID                string     `json:"app_id"`
@@ -30,13 +32,14 @@ type CommitSource struct {
 	OldestPendingAt      *time.Time `json:"oldest_pending_at,omitempty"`
 }
 type CommitReceipt struct {
-	ID           string    `json:"receipt_id"`
-	SourceID     string    `json:"source_id"`
-	EventID      string    `json:"event_id"`
-	InvocationID string    `json:"invocation_id,omitempty"`
-	OperationID  string    `json:"operation_id,omitempty"`
-	AcceptedAt   time.Time `json:"accepted_at"`
-	OperationURL string    `json:"operation_url"`
+	ID           string                      `json:"receipt_id"`
+	SourceID     string                      `json:"source_id"`
+	EventID      string                      `json:"event_id"`
+	InvocationID string                      `json:"invocation_id,omitempty"`
+	OperationID  string                      `json:"operation_id,omitempty"`
+	AcceptedAt   time.Time                   `json:"accepted_at"`
+	OperationURL string                      `json:"operation_url,omitempty"`
+	Publication  *api.CommitEventPublication `json:"publication,omitempty"`
 }
 
 type CommitOperation struct {
@@ -161,7 +164,7 @@ func (s *PgStore) ListCommitRelaySources(ctx context.Context, after string, limi
 	if limit < 1 || limit > 64 {
 		return nil, ErrInvalidArgument
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id::text,account_id::text,app_id::text,name,enabled,COALESCE(operation_policy,''),contract_version,allow_tenant_selection,sealed_connection,credential_revision
+	rows, err := s.pool.Query(ctx, `SELECT id::text,account_id::text,app_id::text,name,enabled,COALESCE(operation_policy,''),contract_version,allow_tenant_selection,destination,sealed_connection,credential_revision
  FROM commit_sources WHERE enabled AND sealed_connection IS NOT NULL
  AND ($1::text='' OR id>NULLIF($1,'')::uuid) ORDER BY id LIMIT $2`, after, limit)
 	if err != nil {
@@ -171,7 +174,7 @@ func (s *PgStore) ListCommitRelaySources(ctx context.Context, after string, limi
 	var sources []CommitRelaySource
 	for rows.Next() {
 		var src CommitRelaySource
-		if err := rows.Scan(&src.ID, &src.AccountID, &src.AppID, &src.Name, &src.Enabled, &src.OperationPolicy, &src.ContractVersion, &src.AllowTenantSelection, &src.SealedConnection, &src.CredentialRevision); err != nil {
+		if err := rows.Scan(&src.ID, &src.AccountID, &src.AppID, &src.Name, &src.Enabled, &src.OperationPolicy, &src.ContractVersion, &src.AllowTenantSelection, &src.Destination, &src.SealedConnection, &src.CredentialRevision); err != nil {
 			return nil, err
 		}
 		sources = append(sources, src)
@@ -213,6 +216,18 @@ func (s *PgStore) SetCommitSourceEnabled(ctx context.Context, account, id string
 }
 
 func (s *PgStore) CreateCommitSource(ctx context.Context, src CommitSource) (CommitSource, error) {
+	if src.Destination == "" {
+		src.Destination = "operation"
+	}
+	if src.Destination == "event" {
+		if src.ContractVersion != 3 || src.AllowTenantSelection || src.OperationPolicy != "" {
+			return src, ErrInvalidArgument
+		}
+		return s.createCommitPublicationSource(ctx, src)
+	}
+	if src.Destination != "operation" {
+		return src, ErrInvalidArgument
+	}
 	if src.ContractVersion == 0 {
 		src.ContractVersion = 1
 	}
@@ -225,7 +240,7 @@ func (s *PgStore) CreateCommitSource(ctx context.Context, src CommitSource) (Com
 	err := s.pool.QueryRow(ctx, `INSERT INTO commit_sources(account_id,app_id,name)
  SELECT $1::uuid,id,$3 FROM apps WHERE id=$2::uuid AND account_id=$1::uuid
  ON CONFLICT(account_id,name) DO UPDATE SET name=commit_sources.name
- WHERE commit_sources.app_id=excluded.app_id AND commit_sources.operation_policy IS NULL
+ WHERE commit_sources.app_id=excluded.app_id AND commit_sources.operation_policy IS NULL AND commit_sources.destination='operation'
  RETURNING id::text,enabled`, src.AccountID, src.AppID, src.Name).Scan(&src.ID, &src.Enabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var conflict bool
@@ -241,7 +256,7 @@ func (s *PgStore) CreateCommitSource(ctx context.Context, src CommitSource) (Com
 }
 func (s *PgStore) CommitSourceByID(ctx context.Context, account, id string) (CommitSource, error) {
 	row, err := sqlc.New().CommitSourceIdentity(ctx, s.pool, sqlc.CommitSourceIdentityParams{AccountID: account, SourceID: id})
-	src := CommitSource{ID: row.ID, AccountID: account, AppID: row.AppID, Name: row.Name,
+	src := CommitSource{ID: row.ID, AccountID: account, AppID: row.AppID, Name: row.Name, Destination: row.Destination,
 		Enabled: row.Enabled, OperationPolicy: row.OperationPolicy, ContractVersion: int(row.ContractVersion), AllowTenantSelection: row.AllowTenantSelection, RelayStatus: row.RelayStatus,
 		LastCheckedAt: exclusiveTime(row.LastCheckedAt), OldestPendingAt: exclusiveTime(row.OldestPendingAt)}
 	if row.PendingEvents.Valid {
@@ -263,7 +278,11 @@ func (s *PgStore) CommitReceiptByEvent(ctx context.Context, account, source, eve
 	row, err := sqlc.New().CommitReceiptIdentity(ctx, s.pool, sqlc.CommitReceiptIdentityParams{AccountID: account, SourceID: source, EventID: event})
 	receipt := CommitReceipt{ID: row.ID, SourceID: row.SourceID, EventID: row.EventID,
 		InvocationID: row.InvocationID, OperationID: row.OperationID, AcceptedAt: row.AcceptedAt.Time}
-	receipt.OperationURL = "/v1/operations/" + receipt.WorkID()
+	if row.PublicationAcceptanceID > 0 {
+		receipt.Publication = commitPublicationIdentity(row.PublicationAcceptanceID, row.PublicationSource, row.PublicationEventID, receipt.AcceptedAt)
+	} else {
+		receipt.OperationURL = "/v1/operations/" + receipt.WorkID()
+	}
 	return receipt, mapErr(err)
 }
 
@@ -274,6 +293,12 @@ func (s *PgStore) AcceptCommitEvent(ctx context.Context, account, source, event,
 	src, err := s.CommitSourceByID(ctx, account, source)
 	if err != nil {
 		return CommitReceipt{}, err
+	}
+	if len(routing) > 1 {
+		return CommitReceipt{}, ErrInvalidArgument
+	}
+	if src.Destination == "event" {
+		return s.AcceptCommitPublication(ctx, account, source, commitwork.Event{ID: event, Type: kind, Data: data, Routing: commitSelectedRouting(routing)})
 	}
 	if src.OperationPolicy != "" {
 		return s.AcceptCommitOperation(ctx, account, source, event, kind, data, inv, routing...)

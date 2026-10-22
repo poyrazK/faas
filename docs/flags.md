@@ -523,9 +523,16 @@ flags_workload_jwks_path = "/etc/faas/workload-identity-public.jwks.json"
 flags_workload_issuer = "https://identity.gregale.dev"
 ```
 
-Enable the qualification with `FAAS_FLAGS_ENABLED=1` (disabled by default).
-Environment overrides are `FAAS_FLAGS_WORKLOAD_JWKS_PATH` and
-`FAAS_FLAGS_WORKLOAD_ISSUER`. Missing trust leaves the runtime endpoint unavailable;
+Release Flags with the `customer_flags` platform flag
+([platform flags](ops/platform-flags.md), ADR-1700): `gregalectl flags enable
+--key customer_flags` and then `allow` one account at a time, or a rollout.
+It applies without a restart. `flags_enabled` / `FAAS_FLAGS_ENABLED=1`
+(disabled by default) is only its boot fallback, releasing Flags to every
+account until an operator writes the flag. Environment overrides for workload
+trust are `FAAS_FLAGS_WORKLOAD_JWKS_PATH` and
+`FAAS_FLAGS_WORKLOAD_ISSUER`. With neither set, Flags uses the cluster
+workload trust Ansible installs (`workload_jwks_path`, ADR-1141; see
+[workload identity](workload-identity.md)). Missing trust leaves the runtime endpoint unavailable;
 malformed configured trust fails startup. Restart apid after replacing the public
 JWKS file. Tokens must use the `gregale:flags` audience, last at most five minutes,
 and identify an active account and live app instance. Runtime clients cannot

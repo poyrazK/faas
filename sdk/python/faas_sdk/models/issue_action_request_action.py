@@ -1,12 +1,14 @@
 from typing import Literal
 
-IssueActionRequestAction = Literal["assign", "ignore", "reopen", "resolve"]
+IssueActionRequestAction = Literal["assign", "ignore", "merge", "reopen", "resolve", "split"]
 
 ISSUE_ACTION_REQUEST_ACTION_VALUES: set[IssueActionRequestAction] = {
     "assign",
     "ignore",
+    "merge",
     "reopen",
     "resolve",
+    "split",
 }
 
 

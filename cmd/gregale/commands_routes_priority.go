@@ -108,4 +108,30 @@ func renderRoutePriorities(w io.Writer, p api.RoutePrioritiesResponse) {
 		_ = tw.Flush()
 	}
 	_, _ = fmt.Fprintln(w, "Crawlers and link-preview bots that match no rule are bulk. Priorities apply only while every instance is busy.")
+	if p.Queue != nil {
+		renderRoutePriorityQueue(w, *p.Queue)
+	}
+}
+
+// renderRoutePriorityQueue shows the queue outcomes per class (ADR-1152).
+func renderRoutePriorityQueue(w io.Writer, q api.RoutePriorityQueueStats) {
+	if q.Source != api.RouteEvidenceSourceLive {
+		_, _ = fmt.Fprintln(w, "\nQueue outcomes: unavailable (gateway metrics are not reachable).")
+		return
+	}
+	var total int64
+	for _, c := range q.Classes {
+		total += c.Queued + c.Displacing + c.Rejected
+	}
+	if total == 0 {
+		_, _ = fmt.Fprintf(w, "\nQueue outcomes (last %s): no request had to wait.\n", q.Window)
+		return
+	}
+	_, _ = fmt.Fprintf(w, "\nQueue outcomes (last %s):\n", q.Window)
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "CLASS\tQUEUED\tTOOK A PLACE\tLOST ITS PLACE\tTURNED AWAY")
+	for _, c := range q.Classes {
+		_, _ = fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\n", c.Class, c.Queued, c.Displacing, c.Displaced, c.Rejected)
+	}
+	_ = tw.Flush()
 }

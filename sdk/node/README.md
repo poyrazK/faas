@@ -52,6 +52,93 @@ cd /path/to/your/project
 npm install /tmp/gregale-sdk-node-0.1.0.tgz
 ```
 
+## PostgreSQL pools across checkpoint, restore and thaw
+
+The `@gregale/sdk-node/postgres/runtime` subpath exports `createPostgresPool`,
+`postgresPoolConfig`, and `PostgresPoolError`. Install `pg` separately. This
+runtime has no control-plane client or driver dependency, and does not install
+process handlers. The CLI's `rest-api-postgres` starter bundles the same compiled
+runtime, so scaffolding does not depend on a published npm SDK.
+
+```ts
+import pg from 'pg';
+import {createPostgresPool, postgresPoolConfig} from '@gregale/sdk-node/postgres/runtime';
+
+const database = createPostgresPool(
+  () => new pg.Pool(postgresPoolConfig(process.env.DATABASE_URL!)),
+  {
+    readinessQuery: {text: 'SELECT id FROM notes LIMIT 1'},
+    onEvent: event => console.error(JSON.stringify(event)),
+  },
+);
+const {rows} = await database.query<{id: number; body: string}>(
+  'INSERT INTO notes(body) VALUES ($1) RETURNING id, body', ['hello'],
+  {write: true, signal: requestAbortSignal},
+);
+```
+
+Read current credentials **inside** the factory; it must return a fresh `pg.Pool`
+each time. The helper does not mutate `process.env` or subscribe to secret
+reloads. Managed binding rotation still uses Gregale's replacement/retirement
+protocol. Never share the underlying pool with other borrowers or call its
+`end()` yourself.
+
+Declare both hooks in `gregale.yaml` and wire their HTTP handlers:
+
+```yaml
+lifecycle:
+  before_checkpoint:
+    path: /internal/before-checkpoint
+    timeout_ms: 2000
+  after_restore:
+    path: /internal/after-restore
+    timeout_ms: 2000
+```
+
+| Handler | Required marker | SDK call |
+| --- | --- | --- |
+| `POST /internal/before-checkpoint` | `X-Faas-Before-Checkpoint: 1` | `await database.beforeCheckpoint({signal})` |
+| `POST /internal/after-restore` | `X-Faas-After-Restore: 1` | `await database.afterRestore({signal})` |
+
+Require the actual socket peer to be `127.0.0.1`, `::1`, or `::ffff:127.0.0.1`
+**and** the exact marker. Forwarded client addresses are insufficient. Return
+204 only after the SDK call resolves, and 503 on failure; pass the HTTP
+disconnect signal. The [starter handlers](../../cmd/gregale/templates/rest-api-postgres/app.js)
+provide the complete wiring. Gregale's [lifecycle contract](../../docs/cold-wake.md)
+defines capture failures, restore cold fallback, and thaw recovery.
+
+`beforeCheckpoint` stops admission, cancels unfinished transactions and waits
+for all owned sessions to close. The pool stays closed until `afterRestore`
+creates a new one and probes readiness in a read-only transaction. The latter
+also works without a prior checkpoint, as required for frozen thaw. Duplicate
+calls of the same hook coalesce; different hooks cannot overlap. A cancelled
+duplicate waiter does not cancel the owning hook. Failed or timed-out hooks
+leave SQL admission closed; a late probe cannot make the old pool ready.
+
+The total hook and shutdown budget defaults to 1500ms (maximum 1500ms), leaving
+headroom within the platform's two-second hook. `timeoutMs` defaults to 5000ms
+per request, including acquisition and COMMIT. `maxInFlight` defaults to 16
+executing/queued requests; excess work fails with `database_busy`. Other fixed
+errors are `database_unavailable` and `database_cancelled`. `diagnostics` reports
+state, successful restore generation, active requests, and owned pool count;
+`onEvent` receives only fixed event codes and those counts, without provider
+errors, SQL or credentials. `close()` is terminal, bounded and idempotent.
+
+`query` executes one statement in an explicit read-only transaction by default;
+use `write: true` for mutations. Use parameterized statements, not transaction
+control SQL. The helper is not a drop-in `pg.Pool` for ORMs or multi-statement
+transaction callbacks. It never retries SQL or performs schema changes. A
+cancelled connection before COMMIT rolls back; a lost COMMIT response can have
+an uncertain outcome. Add application idempotency before retrying writes.
+
+`postgresPoolConfig` preserves certificate and hostname verification even for
+`sslmode=require`, rejects URL TLS overrides, and accepts explicit
+`sslmode=disable` for local development. Private CAs use `NODE_EXTRA_CA_CERTS`.
+Migrate the application schema separately before deployment; a probe of an
+existing table also detects missing migrations. The default probe is `SELECT 1`.
+Remote PostgreSQL and transaction-mode poolers can use the helper, but provider
+pooling and native guest behavior require their separate acceptance gates.
+
 ## Container listeners
 
 UDP ingress requires an operator-enabled public edge and source-CIDR/firewall
@@ -452,6 +539,57 @@ generated services. The canonical mapping:
 Regenerate via `npm run gen` (committed per ADR-013; CI's
 `sdk-gen-node` job is the dirty-diff gate).
 
+## Batched trigger delivery
+
+A trigger with `delivery: batch` sends one request with several records
+(ADR-1321). `handleTriggerBatch` parses the body, runs your handler for each
+record in delivery order and returns the response body; a record whose handler
+throws is retried, the rest are complete:
+
+```ts
+import { handleTriggerBatch, isTriggerBatch } from '@gregale/sdk-node/triggers/runtime';
+
+export async function POST(request: Request) {
+  const result = await handleTriggerBatch(await request.json(), async (record) => {
+    await saveOrder(record.data); // record.isJSON, record.bytes, record.text(), record.metadata
+  });
+  return Response.json(result); // {"batchItemFailures": [...]}
+}
+```
+
+`isTriggerBatch(request.headers)` tells batch and single-record deliveries apart.
+Options: `concurrency` (1-100) for records that do not depend on each other's
+order, `stopOnFailure` to retry every record after a failure in order, and
+`onError` to log each failure. A malformed body throws `TriggerBatchError`;
+let the request fail so the whole batch is retried.
+
+## Realtime in the browser and React
+
+`createRealtimeClient` keeps one WebSocket per endpoint and subscribes channels
+while something watches them. Each channel handle has an immutable view
+(`status`, recent `messages`, `presence`, `occupancy`, `error`) that changes
+only when something does, so it works with `useSyncExternalStore` and other
+stores:
+
+```ts
+import { createBrowserRealtimeTicketSocketFactory, createRealtimeClient } from '@gregale/sdk-node/browser';
+
+const client = createRealtimeClient({ url, webSocketFactory: createBrowserRealtimeTicketSocketFactory(fetchTicket) });
+const lobby = client.channel('lobby', { occupancy: true });
+const stop = lobby.subscribe(() => render(lobby.getView()));
+```
+
+React bindings live in `@gregale/sdk-node/react` (React 18+, an optional peer
+dependency): `RealtimeProvider`, `useRealtimeChannel(channel, options)`,
+`usePresence(channel)`, `useOccupancy(channel)` and `useRealtimeClient()`.
+A channel is released `lingerMs` (default 1 s) after its last watcher leaves.
+A client watches at most 8 channels at once; a refused channel reports
+`status: 'error'` with the server's code while the others continue.
+
+`consumeRealtimeChannels` also takes a `controller` callback whose `add()` and
+`remove()` change the channel set on a live connection, plus per-channel
+`onSubscriptionError` and connection-level `onConnectionChange` hooks.
+
 ## Transactional operation handlers
 
 Customer Operations HTTP definitions explicitly enable
@@ -516,11 +654,10 @@ qualification. See the runnable
 Every mutating call (POST/PUT/PATCH/DELETE) carries an `Idempotency-Key`
 header. The semantic contract is identical to the Go SDK:
 
-- **Auto-mint (default).** The wrapper mints a fresh UUIDv4 on **every
-  attempt**, not per-call. This means each retry sees a fresh key and
-  the server's 24h replay window sees a fresh retry budget per attempt;
-  a retried `CreateApp` is a new logical request from the server's
-  perspective, never a double-bill.
+- **Auto-mint (default).** The wrapper mints a fresh UUIDv4 for each logical
+  mutating call and reuses it across that call's retry attempts. An accepted
+  write whose response fails can therefore be replayed under the same key.
+  Independent calls receive different keys, including concurrent calls.
 - **Opt-in stable key.** For deployments that need to survive across
   processes (CI deploys, retry-batched jobs), pin a stable key so the
   server replays the original response on retry rather than minting
@@ -537,6 +674,18 @@ header. The semantic contract is identical to the Go SDK:
   until reset. Pass a fresh key per logically independent call.
 
 GET/HEAD skip the header — the server doesn't dedupe reads.
+
+Retries are disabled by default. When configured, HTTP 429 and 5xx responses
+retry up to `retry.maxAttempts` total attempts, including JSON Problem responses.
+The delay is the longer of exponential policy backoff and a valid `Retry-After`
+delta-seconds or HTTP-date value. The final response preserves its Problem,
+request ID, and retry metadata. Other 4xx responses and transport failures
+propagate immediately.
+
+Caller cancellation and `timeoutMs` bound the entire call, including retry
+waiting. One-shot `Request` and `ReadableStream` upload bodies are sent once;
+they cannot be automatically replayed. Generated JSON and FormData requests
+retain their body and key across retries.
 
 The `client.setIdempotencyKey` API is the only public stable-key wire-in
 in PR 5. A future AsyncLocalStorage-based per-call key (PR 11 if
@@ -796,7 +945,7 @@ but does **not** layer a timeout — the caller owns the deadline. Pass
 ## Co-tenant code: the global fetch wrapper
 
 The `FaaSClient` constructor replaces `globalThis.fetch` with the
-wrapper chain (retry → RFC 7807 unwrap → logger → idempotency →
+wrapper chain (idempotency → RFC 7807 unwrap → retry → logger →
 user fetch). This is the only injection point the
 `openapi-typescript-codegen@0.31.0` generator exposes — see
 `src/generated/core/request.ts:219`. **All other `fetch` calls in your
@@ -824,11 +973,11 @@ Test rigs that mock `fetch` should pass `fetch: mockFn` via
 `FaaSClientOptions` rather than setting `globalThis.fetch` directly —
 the wrapper will chain the mock in the correct order.
 
-## Zero runtime dependencies
+## Runtime dependencies
 
-`dependencies: {}` — the wrapper uses only Web APIs (`fetch`,
-`AbortController`, `Headers`, `URL`) plus Node 22 built-ins
-(`node:crypto`, `node:test`, `node:child_process`, `node:net`).
+The HTTP wrapper uses Web APIs (`fetch`, `AbortController`, `Headers`, `URL`)
+and Node 22 built-ins. Deployment-local issue source maps use the pinned
+`@jridgewell/trace-mapping@0.3.31` parser (ADR-1113). No map URLs are fetched.
 
 The `devDependencies` pin `openapi-typescript-codegen@0.31.0` and
 `typescript@5.6.3`. Major-version bumps require an ADR.
@@ -1117,6 +1266,20 @@ request after an uncertain reply; the returned `queued` receipt describes the
 original decision. Read delivery status separately. Business results and
 execution generations are unaffected. The legacy retry method remains available.
 
+
+
+### Application standards
+
+The public `OrgsService` exposes `previewApplicationStandardAssignment`,
+`getApplicationStandardReview`, `getApplicationStandardOperation`,
+`getApplicationStandardEnrollment`, and `listApplicationStandardExceptions`.
+Configure authentication with `new FaaSClient(baseURL, { token })` before calling
+these generated methods. A preview saves affected applications and blockers
+without activating an assignment. Progress preserves the distinction between
+persisted and observed settings. Enrollment includes the installed exception
+expiry deadline; history includes active, expired or revoked status evaluated
+at the server's `as_of` timestamp and an exclusive UUID cursor. Activation and
+exception mutation APIs remain gated pending runtime acceptance.
 
 ## Object version protection
 
@@ -2370,6 +2533,730 @@ Effect helpers record pending, failed, or confirmed business facts with a refere
 ### Compensation workflows
 
 Compensation helpers record required, pending, failed, or confirmed reversal observations linked to a retained confirmed effect. Source ownership/app/environment are checked before commit and publication. Applications execute reversals and report workflow state explicitly. See [compensation usage](../../docs/operations.md#compensation-workflows).
+### Transactional realtime publishing (preview)
+
+`insertRealtimeCommitEvent(client, { endpointId, channel, data, metadata? })`
+queues a retained JSON text frame in the same PostgreSQL transaction as your
+business write. Use a transaction-bound client; the helper does not begin or
+commit transactions, install tables, or publish over HTTP. Rollback removes the
+event. Gregale's managed Commit dispatcher performs publication and retries.
+
+`listRealtimeCommitDeliveries(db)` and `getRealtimeCommitDelivery(db, eventId)`
+read payload-free delivery metadata from your database. A published sequence is
+a decimal string. `retryRealtimeCommitEvent(db, eventId)` clears a repaired
+blocked event without resetting identity. A missing inspection row can mean
+cleanup; it does not establish successful publication.
+
+Requires explicit customer outbox installation, an enabled managed Commit
+source and the transactional realtime operator preview. Supports v2 retained
+subscribers and existing schema/reducer validation; published does not mean
+client received. See [setup and example](../../docs/ops/realtime.md#transactional-publishing-preview).
+### Managed realtime access controls (preview)
+
+Use `revokeRealtimeChannelAccess({ slug, id, principal }, channel)` to deny a
+user's channel subscriptions across enabled nodes, including private activity
+scopes. `restoreRealtimeChannelAccess(target, channel)` removes the deny; your
+application must still authorize membership and clients must subscribe again.
+
+`revokeRealtimeSessions(target)` disconnects older OIDC sessions and prevents
+their tokens from reconnecting. A fresh token needs an integer signed `iat`
+strictly after the cutoff. This logs out older sessions; permanent bans remain
+an application authentication decision. `RealtimeService.getManagedRealtimeAccess`
+reads the persisted controls. API success confirms persistence, not fleet
+convergence. See [setup](../../docs/ops/realtime.md#principal-access-controls-preview).
+
+### PostgreSQL table-change feeds
+
+After explicit owner installation of `pkg/commit/realtime_changefeeds.sql`, use
+`installRealtimeChangefeed(ownerTx, 'public.orders', { name: 'order_status',
+endpointId, channel: 'orders:', tenantColumn: 'tenant_id',
+columns: ['id', 'tenant_id', 'status'] })` to capture row inserts, updates and deletes
+through the transactional realtime outbox. Primary key and tenant fields must be
+explicitly allowed. Unchanged selected fields emit nothing. Tenant moves require
+an explicit delete/insert. `removeRealtimeChangefeed(ownerTx, table, name)` stops
+future capture. Writer privileges and the complete 4096-byte event bound apply;
+capture failures roll back the business write. See the operator guide for setup,
+authorization, schema migration and retention requirements.
+
+### Realtime over SSE
+
+`subscribeRealtimeSSE({ url, channel, token: () => getFreshToken(), after, signal })`
+is exported from both the main and browser SDK entries. It yields retained channel
+messages with decimal-string sequences and base64 payloads. It uses fetch with
+Authorization headers, reconnects transient failures and refreshes tokens on each
+attempt. Requires resume preview, OIDC and explicit allowed origins for browsers.
+`RealtimeSSEError` terminates authentication/access/protocol failures and reports
+`resync_required` when callers must rebuild from an application snapshot. Delivery
+may repeat; consumers must apply events idempotently. This receive-only transport
+does not provide presence, signals, inboxes or server-side ACK checkpoints.
+
+### Channel-event webhooks
+
+Subscribe an app webhook explicitly to `realtime.channel.published`, then use
+`WebhooksService.setRealtimeChannelWebhookFilter({ slug, id, requestBody: {
+endpoint_id, channel, metadata } })`. The corresponding get/delete methods inspect
+or remove the exact channel binding. Metadata uses all-key equality matching.
+Existing webhook signing, delivery history and retries apply; deduplicate payload
+`event_id`, and treat sequence as a decimal string. Removing a binding stops future
+capture without recalling queued payloads. Empty catch-all event filters do not
+opt in. See the operator guide for the required platform migration.
+
+### Subscription tickets
+
+Backends can call `RealtimeService.issueRealtimeSubscriptionTicket({ slug, id,
+requestBody: { principal, channels, ttl_seconds } })` after authenticating the user
+and authorizing every exact channel. Return only the short-lived ticket to clients;
+never expose backend platform credentials. Requires operator ticket/resume preview.
+
+Browsers can use `createBrowserRealtimeTicketSocketFactory(getFreshTicket)` with
+the existing v2 channel consumer; the provider runs on every reconnect. For SSE,
+use `getFreshTicket` as the token provider. Tickets allow retained subscriptions
+only, expire within five minutes and obey principal session/channel revocation.
+Named durable subscriptions, presence, signals, inboxes and direct messages are
+unsupported. See the operator guide for migrations, endpoint policy and activation.
+
+### Automatic WebSocket-to-SSE fallback
+
+`consumeRealtimeChannelWithFallback({ url, channel, token: getFreshCredential,
+cursorStore, onMessage, onTransportChange, signal })` provides receive-only retained
+subscriptions from both SDK entries. It starts with WebSocket, then switches to
+SSE after two failed connection/subscription attempts. Both transports share a
+numeric cursor store and decoded message callbacks; processing precedes cursor
+save. Node callers supply an authenticated `webSocketFactory`. Fresh OIDC tokens
+or subscription tickets are obtained on reconnect. Explicit authorization/protocol
+failures are terminal, and optional `onResync` handles expired history. Fallback
+stays on SSE until a new invocation. Presence, signals, inboxes, metadata filters
+and named durable subscriptions are unsupported; see the operator guide.
+
+For a named durable consumer, your backend can read the latest actual advancing
+ACK with `RealtimeService.getRealtimeChannelAcknowledgement({ slug, id, channel,
+principal, subscription })`. The response separates the decimal-string checkpoint
+from nullable `acknowledged_sequence` / `acknowledged_at`. Initial baselines and
+resets are not processing receipts. This retains only the latest ACK, not a receipt
+for every message; do not infer processing of skipped or filtered messages.
+Explicitly select `realtime.channel.acknowledged` on an enabled app webhook to
+receive signed receipts across that app's endpoints. Runtime and migration checks
+remain pending; see the realtime operations guide.
+
+Backend workers can share channel work with consumer groups. Create a group via
+`RealtimeService.createRealtimeConsumerGroup`, then run
+`consumeRealtimeConsumerGroup({ slug, id, channel, group, worker, signal,
+onMessage })`. The helper claims one message at a time, renews its lease while the
+handler runs, completes after success, and requests bounded retry on handler
+failure. Configure account API credentials on the backend; this helper is not
+exported from the browser entrypoint. Its handler receives a cancellation signal
+on shutdown or lease loss and must use idempotent effects. Network/auth/lease
+errors terminate the helper; restart with backoff. Generated clients expose status,
+dead-letter replay and explicit retention-gap recovery. See ADR-1030 and the
+realtime operations guide for capacity bounds and migration requirements.
+
+For a least-privilege worker, issue a group-bound `grw_` credential with `status`,
+`claim`, `renew`, `complete` and `retry`. Use
+`createRealtimeConsumerGroupWorkerClient({ groupId, credential })` and
+`consumeRealtimeConsumerGroupWithCredential({ client, signal, onMessage })`.
+The credential may be an async provider called per request to support rotation.
+This client keeps worker authentication isolated from global account credentials
+and does not inherit account headers/cookies. A worker can settle only its own
+credential's leases. Rotation preserves that ownership; revocation/expiry stops
+further settlement/renewal. Administrative grants are explicit and separate.
+
+Publish from a backend with a channel-scoped `grp_` credential:
+
+```ts
+const publisher = createRealtimePublisherClient({
+  endpointId,
+  credential: getFreshPublisherCredential,
+});
+const result = await publisher.publish('jobs', {
+  event_type: 'job.progress',
+  data_base64: Buffer.from(JSON.stringify({ progress: 50 })).toString('base64'),
+}, 'job-123-progress-50');
+```
+
+Import `createRealtimePublisherClient` from the Node entrypoint. Account admins
+issue the credential with exact channel/event grants through the generated
+`RealtimeService` APIs. The isolated client obtains a fresh credential per request
+and does not inherit account headers or cookies. Reuse the same idempotency key
+and decoded content after uncertain outcomes. Receipts are bounded to 1024 per
+credential for 24 hours; changed content conflicts. A partial response still
+represents a durable event. See ADR-1032 and the operator guide before activation.
+
+Consumer-group worker helpers accept `failureCode: (error, message) =>
+'upstream_unavailable'` to record a safe diagnostic code after handler failure.
+Return 1–64 printable ASCII bytes; omit raw exception messages and secrets.
+The default remains `handler_failed`. A throwing/invalid callback terminates the
+helper and leaves the claim to expire. Both account and scoped-worker helpers
+support this option. Direct generated Node/Python APIs already accept
+`failure_code` in retry settlements.
+
+Subscribe an app webhook explicitly to `realtime.consumer_group.dead_lettered`
+for signed exhaustion alerts with group/channel/sequence, attempts and failure
+code. Alerts commit with the dead transition, use existing webhook retries and
+exclude message payloads. Lease-exhaustion alerts wait for the next claim.
+Replay remains explicit; another exhausted replay emits a new alert. See ADR-1033
+and the operator guide for migration requirements and inspector links.
+
+For concurrent group processing, set `concurrency: 8, batchSize: 8` on either
+consumer-group helper. The default remains one handler using single claims.
+Helpers claim only available handler slots, renew leases independently and settle
+messages separately. `concurrency` permits 1–32 and `batchSize` 1–16; the group-wide
+lease and outstanding snapshot limits still apply. Completion can be out of
+order, so effects must be idempotent and handlers should honor their abort signal.
+
+Direct clients can use `RealtimeService.claimRealtimeConsumerGroupBatch` or the
+isolated worker client's `claimBatch(limit)`. Generated Python APIs expose both
+account and worker batch endpoints. A 200 response may contain an empty or partial
+`claims` array with `history_unavailable` or `capacity_blocked`. Process returned
+claims before fixing that blocker. Do not retry uncertain claims automatically;
+unobserved leases expire. See ADR-1034 and the operator guide.
+
+Pause consumer-group claims with `RealtimeService.pauseRealtimeConsumerGroup`
+and resume with `RealtimeService.resumeRealtimeConsumerGroup` (account admin
+scope and MFA). An isolated worker client exposes `pause()` and `resume()` when
+its credential has the corresponding explicit grant. Responses contain `paused`
+and nullable `paused_at`; group status and batch results also expose `paused`.
+
+Existing handlers can finish, renew or retry during pause. Helpers keep polling
+empty claims and automatically claim again after resume. Pause preserves the
+cursor and retry counts, but lease clocks and channel retention continue. It does
+not cancel already-issued work. Generated Python clients expose the same controls.
+Apply the ADR-1035 migration before activation; runtime checks remain pending.
+
+Use `drainRealtimeConsumerGroup({ slug, id, channel, group, timeoutMs: 60_000 })`
+to stop new claims and wait for active leases to clear. Scoped callers use
+`drainRealtimeConsumerGroupWithCredential({ client, timeoutMs: 60_000 })` with
+explicit `drain` and `status` grants. Import helpers from the Node entrypoint.
+The default timeout is 30 seconds and covers requests and polling; caller abort
+signals are supported. Timeout/cancellation never resumes the group.
+
+Direct worker clients expose `drain()`, and generated Node/Python APIs expose drain
+initiation and group status. Resume explicitly after deployment. Drained status
+means zero unexpired leases; it does not prove expired handlers stopped external
+effects. Stop workers, honor handler cancellation and keep effects idempotent.
+See ADR-1036 for migration requirements and runtime validation status.
+
+Consumer-group helpers now default to `waitSeconds: 10` for long-poll claims.
+Set 0 to retain immediate polling, or choose an integer up to 20. Both single and
+batch requests stop waiting when work or pause/drain/blockers are observed;
+existing empty-result backoff remains. Direct worker clients support
+`claim(worker, waitSeconds)` and `claimBatch(limit, worker, waitSeconds)`.
+Generated Node/Python models expose `wait_seconds`, defaulting to 0.
+
+Set proxy/client timeouts above the wait plus request overhead. The preview checks
+PostgreSQL every 500 ms with no transaction held between attempts; it reduces
+HTTP traffic while retaining database polling. There are 64 waiting slots per
+apid process. Cancellation may leave an unobserved committed lease to expire;
+do not automatically retry uncertain claims. See ADR-1037.
+
+Configure sampled consumer-group lag alerts with
+`RealtimeService.configureRealtimeConsumerGroupLagAlert({ slug, id, channel, group,
+requestBody: { enabled: true, unassigned_threshold: '100', oldest_pending_seconds:
+60, dead_letter_threshold: 1, cooldown_seconds: 300 } })`. Read policy and nullable
+observations with `getRealtimeConsumerGroupLagAlert`. Writes require account admin
+scope and MFA; scoped worker credentials do not configure policies. Generated
+Python exposes the same operations.
+
+Explicitly subscribe app webhooks to `realtime.consumer_group.lag_exceeded` and
+`realtime.consumer_group.lag_recovered`. Any configured threshold can breach;
+zero disables a metric. Cooldown limits ongoing reminders; actual transitions
+alert promptly. Identical PUTs preserve state and changed policies rearm. Paused
+and draining groups remain monitored. Apply the ADR-1038 migration before activation;
+runtime checks remain pending.
+
+Create ordered groups with `ordering_metadata_key: 'job_id'` and
+`dead_letter_policy: 'block'` (default) or `'skip'` in
+`RealtimeService.createRealtimeConsumerGroup`'s request body. Policies are immutable.
+Publish a consistent exact metadata value; missing/empty values share a serialized
+bucket. Worker concurrency runs different keys in parallel while leases/retries
+hold later same-key work. No new worker permission or helper setting is required.
+
+Group status exposes policy and blocked-ready count; batch `ordering_blocked`
+is normal backpressure and helpers keep polling. Under block, repair/replay the
+dead predecessor; under skip, replay can occur after successors completed and
+conflicts while another same-key lease exists. Lookahead remains bounded to 128
+snapshots, and external effects still need idempotency/fencing. Generated Python
+supports the same creation/status fields. See ADR-1039 and apply its migration
+before activation; runtime checks remain pending.
+
+Worker handlers receive `context.claim.group_id` and
+`context.claim.fencing_token` on every new lease. Pass these to downstream storage
+and atomically reject lower fences within the authorized group UUID and resource
+scope. Use decimal strings or `BigInt(claim.fencing_token)`, never Number. Renewals
+keep the token; retries/replay receive a larger token on their next claim. Group
+status exposes `last_fencing_token`. Generated Python claims expose the same fields.
+
+Scope fences per entity for ordered processing, or per message sequence; one
+shared high-water mark across independent entities would reject valid concurrent
+work. The number does not authorize API operations and downstream enforcement is
+required. A newer claim alone does not invalidate an old downstream writer until
+the store registers/enforces the higher token. Idempotent effects remain necessary.
+Apply ADR-1040's migration and upgrade all API replicas/workers before relying on
+fencing. Legacy leases have no retroactive fence; runtime checks remain pending.
+
+Consumer-group dead letters now support opt-in retention. Set
+`dead_letter_retention_seconds` at creation or use generated
+`configureRealtimeConsumerGroupDeadLetterRetention` with `retention_seconds`:
+zero keeps indefinitely, otherwise choose one hour to 30 days. Ordered groups
+require `skip`. Account admin scope and MFA are required to configure it.
+`getRealtimeConsumerGroupDeadLetterRetention` returns the policy, fixed 300-second
+warning grace and cumulative decimal-string `expired_dead_letters` count.
+
+Subscribe to `realtime.consumer_group.dead_letter_expiring` for signed expiry
+warnings. Cleanup waits at least five minutes after the persisted warning decision,
+including after outages, but does not wait for webhook delivery. Dead-letter
+responses include nullable `retention_started_at`, `expires_at`, `warning_at`, and
+`cleanup_after`. Replay protects a snapshot if it commits before cleanup. Paused
+and draining groups still expire dead work. Python exposes the same generated API.
+Migration/runtime validation remains pending; see ADR 1041.
+
+Consumer-group retry policies are opt-in. Use generated
+`configureRealtimeConsumerGroupRetryPolicy` with `enabled: true`,
+`base_delay_seconds: 2`, `max_delay_seconds: 60`, `jitter: true`, and optional
+`permanent_failure_codes: ['invalid_payload']`. This requires account admin scope
+and MFA. `getRealtimeConsumerGroupRetryPolicy` returns the policy and nullable
+`next_retry_at`, also visible in the inspector. Python exposes the same API.
+
+Set `useGroupRetryPolicy: true` in the Node consumer helper (account or scoped
+worker) to use server backoff. Its default retains the previous one-second delay.
+An explicit `retryAfterSeconds`, including zero, overrides backoff; permanent codes
+and attempt exhaustion still dead-letter immediately. Backoff doubles after each
+failed attempt, caps at 300 seconds, and optionally samples from half to full delay.
+Changes do not reschedule existing retries. Lease expiry retains existing behavior.
+Ready settlements return `available_at`; pause/order constraints can delay claims
+further. Migration/runtime validation remains pending; see ADR 1042.
+
+Bulk dead-letter recovery now offers `previewRealtimeConsumerGroupDeadLetters`
+and `bulkReplayRealtimeConsumerGroupDeadLetters` in the generated account client.
+Both require app ownership and MFA; preview uses read scope and replay uses
+deploy-write scope. Preview body example:
+
+```json
+{"failure_codes":["invalid_payload"],"after_sequence":"0","limit":32}
+```
+
+Preview returns `group_id`, ordered `items`, and `has_more`. Select items deliberately
+and replay their exact `sequence` and `dead_since` values:
+
+```ts
+const selection = {
+  group_id: preview.group_id,
+  items: preview.items.map(({ sequence, dead_since }) => ({ sequence, dead_since })),
+};
+```
+
+Pass this as the generated bulk replay request body. Preserve timestamp strings;
+converting through JavaScript Date loses microsecond precision and can make a
+selection stale. Each batch accepts 1–32 unique sequences and returns outcomes:
+`replayed`, `ordering_blocked`, `stale`, `not_dead`, or `missing`. Missing may mean
+retention cleanup, but the API cannot infer the cause. An old preview never replays
+a recreated group or a later dead incarnation. Use the last sequence as the next
+preview's exclusive `after_sequence` when `has_more` is true. Python exposes the
+same endpoints and preserves datetime microseconds.
+
+Successful replays reset attempts; pause/drain and ordering still govern claims.
+The next claim gets a fresh fencing token. Unexpected errors roll back the batch;
+recognized per-item conflicts allow eligible items to proceed. Do not automatically
+retry uncertain responses. Runtime validation remains pending; see ADR 1043.
+
+Consumer groups can opt into delivery deadlines at creation with
+`deadline_metadata_key: 'deliver_by'`. Publish a metadata value such as
+`deliver_by: '2026-10-12T12:00:00Z'`. Missing/empty values have no deadline;
+malformed timestamps become terminal `invalid_delivery_deadline` failures.
+Ordered groups require `dead_letter_policy: 'skip'`. The field and each assigned
+snapshot's deadline are immutable; existing groups retain no deadline behavior.
+
+Claims expose nullable `delivery_deadline`, and leases/renewals cannot extend past
+it. The Node consumer helper aborts the handler signal and renewal at the deadline;
+handlers must honor cancellation and guard external effects. Server checks are
+authoritative; local clock skew can cause early cancellation. Python claims expose
+the same timestamp. Expired work becomes a `delivery_expired` dead letter during
+claim/replay maintenance, with signed `realtime.consumer_group.delivery_expired`
+webhooks and cumulative `expired_deliveries` status/inspector counters. Invalid
+values also increment this rejection counter; successful completions do not.
+
+There is no background expiry timer: unassigned or untouched work is observed on
+maintenance. Dead snapshots still consume capacity until compatible retention or
+explicit group retirement. Replay cannot extend a frozen deadline: single replay
+conflicts, bulk replay reports `deadline_expired` or `invalid_deadline`. Ordinary
+failed work with a future deadline can still replay. Publish corrected replacement
+work deliberately when needed. Migration/runtime validation remains pending;
+see ADR 1044.
+
+Consumer-group claim rates are opt-in and shared across all workers/API replicas.
+Use generated `configureRealtimeConsumerGroupClaimRate` with
+`{ rate_per_second: 10, burst: 4 }`; rate zero disables throttling. Rates range
+from 1–1000 claims per second and burst from 1–32. Account admin scope and MFA
+are required to configure; `getRealtimeConsumerGroupClaimRate` uses read scope.
+Python exposes the same generated routes.
+
+Each successful new lease consumes credit; renewals, settlement and replay itself
+do not. Batch responses include `rate_throttled` and `retry_after_milliseconds`
+and may contain partial claims. Single claims return a specific 429 problem code,
+`realtime_group_rate_limited`, with `Retry-After` and `retry_after_seconds`. Shared
+Node account/scoped-worker helpers wait for these hints and continue processing
+admitted work. Batch mode supports finer pacing than the rounded HTTP seconds
+used by the single route. Hints do not reserve credit from competing workers.
+
+The inspector and policy response expose `throttled_claim_requests`, a cumulative
+decimal-string count of committed admission decisions stopped by rate, not messages.
+Identical policy writes preserve credit; changed policies clamp existing debt to
+the new burst window. Disable/re-enable grants the configured burst. Existing
+credential request budgets, lease limits, pause/drain and ordering still apply.
+Migration/runtime validation remains pending; see ADR 1045.
+
+Consumer groups can now select event types and exact metadata at creation:
+
+```json
+{
+  "name": "billing",
+  "after_sequence": "0",
+  "filter": {
+    "event_types": ["invoice.created"],
+    "metadata": {"region": "eu"}
+  }
+}
+```
+
+`event_types` matches `metadata.event_type`, rather than the retained message's
+created/updated/deleted lifecycle `event`. Types use OR; every metadata predicate
+and the type condition must match. Missing metadata does not equal an empty value.
+Empty filters match everything. Limits: 32 unique types of up to 128 bytes, eight
+metadata predicates using existing metadata bounds, and 8192 encoded filter bytes.
+Filters are immutable; create a new group with an explicit starting sequence to
+change selection. Generated Node/Python creation models expose the same filter.
+
+Nonmatching history advances the group cursor without consuming snapshot capacity,
+claim credit or worker attempts. Status and the inspector expose `filter` and the
+cumulative decimal-string `filtered_messages` count. Matching work retains ordering,
+deadline, retry and replay behavior. A missing-history gap still requires explicit
+recovery; lag metrics describe raw unassigned channel events until scanning.
+
+Each batch transaction scans at most 128 assignment events and returns
+`filter_scan_limited` when it reaches that budget, possibly alongside partial claims.
+Progress is committed; poll again to continue. Single claims return 204 when no
+matching claim was admitted. Node helpers keep polling without treating filtering
+as a failure. Pause/drain, full capacity and rate limits can delay cursor scanning.
+Migration/runtime validation remains pending; see ADR 1046.
+
+Worker health reporting is opt-in. Set `heartbeat: true` on the Node account or
+scoped consumer helper to report ready every 15 seconds while idle or processing.
+Scoped credentials need the new explicit `heartbeat` permission. The isolated
+worker client also supports `heartbeat({ ready: false, status_code: 'maintenance' })`
+for custom reporting. Account clients use generated `heartbeatRealtimeConsumerGroup`
+with an explicit worker name; `getRealtimeConsumerGroupWorkerHealth` reads status.
+Generated Python routes expose the same models and scoped heartbeat request.
+
+Timeout is 60 seconds. Ready and live are separate; readiness is self-reported,
+while live requires a fresh report and eligible scoped credential. Use a separate
+credential per process for independent identities; sharing aggregates reports.
+Health reporting never renews leases or consumes claim-rate credit, but existing
+credential request budgets apply. Reporting errors stop an opted-in Node helper;
+shutdown cancels reporting and natural timeout later records loss.
+
+Signed `realtime.consumer_group.worker_lost` and `worker_recovered` webhooks report
+liveness transitions. Recovery does not imply ready=true. The inspector shows
+last-seen/status and pending groups with no ready reporting workers. Non-reporting
+workers remain unobserved. At most 32 identities are tracked; stale lost rows can
+be replaced under capacity pressure or pruned after a day, without a later recovery
+backfill. Migration/runtime validation remains pending; see ADR 1047.
+
+Consumer-group processing helpers accept `settlementRetries: 2` (0–3; default 0).
+When enabled, terminal settlements use a UUID receipt key and retry transport errors
+and HTTP 408/500/502/503/504 without rerunning the handler. Batch retries reuse one
+key and the entire ordered batch. Renewals are not automatically retried; cancellation,
+auth, validation, conflicts and 429 stop retries. Deploy the settlement-receipt migration
+and API changes before opting in. Receipts last 24 hours, at most 1024 per group;
+full capacity rejects new keyed settlements before mutation. Generated Node/Python
+settlement bodies expose `idempotency_key` for manual retry policies. Batch keys belong
+on the outer body, never individual items. Saved results report the original outcome.
+
+For event deduplication, create a consumer group with
+`deduplication_metadata_key: 'event_id'` and optionally
+`deduplication_window_seconds: 3600`. Settings are immutable; missing/empty IDs process
+normally. Group status exposes `duplicate_messages` and `deduplication_keys`.
+Duplicate copies skip assignment while retries and dead-letter replay remain available.
+The store holds at most 4096 IDs per group without evicting live entries. Processing
+helpers handle single `realtime_group_deduplication_full` errors and batch
+`deduplication_blocked` hints while existing snapshots remain claimable. Deploy the
+migration and upgrade all API replicas before enabling this policy. Deduplication
+covers a finite assignment window and does not guarantee handler side-effect uniqueness.
+
+`RealtimeService.exportRealtimeConsumerGroupDeadLetters` downloads a JSONL `Blob`.
+Its first line is `RealtimeDeadLetterExportManifest`; record lines follow
+`RealtimeDeadLetterExportRecord`. Read the manifest for `has_more`, then resume with
+`groupId`, `throughSequence`, `snapshotAt` and `afterSequence: next_after_sequence`,
+retaining failure-code filters. Default limit is 32, maximum 128. Verify the complete
+record count before advancing. Export is read-only and live: replay/cleanup can remove
+records between pages. Save files outside Gregale for longer retention. Account read
+scope, MFA and history preview are required; scoped workers cannot export.
+
+
+### Background dead-letter replay jobs
+
+Use `POST .../groups/{group}/replay-jobs` with `rate` (1–32), optional `failure_codes`, `after_sequence` (exclusive) and `through_sequence` (inclusive). Creation captures current failures only, up to 128; an empty selection is invalid. `GET .../replay-jobs` shows active jobs first and recent terminal jobs. `POST .../replay-jobs/{job}/{action}` accepts `pause`, `resume` or `cancel`. Account ownership and MFA apply; mutations require deploy-write scope. The inspector offers the same controls.
+
+Rate is an upper limit per job; multiple jobs have independent limits. Known outcomes include replayed, stale, missing, not_dead, ordering_blocked, invalid_deadline and deadline_expired. Skips require a new recovery job. Safe processing errors and cumulative counts appear in status; database errors retry without advancing progress. Cancellation does not undo completed replay. Inspect recent jobs before retrying an uncertain creation response. Disabled endpoints suspend execution; group claim pause/circuit/rate settings still govern subsequent processing.
+
+Apply migration `20261012102700533_realtime_dead_letter_replay_jobs.sql` before enabling jobs, with all API replicas upgraded. Cancel active jobs before downgrade. Migration and runtime/UI checks are currently deferred.
+
+
+### Replay-job notifications
+
+Create or update an app webhook with event filters `realtime.replay_job.completed`, `realtime.replay_job.cancelled` and/or `realtime.replay_job.processing_failed`. Existing webhook signing, retry policy, delivery status and dead-letter inspection apply. The inspector links to app webhook configuration.
+
+Completion and cancellation notify once per transition. The processing warning notifies once per job when cumulative recorded processing errors first reach three; the job continues retrying. Known skips are not processing errors. No backfill for past transitions or newly added subscribers. Deduplicate the payload's `event_id` across delivery retries and do not assume delivery order.
+
+`RealtimeReplayJobWebhookPayload` documents recovery counts, safe error diagnostics and a relative `inspector_path` to resolve against your console origin. Payloads exclude failed messages and credential secrets. Job history can be pruned after notification. Migration `20261012102700536_realtime_replay_job_notifications.sql` is required and currently unapplied.
+
+### Reviewed dead-letter recovery
+
+Call `RealtimeService.createRealtimeReplayDryRun` with the same filter/rate request as job creation. Poll `listRealtimeReplayJobs` until the dry run reaches `completed`, then inspect its eligible/skipped counts and outcome timestamps. Call `controlRealtimeReplayJob` with the report UUID and `action: 'start'` to replay only reviewed eligible identities. The response is the linked real replay; repeated start returns that same job while retained. Replays recheck identity, deadlines and ordering, so reviewed eligibility does not guarantee replay. Dry runs share quotas with real jobs and emit no replay lifecycle webhooks.
+
+### Retained channel message TTL
+
+Single retained-channel publishing accepts optional `ttl_seconds` (1–86400; zero
+or omitted means no expiry). Generated request models expose it. Retries with an
+idempotency key must use the same TTL and preserve the original deadline; edits
+inherit that deadline. WebSocket retained consumers skip expired positions, persist
+their cursors and ACK them without calling `onMessage`. Message DTOs expose optional
+`expiresAt`; REST history uses `expired: true` with no payload/metadata.
+
+Low-level `subscribeRealtimeSSE` yields entries with `checkpoint: true` for expired
+positions. Advance your cursor without treating these entries as application
+messages. The receive-only fallback handles this automatically. Upgrade clients
+and the server/private readers after deploying migration 20261012102700541 before
+enabling TTL publishing. TTL affects delivery selection, not already delivered
+state, retention deletion or consumer-group job processing. TTL publishing covers account-authenticated single and batch retained writes. Runtime checks remain
+deferred.
+
+### Batch TTL
+
+Retained batch requests accept `ttl_seconds` as a default and
+`messages[i].ttl_seconds` as an override. Omitted/null overrides inherit; zero
+turns expiry off for that item. Values are bounded by 86400 seconds. A default of
+60 with overrides omitted, 10 and 0 produces one-minute, ten-second and unlimited
+lifetimes. Deadlines persist atomically and survive idempotent retries; changing
+effective lifetimes conflicts with the batch ID. Existing expiration checkpoints
+handle skipped positions. Deploy the TTL companion-table migration before enabling
+batch expiry; runtime checks remain deferred.
+
+Scheduled realtime publishing accepts optional `ttl_seconds` (0–86400; zero disables expiry). Each occurrence starts its message lifetime at actual publication. Rescheduling and retries preserve the schedule setting and cannot extend a committed message deadline.
+
+
+For transactional realtime TTL, first install the optional customer outbox TTL
+upgrade (`pkg/commit/realtime_ttl_upgrade.sql` for existing databases). In your
+existing transaction on the same connection:
+
+```ts
+await setRealtimeCommitTTL(tx, 60);
+await insertRealtimeCommitEvent(tx, { endpointId, channel, data }); // inherits 60s
+await insertRealtimeCommitEvent(tx, { endpointId, channel, data, ttlSeconds: 0 }); // no expiry
+```
+
+Import both helpers from the SDK. Call the default setter after `BEGIN`; it clears
+on commit or rollback and also covers changefeed captures on that connection.
+TTL is 0–86400 seconds and begins at retained publication by the relay. Retried
+receipts preserve the original deadline. The helpers never control transactions.
+
+Scoped publisher `publish` messages accept `ttl_seconds` (0–86400; zero disables
+expiry). Credential issuance can set `max_message_ttl_seconds` (zero means
+uncapped); a positive cap requires a positive message TTL at or below it.
+Omitted or zero message TTL is denied when capped. Issue/rotation `ttl_seconds`
+is the credential's own lifetime, independent of message expiry. Rotation
+preserves the message cap. Keep message TTL unchanged when retrying a key.
+
+Observe expired retained positions without processing expired payloads:
+
+```ts
+const expiry = new RealtimeExpiryDiagnostics();
+// Pass this option to consumeRealtimeChannel, subscribeRealtimeSSE or consumeRealtimeChannelWithFallback:
+const diagnostics = { onMessageExpired: expiry.record };
+const counts = expiry.snapshot(); // websocketCheckpoints / sseCheckpoints
+```
+
+Import `RealtimeExpiryDiagnostics` from the SDK. The optional synchronous observer
+receives only `code: "message_expired"`, channel, decimal-string sequence and
+transport. It runs after protocol validation, before cursor persistence/ACK.
+Observer errors are isolated; never use the hook for business effects or blocking
+work. Reconnects can observe a position again. Counts are process-local and
+saturate at JavaScript's safe integer maximum; snapshots retain no identifiers,
+payloads or credentials. Expired positions remain checkpoints and never invoke
+`onMessage`.
+
+Retained principal sends accept `ttl_seconds` (0–86400; zero disables delivery
+expiry). Use `delivery: "retained"` for positive TTL. Send responses expose
+`delivery_expires_at`; inbox history adds `ttl_seconds`, `delivery_expires_at`
+and `expired`. Existing history `expires_at` remains the retention deadline.
+Skip payload processing for REST rows marked `expired`, but advance the cursor.
+Retries and edits retain the original deadline. Notification-fallback TTL remains
+independent; set `notification_ttl_seconds` separately when needed.
+
+Native inbox subscriptions ACK `inbox_checkpoint` expiry positions without calling
+`onMessage`. Configure `inbox.onMessageExpired: expiry.record` using
+`RealtimeExpiryDiagnostics`. Inbox observers receive `inbox: true`, consumer,
+sequence, code and transport; no channel/principal/payload. Diagnostic snapshots
+add `inboxCheckpoints` separately from channel WebSocket/SSE counts. Active inbox
+messages expose optional `expiresAt`. Reconnects can repeat observations; hooks
+are best effort and must not perform business effects. Upgrade server migration,
+apid, realtime nodes and SDKs before opting into inbox TTL.
+
+
+### Transactional event consumers
+
+Use `eventConsumerRequestFromHeaders(headers, rawBody, accountId, appId)` after
+authenticating an internal subscription delivery, then
+`withEventConsumerTransaction(pgPool, input, async tx => JSONText)`. The callback
+uses only `tx.query` for business writes and returns JSON text. The receipt and
+writes commit together. Duplicates return saved `body` with `replayed=true`;
+changed content raises `EventConsumerConflictError`. An uncertain commit raises
+`EventConsumerCommitUnknownError`; retry the same identity and original bytes.
+
+Install exported `eventConsumerReceiptSchema` explicitly in application PostgreSQL.
+Acceptance IDs are canonical decimal strings, preserving values above 2^53. Retain
+receipts across all relevant retries/replays. Do not control transaction lifecycle
+or make external effects in the callback. Acknowledge only after success.
+See [handler examples and the shared contract](../../docs/event-consumer-transactions.md).
+
+Enqueue follow-up Commit work inside the event-consumer callback with `insertCommitEvent(tx, event)`. Install both schemas in the same database and configure a Commit source. Business writes, follow-up work and the receipt commit together; duplicate inputs return the saved result. See [the combined transaction examples](../../docs/event-consumer-transactions.md#update-and-enqueue-follow-up-work-atomically).
+
+For transactional publication to subscribers, configure an immutable `event` Commit destination with contract version 3. The existing insert helpers accept an optional schema version and run in the consumer callback transaction. See [publication setup and receipt recovery](../../docs/gregale-commit.md#version-3-application-event-publication-adr-935).
+
+`waitCommitSubscriber(publication, subscriptionId, { timeoutMs, intervalMs, signal })`
+waits for one original application subscriber through the configured EventsService.
+Only `status === 'completed'` proves original execution success.
+See [subscriber waits](../../docs/gregale-commit.md#wait-for-an-individual-publication-subscriber).
+
+`getCommitDeliveryReport(source, { limit, subscriptionId, timeoutMs, signal })`
+samples recent original-subscriber outcomes. Check per-item `evidence_status`
+and continuation cursors; failures throw `CommitDeliveryReportError` with the
+partial report. Counts cover sampled evidence only.
+
+Delivery reports accept `recipientPages` (1–20, default 1) and `resume: savedReport`.
+Resume fixes selection and filter, merges recipients without duplicate counts,
+and checks the source under the current account. Omit selection/filter options
+when resuming; saved completed coverage is not refreshed.
+
+Use `getCommitDeliveryReport(source, { refresh: savedReport, recipientPages: 5 })`
+to reread a fixed selection. Fresh counts, `observed_at`, and `changes` describe
+new observations; omit resume and selection/filter options. The baseline is copied.
+
+Delivery report rows now separate original `status` from latest retained replay
+`recovery` evidence. `recovery_counts` and refresh changes with `kind: recovery`
+help identify remaining failures; missing evidence does not prove no replay occurred.
+
+Use `planCommitRecovery(source, savedReport, { recipientPages: 5 })` to build a read-only recovery plan from fresh guarded receipt evidence. Plans include skip reasons and publication coverage issues; they never execute recovery actions.
+
+Use `applyCommitRecovery(source, reviewedPlan, options)` for sequential, freshly revalidated execution recovery. Unknown writes stop the batch and require inspection. Routing apply now submits the matching acceptance guard from a fresh server offer; older unguarded offers remain skipped. See the Commit documentation for limits and partial results.
+
+Selective routing replay accepts `expected_accepted_at`; a replaced acceptance returns 409 without requeuing the consumer. Refresh and review older plans before using guarded routing apply.
+
+Routing recovery offers include an `expected_generation` guard when available.
+Commit recovery apply skips changed generations as `generation_changed`, and
+missing guards as `generation_guard_unavailable`. Direct selective replay can
+supply the nonnegative generation together with `expected_accepted_at`; the
+server checks both and failed state atomically before requeue.
+
+Read-only recovery status accepts the reviewed plan and saved apply result.
+It retains each attempt alongside fresh delivery state and routing generation;
+unknown attempts remain unknown even if delivery advances. Missing evidence
+stays unresolved, and partial read failures retain output. The helper never
+submits replay or follows saved action URLs. See
+[the recovery-status guide](../../docs/gregale-commit.md#inspecting-recovery-results-without-replay).
+
+Use getCommitRecoveryStatus(source, plan, applied, { limit: 50, recipientPages: 5 }); CommitRecoveryStatusError.result retains partial output.
+
+Recovery status can resume saved output, preserving successful observations
+and their timestamps. Unread items are inspected before failed reads are
+retried. Selection snapshots bind resume to the original plan, apply result,
+publication acceptance and subscriber filter. Counts and remaining coverage
+are recomputed, and unknown attempts remain unknown.
+
+Pass { resume: previous, limit: 50, recipientPages: 5 } to getCommitRecoveryStatus.
+
+Older status files without selection snapshots require a fresh status read. Resume keeps historical samples; omit resume to reread them.
+
+
+Refresh saved Commit recovery observations with `getCommitRecoveryStatus(source, plan, applied, { refresh: previous })`. Refresh clears current evidence and reports before/after changes against a compact saved baseline. Use resume to finish a bounded refresh pass; refresh and resume are mutually exclusive. Unknown apply attempts remain unknown. See [the Commit guide](../../docs/gregale-commit.md#refresh-saved-recovery-observations).
+
+
+Use `watchCommitRecoveryStatus` for bounded recovery monitoring with detached progress callbacks. Partial passes resume before the next refresh. Queued attempts require matching terminal execution evidence; unknown attempts remain unknown. Timeout/read errors retain the last or partial status. See [monitoring usage](../../docs/gregale-commit.md#monitor-acknowledged-recovery-executions).
+
+
+Opt into transient recovery-watch read retries with `readRetries`. The total budget is 0..20, defaults to zero, and shares the overall timeout. Partial results reach progress callbacks before backoff; permanent errors stop immediately. See [retry behavior](../../docs/gregale-commit.md#retry-transient-monitoring-reads).
+
+
+Recovery watch results include `monitoring` with stop reason, started passes, consumed retries, elapsed milliseconds and conservative terminal coverage. Progress snapshots report running; final results and attached errors report the outcome. Counters restart on resume. See [structured outcomes](../../docs/gregale-commit.md#structured-monitoring-outcomes).
+
+
+Optionally require recent recovery evidence with `maxObservationAgeMs` (default disabled; 100ms..24h). Stale and missing/future-timestamp observations are reread within existing budgets before settlement. Monitoring includes freshness counts. See [freshness policy](../../docs/gregale-commit.md#require-recent-recovery-observations).
+
+Optional `diagnostics: true` includes bounded exact-recipient delivery blocker diagnostics, separate from replay attribution. Missing evidence and settled routing never prove handler completion. See [diagnostics](../../docs/gregale-commit.md#diagnose-recovery-delivery-blockers).
+
+Exact routing lookup: `EventsService.getEventRecipientBlocker({ source, id, subscriptionId, expectedAcceptedAt })`. Keep the original timestamp string, including fractional precision. `not_waiting` describes routing only.
+
+Diagnostic coverage rotates within the 50-read cap and resumes from checkpoints. `diagnostics_progress` reports separate coverage counts; `retained` samples keep their original timestamps. Diagnostic completeness never gates delivery settlement. See [resumable coverage](../../docs/gregale-commit.md#resume-diagnostic-coverage-across-large-selections).
+
+Recipient diagnostic monitoring batches up to 50 exact acceptance-guarded lookups per request. The read-only `/v1/events/recipient-blockers` endpoint preserves ordered independent results and errors, with a shared five-second deadline. Diagnostic read counts remain recipient counts. A batch is not an atomic snapshot or proof of handler completion.
+
+Use `{diagnostics: true, maxDiagnosticAgeMs: 30000}` for status or watch. Standalone `diagnoseCommitRecoveryStatus(status, signal, previous, 30000)` accepts the same age in milliseconds. Zero disables the policy; enabled ages range from 100ms to 24h. `diagnostics_progress.freshness` separates fresh, stale and unread samples and records the check time; `fresh_complete` is independent of historical coverage and delivery settlement. Stale samples refresh before fresh ones within the covered refresh pool. Saved counters and age policies are recomputed on resume.
+
+Repeated diagnostic samples expose `comparison`, compact `previous_observation`, and field-level `changes` with both observation timestamps. Comparisons require the same exact acceptance and increasing timestamps. Missing evidence resets the baseline; routing changes never imply handler completion. Checkpoints retain only the latest pair and recompute saved changes. `diagnostics_progress.compared` and `changed` count newly compared and changed recipients per pass, excluding retained samples. See [routing blocker change tracking](../../docs/gregale-commit.md#track-routing-blocker-changes).
+
+`watchCommitRecoveryStatus` accepts `{watchDiagnostics: true, maxDiagnosticAgeMs: 30000}`. This enables diagnostics and waits for complete, fresh diagnostic coverage independently of delivery settlement. Monitoring exposes `watch_mode`, `diagnostic_coverage_complete` and stop reason `diagnostic_coverage_complete`. Age is rechecked after callbacks; the recorded check time defines completion. Resume retains existing coverage and cursors. Batch transport failures use the shared read retry budget; individual item failures rotate until timeout. Unavailable answers count as coverage, and coverage never proves handler success.
+
+Diagnostic watches expose `monitoring.diagnostic_estimate`: remaining initial samples, actual sampling rate, average samples per pass, estimated remaining passes/milliseconds, and a full-refresh span estimate. States distinguish insufficient timing, deferred receipt evidence, estimates, and already-covered selections. `refresh_exceeds_max_age` is advisory; forecasts never predict delivery success or fresh coverage completion. Performance measurements reset on resume while coverage/cursors persist. See [coverage estimates](../../docs/gregale-commit.md#estimate-diagnostic-coverage-time).
+
+### Inspect selected consumers
+
+Diagnostic progress includes `consumers`, sorted by subscription ID. Each summary counts relevant selected recipients, fresh/stale/unread coverage, validated sample statuses, fresh and stale waiting reasons separately, and newly compared/changed recipients in this pass. Waiting reasons expose paused subscriptions, circuits, ordering, capacity and other routing conditions without additional requests. Unsupported recipients are excluded. A valid unavailable or replaced answer counts as sampled coverage but contributes no waiting reason.
+
+`oldest_waiting` identifies the earliest accepted event among validated available samples, with its exact query, observation timestamp, freshness and waiting reason. Acceptance time is not the time a blocker started. Stale waiting reasons describe historical samples; these summaries are neither account-wide backlog totals nor delivery success. Saved totals are ignored and recomputed from validated rows at the progress freshness check time. CLI watch output includes these summaries when consumer evidence changes, without timestamp-only polling updates.
+
+### Detect persistent sampled blockers
+
+Enable watch stall detection with `--stall-threshold 30s --watch --diagnostics --max-diagnostic-age 10s` (both duration policies accept 100ms–24h; zero disables detection). Go watch options use `StallThreshold`, Node uses `stallThresholdMs`, and Python uses `stall_threshold` in seconds. Watch results include `monitoring.stall_threshold_ms` and `monitoring.consumer_stalls`, grouped by selected subscription. CLI alerts once per confirmed blocker episode and can alert again after confirmation breaks. Detection does not change watch completion, timeouts, retries or delivery actions. A coverage watch can complete before the stall threshold is reached.
+
+Each consumer has recipient counts for `insufficient_evidence`, `not_blocked`, `observing` and `stalled`, plus overlapping indicators `routing_changed` and `advancing` for the most recent confirmed pair. Advancing specifically means pending to processing, or available to enqueued; it does not prove handler success. Other routing changes can improve or worsen conditions. Blocker details contain the exact query, reason, first/last sample timestamps, sample count and `monitored_ms`: the monotonic span between distinct samples in this invocation, never the original blocker duration.
+
+At least two strictly increasing fresh samples of the same routing observation must span the threshold. Pauses, circuit/rate limits, ordering, capacity and retry backoff are eligible; ready and processing indicators are not blockers. Changes in routing state, target availability, capacity scope or exact ordering blocker reset the episode. Stale, future, unavailable, replaced, invalid and non-monotonic evidence interrupt confirmation; a gap exceeding the age limit also resets it. Retained samples cannot start an episode or extend its duration. Resume starts a new tracker and ignores checkpoint stall aggregates. Counts describe sampled selected recipients, not account-wide stalled consumers.
+
+### Consume blocker incident transitions
+
+Stall-enabled watch results include `monitoring.blocker_incidents` (currently confirmed incidents) and `monitoring.blocker_transitions` (events from the current pass). An incident opens when fresh samples reach the stall threshold. Its opaque ID stays fixed during that episode within this watch. Each transition has an increasing invocation-local sequence, incident ID, exact guarded query, original waiting reason, notification timestamp and optional compact routing evidence. Deduplicate repeated snapshots by incident ID and sequence. A newly confirmed episode receives a new ID. Without durable alerts, resume starts a new invocation and does not adopt saved incidents or replay their transitions.
+
+Transitions are `opened` / `persistent_blocker`, `resolved` / `routing_not_blocked`, or `confirmation_lost`. Resolution requires a newly sampled, strictly later, fresh observation without an evidence gap: either retained routing has ended (`not_waiting`) or the sampled waiting reason is no longer an eligible blocker. This includes terminal routing failures/filters and never proves handler success. Changed blockers or episode resets report `confirmation_lost` / `episode_reset`; stale, unavailable, invalid or replaced evidence reports `evidence_unavailable`, excessive sampling gaps report `sample_gap`, and missing selected evidence reports `selection_unavailable`. Missing evidence never implies resolution.
+
+Add `--alerts-json` to a stall-enabled CLI watch to emit one JSON transition per line on stderr and suppress routine watch progress text. The final status JSON remains on stdout; command errors retain their existing error reporting. The CLI deduplicates callback/final snapshot events and emits transitions discovered by final freshness checks. Without this flag, lifecycle alerts use readable text. Watch completion and deadlines are unchanged: a stopped watch may still have active confirmed incidents. Active state and current-pass events are bounded by the selected recipients; these results are not a durable incident history or a delivery success signal.
+
+### Resume pending incident notifications
+
+A stall-enabled CLI watch with `--checkpoint PATH` now enables a durable alert outbox. SDK watch options enable it with Go `DurableAlerts: true`, Node `durableAlerts: true`, or Python `durable_alerts=True`. SDK callers must persist progress and final snapshots themselves, before handing alerts to a consumer. `monitoring.alert_outbox` contains version 1, a notification session, its latest sequence, ordered `pending` transitions and saved `active` incidents. Consume `pending` when durable mode is enabled; `blocker_transitions` remains a per-pass view.
+
+Resume validates saved alerts against the same frozen publication/acceptance/subscription selection and reviewed attempts, checks episode lineage and bounded queue shape, and preserves pending IDs, sequences and the notification session. This extends the invocation-only lifecycle behavior above for durable notification streams. Previously active episodes emit `confirmation_lost` with reason `watch_resumed`; saved samples never restore live confirmation. New episodes require fresh samples and receive new IDs in the continued stream. Historical pending alerts remain historical notifications even when current evidence has disappeared.
+
+Printing or writing an alert is not acknowledgement from the consumer. After processing an alert, acknowledge its exact incident ID and transition sequence. CLI accepts an array such as `[{"incident_id":"0123456789abcdef0123456789abcdef-1","sequence":1}]` via `--ack-alerts PATH` with checkpoint and resume/refresh. The acknowledgement file is protected from checkpoint overwrite. SDKs accept initial `AlertAcknowledgements` / `alertAcknowledgements` / `alert_acknowledgements` and synchronous per-pass `OnAlertAcknowledgements` / `onAlertAcknowledgements` / `on_alert_acknowledgements` callbacks that return acknowledgement arrays after progress. Acknowledgements validate as a whole; duplicate pairs within a batch, wrong-stream IDs, future sequences and conflicting IDs for pending sequences fail without removing entries. Repeating an acknowledgement for an already removed sequence in this stream is an idempotent no-op. Callbacks should return promptly and acknowledge only completed consumer processing. Persist the next/final snapshot to commit removals; a crash before that save can replay acknowledged work.
+
+The CLI saves each snapshot before emitting alerts, including final-check transitions, and re-emits unacknowledged pending entries once per resumed invocation. This is at-least-once delivery of checkpointed notifications, not exactly-once processing; deduplicate by incident ID and sequence, and apply only transitions newer than the last sequence processed for that incident. Partial acknowledgements can replay an older transition after a newer one was processed. Resume the latest snapshot of a single checkpoint stream; SDK callers must serialize checkpoint ownership and writes. Notifications that were never checkpointed have no durability guarantee. Consumer acknowledgements are explicit; stderr success does not remove pending alerts.
+
+The queue is bounded at 1,024 slots, including a reserved closing transition for every active incident. If a new opening cannot reserve both slots, monitoring stops with `alert_queue_full` and retains queued notifications and the sampled status. Acknowledge pending work and resume. No queued transition is evicted. Notification sequences are bounded to the exact integer range shared by the SDKs. Invalid saved state/acknowledgements are rejected and do not overwrite the CLI checkpoint. Non-durable watches retain the previous per-pass behavior. Delivery mutations, receipt budgets and ordinary watch completion are unchanged.
+
+`EventsService.getEventConsumerDeliveryHealth({ slug, subscriptionID, window: '15m' })`
+returns independent routing/execution reads and an oldest-first pending sample.
+Check component timestamps, truncation, and retention coverage. Sampled blocker
+counts and retained dead-letter/retry counts are not all-time event totals;
+`latest_successful_completion_at` is the latest retained observed completion.
+
+Subscription delivery health now includes optional `capacity_waits`: complete
+effective capacity-reason counts for consumer/app/account scope, a pending total,
+explicit coverage/completeness, consumer binding, and a separate observation time.
+Counts cover all retained pending recipients independently of the bounded sample.
+A missing aggregate from an older server is unavailable evidence, not zero waits.
+
+Subscription delivery health `waiting_reasons` provides complete effective pending
+reason counts independently of the event sample, with its own pending total,
+completeness, coverage, observation time, and acceptance cutoff. Counts include zero
+entries and sum to that total when complete. Missing aggregates mean unavailable
+evidence. Backlog consumers also expose `pending_waiting_reasons` under their filters.
 
 ## Inspect durable entity metadata
 
@@ -2615,3 +3502,412 @@ Use the attention reason `sla_breached` to find known breaches. Performance coho
 Workflow steps optionally accept `state_sla_warning_percent`, mapping budgeted nonterminal states to whole percentages 1–99. For example, an 80% warning on a 1,800-second budget starts at 1,440 seconds. Pin threshold changes to a new workflow contract version.
 
 Current `sla` data includes optional `warning_percent` and, when retained entry history is known, `warning_at`. Status becomes `at_risk` at that time, then `breached` at the due time. Unknown history implies neither status. Use attention reason `sla_at_risk`; matching summaries expose `sla_at_risk_workflow_count`. These observations do not enforce application actions.
+
+Managed compute storage client loading and rotation are described in the
+[object storage compute guide](../../docs/object-storage-compute.md).
+Use `SecretReloadCoordinator` from `@gregale/sdk-node/secrets/runtime` with each
+`ObjectStorageBinding.secretConsumer()` to install SIGHUP before readiness,
+serialize atomic snapshot adoption and ACK only after all registered consumers
+succeed. Require the current guest atomic snapshot, readiness and generation
+contract; register all other secret users as well. Start serving after
+`await coordinator.start()` and pass your shutdown signal. Both runtime subpaths
+are server-only and have no added package dependencies.
+
+For automatic old-client cleanup, pass `{retire: ...}` to the storage binding.
+Use `acquire()` and release the lease in a finally block after consuming/closing
+all response streams; managed bindings reject raw `current()`. Stop admission
+and the coordinator before `waitForRetirement(shutdownSignal)`. A canceled wait
+never destroys leased clients. Without a hook, lifetime remains caller-owned.
+
+### Durable entity developer workflow
+
+The pure `@gregale/sdk-node/durable-entities/runtime` entrypoint exports
+`defineDurableEntity` and `createDurableEntityRegistry` for namespace-bound,
+schema-aware synchronous handlers. The separate
+`@gregale/sdk-node/durable-entities/testing` entrypoint exports
+`DurableEntitySimulator` for serialized local calls, replay receipts, commit fault
+injection, manually advanced alarms, captured intents and restart checkpoints.
+It is an in-memory development tool, not a production storage backend.
+
+See the [complete Node starter workflow](../../cmd/gregale/templates/durable-entity-node/README.md)
+for installation, examples, validation and deployment requirements.
+
+### Durable entity operational visibility
+
+Call `entityHandle.observe()` or `observeDurableEntity(selectors)` for an inspection
+plus alarm/outbox status and actionable findings. `summarizeDurableEntity(inspection,
+clock)` diagnoses existing metadata without network calls. Neither helper reads
+application state, inspects replay receipts, acquires ownership or retries work.
+See [visibility semantics and CLI watch](../../docs/durable-entity-visibility.md).
+
+### Typed entity clients
+
+`@gregale/sdk-node/durable-entities/client` exports
+`defineDurableEntityClientContract` and `durableEntityClient`. Shared pure decoders
+infer payload/result types; clients validate before transport and preserve explicit
+request IDs. The Node starter generates namespace-bound factories from declared
+contract exports. See its [generated client guide](../../cmd/gregale/templates/durable-entity-node/README.md#generated-typed-clients).
+
+### Reconnectable entity sessions
+
+`@gregale/sdk-node/durable-entities/session` exports `defineDurableSessionEntity`,
+`durableSessionFrame` and `decodeDurableSessionAcknowledgement`. The helper retains
+session identity, sequence and closed tombstones with application state. Save each
+pending frame before transport and replay its identical bytes after disconnect.
+See the [session guide](../../docs/durable-entity-sessions.md) for the separately
+gated owner-authenticated WebSocket endpoint and its limits.
+<!-- Durable session lifecycle -->
+The session module also exports `defineRecoverableDurableSessionEntity`,
+`durableSessionLifecycleFrame`, `decodeDurableSessionStatus` and
+`decodeDurableSessionLifecycleAcknowledgement`. This opt-in contract adds fresh
+status snapshots, service-driven logical-time expiry, generation-fenced cohort
+reclamation and pure application migrations. See
+[the lifecycle guide](../../docs/durable-entity-session-lifecycle.md).
+
+Checked project release graphs use the preparation and activation endpoints.
+Preparation returns a manifest with exact members, expected routing and policy
+revisions; activation independently rechecks binding evidence and service
+readiness. Internal service evidence is selected by `service_targets` together
+with an exact caller deployment. See the [qualification and activation workflow](../../docs/networking.md#qualify-and-activate-a-project-release-graph)
+for the CLI steps, consent requirements and graph limitations.
+
+
+Checked graph recovery uses `ProjectsService.prepareCheckedProjectRollback` and
+`ProjectsService.rollbackCheckedProjectRelease` to select retained history
+and commit the verified manifest. Historical membership and expiry are checked
+atomically under current binding policies. The new release records
+`rollback_source_release_id` and `rollback_previous_release_id`. See the
+[recovery workflow](../../docs/networking.md#recover-a-retained-project-release-graph).
+
+
+Checked graph deactivation uses `ProjectsService.prepareCheckedProjectDeactivation` and `ProjectsService.deactivateCheckedProjectRelease`.
+Preparation freezes one 100% weighted fallback per workload with current policy
+and service targets. Qualify this `deactivate: true`, `ttl_seconds: 0` manifest,
+then deactivate explicitly. Missing fallbacks, splits, stale intent and missing
+readiness block the switch. The retired release's `deactivation` field contains
+the durable receipt and exact fallback members. See the
+[deactivation workflow](../../docs/networking.md#deactivate-a-project-graph-with-checked-fallback-routing).
+
+Candidate service staging uses `POST .../release-sets/staging` with a complete
+prepared forward or rollback manifest and a 1–1800 second `ttl_seconds` lease.
+Read or cancel the stage with `GET` / `DELETE .../release-sets/staging/{stage}`.
+Staging capacity is billable, preserves current routes, uses ordinary admission
+limits, and excludes GitOps-managed workloads. Repeating the same manifest reuses
+its original expiry. `ready` is observed replica readiness, not binding proof;
+run verification and explicit activation/rollback afterwards. Cancellation or
+expiry removes temporary capacity while active graph allocations remain.
+
+
+Push queue canaries require an exact deployment, a declared safe `GREGALE_QUEUE_CANARY_BINDINGS` override and explicit publication consent. Create, get and cancel operations expose bounded publication/dispatch/completion status. The `handler_completion` queue release requirement checks fresh completion on the selected deployment plus normal consumer readiness. See [queue completion canaries](../../docs/networking.md#push-queue-binding-completion-canaries).
+
+Durable single-app binding verification exposes create, status, resume, atomic
+step admission, complete and cancel operations. Supply a stable run UUID and
+review digest; original consent and deadlines are immutable, and observing an
+existing task/message does not acquire ownership. See
+[durable verification runs](../../docs/networking.md#durable-single-app-binding-verification).
+
+Durable graph qualification preserves the reviewed manifest, member receipts and exact service targets. See [durable project graph verification](../../docs/networking.md#durable-project-graph-verification) for status, resume and cancel.
+
+Binding verification review endpoints return an executable plan and opaque digests without admitting work. Call `ReviewBindingVerification` / `reviewBindingVerification` / `review_binding_verification`, or the corresponding project review method. Check `ready`, show blockers and required consent, then forward the returned selection and digest to receipt creation. Graph creation also forwards the aggregate `review_digest`, member `review_digests` and unchanged consent. No client-side digest calculation is required. A ready review is not a passing verification result.
+
+### Run a durable binding verification receipt
+
+After reviewing and creating a consented receipt, save its UUID and resume it directly:
+
+```ts
+import { runBindingVerification, runProjectBindingVerification } from '@gregale/sdk-node';
+const run = await runBindingVerification('api', savedRunId, {
+  concurrency: 2,
+  signal: controller.signal,
+  onProgress: progress => console.log(progress),
+});
+const graph = await runProjectBindingVerification('project', 'production', savedGraphRunId, {
+  concurrency: 2,
+});
+```
+
+Configure `OpenAPI.BASE` and `OpenAPI.TOKEN` as for the generated services. One graph budget covers all unfinished task and queue resources. Callbacks run serially and expose sanitized IDs/status; a persisted passed receipt reports `qualifying` until final completion is reconfirmed. A callback exception, abort or transport error throws `BindingVerificationRecoveryError` with `runId`, `cause` and the latest observation. These failures leave server work intact: resume the same UUID. Use the generated cancel API for explicit cancellation. Neither expiry nor consent changes on resume; no route activation occurs. Callbacks should finish promptly.
+
+### Diagnose a stopped verification run
+
+```ts
+const diag = await AppsService.getBindingVerificationRunDiagnostics({slug: 'api', run: savedRunId});
+const graphDiag = await ProjectsService.getProjectBindingVerificationRunDiagnostics({slug: 'project', environment: 'production', run: savedGraphRunId});
+```
+
+Inspect `blockers`, whitelisted public `changes` and suggested `recovery` actions after a runner error. `complete` describes diagnostic read completeness; optional `check_passed` describes public evidence and conveys no admission or completion authority. Diagnostics preserve the original deadline and perform no execution, cancellation or receipt mutation. Missing domain permission fails the read. Continue with the same run ID only when current server checks allow it, or explicitly cancel and obtain a new reviewed receipt as directed.
+
+Verification receipt creation accepts `max_concurrency` (`MaxConcurrency` in Go), default two with a range of one through eight. This budget is frozen and enforced by the server across all drivers and graph members. Local runner concurrency can be lower; resume never changes the server budget. Runners wait and reread on `binding_verification_budget_full`, preserving the original receipt and deadline. Other capacity errors retain their recovery behavior. Diagnostics expose `budget` with the shared run ID, limit, unfinished resource count, waiting steps and fullness.
+
+Runner recovery errors now attach typed optional `diagnostics` containing server blockers, public changes and recovery suggestions. The read-only lookup has a two-second cap and respects the original receipt/caller deadlines. Unavailable, forbidden or mismatched diagnostics preserve the original cause and run ID. Cancellation and callback failures skip enrichment; no recovery action is executed automatically. Use `skipDiagnostics: true` to disable it.
+
+### Create from a reviewed binding selection
+
+Persist a canonical nonzero run UUID before creation. Pass a ready server review, lifetime and explicit effect consent; digests and selections are forwarded unchanged. Typed creation errors retain the UUID, original cause and whether creation was invoked. This flag does not prove acceptance. Reconcile uncertain creation by reading the same ID with the same review/options. Reconciliation never writes, resumes or replaces work; a failed read does not establish noncreation. Run a confirmed receipt explicitly using the existing runner.
+
+```ts
+const options = { runId: savedId, ttlSeconds: 60, maxConcurrency: 2, queuePublish: true, signal: controller.signal };
+const run = await createBindingVerificationFromReview('api', review, options);
+// After an uncertain creation error, inspect the same identity:
+const recovered = await reconcileBindingVerificationCreation('api', review, options);
+```
+
+Graph helpers are `createProjectBindingVerificationFromReview` and `reconcileProjectBindingVerificationCreation`. `BindingVerificationCreationError` exposes `runId`, `attempted` and `cause`.
+
+Durable runner status GETs now retry temporary connection failures and HTTP 502/503/504 with bounded exponential jitter. Configure `statusReadRetries` (default three; zero disables), maximum eight retries per read. Retry waits obey the original expiry and caller stop controls. Progress exposes `retrying`, `retry_attempt` and `retry_delay_ms`; callback failures stop observation. Lifecycle writes and invalid responses retain explicit recovery behavior.
+
+### Discover retained verification receipts
+
+Use `AppsService.listBindingVerificationRuns({slug, limit: 20})` and `ProjectsService.listProjectBindingVerificationRuns({slug, environment, limit: 20})`. Both accept `cursor`, `deploymentId` and `status`; app calls additionally support `scope` and `includeMembers`. Follow `next_cursor` with the same filters. `BindingVerificationRunList` contains compact `BindingVerificationRunSummary` entries and `observed_at`. Lists describe retained stored/expired states, never current qualification; app members are opt-in and identify `graph_run_id`, while project lists contain roots only. Retention is unchanged.
+
+Durable runners wait for recognized final `qualification` conditions after successful probes. Progress reports `waiting_for_qualification` with typed public conditions; polling stays within the original receipt expiry and caller deadline/stop controls. Unknown conditions or review drift stop observation. Waiting does not admit new work or renew receipts. See [ADR-1365](../../docs/adr/1365-verification-qualification-waiting.md).
+
+After an eligible admission/completion transport failure or HTTP 502/503/504, durable runners reconcile through a bounded GET of the original receipt. They continue only after validating proof of the exact owned admission or fresh passed completion, and never automatically replay the uncertain write. Progress exposes `reconciling` with `operation` and admission selectors. Reads obey existing status retry settings, original expiry and caller stop controls. Unproved results preserve explicit recovery with the original ID and write cause. See [ADR-1366](../../docs/adr/1366-verification-write-reconciliation.md).
+
+Reviewed creation now reconciles eligible transport failures and HTTP 502/503/504 through bounded reads of the original UUID. It returns only a matching usable receipt, without repeating creation or generating another UUID. Configure `statusReadRetries`, `onProgress` and the existing `signal`; read retries default to three, with zero disabling extra attempts. Progress emits `reconciling` with `operation: creation` and bounded `retrying` events. Recovery is capped at five seconds and the requested TTL measured from the attempt, plus caller context/stop controls. Unproved results preserve the typed creation error, attempted flag, original UUID and write cause. Explicit reconciliation remains a single read that can inspect terminal or expired receipts. See [ADR-1368](../../docs/adr/1368-verification-creation-reconciliation.md).
+
+### PostgreSQL pool runtime
+
+Use `PostgresPoolBinding` to validate a fresh pool before atomic secret adoption and
+retire old pools after their transaction leases release. Validation and retirement
+callbacks are required; the application supplies its driver. Register the secret
+consumer with the reload coordinator, hold each lease through driver connection
+release, and invalidate before waiting for retirement at shutdown. See the
+[pool lifecycle and SDK examples](../../docs/postgres-pool-runtime.md) and the
+[runnable Node pg.Pool service](../../examples/postgres-pool-rotation/README.md).
+
+### Deadline count alerts
+
+`watchEventSubscriptionDeadlines(target, options)` provides sustained upcoming,
+expired and waiting-reason count alerts, separate recovery boundaries, fresh-evidence
+confirmation progress, cancellation and a bounded checkpoint outbox. Load checkpoints
+with `validateEventDeadlineCheckpoint`; acknowledge exact incident/sequence pairs
+with `acknowledgeEventDeadlineAlerts` or the watch's acknowledgment callback.
+
+The Node deadline-only checkpoint format is distinct from Go/CLI delivery-health
+checkpoints. Applications own persistence and notifications: persist before sending,
+replay unacknowledged alerts after a crash, and deduplicate downstream. See
+[configuration, callbacks and recovery semantics](../../docs/event-deadline-node-watch.md).
+
+`expiredRatio: { warningBasisPoints: 1000, recoveryBasisPoints: 500,
+minimumRecipients: 100 }` enables >=10% expired backlog warnings and <=5% recovery
+with a qualifying cohort. Decisions use exact BigInt arithmetic; display values
+are approximate and alerts retain the source count sample. Ratio selections use
+version 2 Node checkpoints; existing count-only selections stay at version 1. See
+[ratio validation and compatibility](../../docs/event-deadline-node-watch.md#expired-backlog-ratios).
+
+`investigateEventDeadlineAlert(checkpoint, { incidentId, sequence }, { limit: 25 })`
+maps an exact retained Node alert to one current read-only triage page. It validates
+the checkpoint and returned scope/cohort, preserves opaque cursor continuation and
+keeps the saved notification time separate from current observation clocks. Ratio
+alerts list the expired numerator only. See
+[investigation, cancellation and pagination](../../docs/event-deadline-node-investigation.md).
+
+### Deferred event acknowledgment worker
+
+`eventAcknowledgmentWorkerFromHeaders(app, headers, originalBody, accountId, appId)`
+reconstructs a worker from an authenticated delivery or its protected durable job.
+`run(pool, handler, { signal })` renews the platform lease while the transactional
+consumer receipt and business writes commit, then completes with the exact saved
+JSON. `completeReceipt` recovers an uncertain commit/completion without invoking
+business code. Explicit `retry` / `deadLetter` decisions check for an existing
+receipt first. The application owns durable job storage and exclusive ownership.
+See [usage, cancellation and recovery](../../docs/event-acknowledgment-node-worker.md)
+and the [durable-job integration](../../examples/event-acknowledgment-node/README.md).
+
+`runDurable` commits a completion intent with the receipt and business writes.
+`saveCompletionIntent` stages a saved receipt without business code;
+`saveRetryIntent` / `saveDeadLetterIntent` persist explicit negative decisions.
+Install `eventAcknowledgmentIntentSchema` explicitly in the application database,
+and run `recoverNextEventAcknowledgmentIntent` from a durable recovery host.
+Recovery sends only the saved callback; inspect its returned `state` / `lastCode`.
+`listEventAcknowledgmentIntents` provides bounded metadata without tokens or results.
+See [transaction, recovery and retention details](../../docs/event-acknowledgment-node-intents.md).
+
+`getEventAcknowledgmentIntentHealth(pool, accountId, appId, { scanLimit, stallAfterMs, signal })`
+reads one owner-scoped database snapshot for pending/unconfirmed/parked backlog, due work,
+live/expired claims, stalled recovery and oldest overdue age. Export `complete`,
+`truncated` and `coverage` with the counts; incomplete scans cannot establish
+healthy recovery. The helper reads metadata only and claims no work. See
+[options, coverage and cancellation](../../docs/event-acknowledgment-intent-health.md#node-summary).
+
+`watchEventAcknowledgmentIntentHealth(pool, accountId, appId, options, notify)`
+adds sustained `due_backlog` / `stalled_recovery` / `parked_intents` alerts with opt-in thresholds.
+Firing and resolution require multiple fresh, complete observations; failed,
+incomplete or stale evidence becomes `unknown` / `confirmation_lost`. Polls and
+local callbacks run sequentially, and cancellation never resolves an incident.
+State is in memory; notification transport and durable identity stay application-owned.
+See [watch options, callback errors and cooperative deadlines](../../docs/event-acknowledgment-intent-health.md#node-watch).
+
+`watchEventAcknowledgmentIntentHealthWithCheckpoint(pool, accountId, appId, options)`
+adds opt-in restart recovery with stable incident IDs and a bounded notification
+outbox. Persist `progress.checkpoint` in `onProgress` before delivering
+`checkpoint.pending`; acknowledge exact incident/sequence pairs with
+`acknowledgeEventAcknowledgmentIntentAlerts`. Resume validates owner/policy and
+requires fresh confirmation while retaining unresolved incident identity.
+See [checkpoint validation, replay and shutdown](../../docs/event-acknowledgment-node-checkpoints.md).
+
+Set `parkedThreshold` to enable parked-count alerts in either Node watch,
+including a parked-only selection. Checkpointed parked alerts use version 2;
+zero/omission preserves version 1 with the existing policy JSON. Upgrade hosts
+that can resume or acknowledge version 2 first. Incomplete evidence stays unknown;
+operator resume or newer staging can reduce parked count without confirming a
+callback. See [parked evidence and rollout](../../docs/event-acknowledgment-node-checkpoints.md#parked-intent-alerts).
+
+`EventAcknowledgmentIntentHealthMetrics(accountId, appId, { maxAgeMs: 30000 })`
+caches one bounded recovery-health sample. Feed sequential reads with `record`
+and failures with `recordReadFailure`, then format a fresh `snapshot()` per scrape
+with `formatEventAcknowledgmentIntentHealthMetrics`. It exports due/stalled/parked
+counts and coverage/age gauges without identity labels; missing reads omit counts.
+The [read-only metrics contract](../../docs/event-acknowledgment-node-recovery-prometheus.md)
+and [Prometheus/Grafana pack](../../examples/event-acknowledgment-monitoring/README.md#recovery-health-node)
+include freshness guards, unavailable-evidence alerts and guarded operator resume.
+
+`EventAcknowledgmentIntentRecoveryWorkerMetrics` and
+`recoverEventAcknowledgmentIntentsWithMetrics` add actual pass liveness, separate
+from healthy reads/scrapes. The wrapper preserves original joined results/errors;
+its formatter shares Go's 23 gauges and adds Node's overlapping cleanup-failure
+gauge. Reuse the shared opt-in worker alerts/dashboard with the explicit same-loop
+host. See [Node worker liveness](../../docs/event-acknowledgment-node-worker-liveness.md).
+
+`claimEventConsumerProcessing(pool, input, durationMs, { signal })` provides an
+opaque local preparation lease with `completed`, `renew` and `complete`. Install
+`eventConsumerProcessingSchema` explicitly beside the inbox. Worker
+`runWithProcessingLease` / `runDurableWithProcessingLease` compose the same local
+fence with platform acknowledgment and optional atomic intent staging. Stop local
+renewal before the short final transaction. See [takeover, failure and lease boundaries](../../docs/event-consumer-processing-node.md).
+
+`worker.runPreparedDurable(pool, prepare, handler, { preparationTimeoutMs,
+processingLeaseMs, signal })` coordinates both local and platform lease renewal
+during side-effect-free preparation. Existing receipts skip both callbacks. Local
+renewal stops and joins before the fenced business-write/receipt/intent commit;
+platform renewal continues through it. The preparation timeout is required and
+does not bound the final transaction; supply a parent deadline and driver timeouts.
+See [coordinated preparation and recovery](../../docs/event-acknowledgment-node-preparation.md).
+
+`inspectEventConsumerProcessing(pool, input, { signal })` reads one original
+consumer acceptance's local receipt/claim metadata. It reports completed, active,
+expired, absent or conflict evidence plus database observation/expiry times and
+rounded-down remaining lease milliseconds. It selects no token or response body,
+makes no mutation and grants no processing ownership or acknowledgment proof.
+See [snapshot boundaries and explicit recovery](../../docs/event-consumer-processing-inspection.md).
+
+Prepared operations accept optional `onEvent(event)` for bounded phase, duration,
+renewal-failure and commit-outcome telemetry. Events exclude identities, tokens,
+payloads, prepared data, results and raw errors. Use a passive synchronous adapter;
+throws and accidental async rejections are ignored without changing processing
+outcomes. See [event ordering and observer limits](../../docs/event-acknowledgment-node-telemetry.md).
+
+`EventAcknowledgmentPreparationMetrics` supplies a bound `record` observer for
+`onEvent` and immutable `snapshot()` counters/histograms. Labels and duration
+buckets are fixed, memory stays bounded, and saturation is explicit. Counts are
+process-local observations; duplicate records count again and callback delivery
+remains separate. No exporter dependency is installed. See [counting and exporter semantics](../../docs/event-acknowledgment-node-metrics.md).
+
+`formatEventAcknowledgmentPreparationMetrics(metrics.snapshot(), { prefix? })`
+renders cumulative Prometheus text 0.0.4 with fixed labels, durations in seconds
+and saturation gauges. Serve with
+`EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE` on an application-owned
+scrape path. No registry, listener or network publication is added. See the
+[metric names and private scrape example](../../docs/event-acknowledgment-node-prometheus.md).
+
+The application-owned [shared Node/Python monitoring pack](../../examples/event-acknowledgment-monitoring/README.md)
+includes opt-in Prometheus recording/alert rules, a Grafana dashboard and recovery
+runbook. Tune sample guards and thresholds for your worker workload and install
+it through your own monitoring deployment process.
+
+`recoverEventAcknowledgmentIntents(pool, accountId, appId, { maxAttempts?,
+concurrency?, signal?, claimDurationMs?, backoffMs?, retryPolicy?, callbackOptions? })` runs one
+finite saved-callback recovery pass. Admissions/concurrency are bounded, existing
+transaction fences remain authoritative and all worker promises join. Frozen
+`.result` progress accompanies ordinary failure, AbortError and uncertain-COMMIT
+exceptions. The host schedules later passes and owns pool/client lifetime. See
+[budgets, pool release and recovery progress](../../docs/event-acknowledgment-node-recovery-pass.md).
+
+Set `retryPolicy: { initialBackoffMs: 1000, maxBackoffMs: 300000 }` for capped
+exponential full jitter based on persisted recovery claims. Single-intent
+recovery and `claim.deliver` accept the same option. Omit `backoffMs` with a policy;
+omitted policies keep fixed delays. See the
+[adaptive retry contract](../../docs/event-acknowledgment-node-retry-policy.md).
+
+Durable staging accepts `retryPolicy` to atomically bind an immutable versioned
+schedule to a new intent. Updated recovery uses the captured binding instead of
+worker fallback; status exposes optional frozen `retryPolicy` metadata. Apply
+`eventAcknowledgmentIntentStoredRetryPolicySchema` to existing installations
+before upgrading current intent workers. See the
+[shared binding and rollout contract](../../docs/event-acknowledgment-stored-retry-policy.md).
+
+Use `getEventAcknowledgmentIntentPolicyAdoptionCandidate` for a precise timestamp
+snapshot of selected backlog, then `adoptEventAcknowledgmentIntentRetryPolicy`
+with a durably saved command UUID, expected timestamp/count and optional policy.
+Install `eventAcknowledgmentIntentPolicyAdoptionSchema` first. Frozen receipts
+resolve exact retries across Go and Node within Node's safe generation range;
+typed rejection errors expose their retained `.receipt`. Callback data, attempts
+and due time are preserved. See the
+[adoption, timestamp and replay contract](../../docs/event-acknowledgment-policy-adoption.md#node-selection-adoption-and-replay).
+
+Set `retryBudget: { maxDeliveryAttempts: 8, retryPolicy: { initialBackoffMs: 1000,
+maxBackoffMs: 300000 } }` during durable staging to opt into v2 exhaustion. Apply
+`eventAcknowledgmentIntentRetryBudgetSchema` after the v1 upgrade before upgrading
+current helpers, including v1-only hosts. Parked callbacks retain protected inputs;
+passes and health expose `parked`. Install `eventAcknowledgmentIntentRetryResumeSchema`
+before guarded resume, select exact timestamp/count/grant metadata with
+`getEventAcknowledgmentIntentRetryResumeCandidate`, durably retain the command, then
+call `resumeEventAcknowledgmentIntentRetryBudget`. Exact retries resolve uncertain
+commits across Go/Node within Node's safe generation range. See
+[budgets, migration and operator resume](../../docs/event-acknowledgment-retry-budgets.md#node-budgets-and-guarded-resume).
+
+## Issue source maps
+
+Node issue reporters using `groupingStrategy: 'failure-site-v1'` or `'cause-chain-v1'` accept
+`sourceMaps: [{ generatedFile, payload }]`. `generatedFile` is the exact absolute
+bundle path or file URL, and `payload` is its flat Source Map v3 JSON text.
+Ship matching maps with the deployment and load them before creating the reporter.
+Original frames determine grouping, and raw bundle stacks remain available.
+Check `stats().mappedFrames` and `unmappedFrames` for mapping coverage. See
+[registration, bounds, and rollout](../../docs/issues.md#deployment-local-node-source-maps).
+
+To discover maps automatically after a build, run
+`gregale-issue-source-maps dist dist/.gregale-issue-maps.json --replace` and ship
+the manifest with the bundles. Set
+`sourceMapManifest: { file: '/app/dist/.gregale-issue-maps.json', directory: '/app/dist' }`
+instead of `sourceMaps`. Initialization checks bundle hashes and resolves paths
+against the running deployment; capture never reads files. Build-time discovery
+removes embedded source content, supports local annotations and adjacent hidden
+maps, and rejects remote/inline references and mismatched artifacts. See
+[automatic discovery](../../docs/issues.md#discover-source-maps-during-node-builds).
+
+## Reversible issue grouping
+
+Issue actions support `merge` with `target_issue_id` and `split` with
+`member_issue_id`. Canonical details expose `group_members`; occurrences and
+activity retain `original_issue_id`. See [manual grouping and retained history](../../docs/issues.md#reversible-manual-grouping).
+
+Use `cause-chain-v1` to group wrapped exceptions by the deepest complete reported
+cause. The dashboard preserves the outer exception and cause chain. See
+[Issues cause-aware grouping](../../docs/issues.md#cause-aware-grouping) for
+language semantics, incomplete chains, and compatibility.
+
+Issue reporters accept explicitly reported operational context. Create a separate collector for each request or job:
+
+```ts
+const context = createIssueContext();
+context.setTag('component', 'payments');
+context.addBreadcrumb({ category: 'workflow', message: 'starting charge' });
+reporter.captureException(error, context.snapshot());
+```
+
+Import `createIssueContext` from `@gregale/sdk-node`. The collector retains at most 16 entries and immutable snapshots; it does not collect data automatically. Only the operational tag allowlist is accepted. See [the Issues guide](../../docs/issues.md) for server sanitation, retention, tag search, and deployment source-map publication.
+
+### Adopt recovery budgets for existing callback backlog
+
+`adoptEventAcknowledgmentIntentRetryBudget` attaches v2 to a selected active unbound/
+v1 intent with exact timestamp/count/policy guards, no live claim and no newer
+attempt. Install `eventAcknowledgmentIntentBudgetAdoptionSchema`, select exact
+metadata with `getEventAcknowledgmentIntentBudgetAdoptionCandidate`, then durably
+save `EventAcknowledgmentIntentAdoptRetryBudgetOptions` before execution. Omitted/
+null `expectedPolicy` means unbound; complete v1 timing must be preserved. The total
+exceeds consumed claims without resetting them. Frozen receipts resolve exact
+retries across Go/Node within Node's safe generation range, with known rejection
+receipts on `EventAcknowledgmentIntentBudgetAdoptionError.receipt`. See
+[budget adoption, exact fences and uncertainty](../../docs/event-acknowledgment-budget-adoption.md#node-selection-adoption-and-replay).

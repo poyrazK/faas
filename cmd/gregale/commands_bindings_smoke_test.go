@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -56,15 +57,15 @@ func TestCmdBindingsSmokeRunsInCallerTaskAndReportsPinnedResponse(t *testing.T) 
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	previousJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = previousJSON })
+	previousJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = previousJSON })
 	var out bytes.Buffer
-	previousOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
+	previousOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previousOut })
 
-	code := run([]string{"bindings", "smoke", "api", "billing", "--deployment", targetDeployment, "--path", "/health?token=do-not-report", "--expect-status", "204", "--poll-interval", "1ms", "--wait-timeout", "1s"})
+	code := main.Run([]string{"bindings", "smoke", "api", "billing", "--deployment", targetDeployment, "--path", "/health?token=do-not-report", "--expect-status", "204", "--poll-interval", "1ms", "--wait-timeout", "1s"})
 	if code != 0 {
 		t.Fatalf("exit = %d, output = %s", code, out.String())
 	}
@@ -72,7 +73,7 @@ func TestCmdBindingsSmokeRunsInCallerTaskAndReportsPinnedResponse(t *testing.T) 
 	if !reflect.DeepEqual(created.Command, wantCommand) || created.CommandShell {
 		t.Fatalf("task command = %+v, want argv=%v without shell", created, wantCommand)
 	}
-	if created.TimeoutSeconds != bindingSmokeTaskTimeoutSeconds || created.MaxOutputBytes != 4096 {
+	if created.TimeoutSeconds != main.BindingSmokeTaskTimeoutSeconds || created.MaxOutputBytes != 4096 {
 		t.Fatalf("task limits = %+v", created)
 	}
 	var got api.ServiceBindingSmokeReport
@@ -109,7 +110,7 @@ func TestCmdBindingsSmokeRequiresDeclaredServiceAndExplicitTarget(t *testing.T) 
 		{"bindings", "smoke", "api", "billing", "--path", "/health"},
 		{"bindings", "smoke", "api", "billing", "--deployment", "d6e281f3-f5b2-436c-b4ad-8529a956609c", "--path", "/health"},
 	} {
-		if code := run(args); code == 0 {
+		if code := main.Run(args); code == 0 {
 			t.Errorf("accepted incomplete or unbound smoke request %v", args)
 		}
 	}
@@ -128,7 +129,7 @@ func TestCmdBindingsSmokeRejectsNonOriginPathBeforeTaskAdmission(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	code := run([]string{"bindings", "smoke", "api", "billing", "--deployment", "d6e281f3-f5b2-436c-b4ad-8529a956609c", "--path", "https://outside.example/health"})
+	code := main.Run([]string{"bindings", "smoke", "api", "billing", "--deployment", "d6e281f3-f5b2-436c-b4ad-8529a956609c", "--path", "https://outside.example/health"})
 	if code == 0 || apiCalls != 0 {
 		t.Fatalf("exit=%d API calls=%d for non-origin path", code, apiCalls)
 	}

@@ -55,15 +55,16 @@ DELETE FROM dev_source_patches
 WHERE app_id = sqlc.arg(app_id)::uuid
   AND (expires_at <= now() OR base_deployment_id <> sqlc.arg(base_deployment_id)::uuid);
 
--- name: RecordDevSourcePatchApplied :execrows
+-- name: RecordDevSourcePatchApplied :one
 -- The first acknowledgement wins; later instances applying the same
--- generation do not move the recorded time.
+-- generation do not move the recorded time and return no row.
 UPDATE dev_source_patches
 SET applied_at = now(), apply_ms = sqlc.arg(apply_ms)::int, apply_error = sqlc.narg(apply_error)::text
 WHERE app_id = sqlc.arg(app_id)::uuid
   AND base_deployment_id = sqlc.arg(base_deployment_id)::uuid
   AND generation = sqlc.arg(generation)::bigint
-  AND applied_at IS NULL;
+  AND applied_at IS NULL
+RETURNING created_at, applied_at;
 
 -- name: GetDevSourcePatchStatus :one
 SELECT generation, created_at, applied_at, apply_ms, apply_error
@@ -71,3 +72,15 @@ FROM dev_source_patches
 WHERE app_id = sqlc.arg(app_id)::uuid AND generation = sqlc.arg(generation)::bigint
 ORDER BY created_at DESC
 LIMIT 1;
+
+-- name: UpsertDevWatchSetting :exec
+-- ADR-1170: a developer environment's watch-mode command and public hostname.
+INSERT INTO dev_watch_settings (app_id, command, host)
+VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(command)::text, sqlc.arg(host)::text)
+ON CONFLICT (app_id) DO UPDATE SET command = EXCLUDED.command, host = EXCLUDED.host, updated_at = now();
+
+-- name: DeleteDevWatchSetting :exec
+DELETE FROM dev_watch_settings WHERE app_id = sqlc.arg(app_id)::uuid;
+
+-- name: GetDevWatchSetting :one
+SELECT command, host FROM dev_watch_settings WHERE app_id = sqlc.arg(app_id)::uuid;

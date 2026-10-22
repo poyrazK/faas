@@ -130,6 +130,13 @@ func (p UsageProgress) blockingIssues(policy UsagePolicy, now time.Time) usageIs
 		return usageIdentityUnknown
 	}
 	if p.Window == 0 || p.ObservedAt.IsZero() {
+		// Collection records completed windows only. Until the window a live
+		// resource was created in closes, nothing is owed, and treating it as
+		// missing made every create block the whole account for up to an
+		// hour (production-us hunt #9, H9-P113).
+		if !p.Terminal && !p.CreatedAt.IsZero() && !p.CreatedAt.Before(now.UTC().Truncate(policy.Window)) {
+			return 0
+		}
 		return usageCoverageMissing
 	}
 	if p.Window != policy.Window {

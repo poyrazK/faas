@@ -95,8 +95,19 @@ func (m *MemStore) syncOperationWorkflowLocked(runID string) error {
 		return err
 	}
 	events = append(events, publishWorkflowArtifacts(&op, run, m.workflowSteps[runID], false, time.Now().UTC())...)
+	usageChanged := false
+	if op.Usage != nil {
+		usage, err := m.workflowOperationUsageLocked(run)
+		if err != nil {
+			return err
+		}
+		usageChanged = refreshWorkflowOperationUsage(&op, usage)
+	}
 	m.saveOperationWorkflowExecutionLocked(op, run)
 	if len(events) == 0 {
+		if usageChanged {
+			m.operationMemoryLocked().operations[op.ID] = op
+		}
 		return nil
 	}
 	if op.State.Terminal() {
@@ -144,24 +155,29 @@ func (m *MemStore) cancelOperationWorkflowLocked(op Operation, generation int) (
 	op.CancellationRequested = true
 	event := operationWorkflowEvent(&op, run, "cancellation_requested", map[string]any{"cancellation_requested": true}, now)
 	m.operationSaveLocked(op, event)
+	if err := m.stopOperationWorkflowLocked(run, "cancelled by operation owner", now); err != nil {
+		return Operation{}, err
+	}
+	return cloneOperation(m.operationDeliveryLocked(m.operationData.operations[op.ID])), nil
+}
+
+// stopOperationWorkflowLocked mirrors stopOperationWorkflowTx.
+func (m *MemStore) stopOperationWorkflowLocked(run WorkflowRun, reason string, now time.Time) error {
 	m.interruptOperationWorkflowLocked(run.ID, now)
 	for name, step := range m.workflowSteps[run.ID] {
-		if step.Status == WorkflowStepStatusPending {
-			reason := WorkflowSkipDependencyFailed
-			step.Status, step.SkipReason, step.FinishedAt = WorkflowStepStatusSkipped, &reason, &now
+		if step.Status == WorkflowStepStatusPending || step.Status == WorkflowStepStatusAwaitingEvent {
+			skip := WorkflowSkipDependencyFailed
+			step.Status, step.SkipReason, step.FinishedAt = WorkflowStepStatusSkipped, &skip, &now
 			m.workflowSteps[run.ID][name] = step
 		}
 	}
 	if workflowGuardRunActive(run.Status) {
-		message := "cancelled by operation owner"
+		message := reason
 		run.Status, run.LastError, run.CancelledAt, run.FinishedAt, run.UpdatedAt = WorkflowRunStatusFailed, &message, &now, &now, now
 		m.workflowRuns[run.ID] = run
 		delete(m.workflowRunLeases, run.ID)
 	}
-	if err := m.syncOperationWorkflowLocked(run.ID); err != nil {
-		return Operation{}, err
-	}
-	return cloneOperation(m.operationDeliveryLocked(m.operationData.operations[op.ID])), nil
+	return m.syncOperationWorkflowLocked(run.ID)
 }
 
 func operationWorkflowRecovery(op *Operation, def OperationDefinition, run WorkflowRun, req api.OperationRecoveryRequest, now time.Time) (api.OperationEvent, error) {
@@ -172,6 +188,9 @@ func operationWorkflowRecovery(op *Operation, def OperationDefinition, run Workf
 		return api.OperationEvent{}, NewOperationLimitError("recoveries_per_operation", int64(op.PlanLimits.RecoveriesPerOperation), int64(op.RecoveryCount+1))
 	}
 	if req.Resolution == "safe_to_retry" {
+		if operationLimitExceeded(*op, now) != "" {
+			return api.OperationEvent{}, ErrOperationLimitExceeded
+		}
 		op.Generation++
 		op.State, op.Progress, op.Result, op.CancellationRequested = api.OperationAccepted, nil, nil, false
 		op.CompletionDelivery = api.OperationDeliveryResponse{State: "not_requested"}

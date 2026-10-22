@@ -116,7 +116,7 @@ func validateRoute(route Requirement) error {
 		}
 	}
 	if b := checks.Budget; b != nil {
-		if (b.MaxMS == nil && !b.Explicit) || (b.MaxMS != nil && (*b.MaxMS <= 0 || *b.MaxMS > api.RequestBudgetMax.Milliseconds())) {
+		if (b.MaxMS == nil && !b.Explicit) || (b.MaxMS != nil && (*b.MaxMS <= 0 || *b.MaxMS > api.RequestBudgetPlanMax.Milliseconds())) {
 			return errors.New("budget needs explicit: true or a positive max_ms within the platform request-budget ceiling")
 		}
 	}

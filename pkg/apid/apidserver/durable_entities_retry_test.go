@@ -178,8 +178,9 @@ func TestEntityRecoveryRechecksMutationAdmission(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "app-disabled":
+				// Removing the app from the allowlist hides the preview from it.
 				delete((*e.s.Durable()).Apps, app.ID)
-				want = http.StatusServiceUnavailable
+				want = http.StatusNotFound
 			case "suspended-customer":
 				tenant, _, err := e.store.CreatePlatformTenant(t.Context(), e.acct.ID, "recover-customer", "Recovery customer", 10)
 				if err != nil {

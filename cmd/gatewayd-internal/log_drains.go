@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/logdrain"
 	"github.com/onebox-faas/faas/pkg/oci"
@@ -88,6 +89,13 @@ type appLogDrainProvenance struct {
 	DeploymentTag       string
 	DeploymentCreatedAt string
 	ImageDigest         string
+	Environment         string
+}
+
+// appLogDrainAppLookupStore resolves the app slug a datadog drain reports as
+// its Datadog service tag (ADR-752).
+type appLogDrainAppLookupStore interface {
+	AppByID(context.Context, string) (state.App, error)
 }
 
 type appLogDrainManager struct {
@@ -100,7 +108,6 @@ type appLogDrainManager struct {
 	// httpClient delivers to customer-supplied drain URLs. It must carry
 	// the §11 dial-time egress guard; see newAppLogDrainHTTPClient.
 	httpClient *http.Client
-
 	// owns reports whether this gateway delivers a drain. Every
 	// gatewayd-internal reconciles every enabled drain, so without it each
 	// node streamed and delivered the same lines (production-us hunt #9:
@@ -108,17 +115,31 @@ type appLogDrainManager struct {
 	// single-box behaviour of delivering every drain.
 	owns func(context.Context, state.AppLogDrain) (bool, error)
 
-	mu                 sync.Mutex
-	workers            map[string]*appLogDrainWorker
-	active             map[string]int
-	healthMu           sync.Mutex
-	health             map[string]state.AppLogDrainHealth
-	lastAnalyticsPrune time.Time
+	mu                      sync.Mutex
+	shutdownMu              sync.Mutex
+	stopping                bool
+	workers                 map[string]*appLogDrainWorker
+	active                  map[string]int
+	healthMu                sync.Mutex
+	health                  map[string]state.AppLogDrainHealth
+	lastAnalyticsPrune      time.Time
+	spoolLease              *flock.Flock
+	standardNode            *localNodeID
+	standardSessionID       string
+	standardSession         state.ApplicationStandardLogConsumerSession
+	standardInventories     []state.ApplicationStandardLogInventory
+	standardInventoryCursor int
+	standardHealthCursor    int
+	standardFenced          bool
 }
 
 type appLogDrainWorker struct {
-	spec   state.AppLogDrain
-	cancel context.CancelFunc
+	spec             state.AppLogDrain
+	cancel           context.CancelFunc
+	standardObserver *appLogDrainStandardObserver
+	standardHealth   *appLogDrainStandardHealthObserver
+	done             chan struct{}
+	stopping         bool
 }
 
 func newAppLogDrainManager(store appLogDrainStore, resolver logStreamerResolver, unseal func([]byte) (string, error), metrics *gateway.Metrics, log *slog.Logger) *appLogDrainManager {
@@ -173,8 +194,16 @@ type appLogDrainOwnerStore interface {
 }
 
 func (m *appLogDrainManager) Run(ctx context.Context) {
+	if !m.waitForLogSpoolLease(ctx, time.Second) {
+		return
+	}
+	defer func() { _ = m.spoolLease.Unlock() }()
+	defer m.stopAllLogWorkersJoined(ctx)
 	m.reconcile(ctx)
 	m.flushHealth(ctx)
+	if m.standardLogConsumerFenced() {
+		return
+	}
 	ticker := time.NewTicker(appLogDrainHealthFlushInterval)
 	defer ticker.Stop()
 	reconcileTicker := time.NewTicker(appLogDrainReconcileInterval)
@@ -182,7 +211,7 @@ func (m *appLogDrainManager) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			m.stopAll()
+			m.stopAllLogWorkersJoined(ctx)
 			flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			m.flushHealth(flushCtx)
 			cancel()
@@ -191,19 +220,22 @@ func (m *appLogDrainManager) Run(ctx context.Context) {
 			m.reconcile(ctx)
 		case <-ticker.C:
 			m.flushHealth(ctx)
+			if m.standardLogConsumerFenced() {
+				return
+			}
 		}
 	}
 }
 
 func (m *appLogDrainManager) reconcile(ctx context.Context) {
-	rows, err := m.store.ListEnabledAppLogDrains(ctx)
+	snapshot, err := m.loadLogConsumerSnapshot(ctx)
 	if err != nil {
 		m.log.WarnContext(ctx, "list enabled app log drains", slog.String("err", err.Error()))
 		return
 	}
-	desired := make(map[string]state.AppLogDrain, len(rows))
+	desired := make(map[string]state.AppLogDrain, len(snapshot.Drains))
 	undecided := make(map[string]struct{})
-	for _, row := range rows {
+	for _, row := range snapshot.Drains {
 		if m.owns != nil {
 			owned, err := m.owns(ctx, row)
 			if err != nil {
@@ -220,6 +252,10 @@ func (m *appLogDrainManager) reconcile(ctx context.Context) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.stopping {
+		return
+	}
+	m.standardInventories = snapshot.Inventories
 	for id := range undecided {
 		if _, running := m.workers[id]; !running {
 			delete(desired, id)
@@ -227,12 +263,12 @@ func (m *appLogDrainManager) reconcile(ctx context.Context) {
 	}
 	for id, worker := range m.workers {
 		spec, ok := desired[id]
-		if ok && sameAppLogDrainSpec(worker.spec, spec) {
+		if !worker.stopping && ok && sameAppLogDrainSpec(worker.spec, spec) {
 			continue
 		}
-		worker.cancel()
-		m.setActiveLocked(worker.spec, -1)
-		delete(m.workers, id)
+		if m.retireLogDrainWorkerLocked(worker) {
+			delete(m.workers, id)
+		}
 	}
 	for _, spec := range desired {
 		if _, exists := m.workers[spec.ID]; exists {
@@ -267,14 +303,18 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 	if err != nil {
 		return nil, err
 	}
+	standardObserver := m.newStandardLogObserver(spec)
+	standardHealth := m.newStandardLogHealthObserver(spec)
 	sender, err := logdrain.New(logdrain.Config{
 		Kind:         logdrain.Kind(spec.Kind),
 		TargetURL:    spec.TargetURL,
 		AuthHeader:   authHeader,
+		Service:      m.drainServiceName(parent, spec),
 		DurableQueue: durableQueue,
 		RetryWindow:  appLogDrainRetryWindow,
 		HTTPClient:   m.httpClient,
-		OnDropped: func(logdrain.Record) {
+		OnDropped: func(record logdrain.Record) {
+			standardHealth.rejected(record)
 			m.metrics.IncLogDrainDropped(spec.AppID, string(spec.Kind))
 			m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) {
 				health.DroppedTotal++
@@ -284,7 +324,9 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 				health.LastError = "delivery queue dropped records"
 			})
 		},
-		OnDelivered: func(logdrain.Record) {
+		OnDelivered: func(record logdrain.Record) {
+			standardObserver.delivered(record)
+			standardHealth.delivered(record)
 			m.metrics.ObserveLogDrainDelivered(spec.AppID, string(spec.Kind))
 			at := time.Now().UTC()
 			m.metrics.SetLogDrainLastSuccess(spec.AppID, string(spec.Kind), at)
@@ -302,6 +344,7 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 			})
 		},
 		OnFailed: func(_ logdrain.Record, err error) {
+			standardHealth.failed("delivery_failed", false)
 			m.metrics.ObserveLogDrainFailed(spec.AppID, string(spec.Kind))
 			at := time.Now().UTC()
 			m.metrics.SetLogDrainLastFailure(spec.AppID, string(spec.Kind), at)
@@ -317,7 +360,7 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 				slog.String("drain_id", spec.ID),
 				slog.String("app_id", spec.AppID),
 				slog.String("kind", string(spec.Kind)),
-				slog.String("err", err.Error()),
+				slog.String("err", appLogDrainErrorSummary(err)),
 			)
 		},
 		OnQueueDepth: func(depth, capacity int) {
@@ -328,6 +371,7 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 			})
 		},
 		OnRetry: func(_ logdrain.Record, _ int) {
+			standardHealth.failed("retrying", false)
 			m.metrics.ObserveLogDrainRetry(spec.AppID, string(spec.Kind))
 			m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) {
 				health.RetriesTotal++
@@ -347,6 +391,9 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 			})
 		},
 		OnDurableQueue: func(stats logdrain.QueueStats) {
+			if stats.DeadLetterTotal > 0 {
+				standardHealth.failed("records_lost", true)
+			}
 			m.metrics.SetLogDrainDurableQueue(spec.AppID, string(spec.Kind), stats.PendingRecords, stats.PendingBytes, stats.CapacityBytes, stats.DeadLetterTotal, stats.OldestPendingAt)
 			m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) {
 				health.PendingRecords = stats.PendingRecords
@@ -360,6 +407,7 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 			})
 		},
 		OnDeadLetter: func(_ logdrain.Record, _ error) {
+			standardHealth.failed("records_lost", true)
 			m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) {
 				if health.Active {
 					health.Status = appLogDrainHealthDegraded
@@ -367,6 +415,7 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 			})
 		},
 		OnQueueStorageError: func(err error) {
+			standardHealth.failed("queue_fault", false)
 			m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) {
 				if health.Active {
 					health.Status = appLogDrainHealthDegraded
@@ -383,14 +432,13 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 	}
 	m.metrics.InitializeLogDrain(spec.AppID, string(spec.Kind))
 	workerCtx, cancel := context.WithCancel(parent)
-	worker := &appLogDrainWorker{spec: spec, cancel: cancel}
+	worker := &appLogDrainWorker{spec: spec, cancel: cancel, standardObserver: standardObserver, standardHealth: standardHealth}
 	m.setActiveLocked(spec, 1)
-	go sender.Run(workerCtx)
-	go m.streamWorker(workerCtx, spec, sender)
+	m.runLogDrainWorker(workerCtx, worker, sender)
 	return worker, nil
 }
 
-func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLogDrain, sender *logdrain.Sender) {
+func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLogDrain, sender *logdrain.Sender, standardHealth *appLogDrainStandardHealthObserver) {
 	lastSeq := sender.LastSequences()
 	provenanceCache := make(map[string]appLogDrainProvenance)
 	backoff := time.Second
@@ -414,13 +462,18 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 				backoff = time.Second
 				for {
 					frame, recvErr := stream.Recv()
+					if ctx.Err() != nil {
+						return
+					}
 					if recvErr != nil {
+						standardHealth.failed("stream_unavailable", false)
 						if errors.Is(recvErr, io.EOF) || ctx.Err() == nil {
 							m.log.DebugContext(ctx, "customer log drain stream ended", slog.String("drain_id", spec.ID), slog.String("app_id", spec.AppID), slog.String("err", recvErr.Error()))
 						}
 						break
 					}
 					if frame.IsGap {
+						standardHealth.failed("source_gap", true)
 						m.metrics.IncLogDrainGap(spec.AppID, string(spec.Kind))
 						m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) {
 							health.GapsTotal++
@@ -445,7 +498,8 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 						NodeID: provenance.NodeID, Region: provenance.Region,
 						CommitSHA: provenance.CommitSHA, DeploymentTag: provenance.DeploymentTag,
 						DeploymentCreatedAt: provenance.DeploymentCreatedAt, ImageDigest: provenance.ImageDigest,
-						Sequence: uint64(frame.Seq), Stream: frame.Stream, Line: frame.Line, WrittenAt: frame.WrittenAt,
+						Environment: provenance.Environment,
+						Sequence:    uint64(frame.Seq), Stream: frame.Stream, Line: frame.Line, WrittenAt: frame.WrittenAt,
 					}) {
 						// Keep the source cursor unchanged and reconnect rather than
 						// consuming later frames. A later stream can retry this record
@@ -459,6 +513,7 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 			}
 		}
 		if err != nil && ctx.Err() == nil {
+			standardHealth.failed("stream_unavailable", false)
 			m.log.WarnContext(ctx, "customer log drain stream unavailable", slog.String("drain_id", spec.ID), slog.String("app_id", spec.AppID), slog.String("err", err.Error()))
 		}
 		timer := time.NewTimer(backoff)
@@ -506,6 +561,7 @@ func (m *appLogDrainManager) provenanceForFrame(ctx context.Context, frame sched
 				resolved.CommitSHA = deployment.CommitSHA
 				resolved.DeploymentTag = deployment.Tag
 				resolved.ImageDigest = deployment.ImageDigest
+				resolved.Environment = deployment.Scope
 				if !deployment.CreatedAt.IsZero() {
 					resolved.DeploymentCreatedAt = deployment.CreatedAt.UTC().Format(time.RFC3339Nano)
 				}
@@ -523,12 +579,25 @@ func (m *appLogDrainManager) provenanceForFrame(ctx context.Context, frame sched
 	return resolved
 }
 
+// drainServiceName is the app slug for datadog drains; other kinds do not
+// use it. A failed lookup falls back to the app ID so logs still arrive.
+func (m *appLogDrainManager) drainServiceName(ctx context.Context, spec state.AppLogDrain) string {
+	if spec.Kind != state.AppLogDrainKindDatadog {
+		return ""
+	}
+	if lookup, ok := m.store.(appLogDrainAppLookupStore); ok {
+		if app, err := lookup.AppByID(ctx, spec.AppID); err == nil && app.Slug != "" {
+			return app.Slug
+		}
+	}
+	return spec.AppID
+}
+
 func (m *appLogDrainManager) stopAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for id, worker := range m.workers {
-		worker.cancel()
-		m.setActiveLocked(worker.spec, -1)
+		m.retireLogDrainWorkerLocked(worker)
 		delete(m.workers, id)
 	}
 }
@@ -600,6 +669,9 @@ func (m *appLogDrainManager) updateHealth(drainID string, update func(*state.App
 }
 
 func (m *appLogDrainManager) flushHealth(ctx context.Context) {
+	m.flushStandardLogDeliveries(ctx)
+	m.flushStandardLogInventories(ctx)
+	m.flushStandardLogHealth(ctx)
 	store, ok := m.store.(appLogDrainHealthStore)
 	if !ok {
 		return
@@ -662,7 +734,7 @@ func appLogDrainErrorSummary(err error) string {
 }
 
 func sameAppLogDrainSpec(a, b state.AppLogDrain) bool {
-	return a.ID == b.ID && a.AppID == b.AppID && a.AccountID == b.AccountID && a.Kind == b.Kind && a.TargetURL == b.TargetURL && a.Enabled == b.Enabled && bytes.Equal(a.AuthHeaderSealed, b.AuthHeaderSealed)
+	return a.ID == b.ID && a.AppID == b.AppID && a.AccountID == b.AccountID && a.Kind == b.Kind && a.TargetURL == b.TargetURL && a.Enabled == b.Enabled && bytes.Equal(a.AuthHeaderSealed, b.AuthHeaderSealed) && sameAppLogDrainStandardBinding(a.StandardBinding, b.StandardBinding)
 }
 
 // newAppLogDrainHTTPClient builds the client that posts customer logs to a

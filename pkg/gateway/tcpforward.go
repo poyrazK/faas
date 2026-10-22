@@ -17,6 +17,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/tcpmetrics"
+	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -111,7 +112,7 @@ func (f TCPForwarder) serveConn(ctx context.Context, conn net.Conn, target Targe
 
 	streamCtx, cancel := context.WithCancel(idleCtx)
 	defer cancel()
-	stream, err := cli.ForwardTCPStream(streamCtx) //nolint:contextcheck // streamCtx inherits idleCtx and is canceled when either copy direction ends.
+	stream, err := cli.ForwardTCPStream(wire.ForwardContext(streamCtx)) //nolint:contextcheck // retains idle cancellation and authenticated private-hop identity.
 	if err != nil {
 		return unreachable("open TCP forward stream: %v", err)
 	}
@@ -130,7 +131,10 @@ func (f TCPForwarder) serveConn(ctx context.Context, conn net.Conn, target Targe
 	}
 	if awaitDial {
 		if err := awaitTCPGuestDial(stream); err != nil {
-			return unreachable("%v", err)
+			// Keep vmmd's status as the cause: a frozen guest (ADR-1151) is
+			// withdrawn and thawed, not quarantined.
+			handBack.Store(true)
+			return fmt.Errorf("%w: %w", ErrTCPGuestUnreachable, err)
 		}
 	}
 

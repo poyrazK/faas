@@ -23,6 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // fakeNotifier is a goroutine-safe recording fake for the
@@ -42,8 +43,8 @@ type fakeNotifyCall struct {
 }
 
 type reopenBeforeClaimStore struct {
-	*state.MemStore
-	reopen func()
+	MemStore *state.MemStore
+	reopen   func()
 }
 
 func (s *reopenBeforeClaimStore) ClaimPreviewTeardown(ctx context.Context, observed state.App, now time.Time) (state.App, error) {
@@ -222,7 +223,7 @@ func TestPreviewJanitor_ReopenWinsBeforeTeardownClaim(t *testing.T) {
 			t.Fatalf("reopen before claim: %v", err)
 		}
 	}}
-	j := apidserver.NewPreviewJanitor(store, notif, nil, apidserver.TestLogger(), true).WithClock(func() time.Time { return now })
+	j := apidserver.NewPreviewJanitor(statetest.NewMem(store), notif, nil, apidserver.TestLogger(), true).WithClock(func() time.Time { return now })
 	if err := j.SweepOnce(ctx); err != nil {
 		t.Fatal(err)
 	}

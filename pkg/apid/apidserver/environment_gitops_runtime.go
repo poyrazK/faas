@@ -7,6 +7,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
@@ -56,10 +57,43 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 	workloadReady := true
 	var workloadErr error
 	if lease.Source.Spec.Mode == "enforce" {
+		if retirement, ok := b.intent.(state.EnvironmentGitOpsWorkloadRetirementStore); ok {
+			steps, err := retirement.BeginEnvironmentGitOpsWorkloadRetirements(ctx, lease, plan)
+			if err != nil || len(steps) > 0 {
+				return false, err
+			}
+		}
 		if err := store.EnsureEnvironmentGitOpsRuntime(ctx, lease, plan); err != nil {
 			return false, err
 		}
-		workloadReady, workloadErr = b.prepareWorkloadCandidates(ctx, lease, plan)
+		var definition api.EnvironmentDefinition
+		if err := json.Unmarshal(lease.Revision.Definition, &definition); err != nil {
+			return false, state.ErrInvalidArgument
+		}
+		if definition.Workloads == nil {
+			return false, state.ErrInvalidArgument
+		}
+		if len(definition.Workloads) == 0 {
+			if retirement, ok := b.intent.(state.EnvironmentGitOpsWorkloadRetirementStore); ok {
+				if _, err := retirement.ActivateEnvironmentGitOpsEmptyRetirement(ctx, lease, plan); err != nil {
+					return false, err
+				}
+			}
+
+			// Empty membership is a valid environment configuration, but a
+			// previously activated Git-managed member must not disappear from
+			// serving evidence just because the new definition omits it.
+			guard, ok := b.intent.(state.EnvironmentGitOpsEmptyGraphGuard)
+			if !ok {
+				workloadReady = false
+			} else {
+				var managed bool
+				managed, workloadErr = guard.EnvironmentGitOpsHasServingManagedWorkload(ctx, lease)
+				workloadReady = !managed
+			}
+		} else {
+			workloadReady, workloadErr = b.prepareWorkloadCandidates(ctx, lease, plan)
+		}
 		if err := b.recoverRuntime(ctx, lease); err != nil {
 			return false, err
 		}
@@ -80,8 +114,12 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 	if err != nil || len(pending) != 0 {
 		return false, err
 	}
+	retired, err := b.reconcileWorkloadRetirements(ctx, lease)
+	if err != nil {
+		return false, err
+	}
 	effects, err := b.effects.PendingEnvironmentGitOpsEffects(ctx, lease)
-	return workloadReady && len(effects) == 0, err
+	return workloadReady && retired && len(effects) == 0, err
 }
 
 func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (bool, error) {

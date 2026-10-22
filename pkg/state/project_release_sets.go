@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,15 +18,18 @@ import (
 // ProjectReleaseSet is an immutable app->deployment graph. Active is only the
 // default ingress choice; clients carrying its ID can continue until expiry.
 type ProjectReleaseSet struct {
-	ID              string                 `json:"id"`
-	AccountID       string                 `json:"account_id"`
-	ProjectID       string                 `json:"project_id"`
-	EnvironmentSlug string                 `json:"environment"`
-	Active          bool                   `json:"active"`
-	TTLSeconds      int                    `json:"ttl_seconds"`
-	ExpiresAt       *time.Time             `json:"expires_at,omitempty"`
-	CreatedAt       time.Time              `json:"created_at"`
-	Members         []ProjectReleaseMember `json:"members"`
+	Deactivation              *api.ProjectReleaseDeactivationReceipt `json:"deactivation,omitempty"`
+	RollbackSourceReleaseID   string                                 `json:"rollback_source_release_id,omitempty"`
+	RollbackPreviousReleaseID string                                 `json:"rollback_previous_release_id,omitempty"`
+	ID                        string                                 `json:"id"`
+	AccountID                 string                                 `json:"account_id"`
+	ProjectID                 string                                 `json:"project_id"`
+	EnvironmentSlug           string                                 `json:"environment"`
+	Active                    bool                                   `json:"active"`
+	TTLSeconds                int                                    `json:"ttl_seconds"`
+	ExpiresAt                 *time.Time                             `json:"expires_at,omitempty"`
+	CreatedAt                 time.Time                              `json:"created_at"`
+	Members                   []ProjectReleaseMember                 `json:"members"`
 }
 
 type ProjectReleaseMember struct {
@@ -110,10 +114,18 @@ func (s *PgStore) publishProjectReleaseSet(ctx context.Context, accountID, proje
 
 type projectReleaseSetBeforePublish func(context.Context, pgx.Tx) error
 
+// Only checked managed activation or retirement can supply this transaction-bound ID.
+type qualifiedEnvironmentReleaseKey struct{}
+
 func publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, projectID, environment string, expectedActiveID *string,
 	expectedFallback []ProjectReleaseMember, ttlSeconds int, members []ProjectReleaseMember, allowGitOpsReplacement bool,
 	beforePublish projectReleaseSetBeforePublish, skipFallbackApps ...map[string]struct{}) (ProjectReleaseSet, error) {
-	if !validReleaseTTL(ttlSeconds) || len(members) == 0 || len(members) > api.ProjectReleaseSetMaxMembers || !api.ValidProjectEnvironmentSlug(environment) {
+	return publishProjectReleaseWithIDTx(ctx, tx, accountID, projectID, environment, expectedActiveID, expectedFallback, ttlSeconds, members, allowGitOpsReplacement, beforePublish, "", skipFallbackApps...)
+}
+func publishProjectReleaseWithIDTx(ctx context.Context, tx pgx.Tx, accountID, projectID, environment string, expectedActiveID *string,
+	expectedFallback []ProjectReleaseMember, ttlSeconds int, members []ProjectReleaseMember, allowGitOpsReplacement bool,
+	beforePublish projectReleaseSetBeforePublish, activateID string, skipFallbackApps ...map[string]struct{}) (ProjectReleaseSet, error) {
+	if !validReleaseTTL(ttlSeconds) || len(members) == 0 && !allowGitOpsReplacement || len(members) > api.ProjectReleaseSetMaxMembers || !api.ValidProjectEnvironmentSlug(environment) {
 		return ProjectReleaseSet{}, ErrInvalidArgument
 	}
 	var found int
@@ -122,6 +134,24 @@ func publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, proje
 	}
 	if err := tx.QueryRow(ctx, `select 1 from project_environments where project_id = $1 and slug = $2`, projectID, environment).Scan(&found); err != nil {
 		return ProjectReleaseSet{}, mapErr(err)
+	}
+	if environment == "production" {
+		allowed, err := sqlc.New().MigrationPublicationAllowed(ctx, tx, projectID)
+		if err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if !allowed {
+			return ProjectReleaseSet{}, ErrConflict
+		}
+	}
+	for _, member := range members {
+		retired, err := sqlc.New().MigrationDeploymentRetired(ctx, tx, member.DeploymentID)
+		if err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if retired {
+			return ProjectReleaseSet{}, ErrConflict
+		}
 	}
 	var activeID string
 	activeErr := tx.QueryRow(ctx, `select id::text from project_release_sets
@@ -148,6 +178,10 @@ func publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, proje
 		}
 		byApp[member.AppID] = member.DeploymentID
 	}
+	omitted, err := guardReleaseAdditionsDB(ctx, tx, accountID, projectID, byApp)
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	rows, err := tx.Query(ctx, `select id, coalesce(manifest, '{}'::jsonb)
 		from apps where project_id = $1 and account_id = $2 and status <> 'deleted'
 		  and coalesce(preview_of_slug, '') = ''
@@ -168,11 +202,25 @@ func publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, proje
 			rows.Close()
 			return ProjectReleaseSet{}, err
 		}
-		appRows = append(appRows, appRow)
+		if !omitted[appRow.id] {
+			appRows = append(appRows, appRow)
+		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return ProjectReleaseSet{}, err
+	}
+	if allowGitOpsReplacement {
+		excluded, err := workloadReleaseExclusionsTx(ctx, tx, EnvironmentGitSource{ID: "", AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment})
+		if err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		appRows = slices.DeleteFunc(appRows, func(app struct {
+			id       string
+			manifest []byte
+		}) bool {
+			return excluded[app.id]
+		})
 	}
 	if activeID != "" && !allowGitOpsReplacement {
 		if err := validateGitOpsReleaseMembersTx(ctx, tx, activeID, byApp); err != nil {
@@ -219,6 +267,9 @@ func publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, proje
 		}
 	}
 	// A member may already have reached 0% when this graph is replaced.
+	if err := applyReleaseAdditionsDB(ctx, tx); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	// Its direct revision deadline began at the deployment cutover, which
 	// can precede this graph switch. Keep it alive through the old graph's
 	// compatibility window measured from this transaction.
@@ -233,11 +284,50 @@ func publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, proje
 		   set expires_at = greatest(deployment_revision_pins.expires_at, excluded.expires_at)`, projectID, environment); err != nil {
 		return ProjectReleaseSet{}, fmt.Errorf("state: extend retained release members: %w", err)
 	}
+	var existing ProjectReleaseSet
+	if activateID != "" {
+		var err error
+		existing, err = readProjectReleaseSetTx(ctx, tx, accountID, projectID, environment, activateID)
+		if err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if existing.Active || existing.ExpiresAt == nil || !existing.ExpiresAt.After(time.Now()) || !sameReleaseMembers(existing.Members, members) {
+			return ProjectReleaseSet{}, ErrConflict
+		}
+	}
 	if err := deactivateProjectReleaseSetsTx(ctx, tx, projectID, environment, ""); err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	release := ProjectReleaseSet{AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment, Active: true, TTLSeconds: ttlSeconds, Members: append([]ProjectReleaseMember(nil), members...)}
-	if err := tx.QueryRow(ctx, `insert into project_release_sets (account_id, project_id, environment_slug, active, ttl_seconds)
+	if activateID != "" {
+		n, err := sqlc.New().ActivateStagedProjectRelease(ctx, tx, mustPgUUID(activateID))
+		if err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if n != 1 {
+			return ProjectReleaseSet{}, ErrConflict
+		}
+		release.ID, release.CreatedAt = existing.ID, existing.CreatedAt
+		return release, nil
+	}
+	if qualifiedID, qualified := ctx.Value(qualifiedEnvironmentReleaseKey{}).(string); qualified {
+		stamp, err := sqlc.New().InsertEnvironmentBindingRelease(ctx, tx, sqlc.InsertEnvironmentBindingReleaseParams{ID: mustPgUUID(qualifiedID), AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), Environment: environment, Ttl: int32(ttlSeconds)})
+		if err != nil {
+			return ProjectReleaseSet{}, mapErr(err)
+		}
+		release.ID, release.CreatedAt = qualifiedID, stamp.Time
+	} else if checkedID, checked := ctx.Value(checkedReleaseGraphKey{}).(string); checked {
+		var source, previous pgtype.UUID
+		if rollback, recovering := ctx.Value(checkedReleaseRollbackKey{}).(checkedReleaseRollback); recovering {
+			source, previous = mustPgUUID(rollback.source), mustPgUUID(rollback.previous)
+			release.RollbackSourceReleaseID, release.RollbackPreviousReleaseID = rollback.source, rollback.previous
+		}
+		row, err := sqlc.New().InsertCheckedProjectRelease(ctx, tx, sqlc.InsertCheckedProjectReleaseParams{ID: mustPgUUID(checkedID), AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), EnvironmentSlug: environment, TtlSeconds: int32(ttlSeconds), RollbackSourceReleaseID: source, RollbackPreviousReleaseID: previous})
+		if err != nil {
+			return ProjectReleaseSet{}, mapErr(err)
+		}
+		release.ID, release.CreatedAt = checkedID, row.Time
+	} else if err := tx.QueryRow(ctx, `insert into project_release_sets (account_id, project_id, environment_slug, active, ttl_seconds)
 		values ($1, $2, $3, true, $4)
 		returning id, created_at`, accountID, projectID, environment, ttlSeconds).Scan(&release.ID, &release.CreatedAt); err != nil {
 		return ProjectReleaseSet{}, err
@@ -251,55 +341,90 @@ func publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, proje
 }
 
 func (s *PgStore) DeactivateProjectReleaseSetIfActive(ctx context.Context, accountID, projectID, environment, expectedActiveID string, expectedFallback []ProjectReleaseMember) error {
+	_, err := s.deactivateProjectReleaseSet(ctx, accountID, projectID, environment, expectedActiveID, expectedFallback, nil)
+	return err
+}
+
+func (s *PgStore) deactivateProjectReleaseSet(ctx context.Context, accountID, projectID, environment, expectedActiveID string, expectedFallback []ProjectReleaseMember, before projectReleaseSetBeforePublish) (ProjectReleaseSet, error) {
 	if expectedActiveID == "" {
-		return ErrInvalidArgument
+		return ProjectReleaseSet{}, ErrInvalidArgument
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("state: deactivate release set begin: %w", err)
+		return ProjectReleaseSet{}, fmt.Errorf("state: deactivate release set begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var found int
 	if err := tx.QueryRow(ctx, `select 1 from projects where id = $1 and account_id = $2 for update`, projectID, accountID).Scan(&found); err != nil {
-		return mapErr(err)
+		return ProjectReleaseSet{}, mapErr(err)
 	}
 	var activeID string
 	err = tx.QueryRow(ctx, `select id::text from project_release_sets
 		where project_id = $1 and environment_slug = $2 and active for update`, projectID, environment).Scan(&activeID)
+	if errors.Is(err, pgx.ErrNoRows) && before != nil {
+		return ProjectReleaseSet{}, ErrConflict
+	}
 	if err != nil {
-		return mapErr(err)
+		return ProjectReleaseSet{}, mapErr(err)
 	}
 	if activeID != expectedActiveID {
-		return ErrConflict
+		return ProjectReleaseSet{}, ErrConflict
+	}
+	dormant, err := sqlc.New().HasDormantReleaseAdditions(ctx, tx, projectID)
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if dormant {
+		return ProjectReleaseSet{}, ErrConflict
 	}
 	rows, err := tx.Query(ctx, `select id::text from apps
 		where project_id = $1 and account_id = $2 and status <> 'deleted'
 		  and coalesce(preview_of_slug, '') = '' order by id for update`, projectID, accountID)
 	if err != nil {
-		return fmt.Errorf("state: lock workloads for release rollback: %w", err)
+		return ProjectReleaseSet{}, fmt.Errorf("state: lock workloads for release rollback: %w", err)
 	}
 	var appIDs []string
 	for rows.Next() {
 		var appID string
 		if err := rows.Scan(&appID); err != nil {
 			rows.Close()
-			return err
+			return ProjectReleaseSet{}, err
 		}
 		appIDs = append(appIDs, appID)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return err
+		return ProjectReleaseSet{}, err
 	}
 	managed, err := gitOpsReleaseSetHasManagedMembersTx(ctx, tx, activeID)
 	if err != nil {
-		return err
+		return ProjectReleaseSet{}, err
 	}
 	if managed {
-		return ErrConflict
+		return ProjectReleaseSet{}, ErrConflict
 	}
 	if err := validateProjectReleaseFallbackTx(ctx, tx, appIDs, environment, expectedFallback); err != nil {
-		return err
+		return ProjectReleaseSet{}, err
+	}
+	if before != nil {
+		if len(appIDs) != len(expectedFallback) || len(appIDs) == 0 {
+			return ProjectReleaseSet{}, ErrConflict
+		}
+		for _, member := range expectedFallback {
+			managed, err := environmentGitOpsManagedForScopeTx(ctx, tx, member.AppID, environment)
+			if err != nil {
+				return ProjectReleaseSet{}, err
+			}
+			if managed {
+				return ProjectReleaseSet{}, ErrConflict
+			}
+			if err := releaseMemberDeployment(ctx, tx, member.AppID, member.DeploymentID, environment); err != nil {
+				return ProjectReleaseSet{}, err
+			}
+		}
+		if err := before(ctx, tx); err != nil {
+			return ProjectReleaseSet{}, checkedGraphWriteError(err)
+		}
 	}
 	if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
 		select rm.deployment_id, rm.app_id, now() + (rs.ttl_seconds * interval '1 second')
@@ -309,15 +434,31 @@ func (s *PgStore) DeactivateProjectReleaseSetIfActive(ctx context.Context, accou
 		 where rs.id = $1 and rs.active and d.status = 'live' and d.traffic_percent = 0
 		on conflict (deployment_id) do update
 		   set expires_at = greatest(deployment_revision_pins.expires_at, excluded.expires_at)`, expectedActiveID); err != nil {
-		return fmt.Errorf("state: retain deactivated release members: %w", err)
+		return ProjectReleaseSet{}, fmt.Errorf("state: retain deactivated release members: %w", err)
 	}
-	if err := deactivateProjectReleaseSetsTx(ctx, tx, projectID, environment, expectedActiveID); err != nil {
-		return fmt.Errorf("state: deactivate release set: %w", err)
+	if before != nil {
+		receipt, err := json.Marshal(projectDeactivationReceipt(ctx, expectedActiveID, expectedFallback, time.Now().UTC()))
+		if err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if err := sqlc.New().RecordCheckedProjectDeactivation(ctx, tx, sqlc.RecordCheckedProjectDeactivationParams{ID: mustPgUUID(expectedActiveID), Receipt: receipt}); err != nil {
+			return ProjectReleaseSet{}, checkedGraphWriteError(err)
+		}
+	} else if err := deactivateProjectReleaseSetsTx(ctx, tx, projectID, environment, expectedActiveID); err != nil {
+		return ProjectReleaseSet{}, fmt.Errorf("state: deactivate release set: %w", err)
+	}
+	data, err := sqlc.New().ReadProjectReleaseSet(ctx, tx, sqlc.ReadProjectReleaseSetParams{AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), Environment: environment, ReleaseID: mustPgUUID(expectedActiveID)})
+	if err != nil {
+		return ProjectReleaseSet{}, mapErr(err)
+	}
+	release, err := decodeProjectReleaseSet(data)
+	if err != nil {
+		return ProjectReleaseSet{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("state: commit release set deactivation: %w", err)
+		return ProjectReleaseSet{}, fmt.Errorf("state: commit release set deactivation: %w", checkedGraphWriteError(err))
 	}
-	return nil
+	return release, nil
 }
 
 var _ ProjectReleaseSetPromotionStore = (*PgStore)(nil)
@@ -646,6 +787,10 @@ func (s *PgStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Conte
 	if err := lockPromotionWorkloadEnvironmentsTx(ctx, tx, promotion.ID); err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	health, err := guardPromotionHealthPublishDB(ctx, tx, promotion)
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	if promotion.TargetReleaseSetID != "" {
 		if err := lockProjectForReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID); err != nil {
 			return ProjectReleaseSet{}, err
@@ -662,6 +807,9 @@ func (s *PgStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Conte
 			return ProjectReleaseSet{}, err
 		}
 		if err := verifyProjectEnvironmentPromotionConfigTx(ctx, tx, promotion, false); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if err := guardPromotionReleaseConfigurationDB(ctx, tx, promotion, release.Members, false, true); err != nil {
 			return ProjectReleaseSet{}, err
 		}
 		if err := promotionWorkloadActivationsTx(ctx, tx, promotion, release.Members, false, true); err != nil {
@@ -686,6 +834,9 @@ func (s *PgStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Conte
 	if err := promotionFeatureFlagsActivationTx(ctx, tx, promotion, false, false); err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	if err := guardPromotionReleaseConfigurationDB(ctx, tx, promotion, members, false, false); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	targetConfigVersion, err := applyProjectEnvironmentPromotionConfigTx(ctx, tx, promotion)
 	if err != nil {
 		return ProjectReleaseSet{}, err
@@ -701,7 +852,18 @@ func (s *PgStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Conte
 	if _, err := tx.Exec(ctx, `update project_environment_promotions set target_release_set_id = $2, target_config_version = $3, updated_at = now() where id = $1`, promotionID, release.ID, targetConfigVersion); err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	if health != nil {
+		if err := savePromotionHealthDB(ctx, tx, promotion.ID, health.Generation, promotionHealthAfterCutover(health, time.Now().UTC())); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+	}
+	if err := promotionPublicationBarrier(ctx, promotion, "cutover_before_commit", release.ID); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if err := promotionPublicationBarrier(ctx, promotion, "cutover_after_commit", release.ID); err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	return release, nil
@@ -781,6 +943,9 @@ func (s *PgStore) RollbackProjectEnvironmentPromotionReleaseSet(ctx context.Cont
 		if err := verifyProjectEnvironmentPromotionConfigTx(ctx, tx, promotion, true); err != nil {
 			return ProjectReleaseSet{}, err
 		}
+		if err := guardPromotionReleaseConfigurationDB(ctx, tx, promotion, release.Members, true, true); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 		if err := promotionWorkloadActivationsTx(ctx, tx, promotion, release.Members, true, true); err != nil {
 			return ProjectReleaseSet{}, err
 		}
@@ -792,7 +957,13 @@ func (s *PgStore) RollbackProjectEnvironmentPromotionReleaseSet(ctx context.Cont
 		}
 		return release, nil
 	}
+	if err := guardPromotionControlRollbackDB(ctx, tx, promotion); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	if err := promotionFeatureFlagsActivationTx(ctx, tx, promotion, true, false); err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if err := guardPromotionReleaseConfigurationDB(ctx, tx, promotion, members, true, false); err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	rollbackConfigVersion, err := rollbackProjectEnvironmentPromotionConfigTx(ctx, tx, promotion)
@@ -810,7 +981,13 @@ func (s *PgStore) RollbackProjectEnvironmentPromotionReleaseSet(ctx context.Cont
 	if _, err := tx.Exec(ctx, `update project_environment_promotions set restored_target_release_set_id = $2, rollback_config_version = $3, updated_at = now() where id = $1`, promotionID, release.ID, rollbackConfigVersion); err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	if err := promotionPublicationBarrier(ctx, promotion, "rollback_before_commit", release.ID); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if err := promotionPublicationBarrier(ctx, promotion, "rollback_after_commit", release.ID); err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	return release, nil
@@ -927,8 +1104,13 @@ func applyProjectEnvironmentPromotionConfigTx(ctx context.Context, tx pgx.Tx, pr
 	if source.ConfigHash != promotion.SourceConfigHash || target.ConfigHash != promotion.PreviousTargetConfigHash {
 		return 0, ErrConflict
 	}
+	capture, err := readPromotionReleaseCaptureDB(ctx, tx, promotion.AccountID, promotion.ID)
+	if err != nil {
+		return 0, err
+	}
+	values, hash := promotionDestinationConfig(promotion, capture)
 	return insertProjectEnvironmentConfigVersionTx(ctx, tx, promotion.AccountID, promotion.ProjectID,
-		promotion.ToEnvironment, promotion.SourceConfigSnapshot, promotion.SourceConfigHash)
+		promotion.ToEnvironment, values, hash)
 }
 
 func rollbackProjectEnvironmentPromotionConfigTx(ctx context.Context, tx pgx.Tx, promotion ProjectEnvironmentPromotion) (int64, error) {
@@ -941,11 +1123,16 @@ func rollbackProjectEnvironmentPromotionConfigTx(ctx context.Context, tx pgx.Tx,
 		}
 		return promotion.RollbackConfigVersion, nil
 	}
+	capture, err := readPromotionReleaseCaptureDB(ctx, tx, promotion.AccountID, promotion.ID)
+	if err != nil {
+		return 0, err
+	}
+	_, destinationHash := promotionDestinationConfig(promotion, capture)
 	target, err := projectEnvironmentConfigLatestTx(ctx, tx, promotion.AccountID, promotion.ProjectID, promotion.ToEnvironment)
 	if err != nil {
 		return 0, err
 	}
-	if target.Version != promotion.TargetConfigVersion || target.ConfigHash != promotion.SourceConfigHash {
+	if target.Version != promotion.TargetConfigVersion || target.ConfigHash != destinationHash {
 		return 0, ErrConflict
 	}
 	return insertProjectEnvironmentConfigVersionTx(ctx, tx, promotion.AccountID, promotion.ProjectID,
@@ -956,6 +1143,11 @@ func verifyProjectEnvironmentPromotionConfigTx(ctx context.Context, tx pgx.Tx, p
 	if !promotion.SyncConfig {
 		return nil
 	}
+	capture, err := readPromotionReleaseCaptureDB(ctx, tx, promotion.AccountID, promotion.ID)
+	if err != nil {
+		return err
+	}
+	_, destinationHash := promotionDestinationConfig(promotion, capture)
 	target, err := projectEnvironmentConfigLatestTx(ctx, tx, promotion.AccountID, promotion.ProjectID, promotion.ToEnvironment)
 	if err != nil {
 		return err
@@ -966,7 +1158,7 @@ func verifyProjectEnvironmentPromotionConfigTx(ctx context.Context, tx pgx.Tx, p
 		}
 		return nil
 	}
-	if promotion.TargetConfigVersion == 0 || target.Version != promotion.TargetConfigVersion || target.ConfigHash != promotion.SourceConfigHash {
+	if promotion.TargetConfigVersion == 0 || target.Version != promotion.TargetConfigVersion || target.ConfigHash != destinationHash {
 		return ErrConflict
 	}
 	return nil

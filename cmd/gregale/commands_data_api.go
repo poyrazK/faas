@@ -9,18 +9,36 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dataapi/clientgen"
 )
 
 func cmdDataAPI(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale data-api <create|types|diff|check|refresh|sync|status|replay|diagnostics|dev|install>", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api <create|deploy|configure|server-key|usage|live|storage|types|diff|check|refresh|sync|status|rotation|health|replay|diagnostics|dev|install|onboard|migration|fixture|explain|verify|transaction>", "data-api")
 		return 1
 	}
 	switch args[0] {
+	case "rotation":
+		return cmdDataAPIRotation(args[1:])
+	case "health":
+		return cmdDataAPIHealth(args[1:])
+	case "transaction":
+		return cmdDataAPITransaction(args[1:])
+	case "verify":
+		return cmdDataAPIVerify(args[1:])
+	case "explain":
+		return cmdDataAPIExplain(args[1:])
+	case "fixture":
+		return cmdDataAPIFixture(args[1:])
+	case "migration":
+		return cmdDataAPIMigration(args[1:])
+	case "onboard":
+		return cmdDataAPIOnboard(args[1:])
 	case "install":
 		return cmdDataAPIInstall(args[1:])
 	case "dev":
@@ -41,10 +59,22 @@ func cmdDataAPI(args []string) int {
 		return cmdDataAPIDiagnostics(args[1:])
 	case "status":
 		return cmdDataAPIStatus(args[1:])
+	case "configure":
+		return cmdDataAPIConfigure(args[1:])
+	case "server-key":
+		return cmdDataAPIServerKey(args[1:])
+	case "usage":
+		return cmdDataAPIUsage(args[1:])
+	case "live":
+		return cmdDataAPILive(args[1:])
+	case "storage":
+		return cmdDataAPIStorage(args[1:])
+	case "deploy":
+		return cmdDataAPIDeploy(args[1:])
 	case "sync":
 		return cmdDataAPISync(args[1:])
 	default:
-		return printErr("Unknown Data API command", fmt.Errorf("use create, types, diff, refresh, sync, status, replay, dev or install"))
+		return printErr("Unknown Data API command", fmt.Errorf("use create, deploy, configure, server-key, usage, live, storage, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
 	}
 }
 
@@ -111,19 +141,50 @@ func cmdDataAPIRefresh(args []string) int {
 func cmdDataAPICreate(args []string) int {
 	fs := newFlagSet("data-api create", flag.ContinueOnError)
 	database := fs.String("database", "", "managed PostgreSQL name or ID")
-	schema := fs.String("schema", "api", "exposed schema (managed Data APIs use api)")
+	schema := fs.String("schema", "api", "exposed schema (api, or public with --read-only)")
+	readOnly := fs.Bool("read-only", false, "use a SELECT-only public-schema binding and reject mutation requests")
 	scope := fs.String("scope", api.DefaultEnvScope, "environment scope")
 	issuer := fs.String("issuer", "", "HTTPS application JWT issuer")
 	jwks := fs.String("jwks-url", "", "HTTPS application JWKS URL")
 	audience := fs.String("audience", "", "required application JWT audience")
 	origins := fs.String("origins", "", "comma-separated allowed browser origins")
 	resume := fs.Bool("resume", false, "resume configuration and deployment of an existing app")
+	authApp := unreleasedStringFlag(fs, "auth", "Auth app whose tokens to verify (replaces --issuer, --jwks-url and --audience)")
+	publicRead := fs.String("public-read", "", "comma-separated schema.relation list readable without a token")
+	publicRPC := fs.String("public-rpc", "", "comma-separated schema.function list callable without a token by GET")
+	aggregates := fs.Bool("aggregates", false, "enable aggregate queries (also enables the SQL deadline)")
+	migrations := fs.String("migrations", "", "single-app project: migration directory run as this app's release task")
+	releaseCommand := fs.String("release-command", dataAPIDefaultReleaseCommand, "single-app release command run with "+dataAPIMigrationEnv)
 	if err := fs.Parse(normalizeDataAPITypeArgs(args)); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *database == "" || *schema != "api" || api.ValidateScope(*scope) != nil || !dataAPIHTTPS(*issuer) || !dataAPIHTTPS(*jwks) || strings.TrimSpace(*audience) == "" {
-		PrintUsage(os.Stderr, "usage: gregale data-api create NAME --database DATABASE --issuer HTTPS_URL --jwks-url HTTPS_URL --audience AUDIENCE [--scope SCOPE] [--origins ORIGINS]", "data-api")
+	schemaExplicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "schema" {
+			schemaExplicit = true
+		}
+	})
+	if *readOnly && !schemaExplicit {
+		*schema = "public"
+	}
+	explicitIssuer := dataAPIHTTPS(*issuer) && dataAPIHTTPS(*jwks) && strings.TrimSpace(*audience) != ""
+	if *authApp != "" && (*issuer != "" || *jwks != "" || *audience != "") {
+		return printErr("Invalid flags", errors.New("--auth replaces --issuer, --jwks-url and --audience; pass one or the other"))
+	}
+	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *database == "" || (!*readOnly && *schema != "api") || (*readOnly && *schema != "public") || api.ValidateScope(*scope) != nil || (*authApp == "" && !explicitIssuer) {
+		PrintUsage(os.Stderr, dataAPICreateUsage(), "data-api")
 		return 1
+	}
+	if *publicRead != "" && !validDataAPIPublicRead(*publicRead) {
+		return printErr("Invalid --public-read", fmt.Errorf("list at most %d unique schema.relation names", api.DataAPIPublicReadMaxRelations))
+	}
+	if *publicRPC != "" && !validDataAPIPublicRPC(*publicRPC) {
+		return printErr("Invalid --public-rpc", fmt.Errorf("list at most %d unique schema.function names", api.DataAPIPublicRPCMaxFunctions))
+	}
+	if *migrations != "" {
+		if _, err := checkedDataAPIMigrations(*migrations, *releaseCommand); err != nil {
+			return printErr("Invalid --migrations", err)
+		}
 	}
 	for _, origin := range strings.Split(*origins, ",") {
 		if origin != "" && !dataAPIOrigin(origin) {
@@ -135,12 +196,31 @@ func cmdDataAPICreate(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
+	if *authApp != "" {
+		resolved, err := resolveAuthIssuer(ctx, client, *authApp)
+		if err != nil {
+			return printErr("Could not resolve the Auth app", err)
+		}
+		*issuer, *jwks, *audience = resolved.Issuer, resolved.JWKSURL, resolved.Audience
+	}
 	db, err := resolveManagedPostgresDatabase(ctx, client, *database)
 	if err != nil {
 		return printErr("Could not resolve PostgreSQL database", err)
 	}
 	if db.State != "ready" {
 		return printErr("Database unavailable", errors.New("the managed database must be ready"))
+	}
+	// Check the backend offers data_api credentials before creating anything.
+	// On production-us the command created an app first and only then failed
+	// the binding, leaving an undeployed app on the plan's app count (hunt #9
+	// H9-P119; live test 2026-10-14 hit the 100-app cap instead). An unreadable
+	// capability answer does not block: the binding still decides.
+	access := "data_api"
+	if *readOnly {
+		access = "read_only"
+	}
+	if caps, capErr := client.GetManagedPostgresCapabilities(ctx, db.Region); capErr == nil && !slices.Contains(caps.CredentialAccess, access) {
+		return printErr("Data API not offered", fmt.Errorf("the database's backend in %s does not offer data_api credential access; no app was created", db.Region))
 	}
 	var app api.AppResponse
 	if *resume {
@@ -157,8 +237,22 @@ func cmdDataAPICreate(args []string) int {
 	}
 	// Retain partially configured intent on failure: the ordinary app and
 	// binding recovery paths own cleanup and retries, never an ad-hoc rollback.
-	if err := configureDataAPI(ctx, client, app, db.ID, *scope, map[string]string{"DATA_API_SCHEMAS": *schema, "DATA_API_ISSUER": *issuer, "DATA_API_JWKS_URL": *jwks, "DATA_API_AUDIENCE": *audience, "DATA_API_ALLOWED_ORIGINS": *origins}); err != nil {
+	settings := map[string]string{"DATA_API_SCHEMAS": *schema, "DATA_API_ISSUER": *issuer, "DATA_API_JWKS_URL": *jwks, "DATA_API_AUDIENCE": *audience, "DATA_API_ALLOWED_ORIGINS": *origins, "DATA_API_PUBLIC_READ": *publicRead, "DATA_API_PUBLIC_RPC": *publicRPC, "DATA_API_READ_ONLY": fmt.Sprint(*readOnly)}
+	// Usage reporting is on for new APIs whenever the platform API is HTTPS.
+	if origin, ok := dataAPIUsageURL(client.BaseURL()); ok {
+		settings[dataAPIUsageURLKey] = origin
+	}
+	if *aggregates {
+		settings["DATA_API_SQL_DEADLINE"], settings["DATA_API_AGGREGATES"] = "1", "1"
+	}
+	if err := configureDataAPI(ctx, client, app, db.ID, *scope, settings); err != nil {
 		return printErr("Data API configuration failed; the app is retained for recovery", err)
+	}
+	if *migrations != "" {
+		if err := attachDataAPIMigrationBinding(ctx, client, app, db.ID, *scope); err != nil {
+			return printErr("Migration binding failed; the app is retained for recovery", err)
+		}
+		return deploySingleAppDataAPI(ctx, app.Slug, *scope, *migrations, *releaseCommand, "15m")
 	}
 	deployArgs := []string{"--name", app.Slug, "--template", "data-api", "--dockerfile", "--healthcheck-path", "/healthz", "--no-doctor"}
 	if *scope != api.DefaultEnvScope {
@@ -168,7 +262,11 @@ func cmdDataAPICreate(args []string) int {
 }
 
 func configureDataAPI(ctx context.Context, client *api.Client, app api.AppResponse, database, scope string, settings map[string]string) error {
-	binding, err := client.CreateManagedPostgresBinding(api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("data-api", app.ID, database, scope)), database, api.CreateManagedPostgresBindingRequest{AppID: app.ID, Scope: scope, EnvironmentKey: "DATABASE_URL", Access: "data_api"})
+	access := "data_api"
+	if settings["DATA_API_READ_ONLY"] == "true" {
+		access = "read_only"
+	}
+	binding, err := client.CreateManagedPostgresBinding(api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("data-api", app.ID, database, scope)), database, api.CreateManagedPostgresBindingRequest{AppID: app.ID, Scope: scope, EnvironmentKey: "DATABASE_URL", Access: access})
 	if err != nil {
 		return err
 	}
@@ -184,7 +282,21 @@ func configureDataAPI(ctx context.Context, client *api.Client, app api.AppRespon
 	if _, err = client.UpdateApp(ctx, app.Slug, api.UpdateAppRequest{EgressPorts: &ports, RequireAuthn: &requireAuthn, PublicAuth: publicAuth, SetPublicAuth: publicAuth != nil}); err != nil {
 		return err
 	}
-	for _, key := range []string{"DATA_API_SCHEMAS", "DATA_API_ISSUER", "DATA_API_JWKS_URL", "DATA_API_AUDIENCE", "DATA_API_ALLOWED_ORIGINS"} {
+	for _, key := range []string{"DATA_API_SCHEMAS", "DATA_API_ISSUER", "DATA_API_JWKS_URL", "DATA_API_AUDIENCE", "DATA_API_ALLOWED_ORIGINS", "DATA_API_READ_ONLY"} {
+		if err = client.SetSecretWithScope(ctx, app.Slug, key, func() string {
+			if key == "DATA_API_READ_ONLY" && settings[key] == "" {
+				return "false"
+			}
+			return settings[key]
+		}(), scope); err != nil {
+			return err
+		}
+	}
+	// Optional owner opt-ins are stored only when requested; absence keeps them off.
+	for _, key := range []string{"DATA_API_PUBLIC_READ", "DATA_API_PUBLIC_RPC", "DATA_API_SQL_DEADLINE", "DATA_API_AGGREGATES", dataAPIUsageURLKey} {
+		if settings[key] == "" {
+			continue
+		}
 		if err = client.SetSecretWithScope(ctx, app.Slug, key, settings[key], scope); err != nil {
 			return err
 		}
@@ -209,14 +321,28 @@ func cmdDataAPITypes(args []string) int {
 	output := fs.String("output", "", "write generated types atomically to a file")
 	check := fs.Bool("check", false, "fail if --output differs from the database contract")
 	snapshot := fs.Bool("snapshot", false, "export a JSON contract baseline for data-api diff")
+	validators := fs.Bool("validators", false, "include typed runtime table and RPC argument validators")
+	language := fs.String("language", "typescript", "client language: typescript, python or go")
+	pkg := fs.String("package", "gregaledata", "Go package name for --language go")
+	snapshotFile := fs.String("snapshot-file", "", "render Python or Go from a saved snapshot without contacting the API")
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum task wait")
 	// This command never downloads credentials or introspects customer SQL
 	// from apid. A bounded manual task runs inside the selected app revision.
 	if err := fs.Parse(normalizeDataAPITypeArgs(args)); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || (*check && *output == "") || *timeout <= 0 || *timeout > time.Hour {
-		PrintUsage(os.Stderr, "usage: gregale data-api types NAME [--output FILE] [--check] [--snapshot] [--timeout DURATION]", "data-api")
+	usage := "usage: gregale data-api types NAME [--output FILE] [--check] [--snapshot | --validators] [--timeout DURATION]\n       gregale data-api types [NAME | --snapshot-file FILE] --language python|go [--package NAME] [--output FILE [--check]]"
+	if *language != "typescript" {
+		// Python and Go render from the contract snapshot, locally or via the app task.
+		named := fs.NArg() == 1 && api.ValidAppSlug(fs.Arg(0))
+		if !dataAPIDiagnosticAllowed(*language, "python", "go") || named == (*snapshotFile != "") || fs.NArg() > 1 || *snapshot || *validators || (*check && *output == "") || (*language == "python" && *pkg != "gregaledata") || !clientgen.GoPackageValid(*pkg) || *timeout <= 0 || *timeout > time.Hour {
+			PrintUsage(os.Stderr, usage, "data-api")
+			return 1
+		}
+		return dataAPIClientTypes(fs.Arg(0), *language, *pkg, *snapshotFile, *output, *check, *timeout)
+	}
+	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || (*check && *output == "") || (*snapshot && *validators) || *snapshotFile != "" || *pkg != "gregaledata" || *timeout <= 0 || *timeout > time.Hour {
+		PrintUsage(os.Stderr, usage, "data-api")
 		return 1
 	}
 	client, err := authedClient()
@@ -228,6 +354,8 @@ func cmdDataAPITypes(args []string) int {
 	var task api.AppTaskResponse
 	if *snapshot {
 		task, err = generateDataAPIContract(ctx, client, fs.Arg(0))
+	} else if *validators {
+		task, err = generateDataAPIInputValidators(ctx, client, fs.Arg(0))
 	} else {
 		task, err = generateDataAPITypes(ctx, client, fs.Arg(0))
 	}
@@ -262,6 +390,18 @@ func cmdDataAPITypes(args []string) int {
 		PrintOK(osStdout, "Database types %s: %s", map[bool]string{true: "match", false: "written"}[*check], *output)
 	}
 	return 0
+}
+
+func generateDataAPIInputValidators(ctx context.Context, client *api.Client, slug string) (api.AppTaskResponse, error) {
+	task, err := client.CreateAppTask(ctx, slug, api.CreateAppTaskRequest{Command: []string{"node", "/app/types.mjs", "--validators"}, TimeoutSeconds: 60, MaxOutputBytes: api.AppTaskDefaultMaxOutputBytes})
+	if err != nil {
+		return task, fmt.Errorf("start input validator generation: %w", err)
+	}
+	task, err = waitDataAPITypeTask(ctx, client, slug, task)
+	if err == nil && (!strings.Contains(task.StdoutTail, "export const inputValidators = {") || !strings.Contains(task.StdoutTail, "export const rpcValidators = {")) {
+		err = errors.New("runtime does not support table and RPC argument validator generation; update the Data API runtime")
+	}
+	return task, err
 }
 
 func generateDataAPITypes(ctx context.Context, client *api.Client, slug string) (api.AppTaskResponse, error) {

@@ -44,6 +44,10 @@ func (s *Service) SetWorkflowRecoveryPolicy(w http.ResponseWriter, r *http.Reque
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
+	if req.Policy.Enabled && req.Policy.Mode == "automatic_initial" && !s.Host.WorkflowRuntimeEnabled() {
+		api.WriteProblem(w, api.ErrWorkflowDeploymentUnavailable())
+		return
+	}
 	r = recoveryActorRequest(r)
 	out, err := store.SetWorkflowRecoveryPolicy(r.Context(), acct.ID, app, req)
 	s.writeEventRecovery(w, r, http.StatusOK, out, err)

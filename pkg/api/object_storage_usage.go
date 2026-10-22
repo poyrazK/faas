@@ -127,6 +127,26 @@ func (p ObjectStoragePricing) Valid() bool {
 	return true
 }
 
+// ObjectStorageAllowance is usage included in an account's plan, in
+// month-close billing units (ADR-1320). It is removed from each meter before
+// pricing; usage below it is never charged. The zero value includes nothing.
+type ObjectStorageAllowance struct {
+	StoredByteHours int64
+	Requests        int64
+	EgressBytes     int64
+}
+
+// Valid reports whether every component is a representable non-negative
+// quantity.
+func (a ObjectStorageAllowance) Valid() bool {
+	for _, v := range []int64{a.StoredByteHours, a.Requests, a.EgressBytes} {
+		if v < 0 || v > MaxObjectStoragePolicyValue {
+			return false
+		}
+	}
+	return true
+}
+
 // ObjectStorageCharge is the deterministic estimate for the current UTC
 // month. Components are rounded up independently to one millicent so a
 // configured non-zero rate cannot be under-collected by fractional units.

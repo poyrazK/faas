@@ -22,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/durableentity"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type entityHTTPEnv struct {
@@ -70,7 +71,7 @@ func (e entityHTTPEnv) do(t *testing.T, method, path string, body any, headers m
 // invocation protocol. It substitutes a trusted HTTP guest and scheduler handoff
 // for Firecracker; native workload isolation remains a separate acceptance gate.
 type entityDispatchFixture struct {
-	*state.MemStore
+	MemStore            *state.MemStore
 	t                   *testing.T
 	guest               http.Handler
 	calls               atomic.Int64
@@ -89,7 +90,7 @@ func (f *entityDispatchFixture) EnqueueInvocation(ctx context.Context, inv state
 			return queued, err
 		}
 	}
-	claimed, err := f.ClaimInvocation(ctx, queued.ID, "fixture-instance", 60)
+	claimed, err := f.MemStore.ClaimInvocation(ctx, queued.ID, "fixture-instance", 60)
 	if err != nil {
 		return queued, err
 	}
@@ -120,7 +121,7 @@ func (f *entityDispatchFixture) EnqueueInvocation(ctx context.Context, inv state
 		rec.Body.Reset()
 		rec.Body.WriteString(`{"data":{},"result":1,"claim_token":"leaked-secret"}`)
 	}
-	if err := f.CompleteInvocation(ctx, queued.ID, rec.Body.Bytes()); err != nil {
+	if err := f.MemStore.CompleteInvocation(ctx, queued.ID, rec.Body.Bytes()); err != nil {
 		return queued, err
 	}
 	return queued, nil
@@ -233,7 +234,7 @@ func entityAPIFixture(t *testing.T, project bool) (entityHTTPEnv, state.App, *en
 		t.Fatal(err)
 	}
 	dispatch := &entityDispatchFixture{MemStore: e.store, t: t, guest: http.HandlerFunc(entityCounterGuest)}
-	(*e.s.Store()), (*e.s.Durable()).Engine, (*e.s.Durable()).Owner, (*e.s.Durable()).Apps = dispatch, engine, uuid.NewString(), map[string]bool{app.ID: true}
+	(*e.s.Store()), (*e.s.Durable()).Engine, (*e.s.Durable()).Owner, (*e.s.Durable()).Apps = statetest.NewMem(dispatch), engine, uuid.NewString(), map[string]bool{app.ID: true}
 	return e, app, dispatch, bucket
 }
 
@@ -277,14 +278,14 @@ func TestDurableEntityAPIConcurrentCallsAndRestartReplay(t *testing.T) {
 	(*e.s.Durable()).Engine, (*e.s.Durable()).Owner = restarted, uuid.NewString()
 	(*
 	// Make deployment selection fail: receipts must replay before selecting code.
-	e.s.Store()) = &entityNoExecutionStore{MemStore: e.store}
+	e.s.Store()) = statetest.NewMem(&entityNoExecutionStore{MemStore: e.store})
 	replayed := entityAPIResult(t, e.do(t, http.MethodPost, path, entityRequest("first"), nil))
 	if string(replayed.Value) != string(first.Value) || replayed.Version != first.Version || !replayed.Replayed || dispatch.calls.Load() != calls+1 {
 		t.Fatalf("restart replay = %+v, handler calls = %d", replayed, dispatch.calls.Load())
 	}
 }
 
-type entityNoExecutionStore struct{ *state.MemStore }
+type entityNoExecutionStore struct{ MemStore *state.MemStore }
 
 func (*entityNoExecutionStore) LiveDeploymentForScope(context.Context, string, string) (state.Deployment, error) {
 	return state.Deployment{}, state.ErrNotFound
@@ -432,11 +433,38 @@ func TestDurableEntityPreviewDisabledAndConfigValidation(t *testing.T) {
 	if _, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "disabled", Type: state.AppTypeApp}); err != nil {
 		t.Fatal(err)
 	}
-	res := e.do(t, http.MethodPost, "/v1/apps/disabled/entities/invoke", entityRequest("one"), nil)
-	if res.Code != http.StatusServiceUnavailable {
-		t.Fatalf("disabled = %d", res.Code)
+	// The preview is hidden: its routes answer like unregistered ones, even
+	// for a method the route does not accept and without credentials.
+	for _, res := range []*httptest.ResponseRecorder{
+		e.do(t, http.MethodPost, "/v1/apps/disabled/entities/invoke", entityRequest("one"), nil),
+		e.do(t, http.MethodDelete, "/v1/apps/disabled/entities/invoke", nil, nil),
+		anonymousEntityRequest(e, "/v1/apps/disabled/entities/inspect"),
+	} {
+		assertUnregisteredRoute(t, res)
 	}
 	if err := e.s.ConfigureDurableEntities(t.Context(), func(string) string { return "" }); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDurableEntityPreviewHiddenFromAppsOutsideAllowlist(t *testing.T) {
+	e, _, _, _ := entityAPIFixture(t, false)
+	if _, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "not-allowlisted", Type: state.AppTypeApp}); err != nil {
+		t.Fatal(err)
+	}
+	assertUnregisteredRoute(t, e.do(t, http.MethodPost, "/v1/apps/not-allowlisted/entities/invoke", entityRequest("one"), nil))
+	assertUnregisteredRoute(t, e.do(t, http.MethodGet, "/v1/apps/not-allowlisted/entities/readiness", nil, nil))
+}
+
+func anonymousEntityRequest(e entityHTTPEnv, path string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	return rec
+}
+
+func assertUnregisteredRoute(t *testing.T, res *httptest.ResponseRecorder) {
+	t.Helper()
+	if res.Code != http.StatusNotFound || !strings.Contains(res.Body.String(), "no such API route") || res.Header().Get("Allow") != "" {
+		t.Fatalf("hidden route = %d %q allow=%q, want the unregistered-route 404", res.Code, res.Body.String(), res.Header().Get("Allow"))
 	}
 }

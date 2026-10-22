@@ -10,6 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestRuntimeConfigReceiptRejectsInputsReadBeforeChangeDespiteLaterReadiness(t *testing.T) {
@@ -121,7 +122,7 @@ func TestRuntimeConfigReceiptRestoreInheritsCapturedInputs(t *testing.T) {
 	}
 }
 
-type runtimeEnvReadFailingStore struct{ *state.MemStore }
+type runtimeEnvReadFailingStore struct{ MemStore *state.MemStore }
 
 func (runtimeEnvReadFailingStore) RuntimeAppValuesForDeployment(context.Context, string, string, string) (state.RuntimeAppValuesSnapshot, error) {
 	return state.RuntimeAppValuesSnapshot{}, errors.New("database unavailable")
@@ -131,9 +132,9 @@ func TestRuntimeConfigReceiptInputReadFailureRollsBackAdmission(t *testing.T) {
 	for _, prime := range []bool{false, true} {
 		t.Run(map[bool]string{false: "wake", true: "prime"}[prime], func(t *testing.T) {
 			store := runtimeEnvReadFailingStore{state.NewMemStore()}
-			_, app, deployment := seedApp(t, store, api.PlanPro, 256, 5)
+			_, app, deployment := seedApp(t, statetest.NewMem(store), api.PlanPro, 256, 5)
 			vmm := &fakeVMM{}
-			engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+			engine := newEngine(t, statetest.NewMem(store), vmm, &fakeNotifier{}, "1.10.0")
 			var err error
 			if prime {
 				err = engine.Prime(t.Context(), app.ID, deployment.ID)
@@ -143,7 +144,7 @@ func TestRuntimeConfigReceiptInputReadFailureRollsBackAdmission(t *testing.T) {
 			if err == nil || vmm.coldBoots != 0 || vmm.restores != 0 || engine.ledger.Concurrency(app.ID) != 0 {
 				t.Fatalf("failed input read retained admission or dispatched vmmd: %v boots=%d restores=%d concurrent=%d", err, vmm.coldBoots, vmm.restores, engine.ledger.Concurrency(app.ID))
 			}
-			instances, err := store.ListInstancesForApp(t.Context(), app.ID)
+			instances, err := store.MemStore.ListInstancesForApp(t.Context(), app.ID)
 			// Wake reads inputs before creating a row; prime rolls back its
 			// provisional row when the same read fails.
 			expectedRows := 0

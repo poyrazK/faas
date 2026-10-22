@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"maps"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -22,7 +23,12 @@ type BindingReleasePolicyStore interface {
 type bindingReleaseFencesKey struct{}
 
 func WithBindingReleaseFences(ctx context.Context, fences []BindingPromotionFence) context.Context {
-	return context.WithValue(ctx, bindingReleaseFencesKey{}, append([]BindingPromotionFence(nil), fences...))
+	copy := append([]BindingPromotionFence(nil), fences...)
+	for i := range copy {
+		copy[i].ObjectStorageRequirements = maps.Clone(copy[i].ObjectStorageRequirements)
+		copy[i].QueueRequirements = maps.Clone(copy[i].QueueRequirements)
+	}
+	return context.WithValue(ctx, bindingReleaseFencesKey{}, copy)
 }
 func bindingReleaseFences(ctx context.Context) []BindingPromotionFence {
 	fences, _ := ctx.Value(bindingReleaseFencesKey{}).([]BindingPromotionFence)
@@ -40,5 +46,5 @@ func defaultBindingReleasePolicy(appID, scope string) api.BindingReleasePolicy {
 
 func releaseFenceMatchesPolicy(f BindingPromotionFence, p api.BindingReleasePolicy) bool {
 	age, err := time.ParseDuration(p.MaxVerificationAge)
-	return err == nil && f.PolicyRevision == p.Revision && f.MaxVerificationAge > 0 && f.MaxVerificationAge <= age && !f.AllowUnsupported && (!p.RequireApplicationAck || f.RequireApplicationAck)
+	return err == nil && f.PolicyRevision == p.Revision && f.MaxVerificationAge > 0 && f.MaxVerificationAge <= age && !f.AllowUnsupported && (!p.RequireApplicationAck || f.RequireApplicationAck) && maps.Equal(f.ObjectStorageRequirements, p.ObjectStorageRequirements) && maps.Equal(f.QueueRequirements, p.QueueRequirements)
 }

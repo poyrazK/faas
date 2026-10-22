@@ -40,12 +40,16 @@ type OutboundCredentialKey struct {
 }
 
 // OutboundAIBudgetAlert is one budget threshold outboundd recorded at
-// settlement. AppID is set only for an app budget.
+// settlement. AppID is set only for an app budget, EndUser only for an end
+// user's budget (ADR-995).
 type OutboundAIBudgetAlert struct {
-	ID               string
-	IntegrationID    string
-	Budget           string
-	AppID            string
+	ID            string
+	IntegrationID string
+	Budget        string
+	AppID         string
+	EndUser       string
+	// Tag is the tag of a tag_daily_cost alert (ADR-1438).
+	Tag              string
 	PeriodStart      time.Time
 	ThresholdPercent int32
 	Limit            int64
@@ -70,6 +74,34 @@ type OutboundAIRequestLogEntry struct {
 	DurationMS        int64
 	TTFBMS            *int64
 	Attempts          int
+	// EndUser is empty when the call named no end user (ADR-994).
+	EndUser string
+	// Tags are the call's usage tags (ADR-1436).
+	Tags []string
+	// ContentCaptured reports stored bodies for the call (ADR-996).
+	ContentCaptured bool
+}
+
+// OutboundAIRequestContent is one logged call's captured bodies (ADR-996):
+// the start of each as outboundd sent and received it, never headers.
+type OutboundAIRequestContent struct {
+	LogID string
+	// RequestPath is the call's escaped provider path; empty for captures
+	// made before ADR-997.
+	RequestPath         string
+	CreatedAt           time.Time
+	RequestBody         []byte
+	RequestTruncated    bool
+	ResponseBody        []byte
+	ResponseTruncated   bool
+	ResponseContentType string
+}
+
+// OutboundAIContentStore reads the content outboundd captured. It is
+// separate from OutboundAIControlStore so existing implementations do not
+// change.
+type OutboundAIContentStore interface {
+	GetOutboundAIRequestContent(ctx context.Context, accountID, integrationID, logID string) (OutboundAIRequestContent, error)
 }
 
 // OutboundAIControlStore owns the ADR-991 customer settings (guardrails and

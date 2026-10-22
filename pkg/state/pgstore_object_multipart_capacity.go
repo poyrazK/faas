@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"time"
@@ -35,7 +36,13 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
+	owner, ownerErr := q.ObjectStorageLockOwner(ctx, tx, sqlc.ObjectStorageLockOwnerParams{BucketID: mustPgUUID(bucket), AccountID: mustPgUUID(account)})
+	if ownerErr != nil {
+		return mapErr(ownerErr)
+	}
+	subject := pgUUIDString(owner.Subject)
+
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(account), mustPgUUID(bucket)); err != nil {
 		return mapErr(err)
 	}
 	if source != nil {
@@ -65,7 +72,7 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 		if e != nil {
 			return e
 		}
-		if !u.Protection.Equal(preparation.protection) || u.EncryptionDefaultRevision != preparation.defaultRevision || !u.Encryption.Equal(preparation.encryption) || pending || u.PartRevision != preparation.revision || ObjectMultipartIsCompleting(u.State) && (!slices.Equal(u.Parts, preparation.parts) || u.CompletionConditions != preparation.conditions || u.SizeBytes != size) {
+		if u.Checksum.Policy != preparation.checksum.Policy || ObjectMultipartIsCompleting(u.State) && !u.Checksum.Equal(preparation.checksum) || !u.Protection.Equal(preparation.protection) || u.EncryptionDefaultRevision != preparation.defaultRevision || !u.Encryption.Equal(preparation.encryption) || pending || u.PartRevision != preparation.revision || ObjectMultipartIsCompleting(u.State) && (!slices.Equal(u.Parts, preparation.parts) || u.CompletionConditions != preparation.conditions || u.SizeBytes != size) {
 			return ErrConflict
 		}
 	}
@@ -82,7 +89,7 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 	if err != nil {
 		return err
 	}
-	snapshot, err := readObjectUsage(ctx, tx, account, now)
+	snapshot, err := readObjectUsage(ctx, tx, subject, now)
 	if err != nil {
 		return err
 	}
@@ -161,7 +168,7 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 		}
 	}
 	if !completion || !u.FixedAdmission {
-		if err = q.ObjectUsageAuthorize(ctx, tx, sqlc.ObjectUsageAuthorizeParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(ObjectStoragePeriod(now))}); err != nil {
+		if err = q.ObjectUsageAuthorize(ctx, tx, sqlc.ObjectUsageAuthorizeParams{AccountID: mustPgUUID(subject), PeriodStart: objectUsageTime(ObjectStoragePeriod(now))}); err != nil {
 			return err
 		}
 	}
@@ -170,7 +177,11 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 		if e != nil {
 			return e
 		}
-		row, e := q.ObjectMultipartClaim(ctx, tx, sqlc.ObjectMultipartClaimParams{ID: mustPgUUID(id), AccountID: mustPgUUID(account), AppID: mustPgUUID(u.AppID), BucketID: mustPgUUID(bucket), Operation: multipartCompletionOperation(preparation.conditions), CompletionIfMatch: preparation.conditions.IfMatch, CompletionIfNoneMatch: preparation.conditions.IfNoneMatch, Token: pgtype.Text{String: preparation.token, Valid: true}, LeaseSeconds: int32(ObjectMultipartLeaseDuration / time.Second), CompletionParts: raw})
+		checksum, e := json.Marshal(preparation.checksum)
+		if e != nil {
+			return e
+		}
+		row, e := q.ObjectMultipartClaim(ctx, tx, sqlc.ObjectMultipartClaimParams{ChecksumSnapshot: checksum, ID: mustPgUUID(id), AccountID: mustPgUUID(account), AppID: mustPgUUID(u.AppID), BucketID: mustPgUUID(bucket), Operation: multipartCompletionOperation(preparation.conditions), CompletionIfMatch: preparation.conditions.IfMatch, CompletionIfNoneMatch: preparation.conditions.IfNoneMatch, Token: pgtype.Text{String: preparation.token, Valid: true}, LeaseSeconds: int32(ObjectMultipartLeaseDuration / time.Second), CompletionParts: raw})
 		if errors.Is(e, pgx.ErrNoRows) {
 			return ErrConflict
 		}

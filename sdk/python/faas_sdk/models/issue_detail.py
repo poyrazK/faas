@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.issue_impact import IssueImpact
     from ..models.issue_occurrence import IssueOccurrence
     from ..models.issue_release import IssueRelease
+    from ..models.issue_split_rule import IssueSplitRule
 
 
 T = TypeVar("T", bound="IssueDetail")
@@ -21,7 +22,10 @@ T = TypeVar("T", bound="IssueDetail")
 
 @_attrs_define
 class IssueDetail:
-    """Issue metadata and independently paginated occurrence, release, and activity collections."""
+    """Canonical issue metadata and independently paginated combined history. Linked IDs resolve to their current canonical
+    issue; original identities and counters appear in group_members.
+
+    """
 
     issue: Issue
     """Durable failure group across releases in one app and environment."""
@@ -30,6 +34,11 @@ class IssueDetail:
     activity: list[IssueActivity]
     impact: IssueImpact
     """Observed retained customer impact within an explicit time window; unknown identity remains unattributed."""
+    split_rules: list[IssueSplitRule] | Unset = UNSET
+    """Routing rules associated with the displayed original identities or derived branches; lower priority wins per
+    source."""
+    group_members: list[Issue] | Unset = UNSET
+    """Original fingerprint identities with their own lifetime counters."""
     next_event_cursor: str | Unset = UNSET
     next_release_cursor: str | Unset = UNSET
     next_activity_cursor: str | Unset = UNSET
@@ -55,6 +64,20 @@ class IssueDetail:
 
         impact = self.impact.to_dict()
 
+        split_rules: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.split_rules, Unset):
+            split_rules = []
+            for split_rules_item_data in self.split_rules:
+                split_rules_item = split_rules_item_data.to_dict()
+                split_rules.append(split_rules_item)
+
+        group_members: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.group_members, Unset):
+            group_members = []
+            for group_members_item_data in self.group_members:
+                group_members_item = group_members_item_data.to_dict()
+                group_members.append(group_members_item)
+
         next_event_cursor = self.next_event_cursor
 
         next_release_cursor = self.next_release_cursor
@@ -72,6 +95,10 @@ class IssueDetail:
                 "impact": impact,
             }
         )
+        if split_rules is not UNSET:
+            field_dict["split_rules"] = split_rules
+        if group_members is not UNSET:
+            field_dict["group_members"] = group_members
         if next_event_cursor is not UNSET:
             field_dict["next_event_cursor"] = next_event_cursor
         if next_release_cursor is not UNSET:
@@ -88,6 +115,7 @@ class IssueDetail:
         from ..models.issue_impact import IssueImpact
         from ..models.issue_occurrence import IssueOccurrence
         from ..models.issue_release import IssueRelease
+        from ..models.issue_split_rule import IssueSplitRule
 
         d = dict(src_dict)
         issue = Issue.from_dict(d.pop("issue"))
@@ -115,6 +143,24 @@ class IssueDetail:
 
         impact = IssueImpact.from_dict(d.pop("impact"))
 
+        _split_rules = d.pop("split_rules", UNSET)
+        split_rules: list[IssueSplitRule] | Unset = UNSET
+        if _split_rules is not UNSET:
+            split_rules = []
+            for split_rules_item_data in _split_rules:
+                split_rules_item = IssueSplitRule.from_dict(split_rules_item_data)
+
+                split_rules.append(split_rules_item)
+
+        _group_members = d.pop("group_members", UNSET)
+        group_members: list[Issue] | Unset = UNSET
+        if _group_members is not UNSET:
+            group_members = []
+            for group_members_item_data in _group_members:
+                group_members_item = Issue.from_dict(group_members_item_data)
+
+                group_members.append(group_members_item)
+
         next_event_cursor = d.pop("next_event_cursor", UNSET)
 
         next_release_cursor = d.pop("next_release_cursor", UNSET)
@@ -127,6 +173,8 @@ class IssueDetail:
             releases=releases,
             activity=activity,
             impact=impact,
+            split_rules=split_rules,
+            group_members=group_members,
             next_event_cursor=next_event_cursor,
             next_release_cursor=next_release_cursor,
             next_activity_cursor=next_activity_cursor,

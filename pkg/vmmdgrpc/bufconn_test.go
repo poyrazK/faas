@@ -366,7 +366,7 @@ func newServerForNode(t *testing.T, fake *fakeVMM, nodeID string) (vmmdpb.VmmdCl
 	srv := grpc.NewServer()
 	impl := vmmdgrpc.New(fake, ops, "1.0.0", nil)
 	if nodeID != "" {
-		impl.WithNodeID(nodeID)
+		impl.WithNodeID(nodeID).WithQualificationNodeID(nodeID)
 	}
 	impl.Register(srv)
 

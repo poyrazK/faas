@@ -27,8 +27,8 @@ func (s *PgStore) CompleteInvocationClaim(ctx context.Context, id string, claim 
 	return s.completeInvocation(ctx, id, claim.Attempt, &claim, result)
 }
 
-func (m *MemStore) CompleteInvocationClaim(_ context.Context, id string, claim InvocationClaim, result json.RawMessage) error {
-	return m.completeInvocation(id, 0, &claim, result)
+func (m *MemStore) CompleteInvocationClaim(ctx context.Context, id string, claim InvocationClaim, result json.RawMessage) error {
+	return m.completeInvocationContext(ctx, id, 0, &claim, result)
 }
 
 func lockInvocationAttemptClaim(ctx context.Context, tx pgx.Tx, id string, claim InvocationClaim) error {
@@ -178,7 +178,12 @@ func (m *MemStore) EventReceiptAttempts(ctx context.Context, accountID, source, 
 // Centralize memory writes to mirror the PostgreSQL transition trigger.
 func (m *MemStore) setInvocationLocked(id string, inv Invocation) {
 	old := m.invocations[id]
+	m.captureScenarioManagedWorkLocked(old, inv)
 	now := time.Now().UTC()
+	m.captureEventExecutionTransitionLocked(old, inv, now, false)
+	if old.ID != "" && (old.ReplayGeneration != inv.ReplayGeneration || !old.CreatedAt.Equal(inv.CreatedAt) || !sameMemUUID(old.AccountID, inv.AccountID) || !sameMemUUID(old.AppID, inv.AppID) || old.ReplayRootInvocationID != inv.ReplayRootInvocationID || old.ReplayedFromInvocationID != inv.ReplayedFromInvocationID || (old.State == InvocationCompleted && (inv.State != InvocationCompleted || !equalCoverageTime(old.CompletedAt, inv.CompletedAt)))) {
+		m.loseExecutionCoverageLocked(old.AppID, "execution_replaced", now)
+	}
 	if old.ReplayGeneration != inv.ReplayGeneration || !old.CreatedAt.Equal(inv.CreatedAt) || !sameMemUUID(old.AccountID, inv.AccountID) || !sameMemUUID(old.AppID, inv.AppID) {
 		m.captureRecoveryInvocationResultLocked(old, now)
 	}
@@ -255,8 +260,12 @@ func invocationAttemptOutcome(old, inv Invocation) string {
 }
 
 func (m *MemStore) deleteInvocationAttemptsLocked(id string) {
+	if inv, ok := m.invocations[id]; ok {
+		m.failScenarioManagedWorkLocked(inv.AppID)
+	}
 	for key, row := range m.invocationAttemptHistory {
 		if row.InvocationID == id {
+			m.loseExecutionCoverageLocked(row.appID, "attempt_deleted", time.Now().UTC())
 			delete(m.invocationAttemptHistory, key)
 		}
 	}
@@ -296,6 +305,7 @@ func (m *MemStore) PruneInvocationAttemptHistory(_ context.Context, now time.Tim
 		ids = ids[:limit]
 	}
 	for _, id := range ids {
+		m.loseExecutionCoverageLocked(m.invocationAttemptHistory[id].appID, "attempt_deleted", time.Now().UTC())
 		delete(m.invocationAttemptHistory, id)
 	}
 	return len(ids), nil

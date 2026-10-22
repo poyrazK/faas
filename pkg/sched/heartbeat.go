@@ -59,6 +59,14 @@ const DefaultHeartbeatConcurrency = 32
 // The whole sweep can continue probing other nodes when one transport hangs.
 const DefaultHeartbeatProbeTimeout = 5 * time.Second
 
+// DefaultHeartbeatFailureThreshold is how many consecutive failed pings mark
+// a node unavailable. Marking it fails the node over: the recovery arbiter
+// parks its instances. One ping timing out on a starved control plane did
+// that to both production-us nodes about 22 times in 36 minutes, while their
+// VMs kept running (production-us hunt #9, H9-171). Three probes at the 30 s
+// interval stay inside the 90 s staleness budget peers already use.
+const DefaultHeartbeatFailureThreshold = 3
+
 // HeartbeatGapSummary is re-exported from pkg/state for the same
 // reason: schedd callers use it in the property test
 // (heartbeat_gap_test.go) without importing pkg/state directly.
@@ -77,8 +85,18 @@ func ClassifyHeartbeatGap(prev, curr time.Time, interval, staleness time.Duratio
 // stateless across ticks — each tick queries the store fresh —
 // so a panicking tick does not corrupt subsequent ticks (same
 // shape as Watchdog).
+// TakeoverGuard vetoes acting on a stale-looking node whose liveness lease
+// is still live (ADR-1344 §4, phase 2). nodelease.Guard implements it; nil
+// leaves the heartbeat rules alone.
+type TakeoverGuard interface {
+	MayTakeOver(ctx context.Context, path, nodeID string) bool
+}
+
 type Heartbeat struct {
-	store state.Store
+	// takeoverGuard, when set, must agree before a stale peer is marked
+	// unavailable.
+	takeoverGuard TakeoverGuard
+	store         state.Store
 	// dialer is the per-tick fresh-dial path (issue #120). The
 	// heartbeat dials a fresh *VMMClient per node per tick instead
 	// of reusing the VMMRouter's cached conn, matching the
@@ -127,9 +145,24 @@ type Heartbeat struct {
 	Concurrency int
 	// ProbeTimeout bounds each dial + Ping. Zero uses the default.
 	ProbeTimeout time.Duration
+	// FailureThreshold is how many consecutive failed pings mark a node
+	// unavailable. Zero uses DefaultHeartbeatFailureThreshold.
+	FailureThreshold int
+	// onReachable runs after every successful ping of a node. It must not
+	// block the sweep. Set via WithReachableHook.
+	onReachable func(ctx context.Context, nodeID string)
+
+	// failMu guards failures, the consecutive failed pings per node.
+	failMu   sync.Mutex
+	failures map[string]int
 
 	// recoverMu guards recovering.
 	recoverMu sync.Mutex
+	// peerSettle tracks uninterrupted store access for the stale-peer
+	// observer, which must not judge peers by timestamps that nobody could
+	// write during a store outage (ADR-1344 §5 rule 4).
+	peerSettle storeSettle
+
 	// recovering holds the nodes THIS schedd flipped inactive after a
 	// failed ping, so the sweep can keep probing them and put them back
 	// when they answer.
@@ -164,6 +197,17 @@ func (h *Heartbeat) WithOwnerNodeID(nodeID string) *Heartbeat {
 	return h
 }
 
+// WithReachableHook registers fn to run after every successful ping of a
+// node. cmd/schedd wires the engine's destroy of VMs the recovery arbiter
+// parked while the node looked dead. fn must not block.
+func (h *Heartbeat) WithReachableHook(fn func(ctx context.Context, nodeID string)) *Heartbeat {
+	if h == nil {
+		return h
+	}
+	h.onReachable = fn
+	return h
+}
+
 // WithStalePeerObserver enables the control-plane stale-heartbeat observer.
 // Each per-node schedd should enable this in a multi-node deployment so a
 // frozen schedd cannot hide its node from the rest of the fleet. The CAS is
@@ -174,6 +218,29 @@ func (h *Heartbeat) WithStalePeerObserver(enabled bool) *Heartbeat {
 		return h
 	}
 	h.observeStalePeers = enabled
+	return h
+}
+
+// WithTakeoverGuard makes the stale-peer observer consult guard before it
+// marks a peer unavailable (ADR-1344 §4, phase 2).
+func (h *Heartbeat) WithTakeoverGuard(guard TakeoverGuard) *Heartbeat {
+	if h == nil {
+		return h
+	}
+	h.takeoverGuard = guard
+	return h
+}
+
+// WithStoreOutageAtStartup holds the stale-peer observer for a full staleness
+// window of store access when this process saw the store unavailable before
+// the heartbeat existed (ADR-1344 §5 rule 4).
+func (h *Heartbeat) WithStoreOutageAtStartup(outage bool) *Heartbeat {
+	if h == nil {
+		return h
+	}
+	if outage {
+		h.peerSettle.hold()
+	}
 	return h
 }
 
@@ -282,6 +349,7 @@ func (h *Heartbeat) Tick(ctx context.Context) error {
 			// A transient DB error must not crash schedd. Log + return;
 			// the next tick will retry. The Watchdog path (1s tick)
 			// is unaffected.
+			h.peerSettle.observe(err, now)
 			h.log.Warn("heartbeat: list active compute_nodes failed", "err", err)
 			return err
 		}
@@ -292,11 +360,13 @@ func (h *Heartbeat) Tick(ctx context.Context) error {
 	// de-duplicated by node id.
 	recoverable, err := h.store.NodeListRecoverable(ctx)
 	if err != nil {
+		h.peerSettle.observe(err, now)
 		h.log.Warn("heartbeat: list recoverable compute_nodes failed", "err", err)
 		return err
 	}
 	draining, err := h.store.NodeList(ctx, state.NodeLifecycleDraining)
 	if err != nil {
+		h.peerSettle.observe(err, now)
 		h.log.Warn("heartbeat: list draining compute_nodes failed", "err", err)
 		return err
 	}
@@ -372,10 +442,24 @@ func (h *Heartbeat) Tick(ctx context.Context) error {
 // the same staleness budget. This path is intentionally timestamp-only: it
 // does not dial a peer and it never reactivates rows. The owning schedd's
 // probe remains the sole authority for transport recovery.
+//
+// After this schedd saw the store unavailable (a failed read here, or an
+// outage at startup), the observer acts only once it has read the store
+// without interruption for a full staleness window. Right after a store
+// outage every peer's timestamp is old because no one could write it, and
+// acting then would mark the whole fleet unavailable.
 func (h *Heartbeat) observeStalePeerNodes(ctx context.Context, tickNow time.Time, staleness time.Duration) {
 	nodes, err := h.store.NodeList(ctx, "")
+	h.peerSettle.observe(err, tickNow)
 	if err != nil {
 		h.log.Warn("heartbeat: list nodes for stale-peer observer failed", "err", err)
+		return
+	}
+	if ok, firstWait := h.peerSettle.settled(tickNow, staleness); !ok {
+		if firstWait {
+			h.log.Info("heartbeat: stale-peer observer waiting for a full staleness window of store access",
+				"staleness", staleness.String())
+		}
 		return
 	}
 	for _, n := range nodes {
@@ -386,6 +470,11 @@ func (h *Heartbeat) observeStalePeerNodes(ctx context.Context, tickNow time.Time
 		// Preserve operator intent. A peer in a drain/maintenance/terminal
 		// lifecycle is not a liveness candidate for this observer.
 		if n.Lifecycle != state.NodeLifecycleActive && n.Lifecycle != state.NodeLifecycleRecovering {
+			continue
+		}
+		// ADR-1344 §4 phase 2: a stale heartbeat is not enough while the
+		// peer's liveness lease is still live.
+		if h.takeoverGuard != nil && !h.takeoverGuard.MayTakeOver(ctx, "peer_observer", n.ID) {
 			continue
 		}
 
@@ -502,6 +591,11 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 	// rejecting customer wakes during the recovery cycle.
 	wasUnavailable := n.Lifecycle == state.NodeLifecycleUnavailable
 	if _, err := h.heartbeatPing(ctx, n); err != nil {
+		if failures, threshold := h.noteProbeFailure(n.ID), h.failureThreshold(); !wasUnavailable && failures < threshold {
+			h.log.Warn("heartbeat: ping failed; node stays in rotation below the failure threshold",
+				"node_id", n.ID, "node_name", n.Name, "failures", failures, "threshold", threshold, "err", err)
+			return
+		}
 		// A dead node gets flipped unavailable so placement
 		// skips it on the next Wake. We don't fail the
 		// sweep — one bad node must not block the others.
@@ -528,6 +622,7 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 		}
 		return
 	}
+	h.nodeAnswered(ctx, n.ID)
 	// Ping succeeded: stamp last_heartbeat_at, and if the node
 	// was previously unavailable, transition it to `recovering`
 	// (still admitting, but the recovery arbiter now owns the
@@ -661,6 +756,36 @@ func (h *Heartbeat) emitNodeFailed(ctx context.Context, n state.ComputeNode, las
 	})
 }
 
+func (h *Heartbeat) failureThreshold() int {
+	if h.FailureThreshold > 0 {
+		return h.FailureThreshold
+	}
+	return DefaultHeartbeatFailureThreshold
+}
+
+// noteProbeFailure counts a failed ping and returns the node's consecutive
+// failures.
+func (h *Heartbeat) noteProbeFailure(nodeID string) int {
+	h.failMu.Lock()
+	defer h.failMu.Unlock()
+	if h.failures == nil {
+		h.failures = map[string]int{}
+	}
+	h.failures[nodeID]++
+	return h.failures[nodeID]
+}
+
+// nodeAnswered resets the node's failed-ping count and runs the reachable
+// hook.
+func (h *Heartbeat) nodeAnswered(ctx context.Context, nodeID string) {
+	h.failMu.Lock()
+	delete(h.failures, nodeID)
+	h.failMu.Unlock()
+	if h.onReachable != nil {
+		h.onReachable(ctx, nodeID)
+	}
+}
+
 // markRecovering records a node the watchdog just flipped inactive so
 // TickRecover keeps probing it.
 func (h *Heartbeat) markRecovering(n state.ComputeNode) {
@@ -741,6 +866,7 @@ func (h *Heartbeat) TickRecover(ctx context.Context) {
 			// Still down. Keep it in the set and try next tick.
 			continue
 		}
+		h.nodeAnswered(ctx, fresh.ID)
 		var reactivateErr error
 		switch fresh.Lifecycle {
 		case state.NodeLifecycleUnavailable:

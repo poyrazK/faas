@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/durableentity"
+	entitysocket "github.com/onebox-faas/faas/pkg/durableentity/socket"
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -46,7 +47,17 @@ type Host interface {
 // Service is the durable entity preview. Configure fills the engine and
 // operator gates at boot; tests set the exported fields directly.
 type Service struct {
-	Host Host
+	registryHealth               registryCleanupHealth
+	Host                         Host
+	Sockets                      *entitysocket.Hub
+	SessionGrants                *entitysocket.Grants
+	TenantQuotas                 *entitysocket.Quotas
+	QuotaMigrationEnabled        bool
+	QuotaPolicyEnabled           bool
+	RetirementEnabled            bool
+	RegistryEnabled              bool
+	RegistryCleanupEnabled       bool
+	RegistryCleanupWorkerEnabled bool
 
 	Engine *durableentity.Manager
 	// Owner is this replica's lease owner identity.

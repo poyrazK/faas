@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -54,7 +55,7 @@ func TestWatchdogGivesEveryWakingRowTheFallbackBudget(t *testing.T) {
 // remotePublishStore publishes RUNNING right after KillStuck's read, the
 // way the owning schedd on another node does: appMu is process-local.
 type remotePublishStore struct {
-	state.Store
+	Store     state.Store
 	published bool
 }
 
@@ -77,7 +78,7 @@ func TestKillStuckWakingYieldsToPeerPublication(t *testing.T) {
 	_, app, dep := seedApp(t, base, api.PlanPro, 512, 5)
 	store := &remotePublishStore{Store: base}
 	vmm := &fakeVMM{}
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
+	engine := newEngine(t, statetest.NewStore(store), vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
 	ins := admitAccountingInstance(t, base, engine, app, dep, state.StateWaking)
 
 	if err := engine.KillStuck(context.Background(), ins.ID, app.ID, StuckWakingTimeout); err != nil {

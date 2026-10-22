@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 )
@@ -18,6 +19,7 @@ type managedPostgresCatalogClient interface {
 
 type manifestPostgresClient interface {
 	managedPostgresCatalogClient
+	postgresEgressClient
 	GetApp(context.Context, string) (api.AppResponse, error)
 	CreateManagedPostgresBinding(context.Context, string, api.CreateManagedPostgresBindingRequest) (api.ManagedPostgresBinding, error)
 }
@@ -49,6 +51,22 @@ func resolveManagedPostgresDatabase(ctx context.Context, client managedPostgresC
 		return api.ManagedPostgresDatabase{}, fmt.Errorf("no managed database named or identified %q", reference)
 	}
 	return match, nil
+}
+
+// postgresDatabaseID passes a database ID through and resolves a logical
+// name. get, delete, restore and bindings list sent names verbatim, so
+// `postgres get orders` answered "invalid managed postgres request" while
+// attach and resize accepted the same name (production-us hunt #9, H9-P108).
+func postgresDatabaseID(ctx context.Context, client managedPostgresCatalogClient, reference string) (string, error) {
+	reference = strings.TrimSpace(reference)
+	if _, err := uuid.Parse(reference); err == nil {
+		return reference, nil
+	}
+	database, err := resolveManagedPostgresDatabase(ctx, client, reference)
+	if err != nil {
+		return "", err
+	}
+	return database.ID, nil
 }
 
 // deployManifestPostgresBindings turns declarative database dependencies into
@@ -134,6 +152,7 @@ func deployManifestPostgresBindings(ctx context.Context, client manifestPostgres
 			_, _ = fmt.Fprintf(osStdout, "  ✓ %s: database %s attached as %s\n", slug, database.Name, binding.EnvironmentKey)
 		}
 	}
+	ensurePostgresEgress(ctx, client, app)
 	return nil
 }
 

@@ -557,7 +557,13 @@ func (*operationsAcceptanceBackend) ScheduleMirror(context.Context, string, stri
 	return "", "", errors.New("unexpected mirror")
 }
 
-type operationsAcceptanceConsumerStore struct{ *state.PgStore }
+type operationsAcceptanceConsumerStore struct{ PgStore *state.PgStore }
+
+// TouchConsumerKeyLastUsed completes gateway.ConsumerAuthStore; the adapter no longer
+// embeds the store, so it delegates explicitly.
+func (s operationsAcceptanceConsumerStore) TouchConsumerKeyLastUsed(ctx context.Context, keyID string) error {
+	return s.PgStore.TouchConsumerKeyLastUsed(ctx, keyID)
+}
 
 func (s operationsAcceptanceConsumerStore) ConsumerKeyByAppAndPrefix(ctx context.Context, account, app, prefix string) (gateway.ConsumerAuthKey, error) {
 	k, err := s.PgStore.ConsumerKeyByAppAndPrefix(ctx, account, app, prefix)

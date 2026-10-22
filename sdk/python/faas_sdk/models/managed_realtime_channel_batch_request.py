@@ -9,9 +9,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.managed_realtime_channel_batch_request_messages_item import (
-        ManagedRealtimeChannelBatchRequestMessagesItem,
-    )
+    from ..models.managed_realtime_batch_message_request import ManagedRealtimeBatchMessageRequest
 
 
 T = TypeVar("T", bound="ManagedRealtimeChannelBatchRequest")
@@ -22,7 +20,9 @@ class ManagedRealtimeChannelBatchRequest:
     """Atomic batch of retained channel messages with an optional sequence precondition."""
 
     batch_id: str
-    messages: list[ManagedRealtimeChannelBatchRequestMessagesItem]
+    messages: list[ManagedRealtimeBatchMessageRequest]
+    ttl_seconds: int | Unset = 0
+    """Default delivery lifetime for all batch messages; zero disables expiry."""
     expected_sequence: int | None | Unset = UNSET
     """Precondition for the channel head before the whole batch."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -34,6 +34,8 @@ class ManagedRealtimeChannelBatchRequest:
         for messages_item_data in self.messages:
             messages_item = messages_item_data.to_dict()
             messages.append(messages_item)
+
+        ttl_seconds = self.ttl_seconds
 
         expected_sequence: int | None | Unset
         if isinstance(self.expected_sequence, Unset):
@@ -49,6 +51,8 @@ class ManagedRealtimeChannelBatchRequest:
                 "messages": messages,
             }
         )
+        if ttl_seconds is not UNSET:
+            field_dict["ttl_seconds"] = ttl_seconds
         if expected_sequence is not UNSET:
             field_dict["expected_sequence"] = expected_sequence
 
@@ -56,9 +60,7 @@ class ManagedRealtimeChannelBatchRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.managed_realtime_channel_batch_request_messages_item import (
-            ManagedRealtimeChannelBatchRequestMessagesItem,
-        )
+        from ..models.managed_realtime_batch_message_request import ManagedRealtimeBatchMessageRequest
 
         d = dict(src_dict)
         batch_id = d.pop("batch_id")
@@ -66,9 +68,11 @@ class ManagedRealtimeChannelBatchRequest:
         messages = []
         _messages = d.pop("messages")
         for messages_item_data in _messages:
-            messages_item = ManagedRealtimeChannelBatchRequestMessagesItem.from_dict(messages_item_data)
+            messages_item = ManagedRealtimeBatchMessageRequest.from_dict(messages_item_data)
 
             messages.append(messages_item)
+
+        ttl_seconds = d.pop("ttl_seconds", UNSET)
 
         def _parse_expected_sequence(data: object) -> int | None | Unset:
             if data is None:
@@ -82,6 +86,7 @@ class ManagedRealtimeChannelBatchRequest:
         managed_realtime_channel_batch_request = cls(
             batch_id=batch_id,
             messages=messages,
+            ttl_seconds=ttl_seconds,
             expected_sequence=expected_sequence,
         )
 

@@ -15,12 +15,20 @@ import (
 
 // SDK invocation IDs and the Gregale retry token are trusted only when signed.
 func deletionRequestID(r *http.Request, req requestContext) (string, error) {
+	signed := strings.Split(req.signature.SignedHeader, ";")
 	for _, name := range []string{"X-Gregale-Delete-Id", "Amz-Sdk-Invocation-Id"} {
 		values := r.Header.Values(name)
 		if len(values) == 0 {
 			continue
 		}
-		if len(values) != 1 || !slices.Contains(strings.Split(req.signature.SignedHeader, ";"), strings.ToLower(name)) {
+		if name == "Amz-Sdk-Invocation-Id" && !slices.Contains(signed, strings.ToLower(name)) {
+			// botocore (boto3, the AWS CLI) adds the invocation ID after
+			// signing, so it is never signed and every delete from those
+			// clients was refused (hunt #9). An unsigned value cannot key
+			// the durable deletion; it gets a fresh ID instead.
+			continue
+		}
+		if len(values) != 1 || !slices.Contains(signed, strings.ToLower(name)) {
 			return "", objectstorage.ErrInvalid
 		}
 		parsed, e := uuid.Parse(values[0])

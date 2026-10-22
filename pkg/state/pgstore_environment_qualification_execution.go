@@ -145,6 +145,11 @@ func (s *PgStore) RetireEnvironmentQualificationExecution(ctx context.Context, e
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	// Match clone admission fencing: instance writers before execution writers.
+	// A table intent lock acquires no instance row and preserves orphan checks.
+	if err := q.LockEnvironmentQualificationCleanupWriters(ctx, tx); err != nil {
+		return mapErr(err)
+	}
 	row, err := q.LockEnvironmentQualificationExecution(ctx, tx, mustPgUUID(execution.InstanceID))
 	if err != nil {
 		return mapErr(err)

@@ -21,10 +21,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type cloneDatabaseCheckpointFailStore struct {
-	*state.PgStore
+	PgStore            *state.PgStore
 	fail               bool
 	failReservationAck bool
 }
@@ -287,7 +288,7 @@ func TestPGCapturedCloneDatabaseWorkerRecoversUncheckpointedRestore(t *testing.T
 	if _, err := pool.Exec(ctx, "update managed_postgres_bindings set environment_key = 'LATER_DATABASE_URL' where database_id = $1", source.ID); err != nil {
 		t.Fatal(err)
 	}
-	srv.store = &cloneDatabaseCheckpointFailStore{PgStore: store, fail: true, failReservationAck: true}
+	srv.store = statetest.NewPg(&cloneDatabaseCheckpointFailStore{PgStore: store, fail: true, failReservationAck: true})
 	reservationLease, ready, err := srv.prepareProjectEnvironmentCloneDatabases(ctx, lease)
 	if err == nil || !strings.Contains(err.Error(), "reservation acknowledgement lost") || ready || len(provider.restores) != 0 {
 		t.Fatalf("lost reservation response reached provider: ready %t, error %v, calls %+v", ready, err, provider.restores)

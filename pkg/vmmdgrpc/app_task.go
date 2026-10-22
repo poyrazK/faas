@@ -19,7 +19,22 @@ import (
 // data. The ordinary AppSpec wake envelope keeps secrets, env, and network
 // policy identical to the pinned deployment.
 func (s *Server) RestoreAppTask(ctx context.Context, req *vmmdpb.RestoreAppTaskRequest) (*vmmdpb.RestoreAppTaskResponse, error) {
+	if req.GetApp().GetRehearsalRunId() != "" {
+		return nil, status.Error(codes.FailedPrecondition, "contained commands require RestoreRehearsalAppTask")
+	}
+	return s.restoreAppTask(ctx, req)
+}
+
+func (s *Server) RestoreRehearsalAppTask(ctx context.Context, req *vmmdpb.RestoreAppTaskRequest) (*vmmdpb.RestoreAppTaskResponse, error) {
+	if req.GetApp().GetRehearsalRunId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "contained command run identity is required")
+	}
+	return s.restoreAppTask(ctx, req)
+}
+
+func (s *Server) restoreAppTask(ctx context.Context, req *vmmdpb.RestoreAppTaskRequest) (*vmmdpb.RestoreAppTaskResponse, error) {
 	const op = "RestoreAppTask"
+	ctx = withIncomingCorrelation(ctx)
 	start := time.Now()
 	restoreVMM, ok := s.vmm.(AppTaskRestoreVMMAPI)
 	if !ok {
@@ -43,9 +58,17 @@ func (s *Server) RestoreAppTask(ctx context.Context, req *vmmdpb.RestoreAppTaskR
 			"App task restore failed", "vmmd returned an empty instance"))
 	}
 	return &vmmdpb.RestoreAppTaskResponse{
+		HostIp: inst.Net.HostIP.String(), RehearsalRunId: inst.Net.RehearsalRunID, Netns: inst.Net.Netns, CommandVersion: rehearsalCommandVersion(inst.Net.RehearsalRunID),
 		SupportsSecretAliases: true,
 		Instance:              inst.Lease.Instance, LeaseUid: int32(inst.Lease.UID), Method: wakeMethodFrom(inst.Method),
 	}, nil
+}
+
+func rehearsalCommandVersion(run string) uint32 {
+	if run != "" {
+		return 1
+	}
+	return 0
 }
 
 // ExecuteAppTask dispatches one validated command to an app-task-only guest.
@@ -59,6 +82,12 @@ func (s *Server) ExecuteAppTask(ctx context.Context, req *vmmdpb.ExecuteAppTaskR
 			"App tasks unavailable", "vmmd app task execution is not configured")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
+	}
+	if req.GetInteractive() {
+		problem := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid app task request", "interactive app tasks require ExecuteAppTaskStream")
+		s.ops.Observe(op, time.Since(start), problem)
+		return nil, grpcerr.ToStatus(problem)
 	}
 	wireReq, err := appTaskRequestFromProto(req)
 	if err != nil {
@@ -86,6 +115,10 @@ func (s *Server) ExecuteAppTaskStream(req *vmmdpb.ExecuteAppTaskRequest, stream 
 	start := time.Now()
 	var observedErr error
 	defer func() { s.ops.Observe(op, time.Since(start), observedErr) }()
+	if req.GetInteractive() {
+		observedErr = s.executeInteractiveAppTaskStream(req, stream)
+		return observedErr
+	}
 	taskVMM, ok := s.vmm.(AppTaskOutputVMMAPI)
 	if !ok {
 		problem := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,

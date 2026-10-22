@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -45,6 +46,12 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 			// customer hostname can never obtain a certificate or reach
 			// the Cloudflare-fronted edge, yet the feature was advertised.
 			available = api.CustomDomainTLSOnDemand()
+		default:
+			// ADR-998, ADR-1700: a capability released by a platform flag
+			// is available only to the accounts the flag includes.
+			if flagKey, ok := platformflags.FlagForCapability(capabilities.Capabilities[i].Key); ok {
+				available = s.platformFlagEnabled(flagKey, acct)
+			}
 		}
 		applyCapabilityRuntimeAvailability(&capabilities.Capabilities[i], available)
 	}

@@ -17,6 +17,9 @@ import (
 	"time"
 
 	"golang.org/x/net/http2"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/netns"
 )
 
 const (
@@ -144,7 +147,7 @@ func (t *guestH2CRoundTripper) prewarmConnection(ctx context.Context) error {
 	defer func() { t.finishPrewarm(warmed) }()
 	for {
 		dialer := net.Dialer{Timeout: 50 * time.Millisecond}
-		conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(t.guestIP, strconv.FormatUint(uint64(t.port), 10)))
+		conn, err := netns.DialBridgeContext(ctx, &dialer, "tcp", net.JoinHostPort(t.guestIP, strconv.FormatUint(uint64(t.port), 10)))
 		if err == nil {
 			clientConn, connErr := t.base.NewClientConn(conn)
 			if connErr == nil {
@@ -377,13 +380,14 @@ func newGuestH1Transport(guestIP string, guestPort uint16) *http.Transport {
 	return &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			d := net.Dialer{Timeout: dialTimeout}
-			return d.DialContext(ctx, "tcp", net.JoinHostPort(guestIP, strconv.FormatUint(uint64(guestPort), 10)))
+			return netns.DialBridgeContext(ctx, &d, "tcp", net.JoinHostPort(guestIP, strconv.FormatUint(uint64(guestPort), 10)))
 		},
-		DisableCompression:    true,
-		MaxIdleConns:          guestTransportMaxIdleConnsPerHost,
-		MaxIdleConnsPerHost:   guestTransportMaxIdleConnsPerHost,
-		IdleConnTimeout:       h1IdleConnTimeout,
-		ResponseHeaderTimeout: readHeaderTimeout,
+		DisableCompression:  true,
+		MaxIdleConns:        guestTransportMaxIdleConnsPerHost,
+		MaxIdleConnsPerHost: guestTransportMaxIdleConnsPerHost,
+		IdleConnTimeout:     h1IdleConnTimeout,
+		// Outer cap; each request bounds its own wait (guestHeaderWait).
+		ResponseHeaderTimeout: api.RequestBudgetPlanMax,
 		ExpectContinueTimeout: time.Second,
 	}
 }

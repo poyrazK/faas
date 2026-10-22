@@ -42,6 +42,7 @@ func (s *PgStore) savePlaybookProgress(ctx context.Context, r workflowPlaybookPr
 	return s.savePlaybookProgressReview(ctx, r, revision, "", 0)
 }
 func (s *PgStore) savePlaybookProgressReview(ctx context.Context, r workflowPlaybookProgressRecord, revision int64, targetID string, targetRevision int64) (api.OperationWorkflowPlaybookProgress, error) {
+	r.Progress = clonePlaybookProgress(r.Progress)
 	r.Progress.Applicability = nil
 	r.Progress.ReplacesProgressIDs = nil
 	q := sqlc.New()

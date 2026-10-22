@@ -1,0 +1,29 @@
+version: 1
+suites:
+  http-auth-stall:
+    scenarios:
+      - {scenario: authentication-stall, engine: real-vm, profile: warm}
+scenarios:
+  authentication-stall:
+    project: http-native-auth
+    source: ./native-auth-app
+    timeout: 5m
+    services:
+      payment:
+        source: ./payment-postgres
+        secrets:
+          DATABASE_URL: '${env.GREGALE_DEPENDENCY_DATABASE_URL}'
+          LEDGER_NAMESPACE: '${run.id}'
+          LEDGER_TEST_DISPOSABLE: '${env.GREGALE_DEPENDENCY_DATABASE_DISPOSABLE}'
+          GREGALE_NATIVE_AUTH_STALL: '1'
+          NATIVE_AUTH_CERT_PEM: '${env.GREGALE_NATIVE_AUTH_CERT_PEM}'
+          NATIVE_AUTH_KEY_PEM: '${env.GREGALE_NATIVE_AUTH_KEY_PEM}'
+          NATIVE_AUTH_CONTROL_TOKEN: '${env.GREGALE_NATIVE_AUTH_CONTROL_TOKEN}'
+    cleanup:
+      - [node, ../test/native-auth-acceptance.mjs, cleanup]
+    requests:
+      - name: query-baseline
+        method: GET
+        path: /query
+        expect: {status: 200, json: {'/ready': true, '/value': 42}}
+    command: [node, ../test/native-auth-acceptance.mjs, all]

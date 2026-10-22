@@ -48,6 +48,9 @@ func cmdDomainsSetup(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	if detail, unavailable := customDomainsRuntimeUnavailable(context.Background(), client); unavailable {
+		return printErr("Custom domains are unavailable", errors.New(detail))
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	requestCtx, cancel := context.WithTimeout(ctx, 30*time.Second)

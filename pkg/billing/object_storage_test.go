@@ -21,6 +21,7 @@ func (s objectStorageBillingAccounts) ListAllAccounts(context.Context) ([]state.
 
 type objectStorageLineItemRecorder struct {
 	records []state.ObjectStorageBillingRecord
+	charges []int64
 	err     error
 	policy  ObjectStorageLineItemPolicy
 }
@@ -36,11 +37,12 @@ func (s *objectStorageLineItemRecorder) ObjectStorageLineItemPolicy() (ObjectSto
 	return s.policy, true
 }
 
-func (s *objectStorageLineItemRecorder) PublishObjectStorageLineItem(_ context.Context, record state.ObjectStorageBillingRecord) error {
+func (s *objectStorageLineItemRecorder) PublishObjectStorageLineItem(_ context.Context, record state.ObjectStorageBillingRecord, chargeMillicents int64) error {
 	if s.err != nil {
 		return s.err
 	}
 	s.records = append(s.records, record)
+	s.charges = append(s.charges, chargeMillicents)
 	return nil
 }
 
@@ -48,6 +50,25 @@ type objectStorageBillingStore struct {
 	snapshots  map[string]state.ObjectUsageSnapshot
 	records    map[string]state.ObjectStorageBillingRecord
 	deliveries map[string]state.ObjectStorageBillingDelivery
+	// caps and usage back the overage cap reads (ADR-1320); usage rows
+	// carry their hour in Month.
+	caps  map[string]int64
+	usage map[string][]state.Usage
+}
+
+func (s *objectStorageBillingStore) GetAccountOverageCapCents(_ context.Context, account string) (int64, bool, error) {
+	capCents, capped := s.caps[account]
+	return capCents, capped, nil
+}
+
+func (s *objectStorageBillingStore) UsageByHour(_ context.Context, account string, start, end time.Time) ([]state.Usage, error) {
+	var out []state.Usage
+	for _, row := range s.usage[account] {
+		if !row.Month.Before(start) && row.Month.Before(end) {
+			out = append(out, row)
+		}
+	}
+	return out, nil
 }
 
 func (s *objectStorageBillingStore) GetObjectStorageBillingDelivery(_ context.Context, provider, recordID string) (state.ObjectStorageBillingDelivery, error) {
@@ -107,18 +128,55 @@ func objectStorageBillingSnapshot(account, backend string, period time.Time) sta
 func TestFinalizeObjectStoragePeriodIsClosedAndIdempotent(t *testing.T) {
 	store := state.NewMemStore()
 	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
-	pricing := api.ObjectStoragePricing{Currency: "EUR", StorageMillicentsPerGiBMonth: 1000}
+	pricing := api.ObjectStoragePricing{Currency: "USD", StorageMillicentsPerGiBMonth: 1000}
 	now := time.Date(2026, time.September, 6, 0, 0, 0, 0, time.UTC)
-	first, err := FinalizeObjectStoragePeriod(context.Background(), store, "acct", pricing, period, now)
+	first, err := FinalizeObjectStoragePeriod(context.Background(), store, "acct", pricing, api.ObjectStorageAllowance{}, period, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := FinalizeObjectStoragePeriod(context.Background(), store, "acct", pricing, period, now.Add(time.Hour))
+	second, err := FinalizeObjectStoragePeriod(context.Background(), store, "acct", pricing, api.ObjectStorageAllowance{}, period, now.Add(time.Hour))
 	if err != nil || second.ID != first.ID || second.TotalMillicents != first.TotalMillicents {
 		t.Fatalf("retry = %#v, err=%v", second, err)
 	}
-	if _, err := FinalizeObjectStoragePeriod(context.Background(), store, "acct", pricing, state.ObjectStoragePeriod(now), now); !errors.Is(err, state.ErrObjectBillingOpen) {
+	if _, err := FinalizeObjectStoragePeriod(context.Background(), store, "acct", pricing, api.ObjectStorageAllowance{}, state.ObjectStoragePeriod(now), now); !errors.Is(err, state.ErrObjectBillingOpen) {
 		t.Fatalf("open period error = %v", err)
+	}
+}
+
+// adr: 1320 — month close prices usage above the plan allowance and copies the
+// allowance into the immutable record.
+func TestFinalizeObjectStoragePeriodRecordsAllowance(t *testing.T) {
+	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+	gibMonth := int64(1<<30) * api.ObjectStorageBillingHoursPerMonth
+	snapshot := objectStorageBillingSnapshot("acct", "backend", period)
+	snapshot.Reports[0].StoredByteHours = 3 * gibMonth
+	store := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{"acct": snapshot}}
+	pricing := api.ObjectStoragePricing{Currency: "USD", StorageMillicentsPerGiBMonth: 1000}
+	allowance := api.ObjectStorageAllowance{StoredByteHours: gibMonth}
+	record, err := FinalizeObjectStoragePeriod(context.Background(), store, "acct", pricing, allowance, period, period.AddDate(0, 1, 5))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.IncludedStoredByteHours != gibMonth || record.StoredByteHours != 3*gibMonth || record.StorageMillicents != 2000 || record.TotalMillicents != 2000 {
+		t.Fatalf("record = %+v, want one included GiB-month and two billed", record)
+	}
+}
+
+func TestLargestObjectStorageAllowanceTakesPerMeterMaximum(t *testing.T) {
+	allowances := map[api.Plan]api.ObjectStorageAllowance{
+		api.PlanPro:   {StoredByteHours: 100, Requests: 10, EgressBytes: 1},
+		api.PlanHobby: {StoredByteHours: 50, Requests: 20, EgressBytes: 0},
+	}
+	lookup := func(plan api.Plan) (api.ObjectStorageAllowance, bool) {
+		a, ok := allowances[plan]
+		return a, ok
+	}
+	got, err := largestObjectStorageAllowance([]api.Plan{api.PlanPro, api.PlanHobby}, lookup)
+	if err != nil || got != (api.ObjectStorageAllowance{StoredByteHours: 100, Requests: 20, EgressBytes: 1}) {
+		t.Fatalf("allowance = %+v, %v; want the per-meter maximum so a downgrade never shrinks it", got, err)
+	}
+	if _, err := largestObjectStorageAllowance([]api.Plan{"unknown"}, lookup); err == nil {
+		t.Fatal("unknown plan did not fail closed")
 	}
 }
 
@@ -131,7 +189,7 @@ func TestFinalizeObjectStoragePeriodsPublishesOnlyActiveAccounts(t *testing.T) {
 	}}
 	sink := &objectStorageLineItemRecorder{}
 	accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "active", Plan: api.PlanHobby}, {ID: "empty", Plan: api.PlanHobby}}}
-	pricing := api.ObjectStoragePricing{Currency: "EUR", StorageMillicentsPerGiBMonth: 1000}
+	pricing := api.ObjectStoragePricing{Currency: "USD", StorageMillicentsPerGiBMonth: 1000}
 	records, err := FinalizeObjectStoragePeriods(context.Background(), accounts, store, pricing, period, now, sink)
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +208,7 @@ func TestFinalizeObjectStoragePeriodsPublishesExistingRecordOnRetry(t *testing.T
 	store := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{"active": objectStorageBillingSnapshot("active", "backend", period)}}
 	accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "active", Plan: api.PlanHobby}}}
 	sink := &objectStorageLineItemRecorder{}
-	pricing := api.ObjectStoragePricing{Currency: "EUR", StorageMillicentsPerGiBMonth: 1000}
+	pricing := api.ObjectStoragePricing{Currency: "USD", StorageMillicentsPerGiBMonth: 1000}
 	if _, err := FinalizeObjectStoragePeriods(context.Background(), accounts, store, pricing, period, now, sink); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +226,7 @@ func TestFinalizeObjectStoragePeriodsShadowsWithoutPublishing(t *testing.T) {
 	store := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{"active": objectStorageBillingSnapshot("active", "backend", period)}}
 	accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "active", Plan: api.PlanHobby}}}
 	sink := &objectStorageLineItemRecorder{policy: ObjectStorageLineItemPolicy{Provider: "polar", Mode: MeterDeliveryShadow, EffectiveFrom: period}}
-	pricing := api.ObjectStoragePricing{Currency: "EUR", StorageMillicentsPerGiBMonth: 1000}
+	pricing := api.ObjectStoragePricing{Currency: "USD", StorageMillicentsPerGiBMonth: 1000}
 	records, err := FinalizeObjectStoragePeriods(context.Background(), accounts, store, pricing, period, now, sink)
 	if err != nil {
 		t.Fatal(err)
@@ -188,7 +246,7 @@ func TestFinalizeObjectStoragePeriodsNeverPublishesBeforeActivation(t *testing.T
 	store := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{"active": objectStorageBillingSnapshot("active", "backend", period)}}
 	accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "active", Plan: api.PlanHobby}}}
 	sink := &objectStorageLineItemRecorder{policy: ObjectStorageLineItemPolicy{Provider: "polar", Mode: MeterDeliveryLive, EffectiveFrom: period.AddDate(0, 1, 0)}}
-	pricing := api.ObjectStoragePricing{Currency: "EUR", StorageMillicentsPerGiBMonth: 1000}
+	pricing := api.ObjectStoragePricing{Currency: "USD", StorageMillicentsPerGiBMonth: 1000}
 	records, err := FinalizeObjectStoragePeriods(context.Background(), accounts, store, pricing, period, now, sink)
 	if err != nil {
 		t.Fatal(err)
@@ -205,7 +263,7 @@ func TestFinalizeObjectStoragePeriodsNeverBillsIneligiblePlan(t *testing.T) {
 	store := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{"free": objectStorageBillingSnapshot("free", "backend", period)}}
 	accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "free", Plan: api.PlanFree}}}
 	sink := &objectStorageLineItemRecorder{policy: ObjectStorageLineItemPolicy{Provider: "polar", Mode: MeterDeliveryLive, EffectiveFrom: period}}
-	pricing := api.ObjectStoragePricing{Currency: "EUR", StorageMillicentsPerGiBMonth: 1000}
+	pricing := api.ObjectStoragePricing{Currency: "USD", StorageMillicentsPerGiBMonth: 1000}
 	records, err := FinalizeObjectStoragePeriods(context.Background(), accounts, store, pricing, period, now, sink)
 	if err != nil {
 		t.Fatal(err)
@@ -222,7 +280,7 @@ func TestFinalizeObjectStoragePeriodsRetriesFailedLiveDelivery(t *testing.T) {
 	store := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{"active": objectStorageBillingSnapshot("active", "backend", period)}}
 	accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "active", Plan: api.PlanHobby}}}
 	sink := &objectStorageLineItemRecorder{err: errors.New("provider unavailable")}
-	pricing := api.ObjectStoragePricing{Currency: "EUR", StorageMillicentsPerGiBMonth: 1000}
+	pricing := api.ObjectStoragePricing{Currency: "USD", StorageMillicentsPerGiBMonth: 1000}
 	if _, err := FinalizeObjectStoragePeriods(context.Background(), accounts, store, pricing, period, now, sink); err == nil {
 		t.Fatal("failed live delivery returned nil error")
 	}

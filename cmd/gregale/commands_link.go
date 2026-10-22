@@ -6,13 +6,14 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const (
 	linkUsage    = "usage: gregale link [<project-slug>] [--interactive] [--app <slug>] [--environment <environment>] [--no-gitignore]"
-	contextUsage = "usage: gregale context"
+	contextUsage = "usage: gregale context [--check] [--verify [--timeout 10s]] | gregale context --local-config [--problems-only]"
 )
 
 func cmdLink(args []string) int {
@@ -121,7 +122,11 @@ func saveLinkContext(cwd, root string, context, previous localProjectContext, ha
 		return jsonOut(writeJSON(receipt))
 	}
 	if hadPrevious && previous.Project != context.Project {
-		PrintProgress(osStdout, "Re-linked from project %s.", previous.Project)
+		if previous.Project == "" {
+			PrintProgress(osStdout, "Replaced saved standalone app %s.", previous.App)
+		} else {
+			PrintProgress(osStdout, "Re-linked from project %s.", previous.Project)
+		}
 	}
 	PrintOK(osStdout, "Linked to project %s.", context.Project)
 	renderProjectContext(osStdout, receipt)
@@ -162,32 +167,107 @@ func cmdUnlink(args []string) int {
 }
 
 func cmdContext(args []string) int {
-	if len(args) != 0 {
+	if len(args) > 0 && (args[0] == "save" || args[0] == "use" || args[0] == "presets") {
+		return cmdContextPresets(args)
+	}
+	if len(args) > 0 && args[0] == "set" {
+		return cmdContextSet(args[1:])
+	}
+	fs := newFlagSet("context", flag.ContinueOnError)
+	check := fs.Bool("check", false, "fail when a linked project or default app is missing; local check only")
+	verify := fs.Bool("verify", false, "verify authenticated account and linked targets with read-only API requests")
+	localConfig := fs.Bool("local-config", false, "summarize saved project configuration files offline")
+	problemsOnly := fs.Bool("problems-only", false, "show only local configuration problems; requires --local-config")
+	timeout := fs.Duration("timeout", 10*time.Second, "overall verification deadline; requires --verify")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	timeoutSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "timeout" {
+			timeoutSet = true
+		}
+	})
+	if fs.NArg() != 0 || *timeout <= 0 || timeoutSet && !*verify {
 		PrintUsage(os.Stderr, contextUsage, "context")
 		return 1
+	}
+	if *problemsOnly && !*localConfig {
+		return printErr("Invalid local configuration options", errors.New("--problems-only requires --local-config"))
+	}
+	if *localConfig {
+		if *check || *verify || timeoutSet {
+			return printErr("Invalid local configuration options", errors.New("use --local-config separately from --check, --verify, and --timeout"))
+		}
+		return cmdContextLocalConfig(*problemsOnly)
+	}
+	if _, err := loadCLIConfig(); err != nil {
+		return printErr("Could not read connection configuration", err)
+	}
+	configPath, err := absoluteContextConfigPath()
+	if err != nil {
+		return printErr("Could not locate connection configuration", err)
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return printErr("Could not read current directory", err)
 	}
 	context, path, err := linkedProjectContext(cwd)
-	if err != nil {
-		if errors.Is(err, errProjectContextNotFound) {
-			if jsonOutput {
-				return jsonOut(writeJSON(map[string]any{"connection": effectiveConnectionContext()}))
-			}
-			renderConnectionContext()
-			_, _ = fmt.Fprintln(osStdout, "No linked project. Run gregale link <project-slug> to link this checkout.")
-			return 0
-		}
+	if err != nil && !errors.Is(err, errProjectContextNotFound) {
 		return printErr("Could not read project context", err)
 	}
-	receipt := projectContextReceipt{Context: context, Path: displayProjectContextPath(cwd, path), Connection: effectiveConnectionContext()}
-	if jsonOutput {
-		return jsonOut(writeJSON(receipt))
+	if *verify {
+		if err := validateContextVerifyEndpoint(); err != nil {
+			return printErr("Invalid verification endpoint", err)
+		}
 	}
-	renderConnectionContext()
-	PrintOK(osStdout, "Linked project context")
-	renderProjectContext(osStdout, receipt)
+	connection := effectiveConnectionContext()
+	overview := projectTargeting(context, path, configPath, connection)
+	var verification *contextVerification
+	if *verify {
+		verification = verifyProjectConnection(context, path != "", *timeout)
+	}
+	if errors.Is(err, errProjectContextNotFound) {
+		if jsonOutput {
+			receipt := map[string]any{"connection": connection, "targeting": overview}
+			if verification != nil {
+				receipt["verification"] = verification
+			}
+			if code := jsonOut(writeJSON(receipt)); code != 0 {
+				return code
+			}
+		} else {
+			renderConnectionContext()
+			_, _ = fmt.Fprintln(osStdout, "No linked project. Run gregale link <project-slug> to link this checkout.")
+			renderProjectTargeting(overview)
+		}
+	} else {
+		receipt := projectContextReceipt{Context: context, Path: displayProjectContextPath(cwd, path), Connection: connection, Targeting: overview, Verification: verification}
+		if jsonOutput {
+			if code := jsonOut(writeJSON(receipt)); code != 0 {
+				return code
+			}
+		} else {
+			renderConnectionContext()
+			if context.Project == "" {
+				PrintOK(osStdout, "Saved standalone app context")
+			} else {
+				PrintOK(osStdout, "Linked project context")
+			}
+			renderProjectContext(osStdout, receipt)
+			renderProjectTargeting(overview)
+		}
+	}
+	if verification != nil {
+		if !jsonOutput {
+			renderContextVerification(verification)
+		}
+		if verification.ExitCode != 0 {
+			return verification.ExitCode
+		}
+	}
+	if *check && overview.Status != "ready for linked app defaults" {
+		return 1
+	}
 	return 0
 }

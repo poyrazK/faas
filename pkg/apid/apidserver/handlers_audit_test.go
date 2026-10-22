@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -971,7 +972,7 @@ func TestAuditEvents_FailingStoreDoesNotRollback(t *testing.T) {
 	wrapped := &failingAuditStore{Store: e.store}
 	// Re-mount with the wrapped store. The audit helper reads s.audit
 	// ops lazily so we keep e.ops the same.
-	srv := newServer(wrapped,
+	srv := newServer(statetest.NewStore(wrapped),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		"gregale.dev", noopNotifier{}).WithOpsMetrics(context.Background(), e.ops)
 	h := srv.handler()
@@ -1004,7 +1005,7 @@ func TestAuditEvents_FailingStoreDoesNotRollback(t *testing.T) {
 // failingAuditStore wraps state.Store and errors on AppendEvent only.
 // Same pattern as pkg/sched/events_test.go::failingEventStore.
 type failingAuditStore struct {
-	state.Store
+	Store    state.Store
 	failures int64
 }
 

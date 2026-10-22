@@ -1,0 +1,52 @@
+{
+  "nonproduction": true,
+  "account_id": "REPLACE_ACCOUNT_ID",
+  "target": {
+    "app": "acceptance-request",
+    "app_id": "REPLACE_APP_ID",
+    "scope": "default"
+  },
+  "steps": [
+    {
+      "id": "plan",
+      "tool": "gregale_plan_rollback",
+      "arguments": {
+        "app": "acceptance-request",
+        "target_deployment_id": "REPLACE_RETAINED_DEPLOYMENT_ID",
+        "reason": "Native checked rollback acceptance"
+      },
+      "expect": {
+        "target_deployment_id": "REPLACE_RETAINED_DEPLOYMENT_ID"
+      }
+    },
+    {
+      "id": "apply",
+      "tool": "gregale_apply_rollback",
+      "arguments": {
+        "plan_id": {
+          "ref": "plan.plan_id"
+        }
+      },
+      "expect": {
+        "deployment.id": "REPLACE_RETAINED_DEPLOYMENT_ID"
+      },
+      "replay": [
+        "deployment.id"
+      ]
+    },
+    {
+      "id": "observe",
+      "tool": "gregale_get_health",
+      "arguments": {
+        "app": "acceptance-request"
+      },
+      "poll": true,
+      "timeout_seconds": 900,
+      "expect": {
+        "serving_deployment_ids": [
+          "REPLACE_RETAINED_DEPLOYMENT_ID"
+        ]
+      }
+    }
+  ]
+}

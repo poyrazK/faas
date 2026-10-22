@@ -1,0 +1,111 @@
+package api
+
+import (
+	"context"
+	"net/http"
+	"net/url"
+)
+
+func productBillingPath(app, tenant, period, suffix, cursor string) string {
+	query := url.Values{"tenant_id": {tenant}, "period": {period}}
+	if cursor != "" {
+		query.Set("cursor", cursor)
+	}
+	return productPath(app) + "/billing/" + suffix + "?" + query.Encode()
+}
+
+func (c *Client) ReviewProductBilling(ctx context.Context, app, tenant, period string) (ProductBillingReview, error) {
+	var out ProductBillingReview
+	err := c.do(ctx, http.MethodGet, productBillingPath(app, tenant, period, "review", ""), nil, &out)
+	return out, err
+}
+
+func (c *Client) ListProductBillingReceipts(ctx context.Context, app, tenant, period, cursor string) (ProductBillingReceipts, error) {
+	var out ProductBillingReceipts
+	err := c.do(ctx, http.MethodGet, productBillingPath(app, tenant, period, "receipts", cursor), nil, &out)
+	return out, err
+}
+
+func (c *Client) ListProductBillingDocuments(ctx context.Context, app, tenant, period, cursor string) (ProductBillingDocuments, error) {
+	var out ProductBillingDocuments
+	err := c.do(ctx, http.MethodGet, productBillingPath(app, tenant, period, "documents", cursor), nil, &out)
+	return out, err
+}
+
+func (c *Client) FinalizeProductBilling(ctx context.Context, app string, req ProductFinalizeRequest) (ProductBillingDocument, error) {
+	var out ProductBillingDocument
+	err := c.do(ctx, http.MethodPost, productBillingPath(app, req.TenantID, req.Period, "statements/finalize", ""), req, &out)
+	return out, err
+}
+
+func (c *Client) WaiveProductReceipt(ctx context.Context, app, period, operation string, req ProductWaiverRequest) (ProductReceiptEvidence, error) {
+	var out ProductReceiptEvidence
+	err := c.do(ctx, http.MethodPost, productBillingPath(app, req.TenantID, period, "receipts/"+url.PathEscape(operation)+"/waive", ""), req, &out)
+	return out, err
+}
+
+func (c *Client) CreditProductReceipt(ctx context.Context, app, period string, req ProductCreditRequest) (ProductBillingDocument, error) {
+	var out ProductBillingDocument
+	err := c.do(ctx, http.MethodPost, productBillingPath(app, req.TenantID, period, "credits", ""), req, &out)
+	return out, err
+}
+
+func (c *Client) HandoffProductBilling(ctx context.Context, app, period, document string, req ProductHandoffRequest) (ProductInvoiceHandoff, error) {
+	var out ProductInvoiceHandoff
+	err := c.do(ctx, http.MethodPost, productBillingPath(app, req.TenantID, period, "documents/"+url.PathEscape(document)+"/handoff", ""), req, &out)
+	return out, err
+}
+
+func (c *Client) GetProductBillingHandoff(ctx context.Context, app, tenant, period, document string) (ProductInvoiceHandoff, error) {
+	var out ProductInvoiceHandoff
+	err := c.do(ctx, http.MethodGet, productBillingPath(app, tenant, period, "documents/"+url.PathEscape(document)+"/handoff", ""), nil, &out)
+	return out, err
+}
+
+// ExportProductStatement invoices a finalized statement in the account's
+// connected billing provider (ADR-20261018212918); retries resume it.
+func (c *Client) ExportProductStatement(ctx context.Context, app, period, document string, req ProductInvoiceExportRequest) (StatementInvoiceExportResponse, error) {
+	var out StatementInvoiceExportResponse
+	err := c.do(ctx, http.MethodPost, productBillingPath(app, req.TenantID, period, "documents/"+url.PathEscape(document)+"/invoice", ""), req, &out)
+	return out, err
+}
+
+func (c *Client) GetProductStatementExport(ctx context.Context, app, tenant, period, document string) (StatementInvoiceExportResponse, error) {
+	var out StatementInvoiceExportResponse
+	err := c.do(ctx, http.MethodGet, productBillingPath(app, tenant, period, "documents/"+url.PathEscape(document)+"/invoice", ""), nil, &out)
+	return out, err
+}
+
+func (c *Client) GetProductCustomerBilling(ctx context.Context, app, period, cursor string) (ProductCustomerBilling, error) {
+	var out ProductCustomerBilling
+	query := url.Values{"app": {app}, "period": {period}, "cursor": {cursor}}
+	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/product/billing?"+query.Encode(), nil, &out)
+	return out, err
+}
+
+// GetProductOverduePolicy reads an app's overdue rule (ADR-20261018212918).
+func (c *Client) GetProductOverduePolicy(ctx context.Context, app string) (ProductOverduePolicy, error) {
+	var out ProductOverduePolicy
+	err := c.do(ctx, http.MethodGet, productPath(app)+"/billing/overdue-policy", nil, &out)
+	return out, err
+}
+
+// PutProductOverduePolicy holds customers whose exported statement is
+// unpaid days after its due date; holds follow at the next recomputation.
+func (c *Client) PutProductOverduePolicy(ctx context.Context, app string, days int) (ProductOverduePolicy, error) {
+	var out ProductOverduePolicy
+	err := c.do(ctx, http.MethodPut, productPath(app)+"/billing/overdue-policy", PutProductOverduePolicyRequest{BlockOverdueAfterDays: &days}, &out)
+	return out, err
+}
+
+// DeleteProductOverduePolicy clears an app's overdue rule and lifts its holds.
+func (c *Client) DeleteProductOverduePolicy(ctx context.Context, app string) error {
+	return c.do(ctx, http.MethodDelete, productPath(app)+"/billing/overdue-policy", nil, nil)
+}
+
+// ListProductOverdueHolds lists an app's customers held by overdue invoices.
+func (c *Client) ListProductOverdueHolds(ctx context.Context, app string) (ProductOverdueHolds, error) {
+	var out ProductOverdueHolds
+	err := c.do(ctx, http.MethodGet, productPath(app)+"/billing/overdue-holds", nil, &out)
+	return out, err
+}

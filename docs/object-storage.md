@@ -7,6 +7,10 @@ snapshot/image-layer usage.
 Architecture and launch boundaries: [ADR-151](adr/151-provider-neutral-object-storage.md).
 Large-upload protocol: [ADR-158](adr/158-provider-neutral-multipart-uploads.md).
 
+For the local prototype that begins storing bytes on Gregale-owned disks, see
+[Building Gregale-owned object storage](owned-object-storage.md). It reuses the
+existing S3 driver and does not change the preview's provider qualification gates.
+
 ## Enable a qualified backend
 
 1. Apply database migrations through the normal Gregale deployment process.
@@ -197,6 +201,20 @@ origin TLS and forwards this hostname to s3-gatewayd on
 `127.0.0.1:8084`; preserve the original Host header. Do not share the
 `api.gregale.dev` reverse-proxy route, request-body limits, or auth middleware.
 
+The proxied endpoint needs the CDN to leave S3 requests alone. For
+`s3.gregale.dev`, configure a cache rule that bypasses cache (otherwise the
+first HEAD of a key such as `logo.png` reaches the gateway as a GET and fails
+SigV4 with 403), and a configuration rule that turns off Browser Integrity
+Check, Email Obfuscation, Rocket Loader, Automatic HTTPS Rewrites, Real User
+Monitoring, Zaraz and Fonts. Keep "Normalize URLs to origin" off. On this
+profile the gateway also returns `Cache-Control: ... no-transform` for
+`text/html` and `application/xhtml+xml` objects, so zone-wide bot detection
+cannot inject scripts into them (ADR-553 amendment). Objects stored with
+`Content-Encoding: gzip` are still returned decompressed to clients that do not
+send `Accept-Encoding: gzip`, and keys with `/./` or `/../` segments cannot be
+used (see the S3 compatibility notes below); the direct profile has neither
+limit.
+
 Create a credential with
 `POST /v1/apps/{slug}/buckets/{bucket-id}/s3-credentials` and a body such as
 `{"label":"laptop","permission":"read_write"}`. The response contains the
@@ -260,6 +278,12 @@ change. The workload receives the values through the existing secret staging
 path on its next deploy/wake; values are never returned by the binding API or
 stored in plaintext.
 
+The endpoint accepts Signature Version 4 only. boto3/botocore presigns S3 URLs
+with Signature Version 2 for a custom endpoint unless told otherwise, and those
+URLs fail with 403 `SignatureDoesNotMatch`; create the client with
+`botocore.config.Config(signature_version="s3v4", s3={"addressing_style": "path"})`
+before calling `generate_presigned_url`.
+
 List bindings with `GET .../compute-bindings`, rotate in place with
 `POST .../compute-bindings/{binding-id}/rotate`, and revoke with
 `DELETE .../compute-bindings/{binding-id}`. Rotation keeps the binding ID and
@@ -305,6 +329,9 @@ omit `scope` and rejects declarations that explicitly name another scope.
 Compute remains stateless: this binding supplies S3 SDK configuration, not a
 persistent filesystem mount. The app must still have outbound access to
 `s3.gregale.dev` under its egress policy.
+
+See [object storage from compute workloads](object-storage-compute.md) for SDK
+runtime helpers, atomic credential reload and permission-aware write canaries.
 
 ### Release gates and staging smoke
 
@@ -353,7 +380,10 @@ SHA-256 checksum headers before writing upstream. SigV4 `aws-chunked` PUT and
 UploadPart bodies support signed payload chunks, signed checksum trailers, and
 the unsigned-payload checksum trailer form used by current AWS SDKs. The
 gateway verifies every frame, decoded length, trailer signature, and checksum
-before allowing a complete object or part to reach the provider. Ordinary PUT
+before allowing a complete object or part to reach the provider. Multipart
+initiation accepts `x-amz-checksum-algorithm` (CRC32, CRC32C, CRC64NVME, SHA-1,
+SHA-256), which botocore sends by default; each part's checksum is verified on
+upload, and no composite object checksum is stored. Ordinary PUT
 and multipart initiation accept the standard HTTP metadata fields,
 `x-amz-meta-*`, and URL-encoded `x-amz-tagging`; multipart sessions persist this
 metadata so provider recovery and eventual completion retain it. GET/HEAD
@@ -490,7 +520,13 @@ Conditional GET/HEAD requests forward the standard validators and preserve S3
 `304 Not Modified` and `412 Precondition Failed` outcomes without exposing a
 provider response body. SigV4A/ECDSA authentication,
 ACLs, and bucket create/delete through the S3 protocol remain explicit
-`NotImplemented` gaps. Bucket provisioning and deletion use the authenticated
+`NotImplemented` gaps. Browser form uploads (presigned POST with a policy
+document) are not supported: the gateway treats them as anonymous requests and
+answers 403 `SignatureDoesNotMatch`, so browsers should upload with a presigned
+PUT URL instead. Keys containing `/./` or `/../` path segments cannot be used
+through `s3.gregale.dev`: the edge normalizes those segments before the gateway
+verifies the signature, so every request for such a key fails with 403
+`SignatureDoesNotMatch`. Bucket provisioning and deletion use the authenticated
 Gregale API so a customer credential cannot escape its assigned logical bucket.
 Ordinary deletion and mutable null-version deletion use durable receipts and
 marker admission; see the deletion recovery limitations below.
@@ -711,6 +747,16 @@ operator limits. It does not add an enable flag or account allowlist. Missing
 or null policy keeps metadata/cleanup usable but blocks new signed URLs.
 Policy changes require restarting API replicas with identical config.
 
+A plan can tighten the account bytes, monthly requests, and monthly egress
+limits through its object-storage ceilings in `pkg/api/limits.go`
+([ADR-1320](adr/1320-object-storage-plan-allowances-ceilings-and-overage-cap.md)).
+Per limit, the tighter positive value applies, and the bucket byte limit never
+exceeds the account limit. A plan never loosens the operator policy.
+`GET /v1/account/object-storage-usage` reports the effective policy. Free
+stops at 1 GiB of account bytes; paid plans set no ceilings, so the operator
+policy applies unchanged
+([ADR-1430](adr/1430-plan-entitlements-from-october-2026-cogs-report.md)).
+
 In `gateway_safety_v1`, customer native calls reserve the shared request budget
 before dispatch. Each multipart part-list page (including CLI resume), bucket
 configuration or version-protection probe, and tag request counts separately,
@@ -757,7 +803,7 @@ without changing the safety policy:
 
 ```json
 "pricing": {
-  "currency": "EUR",
+  "currency": "USD",
   "storage_millicents_per_gib_month": 15000,
   "requests_millicents_per_million": 500,
   "egress_millicents_per_gib": 90000
@@ -775,12 +821,13 @@ separate from upstream `cost_millicents`.
 Polar billing is independently default-off. In `shadow`, Gregale finalizes the
 completed UTC month and records the would-be charge without sending an event.
 In `live`, it sends one idempotent event per immutable billing record. The
-event quantity is the exact total customer charge in millicents; detailed
-storage, request, egress, and upstream-cost values remain in metadata and the
-local ledger. A durable provider receipt records pre-activation, shadow, or
+event quantity is the customer charge in millicents, held under the account's
+overage cap (see below). The uncapped total (`uncapped_millicents`) and the
+detailed storage, request, egress, and upstream-cost values remain in metadata
+and the local ledger. A durable provider receipt records pre-activation, shadow, or
 live handling; accounts that are not on a paid plan receive a permanent
 zero-quantity ineligible receipt. Changing modes, plans, or restarting cannot
-retroactively charge an older period. Configure the Polar meter to sum `charge_millicents` at EUR
+retroactively charge an older period. Configure the Polar meter to sum `charge_millicents` at USD
 `0.001` cents per unit, and follow the billing provider switch runbook for the
 required environment variables and catalog checks. Polar bills the month-close
 event in the provider cycle in which it is received; its metadata preserves the
@@ -923,9 +970,17 @@ usage exporter and explicit limits, confirm fresh observations, then enable.
 Rollback must disable signing first; old binaries bypass these guards.
 Do not drop accounting tables while serving customer storage.
 
-No plan allowances are introduced by the accounting surface; compute billing
-is unchanged. `apid` closes the prior UTC month once per deployment period and
-stores an immutable per-account billing snapshot. Polar can publish that
+A plan's object-storage allowance (included stored bytes, requests, and egress
+bytes) is removed from each meter before pricing. The month uses the largest
+allowance among the plans active in it, and the finalized record copies the
+allowance it used. Plans include 1 / 10 / 50 / 200 GiB of stored bytes
+(Free / Hobby / Pro / Scale); request and egress allowances are zero until
+exporters report reads and writes separately (ADR-1430). A finalized
+month is billed only up to what the account's overage cap still allows after
+the month's billable compute and live egress, and capped usage is never billed
+later ([ADR-1320](adr/1320-object-storage-plan-allowances-ceilings-and-overage-cap.md)).
+`apid` closes the prior UTC month once per deployment period and stores an
+immutable per-account billing snapshot. Polar can publish that
 snapshot idempotently when its independent rollout gate is live; other billing
 providers retain the internal ledger only. A qualified provider usage exporter
 and live month-close verification remain required for paid launch; see
@@ -1659,7 +1714,9 @@ version listing for Enabled marker preparation and recovery. See the
 and [version listing permissions](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectVersions.html).
 
 S3 clients can sign `X-Gregale-Delete-Id` for retry identity. Signed AWS SDK
-invocation IDs are also used. Responses return `X-Gregale-Delete-Id`; ordinary
+invocation IDs are also used; botocore (boto3, the AWS CLI) adds its invocation
+ID after signing, so an unsigned one is ignored and that delete receives a
+generated ID. Responses return `X-Gregale-Delete-Id`; ordinary
 Enabled deletion returns an owned marker version ID. A dispatched uncertain
 intent fences bucket writes, versioning, bucket deletion and inventories. Permanent
 immutable deletes use the same journal. Recovery can safely resend their exact
@@ -2282,3 +2339,40 @@ ETag mismatch returns 412. Failed observations issue no native PUT, and
 uncertain dispatched writes retain their receipt for recovery. Conditional
 GCS multipart completion requires a separate durable staging/publication
 implementation and still returns 501. See [ADR-955](adr/955-gcs-conditional-put-capabilities.md).
+
+
+## Multipart checksums and object attributes (ADR-1038)
+
+Select `ChecksumAlgorithm` when calling the standard S3
+`CreateMultipartUpload` operation. CRC32/CRC32C support `COMPOSITE` and
+`FULL_OBJECT`; CRC64NVME supports `FULL_OBJECT`; SHA1/SHA256 support
+`COMPOSITE`. When type is omitted, CRC64NVME defaults to full-object and the
+other supported algorithms default to composite. Unsupported combinations
+are rejected before native initiation. This enrollment is currently S3-only.
+
+Each part is validated and its checksum is returned by `UploadPart` and
+`ListParts`. Include the returned part checksums with the selected ETags in
+`CompleteMultipartUpload`. Full-object completion can instead supply its whole
+checksum; a supplied checksum or object size must match the verified native
+part inventory. Checksum-enabled completion requires consecutive part numbers
+starting at one. A rejected checksum does not consume the upload.
+
+The policy and completion snapshot survive restart. Completion returns the
+verified checksum and public version; a terminal retry returns that same result.
+Unknown acknowledgments retain quota and mutation fences until existing
+receipt/version proof and checksum readback both establish completion. Checksums
+do not replace write receipts or prove absence.
+
+Request `ChecksumMode=ENABLED` for GET/HEAD checksum metadata. Standard
+`GetObjectAttributes` supports `ETag`, `Checksum`, `ObjectParts`, `StorageClass`
+and `ObjectSize`, with bounded `MaxParts`/`PartNumberMarker` pagination. Retained
+versions use the same public version selectors and bucket read permission as
+GET/HEAD. Delete markers preserve the public version and standard 404/405
+behavior. Conditional and range headers on `GetObjectAttributes` are explicitly
+unsupported. Native identities remain private.
+
+Checksum-enabled parts share the gateway's configured aggregate spool budget,
+free-space floor, transfer slots and deadlines. Choose part sizes within that
+spool budget. Other limits, cleanup proofs and legacy unselected uploads remain
+unchanged. Local compatibility fixtures exercise Go, Node, Boto3 and AWS CLI;
+live provider qualification remains a separate operator acceptance step.

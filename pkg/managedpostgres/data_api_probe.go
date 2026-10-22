@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // VerifyDataAPICredentialProbe checks a Data API login against its SQL
@@ -16,6 +18,13 @@ import (
 func VerifyDataAPICredentialProbe(ctx context.Context, conn, migration *pgx.Conn, owner, fixture string) error {
 	if conn == nil || migration == nil || !validReadOnlyProbeName(fixture) || owner == "" {
 		return ErrInvalid
+	}
+	// The login carries the Data API's statement and lock deadlines.
+	var statementMS, lockMS int
+	if err := conn.QueryRow(ctx, `SELECT (extract(epoch FROM current_setting('statement_timeout')::interval)*1000)::int,
+ (extract(epoch FROM current_setting('lock_timeout')::interval)*1000)::int`).Scan(&statementMS, &lockMS); err != nil ||
+		statementMS != api.DataAPIQueryTimeoutMS || lockMS != api.DataAPILockTimeoutMS {
+		return ErrUnavailable
 	}
 	table := "api." + dataAPIIdentifier(fixture)
 	for _, query := range []string{

@@ -62,7 +62,20 @@
       fc_kernel_config_sha256 is missing, malformed, or still a placeholder.
       Refusing to fetch an unpinned guest-kernel configuration.
 
-- name: firecracker — mkdir runtime binary and kernel roots
+# /usr/local/bin is the system binary directory, shared with services that
+# run as their own users (prometheus, alertmanager, node_exporter, the
+# postgres connection-metrics collector). root:faas 0770 here left every one
+# of them unable to exec after a restart; the rc.255 control-plane converge,
+# cancelled at its timeout, left it that way.
+- name: firecracker — keep the runtime binary root world-executable
+  ansible.builtin.file:
+    path: /usr/local/bin
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: firecracker — mkdir kernel and base image roots
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -70,7 +83,6 @@
     group: faas
     mode: "0770"
   loop:
-    - /usr/local/bin
     - /srv/fc/base
     - /srv/fc/kernel
 

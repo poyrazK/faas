@@ -1285,9 +1285,13 @@ jobs:
           # directories when RestrictSUIDSGID blocks their chmod(02770); those
           # children remain safe as long as group inheritance and group write
           # hold. Requiring setgid recursively rejects that supported path.
+          # .faas-pmem holds vmmd's own reflinked pmem bases (pkg/fcvm): root
+          # writes it and no faas daemon shares it, so it is not held to the
+          # shared-cache group-write contract. vmmd's UMask=0022 leaves it 2755.
           test -g /var/lib/faas/cache
-          offender="$(find /var/lib/faas/cache -mindepth 1 -type d \
-            \( ! -group faas -o ! -perm -g+w \) -print -quit)"
+          offender="$(find /var/lib/faas/cache -mindepth 1 \
+            -path /var/lib/faas/cache/.faas-pmem -prune -o \
+            -type d \( ! -group faas -o ! -perm -g+w \) -print -quit)"
           if [[ -n "$offender" ]]; then
             echo "cache permission contract violation: $offender" >&2
             stat -c 'path=%n owner=%U group=%G mode=%a' "$offender" >&2

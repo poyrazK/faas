@@ -15,6 +15,7 @@ type testOutageCyclesSpec struct {
 	MaxErrorRateIncrease       *float64 `yaml:"max_error_rate_increase,omitempty" json:"max_error_rate_increase,omitempty"`
 }
 type testOutageCycleEvidence struct {
+	FaultKind      string                      `json:"fault_kind,omitempty"`
 	RecoveryChecks []testOutageRecoveryCheck   `json:"recovery_checks,omitempty"`
 	Number         int                         `json:"number"`
 	FaultPhase     string                      `json:"fault_phase"`
@@ -139,6 +140,17 @@ func expandTestOutageCycles(scenario testScenario) (testScenario, error) {
 }
 
 func testOutageCyclePhasePassed(observed testLoadChaosPhaseEvidence, planned testLoadChaosPhase) bool {
+	for name := range planned.RequestDeadlines {
+		if observed.RequestDeadlines[name] == nil || !observed.RequestDeadlines[name].Passed {
+			return false
+		}
+	}
+	if observed.PoolExhaustion != nil && !observed.PoolExhaustion.Passed {
+		return false
+	}
+	if observed.ConnectionLeaks != nil && !observed.ConnectionLeaks.Passed {
+		return false
+	}
 	if observed.Name != planned.Name || observed.StartedAt.IsZero() || !observed.FinishedAt.After(observed.StartedAt) {
 		return false
 	}
@@ -203,6 +215,9 @@ func applyTestOutageCycles(report *testLoadEvidence, cfg *testLoadConfig, schedu
 			row.Status = "failed"
 			row.Error = "cycle configuration missing"
 		} else {
+			if len(cfg.ChaosSchedule[fi].Rules) == 1 {
+				row.FaultKind = cfg.ChaosSchedule[fi].Rules[0].Kind
+			}
 			row.FaultPhase = cfg.ChaosSchedule[fi].Name
 			row.RecoveryPhase = cfg.ChaosSchedule[ri].Name
 			complete := ri < len(report.ChaosPhases) && (abortedCycle == 0 || cycle < abortedCycle)
@@ -219,9 +234,23 @@ func applyTestOutageCycles(report *testLoadEvidence, cfg *testLoadConfig, schedu
 				evidence.Completed++
 				for _, i := range []int{fi, ri} {
 					p := report.ChaosPhases[i]
-					if !testOutageCyclePhasePassed(p, cfg.ChaosSchedule[i]) {
+					if !testOutageCyclePhasePassed(p, cfg.ChaosSchedule[i]) || (cfg.ConnectionLeaks != nil && i == ri && p.ConnectionLeaks == nil) || (cfg.PoolExhaustion != nil && p.PoolExhaustion == nil) {
 						row.Status = "failed"
-						row.Error = "fault, recovery, or phase budget failed"
+						row.Error = fmt.Sprintf("phase %q: fault, recovery, or phase budget failed", p.Name)
+						for _, name := range testEndpointRecoveryNames(cfg.ChaosSchedule[i].RequestDeadlines) {
+							if d := p.RequestDeadlines[name]; d == nil || !d.Passed {
+								row.Error = fmt.Sprintf("phase %q request deadline %q failed", p.Name, name)
+							}
+						}
+						if p.PoolExhaustion != nil && !p.PoolExhaustion.Passed {
+							row.Error = fmt.Sprintf("phase %q pool exhaustion: %s", p.Name, p.PoolExhaustion.Error)
+						}
+						if p.ConnectionLeaks != nil && !p.ConnectionLeaks.Passed {
+							row.Error = fmt.Sprintf("phase %q connection leaks: %s", p.Name, p.ConnectionLeaks.Error)
+						}
+						if p.ConnectionAttempts != nil && !p.ConnectionAttempts.Passed {
+							row.Error = fmt.Sprintf("phase %q connection attempts: %s", p.Name, p.ConnectionAttempts.Error)
+						}
 					}
 					if cycle > 1 && (spec.MaxP95IncreasePercent != nil || spec.MaxErrorRateIncrease != nil) {
 						base := report.ChaosPhases[1+(i-fi)]

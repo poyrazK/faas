@@ -11,9 +11,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
-type missingUploadSessionStore struct{ state.Store }
+type missingUploadSessionStore struct{ Store state.Store }
 
 func (s missingUploadSessionStore) GetUploadSession(context.Context, string) (sqlc.UploadSession, error) {
 	return sqlc.UploadSession{}, state.ErrNotFound
@@ -32,7 +33,7 @@ func TestUploadCommitRecoveryChecksOutcomeOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	(*(*e.S()).Store()) = missingUploadSessionStore{Store: (*e.Store())}
+	(*(*e.S()).Store()) = statetest.NewStore(missingUploadSessionStore{Store: (*e.Store())})
 	owner := e.Do(t, http.MethodPost, "/v1/uploads/"+id+"/commit", nil, nil)
 	apidserver.AssertProblem(t, owner, http.StatusConflict, api.CodeUploadSessionAlreadyCommitted)
 	if !strings.Contains(owner.Body.String(), dep.ID) {

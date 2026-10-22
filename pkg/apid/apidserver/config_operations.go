@@ -13,22 +13,13 @@ func (s *server) configureOperations(cfg Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	path := cfg.OperationsWorkloadJWKSPath
-	if raw := getenv("FAAS_OPERATIONS_WORKLOAD_JWKS_PATH"); raw != "" {
-		path = raw
-	}
+	path, issuer := workloadTrust(cfg, getenv, "FAAS_OPERATIONS_WORKLOAD_JWKS_PATH", cfg.OperationsWorkloadJWKSPath,
+		"FAAS_OPERATIONS_WORKLOAD_ISSUER", cfg.OperationsWorkloadIssuer)
 	if path == "" {
 		if cfg.OperationsPreviewPolicyPath != "" {
 			return fmt.Errorf("operations preview configuration requires workload trust")
 		}
 		return nil
-	}
-	issuer := cfg.OperationsWorkloadIssuer
-	if raw := getenv("FAAS_OPERATIONS_WORKLOAD_ISSUER"); raw != "" {
-		issuer = raw
-	}
-	if issuer == "" {
-		issuer = workloadidentity.DefaultIssuer
 	}
 	verifier, err := workloadidentity.LoadVerifier(path, issuer)
 	if err != nil {

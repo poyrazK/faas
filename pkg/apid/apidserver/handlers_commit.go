@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/commitapi"
 	commitwork "github.com/onebox-faas/faas/pkg/commit"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
@@ -40,7 +41,18 @@ func (s *server) createCommitSource(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrValidation("source name must contain 1-128 bytes"))
 		return
 	}
-	if strings.TrimSpace(req.OperationPolicy) == "" {
+	if req.Destination == "" {
+		req.Destination = "operation"
+	}
+	if req.Destination == "event" {
+		if req.ContractVersion != 3 || req.OperationPolicy != "" || req.AllowTenantSelection || app.PlatformTenantRequired {
+			api.WriteProblem(w, api.ErrValidation("event destination requires contract_version 3, no operation policy or customer grant, and an account-scoped publisher app"))
+			return
+		}
+	} else if req.Destination != "operation" {
+		api.WriteProblem(w, api.ErrValidation("invalid destination"))
+		return
+	} else if strings.TrimSpace(req.OperationPolicy) == "" {
 		api.WriteProblem(w, api.ErrValidation("operation_policy is required; use a compatible queue policy containing this application"))
 		return
 	}
@@ -49,13 +61,13 @@ func (s *server) createCommitSource(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrCapacity("commit store unavailable"))
 		return
 	}
-	src, err := store.CreateCommitSource(r.Context(), state.CommitSource{AccountID: acct.ID, AppID: app.ID, Name: req.Name, OperationPolicy: req.OperationPolicy, ContractVersion: req.ContractVersion, AllowTenantSelection: req.AllowTenantSelection})
+	src, err := store.CreateCommitSource(r.Context(), state.CommitSource{AccountID: acct.ID, AppID: app.ID, Name: req.Name, Destination: req.Destination, OperationPolicy: req.OperationPolicy, ContractVersion: req.ContractVersion, AllowTenantSelection: req.AllowTenantSelection})
 	if errors.Is(err, state.ErrConflict) {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "commit_source_name_conflict", "Source name already used", "This source name has a different application, operation policy, contract version or routing authority"))
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "commit_source_name_conflict", "Source name already used", "This source name has a different application, destination, operation policy, contract version or routing authority"))
 		return
 	}
 	if errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrNotFound) {
-		api.WriteProblem(w, api.ErrValidation("source contract and selection grant require a compatible active queue policy containing this application"))
+		api.WriteProblem(w, api.ErrValidation("source destination, contract and routing authority must be compatible with this application"))
 		return
 	}
 	if err != nil {
@@ -93,6 +105,14 @@ func (s *server) acceptCommitEvent(w http.ResponseWriter, r *http.Request, acct 
 	}
 	if err := event.Validate(); err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	if src.Destination == "event" {
+		s.acceptCommitPublication(w, r, acct, source, event)
+		return
+	}
+	if event.SchemaVersion != "" {
+		api.WriteProblem(w, api.ErrValidation("schema_version requires an event publication source"))
 		return
 	}
 	// Replay must survive release expiry, destination changes, and a full queue.
@@ -173,27 +193,7 @@ func (s *server) acceptCommitEvent(w http.ResponseWriter, r *http.Request, acct 
 }
 
 func (s *server) getCommitReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	store, ok := s.store.(state.CommitStore)
-	if !ok {
-		api.WriteProblem(w, api.ErrCapacity("commit store unavailable"))
-		return
-	}
-	for _, id := range []string{r.PathValue("source"), r.PathValue("event")} {
-		if _, err := uuid.Parse(id); err != nil {
-			api.WriteProblem(w, api.ErrValidation("invalid commit identity"))
-			return
-		}
-	}
-	receipt, err := store.CommitReceiptByEvent(r.Context(), acct.ID, r.PathValue("source"), r.PathValue("event"))
-	if errors.Is(err, state.ErrNotFound) {
-		api.WriteProblem(w, api.NewProblem(404, "commit_event_not_found", "Event not found", "event has not been accepted"))
-		return
-	}
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("read commit receipt"))
-		return
-	}
-	writeJSON(w, http.StatusOK, receipt)
+	commitapi.GetCommitReceipt(s.store, w, r, acct)
 }
 
 func (s *server) setCommitSourceEnabled(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -341,48 +341,9 @@ func (s *server) replayCommitBlockedEvent(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusAccepted, map[string]string{"event_id": event, "status": "replay_requested"})
 }
 func (s *server) loadCommitRecoverySource(w http.ResponseWriter, r *http.Request, acct state.Account) (state.CommitStore, string, bool) {
-	store, ok := s.store.(state.CommitStore)
-	if !ok {
-		api.WriteProblem(w, api.ErrCapacity("commit store unavailable"))
-		return nil, "", false
-	}
-	source := r.PathValue("source")
-	if _, err := uuid.Parse(source); err != nil {
-		api.WriteProblem(w, api.ErrValidation("invalid source ID"))
-		return nil, "", false
-	}
-	_, err := store.CommitSourceByID(r.Context(), acct.ID, source)
-	if errors.Is(err, state.ErrNotFound) {
-		api.WriteProblem(w, api.NewProblem(404, "commit_source_not_found", "Source not found", "commit source is unavailable"))
-		return nil, "", false
-	}
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("read commit source"))
-		return nil, "", false
-	}
-	return store, source, true
+	return commitapi.LoadCommitRecoverySource(s.store, w, r, acct)
 }
 
-// Retained Commit facts remain readable after the managed owner prunes results.
 func (s *server) getCommitOperation(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	store, ok := s.store.(state.CommitStore)
-	if !ok {
-		api.WriteProblem(w, api.ErrCapacity("commit store unavailable"))
-		return
-	}
-	id := r.PathValue("id")
-	if _, err := uuid.Parse(id); err != nil {
-		api.WriteProblem(w, api.ErrValidation("invalid operation ID"))
-		return
-	}
-	operation, err := store.CommitOperationByID(r.Context(), acct.ID, id)
-	if errors.Is(err, state.ErrNotFound) {
-		api.WriteProblem(w, api.NewProblem(404, "operation_not_found", "Operation not found", "operation is unavailable"))
-		return
-	}
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("read operation"))
-		return
-	}
-	writeJSON(w, http.StatusOK, operation)
+	commitapi.GetCommitOperation(s.store, w, r, acct)
 }

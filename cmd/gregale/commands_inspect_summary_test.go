@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
@@ -26,7 +27,7 @@ func TestInspectOpenAPIPreservesObservedRouteAvailability(t *testing.T) {
 			"collectors_healthy":0
 		}
 	}`)
-	got := inspectOpenAPI(raw)
+	got := main.InspectOpenAPI(raw)
 	if got.Available || got.Source != "unavailable" || got.CollectorsExpected != 3 || got.CollectorsHealthy != 0 {
 		t.Fatalf("inspect API summary masked unavailable route source: %+v", got)
 	}
@@ -42,10 +43,10 @@ func TestCmdInspectSummary_HappyPath(t *testing.T) {
 	defer srv.Close()
 	configureInspectSummaryTest(t, srv.URL)
 
-	stdout, readStderr, restore := swapIO(t)
+	stdout, readStderr, restore := main.SwapIO(t)
 	defer restore()
 
-	if code := cmdInspect([]string{inspectSlug}); code != 0 {
+	if code := main.CmdInspect([]string{inspectSlug}); code != 0 {
 		t.Fatalf("inspect summary = %d, want 0 (stderr=%s)", code, readStderr())
 	}
 	body := stdout.String()
@@ -66,24 +67,24 @@ func TestCmdInspectSummary_JSON(t *testing.T) {
 	srv := newInspectSummaryServer(t, false)
 	defer srv.Close()
 	configureInspectSummaryTest(t, srv.URL)
-	jsonOutput = true
-	t.Cleanup(resetJSONOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(main.ResetJSONOutput)
 
-	stdout, readStderr, restore := swapIO(t)
+	stdout, readStderr, restore := main.SwapIO(t)
 	defer restore()
 
-	if code := cmdInspect([]string{inspectSlug}); code != 0 {
+	if code := main.CmdInspect([]string{inspectSlug}); code != 0 {
 		t.Fatalf("inspect summary json = %d, want 0 (stderr=%s)", code, readStderr())
 	}
-	var got inspectSummary
+	var got main.InspectSummary
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("decode summary: %v\nraw: %s", err, stdout.String())
 	}
 	if !strings.Contains(stdout.String(), `"recommendations": []`) {
 		t.Errorf("empty recommendations must encode as an array; got:\n%s", stdout.String())
 	}
-	if got.SchemaVersion != inspectSummarySchemaVersion {
-		t.Errorf("schema_version = %d, want %d", got.SchemaVersion, inspectSummarySchemaVersion)
+	if got.SchemaVersion != main.InspectSummarySchemaVersion {
+		t.Errorf("schema_version = %d, want %d", got.SchemaVersion, main.InspectSummarySchemaVersion)
 	}
 	if got.App.WorkloadClass != "http" || got.Runtime.Framework != "fastapi" {
 		t.Errorf("application intelligence drift: app=%+v runtime=%+v", got.App, got.Runtime)
@@ -126,15 +127,15 @@ func TestCmdInspectSummary_UsesServingReleaseWhenNewerCandidateFailed(t *testing
 	}))
 	defer srv.Close()
 	configureInspectSummaryTest(t, srv.URL)
-	jsonOutput = true
-	t.Cleanup(resetJSONOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(main.ResetJSONOutput)
 
-	stdout, readStderr, restore := swapIO(t)
+	stdout, readStderr, restore := main.SwapIO(t)
 	defer restore()
-	if code := cmdInspect([]string{inspectSlug}); code != 0 {
+	if code := main.CmdInspect([]string{inspectSlug}); code != 0 {
 		t.Fatalf("inspect summary = %d, want 0 (stderr=%s)", code, readStderr())
 	}
-	var got inspectSummary
+	var got main.InspectSummary
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("decode summary: %v", err)
 	}
@@ -152,7 +153,7 @@ func TestCmdInspectSummary_UsesServingReleaseWhenNewerCandidateFailed(t *testing
 }
 
 func TestInspectResources_ReportsLegacyAutoscaleTargets(t *testing.T) {
-	rpsAndCPU := inspectResources(api.AppResponse{
+	rpsAndCPU := main.InspectResources(api.AppResponse{
 		RAMMB: 256, CPUMillicores: 500, MaxConcurrency: 8,
 		AutoscaleTargetRPS: 5, AutoscaleTargetCPUPct: 50,
 	})
@@ -160,18 +161,18 @@ func TestInspectResources_ReportsLegacyAutoscaleTargets(t *testing.T) {
 		t.Fatalf("legacy targets = %+v, want rps=5/cpu=50", rpsAndCPU)
 	}
 	var rendered strings.Builder
-	renderInspectResources(&rendered, rpsAndCPU)
+	main.RenderInspectResources(&rendered, rpsAndCPU)
 	if got := rendered.String(); !strings.Contains(got, "rps=5 OR cpu_pct=50% (RPS sizing)") {
 		t.Fatalf("rendered scaling target = %q, want explicit OR/RPS sizing precedence", got)
 	}
 
-	policyAndLegacy := inspectResources(api.AppResponse{
+	policyAndLegacy := main.InspectResources(api.AppResponse{
 		RAMMB: 256, CPUMillicores: 500, MaxConcurrency: 8,
 		AutoscaleTargetRPS: 5, AutoscaleTargetCPUPct: 50,
 		ScalingPolicy: &api.ScalingPolicy{Target: &api.ScalingTarget{Metric: "concurrent_requests", Value: 10}},
 	})
 	rendered.Reset()
-	renderInspectResources(&rendered, policyAndLegacy)
+	main.RenderInspectResources(&rendered, policyAndLegacy)
 	if got := rendered.String(); !strings.Contains(got, "concurrent_requests=10 OR rps=5 OR cpu_pct=50% (RPS sizing)") {
 		t.Fatalf("policy + legacy scaling target = %q, want all effective targets", got)
 	}
@@ -182,10 +183,10 @@ func TestCmdInspectSummary_OptionalSignalsDegrade(t *testing.T) {
 	defer srv.Close()
 	configureInspectSummaryTest(t, srv.URL)
 
-	stdout, readStderr, restore := swapIO(t)
+	stdout, readStderr, restore := main.SwapIO(t)
 	defer restore()
 
-	if code := cmdInspect([]string{inspectSlug}); code != 0 {
+	if code := main.CmdInspect([]string{inspectSlug}); code != 0 {
 		t.Fatalf("inspect degraded = %d, want 0 (stderr=%s)", code, readStderr())
 	}
 	body := stdout.String()
@@ -203,7 +204,7 @@ func TestInspectSummaryNoLiveDeploymentIsActionableDespiteHistory(t *testing.T) 
 	app, _ := inspectSummaryFixtures(t)
 	app.DeploymentAvailability = api.AppDeploymentAvailabilityMissing
 	historical := api.DeploymentResponse{ID: inspectDepID, AppID: inspectAppID, Status: "failed"}
-	summary := buildInspectSummary(app, inspectSummaryInputs{Deployment: &historical})
+	summary := main.BuildInspectSummary(app, main.InspectSummaryInputs{Deployment: &historical})
 
 	var noLive, latestFailed bool
 	for _, recommendation := range summary.Recommendations {
@@ -217,7 +218,7 @@ func TestInspectSummaryNoLiveDeploymentIsActionableDespiteHistory(t *testing.T) 
 		t.Fatalf("historical failed row masked missing live deployment: %+v", summary.Recommendations)
 	}
 	var rendered bytes.Buffer
-	renderInspectSummaryHuman(&rendered, summary)
+	main.RenderInspectSummaryHuman(&rendered, summary)
 	for _, want := range []string{"NO LIVE DEPLOYMENT", "gregale deploy", "verified"} {
 		if !strings.Contains(rendered.String(), want) {
 			t.Errorf("inspect output missing %q:\n%s", want, rendered.String())
@@ -228,29 +229,29 @@ func TestInspectSummaryNoLiveDeploymentIsActionableDespiteHistory(t *testing.T) 
 func TestInspectRecommendations_DistinguishSmokeVerifierFromHealthEndpoint(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
-		health   *inspectHealthSummary
+		health   *main.InspectHealthSummary
 		code     string
 		want     string
 		wantNext string
 	}{
 		{
 			name:     "verifier disabled",
-			health:   &inspectHealthSummary{Status: apihostingreceipt.SmokeSkipped, ErrorCode: apihostingreceipt.SmokeErrorNotConfigured},
+			health:   &main.InspectHealthSummary{Status: apihostingreceipt.SmokeSkipped, ErrorCode: apihostingreceipt.SmokeErrorNotConfigured},
 			want:     "health_verifier_unconfigured",
 			wantNext: "contact support",
 		},
 		{
 			name:     "health endpoint missing",
-			health:   &inspectHealthSummary{Status: apihostingreceipt.SmokeFailed, ErrorCode: "smoke_health_path_missing"},
+			health:   &main.InspectHealthSummary{Status: apihostingreceipt.SmokeFailed, ErrorCode: "smoke_health_path_missing"},
 			want:     "health_endpoint_missing",
 			wantNext: "health endpoint",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			recs := inspectRecommendations(inspectSummary{
-				App:     inspectAppSummary{Slug: "demo"},
-				Release: inspectReleaseSummary{Available: true, Status: "live"},
-				Runtime: inspectRuntimeSummary{Health: tc.health},
+			recs := main.InspectRecommendations(main.InspectSummary{
+				App:     main.InspectAppSummary{Slug: "demo"},
+				Release: main.InspectReleaseSummary{Available: true, Status: "live"},
+				Runtime: main.InspectRuntimeSummary{Health: tc.health},
 			})
 			if len(recs) != 1 || recs[0].Code != tc.want {
 				t.Fatalf("recommendations = %+v, want code %q", recs, tc.want)
@@ -270,7 +271,7 @@ func configureInspectSummaryTest(t *testing.T, apiURL string) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
 	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
-	resetJSONOutput()
+	main.ResetJSONOutput()
 }
 
 func newInspectSummaryServer(t *testing.T, failOptional bool) *httptest.Server {
@@ -362,23 +363,51 @@ func TestInspectRecommendations_ParkedAppPointsToWake(t *testing.T) {
 		{reason: "admin_park", want: "This app is parked"},
 		{reason: "", want: "This app is parked"},
 	} {
-		recs := inspectRecommendations(inspectSummary{
-			App:     inspectAppSummary{Slug: "demo", Status: "evicted_cold", ParkedReason: tc.reason},
-			Release: inspectReleaseSummary{Available: true, Status: "live"},
-			Runtime: inspectRuntimeSummary{Health: &inspectHealthSummary{Status: apihostingreceipt.SmokeVerified}},
+		recs := main.InspectRecommendations(main.InspectSummary{
+			App:     main.InspectAppSummary{Slug: "demo", Status: "evicted_cold", ParkedReason: tc.reason},
+			Release: main.InspectReleaseSummary{Available: true, Status: "live"},
+			Runtime: main.InspectRuntimeSummary{Health: &main.InspectHealthSummary{Status: apihostingreceipt.SmokeVerified}},
 		})
 		if len(recs) == 0 || recs[0].Code != "app_parked" || !strings.Contains(recs[0].Message, tc.want) || !strings.Contains(recs[0].Next, "gregale wake demo") {
 			t.Fatalf("reason %q: recommendations = %+v", tc.reason, recs)
 		}
 	}
-	recs := inspectRecommendations(inspectSummary{
-		App:     inspectAppSummary{Slug: "demo", Status: "evicted_cold", ParkedReason: "security_scan_regressed"},
-		Release: inspectReleaseSummary{Available: true, Status: "live"},
-		Runtime: inspectRuntimeSummary{Health: &inspectHealthSummary{Status: apihostingreceipt.SmokeVerified}},
+	recs := main.InspectRecommendations(main.InspectSummary{
+		App:     main.InspectAppSummary{Slug: "demo", Status: "evicted_cold", ParkedReason: "security_scan_regressed"},
+		Release: main.InspectReleaseSummary{Available: true, Status: "live"},
+		Runtime: main.InspectRuntimeSummary{Health: &main.InspectHealthSummary{Status: apihostingreceipt.SmokeVerified}},
 	})
 	for _, rec := range recs {
 		if rec.Code == "app_parked" {
 			t.Fatal("a security quarantine must not be told to wake")
 		}
+	}
+}
+
+// H10-7: with data placement off on the cluster, every inspect headline was
+// "Incomplete information … current health is not established".
+func TestInspectDataPlacementNotOfferedIsNotAReadFailure(t *testing.T) {
+	for _, tc := range []struct {
+		code string
+		want string
+	}{
+		{api.CodeDataUpstreamsDisabled, "not enabled on this cluster"},
+		{api.CodePlanDataUpstreamsNotAllowed, "not included in this plan"},
+	} {
+		off, err := main.UpstreamsNotOffered(&main.APIError{Problem: api.Problem{Code: tc.code}})
+		if err != nil || off != tc.want {
+			t.Fatalf("upstreamsNotOffered(%s) = %q, %v; want %q, nil", tc.code, off, err, tc.want)
+		}
+		in := main.InspectSummaryInputs{UpstreamsOff: off}
+		if got := main.InspectUnavailable(in); len(got) != 0 {
+			t.Fatalf("unavailable = %v, want none", got)
+		}
+		if data := main.InspectData(in); data.Available || data.NotOffered != tc.want {
+			t.Fatalf("inspectData = %+v, want not offered %q", data, tc.want)
+		}
+	}
+	readErr := &main.APIError{Problem: api.Problem{Code: api.CodeInternal}}
+	if off, err := main.UpstreamsNotOffered(readErr); off != "" || err == nil {
+		t.Fatalf("a real read failure must stay an error; got %q, %v", off, err)
 	}
 }

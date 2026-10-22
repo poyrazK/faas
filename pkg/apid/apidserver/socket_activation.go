@@ -5,18 +5,21 @@ import (
 	"fmt"
 	"net"
 	"os"
+
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // apidListener consumes the socket owned by faas-apid.socket when systemd
 // starts the production service. Keeping the listening socket outside the
 // process lets TCP handshakes queue while the old apid exits and its
-// replacement starts. Local and test runs retain the ordinary net.Listen
-// path when no activation environment is present.
+// replacement starts. A two-generation hand-off's successor serves the
+// socket its predecessor passed (ADR-1736). Local and test runs retain the
+// ordinary net.Listen path when no activation environment is present.
 func apidListener(network, addr string) (net.Listener, error) {
 	pidValue, hasPID := os.LookupEnv("LISTEN_PID")
 	fdsValue, hasFDs := os.LookupEnv("LISTEN_FDS")
 	if !hasPID && !hasFDs {
-		return net.Listen(network, addr)
+		return wire.ListenInherited(network, addr)
 	}
 	if !hasPID || !hasFDs {
 		return nil, errors.New("apid: incomplete systemd socket activation environment")
@@ -24,7 +27,7 @@ func apidListener(network, addr string) (net.Listener, error) {
 	if pidValue != fmt.Sprint(os.Getpid()) {
 		// A descriptor advertised for an ancestor does not belong to this
 		// process. Ignore it exactly as the systemd activation contract asks.
-		return net.Listen(network, addr)
+		return wire.ListenInherited(network, addr)
 	}
 	if network != "tcp" {
 		return nil, fmt.Errorf("apid: activated listener network %q, want tcp", network)
@@ -45,11 +48,17 @@ func apidListener(network, addr string) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The listener returned by FileListener is close-on-exec. Clear the
-	// activation variables as well so helpers cannot mistake fd 3 for theirs.
+	// The listener returned by FileListener is close-on-exec and fd 3 is now
+	// closed. Clear the activation variables before anything reaches pkg/wire:
+	// its first call loads the activation set from them, and with fd 3 gone
+	// that load fails and every later wire.ListenInherited (apid's metrics
+	// listener) returns "inspect inherited fd 3: bad file descriptor". This is
+	// what stopped apid from starting in rc.278's rollout. gatewayd-public's
+	// publicListener has always cleared them first.
 	_ = os.Unsetenv("LISTEN_PID")
 	_ = os.Unsetenv("LISTEN_FDS")
 	_ = os.Unsetenv("LISTEN_FDNAMES")
+	wire.Share(listener) // a hand-off passes it to the successor
 	return listener, nil
 }
 

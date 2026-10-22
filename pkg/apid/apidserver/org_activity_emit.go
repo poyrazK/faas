@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -162,12 +163,15 @@ func (s *server) resolveActivityOrg(ctx context.Context, app state.App) (uuid.UU
 
 func activityActor(r *http.Request, acct state.Account) (state.OrgActivityActorType, string, *uuid.UUID) {
 	if r != nil {
-		if _, key, ok := authmw.AccountFromContext(r); ok && key != nil {
-			label := strings.TrimSpace(key.Label)
-			if label == "" {
-				label = "API key"
+		if actor, key, ok := authmw.AccountFromContext(r); ok {
+			acct = actor
+			if key != nil {
+				label := strings.TrimSpace(key.Label)
+				if label == "" {
+					label = "API key"
+				}
+				return state.OrgActivityActorAPIKey, label, nil
 			}
-			return state.OrgActivityActorAPIKey, label, nil
 		}
 	}
 	accountID, err := uuid.Parse(acct.ID)
@@ -184,6 +188,7 @@ func activityActor(r *http.Request, acct state.Account) (state.OrgActivityActorT
 func activitySourceID(r *http.Request, prefix string) string {
 	if r != nil {
 		if key := strings.TrimSpace(r.Header.Get("Idempotency-Key")); key != "" {
+			key = appaccess.IdempotencyKey(r, key)
 			sum := sha256.Sum256([]byte(key))
 			return prefix + ":idem:" + hex.EncodeToString(sum[:])
 		}
@@ -207,7 +212,7 @@ func (s *server) recordDomainTLSIssuedActivity(ctx context.Context, domain state
 		}
 		return
 	}
-	acct, err := s.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, s.store, app)
 	if err != nil {
 		if s.log != nil {
 			s.log.Warn("activity: resolve certificate account failed", "domain", domain.Domain, "err", err)
@@ -239,7 +244,7 @@ func (s *server) recordDeploymentActivity(ctx context.Context, r *http.Request, 
 }
 
 func (s *server) cancelDeploymentWithActivity(ctx context.Context, r *http.Request, acct state.Account, app state.App, prior state.Deployment, reason state.CancelReason, operator bool) (state.Deployment, []string, int64, error) {
-	principal := acct.ID
+	principal := actorAccount(r, acct).ID
 	if operator {
 		principal = "operator:" + acct.ID
 	}

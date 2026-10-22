@@ -24,7 +24,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/behaviorcompare"
 	"github.com/onebox-faas/faas/pkg/chaos"
+	"github.com/onebox-faas/faas/pkg/rehearsalobj"
+	"github.com/onebox-faas/faas/pkg/rehearsalpg"
+	"github.com/onebox-faas/faas/pkg/rehearsalresume"
+	"github.com/onebox-faas/faas/pkg/rehearsalwork"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"gopkg.in/yaml.v3"
 )
@@ -32,41 +37,50 @@ import (
 // Scenario files may declare HTTP checks or run application-owned commands.
 // Gregale owns the expiring environment and lifecycle evidence.
 type testManifest struct {
-	Version   int                     `yaml:"version"`
-	Scenarios map[string]testScenario `yaml:"scenarios"`
-	Suites    map[string]testSuite    `yaml:"suites,omitempty"`
+	AssertionProfiles map[string]testAssertionProfile `yaml:"assertion_profiles,omitempty"`
+	Version           int                             `yaml:"version"`
+	Scenarios         map[string]testScenario         `yaml:"scenarios"`
+	Suites            map[string]testSuite            `yaml:"suites,omitempty"`
 }
 
 type testScenario struct {
-	Resilience       *testResilienceSpec    `yaml:"resilience,omitempty"`
-	Project          string                 `yaml:"project"`
-	Source           string                 `yaml:"source"`
-	Secrets          map[string]string      `yaml:"secrets"`
-	Consumers        []testConsumer         `yaml:"consumers"`
-	ConsumerAuthMode string                 `yaml:"consumer_auth_mode"`
-	Simulation       []string               `yaml:"simulation"`
-	Services         map[string]testService `yaml:"services"`
-	Trigger          []string               `yaml:"trigger"`
-	Command          []string               `yaml:"command"`
-	Requests         []testHTTPRequest      `yaml:"requests"`
-	Checks           []testHTTPRequest      `yaml:"checks"`
-	Steps            []testScenarioStep     `yaml:"steps,omitempty"`
-	Setup            [][]string             `yaml:"setup"`
-	Cleanup          [][]string             `yaml:"cleanup"`
-	Postgres         bool                   `yaml:"postgres"`
-	Buckets          []testBucket           `yaml:"buckets"`
-	WaitFor          testWaitFor            `yaml:"wait_for"`
-	Timeout          string                 `yaml:"timeout"`
-	Load             *testLoadSpec          `yaml:"load"`
-	Local            *testLocalAppSpec      `yaml:"local"`
-	TCPPorts         []int                  `yaml:"tcp_ports,omitempty"`
-	Chaos            *testChaosSpec         `yaml:"chaos,omitempty"`
+	SuspendResume    *testSuspendResumeSpec    `yaml:"suspend_resume,omitempty" json:"suspend_resume,omitempty"`
+	ManagedWork      *rehearsalwork.Plan       `yaml:"managed_work,omitempty" json:"managed_work,omitempty"`
+	ObjectsFixture   *testObjectSpec           `yaml:"objects_fixture,omitempty" json:"objects_fixture,omitempty"`
+	PostgresFixture  *testPostgresSpec         `yaml:"postgres_fixture,omitempty" json:"postgres_fixture,omitempty"`
+	CommandExecution *testCommandExecutionSpec `yaml:"command_execution,omitempty" json:"command_execution,omitempty"`
+	Actions          *testActionSpec           `yaml:"actions,omitempty" json:"actions,omitempty"`
+	Behavior         *testBehaviorSpec         `yaml:"behavior,omitempty" json:"behavior,omitempty"`
+	Resilience       *testResilienceSpec       `yaml:"resilience,omitempty"`
+	Project          string                    `yaml:"project"`
+	Source           string                    `yaml:"source"`
+	Secrets          map[string]string         `yaml:"secrets"`
+	Consumers        []testConsumer            `yaml:"consumers"`
+	ConsumerAuthMode string                    `yaml:"consumer_auth_mode"`
+	Simulation       []string                  `yaml:"simulation"`
+	Services         map[string]testService    `yaml:"services"`
+	Trigger          []string                  `yaml:"trigger"`
+	Command          []string                  `yaml:"command"`
+	Requests         []testHTTPRequest         `yaml:"requests"`
+	Checks           []testHTTPRequest         `yaml:"checks"`
+	Steps            []testScenarioStep        `yaml:"steps,omitempty"`
+	Setup            [][]string                `yaml:"setup"`
+	Cleanup          [][]string                `yaml:"cleanup"`
+	Postgres         bool                      `yaml:"postgres"`
+	Buckets          []testBucket              `yaml:"buckets"`
+	WaitFor          testWaitFor               `yaml:"wait_for"`
+	Timeout          string                    `yaml:"timeout"`
+	Load             *testLoadSpec             `yaml:"load"`
+	Local            *testLocalAppSpec         `yaml:"local"`
+	TCPPorts         []int                     `yaml:"tcp_ports,omitempty"`
+	Chaos            *testChaosSpec            `yaml:"chaos,omitempty"`
 }
 
 type testScenarioStep struct {
 	Name       string            `yaml:"name"`
 	Chaos      *testChaosSpec    `yaml:"chaos,omitempty"`
 	ClearChaos bool              `yaml:"clear_chaos,omitempty"`
+	Restart    *testRestartSpec  `yaml:"restart,omitempty"`
 	Command    []string          `yaml:"command,omitempty"`
 	Requests   []testHTTPRequest `yaml:"requests,omitempty"`
 	Checks     []testHTTPRequest `yaml:"checks,omitempty"`
@@ -182,14 +196,22 @@ type testServiceWakeEvidence struct {
 }
 
 type testServiceHotEvidence struct {
-	RequestID  string `json:"request_id,omitempty"`
-	InstanceID string `json:"instance_id,omitempty"`
-	Status     int    `json:"status,omitempty"`
-	Transport  string `json:"transport,omitempty"`
-	NoNewWake  bool   `json:"no_new_wake,omitempty"`
+	RequestID       string   `json:"request_id,omitempty"`
+	InstanceID      string   `json:"instance_id,omitempty"`
+	Status          int      `json:"status,omitempty"`
+	Transport       string   `json:"transport,omitempty"`
+	NoNewWake       bool     `json:"no_new_wake,omitempty"`
+	PlannedRestarts []string `json:"planned_restarts,omitempty"`
 }
 
 type testRunReceipt struct {
+	SuspendResume          *rehearsalresume.Evidence          `json:"suspend_resume,omitempty"`
+	ColdWake               map[string]testServiceWakeEvidence `json:"cold_wake,omitempty"`
+	Commands               []testContainedCommandReceipt      `json:"commands,omitempty"`
+	Actions                *testActionEvidence                `json:"actions,omitempty"`
+	Behavior               *behaviorcompare.Evidence          `json:"behavior,omitempty"`
+	Objects                *rehearsalobj.Evidence             `json:"objects,omitempty"`
+	Postgres               *rehearsalpg.Evidence              `json:"postgres,omitempty"`
 	CampaignSeed           *testCampaignSeedSetting           `json:"campaign_seed,omitempty"`
 	Minimization           *testFaultMinimizationEvidence     `json:"minimization,omitempty"`
 	Replay                 *testReplayManifest                `json:"replay,omitempty"`
@@ -216,6 +238,8 @@ type testRunReceipt struct {
 	DeploymentID           string                             `json:"deployment_id,omitempty"`
 	SourceSHA256           string                             `json:"source_sha256,omitempty"`
 	Services               map[string]string                  `json:"services,omitempty"`
+	WorkloadDeploymentIDs  map[string]string                  `json:"workload_deployment_ids,omitempty"`
+	WorkloadAppIDs         map[string]string                  `json:"workload_app_ids,omitempty"`
 	AsyncRoutes            map[string][]string                `json:"async_routes,omitempty"`
 	ServiceWake            map[string]testServiceWakeEvidence `json:"service_wake,omitempty"`
 	ServiceHot             map[string]testServiceHotEvidence  `json:"service_hot,omitempty"`
@@ -246,6 +270,7 @@ type testScenarioStepEvidence struct {
 	Status       string                            `json:"status"`
 	Chaos        *testChaosEvidence                `json:"chaos,omitempty"`
 	FaultCleared bool                              `json:"fault_cleared,omitempty"`
+	Restart      *testRestartEvidence              `json:"restart,omitempty"`
 	Requests     []testHTTPRequestEvidence         `json:"requests,omitempty"`
 	Load         *testLoadEvidence                 `json:"load,omitempty"`
 	Relative     *testStagedLoadComparisonEvidence `json:"relative,omitempty"`
@@ -289,11 +314,12 @@ type testStagedLoadComparisonCheck struct {
 }
 
 type testChaosEvidence struct {
-	ExpiresAt      time.Time               `json:"expires_at"`
-	RulesInstalled int                     `json:"rules_installed"`
-	Generation     string                  `json:"-"`
-	Rules          []chaos.Rule            `json:"rules"`
-	Matches        []testChaosRuleEvidence `json:"matches,omitempty"`
+	CorrelationCounts map[string]int64        `json:"-"`
+	ExpiresAt         time.Time               `json:"expires_at"`
+	RulesInstalled    int                     `json:"rules_installed"`
+	Generation        string                  `json:"-"`
+	Rules             []chaos.Rule            `json:"rules"`
+	Matches           []testChaosRuleEvidence `json:"matches,omitempty"`
 }
 
 type testChaosRuleEvidence struct {
@@ -308,6 +334,12 @@ func cmdTest(args []string) int {
 }
 
 func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
+	if len(args) > 0 && args[0] == "rehearse" {
+		if chaosOverride != nil {
+			return printErr("Invalid rehearsal", errors.New("rehearsals use the trusted scenario's declared faults"))
+		}
+		return cmdTestRehearse(args[1:])
+	}
 	if len(args) > 0 && args[0] == "recovery-trend" {
 		if chaosOverride != nil {
 			return printErr("Invalid trend options", errors.New("recovery trends cannot override chaos"))
@@ -501,6 +533,23 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 	if err != nil {
 		return printErr("Invalid scenario manifest", err)
 	}
+	for name, scenario := range scenarios {
+		if *scenarioName != "" && name != *scenarioName {
+			continue
+		}
+		selected := profiles
+		if *engine != "real-vm" {
+			selected = []string{*engine}
+		}
+		for _, p := range selected {
+			if err := validateTestCommandExecution(scenario, *engine, p); err != nil {
+				return printErr("Invalid contained command recipe", err)
+			}
+		}
+		if scenario.CommandExecution != nil && *load {
+			return printErr("Invalid contained command recipe", errors.New("contained commands do not support load overrides"))
+		}
+	}
 	loadConfigs := make(map[string]*testLoadConfig)
 	if *load {
 		for name, scenario := range scenarios {
@@ -629,6 +678,11 @@ func readTestManifestDocument(path string, fieldsForScenario func(string, testSc
 	if err != nil {
 		return testManifest{}, "", err
 	}
+	return decodeTestManifestDocument(data, absolute, fieldsForScenario)
+}
+
+func decodeTestManifestDocument(data []byte, absolute string, fieldsForScenario func(string, testScenario) []string) (testManifest, string, error) {
+	var err error
 	if len(data) > 1024*1024 {
 		return testManifest{}, "", errors.New("scenario manifest exceeds 1 MiB")
 	}
@@ -648,7 +702,14 @@ func readTestManifestDocument(path string, fieldsForScenario func(string, testSc
 	if err := validateTestSuites(manifest); err != nil {
 		return testManifest{}, "", err
 	}
+	if err := validateTestAssertionProfiles(manifest.AssertionProfiles); err != nil {
+		return testManifest{}, "", err
+	}
 	for name, scenario := range manifest.Scenarios {
+		scenario, err = expandTestAssertionProfiles(scenario, manifest.AssertionProfiles)
+		if err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
 		scenario = resolveTestCampaignGuidancePath(scenario, filepath.Dir(absolute))
 		scenario, err = expandTestOutageCycles(scenario)
 		if err != nil {
@@ -664,6 +725,37 @@ func readTestManifestDocument(path string, fieldsForScenario func(string, testSc
 		manifest.Scenarios[name] = scenario
 		if len(name) < 3 || len(name) > 80 || !api.ValidAppSlug(scenario.Project) {
 			return testManifest{}, "", fmt.Errorf("scenario %q needs a valid project slug", name)
+		}
+		if err := validateTestBehavior(scenario.Behavior); err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
+		if err := validateTestCommandExecution(scenario, "real-vm", "warm"); err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
+		if err := validateTestActions(scenario.Actions); err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
+		if scenario.Behavior != nil {
+			if scenario.Resilience != nil {
+				return testManifest{}, "", fmt.Errorf("scenario %q: behavior observations currently require runs without resilience expansion", name)
+			}
+			source := scenario.Source
+			if source == "" {
+				source = "."
+			}
+			sourceDir, err := resolveDeploySourceDir(filepath.Dir(absolute), source)
+			if err != nil {
+				return testManifest{}, "", fmt.Errorf("scenario %q behavior source: %w", name, err)
+			}
+			if _, _, err := testBehaviorIdentities(sourceDir, scenario.Behavior); err != nil {
+				return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
+			}
+			if _, err := prepareTestObjects(sourceDir, scenario, &testRunReceipt{}); err != nil {
+				return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
+			}
+			if _, err := prepareTestPostgres(sourceDir, scenario, &testRunReceipt{}); err != nil {
+				return testManifest{}, "", fmt.Errorf("scenario %q PostgreSQL fixture: %w", name, err)
+			}
 		}
 		if err := validateScenarioTCPService(testService{TCPPorts: scenario.TCPPorts}); err != nil {
 			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
@@ -860,7 +952,7 @@ func validateTestSecrets(workload string, secrets map[string]string, scenario te
 		if api.ValidateSecretKey(key) != nil {
 			return fmt.Errorf("workload %q has invalid secret key %q", workload, key)
 		}
-		if _, err := expandTestSecretValue(value, serviceURLs, serviceSlugs, buckets, "0123456789abcdef0123456789abcdef", "example-run-secret", tcpPorts); err != nil {
+		if _, err := expandTestSecretValueUsingEnv(value, serviceURLs, serviceSlugs, buckets, "0123456789abcdef0123456789abcdef", "example-run-secret", func(string) (string, bool) { return "example-environment-value", true }, tcpPorts); err != nil {
 			return fmt.Errorf("workload %q secret %q: %w", workload, key, err)
 		}
 	}
@@ -881,7 +973,13 @@ func scenarioInternalServiceURLs(workloads map[string]string) map[string]string 
 	return out
 }
 
+var testSecretEnvironmentPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+
 func expandTestSecretValue(value string, serviceURLs, serviceSlugs map[string]string, buckets map[string]testBucketRef, runID, runSecret string, tcpPorts ...map[string][]int) (string, error) {
+	return expandTestSecretValueUsingEnv(value, serviceURLs, serviceSlugs, buckets, runID, runSecret, os.LookupEnv, tcpPorts...)
+}
+
+func expandTestSecretValueUsingEnv(value string, serviceURLs, serviceSlugs map[string]string, buckets map[string]testBucketRef, runID, runSecret string, lookup func(string) (string, bool), tcpPorts ...map[string][]int) (string, error) {
 	var expansionErr error
 	expanded := testSecretReferencePattern.ReplaceAllStringFunc(value, func(match string) string {
 		if expansionErr != nil {
@@ -891,6 +989,9 @@ func expandTestSecretValue(value string, serviceURLs, serviceSlugs map[string]st
 		var replacement string
 		var ok bool
 		switch {
+		case len(parts) == 2 && parts[0] == "env" && testSecretEnvironmentPattern.MatchString(parts[1]):
+			replacement, ok = lookup(parts[1])
+			ok = ok && replacement != ""
 		case len(parts) == 2 && parts[0] == "run" && parts[1] == "id":
 			replacement, ok = runID, true
 		case len(parts) == 2 && parts[0] == "run" && parts[1] == "secret":
@@ -987,13 +1088,21 @@ func provisionTestConsumers(ctx context.Context, client testConsumerClient, appS
 }
 
 func runSimulatedTest(parent context.Context, name string, scenario testScenario, manifestDir string) (receipt testRunReceipt) {
-	receipt = testRunReceipt{Scenario: name, Profile: "simulated", Engine: "simulated", Status: "failed", StartedAt: time.Now().UTC()}
+	receipt = testRunReceipt{Behavior: newTestBehaviorEvidence(scenario.Behavior), Scenario: name, Profile: "simulated", Engine: "simulated", Status: "failed", StartedAt: time.Now().UTC()}
 	phases := newTestPhaseRecorder("simulation")
 	defer func() {
 		receipt.Phases = phases.finish(receipt.Status)
 		receipt.FinishedAt = time.Now().UTC()
 		receipt.DurationMS = receipt.FinishedAt.Sub(receipt.StartedAt).Milliseconds()
 	}()
+	if err := validateTestCommandExecution(scenario, "simulated", "simulated"); err != nil {
+		receipt.Error = err.Error()
+		return receipt
+	}
+	if scenario.Actions != nil {
+		receipt.Error = "webhook action capture requires the real-vm engine"
+		return receipt
+	}
 	if len(scenario.Simulation) == 0 || scenario.Simulation[0] == "" {
 		receipt.Error = "scenario has no simulation command"
 		return receipt
@@ -1013,7 +1122,14 @@ func runSimulatedTest(parent context.Context, name string, scenario testScenario
 		receipt.Error = fmt.Sprintf("simulation source directory: %v", err)
 		return receipt
 	}
+	behavior, err := prepareTestBehavior(sourceDir, scenario, &receipt)
+	if err != nil {
+		receipt.Error = fmt.Sprintf("prepare behavior evidence: %v", err)
+		return receipt
+	}
+	defer behavior.finish(&receipt)
 	env := append(testCommandBaseEnv(), "GREGALE_TEST_ENGINE=simulated", "GREGALE_TEST_PROFILE=simulated", "GREGALE_TEST_SCENARIO="+name)
+	env = behavior.commandEnv(env)
 	if err := runTestCommand(ctx, sourceDir, env, scenario.Simulation); err != nil {
 		receipt.Error = fmt.Sprintf("simulation command: %v", err)
 		return receipt
@@ -1023,7 +1139,7 @@ func runSimulatedTest(parent context.Context, name string, scenario testScenario
 }
 
 func runTestProfile(parent context.Context, client *Client, name string, scenario testScenario, manifestDir, profile string) (receipt testRunReceipt) {
-	receipt = testRunReceipt{Scenario: name, Profile: profile, Engine: "real-vm", Status: "failed", Evidence: &testWakeEvidence{}, StartedAt: time.Now().UTC()}
+	receipt = testRunReceipt{Behavior: newTestBehaviorEvidence(scenario.Behavior), Scenario: name, Profile: profile, Engine: "real-vm", Status: "failed", Evidence: &testWakeEvidence{}, StartedAt: time.Now().UTC()}
 	phases := newTestPhaseRecorder("provision")
 	advancePhase := func(name string) {
 		status := "passed"
@@ -1049,6 +1165,10 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		receipt.FinishedAt = time.Now().UTC()
 		receipt.DurationMS = receipt.FinishedAt.Sub(receipt.StartedAt).Milliseconds()
 	}()
+	if err := validateTestCommandExecution(scenario, "real-vm", profile); err != nil {
+		receipt.Error = err.Error()
+		return
+	}
 	random := make([]byte, 16)
 	if _, err := rand.Read(random); err != nil {
 		receipt.Error = fmt.Sprintf("create test run identity: %v", err)
@@ -1076,17 +1196,52 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		receipt.Error = fmt.Sprintf("source directory: %v", err)
 		return
 	}
+	behavior, err := prepareTestBehavior(sourceDir, scenario, &receipt)
+	if err != nil {
+		receipt.Error = fmt.Sprintf("prepare behavior evidence: %v", err)
+		return
+	}
+	defer behavior.finish(&receipt)
+	commandFiles, err := prepareTestCommandFiles(sourceDir, scenario)
+	if err == nil && scenario.CommandExecution != nil {
+		err = behavior.verifyCommandFiles(commandFiles)
+	}
+	if err != nil {
+		receipt.Error = fmt.Sprintf("prepare contained command inputs: %v", err)
+		return
+	}
+	objects, err := prepareTestObjects(sourceDir, scenario, &receipt)
+	if err != nil {
+		receipt.Error = fmt.Sprintf("prepare object fixture: %v", err)
+		return
+	}
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+		defer cleanupCancel()
+		objects.cleanup(cleanupCtx, client, &receipt)
+	}()
+	postgres, err := prepareTestPostgres(sourceDir, scenario, &receipt)
+	if err != nil {
+		receipt.Error = fmt.Sprintf("prepare PostgreSQL fixture: %v", err)
+		return
+	}
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+		defer cleanupCancel()
+		postgres.cleanup(cleanupCtx, client, &receipt)
+	}()
 	config, err := resolveDevSourceConfig(sourceDir)
 	if err != nil {
 		receipt.Error = fmt.Sprintf("detect app shape: %v", err)
 		return
 	}
-	session, err := client.UpsertDevSession(ctx, scenario.Project, config.sessionRequest(receipt.RunID, scenario.Postgres, "", 0))
+	session, err := client.UpsertDevSession(ctx, scenario.Project, config.sessionRequest(receipt.RunID, scenario.Postgres, "", 0, nil))
 	if err != nil {
 		receipt.Error = fmt.Sprintf("create isolated test environment: %v", err)
 		return
 	}
 	receipt.AppSlug = session.App.Slug
+	receipt.WorkloadAppIDs = map[string]string{scenario.Project: session.App.ID}
 	type deployedTestService struct {
 		name, project, sourceDir string
 		config                   devSourceConfig
@@ -1162,22 +1317,51 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			return
 		}
 		projectName := scenario.Project + "-" + serviceName
-		serviceSession, err := client.UpsertDevSession(ctx, projectName, serviceConfig.sessionRequest(receipt.RunID, spec.Postgres, "", 0))
+		serviceSession, err := client.UpsertDevSession(ctx, projectName, serviceConfig.sessionRequest(receipt.RunID, spec.Postgres, "", 0, nil))
 		if err != nil {
 			receipt.Error = fmt.Sprintf("create test workload %s: %v", serviceName, err)
 			return
 		}
 		workloads = append(workloads, deployedTestService{name: serviceName, project: projectName, sourceDir: serviceDir, config: serviceConfig, session: serviceSession})
+		receipt.WorkloadAppIDs[serviceName] = serviceSession.App.ID
 	}
 	members := make([]api.ScenarioTestWorkload, 0, len(workloads))
 	for _, workload := range workloads {
 		members = append(members, api.ScenarioTestWorkload{Workload: workload.name, AppSlug: workload.session.App.Slug})
 	}
-	if err := client.RegisterScenarioTest(ctx, receipt.RunID, api.RegisterScenarioTestRequest{Members: members}); err != nil {
+	registration := api.RegisterScenarioTestRequest{SuspendResume: testSuspendResumePlan(scenario), ColdStart: testColdStartSpec(scenario, profile), Members: members, ManagedWork: scenario.ManagedWork}
+	if scenario.CommandExecution != nil {
+		registration.CommandVersion = 1
+	}
+	if scenario.Actions != nil {
+		registration.NetworkMode = scenario.Actions.Network
+		registration.WebhookMode = scenario.Actions.Webhooks
+		registration.ActionEvidenceVersion = api.ScenarioActionSnapshotVersion
+		registration.Simulation = scenario.Actions.Simulation
+		if registration.Simulation != nil {
+			registration.ActionEvidenceVersion = api.ScenarioSimulationSnapshotVersion
+		}
+	}
+	if err := client.RegisterScenarioTest(ctx, receipt.RunID, registration); err != nil {
 		receipt.Error = fmt.Sprintf("register isolated service namespace: %v", err)
 		return
 	}
 	registered = true
+	captureActions := func() {}
+	if scenario.Actions != nil {
+		receipt.Actions = &testActionEvidence{ManagedWorkSHA256: testManagedWorkDigest(scenario), SimulationSHA256: testSimulationPlanDigest(scenario.Actions.Simulation, members), Network: scenario.Actions.Network, Webhooks: scenario.Actions.Webhooks, PolicyVersion: 1, Status: "applied"}
+		if scenario.ManagedWork != nil && scenario.ManagedWork.PostgresFault != nil {
+			receipt.Actions.PostgresFaultSHA256 = rehearsalpg.Hash(*scenario.ManagedWork.PostgresFault)
+		}
+		names := make([]string, 0, len(members))
+		for _, member := range members {
+			names = append(names, member.Workload)
+		}
+		receipt.Actions.ColdStartSHA256 = testColdStartDigest(scenario, profile, names)
+		receipt.Actions.SuspendResumeSHA256 = testSuspendResumeDigest(scenario, names)
+		captureActions = newTestActionCollector(ctx, client, &receipt, names)
+		defer captureActions()
+	}
 	for _, workload := range workloads {
 		tcpSpec := scenario.Services[workload.name]
 		if workload.name == scenario.Project {
@@ -1322,6 +1506,14 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	}
 	// The nested deploy command has its own progress output. Keep --json's
 	// stdout as one machine-readable test receipt.
+	if err := objects.create(ctx, client, &receipt, session.App.ID); err != nil {
+		receipt.Error = "create isolated object fixture: " + err.Error()
+		return
+	}
+	if err := postgres.create(ctx, client, &receipt, session.App.ID); err != nil {
+		receipt.Error = "create isolated PostgreSQL fixture: " + err.Error()
+		return
+	}
 	advancePhase("deploy")
 	previousStdout := osStdout
 	if jsonOutput {
@@ -1338,6 +1530,10 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			receipt.Error = fmt.Sprintf("source deployment for %s failed (exit %d)", workload.name, deployResult)
 			return
 		}
+		if receipt.WorkloadDeploymentIDs == nil {
+			receipt.WorkloadDeploymentIDs = map[string]string{}
+		}
+		receipt.WorkloadDeploymentIDs[workload.name] = deploymentID
 		if workload.name == scenario.Project {
 			receipt.DeploymentID = deploymentID
 			receipt.SourceSHA256 = sourceSHA256
@@ -1379,6 +1575,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		"GREGALE_TEST_PROFILE="+profile,
 		"GREGALE_TEST_ENGINE=real-vm",
 	)
+	env = behavior.commandEnv(env)
 	env = append(env, bucketEnv...)
 	env = append(env, consumerEnv...)
 	for _, workload := range workloads[1:] {
@@ -1389,19 +1586,38 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			env = append(env, "GREGALE_TEST_SINK_"+key+"_TOKEN="+token)
 		}
 	}
+	commandRunner := &testContainedCommandRunner{client: client, scenario: scenario, receipt: &receipt, files: commandFiles, serviceSlugs: make(map[string]string)}
+	for _, workload := range workloads {
+		commandRunner.serviceSlugs[workload.name] = workload.session.App.Slug
+	}
+	runCommand := func(commandCtx context.Context, stage string, commandEnv, argv []string) error {
+		if scenario.CommandExecution != nil {
+			return commandRunner.run(commandCtx, stage, commandEnv, argv)
+		}
+		return runTestCommand(commandCtx, sourceDir, commandEnv, argv)
+	}
 	defer func() {
+		behavior.finish(&receipt)
+		if scenario.CommandExecution == nil {
+			captureActions()
+		}
 		beginCleanup()
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
 		defer cleanupCancel()
 		for _, command := range scenario.Cleanup {
-			if err := runTestCommand(cleanupCtx, sourceDir, env, command); err != nil {
+			if err := runCommand(cleanupCtx, "cleanup", env, command); err != nil {
 				receipt.addCleanupError(fmt.Sprintf("fixture cleanup: %v", err))
 			}
 		}
+		if scenario.CommandExecution != nil {
+			captureActions()
+		}
+		postgres.finish(cleanupCtx, client, &receipt)
+		objects.finish(cleanupCtx, client, &receipt)
 	}()
 	advancePhase("prepare_profile")
 	for _, command := range scenario.Setup {
-		if err := runTestCommand(ctx, sourceDir, env, command); err != nil {
+		if err := runCommand(ctx, "setup", env, command); err != nil {
 			receipt.Error = fmt.Sprintf("fixture setup: %v", err)
 			return
 		}
@@ -1412,10 +1628,25 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			return
 		}
 	}
+	if scenario.SuspendResume != nil {
+		advancePhase("suspend_resume")
+		names := make([]string, 0, len(workloads))
+		for _, w := range workloads {
+			names = append(names, w.name)
+		}
+		if err := prepareTestSuspendResume(ctx, client, names, &receipt, testSuspendResumePlan(scenario)); err != nil {
+			receipt.Error = fmt.Sprintf("suspend/resume checkpoint: %v", err)
+			return
+		}
+	}
 	serviceWakeBaseline := make(map[string]map[string]bool, len(workloads)-1)
 	serviceRequestBaseline := make(map[string]map[string]bool, len(workloads)-1)
 	serviceRequestCutoff := make(map[string]time.Time, len(workloads)-1)
-	for _, workload := range workloads[1:] {
+	verifyContainedColdWakes := func() {}
+	for _, workload := range workloads {
+		if workload.name == scenario.Project && testColdStartSpec(scenario, profile) == nil {
+			continue
+		}
 		timeline, err := client.GetAppWakeTimeline(ctx, workload.session.App.Slug, api.AppWakeTimelineOptions{})
 		if err != nil {
 			receipt.Error = fmt.Sprintf("read wake baseline for %s: %v", workload.name, err)
@@ -1449,6 +1680,22 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			serviceRequestBaseline[workload.name] = seenRequests
 		}
 	}
+	if testColdStartSpec(scenario, profile) != nil {
+		slugs := map[string]string{}
+		for _, w := range workloads {
+			slugs[w.name] = w.session.App.Slug
+		}
+		verified := false
+		verifyContainedColdWakes = func() {
+			if verified {
+				return
+			}
+			verified = true
+			verifyTestContainedColdWakes(ctx, client, slugs, serviceWakeBaseline, &receipt)
+		}
+		defer verifyContainedColdWakes()
+	}
+
 	if scenario.Chaos != nil && len(scenario.Steps) == 0 {
 		plan, err := scenario.Chaos.plan()
 		if err != nil {
@@ -1500,7 +1747,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 				env = append(env, "GREGALE_TEST_TRIGGER_OUTPUT="+triggerOutputPath)
 			}
 			if len(scenario.Trigger) > 0 {
-				if err := runTestCommand(ctx, sourceDir, env, scenario.Trigger); err != nil {
+				if err := runCommand(ctx, "trigger", env, scenario.Trigger); err != nil {
 					receipt.Error = fmt.Sprintf("application trigger command: %v", err)
 					receipt.captureWakeEvidence(recorder)
 					return
@@ -1572,52 +1819,61 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		if err != nil {
 			receipt.Error = fmt.Sprintf("application check: %v", err)
 		} else if len(scenario.Command) > 0 {
-			if err := runTestCommand(ctx, sourceDir, env, scenario.Command); err != nil {
+			if err := runCommand(ctx, "assertion", env, scenario.Command); err != nil {
 				receipt.Error = fmt.Sprintf("application assertion command: %v", err)
 			}
 		}
 	}
 	receipt.captureWakeEvidence(recorder)
 	advancePhase("lifecycle_evidence")
-	if err := verifyTestProfile(ctx, client, session.App.Slug, profile, receipt.Evidence); err != nil {
-		if receipt.Error != "" {
-			receipt.Error += "; "
+	verifyContainedColdWakes()
+	if testColdStartSpec(scenario, profile) == nil {
+		if err := verifyTestProfile(ctx, client, session.App.Slug, profile, receipt.Evidence); err != nil {
+			if receipt.Error != "" {
+				receipt.Error += "; "
+			}
+			receipt.Error += fmt.Sprintf("lifecycle evidence: %v", err)
 		}
-		receipt.Error += fmt.Sprintf("lifecycle evidence: %v", err)
-	}
-	if profile != "warm" {
-		receipt.ServiceWake = make(map[string]testServiceWakeEvidence, len(workloads)-1)
-		for _, workload := range workloads[1:] {
-			evidence, err := verifyTestServiceWake(ctx, client, workload.session.App.Slug, profile, serviceWakeBaseline[workload.name])
-			if err != nil {
-				if receipt.Error != "" {
-					receipt.Error += "; "
+		if profile != "warm" {
+			receipt.ServiceWake = make(map[string]testServiceWakeEvidence, len(workloads)-1)
+			for _, workload := range workloads[1:] {
+				wakeBaseline, _ := testServiceRestartBaseline(serviceWakeBaseline[workload.name], receipt.Steps, workload.name)
+				evidence, err := verifyTestServiceWake(ctx, client, workload.session.App.Slug, profile, wakeBaseline)
+				if err != nil {
+					if receipt.Error != "" {
+						receipt.Error += "; "
+					}
+					receipt.Error += fmt.Sprintf("service %s lifecycle evidence: %v", workload.name, err)
 				}
-				receipt.Error += fmt.Sprintf("service %s lifecycle evidence: %v", workload.name, err)
-			}
-			if evidence.WakeID != "" {
-				receipt.ServiceWake[workload.name] = evidence
-			}
-		}
-	} else {
-		receipt.ServiceHot = make(map[string]testServiceHotEvidence, len(workloads)-1)
-		for _, workload := range workloads[1:] {
-			var evidence testServiceHotEvidence
-			var err error
-			if len(scenario.Services[workload.name].TCPPorts) > 0 {
-				evidence, err = verifyTestServiceTCPHot(ctx, client, workload.session.App.Slug, serviceWakeBaseline[workload.name])
-			} else {
-				evidence, err = verifyTestServiceHot(ctx, client, workload.session.App.Slug,
-					serviceWakeBaseline[workload.name], serviceRequestBaseline[workload.name], serviceRequestCutoff[workload.name])
-			}
-			if err != nil {
-				if receipt.Error != "" {
-					receipt.Error += "; "
+				if evidence.WakeID != "" {
+					receipt.ServiceWake[workload.name] = evidence
 				}
-				receipt.Error += fmt.Sprintf("service %s hot evidence: %v", workload.name, err)
 			}
-			if evidence.RequestID != "" || evidence.NoNewWake {
-				receipt.ServiceHot[workload.name] = evidence
+		} else {
+			receipt.ServiceHot = make(map[string]testServiceHotEvidence, len(workloads)-1)
+			for _, workload := range workloads[1:] {
+				var evidence testServiceHotEvidence
+				var err error
+				wakeBaseline, plannedRestarts := testServiceRestartBaseline(serviceWakeBaseline[workload.name], receipt.Steps, workload.name)
+				if len(scenario.Services[workload.name].TCPPorts) > 0 {
+					evidence, err = verifyTestServiceTCPHot(ctx, client, workload.session.App.Slug, wakeBaseline)
+				} else {
+					evidence, err = verifyTestServiceHot(ctx, client, workload.session.App.Slug,
+						wakeBaseline, serviceRequestBaseline[workload.name], serviceRequestCutoff[workload.name])
+				}
+				evidence.PlannedRestarts = plannedRestarts
+				if len(plannedRestarts) > 0 {
+					evidence.NoNewWake = false
+				}
+				if err != nil {
+					if receipt.Error != "" {
+						receipt.Error += "; "
+					}
+					receipt.Error += fmt.Sprintf("service %s hot evidence: %v", workload.name, err)
+				}
+				if evidence.RequestID != "" || evidence.NoNewWake || len(evidence.PlannedRestarts) > 0 {
+					receipt.ServiceHot[workload.name] = evidence
+				}
 			}
 		}
 	}
@@ -1653,6 +1909,11 @@ func runTestScenarioSteps(ctx context.Context, client *Client, sourceDir, baseUR
 	for i, step := range steps {
 		evidence := testScenarioStepEvidence{Name: step.Name, StartedAt: time.Now().UTC(), Status: "failed"}
 		stepErr := func() error {
+			if step.Restart != nil {
+				var err error
+				evidence.Restart, err = runTestRestart(ctx, client, baseURL, env, consumerEnv, runID, *step.Restart, captures)
+				return err
+			}
 			if step.Chaos != nil {
 				plan, err := step.Chaos.plan()
 				if err != nil {
@@ -1736,9 +1997,22 @@ func runTestScenarioLoadOnce(ctx context.Context, client *Client, baseURL, runID
 	if client == nil {
 		return nil, errors.New("load.chaos_schedule requires the real-vm engine")
 	}
+	var correlationErr error
+	load, correlationErr = withTestRequestCorrelation(load)
+	if correlationErr != nil {
+		return nil, correlationErr
+	}
 	loadWithSchedule := *load
 	clock := newTestLoadPhaseClock(len(load.ChaosSchedule))
 	loadWithSchedule.ChaosPhaseClock = clock
+	for _, phase := range load.ChaosSchedule {
+		if (phase.RetryAmplification != nil && phase.RetryAmplification.PerRequest) || len(phase.RequestDeadlines) > 0 {
+			clock.correlationGate = &sync.RWMutex{}
+			clock.correlationGate.Lock()
+			loadWithSchedule.CorrelationGate = clock.correlationGate
+			break
+		}
+	}
 	started := make(chan time.Time, 1)
 	loadWithSchedule.OnStart = func(at time.Time) {
 		clock.start(at)
@@ -1747,6 +2021,14 @@ func runTestScenarioLoadOnce(ctx context.Context, client *Client, baseURL, runID
 	monitorCtx, cancelMonitor := context.WithCancel(ctx)
 	defer cancelMonitor()
 	monitorDone := make(chan []testCircuitObservation, 1)
+	poolDone := make(chan []testPoolSample, 1)
+	go func() {
+		poolDone <- monitorTestPoolExhaustion(monitorCtx, baseURL, consumerEnv, load.PoolExhaustion, clock)
+	}()
+	leakDone := make(chan []testConnectionSample, 1)
+	go func() {
+		leakDone <- monitorTestConnectionLeaks(monitorCtx, baseURL, consumerEnv, load.ConnectionLeaks, clock)
+	}()
 	scheduleCtx, cancelSchedule := context.WithCancel(ctx)
 	type scheduleOutcome struct {
 		result testChaosScheduleResult
@@ -1758,6 +2040,9 @@ func runTestScenarioLoadOnce(ctx context.Context, client *Client, baseURL, runID
 		select {
 		case at = <-started:
 		case <-scheduleCtx.Done():
+			if clock.correlationGate != nil {
+				clock.correlationGate.Unlock()
+			}
 			monitorDone <- nil
 			scheduleDone <- scheduleOutcome{err: scheduleCtx.Err()}
 			return
@@ -1778,6 +2063,8 @@ func runTestScenarioLoadOnce(ctx context.Context, client *Client, baseURL, runID
 	cancelSchedule()
 	cancelMonitor()
 	observations := <-monitorDone
+	leakSamples := <-leakDone
+	poolSamples := <-poolDone
 	if report != nil {
 		for i, fault := range outcome.result.Phases {
 			if i < len(report.ChaosPhases) {
@@ -1792,7 +2079,9 @@ func runTestScenarioLoadOnce(ctx context.Context, client *Client, baseURL, runID
 		}
 	}
 	if report != nil {
-		loadErr = errors.Join(loadErr, applyTestRetryAmplification(report, load, outcome.err), applyTestConnectionAttempts(report, load, outcome.err), applyTestCircuitBreakers(report, load, clock, observations, outcome.err))
+		loadErr = errors.Join(loadErr, applyTestRequestDeadlines(report, load), applyTestRetryAmplification(report, load, outcome.err), applyTestConnectionAttempts(report, load, outcome.err), applyTestCircuitBreakers(report, load, clock, observations, outcome.err))
+		loadErr = errors.Join(loadErr, applyTestConnectionLeaks(ctx, baseURL, consumerEnv, report, load, clock, leakSamples, outcome.err))
+		loadErr = errors.Join(loadErr, applyTestPoolExhaustion(ctx, baseURL, consumerEnv, report, load, clock, poolSamples, outcome.err))
 		loadErr = errors.Join(loadErr, applyTestOutageCycles(report, load, outcome.err))
 	}
 	if outcome.err != nil && !errors.Is(outcome.err, context.Canceled) {
@@ -2196,6 +2485,12 @@ func verifyWakeBootMethod(ctx context.Context, client testWakeBootClient, slug, 
 
 func runTestCommand(ctx context.Context, dir string, env, argv []string) error {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	// A canceled shell must also stop the children running the scenario. Bound
+	// pipe draining when a descendant retains stdout after the leader exits.
+	if configureLocalAppProcess(cmd) == nil {
+		cmd.Cancel = func() error { return signalLocalAppProcess(cmd, true) }
+	}
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Dir = dir
 	cmd.Env = env
 	cmd.Stdout = osStdout
@@ -2204,6 +2499,9 @@ func runTestCommand(ctx context.Context, dir string, env, argv []string) error {
 	}
 	cmd.Stderr = osStderr
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("%s: %w", argv[0], ctx.Err())
+		}
 		return fmt.Errorf("%s: %w", argv[0], err)
 	}
 	return nil

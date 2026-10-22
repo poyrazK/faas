@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -112,6 +115,10 @@ func assessTestPreflight(name string, scenario testScenario, profiles []string, 
 	if needsPostgres {
 		add("managed PostgreSQL", capabilityEnabled("managed-postgres"), "scenario requests an isolated database")
 	}
+	for _, reference := range testScenarioEnvironmentReferences(scenario) {
+		value, ok := os.LookupEnv(reference.name)
+		add("environment "+reference.workload+"/"+reference.name, ok && value != "", "required secret reference; value omitted")
+	}
 	return result
 }
 
@@ -121,5 +128,40 @@ func estimateTestWorkloadMinutes(scenario testScenario, runs int) int {
 	if scenario.Timeout != "" {
 		timeout, _ = time.ParseDuration(scenario.Timeout) // manifest validation has already run
 	}
-	return int(math.Ceil(float64((1+len(scenario.Services))*runs) * timeout.Minutes()))
+	workloads := 1 + len(scenario.Services)
+	if scenario.CommandExecution != nil {
+		workloads++
+		timeout += time.Minute
+	}
+	return int(math.Ceil(float64(workloads*runs) * timeout.Minutes()))
+}
+
+type testSecretEnvironmentReference struct{ workload, name string }
+
+func testScenarioEnvironmentReferences(scenario testScenario) []testSecretEnvironmentReference {
+	workloads := map[string]map[string]string{"app": scenario.Secrets}
+	for name, service := range scenario.Services {
+		workloads[name] = service.Secrets
+	}
+	seen := map[string]testSecretEnvironmentReference{}
+	for workload, secrets := range workloads {
+		for _, value := range secrets {
+			for _, match := range testSecretReferencePattern.FindAllString(value, -1) {
+				parts := strings.Split(match[2:len(match)-1], ".")
+				if len(parts) == 2 && parts[0] == "env" && testSecretEnvironmentPattern.MatchString(parts[1]) {
+					seen[workload+"/"+parts[1]] = testSecretEnvironmentReference{workload: workload, name: parts[1]}
+				}
+			}
+		}
+	}
+	keys := make([]string, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]testSecretEnvironmentReference, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, seen[key])
+	}
+	return result
 }

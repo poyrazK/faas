@@ -85,6 +85,8 @@ func (c *Client) RegisterEndpoint(ctx context.Context, endpoint Endpoint) error 
 		MaxConnections:             endpoint.MaxConnections,
 		MaxMessageBytes:            endpoint.MaxMessageBytes,
 		MaxConnectionAgeSeconds:    int64(endpoint.MaxConnectionAge / time.Second),
+		AccountMaxConnections:      endpoint.AccountMaxConnections,
+		LiveRoutes:                 append([]LiveRoute(nil), endpoint.LiveRoutes...),
 	}
 	return c.do(ctx, http.MethodPost, "/internal/endpoints", request, nil)
 }
@@ -211,6 +213,7 @@ func (c *Client) PublishRetainedWithStatus(ctx context.Context, endpointID, chan
 		DataBase64:       encodeMessage(message),
 		Binary:           message.Binary,
 		RetainedSequence: sequence,
+		ExpiresAt:        message.ExpiresAt,
 	}, &response)
 	status := PublishStatus{Queued: response.Queued, QueueFull: response.QueueFull, Failed: response.Failed}
 	if response.Subscribers != nil {
@@ -233,6 +236,15 @@ func (c *Client) BroadcastEphemeral(ctx context.Context, endpointID, channel str
 func (c *Client) Connections(ctx context.Context) ([]ConnectionInfo, error) {
 	var response []ConnectionInfo
 	err := c.do(ctx, http.MethodGet, "/internal/connections", nil, &response)
+	return response, err
+}
+
+// ChannelOccupancy returns the node's subscriber count for each channel of an
+// endpoint (ADR-1324).
+func (c *Client) ChannelOccupancy(ctx context.Context, endpointID string, channels []string) ([]ChannelOccupancy, error) {
+	query := url.Values{"channel": channels}
+	var response []ChannelOccupancy
+	err := c.do(ctx, http.MethodGet, "/internal/endpoints/"+pathPart(endpointID)+"/occupancy?"+query.Encode(), nil, &response)
 	return response, err
 }
 

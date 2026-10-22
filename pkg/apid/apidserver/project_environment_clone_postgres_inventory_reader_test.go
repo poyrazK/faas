@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func (p *cloneSnapshotProvider) WithSnapshotCopyReaderSQL(ctx context.Context, d managedpostgres.RestoreSourceDefinition, r managedpostgres.SnapshotCopyReaderRequest, read managedpostgres.SnapshotCopyReaderSQLRead) error {
@@ -60,7 +61,7 @@ func cloneInventorySQLConnection(t *testing.T, f cloneCoordinatorFixture, p *clo
 func TestPGClonePostgresSnapshotInventoryOwnedReaderSealsSQLAndRecoversCommittedReply(t *testing.T) {
 	f, original, p, sourceID := cloneReaderWorkerFixture(t, 16)
 	store := &cloneReaderInventoryFailureStore{cloneReaderFailureStore: original, loseInventory: true}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	var err error
 	f.lease, _, err = f.srv.prepareProjectEnvironmentClonePostgresCopyReaders(t.Context(), f.lease)
 	if err != nil {
@@ -74,7 +75,7 @@ func TestPGClonePostgresSnapshotInventoryOwnedReaderSealsSQLAndRecoversCommitted
 	if _, err := f.srv.readProjectEnvironmentClonePostgresInventory(t.Context(), f.lease, plans[0]); err == nil || p.readerSQLCalls != 1 || !p.readerSQLConn.IsClosed() {
 		t.Fatalf("committed inventory reply loss: %v", err)
 	}
-	receipt, err := store.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), f.lease, sourceID)
+	receipt, err := store.PgStore.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), f.lease, sourceID)
 	if err != nil || receipt.Sealed.CiphertextSHA256 == "" || receipt.Sealed.Scope.CaptureProviderResourceID != p.readerRequest.Capture.ExpectedTargetResourceID {
 		t.Fatalf("SQL inventory lost capture identity: %+v %v", receipt.Sealed.Scope, err)
 	}

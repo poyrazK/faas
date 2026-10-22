@@ -32,7 +32,16 @@ func validateCloneNativeAdoptedDatabaseTx(ctx context.Context, tx pgx.Tx, op Pro
 		}
 		return mapErr(err)
 	}
+	ready, dataID, err := checkpointPostgresRuntimeCatalogueTx(ctx, tx, op, receipt, source, point)
+	if err != nil {
+		return err
+	}
 	wantState := "provisioning"
+	observedGeneration := int64(0)
+	if ready {
+		wantState = "ready"
+		observedGeneration = 1
+	}
 	if receipt.State == "deleted" {
 		wantState = "deleted"
 	}
@@ -44,8 +53,8 @@ func validateCloneNativeAdoptedDatabaseTx(ctx context.Context, tx pgx.Tx, op Pro
 		actual.BackendID != receipt.BackendID || actual.BackendFingerprint != receipt.BackendFingerprint ||
 		pgUUIDString(actual.RestoreSourceDatabaseID) != source.DatabaseID || actual.RestoreSourceResourceID.String != source.DataResourceID ||
 		!actual.RestorePointInTime.Valid || !actual.RestorePointInTime.Time.Equal(point) || actual.ProviderResourceID.String != receipt.TargetProviderResourceID ||
-		actual.State != wantState || actual.DeletedAt.Valid != (wantState == "deleted") || actual.DataResourceID.Valid ||
-		actual.DesiredGeneration != 1 || actual.ObservedGeneration != 0 || actual.LeaseToken.Valid || actual.LeaseUntil.Valid {
+		actual.State != wantState || actual.DeletedAt.Valid != (wantState == "deleted") || actual.DataResourceID.Valid != ready || actual.DataResourceID.String != dataID ||
+		actual.DesiredGeneration != 1 || actual.ObservedGeneration != observedGeneration || actual.LeaseToken.Valid || actual.LeaseUntil.Valid {
 		return ErrConflict
 	}
 	return nil
@@ -66,6 +75,9 @@ func (s *PgStore) AdoptProjectEnvironmentClonePostgresSnapshotRestore(ctx contex
 	if err != nil {
 		return ProjectEnvironmentCloneDatabaseTarget{}, false, err
 	}
+	if len(op.Resources) > 0 && op.Resources[0].Kind == "data_checkpoint" {
+		return ProjectEnvironmentCloneDatabaseTarget{}, false, ErrConflict
+	}
 	q := new(sqlc.Queries)
 	if _, err := q.LockProjectEnvironmentCloneDatabaseAccount(ctx, tx, mustPgUUID(op.AccountID)); err != nil {
 		return ProjectEnvironmentCloneDatabaseTarget{}, false, mapErr(err)
@@ -77,6 +89,17 @@ func (s *PgStore) AdoptProjectEnvironmentClonePostgresSnapshotRestore(ctx contex
 	if op.Status != CloneOperationCapturing {
 		return ProjectEnvironmentCloneDatabaseTarget{}, false, ErrConflict
 	}
+	target, created, err := adoptCloneSnapshotRestoreTx(ctx, tx, op, snapshot, lease)
+	if err != nil {
+		return target, false, err
+	}
+	return target, created, mapErr(tx.Commit(ctx))
+}
+
+// Called only after legacy admission or authenticated checkpoint SQL isolation.
+func adoptCloneSnapshotRestoreTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, snapshot ProjectEnvironmentClonePostgresSnapshot, lease ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneDatabaseTarget, bool, error) {
+	q := sqlc.New()
+	sourceID := snapshot.SourceDatabaseID
 	receipt, err := readCloneSnapshotRestoreTx(ctx, tx, op, snapshot)
 	if err != nil {
 		return ProjectEnvironmentCloneDatabaseTarget{}, false, err
@@ -137,5 +160,5 @@ func (s *PgStore) AdoptProjectEnvironmentClonePostgresSnapshotRestore(ctx contex
 	if err := authorizeCloneObjectMutationTx(ctx, tx, op, &lease); err != nil {
 		return ProjectEnvironmentCloneDatabaseTarget{}, false, err
 	}
-	return ProjectEnvironmentCloneDatabaseTarget{ID: receipt.AdoptedDatabaseID, State: "provisioning"}, created, mapErr(tx.Commit(ctx))
+	return ProjectEnvironmentCloneDatabaseTarget{ID: receipt.AdoptedDatabaseID, State: "provisioning"}, created, nil
 }

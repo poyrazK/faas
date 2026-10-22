@@ -245,7 +245,8 @@ func TestEnvironmentWorkloadServingRequiresRouteAndQueueProofForServiceBoundWork
 	targets := map[string]string{"workload/worker": workerDeployment, "workload/api": serviceDeployment}
 	gateways := []string{"edge-a"}
 	servedAt, acknowledgedAt := time.Now().UTC(), time.Now().UTC()
-	receipt := EnvironmentWorkloadServingReceipt{GraphID: graph.ID, ReleaseSetID: releaseID, ExpectedGateways: gateways,
+	receipt := EnvironmentWorkloadServingReceipt{GraphID: graph.ID, ReleaseSetID: releaseID,
+		ReleaseCreatedAt: acknowledgedAt.Add(-time.Minute), ExpectedGateways: gateways,
 		Routes:           []EnvironmentWorkloadServingRoute{{AppID: serviceApp, DeploymentID: serviceDeployment, Generation: 17, Cutover: true}},
 		Acknowledgements: map[int64][]string{17: slices.Clone(gateways)}, Serving: true, ServedAt: &servedAt,
 		QueueAcknowledgements: []EnvironmentWorkloadServingQueueAck{{Mode: "pull", AppID: workerApp, BindingID: bindingID,
@@ -278,13 +279,19 @@ func TestEnvironmentWorkloadQueueServingReceiptRequiresExactActivePushConsumer(t
 	}}}
 	releaseID := uuid.NewString()
 	servedAt, acknowledgedAt := time.Now().UTC(), time.Now().UTC()
-	receipt := EnvironmentWorkloadServingReceipt{GraphID: graph.ID, ReleaseSetID: releaseID, Serving: true, ServedAt: &servedAt,
+	receipt := EnvironmentWorkloadServingReceipt{GraphID: graph.ID, ReleaseSetID: releaseID,
+		ReleaseCreatedAt: acknowledgedAt.Add(-time.Minute), Serving: true, ServedAt: &servedAt,
 		QueueAcknowledgements: []EnvironmentWorkloadServingQueueAck{{Mode: "push", AppID: appID, BindingID: bindingID, TriggerID: triggerID,
 			DeploymentID: deploymentID, InvocationID: invocationID, Acknowledged: acknowledgedAt}}}
 	targets := map[string]string{"workload/worker": deploymentID}
 	if !environmentWorkloadServingReceiptMatches(receipt, graph, releaseID, nil, targets) {
 		t.Fatal("exact push consumer acknowledgement did not satisfy queue serving")
 	}
+	receipt.ReleaseCreatedAt = acknowledgedAt.Add(time.Second)
+	if environmentWorkloadServingReceiptMatches(receipt, graph, releaseID, nil, targets) {
+		t.Fatal("queue acknowledgement from an older release satisfied serving")
+	}
+	receipt.ReleaseCreatedAt = acknowledgedAt.Add(-time.Minute)
 	receipt.QueueAcknowledgements[0].TriggerID = uuid.NewString()
 	if environmentWorkloadServingReceiptMatches(receipt, graph, releaseID, nil, targets) {
 		t.Fatal("acknowledgement from a different trigger satisfied serving")
@@ -314,7 +321,8 @@ func TestEnvironmentWorkloadQueueServingReceiptRequiresExactActivePullConsumer(t
 	}}}
 	releaseID := uuid.NewString()
 	servedAt, acknowledgedAt := time.Now().UTC(), time.Now().UTC()
-	receipt := EnvironmentWorkloadServingReceipt{GraphID: graph.ID, ReleaseSetID: releaseID, Serving: true, ServedAt: &servedAt,
+	receipt := EnvironmentWorkloadServingReceipt{GraphID: graph.ID, ReleaseSetID: releaseID,
+		ReleaseCreatedAt: acknowledgedAt.Add(-time.Minute), Serving: true, ServedAt: &servedAt,
 		QueueAcknowledgements: []EnvironmentWorkloadServingQueueAck{{Mode: "pull", AppID: appID, BindingID: bindingID,
 			DeploymentID: deploymentID, InvocationID: invocationID, Acknowledged: acknowledgedAt}}}
 	targets := map[string]string{"workload/worker": deploymentID}
@@ -338,6 +346,7 @@ func TestMemStoreGitOpsPullQueueCompletionFencesClaimAttempt(t *testing.T) {
 	sourceID, revisionID, graphID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	appID, deploymentID, bindingID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	invocationID, releaseID := uuid.NewString(), uuid.NewString()
+	releaseCreatedAt := time.Now().UTC().Add(-time.Minute)
 	enabled := true
 	source := EnvironmentGitSource{ID: sourceID, AccountID: accountID, ProjectID: projectID, EnvironmentID: environmentID,
 		EnvironmentSlug: "staging", Spec: api.EnvironmentGitSourceSpec{Mode: "enforce"}, Generation: 3, IntentVersion: 5,
@@ -358,7 +367,7 @@ func TestMemStoreGitOpsPullQueueCompletionFencesClaimAttempt(t *testing.T) {
 		graphs: map[string]EnvironmentWorkloadGraph{"current": graph}}
 	store.activeProjectReleaseSets[releaseKey(projectID, "staging")] = releaseID
 	store.projectReleaseSets[releaseID] = ProjectReleaseSet{ID: releaseID, ProjectID: projectID, EnvironmentSlug: "staging",
-		Active: true, Members: []ProjectReleaseMember{{AppID: appID, DeploymentID: deploymentID}}}
+		Active: true, CreatedAt: releaseCreatedAt, Members: []ProjectReleaseMember{{AppID: appID, DeploymentID: deploymentID}}}
 	store.deployments[deploymentID] = Deployment{ID: deploymentID, AppID: appID, Scope: "staging", Status: DeployLive}
 	store.invocations[invocationID] = Invocation{ID: invocationID, AppID: appID, AccountID: accountID,
 		Source: InvocationQueue, QueueBindingID: bindingID, DeploymentScope: "staging", State: InvocationDispatching,
@@ -378,6 +387,11 @@ func TestMemStoreGitOpsPullQueueCompletionFencesClaimAttempt(t *testing.T) {
 	if err != nil || current.State != InvocationDispatching || !current.QuotaReserved {
 		t.Fatalf("stale attempt changed invocation: %+v, err=%v", current, err)
 	}
+	revoked, cancel := WithOrgAccessFence(t.Context(), OrgAccessFence{OrgID: uuid.NewString(), AccountID: accountID, Revision: 1})
+	defer cancel(nil)
+	if err := store.CompleteEnvironmentGitOpsPullQueueDelivery(revoked, invocationID, 2, deploymentID, nil); !errors.Is(err, ErrOrgAccessRevoked) {
+		t.Fatalf("completion discarded its authorization context: %v", err)
+	}
 	result := []byte(`{"ok":true}`)
 	if err := store.CompleteEnvironmentGitOpsPullQueueDelivery(t.Context(), invocationID, 2, deploymentID, result); err != nil {
 		t.Fatalf("current attempt completion: %v", err)
@@ -393,6 +407,26 @@ func TestMemStoreGitOpsPullQueueCompletionFencesClaimAttempt(t *testing.T) {
 	if !acknowledged || acknowledgement.Mode != "pull" || acknowledgement.TriggerID != "" ||
 		acknowledgement.InvocationID != invocationID || acknowledgement.DeploymentID != deploymentID || !receipt.Serving {
 		t.Fatalf("pull completion did not atomically record its active serving proof: ack=%+v receipt=%+v", acknowledgement, receipt)
+	}
+	staleInvocationID := uuid.NewString()
+	staleCompletedAt := releaseCreatedAt.Add(-time.Second)
+	store.mu.Lock()
+	delete(store.environmentWorkloadQueueServingAcks[graphID], bindingID)
+	store.invocations[staleInvocationID] = Invocation{ID: staleInvocationID, AppID: appID, AccountID: accountID,
+		Source: InvocationQueue, QueueBindingID: bindingID, DeploymentScope: "staging", State: InvocationCompleted,
+		CompletedAt: &staleCompletedAt}
+	store.mu.Unlock()
+	if err := store.RecordEnvironmentGitOpsQueueServingAcknowledgement(t.Context(), EnvironmentWorkloadQueueServingAcknowledgement{
+		Mode: "pull", AppID: appID, Scope: "staging", BindingID: bindingID, DeploymentID: deploymentID,
+		InvocationID: staleInvocationID,
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("pre-activation completion acknowledged the active release: %v", err)
+	}
+	store.mu.Lock()
+	_, acknowledged = store.environmentWorkloadQueueServingAcks[graphID][bindingID]
+	store.mu.Unlock()
+	if acknowledged {
+		t.Fatal("pre-activation completion persisted queue serving proof")
 	}
 }
 
@@ -420,7 +454,8 @@ func TestMixedHTTPAndPushGraphRequiresBothServingReceipts(t *testing.T) {
 	}}
 	gateways := []string{"edge-a", "edge-b"}
 	releaseID, servedAt := uuid.NewString(), time.Now().UTC()
-	receipt := EnvironmentWorkloadServingReceipt{GraphID: graph.ID, ReleaseSetID: releaseID, ExpectedGateways: gateways,
+	receipt := EnvironmentWorkloadServingReceipt{GraphID: graph.ID, ReleaseSetID: releaseID,
+		ReleaseCreatedAt: servedAt.Add(-time.Minute), ExpectedGateways: gateways,
 		Routes: []EnvironmentWorkloadServingRoute{
 			{AppID: apiApp, DeploymentID: apiDeployment, Generation: 77, Cutover: true},
 			{AppID: functionApp, DeploymentID: functionDeployment, Generation: 78, Cutover: true},

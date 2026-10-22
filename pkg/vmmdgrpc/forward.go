@@ -65,6 +65,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -218,8 +219,13 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	// concurrency; a stricter per-chunk accounting would
 	// re-enter Begin/End inside the body goroutine and add
 	// lock contention for marginal signal value.
-	s.beginActivity(reqInit.GetInstance())
-	defer s.endActivity(reqInit.GetInstance())
+	finishActivity := s.beginDispatchActivity(reqInit)
+	defer finishActivity()
+	finishTrace := s.inflightTraces.begin(reqInit.GetInstance(), forwardTraceparent(reqInit))
+	defer finishTrace()
+	if err := s.prepareGuest(stream.Context(), reqInit.GetInstance()); err != nil {
+		return err
+	}
 	// Per-invocation extension hooks are deliberately asynchronous. A slow or
 	// absent extension must never add latency to the customer request path.
 	if hooker, ok := s.vmm.(extensionHookVMM); ok {
@@ -277,6 +283,10 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	if currentStreamBridgeVersion() == "v2" {
 		return s.forwardHTTPStreamV2(stream, reqInit, netnsName, maxBody, respTimeout)
 	}
+	ctx, err = s.publicForwardContext(ctx, reqInit.GetInstance())
+	if err != nil {
+		return err
+	}
 
 	// 2. Bridge the request body via a temp file (so the shell
 	//    script can `cat` it without colliding stdin with the
@@ -324,8 +334,14 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	// the documented live rollback becomes unusable. Keep the legacy script
 	// isolated to bash explicitly; v2 remains the default and does not
 	// depend on a shell.
-	cmd := exec.CommandContext(ctx, "ip", "netns", "exec", netnsName, "bash", "-c",
-		buildStreamingBridgeScript(reqInit, respTimeout))
+	cmd, guestFD, err := legacyBridgeCommand(ctx, reqInit, netnsName, respTimeout)
+	if err != nil {
+		_ = stdoutW.Close()
+		return status.Errorf(codes.Unavailable, "public bridge dial: %v", err)
+	}
+	if guestFD != nil {
+		defer func() { _ = guestFD.Close() }()
+	}
 	cmd.Stdin = stdinR
 	cmd.Stdout = stdoutW
 	var stderr bytes.Buffer
@@ -756,6 +772,9 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	// Per-instance concurrency accounting (mirrors ForwardHTTPStream).
 	s.beginActivity(reqInit.GetInstance())
 	defer s.endActivity(reqInit.GetInstance())
+	if err := s.prepareGuest(stream.Context(), reqInit.GetInstance()); err != nil {
+		return err
+	}
 	// An upgraded session outlives any request; instance teardown ends it
 	// through this context (H9-129).
 	ctx, release := s.forwardSessions.track(stream.Context(), reqInit.GetInstance())
@@ -779,6 +798,10 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	// the handler stays under the CLAUDE.md 50-line cap and the
 	// individual concerns (process lifecycle, streaming, error
 	// mapping) are testable in isolation.
+	ctx, err = s.publicForwardContext(ctx, reqInit.GetInstance())
+	if err != nil {
+		return err
+	}
 	cmd, stdinR, stdinW, stdoutR, stderr, err := rawBridgeSpawn(ctx, instancePID, dialPort)
 	if err != nil {
 		return err
@@ -895,8 +918,7 @@ func rawBridgeSpawn(ctx context.Context, instancePID int, dialPort uint32) (*exe
 }
 
 func rawBridgeCommand(ctx context.Context, instancePID int, bridgePath string, dialPort uint32) *exec.Cmd {
-	return exec.CommandContext(ctx, "nsenter", "--target", strconv.Itoa(instancePID), "--net", "--",
-		bridgePath, netns.GuestIP, strconv.FormatUint(uint64(dialPort), 10))
+	return namespaceOrPublicCommand(ctx, instancePID, bridgePath, dialPort)
 }
 
 // rawBridgeBodyLoop copies inbound body_chunks → bridge stdin.
@@ -1224,15 +1246,16 @@ func readUntilBlankLine(r *bufio.Reader) ([]byte, error) {
 // read deadline inside the cat loop (today, `cat <&3` is the
 // simpler streaming primitive and the total budget is enforced
 // by exec.CommandContext on the Go side).
-func buildStreamingBridgeScript(req *vmmdpb.ForwardHTTPRequestInit, respTimeout time.Duration) string {
+func buildStreamingBridgeScript(req *vmmdpb.ForwardHTTPRequestInit, respTimeout time.Duration, connected ...bool) string {
 	dialPort := req.GetPort()
 	if dialPort == 0 {
 		dialPort = uint32(netns.AppPort)
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "set -eu\n")
-	fmt.Fprintf(&b, "exec 3<>/dev/tcp/%s/%d\n",
-		netns.GuestIP, dialPort)
+	if len(connected) == 0 || !connected[0] {
+		fmt.Fprintf(&b, "exec 3<>/dev/tcp/%s/%d\n", netns.GuestIP, dialPort)
+	}
 	// Request line.
 	fmt.Fprintf(&b, "printf '%%s %%s HTTP/1.1\\r\\n' %s %s >&3\n",
 		shellQuote(req.GetMethod()), shellQuote(req.GetRequestUri()))
@@ -1240,11 +1263,14 @@ func buildStreamingBridgeScript(req *vmmdpb.ForwardHTTPRequestInit, respTimeout 
 	fmt.Fprintf(&b, "printf 'Host: %%s\\r\\n' %s >&3\n",
 		shellQuote(fmt.Sprintf("%s:%d", netns.GuestIP, dialPort)))
 	fmt.Fprintf(&b, "printf 'Transfer-Encoding: chunked\\r\\n' >&3\n")
+	// The shell owns one request/socket and cats until EOF. Keep-alive would
+	// retain the process after a complete Content-Length response.
+	fmt.Fprintf(&b, "printf 'Connection: close\\r\\n' >&3\n")
 	// Caller-supplied headers (already had hop-by-hop stripped
 	// upstream). Skip Content-Length because chunked encoding
 	// governs; emitting both would be a protocol violation.
 	for _, h := range req.GetHeaders() {
-		if strings.EqualFold(h.GetName(), "Content-Length") {
+		if strings.EqualFold(h.GetName(), "Content-Length") || strings.EqualFold(h.GetName(), "Connection") {
 			continue
 		}
 		fmt.Fprintf(&b, "printf '%%s: %%s\\r\\n' %s %s >&3\n",
@@ -1266,6 +1292,7 @@ func buildStreamingBridgeScript(req *vmmdpb.ForwardHTTPRequestInit, respTimeout 
 	fmt.Fprintf(&b, "printf '%%s\\n' \"$STATUS\"\n")
 	fmt.Fprintf(&b, "while IFS= read -r -t %d LINE <&3; do\n",
 		int(respTimeout.Seconds()))
+	fmt.Fprintf(&b, "  LINE=${LINE%%$'\\r'}\n")
 	fmt.Fprintf(&b, "  [ -z \"$LINE\" ] && break\n")
 	fmt.Fprintf(&b, "  printf '%%s\\n' \"$LINE\"\n")
 	fmt.Fprintf(&b, "done\n")
@@ -1279,7 +1306,7 @@ func buildStreamingBridgeScript(req *vmmdpb.ForwardHTTPRequestInit, respTimeout 
 	// exits when the guest closes the connection (the
 	// end-of-body signal for both Content-Length and
 	// chunked-encoded responses).
-	fmt.Fprintf(&b, "cat <&3\n")
+	fmt.Fprintf(&b, "exec cat <&3\n")
 	return b.String()
 }
 
@@ -1453,6 +1480,48 @@ func (s *Server) beginActivity(instanceID string) {
 	s.activity.Begin(instanceID)
 }
 
+// quietResumer is the ADR-1151 capability fcvm.Manager provides.
+type quietResumer interface {
+	QuietResume(ctx context.Context, instance string) error
+}
+
+// resumeQuiet resumes a quiet-paused instance (ADR-1151) before the bridge
+// dials its guest. Callers mark activity first, so the pause pass cannot
+// pause the guest again while the forward runs. A failed resume fails the
+// forward fast instead of letting it hang on a paused guest.
+func (s *Server) resumeQuiet(ctx context.Context, instanceID string) error {
+	q, ok := s.vmm.(quietResumer)
+	if !ok {
+		return nil
+	}
+	if err := q.QuietResume(ctx, instanceID); err != nil {
+		return status.Errorf(codes.Unavailable, "resume quiet-paused instance: %v", err)
+	}
+	return nil
+}
+
+// quietReporter reports an instance's ADR-1151 quiet pause state.
+type quietReporter interface {
+	QuietPauseState(instance string) (paused bool, since time.Time)
+}
+
+// addQuietPauseState fills InstanceStats.quiet_paused(_since) so schedd
+// can leave a quiet-paused instance's vCPUs out of the node's active vCPU.
+func (s *Server) addQuietPauseState(row *vmmdpb.InstanceStats) {
+	q, ok := s.vmm.(quietReporter)
+	if !ok {
+		return
+	}
+	paused, since := q.QuietPauseState(row.GetInstance())
+	if !paused {
+		return
+	}
+	row.QuietPaused = true
+	if !since.IsZero() {
+		row.QuietPausedSince = timestamppb.New(since)
+	}
+}
+
 // endActivity (PR-B, issue #462) is the nil-safe bridge to
 // ActivityTracker.End. Pairs with beginActivity as the defer
 // after ForwardHTTPStream's bridge work.
@@ -1501,7 +1570,10 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 	start := time.Now()
 	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
 
-	ctx := stream.Context()
+	ctx, routeErr := s.publicForwardContext(stream.Context(), reqInit.GetInstance())
+	if routeErr != nil {
+		return routeErr
+	}
 	// respTimeout was the v1 shell-bridge response-writer budget
 	// (ForwardStreamResponseTimeout = 900 s). For v2 the bridge
 	// session is capped at defaultSessionDeadline (24 h, set below
@@ -1550,9 +1622,10 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		}
 		sockPath := streamBridgeSockPathForRequest(reqInit.GetInstance())
 		sessionDeadline := time.Now().Add(streamBridgeSessionDeadline).UTC().Format(time.RFC3339)
-		bridgeEnv := streamBridgeEnv(reqInit)
+		bridgeEnv := netns.PublicForwardEnv(streamBridgeEnv(reqInit), publicTarget(ctx))
 		defer func() { _ = os.Remove(sockPath) }()
-		cmd, stderr, err = streamBridgeSpawn(ctx, bridgePath, netnsName, sockPath, netns.GuestIP, dialPort, sessionDeadline, bridgeEnv)
+		spawnNetns, guestIP := streamBridgeTarget(ctx, netnsName)
+		cmd, stderr, err = streamBridgeSpawn(ctx, bridgePath, spawnNetns, sockPath, guestIP, dialPort, sessionDeadline, bridgeEnv)
 		if err != nil {
 			s.log.Warn("vmmd: stream bridge spawn failed",
 				"instance", reqInit.GetInstance(), "netns", netnsName,
@@ -1929,8 +2002,11 @@ func resolveStreamBridgePath() (string, error) {
 var streamBridgeSpawn = streamBridgeSpawnReal
 
 func streamBridgeSpawnReal(ctx context.Context, bridgePath, netnsName, sockPath, guestIP string, guestPort uint32, sessionDeadline string, env []string) (*exec.Cmd, *bytes.Buffer, error) {
-	cmd := exec.CommandContext(ctx, "ip", "netns", "exec", netnsName,
-		bridgePath, sockPath, guestIP, strconv.FormatUint(uint64(guestPort), 10), sessionDeadline)
+	args := []string{sockPath, guestIP, strconv.FormatUint(uint64(guestPort), 10), sessionDeadline}
+	cmd := exec.CommandContext(ctx, bridgePath, args...)
+	if netnsName != "" {
+		cmd = exec.CommandContext(ctx, "ip", append([]string{"netns", "exec", netnsName, bridgePath}, args...)...)
+	}
 	cmd.Env = env
 	// Pdeathsig: if vmmd is SIGKILLed (OOM-killer, orchestrator
 	// restart, kernel panic reboot path that bypasses our deferred

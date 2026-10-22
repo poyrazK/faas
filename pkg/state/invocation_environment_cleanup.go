@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -135,7 +136,10 @@ func (m *MemStore) validateEnvironmentInvocationCleanupLocked(environmentID stri
 func (m *MemStore) deleteEnvironmentInvocationsLocked(environmentID string) {
 	for id, inv := range m.invocations {
 		if inv.EnvironmentID == environmentID {
+			m.captureEventExecutionTransitionLocked(inv, Invocation{}, time.Now().UTC(), true)
+			m.loseExecutionCoverageLocked(inv.AppID, "invocation_deleted", time.Now().UTC())
 			delete(m.invocations, id)
+			delete(m.workerReleasePins, id)
 			delete(m.invocationEnvironmentQueueReceipts, id)
 			delete(m.invocationWorkEnvironmentAdmissions, id)
 			delete(m.invocationEnvironmentQueueAdmissions, id)

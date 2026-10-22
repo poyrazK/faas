@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // adr: 457
 
@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routehealth"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func notificationEntry(status string) api.RouteHealthHistoryEntry {
@@ -25,33 +26,33 @@ func TestRouteHealthNotificationTransitionRules(t *testing.T) {
 	for _, scenario := range []string{"first_unknown", "first_regressed", "first_healthy", "retry", "escalation", "unknown_after_regression", "resume", "report", "revision", "stage", "stable", "anchor", "policy", "no_recipients_baseline"} {
 		t.Run(scenario, func(t *testing.T) {
 			entry := notificationEntry("regressed")
-			previous := routeHealthNotificationState{}
+			previous := state.RouteHealthNotificationState{}
 			if scenario != "first_unknown" && scenario != "first_regressed" && scenario != "first_healthy" {
-				opened, err := routeHealthTransition(previous, entry, "demo")
+				opened, err := state.RouteHealthTransition(previous, entry, "demo")
 				if err != nil {
 					t.Fatal(err)
 				}
 				previous = opened.State
 			}
-			want := AppWebhookEvent("")
+			want := state.AppWebhookEvent("")
 			switch scenario {
 			case "first_unknown":
 				entry.Report.Status = "unknown"
-				want = AppWebhookEventRouteHealthBlocked
+				want = state.AppWebhookEventRouteHealthBlocked
 			case "first_regressed":
-				want = AppWebhookEventRouteHealthBlocked
+				want = state.AppWebhookEventRouteHealthBlocked
 			case "first_healthy", "resume", "revision", "stage", "stable", "anchor", "policy":
 				entry.Report.Status = "healthy"
 			case "escalation":
 				previous.Status = "blocked_unknown"
-				want = AppWebhookEventRouteHealthBlocked
+				want = state.AppWebhookEventRouteHealthBlocked
 			case "unknown_after_regression":
 				entry.Report.Status = "unknown"
 			case "report":
 				entry.Report.Mode = "report"
 			}
 			if scenario == "resume" {
-				want = AppWebhookEventRouteHealthResumed
+				want = state.AppWebhookEventRouteHealthResumed
 			}
 			if scenario == "revision" {
 				entry.Report.Revision++
@@ -70,7 +71,7 @@ func TestRouteHealthNotificationTransitionRules(t *testing.T) {
 				entry.Policy.Version++
 			}
 			entry.Decision = routehealth.Decision(entry.Report)
-			next, err := routeHealthTransition(previous, entry, "demo")
+			next, err := state.RouteHealthTransition(previous, entry, "demo")
 			if err != nil || next.Event != want {
 				t.Fatalf("event %s want %s: %v", next.Event, want, err)
 			}
@@ -85,7 +86,7 @@ func TestRouteHealthNotificationTransitionRules(t *testing.T) {
 				if json.Unmarshal(next.Payload, &payload) != nil || payload.DecisionID != entry.ID || payload.HistoryPath != "/v1/apps/demo/route-health/deployments/"+entry.Report.DeploymentID+"/history/"+entry.ID {
 					t.Fatal("notification lost exact evidence")
 				}
-				if want == AppWebhookEventRouteHealthResumed && payload.BlockedDecisionID != previous.BlockedDecisionID {
+				if want == state.AppWebhookEventRouteHealthResumed && payload.BlockedDecisionID != previous.BlockedDecisionID {
 					t.Fatal("resume lost original hold")
 				}
 				if strings.Contains(string(next.Payload), "requests") || strings.Contains(string(next.Payload), "routes") {

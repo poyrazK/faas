@@ -54,6 +54,9 @@ func (m *Manager) readSnapshot(ctx context.Context, value manifest) (snapshot, e
 }
 
 func validSnapshot(value manifest, state snapshot) bool {
+	if value.Retirement != nil && (string(state.Data) != "{}" || state.AlarmAt != nil || len(state.Outbox) != 0) {
+		return false
+	}
 	if state.ID != value.ID || state.Version != value.Version || !json.Valid(state.Data) || !validAlarm(state.AlarmAt) {
 		return false
 	}

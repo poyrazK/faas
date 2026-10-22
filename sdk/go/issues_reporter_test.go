@@ -65,6 +65,9 @@ func TestIssueReporterCapturesExceptionAndBoundedContext(t *testing.T) {
 	if len(got.Event.Frames) == 0 || len(got.Event.StackTrace) == 0 {
 		t.Fatalf("stack evidence missing: %+v", got.Event)
 	}
+	if got.Event.GroupingStrategy != "" || got.Event.FrameOrder != "" {
+		t.Fatal("legacy reporter unexpectedly opted into new grouping")
+	}
 	if !strings.Contains(got.Event.Frames[0].Function, "TestIssueReporterCapturesExceptionAndBoundedContext") {
 		t.Fatalf("first stack frame did not identify the application capture site: %+v", got.Event.Frames[0])
 	}
@@ -100,11 +103,14 @@ func TestIssueReporterRetriesIdenticalPayload(t *testing.T) {
 
 	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{
 		BaseURL: srv.URL, App: "exports", Token: "g_issue_test", RetryDelay: 10 * time.Millisecond,
+		GroupingStrategy: "failure-site-v1",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	eventID := reporter.CaptureException(errors.New("temporary outage"))
+	eventID := reporter.CaptureException(errors.New("temporary outage"), faas.IssueContext{
+		ErrorCode: "PROVIDER_503", FingerprintOverride: strings.Repeat("é", 200),
+	})
 	if eventID == "" {
 		t.Fatal("CaptureException did not enqueue an event")
 	}
@@ -128,6 +134,10 @@ func TestIssueReporterRetriesIdenticalPayload(t *testing.T) {
 	var event faas.IssueEvent
 	if err := json.Unmarshal(bodies[0], &event); err != nil || event.EventID != eventID {
 		t.Fatalf("retry event identity = %+v, err %v", event, err)
+	}
+	if event.GroupingStrategy != "failure-site-v1" || event.FrameOrder != "newest-first" ||
+		event.ErrorCode != "PROVIDER_503" || event.FingerprintOverride != strings.Repeat("é", 128) {
+		t.Fatalf("retry grouping controls = %+v", event)
 	}
 }
 
@@ -342,6 +352,7 @@ func TestNewIssueReporterRejectsUnsafeConfiguration(t *testing.T) {
 		{BaseURL: "https://api.example.test/path", App: "exports", Token: "g_issue_test"},
 		{BaseURL: "https://api.example.test", App: "exports", Token: "owner-key"},
 		{BaseURL: "https://api.example.test", Token: "g_issue_test"},
+		{BaseURL: "https://api.example.test", App: "exports", Token: "g_issue_test", GroupingStrategy: "unknown"},
 	}
 	for _, options := range cases {
 		if reporter, err := faas.NewIssueReporter(options); err == nil {
@@ -370,4 +381,33 @@ type panickingError struct{}
 
 func (panickingError) Error() string {
 	panic("error formatter panic")
+}
+
+func TestIssueReporterCopiesOperationalContext(t *testing.T) {
+	var got faas.IssueEvent
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { json.NewDecoder(r.Body).Decode(&got); w.WriteHeader(202) }))
+	defer srv.Close()
+	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{BaseURL: srv.URL, App: "worker", Token: "g_issue_test", GroupingStrategy: "failure-site-v1", SymbolicationStrategy: "deployment-source-maps-v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := []faas.IssueBreadcrumb{}
+	for i := 0; i < 20; i++ {
+		entries = append(entries, faas.IssueBreadcrumb{OccurredAt: time.Now(), Category: "workflow", Level: "info", Message: strings.Repeat("x", 300)})
+	}
+	tags := map[string]string{"component": "payments", "email": "private@example.com"}
+	if reporter.CaptureException(errors.New("failed"), faas.IssueContext{Breadcrumbs: entries, Tags: tags}) == "" {
+		t.Fatal("not queued")
+	}
+	tags["component"] = "later"
+	entries[19].Message = "later"
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+	if err = reporter.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	reporter.Close(ctx)
+	if len(got.Breadcrumbs) != 16 || got.BreadcrumbsDropped != 4 || len(got.Breadcrumbs[15].Message) != 256 || got.Tags["component"] != "payments" || len(got.Tags) != 1 || got.SymbolicationStrategy != "deployment-source-maps-v1" {
+		t.Fatalf("unexpected context: %+v", got)
+	}
 }

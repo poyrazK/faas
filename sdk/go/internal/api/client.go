@@ -240,7 +240,15 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 	if !success(resp) {
 		var p Problem
 		if json.Unmarshal(data, &p) == nil && p.Code != "" {
+			if p.Status == 0 {
+				p.Status = resp.StatusCode
+			}
+			p.RetryAfter = resp.Header.Get("Retry-After")
 			return &APIError{Problem: p}
+		}
+		switch resp.StatusCode {
+		case 429, 500, 502, 503, 504:
+			return &APIError{Problem: Problem{Status: resp.StatusCode, Detail: fmt.Sprintf("API error: %s", resp.Status), RetryAfter: resp.Header.Get("Retry-After")}}
 		}
 		return fmt.Errorf("API error: %s", resp.Status)
 	}

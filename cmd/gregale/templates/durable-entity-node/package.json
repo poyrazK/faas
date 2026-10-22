@@ -1,0 +1,25 @@
+{
+  "name": "gregale-durable-entity-starter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node dev.mjs",
+    "prepare:validator": "node tools/prepare.mjs",
+    "test": "node --test test/*.test.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "generate:client": "node tools/generate-client.mjs",
+    "generate:client:check": "node tools/generate-client.mjs --check"
+  },
+  "dependencies": {
+    "@gregale/sdk-node": "file:packages/gregale-sdk.tgz"
+  },
+  "devDependencies": {
+    "typescript": "5.6.3",
+    "@types/node": "22.10.0"
+  },
+  "engines": {
+    "node": ">=22.10.0"
+  }
+}

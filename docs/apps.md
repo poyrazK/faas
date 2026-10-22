@@ -95,7 +95,7 @@ Review an app configuration change before applying it:
 gregale app my-api scale --plan --ram 512 --min 1
 gregale app my-api scale --plan --ram 512 --out scale-change.json
 gregale app my-api scale --apply scale-change.json --confirm
-gregale app my-api scale --plan --environment staging --profile medium
+gregale app my-api scale --plan --environment staging --size medium
 ```
 
 The preview reads current app settings and the account plan, then shows the
@@ -225,3 +225,73 @@ Concurrent target settings edits stop publication or rollback.
 The full clone workflow is still being implemented: these settings operations
 do not yet copy and publish active deployments with a coordinated database and
 object-storage capture, or isolate every related resource and runtime control.
+
+## Retained deleted apps
+
+`GET /v1/deleted-apps?limit=25` lists only the caller's retained deleted apps.
+The page is bounded to 1–50 records; pass its opaque `next_cursor` unchanged
+for the next page. Cursors belong to the account and deletion order. An
+invalid cursor requires restarting the inventory, not guessing a new cutoff.
+
+`GET /v1/deleted-apps/{id}` refreshes one owned retained identity. The returned
+`deleted_at`, `delete_grace_until`, and `evaluated_at` are authoritative
+lifecycle metadata. Missing legacy timestamps remain null. `restore_eligible`
+does not reserve quota/capacity; `grace_expired`, `purge_started`, or
+`metadata_unavailable` explains why the lifecycle review is blocked.
+
+After review, `POST /v1/deleted-apps/{id}/restore` accepts an empty body
+(or `{}`) and rechecks that exact app, its deadline, purge claim, quota, and
+capacity. It requires deploy-write/MFA and trusted browser origin for cookie
+authentication. A reused slug cannot redirect restoration to another app.
+Acceptance restores control-plane state; it does not prove workload execution.
+
+Restore has no durable idempotent replay receipt. After a timeout or lost
+response, inspect the deleted record and current app by exact ID before any
+new deliberate action. Never automatically retry or fall back to slug restore.
+Older servers reject the dedicated route. The legacy slug route remains
+bodyless-compatible; its optional `expected_app_id` fence is not a substitute
+for the dedicated route in a mixed-version fleet.
+
+## Open a shell in a fresh app VM
+
+`gregale app exec` runs a one-off command in a fresh VM built from the app's
+live deployment, with the deployment's files, environment, secrets and
+bindings. Add `-it` to attach your terminal to it, like `docker exec -it`:
+
+```sh
+gregale app my-api exec -it              # /bin/sh
+gregale app my-api exec -it -- bash -l
+echo 'select 1;' | gregale app my-api exec -i -- psql "$DATABASE_URL"
+```
+
+The VM is never routed, parked or snapshotted and is destroyed when the
+process exits, so the shell cannot affect serving traffic. `-i` streams
+stdin; `-t` allocates a terminal with your window size and follows resizes.
+The session ends when the process exits, after `--timeout-seconds` (default
+3600), or when the CLI disconnects; the CLI exits with the remote exit code.
+Gregale stores who started the session, the command and the exit code, never
+the terminal output.
+
+Interactive sessions are an operator-gated preview (ADR-1037). A deployment
+whose guest predates interactive sessions reports `interactive_unsupported`;
+redeploy it and retry. Attaching to an already-running serving instance is not
+supported yet.
+
+### Copy files out and forward ports
+
+The same fresh-VM sessions power two more commands:
+
+```sh
+gregale app my-api cp /app/dist ./dist          # directory or file
+gregale app my-api cp config/app.yaml -         # tar to stdout
+gregale app my-api port-forward 5432:db.svc.gregale:5432
+gregale app my-api port-forward 0:billing.svc.gregale:8080   # pick a free port
+```
+
+`cp` reads the path as the app's configured user, so it sees exactly what the
+app can read; relative paths start at the app's working directory. Copying
+into a VM is not offered because the VM is discarded when the session ends.
+`port-forward` listens on 127.0.0.1 and dials `HOST:PORT` from inside the
+app's network, with its egress policy, private networks and service names, so
+you can reach internal services and managed databases from your laptop. All
+local connections share one session; stop it with Ctrl-C.

@@ -115,8 +115,11 @@ Two options:
      affected plan. Only do this when the spike is fleet-wide, not
      per-app.
 
-The platform ceiling is `RequestBudgetMax = 30 s` (defined in
-`pkg/api/limits.go`); budgets above this are clamped at apply time.
+Each plan has a ceiling (`Limits.RequestBudgetMaxMs` in
+`pkg/api/limits.go`: Free 30 s, Hobby 60 s, Pro 5 min, Scale 15 min;
+ADR-1150); budgets above it are clamped at apply time. An app can raise
+its own budget up to that ceiling with `gregale app APP --request-timeout
+SECONDS`, which is usually the right fix for one slow app.
 
 ### If a specific downstream hop is the bottleneck
 

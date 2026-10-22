@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -50,7 +51,7 @@ func TestCollectQueueStatusIncludesScalingAndBindingHealth(t *testing.T) {
 		},
 	}
 
-	report, err := collectQueueStatus(context.Background(), fake, "demo")
+	report, err := main.CollectQueueStatus(context.Background(), fake, "demo")
 	if err != nil {
 		t.Fatalf("collectQueueStatus() error = %v", err)
 	}
@@ -71,32 +72,50 @@ func TestQueueStatusHealthWorstBindingWins(t *testing.T) {
 		{ConsumerLiveness: "degraded"},
 		{ConsumerLiveness: "stale"},
 	}
-	if got := queueStatusHealth(statuses); got != "stale" {
+	if got := main.QueueStatusHealth(statuses); got != "stale" {
 		t.Fatalf("queueStatusHealth() = %q, want stale", got)
 	}
-	if got := queueStatusHealth(nil); got != "not_configured" {
+	if got := main.QueueStatusHealth(nil); got != "not_configured" {
 		t.Fatalf("queueStatusHealth(nil) = %q, want not_configured", got)
 	}
 }
 
 func TestRenderQueueStatusIncludesActionableSignals(t *testing.T) {
-	oldOut := osStdout
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 	var out bytes.Buffer
-	osStdout = &out
+	(*main.OsStdout) = &out
 	oldestAge := int64(42)
 	lag := int64(7)
 	lagAge := 3.5
-	report := queueStatusReport{
+	report := main.QueueStatusReport{
 		AppSlug: "demo", Health: "degraded",
 		Queue:         api.QueueStateResponse{Depth: 12, InFlight: 2, PlanCap: 100, OldestPendingAgeSeconds: &oldestAge},
 		ScalingPolicy: &api.ScalingPolicy{Target: &api.ScalingTarget{Metric: "queue_depth", Value: 10}},
 		Bindings:      []api.QueueBindingStatusResponse{{Name: "default", QueueName: "default", Mode: "push", WorkloadClass: "worker", Enabled: true, ConsumerState: "active", ConsumerLiveness: "degraded", LagMessages: &lag, LagAgeSeconds: &lagAge, DeadLetter: 3, LastError: "worker timeout"}},
 	}
-	renderQueueStatus(report)
+	main.RenderQueueStatus(report)
 	for _, want := range []string{"health:     degraded", "depth=12", "oldest_age: 42s", "target=queue_depth:10", "lag=7", "lag_age=3.5s", "dead_letter=3", "last_error: worker timeout"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("rendered status missing %q: %s", want, out.String())
+		}
+	}
+}
+
+// A scaling policy's unset bounds read as the app's own: "min=0 max=0"
+// described a consumer that can run max_concurrency instances (H10-75).
+func TestQueueScalingBoundsUseAppDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		report main.QueueStatusReport
+		want   string
+	}{
+		{"unset policy", main.QueueStatusReport{ScalingPolicy: &api.ScalingPolicy{}, MaxConcurrency: 5}, "min=0 max=5 (max_concurrency)"},
+		{"no policy", main.QueueStatusReport{MinInstances: 1, MaxConcurrency: 3}, "min=1 max=3 (max_concurrency)"},
+		{"explicit", main.QueueStatusReport{ScalingPolicy: &api.ScalingPolicy{MinInstances: 2, MaxInstances: 4}, MaxConcurrency: 5}, "min=2 max=4"},
+	} {
+		if got := main.QueueScalingBounds(tc.report); got != tc.want {
+			t.Errorf("%s: bounds = %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }

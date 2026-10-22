@@ -113,8 +113,11 @@ def sync_detailed(
         slug (str):
         environment (str):
         idempotency_key (str | Unset):
-        body (CreateEnvironmentGitSourceRequest): Select a Git definition in the project
-            repository; repository identities are verified by the server.
+        body (CreateEnvironmentGitSourceRequest): Select a Git definition. GitHub uses the
+            project's bound repository; GitLab.com requires an account OAuth connection, a repository
+            path and an explicit ref. Repository identity is verified by the server. Both providers
+            support manual or verified protected-branch approval. Production enforcement remains
+            unavailable in this preview.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -152,8 +155,11 @@ def sync(
         slug (str):
         environment (str):
         idempotency_key (str | Unset):
-        body (CreateEnvironmentGitSourceRequest): Select a Git definition in the project
-            repository; repository identities are verified by the server.
+        body (CreateEnvironmentGitSourceRequest): Select a Git definition. GitHub uses the
+            project's bound repository; GitLab.com requires an account OAuth connection, a repository
+            path and an explicit ref. Repository identity is verified by the server. Both providers
+            support manual or verified protected-branch approval. Production enforcement remains
+            unavailable in this preview.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -186,8 +192,11 @@ async def asyncio_detailed(
         slug (str):
         environment (str):
         idempotency_key (str | Unset):
-        body (CreateEnvironmentGitSourceRequest): Select a Git definition in the project
-            repository; repository identities are verified by the server.
+        body (CreateEnvironmentGitSourceRequest): Select a Git definition. GitHub uses the
+            project's bound repository; GitLab.com requires an account OAuth connection, a repository
+            path and an explicit ref. Repository identity is verified by the server. Both providers
+            support manual or verified protected-branch approval. Production enforcement remains
+            unavailable in this preview.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -223,8 +232,11 @@ async def asyncio(
         slug (str):
         environment (str):
         idempotency_key (str | Unset):
-        body (CreateEnvironmentGitSourceRequest): Select a Git definition in the project
-            repository; repository identities are verified by the server.
+        body (CreateEnvironmentGitSourceRequest): Select a Git definition. GitHub uses the
+            project's bound repository; GitLab.com requires an account OAuth connection, a repository
+            path and an explicit ref. Repository identity is verified by the server. Both providers
+            support manual or verified protected-branch approval. Production enforcement remains
+            unavailable in this preview.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

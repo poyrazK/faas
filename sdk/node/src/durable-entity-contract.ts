@@ -6,4 +6,7 @@ export const DURABLE_ENTITY_PROTOCOL_VERSION = 1;
 export const DURABLE_ENTITY_OUTBOX_PROTOCOL_VERSION = 2;
 export const DURABLE_ENTITY_MAX_REQUEST_BYTES = 2097152;
 export const DURABLE_ENTITY_MAX_TRANSITION_BYTES = 1048576;
+export const DURABLE_ENTITY_MAX_IDENTITY_BYTES = 256;
+export const DURABLE_ENTITY_MAX_PENDING_OUTBOX = 128;
 export const DURABLE_ENTITY_HANDLER_PATH = "/__gregale/entities";
+export const DURABLE_ENTITY_LOCAL_LIMITS = Object.freeze({"transition_bytes": 1048576, "identity_bytes": 256, "outbox_messages": 16, "outbox_payload_bytes": 65536, "outbox_bytes": 262144});

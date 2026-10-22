@@ -5,26 +5,38 @@
       "id": "ai-gateway",
       "name": "AI gateway",
       "category": "data",
-      "description": "Call LLM providers through managed outbound integrations with hard token and cost caps, per-app guardrails, cross-provider fallback routes, key pools, budget alerts and usage reports.",
-      "maturity": "internal",
-      "plans": [],
-      "docs_url": "/docs/ops/outbound-integrations",
-      "acceptance_test": "pkg/outbound/ai_translate_test.go::TestOpenAIRouteFallsBackAcrossProvidersWithTranslation",
-      "operator_flag": "FAAS_AI_GATEWAY_ENABLED"
-    },
-    {
-      "id": "api-monetization",
-      "name": "API monetization",
-      "category": "billing",
-      "description": "Identify your API's consumers with keys, package prices and edge-enforced request limits as named plans that warn consumers before their cap, price usage with versioned rate cards (monthly included requests, graduated tiers, and per-route weights), and produce revisioned usage statements to invoice through your own billing system.",
+      "description": "Call LLM providers through managed outbound integrations with hard token and cost caps, per-app and per-end-user limits, guardrails and content redaction, cross-provider fallback routes, key pools, budget alerts, usage reports, opt-in request capture and replay.",
       "maturity": "preview",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
+      "docs_url": "/docs/ai-gateway",
+      "acceptance_test": "pkg/outbound/ai_gateway_acceptance_test.go::TestAIGatewayPreviewAcceptance",
+      "operator_flag": "FAAS_AI_GATEWAY_ENABLED"
+    },
+    {
+      "id": "anomaly-alerts",
+      "name": "Anomaly alerts",
+      "category": "observability",
+      "description": "Alert when an app's error rate, latency, cold starts, or traffic move far from their usual level for that time of day, without choosing a fixed threshold.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/744-anomaly-alerts",
+      "operator_flag": "FAAS_ANOMALY_ALERTS_ENABLED",
+      "acceptance_test": "pkg/alerts/anomaly_test.go::TestAnomalyRuleFiresAboveBaseline"
+    },
+    {
+      "id": "api-monetization",
+      "name": "API monetization",
+      "category": "billing",
+      "description": "Identify your API's consumers with keys, package prices and edge-enforced request limits as named plans that warn consumers before their cap, price usage per request, compute second, response megabyte or unit your app reports, several at once, with versioned rate cards (monthly included units, graduated or volume tiers, per-route weights, base fees and minimum spend optionally prorated, and free trials, per app or per customer with reusable customer plans), bill every customer's month in one run, sell prepaid credit and cap each customer's monthly spend, and send the statements to your own Stripe, Paddle or Lago as invoices your provider can also send, charge and tax, whose payment status Gregale follows and can block unpaid customers on. Usage is durable before a billed response completes.",
+      "maturity": "internal",
+      "plans": [],
       "docs_url": "/docs/api-monetization",
-      "acceptance_test": "pkg/apid/apidserver/handlers_consumer_usage_statements_test.go::TestAPIConsumerUsageStatementSnapshotAndFinalize"
+      "operator_flag": "FAAS_API_MONETIZATION_ENABLED",
+      "acceptance_test": "pkg/apid/apidserver/billing_runs_test.go::TestBillingRunExportsEveryCustomer"
     },
     {
       "id": "application-messaging",
@@ -39,6 +51,17 @@
       ],
       "docs_url": "/docs/event-driven#application-inbox",
       "acceptance_test": "pkg/apid/apidserver/handlers_application_messaging_test.go::TestSendAppMessageEnqueuesCloudEvent"
+    },
+    {
+      "id": "change-timeline",
+      "name": "Change timeline",
+      "category": "observability",
+      "description": "See an app's deploys, rollouts, rollbacks, configuration changes, incidents, and health transitions on one timeline, without forwarding events anywhere.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/751-app-change-timeline",
+      "operator_flag": "FAAS_CHANGE_TIMELINE_ENABLED",
+      "acceptance_test": "pkg/apid/apidserver/handlers_change_timeline_test.go::TestGetChangeTimeline_MergesSources"
     },
     {
       "id": "circuit-breaking",
@@ -106,6 +129,56 @@
       ],
       "docs_url": "https://gregale.dev/docs/custom-domains",
       "acceptance_test": "pkg/gateway/allowlist_test.go::TestOnDemandAllowlist_CustomDomainTakesPrecedence"
+    },
+    {
+      "id": "custom-metric-history",
+      "name": "Custom metric history",
+      "category": "observability",
+      "description": "Chart and alert on the app's own pushed metrics, such as orders pending or failed payments, with history and OpenTelemetry ingestion.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/745-custom-metric-history",
+      "operator_flag": "FAAS_CUSTOM_METRIC_HISTORY_ENABLED",
+      "acceptance_test": "pkg/apid/apidserver/custom_metric_exporter_test.go::TestCustomMetricExporterExportsOnlyFreshValues"
+    },
+    {
+      "id": "custom-slos",
+      "name": "SLOs and error budgets",
+      "category": "observability",
+      "description": "Define availability and latency objectives per app and track how much of each error budget is left over a 7- or 30-day window, with live burn rates.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/slos",
+      "acceptance_test": "pkg/apid/apidserver/handlers_slo_status_test.go::TestGetSLOReportsBudgetFromHourlyRows"
+    },
+    {
+      "id": "data-pipelines",
+      "name": "Managed Postgres data pipelines",
+      "category": "data",
+      "description": "Continuously mirror selected external PostgreSQL tables into a dedicated managed database and expose explicitly authorized reads through the Data API. Staging qualification only.",
+      "maturity": "internal",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/data-pipelines",
+      "acceptance_test": "pkg/datapipeline/native_test.go::TestNativePipelineEndToEnd"
+    },
+    {
+      "id": "datadog-integration",
+      "name": "Datadog integration",
+      "category": "observability",
+      "description": "Send an app's logs and deployment events to Datadog with one command, tagged with service, env, and version so they correlate with existing Datadog dashboards.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/752-datadog-integration",
+      "operator_flag": "FAAS_DATADOG_INTEGRATION_ENABLED",
+      "acceptance_test": "cmd/gregale/commands_add_datadog_test.go::TestCmdAddDatadog_ConfiguresDrainAndWebhook"
     },
     {
       "id": "declarative-response-caching",
@@ -378,6 +451,17 @@
       "acceptance_test": "cmd/gatewayd-internal/backend_test.go::TestPgRouter_InternalAppIsNotPubliclyRouted"
     },
     {
+      "id": "product-control",
+      "name": "Gregale Product Control",
+      "category": "product",
+      "description": "Internally guide setup with verified Auth workspaces, manage live role permissions, delegated customer teams and owner-offered self-service plan changes, preserve accepted prices and consumed starts, inspect readiness and activation, and control confirmed execution, recoverable requests, reviewed statements, credits and invoice handoffs through customer and owner consoles.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/ops/product-control",
+      "operator_flag": "FAAS_PRODUCT_CONTROL_ENABLED",
+      "acceptance_test": "pkg/apid/apidserver/product_control_test.go::TestProductControlInternalBoundary"
+    },
+    {
       "id": "production-route-monitoring",
       "name": "Production route budgets",
       "category": "observability",
@@ -396,7 +480,7 @@
       "name": "Progressive rollouts and rollback",
       "category": "delivery",
       "description": "Shift traffic between immutable deployment revisions, advance a canary ladder automatically while health signals stay clean, and roll back to a named revision.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "free",
         "hobby",
@@ -404,7 +488,7 @@
         "scale"
       ],
       "docs_url": "/docs/deploys",
-      "acceptance_test": "pkg/sched/invariants_property_test.go::TestProperty_RolloutGrant_AllowsExactlyOneOverlap"
+      "acceptance_test": "cmd/e2e/safe_release_drill_metal_test.go::TestSafeReleaseDrillMetal"
     },
     {
       "id": "request-retry",
@@ -505,6 +589,28 @@
       "acceptance_test": "pkg/gateway/handler_test.go::TestColdWakeReturns200AndHeader"
     },
     {
+      "id": "selective-data-repair",
+      "name": "Selective data repair",
+      "category": "data",
+      "description": "Explicitly record PostgreSQL field updates, review inverse-update candidates and conflicts, rehearse through an operator runner or gated schedd/vmmd tasks, and apply an approved plan with fresh row versions and durable receipts. Internal hosted Operations workflow with account approvals, cleanup fencing and receipt recovery; native production qualification remains pending.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/data-repair",
+      "operator_flag": "GREGALE_DATA_REPAIR_ENABLED",
+      "acceptance_test": "pkg/datarepair/repair_test.go::TestSelectiveRepairRealIsolatedRehearsal"
+    },
+    {
+      "id": "service-map",
+      "name": "Service map",
+      "category": "observability",
+      "description": "See which apps call which, with call volume, error rate, and latency per edge, from unsampled platform data and without instrumenting any service.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/service-map",
+      "operator_flag": "FAAS_SERVICE_MAP_ENABLED",
+      "acceptance_test": "pkg/apid/servicemap/service_test.go::TestGetServiceMap_HappyPath_WithProm"
+    },
+    {
       "id": "source-deploy",
       "name": "Source deploys",
       "category": "delivery",
@@ -532,6 +638,20 @@
       ],
       "docs_url": "https://gregale.dev/docs/runtime-node",
       "acceptance_test": "pkg/gateway/forwardproxy_test.go::TestRawStreamReverseProxy_RemoteWakeNode"
+    },
+    {
+      "id": "synthetic-checks",
+      "name": "Synthetic checks",
+      "category": "observability",
+      "description": "Request a path on your app every 5, 15 or 60 minutes through the public edge and track uptime, latency and failures, even when no users are calling it.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/synthetic-checks",
+      "acceptance_test": "pkg/synthetics/runner_test.go::TestRunOnceRecordsOutcomes"
     },
     {
       "id": "worker-pools",

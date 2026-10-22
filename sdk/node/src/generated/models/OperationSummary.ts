@@ -17,7 +17,7 @@ export type OperationSummary = {
   id: string;
   name: string;
   generation: number;
-  state: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation';
+  state: 'accepted' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation';
   progress?: OperationProgress;
   completion_delivery: OperationDeliverySummary;
   cancellation_requested: boolean;

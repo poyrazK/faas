@@ -59,3 +59,40 @@ func TestInstanceHasNoHTTPContract(t *testing.T) {
 		}
 	}
 }
+
+// H10-23: a direct OCI image readies on its TCP listener (no health path);
+// its plan-default /healthz probe got 404 and parked a healthy nginx as
+// liveness_exhausted. Only that case tolerates 404.
+func TestTCPReadinessLivenessToleratesNotFound(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		healthPath string
+		override   json.RawMessage
+		want       bool
+	}{
+		{name: "tcp readiness tolerates 404", want: true},
+		{name: "declared health path does not", healthPath: "/healthz"},
+		{name: "explicit liveness probe does not", override: json.RawMessage(`{"path":"/live"}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestManager(&fakeRunner{}, &fakeVMM{})
+			var got LivenessProbeConfig
+			m.WithLivenessProbes(NewLivenessRegistry(), LivenessProbeConfig{Path: "/healthz", PeriodSeconds: 5, ConsecutiveFailures: 3}).
+				WithLivenessProbeStarter(func(_ context.Context, _ string, _ int, _ string, cfg LivenessProbeConfig) context.CancelFunc {
+					got = cfg
+					return func() {}
+				})
+			m.mu.Lock()
+			m.live["web"] = &Instance{HealthcheckPath: tc.healthPath, ExecutionMode: api.ExecutionModeRequest}
+			m.mu.Unlock()
+			m.startLivenessLoop(t.Context(), "web", 1, tc.override)
+			if got.PeriodSeconds == 0 {
+				t.Fatalf("probe not started: %+v", got)
+			}
+			if got.NotFoundIsAlive != tc.want {
+				t.Fatalf("NotFoundIsAlive = %v, want %v", got.NotFoundIsAlive, tc.want)
+			}
+			m.cancelLivenessLoop("web")
+		})
+	}
+}

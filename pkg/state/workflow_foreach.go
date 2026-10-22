@@ -353,6 +353,14 @@ func workflowControlSteps(ctx context.Context, db sqlc.DBTX, runID string) (map[
 			value := row.NextRetryAt.Time
 			step.NextRetryAt = &value
 		}
+		if row.StartedAt.Valid {
+			value := row.StartedAt.Time
+			step.StartedAt = &value
+		}
+		if row.Error.Valid {
+			value := row.Error.String
+			step.Error = &value
+		}
 		steps[row.StepName] = step
 	}
 	return steps, nil

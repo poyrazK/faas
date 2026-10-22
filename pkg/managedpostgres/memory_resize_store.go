@@ -3,16 +3,23 @@ package managedpostgres
 import (
 	"context"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/db"
 )
 
 var _ ResizeStore = (*MemoryStore)(nil)
 
-func (s *MemoryStore) ReserveResize(_ context.Context, expected Database, operation ResizeOperation, now time.Time) (ResizeOperation, error) {
+func (s *MemoryStore) ReserveResize(ctx context.Context, expected Database, operation ResizeOperation, now time.Time) (ResizeOperation, error) {
 	if !validResizeOperation(operation) || now.IsZero() || !resizeSourceMatches(expected, operation) {
 		return ResizeOperation{}, ErrInvalid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockIntent, intentErr := db.LockMemoryIntent(ctx)
+	if intentErr != nil {
+		return ResizeOperation{}, intentErr
+	}
+	defer unlockIntent()
 	if existing, ok := s.resizes[operation.ID]; ok {
 		if existing.AccountID != operation.AccountID || !sameComputeChangeRequest(existing, operation) {
 			return ResizeOperation{}, ErrConflict
@@ -97,12 +104,17 @@ func (s *MemoryStore) ActiveResize(_ context.Context, account, database string) 
 	return ResizeOperation{}, ErrNotFound
 }
 
-func (s *MemoryStore) FinishResize(_ context.Context, expected Database, operation ResizeOperation, observed ObservedDatabase, now time.Time) (Database, error) {
+func (s *MemoryStore) FinishResize(ctx context.Context, expected Database, operation ResizeOperation, observed ObservedDatabase, now time.Time) (Database, error) {
 	if validateResizeObservation(operation, observed) != nil || observed.Status != ProviderStatusReady || observed.Spec != operation.TargetSpec() {
 		return Database{}, ErrConflict
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlockIntent, intentErr := db.LockMemoryIntent(ctx)
+	if intentErr != nil {
+		return Database{}, intentErr
+	}
+	defer unlockIntent()
 	database, ok := s.databases[expected.ID]
 	actual, found := s.resizes[operation.ID]
 	if !ok || !found || validateResizeObservation(actual, observed) != nil || !sameComputeChangeRequest(actual, operation) || actual.State != ResizePending || actual.Generation != operation.Generation || actual.TargetSpec() != operation.TargetSpec() ||

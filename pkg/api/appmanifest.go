@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // AppManifestPath is where imaged writes the manifest inside the app layer and
@@ -218,8 +219,12 @@ type AppManifest struct {
 	RestartPolicy    string                `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
-	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
-	Tracing          *TracingConfig        `json:"tracing,omitempty"`
+	// Pause declares when the platform may pause the VM (ADR-1151):
+	// between_requests, when_idle or never. Empty selects the default for
+	// the app's type (EffectivePause).
+	Pause     string           `json:"pause,omitempty"`
+	Profiling *ProfilingConfig `json:"profiling,omitempty"`
+	Tracing   *TracingConfig   `json:"tracing,omitempty"`
 	// StartupDeadlineS is the upper bound on time-to-ready. After this
 	// many seconds without reaching READY the instance transitions to
 	// FAILED with lifecycle_failure_reason='startup_fail' (ADR-138
@@ -234,6 +239,10 @@ type AppManifest struct {
 	// Zero inherits the plan/type default; positive values are bounded by
 	// the plan request-budget ceiling.
 	RequestTimeoutS int `json:"request_timeout_s,omitempty"`
+	// FunctionConcurrency is how many requests one Node or Python function
+	// worker serves at once (ADR-1342). Zero and one keep one request per
+	// worker; the plan's per-VM concurrency bound caps it.
+	FunctionConcurrency int `json:"function_concurrency,omitempty"`
 	// ServiceReplicas is the per-deployment replica scaffold (ADR-137
 	// §Decision 3). Only honoured when ExecutionMode=service. M-2
 	// lays the schema + admission; M-4 workstream E lands the
@@ -272,9 +281,85 @@ type AppManifest struct {
 	// RevisionPinTTLSeconds opts into retaining replaced revisions for exact
 	// client pins. Zero disables skew protection.
 	RevisionPinTTLSeconds int `json:"revision_pin_ttl_seconds,omitempty"`
+	// ReleasePolicy selects how a production release with a serving
+	// predecessor rolls out when the deploy names no rollout policy
+	// (ADR-1446). Empty or "safe" is the adaptive health-gated canary with
+	// first-wake 5xx rollback; "fast" the aggressive ladder with the same
+	// rollback (ADR-1450); "immediate" moves all traffic at once.
+	ReleasePolicy string `json:"release_policy,omitempty"`
+	// ReleaseProbePaths are up to ReleaseProbePathsMax concrete GET paths the
+	// default rollout probe checks instead of "/" (ADR-1449).
+	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 }
 
 const ManagedVersionAffinityCookieName = "__Host-gregale_version"
+
+// Release policies (ADR-1446). The empty string reads as ReleasePolicySafe.
+const (
+	ReleasePolicySafe      = "safe"
+	ReleasePolicyImmediate = "immediate"
+	// ReleasePolicyFast rolls out on FastReleaseCanaryPreset (ADR-1450).
+	ReleasePolicyFast = "fast"
+	// DefaultReleaseCanaryPreset is the ladder a safe release uses when the
+	// deploy names none; it is the same ladder `gregale deploy --safe` uses.
+	// "adaptive" is the balanced ladder paced by evidence (ADR-1321).
+	DefaultReleaseCanaryPreset = "adaptive"
+	// FastReleaseCanaryPreset is the ladder for release_policy and
+	// `deploy --rollout` fast: 5% -> 50% -> 100%, a minute each (ADR-1450).
+	FastReleaseCanaryPreset = "aggressive"
+)
+
+// ValidProbePath reports whether path is a concrete absolute path a synthetic
+// probe may request (ADR-847, ADR-1449): at most RouteHealthMaxPathBytes, with
+// no query, fragment, wildcard, parameter, whitespace or control character.
+func ValidProbePath(path string) bool {
+	return len(path) > 0 && len(path) <= RouteHealthMaxPathBytes && strings.HasPrefix(path, "/") &&
+		!strings.ContainsAny(path, "?#*\\{}") &&
+		strings.IndexFunc(path, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
+}
+
+// ValidateReleaseProbePaths checks an app's release_probe_paths (ADR-1449):
+// at most ReleaseProbePathsMax distinct probe paths.
+func ValidateReleaseProbePaths(paths []string) error {
+	if len(paths) > ReleaseProbePathsMax {
+		return fmt.Errorf("release_probe_paths: at most %d paths; got %d", ReleaseProbePathsMax, len(paths))
+	}
+	seen := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		if !ValidProbePath(p) {
+			return fmt.Errorf("release_probe_paths: %q must be a concrete absolute path without queries, fragments, wildcards or parameters", p)
+		}
+		if seen[p] {
+			return fmt.Errorf("release_probe_paths: %q is listed twice", p)
+		}
+		seen[p] = true
+	}
+	return nil
+}
+
+// ValidReleasePolicy reports whether p is an accepted release_policy value.
+func ValidReleasePolicy(p string) bool {
+	return p == "" || p == ReleasePolicySafe || p == ReleasePolicyFast || p == ReleasePolicyImmediate
+}
+
+// EffectiveReleasePolicy returns the policy a deploy uses, mapping the
+// unset value to the safe default.
+func EffectiveReleasePolicy(p string) string {
+	if p == ReleasePolicyImmediate || p == ReleasePolicyFast {
+		return p
+	}
+	return ReleasePolicySafe
+}
+
+// ReleasePolicyCanaryPreset is the ladder the default fills for a policy
+// that rolls out on a canary (ADR-1450): adaptive for safe, aggressive for
+// fast.
+func ReleasePolicyCanaryPreset(p string) string {
+	if p == ReleasePolicyFast {
+		return FastReleaseCanaryPreset
+	}
+	return DefaultReleaseCanaryPreset
+}
 
 // ManagedReleaseContextCookieName stores the immutable project release
 // selected for a browser document navigation. Unlike the rollout cookie, the
@@ -722,6 +807,12 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	if m.BeforeCheckpoint != nil && m.EffectiveExecutionMode() != ExecutionModeRequest && m.EffectiveExecutionMode() != ExecutionModeService {
 		return fmt.Errorf("app manifest: before_checkpoint requires request or service execution mode")
 	}
+	if err := ValidatePause(m.Pause); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
+	}
+	if m.Pause != "" && m.Pause != PauseNever && m.EffectiveExecutionMode() != ExecutionModeRequest {
+		return fmt.Errorf("app manifest: pause %s requires request execution mode; worker, service and job workloads never idle out", m.Pause)
+	}
 	if err := m.ValidateCrawlerPolicy(); err != nil {
 		return fmt.Errorf("app manifest: %w", err)
 	}
@@ -739,6 +830,12 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	}
 	if m.RevisionPinTTLSeconds < 0 || m.RevisionPinTTLSeconds > RevisionPinMaxTTLSeconds {
 		return fmt.Errorf("app manifest: revision_pin_ttl_seconds must be between 0 and %d", RevisionPinMaxTTLSeconds)
+	}
+	if !ValidReleasePolicy(m.ReleasePolicy) {
+		return fmt.Errorf("app manifest: release_policy must be %q, %q or %q", ReleasePolicySafe, ReleasePolicyFast, ReleasePolicyImmediate)
+	}
+	if err := ValidateReleaseProbePaths(m.ReleaseProbePaths); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
 	}
 	if m.Port < 0 || m.Port > 65535 {
 		return fmt.Errorf("app manifest: port %d out of range", m.Port)
@@ -858,6 +955,9 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	requestTimeoutCap := int(limits.RequestBudgetMaxDuration() / time.Second)
 	if requestTimeoutCap > 0 && m.RequestTimeoutS > requestTimeoutCap {
 		return fmt.Errorf("app manifest: request_timeout_s %d exceeds plan %q cap %d", m.RequestTimeoutS, plan, requestTimeoutCap)
+	}
+	if m.FunctionConcurrency < 0 || m.FunctionConcurrency > limits.ConcurrencyPerVMBound {
+		return fmt.Errorf("app manifest: function_concurrency %d must be between 0 and %d on plan %q", m.FunctionConcurrency, limits.ConcurrencyPerVMBound, plan)
 	}
 	// ServiceReplicas shape: only meaningful when ExecutionMode=service.
 	// Rejecting the other modes here prevents a stale replica policy from

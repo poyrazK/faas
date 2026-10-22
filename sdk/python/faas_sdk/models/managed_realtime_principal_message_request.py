@@ -26,6 +26,8 @@ class ManagedRealtimePrincipalMessageRequest:
     principal: str
     data_base64: str
     """Standard base64; at most 4096 decoded bytes."""
+    ttl_seconds: int | Unset = 0
+    """Delivery lifetime in seconds; positive values require retained inbox delivery. Zero disables expiry."""
     binary: bool | Unset = False
     delivery: ManagedRealtimePrincipalMessageRequestDelivery | Unset = "live"
     message_id: str | Unset = UNSET
@@ -54,6 +56,8 @@ class ManagedRealtimePrincipalMessageRequest:
         principal = self.principal
 
         data_base64 = self.data_base64
+
+        ttl_seconds = self.ttl_seconds
 
         binary = self.binary
 
@@ -93,6 +97,8 @@ class ManagedRealtimePrincipalMessageRequest:
                 "data_base64": data_base64,
             }
         )
+        if ttl_seconds is not UNSET:
+            field_dict["ttl_seconds"] = ttl_seconds
         if binary is not UNSET:
             field_dict["binary"] = binary
         if delivery is not UNSET:
@@ -126,6 +132,8 @@ class ManagedRealtimePrincipalMessageRequest:
         principal = d.pop("principal")
 
         data_base64 = d.pop("data_base64")
+
+        ttl_seconds = d.pop("ttl_seconds", UNSET)
 
         binary = d.pop("binary", UNSET)
 
@@ -171,6 +179,7 @@ class ManagedRealtimePrincipalMessageRequest:
         managed_realtime_principal_message_request = cls(
             principal=principal,
             data_base64=data_base64,
+            ttl_seconds=ttl_seconds,
             binary=binary,
             delivery=delivery,
             message_id=message_id,

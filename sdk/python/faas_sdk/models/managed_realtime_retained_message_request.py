@@ -23,6 +23,9 @@ class ManagedRealtimeRetainedMessageRequest:
 
     data_base64: str
     """Standard base64 for at most 4096 decoded bytes."""
+    ttl_seconds: int | Unset = 0
+    """Managed realtime retained message request properties ttl seconds. Optional retained channel delivery
+    lifetime from first commit. Zero disables expiry; retries preserve the original deadline."""
     expected_sequence: int | None | Unset = UNSET
     """Optional channel head sequence required before this retained publish; zero requires an empty channel."""
     metadata: ManagedRealtimeRetainedMessageRequestMetadata | Unset = UNSET
@@ -34,6 +37,8 @@ class ManagedRealtimeRetainedMessageRequest:
 
     def to_dict(self) -> dict[str, Any]:
         data_base64 = self.data_base64
+
+        ttl_seconds = self.ttl_seconds
 
         expected_sequence: int | None | Unset
         if isinstance(self.expected_sequence, Unset):
@@ -56,6 +61,8 @@ class ManagedRealtimeRetainedMessageRequest:
                 "data_base64": data_base64,
             }
         )
+        if ttl_seconds is not UNSET:
+            field_dict["ttl_seconds"] = ttl_seconds
         if expected_sequence is not UNSET:
             field_dict["expected_sequence"] = expected_sequence
         if metadata is not UNSET:
@@ -75,6 +82,8 @@ class ManagedRealtimeRetainedMessageRequest:
 
         d = dict(src_dict)
         data_base64 = d.pop("data_base64")
+
+        ttl_seconds = d.pop("ttl_seconds", UNSET)
 
         def _parse_expected_sequence(data: object) -> int | None | Unset:
             if data is None:
@@ -98,6 +107,7 @@ class ManagedRealtimeRetainedMessageRequest:
 
         managed_realtime_retained_message_request = cls(
             data_base64=data_base64,
+            ttl_seconds=ttl_seconds,
             expected_sequence=expected_sequence,
             metadata=metadata,
             binary=binary,

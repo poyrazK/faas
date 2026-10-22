@@ -49,6 +49,11 @@ func Run(t *testing.T, open Open) {
 		name string
 		fn   func(*testing.T, *Fixture)
 	}{
+		{"operator_alert_triage_and_retention_are_durable", testOperatorAlertTriageRetention},
+		{"operator_evidence_projections_are_exact", testOperatorEvidenceProjections},
+		{"operator_queue_count_excludes_running_and_terminal_builds", testOperatorQueuedBuildsCount},
+		{"operator_queue_snapshot_preserves_wait_across_requeue", testOperatorBuildQueueSnapshot},
+		{"operator_build_recovery_snapshot_preserves_cleanup_age", testOperatorBuildRecoverySnapshot},
 		{"app_limits_are_persisted_for_each_plan", testAppLimits},
 		{"app_secret_delivery_is_version_fenced", testAppSecretDeliveryVersionFence},
 		{"app_secret_class_survives_legacy_writes", testAppSecretClassSurvivesLegacyWrites},
@@ -58,6 +63,10 @@ func Run(t *testing.T, open Open) {
 		{"non_uuid_invocation_identity_is_unowned", testNonUUIDInvocationIdentityIsUnowned},
 		{"deployment_secret_reload_signal_survives_read", testDeploymentSecretReloadSignalSurvivesRead},
 		{"rollback_on_5xx_candidates_track_the_opt_in", testRollbackOn5xxCandidates},
+		{"config_revisions_and_guards_track_each_write", testConfigRevisionsAndGuards},
+		{"post_release_watch_candidates_follow_the_newest_release", testPostReleaseWatchCandidates},
+		{"release_freezes_limit_list_and_lift", testReleaseFreezes},
+		{"release_gates_round_trip_and_follow_their_slo", testReleaseGates},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
@@ -76,10 +85,12 @@ func Run(t *testing.T, open Open) {
 		{"fire_now_claim_respects_node_ownership_and_handoff", testFireNowNodeOwnershipAndHandoff},
 		{"manual_command_cron_fire_now_is_idempotent_and_keeps_schedule_cursor", testManualCommandCronFireNow},
 		{"runtime_config_operation_claim_is_exactly_once", testRuntimeConfigOperationClaimIsExactlyOnce},
+		{"runtime_config_apply_receipts_never_regress", testRuntimeConfigApplyReceiptsNeverRegress},
 		{"trigger_record_claim_is_bounded_and_scoped", testTriggerRecordClaimIsBoundedAndScoped},
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},
 		{"github_deployment_promotion_fences_stale_revisions", testGitHubDeploymentPromotionFence},
+		{"github_installation_ownership_is_exclusive", testGitHubInstallationOwnership},
 		{"git_driven_deployment_promotion_is_scope_and_revision_fenced", testGitDrivenDeploymentPromotionFence},
 		{"image_deployment_promotion_is_scope_and_revision_fenced", testImageDeploymentPromotionFence},
 		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
@@ -87,11 +98,25 @@ func Run(t *testing.T, open Open) {
 		{"service_rollout_abort_handoff_is_durable", testServiceRolloutAbortHandoff},
 		{"service_recovery_claim_and_retry_are_durable", testServiceRecoveryClaims},
 		{"service_recovery_candidates_are_active_owned_and_bounded", testServiceRecoveryCandidates},
+		{"worker_recovery_claim_and_retry_are_durable", testWorkerRecoveryClaims},
+		{"worker_recovery_observations_are_fenced_and_copied", testWorkerRecoveryObservations},
+		{"worker_recovery_diagnostics_are_owned_fresh_and_eligible", testWorkerRecoveryDiagnostics},
+		{"worker_recovery_candidates_are_active_owned_and_bounded", testWorkerRecoveryCandidates},
+		{"worker_recovery_discovers_captured_environments", testWorkerRecoveryCapturedEnvironment},
+		{"worker_recovery_discovers_unfinished_mode_cleanup", testWorkerRecoveryModeCleanup},
+		{"worker_recovery_clone_inventory_preserves_runtime_authority", testWorkerRecoveryCloneInventory},
+		{"mcp_readiness_clone_inventory_requires_isolation_and_resets_runtime", testMCPReadinessCloneInventory},
 		{"ownership_recovery_pages_are_scoped_exclusive_and_bounded", testOwnershipRecoveryPages},
 		{"ownership_recovery_transfer_fences_health_cooldown_and_peers", testOwnershipRecoveryTransfer},
+		{"scenario_rehearsal_reads_for_unenrolled_app", testScenarioRehearsalReadsForUnenrolledApp},
 		{"usage_rollup_merges_minutes", testUsageRollup},
+		{"archived_logs_are_scoped_to_the_owning_app", testInstanceLogsOwnedByApp},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
+		{"live_instance_list_follows_app_ownership", testLiveInstanceListOwnership},
+		{"live_instances_by_node_are_the_nodes_live_rows", testLiveInstancesByNode},
+		{"org_access_fences_and_org_projects", testOrgAccessAndOrgProjects},
+		{"frozen_instance_holds_ram_without_concurrency", testFrozenInstanceState},
 		{"beta_first_success_includes_parked_instances", testBetaFirstSuccess},
 		{"account_credits_issue_list_and_consume", testAccountCredits},
 		{"billing_identity_is_provider_qualified", testBillingIdentity},
@@ -164,6 +189,7 @@ func Run(t *testing.T, open Open) {
 		{"mirror_rule_update_rejects_oversized_redaction_list", testMirrorRuleUpdateRejectsOversizedRedactionList},
 		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
 		{"app_task_lifecycle_pins_deployment_and_fences_replay", testAppTaskLifecycle},
+		{"app_task_attach_session_is_atomic_and_lease_fenced", testAppTaskAttachSession},
 		{"workflow_admission_recovery_and_cancel_are_atomic", testWorkflowAdmissionRecoveryAndCancel},
 		{"workflow_run_creation_is_idempotent_and_quota_safe", testWorkflowRunCreateIdempotency},
 		{"workflow_concurrency_limit_queues_and_releases_runs", testWorkflowConcurrencyLimitQueues},
@@ -184,9 +210,16 @@ func Run(t *testing.T, open Open) {
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
 		{"scenario_test_namespace_is_scoped_and_reaped", testScenarioTestNamespace},
+		{"scenario_containment_and_capture_survive_namespace_cleanup", testScenarioRetainedContainment},
+		{"scenario_action_policy_readers_retain_isolation_after_cleanup", testScenarioActionPolicyReaders},
+		{"mcp_compatibility_snapshots_and_recovery_leases_are_fenced", testMCPCompatibilityAndRecovery},
 		{"preview_teardown_claim_fences_reopen", testPreviewTeardownClaim},
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
+		{"job_task_log_target_is_scoped_and_tracks_the_instance", testJobTaskLogTarget},
+		{"job_run_attach_session_is_atomic_scoped_and_never_replayed", testJobRunAttach},
+		{"job_run_process_overrides_are_snapshotted_and_replayed", testJobRunProcess},
+		{"image_run_runner_jobs_are_cached_hidden_and_evicted", testImageRunJobs},
 		{"exclusive_operation_work_history_is_account_scoped", testExclusiveOperationWorkHistory},
 		{"job_boot_failures_obey_retry_budget_and_fence_late_exits", testJobBootFailureBudget},
 		{"stale_job_task_reap_is_fenced_and_obeys_retry_budget", testJobTaskReapClaimed},
@@ -209,6 +242,10 @@ func Run(t *testing.T, open Open) {
 		{"runtime_config_change_orders_with_instance_start", testRuntimeConfigChangeOrdersWithInstanceStart},
 		{"snapshot_publication_fences_runtime_config_changes", testSnapshotPublicationFencesRuntimeConfigChanges},
 		{"scoped_runtime_changes_preserve_neighbor_snapshots", testScopedRuntimeChangesPreserveNeighborSnapshots},
+		{"project_config_reaches_runtime_values", testProjectConfigReachesRuntimeValues},
+		{"project_config_change_invalidates_member_snapshots", testProjectConfigChangeInvalidatesMemberSnapshots},
+		{"project_secrets_reach_runtime_values", testProjectSecretsReachRuntimeValues},
+		{"project_secret_change_invalidates_member_snapshots", testProjectSecretChangeInvalidatesMemberSnapshots},
 		{"runtime_input_receipts_are_immutable_and_preserved_in_snapshots", testRuntimeInputReceipts},
 		{"runtime_input_receipts_check_secret_versions", testRuntimeInputReceiptSecretVersions},
 		{"runtime_input_receipts_preserve_sidecar_secret_access", testRuntimeInputReceiptSidecarSecretAccess},
@@ -1003,8 +1040,29 @@ func testAppDeletionClaim(t *testing.T, fx *Fixture) {
 	if _, err := fx.Store.RestoreApp(fx.Ctx, fx.App.ID, api.MustLimitsFor(api.PlanScale)); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("RestoreApp after purge claim = %v, want ErrConflict", err)
 	}
+	usageMinute := time.Now().UTC().Truncate(time.Minute).Add(-time.Hour)
+	const usageMBSeconds = int64(264 * 60)
+	if err := fx.Store.AppendUsage(fx.Ctx, fx.Account.ID, fx.App.ID, uuid.NewString(), usageMinute,
+		usageMBSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatalf("AppendUsage before purge: %v", err)
+	}
 	if err := fx.Store.DeleteAppPermanently(fx.Ctx, fx.App.ID); err != nil {
 		t.Fatalf("DeleteAppPermanently: %v", err)
+	}
+	// ADR-1162: the purge keeps the app's usage rows; they are the
+	// account's billing evidence for the month.
+	usage, err := fx.Store.UsageByMonth(fx.Ctx, fx.Account.ID, usageMinute)
+	if err != nil {
+		t.Fatalf("UsageByMonth after purge: %v", err)
+	}
+	var retained int64
+	for _, row := range usage {
+		if row.AppID == fx.App.ID {
+			retained += row.MBSeconds
+		}
+	}
+	if retained != usageMBSeconds {
+		t.Fatalf("purged app usage = %d mb_seconds, want %d retained", retained, usageMBSeconds)
 	}
 	if err := fx.Store.DeleteAppPermanently(fx.Ctx, fx.App.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("repeated DeleteAppPermanently = %v, want ErrNotFound", err)
@@ -1814,7 +1872,7 @@ func testInvoiceRefunds(t *testing.T, fx *Fixture) {
 		TotalCents:        1000,
 		AmountPaidCents:   1000,
 		Plan:              api.PlanPro,
-		Currency:          "eur",
+		Currency:          api.BillingCurrencyLower,
 	}); err != nil {
 		t.Fatalf("UpsertInvoice: %v", err)
 	}
@@ -1943,7 +2001,7 @@ func testInvoiceHistoryImport(t *testing.T, fx *Fixture) {
 		Number:            "HISTORY-001", Status: "paid",
 		PeriodStart: now.Add(-30 * 24 * time.Hour), PeriodEnd: now,
 		SubtotalCents: 900, TaxCents: 100, TotalCents: 1000, AmountPaidCents: 1000,
-		Plan: state.InvoicePlanUnknown, Currency: "eur", PDFAvailable: true,
+		Plan: state.InvoicePlanUnknown, Currency: api.BillingCurrencyLower, PDFAvailable: true,
 		Details: &state.InvoiceDetails{PaymentTerms: "Net 30"},
 	}
 
@@ -1989,7 +2047,7 @@ func testInvoiceDetailRefresh(t *testing.T, fx *Fixture) {
 		ProviderInvoiceID: "refresh-" + uuid.NewString(),
 		Status:            "paid", PeriodStart: now.Add(-30 * 24 * time.Hour), PeriodEnd: now,
 		SubtotalCents: 1000, TotalCents: 1000, AmountPaidCents: 1000,
-		Plan: api.PlanPro, Currency: "eur",
+		Plan: api.PlanPro, Currency: api.BillingCurrencyLower,
 	}
 	if err := fx.Store.UpsertInvoice(fx.Ctx, inv); err != nil {
 		t.Fatalf("UpsertInvoice: %v", err)
@@ -3698,6 +3756,18 @@ func testPrepareDeploymentRollback(t *testing.T, fx *Fixture) {
 		prepared.RolloutState != "pending" || prepared.CanaryPreset != "none" {
 		t.Fatalf("prepared rollback target = %+v", prepared)
 	}
+	// ADR-1446: imaged reads this marker to promote the older revision
+	// without the latest-revision fence.
+	if markers, ok := fx.Store.(state.RollbackPreparedStore); ok {
+		isPrepared, err := markers.DeploymentRollbackPrepared(fx.Ctx, fx.Deployment.ID)
+		if err != nil || !isPrepared {
+			t.Fatalf("DeploymentRollbackPrepared(target) = %v, %v; want true", isPrepared, err)
+		}
+		isPrepared, err = markers.DeploymentRollbackPrepared(fx.Ctx, current.ID)
+		if err != nil || isPrepared {
+			t.Fatalf("DeploymentRollbackPrepared(current) = %v, %v; want false", isPrepared, err)
+		}
+	}
 	live, err := fx.Store.LiveDeployment(fx.Ctx, fx.App.ID)
 	if err != nil {
 		t.Fatalf("LiveDeployment: %v", err)
@@ -3932,6 +4002,67 @@ func testLiveStateReaders(t *testing.T, fx *Fixture) {
 	}
 	if capRAM != wantRAM {
 		t.Errorf("OperatorCapacity RAM total = %d, want %d", capRAM, wantRAM)
+	}
+	if err := fx.Store.SetAppNodeID(fx.Ctx, fx.App.ID, fx.Node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := fx.Store.ListLiveInstancesByNodeID(fx.Ctx, fx.Node.ID); err != nil || len(rows) != wantLive {
+		t.Errorf("owned live instances = %d, %v; want %d without parked history", len(rows), err, wantLive)
+	}
+	if rows, err := fx.Store.ListInstancesByNodeID(fx.Ctx, fx.Node.ID); err != nil || len(rows) != wantLive+1 {
+		t.Errorf("owned history = %d, %v; want %d including parked history", len(rows), err, wantLive+1)
+	}
+	if rows, err := fx.Store.ListLiveInstancesByNodeID(fx.Ctx, uuid.NewString()); err != nil || len(rows) != 0 {
+		t.Errorf("another node received owned live instances: %+v, %v", rows, err)
+	}
+}
+
+// testFrozenInstanceState pins ADR-1151's FROZEN state: an idle VM kept
+// paused in memory. It is listed with the resident instances (the reaper parks
+// it after FrozenTTL; `gregale ps` shows it), holds no serving concurrency, is
+// left out of the ram_mb+8 node usage (admission books its measured memory),
+// and thaws back to RUNNING.
+func testFrozenInstanceState(t *testing.T, fx *Fixture) {
+	ins, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID, string(state.StateRunning), 256, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	if err := fx.Store.UpdateInstanceStateIf(fx.Ctx, ins.ID, string(state.StateRunning), string(state.StateFrozen)); err != nil {
+		t.Fatalf("freeze RUNNING -> FROZEN: %v", err)
+	}
+	if got, err := fx.Store.ConcurrencyForDeployment(fx.Ctx, fx.App.ID, fx.Deployment.ID); err != nil || got != 0 {
+		t.Errorf("ConcurrencyForDeployment = %d, %v; want 0 (frozen holds no concurrency)", got, err)
+	}
+	if got, err := fx.Store.CountLiveInstancesByDeployment(fx.Ctx, fx.Deployment.ID); err != nil || got != 0 {
+		t.Errorf("CountLiveInstancesByDeployment = %d, %v; want 0", got, err)
+	}
+	if got, err := fx.Store.ComputeNodeUsedMB(fx.Ctx, fx.Node.ID); err != nil || got != 0 {
+		t.Errorf("ComputeNodeUsedMB = %d, %v; want 0 (frozen is charged measured memory, not ram_mb+8)", got, err)
+	}
+	listed := func(rows []state.Instance) bool {
+		for _, row := range rows {
+			if row.ID == ins.ID {
+				return row.State == string(state.StateFrozen)
+			}
+		}
+		return false
+	}
+	if all, err := fx.Store.ListAllInstances(fx.Ctx); err != nil || !listed(all) {
+		t.Errorf("ListAllInstances does not list the frozen instance (err %v)", err)
+	}
+	type activeLister interface {
+		ListActiveInstancesForApp(ctx context.Context, appID string, limit int) ([]state.Instance, error)
+	}
+	if lister, ok := fx.Store.(activeLister); ok {
+		if active, err := lister.ListActiveInstancesForApp(fx.Ctx, fx.App.ID, 100); err != nil || !listed(active) {
+			t.Errorf("ListActiveInstancesForApp (the `ps` read) does not list the frozen instance (err %v)", err)
+		}
+	}
+	if err := fx.Store.UpdateInstanceStateIf(fx.Ctx, ins.ID, string(state.StateFrozen), string(state.StateRunning)); err != nil {
+		t.Fatalf("thaw FROZEN -> RUNNING: %v", err)
+	}
+	if got, err := fx.Store.ConcurrencyForDeployment(fx.Ctx, fx.App.ID, fx.Deployment.ID); err != nil || got != 1 {
+		t.Errorf("ConcurrencyForDeployment after thaw = %d, %v; want 1", got, err)
 	}
 }
 

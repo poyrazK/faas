@@ -1,5 +1,5 @@
 // adr: 521 — losing a claim cancels dispatch without repeating uncertain effects.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -10,12 +10,14 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type lostOperationLeaseStore struct {
-	*state.MemStore
-	err error
+	MemStore *state.MemStore
+	err      error
 }
 
 func (s *lostOperationLeaseStore) RenewOperationExecution(context.Context, string, int, int) (bool, error) {
@@ -41,29 +43,29 @@ func TestDrainOperationLeaseLossRequiresReconciliation(t *testing.T) {
 	}{{"claim-lost", nil}, {"database-unavailable", errors.New("injected database outage")}} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &lostOperationLeaseStore{MemStore: state.NewMemStore(), err: test.err}
-			acct, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
+			acct, app, dep := sched.SeedApp(t, statetest.NewMem(store), api.PlanPro, 256, 5)
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			def, err := store.PutOperationDefinition(ctx, state.OperationDefinition{AccountID: acct.ID, OperationDefinitionResponse: api.OperationDefinitionResponse{
+			def, err := store.MemStore.PutOperationDefinition(ctx, state.OperationDefinition{AccountID: acct.ID, OperationDefinitionResponse: api.OperationDefinitionResponse{
 				AppID: app.ID, Scope: dep.Scope, DeploymentID: dep.ID, Spec: api.OperationDefinitionSpec{Name: "export", Method: "POST", Path: "/exports", Owner: api.OperationOwnerPlatformTenant,
 					InputSchema: []byte(`{"type":"object"}`), OutputSchema: []byte(`{"type":"object"}`), ProgressStages: []string{"generating"}},
 			}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			tenant, _, err := store.CreatePlatformTenant(ctx, acct.ID, "customer", "Customer", 100)
+			tenant, _, err := store.MemStore.CreatePlatformTenant(ctx, acct.ID, "customer", "Customer", 100)
 			if err != nil {
 				t.Fatal(err)
 			}
-			op, _, err := store.AdmitOperation(ctx, state.OperationAdmission{AccountID: acct.ID, DefinitionID: def.ID, PlatformTenantID: tenant.ID, IdempotencyKey: "export-request", Input: []byte(`{}`)})
+			op, _, err := store.MemStore.AdmitOperation(ctx, state.OperationAdmission{AccountID: acct.ID, DefinitionID: def.ID, PlatformTenantID: tenant.ID, IdempotencyKey: "export-request", Input: []byte(`{}`)})
 			if err != nil {
 				t.Fatal(err)
 			}
 			handler := new(interruptedOperationHandler)
-			engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
-			drain := NewDrain(store, engine, WithDrainGatewaySynth(handler), WithDrainWakeLease(1))
+			engine := sched.XNewEngine(t, statetest.NewMem(store), &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+			drain := sched.NewDrain(statetest.NewMem(store), engine, sched.WithDrainGatewaySynth(handler), sched.WithDrainWakeLease(1))
 			drain.Tick(ctx)
-			current, err := store.OperationByID(ctx, acct.ID, tenant.ID, op.ID)
+			current, err := store.MemStore.OperationByID(ctx, acct.ID, tenant.ID, op.ID)
 			if err != nil || current.State != api.OperationRequiresReconciliation || handler.calls.Load() != 1 {
 				t.Fatalf("lease loss did not preserve uncertainty: %+v, calls %d, %v", current, handler.calls.Load(), err)
 			}
@@ -76,9 +78,9 @@ func TestDrainOperationLeaseLossRequiresReconciliation(t *testing.T) {
 }
 
 type rejectedOperationStampStore struct {
-	*state.MemStore
-	err    error
-	reject atomic.Bool
+	MemStore *state.MemStore
+	err      error
+	reject   atomic.Bool
 }
 
 func (s *rejectedOperationStampStore) StampOperationExecutionAttempt(ctx context.Context, id, instance string, attempt int) error {
@@ -115,30 +117,30 @@ func TestDrainOperationInstanceBindingPrecedesHandler(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store := &rejectedOperationStampStore{MemStore: state.NewMemStore(), err: test.err}
 			store.reject.Store(true)
-			acct, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
+			acct, app, dep := sched.SeedApp(t, statetest.NewMem(store), api.PlanPro, 256, 5)
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			def, err := store.PutOperationDefinition(ctx, state.OperationDefinition{AccountID: acct.ID, OperationDefinitionResponse: api.OperationDefinitionResponse{
+			def, err := store.MemStore.PutOperationDefinition(ctx, state.OperationDefinition{AccountID: acct.ID, OperationDefinitionResponse: api.OperationDefinitionResponse{
 				AppID: app.ID, Scope: dep.Scope, DeploymentID: dep.ID, Spec: api.OperationDefinitionSpec{Name: "export", Method: "POST", Path: "/exports", Owner: api.OperationOwnerPlatformTenant,
 					InputSchema: []byte(`{"type":"object"}`), OutputSchema: []byte(`{"type":"object"}`), ProgressStages: []string{"generating"}},
 			}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			tenant, _, err := store.CreatePlatformTenant(ctx, acct.ID, "customer", "Customer", 100)
+			tenant, _, err := store.MemStore.CreatePlatformTenant(ctx, acct.ID, "customer", "Customer", 100)
 			if err != nil {
 				t.Fatal(err)
 			}
-			op, _, err := store.AdmitOperation(ctx, state.OperationAdmission{AccountID: acct.ID, DefinitionID: def.ID, PlatformTenantID: tenant.ID, IdempotencyKey: "export-request", Input: []byte(`{}`)})
+			op, _, err := store.MemStore.AdmitOperation(ctx, state.OperationAdmission{AccountID: acct.ID, DefinitionID: def.ID, PlatformTenantID: tenant.ID, IdempotencyKey: "export-request", Input: []byte(`{}`)})
 			if err != nil {
 				t.Fatal(err)
 			}
 			handler := &boundOperationHandler{store: store.MemStore}
-			engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
-			drain := NewDrain(store, engine, WithDrainGatewaySynth(handler), WithDrainRetryAfter(1))
+			engine := sched.XNewEngine(t, statetest.NewMem(store), &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+			drain := sched.NewDrain(statetest.NewMem(store), engine, sched.WithDrainGatewaySynth(handler), sched.WithDrainRetryAfter(1))
 			drain.Tick(ctx)
-			current, err := store.OperationByID(ctx, acct.ID, tenant.ID, op.ID)
-			inv, invErr := store.InvocationByID(ctx, op.CurrentInvocationID)
+			current, err := store.MemStore.OperationByID(ctx, acct.ID, tenant.ID, op.ID)
+			inv, invErr := store.MemStore.InvocationByID(ctx, op.CurrentInvocationID)
 			if err != nil || invErr != nil || current.State != api.OperationAccepted || handler.calls.Load() != 0 || inv.State != state.InvocationPending || inv.QuotaReserved {
 				t.Fatalf("binding failure dispatched or stranded work: %+v, invocation %+v, calls %d, errors %v/%v", current, inv, handler.calls.Load(), err, invErr)
 			}
@@ -151,7 +153,7 @@ func TestDrainOperationInstanceBindingPrecedesHandler(t *testing.T) {
 			case <-timer.C:
 			}
 			drain.Tick(ctx)
-			current, err = store.OperationByID(ctx, acct.ID, tenant.ID, op.ID)
+			current, err = store.MemStore.OperationByID(ctx, acct.ID, tenant.ID, op.ID)
 			if err != nil || current.State != api.OperationSucceeded || handler.calls.Load() != 1 || current.Generation != 1 {
 				t.Fatalf("retry did not complete the original operation once: %+v, calls %d, %v", current, handler.calls.Load(), err)
 			}

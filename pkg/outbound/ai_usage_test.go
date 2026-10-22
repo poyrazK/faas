@@ -111,8 +111,19 @@ func TestAIUsageObserverBoundsBufferedBodies(t *testing.T) {
 	large := `{"model":"m","pad":"` + strings.Repeat("x", api.OutboundAIUsageJSONParseMaxBytes) + `","usage":{"prompt_tokens":1}}`
 	observer := newAIUsageObserver(api.OutboundAIProviderOpenAI, "application/json", nil)
 	_, _ = observer.Write([]byte(large))
-	if got := observer.Finish(); got.Known || observer.body != nil {
-		t.Fatalf("oversized JSON body parsed or retained: %+v", got)
+	// ADR-997: an oversized body is not kept, but usage at its end is read
+	// from the bounded tail.
+	if observer.body != nil || len(observer.tail) > api.OutboundAIUsageTailBytes {
+		t.Fatalf("oversized JSON body retained: body %d, tail %d bytes", len(observer.body), len(observer.tail))
+	}
+	if got := observer.Finish(); !got.Known || got.InputTokens != 1 {
+		t.Fatalf("usage at the end of an oversized body = %+v", got)
+	}
+	early := `{"usage":{"prompt_tokens":9},"pad":"` + strings.Repeat("x", api.OutboundAIUsageJSONParseMaxBytes) + `"}`
+	beyond := newAIUsageObserver(api.OutboundAIProviderOpenAI, "application/json", nil)
+	_, _ = beyond.Write([]byte(early))
+	if got := beyond.Finish(); got.Known {
+		t.Fatalf("usage before the tail of an oversized body was read: %+v", got)
 	}
 	longEvent := "data: {\"pad\":\"" + strings.Repeat("y", api.OutboundAIUsageEventMaxBytes) + "\"}\n\n" +
 		"data: {\"model\":\"m\",\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":4}}\n\n"

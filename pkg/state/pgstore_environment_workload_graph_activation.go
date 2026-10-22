@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/google/uuid"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -77,6 +79,12 @@ func (s *PgStore) ActivateEnvironmentGitOpsWorkloadGraph(ctx context.Context, le
 	if !evidence.Qualified || !environmentGraphSupportsProductionServing(graph) {
 		return ProjectReleaseSet{}, false, nil
 	}
+	// Source Jobs publish their qualified artifact binding in this transaction,
+	// before readiness is assessed. Install the already-validated controller
+	// lease for that write, as for the later release publication callback.
+	if _, err := sqlc.New().SetEnvironmentGitOpsLeaseContext(ctx, tx, lease.LeaseToken); err != nil {
+		return ProjectReleaseSet{}, false, mapErr(err)
+	}
 	jobsReady, err := environmentGitOpsScheduledJobsReadyTx(ctx, tx, graph, "paused", true)
 	if err != nil {
 		return ProjectReleaseSet{}, false, err
@@ -95,6 +103,13 @@ func (s *PgStore) ActivateEnvironmentGitOpsWorkloadGraph(ctx context.Context, le
 		}
 		return ProjectReleaseSet{}, false, err
 	}
+	required, err := checkEnvironmentBindingGraphTx(ctx, tx, lease.Source.ProjectID, lease.Source.EnvironmentSlug, graph, members)
+	if err != nil {
+		return ProjectReleaseSet{}, false, err
+	}
+	if required {
+		ctx = context.WithValue(ctx, qualifiedEnvironmentReleaseKey{}, uuid.NewString())
+	}
 	expectedActiveID := &activeID
 	candidateFallbackExclusions := make(map[string]struct{}, len(graph.Members))
 	for _, member := range graph.Members {
@@ -107,6 +122,21 @@ func (s *PgStore) ActivateEnvironmentGitOpsWorkloadGraph(ctx context.Context, le
 		func(ctx context.Context, tx pgx.Tx) error {
 			if _, err := sqlc.New().SetEnvironmentGitOpsLeaseContext(ctx, tx, lease.LeaseToken); err != nil {
 				return mapErr(err)
+			}
+			if required {
+				// Recheck after the publisher has locked every project member and
+				// before unholding any candidate. The deferred SQL guard checks
+				// membership, policies, artifacts and expiry again at commit.
+				if _, err := checkEnvironmentBindingGraphTx(ctx, tx, lease.Source.ProjectID, lease.Source.EnvironmentSlug, graph, members); err != nil {
+					return err
+				}
+				body, err := json.Marshal(candidateBindingMemberIDs(members))
+				if err != nil {
+					return err
+				}
+				if _, err := sqlc.New().AuthorizeEnvironmentBindingRelease(ctx, tx, sqlc.AuthorizeEnvironmentBindingReleaseParams{GraphID: mustPgUUID(graph.ID), ReleaseID: mustPgUUID(ctx.Value(qualifiedEnvironmentReleaseKey{}).(string)), PriorRelease: activeID, Members: body}); err != nil {
+					return mapErr(err)
+				}
 			}
 			var activationToken string
 			if err := tx.QueryRow(ctx, `select set_config('gregale.gitops_activation',$1,true)`, lease.LeaseToken).Scan(&activationToken); err != nil {
@@ -141,7 +171,10 @@ func (s *PgStore) ActivateEnvironmentGitOpsWorkloadGraph(ctx context.Context, le
 					return err
 				}
 			}
-			return activateEnvironmentGitOpsScheduledJobsTx(ctx, tx, graph)
+			if err := activateEnvironmentGitOpsScheduledJobsTx(ctx, tx, graph); err != nil {
+				return err
+			}
+			return s.activateWorkloadRetirementsTx(ctx, tx, lease)
 		}, candidateFallbackExclusions)
 	if err != nil {
 		if errors.Is(err, ErrConflict) {
@@ -229,6 +262,10 @@ func activeProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, projectID, enviro
 
 func environmentGitOpsReleaseMembersTx(ctx context.Context, tx pgx.Tx, source EnvironmentGitSource, graph EnvironmentWorkloadGraph,
 	activeID string) ([]ProjectReleaseMember, []ProjectReleaseMember, int, error) {
+	excluded, err := workloadReleaseExclusionsTx(ctx, tx, source)
+	if err != nil {
+		return nil, nil, 0, err
+	}
 	activeTargets := map[string]string{}
 	if activeID != "" {
 		rows, err := tx.Query(ctx, `select app_id::text,deployment_id::text from project_release_members where release_id=$1::uuid order by app_id`, activeID)
@@ -280,19 +317,21 @@ func environmentGitOpsReleaseMembersTx(ctx context.Context, tx pgx.Tx, source En
 			rows.Close()
 			return nil, nil, 0, mapErr(err)
 		}
-		apps = append(apps, app)
+		if !excluded[app.id] {
+			apps = append(apps, app)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		return nil, nil, 0, mapErr(err)
 	}
 	rows.Close()
-	if len(apps) == 0 || len(apps) > api.ProjectReleaseSetMaxMembers {
+	if len(apps) > api.ProjectReleaseSetMaxMembers {
 		return nil, nil, 0, ErrConflict
 	}
 	members := make([]ProjectReleaseMember, 0, len(apps))
 	fallback := make([]ProjectReleaseMember, 0, len(apps))
-	minimumTTL := int(^uint(0) >> 1)
+	minimumTTL := api.RevisionPinMaxTTLSeconds
 	for _, app := range apps {
 		var manifest AppManifest
 		if json.Unmarshal(app.manifest, &manifest) != nil || manifest.RevisionPinTTLSeconds <= 0 {

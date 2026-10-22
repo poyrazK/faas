@@ -13,11 +13,22 @@ import type { AccountRateLimitsResponse } from '../models/AccountRateLimitsRespo
 import type { AccountResponse } from '../models/AccountResponse.js';
 import type { AccountSLOResponse } from '../models/AccountSLOResponse.js';
 import type { AccountTraceLookupResponse } from '../models/AccountTraceLookupResponse.js';
+import type { BillingConnectionResponse } from '../models/BillingConnectionResponse.js';
+import type { BillingProvider } from '../models/BillingProvider.js';
+import type { BillingRunItemListResponse } from '../models/BillingRunItemListResponse.js';
+import type { BillingRunListResponse } from '../models/BillingRunListResponse.js';
+import type { BillingRunResponse } from '../models/BillingRunResponse.js';
+import type { BillingRunScheduleResponse } from '../models/BillingRunScheduleResponse.js';
 import type { CapabilitiesResponse } from '../models/CapabilitiesResponse.js';
 import type { ChangePlanRequest } from '../models/ChangePlanRequest.js';
+import type { CreateBillingRunRequest } from '../models/CreateBillingRunRequest.js';
 import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
+import type { PutBillingConnectionRequest } from '../models/PutBillingConnectionRequest.js';
+import type { PutBillingRunScheduleRequest } from '../models/PutBillingRunScheduleRequest.js';
 import type { RaiseOverageCapRequest } from '../models/RaiseOverageCapRequest.js';
+import type { SelectedTraceLookupResponse } from '../models/SelectedTraceLookupResponse.js';
 import type { SetAccountEgressAllowlistExtraRequest } from '../models/SetAccountEgressAllowlistExtraRequest.js';
+import type { StatementInvoiceListResponse } from '../models/StatementInvoiceListResponse.js';
 import type { UpdateAccountBillingInfoRequest } from '../models/UpdateAccountBillingInfoRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -346,6 +357,66 @@ export class AccountService {
     });
   }
   /**
+   * Look up trace metadata for explicitly selected app IDs.
+   * Requires one to five distinct canonical app IDs owned by the authenticated
+   * account. Both request and invocation SQL queries filter account and selected
+   * app IDs before ordering and limiting. No account-wide fallback, log reads,
+   * spans, payloads, arbitrary headers or queue names. Request metadata is
+   * oldest-first within plan telemetry retention; durable invocation lifecycle
+   * history has an independent oldest-first bound and no request-window filter.
+   * Returns per-source status and truncation, including empty or unavailable
+   * sources. No pagination, automatic follow-up or causal-edge inference.
+   *
+   * @returns SelectedTraceLookupResponse Selected-app metadata, including explicit per-source partial or empty results.
+   * @throws ApiError
+   */
+  public static getSelectedAppTrace({
+    traceId,
+    appId,
+    limit = 10,
+  }: {
+    /**
+     * Exact nonzero W3C trace identifier.
+     */
+    traceId: string,
+    /**
+     * Explicit app IDs, repeated as app_id parameters. All must belong to the account; an empty selection never widens to the account.
+     */
+    appId: Array<string>,
+    /**
+     * Independent oldest-first row limit for each source, after app filtering. A one-row sentinel detects truncation.
+     */
+    limit?: number,
+  }): CancelablePromise<SelectedTraceLookupResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/traces/{trace_id}/selected-apps',
+      path: {
+        'trace_id': traceId,
+      },
+      query: {
+        'app_id': appId,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Look up one distributed trace across the account.
    * Returns retained request telemetry, bounded span evidence, and
    * durable invocation lifecycle rows linked by the platform trace id. Request
@@ -562,6 +633,328 @@ export class AccountService {
       errors: {
         401: `code: unauthorized`,
         409: `code: account_deletion_confirm_required | account_deletion_pending | account_not_restorable`,
+      },
+    });
+  }
+  /**
+   * Describe the account's key for one billing provider.
+   * @returns BillingConnectionResponse The connection; the key itself is never returned.
+   * @throws ApiError
+   */
+  public static getBillingConnection({
+    provider,
+  }: {
+    /**
+     * Billing provider statements export to (ADR-1507).
+     */
+    provider: BillingProvider,
+  }): CancelablePromise<BillingConnectionResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/billing-connections/{provider}',
+      path: {
+        'provider': provider,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Store or replace the account's key for one billing provider.
+   * Checks the key against the provider, then seals it at rest. Stripe
+   * takes a restricted key (rk_live_… or rk_test_…) with read and write
+   * access to invoices and invoice items; Paddle an API key
+   * (pdl_live_apikey_… or pdl_sdbx_apikey_…) with transaction access and
+   * read access to customers; Lago
+   * an API key and, for the EU region or a self-hosted Lago, api_url. Only
+   * the last four characters, the mode and the Lago API URL are ever
+   * returned.
+   *
+   * @returns BillingConnectionResponse The stored connection.
+   * @throws ApiError
+   */
+  public static putBillingConnection({
+    provider,
+    requestBody,
+  }: {
+    /**
+     * Billing provider statements export to (ADR-1507).
+     */
+    provider: BillingProvider,
+    requestBody: PutBillingConnectionRequest,
+  }): CancelablePromise<BillingConnectionResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/billing-connections/{provider}',
+      path: {
+        'provider': provider,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        422: `Not a key of this provider, a bad api_url, or the provider rejected the key.`,
+        502: `The provider could not be reached (\`billing_provider_unavailable\`).`,
+      },
+    });
+  }
+  /**
+   * Remove the account's key for one billing provider.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteBillingConnection({
+    provider,
+  }: {
+    /**
+     * Billing provider statements export to (ADR-1507).
+     */
+    provider: BillingProvider,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/billing-connections/{provider}',
+      path: {
+        'provider': provider,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List invoices exported from usage statements, with their payment status (ADR-1504).
+   * @returns StatementInvoiceListResponse Exported invoices, newest first.
+   * @throws ApiError
+   */
+  public static listStatementInvoices({
+    status,
+    cursor,
+    limit,
+  }: {
+    /**
+     * `unpaid` (draft, open or uncollectible), `overdue` (open and past due), or one payment status.
+     */
+    status?: 'unpaid' | 'overdue' | 'draft' | 'open' | 'paid' | 'void' | 'uncollectible' | 'deleted',
+    /**
+     * The `next_cursor` of the previous invoice page.
+     */
+    cursor?: string,
+    /**
+     * Invoices to return (1–200, default 50).
+     */
+    limit?: number,
+  }): CancelablePromise<StatementInvoiceListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/statement-invoices',
+      query: {
+        'status': status,
+        'cursor': cursor,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+      },
+    });
+  }
+  /**
+   * List the account's month-end billing runs, newest first.
+   * @returns BillingRunListResponse Billing runs with their item counts.
+   * @throws ApiError
+   */
+  public static listBillingRuns({
+    limit,
+  }: {
+    /**
+     * Runs to return (1–100, default 20).
+     */
+    limit?: number,
+  }): CancelablePromise<BillingRunListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/billing-runs',
+      query: {
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+      },
+    });
+  }
+  /**
+   * Bill one ended month for every customer (ADR-1503).
+   * Starts a background run for one UTC calendar month that ended at least
+   * an hour ago. For every app consumer and platform tenant with billable
+   * usage, it drafts the month's statement, holds consumers whose ledger
+   * misses requests telemetry saw (`hold_on_gaps`), finalizes it, and with
+   * `export` set to stripe, paddle or lago exports each statement to that provider. Usage attributed to a
+   * platform tenant is billed on the tenant's statement. One run per
+   * account can be queued or running at a time.
+   *
+   * @returns BillingRunResponse The queued run; poll it or list its items for progress.
+   * @throws ApiError
+   */
+  public static createBillingRun({
+    requestBody,
+    idempotencyKey,
+  }: {
+    requestBody: CreateBillingRunRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<BillingRunResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/billing-runs',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        409: `Another run is in progress, or \`export\` names a provider without a connected key.`,
+        422: `The month has not ended, or the options are invalid.`,
+      },
+    });
+  }
+  /**
+   * Get a billing run and how many customers reached each outcome.
+   * @returns BillingRunResponse The billing run.
+   * @throws ApiError
+   */
+  public static getBillingRun({
+    id,
+  }: {
+    /**
+     * Billing run ID.
+     */
+    id: string,
+  }): CancelablePromise<BillingRunResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/billing-runs/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List what a billing run did for each customer.
+   * @returns BillingRunItemListResponse One page of the run's items.
+   * @throws ApiError
+   */
+  public static listBillingRunItems({
+    id,
+    outcome,
+    cursor,
+    limit,
+  }: {
+    /**
+     * Billing run whose customers are listed.
+     */
+    id: string,
+    /**
+     * Only items with this outcome, such as `held` or `failed`.
+     */
+    outcome?: 'pending' | 'drafted' | 'finalized' | 'exported' | 'up_to_date' | 'held' | 'skipped' | 'failed',
+    /**
+     * The previous page's `next_cursor`.
+     */
+    cursor?: string,
+    /**
+     * Items to return (1–500, default 100).
+     */
+    limit?: number,
+  }): CancelablePromise<BillingRunItemListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/billing-runs/{id}/items',
+      path: {
+        'id': id,
+      },
+      query: {
+        'outcome': outcome,
+        'cursor': cursor,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Get the account's monthly billing run schedule.
+   * @returns BillingRunScheduleResponse The schedule and when it next starts a run.
+   * @throws ApiError
+   */
+  public static getBillingRunSchedule(): CancelablePromise<BillingRunScheduleResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/billing-run-schedule',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Start a billing run automatically after each month ends.
+   * A new schedule starts with the current month: its run starts
+   * `delay_hours` after the month ends. Replacing a schedule keeps its
+   * next month. If a run is already in progress, the scheduled run
+   * starts once it completes.
+   *
+   * @returns BillingRunScheduleResponse The saved schedule.
+   * @throws ApiError
+   */
+  public static putBillingRunSchedule({
+    requestBody,
+  }: {
+    requestBody: PutBillingRunScheduleRequest,
+  }): CancelablePromise<BillingRunScheduleResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/billing-run-schedule',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        409: `\`export\` names a provider without a connected key.`,
+        422: `Invalid schedule options or delay.`,
+      },
+    });
+  }
+  /**
+   * Stop scheduled billing runs; a run already started continues.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteBillingRunSchedule(): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/billing-run-schedule',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
       },
     });
   }

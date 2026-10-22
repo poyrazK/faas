@@ -113,6 +113,12 @@ type Orchestrator struct {
 	// wire.OpsMetrics is itself nil-safe so emitAudit can call
 	// Ops.DeploymentAuditEmittedTotal(...)() unconditionally.
 	Ops *wire.OpsMetrics
+	// CompleteOnly limits the tick to finishing rollouts that have
+	// nothing left to do: no canary ladder, or a ladder already at its
+	// last step. It neither starts ladders nor runs stuck detection,
+	// because without the safe-release tokens nothing advances a ladder
+	// and every started one would only be reported as stuck (#1926).
+	CompleteOnly bool
 }
 
 // NewOrchestrator builds an Orchestrator with nil-coerced
@@ -254,8 +260,11 @@ func (o *Orchestrator) walkRow(ctx context.Context, d state.Deployment, now time
 		// first tick. The migration's fast-default left these
 		// rows in 'pending' even though they have nothing to
 		// canary; the orchestrator cleans them up.
-		if d.CanaryTotalSteps <= 0 {
+		if d.CanaryTotalSteps <= 0 || d.CanaryStep >= d.CanaryTotalSteps {
 			o.complete(ctx, d, now, stats)
+			return
+		}
+		if o.CompleteOnly {
 			return
 		}
 		// Pending + ladder → flip to rolling_out + stamp
@@ -270,6 +279,9 @@ func (o *Orchestrator) walkRow(ctx context.Context, d state.Deployment, now time
 		// the state-machine transitions.
 		if d.CanaryStep >= d.CanaryTotalSteps {
 			o.complete(ctx, d, now, stats)
+			return
+		}
+		if o.CompleteOnly {
 			return
 		}
 		// Stuck detection: rolling_out with canary_step not at

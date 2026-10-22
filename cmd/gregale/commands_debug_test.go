@@ -1,12 +1,14 @@
-package main
+package main_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -29,13 +31,13 @@ func TestCmdDebugCoverage_RendersObservedSignalRates(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := cmdDebugCoverage([]string{"my-app", "--since", "6h"}); code != 0 {
+	if code := main.CmdDebugCoverage([]string{"my-app", "--since", "6h"}); code != 0 {
 		t.Fatalf("cmdDebugCoverage() = %d, want 0", code)
 	}
 	if got.URL.Path != "/v1/apps/my-app/debug/coverage" || got.URL.Query().Get("since") != "6h" {
@@ -64,13 +66,13 @@ func TestCmdDebugDependencies_RendersRegressionAndSendsSince(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := cmdDebugDependencies([]string{"my-app", "--since", "24h"}); code != 0 {
+	if code := main.CmdDebugDependencies([]string{"my-app", "--since", "24h"}); code != 0 {
 		t.Fatalf("cmdDebugDependencies() = %d, want 0", code)
 	}
 	if got.URL.Path != "/v1/apps/my-app/debug/dependencies" || got.URL.Query().Get("since") != "24h" {
@@ -103,13 +105,13 @@ func TestCmdDebugRunning_RendersObservedCausesAndSendsLimit(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := cmdDebugRunning([]string{"my-app", "--since", "6h", "--limit", "5"}); code != 0 {
+	if code := main.CmdDebugRunning([]string{"my-app", "--since", "6h", "--limit", "5"}); code != 0 {
 		t.Fatalf("cmdDebugRunning() = %d, want 0", code)
 	}
 	if got.URL.Path != "/v1/apps/my-app/debug/running" || got.URL.Query().Get("since") != "6h" || got.URL.Query().Get("limit") != "5" {
@@ -141,15 +143,15 @@ func TestCmdDebugRequestsList_SendsFiltersToServer(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
 	// The slug intentionally appears before the flags. This is the form
 	// shown in the command's top-level docs and must not drop the filters.
-	if code := cmdDebugRequestsList([]string{
+	if code := main.CmdDebugRequestsList([]string{
 		"my-app", "--since", "6h", "--route", "GET /checkout", "--deployment-id", "11111111-1111-4111-8111-111111111111",
 		"--status", "503", "--cold-boot", "false", "--consumer-id", "__anonymous__", "--min-latency-ms", "250",
 		"--cursor", "previous-page", "--limit", "50",
@@ -189,7 +191,7 @@ func TestRenderDebugRequestMetadataExplainsJournalOnlyResult(t *testing.T) {
 		RequestID: "customer-request-42", EvidenceStatus: "request_id_only",
 		TraceID: &traceID, ReceivedAt: "2026-09-27T12:00:00Z",
 	}
-	renderDebugRequestMetadata(&out, request)
+	main.RenderDebugRequestMetadata(&out, request)
 	got := out.String()
 	if !strings.Contains(got, "Public ID:  customer-request-42") ||
 		!strings.Contains(got, "detailed request telemetry is unavailable") ||
@@ -202,10 +204,10 @@ func TestRenderDebugRequestMetadataExplainsJournalOnlyResult(t *testing.T) {
 func TestCmdDebugRequestsList_RejectsInvalidLimitBeforeNetwork(t *testing.T) {
 	t.Setenv("FAAS_API", "http://127.0.0.1:1")
 	t.Setenv("FAAS_TOKEN", "fp_test")
-	_, readStderr, restore := swapIO(t)
+	_, readStderr, restore := main.SwapIO(t)
 	defer restore()
 
-	if code := cmdDebugRequestsList([]string{"my-app", "--limit", "201"}); code != 1 {
+	if code := main.CmdDebugRequestsList([]string{"my-app", "--limit", "201"}); code != 1 {
 		t.Fatalf("cmdDebugRequestsList() = %d, want 1", code)
 	}
 	if got := readStderr(); !strings.Contains(got, "--limit must be between 1 and 200") {
@@ -214,10 +216,10 @@ func TestCmdDebugRequestsList_RejectsInvalidLimitBeforeNetwork(t *testing.T) {
 }
 
 func TestCmdDebugHelp(t *testing.T) {
-	_, readStderr, restore := swapIO(t)
+	_, readStderr, restore := main.SwapIO(t)
 	defer restore()
 
-	if code := cmdDebug([]string{"--help"}); code != 0 {
+	if code := main.CmdDebug([]string{"--help"}); code != 0 {
 		t.Fatalf("cmdDebug(--help) = %d, want 0", code)
 	}
 	got := readStderr()
@@ -243,13 +245,13 @@ func TestCmdDebugRequestsEvidenceUsesEvidenceEndpoint(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = true
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := cmdDebugRequestsEvidence([]string{"my-app", "request-1"}); code != 0 {
+	if code := main.CmdDebugRequestsEvidence([]string{"my-app", "request-1"}); code != 0 {
 		t.Fatalf("cmdDebugRequestsEvidence() = %d, want 0", code)
 	}
 	if got.URL.Path != "/v1/apps/my-app/debug/requests/request-1/evidence" {
@@ -293,13 +295,13 @@ func TestCmdDebugRequestsShow_RendersTimelineAndSpans(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := cmdDebugRequests([]string{"show", "my-app", "request-1"}); code != 0 {
+	if code := main.CmdDebugRequests([]string{"show", "my-app", "request-1"}); code != 0 {
 		t.Fatalf("cmdDebugRequests(show) = %d, want 0", code)
 	}
 	got := stdout.String()
@@ -345,13 +347,13 @@ func TestCmdDebugRequestsReplay_SelectsTargetDeployment(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := cmdDebugRequestsReplay([]string{
+	if code := main.CmdDebugRequestsReplay([]string{
 		"my-app", "request-1", "--deployment-id", "target-1",
 	}); code != 0 {
 		t.Fatalf("cmdDebugRequestsReplay() = %d, want 0", code)
@@ -366,7 +368,7 @@ func TestCmdDebugRequestsReplay_SelectsTargetDeployment(t *testing.T) {
 
 func TestRenderDebugReplayComparison(t *testing.T) {
 	var out strings.Builder
-	renderDebugReplayComparison(&out, api.DebugReplayComparison{
+	main.RenderDebugReplayComparison(&out, api.DebugReplayComparison{
 		SourceDeploymentID: "source-1", MirrorDeploymentID: "target-1",
 		SourceStatusCode: 200, MirrorStatusCode: 503,
 		SourceLatencyMS: 42, MirrorLatencyMS: 118,
@@ -394,7 +396,7 @@ func TestRenderDebugRequestsTableOmitsEmptyRequestIDColumn(t *testing.T) {
 	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
 	row := api.DebugTelemetryRequestItem{ID: "ffdcde5a-d69e-4067-ae36-d3c0458f0e7f", TraceID: &traceID, Route: "GET /", Method: "GET", Status: 200, Count: 1}
 	var out strings.Builder
-	renderDebugRequestsTable(&out, api.DebugTelemetryListResponse{Requests: []api.DebugTelemetryRequestItem{row}})
+	main.RenderDebugRequestsTable(&out, api.DebugTelemetryListResponse{Requests: []api.DebugTelemetryRequestItem{row}})
 	got := out.String()
 	if strings.Contains(got, "REQUEST_ID") || strings.Contains(got, "—  "+traceID) || !strings.Contains(got, traceID) ||
 		!strings.Contains(got, "gregale debug requests get <slug> <request-id>") {
@@ -402,7 +404,7 @@ func TestRenderDebugRequestsTableOmitsEmptyRequestIDColumn(t *testing.T) {
 	}
 	row.RequestID = "req-42"
 	out.Reset()
-	renderDebugRequestsTable(&out, api.DebugTelemetryListResponse{Requests: []api.DebugTelemetryRequestItem{row}})
+	main.RenderDebugRequestsTable(&out, api.DebugTelemetryListResponse{Requests: []api.DebugTelemetryRequestItem{row}})
 	if got := out.String(); !strings.Contains(got, "REQUEST_ID") || !strings.Contains(got, "req-42") || strings.Contains(got, "debug requests get") {
 		t.Fatalf("list with a request ID:\n%s", got)
 	}
@@ -418,8 +420,28 @@ func TestRequestLine(t *testing.T) {
 		{"", "GET /x", "GET /x"},
 		{"GET", "", "GET"},
 	} {
-		if got := requestLine(tc.method, tc.route); got != tc.want {
+		if got := main.RequestLine(tc.method, tc.route); got != tc.want {
 			t.Errorf("requestLine(%q, %q) = %q, want %q", tc.method, tc.route, got, tc.want)
 		}
+	}
+}
+
+// TestRenderDebugRunningPrintsTheRouteLabelOnce covers H10-45: request
+// telemetry routes already carry their method ("GET /"), so prefixing the
+// method again printed "GET GET /" on production-us.
+func TestRenderDebugRunningPrintsTheRouteLabelOnce(t *testing.T) {
+	var out bytes.Buffer
+	main.RenderDebugRunning(&out, "my-app", api.DebugRunningResponse{
+		CurrentObservedAt: "2026-10-14T14:16:02Z",
+		Current: []api.DebugRunningCause{{
+			Code: "request_activity", InstanceCount: 1,
+			Request: &api.DebugRunningRequestAttribution{TelemetryID: "tel-1", Method: "GET", Route: "GET /", MatchDeltaMS: 54473, Count: 1},
+		}},
+	})
+	if !strings.Contains(out.String(), "representative telemetry: GET / tel-1 (matched within 54473ms; count=1)") {
+		t.Fatalf("running output:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "GET GET") {
+		t.Fatalf("method printed twice:\n%s", out.String())
 	}
 }

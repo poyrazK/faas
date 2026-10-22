@@ -14,6 +14,10 @@ from ..models.environment_git_source_spec_mode import (
     EnvironmentGitSourceSpecMode,
     check_environment_git_source_spec_mode,
 )
+from ..models.environment_git_source_spec_provider import (
+    EnvironmentGitSourceSpecProvider,
+    check_environment_git_source_spec_provider,
+)
 
 T = TypeVar("T", bound="EnvironmentGitSourceSpec")
 
@@ -22,6 +26,7 @@ T = TypeVar("T", bound="EnvironmentGitSourceSpec")
 class EnvironmentGitSourceSpec:
     """Pinned repository identity and source-of-truth controls for one environment."""
 
+    provider: EnvironmentGitSourceSpecProvider
     repository_id: int
     installation_id: int
     repository: str
@@ -33,6 +38,8 @@ class EnvironmentGitSourceSpec:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        provider: str = self.provider
+
         repository_id = self.repository_id
 
         installation_id = self.installation_id
@@ -53,6 +60,7 @@ class EnvironmentGitSourceSpec:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "provider": provider,
                 "repository_id": repository_id,
                 "installation_id": installation_id,
                 "repository": repository,
@@ -69,6 +77,8 @@ class EnvironmentGitSourceSpec:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        provider = check_environment_git_source_spec_provider(d.pop("provider"))
+
         repository_id = d.pop("repository_id")
 
         installation_id = d.pop("installation_id")
@@ -86,6 +96,7 @@ class EnvironmentGitSourceSpec:
         prune = d.pop("prune")
 
         environment_git_source_spec = cls(
+            provider=provider,
             repository_id=repository_id,
             installation_id=installation_id,
             repository=repository,

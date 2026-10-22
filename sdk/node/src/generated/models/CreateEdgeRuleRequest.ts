@@ -4,6 +4,8 @@
 /* eslint-disable */
 import type { EdgeRuleAsyncAction } from './EdgeRuleAsyncAction.js';
 import type { EdgeRuleBudgetAction } from './EdgeRuleBudgetAction.js';
+import type { EdgeRuleCacheAction } from './EdgeRuleCacheAction.js';
+import type { EdgeRuleChallengeAction } from './EdgeRuleChallengeAction.js';
 import type { EdgeRuleCircuitBreakerAction } from './EdgeRuleCircuitBreakerAction.js';
 import type { EdgeRuleCORSAction } from './EdgeRuleCORSAction.js';
 import type { EdgeRuleGeoAction } from './EdgeRuleGeoAction.js';
@@ -25,6 +27,9 @@ import type { EdgeRuleWAFAction } from './EdgeRuleWAFAction.js';
  * Body shape for POST /v1/apps/{slug}/edge-rules.
  */
 export type CreateEdgeRuleRequest = {
+  /**
+   * Exact host, glob (`*`, `*.example.com`), or `@app` for every hostname the app serves (ADR-1191). Other values starting with `@` are reserved.
+   */
   match_host: string;
   match_path?: string;
   match_methods?: Array<string>;
@@ -34,7 +39,7 @@ export type CreateEdgeRuleRequest = {
   match_headers?: Record<string, string>;
   priority?: number;
   enabled?: boolean;
-  kind: 'route' | 'rewrite' | 'redirect' | 'headers' | 'cors' | 'jwt' | 'ip' | 'validate' | 'limit' | 'maintenance' | 'geo' | 'throttle' | 'budget' | 'cache' | 'respond' | 'retry' | 'circuit_breaker' | 'async' | 'waf';
+  kind: 'route' | 'rewrite' | 'redirect' | 'headers' | 'cors' | 'jwt' | 'ip' | 'validate' | 'limit' | 'maintenance' | 'geo' | 'throttle' | 'budget' | 'cache' | 'respond' | 'retry' | 'circuit_breaker' | 'async' | 'waf' | 'challenge';
   /**
    * Top-level source of truth for kind=validate (ADR-128).
    * Omitted == 'block' (the SQL-side default).
@@ -44,7 +49,7 @@ export type CreateEdgeRuleRequest = {
   /**
    * Kind-tagged action body — shape depends on `kind`.
    */
-  action: (EdgeRuleRouteAction | EdgeRuleRewriteAction | EdgeRuleRedirectAction | EdgeRuleHeadersAction | EdgeRuleCORSAction | EdgeRuleJWTAction | EdgeRuleIPAction | EdgeRuleValidateAction | EdgeRuleLimitAction | EdgeRuleMaintenanceAction | EdgeRuleGeoAction | EdgeRuleThrottleAction | EdgeRuleBudgetAction | EdgeRuleRespondAction | EdgeRuleRetryAction | EdgeRuleCircuitBreakerAction | EdgeRuleAsyncAction | EdgeRuleWAFAction);
+  action: (EdgeRuleRouteAction | EdgeRuleRewriteAction | EdgeRuleRedirectAction | EdgeRuleHeadersAction | EdgeRuleCORSAction | EdgeRuleJWTAction | EdgeRuleIPAction | EdgeRuleValidateAction | EdgeRuleLimitAction | EdgeRuleMaintenanceAction | EdgeRuleGeoAction | EdgeRuleThrottleAction | EdgeRuleBudgetAction | EdgeRuleCacheAction | EdgeRuleRespondAction | EdgeRuleRetryAction | EdgeRuleCircuitBreakerAction | EdgeRuleAsyncAction | EdgeRuleWAFAction | EdgeRuleChallengeAction);
   /**
    * Optional operator-facing name for the new rule.
    */

@@ -147,7 +147,7 @@ func testMailDevEnv() func(string) string {
 // for a real cluster from inside the harness.
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)

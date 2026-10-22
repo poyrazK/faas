@@ -1277,7 +1277,7 @@ func zeroConfigDeployServerWithStages(t *testing.T, slug string, gotDockerfile, 
 				atomic.StoreInt32(gotSource, 1)
 				_ = f.Close()
 			}
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: slug})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 			w.Header().Set("Content-Type", "text/event-stream")
 			flusher, _ := w.(http.Flusher)
@@ -1387,37 +1387,45 @@ func TestCmdDeployTarball_PreservesExplicitTrafficPercent(t *testing.T) {
 }
 
 func TestCmdDeployTarball_NoTrafficSendsExplicitZero(t *testing.T) {
-	source := t.TempDir()
-	if err := os.WriteFile(filepath.Join(source, "package.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(source, "index.js"), []byte("console.log('ok')"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var gotTraffic string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
-			writeJSONTest(w, api.AppResponse{ID: "app-id", Slug: "dark-source"})
-		case r.URL.Path == "/v1/apps/dark-source/deployments" && r.Method == http.MethodPost:
-			if err := r.ParseMultipartForm(32 << 20); err != nil {
-				t.Errorf("ParseMultipartForm: %v", err)
+	for _, trafficFlags := range [][]string{{"--no-traffic"}, {"--traffic-percent", "0"}} {
+		t.Run(strings.Join(trafficFlags, "-"), func(t *testing.T) {
+			source := t.TempDir()
+			if err := os.WriteFile(filepath.Join(source, "package.json"), []byte("{}"), 0o644); err != nil {
+				t.Fatal(err)
 			}
-			gotTraffic = r.FormValue("traffic_percent")
-			writeJSONTest(w, api.DeploymentResponse{ID: "dep-id", AppID: "app-id", Status: "pending", TrafficPercent: 0})
-		default:
-			http.Error(w, "unexpected route", http.StatusNotFound)
-		}
-	}))
-	defer srv.Close()
-	t.Setenv("FAAS_API", srv.URL)
-	t.Setenv("FAAS_TOKEN", "fp_live_x")
+			if err := os.WriteFile(filepath.Join(source, "index.js"), []byte("console.log('ok')"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(source, "gregale.yaml"), []byte("triggers:\n  - kind: cron\n    app: dark-source\n    schedule: '0 * * * *'\n    path: /tick\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var gotTraffic string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
+					writeJSONTest(w, api.AppResponse{ID: "app-id", Slug: "dark-source"})
+				case r.URL.Path == "/v1/apps/dark-source/deployments" && r.Method == http.MethodPost:
+					if err := r.ParseMultipartForm(32 << 20); err != nil {
+						t.Errorf("ParseMultipartForm: %v", err)
+					}
+					gotTraffic = r.FormValue("traffic_percent")
+					writeJSONTest(w, api.DeploymentResponse{ID: "dep-id", AppID: "app-id", Status: "pending", TrafficPercent: 0})
+				default:
+					http.Error(w, "unexpected route", http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdDeployTarball([]string{"--path", source, "--name", "dark-source", "--app", "--yes", "--no-wait", "--no-traffic"}); code != 0 {
-		t.Fatalf("cmdDeployTarball exit = %d, want 0", code)
-	}
-	if gotTraffic != "0" {
-		t.Fatalf("traffic_percent form value = %q, want explicit zero", gotTraffic)
+			if code := cmdDeployTarball(append([]string{"--path", source, "--name", "dark-source", "--app", "--yes", "--no-wait"}, trafficFlags...)); code != 0 {
+				t.Fatalf("cmdDeployTarball exit = %d, want 0", code)
+			}
+			if gotTraffic != "0" {
+				t.Fatalf("traffic_percent form value = %q, want explicit zero", gotTraffic)
+			}
+
+		})
 	}
 }
 
@@ -2371,7 +2379,7 @@ func TestCmdDeployTarball_GithubFlag(t *testing.T) {
 	if !strings.Contains(out, "Ref: ${{ github.sha }}") {
 		t.Errorf("snippet missing ${{ github.sha }} placeholder; got:\n%s", out)
 	}
-	if !strings.Contains(out, "app: my-app") {
+	if !strings.Contains(out, `app: "my-app"`) {
 		t.Errorf("snippet missing the --app slug; got:\n%s", out)
 	}
 	if !strings.Contains(out, "uses: poyrazK/faas/.github/actions/deploy@"+githubActionDefaultSHA+" # v0") {
@@ -2694,5 +2702,65 @@ func TestCreateOrFetchApp_Non409ErrorPropagates(t *testing.T) {
 	// the caller prefixes it once with "Could not create or fetch app".
 	if !strings.Contains(err.Error(), "validation_failed: bad slug") {
 		t.Errorf("error should carry the server's code:detail, got: %v", err)
+	}
+}
+
+// H10-21: a startup crash printed only the catalog copy ("the last lines it
+// printed are in the error detail") and never the lines themselves.
+func TestStartupCrashExcerptShowsTheError(t *testing.T) {
+	node := "snapshot prime failed: sched: prime: cold boot: app_startup_crash: workload stopped during startup (guest c26f50da exited before becoming ready): at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)\n" +
+		"Node.js v22.23.3\nguest-init: app restart (restart 3/3 policy=on-failure): run [/bin/bash -c npm run start]: exit status 1\n" +
+		"> node handler.js\nfile:///app/handler.js:10\n^\nError: H10_REQUIRED_CONFIG is not set (deliberate startup crash)\n" +
+		"at file:///app/handler.js:10:47\nat ModuleJob.run (node:internal/modules/esm/module_job:343:25)\nNode.js v22.23.3\n" +
+		"guest-init: app crash-looped after 3 restart(s): run [/bin/bash -c npm run start]: exit status 1"
+	got := startupCrashExcerpt(node)
+	if len(got) == 0 || got[0] != "Error: H10_REQUIRED_CONFIG is not set (deliberate startup crash)" {
+		t.Fatalf("node excerpt = %q, want it to start at the Error line", got)
+	}
+	nginx := "app_startup_crash: workload stopped during startup (guest 10d17e7b exited before becoming ready): " +
+		"2026/10/14 01:09:07 [warn] 644#644: the \"user\" directive makes sense only if the master process runs with super-user privileges\n" +
+		"nginx: [emerg] mkdir() \"/var/cache/nginx/client_temp\" failed (13: Permission denied)\n" +
+		"guest-init: app restart (restart 3/3 policy=on-failure): run [/docker-entrypoint.sh nginx -g daemon off;]: exit status 1"
+	if got := startupCrashExcerpt(nginx); len(got) != 1 || !strings.Contains(got[0], "[emerg] mkdir()") {
+		t.Fatalf("nginx excerpt = %q, want the [emerg] line", got)
+	}
+	if got := startupCrashExcerpt("build failed: exit status 1"); got != nil {
+		t.Fatalf("non-crash excerpt = %q, want nil", got)
+	}
+}
+
+// TestCmdTrafficStatusSeparatesScopes pins H10-114: a project app live in
+// three environments printed one table ending "Total 300%". Each scope now
+// carries its own total; a single-scope app keeps the original layout.
+func TestCmdTrafficStatusSeparatesScopes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSONTest(w, api.DeploymentListResponse{Items: []api.DeploymentResponse{
+			{ID: "dep-staging", Revision: 6, Scope: "staging", Status: statusLive, TrafficPercent: 100},
+			{ID: "dep-prod", Revision: 5, Scope: "production", Status: statusLive, TrafficPercent: 100},
+			{ID: "dep-default", Revision: 1, Status: statusLive, TrafficPercent: 100},
+		}})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+
+	out, restore := captureStdout(t)
+	defer restore()
+	if code := cmdTraffic([]string{"status", "demo"}); code != 0 {
+		t.Fatalf("traffic status exit = %d", code)
+	}
+	output := out.String()
+	for _, want := range []string{
+		"SCOPE\tREVISION\tDEPLOYMENT\tSTATUS\tTRAFFIC",
+		"default\tv1\tdep-default", "Total default\t\t\t\t100%",
+		"production\tv5\tdep-prod", "Total production\t\t\t\t100%",
+		"staging\tv6\tdep-staging", "Total staging\t\t\t\t100%",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q: %s", want, output)
+		}
+	}
+	if strings.Contains(output, "300%") {
+		t.Errorf("scopes were summed into one total: %s", output)
 	}
 }

@@ -117,8 +117,9 @@ func runTestLoadStreams(ctx context.Context, shared *testLoadCollector, cfg *tes
 		go func(i int, stream testLoadStreamSpec) {
 			defer workers.Done()
 			local := &testLoadCollector{}
-			streamCfg := &testLoadConfig{VUs: stream.VUs, Rate: stream.Rate, Duration: cfg.Duration, RequestLimit: cfg.RequestLimit}
+			streamCfg := &testLoadConfig{VUs: stream.VUs, Rate: stream.Rate, Duration: cfg.Duration, RequestLimit: cfg.RequestLimit, ChaosSchedule: cfg.ChaosSchedule, ChaosPhaseClock: cfg.ChaosPhaseClock, CorrelationGate: cfg.CorrelationGate}
 			j := journey
+			j.CorrelationRunID = journey.RunID
 			j.RunID = journey.RunID + "-" + stream.Name
 			j.Shared = shared
 			j.Steps = nil

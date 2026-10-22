@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationAcceptedResponse } from '../models/OperationAcceptedResponse.js';
+import type { OperationApprovalRequest } from '../models/OperationApprovalRequest.js';
 import type { OperationArtifactRequest } from '../models/OperationArtifactRequest.js';
 import type { OperationArtifactUploadRequest } from '../models/OperationArtifactUploadRequest.js';
 import type { OperationArtifactUploadResponse } from '../models/OperationArtifactUploadResponse.js';
@@ -34,10 +35,15 @@ import type { OperationRecoveryPreviewRequest } from '../models/OperationRecover
 import type { OperationRecoveryRequest } from '../models/OperationRecoveryRequest.js';
 import type { OperationReportRequest } from '../models/OperationReportRequest.js';
 import type { OperationResponse } from '../models/OperationResponse.js';
+import type { OperationSignalReceipt } from '../models/OperationSignalReceipt.js';
+import type { OperationSignalRequest } from '../models/OperationSignalRequest.js';
 import type { OperationStartRequest } from '../models/OperationStartRequest.js';
+import type { OperationSubjectSignalRequest } from '../models/OperationSubjectSignalRequest.js';
+import type { OperationSubjectSignalResponse } from '../models/OperationSubjectSignalResponse.js';
 import type { OperationSubmissionLookupRequest } from '../models/OperationSubmissionLookupRequest.js';
 import type { OperationSubmissionLookupResponse } from '../models/OperationSubmissionLookupResponse.js';
 import type { OperationTenantIdentity } from '../models/OperationTenantIdentity.js';
+import type { OperationTimelineResponse } from '../models/OperationTimelineResponse.js';
 import type { OperationWorkflowActionPreviewRequest } from '../models/OperationWorkflowActionPreviewRequest.js';
 import type { OperationWorkflowActionPreviewResponse } from '../models/OperationWorkflowActionPreviewResponse.js';
 import type { OperationWorkflowArtifactResponse } from '../models/OperationWorkflowArtifactResponse.js';
@@ -50,6 +56,8 @@ import type { OperationWorkflowOutcomesResponse } from '../models/OperationWorkf
 import type { OperationWorkflowOutcomeSummary } from '../models/OperationWorkflowOutcomeSummary.js';
 import type { OperationWorkflowPerformanceInstancesResponse } from '../models/OperationWorkflowPerformanceInstancesResponse.js';
 import type { OperationWorkflowPerformanceSummary } from '../models/OperationWorkflowPerformanceSummary.js';
+import type { OperationWorkflowPlaybookEvidenceWatch } from '../models/OperationWorkflowPlaybookEvidenceWatch.js';
+import type { OperationWorkflowPlaybookEvidenceWatchRequest } from '../models/OperationWorkflowPlaybookEvidenceWatchRequest.js';
 import type { OperationWorkflowPlaybookProgress } from '../models/OperationWorkflowPlaybookProgress.js';
 import type { OperationWorkflowPlaybookProgressStartRequest } from '../models/OperationWorkflowPlaybookProgressStartRequest.js';
 import type { OperationWorkflowPlaybookProgressUpdateRequest } from '../models/OperationWorkflowPlaybookProgressUpdateRequest.js';
@@ -71,6 +79,7 @@ import type { OperationWorkflowStateReport } from '../models/OperationWorkflowSt
 import type { OperationWorkflowStateReportResponse } from '../models/OperationWorkflowStateReportResponse.js';
 import type { OperationWorkflowStateValidationRequest } from '../models/OperationWorkflowStateValidationRequest.js';
 import type { OperationWorkflowStateValidationResponse } from '../models/OperationWorkflowStateValidationResponse.js';
+import type { PlatformTenantSubjectSignalRequest } from '../models/PlatformTenantSubjectSignalRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -108,6 +117,65 @@ export class OperationsService {
       },
       query: {
         'after': after,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
+        410: `The retained result expired; its identity remains reserved for the deduplication window.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read one chronological history of an operation.
+   * Requires account read scope and MFA. Merges operation events, HTTP execution attempts, workflow step attempts and completion delivery attempts by time (ADR-1195). Each source pages after its own position, so pages never skip or repeat a record while the operation runs. Attempt entries are snapshots at read time. HTTP attempts carry an instance log window for the archived log route; workflow step attempts do not. Platform tenants read events instead.
+   * @returns OperationTimelineResponse Chronological timeline page with a continuation cursor while records remain.
+   * @throws ApiError
+   */
+  public static getOperationTimeline({
+    slug,
+    id,
+    limit = 20,
+    cursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable logical operation identity.
+     */
+    id: string,
+    /**
+     * Maximum timeline entries in this page.
+     */
+    limit?: number,
+    /**
+     * Operation-bound continuation cursor from next_cursor.
+     */
+    cursor?: string,
+  }): CancelablePromise<OperationTimelineResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/operations/{id}/timeline',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'limit': limit,
+        'cursor': cursor,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -3894,7 +3962,7 @@ export class OperationsService {
     /**
      * Business state filter.
      */
-    state?: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation',
+    state?: 'accepted' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation',
     /**
      * Business reference type for this account-owned app. Requires subject_id; supply both selectors together.
      */
@@ -4358,6 +4426,102 @@ export class OperationsService {
     });
   }
   /**
+   * Deliver a named event to an operation that waits for it.
+   * Requires deploy:write and MFA (ADR-1197). The event must be one the operation's workflow waits for. signal_id makes delivery idempotent per operation; a repeat with the same event and payload returns the original receipt, a different event or payload under it conflicts. A signal that arrives before its wait is held until the wait starts. Settled operations take no new signals.
+   * @returns OperationSignalReceipt The delivery receipt; duplicate marks a repeat of an earlier signal.
+   * @throws ApiError
+   */
+  public static signalOperation({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable logical operation identity.
+     */
+    id: string,
+    requestBody: OperationSignalRequest,
+  }): CancelablePromise<OperationSignalReceipt> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/operations/{id}/signals',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
+        410: `The retained result expired; its identity remains reserved for the deduplication window.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Deliver a named event to every active operation about one business subject.
+   * Requires deploy:write and MFA (ADR-1197). Reaches at most 16 active operations of the named definition in the scope whose subject matches, oldest first; more is a limit error. Operations that settle during delivery are skipped. Each delivery is idempotent per operation by signal_id.
+   * @returns OperationSubjectSignalResponse One receipt per operation reached.
+   * @throws ApiError
+   */
+  public static signalOperationsBySubject({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: OperationSubjectSignalRequest,
+  }): CancelablePromise<OperationSubjectSignalResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/operation-signals',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
+        410: `The retained result expired; its identity remains reserved for the deduplication window.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Request cancellation of account-owned work.
    * Requires deploy:write. Expected generation prevents cancelling a recovered execution. Pending work can be cancelled; dispatching work may finish successfully or require reconciliation. A cancellation request does not prove an external effect was undone.
    * @returns OperationResponse Account cancellation intent and the resulting business projection.
@@ -4394,6 +4558,61 @@ export class OperationsService {
         404: `code: not_found`,
         409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
         410: `The retained result expired; its identity remains reserved for the deduplication window.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Decide an account approval on waiting work (ADR-1194).
+   * Requires deploy:write and MFA. Only a step whose definition names the account approver. The same decision is idempotent; a different one conflicts. Rejection settles the operation failed with approval_rejected.
+   * @returns OperationResponse The decision is recorded; the operation resumes or settles approval_rejected.
+   * @throws ApiError
+   */
+  public static decideOperationApproval({
+    slug,
+    id,
+    step,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable logical operation identity.
+     */
+    id: string,
+    /**
+     * Approval step declared by the operation definition.
+     */
+    step: string,
+    requestBody: OperationApprovalRequest,
+  }): CancelablePromise<OperationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/operations/{id}/approvals/{step}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'step': step,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -4446,7 +4665,7 @@ export class OperationsService {
     /**
      * Current business state filter, independent of delivery.
      */
-    state?: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation',
+    state?: 'accepted' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation',
     /**
      * Maximum summaries in this page.
      */
@@ -4715,6 +4934,137 @@ export class OperationsService {
         409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
         410: `The retained result expired; its identity remains reserved for the deduplication window.`,
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Decide this customer's approval on its waiting operation (ADR-1194).
+   * Requires platform_tenant:operations:manage. Only a step whose definition names the customer approver, on the customer's own operation. The same decision is idempotent; a different one conflicts.
+   * @returns OperationResponse The customer's decision is recorded; its operation resumes or settles approval_rejected.
+   * @throws ApiError
+   */
+  public static decidePlatformTenantSelfOperationApproval({
+    id,
+    step,
+    requestBody,
+  }: {
+    /**
+     * Stable logical operation identity.
+     */
+    id: string,
+    /**
+     * Approval step that the definition assigns to the customer.
+     */
+    step: string,
+    requestBody: OperationApprovalRequest,
+  }): CancelablePromise<OperationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/customer-operations/{id}/approvals/{step}',
+      path: {
+        'id': id,
+        'step': step,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Deliver a named event to this customer's own waiting operation (ADR-20261017100853).
+   * Requires platform_tenant:operations:manage. Works like the account signal route on the customer's own operation only; another customer's operation is not found. The operation's history records the signal with source customer. signal_id is shared with the account route, so a repeat from either is the same signal.
+   * @returns OperationSignalReceipt The customer's delivery receipt; duplicate marks a repeat of an earlier signal.
+   * @throws ApiError
+   */
+  public static signalPlatformTenantSelfOperation({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Stable logical operation identity.
+     */
+    id: string,
+    requestBody: OperationSignalRequest,
+  }): CancelablePromise<OperationSignalReceipt> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/customer-operations/{id}/signals',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
+        410: `The retained result expired; its identity remains reserved for the deduplication window.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Deliver a named event to this customer's own active operations about one business subject (ADR-20261017100853).
+   * Requires platform_tenant:operations:manage. The definition fixes the app, environment and operation name. Reaches at most 16 of the customer's own active operations whose subject matches; other customers' operations about the same subject are never reached. Each delivery is idempotent per operation by signal_id and recorded with source customer.
+   * @returns OperationSubjectSignalResponse One receipt per customer operation reached; empty when none is active.
+   * @throws ApiError
+   */
+  public static signalPlatformTenantSelfOperationsBySubject({
+    requestBody,
+  }: {
+    requestBody: PlatformTenantSubjectSignalRequest,
+  }): CancelablePromise<OperationSubjectSignalResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/customer-operation-signals',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
+        410: `The retained result expired; its identity remains reserved for the deduplication window.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -5402,6 +5752,9 @@ export class OperationsService {
   public static listAccountWorkflowReadinessFollowUps({
     slug,
     scope,
+    view,
+    actionKind,
+    actionTrigger,
     tenantId,
     owner,
     workflow,
@@ -5409,6 +5762,10 @@ export class OperationsService {
     offset,
     limit,
     reminderOnly,
+    impactPriority,
+    impactKind,
+    impactCode,
+    sort,
   }: {
     /**
      * ListAccountWorkflowReadinessFollowUps. Application slug.
@@ -5418,6 +5775,18 @@ export class OperationsService {
      * ListAccountWorkflowReadinessFollowUps. Application environment scope.
      */
     scope: string,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.view. Select follow-ups (default) or current cross-case next actions. Next-action view uses action ownership/deadlines; reminder and business-impact selectors are incompatible.
+     */
+    view?: 'follow_ups' | 'next_actions',
+    /**
+     * ListAccountWorkflowReadinessFollowUps.action_kind. Exact action kind in next-action view.
+     */
+    actionKind?: 'response_check_in' | 'decision_revalidation' | 'handoff_acceptance' | 'handoff_reassignment' | 'escalation_acknowledgment' | 'coordinator_completion' | 'scheduled_evidence_check' | 'coordinator_evidence_review' | 'coordinator_revision' | 'dependency_review' | 'follow_up' | 'fulfillment_review',
+    /**
+     * ListAccountWorkflowReadinessFollowUps.action_trigger. Exact trigger in next-action view.
+     */
+    actionTrigger?: 'human' | 'automatic' | 'suggested',
     /**
      * ListAccountWorkflowReadinessFollowUps.tenant_id. Optional customer selector matches notification evidence or a customer-specific subscription, including broader account watches.
      */
@@ -5446,6 +5815,22 @@ export class OperationsService {
      * ListAccountWorkflowReadinessFollowUps.reminder_only. Defaults to false; true selects active durable due reminders using the same owner, customer, workflow and environment filters.
      */
     reminderOnly?: boolean,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.impact_priority. Exact pinned priority on an unresolved validity review; excludes ordinary follow-ups without review impact.
+     */
+    impactPriority?: 'normal' | 'high' | 'critical',
+    /**
+     * ListAccountWorkflowReadinessFollowUps.impact_kind. Protected business result category on an unresolved review.
+     */
+    impactKind?: 'milestone' | 'outcome',
+    /**
+     * ListAccountWorkflowReadinessFollowUps.impact_code. Exact protected result code; requires impact_kind to avoid milestone/outcome ambiguity.
+     */
+    impactCode?: string,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.sort. Defaults to due. Business impact ordering puts overdue follow-ups first, then critical/high/normal unresolved review priority, then due time and stable notification identity. Other follow-ups have no declared review priority. Filtering and sorting precede live pagination within the retained candidate window.
+     */
+    sort?: 'due' | 'business_impact',
   }): CancelablePromise<OperationWorkflowReadinessFollowUpsResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -5454,6 +5839,9 @@ export class OperationsService {
         'slug': slug,
       },
       query: {
+        'view': view,
+        'action_kind': actionKind,
+        'action_trigger': actionTrigger,
         'scope': scope,
         'tenant_id': tenantId,
         'owner': owner,
@@ -5462,6 +5850,10 @@ export class OperationsService {
         'offset': offset,
         'limit': limit,
         'reminder_only': reminderOnly,
+        'impact_priority': impactPriority,
+        'impact_kind': impactKind,
+        'impact_code': impactCode,
+        'sort': sort,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -5489,12 +5881,19 @@ export class OperationsService {
   public static listPlatformTenantSelfWorkflowReadinessFollowUps({
     scope,
     appId,
+    view,
+    actionKind,
+    actionTrigger,
     owner,
     workflow,
     due,
     offset,
     limit,
     reminderOnly,
+    impactPriority,
+    impactKind,
+    impactCode,
+    sort,
   }: {
     /**
      * ListPlatformTenantSelfWorkflowReadinessFollowUps. Application environment scope.
@@ -5504,6 +5903,18 @@ export class OperationsService {
      * ListPlatformTenantSelfWorkflowReadinessFollowUps. Application UUID.
      */
     appId: string,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.view. Select follow-ups (default) or current cross-case next actions. Next-action view uses action ownership/deadlines; reminder and business-impact selectors are incompatible.
+     */
+    view?: 'follow_ups' | 'next_actions',
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.action_kind. Exact action kind in next-action view.
+     */
+    actionKind?: 'response_check_in' | 'decision_revalidation' | 'handoff_acceptance' | 'handoff_reassignment' | 'escalation_acknowledgment' | 'coordinator_completion' | 'scheduled_evidence_check' | 'coordinator_evidence_review' | 'coordinator_revision' | 'dependency_review' | 'follow_up' | 'fulfillment_review',
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.action_trigger. Exact trigger in next-action view.
+     */
+    actionTrigger?: 'human' | 'automatic' | 'suggested',
     /**
      * ListPlatformTenantSelfWorkflowReadinessFollowUps.owner. Exact coordination owner, distinct from application blocker ownership.
      */
@@ -5528,11 +5939,30 @@ export class OperationsService {
      * ListPlatformTenantSelfWorkflowReadinessFollowUps.reminder_only. Defaults to false; true selects active durable due reminders using the same owner, customer, workflow and environment filters.
      */
     reminderOnly?: boolean,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.impact_priority. Exact pinned priority on an unresolved validity review; excludes ordinary follow-ups without review impact.
+     */
+    impactPriority?: 'normal' | 'high' | 'critical',
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.impact_kind. Protected business result category on an unresolved review.
+     */
+    impactKind?: 'milestone' | 'outcome',
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.impact_code. Exact protected result code; requires impact_kind to avoid milestone/outcome ambiguity.
+     */
+    impactCode?: string,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.sort. Defaults to due. Business impact ordering puts overdue follow-ups first, then critical/high/normal unresolved review priority, then due time and stable notification identity. Other follow-ups have no declared review priority. Filtering and sorting precede live pagination within the retained candidate window.
+     */
+    sort?: 'due' | 'business_impact',
   }): CancelablePromise<OperationWorkflowReadinessFollowUpsResponse> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/workflow-readiness/follow-ups',
       query: {
+        'view': view,
+        'action_kind': actionKind,
+        'action_trigger': actionTrigger,
         'scope': scope,
         'app_id': appId,
         'owner': owner,
@@ -5541,6 +5971,10 @@ export class OperationsService {
         'offset': offset,
         'limit': limit,
         'reminder_only': reminderOnly,
+        'impact_priority': impactPriority,
+        'impact_kind': impactKind,
+        'impact_code': impactCode,
+        'sort': sort,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -6210,6 +6644,92 @@ export class OperationsService {
     });
   }
   /**
+   * Configure account checklist evidence monitoring
+   * ConfigureAccountWorkflowPlaybookEvidenceWatch. Explicitly enroll or stop a pinned checklist in an existing readiness inbox. Requires the exact checklist revision and watch configuration revision (zero for a new watch). Enabling captures a baseline without delivering a notice. Status or reason changes subsequently publish one grouped notification; clocks and report revisions alone do not notify. Account write scope and MFA or tenant operations-manage scope are required. Closure and revision are rechecked under the shared writer lock before publication. Polling does not change checklist progress or business state. At most 20 retained watches per subscription; stopped entries may be reclaimed for new watches.
+   * @returns OperationWorkflowPlaybookEvidenceWatch ConfigureAccountWorkflowPlaybookEvidenceWatch. Watch configuration and saved evidence baseline.
+   * @throws ApiError
+   */
+  public static configureAccountWorkflowPlaybookEvidenceWatch({
+    slug,
+    scope,
+    tenantId,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    id,
+    requestBody,
+  }: {
+    /**
+     * ConfigureAccountWorkflowPlaybookEvidenceWatch.slug. Application slug.
+     */
+    slug: string,
+    /**
+     * ConfigureAccountWorkflowPlaybookEvidenceWatch.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * ConfigureAccountWorkflowPlaybookEvidenceWatch.tenant_id. Required exact customer UUID; broad business-reference projections are not accepted.
+     */
+    tenantId: string,
+    /**
+     * ConfigureAccountWorkflowPlaybookEvidenceWatch.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * ConfigureAccountWorkflowPlaybookEvidenceWatch.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * ConfigureAccountWorkflowPlaybookEvidenceWatch.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * ConfigureAccountWorkflowPlaybookEvidenceWatch.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * ConfigureAccountWorkflowPlaybookEvidenceWatch.id. Durable checklist UUID belonging to this exact case.
+     */
+    id: string,
+    requestBody: OperationWorkflowPlaybookEvidenceWatchRequest,
+  }): CancelablePromise<OperationWorkflowPlaybookEvidenceWatch> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/evidence-watch',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'scope': scope,
+        'tenant_id': tenantId,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Record account playbook review decision
    * ReviewAccountWorkflowPlaybookProgress. Record continue, retire or replace with a required human reason and expected source revision. Retire and replace permanently close source coordination. Replacement requires an already-started active applicable target in the same exact case, its expected revision, and an atomic target-state check. No item evidence, pinned guidance, business outcome or execution authority is changed. Account write scope and MFA or customer operations-manage scope are required; customer ownership derives from authentication. Applicability is observed before the write, not transactionally locked application evidence.
    * @returns OperationWorkflowPlaybookProgress ReviewAccountWorkflowPlaybookProgress. Source checklist with the committed durable decision and updated shared revision.
@@ -6270,6 +6790,86 @@ export class OperationsService {
       query: {
         'scope': scope,
         'tenant_id': tenantId,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'instance_id': instanceId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Configure customer checklist evidence monitoring
+   * ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch. Explicitly enroll or stop a pinned checklist in an existing readiness inbox. Requires the exact checklist revision and watch configuration revision (zero for a new watch). Enabling captures a baseline without delivering a notice. Status or reason changes subsequently publish one grouped notification; clocks and report revisions alone do not notify. Account write scope and MFA or tenant operations-manage scope are required. Closure and revision are rechecked under the shared writer lock before publication. Polling does not change checklist progress or business state. At most 20 retained watches per subscription; stopped entries may be reclaimed for new watches.
+   * @returns OperationWorkflowPlaybookEvidenceWatch ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch. Watch configuration and saved evidence baseline.
+   * @throws ApiError
+   */
+  public static configurePlatformTenantSelfWorkflowPlaybookEvidenceWatch({
+    appId,
+    scope,
+    subjectType,
+    subjectId,
+    workflow,
+    instanceId,
+    id,
+    requestBody,
+  }: {
+    /**
+     * ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.app_id. Application UUID; customer identity comes from authentication.
+     */
+    appId: string,
+    /**
+     * ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.scope. Explicit application environment.
+     */
+    scope: string,
+    /**
+     * ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.subject_type. Exact business subject type.
+     */
+    subjectType: string,
+    /**
+     * ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.subject_id. Exact business subject identifier.
+     */
+    subjectId: string,
+    /**
+     * ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.workflow. Exact declared workflow name.
+     */
+    workflow: string,
+    /**
+     * ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.instance_id. Exact business workflow instance.
+     */
+    instanceId: string,
+    /**
+     * ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch.id. Durable checklist UUID belonging to this exact case.
+     */
+    id: string,
+    requestBody: OperationWorkflowPlaybookEvidenceWatchRequest,
+  }): CancelablePromise<OperationWorkflowPlaybookEvidenceWatch> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}/evidence-watch',
+      path: {
+        'id': id,
+      },
+      query: {
+        'app_id': appId,
+        'scope': scope,
         'subject_type': subjectType,
         'subject_id': subjectId,
         'workflow': workflow,

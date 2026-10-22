@@ -16,11 +16,12 @@ import (
 )
 
 type mcpReleaseRole struct {
-	Name     string `json:"name"`
-	TokenEnv string `json:"token_env,omitempty"`
-	Baseline string `json:"baseline"`
-	contract mcphosting.Contract
-	token    string
+	Name          string                   `json:"name"`
+	TokenEnv      string                   `json:"token_env,omitempty"`
+	Baseline      string                   `json:"baseline"`
+	Authorization *mcpReleaseAuthorization `json:"authorization,omitempty"`
+	contract      mcphosting.Contract
+	token         string
 }
 
 type mcpCatalogPinReceipt struct {
@@ -72,6 +73,10 @@ func validateMCPDeploymentCatalogFleetPin(pin *mcpCatalogPinReceipt, fleet mcpCa
 }
 
 func loadMCPReleasePolicy(path string) ([]mcpReleaseRole, error) {
+	return loadMCPReleasePolicyWithTokens(path, true)
+}
+
+func loadMCPReleasePolicyWithTokens(path string, withTokens bool) ([]mcpReleaseRole, error) {
 	if path == "" {
 		return nil, nil
 	}
@@ -114,9 +119,11 @@ func loadMCPReleasePolicy(path string) ([]mcpReleaseRole, error) {
 			return nil, errors.New("release roles require unique names and baseline paths")
 		}
 		seen[r.Name] = true
-		r.token, err = mcpToken(r.TokenEnv)
-		if err != nil {
-			return nil, fmt.Errorf("role %s: %w", r.Name, err)
+		if withTokens {
+			r.token, err = mcpToken(r.TokenEnv)
+			if err != nil {
+				return nil, fmt.Errorf("role %s: %w", r.Name, err)
+			}
 		}
 		baseline, err := root.Open(r.Baseline)
 		if err != nil {
@@ -129,6 +136,15 @@ func loadMCPReleasePolicy(path string) ([]mcpReleaseRole, error) {
 		}
 		if r.contract.Version != 2 {
 			return nil, fmt.Errorf("role %s requires a full catalog format-2 baseline", r.Name)
+		}
+	}
+	for i := range policy.Roles {
+		validate := validateMCPAuthorizationDeclarations
+		if withTokens {
+			validate = loadMCPRoleAuthorization
+		}
+		if err := validate(&policy.Roles[i]); err != nil {
+			return nil, fmt.Errorf("role %s authorization: %w", policy.Roles[i].Name, err)
 		}
 	}
 	return policy.Roles, nil
@@ -226,7 +242,17 @@ func verifyMCPRoles(ctx context.Context, candidate string, roles []mcpReleaseRol
 		if err != nil {
 			return checks, err
 		}
-		checks = append(checks, map[string]any{"role": role.Name, "diff": diff})
+		entry := map[string]any{"role": role.Name, "diff": diff}
+		if role.Authorization != nil {
+			authorization := probe.CheckAuthorization(ctx, role.Authorization.AuthorizationExpectations, catalog, role.Authorization.insufficientToken)
+			entry["authorization"] = authorization
+			checks = append(checks, entry)
+			if !mcpAuthorizationChecksPassed(authorization) {
+				return checks, fmt.Errorf("role %s authorization expectations failed; promotion blocked", role.Name)
+			}
+		} else {
+			checks = append(checks, entry)
+		}
 		if !diff.Compatible {
 			return checks, fmt.Errorf("role %s catalog requires review; capture and review its baseline before promoting", role.Name)
 		}
@@ -234,7 +260,7 @@ func verifyMCPRoles(ctx context.Context, candidate string, roles []mcpReleaseRol
 	return checks, nil
 }
 
-func finishMCPDeploy(ctx context.Context, c *Client, slug, id string, cfg mcphosting.Config, token string, roles []mcpReleaseRole, pin ...*mcpCatalogPinReceipt) int {
+func finishMCPDeployWithSmoke(ctx context.Context, c *Client, slug, id string, cfg mcphosting.Config, token string, roles []mcpReleaseRole, audit *mcpAccessAuditOptions, smoke *mcpSmokeGate, pin ...*mcpCatalogPinReceipt) int {
 	endpoint, candidate, serving, err := prepareMCPCandidate(ctx, c, slug, id, cfg)
 	if err != nil {
 		return printErr("MCP candidate", err)
@@ -279,7 +305,75 @@ func finishMCPDeploy(ctx context.Context, c *Client, slug, id string, cfg mcphos
 		}
 		receipt["promotion_error"] = protocolErr
 	}
-	if report.OK && pinErr == nil && protocolQualification.Qualified {
+	var readiness []map[string]any
+	ready := true
+	for _, role := range protocolRoles {
+		version := mcphosting.ProtocolVersion
+		var baseline *mcphosting.Contract
+		if role.contract.Version != 0 {
+			baseline = &role.contract
+			version = role.contract.ProtocolVersion
+		}
+		publicProbe, probeErr := mcphosting.NewClient(candidate, role.token, version)
+		if probeErr != nil {
+			ready = false
+			continue
+		}
+		result := mcphosting.CheckReadiness(probeCtx, publicProbe, baseline)
+		readiness = append(readiness, map[string]any{"role": role.Name, "deployment_id": id, "report": result})
+		ready = ready && result.OK
+	}
+	receipt["readiness"] = readiness
+	if !ready {
+		receipt["promotion_error"] = "Public MCP readiness failed; candidate remains unpromoted"
+	}
+	if report.OK && pinErr == nil && protocolQualification.Qualified && ready {
+		deployment, policyErr := c.GetDeployment(ctx, id)
+		var policy api.MCPReadinessPolicy
+		if policyErr == nil {
+			if deployment.Scope == "" || deployment.Scope == api.DefaultEnvScope {
+				policy, policyErr = c.GetMCPReadinessPolicy(ctx, slug)
+			} else {
+				policy, policyErr = c.GetMCPReadinessPolicy(ctx, slug, deployment.Scope)
+			}
+		}
+		if policyErr != nil {
+			ready = false
+			receipt["promotion_error"] = "Platform readiness policy unavailable"
+		} else if policy.Enabled {
+			stored := []api.MCPReadinessEvidence{}
+			for _, required := range policy.Roles {
+				matched := false
+				for _, role := range protocolRoles {
+					if role.Name != required.Name {
+						continue
+					}
+					matched = true
+					token := role.token
+					if required.Monitor.ManagedOAuth() {
+						token = ""
+					}
+					evidence, e := c.ProbeMCPReadiness(ctx, id, required.Name, token)
+					if e != nil || !evidence.Passed || evidence.DeploymentID != id || evidence.Role != required.Name || evidence.PolicyRevision != policy.Revision {
+						ready = false
+						break
+					}
+					stored = append(stored, evidence)
+				}
+				if !matched {
+					ready = false
+				}
+				if !ready {
+					break
+				}
+			}
+			receipt["platform_readiness"] = stored
+			if !ready {
+				receipt["promotion_error"] = "Fresh platform readiness evidence required for every configured role"
+			}
+		}
+	}
+	if report.OK && pinErr == nil && protocolQualification.Qualified && ready {
 		if catalogHealth.Supported && !catalogHealth.Healthy {
 			receipt["promotion_error"] = fmt.Sprintf("catalog health check failed: %s", catalogHealth.Error)
 		} else {
@@ -288,7 +382,33 @@ func finishMCPDeploy(ctx context.Context, c *Client, slug, id string, cfg mcphos
 			if gateErr != nil {
 				receipt["promotion_error"] = gateErr.Error()
 			} else {
-				_, err = c.PatchDeploymentTrafficIfServing(ctx, id, 100, serving)
+				var policy *api.MCPAccessPolicyExpectation
+				if audit != nil {
+					access := collectMCPAccessAudit(probeCtx, c, slug, cfg, roles, *audit)
+					receipt["access_audit"] = access
+					policy = access.PolicyExpectation
+					if !access.OK {
+						receipt["promotion_error"] = "reviewed MCP access policy drift or missing evidence blocks promotion"
+						if code := jsonOut(writeJSON(receipt)); code != 0 {
+							return code
+						}
+						return 1
+					}
+				}
+				if smoke != nil {
+					smokeCtx, smokeCancel := context.WithTimeout(ctx, 30*time.Second)
+					smokeReport := runMCPSmokeGate(smokeCtx, candidate, token, smoke)
+					smokeCancel()
+					receipt["smoke_tests"] = smokeReport
+					if !smokeReport.OK {
+						receipt["promotion_error"] = "MCP smoke fixtures failed; candidate remains unpromoted"
+						if code := jsonOut(writeJSON(receipt)); code != 0 {
+							return code
+						}
+						return 1
+					}
+				}
+				_, err = c.PatchDeploymentTrafficIfServingWithMCPAccess(ctx, id, 100, serving, policy)
 				if err != nil {
 					receipt["promotion_error"] = err.Error()
 				} else {

@@ -209,7 +209,7 @@ func TestAcquireVMTargetAnswersDisplacementAsFullQueue(t *testing.T) {
 	if err := <-bulkErr; !errors.As(err, &full) {
 		t.Fatalf("displaced crawler request = %v, want ConcurrencyQueueFullError", err)
 	}
-	if got := testutil.ToFloat64(h.metrics.routePriorityQueue.WithLabelValues("bulk", "displaced")); got != 1 {
+	if got := testutil.ToFloat64(h.metrics.routePriorityQueue.WithLabelValues("app", "bulk", "displaced")); got != 1 {
 		t.Fatalf("displaced metric = %v", got)
 	}
 }

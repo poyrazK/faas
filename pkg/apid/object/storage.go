@@ -460,6 +460,13 @@ func (s *Service) DeleteBucket(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		return
 	}
+	if nonEmpty, err := s.customerBucketHasData(r.Context(), b); err != nil || nonEmpty {
+		if err == nil {
+			err = objectstorage.ErrNotEmpty
+		}
+		BucketProblem(w, err)
+		return
+	}
 	var bindingsToRevoke []state.ObjectS3Credential
 	if bindings, ok := s.Host.Store().(state.ObjectS3CredentialBindingStore); ok {
 		credentials, err := bindings.ListObjectS3Credentials(r.Context(), acct.ID, b.ID)
@@ -502,6 +509,47 @@ func (s *Service) DeleteBucket(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// customerBucketHasData reports whether a bucket the customer must empty
+// still holds objects or retained versions. Deletion revokes the app's compute
+// bindings before the provider is asked; when the provider then refused a
+// non-empty bucket, the bucket returned to ready with its bindings gone and the
+// app lost access to data that still existed (hunt #9). Owned buckets are
+// emptied by the deletion itself and are not checked.
+func (s *Service) customerBucketHasData(ctx context.Context, b state.ObjectBucket) (bool, error) {
+	if b.State != "ready" {
+		return false, nil
+	}
+	if owned, err := s.ownedBucketCleanupRequired(ctx, b); err != nil || owned {
+		return false, err
+	}
+	backend, err := s.Host.ObjectStorage().Resolve(b.BackendID, b.BackendFingerprint)
+	if err != nil {
+		return false, objectstorage.ErrConfiguration
+	}
+	if err := s.inventoryRequestRecorder(b)(ctx); err != nil {
+		return false, err
+	}
+	page, err := backend.Provider.ListObjects(ctx, b.PhysicalName, "", "", 1)
+	if errors.Is(err, objectstorage.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil || len(page.Items) > 0 {
+		return len(page.Items) > 0, err
+	}
+	versions, ok := backend.Provider.(objectstorage.ObjectVersionInventoryProvider)
+	if !ok {
+		return false, nil
+	}
+	if err := s.inventoryRequestRecorder(b)(ctx); err != nil {
+		return false, err
+	}
+	retained, err := versions.ListObjectVersions(ctx, b.PhysicalName, "", 1)
+	if errors.Is(err, objectstorage.ErrNotFound) || errors.Is(err, objectstorage.ErrUnsupported) {
+		return false, nil
+	}
+	return len(retained.Items) > 0, err
 }
 
 func (s *Service) ListBucketObjects(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -638,7 +686,7 @@ func (s *Service) SetBucketAccessGrant(w http.ResponseWriter, r *http.Request, a
 	if !decodeBucketRequest(w, r, &req) {
 		return
 	}
-	key, err := s.Host.Store().GetAPIKey(r.Context(), acct.ID, keyID)
+	key, err := s.objectGrantKey(r.Context(), acct.ID, keyID)
 	if err != nil {
 		BucketProblem(w, err)
 		return

@@ -76,6 +76,10 @@ func seedApp(t *testing.T, store *fakeStore, project state.Project, rootDir, wor
 		StartCommand:  startCmd,
 		Status:        state.AppActive,
 	}
+	if class == state.WorkloadClassWorker {
+		// What applyProjectImage writes for a worker (H9-170).
+		a.Manifest.ExecutionMode = api.ExecutionModeWorker
+	}
 	added, err := store.CreateApp(context.Background(), a)
 	if err != nil {
 		t.Fatalf("seedApp: %v", err)
@@ -514,9 +518,12 @@ func TestReconcile_OverQuota_CreatesSkipped(t *testing.T) {
 	seedApp(t, store, proj, "", "backend", "")
 
 	// Attempt 3 creates. Free cap = 1. proj = 1 existing + 3 = 4.
-	// projected > cap → rejected before any mutation.
+	// projected > cap → rejected before any mutation. All HTTP: Free
+	// refuses a worker before the quota check.
+	scan := threeWorkloads(t, "")
+	scan.Workloads[1].Class = reposcan.ClassHTTP
 	svc := freshService(store, aud)
-	out, err := svc.Reconcile(context.Background(), proj, threeWorkloads(t, ""), "sha-1", "main", nil)
+	out, err := svc.Reconcile(context.Background(), proj, scan, "sha-1", "main", nil)
 	if err == nil {
 		t.Fatal("expected quota error")
 	}

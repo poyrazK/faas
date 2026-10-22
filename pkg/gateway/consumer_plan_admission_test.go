@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -37,7 +38,7 @@ func TestEnforceConsumerPlan(t *testing.T) {
 	app := App{ID: "app-1", AccountID: "acct-1"}
 	t.Run("unlimited plans skip admission and cache the policy", func(t *testing.T) {
 		store := &fakeConsumerPlanStore{}
-		h := (&Handler{}).WithConsumerPlanStore(store)
+		h := (&Handler{apiMonetization: monetizationOn}).WithConsumerPlanStore(store)
 		for range 3 {
 			if !h.enforceConsumerPlan(httptest.NewRecorder(), planRequest("GET /items"), &statusRecorder{}, app, false) {
 				t.Fatal("unlimited plan denied")
@@ -50,7 +51,7 @@ func TestEnforceConsumerPlan(t *testing.T) {
 	t.Run("monthly caps count weighted units", func(t *testing.T) {
 		store := &fakeConsumerPlanStore{policy: ConsumerPlanPolicy{MaxUnitsPerMonth: 100, RouteWeights: map[string]int64{"POST /generate": 20}},
 			decision: ConsumerPlanDecision{Allowed: true}}
-		h := (&Handler{}).WithConsumerPlanStore(store)
+		h := (&Handler{apiMonetization: monetizationOn}).WithConsumerPlanStore(store)
 		h.enforceConsumerPlan(httptest.NewRecorder(), planRequest("POST /generate"), &statusRecorder{}, app, false)
 		h.enforceConsumerPlan(httptest.NewRecorder(), planRequest("GET /items"), &statusRecorder{}, app, false)
 		if len(store.admitUnits) != 2 || store.admitUnits[0] != 20 || store.admitUnits[1] != 1 {
@@ -60,7 +61,7 @@ func TestEnforceConsumerPlan(t *testing.T) {
 	t.Run("denials return 429 and are not billed", func(t *testing.T) {
 		store := &fakeConsumerPlanStore{policy: ConsumerPlanPolicy{MaxRequestsPerMinute: 1},
 			decision: ConsumerPlanDecision{Scope: "minute", Limit: 1, Observed: 1, RetryAfterSeconds: 30}}
-		h := (&Handler{}).WithConsumerPlanStore(store)
+		h := (&Handler{apiMonetization: monetizationOn}).WithConsumerPlanStore(store)
 		w, r := httptest.NewRecorder(), planRequest("GET /items")
 		if h.enforceConsumerPlan(w, r, &statusRecorder{}, app, false) {
 			t.Fatal("over-limit request admitted")
@@ -72,7 +73,7 @@ func TestEnforceConsumerPlan(t *testing.T) {
 	})
 	t.Run("unverifiable admission fails closed", func(t *testing.T) {
 		store := &fakeConsumerPlanStore{policyErr: errors.New("db down")}
-		h := (&Handler{}).WithConsumerPlanStore(store)
+		h := (&Handler{apiMonetization: monetizationOn}).WithConsumerPlanStore(store)
 		w := httptest.NewRecorder()
 		if h.enforceConsumerPlan(w, planRequest("GET /items"), &statusRecorder{}, app, false) || w.Code != http.StatusServiceUnavailable {
 			t.Fatalf("code=%d, want 503", w.Code)
@@ -80,11 +81,27 @@ func TestEnforceConsumerPlan(t *testing.T) {
 	})
 	t.Run("anonymous traffic and smoke probes are not plan-limited", func(t *testing.T) {
 		store := &fakeConsumerPlanStore{policyErr: errors.New("must not be called")}
-		h := (&Handler{}).WithConsumerPlanStore(store)
+		h := (&Handler{apiMonetization: monetizationOn}).WithConsumerPlanStore(store)
 		anonymous := httptest.NewRequest(http.MethodGet, "/", nil)
 		if !h.enforceConsumerPlan(httptest.NewRecorder(), anonymous, &statusRecorder{}, app, false) ||
 			!h.enforceConsumerPlan(httptest.NewRecorder(), planRequest("GET /items"), &statusRecorder{}, app, true) {
 			t.Fatal("anonymous or smoke traffic was plan-limited")
 		}
 	})
+}
+
+// adr: 1306 — a spend-capped consumer gets a 402 on any plan, before any
+// counter is written, and the request is not billed.
+func TestEnforceConsumerSpendCap(t *testing.T) {
+	store := &fakeConsumerPlanStore{policy: ConsumerPlanPolicy{SpendCapped: true, SpendCapMillicents: 0, SpendDueMillicents: 125000, SpendCurrency: "EUR"}}
+	h := (&Handler{apiMonetization: monetizationOn}).WithConsumerPlanStore(store)
+	w, r := httptest.NewRecorder(), planRequest("GET /items")
+	if h.enforceConsumerPlan(w, r, &statusRecorder{}, App{ID: "app-1", AccountID: "acct-1"}, false) {
+		t.Fatal("spend-capped consumer admitted")
+	}
+	if w.Code != http.StatusPaymentRequired || !strings.Contains(w.Body.String(), "consumer_spend_cap_reached") ||
+		!strings.Contains(w.Body.String(), `"observed":125000`) || len(store.admitUnits) != 0 ||
+		w.Header().Get("x-faas-rate-limit-scope") != "consumer-spend-cap" || r.Context().Value(suppressFinancialUsageKey{}) != true {
+		t.Fatalf("code=%d body=%s admissions=%d", w.Code, w.Body, len(store.admitUnits))
+	}
 }

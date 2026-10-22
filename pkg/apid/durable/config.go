@@ -10,14 +10,58 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/durableentity"
+	entitysocket "github.com/onebox-faas/faas/pkg/durableentity/socket"
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Configure validates the FAAS_DURABLE_ENTITY_* settings and, when the preview
-// is enabled, opens the engine on the selected objects backend.
 func (s *Service) Configure(ctx context.Context, getenv func(string) string, objects *objectstorage.Registry) error {
+	s.Sockets = nil
+	s.TenantQuotas = nil
+	s.QuotaMigrationEnabled = false
+	s.QuotaPolicyEnabled = false
+	s.RetirementEnabled = false
+	s.RegistryEnabled = false
+	s.RegistryCleanupEnabled = false
+	s.RegistryCleanupWorkerEnabled = false
+	quotas := getenv("FAAS_DURABLE_ENTITY_TENANT_QUOTAS_ENABLED") == "1"
+	migration := getenv("FAAS_DURABLE_ENTITY_QUOTA_MIGRATION_ENABLED") == "1"
+	policy := getenv("FAAS_DURABLE_ENTITY_QUOTA_POLICY_ENABLED") == "1"
+	registry := getenv("FAAS_DURABLE_ENTITY_REGISTRY_ENABLED") == "1"
+	registryCleanup := getenv("FAAS_DURABLE_ENTITY_REGISTRY_CLEANUP_ENABLED") == "1"
+	registryWorker := getenv("FAAS_DURABLE_ENTITY_REGISTRY_CLEANUP_WORKER_ENABLED") == "1"
+	if registryWorker && !registryCleanup {
+		return errors.New("registry cleanup worker requires registry cleanup management")
+	}
+	if registryCleanup && !registry {
+		return errors.New("registry cleanup requires registry management")
+	}
+	if registry && !policy {
+		return errors.New("entity registry requires quota policy management")
+	}
+	retirement := getenv("FAAS_DURABLE_ENTITY_RETIREMENT_ENABLED") == "1"
+	if retirement && !policy {
+		return errors.New("entity retirement requires quota policy management")
+	}
+	if policy && !migration {
+		return errors.New("quota policy changes require quota migration")
+	}
+	if migration && !quotas {
+		return errors.New("quota migration requires tenant quotas")
+	}
+	if quotas && getenv("FAAS_DURABLE_ENTITIES_ENABLED") != "1" {
+		return errors.New("tenant quotas require durable entities")
+	}
+	s.SessionGrants = nil
+	browser := getenv("FAAS_DURABLE_ENTITY_BROWSER_SESSIONS_ENABLED") == "1"
+	if browser && getenv("FAAS_DURABLE_ENTITY_SOCKETS_ENABLED") != "1" {
+		return errors.New("browser sessions require entity sockets")
+	}
+	sockets := getenv("FAAS_DURABLE_ENTITY_SOCKETS_ENABLED") == "1"
+	if sockets && getenv("FAAS_DURABLE_ENTITIES_ENABLED") != "1" {
+		return errors.New("entity sockets require durable entities")
+	}
 	artifacts, artifactErr := validatorbundle.OpenArtifacts(getenv)
 	if artifactErr != nil {
 		return artifactErr
@@ -90,6 +134,31 @@ func (s *Service) Configure(ctx context.Context, getenv func(string) string, obj
 	if err != nil {
 		return err
 	}
+	var tenantQuotas *entitysocket.Quotas
+	if quotas {
+		limits, err := TenantLimits(getenv, limit)
+		if err != nil {
+			return err
+		}
+		cache, err := entitysocket.NewRegistryCache(store, 8<<20, 256, 16)
+		if err != nil {
+			return err
+		}
+		tenantQuotas = &entitysocket.Quotas{Store: store, Limits: limits, RegistryCache: cache}
+	}
+	if registryCleanup {
+		if err := tenantQuotas.CheckRegistryCleanup(ctx); err != nil {
+			return errors.New("registry cleanup requires verified private listing and delete permission")
+		}
+	}
+	if registryWorker {
+		if err := tenantQuotas.CheckRegistryCleanupWorker(ctx); err != nil {
+			return errors.New("registry cleanup worker requires verified quota discovery and private sidecar CAS permissions")
+		}
+		if err := tenantQuotas.CheckRegistryCleanupIndex(ctx); err != nil {
+			return errors.New("registry cleanup worker requires verified private index permissions")
+		}
+	}
 	// The request budget is shorter than this lease. We deliberately avoid a
 	// renewal writer racing every transition in the first synchronous slice.
 	probeCtx, cancel := context.WithTimeout(ctx, api.DurableEntityInvokeTimeout)
@@ -98,6 +167,16 @@ func (s *Service) Configure(ctx context.Context, getenv func(string) string, obj
 	engine, err := durableentity.Open(probeCtx, observed, durableentity.Options{LeaseDuration: api.MaxDurableEntityLease, RetainedBytesLimit: limit})
 	if err != nil {
 		return errors.New("durable entities require private conditional writes and strongly consistent reads")
+	}
+	if migration {
+		if err := engine.CheckHealthDiscovery(probeCtx); err != nil {
+			return errors.New("quota migration requires bounded private delimiter listing")
+		}
+	}
+	if retirement {
+		if err := engine.CheckMaintenance(probeCtx); err != nil {
+			return errors.New("entity retirement requires bounded private listing and verified delete permission")
+		}
 	}
 	alarms := getenv("FAAS_DURABLE_ENTITY_ALARMS_ENABLED") == "1"
 	if alarms {
@@ -132,9 +211,22 @@ func (s *Service) Configure(ctx context.Context, getenv func(string) string, obj
 			return errors.New("durable entity backups require private listing and deletion")
 		}
 	}
+	if sockets {
+		s.Sockets = entitysocket.New()
+		if browser {
+			s.SessionGrants = &entitysocket.Grants{Store: store, Quotas: tenantQuotas}
+		}
+	}
 	s.RestoreValidationEnabled = getenv("FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED") == "1"
 	s.BackupsEnabled = backups
 	s.HealthEnabled = health
+	s.TenantQuotas = tenantQuotas
+	s.QuotaMigrationEnabled = migration
+	s.QuotaPolicyEnabled = policy
+	s.RetirementEnabled = retirement
+	s.RegistryEnabled = registry
+	s.RegistryCleanupEnabled = registryCleanup
+	s.RegistryCleanupWorkerEnabled = registryWorker
 	s.Engine, s.Apps, s.Owner = engine, apps, uuid.NewString()
 	s.AlarmsEnabled = alarms
 	s.MaintenanceEnabled = maintenance

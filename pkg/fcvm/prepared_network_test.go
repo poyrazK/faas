@@ -403,13 +403,26 @@ func TestPreparedNetworkClaimFailureFallsBack(t *testing.T) {
 	m, p := testPreparedPool(t, 1)
 	fillTestPreparedPool(t, m, p, 250)
 	p.move = func(string, string) error { return errors.New("bind failure") }
-	lease, entry, err := m.acquireWakeNetwork(WakeRequest{Instance: "fallback", Plan: "scale", EgressMbit: 250})
+	lease, entry, err := m.acquireWakeNetwork(WakeRequest{Instance: "fallback", Plan: "scale", EgressMbit: 250}, false)
 	if err != nil || entry != nil {
 		t.Fatalf("ordinary acquisition failed: %v", err)
 	}
 	defer func() { _ = m.alloc.Release(lease.Instance) }()
 	if len(m.alloc.reserved) != 0 || m.LeasedCount() != 1 {
 		t.Fatal("claim failure leaked a slot")
+	}
+}
+
+func TestPreparedNetworkStrictEgressBypassesPool(t *testing.T) {
+	m, p := testPreparedPool(t, 1)
+	fillTestPreparedPool(t, m, p, 250)
+	lease, entry, err := m.acquireWakeNetwork(WakeRequest{Instance: "strict-egress", Plan: "scale", EgressMbit: 250}, true)
+	if err != nil || entry != nil {
+		t.Fatalf("strict egress claimed a prepared namespace: entry=%v err=%v", entry, err)
+	}
+	defer func() { _ = m.alloc.Release(lease.Instance) }()
+	if len(p.ready) != 1 {
+		t.Fatalf("strict egress consumed the prepared pool: ready=%d", len(p.ready))
 	}
 }
 
@@ -503,5 +516,30 @@ func TestEnablePreparedNetworksReportsMissingHostNetwork(t *testing.T) {
 	}
 	if m.preparedNetworks != nil {
 		t.Fatal("a failed enable left a cache behind")
+	}
+}
+
+// H10-141: an idle pool keeps its spares across maintenance. At a 60 s TTL
+// every spare was rebuilt each 45 s, and the bridge-port and networkd lines
+// from those rebuilds filled 96% of a production node's journal.
+func TestPreparedNetworkIdleSparesSurviveMaintenance(t *testing.T) {
+	if preparedNetworkTick >= preparedNetworkTTL/2 {
+		t.Fatalf("maintenance tick %s must be shorter than the refresh age %s", preparedNetworkTick, preparedNetworkTTL/2)
+	}
+	m, p := testPreparedPool(t, 3)
+	fillTestPreparedPool(t, m, p, 100)
+	before := map[string]bool{}
+	for i := range p.ready {
+		p.ready[i].created = time.Now().Add(-10 * time.Minute)
+		before[p.ready[i].lease.Instance] = true
+	}
+	p.fill()
+	if len(p.ready) != 3 {
+		t.Fatalf("ready = %d, want 3", len(p.ready))
+	}
+	for _, entry := range p.ready {
+		if !before[entry.lease.Instance] {
+			t.Fatalf("a 10-minute-old idle spare was rebuilt (%s)", entry.lease.Instance)
+		}
 	}
 }

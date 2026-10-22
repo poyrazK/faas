@@ -52,7 +52,11 @@ func startCommitRelay(ctx context.Context, store *state.PgStore, identities []*a
 	if err := registry.Register(commitmanaged.NewObservationCollector(store)); err != nil {
 		return err
 	}
-	manager := &commitmanaged.Manager{Store: store, Identities: identities, Policy: policy, Report: func(source, code string, n int) {
+	realtimeEnabled := os.Getenv("FAAS_REALTIME_TRANSACTIONAL_PREVIEW_ENABLED")
+	if realtimeEnabled != "" && realtimeEnabled != "0" && realtimeEnabled != "1" {
+		return errors.New("commit: FAAS_REALTIME_TRANSACTIONAL_PREVIEW_ENABLED must be 0 or 1")
+	}
+	manager := &commitmanaged.Manager{RealtimeEnabled: realtimeEnabled == "1", Store: store, Identities: identities, Policy: policy, Report: func(source, code string, n int) {
 		cycles.WithLabelValues(code).Inc()
 		accepted.Add(float64(n))
 		if code != "healthy" {

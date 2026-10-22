@@ -542,7 +542,7 @@ func TestEdgeRuleBudgetActionValidate_Mega4(t *testing.T) {
 	if p := (&EdgeRuleBudgetAction{BudgetMs: -1}).Validate(); p == nil {
 		t.Error("neg budget: p=nil")
 	}
-	if p := (&EdgeRuleBudgetAction{BudgetMs: int(RequestBudgetMax.Milliseconds()) + 1}).Validate(); p == nil {
+	if p := (&EdgeRuleBudgetAction{BudgetMs: int(RequestBudgetPlanMax.Milliseconds()) + 1}).Validate(); p == nil {
 		t.Error("budget over cap: p=nil")
 	}
 	long := strings.Repeat("h", 129)

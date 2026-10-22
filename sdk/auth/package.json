@@ -1,0 +1,16 @@
+{
+  "name": "@gregale/auth",
+  "version": "0.1.0",
+  "description": "Client for Gregale application Auth: sign-in, sessions, organizations and authorization",
+  "license": "SEE LICENSE IN LICENSE",
+  "publishConfig": {"access": "restricted"},
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": {"node": ">=22"},
+  "exports": {".": {"types": "./dist/index.d.ts", "import": "./dist/index.js"}, "./server": {"types": "./dist/server.d.ts", "import": "./dist/server.js"}, "./react": {"types": "./dist/react.d.ts", "import": "./dist/react.js"}},
+  "scripts": {"build": "tsc -p tsconfig.json", "test": "npm run build && tsc -p tsconfig.declarations.json && node --test test/*.test.mjs"},
+  "peerDependencies": {"react": ">=18"},
+  "peerDependenciesMeta": {"react": {"optional": true}},
+  "devDependencies": {"@types/react": "18.3.12", "react": "18.3.1", "react-test-renderer": "18.3.1", "typescript": "5.9.3"}
+}

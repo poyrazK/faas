@@ -7,6 +7,7 @@ package apidserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,7 +79,15 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 		log.Warn("dashboard edge rules: list rules", "account_id", acct.ID, "app_id", app.ID, "err", listErr)
 	} else {
 		data.Rules = projectDashboardEdgeRules(rules)
-		s.addDashboardEdgeRuleHits(ctx, log, app.ID, data.Rules)
+		data.Recipes = dashboardEdgeRuleRecipes(rules, acct.Plan)
+		if limits, ok := api.LimitsFor(acct.Plan); ok && limits.AlertRuleLimitPerApp > 0 {
+			data.RecipeAlerts = true
+		}
+		data.Suggestions = s.dashboardEdgeRuleSuggestions(ctx, log, app, acct.Plan, data.Recipes)
+		data.Hosts = s.dashboardEdgeRuleHostCoverage(ctx, log, app, rules)
+		if hits, ok := s.addDashboardEdgeRuleHits(ctx, log, app.ID, data.Rules); ok {
+			data.Review = dashboardEdgeRuleReview(rules, data.Rules, hits)
+		}
 		data.Events = s.loadDashboardEdgeRuleEvents(r, log, acct, app, rules)
 		for _, rule := range rules {
 			if isSecurityHeadersRule(rule) && rule.Enabled {
@@ -268,6 +277,7 @@ func projectDashboardEdgeRules(rows []state.EdgeRule) []dashboard.EdgeRulePageIt
 			CreatedAt: dashboardJobsTime(row.CreatedAt), UpdatedAt: dashboardJobsTime(row.UpdatedAt),
 			SecurityPreset: isSecurityHeadersRule(row),
 			Name:           row.Name, Mode: edgeRuleModeOrDefault(row.Mode),
+			AppWide: api.IsEdgeRuleAppHosts(row.MatchHost),
 		}
 		items = append(items, item)
 	}
@@ -316,7 +326,8 @@ func edgeRuleActionSummary(rule state.EdgeRule) string {
 
 func dashboardEdgeRulesActionFlash(r *http.Request) string {
 	switch r.URL.Query().Get("action") {
-	case "created", "updated", "deleted", "security_headers_enabled", "mode_enforce", "mode_log":
+	case "created", "updated", "deleted", "security_headers_enabled", "mode_enforce", "mode_log", "recipe_log", "recipe_enforce",
+		"recipe_log_alert", "recipe_enforce_alert", "recipe_alert_failed":
 		return r.URL.Query().Get("action")
 	case "error":
 		return "error"
@@ -468,14 +479,10 @@ func (s *server) dashboardSecurityHeaders(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	host := app.Slug
-	if parsed, parseErr := url.Parse(appURLForDomain(app.Slug, s.domain)); parseErr == nil && parsed.Hostname() != "" {
-		host = parsed.Hostname()
-	}
 	enabled := true
 	priority := 1000
 	req := api.CreateEdgeRuleRequest{
-		MatchHost: host, MatchPath: "/*", Priority: &priority, Enabled: &enabled,
+		MatchHost: api.EdgeRuleAppHosts, MatchPath: "/*", Priority: &priority, Enabled: &enabled,
 		Kind: string(state.EdgeRuleKindHeaders), Action: securityHeadersActionJSON(),
 	}
 	resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/edge-rules", "", req, s.edgeRules.CreateEdgeRule)
@@ -554,4 +561,214 @@ func (s *server) forwardDashboardEdgeRuleJSON(r *http.Request, acct state.Accoun
 	resp := httptest.NewRecorder()
 	handler(resp, req, acct)
 	return resp
+}
+
+// dashboardApplyEdgeRuleRecipe adds one protection recipe's rule (ADR-986)
+// through the JSON create handler, so validation, plan gates and quotas are
+// the API's. The rule starts in log mode unless the form asks to enforce.
+func (s *server) dashboardApplyEdgeRuleRecipe(w http.ResponseWriter, r *http.Request) {
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		writeDashboardUnauthorized(w, r)
+		return
+	}
+	if !s.verifyDashboardEdgeRulesCSRF(w, r, acct.ID) {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		api.WriteProblem(w, api.ErrValidation("could not parse recipe form"))
+		return
+	}
+	slug := r.PathValue("slug")
+	app, err := s.store.AppBySlug(r.Context(), slug)
+	if err != nil || app.AccountID != acct.ID {
+		http.NotFound(w, r)
+		return
+	}
+	recipe, ok := api.EdgeRuleRecipeByID(r.PostFormValue("recipe"))
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	values := map[string]string{}
+	for _, p := range recipe.Params {
+		if v := strings.TrimSpace(r.PostFormValue(p.Name)); v != "" {
+			values[p.Name] = v
+		}
+	}
+	enforce := r.PostFormValue("enforce") != ""
+	req, prob := api.BuildEdgeRuleRecipe(recipe.ID, api.EdgeRuleAppHosts, values, enforce)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	alert, prob := dashboardRecipeAlertInput(r, acct.Plan)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/edge-rules", "", req, s.edgeRules.CreateEdgeRule)
+	if !dashboardMutationSucceeded(w, resp) {
+		return
+	}
+	action := "recipe_log"
+	if enforce {
+		action = "recipe_enforce"
+	}
+	if alert != nil {
+		action = s.addDashboardRecipeAlert(r, acct, slug, recipe.ID, resp, alert, action)
+	}
+	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(slug)+"/edge-rules?action="+action, http.StatusSeeOther)
+}
+
+// dashboardEdgeRuleRecipes projects the recipe catalog for the page: which
+// recipes already have a rule, and which need a higher plan.
+func dashboardEdgeRuleRecipes(rules []state.EdgeRule, plan api.Plan) []dashboard.EdgeRuleRecipeView {
+	limits, _ := api.LimitsFor(plan)
+	out := make([]dashboard.EdgeRuleRecipeView, 0, len(api.EdgeRuleRecipes))
+	for _, recipe := range api.EdgeRuleRecipes {
+		view := dashboard.EdgeRuleRecipeView{ID: recipe.ID, Title: recipe.Title, Summary: recipe.Summary, LogNote: recipe.LogNote}
+		for _, p := range recipe.Params {
+			view.Params = append(view.Params, dashboard.EdgeRuleRecipeParamView{Name: p.Name, Label: p.Label, Help: p.Help, Default: p.Default, Placeholder: p.Placeholder, Required: p.Required})
+		}
+		description := api.EdgeRuleRecipeDescription(recipe.ID)
+		for _, rule := range rules {
+			if rule.Description == description {
+				view.Added = true
+				break
+			}
+		}
+		if recipe.Kind == string(state.EdgeRuleKindIP) && !limits.EdgeRulesIPAllowed {
+			view.Blocked = "Available on the Hobby plan and above, which include IP edge rules."
+		}
+		if recipe.Kind == string(state.EdgeRuleKindChallenge) && limits.EdgeRulesChallengePerApp == 0 {
+			view.Blocked = "Available on the Hobby plan and above, which include challenge rules."
+		}
+		out = append(out, view)
+	}
+	return out
+}
+
+// dashboardEdgeRuleHostCoverage counts, for each hostname the app serves
+// (its platform host and verified custom domains), the enabled rules that
+// apply to it: host-specific, pattern ("*", "*.example.com") and app-wide
+// ("@app", ADR-1191) rules alike.
+func (s *server) dashboardEdgeRuleHostCoverage(ctx context.Context, log *slog.Logger, app state.App, rules []state.EdgeRule) []dashboard.EdgeRuleHostCoverage {
+	hosts := []dashboard.EdgeRuleHostCoverage{}
+	if parsed, err := url.Parse(appURLForDomain(app.Slug, s.domain)); err == nil && parsed.Hostname() != "" {
+		hosts = append(hosts, dashboard.EdgeRuleHostCoverage{Host: parsed.Hostname()})
+	}
+	domains, err := s.store.ListDomainsForApp(ctx, app.ID)
+	if err != nil {
+		log.Warn("dashboard edge rules: list custom domains", "app_id", app.ID, "err", err)
+	}
+	for _, d := range domains {
+		if !d.VerifiedAt.IsZero() {
+			hosts = append(hosts, dashboard.EdgeRuleHostCoverage{Host: strings.ToLower(d.Domain), Custom: true})
+		}
+	}
+	for i := range hosts {
+		for _, rule := range rules {
+			if rule.Enabled && api.EdgeRuleHostMatches(rule.MatchHost, hosts[i].Host) {
+				hosts[i].Rules++
+			}
+		}
+	}
+	return hosts
+}
+
+// recipeAlertInput is the optional "alert me" part of a recipe form.
+type recipeAlertInput struct {
+	perHour int
+	url     string
+	secret  string
+}
+
+// dashboardRecipeAlertInput reads and checks the recipe form's alert fields
+// before any rule is created, so a bad threshold, missing webhook or plan
+// without alerts never leaves a half-added recipe. nil means no alert.
+func dashboardRecipeAlertInput(r *http.Request, plan api.Plan) (*recipeAlertInput, *api.Problem) {
+	if r.PostFormValue("alert") == "" {
+		return nil, nil
+	}
+	if limits, ok := api.LimitsFor(plan); !ok || limits.AlertRuleLimitPerApp == 0 {
+		return nil, api.ErrPlanAlertRulesNotAllowed(plan)
+	}
+	in := &recipeAlertInput{perHour: api.EdgeRuleRecipeAlertDefaultPerHour, url: strings.TrimSpace(r.PostFormValue("webhook_url")), secret: r.PostFormValue("webhook_secret")}
+	if raw := strings.TrimSpace(r.PostFormValue("alert_threshold")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			return nil, api.ErrValidation("alert threshold must be a whole number of matches per hour")
+		}
+		in.perHour = n
+	}
+	if _, prob := api.EdgeRuleRecipeAlert(api.EdgeRuleRecipeBlockUnverifiedBots, "pending", in.perHour, in.url, in.secret); prob != nil {
+		return nil, prob
+	}
+	return in, nil
+}
+
+// addDashboardRecipeAlert creates the recipe's "alert me" rule for the edge
+// rule in created through the JSON alert handler (validation, egress check,
+// quota and secret sealing stay the API's) and returns the flash action. A
+// failure keeps the rule and says the alert was not added.
+func (s *server) addDashboardRecipeAlert(r *http.Request, acct state.Account, slug, recipeID string, created *httptest.ResponseRecorder, in *recipeAlertInput, action string) string {
+	var rule api.EdgeRuleResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &rule); err != nil || rule.ID == "" {
+		return "recipe_alert_failed"
+	}
+	req, prob := api.EdgeRuleRecipeAlert(recipeID, rule.ID, in.perHour, in.url, in.secret)
+	if prob != nil {
+		return "recipe_alert_failed"
+	}
+	resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/alerts", "", req, s.createAlertRule)
+	if resp.Code < http.StatusOK || resp.Code >= http.StatusMultipleChoices {
+		return "recipe_alert_failed"
+	}
+	return action + "_alert"
+}
+
+// dashboardEdgeRuleSuggestions turns the app's recipe suggestions (ADR-20261020105000)
+// into forms for the recipes route: suggested parameters ride as hidden
+// fields and any required parameter the suggestion cannot fill becomes an
+// input. A plan without request telemetry, or a telemetry error, hides the
+// section rather than failing the page.
+func (s *server) dashboardEdgeRuleSuggestions(ctx context.Context, log *slog.Logger, app state.App, plan api.Plan, recipes []dashboard.EdgeRuleRecipeView) []dashboard.EdgeRuleSuggestionView {
+	days := api.EdgeRuleRecipeSuggestionDays(plan)
+	if days == 0 {
+		return nil
+	}
+	suggestions, err := s.edgeRules.RecipeSuggestions(ctx, app, days)
+	if err != nil {
+		log.Warn("dashboard edge rules: recipe suggestions", "app_id", app.ID, "err", err)
+		return nil
+	}
+	byID := map[string]dashboard.EdgeRuleRecipeView{}
+	for _, r := range recipes {
+		byID[r.ID] = r
+	}
+	out := make([]dashboard.EdgeRuleSuggestionView, 0, len(suggestions.Suggestions))
+	for _, sg := range suggestions.Suggestions {
+		view := dashboardSuggestionView(byID[sg.Recipe], sg.Title, sg.Reason, sg.Params)
+		if alt := sg.Alternative; alt != nil {
+			altView := dashboardSuggestionView(byID[alt.Recipe], alt.Title, "", alt.Params)
+			view.Alternative = &altView
+		}
+		out = append(out, view)
+	}
+	return out
+}
+
+// dashboardSuggestionView is one recipe form: suggested parameters ride as
+// hidden fields, required ones the suggestion cannot fill become inputs.
+func dashboardSuggestionView(recipe dashboard.EdgeRuleRecipeView, title, reason string, params map[string]string) dashboard.EdgeRuleSuggestionView {
+	view := dashboard.EdgeRuleSuggestionView{Recipe: recipe.ID, Title: title, Reason: reason, Blocked: recipe.Blocked}
+	for _, p := range recipe.Params {
+		if v, ok := params[p.Name]; ok {
+			view.Hidden = append(view.Hidden, dashboard.EdgeRuleSuggestionField{Name: p.Name, Value: v})
+		} else if p.Required {
+			view.Inputs = append(view.Inputs, p)
+		}
+	}
+	return view
 }

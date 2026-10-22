@@ -8,8 +8,10 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.app_operational_summary_version import AppOperationalSummaryVersion, check_app_operational_summary_version
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.app_health_response import AppHealthResponse
     from ..models.app_operational_monitoring import AppOperationalMonitoring
     from ..models.app_operational_recommendation import AppOperationalRecommendation
     from ..models.app_operational_recovery import AppOperationalRecovery
@@ -29,12 +31,17 @@ class AppOperationalSummary:
     app_id: str
     checked_at: datetime.datetime
     monitoring: AppOperationalMonitoring
-    """Recent default-scope route-monitor evaluation with observed-only coverage. Unknown or unavailable health is
-    independent of deployment smoke verification."""
+    """Recent default-scope or explicitly scoped route-monitor evaluation with observed-only coverage. Unknown or
+    unavailable health is independent of deployment smoke verification."""
     recovery: AppOperationalRecovery
     """Bounded app-scoped pending rollbacks and pending or failed restart handoffs. Availability and truncation are
     explicit; accepted work does not establish completed recovery."""
     recommendations: list[AppOperationalRecommendation]
+    scope: str | Unset = UNSET
+    project_id: str | Unset = UNSET
+    environment_id: str | Unset = UNSET
+    health: AppHealthResponse | Unset = UNSET
+    """Read-only observed health of selected-scope HTTP serving workloads."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -53,6 +60,16 @@ class AppOperationalSummary:
             recommendations_item = recommendations_item_data.to_dict()
             recommendations.append(recommendations_item)
 
+        scope = self.scope
+
+        project_id = self.project_id
+
+        environment_id = self.environment_id
+
+        health: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.health, Unset):
+            health = self.health.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -65,11 +82,20 @@ class AppOperationalSummary:
                 "recommendations": recommendations,
             }
         )
+        if scope is not UNSET:
+            field_dict["scope"] = scope
+        if project_id is not UNSET:
+            field_dict["project_id"] = project_id
+        if environment_id is not UNSET:
+            field_dict["environment_id"] = environment_id
+        if health is not UNSET:
+            field_dict["health"] = health
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.app_health_response import AppHealthResponse
         from ..models.app_operational_monitoring import AppOperationalMonitoring
         from ..models.app_operational_recommendation import AppOperationalRecommendation
         from ..models.app_operational_recovery import AppOperationalRecovery
@@ -92,6 +118,19 @@ class AppOperationalSummary:
 
             recommendations.append(recommendations_item)
 
+        scope = d.pop("scope", UNSET)
+
+        project_id = d.pop("project_id", UNSET)
+
+        environment_id = d.pop("environment_id", UNSET)
+
+        _health = d.pop("health", UNSET)
+        health: AppHealthResponse | Unset
+        if isinstance(_health, Unset):
+            health = UNSET
+        else:
+            health = AppHealthResponse.from_dict(_health)
+
         app_operational_summary = cls(
             version=version,
             app_id=app_id,
@@ -99,6 +138,10 @@ class AppOperationalSummary:
             monitoring=monitoring,
             recovery=recovery,
             recommendations=recommendations,
+            scope=scope,
+            project_id=project_id,
+            environment_id=environment_id,
+            health=health,
         )
 
         app_operational_summary.additional_properties = d

@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 // adr: 199
 
@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -19,7 +20,7 @@ import (
 // `restart --wait` timed out.
 func TestRefreshRuntimeConfigRetiresUnroutedDeploymentInsteadOfReplacingIt(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, serving := seedApp(t, store, api.PlanPro, 256, 1)
+	_, app, serving := sched.SeedApp(t, store, api.PlanPro, 256, 1)
 	if _, err := store.UpdateDeploymentTraffic(t.Context(), serving.ID, 100); err != nil {
 		t.Fatal(err)
 	}
@@ -30,20 +31,20 @@ func TestRefreshRuntimeConfigRetiresUnroutedDeploymentInsteadOfReplacingIt(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	vmm := &fakeVMM{}
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
-	old, err := engine.Wake(t.Context(), app.ID, serving.ID, serving.Scope, TriggerAppWake)
+	vmm := &sched.FakeVMM{}
+	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
+	old, err := engine.Wake(t.Context(), app.ID, serving.ID, serving.Scope, sched.TriggerAppWake)
 	if err != nil {
 		t.Fatal(err)
 	}
-	preview, err := engine.Wake(t.Context(), app.ID, staged.ID, staged.Scope, TriggerAppWake)
+	preview, err := engine.Wake(t.Context(), app.ID, staged.ID, staged.Scope, sched.TriggerAppWake)
 	if err != nil {
 		t.Fatalf("waking the staged revision (preview URL): %v", err)
 	}
 	if _, err := state.InvalidateAppSnapshots(t.Context(), store, app.ID); err != nil {
 		t.Fatal(err)
 	}
-	bootsBefore := vmm.coldBoots + vmm.restores
+	bootsBefore := (*vmm.ColdBoots()) + (*vmm.Restores())
 
 	wakeID := uuid.NewString()
 	out, err := engine.RefreshRuntimeConfig(t.Context(), app.ID, wakeID)
@@ -53,7 +54,7 @@ func TestRefreshRuntimeConfigRetiresUnroutedDeploymentInsteadOfReplacingIt(t *te
 	if out.Instance == nil || out.Instance.DeploymentID != serving.ID {
 		t.Fatalf("refreshed instance = %+v; want a fresh instance of the serving deployment", out.Instance)
 	}
-	if boots := vmm.coldBoots + vmm.restores - bootsBefore; boots != 1 {
+	if boots := (*vmm.ColdBoots()) + (*vmm.Restores()) - bootsBefore; boots != 1 {
 		t.Fatalf("restart booted %d VMs; want only the serving replacement", boots)
 	}
 	for id, want := range map[string]state.State{old.InstanceID: state.StateStopped, preview.InstanceID: state.StateStopped} {
@@ -67,8 +68,48 @@ func TestRefreshRuntimeConfigRetiresUnroutedDeploymentInsteadOfReplacingIt(t *te
 		t.Fatal(err)
 	}
 	for _, instance := range instances {
-		if instance.DeploymentID == staged.ID && runtimeConfigResident(instance) {
+		if instance.DeploymentID == staged.ID && sched.RuntimeConfigResident(instance) {
 			t.Fatalf("staged revision still has resident instance %+v", instance)
+		}
+	}
+}
+
+// H10-39: after scale-out to three instances, lowering max_concurrency to 1
+// left three serving instances against a ceiling of two (max plus the
+// rollout grant). Every replacement boot was refused and the restart retried
+// forever. Surplus predecessors are now retired first.
+func TestRefreshRuntimeConfigRetiresSurplusAboveLoweredConcurrency(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, serving := sched.SeedApp(t, store, api.PlanPro, 256, 3)
+	vmm := &sched.FakeVMM{}
+	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
+	var old []string
+	for range 3 {
+		res, err := engine.AdmitAndDispatchWithOptions(t.Context(), app.ID, serving.ID, "normal", sched.TriggerAppWake, true, true)
+		if err != nil || res.InstanceID == "" {
+			t.Fatalf("scale-out admission: %+v, %v", res, err)
+		}
+		old = append(old, res.InstanceID)
+	}
+	lowered := 1
+	if _, err := store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{MaxConcurrency: &lowered}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.InvalidateAppSnapshots(t.Context(), store, app.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := engine.RefreshRuntimeConfig(t.Context(), app.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("RefreshRuntimeConfig over the lowered cap: %v", err)
+	}
+	if out.Instance == nil || out.Instance.DeploymentID != serving.ID {
+		t.Fatalf("refreshed instance = %+v; want a fresh serving instance", out.Instance)
+	}
+	for _, id := range old {
+		instance, err := store.InstanceByID(t.Context(), id)
+		if err != nil || sched.RuntimeConfigResident(instance) {
+			t.Fatalf("predecessor %s = %+v, %v; want retired", id, instance, err)
 		}
 	}
 }

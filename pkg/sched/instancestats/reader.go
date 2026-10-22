@@ -81,6 +81,12 @@ type InstanceStat struct {
 	// "not-yet-observed" case only by the reader's Validity,
 	// not the field.
 	InflightRequests int64
+	// QuietPaused (ADR-1151) is true while vmmd holds the instance
+	// quiet-paused between requests.
+	QuietPaused bool
+	// Frozen (ADR-1151) is true while vmmd holds the instance frozen in
+	// place.
+	Frozen bool
 	// LastRequestAt is the most recent ForwardHTTP start time on
 	// this instance. PR-B populates it from the vmmd
 	// ActivityTracker; PR-A leaves it zero and the poller
@@ -215,6 +221,7 @@ type Reader struct {
 	snap atomic.Pointer[[]InstanceStat]
 	// shadow is the latest per-node ADR-909 measurement (memory_shadow.go).
 	shadow atomic.Pointer[memoryShadowSnapshot]
+	quiet  atomic.Pointer[quietPausedSnapshot]
 
 	// rateMu protects the cumulative-counter baselines and their
 	// derived app-level rates. These are deliberately separate from

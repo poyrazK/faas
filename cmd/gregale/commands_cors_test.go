@@ -1,11 +1,13 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -39,7 +41,7 @@ func TestPrimaryDomainOrFallbackUsesCanonicalHost(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := primaryDomainOrFallback(tt.app); got != tt.want {
+			if got := main.PrimaryDomainOrFallback(tt.app); got != tt.want {
 				t.Fatalf("primaryDomainOrFallback() = %q, want %q", got, tt.want)
 			}
 		})
@@ -47,9 +49,9 @@ func TestPrimaryDomainOrFallbackUsesCanonicalHost(t *testing.T) {
 }
 
 func TestCorsAllowCredentialedDefaultsUseExplicitHeaders(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"id":"rule-1","kind":"cors","match_host":"demo.gregale.dev","match_path":"/*"}`, http.StatusCreated)
-	if code := cmdCorsAllow([]string{"demo", "https://app.example", "--host", "demo.gregale.dev", "--credentials"}); code != 0 {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"id":"rule-1","kind":"cors","match_host":"demo.gregale.dev","match_path":"/*"}`, http.StatusCreated)
+	if code := main.CmdCorsAllow([]string{"demo", "https://app.example", "--host", "demo.gregale.dev", "--credentials"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	var body struct {
@@ -59,8 +61,8 @@ func TestCorsAllowCredentialedDefaultsUseExplicitHeaders(t *testing.T) {
 			AllowMethods []string `json:"allow_methods"`
 		} `json:"action"`
 	}
-	if err := json.Unmarshal(f.sawBody, &body); err != nil {
-		t.Fatalf("decode request: %v; body=%s", err, f.sawBody)
+	if err := json.Unmarshal((*f.SawBody()), &body); err != nil {
+		t.Fatalf("decode request: %v; body=%s", err, (*f.SawBody()))
 	}
 	if slices.Contains(body.Action.AllowHeaders, "*") {
 		t.Fatalf("credentialed defaults contain wildcard: %v", body.Action.AllowHeaders)
@@ -70,10 +72,10 @@ func TestCorsAllowCredentialedDefaultsUseExplicitHeaders(t *testing.T) {
 			t.Fatalf("credentialed defaults %v missing %s", body.Action.AllowHeaders, required)
 		}
 	}
-	if len(body.MatchMethods) != len(corsDefaultMethods) || len(body.Action.AllowMethods) != len(corsDefaultMethods) {
-		t.Fatalf("default match/allow methods = %v/%v, want %v", body.MatchMethods, body.Action.AllowMethods, corsDefaultMethods)
+	if len(body.MatchMethods) != len((*main.CorsDefaultMethods)) || len(body.Action.AllowMethods) != len((*main.CorsDefaultMethods)) {
+		t.Fatalf("default match/allow methods = %v/%v, want %v", body.MatchMethods, body.Action.AllowMethods, (*main.CorsDefaultMethods))
 	}
-	for _, method := range corsDefaultMethods {
+	for _, method := range *main.CorsDefaultMethods {
 		if !slices.Contains(body.MatchMethods, method) || !slices.Contains(body.Action.AllowMethods, method) {
 			t.Fatalf("default match/allow methods = %v/%v, missing %s", body.MatchMethods, body.Action.AllowMethods, method)
 		}
@@ -81,15 +83,15 @@ func TestCorsAllowCredentialedDefaultsUseExplicitHeaders(t *testing.T) {
 }
 
 func TestCorsAllowUsesGatewayMatchAllPath(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"id":"rule-1","kind":"cors","match_host":"demo.gregale.dev","match_path":"/*"}`, http.StatusCreated)
-	if code := cmdCorsAllow([]string{"demo", "https://app.example", "--host", "demo.gregale.dev"}); code != 0 {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"id":"rule-1","kind":"cors","match_host":"demo.gregale.dev","match_path":"/*"}`, http.StatusCreated)
+	if code := main.CmdCorsAllow([]string{"demo", "https://app.example", "--host", "demo.gregale.dev"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	var body struct {
 		MatchPath string `json:"match_path"`
 	}
-	if err := json.Unmarshal(f.sawBody, &body); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &body); err != nil {
 		t.Fatal(err)
 	}
 	if body.MatchPath != "/*" {
@@ -98,14 +100,14 @@ func TestCorsAllowUsesGatewayMatchAllPath(t *testing.T) {
 }
 
 func TestCorsAllowCredentialedCustomHeaders(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"id":"rule-1","kind":"cors","match_host":"demo.gregale.dev","match_path":"/*"}`, http.StatusCreated)
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"id":"rule-1","kind":"cors","match_host":"demo.gregale.dev","match_path":"/*"}`, http.StatusCreated)
 	args := []string{"demo", "https://app.example", "--host", "demo.gregale.dev", "--credentials", "--allow-header", "content-type", "--allow-header", "x-audit"}
-	if code := cmdCorsAllow(args); code != 0 {
+	if code := main.CmdCorsAllow(args); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	var body map[string]any
-	if err := json.Unmarshal(f.sawBody, &body); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &body); err != nil {
 		t.Fatal(err)
 	}
 	action := body["action"].(map[string]any)
@@ -116,9 +118,9 @@ func TestCorsAllowCredentialedCustomHeaders(t *testing.T) {
 }
 
 func TestCorsAllowExplicitMethodsReplaceDefaults(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"id":"rule-1","kind":"cors","match_host":"demo.gregale.dev","match_path":"/*"}`, http.StatusCreated)
-	if code := cmdCorsAllow([]string{"demo", "https://app.example", "--host", "demo.gregale.dev", "--method", "GET"}); code != 0 {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"id":"rule-1","kind":"cors","match_host":"demo.gregale.dev","match_path":"/*"}`, http.StatusCreated)
+	if code := main.CmdCorsAllow([]string{"demo", "https://app.example", "--host", "demo.gregale.dev", "--method", "GET"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	var body struct {
@@ -127,8 +129,8 @@ func TestCorsAllowExplicitMethodsReplaceDefaults(t *testing.T) {
 			AllowMethods []string `json:"allow_methods"`
 		} `json:"action"`
 	}
-	if err := json.Unmarshal(f.sawBody, &body); err != nil {
-		t.Fatalf("decode request: %v; body=%s", err, f.sawBody)
+	if err := json.Unmarshal((*f.SawBody()), &body); err != nil {
+		t.Fatalf("decode request: %v; body=%s", err, (*f.SawBody()))
 	}
 	if !slices.Equal(body.MatchMethods, []string{"GET"}) || !slices.Equal(body.Action.AllowMethods, []string{"GET"}) {
 		t.Fatalf("match/allow methods = %v/%v, want GET only", body.MatchMethods, body.Action.AllowMethods)
@@ -136,8 +138,44 @@ func TestCorsAllowExplicitMethodsReplaceDefaults(t *testing.T) {
 }
 
 func TestCorsAllowRejectsCredentialedWildcardHeaders(t *testing.T) {
-	resetJSONOut(t)
-	if code := cmdCorsAllow([]string{"demo", "https://app.example", "--host", "demo.gregale.dev", "--credentials", "--allow-header", "*"}); code != 1 {
+	main.ResetJSONOut(t)
+	if code := main.CmdCorsAllow([]string{"demo", "https://app.example", "--host", "demo.gregale.dev", "--credentials", "--allow-header", "*"}); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
+	}
+}
+
+// TestCorsAllowIsIdempotent pins H10-119: on production-us two identical
+// `cors allow` calls left two identical rules. An existing match is reported
+// and nothing is created; a different origin still creates a rule.
+func TestCorsAllowIsIdempotent(t *testing.T) {
+	main.ResetJSONOut(t)
+	existing := api.EdgeRuleCORSAction{AllowOrigins: []string{"https://app.example"}, AllowMethods: []string{"GET", "POST"}, AllowHeaders: []string{"*"}, MaxAgeSeconds: 600}
+	raw, err := json.Marshal(existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/demo/edge-rules":
+			main.WriteJSONTest(w, []api.EdgeRuleResponse{{ID: "rule-1", Kind: "cors", Enabled: true, MatchHost: "demo.gregale.dev", MatchPath: "/*", MatchMethods: []string{"POST", "GET"}, Action: raw}})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/demo/edge-rules":
+			posts++
+			w.WriteHeader(http.StatusCreated)
+			main.WriteJSONTest(w, api.EdgeRuleResponse{ID: "rule-2", Kind: "cors"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	_, restore := main.CaptureStdout(t)
+	defer restore()
+	if code := main.CmdCorsAllow([]string{"demo", "https://app.example", "--host", "demo.gregale.dev", "--method", "GET", "--method", "POST"}); code != 0 || posts != 0 {
+		t.Fatalf("identical allow: exit=%d posts=%d, want 0 and 0", code, posts)
+	}
+	if code := main.CmdCorsAllow([]string{"demo", "https://other.example", "--host", "demo.gregale.dev", "--method", "GET", "--method", "POST"}); code != 0 || posts != 1 {
+		t.Fatalf("different origin: exit=%d posts=%d, want 0 and 1", code, posts)
 	}
 }

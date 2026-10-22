@@ -8,7 +8,7 @@
 //     the API with the explicit Idempotency-Key header and the
 //     {cents, reason} JSON body.
 //  3. Auth gate: no token → exit 2 (the documented errAuth path).
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -32,7 +33,7 @@ func TestAdminCredit_BadUUIDExitsTwo(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	code := cmdAdmin([]string{"credit", "not-a-uuid", "500", "--reason", "goodwill for outage"})
+	code := main.CmdAdmin([]string{"credit", "not-a-uuid", "500", "--reason", "goodwill for outage"})
 	if code != 2 {
 		t.Errorf("exit code = %d, want 2", code)
 	}
@@ -49,7 +50,7 @@ func TestAdminCredit_BadCentsExitsTwo(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	code := cmdAdmin([]string{"credit", uuid.NewString(), "not-an-int", "--reason", "goodwill for outage"})
+	code := main.CmdAdmin([]string{"credit", uuid.NewString(), "not-an-int", "--reason", "goodwill for outage"})
 	if code != 2 {
 		t.Errorf("exit code = %d, want 2", code)
 	}
@@ -68,7 +69,7 @@ func TestAdminCredit_MissingReasonExitsTwo(t *testing.T) {
 
 	// Flag-before-positional; --reason absent → the empty-string
 	// validator fires after fs.Parse.
-	code := cmdAdmin([]string{"credit", uuid.NewString(), "500"})
+	code := main.CmdAdmin([]string{"credit", uuid.NewString(), "500"})
 	if code != 2 {
 		t.Errorf("exit code = %d, want 2", code)
 	}
@@ -85,7 +86,7 @@ func TestAdminCredit_NoTokenExitsTwo(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	code := cmdAdmin([]string{"credit", uuid.NewString(), "500", "--reason", "goodwill for outage"})
+	code := main.CmdAdmin([]string{"credit", uuid.NewString(), "500", "--reason", "goodwill for outage"})
 	if code != 2 {
 		t.Errorf("exit code = %d, want 2 (auth)", code)
 	}
@@ -134,7 +135,7 @@ func TestAdminCredit_HappyPathHitsAPID(t *testing.T) {
 	// Go's flag package stops parsing flags once a positional arg is
 	// seen; the documented convention is flags-before-positional.
 	// cmdAccountExport's `--no-secrets` test pins the same pattern.
-	code := cmdAdmin([]string{"credit", "--reason", wantReason, targetID, "500"})
+	code := main.CmdAdmin([]string{"credit", "--reason", wantReason, targetID, "500"})
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
@@ -190,7 +191,7 @@ func TestAdminCredit_IdempotentOnRetry(t *testing.T) {
 
 	// Two invocations of the *same* operator intent → same key.
 	for i := 0; i < 2; i++ {
-		if code := cmdAdmin([]string{"credit", "--reason", reason, target, "500"}); code != 0 {
+		if code := main.CmdAdmin([]string{"credit", "--reason", reason, target, "500"}); code != 0 {
 			t.Fatalf("invocation %d: exit %d, want 0", i, code)
 		}
 	}
@@ -214,7 +215,7 @@ func TestAdminCredit_IdempotentOnRetry(t *testing.T) {
 	defer otherSrv.Close()
 	setupAdmin()
 	t.Setenv("FAAS_API", otherSrv.URL)
-	if code := cmdAdmin([]string{"credit", "--reason", reason, target, "501"}); code != 0 {
+	if code := main.CmdAdmin([]string{"credit", "--reason", reason, target, "501"}); code != 0 {
 		t.Fatalf("different-cents invocation: exit %d, want 0", code)
 	}
 	if keys[2] == keys[0] {
@@ -231,7 +232,7 @@ func TestAdminCredit_IdempotentOnRetry(t *testing.T) {
 	defer r3Srv.Close()
 	setupAdmin()
 	t.Setenv("FAAS_API", r3Srv.URL)
-	if code := cmdAdmin([]string{"credit", "--reason", "different reason here", target, "500"}); code != 0 {
+	if code := main.CmdAdmin([]string{"credit", "--reason", "different reason here", target, "500"}); code != 0 {
 		t.Fatalf("different-reason invocation: exit %d, want 0", code)
 	}
 	if keys[3] == keys[0] {
@@ -247,9 +248,9 @@ func TestAdminUsageAdvertisesRefund(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "")
 	t.Setenv("FAAS_API", "")
 
-	stderr, restore := captureStderr(t)
+	stderr, restore := main.CaptureStderr(t)
 	defer restore()
-	if code := cmdAdmin([]string{}); code != 2 {
+	if code := main.CmdAdmin([]string{}); code != 2 {
 		t.Errorf("cmdAdmin([]) exit = %d, want 2 (operator error)", code)
 	}
 	out := stderr.String()
@@ -272,7 +273,7 @@ func TestAdminRefund_BadInvoiceExitsTwo(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	code := cmdAdmin([]string{"refund", "--reason", "customer request", uuid.NewString(), "not-a-uuid", "500"})
+	code := main.CmdAdmin([]string{"refund", "--reason", "customer request", uuid.NewString(), "not-a-uuid", "500"})
 	if code != 2 {
 		t.Errorf("exit code = %d, want 2", code)
 	}
@@ -310,13 +311,13 @@ func TestAdminRefund_HappyPathHitsAPID(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.AdminRefundResponse{
 			AccountID: targetID, InvoiceID: invoiceID, Provider: "polar",
 			ProviderRefundID: "refund-1", ChargeID: "order-1", AmountCents: 500,
-			Currency: "EUR", Status: "succeeded",
+			Currency: "USD", Status: "succeeded",
 		})
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdAdmin([]string{"refund", "--reason", "customer request", targetID, invoiceID, "500"}); code != 0 {
+	if code := main.CmdAdmin([]string{"refund", "--reason", "customer request", targetID, invoiceID, "500"}); code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
 	if gotPath != "/v1/admin/accounts/"+targetID+"/refunds" {

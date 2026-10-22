@@ -30,7 +30,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/deploystaging"
+	"github.com/onebox-faas/faas/pkg/apid/projectmigration"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -97,7 +100,8 @@ func (s *server) scanProject(w http.ResponseWriter, r *http.Request, acct state.
 //
 //  1. Reading the reconcile Result's added + changed slices from
 //     scanService's third + fourth return values.
-//  2. Stamping cron app_id from the post-reconcile slug→ID map.
+//  2. Preserving legacy removal cleanup; selected HTTP schedules are
+//     bound to deployment intents by scanService.
 //  3. Emitting per-app NotifyAppChanged (kind=created for added,
 //     kind=updated for changed) so schedd picks up the rows.
 //  4. Emitting the project.created audit row (gated by the
@@ -106,7 +110,17 @@ func (s *server) scanProject(w http.ResponseWriter, r *http.Request, acct state.
 //  5. Rendering per-workload appliedBuild results in the response
 //     so the CLI's `faas apply` flow can show "app X: deployment Y,
 //     build Z" per workload (PR-A, Phase 5 close-the-loop).
+//
+//nolint:contextcheck // r carries reqbudget.Detached(r.Context()) on purpose (ADR-093 amendment)
 func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	ctx, cancel := reqbudget.Detached(r.Context(), api.ProjectApplyTimeout) // ADR-093 amendment
+	if run := projectmigration.FromContext(ctx); run != nil {
+		originalCancel := cancel
+		ctx, cancel = context.WithDeadline(ctx, run.Deadline())
+		defer originalCancel()
+	}
+	defer cancel()
+	r = r.WithContext(ctx)
 	planToken := r.URL.Query().Get("plan_token")
 	resp, insertedProject, added, changed, removedSlugs, builds, prob := s.scanService(r, acct, planToken, true)
 	if prob != nil {
@@ -119,10 +133,8 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 	// apid-side audit pipeline only fires the per-project
 	// project.created row (at the bottom of this function).
 
-	// Cron replacement is now part of reconcile's atomic project mutation.
-	// Keep the legacy fallback below disabled for stores that implement the
-	// new seam; it remains documented here only for source compatibility with
-	// older test doubles.
+	// Atomic reconcile cascades removed apps. Older adapters still need
+	// removal cleanup here; HTTP replacement never falls back to early writes.
 	if _, atomic := s.store.(state.ProjectReconcileStore); !atomic {
 		// Soft-delete crons for workloads the scan dropped (H8 fix).
 		// Pre-fix, the cron-stamping loop below tried to look up
@@ -199,40 +211,6 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 			}
 		}
 
-		// Build the slug→ID map for cron stamping. The cron list is
-		// encoded by name in resp.CronNames; both Added and Changed
-		// contribute to the map because a cron can attach to either a
-		// newly-created or an updated app. Removed-slug crons were
-		// soft-deleted above; the loop below only stamps NEW crons.
-		slugToID := make(map[string]string, len(added)+len(changed))
-		for _, a := range added {
-			slugToID[a.Slug] = a.ID
-		}
-		for _, a := range changed {
-			slugToID[a.Slug] = a.ID
-		}
-		for i, name := range resp.CronNames {
-			appID := slugToID[name]
-			if appID == "" {
-				// H8 fix: removed workload — the cron for it was
-				// soft-deleted in the loop above. This branch is
-				// now a defensive no-op rather than a 500.
-				continue
-			}
-			// The schedule + path + enabled flags ride on the planCron
-			// entry captured earlier. resp.Crons has the same length
-			// + order as resp.CronNames (scan_service.go populates
-			// them in the same loop).
-			if i >= len(resp.Crons) {
-				continue
-			}
-			c := resp.Crons[i]
-			if _, err := s.store.CreateCron(r.Context(), appID, c.Schedule, c.Path, c.Enabled); err != nil {
-				api.WriteProblem(w, api.ErrInternal(
-					fmt.Sprintf("stamp cron app_id: %v", err)))
-				return
-			}
-		}
 	}
 
 	// Notify every touched app. PostgreSQL delivers the
@@ -267,16 +245,16 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 	// carries the inserted/updated IDs so the CLI's --yes flow
 	// can render "applied: <slug> → <app_id>".
 	type applyResp struct {
+		SubmissionAttemptID string `json:"submission_attempt_id,omitempty"`
 		scanPlanResponse
 		ProjectID string         `json:"project_id"`
 		AppIDs    []appSummary   `json:"apps"`
 		Builds    []appliedBuild `json:"builds,omitempty"`
+		Unchanged []string       `json:"unchanged"`
 	}
 	currentApps, err := s.store.AppsForProject(r.Context(), acct.ID, insertedProject.ID)
 	if err != nil {
-		writeCustomerInternalProblem(w, r, s.log, "load apps after applying project",
-			"Gregale could not finish loading the project after applying the changes.",
-			"Reload the project before retrying the operation.", err)
+		s.writeProjectApplyLoadError(w, r, err)
 		return
 	}
 	appIDs := make([]appSummary, 0, len(currentApps))
@@ -289,6 +267,7 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 		ProjectID:        insertedProject.ID,
 		AppIDs:           appIDs,
 		Builds:           builds,
+		Unchanged:        unchangedProjectMembers(appIDs, builds),
 	}
 
 	s.audit.Emit(r.Context(), "project.created", &acct.ID, map[string]any{
@@ -393,6 +372,9 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 	// returns the same Skipped partition without writing audit rows.
 	s.emitProjectApplyExclusionAudits(r.Context(), r, acct, insertedProject, resp, added, changed)
 
+	if tracker := deploystaging.ProjectSubmissionFromContext(r.Context()); tracker != nil {
+		out.SubmissionAttemptID = tracker.Receipt.AttemptID
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -432,7 +414,7 @@ func (s *server) emitProjectApplyExclusionAudits(
 				rows[i].ID = appIDs[strings.ToLower(rows[i].Slug)]
 			}
 		}
-		emitSkippedAuditRows(ctx, s.audit, actor, acct.ID, project.ID, resp.SourceSHA256, rows)
+		emitSkippedAuditRows(ctx, s.audit, actor, acct.ID, project.ID, resp.SourceSHA256, rows, resp.WorkloadNames)
 	}
 
 	if len(resp.PersistedExclusions) == 0 {
@@ -571,3 +553,22 @@ func quotaProblem(plan api.Plan, l api.Limits, qe *state.QuotaError) *api.Proble
 var (
 	_ = json.Marshal
 )
+
+// unchangedProjectMembers lists the project members this apply did not
+// rebuild. The response's apps is the whole membership while builds holds only
+// what was enqueued, so the CLI counted every untouched workload as a missing
+// build: editing one service of a two-service project printed "applied with
+// failures" and exited 1 (hunt #10, H10-88).
+func unchangedProjectMembers(apps []appSummary, builds []appliedBuild) []string {
+	built := make(map[string]bool, len(builds))
+	for _, build := range builds {
+		built[build.AppID] = true
+	}
+	unchanged := []string{}
+	for _, app := range apps {
+		if !built[app.ID] {
+			unchanged = append(unchanged, app.Slug)
+		}
+	}
+	return unchanged
+}

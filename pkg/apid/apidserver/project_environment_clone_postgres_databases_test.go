@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copydatabases"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type databaseWorkerFailureStore struct {
@@ -76,8 +77,8 @@ func cloneDatabaseWorkerFixture(t *testing.T, configure ...func(*roleWorkerFixtu
 	})
 	f.x = x
 	f.store = &databaseWorkerFailureStore{roleWorkerFailureStore: x.store}
-	x.f.srv.store = f.store
-	owned, err := x.store.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), x.f.lease, x.source.source.ID)
+	x.f.srv.store = statetest.NewPg(f.store)
+	owned, err := x.store.PgStore.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), x.f.lease, x.source.source.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,10 +172,10 @@ func TestPGClonePostgresDatabaseWorkerRetainsCompleteOriginalPlanBeforeCreateAnd
 	}
 	x.f.srv.managedPostgres = service
 	old := x.f.lease
-	if err = f.store.ReleaseProjectEnvironmentCloneLease(t.Context(), old, 0); err != nil {
+	if err = f.store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), old, 0); err != nil {
 		t.Fatal(err)
 	}
-	x.f.lease, err = f.store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), 2*time.Minute)
+	x.f.lease, err = f.store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), 2*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +272,7 @@ func TestPGClonePostgresDatabaseWorkerRejectsDispatchDriftAndChangedOriginalInpu
 			exports := f.exports
 			switch fault {
 			case "stale":
-				if err := f.store.ReleaseProjectEnvironmentCloneLease(t.Context(), x.f.lease, 0); err != nil {
+				if err := f.store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), x.f.lease, 0); err != nil {
 					t.Fatal(err)
 				}
 			case "phase":

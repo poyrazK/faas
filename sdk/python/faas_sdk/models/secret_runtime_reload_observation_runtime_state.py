@@ -1,12 +1,13 @@
 from typing import Literal
 
 SecretRuntimeReloadObservationRuntimeState = Literal[
-    "cold_booting", "draining", "migrating", "running", "snapshotting", "waking", "warm"
+    "cold_booting", "draining", "frozen", "migrating", "running", "snapshotting", "waking", "warm"
 ]
 
 SECRET_RUNTIME_RELOAD_OBSERVATION_RUNTIME_STATE_VALUES: set[SecretRuntimeReloadObservationRuntimeState] = {
     "cold_booting",
     "draining",
+    "frozen",
     "migrating",
     "running",
     "snapshotting",

@@ -87,7 +87,8 @@ func TestWorkflowFailureEligibilityStores(t *testing.T) {
 func TestWorkflowFailureEligibilitySavedParent(t *testing.T) {
 	workflowScheduleStores(t, func(t *testing.T, s Store) {
 		review, app, _, _ := seedAutomaticRecoveryReview(t, s, nil)
-		before := policyChangeEvidence(t, s, app.ID)
+		// Eligibility is the observer's output; all other durable evidence must stay unchanged.
+		before := policyChangeEvidenceSnapshot(t, s, app.ID, false)
 		now := time.Now().UTC().Truncate(time.Microsecond)
 		if n := observeFailureBatch(t, s, now); n != 2 {
 			t.Fatalf("checked %d", n)
@@ -96,7 +97,7 @@ func TestWorkflowFailureEligibilitySavedParent(t *testing.T) {
 		if len(facts) != 2 || facts[1].Eligibility == nil || facts[1].Eligibility.Reason != "eligible" || facts[1].Eligibility.ParentJobID != review.JobID || facts[1].Eligibility.ParentPosition != review.Decisions[0].Position {
 			t.Fatalf("saved parent %+v", facts)
 		}
-		if string(before) != string(policyChangeEvidence(t, s, app.ID)) {
+		if string(before) != string(policyChangeEvidenceSnapshot(t, s, app.ID, false)) {
 			t.Fatal("observer mutated policy/review/job/outbox")
 		}
 		// Pure assessment uses an observation distinct from original failure, never replay totals.

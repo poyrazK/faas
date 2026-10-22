@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,10 +22,58 @@ const eventFanoutReplayBatchMax = 100
 // subscriptions and deliveries inspect declarations and delivery outcomes.
 func cmdEvents(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale events <subscription-circuit-status|subscription-circuit-set|subscription-circuit-disable|subscription-circuit-reset|subscription-pause|subscription-resume|subscription-status|recovery-preflight|recovery-health|notification-retry-reconcile|notification-retry-plan|notification-retry-apply|notification-retry-backlog|recovery-notification-retry-history|recovery-notification-retry-preview|recovery-notification-retry|recovery-notifications|recovery-history|recovery-list|recovery-preview|recovery-create|recovery-status|recovery-items|recovery-cancel|recovery-pause|recovery-resume|recovery-rate|preview|replay-preview|workflow-replay-preview|backfill|workflow-backfill|backfill-status|backfill-items|backfill-retry|publish|publish-app-verify|publish-app-status|publish-app|publish-batch|retention|backlog|inspect|recover|attempts|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
+		PrintUsage(os.Stderr, "usage: gregale events <deadline-alert-investigate|subscription-circuit-status|subscription-circuit-set|subscription-circuit-disable|subscription-circuit-reset|subscription-pause|subscription-resume|subscription-status|recovery-preflight|recovery-health|notification-retry-reconcile|notification-retry-plan|notification-retry-apply|notification-retry-backlog|recovery-notification-retry-history|recovery-notification-retry-preview|recovery-notification-retry|recovery-notifications|recovery-history|recovery-list|recovery-preview|recovery-create|recovery-status|recovery-items|recovery-cancel|recovery-pause|recovery-resume|recovery-rate|preview|replay-preview|workflow-replay-preview|backfill|workflow-backfill|backfill-status|backfill-items|backfill-retry|publish|publish-app-verify|publish-app-status|publish-app|publish-batch|retention|backlog|inspect|recover|attempts|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
 		return 1
 	}
 	switch args[0] {
+	case "delivery-retry", "delivery-dead-letter":
+		return cmdEventsDeliveryFailure(args[1:], args[0])
+	case "deadline-alert-investigate":
+		return cmdEventsDeadlineAlertInvestigate(args[1:])
+	case "delivery-health-alerts":
+		return cmdEventDeliveryHealthAlerts(args[1:])
+	case "subscription-delivery-health":
+		return cmdEventsSubscriptionDeliveryHealth(args[1:])
+	case "subscription-lineage-case-backfill-pause", "subscription-lineage-case-backfill-resume", "subscription-lineage-case-backfill-cancel":
+		return cmdEventsLineageCaseBackfillControl(args[1:], args[0])
+	case "subscription-lineage-case-backfill":
+		return cmdEventsLineageCaseBackfill(args[1:], false)
+	case "subscription-lineage-case-backfill-request":
+		return cmdEventsLineageCaseBackfill(args[1:], true)
+	case "subscription-lineage-retry-job-controls-inspect":
+		return cmdEventsLineageControlHistoryInspect(args[1:])
+	case "subscription-lineage-retry-job-controls-export":
+		return cmdEventsLineageControlHistoryExport(args[1:])
+	case "subscription-lineage-retry-job-controls":
+		return cmdEventsLineageRetryJobControls(args[1:])
+	case "subscription-lineage-retry-preflight":
+		return cmdEventsLineageRetryPreflight(args[1:])
+	case "subscription-lineage-retry-job-export":
+		return cmdEventsLineageRetryJobExport(args[1:])
+	case "subscription-lineage-retry-job-watch":
+		return cmdEventsLineageRetryJobWatch(args[1:])
+	case "subscription-lineage-retry-control-plan-export":
+		return cmdEventsLineageControlPlan(args[1:], false)
+	case "subscription-lineage-retry-control-plan-preflight":
+		return cmdEventsLineageControlPlan(args[1:], false, true)
+	case "subscription-lineage-retry-control-plan-reconcile":
+		return cmdEventsLineageControlPlanReconcile(args[1:])
+	case "subscription-lineage-retry-control-plan-apply":
+		return cmdEventsLineageControlPlan(args[1:], true)
+	case "subscription-lineage-retry-jobs":
+		return cmdEventsLineageRetryJobs(args[1:])
+	case "subscription-lineage-retry-export":
+		return cmdEventsLineageRetryExport(args[1:])
+	case "subscription-lineage-retry-preview", "subscription-lineage-retry-job-create", "subscription-lineage-retry-job", "subscription-lineage-retry-job-cancel", "subscription-lineage-retry-job-pause", "subscription-lineage-retry-job-resume":
+		return cmdEventsLineageRetryJob(args[1:], args[0])
+	case "subscription-lineage-cases":
+		return cmdEventsLineageCases(args[1:], false)
+	case "subscription-lineage-retry":
+		return cmdEventsLineageCases(args[1:], true)
+	case "subscription-execution-reconciliation":
+		return cmdEventsExecutionReconciliation(args[1:], false)
+	case "subscription-reconcile-execution":
+		return cmdEventsExecutionReconciliation(args[1:], true)
 	case "subscription-execution-health":
 		return cmdEventsSubscriptionExecutionHealth(args[1:])
 	case "schema-rollout-preview":
@@ -55,6 +104,14 @@ func cmdEvents(args []string) int {
 		return cmdEventsSubscriptionRetry(args[1:], "reset")
 	case "subscription-health":
 		return cmdEventsSubscriptionHealth(args[1:])
+	case "subscription-capacity-preview":
+		return cmdEventsSubscriptionCapacityPreview(args[1:])
+	case "subscription-capacity-commands":
+		return cmdEventsSubscriptionCapacityCommands(args[1:])
+	case "subscription-capacity-command":
+		return cmdEventsSubscriptionCapacityCommand(args[1:])
+	case "subscription-capacity":
+		return cmdEventsSubscriptionControl(args[1:], "capacity")
 	case "subscription-status":
 		return cmdEventsSubscriptionControl(args[1:], "status")
 	case "recovery-preflight":
@@ -191,6 +248,8 @@ func cmdEventsReplayRetryableFanoutFailures(args []string) int {
 func cmdEventsReplayFanoutFailure(args []string) int {
 	flags, positional := splitArgsForFlags(args, "allow-expired")
 	fs := newFlagSet("events replay", flag.ContinueOnError)
+	expected := fs.String("expected-accepted-at", "", "pin the original receipt acceptance timestamp")
+	generationFlag := fs.String("expected-generation", "", "pin the routing replay generation; requires expected-accepted-at")
 	allowExpired := fs.Bool("allow-expired", false, "explicitly bypass delivery age for this replay generation")
 	eventID := fs.String("event-id", "", "published event id from events deliveries")
 	eventSource := fs.String("event-source", "", "published event source from events deliveries")
@@ -207,8 +266,21 @@ func cmdEventsReplayFanoutFailure(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	guard, err := api.ParseAppEventAcceptanceGuard(*expected)
+	if err != nil {
+		return printErr("Invalid acceptance guard", err)
+	}
+	var generation *int64
+	if *generationFlag != "" {
+		value, parseErr := strconv.ParseInt(*generationFlag, 10, 64)
+		if parseErr != nil || value < 0 || guard.ExpectedAcceptedAt == nil {
+			return printErr("Invalid generation guard", fmt.Errorf("expected-generation must be nonnegative and requires expected-accepted-at"))
+		}
+		generation = &value
+	}
 	resp, err := client.ReplayEventFanoutFailure(context.Background(), positional[0], api.ReplayEventFanoutFailureRequest{
-		AllowExpired: *allowExpired, EventID: strings.TrimSpace(*eventID), EventSource: strings.TrimSpace(*eventSource),
+		ExpectedGeneration: generation,
+		ExpectedAcceptedAt: guard.ExpectedAcceptedAt, AllowExpired: *allowExpired, EventID: strings.TrimSpace(*eventID), EventSource: strings.TrimSpace(*eventSource),
 		SubscriptionID: strings.TrimSpace(*subscriptionID),
 	})
 	if err != nil {

@@ -15,8 +15,9 @@ type testLoadPhaseWindow struct {
 }
 
 type testLoadPhaseClock struct {
-	mu      sync.RWMutex
-	windows []testLoadPhaseWindow
+	correlationGate *sync.RWMutex
+	mu              sync.RWMutex
+	windows         []testLoadPhaseWindow
 }
 
 func newTestLoadPhaseClock(phases int) *testLoadPhaseClock {

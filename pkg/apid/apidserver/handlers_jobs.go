@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -885,6 +886,8 @@ func (s *server) createJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	if err != nil {
 		switch {
+		case errors.Is(err, financial.ErrComputeUnavailable):
+			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "financial_compute_not_ready", "Job compute authority unavailable", "The compute authority could not be verified. Retry after native compute owners are ready."))
 		case errors.Is(err, state.ErrJobQuotaExceeded):
 			var qe *state.JobQuotaError
 			if errors.As(err, &qe) {
@@ -937,6 +940,10 @@ func (s *server) updateJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	if !ok {
 		s.notFound(w, "no such job")
+		return
+	}
+	if j.Kind == state.JobKindImageRun {
+		api.WriteProblem(w, api.ErrImageRunManaged(j.Name))
 		return
 	}
 	// Re-clamp RAM / task_timeout / parallelism / retry against

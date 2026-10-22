@@ -38,6 +38,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // stubFailedOps is the in-memory auditFailedOps the unit tests
@@ -106,7 +107,7 @@ func (f *flushCounter) Count() int {
 // failingStore pattern so the audit-write-failure path is wired
 // identically to the success-path audit seam.
 type failingFlushStore struct {
-	state.Store
+	Store state.Store
 }
 
 func (failingFlushStore) AppendEvent(_ context.Context, _, _ string, _ *string, _ []byte) error {
@@ -285,7 +286,7 @@ func TestAuditFailedLogin_AuditWriteFailureIncrementsCounter(t *testing.T) {
 	failingStore := failingFlushStore{Store: state.NewMemStore()}
 	ops := newStubFailedOps()
 	successOps := newStubAuditOps()
-	base := apidserver.NewAuditor(failingStore, slog.New(slog.NewTextHandler(io.Discard, nil)), successOps)
+	base := apidserver.NewAuditor(statetest.NewStore(failingStore), slog.New(slog.NewTextHandler(io.Discard, nil)), successOps)
 	(*base.FailedOps()) = ops
 	(*base.CloseSignal()) = make(chan struct{})
 	base.Start(context.Background())

@@ -11,12 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type cloneObjectWriteFenceTestStore interface {
-	cloneBindingTestStore
-	state.ProjectEnvironmentCloneWorkerLeaseStore
-	state.ProjectEnvironmentCloneObjectWriteFenceStore
-	state.ObjectBucketWriteFenceStore
-}
+type cloneObjectWriteFenceTestStore = contractTestStore
 
 func cloneObjectWriteFenceFixture(t *testing.T, s cloneObjectWriteFenceTestStore) (state.ProjectEnvironmentCloneLease, []state.ObjectBucket, state.ObjectBucket) {
 	t.Helper()

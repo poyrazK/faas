@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -42,7 +43,7 @@ func TestCommitInspectionPreservesUnknownAndRetainedFacts(t *testing.T) {
 	now := time.Now().UTC()
 	stale := now.Add(-10 * time.Minute)
 	event := uuid.NewString()
-	missing := &APIError{Problem: api.Problem{Status: http.StatusNotFound, Code: "commit_event_not_found"}}
+	missing := &main.APIError{Problem: api.Problem{Status: http.StatusNotFound, Code: "commit_event_not_found"}}
 	source := api.CommitSourceResponse{ID: uuid.NewString(), Enabled: true, OperationPolicy: "orders", RelayStatus: "healthy", LastCheckedAt: &now}
 	for _, tc := range []struct {
 		name                          string
@@ -51,14 +52,14 @@ func TestCommitInspectionPreservesUnknownAndRetainedFacts(t *testing.T) {
 		wantErr                       bool
 	}{
 		{"absent receipt is unknown", commitInspectionClient{source: source, receiptErr: missing}, "unknown", "unknown", "unknown", false},
-		{"database failure is an error", commitInspectionClient{source: source, receiptErr: &APIError{Problem: api.Problem{Status: 503, Code: "capacity"}}}, "", "", "", true},
-		{"unrelated 404 is an error", commitInspectionClient{source: source, receiptErr: &APIError{Problem: api.Problem{Status: 404, Code: "route_not_found"}}}, "", "", "", true},
+		{"database failure is an error", commitInspectionClient{source: source, receiptErr: &main.APIError{Problem: api.Problem{Status: 503, Code: "capacity"}}}, "", "", "", true},
+		{"unrelated 404 is an error", commitInspectionClient{source: source, receiptErr: &main.APIError{Problem: api.Problem{Status: 404, Code: "route_not_found"}}}, "", "", "", true},
 		{"retained completion wins", commitInspectionClient{source: source, receipt: api.CommitReceiptResponse{OperationID: uuid.NewString()}, operation: api.CommitOperationResponse{State: "completed"}, blocked: api.CommitBlockedEventsResponse{Items: []api.CommitBlockedEventResponse{{EventID: event, ObservedAt: now}}}}, "accepted", "completed", "unknown", false},
 		{"stale block is historical", commitInspectionClient{source: source, receiptErr: missing, blocked: api.CommitBlockedEventsResponse{Items: []api.CommitBlockedEventResponse{{EventID: event, ObservedAt: stale}}}}, "unknown", "unknown", "observed", false},
 		{"accepted status read fails", commitInspectionClient{source: source, receipt: api.CommitReceiptResponse{OperationID: uuid.NewString()}, operationErr: errors.New("store unavailable")}, "accepted", "unknown", "unknown", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, err := inspectCommitEvent(t.Context(), &tc.client, source.ID, event, now)
+			out, err := main.InspectCommitEvent(t.Context(), &tc.client, source.ID, event, now)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("error=%v", err)
 			}
@@ -69,7 +70,7 @@ func TestCommitInspectionPreservesUnknownAndRetainedFacts(t *testing.T) {
 	}
 	source.RelayStatus = "blocked_events"
 	c := &commitInspectionClient{source: source, receiptErr: missing, blocked: api.CommitBlockedEventsResponse{Items: []api.CommitBlockedEventResponse{{EventID: event, ObservedAt: now}}}}
-	out, err := inspectCommitEvent(t.Context(), c, source.ID, event, now)
+	out, err := main.InspectCommitEvent(t.Context(), c, source.ID, event, now)
 	if err != nil || out.Acceptance != "blocked" || out.DatabaseCommit != "observed" || out.Action == "" {
 		t.Fatalf("fresh blocked event=%+v err=%v", out, err)
 	}
@@ -79,7 +80,7 @@ func TestCommitWaitTimeoutAndTerminalStates(t *testing.T) {
 	for _, state := range []string{"completed", "failed", "cancelled", "expired"} {
 		t.Run(state, func(t *testing.T) {
 			client := &commitInspectionClient{receipt: api.CommitReceiptResponse{OperationID: uuid.NewString()}, operation: api.CommitOperationResponse{State: state}}
-			out, err := waitCommitEvent(t.Context(), client, "source", "event", "completed", time.Hour)
+			out, err := main.WaitCommitEvent(t.Context(), client, "source", "event", "completed", time.Hour)
 			if err != nil || out.Execution != state || client.reads != 1 {
 				t.Fatalf("terminal=%+v reads=%d err=%v", out, client.reads, err)
 			}
@@ -88,25 +89,25 @@ func TestCommitWaitTimeoutAndTerminalStates(t *testing.T) {
 	client := &commitInspectionClient{receipt: api.CommitReceiptResponse{OperationID: uuid.NewString()}, operation: api.CommitOperationResponse{State: "pending"}}
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
-	out, err := waitCommitEvent(ctx, client, "source", "event", "completed", time.Hour)
+	out, err := main.WaitCommitEvent(ctx, client, "source", "event", "completed", time.Hour)
 	if !errors.Is(err, context.DeadlineExceeded) || out.Execution != "pending" {
 		t.Fatalf("timeout lost last facts: %+v err=%v", out, err)
 	}
-	out, err = waitCommitEvent(t.Context(), client, "source", "event", "accepted", time.Hour)
+	out, err = main.WaitCommitEvent(t.Context(), client, "source", "event", "accepted", time.Hour)
 	if err != nil || out.Acceptance != "accepted" {
 		t.Fatalf("accepted wait=%+v err=%v", out, err)
 	}
 	client.operationErr = errors.New("execution status unavailable")
-	out, err = waitCommitEvent(t.Context(), client, "source", "event", "accepted", time.Hour)
+	out, err = main.WaitCommitEvent(t.Context(), client, "source", "event", "accepted", time.Hour)
 	if err != nil || out.Acceptance != "accepted" || out.Execution != "unknown" || out.Receipt == nil {
 		t.Fatalf("execution read failure hid accepted work: %+v err=%v", out, err)
 	}
-	out, err = waitCommitEvent(t.Context(), client, "source", "event", "completed", time.Hour)
+	out, err = main.WaitCommitEvent(t.Context(), client, "source", "event", "completed", time.Hour)
 	if err == nil || out.Acceptance != "accepted" || out.Execution != "unknown" || out.Receipt == nil {
 		t.Fatalf("failed completion read lost acceptance or claimed completion: %+v err=%v", out, err)
 	}
-	client.receiptErr = &APIError{Problem: api.Problem{Status: http.StatusServiceUnavailable, Code: "capacity"}}
-	out, err = waitCommitEvent(t.Context(), client, "source", "event", "completed", time.Hour)
+	client.receiptErr = &main.APIError{Problem: api.Problem{Status: http.StatusServiceUnavailable, Code: "capacity"}}
+	out, err = main.WaitCommitEvent(t.Context(), client, "source", "event", "completed", time.Hour)
 	if err == nil || out.EventID != "event" || out.Acceptance != "unknown" || out.Execution != "unknown" || out.DatabaseCommit != "unknown" {
 		t.Fatalf("initial read failure did not preserve unknown facts: %+v err=%v", out, err)
 	}
@@ -129,7 +130,7 @@ func TestCommitDoctorStaleAndPausedSources(t *testing.T) {
 		{"paused", &now, false, "healthy", "pass"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out := diagnoseCommitSource(api.CommitSourceResponse{Enabled: tc.enabled, OperationPolicy: "orders", LastCheckedAt: tc.checked, RelayStatus: tc.status}, now)
+			out := main.DiagnoseCommitSource(api.CommitSourceResponse{Enabled: tc.enabled, OperationPolicy: "orders", LastCheckedAt: tc.checked, RelayStatus: tc.status}, now)
 			if out.Checks[2].State != tc.expected {
 				t.Fatalf("checks=%+v", out.Checks)
 			}
@@ -141,20 +142,20 @@ func TestCommitDoctorStaleAndPausedSources(t *testing.T) {
 }
 
 func TestCommitDoctorLocalCredentialIsNotUploadedOrPrinted(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"id":"00000000-0000-4000-8000-000000000001","enabled":true,"operation_policy":"orders"}`, http.StatusOK)
-	out, restore := swapStdout(t)
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"id":"00000000-0000-4000-8000-000000000001","enabled":true,"operation_policy":"orders"}`, http.StatusOK)
+	out, restore := main.SwapStdout(t)
 	defer restore()
 	file := filepath.Join(t.TempDir(), "credential")
 	secret := "postgres://relay:private-doctor-password@db.example/customer?sslmode=disable"
 	if err := os.WriteFile(file, []byte(secret), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdCommit([]string{"doctor", "00000000-0000-4000-8000-000000000001", "--file", file}); code != 1 {
+	if code := main.CmdCommit([]string{"doctor", "00000000-0000-4000-8000-000000000001", "--file", file}); code != 1 {
 		t.Fatalf("exit=%d", code)
 	}
-	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/commit-sources/00000000-0000-4000-8000-000000000001" {
-		t.Fatalf("doctor mutated source: %s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != http.MethodGet || (*f.SawPath()) != "/v1/commit-sources/00000000-0000-4000-8000-000000000001" {
+		t.Fatalf("doctor mutated source: %s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 	if strings.Contains(out.String(), "private-doctor-password") || strings.Contains(out.String(), "postgres://") {
 		t.Fatal("doctor leaked credential")
@@ -163,8 +164,8 @@ func TestCommitDoctorLocalCredentialIsNotUploadedOrPrinted(t *testing.T) {
 	if err := os.Symlink(file, link); err != nil {
 		t.Fatal(err)
 	}
-	f.sawMethod = ""
-	if code := cmdCommit([]string{"doctor", uuid.NewString(), "--file", link}); code == 0 || f.sawMethod != "" {
+	(*f.SawMethod()) = ""
+	if code := main.CmdCommit([]string{"doctor", uuid.NewString(), "--file", link}); code == 0 || (*f.SawMethod()) != "" {
 		t.Fatal("doctor accepted a symlink or contacted API before rejecting it")
 	}
 }

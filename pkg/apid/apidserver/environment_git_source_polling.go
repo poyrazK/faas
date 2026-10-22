@@ -22,6 +22,9 @@ func (reader *environmentGitSourceReader) ReadEnvironmentGitSource(ctx context.C
 	if err != nil {
 		return state.EnvironmentGitSourcePollResult{}, err
 	}
+	if source.Spec.Provider == "gitlab" {
+		return reader.readGitLab(ctx, account, source)
+	}
 	if _, err := s.verifyEnvironmentGitRepository(ctx, account.ID, source.Spec.InstallationID, source.Spec.Repository, source.Spec.RepositoryID); err != nil {
 		return state.EnvironmentGitSourcePollResult{ErrorCode: "environment_git_repository_unavailable"}, nil
 	}

@@ -29,7 +29,7 @@
 //  5. TestRebalanceOrphanedApps_PeersRaceExactlyOneWins — 2 schedds.
 //  6. TestRebalanceOrphanedApps_EmitsRebalancedNotify — NotifyAppChanged emit.
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -40,6 +40,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -127,9 +128,9 @@ func seedAppOnNode(t *testing.T, store *state.MemStore, ctx context.Context, pla
 // pointing at default-local. Tests get a MemStore-backed engine
 // that drives rebalances through the same wire the production
 // schedd will exercise.
-func newRebalanceEngine(t *testing.T, store *state.MemStore, ownerNodeID string, notif *fakeNotifier) *Engine {
+func newRebalanceEngine(t *testing.T, store *state.MemStore, ownerNodeID string, notif *sched.FakeNotifier) *sched.Engine {
 	t.Helper()
-	e := newEngine(t, store, &fakeVMM{}, notif, "1.10.0").WithOwnerNodeID(ownerNodeID)
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, notif, "1.10.0").WithOwnerNodeID(ownerNodeID)
 	return e
 }
 
@@ -157,7 +158,7 @@ func TestRebalanceOrphanedApps_MigratesParkedApps(t *testing.T) {
 		t.Fatalf("flip peer inactive: %v", err)
 	}
 
-	notif := &fakeNotifier{}
+	notif := &sched.FakeNotifier{}
 	e := newRebalanceEngine(t, store, defaultLocal.ID, notif)
 	if err := e.RebalanceOrphanedApps(ctx, peer.ID); err != nil {
 		t.Fatalf("RebalanceOrphanedApps: %v", err)
@@ -204,7 +205,7 @@ func TestRebalanceOrphanedApps_SourceNodeCannotReclaimItsOwnApps(t *testing.T) {
 		t.Fatalf("flip peer inactive: %v", err)
 	}
 
-	notif := &fakeNotifier{}
+	notif := &sched.FakeNotifier{}
 	source := newRebalanceEngine(t, store, peer.ID, notif)
 	if err := source.RebalanceOrphanedApps(ctx, peer.ID); err != nil {
 		t.Fatalf("RebalanceOrphanedApps: %v", err)
@@ -260,7 +261,7 @@ func TestRebalanceOrphanedApps_RespectsCooldown(t *testing.T) {
 		t.Fatalf("stamp stale: %v", err)
 	}
 
-	notif := &fakeNotifier{}
+	notif := &sched.FakeNotifier{}
 	e := newRebalanceEngine(t, store, defaultLocal.ID, notif)
 	if err := e.RebalanceOrphanedApps(ctx, peer.ID); err != nil {
 		t.Fatalf("RebalanceOrphanedApps: %v", err)
@@ -340,7 +341,7 @@ func TestRebalanceOrphanedApps_AdmissionCap_SmallCeiling(t *testing.T) {
 		t.Fatalf("CreateComputeNode shrink: %v", err)
 	}
 
-	notif := &fakeNotifier{}
+	notif := &sched.FakeNotifier{}
 	e := newRebalanceEngine(t, store, shrink.ID, notif)
 	if err := e.RebalanceOrphanedApps(ctx, peer.ID); err != nil {
 		t.Fatalf("RebalanceOrphanedApps: %v", err)
@@ -390,7 +391,7 @@ func TestRebalanceOrphanedApps_PerTickCap(t *testing.T) {
 		t.Fatalf("flip peer inactive: %v", err)
 	}
 
-	notif := &fakeNotifier{}
+	notif := &sched.FakeNotifier{}
 	e := newRebalanceEngine(t, store, defaultLocal.ID, notif)
 	if err := e.RebalanceOrphanedApps(ctx, peer.ID); err != nil {
 		t.Fatalf("RebalanceOrphanedApps: %v", err)
@@ -432,7 +433,7 @@ func TestRebalanceOrphanedApps_PeersRaceExactlyOneWins(t *testing.T) {
 	// owner, both racing the same rebalance. The tests
 	// expect: every app ends up owned by exactly one of the
 	// two engines (conditional UPDATE guarantees that).
-	e1 := newRebalanceEngine(t, store, defaultLocal.ID, &fakeNotifier{})
+	e1 := newRebalanceEngine(t, store, defaultLocal.ID, &sched.FakeNotifier{})
 	// Second owner: the shrink-row used by
 	// TestRebalanceOrphanedApps_AdmissionCap_SmallCeiling is
 	// too small for the full fleet; create a fresh, large
@@ -451,7 +452,7 @@ func TestRebalanceOrphanedApps_PeersRaceExactlyOneWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateComputeNode other: %v", err)
 	}
-	e2 := newRebalanceEngine(t, store, other.ID, &fakeNotifier{})
+	e2 := newRebalanceEngine(t, store, other.ID, &sched.FakeNotifier{})
 
 	done1, done2 := make(chan struct{}), make(chan struct{})
 	go func() { _ = e1.RebalanceOrphanedApps(ctx, peer.ID); close(done1) }()
@@ -487,29 +488,29 @@ func TestRebalanceOrphanedApps_EmitsRebalancedNotify(t *testing.T) {
 		t.Fatalf("flip peer inactive: %v", err)
 	}
 
-	notif := &fakeNotifier{}
+	notif := &sched.FakeNotifier{}
 	e := newRebalanceEngine(t, store, defaultLocal.ID, notif)
 	if err := e.RebalanceOrphanedApps(ctx, peer.ID); err != nil {
 		t.Fatalf("RebalanceOrphanedApps: %v", err)
 	}
 
-	events := notif.events
-	var found *notifyEvent
+	events := (*notif.Events())
+	var found *sched.NotifyEvent
 	for i := range events {
 		e := events[i]
-		if e.channel != "app_changed" {
+		if (*e.Channel()) != "app_changed" {
 			continue
 		}
-		if !strings.Contains(e.payload, `"rebalanced"`) {
+		if !strings.Contains((*e.Payload()), `"rebalanced"`) {
 			continue
 		}
-		if !strings.Contains(e.payload, `"app_id":"`+app.ID+`"`) {
+		if !strings.Contains((*e.Payload()), `"app_id":"`+app.ID+`"`) {
 			continue
 		}
-		if !strings.Contains(e.payload, `"from_node":"`+peer.ID+`"`) {
+		if !strings.Contains((*e.Payload()), `"from_node":"`+peer.ID+`"`) {
 			continue
 		}
-		if !strings.Contains(e.payload, `"to_node":"`+defaultLocal.ID+`"`) {
+		if !strings.Contains((*e.Payload()), `"to_node":"`+defaultLocal.ID+`"`) {
 			continue
 		}
 		found = &e
@@ -523,10 +524,10 @@ func TestRebalanceOrphanedApps_EmitsRebalancedNotify(t *testing.T) {
 // countRebalancedNotifies returns the count of
 // db.NotifyAppChanged notifies whose payload contains
 // "rebalanced". Drops everything else (claimed, etc.).
-func countRebalancedNotifies(n *fakeNotifier) int {
+func countRebalancedNotifies(n *sched.FakeNotifier) int {
 	c := 0
-	for _, e := range n.events {
-		if e.channel == "app_changed" && strings.Contains(e.payload, `"rebalanced"`) {
+	for _, e := range *n.Events() {
+		if (*e.Channel()) == "app_changed" && strings.Contains((*e.Payload()), `"rebalanced"`) {
 			c++
 		}
 	}

@@ -1,0 +1,809 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">
+<title>{{.Title}} — Gregale</title>
+<style nonce="{{.Nonce}}">[hidden]{display:none!important}body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem}section{margin:1.5rem 0}table{border-collapse:collapse;width:100%}th,td{padding:.5rem;text-align:left;border-bottom:1px solid #ccc;vertical-align:top}code{overflow-wrap:anywhere}button,select,input{font:inherit;padding:.4rem .6rem}nav{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.75rem 0}[aria-pressed="true"]{font-weight:700}.danger{color:#b00020}.muted{color:#555}dl{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem}dt{color:#555}form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}input[type=search]{min-width:16rem}#detail{border:1px solid #ccc;border-radius:6px;padding:1rem}#detail>button:last-child{margin-top:1rem}#settings-form,#provider-form,#email-form{display:grid;gap:.6rem;max-width:40rem}#settings-form label,#provider-form label,#email-form label{display:grid;gap:.2rem}.sso-form{display:grid;gap:.5rem;max-width:40rem;margin:.5rem 0}.sso-form label{display:grid;gap:.2rem}fieldset{display:flex;flex-wrap:wrap;gap:.75rem}#detail>label{display:grid;gap:.2rem;max-width:40rem;margin:.5rem 0}#detail textarea{font:inherit;width:100%}.email-preview{white-space:pre-wrap;background:#f4f4f5;padding:.75rem;border-radius:6px}</style></head>
+<body><header><a href="/dashboard/apps/{{.Data.Slug}}">{{.Data.Slug}}</a> · <a href="/dashboard/apps/{{.Data.Slug}}/env">Environment &amp; secrets</a></header>
+<main id="auth-admin" data-origin="{{.Data.AuthOrigin}}" data-slug="{{.Data.Slug}}">{{template "email-verification-banner" .}}<h1>Application Auth</h1>
+<p>Settings, users and organizations of the Auth app <code>{{.Data.Slug}}</code>; these are your application's users, not your Gregale team.</p>
+{{if .Data.Message}}<p role="status">{{.Data.Message}}</p>{{end}}
+{{if .Data.AuthOrigin}}
+<section id="settings" aria-labelledby="settings-heading"><h2 id="settings-heading">Settings</h2>
+{{if .Data.Error}}<p class="danger" role="alert">{{.Data.Error}}</p>{{end}}
+{{if eq .Data.Changed "unchanged"}}<p role="status">Nothing changed.</p>{{else if .Data.RestartPending}}<p role="status">Saved, but {{.Data.Slug}} was already restarting, so the change may not be loaded yet. If the values below don't show it within a minute, restart the app from its page.</p>{{else if .Data.Changed}}<p role="status">Saved. {{.Data.Slug}} restarts to apply the change; the values below are read from the running app.</p>{{end}}
+<p id="settings-status" role="status" aria-live="polite">Reading the running app's settings…</p>
+<form id="settings-form" method="post" action="/dashboard/apps/{{.Data.Slug}}/auth/settings" hidden>
+<input type="hidden" name="csrf_token" value="{{.Data.CSRFToken}}">
+<label>Site URL (users return here after signing in)<input name="site_url" type="url" size="50" required></label>
+<label>Other allowed redirect URLs, one per line<textarea name="redirect_urls" rows="3" cols="50"></textarea></label>
+<label>Sign-up<select name="signup"><option value="on">Anyone can sign up</option><option value="off">Only invited or administrator-created users</option></select></label>
+<label>Who may sign up<select name="signup_access"><option value="open">Anyone</option><option value="invite">Invited or approved addresses</option><option value="waitlist">Invited or approved addresses; others join a waitlist</option></select></label>
+<label>Only addresses at these domains may sign up (blank for any), one per line<textarea name="signup_domains" rows="2" cols="50"></textarea></label>
+<label>Refuse sign-ups from these domains and their subdomains, one per line<textarea name="blocked_domains" rows="2" cols="50" placeholder="Not shown once saved; enter the whole list to replace it"></textarea></label>
+<label>Throwaway email addresses<select name="block_disposable"><option value="off">Allowed</option><option value="on">Refused at sign-up</option></select></label>
+<label>Email confirmation<select name="autoconfirm"><option value="off">Required before signing in</option><option value="on">Skipped (development only)</option></select></label>
+<label>Minimum password length<input name="password_min_length" type="number" min="6" max="72" required></label>
+<fieldset id="password-classes"><legend>Passwords must include</legend><label><input type="checkbox" value="lower"> lowercase</label><label><input type="checkbox" value="upper"> uppercase</label><label><input type="checkbox" value="digit"> digit</label><label><input type="checkbox" value="symbol"> symbol</label></fieldset>
+<input type="hidden" name="password_require">
+<label>Refuse passwords found in known breaches (Have I Been Pwned)<select name="leaked_password_check"><option value="off">Off</option><option value="on">On</option></select></label>
+<label>Authenticator-app (TOTP) MFA<select name="mfa"><option value="on">Users may enrol</option><option value="off">No new enrolments; enrolled users keep using it</option></select></label>
+<label>SMS codes as a second factor (needs an SMS provider)<select name="mfa_phone"><option value="off">Off</option><option value="on">Users may enrol</option></select></label>
+<label>Recovery codes for users with a second factor<select name="recovery_codes"><option value="off">Off</option><option value="on">Users may create them</option></select></label>
+<label>Passkeys<select name="passkeys"><option value="off">Off</option><option value="on">Users may sign in with a passkey</option></select></label>
+<fieldset><legend>Hosted pages</legend>
+<label>Display name (also used in emails)<input name="brand_name" maxlength="60"></label>
+<label>Accent colour (#rrggbb; empty for the default)<input name="brand_color" pattern="#[0-9a-fA-F]{6}" maxlength="7" placeholder="#1d4ed8"></label>
+<label>Logo URL (HTTPS; empty for none)<input name="brand_logo_url" type="url" maxlength="2048" placeholder="https://cdn.example.com/logo.svg"></label>
+</fieldset>
+<fieldset><legend>CAPTCHA on sign-up, sign-in and password reset</legend>
+<label>Provider<select name="captcha_provider"><option value="">Off</option><option value="turnstile">Cloudflare Turnstile</option><option value="hcaptcha">hCaptcha</option></select></label>
+<label>Site key<input name="captcha_site_key" autocomplete="off" spellcheck="false" maxlength="100"></label>
+<label>Secret key (required whenever you change CAPTCHA)<input name="captcha_secret" type="password" autocomplete="off" maxlength="4096"></label>
+</fieldset>
+<fieldset><legend>Phone sign-in by text message, through your own SMS account</legend>
+<label>Provider<select name="sms_provider"><option value="">Off</option>{{range .Data.SMSProviders}}<option value="{{.}}">{{.}}</option>{{end}}</select></label>
+<label>Account (Twilio account SID or Vonage API key)<input name="sms_account" autocomplete="off" spellcheck="false" maxlength="256"></label>
+<label>Sender (Twilio messaging or Verify service SID, MessageBird originator, Textlocal sender or Vonage from)<input name="sms_sender" autocomplete="off" spellcheck="false" maxlength="256"></label>
+<label>Secret (auth token, access key, API key or API secret; required whenever you change SMS)<input name="sms_secret" type="password" autocomplete="off" maxlength="4096"></label>
+<label>Countries it may text: calling codes such as 1,44,49 (empty for every country)<input name="sms_countries" autocomplete="off" spellcheck="false" maxlength="250" pattern="[0-9, +]*"></label>
+</fieldset>
+<label>Keep sign-in activity for this many days (empty keeps it forever)<input name="activity_retention_days" type="number" min="1" max="3650"></label>
+<label>Organization single sign-on (SAML)<select name="sso"><option value="off">Off</option><option value="on">On (register identity providers with gregale auth sso add)</option></select></label>
+<label>Self-service SSO for organizations<select name="org_sso"><option value="off">Off</option><option value="on">Organizations may verify domains and connect their own identity provider</option></select></label>
+<p id="sso-status" class="muted"></p>
+<label>OAuth 2.1 server, for third-party apps and MCP clients<select name="oauth_server"><option value="off">Off</option><option value="on">On (register clients with gregale auth oauth-clients add)</option></select></label>
+<label>Clients register themselves (RFC 7591), as MCP clients do<select name="oauth_registration"><option value="off">Off</option><option value="on">On</option></select></label>
+<p id="oauth-status" class="muted"></p>
+<label>Anonymous users (people start without an account; turn on CAPTCHA with it)<select name="anonymous"><option value="off">Off</option><option value="on">On</option></select></label>
+<label>Delete anonymous users idle this many days (empty keeps them)<input name="anonymous_retention_days" type="number" min="1" max="3650"></label>
+<label>Users link and unlink sign-in methods<select name="identity_linking"><option value="off">Off</option><option value="on">On</option></select></label>
+<label>Users delete their own accounts (after a recent sign-in)<select name="self_deletion"><option value="off">Off</option><option value="on">On</option></select></label>
+<label>Access tokens carry the active organization, role and permissions<select name="org_claims"><option value="off">Off</option><option value="on">On</option></select></label>
+<label>Support may open sessions as users<select name="impersonation"><option value="off">Off</option><option value="on">On: time-limited, recorded, cannot change the account</option></select></label>
+<label>Wallet sign-in<select name="web3"><option value="off">Off</option><option value="ethereum">Ethereum wallets</option><option value="solana">Solana wallets</option><option value="ethereum,solana">Ethereum and Solana wallets</option></select></label>
+<label>End sessions this long after sign-in (45m, 12h or 30d; empty for never)<input name="session_max_age" maxlength="8" pattern="[1-9][0-9]{0,5}[mhd]"></label>
+<label>End sessions not used for this long (45m, 12h or 30d; empty for never)<input name="session_idle" maxlength="8" pattern="[1-9][0-9]{0,5}[mhd]"></label>
+<label>Keep only each user's most recently used session<select name="single_session"><option value="off">Off</option><option value="on">On</option></select></label>
+<label>Organization email domains<select name="org_domains"><option value="off">Off</option><option value="on">Organizations may verify domains and let people at them join (needs autoconfirm off)</option></select></label>
+<label>Service accounts, for organizations' scripts and servers<select name="service_accounts"><option value="off">Off</option><option value="on">Organizations may make service accounts that get tokens with the client-credentials grant</option></select></label>
+<button type="submit">Save and restart</button>
+</form>
+<h3>Sign-in providers</h3>
+<p id="providers-status" class="muted"></p>
+<ul id="providers"></ul>
+<form id="provider-form" method="post" action="/dashboard/apps/{{.Data.Slug}}/auth/providers" hidden>
+<input type="hidden" name="csrf_token" value="{{.Data.CSRFToken}}">
+<label>Provider<select name="provider">{{range .Data.Providers}}<option value="{{.}}">{{.}}</option>{{end}}</select></label>
+<label>Client ID<input name="client_id" required autocomplete="off" spellcheck="false" maxlength="512"></label>
+<label>Client secret<input name="client_secret" type="password" required autocomplete="off" maxlength="4096"></label>
+<label>Server URL (Keycloak; optional for a self-hosted GitLab, an Azure tenant or WorkOS)<input name="url" type="url"></label>
+<button type="submit">Enable provider</button>
+<p class="muted">Register <code>{{.Data.AuthOrigin}}/auth/v1/callback</code> as the callback URL with the provider.</p>
+</form>
+<h3>Email delivery</h3>
+<p id="email-status"></p>
+<form id="email-form" method="post" action="/dashboard/apps/{{.Data.Slug}}/auth/settings" hidden>
+<input type="hidden" name="csrf_token" value="{{.Data.CSRFToken}}">
+<label>Provider<select name="email_provider"><option value="">None</option>{{range .Data.EmailProviders}}<option value="{{.}}">{{.}}</option>{{end}}</select></label>
+<label>Sender (an address, or Name &lt;address&gt;)<input name="email_from" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Shop &lt;auth@shop.example.com&gt;"></label>
+<label>API key (required whenever you change email delivery)<input name="email_api_key" type="password" autocomplete="off" maxlength="512"></label>
+<button type="submit">Save and restart</button>
+</form>
+<h3>Signing keys</h3>
+<p id="keys-status" role="status" aria-live="polite"></p>
+<ul id="sealed-keys" hidden>{{range .Data.Keys}}<li data-id="{{.ID}}" data-created="{{.CreatedAt}}" data-signer="{{.Signer}}"></li>{{end}}</ul>
+<table id="keys" hidden><thead><tr><th>Key</th><th>State</th><th>Created</th><th></th></tr></thead><tbody></tbody></table>
+<form id="key-create" method="post" action="/dashboard/apps/{{.Data.Slug}}/auth/keys" data-max="{{.Data.MaxKeys}}" hidden><input type="hidden" name="csrf_token" value="{{.Data.CSRFToken}}"><button type="submit">Add a standby key</button></form>
+<p class="muted">To rotate without signing anyone out: add a standby key and wait until it shows as verifying, so every verifier can learn it; make it sign; ten minutes later, once the tokens it signed have expired, revoke the previous key. To cut off a leaked key, revoke it at once: its tokens stop verifying, and signed-in users keep their sessions.</p>
+<h3>Lifecycle events</h3>
+<p id="events-status"></p>
+<p class="muted">Turn them on or off with <code>gregale auth config {{.Data.Slug}} --events on</code>.</p>
+</section>
+<h2>Users and organizations</h2>
+<section id="key-section"><h2>Admin key</h2>
+<form id="key-form"><label for="admin-key">Admin key</label><input id="admin-key" type="password" autocomplete="off" spellcheck="false" required pattern="gaak_[A-Za-z0-9_\-]{43}" size="52"><button type="submit">Open</button></form>
+<p id="key-error" class="danger" role="alert"></p>
+<p>Create a key with <code>gregale auth admin-key create {{.Data.Slug}}</code>. This page sends it only to <code>{{.Data.AuthOrigin}}</code> and keeps it in this browser tab until you close the tab or choose Forget key. User records go from your Auth app to this browser and never through Gregale.</p></section>
+<section id="workspace" hidden>
+<nav aria-label="Views"><button type="button" data-tab="users" aria-pressed="true">Users</button><button type="button" data-tab="orgs" aria-pressed="false">Organizations</button><button type="button" data-tab="activity" aria-pressed="false">Activity</button><button type="button" data-tab="sso" aria-pressed="false">SSO</button><button type="button" data-tab="signups" aria-pressed="false">Sign-ups</button><button type="button" data-tab="emails" aria-pressed="false">Emails</button><button type="button" id="forget">Forget key</button></nav>
+<form id="search" role="search"><label for="query" class="muted">Search</label><input type="search" id="query" maxlength="200"><button type="submit">Search</button><button type="button" id="export" hidden>Export CSV</button></form>
+<p id="status" role="status" aria-live="polite"></p>
+<table id="list"><thead></thead><tbody></tbody></table>
+<nav aria-label="Pages"><button type="button" id="prev">Previous</button><span id="position" class="muted"></span><button type="button" id="next">Next</button></nav>
+<section id="detail" hidden aria-live="polite"></section>
+</section>
+<script nonce="{{.Nonce}}">
+(() => {
+  const root = document.getElementById('auth-admin')
+  const origin = root.dataset.origin
+  const storageKey = 'gregale.authAdmin.' + root.dataset.slug
+  const $ = id => document.getElementById(id)
+  const store = {
+    get() { try { return sessionStorage.getItem(storageKey) } catch { return null } },
+    set(value) { try { sessionStorage.setItem(storageKey, value) } catch { /* memory only */ } },
+    clear() { try { sessionStorage.removeItem(storageKey) } catch { /* memory only */ } },
+  }
+  const perPage = 50
+  let key = store.get(), tab = 'users', page = 1, search = '', loads = 0, ssoInfo = null, impersonationOn = false
+  const messages = {
+    last_owner: 'This user is the last owner of an organization that has other members. Make another member an owner first.',
+    invalid_claim_name: 'Claim names are letters, digits and _, start with a letter, and cannot be provider or providers.',
+    claims_too_large: 'Custom claims are limited to 1,000 bytes of JSON per user.', invalid_claims: 'Enter a JSON object of claims; remove a claim instead of setting it to null.',
+    impersonation_needs_confirmed_email: 'Only a user with a confirmed email address can be opened; the sign-in link would confirm it.', user_banned: 'This user is banned.',
+    impersonation_disabled: 'Opening sessions as users is off. Turn it on under Settings first.', invalid_reason: 'Give a reason of up to 200 characters.',
+    not_found: 'It no longer exists.', invalid_duration: 'Choose a ban duration.',
+    sso_disabled: 'Organization SSO is off. Turn it on under Settings first.', invalid_metadata: 'Give an HTTPS metadata URL or the metadata XML, not both.',
+    invalid_domains: 'List one or more email domains, such as acme.com.', organization_not_found: 'No organization has that slug or ID.',
+    invalid_role: 'An identity provider cannot grant the owner role.', unknown_role: 'That role does not exist.',
+    sso_domain_already_exists: 'Another identity provider already serves one of those domains.', saml_idp_already_exists: 'That identity provider is already registered.',
+    saml_metadata_fetch_failed: 'The Auth app could not fetch that metadata URL.',
+    unknown_placeholder: 'A placeholder is not available in this email; use only those listed.', invalid_placeholder: 'A placeholder is not closed; put each name in double braces.',
+    invalid_subject: 'The subject needs 1 to 150 characters on one line, without the link or code.', invalid_body: 'The body needs 1 to 4,000 bytes of text.',
+    invalid_send_to: 'Give one email address to send the preview to.', email_provider_unconfigured: 'Set up an email provider under Settings to send emails.',
+  }
+  const emailLabels = {
+    signup: 'Confirm sign-up', invite: 'Invitation to sign up', magiclink: 'Sign-in link', recovery: 'Password reset', email_change: 'Email change',
+    code: 'Verification code', security_notice: 'Security notice', organization_invitation: 'Organization invitation', signup_approved: 'Sign-up approved',
+  }
+  const el = (tag, text, attrs = {}) => {
+    const node = document.createElement(tag)
+    if (text !== undefined && text !== null) node.textContent = String(text)
+    for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, value)
+    return node
+  }
+  const button = (text, onClick, attrs = {}) => { const b = el('button', text, { type: 'button', ...attrs }); b.addEventListener('click', onClick); return b }
+  const when = value => value ? new Date(value).toLocaleString() : '—'
+  // GoTrue audit actions; anything else is shown as recorded.
+  const actions = {
+    login: 'Signed in', logout: 'Signed out', user_signedup: 'Signed up', user_repeated_signup: 'Signed up again', token_refreshed: 'Session refreshed',
+    token_revoked: 'Session revoked', user_recovery_requested: 'Password reset requested', user_updated_password: 'Password changed',
+    user_modified: 'Account changed', user_deleted: 'Deleted', user_invited: 'Invited', invite_accepted: 'Invitation accepted',
+    user_confirmation_requested: 'Confirmation requested', user_reauthenticate_requested: 'Reauthentication requested',
+    factor_in_progress: 'MFA enrolment started', factor_unenrolled: 'MFA removed', verification_attempted: 'MFA verified', identity_unlinked: 'Identity unlinked',
+  }
+  const actionLabel = action => actions[action] || action || '—'
+  const say = text => { $('status').textContent = text }
+
+  function lock(message) {
+    key = null
+    store.clear()
+    $('workspace').hidden = true
+    $('key-section').hidden = false
+    $('key-error').textContent = message || ''
+  }
+
+  async function call(method, path, body) {
+    let response
+    try {
+      response = await fetch(origin + path, {
+        method, mode: 'cors', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer',
+        headers: { Authorization: 'Bearer ' + key, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      })
+    } catch {
+      throw new Error('Cannot reach ' + origin + '. The Auth app may be starting or may not allow this dashboard; try again.')
+    }
+    const data = await response.json().catch(() => null)
+    if (response.status === 401) { lock('The admin key was rejected.'); throw new Error('The admin key was rejected.') }
+    // Without any admin key the Auth app has no /admin/v1 at all.
+    if (response.status === 404 && /^\/admin\/v1\/(users|orgs)\?/.test(path)) {
+      lock('This Auth app has no admin key yet, or it has not restarted since one was created.'); throw new Error('No admin key.')
+    }
+    if (!response.ok) {
+      const error = new Error(messages[data?.code] || 'The Auth app answered ' + response.status + (data?.code ? ' (' + data.code + ')' : '') + '.')
+      error.data = data
+      throw error
+    }
+    return data
+  }
+
+  function setTable(headings, rows) {
+    const head = $('list').tHead, body = $('list').tBodies[0]
+    head.replaceChildren(el('tr'))
+    for (const heading of headings) head.rows[0].append(el('th', heading, { scope: 'col' }))
+    body.replaceChildren(...rows)
+  }
+
+  function pager(total, more) {
+    const last = Math.max(1, Math.ceil((total ?? 0) / perPage))
+    // Activity pages carry no total, only whether another page exists.
+    $('position').textContent = more === undefined ? 'Page ' + page + ' of ' + last + (total !== null && total !== undefined ? ' · ' + total + ' total' : '') : 'Page ' + page
+    $('prev').disabled = page <= 1
+    $('next').disabled = more === undefined ? page >= last : !more
+  }
+
+  function activityRows(entries, withUser) {
+    return entries.map(entry => {
+      const row = el('tr')
+      row.append(el('td', when(entry.created_at)), el('td', actionLabel(entry.action) + (entry.actor === 'administrator' ? ' by an administrator' : '')))
+      if (withUser) {
+        const cell = el('td')
+        if (entry.user_id) cell.append(button(entry.email || entry.user_id, () => showUser(entry.user_id)))
+        else cell.textContent = '—'
+        row.append(cell)
+      }
+      return row
+    })
+  }
+
+  async function load() {
+    $('detail').hidden = true
+    say('Loading…')
+    const qs = new URLSearchParams({ page: String(page), per_page: String(perPage), ...(search ? { search } : {}) })
+    // A slower earlier load must not overwrite the view the owner switched to.
+    const current = ++loads
+    const fetchView = async path => { const data = await call('GET', path); if (current !== loads) throw new Error('superseded'); return data }
+    try {
+      if (tab === 'users') {
+        const data = await fetchView('/admin/v1/users?' + qs)
+        setTable(['Email', 'Created', 'Last sign-in', 'Confirmed', 'Status', ''], data.users.map(user => {
+          const row = el('tr')
+          row.append(el('td', user.email || user.phone || user.id), el('td', when(user.created_at)), el('td', when(user.last_sign_in_at)),
+            el('td', user.email_confirmed_at ? 'Yes' : 'No'), el('td', banned(user) ? 'Banned until ' + when(user.banned_until) : 'Active'))
+          const cell = el('td'); cell.append(button('Open', () => showUser(user.id))); row.append(cell)
+          return row
+        }))
+        pager(data.total)
+        say(data.users.length ? '' : 'No users match.')
+      } else if (tab === 'activity') {
+        const data = await fetchView('/admin/v1/activity?' + qs)
+        setTable(['Time', 'Event', 'User'], activityRows(data.entries, true))
+        pager(null, data.more)
+        say(data.entries.length ? '' : 'No activity matches.')
+      } else if (tab === 'signups') {
+        // Who may sign up while sign-up is by invitation or waitlist.
+        const data = await fetchView('/admin/v1/signups?' + qs)
+        const act = async (label, method, path, body) => {
+          say(label + '…')
+          try { await call(method, path, body); await load() } catch (error) { say(error.message) }
+        }
+        setTable(['Email', 'State', ''], data.signups.map(signup => {
+          const row = el('tr')
+          const state = signup.signed_up ? 'Signed up' : signup.approved_at ? 'Approved ' + when(signup.approved_at) + (signup.notified_at ? ', emailed' : '') : 'Waiting since ' + when(signup.requested_at)
+          row.append(el('td', signup.email), el('td', state))
+          const cell = el('td')
+          if (!signup.approved_at) cell.append(button('Approve', () => act('Approving', 'POST', '/admin/v1/signups/approve', { emails: [signup.email] })))
+          cell.append(button('Remove', () => act('Removing', 'DELETE', '/admin/v1/signups/' + encodeURIComponent(signup.email))))
+          row.append(cell)
+          return row
+        }))
+        pager(data.total)
+        const approve = el('form')
+        const addresses = el('input', null, { type: 'text', size: '50', 'aria-label': 'Addresses to approve, separated by commas or spaces', placeholder: 'ada@example.com, bob@example.com' })
+        approve.append(addresses, el('button', 'Approve and email', { type: 'submit' }))
+        approve.addEventListener('submit', event => {
+          event.preventDefault()
+          const emails = addresses.value.split(/[\s,]+/).filter(Boolean)
+          if (emails.length) act('Approving', 'POST', '/admin/v1/signups/approve', { emails })
+        })
+        $('detail').replaceChildren(el('h2', 'Approve addresses'), el('p', 'Approved addresses may sign up while sign-up is by invitation or waitlist; with an email provider set up they are told so.', { class: 'muted' }), approve)
+        $('detail').hidden = false
+        say(data.signups.length ? '' : 'No waiting or approved addresses.')
+      } else if (tab === 'emails') {
+        const data = await fetchView('/admin/v1/emails')
+        setTable(['Email', 'Subject', 'Wording', ''], data.emails.map(email => {
+          const row = el('tr')
+          row.append(el('td', emailLabels[email.type] || email.type), el('td', email.subject), el('td', email.custom ? 'Yours' : 'Default'))
+          const cell = el('td'); cell.append(button('Edit', () => showEmail(email))); row.append(cell)
+          return row
+        }))
+        pager(data.emails.length)
+        say('')
+      } else if (tab === 'sso') {
+        let data
+        try { data = await fetchView('/admin/v1/sso') } catch (error) {
+          if (error.data?.code !== 'sso_disabled') throw error
+          setTable([], []); pager(0); say(messages.sso_disabled); return
+        }
+        setTable(['Email domains', 'Entity ID', 'Users join', ''], data.providers.map(provider => {
+          const row = el('tr')
+          row.append(el('td', provider.domains.join(', ')), el('td', provider.entity_id || '—'), el('td', provider.organization ? provider.organization.slug + ' as ' + provider.organization.role : '—'))
+          const cell = el('td'); cell.append(button('Open', () => showProvider(provider))); row.append(cell)
+          return row
+        }))
+        pager(data.providers.length)
+        say(data.providers.length ? '' : 'No identity providers yet.')
+        showAddProvider()
+      } else {
+        const data = await fetchView('/admin/v1/orgs?' + qs)
+        setTable(['Slug', 'Name', 'Members', 'Second factor', 'Created', ''], data.organizations.map(org => {
+          const row = el('tr')
+          row.append(el('td', org.slug), el('td', org.name), el('td', org.members), el('td', org.mfa_required ? 'Required' : 'Optional'), el('td', when(org.created_at)))
+          const cell = el('td'); cell.append(button('Open', () => showOrg(org.id))); row.append(cell)
+          return row
+        }))
+        pager(data.total)
+        say(data.organizations.length ? '' : 'No organizations match.')
+      }
+    } catch (error) { if (current === loads) say(error.message) }
+  }
+
+  const banned = user => user.banned_until && new Date(user.banned_until) > new Date()
+
+  function facts(pairs) {
+    const list = el('dl')
+    for (const [term, value] of pairs) list.append(el('dt', term), el('dd', value))
+    return list
+  }
+
+  async function showUser(id) {
+    const panel = $('detail')
+    try {
+      const [{ user, organizations, active_sessions: sessions }, recent] = await Promise.all([
+        call('GET', '/admin/v1/users/' + encodeURIComponent(id)),
+        call('GET', '/admin/v1/activity?' + new URLSearchParams({ user: id, per_page: '10' })),
+      ])
+      const result = el('p', '', { role: 'status' })
+      const act = async (label, method, path, body, done) => {
+        result.textContent = label + '…'
+        try {
+          const text = done(await call(method, path, body))
+          await load()
+          if (method === 'DELETE') { panel.hidden = true; say(text) } else { await showUser(id); $('detail').querySelector('[role=status]').textContent = text }
+        } catch (error) { result.textContent = error.message }
+      }
+      const duration = el('select', null, { 'aria-label': 'Ban duration' })
+      for (const [value, label] of [['1h', '1 hour'], ['24h', '1 day'], ['168h', '7 days'], ['720h', '30 days'], ['876000h', 'Indefinitely']]) duration.append(el('option', label, { value }))
+      const confirmDelete = button('Confirm: delete ' + (user.email || user.id), () => act('Deleting', 'DELETE', '/admin/v1/users/' + encodeURIComponent(id), undefined,
+        data => 'Deleted.' + (data.organizations_deleted ? ' Removed ' + data.organizations_deleted + ' organization(s) that had no other members.' : '')), { class: 'danger', hidden: '' })
+      const actions = el('nav', null, { 'aria-label': 'User actions' })
+      actions.append(
+        button('Sign out everywhere', () => act('Signing out', 'POST', '/admin/v1/users/' + encodeURIComponent(id) + '/sign-out', {}, data => 'Ended ' + data.sessions_ended + ' session(s).')),
+        duration,
+        button('Ban', () => act('Banning', 'POST', '/admin/v1/users/' + encodeURIComponent(id) + '/ban', { duration: duration.value }, () => 'Banned and signed out.')),
+        ...(banned(user) ? [button('Unban', () => act('Unbanning', 'POST', '/admin/v1/users/' + encodeURIComponent(id) + '/ban', { duration: 'none' }, () => 'Unbanned.'))] : []),
+        button('Delete user', () => { confirmDelete.hidden = false; confirmDelete.focus() }, { class: 'danger' }),
+        confirmDelete,
+      )
+      const memberships = el('table')
+      memberships.append(el('tr'))
+      for (const heading of ['Organization', 'Name', 'Role']) memberships.rows[0].append(el('th', heading, { scope: 'col' }))
+      for (const org of organizations) {
+        const row = memberships.insertRow()
+        const link = button(org.slug, () => showOrg(org.id))
+        const cell = el('td'); cell.append(link)
+        row.append(cell, el('td', org.name), el('td', org.role))
+      }
+      panel.replaceChildren(
+        el('h2', user.email || user.phone || user.id),
+        facts([['User ID', user.id], ['Sign-in methods', user.providers.join(', ') || '—'], ['Created', when(user.created_at)], ['Last sign-in', when(user.last_sign_in_at)],
+          ['Email confirmed', when(user.email_confirmed_at)], ['Banned until', banned(user) ? when(user.banned_until) : '—'], ['Active sessions', sessions]]),
+        actions, result,
+        el('h3', 'Custom claims'), claimsEditor(user),
+        ...(impersonationOn ? [el('h3', 'Open as this user'), await impersonationPanel(user)] : []),
+        el('h3', 'Organizations'), organizations.length ? memberships : el('p', 'Not a member of any organization.', { class: 'muted' }),
+        el('h3', 'Recent activity'), recent.entries.length ? activityTable(recent.entries) : el('p', 'No recorded activity.', { class: 'muted' }),
+        button('Close', () => { panel.hidden = true }),
+      )
+      panel.hidden = false
+      panel.scrollIntoView({ block: 'nearest' })
+    } catch (error) { say(error.message) }
+  }
+
+  // claimsEditor edits a user's custom claims as one JSON object; saving
+  // sends what changed. Tokens carry them as app_metadata from the next refresh.
+  function claimsEditor(user) {
+    const current = user.claims || {}
+    const text = el('textarea', null, { rows: '4', spellcheck: 'false', 'aria-label': 'Custom claims as JSON' })
+    text.value = JSON.stringify(current, null, 2)
+    const status = el('p', '', { role: 'status' })
+    const save = button('Save claims', async () => {
+      let next
+      try { next = JSON.parse(text.value || '{}') } catch { status.textContent = 'Enter a JSON object, such as {"plan": "pro"}.'; return }
+      if (!next || typeof next !== 'object' || Array.isArray(next)) { status.textContent = 'Enter a JSON object, such as {"plan": "pro"}.'; return }
+      const set = Object.fromEntries(Object.entries(next).filter(([name, value]) => JSON.stringify(value) !== JSON.stringify(current[name])))
+      const unset = Object.keys(current).filter(name => !(name in next))
+      if (!Object.keys(set).length && !unset.length) { status.textContent = 'Nothing changed.'; return }
+      status.textContent = 'Saving…'
+      try {
+        const { claims } = await call('PATCH', '/admin/v1/users/' + encodeURIComponent(user.id) + '/claims', { set, unset })
+        Object.keys(current).forEach(name => delete current[name]); Object.assign(current, claims)
+        text.value = JSON.stringify(claims, null, 2)
+        status.textContent = 'Saved. Tokens carry them as app_metadata from the next refresh, within ten minutes.'
+      } catch (error) { status.textContent = error.message }
+    })
+    const box = el('div')
+    box.append(el('p', 'Values your backend and row-level security read from tokens, such as a plan or a tenant.', { class: 'muted' }), text, save, status)
+    return box
+  }
+
+  // impersonationPanel opens a time-limited session as the user in a new tab,
+  // recorded with the reason given, and lists the earlier ones. The session
+  // cannot change the user's password, email, factors or account.
+  async function impersonationPanel(user) {
+    const box = el('div')
+    const status = el('p', '', { role: 'status' })
+    const reason = el('input', null, { type: 'text', maxlength: '200', size: '40', 'aria-label': 'Reason, such as a support ticket', placeholder: 'Reason, such as a support ticket' })
+    const minutes = el('select', null, { 'aria-label': 'Session length' })
+    for (const m of [15, 30, 60]) minutes.append(el('option', m + ' minutes', { value: String(m) }))
+    minutes.value = '30'
+    const open = button('Open the app as this user', async () => {
+      if (!reason.value.trim()) { status.textContent = 'Give a reason; it is recorded.'; return }
+      status.textContent = 'Opening…'
+      try {
+        const started = await call('POST', '/admin/v1/users/' + encodeURIComponent(user.id) + '/impersonate', { reason: reason.value.trim(), minutes: Number(minutes.value) })
+        window.open(started.url, '_blank', 'noopener,noreferrer')
+        status.textContent = 'Opened in a new tab until ' + when(started.expires_at) + '.'
+        await showUser(user.id)
+      } catch (error) { status.textContent = error.message }
+    })
+    const { impersonations } = await call('GET', '/admin/v1/impersonations?user=' + encodeURIComponent(user.id))
+    const history = el('table')
+    history.append(el('tr'))
+    for (const heading of ['Opened', 'By', 'Reason', 'State', '']) history.rows[0].append(el('th', heading, { scope: 'col' }))
+    for (const item of impersonations) {
+      const row = history.insertRow()
+      const cell = el('td')
+      if (item.active) cell.append(button('End', async () => {
+        try { await call('DELETE', '/admin/v1/impersonations/' + encodeURIComponent(item.id)); await showUser(user.id) } catch (error) { status.textContent = error.message }
+      }))
+      row.append(el('td', when(item.started_at)), el('td', item.actor), el('td', item.reason), el('td', item.active ? 'Active until ' + when(item.expires_at) : 'Ended'), cell)
+    }
+    box.append(el('p', 'Opens the app signed in as this user, for support. The session is recorded with your reason and cannot change their password, email, second factors or account.', { class: 'muted' }),
+      reason, minutes, open, status, ...(impersonations.length ? [history] : []))
+    return box
+  }
+
+  function activityTable(entries) {
+    const table = el('table')
+    table.append(el('tr'))
+    for (const heading of ['Time', 'Event']) table.rows[0].append(el('th', heading, { scope: 'col' }))
+    table.append(...activityRows(entries, false))
+    return table
+  }
+
+  async function showOrg(id) {
+    const panel = $('detail')
+    try {
+      const { organization: org, members, invitations, domains = [] } = await call('GET', '/admin/v1/orgs/' + encodeURIComponent(id))
+      const memberTable = el('table')
+      memberTable.append(el('tr'))
+      for (const heading of ['Member', 'Role', 'Second factor', 'Joined']) memberTable.rows[0].append(el('th', heading, { scope: 'col' }))
+      for (const member of members) {
+        const row = memberTable.insertRow()
+        const cell = el('td'); cell.append(button(member.email || member.user_id, () => showUser(member.user_id)))
+        const factor = member.mfa_enabled ? 'Yes' : org.mfa_required ? 'No: cannot use this organization' : 'No'
+        row.append(cell, el('td', member.role), el('td', factor), el('td', when(member.created_at)))
+      }
+      // The organization's audit log, newest first (sql/0020).
+      const audit = await call('GET', '/admin/v1/orgs/' + encodeURIComponent(id) + '/audit-log?limit=20')
+      const auditTable = el('table')
+      auditTable.append(el('tr'))
+      for (const heading of ['Time', 'Event', 'By', 'Member']) auditTable.rows[0].append(el('th', heading, { scope: 'col' }))
+      for (const entry of audit.entries) {
+        const details = Object.entries(entry.data || {}).filter(([, v]) => v !== false).map(([k, v]) => k + ': ' + v).join(', ')
+        auditTable.insertRow().append(el('td', when(entry.occurred_at)), el('td', entry.action + (details ? ' (' + details + ')' : '')),
+          el('td', entry.actor_email || (entry.action === 'member.signed_in' ? '—' : 'The application')), el('td', entry.target_email || '—'))
+      }
+      // The organization's owners normally set this; the admin key acts as
+      // the application's operator, for example when every owner lost their factor.
+      const result = el('p', '', { role: 'status' })
+      const without = members.filter(member => !member.mfa_enabled).length
+      const toggle = button(org.mfa_required ? 'Stop requiring a second factor' : 'Require a second factor', async () => {
+        result.textContent = 'Saving…'
+        try {
+          await call('PATCH', '/admin/v1/orgs/' + encodeURIComponent(id), { mfa_required: !org.mfa_required })
+          await showOrg(id)
+          $('detail').querySelector('[role=status]').textContent = org.mfa_required ? 'A second factor is no longer required.' : 'A second factor is now required.'
+        } catch (error) { result.textContent = error.message }
+      })
+      const warning = !org.mfa_required && without ? el('p', without + ' member(s) without a second factor would lose access until they add one.', { class: 'muted' }) : null
+      const inviteTable = el('table')
+      inviteTable.append(el('tr'))
+      for (const heading of ['Invited email', 'Role', 'Expires']) inviteTable.rows[0].append(el('th', heading, { scope: 'col' }))
+      for (const invitation of invitations) inviteTable.insertRow().append(el('td', invitation.email), el('td', invitation.role), el('td', when(invitation.expires_at)))
+      // The organization's email domains and who joins by them; its owners
+      // manage these through the app.
+      const joins = { off: 'No', suggest: 'Offered', automatic: 'Automatically' }
+      const domainTable = el('table')
+      domainTable.append(el('tr'))
+      for (const heading of ['Domain', 'Verified', 'People at it join']) domainTable.rows[0].append(el('th', heading, { scope: 'col' }))
+      for (const domain of domains) domainTable.insertRow().append(el('td', domain.domain), el('td', domain.verified ? 'Yes' : 'No'),
+        el('td', domain.join.mode === 'off' ? 'No' : joins[domain.join.mode] + ' as ' + domain.join.role))
+      panel.replaceChildren(
+        el('h2', org.name), facts([['Slug', org.slug], ['Organization ID', org.id], ['Created', when(org.created_at)],
+          ['Second factor', org.mfa_required ? 'Required: permissions hold only in sessions verified with one' : 'Optional']]),
+        toggle, ...(warning ? [warning] : []), result,
+        el('h3', 'Members (' + members.length + ')'), memberTable,
+        el('h3', 'Pending invitations'), invitations.length ? inviteTable : el('p', 'None.', { class: 'muted' }),
+        el('h3', 'Audit log'), audit.entries.length ? auditTable : el('p', 'Nothing recorded yet.', { class: 'muted' }),
+        ...(domains.length ? [el('h3', 'Email domains'), domainTable] : []),
+        button('Close', () => { panel.hidden = true }),
+      )
+      panel.hidden = false
+      panel.scrollIntoView({ block: 'nearest' })
+    } catch (error) { say(error.message) }
+  }
+
+  // Identity providers for organization single sign-on. The owner gives the
+  // provider the entity ID and ACS URL below; provider records stay in the
+  // customer's database like users.
+  const field = (label, name, attrs = {}) => { const input = el(attrs.rows ? 'textarea' : 'input', null, { name, ...attrs }); const wrap = el('label', label); wrap.append(input); return wrap }
+  const serviceProvider = () => ssoInfo?.enabled
+    ? facts([['Entity ID (metadata URL)', ssoInfo.entity_id], ['ACS URL', ssoInfo.acs_url]])
+    : el('p', 'Organization SSO is off; turn it on under Settings.', { class: 'muted' })
+  const providerForm = (submitLabel, fields, toBody, send) => {
+    const form = el('form', null, { class: 'sso-form' })
+    const result = el('p', '', { role: 'status' })
+    form.append(...fields, el('button', submitLabel, { type: 'submit' }), result)
+    form.addEventListener('submit', async event => {
+      event.preventDefault()
+      const values = Object.fromEntries(new FormData(form))
+      result.textContent = 'Saving…'
+      try { result.textContent = await send(toBody(values)) } catch (error) { result.textContent = error.message }
+    })
+    return form
+  }
+  const domainsOf = value => value.split(/[\s,]+/).filter(Boolean)
+  const joined = data => data.members_added ? ' ' + data.members_added + ' existing user(s) joined the organization.' : ''
+
+  function showAddProvider() {
+    const panel = $('detail')
+    panel.replaceChildren(
+      el('h2', 'Add an identity provider'), el('p', 'Register these with the identity provider (Okta, Entra ID, Google Workspace or any SAML 2.0 provider):'), serviceProvider(),
+      providerForm('Add identity provider', [
+        field('Metadata URL (HTTPS)', 'metadata_url', { type: 'url', maxlength: '2048' }),
+        field('or metadata XML', 'metadata_xml', { rows: '4', spellcheck: 'false' }),
+        field('Email domains, comma-separated', 'domains', { required: '', placeholder: 'acme.com' }),
+        field('Organization its users join (slug or ID; optional)', 'organization', { maxlength: '64' }),
+        field('Role they join with', 'role', { value: 'member', maxlength: '32' }),
+      ], values => ({
+        ...(values.metadata_url ? { metadata_url: values.metadata_url } : {}), ...(values.metadata_xml.trim() ? { metadata_xml: values.metadata_xml } : {}),
+        domains: domainsOf(values.domains), ...(values.organization.trim() ? { organization: values.organization.trim(), role: values.role.trim() || 'member' } : {}),
+      }), async body => { const data = await call('POST', '/admin/v1/sso', body); await load(); say('Added the identity provider.' + joined(data)); return '' }),
+    )
+    panel.hidden = false
+  }
+
+  function showProvider(provider) {
+    const panel = $('detail')
+    const path = '/admin/v1/sso/' + encodeURIComponent(provider.id)
+    const patch = async (body, done) => { const data = await call('PATCH', path, body); await load(); showProvider(data.provider); return done(data) }
+    const confirmRemove = button('Confirm: remove this identity provider; its users can no longer sign in through it', async () => {
+      try { await call('DELETE', path); await load(); say('Removed the identity provider.') } catch (error) { say(error.message) }
+    }, { class: 'danger', hidden: '' })
+    panel.replaceChildren(
+      el('h2', provider.domains.join(', ')),
+      facts([['Provider ID', provider.id], ['Entity ID', provider.entity_id || '—'], ['Metadata URL', provider.metadata_url || 'Metadata XML'],
+        ['Users join', provider.organization ? provider.organization.slug + ' as ' + provider.organization.role : 'No organization']]),
+      el('h3', 'Email domains'),
+      providerForm('Save domains', [field('Comma-separated', 'domains', { required: '', value: provider.domains.join(', ') })], values => ({ domains: domainsOf(values.domains) }), body => patch(body, () => 'Saved.')),
+      el('h3', 'Organization'),
+      providerForm('Link', [field('Organization (slug or ID)', 'organization', { required: '', value: provider.organization?.slug ?? '' }), field('Role', 'role', { value: provider.organization?.role ?? 'member' })],
+        values => ({ organization: values.organization.trim(), role: values.role.trim() || 'member' }), body => patch(body, data => 'Linked.' + joined(data))),
+      ...(provider.organization ? [button('Unlink; members stay', async () => { try { await patch({ organization: null }, () => '') } catch (error) { say(error.message) } })] : []),
+      el('h3', 'Metadata'),
+      providerForm('Replace metadata URL', [field('Metadata URL (HTTPS)', 'metadata_url', { type: 'url', required: '', value: provider.metadata_url ?? '' })], values => ({ metadata_url: values.metadata_url }), body => patch(body, () => 'Saved.')),
+      el('h3', 'Register with the identity provider'), serviceProvider(),
+      button('Remove identity provider', () => { confirmRemove.hidden = false; confirmRemove.focus() }, { class: 'danger' }), confirmRemove,
+      button('Close', () => { showAddProvider() }),
+    )
+    panel.hidden = false
+    panel.scrollIntoView({ block: 'nearest' })
+  }
+
+  // showEmail edits one email's wording. Previews render with example
+  // values in the Auth app; nothing is saved until Save.
+  function showEmail(email, notice = '') {
+    const panel = $('detail')
+    const path = '/admin/v1/emails/' + encodeURIComponent(email.type)
+    const result = el('p', notice, { role: 'status' })
+    const subject = el('input', null, { name: 'subject', maxlength: '150', required: '', 'aria-label': 'Subject' })
+    subject.value = email.subject
+    const body = el('textarea', null, { name: 'body', rows: '8', required: '', spellcheck: 'true', 'aria-label': 'Body' })
+    body.value = email.body
+    const sendTo = el('input', null, { type: 'email', maxlength: '320', 'aria-label': 'Send a preview to', placeholder: 'you@example.com' })
+    const preview = el('pre', null, { class: 'email-preview', hidden: '' })
+    const draft = () => ({ subject: subject.value, body: body.value })
+    // work returns the message to show, or null when it redrew the panel.
+    const run = async (label, work) => { result.textContent = label + '…'; try { const text = await work(); if (text !== null) result.textContent = text } catch (error) { result.textContent = error.message } }
+    const confirmReset = button('Confirm: return to the default wording', () => run('Resetting', async () => {
+      const data = await call('DELETE', path); await load(); showEmail(data, 'The default wording is back.'); return null
+    }), { class: 'danger', hidden: '' })
+    panel.replaceChildren(
+      el('h2', emailLabels[email.type] || email.type),
+      // Braces are built here: this page is a Go template.
+      el('p', 'Placeholders: ' + email.placeholders.map(name => '\x7b\x7b' + name + '\x7d\x7d').join(' ') + '. Separate paragraphs with a blank line. A link or code the email carries is added at the end unless you place it.', { class: 'muted' }),
+      (() => { const wrap = el('label', 'Subject'); wrap.append(subject); return wrap })(),
+      (() => { const wrap = el('label', 'Body'); wrap.append(body); return wrap })(),
+      el('nav', null, { 'aria-label': 'Email actions' }),
+      preview, result,
+    )
+    panel.querySelector('nav').append(
+      button('Save', () => run('Saving', async () => { const data = await call('PATCH', path, draft()); await load(); showEmail(data, 'Saved; the next email uses it.'); return null })),
+      button('Preview', () => run('Rendering', async () => {
+        const data = await call('POST', path + '/preview', draft())
+        preview.textContent = 'Subject: ' + data.subject + '\n\n' + data.text
+        preview.hidden = false
+        return ''
+      })),
+      sendTo,
+      button('Send preview', () => run('Sending', async () => { await call('POST', path + '/preview', { ...draft(), send_to: sendTo.value.trim() }); return 'Sent to ' + sendTo.value.trim() + '.' })),
+      ...(email.custom ? [button('Reset to default', () => { confirmReset.hidden = false; confirmReset.focus() }, { class: 'danger' }), confirmReset] : []),
+      button('Close', () => { panel.hidden = true }),
+    )
+    panel.hidden = false
+    panel.scrollIntoView({ block: 'nearest' })
+  }
+
+  function open() {
+    $('key-section').hidden = true
+    $('workspace').hidden = false
+    load()
+  }
+
+  $('key-form').addEventListener('submit', event => {
+    event.preventDefault()
+    key = $('admin-key').value.trim()
+    $('admin-key').value = ''
+    store.set(key)
+    open()
+  })
+  $('forget').addEventListener('click', () => lock(''))
+  for (const tabButton of document.querySelectorAll('[data-tab]')) {
+    tabButton.addEventListener('click', () => {
+      tab = tabButton.dataset.tab
+      page = 1
+      for (const other of document.querySelectorAll('[data-tab]')) other.setAttribute('aria-pressed', String(other === tabButton))
+      $('export').hidden = tab !== 'activity'
+      $('search').hidden = tab === 'sso' || tab === 'emails'
+      $('query').placeholder = { users: 'Email or name', orgs: 'Slug or name', activity: 'Email, or an event such as login', sso: '', emails: '' }[tab]
+      load()
+    })
+  }
+  $('search').addEventListener('submit', event => { event.preventDefault(); search = $('query').value.trim(); page = 1; load() })
+  // The export is built in this browser from the Auth app's activity pages,
+  // like every other view here; nothing passes through Gregale.
+  const csvCell = value => {
+    let text = String(value ?? '')
+    if (/^[=+\-@\t\r]/.test(text)) text = "'" + text
+    return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text
+  }
+  $('export').addEventListener('click', async () => {
+    const button = $('export')
+    button.disabled = true
+    say('Exporting…')
+    try {
+      const rows = [['time', 'event', 'by', 'user_id', 'email']]
+      for (let p = 1; p <= 100; p++) {
+        const data = await call('GET', '/admin/v1/activity?' + new URLSearchParams({ page: String(p), per_page: '100', ...(search ? { search } : {}) }))
+        for (const entry of data.entries) rows.push([entry.created_at, entry.action, entry.actor, entry.user_id, entry.email])
+        if (!data.more) break
+      }
+      const url = URL.createObjectURL(new Blob([rows.map(row => row.map(csvCell).join(',')).join('\r\n') + '\r\n'], { type: 'text/csv' }))
+      const link = el('a', null, { href: url, download: root.dataset.slug + '-activity.csv' })
+      document.body.append(link)
+      link.click()
+      link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      say('Exported ' + (rows.length - 1) + ' entries' + (rows.length - 1 >= 10000 ? ' (the first 10,000; narrow the search for more).' : '.'))
+    } catch (error) { say(error.message) } finally { button.disabled = false }
+  })
+  $('prev').addEventListener('click', () => { page = Math.max(1, page - 1); load() })
+  $('next').addEventListener('click', () => { page += 1; load() })
+  $('query').placeholder = 'Email or name'
+  if (key) open()
+
+  // Settings are read from the running app's public /settings/v1, because
+  // app secrets are write-only. Saving sends only the fields that changed.
+  const form = $('settings-form')
+  const control = name => form.elements.namedItem(name)
+  // Minutes back to the 45m / 12h / 30d form the setting takes.
+  const sessionLimit = minutes => !minutes ? '' : minutes % 1440 === 0 ? (minutes / 1440) + 'd' : minutes % 60 === 0 ? (minutes / 60) + 'h' : minutes + 'm'
+  const classes = [...document.querySelectorAll('#password-classes input')]
+  const requireValue = () => classes.filter(box => box.checked).map(box => box.value).join(',') || 'none'
+  async function loadSettings() {
+    let settings
+    try {
+      const response = await fetch(origin + '/settings/v1', { mode: 'cors', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer' })
+      if (!response.ok) throw new Error(String(response.status))
+      settings = await response.json()
+    } catch {
+      $('settings-status').textContent = 'Cannot read the running app\'s settings. It may be restarting; reload this page in a moment.'
+      return
+    }
+    const values = {
+      site_url: settings.site_url, redirect_urls: settings.redirect_urls.join('\n'), signup: settings.signup.enabled ? 'on' : 'off',
+      autoconfirm: settings.signup.autoconfirm ? 'on' : 'off', password_min_length: String(settings.password.min_length),
+      signup_access: settings.signup.access ?? 'open', signup_domains: (settings.signup.allowed_domains ?? []).join('\n'), blocked_domains: '',
+      block_disposable: settings.signup.block_disposable ? 'on' : 'off',
+      leaked_password_check: settings.password.leaked_password_check ? 'on' : 'off', mfa: settings.mfa.totp ? 'on' : 'off',
+      mfa_phone: settings.mfa.phone ? 'on' : 'off', recovery_codes: settings.mfa.recovery_codes ? 'on' : 'off',
+      passkeys: settings.passkeys?.enabled ? 'on' : 'off',
+      brand_name: settings.branding?.name ?? '', brand_color: settings.branding?.color ?? '', brand_logo_url: settings.branding?.logo_url ?? '',
+      captcha_provider: settings.captcha?.provider ?? '', captcha_site_key: settings.captcha?.site_key ?? '', captcha_secret: '',
+      activity_retention_days: settings.activity?.retention_days ? String(settings.activity.retention_days) : '',
+      sms_provider: settings.phone?.enabled ? settings.phone.provider : '', sms_account: '', sms_sender: '', sms_secret: '',
+      sso: settings.sso?.enabled ? 'on' : 'off', sms_countries: (settings.phone?.countries ?? []).join(','), org_sso: settings.sso?.self_service ? 'on' : 'off',
+      oauth_server: settings.oauth?.enabled ? 'on' : 'off', oauth_registration: settings.oauth?.dynamic_registration ? 'on' : 'off',
+      anonymous: settings.anonymous?.enabled ? 'on' : 'off', anonymous_retention_days: settings.anonymous?.retention_days ? String(settings.anonymous.retention_days) : '',
+      identity_linking: settings.identity_linking ? 'on' : 'off', self_deletion: settings.self_deletion ? 'on' : 'off', org_claims: settings.organization_claims ? 'on' : 'off', impersonation: settings.impersonation ? 'on' : 'off', org_domains: settings.organization_domains?.enabled ? 'on' : 'off', service_accounts: settings.service_accounts?.enabled ? 'on' : 'off',
+      web3: [settings.web3?.ethereum && 'ethereum', settings.web3?.solana && 'solana'].filter(Boolean).join(',') || 'off',
+      session_max_age: sessionLimit(settings.sessions?.max_age_minutes), session_idle: sessionLimit(settings.sessions?.idle_minutes), single_session: settings.sessions?.single_per_user ? 'on' : 'off',
+    }
+    for (const box of classes) box.checked = settings.password.required.includes(box.value)
+    values.password_require = requireValue()
+    for (const [name, value] of Object.entries(values)) { control(name).value = value; control(name).dataset.initial = value }
+    const custom = settings.password.required.includes('custom')
+    $('settings-status').textContent = custom ? 'Passwords also need characters from a custom set; saving password classes replaces it.' : ''
+    $('sso-status').textContent = settings.sso?.enabled ? 'Identity providers trust entity ID ' + settings.sso.entity_id + ' with ACS URL ' + settings.sso.acs_url + '.' : ''
+    $('oauth-status').textContent = settings.oauth?.enabled ? 'Issuer ' + settings.oauth.issuer + '; clients discover it at ' + settings.oauth.metadata_url + '.' : ''
+    form.hidden = false
+    $('provider-form').hidden = false
+    const known = [...$('provider-form').elements.namedItem('provider').options].map(option => option.value)
+    const enabled = settings.providers.filter(name => known.includes(name))
+    $('providers-status').textContent = enabled.length ? 'Email and password sign-in, plus:' : 'Only email and password sign-in is enabled.'
+    $('providers').replaceChildren(...enabled.map(name => {
+      const item = el('li', name + ' ')
+      const disable = el('form', null, { method: 'post', action: '/dashboard/apps/' + encodeURIComponent(root.dataset.slug) + '/auth/providers/' + encodeURIComponent(name) + '/disable' })
+      disable.append(el('input', null, { type: 'hidden', name: 'csrf_token', value: control('csrf_token').value }), el('button', 'Disable', { type: 'submit' }))
+      item.append(disable)
+      return item
+    }))
+    $('email-status').textContent = !settings.email.configured ? 'Email delivery is not configured: confirmation, magic-link, recovery and invitation emails fail.'
+      : settings.email.provider ? 'Sending through ' + settings.email.provider + ' as ' + settings.email.from + '.' : 'Email delivery is configured.'
+    const emailForm = $('email-form')
+    emailForm.elements.namedItem('email_provider').value = settings.email.provider ?? ''
+    emailForm.elements.namedItem('email_from').value = settings.email.from ?? ''
+    emailForm.hidden = false
+    ssoInfo = settings.sso ?? null
+    impersonationOn = settings.impersonation === true
+    $('events-status').textContent = settings.events?.lifecycle ? 'Lifecycle events (auth.user.created, signed_in, confirmed, banned, unbanned, deleted) are published to your event bus.' : 'Lifecycle events are off.'
+    renderKeys(settings.keys)
+  }
+
+  // Key states join the sealed keys (secret names, rendered by apid) with
+  // the keys the running app publishes, as `gregale auth keys list` does.
+  const sealed = [...document.querySelectorAll('#sealed-keys li')].map(li => ({ id: li.dataset.id, created: li.dataset.created, signer: li.dataset.signer === 'true' }))
+  const keyAction = (id, action, label, attrs = {}) => {
+    const post = el('form', null, { method: 'post', action: '/dashboard/apps/' + encodeURIComponent(root.dataset.slug) + '/auth/keys/' + encodeURIComponent(id) + '/' + action })
+    post.append(el('input', null, { type: 'hidden', name: 'csrf_token', value: control('csrf_token').value }), el('button', label, { type: 'submit', ...attrs }))
+    return post
+  }
+  const keyNotes = { signing: 'Signs new tokens', pending: 'Waiting for the restart to publish it', activating: 'Waiting for the restart to make it sign', removing: 'Waiting for the restart to remove it' }
+  let keyPolls = 0
+  function renderKeys(running) {
+    const ids = [...new Set([...sealed.map(key => key.id), running.signing, ...running.verifying])]
+    const rows = ids.map(id => {
+      const key = sealed.find(k => k.id === id)
+      const state = !key ? 'removing' : running.signing === id ? 'signing' : !running.verifying.includes(id) ? 'pending' : key.signer ? 'activating' : 'verifying'
+      return { id, state, created: key?.created ?? '' }
+    }).sort((a, b) => (a.created + a.id).localeCompare(b.created + b.id))
+    $('keys').tBodies[0].replaceChildren(...rows.map(row => {
+      const tr = el('tr')
+      const actions = el('td', row.state === 'verifying' ? null : keyNotes[row.state])
+      if (row.state === 'verifying') {
+        const confirmRevoke = keyAction(row.id, 'revoke', 'Confirm: revoke ' + row.id + '; tokens it signed stop verifying', { class: 'danger' })
+        confirmRevoke.hidden = true
+        actions.append(keyAction(row.id, 'activate', 'Make it sign'), button('Revoke', () => { confirmRevoke.hidden = false; confirmRevoke.querySelector('button').focus() }, { class: 'danger' }), confirmRevoke)
+      }
+      tr.append(el('td', row.id), el('td', row.state), el('td', row.created), actions)
+      return tr
+    }))
+    $('keys').hidden = false
+    $('key-create').hidden = sealed.length >= Number($('key-create').dataset.max)
+    const waiting = rows.some(row => !['signing', 'verifying'].includes(row.state))
+    $('keys-status').textContent = waiting ? 'The app is restarting; this list updates when it finishes.' : sealed.length >= Number($('key-create').dataset.max) ? 'This app has the most signing keys allowed; revoke one to add another.' : ''
+    // Follow a restart for up to five minutes, then leave reloading to the owner.
+    if (waiting && keyPolls++ < 60) setTimeout(refreshKeys, 5000)
+  }
+  async function refreshKeys() {
+    try {
+      const response = await fetch(origin + '/settings/v1', { mode: 'cors', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer' })
+      if (response.ok) return renderKeys((await response.json()).keys)
+    } catch { /* still restarting */ }
+    if (keyPolls++ < 60) setTimeout(refreshKeys, 5000)
+  }
+  form.addEventListener('submit', event => {
+    control('password_require').value = requireValue()
+    const changed = [...form.elements].filter(field => field.name && field.dataset.initial !== undefined && field.value !== field.dataset.initial)
+    if (!changed.length) { event.preventDefault(); $('settings-status').textContent = 'Nothing changed.'; return }
+    // The CAPTCHA and SMS settings are each saved together.
+    for (const group of [['captcha_provider', 'captcha_site_key', 'captcha_secret'], ['sms_provider', 'sms_account', 'sms_sender', 'sms_secret']]) {
+      if (changed.some(field => group.includes(field.name))) for (const name of group) if (!changed.includes(control(name))) changed.push(control(name))
+    }
+    for (const field of form.elements) if (field.dataset.initial !== undefined && !changed.includes(field)) field.disabled = true
+  })
+  loadSettings()
+})()
+</script>
+{{end}}</main></body></html>

@@ -168,15 +168,16 @@ func TestE2E_Autoscale_NoMetricDoesNotAdmit(t *testing.T) {
 // targets fall through to generic request admission and cannot scale back in.
 func TestE2E_Autoscale_MCPWorkerScalesFromZeroAndBack(t *testing.T) {
 	const (
-		slug       = "autoscale-mcp-zero"
-		metricName = "mcp_tasks_outstanding"
-		perWorker  = 2.0
+		slug         = "autoscale-mcp-zero"
+		observerSlug = "autoscale-mcp-observer"
+		metricName   = "mcp_tasks_outstanding"
+		perWorker    = 2.0
 	)
 	request := api.CreateAppRequest{
 		Slug: slug, Type: string(state.AppTypeApp), RequireAuthn: boolPtr(false),
 		ExecutionMode: api.ExecutionModeWorker, MaxConcurrency: 5,
 		WorkerReplicas: &api.WorkerScaling{
-			Min: 0, Max: 5, Metric: api.ScalingMetricCustom, Name: metricName, Target: perWorker,
+			Min: 0, Max: 5, Metric: api.ScalingMetricCustom, Name: metricName, Target: perWorker, ObserverAppSlug: observerSlug,
 		},
 	}
 	f := newNormalPathFixtureWithRequest(t, slug, api.PlanScale, 0, request)
@@ -184,12 +185,63 @@ func TestE2E_Autoscale_MCPWorkerScalesFromZeroAndBack(t *testing.T) {
 		return
 	}
 
-	policy := &api.ScalingPolicy{
-		MinInstances: 0,
-		MaxInstances: 5,
-		Targets:      []api.ScalingTarget{{Metric: api.ScalingMetricCustom, Name: metricName, Value: perWorker}},
+	// A separately running observer and its fresh heartbeat own scale-in to
+	// zero. Exercise that production prerequisite rather than bypassing it.
+	body, status := doReq(t, f.h, f.key, http.MethodPost, "/v1/apps", api.CreateAppRequest{
+		Slug: observerSlug, Type: string(state.AppTypeApp), RequireAuthn: boolPtr(false),
+		ExecutionMode: api.ExecutionModeWorker, MaxConcurrency: 1,
+		WorkerReplicas: &api.WorkerScaling{Min: 1, Max: 1},
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create observer app: status=%d body=%s", status, body)
 	}
-	body, status := doReq(t, f.h, f.key, http.MethodPatch, "/v1/apps/"+f.app.Slug,
+	var observer api.AppResponse
+	if err := json.Unmarshal(body, &observer); err != nil {
+		t.Fatalf("decode observer: %v", err)
+	}
+	observerDeployment, err := f.store.CreateDeployment(f.ctx, state.Deployment{
+		AppID: observer.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + strings.Repeat("4", 64),
+	})
+	if err != nil {
+		t.Fatalf("create observer deployment: %v", err)
+	}
+	if err := f.store.MarkDeploymentLive(f.ctx, observerDeployment.ID); err != nil {
+		t.Fatalf("mark observer deployment live: %v", err)
+	}
+	publishNormalPathLayer(t, f, observerDeployment.ID)
+	// Store-only promotion does not emit imaged's deployment lifecycle
+	// notification. Start the observer through the public wake path after
+	// its signed rootfs is ready, then verify real worker admission below.
+	body, status = doReq(t, f.h, f.key, http.MethodPost, "/v1/apps/"+observerSlug+"/wake", nil)
+	if status != http.StatusAccepted && status != http.StatusOK {
+		t.Fatalf("wake observer app: status=%d body=%s", status, body)
+	}
+	observerReady := false
+	for deadline := time.Now().Add(45 * time.Second); time.Now().Before(deadline); {
+		instances, err := f.store.ListInstancesForApp(f.ctx, observer.ID)
+		if err != nil {
+			t.Fatalf("list observer instances: %v", err)
+		}
+		for _, instance := range instances {
+			observerReady = observerReady || (instance.DeploymentID == observerDeployment.ID && instance.Mode == string(state.InstanceModeWorker) && instance.State == string(state.StateRunning))
+		}
+		if observerReady {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if !observerReady {
+		t.Fatal("dedicated MCP observer never reached running worker state")
+	}
+
+	policy := &api.ScalingPolicy{
+		MinInstances:      0,
+		MaxInstances:      5,
+		ScaleOutCooldownS: api.MinScaleOutCooldownS,
+		ScaleInCooldownS:  api.MinScaleInCooldownS,
+		Targets:           []api.ScalingTarget{{Metric: api.ScalingMetricCustom, Name: metricName, Value: perWorker}},
+	}
+	body, status = doReq(t, f.h, f.key, http.MethodPatch, "/v1/apps/"+f.app.Slug,
 		api.UpdateAppRequest{ScalingPolicy: policy})
 	if status != http.StatusOK {
 		t.Fatalf("PATCH worker scaling policy: status=%d body=%s", status, body)
@@ -233,7 +285,14 @@ func TestE2E_Autoscale_MCPWorkerScalesFromZeroAndBack(t *testing.T) {
 	if status != http.StatusNoContent {
 		t.Fatalf("publish empty MCP backlog: status=%d body=%s", status, body)
 	}
-	deadline = time.Now().Add(45 * time.Second)
+	body, status = doReq(t, f.h, f.key, http.MethodPut,
+		"/v1/apps/"+f.app.Slug+"/custom-metrics/mcp_tasks_observer_heartbeat",
+		api.CustomMetricRequest{Value: 1})
+	if status != http.StatusNoContent {
+		t.Fatalf("publish observer heartbeat: status=%d body=%s", status, body)
+	}
+	// Retain the four-worker demand until the production stabilization window ages out.
+	deadline = time.Now().Add(time.Duration(api.WorkerScaleInStabilizationSeconds)*time.Second + 45*time.Second)
 	for time.Now().Before(deadline) {
 		if mcpWorkerInstanceCount(t, f) == 0 {
 			return

@@ -19,7 +19,7 @@ class OutboundAIUsageItem:
     """
 
     caller: str
-    """App UUID, or "runs" for stateless Runs."""
+    """App UUID, "runs" for stateless Runs, or "replay" for replayed calls (ADR-997)."""
     model: str
     """Provider-reported model; "other" collects models beyond the daily distinct-model cap and "unknown" covers
     responses without one."""
@@ -32,8 +32,33 @@ class OutboundAIUsageItem:
     cached_input_tokens: int
     cache_write_tokens: int
     output_tokens: int
+    images: int
+    """Images billed per image (ADR-997)."""
+    audio_seconds: int
+    """Seconds of transcribed audio."""
+    characters: int
+    """Characters of speech input."""
+    video_seconds: int
+    """Seconds of generated video (ADR-1432)."""
+    web_searches: int
+    """Web searches as the provider bills them: per call, query or grounded prompt (ADR-1433)."""
+    file_searches: int
+    """File search calls (ADR-1433)."""
+    code_session_gb: int
+    """GB of code-interpreter container sessions (ADR-1433)."""
+    cached_requests: int
+    """Requests the response cache served, with no tokens or cost (ADR-1440)."""
+    cache_saved_millicents: int
+    """Provider cost the response cache avoided, priced from the cached responses at the current price list."""
+    prompt_cache_saved_millicents: int
+    """What provider prompt caching saved against plain input prices; negative when cache writes outweighed reads."""
+    input_audio_tokens: int
+    """Audio part of input_tokens, priced at the audio input price (ADR 20261019072722)."""
+    output_audio_tokens: int
+    """Audio part of output_tokens, priced at the audio output price."""
     cost_millicents: int | Unset = UNSET
-    """Priced from the list in effect at each call and rounded up per call; zero without a price list."""
+    """Priced from the list in effect at each call, else the built-in catalog, and rounded up per call; zero for an
+    unpriced model."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,6 +80,30 @@ class OutboundAIUsageItem:
 
         output_tokens = self.output_tokens
 
+        images = self.images
+
+        audio_seconds = self.audio_seconds
+
+        characters = self.characters
+
+        video_seconds = self.video_seconds
+
+        web_searches = self.web_searches
+
+        file_searches = self.file_searches
+
+        code_session_gb = self.code_session_gb
+
+        cached_requests = self.cached_requests
+
+        cache_saved_millicents = self.cache_saved_millicents
+
+        prompt_cache_saved_millicents = self.prompt_cache_saved_millicents
+
+        input_audio_tokens = self.input_audio_tokens
+
+        output_audio_tokens = self.output_audio_tokens
+
         cost_millicents = self.cost_millicents
 
         field_dict: dict[str, Any] = {}
@@ -70,6 +119,18 @@ class OutboundAIUsageItem:
                 "cached_input_tokens": cached_input_tokens,
                 "cache_write_tokens": cache_write_tokens,
                 "output_tokens": output_tokens,
+                "images": images,
+                "audio_seconds": audio_seconds,
+                "characters": characters,
+                "video_seconds": video_seconds,
+                "web_searches": web_searches,
+                "file_searches": file_searches,
+                "code_session_gb": code_session_gb,
+                "cached_requests": cached_requests,
+                "cache_saved_millicents": cache_saved_millicents,
+                "prompt_cache_saved_millicents": prompt_cache_saved_millicents,
+                "input_audio_tokens": input_audio_tokens,
+                "output_audio_tokens": output_audio_tokens,
             }
         )
         if cost_millicents is not UNSET:
@@ -98,6 +159,30 @@ class OutboundAIUsageItem:
 
         output_tokens = d.pop("output_tokens")
 
+        images = d.pop("images")
+
+        audio_seconds = d.pop("audio_seconds")
+
+        characters = d.pop("characters")
+
+        video_seconds = d.pop("video_seconds")
+
+        web_searches = d.pop("web_searches")
+
+        file_searches = d.pop("file_searches")
+
+        code_session_gb = d.pop("code_session_gb")
+
+        cached_requests = d.pop("cached_requests")
+
+        cache_saved_millicents = d.pop("cache_saved_millicents")
+
+        prompt_cache_saved_millicents = d.pop("prompt_cache_saved_millicents")
+
+        input_audio_tokens = d.pop("input_audio_tokens")
+
+        output_audio_tokens = d.pop("output_audio_tokens")
+
         cost_millicents = d.pop("cost_millicents", UNSET)
 
         outbound_ai_usage_item = cls(
@@ -110,6 +195,18 @@ class OutboundAIUsageItem:
             cached_input_tokens=cached_input_tokens,
             cache_write_tokens=cache_write_tokens,
             output_tokens=output_tokens,
+            images=images,
+            audio_seconds=audio_seconds,
+            characters=characters,
+            video_seconds=video_seconds,
+            web_searches=web_searches,
+            file_searches=file_searches,
+            code_session_gb=code_session_gb,
+            cached_requests=cached_requests,
+            cache_saved_millicents=cache_saved_millicents,
+            prompt_cache_saved_millicents=prompt_cache_saved_millicents,
+            input_audio_tokens=input_audio_tokens,
+            output_audio_tokens=output_audio_tokens,
             cost_millicents=cost_millicents,
         )
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func recoveryFixture(t *testing.T, store state.Store, vmm *fakeVMM, desired int) (*Engine, state.App, state.Deployment) {
@@ -247,7 +248,7 @@ func TestServiceRecoveryCapacityReturnsWithoutTraffic(t *testing.T) {
 }
 
 type recoveryDependencyStore struct {
-	state.Store
+	Store       state.Store
 	unavailable atomic.Bool
 }
 
@@ -260,18 +261,18 @@ func (s *recoveryDependencyStore) ListMirrorRules(ctx context.Context, appID str
 
 func TestServiceRecoveryDependencyFailureRetries(t *testing.T) {
 	store := &recoveryDependencyStore{Store: state.NewMemStore()}
-	e, app, dep := recoveryFixture(t, store, &fakeVMM{}, 1)
+	e, app, dep := recoveryFixture(t, statetest.NewStore(store), &fakeVMM{}, 1)
 	var clock atomic.Int64
 	clock.Store(time.Now().UnixNano())
 	e.now = func() time.Time { return time.Unix(0, clock.Load()).UTC() }
 	store.unavailable.Store(true)
 	e.ReconcileServiceApp(context.Background(), app.ID)
-	r, err := store.ServiceRecoveryByApp(context.Background(), app.ID)
+	r, err := store.Store.ServiceRecoveryByApp(context.Background(), app.ID)
 	if err != nil || r.Status != "waiting_dependency" || r.Failures != 1 || !r.NextAttemptAt.Equal(e.now().Add(5*time.Second)) {
 		t.Fatalf("dependency retry: %+v %v", r, err)
 	}
 	store.unavailable.Store(false)
 	clock.Store(r.NextAttemptAt.UnixNano())
 	e.ReconcileServiceApp(context.Background(), app.ID)
-	assertRecoveryReplicas(t, store, app.ID, dep.ID, 1)
+	assertRecoveryReplicas(t, statetest.NewStore(store), app.ID, dep.ID, 1)
 }

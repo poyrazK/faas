@@ -7,6 +7,15 @@ import type { BindingApplicationAdoption } from './BindingApplicationAdoption.js
  * Preflight status and safe evidence summary for one binding.
  */
 export type BindingCheckBindingResult = {
+  /**
+   * Explicit scheduler readiness requirement; a passed policy result does not imply queue connectivity.
+   */
+  required_queue_evidence?: 'consumer_readiness' | 'handler_completion';
+  /**
+   * Exact admitted canary mode. Older evidence with no mode is listing-only and cannot satisfy write requirements.
+   */
+  object_storage_mode?: 'read' | 'write' | 'read_write';
+  required_object_storage_mode?: 'read' | 'write' | 'read_write';
   type: string;
   name: string;
   binding?: string;

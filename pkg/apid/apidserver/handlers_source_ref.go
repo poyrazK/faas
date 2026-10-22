@@ -39,6 +39,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -106,7 +107,11 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 			"Unsupported format", "format must be '"+fieldNameTarball+"' (PR-A)"))
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Environment: req.Environment, TrafficPercent: req.TrafficPercent, Canary: req.Canary, RollbackOn5xx: req.RollbackOn5xx, DisableStartupCPUBoost: req.DisableStartupCPUBoost, MCPTaskMigrationOverride: req.MCPTaskMigrationOverride}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: req.Environment, TrafficPercent: req.TrafficPercent, Canary: req.Canary, RollbackOn5xx: req.RollbackOn5xx, DisableStartupCPUBoost: req.DisableStartupCPUBoost, MCPTaskMigrationOverride: req.MCPTaskMigrationOverride, OverrideFreeze: req.OverrideFreeze}
+	if problem := reviewedSourceStage(req, rolloutReq); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(req.Healthcheck)
 	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
 	if healthProblem != nil {
@@ -117,12 +122,30 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, p)
 		return
 	}
+	if p := s.releaseFreezeProblem(r, acct, app, rolloutReq.Scope, rolloutReq.OverrideFreeze); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
 	if p := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
 	if p := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); p != nil {
 		api.WriteProblem(w, p)
+		return
+	}
+	app, reviewedSettings, reviewProblem := s.reviewedEnvironmentApp(w, r, acct, app, *rolloutReq)
+	if reviewProblem != nil {
+		api.WriteProblem(w, reviewProblem)
+		return
+	}
+	if req.ExpectedSource != nil && req.NativeRollout == "" && (app.Manifest.ExecutionMode != "" && app.Manifest.ExecutionMode != api.ExecutionModeRequest) {
+		api.WriteProblem(w, api.ErrValidation("service and worker source releases require their dedicated rollout workflow"))
+		return
+	}
+	if req.NativeRollout != "" && app.Manifest.ExecutionMode != req.NativeRollout {
+		api.WriteProblem(w, api.ErrValidation("native_rollout must match the reviewed workload mode"))
 		return
 	}
 	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
@@ -134,6 +157,10 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	installID, p := s.resolveInstallToken(r.Context(), acct, app, req.Repo)
 	if p != nil {
 		api.WriteProblem(w, p)
+		return
+	}
+	if problem := s.checkReviewedSource(r.Context(), acct, app, req, installID); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	branchRef, branchProblem := s.resolveSourceRefBranch(r.Context(), acct.ID, installID, req.Repo, req.Ref)
@@ -169,6 +196,12 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, p)
 		return
 	}
+	sourceAccepted := false
+	defer func() {
+		if !sourceAccepted {
+			_ = os.Remove(spoolPath)
+		}
+	}()
 	// Close immediately after the reader reaches EOF so the gRPC client
 	// publishes terminal stream metadata (including the resolved SHA and
 	// any transport error) before the handler makes acceptance decisions.
@@ -198,6 +231,10 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	if stream.Stats != nil {
 		resolvedSHA = stream.Stats.ResolvedCommitSHA
 	}
+	if req.ExpectedSource != nil && (resolvedSHA != req.Ref || stream.Stats == nil || stream.Stats.BytesStreamed != spoolBytes) {
+		api.WriteProblem(w, api.ErrSourceRefStale("GitHub returned a different commit than the reviewed source"))
+		return
+	}
 	if resolvedSHA == "" && isCanonicalCommitSHA(req.Ref) {
 		resolvedSHA = req.Ref
 	}
@@ -205,12 +242,6 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.ErrSourceRefUnavailable("githubd did not return an immutable commit SHA"))
 		return
 	}
-	sourceAccepted := false
-	defer func() {
-		if !sourceAccepted {
-			_ = os.Remove(spoolPath)
-		}
-	}()
 	if req.SourceBranch != "" {
 		if p := s.verifyPinnedSourceBranch(r.Context(), acct.ID, installID, req.Repo, req.SourceBranch, resolvedSHA); p != nil {
 			api.WriteProblem(w, p)
@@ -222,17 +253,30 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, prob)
 		return
 	}
-	manifest, manifestProblem := loadSourceRefManifest(spoolPath, app, acct.Plan)
+	if problem := s.checkReviewedSource(r.Context(), acct, app, req, installID); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	manifest, manifestProblem := loadReviewedSourceManifest(spoolPath, app, acct.Plan, req.ExpectedSource != nil)
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return
 	}
-	releaseCommand, releaseProblem := resolveSourceReleaseCommand(spoolPath, app, manifest)
+	releaseCommand, releaseProblem := reviewedSourceReleaseCommand(spoolPath, app, manifest, req.ExpectedSource != nil)
 	if releaseProblem != nil {
 		api.WriteProblem(w, releaseProblem)
 		return
 	}
 	var workflowDefs []api.WorkflowSpec
+	operationSpecs := sourceOperationSpecs(manifest)
+	if req.ExpectedSource != nil {
+		var problem *api.Problem
+		workflowDefs, operationSpecs, problem = s.reviewedSourceDeclarations(r.Context(), acct, app, req.ExpectedSource.ReleaseReview)
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
 	if manifest != nil {
 		workflowDefs = manifest.Workflows
 		overrides, applied, workloadProblem := s.applyManifestWorkloads(rolloutReq, manifest, acct, limits)
@@ -261,7 +305,10 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 			s.log.Warn("source-ref manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
 		}
 	}(r.Context())
-	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !req.NoTriggers)
+	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !req.NoTriggers)
+	if stagedManifest.cronIntent != nil {
+		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
+	}
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return
@@ -288,8 +335,11 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		sourceInstallationID = installID
 	}
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
-		OperationDefinitions:      sourceOperationSpecs(manifest),
-		OperationAdmissionEnabled: s.operation.OperationDefinitionsAdmission(app.AccountID, app.ID, rollout.Scope, sourceOperationSpecs(manifest)),
+		ExpectedReview:            rolloutReq.ExpectedReview,
+		ReviewedRolloutMode:       req.NativeRollout,
+		ReviewedSettings:          reviewedSettings,
+		OperationDefinitions:      operationSpecs,
+		OperationAdmissionEnabled: s.operation.OperationDefinitionsAdmission(app.AccountID, app.ID, rollout.Scope, operationSpecs),
 		Activity:                  s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "source_ref", "scope": rollout.Scope}),
 		AppID:                     app.ID,
 		Kind:                      state.DeploymentKindGitHub,
@@ -341,6 +391,11 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && req.TrafficPercent == nil && req.Canary == nil,
 	})
 	if err != nil {
+		// A queued source build may have committed even when its reply was
+		// lost. Retain reviewed source on ambiguous enqueue failure.
+		if req.ExpectedSource != nil && !errors.Is(err, state.ErrReleaseReviewChanged) {
+			sourceAccepted = true
+		}
 		s.writeDeploymentCreateError(w, err)
 		return
 	}
@@ -351,11 +406,12 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	// Reload the deployment row so the response carries the
 	// canonical wire shape (mirrors createDeployment's
 	// LatestDeployment re-read).
-	d, err := s.store.LatestDeployment(r.Context(), app.ID)
+	d, err := s.store.DeploymentByID(r.Context(), res.DeploymentID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
 		return
 	}
+	d.StagedReview = res.StagedReview
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
 }
 

@@ -1,5 +1,5 @@
 // adr: 590
-package sched
+package sched_test
 
 import (
 	"context"
@@ -8,11 +8,13 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type runtimeSecretDeliveryTrackingStore struct {
-	state.Store
+	Store  state.Store
 	result state.AppSecretDeliveryResult
 	err    error
 	calls  int
@@ -36,7 +38,7 @@ func TestEngineBootSecretDeliveryUsesSelectedFence(t *testing.T) {
 			t.Run(name+"/"+change, func(t *testing.T) {
 				ctx := t.Context()
 				mem := state.NewMemStore()
-				account, app, seedDeployment := seedApp(t, mem, api.PlanPro, 256, 5)
+				account, app, seedDeployment := sched.SeedApp(t, mem, api.PlanPro, 256, 5)
 				status := state.DeployLive
 				if prime {
 					// Prime has no prior live worker in this fixture. Otherwise a
@@ -83,11 +85,11 @@ func TestEngineBootSecretDeliveryUsesSelectedFence(t *testing.T) {
 					t.Fatal(err)
 				}
 				store := &runtimeSecretDeliveryTrackingStore{Store: mem}
-				vmm := &fakeVMM{}
+				vmm := &sched.FakeVMM{}
 				if change == "failed-start" {
-					vmm.wakeErr = errors.New("test boot failure")
+					(*vmm.WakeErr()) = errors.New("test boot failure")
 				}
-				vmm.coldBootHook = func() {
+				(*vmm.ColdBootHook()) = func() {
 					if change == "same-envelope-recreation" {
 						if err := mem.DeleteAppSecretInScope(ctx, account.ID, app.ID, api.DefaultEnvScope, "SIDECAR_TOKEN"); err != nil {
 							t.Fatal(err)
@@ -103,7 +105,7 @@ func TestEngineBootSecretDeliveryUsesSelectedFence(t *testing.T) {
 						}
 					}
 				}
-				engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+				engine := sched.XNewEngine(t, statetest.NewStore(store), vmm, &sched.FakeNotifier{}, "1.10.0")
 				if prime {
 					err = engine.Prime(ctx, app.ID, dep.ID)
 				} else {
@@ -123,8 +125,8 @@ func TestEngineBootSecretDeliveryUsesSelectedFence(t *testing.T) {
 				if err != nil || instance.WakeID != store.result.WakeID || instance.DeploymentID != dep.ID {
 					t.Fatalf("boot completion detached from wake attempt: %+v %v", instance, err)
 				}
-				if stale && (instance.State != string(state.StateFailed) || vmm.destroys != 1 || engine.ledger.ResidentRAM() != 0) {
-					t.Fatalf("changed sealed inputs retained a published runtime: %+v destroys=%d ram=%d", instance, vmm.destroys, engine.ledger.ResidentRAM())
+				if stale && (instance.State != string(state.StateFailed) || (*vmm.Destroys()) != 1 || (*engine.XLedger()).ResidentRAM() != 0) {
+					t.Fatalf("changed sealed inputs retained a published runtime: %+v destroys=%d ram=%d", instance, (*vmm.Destroys()), (*engine.XLedger()).ResidentRAM())
 				}
 				for _, key := range []string{"MAIN_TOKEN", "SIDECAR_TOKEN", "UNGRANTED_TOKEN"} {
 					row, err := mem.GetAppSecret(ctx, account.ID, app.ID, key)

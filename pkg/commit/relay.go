@@ -6,16 +6,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 type Receipt struct {
-	ID           string `json:"receipt_id"`
-	InvocationID string `json:"invocation_id,omitempty"`
-	OperationID  string `json:"operation_id,omitempty"`
+	Publication  *api.CommitEventPublication `json:"publication,omitempty"`
+	ID           string                      `json:"receipt_id"`
+	InvocationID string                      `json:"invocation_id,omitempty"`
+	OperationID  string                      `json:"operation_id,omitempty"`
 }
 
 // Acceptor must durably deduplicate source/event identity and return the
@@ -31,19 +34,20 @@ type PermanentError struct{ Code string }
 func (e *PermanentError) Error() string { return e.Code }
 
 type Relay struct {
-	SourceID   string
-	Pool       *pgxpool.Pool
-	Acceptor   Acceptor
-	Batch      int
-	Lease      time.Duration
-	RetryDelay time.Duration
+	ContractVersion int
+	SourceID        string
+	Pool            *pgxpool.Pool
+	Acceptor        Acceptor
+	Batch           int
+	Lease           time.Duration
+	RetryDelay      time.Duration
 }
 
 // Tick leases committed rows in a short transaction, then performs remote work
 // outside the customer transaction. Lease fencing prevents stale workers from
 // overwriting a newer worker's checkpoint. An uncertain acceptance is retried.
 func (r *Relay) Tick(ctx context.Context) (int, error) {
-	if r.Pool == nil || r.Acceptor == nil {
+	if r.Pool == nil || r.Acceptor == nil || (r.ContractVersion == 3 && r.SourceID == "") {
 		return 0, errors.New("commit: relay dependencies missing")
 	}
 	batch := r.Batch
@@ -85,7 +89,7 @@ func (r *Relay) Tick(ctx context.Context) (int, error) {
  ) UPDATE public.gregale_outbox o SET lease_token=$2::uuid,
  lease_until=clock_timestamp()+($3::bigint * interval '1 millisecond'), attempts=attempts+1
  FROM candidates c WHERE o.event_id=c.event_id
-	RETURNING o.event_id::text,o.event_type,o.payload,to_jsonb(o)->'routing'`, batch, token, lease.Milliseconds(), source)
+	RETURNING o.event_id::text,o.event_type,o.payload,to_jsonb(o)->'routing',COALESCE(to_jsonb(o)->>'schema_version','')`, batch, token, lease.Milliseconds(), source)
 	if err != nil {
 		return 0, fmt.Errorf("commit: claim events: %w", err)
 	}
@@ -97,7 +101,7 @@ func (r *Relay) Tick(ctx context.Context) (int, error) {
 	for rows.Next() {
 		var e Event
 		var routing json.RawMessage
-		if err := rows.Scan(&e.ID, &e.Type, &e.Data, &routing); err != nil {
+		if err := rows.Scan(&e.ID, &e.Type, &e.Data, &routing, &e.SchemaVersion); err != nil {
 			rows.Close()
 			return 0, err
 		}
@@ -134,12 +138,19 @@ func (r *Relay) Tick(ctx context.Context) (int, error) {
 			if _, err := uuid.Parse(receipt.ID); err != nil {
 				acceptErr = errors.New("commit: invalid acceptance receipt")
 			}
-			workID := receipt.OperationID
-			if workID == "" {
-				workID = receipt.InvocationID
-			}
-			if _, err := uuid.Parse(workID); err != nil || (receipt.OperationID != "" && receipt.InvocationID != "") {
-				acceptErr = errors.New("commit: invalid acceptance work identity")
+			if receipt.Publication != nil {
+				pub := receipt.Publication
+				if r.ContractVersion != 3 || receipt.OperationID != "" || receipt.InvocationID != "" || pub.AcceptanceID <= 0 || !r.publicationMatches(e, pub) || pub.AcceptedAt.IsZero() || pub.ReceiptURL == "" {
+					acceptErr = errors.New("commit: invalid publication identity")
+				}
+			} else {
+				workID := receipt.OperationID
+				if workID == "" {
+					workID = receipt.InvocationID
+				}
+				if _, err := uuid.Parse(workID); err != nil || (receipt.OperationID != "" && receipt.InvocationID != "") || r.ContractVersion == 3 {
+					acceptErr = errors.New("commit: invalid acceptance work identity")
+				}
 			}
 		}
 		if acceptErr != nil {
@@ -157,14 +168,25 @@ func (r *Relay) Tick(ctx context.Context) (int, error) {
 			}
 			continue
 		}
-		result, err := r.Pool.Exec(ctx, `UPDATE public.gregale_outbox SET accepted_at=clock_timestamp(),
-   receipt_id=$3::uuid,invocation_id=NULLIF($4,'')::uuid,operation_id=NULLIF($5,'')::uuid,lease_token=NULL,lease_until=NULL
-   WHERE event_id=$1::uuid AND lease_token=$2::uuid AND accepted_at IS NULL`, e.ID, token, receipt.ID, receipt.InvocationID, receipt.OperationID)
+		var resultRows int64
+		var checkpointErr error
+		if receipt.Publication != nil {
+			tag, err := r.Pool.Exec(ctx, `UPDATE public.gregale_outbox SET accepted_at=clock_timestamp(),receipt_id=$3::uuid,
+    publication_acceptance_id=$4,invocation_id=NULL,operation_id=NULL,lease_token=NULL,lease_until=NULL
+    WHERE event_id=$1::uuid AND lease_token=$2::uuid AND accepted_at IS NULL`, e.ID, token, receipt.ID, receipt.Publication.AcceptanceID)
+			resultRows, checkpointErr = tag.RowsAffected(), err
+		} else {
+			tag, err := r.Pool.Exec(ctx, `UPDATE public.gregale_outbox SET accepted_at=clock_timestamp(),
+    receipt_id=$3::uuid,invocation_id=NULLIF($4,'')::uuid,operation_id=NULLIF($5,'')::uuid,lease_token=NULL,lease_until=NULL
+    WHERE event_id=$1::uuid AND lease_token=$2::uuid AND accepted_at IS NULL`, e.ID, token, receipt.ID, receipt.InvocationID, receipt.OperationID)
+			resultRows, checkpointErr = tag.RowsAffected(), err
+		}
+		err = checkpointErr
 		if err != nil {
 			failures = append(failures, err)
 			continue
 		}
-		accepted += int(result.RowsAffected())
+		accepted += int(resultRows)
 	}
 	return accepted, errors.Join(failures...)
 }
@@ -179,4 +201,21 @@ func (r *Relay) Cleanup(ctx context.Context, before time.Time, limit int) (int64
   SELECT event_id FROM public.gregale_outbox WHERE accepted_at IS NOT NULL AND accepted_at<$1
   ORDER BY accepted_at,event_id FOR UPDATE SKIP LOCKED LIMIT $2)`, before, limit)
 	return tag.RowsAffected(), err
+}
+
+// A publication checkpoint must identify this source's exact outbox event, not
+// merely contain a syntactically valid acceptance from a different publication.
+func (r *Relay) publicationMatches(event Event, publication *api.CommitEventPublication) bool {
+	source, err := uuid.Parse(r.SourceID)
+	if err != nil {
+		return false
+	}
+	if publication.ID != "commit."+source.String()+"."+event.ID {
+		return false
+	}
+	if !strings.HasPrefix(publication.Source, "app.") {
+		return false
+	}
+	app, err := uuid.Parse(strings.TrimPrefix(publication.Source, "app."))
+	return err == nil && app != uuid.Nil && publication.Source == "app."+app.String()
 }

@@ -44,28 +44,39 @@ func (s *Service) setEdgeRuleSetETag(ctx context.Context, w http.ResponseWriter,
 // apid's mutation of the same app. It writes the 412 and returns true when
 // the precondition fails.
 func (s *Service) edgeRuleIfMatchFailed(ctx context.Context, w http.ResponseWriter, r *http.Request, appID string) bool {
+	etag, prob := s.ifMatchProblem(ctx, r, appID)
+	if prob == nil {
+		return false
+	}
+	if etag != "" {
+		w.Header().Set("ETag", etag)
+	}
+	api.WriteProblem(w, prob)
+	return true
+}
+
+// ifMatchProblem is edgeRuleIfMatchFailed without the response: the problem
+// when the precondition fails, with the current rule-set ETag on a mismatch.
+func (s *Service) ifMatchProblem(ctx context.Context, r *http.Request, appID string) (string, *api.Problem) {
 	header := strings.TrimSpace(r.Header.Get("If-Match"))
 	if header == "" || header == "*" {
-		return false
+		return "", nil
 	}
 	store, ok := s.edgeRuleVersions()
 	if !ok {
-		return false
+		return "", nil
 	}
 	current, err := store.LatestEdgeRuleSetVersion(ctx, appID)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not read the edge-rule set version"))
-		return true
+		return "", api.ErrCapacity("could not read the edge-rule set version")
 	}
 	want := api.EdgeRuleSetETag(current)
 	for _, candidate := range strings.Split(header, ",") {
 		if strings.TrimPrefix(strings.TrimSpace(candidate), "W/") == want {
-			return false
+			return "", nil
 		}
 	}
-	w.Header().Set("ETag", want)
-	api.WriteProblem(w, api.ErrEdgeRulesVersionMismatch(header, current))
-	return true
+	return want, api.ErrEdgeRulesVersionMismatch(header, current)
 }
 
 func edgeRuleSetVersionResponse(v state.EdgeRuleSetVersion, latest int) api.EdgeRuleSetVersionResponse {

@@ -70,7 +70,7 @@ func (s *Service) applyActions(
 	scan reposcan.Result,
 	cronSpecs []CronSpec,
 ) (Result, error) {
-	availableServices := workloadNameSet(scan.Workloads)
+	availableServices := availableServiceNames(scan, project, existing)
 	var out Result
 
 	// Partition by op so we can run them in the documented order
@@ -97,7 +97,7 @@ func (s *Service) applyActions(
 	// 1. Resolve the authoritative plan from the account. The
 	// project does not carry a plan today; the limits table is
 	// keyed on Account.Plan (single source of truth for quotas).
-	acct, err := s.Store.AccountByID(ctx, project.AccountID)
+	acct, err := state.ProjectResourceAccount(ctx, s.Store, project)
 	if err != nil {
 		return out, err
 	}
@@ -325,6 +325,7 @@ func (s *Service) applyUpdate(
 	manifest.AllowedServiceCallScopes = a.Workload.AllowedServiceCallScopes
 	manifest.Ports = portsWithInternal(manifest.Ports, a.Workload.InternalPorts)
 	manifest.BuildDockerfile = a.Workload.Dockerfile
+	manifest.DockerfileBuild = a.Workload.DockerfileBuild.Clone()
 	applyProjectImage(&manifest, a.Workload)
 	workloadClass := workloadClassFromScan(a.Workload)
 	params := state.UpdateAppParams{
@@ -360,14 +361,9 @@ func (s *Service) applyRemove(
 }
 
 // workloadToDraftApp replaces the legacy cmd/apid
-// `wlToApp` helper (retired in PR-GH.2). The Slug is w.Name
-// verbatim — apps.slug is unconstrained in the schema
-// (migrations/00074_…:141-145 documents the historical
-// allowance of uppercase, dots, longer
-// strings), so the apid path and the reconcile path must agree
-// byte-for-byte to keep customer URLs stable. Any future
-// normalisation must land in BOTH paths at the same time, with
-// a slug migration. The store stamps id, created_at, status, and
+// `wlToApp` helper (retired in PR-GH.2). AppSlug is the reviewed
+// allocation; Name remains the durable repository service identity.
+// Without an allocation override, the established name is retained. The store stamps id, created_at, status, and
 // backfills project_id on insert.
 //
 // plan is the owning account's plan — used to stamp the per-plan
@@ -385,8 +381,9 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 	transport := serviceBindingTransportForNewWorkload(w)
 	app := state.App{
 		AccountID:     project.AccountID,
+		OrgID:         project.OrgID,
 		ProjectID:     project.ID,
-		Slug:          w.Name,
+		Slug:          AppSlug(w),
 		RootDir:       w.RootDir,
 		WorkloadName:  w.Name,
 		WorkloadClass: class,
@@ -409,6 +406,7 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 			PreAuthRateLimit: api.DefaultPreAuthRateLimit(plan),
 
 			BuildDockerfile: w.Dockerfile,
+			DockerfileBuild: w.DockerfileBuild.Clone(),
 		},
 		RequireAuthn:           plan.RequireAuthnDefault(),
 		PublicAuthMode:         plan.PublicAuthModeDefault(),
@@ -442,6 +440,7 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	app.Manifest.AllowedServiceCallScopes = w.AllowedServiceCallScopes
 	app.Manifest.Ports = portsWithInternal(app.Manifest.Ports, w.InternalPorts)
 	app.Manifest.BuildDockerfile = w.Dockerfile
+	app.Manifest.DockerfileBuild = w.DockerfileBuild.Clone()
 	applyProjectImage(&app.Manifest, w)
 	return app
 }
@@ -451,13 +450,15 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	manifest.ProjectImageCommand = nil
 	manifest.ProjectImagePort = 0
 	manifest.ProjectImageHealthcheck = nil
+	manifest.ProjectImageProcess = nil
+	if manifest.ExecutionMode == "" {
+		manifest.ExecutionMode = scanExecutionMode(w)
+	}
 	if w.Image == "" {
 		return
 	}
-	if manifest.ExecutionMode == "" {
-		manifest.ExecutionMode = projectImageExecutionMode(w)
-	}
 	manifest.ProjectImageHealthcheck = w.ImageHealthcheck.Clone()
+	manifest.ProjectImageProcess = w.ImageProcess.Clone()
 	manifest.ProjectImageCommand = append([]string(nil), w.Command...)
 	if w.CommandShell && len(w.Command) > 0 {
 		manifest.ProjectImageCommand = []string{"/bin/sh", "-c", w.Command[0]}
@@ -465,6 +466,18 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	if len(w.Ports) > 0 {
 		manifest.ProjectImagePort = w.Ports[0]
 	}
+}
+
+// scanExecutionMode is the execution mode a scanned workload's class needs.
+// Image workloads take worker and job modes (#4311). A built worker takes the
+// worker mode too: with the worker class alone, request wakes are refused,
+// the worker reconciler (which owns worker-mode apps) skips it, and nothing
+// restarts it once it parks (production-us hunt #9, H9-170).
+func scanExecutionMode(w reposcan.Workload) string {
+	if w.Image == "" && w.Class != reposcan.ClassWorker {
+		return ""
+	}
+	return projectImageExecutionMode(w)
 }
 
 func projectImageExecutionMode(w reposcan.Workload) string {

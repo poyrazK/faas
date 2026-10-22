@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func (p *cloneSnapshotProvider) PrepareSnapshotCopyReader(ctx context.Context, d managedpostgres.RestoreSourceDefinition, r managedpostgres.SnapshotCopyReaderRequest) (managedpostgres.SnapshotCopyReaderObservation, error) {
@@ -100,7 +101,7 @@ func (p *cloneSnapshotProvider) ObserveSnapshotCopyReaderDeletion(ctx context.Co
 }
 
 type cloneReaderFailureStore struct {
-	*state.PgStore
+	PgStore                                                   *state.PgStore
 	loseReservation, loseRequestClaim, failRecord, loseRecord bool
 	loseBegin, loseCleanupClaim, loseProof, loseFinish        bool
 }
@@ -181,9 +182,9 @@ func cloneReaderWorkerFixture(t *testing.T, majors ...int) (cloneCoordinatorFixt
 		t.Fatal(err)
 	}
 	store := &cloneReaderFailureStore{PgStore: f.store.PgStore}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	p.beforeReaderCreate = func(ctx context.Context, r managedpostgres.SnapshotCopyReaderRequest) error {
-		reader, err := store.ProjectEnvironmentClonePostgresCopyReaderForLease(ctx, f.lease, sourceID)
+		reader, err := store.PgStore.ProjectEnvironmentClonePostgresCopyReaderForLease(ctx, f.lease, sourceID)
 		if err == nil && (reader.State != "requested" || reader.OwnerID != r.ResourceID || reader.RequestStartedAt.IsZero() || !reader.RequestStartedAt.Equal(r.RequestedAt) ||
 			reader.Scope.CaptureProviderResourceID != r.Capture.ExpectedTargetResourceID || !reader.Scope.CaptureCreatedAt.Equal(r.CaptureCreatedAt) || r.ExpectedEndpointID != "") {
 			err = state.ErrConflict
@@ -218,7 +219,7 @@ func cloneReaderCompensate(t *testing.T, f *cloneCoordinatorFixture, store *clon
 	t.Helper()
 	op := f.lease.Operation
 	var err error
-	f.lease.Operation, err = store.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
+	f.lease.Operation, err = store.PgStore.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,16 +257,16 @@ func TestPGClonePostgresSnapshotReaderWorkerRecoversUnknownCreationWithFrozenInp
 	if err == nil || p.readerCreates != 1 {
 		t.Fatalf("lost observation reply: %v", err)
 	}
-	if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.lease, err = store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var available bool
 	f.lease, available, err = f.srv.prepareProjectEnvironmentClonePostgresCopyReaders(t.Context(), f.lease)
-	reader, readErr := store.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
+	reader, readErr := store.PgStore.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
 	if err != nil || readErr != nil || !available || reader.EndpointID != p.readerActual.EndpointID || !reader.EndpointCreatedAt.Equal(p.readerActual.CreatedAt) ||
 		p.readerDefinition.Spec.RestoreWindowSeconds == 0 || p.readerDefinition.Spec.StorageLimitBytes == 123456 || p.readerCreates != 1 || p.deadlineMissing {
 		t.Fatalf("recovery replaced frozen input: %+v %v %v", reader, err, readErr)
@@ -273,7 +274,7 @@ func TestPGClonePostgresSnapshotReaderWorkerRecoversUnknownCreationWithFrozenInp
 	if f.lease.Operation.Resources[0].TargetID != "" || f.lease.Operation.Resources[0].Status != "captured" {
 		t.Fatal("compute metadata authorized dataset publication")
 	}
-	if _, err := store.ProjectEnvironmentBySlug(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.TargetEnvironment); !errors.Is(err, state.ErrNotFound) {
+	if _, err := store.PgStore.ProjectEnvironmentBySlug(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.TargetEnvironment); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("reader published an environment: %v", err)
 	}
 }
@@ -287,7 +288,7 @@ func TestPGClonePostgresSnapshotReaderWorkerPendingAvailabilityAndPreDispatchGat
 		t.Fatal(err)
 	}
 	f.lease, _, err = f.srv.prepareProjectEnvironmentClonePostgresCopyReaders(t.Context(), f.lease)
-	actual, readErr := store.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
+	actual, readErr := store.PgStore.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
 	if !errors.Is(err, managedpostgres.ErrUnavailable) || readErr != nil || !actual.RequestStartedAt.IsZero() || actual.OwnerID != reader.OwnerID || p.readerCreates != 0 {
 		t.Fatalf("disabled gate consumed dispatch: %+v %v %v", actual, err, readErr)
 	}
@@ -317,7 +318,7 @@ func TestPGClonePostgresSnapshotReaderWorkerLostDispatchClaimRetainsUnknownOwner
 	if err == nil || p.readerCreates != 0 {
 		t.Fatalf("lost claim dispatched POST: %v", err)
 	}
-	reader, err := store.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
+	reader, err := store.PgStore.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
 	if err != nil || reader.RequestStartedAt.IsZero() {
 		t.Fatalf("lost claim forgotten: %+v %v", reader, err)
 	}
@@ -326,7 +327,7 @@ func TestPGClonePostgresSnapshotReaderWorkerLostDispatchClaimRetainsUnknownOwner
 		t.Fatalf("uncertain dispatch repeated POST: %v", err)
 	}
 	cloneReaderCompensate(t, &f, store)
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
 	if !errors.Is(err, managedpostgres.ErrUnavailable) || p.forkDeletes != 0 || p.deletes != 0 || p.readerDeletes != 0 {
 		t.Fatalf("unknown reader discarded discovery input: %v", err)
 	}
@@ -344,56 +345,56 @@ func TestPGClonePostgresSnapshotReaderCleanupCoordinatesLostDeleteAndNativeQuota
 	enabled := false
 	cloneReaderWorkerGate(t, f, p, &enabled)
 	p.hideReader = true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
 	if !errors.Is(err, managedpostgres.ErrUnavailable) || p.readerDeletes != 0 || p.forkDeletes != 0 {
 		t.Fatalf("unknown reader absence lost capture: %v", err)
 	}
 	p.hideReader, store.loseRecord = false, true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
 	if err == nil || p.readerDeletes != 0 || p.forkDeletes != 0 {
 		t.Fatalf("lost cleanup identity dispatched: %v", err)
 	}
 	p.beforeReaderDelete = func(ctx context.Context, r managedpostgres.SnapshotCopyReaderDeletionRequest) error {
-		reader, err := store.ProjectEnvironmentClonePostgresCopyReaderForLease(ctx, f.lease, sourceID)
+		reader, err := store.PgStore.ProjectEnvironmentClonePostgresCopyReaderForLease(ctx, f.lease, sourceID)
 		if err == nil && (reader.State != "deleting" || reader.CleanupDispatchedAt.IsZero() || !reader.CleanupDispatchedAt.Equal(r.RequestedAt) || reader.EndpointID != r.Reader.ExpectedEndpointID || reader.Available) {
 			err = state.ErrConflict
 		}
 		return err
 	}
 	p.loseReaderDelete = true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
 	if !errors.Is(err, errCloneCompensationUnavailable) || p.readerDeletes != 1 || p.forkDeletes != 1 || p.deletes != 0 {
 		t.Fatalf("lost reader DELETE prevented qualified parent progress: %v", err)
 	}
 	p.forkDeleteReady = true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
-	capture, readErr := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
+	capture, readErr := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID)
 	var held int
 	quotaErr := f.pool.QueryRow(t.Context(), "select count(*) from managed_postgres_databases where account_id=$1 and state<>'deleted'", f.lease.Operation.AccountID).Scan(&held)
 	if !errors.Is(err, errCloneCompensationUnavailable) || readErr != nil || quotaErr != nil || capture.State != "deleting" || held != 2 || p.deletes != 0 || p.readerDeletes != 1 {
 		t.Fatalf("native deletion inferred endpoint absence or released quota: %+v held=%d %v %v %v", capture, held, err, readErr, quotaErr)
 	}
-	if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.lease, err = store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	p.readerAbsent, store.loseProof = true, true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
 	if err == nil || p.readerDeletes != 1 || p.deletes != 0 {
 		t.Fatalf("lost retained proof released native catalogue: %v", err)
 	}
 	store.loseFinish = true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
-	reader, readErr := store.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
+	reader, readErr := store.PgStore.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
 	ids, idsErr := reader.CaptureDeletionOperationIDs()
 	if err == nil || readErr != nil || idsErr != nil || reader.State != "retired" || !slices.Equal(ids, []string{"delete-a", "delete-b"}) || p.deletes != 0 {
 		t.Fatalf("lost retirement proof: %+v %v %v %v", reader, err, readErr, idsErr)
 	}
 	ioBefore := p.readerFinds + p.readerDeletes + p.readerReads
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
 	if !errors.Is(err, errCloneCompensationUnavailable) || p.deletes != 1 || p.readerDeletes != 1 || p.forkDeletes != 1 || ioBefore != p.readerFinds+p.readerDeletes+p.readerReads || p.deadlineMissing {
 		t.Fatalf("retired replay repeated reader IO: %v", err)
 	}
@@ -411,18 +412,18 @@ func TestPGClonePostgresSnapshotReaderCleanupLostClaimUsesNoRepeatedDelete(t *te
 	}
 	cloneReaderCompensate(t, &f, store)
 	store.loseBegin = true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
 	if err == nil || p.readerDeletes != 0 || p.forkDeletes != 0 {
 		t.Fatalf("lost cleanup intent dispatched: %v", err)
 	}
 	store.loseCleanupClaim = true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
 	if err == nil || p.readerDeletes != 0 || p.forkDeletes != 0 {
 		t.Fatalf("lost cleanup claim dispatched: %v", err)
 	}
 	p.forkDeleteReady, p.readerAbsent = true, true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
-	reader, readErr := store.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
+	reader, readErr := store.PgStore.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
 	if !errors.Is(err, errCloneCompensationUnavailable) || readErr != nil || reader.State != "retired" || p.readerDeletes != 0 || p.forkDeletes != 1 || p.deletes != 1 {
 		t.Fatalf("unknown DELETE dispatch repeated or lost native proof: %+v %v %v", reader, err, readErr)
 	}
@@ -437,21 +438,21 @@ func TestPGClonePostgresSnapshotReaderCleanupRequiresStoredEndpointChainAndAbsen
 	}
 	cloneReaderCompensate(t, &f, store)
 	store.loseProof = true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
-	reader, readErr := store.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
+	reader, readErr := store.PgStore.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
 	ids, idsErr := reader.DeletionOperationIDs()
 	if err == nil || readErr != nil || idsErr != nil || !slices.Equal(ids, []string{"reader-delete-a", "reader-delete-b"}) || p.readerDeletes != 1 || p.readerReads != 0 || p.forkDeletes != 0 {
 		t.Fatalf("lost chain acknowledgement observed or released native input: %+v %v %v %v", reader, err, readErr, idsErr)
 	}
 	p.readerDeleteReady, p.forkDeleteReady = true, true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
-	reader, readErr = store.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
+	reader, readErr = store.PgStore.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
 	if !errors.Is(err, errCloneCompensationUnavailable) || readErr != nil || reader.State != "deleting" || p.readerDeletes != 1 || p.deletes != 0 {
 		t.Fatalf("finished endpoint operation inferred absence: %+v %v %v", reader, err, readErr)
 	}
 	p.readerAbsent = true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
-	reader, readErr = store.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
+	reader, readErr = store.PgStore.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
 	if !errors.Is(err, errCloneCompensationUnavailable) || readErr != nil || reader.State != "retired" || p.readerDeletes != 1 || p.deletes != 1 {
 		t.Fatalf("stored endpoint proof did not retire: %+v %v %v", reader, err, readErr)
 	}
@@ -470,7 +471,7 @@ func TestPGClonePostgresSnapshotReaderCleanupUndispatchedReservationRetiresLocal
 	}
 	f.srv.managedPostgres = nil
 	complete, err := f.srv.cleanupProjectEnvironmentClonePostgresCopyReader(t.Context(), f.lease, plans[0])
-	reader, readErr := store.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
+	reader, readErr := store.PgStore.ProjectEnvironmentClonePostgresCopyReaderForLease(t.Context(), f.lease, sourceID)
 	if err != nil || readErr != nil || !complete || reader.State != "retired" || !reader.RequestStartedAt.IsZero() || reader.EndpointID != "" || readerIO != p.readerCreates+p.readerFinds+p.readerDeletes+p.readerReads {
 		t.Fatalf("local reader retirement used remote IO: %+v %v %v", reader, err, readErr)
 	}

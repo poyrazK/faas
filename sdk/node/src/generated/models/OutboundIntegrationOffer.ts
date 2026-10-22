@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OutboundAIContentPolicy } from './OutboundAIContentPolicy.js';
 import type { OutboundRequestPolicy } from './OutboundRequestPolicy.js';
 /**
  * Account-owned managed integration metadata; never contains a provider key or gateway token.
@@ -51,8 +52,33 @@ export type OutboundIntegrationOffer = {
    */
   ai_monthly_cost_limit_millicents?: number | null;
   /**
-   * Whether every settled AI call writes one metadata row to the request log (ADR-991). Never stores content.
+   * Whether every settled AI call writes one metadata row to the request log (ADR-991).
    */
   ai_request_log_enabled?: boolean;
+  /**
+   * Whether logged calls also keep the first 32 KiB of their request and response bodies for 3 days (ADR-996).
+   */
+  ai_request_log_content?: boolean;
+  ai_content_policy?: OutboundAIContentPolicy;
+  /**
+   * Whether each settled app call writes one metadata line to the app's log drains (ADR-1340).
+   */
+  ai_log_export?: boolean;
+  /**
+   * Whether writes the gateway can neither meter nor knows to be free go through, outside the caps (ADR-1432).
+   */
+  ai_allow_unmetered?: boolean;
+  /**
+   * Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none (ADR-1437).
+   */
+  ai_auto_prompt_cache?: boolean;
+  /**
+   * UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-994).
+   */
+  ai_user_daily_token_limit?: number | null;
+  /**
+   * UTC-day cost limit for each end user named by X-Gregale-AI-User (ADR-994).
+   */
+  ai_user_daily_cost_limit_millicents?: number | null;
 };
 

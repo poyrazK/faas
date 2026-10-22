@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -73,9 +75,13 @@ func cmdRealtimeCreate(args []string) int {
 	maxMessageBytes := fs.Int64("max-message-bytes", -1, "per-endpoint decoded message cap (0 inherits daemon default)")
 	maxConnectionAge := fs.Int64("max-connection-age-seconds", -1, "per-endpoint connection age cap (0 inherits daemon default)")
 	enabled := fs.Bool("enabled", true, "enable the endpoint immediately")
+	authApp := unreleasedStringFlag(fs, "auth", "Auth app that verifies clients and authorizes channels (ADR-1190)")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 {
 		PrintUsage(osStderr, "usage: gregale realtime create APP_SLUG --callback-url URL (--callback-auth-token-stdin|--callback-auth-token TOKEN) [--auth-mode MODE] [--auth-token-stdin|--auth-token TOKEN] [policy flags]", "realtime")
 		return 1
+	}
+	if *authApp != "" {
+		return cmdRealtimeCreateWithAuth(positional[0], *authApp, fs, origins, *maxConnections, *maxMessageBytes, *maxConnectionAge, *enabled)
 	}
 	if strings.TrimSpace(positional[0]) == "" || strings.TrimSpace(*callbackURL) == "" {
 		PrintUsage(osStderr, "usage: gregale realtime create APP_SLUG --callback-url URL (--callback-auth-token-stdin|--callback-auth-token TOKEN) [--auth-mode MODE] [--auth-token-stdin|--auth-token TOKEN] [policy flags]", "realtime")
@@ -377,4 +383,81 @@ func renderRealtimeLifecycleEndpoint(endpoint api.ManagedRealtimeEndpointRespons
 	}
 	renderRealtimeEndpoint(osStdout, endpoint)
 	return 0
+}
+
+// cmdRealtimeCreateWithAuth wires an endpoint to an application Auth app:
+// clients present that app's tokens, and its /realtime/authorize-channel
+// decides every subscription with authorize(). The callback token is
+// generated here, sealed only in the Auth app and never printed.
+func cmdRealtimeCreateWithAuth(app, authApp string, fs *flag.FlagSet, origins realtimeStringList, maxConnections int, maxMessageBytes, maxConnectionAge int64, enabled bool) int {
+	var conflicting []string
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "callback-url", "callback-auth-token", "callback-auth-token-stdin", "connect-path", "message-path", "disconnect-path",
+			"auth-token", "auth-token-stdin", "auth-mode", "auth-issuer", "auth-jwks-url", "auth-audience", "auth-algorithm":
+			conflicting = append(conflicting, "--"+f.Name)
+		}
+	})
+	if len(conflicting) > 0 {
+		return printErr("Invalid flags", fmt.Errorf("--auth sets the callback and client authentication; remove %s", strings.Join(conflicting, ", ")))
+	}
+	if strings.TrimSpace(app) == "" {
+		PrintUsage(osStderr, "usage: gregale realtime create APP_SLUG --auth AUTH_APP [--allowed-origin ORIGIN]... [policy flags]", "realtime")
+		return 1
+	}
+	if err := validateRealtimeLifecyclePolicy("oidc_jwt", origins, maxConnections, maxMessageBytes, maxConnectionAge); err != nil {
+		return printErr("Invalid realtime endpoint policy", err)
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	ctx := context.Background()
+	issuer, err := resolveAuthIssuer(ctx, client, authApp)
+	if err != nil {
+		return printErr("Could not resolve the Auth app", err)
+	}
+	var raw [32]byte
+	var suffix [4]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return printErr("Could not generate a callback token", err)
+	}
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return printErr("Could not generate a callback token", err)
+	}
+	token := hex.EncodeToString(raw[:])
+	secretName := "AUTH_REALTIME_CALLBACK_TOKEN_" + strings.ToUpper(hex.EncodeToString(suffix[:]))
+	if err := client.SetSecretWithScope(ctx, authApp, secretName, token, api.DefaultEnvScope); err != nil {
+		return printErr("Could not seal the callback token in the Auth app", err)
+	}
+	request := api.CreateManagedRealtimeEndpointRequest{
+		CallbackURL:       strings.TrimSuffix(issuer.Issuer, "/auth/v1"),
+		CallbackAuthToken: token,
+		AuthMode:          "oidc_jwt",
+		AuthIssuer:        issuer.Issuer,
+		AuthJWKSURL:       issuer.JWKSURL,
+		AuthAudience:      []string{issuer.Audience},
+		AuthAlgorithms:    []string{"ES256"},
+		AllowedOrigins:    append([]string(nil), origins...),
+		Enabled:           &enabled,
+	}
+	if maxConnections >= 0 {
+		request.MaxConnections = maxConnections
+	}
+	if maxMessageBytes >= 0 {
+		request.MaxMessageBytes = maxMessageBytes
+	}
+	if maxConnectionAge >= 0 {
+		request.MaxConnectionAgeSeconds = maxConnectionAge
+	}
+	endpoint, err := client.CreateManagedRealtimeEndpoint(ctx, app, request)
+	if err != nil {
+		_ = client.UnsetSecretWithScope(ctx, authApp, secretName, api.DefaultEnvScope)
+		return printErr("Could not create realtime endpoint", err)
+	}
+	// Running Auth instances load the new token on a fresh restart.
+	if _, err := client.RestartAppFresh(ctx, authApp); err != nil {
+		PrintWarn(osStderr, "the endpoint exists, but restarting %s failed (%v); run `gregale app %s restart --fresh` before clients subscribe", authApp, err, authApp)
+	}
+	return renderRealtimeLifecycleEndpoint(endpoint)
 }

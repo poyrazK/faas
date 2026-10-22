@@ -15,7 +15,7 @@
 // presence. We deliberately assert substrings rather than full-string
 // equality — the closed 6-row block format is the contract, the exact
 // spacing is the renderer's choice.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -51,7 +52,7 @@ func TestRenderDeploySummary_AllSixCompleted(t *testing.T) {
 		},
 	}
 	var buf bytes.Buffer
-	if err := renderDeploySummary(&buf, ss, "live", now); err != nil {
+	if err := main.RenderDeploySummary(&buf, ss, "live", now); err != nil {
 		t.Fatalf("renderDeploySummary: %v", err)
 	}
 	got := buf.String()
@@ -94,7 +95,7 @@ func TestRenderDeploySummary_LiveDeployment(t *testing.T) {
 		},
 	}
 	var buf bytes.Buffer
-	if err := renderDeploySummary(&buf, ss, "", now); err != nil {
+	if err := main.RenderDeploySummary(&buf, ss, "", now); err != nil {
 		t.Fatalf("renderDeploySummary: %v", err)
 	}
 	got := buf.String()
@@ -137,7 +138,7 @@ func TestRenderDeploySummary_Failed(t *testing.T) {
 		},
 	}
 	var buf bytes.Buffer
-	if err := renderDeploySummary(&buf, ss, "failed", now.Add(-10*time.Second)); err != nil {
+	if err := main.RenderDeploySummary(&buf, ss, "failed", now.Add(-10*time.Second)); err != nil {
 		t.Fatalf("renderDeploySummary: %v", err)
 	}
 	got := buf.String()
@@ -156,7 +157,7 @@ func TestRenderDeploySummary_Failed(t *testing.T) {
 // renderDeploymentRow's write-failure-is-unrecoverable stance.
 func TestRenderDeploySummary_NilWriter(t *testing.T) {
 	ss := state.StageState{Current: state.StageSourceDownload}
-	if err := renderDeploySummary(nil, ss, "", time.Time{}); err == nil {
+	if err := main.RenderDeploySummary(nil, ss, "", time.Time{}); err == nil {
 		t.Error("renderDeploySummary(nil) = nil err, want non-nil")
 	}
 }

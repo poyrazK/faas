@@ -76,6 +76,45 @@
       /etc/postgresql/{{ (postgres_capacity_cluster_dirs.files
       | map(attribute='path') | map('basename') | list | sort | last) }}/main
 
+# Host-configuration lane (ADR 20261018133100): max_connections and
+# superuser_reserved_connections take effect only on a postmaster restart,
+# which the lane never does. Refuse before postgresql.conf changes when the
+# running server does not already have the derived values.
+- name: postgres capacity — read the running postmaster settings for the lane
+  become: true
+  become_user: postgres
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -X
+      - -A
+      - -t
+      - -d
+      - postgres
+      - -c
+      - >-
+        select current_setting('max_connections') || ':' ||
+        current_setting('superuser_reserved_connections')
+  register: postgres_capacity_lane_running
+  changed_when: false
+  when: not (faas_stateful_restart_allowed | default(true) | bool)
+
+- name: postgres capacity — refuse a postmaster restart outside a full release
+  ansible.builtin.assert:
+    that:
+      - >-
+        (postgres_capacity_lane_running.stdout | trim)
+        == ((postgres_capacity_max_connections | int | string) + ':'
+            + (faas_postgres_superuser_reserved_connections | int | string))
+    fail_msg: >-
+      PostgreSQL runs {{ postgres_capacity_lane_running.stdout | trim }}
+      (max_connections:superuser_reserved_connections) but the derived target
+      is {{ postgres_capacity_max_connections }}:{{ faas_postgres_superuser_reserved_connections }}.
+      Applying it restarts the postmaster, which the host-configuration lane
+      never does (docs/adr/20261018133100-host-configuration-lane.md). Deploy
+      it with a full release or in a maintenance window.
+  when: not (faas_stateful_restart_allowed | default(true) | bool)
+
 - name: postgres capacity — set max_connections
   ansible.builtin.lineinfile:
     path: "{{ postgres_capacity_config_dir }}/postgresql.conf"
@@ -128,7 +167,9 @@
   ansible.builtin.service:
     name: "postgresql@{{ postgres_capacity_major_version }}-main.service"
     state: restarted
-  when: (postgres_capacity_running.stdout | trim) != postgres_capacity_live_target
+  when:
+    - (postgres_capacity_running.stdout | trim) != postgres_capacity_live_target
+    - faas_stateful_restart_allowed | default(true) | bool
 
 - name: postgres capacity — read live postmaster settings
   become: true

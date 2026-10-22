@@ -58,6 +58,16 @@ const (
 	// InvocationSourceHeader identifies the platform-authored source of a
 	// synthetic invocation; it must not be forwarded from customer requests.
 	InvocationSourceHeader = "X-Faas-Invocation-Source"
+	// Invocation attempt metadata is scheduler-authored and transient.
+	InvocationAttemptHeader          = "X-Faas-Invocation-Attempt"
+	InvocationReplayGenerationHeader = "X-Faas-Invocation-Replay-Generation"
+	InvocationReplayedFromHeader     = "X-Faas-Invocation-Replayed-From"
+	InvocationReplayRootHeader       = "X-Faas-Invocation-Replay-Root"
+	// DeadlineHeader carries the request budget left, in milliseconds, when
+	// the gateway hands a request to the guest (ADR-1150). The function
+	// runner bounds the invocation by it; handlers may read it to stop
+	// early. A customer-supplied value never reaches the guest.
+	DeadlineHeader = "X-Faas-Deadline-Ms"
 	// Workflow step headers identify the run, step and attempt a workflow
 	// step request belongs to (docs/event-driven.md). Only scheduler-authored
 	// workflow invocations carry them to the guest.
@@ -259,4 +269,9 @@ func IsPlatformIdentityEnvKey(key string) bool {
 	default:
 		return false
 	}
+}
+
+// IsInvocationAttemptHeader identifies volatile dispatch metadata, never guest identity or deduplication keys.
+func IsInvocationAttemptHeader(name string) bool {
+	return strings.EqualFold(name, InvocationAttemptHeader) || strings.EqualFold(name, InvocationReplayGenerationHeader) || strings.EqualFold(name, InvocationReplayedFromHeader) || strings.EqualFold(name, InvocationReplayRootHeader)
 }

@@ -268,10 +268,11 @@ func (s *targetSet) routableCount() int {
 // deployments but does not deadlock the request. PR-C ships
 // wake-fan-out to remove this fallback.
 type PGBackend struct {
-	router  Router
-	sched   Scheduler
-	log     *slog.Logger
-	metrics *Metrics
+	workloadAdmissions workloadAdmissionCache
+	router             Router
+	sched              Scheduler
+	log                *slog.Logger
+	metrics            *Metrics
 
 	routes *RouteCache // host -> app_id (LRU)
 	// stale (ADR-190) is the last-known-good host -> App tier consulted
@@ -320,6 +321,7 @@ type PGBackend struct {
 	appResolver            func(ctx context.Context, appID string) (App, bool, error)
 	revisionPinResolver    func(context.Context, string, string, string) (bool, error)
 	projectReleaseResolver func(context.Context, string, string, string) (string, string, error)
+	projectCanaryResolver  func(context.Context, string, string, string) (string, string, error)
 
 	// clientForApp (Phase 2 / Gate A) returns the schedd client that
 	// owns the given app. Mandatory when appResolver is set. Production wires
@@ -424,7 +426,7 @@ type PGBackend struct {
 	// probeMu/probeChallenges hold ADR-847 route probe tokens, separate
 	// from smoke tokens so a probe never authorizes the smoke bypass.
 	probeMu         sync.Mutex
-	probeChallenges map[string][]deploymentSmokeChallenge
+	probeChallenges map[string][]routeProbeChallenge
 }
 
 type deploymentSmokeChallenge struct {
@@ -503,6 +505,17 @@ func (b *PGBackend) ResolveProjectRelease(ctx context.Context, appID, scope, req
 		return "", "", errors.New("project release resolver unavailable")
 	}
 	return b.projectReleaseResolver(ctx, appID, scope, requestedID)
+}
+
+func (b *PGBackend) WithProjectCanaryResolver(fn func(context.Context, string, string, string) (string, string, error)) *PGBackend {
+	b.projectCanaryResolver = fn
+	return b
+}
+func (b *PGBackend) ResolveProjectCanary(ctx context.Context, appID, scope, key string) (string, string, error) {
+	if b != nil && b.projectCanaryResolver != nil {
+		return b.projectCanaryResolver(ctx, appID, scope, key)
+	}
+	return b.ResolveProjectRelease(ctx, appID, scope, "")
 }
 
 // WithClientForApp sets the per-app schedd client factory used by
@@ -1021,10 +1034,11 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 		if target.CustomDomain {
 			active, err := b.cachedCustomDomainRouteActive(ctx, host, target.AppID)
 			if err != nil {
-				if b.log != nil {
-					b.log.Warn("gateway: custom domain cache validation failed", "host", host, "err", err)
-				}
-				return App{}, false
+				// The validation could not reach the registry. Treat it like
+				// any other route lookup error (ADR-190, ADR-1344 §5): serve
+				// the last-known-good route within the stale TTL instead of
+				// failing every request to the domain.
+				return b.lookupStale(ctx, host, err)
 			}
 			if !active {
 				b.routes.Invalidate(host)
@@ -1046,6 +1060,12 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 				app.CustomDomainRoute = target.CustomDomain
 				if !b.prepareProductionWeights(ctx, app) {
 					return App{}, false
+				}
+				if target.CustomDomain {
+					// The registry just confirmed this route, so its stale
+					// TTL restarts from now rather than from the first
+					// resolution that filled the cache.
+					b.stale.Put(host, app)
 				}
 				return app, true
 			}
@@ -1979,13 +1999,26 @@ func (b *PGBackend) recordAdmissionWithIdentity(ctx context.Context, appID, depl
 //
 // Walks every per-deployment targetSet under the app's picker —
 // we don't know which bucket owns the instance without an index.
-// If the picker is empty after the walk, the picker is dropped.
+// If the picker is empty after the walk and its weights did not come
+// from the store, the picker is dropped.
 // Per-bucket targetSets are preserved even when their entries
 // become empty (cold deployment under non-zero weight); only the
 // picker-level drop happens here. The per-deployment weight
 // removal is RefreshDeploymentWeights's job — that's where we
 // learn a deployment is no longer 'live'.
 func (b *PGBackend) EvictInstance(appID, instanceID string) {
+	b.removeInstance(appID, instanceID, true)
+}
+
+// WithdrawInstance removes an instance's routes without quarantining its ID.
+// A frozen instance (ADR-1151) comes back under the same ID when schedd
+// thaws it, so the next RUNNING record must be routable at once; the
+// stale-target quarantine would hold it out for staleTargetQuarantine.
+func (b *PGBackend) WithdrawInstance(appID, instanceID string) {
+	b.removeInstance(appID, instanceID, false)
+}
+
+func (b *PGBackend) removeInstance(appID, instanceID string, quarantine bool) {
 	if appID == "" || instanceID == "" {
 		return
 	}
@@ -2001,7 +2034,11 @@ func (b *PGBackend) EvictInstance(appID, instanceID string) {
 		}
 	}
 	b.purgeStaleTargetsLocked(now)
-	b.staleTargets[staleTargetKey(appID, instanceID)] = now.Add(staleTargetQuarantine)
+	if quarantine {
+		b.staleTargets[staleTargetKey(appID, instanceID)] = now.Add(staleTargetQuarantine)
+	} else {
+		delete(b.staleTargets, staleTargetKey(appID, instanceID))
+	}
 	picker := b.appsPicker[appID]
 	if picker == nil {
 		b.tgtMu.Unlock()
@@ -2011,7 +2048,11 @@ func (b *PGBackend) EvictInstance(appID, instanceID string) {
 	for _, set := range picker.sets {
 		totalRemaining += set.remove(instanceID)
 	}
-	if totalRemaining == 0 {
+	// An empty picker keeps weights read from the store: deployment_changed
+	// keeps them current, and a target recorded later (a thaw or restore
+	// another request is waiting for) is routable only through them.
+	// Without weights, HealthyCount and Pick never see it.
+	if totalRemaining == 0 && !picker.weightsAuthoritative {
 		delete(b.appsPicker, appID)
 	}
 	b.tgtMu.Unlock()
@@ -2461,6 +2502,7 @@ func (b *PGBackend) WithMirrorStore(s mirrorRulesStore) *PGBackend {
 // an app_changed / domain_changed notification so a renamed slug, plan change,
 // or deleted app is re-resolved (or 404'd) on the next request.
 func (b *PGBackend) FlushRoutes() {
+	b.workloadAdmissions.reset()
 	b.routes.Reset()
 	b.appsMu.Lock()
 	b.apps = map[string]App{}
@@ -2474,6 +2516,7 @@ func (b *PGBackend) InvalidateRoutesForApp(appID string) {
 	if b == nil || appID == "" {
 		return
 	}
+	b.InvalidateWorkloadAdmission(appID)
 	if b.routes != nil {
 		b.routes.InvalidateApp(appID)
 	}

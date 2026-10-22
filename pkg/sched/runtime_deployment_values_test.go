@@ -1,5 +1,5 @@
 // adr: 590
-package sched
+package sched_test
 
 import (
 	"context"
@@ -7,11 +7,13 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type rotatingRuntimeValuesStore struct {
-	state.Store
+	Store     state.Store
 	afterRead func()
 	reads     int
 }
@@ -28,7 +30,7 @@ func (s *rotatingRuntimeValuesStore) RuntimeAppValuesForDeployment(ctx context.C
 func TestBuildAppSpecForMigrationUsesOneOwnedValuesSnapshot(t *testing.T) {
 	ctx := t.Context()
 	mem := state.NewMemStore()
-	account, _, _ := seedApp(t, mem, api.PlanPro, 256, 5)
+	account, _, _ := sched.SeedApp(t, mem, api.PlanPro, 256, 5)
 	project, err := mem.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "migration-values"})
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +77,7 @@ func TestBuildAppSpecForMigrationUsesOneOwnedValuesSnapshot(t *testing.T) {
 	write("default", "production")
 	write("stage", "before")
 	store := &rotatingRuntimeValuesStore{Store: mem, afterRead: func() { write("stage", "after") }}
-	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	engine := sched.XNewEngine(t, statetest.NewStore(store), &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 	spec, err := engine.BuildAppSpecForMigration(ctx, instance.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +108,7 @@ func TestBuildAppSpecForMigrationUsesOneOwnedValuesSnapshot(t *testing.T) {
 }
 
 type staleSecretPolicyStore struct {
-	state.Store
+	Store       state.Store
 	policyReads int
 }
 
@@ -118,20 +120,20 @@ func (s *staleSecretPolicyStore) ListAppSecretsInScope(context.Context, string, 
 func TestEngineWakeSnapshotPolicyUsesOwnedValues(t *testing.T) {
 	ctx := t.Context()
 	mem := state.NewMemStore()
-	account, app, dep := seedApp(t, mem, api.PlanPro, 512, 5)
-	if _, err := mem.CreateSnapshot(ctx, state.Snapshot{DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 512 << 20, StorageKey: SnapshotMemKey(dep.ID)}); err != nil {
+	account, app, dep := sched.SeedApp(t, mem, api.PlanPro, 512, 5)
+	if _, err := mem.CreateSnapshot(ctx, state.Snapshot{DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 512 << 20, StorageKey: sched.SnapshotMemKey(dep.ID)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := mem.UpsertAppSecretWithClassInScope(ctx, account.ID, app.ID, api.DefaultEnvScope, "SESSION_TOKEN", "kid", "hash", state.SecretClassEphemeral, []byte("sealed")); err != nil {
 		t.Fatal(err)
 	}
 	store := &staleSecretPolicyStore{Store: mem}
-	vmm := &fakeVMM{}
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	vmm := &sched.FakeVMM{}
+	engine := sched.XNewEngine(t, statetest.NewStore(store), vmm, &sched.FakeNotifier{}, "1.10.0")
 	if _, err := engine.Wake(ctx, app.ID, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if vmm.restores != 0 || vmm.coldBoots != 1 || store.policyReads != 0 {
-		t.Fatalf("snapshot policy detached from payload: restores=%d cold=%d separate_reads=%d", vmm.restores, vmm.coldBoots, store.policyReads)
+	if (*vmm.Restores()) != 0 || (*vmm.ColdBoots()) != 1 || store.policyReads != 0 {
+		t.Fatalf("snapshot policy detached from payload: restores=%d cold=%d separate_reads=%d", (*vmm.Restores()), (*vmm.ColdBoots()), store.policyReads)
 	}
 }

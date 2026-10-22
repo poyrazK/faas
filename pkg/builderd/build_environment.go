@@ -66,7 +66,7 @@ func ReadBuildEnvironment(builderBase, platform string) (BuildEnvironment, error
 // content-addressed: the base lands at something like
 // /var/lib/faas/cache/e6/572dbb..., and no sibling ".digest" exists there or
 // ever will — the sidecar is a separate storage key
-// (sched.BaseDigestKeyForArch). Deriving it there made every build on an
+// (storagekey.BaseDigestForArch). Deriving it there made every build on an
 // OCI-backed node fail with "stat builder base digest sidecar: no such file
 // or directory", reported as failure_class=user_error.
 //

@@ -363,6 +363,14 @@ func (s *Service) ReplayEventFanoutFailure(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrValidation("event_id, event_source and subscription_id are required"))
 		return
 	}
+	if err := (api.AppEventAcceptanceGuard{ExpectedAcceptedAt: req.ExpectedAcceptedAt}).Validate(); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	if req.ExpectedGeneration != nil && (*req.ExpectedGeneration < 0 || req.ExpectedAcceptedAt == nil) {
+		api.WriteProblem(w, api.ErrValidation("expected_generation must be nonnegative and requires expected_accepted_at"))
+		return
+	}
 	store, ok := s.Host.Store().(state.EventFanoutReplayStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrInternal("event fanout replay"))
@@ -421,6 +429,12 @@ func (s *Service) ReplayRetryableEventFanoutFailures(w http.ResponseWriter, r *h
 
 func writeEventRoutingReplayError(w http.ResponseWriter, r *http.Request, err error) bool {
 	switch {
+	case errors.Is(err, state.ErrEventReplayGenerationChanged):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "event_replay_generation_changed", "Replay generation changed", "the recipient generation changed; no recipient was requeued"))
+		return true
+	case errors.Is(err, state.ErrEventReplayAcceptanceChanged):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Event acceptance changed", "the guarded event acceptance was replaced; no recipient was requeued"))
+		return true
 	case errors.Is(err, state.ErrInvalidArgument):
 		api.WriteProblem(w, api.ErrValidation("invalid recovery expectation or incompatible age override"))
 		return true

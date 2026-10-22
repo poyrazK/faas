@@ -23,7 +23,8 @@ T = TypeVar("T", bound="OutboundAIBudgetThresholdWebhookPayload")
 @_attrs_define
 class OutboundAIBudgetThresholdWebhookPayload:
     """Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period (ADR-991).
-    alert_id is stable across retries; integration budgets notify every bound app, app budgets only that app.
+    alert_id is stable across retries; integration budgets notify every bound app, app budgets only that app, and an end
+    user's or a tag's budget only the app whose call crossed it (ADR-995, ADR-1438).
 
     """
 
@@ -32,11 +33,15 @@ class OutboundAIBudgetThresholdWebhookPayload:
     integration_name: str
     budget: OutboundAIBudgetThresholdWebhookPayloadBudget
     app_id: None | UUID
+    end_user: None | str
+    """The X-Gregale-AI-User value whose daily budget crossed the threshold (ADR-995)."""
     period_start: datetime.date
     threshold_percent: OutboundAIBudgetThresholdWebhookPayloadThresholdPercent
     limit: int
     used: int
     crossed_at: datetime.datetime
+    tag: None | str
+    """The tag whose daily cost limit crossed the threshold (ADR-1438)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,6 +59,9 @@ class OutboundAIBudgetThresholdWebhookPayload:
         else:
             app_id = self.app_id
 
+        end_user: None | str
+        end_user = self.end_user
+
         period_start = self.period_start.isoformat()
 
         threshold_percent: int = self.threshold_percent
@@ -64,6 +72,9 @@ class OutboundAIBudgetThresholdWebhookPayload:
 
         crossed_at = self.crossed_at.isoformat()
 
+        tag: None | str
+        tag = self.tag
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -73,11 +84,13 @@ class OutboundAIBudgetThresholdWebhookPayload:
                 "integration_name": integration_name,
                 "budget": budget,
                 "app_id": app_id,
+                "end_user": end_user,
                 "period_start": period_start,
                 "threshold_percent": threshold_percent,
                 "limit": limit,
                 "used": used,
                 "crossed_at": crossed_at,
+                "tag": tag,
             }
         )
 
@@ -109,6 +122,13 @@ class OutboundAIBudgetThresholdWebhookPayload:
 
         app_id = _parse_app_id(d.pop("app_id"))
 
+        def _parse_end_user(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        end_user = _parse_end_user(d.pop("end_user"))
+
         period_start = datetime.date.fromisoformat(d.pop("period_start"))
 
         threshold_percent = check_outbound_ai_budget_threshold_webhook_payload_threshold_percent(
@@ -121,17 +141,26 @@ class OutboundAIBudgetThresholdWebhookPayload:
 
         crossed_at = datetime.datetime.fromisoformat(d.pop("crossed_at"))
 
+        def _parse_tag(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        tag = _parse_tag(d.pop("tag"))
+
         outbound_ai_budget_threshold_webhook_payload = cls(
             alert_id=alert_id,
             integration_id=integration_id,
             integration_name=integration_name,
             budget=budget,
             app_id=app_id,
+            end_user=end_user,
             period_start=period_start,
             threshold_percent=threshold_percent,
             limit=limit,
             used=used,
             crossed_at=crossed_at,
+            tag=tag,
         )
 
         outbound_ai_budget_threshold_webhook_payload.additional_properties = d

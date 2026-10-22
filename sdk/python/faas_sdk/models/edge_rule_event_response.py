@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -18,11 +18,21 @@ T = TypeVar("T", bound="EdgeRuleEventResponse")
 
 @_attrs_define
 class EdgeRuleEventResponse:
-    """One sampled request an edge rule matched (ADR-964)."""
+    """One sampled request an edge rule matched (ADR-964), or a request a
+    kind=waf rule detected as a likely attack (ADR-831 amendment 5).
+    Detections carry the CRS rule IDs that scored, their attack
+    categories and the anomaly score, never the matched payload.
+
+    """
 
     id: str
     rule_id: str
     outcome: EdgeRuleEventResponseOutcome
+    """matched (enforced rule) and logged (log-mode rule) are rule matches. detected is a kind=waf detection in a
+    sampled request; warned and blocked are kind=waf detections in-path by a warn or block rule (blocked requests
+    were answered with 403). challenged, rejected, solved and failed are kind=challenge outcomes: the challenge page
+    served to a browser, a request that is not a browser navigation answered with 403, a solution that earned a
+    pass, and a solution answered with 403. An enforced challenge rule records these instead of matched."""
     occurred_at: datetime.datetime
     rule_name: str | Unset = UNSET
     """Empty once the rule is deleted."""
@@ -36,6 +46,12 @@ class EdgeRuleEventResponse:
     """Trusted client IP, when known."""
     country: str | Unset = UNSET
     user_agent: str | Unset = UNSET
+    waf_rule_ids: list[int] | Unset = UNSET
+    """CRS rule IDs that scored in a kind=waf detection."""
+    waf_categories: list[str] | Unset = UNSET
+    """CRS attack categories of a kind=waf detection (sqli, xss, lfi, ...)."""
+    waf_score: int | Unset = UNSET
+    """CRS inbound anomaly score of a kind=waf detection."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -65,6 +81,16 @@ class EdgeRuleEventResponse:
 
         user_agent = self.user_agent
 
+        waf_rule_ids: list[int] | Unset = UNSET
+        if not isinstance(self.waf_rule_ids, Unset):
+            waf_rule_ids = self.waf_rule_ids
+
+        waf_categories: list[str] | Unset = UNSET
+        if not isinstance(self.waf_categories, Unset):
+            waf_categories = self.waf_categories
+
+        waf_score = self.waf_score
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -93,6 +119,12 @@ class EdgeRuleEventResponse:
             field_dict["country"] = country
         if user_agent is not UNSET:
             field_dict["user_agent"] = user_agent
+        if waf_rule_ids is not UNSET:
+            field_dict["waf_rule_ids"] = waf_rule_ids
+        if waf_categories is not UNSET:
+            field_dict["waf_categories"] = waf_categories
+        if waf_score is not UNSET:
+            field_dict["waf_score"] = waf_score
 
         return field_dict
 
@@ -125,6 +157,12 @@ class EdgeRuleEventResponse:
 
         user_agent = d.pop("user_agent", UNSET)
 
+        waf_rule_ids = cast(list[int], d.pop("waf_rule_ids", UNSET))
+
+        waf_categories = cast(list[str], d.pop("waf_categories", UNSET))
+
+        waf_score = d.pop("waf_score", UNSET)
+
         edge_rule_event_response = cls(
             id=id,
             rule_id=rule_id,
@@ -139,6 +177,9 @@ class EdgeRuleEventResponse:
             client_ip=client_ip,
             country=country,
             user_agent=user_agent,
+            waf_rule_ids=waf_rule_ids,
+            waf_categories=waf_categories,
+            waf_score=waf_score,
         )
 
         edge_rule_event_response.additional_properties = d

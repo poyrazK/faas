@@ -17,6 +17,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.workflow_recovery_policy import WorkflowRecoveryPolicy
     from ..models.workflow_recovery_policy_automatic_execution import WorkflowRecoveryPolicyAutomaticExecution
+    from ..models.workflow_recovery_polling_notification import WorkflowRecoveryPollingNotification
 
 
 T = TypeVar("T", bound="WorkflowRecoveryPolicyResponse")
@@ -32,13 +33,19 @@ class WorkflowRecoveryPolicyResponse:
     app_id: UUID
     version: int
     policy: WorkflowRecoveryPolicy
-    """Explicit app recovery policy. Preview prepares plans only. Opt-in automatic_retry requires saved_failure
-    only and explicit failure statuses and execution limits. Resume count caps the absolute generation; preparation
-    and execution budgets are separate. Cancellation remains manual."""
+    """Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
+    reviews. initial_failure requires explicit failure statuses. Opt-in automatic_retry requires saved_failure only;
+    automatic_initial requires initial_failure only. Both require explicit workflow and failure-status filters and
+    execution limits. Resume count caps the absolute generation; preparation and execution budgets are separate.
+    Cancellation remains manual."""
     updated_at: datetime.datetime
     actor_kind: str
     actor_id: str
     status: WorkflowRecoveryPolicyResponseStatus
+    polling_notification: WorkflowRecoveryPollingNotification | Unset = UNSET
+    """Last captured polling alert receipt. queued means durable outbox admission; no_receivers never replays to
+    later subscribers. Successful polling retains the recovered receipt separately from the cleared error metadata.
+   """
     automatic_execution: WorkflowRecoveryPolicyAutomaticExecution | Unset = UNSET
     """Durable consecutive failure counter and automatic execution pause for the current policy version. Updating
     the policy explicitly clears this pause."""
@@ -59,6 +66,10 @@ class WorkflowRecoveryPolicyResponse:
         actor_id = self.actor_id
 
         status: str = self.status
+
+        polling_notification: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.polling_notification, Unset):
+            polling_notification = self.polling_notification.to_dict()
 
         automatic_execution: dict[str, Any] | Unset = UNSET
         if not isinstance(self.automatic_execution, Unset):
@@ -81,6 +92,8 @@ class WorkflowRecoveryPolicyResponse:
                 "status": status,
             }
         )
+        if polling_notification is not UNSET:
+            field_dict["polling_notification"] = polling_notification
         if automatic_execution is not UNSET:
             field_dict["automatic_execution"] = automatic_execution
         if last_evaluation_at is not UNSET:
@@ -92,6 +105,7 @@ class WorkflowRecoveryPolicyResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.workflow_recovery_policy import WorkflowRecoveryPolicy
         from ..models.workflow_recovery_policy_automatic_execution import WorkflowRecoveryPolicyAutomaticExecution
+        from ..models.workflow_recovery_polling_notification import WorkflowRecoveryPollingNotification
 
         d = dict(src_dict)
         app_id = UUID(d.pop("app_id"))
@@ -107,6 +121,13 @@ class WorkflowRecoveryPolicyResponse:
         actor_id = d.pop("actor_id")
 
         status = check_workflow_recovery_policy_response_status(d.pop("status"))
+
+        _polling_notification = d.pop("polling_notification", UNSET)
+        polling_notification: WorkflowRecoveryPollingNotification | Unset
+        if isinstance(_polling_notification, Unset):
+            polling_notification = UNSET
+        else:
+            polling_notification = WorkflowRecoveryPollingNotification.from_dict(_polling_notification)
 
         _automatic_execution = d.pop("automatic_execution", UNSET)
         automatic_execution: WorkflowRecoveryPolicyAutomaticExecution | Unset
@@ -130,6 +151,7 @@ class WorkflowRecoveryPolicyResponse:
             actor_kind=actor_kind,
             actor_id=actor_id,
             status=status,
+            polling_notification=polling_notification,
             automatic_execution=automatic_execution,
             last_evaluation_at=last_evaluation_at,
         )

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,14 +8,15 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestCmdCacheDeclare_ExactShorthandUsesLinkedApp(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	root := t.TempDir()
-	if _, err := saveProjectContext(root, localProjectContext{
-		Version: projectContextVersion,
+	if _, err := main.SaveProjectContext(root, main.LocalProjectContext{
+		Version: main.ProjectContextVersion,
 		Project: "shop",
 		App:     "products",
 	}); err != nil {
@@ -52,7 +53,7 @@ func TestCmdCacheDeclare_ExactShorthandUsesLinkedApp(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
 
-	if code := cmdCache([]string{
+	if code := main.CmdCache([]string{
 		"GET", "/products/:id", "for", "30s",
 		"--stale-while-revalidate", "1m",
 		"--stale-if-error", "0s",
@@ -88,7 +89,7 @@ func TestCacheRoutePattern(t *testing.T) {
 		{"/products/*", "/products/*"},
 	}
 	for _, test := range tests {
-		got, err := cacheRoutePattern(test.in)
+		got, err := main.CacheRoutePattern(test.in)
 		if err != nil {
 			t.Fatalf("cacheRoutePattern(%q): %v", test.in, err)
 		}
@@ -97,18 +98,18 @@ func TestCacheRoutePattern(t *testing.T) {
 		}
 	}
 	for _, invalid := range []string{"products/:id", "/products/:", "/products?sort=new"} {
-		if _, err := cacheRoutePattern(invalid); err == nil {
+		if _, err := main.CacheRoutePattern(invalid); err == nil {
 			t.Errorf("cacheRoutePattern(%q) unexpectedly succeeded", invalid)
 		}
 	}
 }
 
 func TestCacheDurationSeconds(t *testing.T) {
-	if got, err := cacheDurationSeconds("duration", "30s", 60, false); err != nil || got != 30 {
+	if got, err := main.CacheDurationSeconds("duration", "30s", 60, false); err != nil || got != 30 {
 		t.Fatalf("duration = %d, %v; want 30, nil", got, err)
 	}
 	for _, invalid := range []string{"0s", "1500ms", "61s", "forever"} {
-		if _, err := cacheDurationSeconds("duration", invalid, 60, false); err == nil {
+		if _, err := main.CacheDurationSeconds("duration", invalid, 60, false); err == nil {
 			t.Errorf("duration %q unexpectedly succeeded", invalid)
 		}
 	}

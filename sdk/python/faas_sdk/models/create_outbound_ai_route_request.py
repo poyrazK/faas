@@ -10,6 +10,10 @@ from ..models.create_outbound_ai_route_request_format import (
     CreateOutboundAIRouteRequestFormat,
     check_create_outbound_ai_route_request_format,
 )
+from ..models.create_outbound_ai_route_request_strategy import (
+    CreateOutboundAIRouteRequestStrategy,
+    check_create_outbound_ai_route_request_strategy,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -26,8 +30,15 @@ class CreateOutboundAIRouteRequest:
     name: str
     targets: list[OutboundAIRouteTarget]
     format_: CreateOutboundAIRouteRequestFormat | Unset = UNSET
-    """native (default) needs one ai_provider across targets; openai accepts openai, azure_openai, anthropic and
-    gemini targets, and every target but openai must name its model (ADR-991)."""
+    """native (default) needs one ai_provider across targets; openai accepts openai, azure_openai, anthropic,
+    gemini, bedrock and vertex targets, every target but openai must name its model, and a vertex target's
+    integration must name one /v1/projects/{project}/locations/{location} path prefix (ADR-991, ADR-995)."""
+    strategy: CreateOutboundAIRouteRequestStrategy | Unset = UNSET
+    """How a call picks its first target (ADR-1434). ordered (the default) follows route order; weighted draws by
+    target weight; latency picks the healthy target with the lowest recent mean time to first byte; cost picks the
+    healthy target with the lowest recent mean cost per call. The other targets follow as fallbacks."""
+    max_ttfb_ms: int | Unset = UNSET
+    """A cost route's latency target; targets slower on average go after those within it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -42,6 +53,12 @@ class CreateOutboundAIRouteRequest:
         if not isinstance(self.format_, Unset):
             format_ = self.format_
 
+        strategy: str | Unset = UNSET
+        if not isinstance(self.strategy, Unset):
+            strategy = self.strategy
+
+        max_ttfb_ms = self.max_ttfb_ms
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -52,6 +69,10 @@ class CreateOutboundAIRouteRequest:
         )
         if format_ is not UNSET:
             field_dict["format"] = format_
+        if strategy is not UNSET:
+            field_dict["strategy"] = strategy
+        if max_ttfb_ms is not UNSET:
+            field_dict["max_ttfb_ms"] = max_ttfb_ms
 
         return field_dict
 
@@ -76,10 +97,21 @@ class CreateOutboundAIRouteRequest:
         else:
             format_ = check_create_outbound_ai_route_request_format(_format_)
 
+        _strategy = d.pop("strategy", UNSET)
+        strategy: CreateOutboundAIRouteRequestStrategy | Unset
+        if isinstance(_strategy, Unset):
+            strategy = UNSET
+        else:
+            strategy = check_create_outbound_ai_route_request_strategy(_strategy)
+
+        max_ttfb_ms = d.pop("max_ttfb_ms", UNSET)
+
         create_outbound_ai_route_request = cls(
             name=name,
             targets=targets,
             format_=format_,
+            strategy=strategy,
+            max_ttfb_ms=max_ttfb_ms,
         )
 
         create_outbound_ai_route_request.additional_properties = d

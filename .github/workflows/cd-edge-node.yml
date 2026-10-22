@@ -1,0 +1,238 @@
+# cd-edge-node.yml — the edge lane on one compute node
+# (docs/adr/1650-per-unit-control-plane-releases.md). Called by
+# cd-edge-units.yml, once for the canary node with the full SLO gate and once
+# per later node with the follower gate. Plans the node, swaps its gateway
+# binaries in a hard-linked overlay, restarts only the planned services
+# (deployctl reloads one into a second generation when both binaries
+# support the ADR-20261018072701 hand-off), holds the node on the SLO gate, and rolls
+# it back to the binaries it ran before on a failure, which fails the run
+# and stops the lane.
+
+name: cd-edge-node
+
+on:
+  workflow_call:
+    inputs:
+      deploy_environment:
+        description: "GitHub environment holding the target fleet's secrets"
+        required: false
+        default: production
+        type: string
+      units_run_id:
+        description: "release-units.yml run whose signed unit release to deploy"
+        required: true
+        type: string
+      target:
+        description: "One edge target as JSON: node, ssh_host, ssh_user, ssh_port, ssh_host_key_sha256"
+        required: true
+        type: string
+      slo_gate:
+        description: "canary (full) or follower (short); durations in scripts/ci/release_units.json"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  deploy:
+    name: Edge lane on ${{ fromJSON(inputs.target).node }} (${{ inputs.slo_gate }})
+    environment: ${{ inputs.deploy_environment }}
+    runs-on: ${{ fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
+    if: github.repository == 'poyrazK/faas'
+    # Shares cd-compute.yml's per-node group, so a full release and a unit
+    # release never change the same node at once.
+    concurrency:
+      group: cd-compute-${{ inputs.deploy_environment }}-${{ fromJSON(inputs.target).node }}
+      cancel-in-progress: false
+    timeout-minutes: 20
+    env:
+      CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
+      CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
+      NODE: ${{ fromJSON(inputs.target).node }}
+      SSH_HOST: ${{ fromJSON(inputs.target).ssh_host }}
+      SSH_USER: ${{ fromJSON(inputs.target).ssh_user }}
+      SSH_PORT: ${{ fromJSON(inputs.target).ssh_port }}
+      SSH_HOST_KEY_SHA256: ${{ fromJSON(inputs.target).ssh_host_key_sha256 }}
+      SLO_GATE: ${{ inputs.slo_gate }}
+    steps:
+      - name: Require a gate kind
+        run: |
+          [[ "$SLO_GATE" == canary || "$SLO_GATE" == follower ]] || {
+            echo "::error::slo_gate must be canary or follower" >&2
+            exit 1
+          }
+
+      - name: Install pinned cosign verifier
+        env:
+          COSIGN_VERSION: "2.4.1"
+          COSIGN_SHA256: "8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b"
+        run: |
+          set -euo pipefail
+          echo "TUF_ROOT=$RUNNER_TEMP/sigstore-tuf" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/release-tools"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            -o "$RUNNER_TEMP/release-tools/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "${COSIGN_SHA256}  $RUNNER_TEMP/release-tools/cosign" | sha256sum -c -
+          chmod 0755 "$RUNNER_TEMP/release-tools/cosign"
+          echo "$RUNNER_TEMP/release-tools" >> "$GITHUB_PATH"
+
+      - name: Download unit release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gregale-unit-release
+          run-id: ${{ inputs.units_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/gregale-units
+
+      - uses: actions/checkout@v7
+        with:
+          path: workflow-src
+          sparse-checkout: scripts/ci/verify_unit_release.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Verify unit release
+        id: verify
+        run: |
+          set -euo pipefail
+          git_sha="$(workflow-src/scripts/ci/verify_unit_release.sh "$RUNNER_TEMP/gregale-units")"
+          echo "git_sha=$git_sha" >> "$GITHUB_OUTPUT"
+          echo "UNITS_DIR=$RUNNER_TEMP/gregale-units/unpacked" >> "$GITHUB_ENV"
+          echo "UNITS_SHA=$git_sha" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v7
+        with:
+          # Main's history and the release tags, not every branch
+          # (scripts/ci/fetch_release_history.sh).
+          ref: ${{ steps.verify.outputs.git_sha }}
+          filter: blob:none
+
+      - name: Fetch main's history and release tags
+        run: scripts/ci/fetch_release_history.sh
+
+      - name: Set up SSH
+        env:
+          COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
+          COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          keys="$RUNNER_TEMP/unit-ssh"
+          install -d -m 0700 "$keys"
+          printf '%s\n' "$COMPUTE_SSH_KEY" > "$keys/compute-key"
+          printf '%s\n' "${{ env.CP_SSH_KEY }}" > "$keys/cp-key"
+          chmod 0600 "$keys/compute-key" "$keys/cp-key"
+          # The node: only a scanned key matching its pinned fingerprint.
+          : > "$keys/node-known-hosts"
+          scanned="$(ssh-keyscan -T 10 -t ed25519,ecdsa,rsa -p "$SSH_PORT" "$SSH_HOST" 2>/dev/null || true)"
+          while IFS= read -r line; do
+            [[ -n "$line" && "$line" != \#* ]] || continue
+            fingerprint="$(ssh-keygen -lf - -E sha256 <<<"$line" 2>/dev/null | awk 'NR == 1 { print $2 }')"
+            [[ "$fingerprint" != "$SSH_HOST_KEY_SHA256" ]] || printf '%s\n' "$line" >> "$keys/node-known-hosts"
+          done <<<"$scanned"
+          [[ -s "$keys/node-known-hosts" ]] || {
+            echo "::error::$SSH_HOST presented no host key with fingerprint $SSH_HOST_KEY_SHA256" >&2
+            exit 1
+          }
+          # The control plane, where the SLO gate reads Prometheus: only a
+          # key listed in COMPUTE_KNOWN_HOSTS.
+          : > "$keys/cp-known-hosts"
+          scanned="$(ssh-keyscan -T 10 -t ed25519,ecdsa,rsa "$CP_HOST" 2>/dev/null || true)"
+          while read -r _ key_type key; do
+            [[ -n "${key:-}" ]] || continue
+            if awk -v t="$key_type" -v k="$key" '!/^#/ { for (i = 1; i < NF; i++) if ($i == t && $(i + 1) == k) found = 1 } END { exit !found }' <<<"$COMPUTE_KNOWN_HOSTS"; then
+              printf '%s %s %s\n' "$CP_HOST" "$key_type" "$key" >> "$keys/cp-known-hosts"
+            fi
+          done <<<"$scanned"
+          [[ -s "$keys/cp-known-hosts" ]] || {
+            echo "::error::$CP_HOST presented no host key listed in COMPUTE_KNOWN_HOSTS" >&2
+            exit 1
+          }
+          {
+            echo "UNIT_SSH_TARGET=${SSH_USER}@${SSH_HOST}"
+            echo "UNIT_SSH_PORT=${SSH_PORT}"
+            echo "UNIT_SSH_KEY=$keys/compute-key"
+            echo "UNIT_SSH_KNOWN_HOSTS=$keys/node-known-hosts"
+            echo "UNIT_GATE_SSH_TARGET=root@${CP_HOST}"
+            echo "UNIT_GATE_SSH_PORT=22"
+            echo "UNIT_GATE_SSH_KEY=$keys/cp-key"
+            echo "UNIT_GATE_SSH_KNOWN_HOSTS=$keys/cp-known-hosts"
+          } >> "$GITHUB_ENV"
+
+      - name: Plan the node
+        id: plan
+        run: |
+          set -euo pipefail
+          scripts/ci/unit_deploy.sh state > "$RUNNER_TEMP/host-state.json"
+          jq . "$RUNNER_TEMP/host-state.json"
+          previous_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "$UNITS_SHA")"
+          python3 scripts/ci/plan_unit_deploy.py \
+            --units-manifest "$UNITS_DIR/units-manifest.json" \
+            --host-state "$RUNNER_TEMP/host-state.json" \
+            --lane edge --host-role compute-only \
+            --previous-release "$(git rev-parse "${previous_tag}^{commit}")" \
+            --out "$RUNNER_TEMP/unit-plan"
+          plan="$RUNNER_TEMP/unit-plan/plan.json"
+          action="$(jq -r .action "$plan")"
+          echo "action=$action" >> "$GITHUB_OUTPUT"
+          echo "UNIT_PLAN=$plan" >> "$GITHUB_ENV"
+          {
+            echo "## Edge lane on ${NODE} (${SLO_GATE}): **${action}**"
+            echo
+            echo "Restart: $(jq -r '.only | join(", ") | if . == "" then "none" else . end' "$plan")."
+            kept="$(jq -r '.kept // [] | join(", ")' "$plan")"
+            [[ -z "$kept" ]] || echo "Already running this release's code, not restarted: ${kept}."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stage the unit release on the node
+        if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'
+        run: |
+          set -euo pipefail
+          # deployctl rides in the signed unit release (tools/deployctl).
+          remote="$(scripts/ci/unit_deploy.sh stage "$UNIT_PLAN" "$UNITS_DIR" "$UNITS_DIR/tools/deployctl")"
+          echo "REMOTE_STAGE=$remote" >> "$GITHUB_ENV"
+
+      # The post-deploy watch (docs/adr/20261020214632-automatic-unit-deploy-
+      # safety-rails.md): the control plane's watch record learns this node,
+      # its pinned SSH target and the release it gets, before activation.
+      - name: Take over the post-deploy watch
+        id: watch_open
+        if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$TARGET" > "$RUNNER_TEMP/edge-target.json"
+          scripts/ci/unit_deploy.sh watch-open "$UNIT_PLAN" "$NODE" "$RUNNER_TEMP/edge-target.json"
+
+      - name: Activate the unit release on the node
+        if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'
+        run: |
+          set -euo pipefail
+          activation_script="$RUNNER_TEMP/unit-activate.sh"
+          scripts/ci/unit_deploy.sh script "$UNIT_PLAN" "$REMOTE_STAGE" "$activation_script"
+          cat "$activation_script"
+          echo "DEPLOYED_AT=$(scripts/ci/unit_deploy.sh now)" >> "$GITHUB_ENV"
+          scripts/ci/unit_deploy.sh run "$activation_script"
+
+      - name: Hold the node on the SLO gate
+        if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'
+        run: |
+          set -euo pipefail
+          status=0
+          scripts/ci/unit_deploy.sh gate "$UNIT_PLAN" "$DEPLOYED_AT" "$SLO_GATE" || status=$?
+          if (( status != 0 )); then
+            scripts/ci/unit_deploy.sh rollback "$UNIT_PLAN" "$REMOTE_STAGE"
+            echo "::error::rolled ${NODE} back after the SLO gate (exit $status); the edge lane stops and the remaining nodes keep their gateways" >&2
+            exit 1
+          fi
+
+      - name: Return the node to the watch record
+        if: failure() && steps.watch_open.outcome == 'success'
+        run: scripts/ci/unit_deploy.sh watch-revert "$NODE"
+
+      - name: Remove the staged unit release
+        if: always() && env.REMOTE_STAGE != ''
+        run: scripts/ci/unit_deploy.sh cleanup "$REMOTE_STAGE"

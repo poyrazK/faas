@@ -1,3 +1,4 @@
+import {writePackedSDKRuntimeLock} from './fixtures/packed-sdk-runtime-lock.mjs';
 // Exercise the shipped SDK and starter outside the checkout. Source imports
 // and mocked SDK classes cannot establish that a generated feature starts.
 import test from 'node:test';
@@ -7,6 +8,14 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {execFileSync} from 'node:child_process';
+
+function packSDK(sdk, destination) {
+  // The JSON report lists every generated file and can exceed spawnSync's
+  // buffer limit. Request only the filename; the full tarball is still tested.
+  const filename = execFileSync('npm', ['pack', '--ignore-scripts', '--loglevel=error', '--pack-destination', destination], {cwd: sdk, encoding: 'utf8', timeout: 30000}).trim();
+  assert.match(filename, /^[A-Za-z0-9_.-]+\.tgz$/);
+  return filename;
+}
 
 function prepareOfflineStarterInstall(directory) {
   const packagePath = join(directory, 'package.json');
@@ -27,12 +36,12 @@ test(`${template}: packed SDK installs outside the checkout and serves the brows
   const dest = join(temp, 'feature');
   cpSync(source, dest, {recursive: true}); mkdirSync(join(dest, 'packages'));
   prepareOfflineStarterInstall(dest);
-  const output = execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', temp], {cwd: sdk, encoding: 'utf8', timeout: 30000});
-  const [packed] = JSON.parse(output);
-  cpSync(join(temp, packed.filename), join(dest, 'packages/gregale-sdk.tgz'));
+  const filename = packSDK(sdk, temp);
+  cpSync(join(temp, filename), join(dest, 'packages/gregale-sdk.tgz'));
+  writePackedSDKRuntimeLock(dest, sdk);
   const childEnv = {...process.env};
   delete childEnv.NODE_TEST_CONTEXT;
-  execFileSync('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], {cwd: dest, env: childEnv, timeout: 60000});
+  execFileSync('npm', ['ci', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], {cwd: dest, env: childEnv, timeout: 60000});
   const checked = execFileSync('npm', ['test'], {cwd: dest, env: childEnv, encoding: 'utf8', timeout: 30000});
   assert.ok(Number(checked.match(/tests (\d+)/)?.[1]) >= minimumTests, 'starter behavior tests did not run');
   assert.match(checked, /fail 0/);
@@ -73,11 +82,12 @@ test('workflow export: packed SDK installs outside the checkout and needs no buc
   const source = fileURLToPath(new URL('../../../examples/customer-operation-workflow-export/', import.meta.url));
   const dest = join(temp, 'feature'); cpSync(source, dest, {recursive: true}); mkdirSync(join(dest, 'packages'));
   prepareOfflineStarterInstall(dest);
-  const [packed] = JSON.parse(execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', temp], {cwd: sdk, encoding: 'utf8', timeout: 30000}));
-  cpSync(join(temp, packed.filename), join(dest, 'packages/gregale-sdk.tgz'));
+  const filename = packSDK(sdk, temp);
+  cpSync(join(temp, filename), join(dest, 'packages/gregale-sdk.tgz'));
+  writePackedSDKRuntimeLock(dest, sdk);
   const childEnv = {...process.env}; delete childEnv.NODE_TEST_CONTEXT;
   for (const name of ['GREGALE_STORAGE_TOKEN', 'GREGALE_EXPORT_BUCKET_URI', 'GREGALE_APP_SLUG']) delete childEnv[name];
-  execFileSync('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], {cwd: dest, env: childEnv, timeout: 60000});
+  execFileSync('npm', ['ci', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], {cwd: dest, env: childEnv, timeout: 60000});
   const checked = execFileSync('npm', ['test'], {cwd: dest, env: childEnv, encoding: 'utf8', timeout: 30000});
   assert.ok(Number(checked.match(/tests (\d+)/)?.[1]) >= 8); assert.match(checked, /fail 0/);
   assert.doesNotMatch(readFileSync(join(dest,'server.mjs'),'utf8'), /managedBucketWriter|GREGALE_STORAGE_TOKEN|GREGALE_EXPORT_BUCKET_URI/);

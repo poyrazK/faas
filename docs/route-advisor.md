@@ -34,6 +34,47 @@ Each suggestion has a stable ID: the same kind, method and route always get
 the same ID. Rule bodies depend on the window and the cache lifetime, so apply
 with the same `--since` and `--cache-max-age` you listed with.
 
+## Settings
+
+Two suggestions change app settings instead of adding edge rules:
+
+| Kind | Suggested when | Applying it |
+| --- | --- | --- |
+| `wake_ahead` | Your app is not opted in and the gateways measured a service it usually calls right after a cold wake, usually parked. | Turns on [service wake-ahead](service-wake-ahead.md). |
+| `priority` | No route priorities are set and, in the last 24 hours, at least 10 requests were turned away or lost their queue place while every instance was busy. | Saves the busiest routes that change data (up to three) as critical [route priorities](route-priority.md). Review them first. |
+
+`gregale routes status` marks routes with a pending suggestion
+(`advice_available`) and counts all suggestions.
+
+## Is it safe to cache?
+
+For anonymous `GET` requests on routes without a cache rule, the gateways
+compare each response with the previous response for the same URL. They
+keep only the outcome, never the body: the same or changed, and how long
+after the previous request it came. A cache suggestion then shows what was
+measured:
+
+```text
+  Content: 633 responses compared; 600 repeats, 3 changed; safe max-age 3600s
+```
+
+- **Safe max-age** is the longest of 60 s, 300 s and 3600 s at which, among
+  at least 50 repeat requests (10 of them at that spacing), at most 1% got a
+  different body. A cache rule with that lifetime would rarely serve a stale
+  answer.
+- A route is **not suggested** when more than 5% of repeats under a minute
+  apart got a different body, or when most responses can't be cached at all
+  (`Set-Cookie`, `Cache-Control: no-store` or `private`, `Vary`, or bodies
+  over 1 MiB).
+- Until enough repeats are seen, the suggestion says so and keeps the usual
+  warning. Each gateway compares on its own and forgets after a restart, so
+  quiet routes take longer to measure.
+
+Routes that already have a cache rule are checked too: each time the edge
+refills its copy, the gateway compares the new body with the old one. A rule
+that served stale bodies, or one far shorter than the content's lifetime,
+becomes a `cache_stale` or `cache_too_short` [route insight](route-insights.md).
+
 ## Reading the estimates
 
 Estimates replay your retained telemetry; they are not guarantees.
@@ -57,3 +98,6 @@ retention as request analytics: the window (default 7 days) is shortened to
 your plan's retention and the response says so. Free plans have no request
 telemetry. Only routes recorded in telemetry are considered; consumer
 identities in throttle suggestions are the request-time API consumer IDs.
+
+To see which routes keep your app awake, and what removing each would save,
+run [`gregale routes awake`](route-awake.md).

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -140,7 +141,8 @@ func newEventAdmissionPlan(ctx context.Context, receipt *PublishedEventWork, cla
 		"traceparent": envelope.Traceparent, "tracestate": envelope.Tracestate, "baggage": envelope.Baggage,
 	})
 	headerMap := propagation.MapCarrier{"x-gregale-event-id": envelope.ID, "x-gregale-event-source": envelope.Source,
-		"x-gregale-event-type": envelope.Type, "x-gregale-event-subscription-id": r.ID}
+		"x-gregale-event-type": envelope.Type, "x-gregale-event-subscription-id": r.ID,
+		"x-gregale-event-acceptance-id": strconv.FormatInt(receipt.ID, 10)}
 	otel.GetTextMapPropagator().Inject(traceContext, headerMap)
 	if span := trace.SpanContextFromContext(traceContext); span.IsValid() {
 		headerMap[api.TraceIDHeader] = span.TraceID().String()

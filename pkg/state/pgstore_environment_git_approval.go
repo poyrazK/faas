@@ -43,7 +43,7 @@ func approveEnvironmentGitPoll(ctx context.Context, tx pgx.Tx, source sqlc.Envir
 	}
 	definition, _ := json.Marshal(result.Desired.Definition)
 	revision, err := q.InsertEnvironmentDesiredRevision(ctx, tx, sqlc.InsertEnvironmentDesiredRevisionParams{SourceID: source.ID, CommitSha: result.CommitSHA,
-		DefinitionDigest: result.Digest, Definition: definition, ApprovedBy: "github:protected_branch"})
+		DefinitionDigest: result.Digest, Definition: definition, ApprovedBy: environmentProtectedApprover(source.Provider)})
 	if err != nil {
 		return mapErr(err)
 	}

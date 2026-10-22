@@ -7,6 +7,10 @@
  */
 export type ManagedRealtimeMessageRequest = {
   /**
+   * Optional retained channel delivery lifetime from first commit. Zero disables expiry; retries preserve the original deadline.
+   */
+  ttl_seconds?: number;
+  /**
    * Optional current channel sequence precondition; zero requires an empty channel. Retained channel writes only.
    */
   expected_sequence?: number | null;

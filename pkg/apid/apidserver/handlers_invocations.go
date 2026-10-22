@@ -22,13 +22,13 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
-	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // --- decodeJSONLimit --------------------------------------------------------
@@ -406,19 +406,6 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 	if work != nil && selection.Binding != nil && selection.Binding.DeploymentScope != "" {
 		return state.Invocation{}, "", api.NewProblem(http.StatusConflict, "queue_environment_work_policy_unavailable", "Scoped work policy unavailable", "application-shared work policies cannot manage an environment-owned queue")
 	}
-	n, err := s.store.CountPendingInvocations(ctx, app.ID, state.InvocationQueue)
-	if err != nil {
-		return state.Invocation{}, "", api.ErrCapacity("count queue")
-	}
-	if n >= limits.MaxQueueDepth {
-		replaceable, problem := s.replaceableQueueWorkCount(ctx, app, work)
-		if problem != nil {
-			return state.Invocation{}, "", problem
-		}
-		if n-replaceable >= limits.MaxQueueDepth {
-			return state.Invocation{}, "", api.ErrPlanQueueDepth(limits.MaxQueueDepth, n)
-		}
-	}
 	if problem := validateInvocationRetryPolicy(retryPolicy); problem != nil {
 		return state.Invocation{}, "", problem
 	}
@@ -467,6 +454,9 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 		Headers:          traceHeaders,
 		DueAt:            time.Now().UTC(),
 		RetryPolicyJSON:  effectiveInvocationRetryPolicy(app, retryPolicy, limits.MaxQueueAttempts),
+		// The store counts and inserts under one app lock, so concurrent
+		// senders cannot overshoot; keep_latest replacement is net zero.
+		AdmissionMaxPending: limits.MaxQueueDepth,
 	}, "enqueue application message", work)
 	if versionProblem != nil {
 		return state.Invocation{}, "", versionProblem
@@ -492,43 +482,6 @@ func canonicalQueueFlagContext(raw string) (header, tenantID string, problem *ap
 		return "", "", api.ErrValidation("flag_context must be a valid Gregale Flags propagation envelope")
 	}
 	return canonical, propagated.CustomerID, nil
-}
-
-func (s *server) replaceableQueueWorkCount(ctx context.Context, app state.App, work *api.InvokeWork) (int, *api.Problem) {
-	if work == nil {
-		return 0, nil
-	}
-	policies, ok := s.store.(state.AppWorkPolicyStore)
-	if !ok {
-		return 0, api.ErrCapacity("work policy store unavailable")
-	}
-	record, err := policies.AppWorkPolicyByName(ctx, app.ID, work.Policy)
-	if errors.Is(err, state.ErrNotFound) {
-		return 0, api.ErrValidation("unknown work policy")
-	}
-	if err != nil {
-		return 0, api.ErrCapacity("lookup work policy")
-	}
-	if record.Policy.PendingUpdates != workpolicy.PendingKeepLatest {
-		return 0, nil
-	}
-	key, err := workpolicy.CanonicalScalar(work.Key)
-	if err != nil {
-		return 0, api.ErrValidation("work key must be a bounded string, number, or boolean")
-	}
-	digest, err := workpolicy.DigestKey(key)
-	if err != nil {
-		return 0, api.ErrValidation("invalid work key")
-	}
-	counter, ok := s.store.(state.PendingQueueWorkCounter)
-	if !ok {
-		return 0, api.ErrCapacity("queue work counter unavailable")
-	}
-	n, err := counter.PendingQueueWorkInLane(ctx, app.ID, record.Policy.Name, digest[:])
-	if err != nil {
-		return 0, api.ErrCapacity("count replaceable queue work")
-	}
-	return n, nil
 }
 
 // queueReceive long-polls on invocation_done scoped to this app; when
@@ -729,6 +682,9 @@ func (s *server) delayedTaskCreate(w http.ResponseWriter, r *http.Request, acct 
 		ResultRetentionUntil:   retentionForRequestAt(sched, req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
+		// The count above rejects early; the store re-checks under the app
+		// lock so concurrent creates cannot overshoot.
+		AdmissionMaxPending: limits.MaxDelayedTasksPerApp,
 	}, "enqueue delayed task", req.Work)
 	if versionProblem != nil {
 		api.WriteProblem(w, versionProblem)
@@ -962,6 +918,7 @@ func ptrTime(t *time.Time) time.Time {
 // Pagination is by `?before=<id>` (an Invocation.ID); defaults to 20,
 // capped at 200.
 func (s *server) listInvocations(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	requestCtx := r.Context()
 	limit := 20
 	if q := r.URL.Query().Get("limit"); q != "" {
 		if n, err := strconv.Atoi(q); err == nil && n > 0 && n <= 200 {
@@ -969,21 +926,20 @@ func (s *server) listInvocations(w http.ResponseWriter, r *http.Request, acct st
 		}
 	}
 	before := r.URL.Query().Get("before")
-	rows, err := s.store.ListInvocationsForAccount(r.Context(), acct.ID, limit, before)
+	rows, nextBefore, err := appaccess.VisiblePage(requestCtx, before, limit,
+		func(cursor string) ([]state.Invocation, error) {
+			return s.store.ListInvocationsForAccount(requestCtx, acct.ID, limit, cursor)
+		},
+		func(rows []state.Invocation) ([]state.Invocation, error) {
+			return appaccess.VisibleResources(r, s.store, actorAccount(r, acct), rows, func(row state.Invocation) string { return row.AppID })
+		},
+		func(row state.Invocation) string { return row.ID })
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("list invocations"))
 		return
 	}
 	if rows == nil {
 		rows = []state.Invocation{}
-	}
-	var nextBefore string
-	if len(rows) == limit && len(rows) > 0 {
-		// The store orders newest first and applies the same cursor to
-		// the next query, so the last row is the stable continuation
-		// token. An extra request at the end of an exact-size history is
-		// harmless and keeps the store interface backwards-compatible.
-		nextBefore = rows[len(rows)-1].ID
 	}
 	writeJSON(w, http.StatusOK, invocationListResponse{Invocations: rows, NextBefore: nextBefore})
 }

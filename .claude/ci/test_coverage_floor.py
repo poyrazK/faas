@@ -80,13 +80,14 @@ class CoverageFloorTest(unittest.TestCase):
 
     def test_rounded_percentage_cannot_pass_below_threshold(self):
         path = self.profile("below.out", [
-            self.block("pkg/state/store.go", 6996, 1),
-            self.block("pkg/state/store.go", 3004, 0, "3.1,4.1"),
+            self.block("pkg/state/store.go", 6696, 1),
+            self.block("pkg/state/store.go", 3304, 0, "3.1,4.1"),
         ])
         with contextlib.redirect_stdout(io.StringIO()) as output:
             result = coverage_floor.main([path], state_only=True)
+        self.assertEqual(coverage_floor.STATE_EXACT_FLOOR, 67)
         self.assertEqual(result, 1)
-        self.assertIn("70.0% ✗", output.getvalue())
+        self.assertIn("67.0% ✗", output.getvalue())
 
     def test_missing_exact_state_statements_fail(self):
         path = self.profile("generated.out", [self.block("pkg/state/sqlc/generated.go", 100, 1)])
@@ -131,14 +132,20 @@ class StateCoverageWorkflowTest(unittest.TestCase):
         self.assertIn("if-no-files-found: error", upload)
         self.assertNotRegex(upload, r"(?m)^\s+if:")
         aggregate = jobs["state-coverage"]
-        self.assertIn("needs: [unit-tests-state, unit-tests-pg-2, unit-tests-pg-1]", aggregate)
+        self.assertIn("needs: [unit-tests-state, unit-tests-pg-2, unit-tests-pg-1, unit-tests-pg-1-pgclone]", aggregate)
+        clone_job = jobs["unit-tests-pg-1-pgclone"]
+        self.assertIn("part: [1, 2, 3, 4]", clone_job)
+        self.assertIn('-coverpkg="$APIDPKG,$STATEPKG"', clone_job)
+        self.assertIn("name: coverage-state-api-pgclone-${{ matrix.part }}", clone_job)
+        self.assertIn("-skip '^TestPGClone'", api_job)
         command = next(line for line in aggregate.splitlines() if "coverage_floor.py --state-only" in line)
         profiles = command.split("--state-only", 1)[1].split()
         self.assertEqual(set(profiles), {
-            *(f"coverage/cover-shard-state-{shard}.out" for shard in range(1, 5)),
+            *(f"coverage/cover-shard-state-{shard}.out" for shard in range(1, 7)),
             "coverage/cover-shard2a.out", "coverage/cover-shard1.out",
+            *(f"coverage/cover-shard1-pgclone-{part}.out" for part in range(1, 5)),
         })
-        self.assertEqual(len(profiles), 6)
+        self.assertEqual(len(profiles), 12)
 
 
 if __name__ == "__main__":

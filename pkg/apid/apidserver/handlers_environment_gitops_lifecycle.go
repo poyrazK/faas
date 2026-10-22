@@ -51,27 +51,46 @@ func (s *server) rebindEnvironmentGitSource(w http.ResponseWriter, r *http.Reque
 		writeEnvironmentGitOpsError(w, err)
 		return
 	}
-	repoID, err := s.verifyEnvironmentGitRepository(r.Context(), acct.ID, project.InstallID, project.RepoFullName, 0)
-	if err != nil {
-		writeEnvironmentGitOpsError(w, err)
-		return
-	}
 	if request.Ref == "" {
-		request.Ref = "refs/heads/" + project.ProductionBranch
+		if source.Spec.Provider == "gitlab" {
+			request.Ref = source.Spec.Ref
+		} else {
+			request.Ref = "refs/heads/" + project.ProductionBranch
+		}
 	}
 	if request.ApprovalPolicy == "" {
 		request.ApprovalPolicy = "manual"
 	}
-	s.rebindVerifiedEnvironmentGitSource(w, r, acct, source, request, project, repoID)
+	spec := source.Spec
+	spec.Ref, spec.ManifestPath, spec.ApprovalPolicy, spec.Mode, spec.Prune = request.Ref, request.ManifestPath, request.ApprovalPolicy, "report", false
+	if spec.Provider == "gitlab" {
+		token, tokenErr := s.gitLabTokenForAccount(r.Context(), acct.ID)
+		if tokenErr != nil {
+			api.WriteProblem(w, api.ErrSourceRefUnavailable("GitLab connection unavailable."))
+			return
+		}
+		if _, verifyErr := s.gitLabClient().VerifyRepository(r.Context(), token, spec.Repository, spec.RepositoryID); verifyErr != nil {
+			api.WriteProblem(w, api.ErrSourceRefUnavailable("GitLab repository identity unavailable."))
+			return
+		}
+	} else {
+		repoID, verifyErr := s.verifyEnvironmentGitRepository(r.Context(), acct.ID, project.InstallID, project.RepoFullName, 0)
+		if verifyErr != nil {
+			writeEnvironmentGitOpsError(w, verifyErr)
+			return
+		}
+		spec.RepositoryID, spec.InstallationID, spec.Repository = repoID, project.InstallID, project.RepoFullName
+	}
+	s.rebindVerifiedEnvironmentGitSource(w, r, acct, source, request, spec)
 }
 
-func (s *server) rebindVerifiedEnvironmentGitSource(w http.ResponseWriter, r *http.Request, acct state.Account, source state.EnvironmentGitSource, request api.RebindEnvironmentGitSourceRequest, project state.Project, repoID int64) {
+func (s *server) rebindVerifiedEnvironmentGitSource(w http.ResponseWriter, r *http.Request, acct state.Account, source state.EnvironmentGitSource, request api.RebindEnvironmentGitSourceRequest, spec state.EnvironmentGitSourceSpec) {
 	store, ok := s.store.(state.EnvironmentGitOpsLifecycleStore)
 	if !ok {
 		writeEnvironmentGitOpsError(w, state.ErrConflict)
 		return
 	}
-	next, err := store.RebindEnvironmentGitSource(r.Context(), acct.ID, source.ID, request.ExpectedGeneration, state.EnvironmentGitSourceSpec{RepositoryID: repoID, InstallationID: project.InstallID, Repository: project.RepoFullName, Ref: request.Ref, ManifestPath: request.ManifestPath, ApprovalPolicy: request.ApprovalPolicy, Mode: "report"})
+	next, err := store.RebindEnvironmentGitSource(r.Context(), acct.ID, source.ID, request.ExpectedGeneration, spec)
 	if err != nil {
 		writeEnvironmentGitOpsError(w, err)
 		return

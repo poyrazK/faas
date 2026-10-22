@@ -71,6 +71,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apislogs"
 	mwauth "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/logarchive"
@@ -155,8 +156,12 @@ type ArchiveLogsHandler struct {
 	// can swap it without rebuilding the client.
 	Bucket string
 	Store  state.Store
-	Log    *slog.Logger
-	Ops    *wire.OpsMetrics
+	// Scope proves an instance's archive belongs to the requested app.
+	// Archive objects are keyed by instance alone, so a nil Scope refuses
+	// every read.
+	Scope state.LogArchiveScopeStore
+	Log   *slog.Logger
+	Ops   *wire.OpsMetrics
 
 	// Backstop is the SSE stream idle timeout. 0 = use the
 	// production default (10 minutes, mirroring
@@ -179,7 +184,7 @@ func (h *ArchiveLogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrAppLogsUnavailable())
 		return
 	}
-	slug := r.URL.Query().Get("slug")
+	slug := r.PathValue("slug")
 	if slug == "" {
 		// r.PathValue is not bound when the mux registers this
 		// handler directly; the wrapping mux (run.go::logsMux)
@@ -187,12 +192,12 @@ func (h *ArchiveLogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// through. Tests that mount the handler bare must pass
 		// the slug explicitly via ?slug=. The "no slug" branch
 		// here is the fail-closed default.
-		slug = r.PathValue("slug")
+		slug = r.URL.Query().Get("slug")
 	}
 	inner := mwauth.AccountHandler(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		h.stream(w, r, acct, slug)
 	})
-	chain := h.Auth.RequireScope(api.ScopesReadSurface...)(h.Auth.RequireMFA(inner))
+	chain := h.Auth.RequireScope(api.ScopesReadSurface...)(h.Auth.RequireMFA(appaccess.Wrap(h.Store, h.Auth.Audit, inner)))
 	h.Auth.RequireLimited(chain)(w, r)
 }
 
@@ -341,6 +346,19 @@ func (h *ArchiveLogsHandler) withinRetention(plan api.Plan, day string) bool {
 // exceeds the stdlib heap budget; the wire shape stays the
 // same.
 func (h *ArchiveLogsHandler) serveArchiveWithAccount(ctx_ context.Context, w http.ResponseWriter, flusher http.Flusher, appID, accountID, instance, day string) {
+	switch owned, err := h.instanceInScope(ctx_, accountID, appID, instance, day); {
+	case err != nil:
+		if h.Log != nil {
+			h.Log.Warn("logarchive.readback.scope_error", "app", appID, "err", err)
+		}
+		renderArchiveTerminal(w, flusher, archiveReasonDegraded)
+		return
+	case !owned:
+		// Same terminal as an absent object, so the route cannot be used
+		// to learn which instance IDs exist.
+		renderArchiveTerminal(w, flusher, archiveReasonMissing)
+		return
+	}
 	key := archiveObjectKey(instance, day)
 	identity := resolveRuntimeLogIdentity(ctx_, h.Store, scheddgrpc.LogFrame{InstanceID: instance}, accountID, appID, "", make(map[string]api.PlatformIdentity))
 	backstop := h.Backstop
@@ -360,6 +378,7 @@ func (h *ArchiveLogsHandler) serveArchiveWithAccount(ctx_ context.Context, w htt
 	var body bytes.Buffer
 	if _, err := h.S3.GetObject(ctx_, key, &body); err != nil {
 		// 4xx → archive_missing; 5xx / network → archive_degraded.
+		h.logArchiveReadError(appID, instance, day, err)
 		renderArchiveTerminal(w, flusher, archiveTerminalForError(err))
 		return
 	}
@@ -430,6 +449,20 @@ func (h *ArchiveLogsHandler) serveArchiveWithAccount(ctx_ context.Context, w htt
 		}
 	}
 	renderArchiveTerminal(w, flusher, archiveReasonComplete)
+}
+
+// instanceInScope reports whether the instance's archived logs for day belong
+// to the app. The billing window spans the day before and after so lines
+// spooled near midnight still match.
+func (h *ArchiveLogsHandler) instanceInScope(ctx context.Context, accountID, appID, instance, day string) (bool, error) {
+	if h.Scope == nil {
+		return false, nil
+	}
+	start, err := time.Parse("2006-01-02", day)
+	if err != nil {
+		return false, fmt.Errorf("parse archive date %q: %w", day, err)
+	}
+	return h.Scope.InstanceLogsOwnedByApp(ctx, accountID, appID, instance, start.AddDate(0, 0, -1), start.AddDate(0, 0, 2))
 }
 
 // archiveObjectKey mirrors pkg/logarchive.Shipper.bucketKey's
@@ -525,6 +558,29 @@ func renderArchiveTerminal(w http.ResponseWriter, flusher http.Flusher, reason s
 	_, _ = fmt.Fprintf(w, "event: end\ndata: %s\n\n", reasonJSON)
 	if flusher != nil {
 		flusher.Flush()
+	}
+}
+
+// logArchiveReadError records why an archived day could not be read. The
+// SSE terminal folds NoSuchKey and AccessDenied into archive_missing on
+// purpose, so this line is the only place an operator can tell a real gap
+// (404) from credentials or bucket-policy drift (403). Hunt #11 (H11-8) found
+// every parked instance's archive reported as a gap with nothing logged.
+func (h *ArchiveLogsHandler) logArchiveReadError(appID, instance, day string, err error) {
+	if h.Log == nil {
+		return
+	}
+	var p *logarchive.Permanent
+	switch {
+	case errors.As(err, &p) && p.StatusCode == http.StatusNotFound:
+		h.Log.Info("logarchive.readback.missing", "app", appID, "instance", instance, "day", day,
+			"status", p.StatusCode, "code", p.Code)
+	case errors.As(err, &p):
+		h.Log.Warn("logarchive.readback.rejected", "app", appID, "instance", instance, "day", day,
+			"status", p.StatusCode, "code", p.Code, "err", err)
+	default:
+		h.Log.Warn("logarchive.readback.unavailable", "app", appID, "instance", instance, "day", day,
+			"err", err)
 	}
 }
 

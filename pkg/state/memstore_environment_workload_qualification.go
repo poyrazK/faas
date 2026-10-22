@@ -33,6 +33,17 @@ func (m *MemStore) QueueEnvironmentGitOpsQualification(_ context.Context, lease 
 		if err != nil {
 			return nil, err
 		}
+		policy := m.bindingReleasePolicyLocked(request.AppID, request.FrozenInputs.Scope)
+		if policy.Mode == "enforce" {
+			revision, err := m.serviceBindingRevisionLocked(lease.Source.AccountID)
+			if err != nil {
+				return nil, err
+			}
+			request.BindingContext, err = candidateBindingContext(m.deployments[member.CandidateDeploymentID], policy, revision)
+			if err != nil {
+				return nil, err
+			}
+		}
 		for _, prior := range memory.qualifications {
 			if prior.GraphID == graph.ID && prior.Resource == member.Resource {
 				if prior.Artifact != request.Artifact || !reflect.DeepEqual(prior.FrozenInputs, request.FrozenInputs) {

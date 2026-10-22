@@ -52,6 +52,7 @@ func TestFaasRulesSyntax(t *testing.T) {
 	ruleFiles := []string{
 		filepath.Join(repoRoot, "deploy", "ansible", "roles", "prometheus", "files", "faas.rules.yml"),
 		filepath.Join(repoRoot, "pkg", "promqlrules", "data_placement.yaml"),
+		filepath.Join(repoRoot, "pkg", "promqlrules", "object_node_scrub.yaml"),
 	}
 	for _, rel := range ruleFiles {
 		t.Run(filepath.Base(rel), func(t *testing.T) {

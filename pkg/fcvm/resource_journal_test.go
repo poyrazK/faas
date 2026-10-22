@@ -35,6 +35,31 @@ func journalTestLease(id string, slot int) Lease {
 	return l
 }
 
+func TestResourceJournalNativeTransitionRequiresEmptyLockedJournal(t *testing.T) {
+	path := t.TempDir()
+	j := openTestResourceJournal(t, path)
+	if err := j.RequireEmptyForNativeRecovery(); err != nil {
+		t.Fatal(err)
+	}
+	lease := journalTestLease("legacy-survivor", 1)
+	if err := j.begin(lease); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.RequireEmptyForNativeRecovery(); err == nil || !strings.Contains(err.Error(), "legacy lease records") {
+		t.Fatalf("native transition accepted a legacy survivor: %v", err)
+	}
+	if second, err := OpenResourceJournal(path); err == nil {
+		_ = second.Close()
+		t.Fatal("native transition released the legacy daemon exclusion lock")
+	}
+	if err := j.forget(lease); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.RequireEmptyForNativeRecovery(); err != nil {
+		t.Fatalf("retired legacy lease still blocks native transition: %v", err)
+	}
+}
+
 func TestResourceJournalExclusiveDurableAndConcurrent(t *testing.T) {
 	path := t.TempDir()
 	j := openTestResourceJournal(t, path)

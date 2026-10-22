@@ -14,6 +14,7 @@ from ..models.route_priorities_response_source import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.route_priority_queue_stats import RoutePriorityQueueStats
     from ..models.route_priority_rule import RoutePriorityRule
 
 
@@ -29,6 +30,9 @@ class RoutePrioritiesResponse:
     routes: list[RoutePriorityRule]
     updated_at: datetime.datetime | Unset = UNSET
     """When saved rules last changed; omitted for the route-health default."""
+    queue: RoutePriorityQueueStats | Unset = UNSET
+    """How the app's warm-capacity queue behaved per priority class over the evidence window (ADR-1152). Present on
+    GET; source is unavailable when gateway metrics cannot be read."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +49,10 @@ class RoutePrioritiesResponse:
         if not isinstance(self.updated_at, Unset):
             updated_at = self.updated_at.isoformat()
 
+        queue: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.queue, Unset):
+            queue = self.queue.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -56,11 +64,14 @@ class RoutePrioritiesResponse:
         )
         if updated_at is not UNSET:
             field_dict["updated_at"] = updated_at
+        if queue is not UNSET:
+            field_dict["queue"] = queue
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.route_priority_queue_stats import RoutePriorityQueueStats
         from ..models.route_priority_rule import RoutePriorityRule
 
         d = dict(src_dict)
@@ -82,11 +93,19 @@ class RoutePrioritiesResponse:
         else:
             updated_at = datetime.datetime.fromisoformat(_updated_at)
 
+        _queue = d.pop("queue", UNSET)
+        queue: RoutePriorityQueueStats | Unset
+        if isinstance(_queue, Unset):
+            queue = UNSET
+        else:
+            queue = RoutePriorityQueueStats.from_dict(_queue)
+
         route_priorities_response = cls(
             slug=slug,
             source=source,
             routes=routes,
             updated_at=updated_at,
+            queue=queue,
         )
 
         route_priorities_response.additional_properties = d

@@ -206,6 +206,27 @@ func (b *PGRateLimitBackend) ConsumeTokens(ctx context.Context, scope, subjectID
 	return 0, 0, fmt.Errorf("ratelimit central ConsumeTokens: counter row for %s/%s raced its creation twice", scope, plan)
 }
 
+// ReturnTokens gives n unspent leased tokens back to one counter, capped at
+// its burst (ADR-1520). It implements gateway.CentralLeaseBackend; a gateway
+// returns tokens only while the bucket is under pressure, so a customer
+// pacing at the limit is not short-changed by tokens that expired unspent.
+// Returning a token adds it to the stored balance; the next consume applies
+// the refill since last_refill on top and caps the sum at burst, so a late
+// return cannot raise the bucket above what it would have held.
+func (b *PGRateLimitBackend) ReturnTokens(ctx context.Context, scope, subjectID, plan string, burst float64, n int) error {
+	if burst < 1 || n <= 0 {
+		return nil
+	}
+	const q = `
+		UPDATE pg_ratelimit_counters
+		   SET tokens = LEAST(FLOOR($4)::bigint, tokens + $5::bigint)
+		 WHERE scope = $1 AND subject_id = $2 AND plan = $3`
+	if _, err := b.pool.Exec(ctx, q, scope, subjectID, plan, burst, int64(n)); err != nil {
+		return fmt.Errorf("ratelimit central ReturnTokens: %w", err)
+	}
+	return nil
+}
+
 // PeekToken returns the central counter's current tokens WITHOUT
 // decrementing. Implements gateway.CentralBackend.
 //

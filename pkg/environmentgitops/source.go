@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/tarball"
 )
 
-// ReadGitDefinition reads one regular manifest from a GitHub codeload archive.
+// ReadGitDefinition reads one regular manifest from a Git provider archive.
 // No archive content is extracted onto the host. Both compressed and expanded
 // streams are bounded, and the full gzip stream is verified before approval.
 func ReadGitDefinition(reader io.Reader, manifestPath string, maxArchiveBytes int64) (environmentsync.DesiredState, error) {

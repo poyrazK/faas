@@ -2,6 +2,7 @@ package httpkit
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -95,6 +96,15 @@ func TestCustomerProblems(t *testing.T) {
 			},
 			wantStatus: http.StatusInternalServerError,
 			wantCode:   api.CodeInternal,
+			wantLogged: true,
+		},
+		{
+			name: "internal deadline is a retryable 503",
+			build: func(l *slog.Logger) *api.Problem {
+				return CustomerInternalProblem(l, "op", "d", "h", fmt.Errorf("secret-db-text: %w", context.DeadlineExceeded))
+			},
+			wantStatus: http.StatusServiceUnavailable,
+			wantCode:   api.CodeCapacity,
 			wantLogged: true,
 		},
 		{

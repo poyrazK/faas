@@ -90,6 +90,7 @@ func cmdAutomationsRecoveryPolicy(args []string) int {
 				_, _ = fmt.Fprintln(osStdout, "    Last evaluation: not recorded")
 			}
 			printAutomaticActionEvidence(e.Action)
+			printRecoveryQueueEvidence(e)
 		}
 		if out.Truncated {
 			_, _ = fmt.Fprintln(osStdout, "Queue entries truncated; use recovery-policy-reviews to inspect retained reviews.")
@@ -122,7 +123,13 @@ func cmdAutomationsRecoveryPolicy(args []string) int {
 		return jsonOut(writeJSON(out))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Recovery policy: %s | version %d | %s | enabled %t | %s\nWorkflows: %s\nTriggers: %s\nMax resume count: %d | cooldown: %ds | hourly preparation budget: %d\n", oneLine(*app), out.Version, oneLine(out.Policy.Mode), out.Policy.Enabled, oneLine(out.Status), oneLine(strings.Join(out.Policy.WorkflowNames, ", ")), oneLine(strings.Join(out.Policy.Triggers, ", ")), out.Policy.MaxResumeCount, out.Policy.CooldownSeconds, out.Policy.HourlyActionBudget)
+	if n := out.PollingNotification; n != nil {
+		_, _ = fmt.Fprintf(osStdout, "Polling alert: %s | %s | event %s\n", oneLine(n.Payload.State), oneLine(n.Payload.Code), oneLine(n.Payload.EventID))
+	}
 	if a := out.AutomaticExecution; a != nil {
+		if f := a.PollingFailure; f != nil {
+			_, _ = fmt.Fprintf(osStdout, "Polling error: %s | attempts %d | next retry %s\n", oneLine(f.Code), f.Attempts, f.RetryAt.UTC().Format(time.RFC3339))
+		}
 		_, _ = fmt.Fprintf(osStdout, "Automatic execution budget: %d/hour | pause after %d consecutive failures | failures %d\n", out.Policy.HourlyExecutionBudget, out.Policy.PauseAfterFailures, a.ConsecutiveFailures)
 		if a.PausedAt != nil {
 			_, _ = fmt.Fprintf(osStdout, "Paused: %s | %s\n", a.PausedAt.Format(time.RFC3339), oneLine(a.PauseReason))
@@ -272,6 +279,29 @@ func printAutomaticActionEvidence(a api.WorkflowRecoveryAutomaticAction) {
 	}
 	if a.BlockedNotification != nil {
 		r := a.BlockedNotification
-		_, _ = fmt.Fprintf(osStdout, "    Blocked notification: %s | %s | event %s | %s\n", oneLine(r.Status), oneLine(r.Reason), oneLine(r.EventID), r.CapturedAt.Format(time.RFC3339))
+		_, _ = fmt.Fprintf(osStdout, "    Queue notification: %s | %s | event %s | %s\n", oneLine(r.Status), oneLine(r.Reason), oneLine(r.EventID), r.CapturedAt.Format(time.RFC3339))
 	}
+}
+
+func printRecoveryQueueEvidence(e api.WorkflowRecoveryAutomaticQueueEntry) {
+	if e.WaitCategory != "" {
+		_, _ = fmt.Fprintf(osStdout, "    Wait: %s | %s (current policy or last worker observation)\n", oneLine(e.WaitCategory), oneLine(e.WaitReason))
+	}
+	if e.EvidenceUnavailableReason != "" {
+		_, _ = fmt.Fprintf(osStdout, "    Current evidence unavailable: %s\n", oneLine(e.EvidenceUnavailableReason))
+	}
+	if e.InitialEvidence != nil {
+		d := e.InitialEvidence.Diagnosis
+		_, _ = fmt.Fprintf(osStdout, "    Initial evidence: %s | run %s | target generation %d | %s | repairable %t | observed %s\n", oneLine(e.InitialEvidence.Stage), oneLine(d.RunID), d.ResumeCount, oneLine(d.Reason), d.Repairable, d.ObservedAt.Format(time.RFC3339))
+		if e.InitialEvidence.Stage == "prepared" {
+			_, _ = fmt.Fprintln(osStdout, "    Prepared review: no recovery job submitted; evidence repair unavailable.")
+		}
+		_, _ = fmt.Fprintf(osStdout, "    Inspect: %s\n    Diagnosis: %s\n", oneLine(e.InitialEvidence.CLICommand), oneLine(e.InitialEvidence.EvidenceURL))
+	}
+	if e.Evidence == nil {
+		return
+	}
+	d := e.Evidence.Diagnosis
+	_, _ = fmt.Fprintf(osStdout, "    Current evidence: %s | run %s | generation %d | %s | repairable %t | observed %s\n", oneLine(d.EvidenceKind), oneLine(d.RunID), d.ResumeCount, oneLine(d.Reason), d.Repairable, d.ObservedAt.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(osStdout, "    Inspect: %s\n    Diagnosis: %s\n", oneLine(e.Evidence.CLICommand), oneLine(e.Evidence.EvidenceURL))
 }

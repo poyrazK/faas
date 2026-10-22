@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -37,7 +38,7 @@ func TestCmdAppPolicyControlsPatchAndJSONReceipt(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			resetJSONOut(t)
+			main.ResetJSONOut(t)
 			var got api.UpdateAppRequest
 			var calls int
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -50,8 +51,8 @@ func TestCmdAppPolicyControlsPatchAndJSONReceipt(t *testing.T) {
 					http.Error(w, "bad request", http.StatusBadRequest)
 					return
 				}
-				writeJSONTest(w, api.AppResponse{
-					Slug: constSlug, MaintenanceMode: tc.wantMaintenance,
+				main.WriteJSONTest(w, api.AppResponse{
+					Slug: main.ConstSlug, MaintenanceMode: tc.wantMaintenance,
 					StreamingEnabled: tc.wantStreaming, WebSocketEnabled: tc.wantWebsocket,
 					RouteMetricsEnabled: tc.wantRouteMetrics, ConsumerAuthMode: tc.wantConsumerAuth,
 				})
@@ -60,13 +61,13 @@ func TestCmdAppPolicyControlsPatchAndJSONReceipt(t *testing.T) {
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_test_x")
 
-			args := append([]string{"app", constSlug}, tc.flags...)
+			args := append([]string{"app", main.ConstSlug}, tc.flags...)
 			args = append(args, "--json")
 			var stdout bytes.Buffer
-			oldOut := osStdout
-			osStdout = &stdout
-			t.Cleanup(func() { osStdout = oldOut })
-			if code := run(args); code != 0 {
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &stdout
+			t.Cleanup(func() { (*main.OsStdout) = oldOut })
+			if code := main.Run(args); code != 0 {
 				t.Fatalf("run(%v) = %d, want 0; output: %s", args, code, stdout.String())
 			}
 			if calls != 1 {
@@ -105,7 +106,7 @@ func TestCmdAppPolicyControlsPatchAndJSONReceipt(t *testing.T) {
 			if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {
 				t.Fatalf("decode --json mutation receipt: %v; output: %s", err, stdout.String())
 			}
-			if receipt.Slug != constSlug || receipt.MaintenanceMode != tc.wantMaintenance ||
+			if receipt.Slug != main.ConstSlug || receipt.MaintenanceMode != tc.wantMaintenance ||
 				receipt.StreamingEnabled != tc.wantStreaming || receipt.WebSocketEnabled != tc.wantWebsocket ||
 				receipt.RouteMetricsEnabled != tc.wantRouteMetrics || receipt.ConsumerAuthMode != tc.wantConsumerAuth {
 				t.Fatalf("JSON receipt = %+v, does not reflect updated controls", receipt)
@@ -116,18 +117,18 @@ func TestCmdAppPolicyControlsPatchAndJSONReceipt(t *testing.T) {
 
 func TestCmdAppPolicyControlsPartialPatchAndValidation(t *testing.T) {
 	t.Run("omitted policy fields stay omitted", func(t *testing.T) {
-		resetJSONOut(t)
+		main.ResetJSONOut(t)
 		var got api.UpdateAppRequest
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 				t.Errorf("decode PATCH body: %v", err)
 			}
-			writeJSONTest(w, api.AppResponse{Slug: constSlug, MaintenanceMode: true})
+			main.WriteJSONTest(w, api.AppResponse{Slug: main.ConstSlug, MaintenanceMode: true})
 		}))
 		defer srv.Close()
 		t.Setenv("FAAS_API", srv.URL)
 		t.Setenv("FAAS_TOKEN", "fp_test_x")
-		if code := cmdApp([]string{constSlug, "--maintenance"}); code != 0 {
+		if code := main.CmdApp([]string{main.ConstSlug, "--maintenance"}); code != 0 {
 			t.Fatalf("cmdApp --maintenance = %d, want 0", code)
 		}
 		if got.MaintenanceMode == nil || !*got.MaintenanceMode {
@@ -142,11 +143,11 @@ func TestCmdAppPolicyControlsPartialPatchAndValidation(t *testing.T) {
 		name  string
 		flags []string
 	}{
-		{name: "consumer auth enum", flags: []string{constSlug, "--consumer-auth-mode", "sometimes"}},
-		{name: "maintenance conflict", flags: []string{constSlug, "--maintenance", "--no-maintenance"}},
-		{name: "streaming conflict", flags: []string{constSlug, "--streaming-enabled", "--no-streaming-enabled"}},
-		{name: "websocket conflict", flags: []string{constSlug, "--websocket-enabled", "--no-websocket"}},
-		{name: "route metrics conflict", flags: []string{constSlug, "--route-metrics", "--no-route-metrics"}},
+		{name: "consumer auth enum", flags: []string{main.ConstSlug, "--consumer-auth-mode", "sometimes"}},
+		{name: "maintenance conflict", flags: []string{main.ConstSlug, "--maintenance", "--no-maintenance"}},
+		{name: "streaming conflict", flags: []string{main.ConstSlug, "--streaming-enabled", "--no-streaming-enabled"}},
+		{name: "websocket conflict", flags: []string{main.ConstSlug, "--websocket-enabled", "--no-websocket"}},
+		{name: "route metrics conflict", flags: []string{main.ConstSlug, "--route-metrics", "--no-route-metrics"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
@@ -157,7 +158,7 @@ func TestCmdAppPolicyControlsPartialPatchAndValidation(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_test_x")
-			if code := cmdApp(tc.flags); code == 0 {
+			if code := main.CmdApp(tc.flags); code == 0 {
 				t.Fatalf("cmdApp(%v) succeeded; want local validation error", tc.flags)
 			}
 			if calls != 0 {
@@ -168,10 +169,10 @@ func TestCmdAppPolicyControlsPartialPatchAndValidation(t *testing.T) {
 }
 
 func TestCmdAppPolicyControlsVisibleInPlainAppRead(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSONTest(w, api.AppResponse{
-			Slug: constSlug, MaintenanceMode: true, StreamingEnabled: true,
+		main.WriteJSONTest(w, api.AppResponse{
+			Slug: main.ConstSlug, MaintenanceMode: true, StreamingEnabled: true,
 			WebSocketEnabled: true, RouteMetricsEnabled: true,
 			ConsumerAuthMode: api.ConsumerAuthModeRequired,
 		})
@@ -191,7 +192,7 @@ func TestCmdAppPolicyControlsVisibleInPlainAppRead(t *testing.T) {
 		_ = reader.Close()
 		_ = writer.Close()
 	})
-	if code := cmdApp([]string{constSlug}); code != 0 {
+	if code := main.CmdApp([]string{main.ConstSlug}); code != 0 {
 		t.Fatalf("cmdApp read = %d, want 0", code)
 	}
 	if err := writer.Close(); err != nil {
@@ -227,7 +228,7 @@ func TestUpdateAppRequestFieldsHaveReviewedCLISurfaces(t *testing.T) {
 			jsonName = field.Name
 		}
 		seen[jsonName] = true
-		surface, ok := updateAppRequestCLISurfaces[jsonName]
+		surface, ok := (*main.UpdateAppRequestCLISurfaces)[jsonName]
 		if !ok {
 			t.Errorf("UpdateAppRequest.%s (%s) has no reviewed CLI surface; add a path or an explicit known-gap disposition", field.Name, jsonName)
 			continue
@@ -239,7 +240,7 @@ func TestUpdateAppRequestFieldsHaveReviewedCLISurfaces(t *testing.T) {
 			t.Errorf("UpdateAppRequest.%s has both a CLI path and a known-gap disposition", field.Name)
 		}
 		if len(surface.AppFlags) > 0 {
-			command, ok := lookupCliCommand("app")
+			command, ok := main.LookupCliCommand("app")
 			if !ok {
 				t.Fatal("app command missing from CLI manifest")
 			}
@@ -250,7 +251,7 @@ func TestUpdateAppRequestFieldsHaveReviewedCLISurfaces(t *testing.T) {
 			}
 		}
 	}
-	for jsonName := range updateAppRequestCLISurfaces {
+	for jsonName := range *main.UpdateAppRequestCLISurfaces {
 		if !seen[jsonName] {
 			t.Errorf("CLI surface metadata refers to %q, which is not a JSON field on UpdateAppRequest", jsonName)
 		}
@@ -262,19 +263,19 @@ func TestAppPolicyControlsHelpCompletionManAndReference(t *testing.T) {
 		"--maintenance", "--no-maintenance", "--streaming-enabled", "--no-streaming-enabled",
 		"--websocket-enabled", "--no-websocket", "--route-metrics", "--no-route-metrics", "--consumer-auth-mode",
 	}
-	command, ok := lookupCliCommand("app")
+	command, ok := main.LookupCliCommand("app")
 	if !ok {
 		t.Fatal("app command missing from CLI manifest")
 	}
 	var help, man, reference bytes.Buffer
-	printLocalCommandHelp(&help, command)
-	renderManCommand(&man, command)
-	renderMarkdownReference(&reference, []cliCommand{command})
-	for surface, render := range map[string]func(io.Writer, cliCommand){
-		"bash completion":       renderBashCommand,
-		"zsh completion":        renderZshCommand,
-		"fish completion":       renderFishCommand,
-		"powershell completion": renderPowershellCommand,
+	main.PrintLocalCommandHelpDetail(&help, command, true)
+	main.RenderManCommand(&man, command)
+	main.RenderMarkdownReference(&reference, []main.CliCommand{command})
+	for surface, render := range map[string]func(io.Writer, main.CliCommand){
+		"bash completion":       main.RenderBashCommand,
+		"zsh completion":        main.RenderZshCommand,
+		"fish completion":       main.RenderFishCommand,
+		"powershell completion": main.RenderPowershellCommand,
 	} {
 		var out bytes.Buffer
 		render(&out, command)
@@ -297,7 +298,7 @@ func TestAppPolicyControlsHelpCompletionManAndReference(t *testing.T) {
 				// The roff source escapes hyphens so the rendered manual
 				// displays the flag literally without treating them as
 				// break opportunities.
-				needle = manRoffFlagName(want)
+				needle = main.ManRoffFlagName(want)
 			}
 			if !strings.Contains(out, needle) {
 				t.Errorf("%s missing %s", surface, want)
@@ -306,7 +307,7 @@ func TestAppPolicyControlsHelpCompletionManAndReference(t *testing.T) {
 	}
 }
 
-func cliCommandHasFlag(command cliCommand, name string) bool {
+func cliCommandHasFlag(command main.CliCommand, name string) bool {
 	for _, flag := range command.Flags {
 		if flag.Name == name {
 			return true

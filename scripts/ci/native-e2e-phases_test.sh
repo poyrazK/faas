@@ -39,6 +39,11 @@ done
 native_e2e_phase_tests wake "${repo_root}" | grep -qx TestWakePlatformBenchMetal ||
   fail "platform wake benchmark is no longer included in the wake phase"
 
+native_e2e_phase_tests deploy "${repo_root}" | grep -qx TestProjectWorkerReleaseMetal ||
+  fail "project worker release acceptance is missing from the deploy phase"
+native_e2e_phase_tests deploy "${repo_root}" | grep -qx TestQueuePushParallelDispatchMetal ||
+  fail "push queue delivery acceptance is missing from the deploy phase"
+
 # 4. Every required test must live in some phase, or the gate would require a
 #    test it never runs.
 for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
@@ -61,6 +66,13 @@ native_e2e_phase_tests wake "${repo_root}" | grep -qx TestWakePlatformBenchMetal
 # Keep all test names from its file in the deploy phase.
 native_e2e_phase_tests deploy "${repo_root}" | grep -qx TestDevLoopMetal ||
   fail "developer loop is missing from the deploy phase"
+
+# Binary functions exercise the source/builder/runner pipeline.
+native_e2e_phase_tests build "${repo_root}" | grep -qx TestBinaryFunctionMetal ||
+  fail "binary function pipeline is missing from the build phase"
+
+native_e2e_phase_tests streaming "${repo_root}" | grep -qx TestFunctionStreamingMetal ||
+  fail "function streaming is missing from the streaming phase"
 
 # 5. The partition assert must actually FAIL on an unassigned metal test.
 #    A guard that cannot fail is not a guard — this gate has shipped one before.
@@ -97,13 +109,13 @@ native_e2e_assert_lanes "${repo_root}" || fail "a lane names a test that is not 
 smoke_tests="$(native_e2e_lane_tests smoke "${repo_root}")"
 for must in TestSourceDeployWakeMetal TestDeployWakeMetal \
   TestSec11_MemoryMaxFenceEnforced_CrossProcess TestSec11_SeccompFilterEnforced_CrossProcess; do
-  printf '%s\n' "${smoke_tests}" | grep -qx "${must}" ||
+  grep -qx "${must}" <<<"${smoke_tests}" ||
     fail "smoke lane lost ${must}; it no longer exercises the beta path"
 done
 # Fixture checks ride along (no microVM), so a broken fixture tree is reported
 # before anything boots.
 for t in $(native_e2e_phase_tests fixtures "${repo_root}"); do
-  printf '%s\n' "${smoke_tests}" | grep -qx "${t}" || fail "smoke lane lost fixtures test ${t}"
+  grep -qx "${t}" <<<"${smoke_tests}" || fail "smoke lane lost fixtures test ${t}"
 done
 # And it must stay SMALL: the lane is the answer to the hour-long matrix.
 n="$(printf '%s\n' "${smoke_tests}" | grep -c .)"
@@ -132,7 +144,7 @@ native_e2e_is_lane managed-operation-only || fail "managed-operation-only is not
 customer_job_tests="$(native_e2e_lane_tests customer-job-operations-only "${repo_root}")"
 for required in TestCustomerJobOperationResultMetal TestCustomerJobOperationRestartMetal \
   TestCustomerJobOperationRecoveryMetal TestCustomerJobOperationCancellationMetal TestCustomerJobOperationDirectUploadMetal; do
-  printf '%s\n' "${customer_job_tests}" | grep -qx "${required}" || fail "customer Job lane lost ${required}"
+  grep -qx "${required}" <<<"${customer_job_tests}" || fail "customer Job lane lost ${required}"
 done
 native_e2e_is_lane customer-job-operations-only || fail "customer Job selector is not a lane"
 rx="$(native_e2e_lane_regex customer-job-operations-only "${repo_root}")"
@@ -145,8 +157,9 @@ native_e2e_lane_tests customer-job-operations-only "${customer_job_probe}" | gre
 
 customer_workflow_tests="$(native_e2e_lane_tests customer-workflow-operations-only "${repo_root}")"
 for required in TestCustomerWorkflowOperationResultMetal TestCustomerWorkflowOperationRecoveryMetal \
-  TestCustomerWorkflowOperationCancellationMetal TestCustomerWorkflowOperationDeadlineMetal TestCustomerWorkflowOperationOwnerRevocationMetal; do
-  printf '%s\n' "${customer_workflow_tests}" | grep -qx "${required}" || fail "customer Workflow lane lost ${required}"
+  TestCustomerWorkflowOperationCancellationMetal TestCustomerWorkflowOperationDeadlineMetal TestCustomerWorkflowOperationOwnerRevocationMetal \
+  TestCustomerWorkflowOperationWaitsAndSignalsMetal TestCustomerWorkflowOperationEventTimeoutMetal TestCustomerWorkflowOperationBudgetCutMetal; do
+  grep -qx "${required}" <<<"${customer_workflow_tests}" || fail "customer Workflow lane lost ${required}"
 done
 native_e2e_is_lane customer-workflow-operations-only || fail "customer Workflow selector is not a lane"
 rx="$(native_e2e_lane_regex customer-workflow-operations-only "${repo_root}")"
@@ -156,6 +169,34 @@ mkdir -p "${customer_workflow_probe}/cmd/e2e"
 cp "${repo_root}/cmd/e2e/customer_workflow_operations_metal_test.go" "${customer_workflow_probe}/cmd/e2e/"
 printf '\nfunc TestCustomerWorkflowAddedProbe(t *testing.T) {}\n' >> "${customer_workflow_probe}/cmd/e2e/customer_workflow_operations_metal_test.go"
 native_e2e_lane_tests customer-workflow-operations-only "${customer_workflow_probe}" | grep -qx TestCustomerWorkflowAddedProbe || fail "new customer Workflow scenario was omitted"
+
+worker_tests="$(native_e2e_lane_tests project-worker-release-only "${repo_root}")"
+printf '%s\n' "${worker_tests}" | grep -qx TestProjectWorkerReleaseMetal || fail "project worker lane lost its acceptance scenario"
+native_e2e_is_lane project-worker-release-only || fail "project worker selector is not a lane"
+rx="$(native_e2e_lane_regex project-worker-release-only "${repo_root}")"
+[[ "${rx}" == ^\(*\)\$ ]] || fail "project worker regex is not anchored"
+worker_probe="${probe}/project-worker"
+mkdir -p "${worker_probe}/cmd/e2e"
+cp "${repo_root}/cmd/e2e/project_worker_release_metal_test.go" "${worker_probe}/cmd/e2e/"
+printf '\nfunc TestProjectWorkerAddedProbe(t *testing.T) {}\n' >> "${worker_probe}/cmd/e2e/project_worker_release_metal_test.go"
+native_e2e_lane_tests project-worker-release-only "${worker_probe}" | grep -qx TestProjectWorkerAddedProbe || fail "new project worker scenario was omitted"
+customer_http_tests="$(native_e2e_lane_tests customer-http-operations-only "${repo_root}")"
+for required in TestCustomerHTTPOperationResultMetal TestCustomerHTTPOperationRecoveryMetal \
+  TestCustomerHTTPOperationCancellationMetal TestCustomerHTTPOperationOwnerRevocationMetal \
+  TestCustomerHTTPOperationWebhookAdmissionMetal TestCustomerHTTPOperationDeadlineCutMetal; do
+  printf '%s\n' "${customer_http_tests}" | grep -qx "${required}" || fail "customer HTTP lane lost ${required}"
+done
+native_e2e_is_lane customer-http-operations-only || fail "customer HTTP selector is not a lane"
+rx="$(native_e2e_lane_regex customer-http-operations-only "${repo_root}")"
+[[ "${rx}" == ^\(*\)\$ ]] || fail "customer HTTP regex is not anchored"
+customer_http_probe="${probe}/customer-http"
+mkdir -p "${customer_http_probe}/cmd/e2e"
+cp "${repo_root}/cmd/e2e/customer_http_operations_metal_test.go" "${customer_http_probe}/cmd/e2e/"
+printf '\nfunc TestCustomerHTTPAddedProbe(t *testing.T) {}\n' >> "${customer_http_probe}/cmd/e2e/customer_http_operations_metal_test.go"
+native_e2e_lane_tests customer-http-operations-only "${customer_http_probe}" | grep -qx TestCustomerHTTPAddedProbe || fail "new customer HTTP scenario was omitted"
+# ADR-20261017102231: a scenario in a sibling customer_http_operations*_metal_test.go file joins the lane.
+printf '//go:build metal\n\npackage e2e\n\nfunc TestCustomerHTTPSiblingProbe(t *testing.T) {}\n' > "${customer_http_probe}/cmd/e2e/customer_http_operations_probe_metal_test.go"
+native_e2e_lane_tests customer-http-operations-only "${customer_http_probe}" | grep -qx TestCustomerHTTPSiblingProbe || fail "a sibling customer HTTP scenario file was omitted"
 
 # The assert must actually bite: a bogus name fails it.
 ( NATIVE_E2E_SMOKE_TESTS+=(TestDoesNotExistAnywhere); native_e2e_assert_lanes "${repo_root}" ) 2>/dev/null &&
@@ -180,7 +221,7 @@ for must in TestDirectOCIFullRootfsMetal TestDirectOCIProcessContractMetal TestD
   TestBeforeCheckpointMetal TestTCPIngressMetal TestDeployHealthcheckMetal \
   TestE2E_Streaming_Metal_H2CInnerLeg \
   TestSec11_MemoryMaxFenceEnforced_CrossProcess TestSec11_SeccompFilterEnforced_CrossProcess; do
-  printf '%s\n' "${container_tests}" | grep -qx "${must}" || fail "container lane lost ${must}"
+  grep -qx "${must}" <<<"${container_tests}" || fail "container lane lost ${must}"
 done
 rx="$(native_e2e_lane_regex containers "${repo_root}")"
 [[ "${rx}" == ^\(*\)\$ ]] || fail "container lane regex is not anchored"
@@ -277,3 +318,63 @@ grep -qx "mount ${reap_probe}/jail/firecracker/app/root/snap-in-mem" "${reap_pro
 ! grep -qE 'inspection|vmmd|/other/' "${reap_probe}/calls" || fail "reaper selected unrelated resources"
 
 echo "native e2e phase contracts OK (${#NATIVE_E2E_PHASES[@]} phases, ${#NATIVE_E2E_LANES[@]} lanes)"
+
+# Slow migration qualification is selected explicitly, with its extra build tag.
+contract_probe="$(mktemp -d)"
+mkdir -p "${contract_probe}/cmd/e2e"
+cp "${repo_root}/cmd/e2e/project_migration_contract_metal_test.go" "${contract_probe}/cmd/e2e/"
+printf '\nfunc TestProjectContractAddedProbe(t *testing.T) {}\n' >> "${contract_probe}/cmd/e2e/project_migration_contract_metal_test.go"
+native_e2e_lane_tests project-migration-contract-only "${contract_probe}" | grep -qx TestProjectContractAddedProbe || fail "new contract scenario was omitted"
+sed -i '1c//go:build metal' "${contract_probe}/cmd/e2e/project_migration_contract_metal_test.go"
+if native_e2e_lane_tests project-migration-contract-only "${contract_probe}" >/dev/null 2>&1; then fail "contract lane accepted a lost acceptance build tag"; fi
+rm -rf "${contract_probe}"
+echo "contract lane selection and build tag checks OK"
+
+sql_probe="$(mktemp -d)"
+mkdir -p "${sql_probe}/cmd/e2e"
+cp "${repo_root}/cmd/e2e/project_migration_sql_metal_test.go" "${sql_probe}/cmd/e2e/"
+printf '\nfunc TestProjectSQLAddedProbe(t *testing.T) {}\n' >> "${sql_probe}/cmd/e2e/project_migration_sql_metal_test.go"
+native_e2e_lane_tests project-migration-sql-only "${sql_probe}" | grep -qx TestProjectSQLAddedProbe || fail 'new SQL scenario was omitted'
+sed -i '1c//go:build metal' "${sql_probe}/cmd/e2e/project_migration_sql_metal_test.go"
+if native_e2e_lane_tests project-migration-sql-only "${sql_probe}" >/dev/null 2>&1; then fail 'SQL lane accepted a lost acceptance build tag';fi
+rm -rf "${sql_probe}"
+echo 'SQL lane selection and build tag checks OK'
+
+mapfile -t http_tests < <(native_e2e_lane_tests project-progressive-http-only "${repo_root}")
+[[ ${#http_tests[@]} == 9 ]] || fail "HTTP lane must select all nine scenarios"
+
+mapfile -t concurrent_tests < <(native_e2e_lane_tests project-concurrent-release-only "${repo_root}")
+[[ ${#concurrent_tests[@]} == 3 ]] || fail "concurrent lane must select three ownership races"
+
+mapfile -t secret_release_tests < <(native_e2e_lane_tests project-release-secrets-only "${repo_root}")
+[[ ${#secret_release_tests[@]} == 2 ]] || fail "secret lane must require promotion and rollback"
+
+mapfile -t promotion_tests < <(native_e2e_lane_tests project-environment-promotion-only "${repo_root}")
+[[ ${#promotion_tests[@]} == 11 ]] || fail "environment promotion lane must select metadata, success, rollback, controls, load, admission, four migration outcomes and publication crashes"
+promotion_probe="$(mktemp -d)"
+mkdir -p "${promotion_probe}/cmd/e2e"
+cp "${repo_root}/cmd/e2e/project_environment_promotion"{,_fixture,_controls,_concurrent,_admission,_migrations,_publication}"_metal_test.go" "${promotion_probe}/cmd/e2e/"
+printf '\nfunc TestProjectPromotionAddedProbe(t *testing.T) {}\n' >> "${promotion_probe}/cmd/e2e/project_environment_promotion_metal_test.go"
+native_e2e_lane_tests project-environment-promotion-only "${promotion_probe}" | grep -qx TestProjectPromotionAddedProbe || fail "new promotion scenario was omitted"
+sed -i '1c//go:build metal' "${promotion_probe}/cmd/e2e/project_environment_promotion_metal_test.go"
+if native_e2e_lane_tests project-environment-promotion-only "${promotion_probe}" >/dev/null 2>&1; then fail "promotion lane accepted a lost acceptance build tag"; fi
+rm -rf "${promotion_probe}"
+echo 'environment promotion lane selection and build tag checks OK'
+
+partition="$(for group in promotion-core promotion-controls promotion-load promotion-admission promotion-migrations promotion-publication; do native_e2e_promotion_group_tests "$group" "$repo_root"; done)"
+[[ "$(printf '%s\n' "$partition" | sort)" == "$(printf '%s\n' "${promotion_tests[@]}" | sort)" ]] || fail 'promotion partitions lost or duplicated a scenario'
+if native_e2e_promotion_group_tests unknown "$repo_root" >/dev/null 2>&1;then fail 'unknown promotion group accepted';fi
+echo 'promotion group partition checks OK'
+
+graph_tests="$(native_e2e_promotion_group_tests promotion-service-graph "$repo_root")"
+[[ "$(printf '%s\n' "$graph_tests" | wc -l)" == 2 ]] || { echo 'service graph group lost exact inventory' >&2;exit 1; }
+if printf '%s\n' "$partition" | grep -F 'PromotionServiceGraph'; then echo 'optional service graph widened base inventory' >&2;exit 1;fi
+echo 'optional service graph partition checks OK'
+
+coordinated_tests="$(native_e2e_promotion_group_tests promotion-coordinated "$repo_root")"
+[[ "$(printf '%s\n' "$coordinated_tests" | wc -l)" == 4 ]] || { echo 'coordinated group lost exact inventory' >&2;exit 1; }
+for test in TestProjectEnvironmentPromotionCoordinatedFixtureMeta TestProjectEnvironmentPromotionCoordinatedSuccessMetal TestProjectEnvironmentPromotionCoordinatedRollbackMetal TestProjectEnvironmentPromotionCoordinatedResolveMetal;do
+ printf '%s\n' "$coordinated_tests" | grep -Fxq "$test" || { echo "coordinated group missing $test" >&2;exit 1; }
+done
+if printf '%s\n' "$partition" | grep -F 'PromotionCoordinated'; then echo 'coordinated option widened base inventory' >&2;exit 1;fi
+echo 'optional coordinated partition checks OK'

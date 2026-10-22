@@ -28,5 +28,22 @@ func (s *Service) PreviewWorkflowRecoveryPolicyChange(w http.ResponseWriter, r *
 		return
 	}
 	out, err := preview.PreviewWorkflowRecoveryPolicyChange(r.Context(), acct.ID, app, req)
+	if err == nil && out.InitialFailures != nil {
+		available := s.Host.WorkflowRuntimeEnabled()
+		out.InitialFailures.RuntimeAvailable = &available
+		if req.Policy.Enabled && req.Policy.Mode == "automatic_initial" && !available {
+			blockInitialPolicyChangeRuntime(out.InitialFailures)
+		}
+	}
 	s.writeEventRecovery(w, r, http.StatusOK, out, err)
+}
+
+func blockInitialPolicyChangeRuntime(sample *api.WorkflowRecoveryInitialPolicyChangePreview) {
+	sample.WouldSubmit = 0
+	for i := range sample.Candidates {
+		c := &sample.Candidates[i]
+		if c.Preparation == "would_prepare" {
+			c.Execution = "workflow_runtime_disabled"
+		}
+	}
 }

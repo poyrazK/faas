@@ -119,12 +119,30 @@ func (s *PgStore) RequestServiceRolloutAbort(ctx context.Context, appID, id, pre
 		return Deployment{}, 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if expected, ok := serviceRecoveryReview(ctx); ok && expected.EnvironmentID != "" {
+		params := sqlc.LockReviewedEnvironmentParams{AppID: mustPgUUID(appID), Scope: expected.Scope}
+		if _, err := sqlc.New().LockReviewedEnvironment(ctx, tx, params); err != nil {
+			return Deployment{}, 0, mapErr(err)
+		}
+		if err := sqlc.New().LockReviewedRoutePolicy(ctx, tx, sqlc.LockReviewedRoutePolicyParams(params)); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
 	target, rows, err := s.loadAndLockServiceRollout(ctx, tx, id)
 	if err != nil || target.AppID != appID {
 		if err == nil {
 			err = ErrNotFound
 		}
 		return target, 0, err
+	}
+	if expected, ok := serviceRecoveryReview(ctx); ok {
+		current, err := readReleaseReview(ctx, tx, appID, target.Scope)
+		if err != nil {
+			return target, 0, err
+		}
+		if err := checkServiceRecoveryReview(expected, current); err != nil {
+			return target, 0, err
+		}
 	}
 	previous, found := previousServiceRolloutRow(target, rows)
 	if !found || previous.id != predecessorID {

@@ -105,8 +105,10 @@ func TestManagedPostgresResizeRoutesAndReplay(t *testing.T) {
 }
 func TestManagedPostgresResizeValidationAndPlan(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanHobby)
-	(*(*e.S()).ManagedPostgres()), _, _ = resizeAPIService(t, (*e.Acct()).ID)
-	path := "/v1/postgres/databases/anything/resize"
+	// ADR-202610171906 authorizes the persisted owner before validating the payload.
+	service, database, _ := resizeAPIService(t, (*e.Acct()).ID)
+	(*(*e.S()).ManagedPostgres()) = service
+	path := "/v1/postgres/databases/" + database.ID + "/resize"
 	for _, tc := range []struct {
 		body   map[string]any
 		status int
@@ -121,6 +123,7 @@ func TestManagedPostgresResizeValidationAndPlan(t *testing.T) {
 		}
 	}
 }
+
 // Storage growth is a preview: outside its accounts the field is unknown
 // and nothing mentions storage.
 func TestManagedPostgresStorageResizeHiddenOutsideThePreview(t *testing.T) {

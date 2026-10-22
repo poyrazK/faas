@@ -48,7 +48,10 @@ func snapshotFromDocument(deploymentID, appID, scope string, importedDoc []byte,
 		}, SnapshotSourceManualImport, nil
 	}
 
-	spec, err := GenerateFromEdgeRules(nil, nil, rules)
+	// Start from an empty document: a nil base is Gregale's own embedded API,
+	// which every customer deployment then stored as its snapshot (890 paths,
+	// ~760 KB each, a fifth of the production-us database; hunt #9, H9-168).
+	spec, err := GenerateFromEdgeRules(&Spec{Paths: map[string]*PathItem{}, Components: map[string]*Schema{}, version: "3.1"}, nil, rules)
 	if err != nil {
 		return state.OpenAPISnapshot{}, "", fmt.Errorf("project edge-rule OpenAPI surface: %w", err)
 	}

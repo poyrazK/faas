@@ -20,6 +20,22 @@ anonymous) or 307-redirected to the leader's public URL
 (cookie). The customer never sees a 5xx from a stale-DNS
 write.
 
+## Alerts
+
+gatewayd-internal exports the write gate as `gatewayd_write_redirect_*`
+(prefix `gatewayd`). All four alerts are warn (ADR-1235).
+
+- `FaasWriteRedirectLeaderUnreachable`: writes on a standby fail with
+  `leader_unreachable` above 0.1/min. Check the leader's health and the overlay
+  between the nodes; see Rollback / recovery.
+- `FaasWriteRedirectLoopPrevented`: more than one refused redirect loop per
+  minute. Two nodes disagree about the leader, or a client is replaying
+  redirects.
+- `FaasWriteRedirectMTLSFailure`: the relay failed mTLS to the leader. Check
+  internal leaf expiry (`FaasInternalMTLSLeafExpiry*`) and clock skew.
+- `FaasWriteRedirectLatencyHigh`: relay p95 above 3 s; above 5 s
+  `StandbyWriteRedirectTimeoutMS` fails the write.
+
 ## Pre-flight
 
 Before relying on the writeGate, verify:

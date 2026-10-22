@@ -61,6 +61,13 @@ func (h *MetalJobHarness) Close() {
 // the same image/signing environment as the other metal tests.
 func newMetalHarness(t *testing.T, extraEnv ...string) *MetalJobHarness {
 	t.Helper()
+	return newMetalHarnessWith(t, 0, extraEnv...)
+}
+
+// newMetalHarnessWith also starts the extra components, e.g. e2etest.Gatewayd
+// for routes the compute gateway serves.
+func newMetalHarnessWith(t *testing.T, extra e2etest.Which, extraEnv ...string) *MetalJobHarness {
+	t.Helper()
 	if os.Getenv("FAAS_TEST_KERNEL") == "" {
 		t.Skip("FAAS_TEST_KERNEL unset; skipping metal jobs acceptance")
 	}
@@ -115,7 +122,7 @@ func newMetalHarness(t *testing.T, extraEnv ...string) *MetalJobHarness {
 		"FAAS_HOST_AGE_RECIPIENT_PATH=" + recipientPath,
 		"FAAS_HOST_AGE_IDENTITY_PATH=" + hostIdentityPath,
 	}, extraEnv...)
-	h := e2etest.Start(t, pool, e2etest.APID|e2etest.Schedd|e2etest.VMMD|e2etest.Imaged|e2etest.Meterd, env...)
+	h := e2etest.Start(t, pool, e2etest.APID|e2etest.Schedd|e2etest.VMMD|e2etest.Imaged|e2etest.Meterd|extra, env...)
 	jh := &MetalJobHarness{
 		t: t, Harness: h, registry: registry,
 		imageRefs: make(map[string]string), accountKeys: make(map[string]string),

@@ -205,9 +205,12 @@ func Roles() []Role {
 		{CommonName: "apid.faas", Kind: KindServer, Directory: "apid", Filename: "advisory", AltNames: ProductionSANs("apid.faas")},
 		{CommonName: "githubd.faas", Kind: KindServer, Directory: "githubd", Filename: "server", AltNames: ProductionSANs("githubd.faas")},
 		{CommonName: "meterd.faas", Kind: KindServer, Directory: "meterd", Filename: "server", AltNames: ProductionSANs("meterd.faas")},
-		// ADR-989: outboundd's app relay listener; compute vmmd dials it with
-		// the vmmd/outboundd-client node-identity leaf.
-		{CommonName: "outboundd.faas", Kind: KindServer, Directory: "outboundd", Filename: "server", AltNames: ProductionSANs("outboundd.faas")},
+		// ADR-989's outboundd/server and vmmd/outboundd-client leaves are not
+		// listed here yet. Every role in this table is required by trust-bundle
+		// validation, renewal and expiry metrics, and no rollout or renewal
+		// path issues a role an existing host lacks: listing them blocked every
+		// live-node compute rollout of v0.1.18-rc.255. They return with an
+		// issuance migration; until then the relay stays closed as documented.
 		// Tier A9 / ADR-084: the cross-box standby write-
 		// redirect hop lands on the LEADER box's
 		// gatewayd-public listener over an mTLS-only port
@@ -244,7 +247,6 @@ func Roles() []Role {
 	clientRoles := []Role{
 		{CommonName: "vmmd.faas", Kind: KindClient, Directory: "vmmd", Filename: "schedd-client", AltNames: ProductionSANs("vmmd.faas")},
 		{CommonName: "vmmd.faas", Kind: KindClient, Directory: "vmmd", Filename: "apid-client", AltNames: ProductionSANs("vmmd.faas")},
-		{CommonName: "vmmd.faas", Kind: KindClient, Directory: "vmmd", Filename: "outboundd-client", AltNames: ProductionSANs("vmmd.faas")},
 		{CommonName: "meterd.faas", Kind: KindClient, Directory: "meterd", Filename: "schedd-client", AltNames: ProductionSANs("meterd.faas")},
 		{CommonName: "meterd.faas", Kind: KindClient, Directory: "meterd", Filename: "egress-client", AltNames: ProductionSANs("meterd.faas")},
 		{CommonName: "gatewayd.faas", Kind: KindClient, Directory: "gatewayd", Filename: "schedd-client", AltNames: ProductionSANs("gatewayd.faas")},
@@ -348,7 +350,6 @@ func rolesForControlPlane() []Role {
 		"meterd":          true, // meterd/server + meterd/{schedd-client,egress-client}
 		"githubd":         true, // githubd/server (apid dials it from this box)
 		"gatewayd-public": true, // leader-server (fsn-1's listener)
-		"outboundd":       true, // outboundd/server (ADR-989 relay listener)
 	}
 	return filterRolesByDirectory(keep)
 }

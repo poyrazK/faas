@@ -56,6 +56,10 @@ func (m *MemStore) CurrentEnvironmentGitOpsWorkloadEvidence(ctx context.Context,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.currentEnvironmentGitOpsWorkloadEvidenceLocked(accountID, sourceID)
+}
+
+func (m *MemStore) currentEnvironmentGitOpsWorkloadEvidenceLocked(accountID, sourceID string) (*EnvironmentWorkloadActivationEvidence, error) {
 	memory, exists := m.environmentGitOps[sourceID]
 	if !exists || memory.source.AccountID != accountID {
 		return nil, ErrNotFound
@@ -86,11 +90,12 @@ func (m *MemStore) CurrentEnvironmentGitOpsWorkloadEvidence(ctx context.Context,
 		graph.DefinitionDigest != revision.Digest || graph.PlanHash != plan.Hash {
 		return nil, nil
 	}
-	evidence := m.environmentWorkloadActivationEvidenceLocked(memory, graph)
+	evidence := m.environmentWorkloadActivationEvidenceLocked(memory, graph, true)
+	evidence.CommitSHA = revision.CommitSHA
 	return &evidence, nil
 }
 
-func (m *MemStore) environmentWorkloadActivationEvidenceLocked(memory *environmentGitOpsMemory, graph EnvironmentWorkloadGraph) EnvironmentWorkloadActivationEvidence {
+func (m *MemStore) environmentWorkloadActivationEvidenceLocked(memory *environmentGitOpsMemory, graph EnvironmentWorkloadGraph, diagnostics ...bool) EnvironmentWorkloadActivationEvidence {
 	activeTargets := m.environmentGraphActiveReleaseTargetsLocked(memory.source, graph)
 	activatedCandidates, hasCandidates := true, false
 	for _, member := range graph.Members {
@@ -173,6 +178,11 @@ func (m *MemStore) environmentWorkloadActivationEvidenceLocked(memory *environme
 		}
 	}
 	evidence := graphActivationEvidenceWithReleaseTargets(graph, captures, restores, smokes, configs, frameworkReady, jobSmokes, activeTargets)
+	if evidence.Qualified && !evidence.Activated {
+		if err := m.checkEnvironmentBindingGraphLocked(memory, graph, candidateBindingGraphMembers(graph)); err != nil {
+			evidence.BlockingReasons = append(evidence.BlockingReasons, candidateBindingBlocker(err))
+		}
+	}
 	jobStatus := "paused"
 	if evidence.Activated {
 		jobStatus = "active"
@@ -195,6 +205,28 @@ func (m *MemStore) environmentWorkloadActivationEvidenceLocked(memory *environme
 		environmentWorkloadServingReceiptMatches(receipt, graph, releaseID,
 			m.environmentServingGatewayNamesLocked(), activeTargets) && m.environmentWorkloadServingWeightsMatchLocked(memory.source, graph, activeTargets)
 	applyEnvironmentWorkloadServingEvidence(&evidence, serving)
+	if len(diagnostics) > 0 && diagnostics[0] {
+		evidence.Workloads, _ = environmentWorkloadProgress(graph, captures, restores, smokes, configs, frameworkReady, jobSmokes, activeTargets, serving,
+			func(member EnvironmentWorkloadGraphMember) (string, string, error) {
+				deployment, exists := m.deployments[member.CandidateDeploymentID]
+				if !exists || deployment.AppID != member.AppID {
+					return "", "", nil
+				}
+				build := m.builds[deployment.BuildID]
+				if build.DeploymentID != deployment.ID {
+					return string(deployment.Status), "", nil
+				}
+				return string(deployment.Status), string(build.Status), nil
+			})
+		for i := range evidence.Workloads {
+			progress := &evidence.Workloads[i]
+			dep := m.deployments[progress.DeploymentID]
+			build := m.builds[dep.BuildID]
+			if dep.AppID == progress.AppID && build.DeploymentID == dep.ID {
+				environmentBuildCacheProgress(progress, build)
+			}
+		}
+	}
 	return evidence
 }
 
@@ -211,7 +243,9 @@ func (m *MemStore) environmentWorkloadServingWeightsMatchLocked(source Environme
 		if !ok || target.Status != DeployLive || target.EnvironmentWorkloadHeld() {
 			return false
 		}
-		if member.ExecutionMode == api.ExecutionModeWorker {
+		if member.ExecutionMode == api.ExecutionModeWorker || member.ExecutionMode == api.ExecutionModeJob {
+			// Job serving is proved by its scheduled occurrence, not a traffic
+			// weight. The exact live, unheld release target is still mandatory.
 			continue
 		}
 		if member.CandidateDeploymentID != "" {

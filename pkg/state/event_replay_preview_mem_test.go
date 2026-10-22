@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // adr: 624
 
@@ -11,16 +11,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemEventReplayPreviewCursorBindingRevisionAndLegacy(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	account, err := m.CreateAccount(ctx, "preview-cursor@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := m.CreateApp(ctx, App{ID: uuid.NewString(), AccountID: account.ID, Slug: "preview-cursor"})
+	app, err := m.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: account.ID, Slug: "preview-cursor"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,14 +35,14 @@ func TestMemEventReplayPreviewCursorBindingRevisionAndLegacy(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	m.mu.Lock()
-	for _, work := range m.eventFanout {
+	(*m.Mu()).Lock()
+	for _, work := range *m.EventFanout() {
 		work.CreatedAt = accepted // tied acceptance timestamps must page by ID
 		work.SnapshotCaptured = false
 		work.RecipientSnapshot = nil
 	}
-	m.mu.Unlock()
-	q := EventReplayPreviewQuery{AppID: app.ID, SubscriptionID: sub.ID, EventReplayPreviewOptions: api.EventReplayPreviewOptions{From: accepted, Until: accepted.Add(2 * time.Hour), Limit: 1}}
+	(*m.Mu()).Unlock()
+	q := state.EventReplayPreviewQuery{AppID: app.ID, SubscriptionID: sub.ID, EventReplayPreviewOptions: api.EventReplayPreviewOptions{From: accepted, Until: accepted.Add(2 * time.Hour), Limit: 1}}
 	first, err := m.PreviewEventReplay(ctx, account.ID, q)
 	if err != nil || first.MatchedCount != 1 || first.NextAfter == "" || first.Matches[0].OriginalRecipient != "unknown" {
 		t.Fatalf("legacy=%+v %v", first, err)
@@ -51,43 +52,43 @@ func TestMemEventReplayPreviewCursorBindingRevisionAndLegacy(t *testing.T) {
 	if err != nil || second.MatchedCount != 1 || second.Matches[0].EventID == first.Matches[0].EventID || second.NextAfter == "" {
 		t.Fatalf("tied cursor=%+v %v", second, err)
 	}
-	for _, mutate := range []func(*EventReplayPreviewQuery){func(q *EventReplayPreviewQuery) { q.From = q.From.Add(-time.Minute) }, func(q *EventReplayPreviewQuery) { q.Until = q.Until.Add(time.Minute) }, func(q *EventReplayPreviewQuery) { q.After = "erp1.invalid" }, func(q *EventReplayPreviewQuery) { q.Limit = -1 }} {
+	for _, mutate := range []func(*state.EventReplayPreviewQuery){func(q *state.EventReplayPreviewQuery) { q.From = q.From.Add(-time.Minute) }, func(q *state.EventReplayPreviewQuery) { q.Until = q.Until.Add(time.Minute) }, func(q *state.EventReplayPreviewQuery) { q.After = "erp1.invalid" }, func(q *state.EventReplayPreviewQuery) { q.Limit = -1 }} {
 		changed := q
 		mutate(&changed)
-		if _, err := m.PreviewEventReplay(ctx, account.ID, changed); !errors.Is(err, ErrEventReplayPreviewQuery) {
+		if _, err := m.PreviewEventReplay(ctx, account.ID, changed); !errors.Is(err, state.ErrEventReplayPreviewQuery) {
 			t.Fatalf("cursor mutation=%v", err)
 		}
 	}
-	setSubscription := func(update func(*EventSubscription)) {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		for key, s := range m.eventSubscriptions {
+	setSubscription := func(update func(*state.EventSubscription)) {
+		(*m.Mu()).Lock()
+		defer (*m.Mu()).Unlock()
+		for key, s := range *m.EventSubscriptions() {
 			if s.ID == sub.ID {
 				update(&s)
-				m.eventSubscriptions[key] = s
+				(*m.EventSubscriptions())[key] = s
 			}
 		}
 	}
-	setSubscription(func(s *EventSubscription) { s.Filter = json.RawMessage(`{"data":{"amount":1}}`) })
-	if _, err := m.PreviewEventReplay(ctx, account.ID, q); !errors.Is(err, ErrEventReplayPreviewChanged) {
+	setSubscription(func(s *state.EventSubscription) { s.Filter = json.RawMessage(`{"data":{"amount":1}}`) })
+	if _, err := m.PreviewEventReplay(ctx, account.ID, q); !errors.Is(err, state.ErrEventReplayPreviewChanged) {
 		t.Fatalf("changed filter=%v", err)
 	}
-	setSubscription(func(s *EventSubscription) { s.Enabled = false })
-	if _, err := m.PreviewEventReplay(ctx, account.ID, q); !errors.Is(err, ErrEventReplayPreviewDisabled) {
+	setSubscription(func(s *state.EventSubscription) { s.Enabled = false })
+	if _, err := m.PreviewEventReplay(ctx, account.ID, q); !errors.Is(err, state.ErrEventReplayPreviewDisabled) {
 		t.Fatalf("disabled=%v", err)
 	}
-	setSubscription(func(s *EventSubscription) {
+	setSubscription(func(s *state.EventSubscription) {
 		s.Enabled = true
 		s.Filter = sub.Filter
 		s.UpdatedAt = s.UpdatedAt.Add(time.Second)
 	})
-	if _, err := m.PreviewEventReplay(ctx, account.ID, q); !errors.Is(err, ErrEventReplayPreviewChanged) {
+	if _, err := m.PreviewEventReplay(ctx, account.ID, q); !errors.Is(err, state.ErrEventReplayPreviewChanged) {
 		t.Fatalf("re-enabled revision=%v", err)
 	}
-	m.mu.Lock()
-	m.eventWorkBindings[sub.ID] = EventWorkBinding{SubscriptionID: sub.ID, AppID: app.ID, PolicyName: "keyed"}
-	m.mu.Unlock()
-	if _, err := m.PreviewEventReplay(ctx, account.ID, q); !errors.Is(err, ErrEventReplayPreviewUnsupported) {
+	(*m.Mu()).Lock()
+	(*m.EventWorkBindings())[sub.ID] = state.EventWorkBinding{SubscriptionID: sub.ID, AppID: app.ID, PolicyName: "keyed"}
+	(*m.Mu()).Unlock()
+	if _, err := m.PreviewEventReplay(ctx, account.ID, q); !errors.Is(err, state.ErrEventReplayPreviewUnsupported) {
 		t.Fatalf("work-bound=%v", err)
 	}
 }

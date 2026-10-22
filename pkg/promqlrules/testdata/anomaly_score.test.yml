@@ -104,7 +104,7 @@ tests:
         alertname: FaasTrafficAnomaly
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               component: apid
               family: traffic_anomaly
               mode: platform

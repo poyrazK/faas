@@ -503,11 +503,12 @@ func TestNativeJournalRefusesCommandsThatCanBypassItsGate(t *testing.T) {
 	}
 }
 
-func TestNativePhysicalLeaseReopenExcludesOnlyCallbackGeneration(t *testing.T) {
+func TestNativePhysicalLeaseReopenExcludesOnlyProcessLocalFields(t *testing.T) {
 	j := nativeJournalFixture(filepath.Join(t.TempDir(), "journal"))
 	lease := leaseForSlot("qualification-callback", 3)
 	lease.Plan, lease.MemoryMaxMiB, lease.CPUMillicores, lease.BuildTimeoutSec = api.PlanHobby, 256, 500, 60
 	lease.processGeneration = 19
+	lease.profileStartedAt = time.Now()
 	if err := j.prepare(t.Context(), lease); err != nil {
 		t.Fatal(err)
 	}
@@ -516,8 +517,8 @@ func TestNativePhysicalLeaseReopenExcludesOnlyCallbackGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Lease.processGeneration != 0 || !sameNativePhysicalLease(record.Lease, lease) {
-		t.Fatal("private callback fence changed durable lease ownership")
+	if record.Lease.processGeneration != 0 || !record.Lease.profileStartedAt.IsZero() || !sameNativePhysicalLease(record.Lease, lease) {
+		t.Fatal("process-local fields changed durable lease ownership")
 	}
 	for _, mutate := range []func(*Lease){
 		func(l *Lease) { l.MemoryMaxMiB++ },

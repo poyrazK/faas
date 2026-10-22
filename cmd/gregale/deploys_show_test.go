@@ -16,9 +16,11 @@
 //
 // Renderer-only tests for the underlying renderDeploySummary
 // helper live in deploy_stages_test.go (created in this PR).
-package main
+package main_test
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -27,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -90,12 +93,12 @@ func TestCmdDeploysShow_HappyPath(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restoreStdout := swapStdout(t)
+	stdout, restoreStdout := main.SwapStdout(t)
 	defer restoreStdout()
-	jsonOutput = false
-	defer func() { jsonOutput = false }()
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = false }()
 
-	if code := cmdDeploysShow([]string{showTestID}); code != 0 {
+	if code := main.CmdDeploysShow([]string{showTestID}); code != 0 {
 		t.Fatalf("cmdDeploysShow happy path = %d, want 0", code)
 	}
 	got := stdout.String()
@@ -136,12 +139,12 @@ func TestCmdDeploysShow_JSON(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restoreStdout := swapStdout(t)
+	stdout, restoreStdout := main.SwapStdout(t)
 	defer restoreStdout()
-	jsonOutput = true
-	defer func() { jsonOutput = false }()
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = false }()
 
-	if code := cmdDeploysShow([]string{showTestID}); code != 0 {
+	if code := main.CmdDeploysShow([]string{showTestID}); code != 0 {
 		t.Fatalf("cmdDeploysShow --json = %d, want 0", code)
 	}
 	var got struct {
@@ -168,7 +171,7 @@ func TestCmdDeploysShow_NotFoundFromServer(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdDeploysShow([]string{showTestID}); code == 0 {
+	if code := main.CmdDeploysShow([]string{showTestID}); code == 0 {
 		t.Errorf("cmdDeploysShow on 404 = 0, want non-zero")
 	}
 }
@@ -181,7 +184,7 @@ func TestCmdDeploysShow_InvalidIDFailsFast(t *testing.T) {
 	// No httptest server — the local regex gate must reject
 	// before authedClient is called.
 	t.Setenv("FAAS_TOKEN", "")
-	if code := cmdDeploysShow([]string{"not-hex"}); code != 1 {
+	if code := main.CmdDeploysShow([]string{"not-hex"}); code != 1 {
 		t.Errorf("cmdDeploysShow bad id = %d, want 1", code)
 	}
 }
@@ -189,10 +192,10 @@ func TestCmdDeploysShow_InvalidIDFailsFast(t *testing.T) {
 // TestCmdDeploysShow_NoArgs covers the usage-error branch when
 // the operator forgets the deployment id.
 func TestCmdDeploysShow_NoArgs(t *testing.T) {
-	if code := cmdDeploysShow(nil); code != 1 {
+	if code := main.CmdDeploysShow(nil); code != 1 {
 		t.Errorf("cmdDeploysShow nil args = %d, want 1", code)
 	}
-	if code := cmdDeploysShow([]string{"--bogus"}); code != 1 {
+	if code := main.CmdDeploysShow([]string{"--bogus"}); code != 1 {
 		t.Errorf("cmdDeploysShow --bogus (no positional) = %d, want 1", code)
 	}
 }
@@ -217,21 +220,21 @@ func TestCmdDeploysShow_FlagOrder(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restoreStdout := swapStdout(t)
+	stdout, restoreStdout := main.SwapStdout(t)
 	defer restoreStdout()
-	jsonOutput = false
-	defer func() { jsonOutput = false }()
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = false }()
 
 	// Form A: flags before positional — was working pre-fix.
-	if code := cmdDeploysShow([]string{"--status", showTestID}); code != 0 {
+	if code := main.CmdDeploysShow([]string{"--status", showTestID}); code != 0 {
 		t.Fatalf("cmdDeploysShow [--status id] = %d, want 0", code)
 	}
 	// Form B: positional before flag — review finding C4.
-	if code := cmdDeploysShow([]string{showTestID, "--status"}); code != 0 {
+	if code := main.CmdDeploysShow([]string{showTestID, "--status"}); code != 0 {
 		t.Fatalf("cmdDeploysShow [id --status] = %d, want 0 (review finding C4)", code)
 	}
 	// Form C: a value flag after the positional keeps its value.
-	if code := cmdDeploysShow([]string{showTestID, "--app", "my-api", "--status"}); code != 0 {
+	if code := main.CmdDeploysShow([]string{showTestID, "--app", "my-api", "--status"}); code != 0 {
 		t.Fatalf("cmdDeploysShow [id --app my-api --status] = %d, want 0", code)
 	}
 	// Both forms must produce equivalent output (the post-stream
@@ -246,20 +249,20 @@ func TestCmdDeploysShow_FlagOrder(t *testing.T) {
 // main.go switch arm and the cli_meta subcommand entry.
 func TestCmdDeploys_Dispatcher(t *testing.T) {
 	// Empty → usage error (1).
-	if code := cmdDeploys(nil); code != 1 {
+	if code := main.CmdDeploys(nil); code != 1 {
 		t.Errorf("cmdDeploys nil args = %d, want 1", code)
 	}
 	// Unknown subcommand → usage error (1) — not a panic.
-	if code := cmdDeploys([]string{"bogus"}); code != 1 {
+	if code := main.CmdDeploys([]string{"bogus"}); code != 1 {
 		t.Errorf("cmdDeploys unknown sub = %d, want 1", code)
 	}
 	// `show` with bad id → usage error (1) from cmdDeploysShow.
 	// No httptest server needed: id gate fires first.
-	if code := cmdDeploys([]string{"show", "not-hex"}); code != 1 {
+	if code := main.CmdDeploys([]string{"show", "not-hex"}); code != 1 {
 		t.Errorf("cmdDeploys show bad id = %d, want 1", code)
 	}
 	// `show` with no args → usage error (1).
-	if code := cmdDeploys([]string{"show"}); code != 1 {
+	if code := main.CmdDeploys([]string{"show"}); code != 1 {
 		t.Errorf("cmdDeploys show no args = %d, want 1", code)
 	}
 }
@@ -451,12 +454,12 @@ func TestCmdDeploysShow_WithStatusFlag(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restoreStdout := swapStdout(t)
+	stdout, restoreStdout := main.SwapStdout(t)
 	defer restoreStdout()
-	jsonOutput = false
-	defer func() { jsonOutput = false }()
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = false }()
 
-	if code := cmdDeploysShow([]string{"--status", showTestID}); code != 0 {
+	if code := main.CmdDeploysShow([]string{"--status", showTestID}); code != 0 {
 		t.Fatalf("cmdDeploysShow --status = %d, want 0", code)
 	}
 	got := stdout.String()
@@ -491,15 +494,15 @@ func TestCmdDeploysShow_WithStatusJSON(t *testing.T) {
 	)
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	stdout, restoreStdout := swapStdout(t)
+	stdout, restoreStdout := main.SwapStdout(t)
 	defer restoreStdout()
-	jsonOutput = true
-	defer func() { jsonOutput = false }()
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = false }()
 
-	if code := cmdDeploysShow([]string{"--status", showTestID}); code != 0 {
+	if code := main.CmdDeploysShow([]string{"--status", showTestID}); code != 0 {
 		t.Fatalf("cmdDeploysShow --status --json = %d, want 0", code)
 	}
-	var got deployStatusJSON
+	var got main.DeployStatusJSON
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal --status --json output: %v\nraw: %s", err, stdout.String())
 	}
@@ -517,7 +520,7 @@ func TestCmdDeploysShow_WithStatusJSON(t *testing.T) {
 func TestCmdDeploysShow_RejectsBadFlag(t *testing.T) {
 	// No httptest server — the FlagSet.ContinueOnError path
 	// fires before the round-trip.
-	if code := cmdDeploysShow([]string{"--bogus", showTestID}); code != 1 {
+	if code := main.CmdDeploysShow([]string{"--bogus", showTestID}); code != 1 {
 		t.Errorf("cmdDeploysShow --bogus = %d, want 1", code)
 	}
 }
@@ -529,11 +532,11 @@ func TestCmdDeploysShow_RejectsBadFlag(t *testing.T) {
 func TestCmdDeploys_Dispatcher_Status(t *testing.T) {
 	// `status` with bad id → usage error (1) from cmdDeploysStatus.
 	// No httptest server needed: id gate fires first.
-	if code := cmdDeploys([]string{"status", "not-hex"}); code != 1 {
+	if code := main.CmdDeploys([]string{"status", "not-hex"}); code != 1 {
 		t.Errorf("cmdDeploys status bad id = %d, want 1", code)
 	}
 	// `status` with no args → usage error (1).
-	if code := cmdDeploys([]string{"status"}); code != 1 {
+	if code := main.CmdDeploys([]string{"status"}); code != 1 {
 		t.Errorf("cmdDeploys status no args = %d, want 1", code)
 	}
 }
@@ -570,10 +573,10 @@ func TestCmdDeploysShow_URLFlag(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restoreStdout := swapStdout(t)
+	stdout, restoreStdout := main.SwapStdout(t)
 	defer restoreStdout()
 
-	if code := cmdDeploysShow([]string{"--url", showTestID}); code != 0 {
+	if code := main.CmdDeploysShow([]string{"--url", showTestID}); code != 0 {
 		t.Fatalf("cmdDeploysShow --url = %d, want 0", code)
 	}
 	got := strings.TrimSpace(stdout.String())
@@ -594,10 +597,10 @@ func TestCmdDeploysShow_URLFlagNotAlive(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restoreStdout := swapStdout(t)
+	stdout, restoreStdout := main.SwapStdout(t)
 	defer restoreStdout()
 
-	if code := cmdDeploysShow([]string{"--url", showTestID}); code != 0 {
+	if code := main.CmdDeploysShow([]string{"--url", showTestID}); code != 0 {
 		t.Fatalf("cmdDeploysShow --url on Alive=false = %d, want 0 (empty line is valid)", code)
 	}
 	if stdout.Len() == 0 {
@@ -617,10 +620,33 @@ func TestCmdDeploysShow_URLFlagServerError(t *testing.T) {
 	// swapStdout helper because our test infra doesn't
 	// expose a stderr swap for this file; we only need to
 	// confirm the exit code here, not the stderr prose.
-	_, restoreStdout := swapStdout(t)
+	_, restoreStdout := main.SwapStdout(t)
 	defer restoreStdout()
 
-	if code := cmdDeploysShow([]string{"--url", showTestID}); code == 0 {
+	if code := main.CmdDeploysShow([]string{"--url", showTestID}); code == 0 {
 		t.Errorf("cmdDeploysShow --url on server error = 0, want non-zero")
+	}
+}
+
+// TestDeployTerminalCancelledIsNotAFailure covers H10-48: a cancelled
+// deployment reached the deploy wait as "failed without a server reason", and
+// deploys status showed its stages with no outcome.
+func TestDeployTerminalCancelledIsNotAFailure(t *testing.T) {
+	_, readStderr, restore := main.SwapIO(t)
+	code := main.TerminalExitForDeploymentWithFailureContext(context.Background(), nil,
+		api.DeploymentResponse{ID: "dep-1", Status: main.DeploymentStatusCancelled}, "my-app", nil)
+	stderr := readStderr()
+	restore()
+	if code != 2 {
+		t.Errorf("exit = %d, want 2 (the build-cancelled code)", code)
+	}
+	if !strings.Contains(stderr, "dep-1 was cancelled before it went live") || strings.Contains(stderr, "failed") {
+		t.Errorf("stderr = %q, want the cancellation, not a failure", stderr)
+	}
+
+	var out bytes.Buffer
+	main.RenderDeployFailureIfPresent(&out, api.DeploymentResponse{ID: "dep-1", Status: main.DeploymentStatusCancelled})
+	if !strings.Contains(out.String(), "Cancelled before it went live; the live release is unchanged.") {
+		t.Errorf("deploys status note = %q", out.String())
 	}
 }

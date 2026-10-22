@@ -18,27 +18,31 @@ import (
 var _ EnvironmentGitOpsIntentStore = (*PgStore)(nil)
 
 type gitOpsIntentApp struct {
-	RuntimeBase      string                        `json:"runtime_base"`
-	StartCommand     string                        `json:"start_command"`
-	Manifest         AppManifest                   `json:"manifest"`
-	WorkloadIntent   *EnvironmentWorkloadIntent    `json:"workload_intent"`
-	Sources          []gitOpsSourceBaseline        `json:"sources"`
-	SuppressedKeys   []string                      `json:"suppressed_keys"`
-	SuppressionCount int                           `json:"suppression_count"`
-	LiveDeployments  []gitOpsSecretBaseline        `json:"live_deployments"`
-	SecretRefs       map[string]string             `json:"secret_refs"`
-	SecretNames      []string                      `json:"secret_names"`
-	SecretRefCount   int                           `json:"secret_ref_count"`
-	ID               string                        `json:"id"`
-	Slug             string                        `json:"slug"`
-	Variables        map[string]string             `json:"variables"`
-	Routes           *api.EnvironmentRouteContract `json:"routes"`
-	Policies         *[]ProjectEnvironmentEdgeRule `json:"policies"`
-	VariableCount    int                           `json:"variable_count"`
-	BindingCount     int                           `json:"binding_count"`
-	Type             AppType                       `json:"type"`
-	WorkloadClass    WorkloadClass                 `json:"workload_class"`
-	QueueBindings    []gitOpsQueueIntent           `json:"queue_bindings"`
+	PendingInvocations  int64                         `json:"pending_invocations"`
+	InFlightInvocations int64                         `json:"in_flight_invocations"`
+	QueuedTasks         int64                         `json:"queued_tasks"`
+	InFlightTasks       int64                         `json:"in_flight_tasks"`
+	RuntimeBase         string                        `json:"runtime_base"`
+	StartCommand        string                        `json:"start_command"`
+	Manifest            AppManifest                   `json:"manifest"`
+	WorkloadIntent      *EnvironmentWorkloadIntent    `json:"workload_intent"`
+	Sources             []gitOpsSourceBaseline        `json:"sources"`
+	SuppressedKeys      []string                      `json:"suppressed_keys"`
+	SuppressionCount    int                           `json:"suppression_count"`
+	LiveDeployments     []gitOpsSecretBaseline        `json:"live_deployments"`
+	SecretRefs          map[string]string             `json:"secret_refs"`
+	SecretNames         []string                      `json:"secret_names"`
+	SecretRefCount      int                           `json:"secret_ref_count"`
+	ID                  string                        `json:"id"`
+	Slug                string                        `json:"slug"`
+	Variables           map[string]string             `json:"variables"`
+	Routes              *api.EnvironmentRouteContract `json:"routes"`
+	Policies            *[]ProjectEnvironmentEdgeRule `json:"policies"`
+	VariableCount       int                           `json:"variable_count"`
+	BindingCount        int                           `json:"binding_count"`
+	Type                AppType                       `json:"type"`
+	WorkloadClass       WorkloadClass                 `json:"workload_class"`
+	QueueBindings       []gitOpsQueueIntent           `json:"queue_bindings"`
 }
 
 type gitOpsIntentResource struct {
@@ -47,6 +51,8 @@ type gitOpsIntentResource struct {
 }
 
 type gitOpsIntentSnapshot struct {
+	GitSource      EnvironmentGitSourceSpec        `json:"-"`
+	Retirements    []EnvironmentWorkloadRetirement `json:"retirements"`
 	ExternalOwners []environmentExternalFieldOwner `json:"external_owners"`
 	Plan           api.Plan                        `json:"plan"`
 	SourceID       string                          `json:"source_id"`
@@ -87,6 +93,7 @@ func readEnvironmentGitOpsIntent(ctx context.Context, db sqlc.DBTX, source Envir
 		return EnvironmentGitOpsObservation{}, snapshot, err
 	}
 	snapshot.Repository = source.Spec.Repository
+	snapshot.GitSource = source.Spec
 	observation, err := compileGitOpsObservation(snapshot, desired)
 	return observation, snapshot, err
 }
@@ -222,6 +229,11 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 		if !strings.HasPrefix(resource, "workload/") || strings.Count(resource, "/") != 1 {
 			continue
 		}
+		if r, ok := activeWorkloadRetirement(snapshot, resource); ok {
+			if _, wanted := desired.Definition.Workloads[strings.TrimPrefix(r.Resource, "workload/")]; !wanted {
+				continue
+			}
+		}
 		app, exists := byID[id]
 		if !exists {
 			continue
@@ -299,7 +311,30 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 		}
 		if snapshot.Prune && owner.Manager == snapshot.SourceID && owner.Path == "presence" && strings.HasPrefix(owner.Resource, "workload/") {
 			if _, wanted := desired.Definition.Workloads[strings.TrimPrefix(owner.Resource, "workload/")]; !wanted {
-				out.State.Unsupported = append(out.State.Unsupported, owner.Key()+": workload pruning adapter is not available")
+				if _, reserved := activeWorkloadRetirement(snapshot, owner.Resource); !reserved {
+					if desired.Definition.WorkloadPruningPolicy != "retain" {
+						out.State.Unsupported = append(out.State.Unsupported, owner.Key()+": workload retirement requires workload_pruning_policy retain")
+					}
+					app := byID[out.State.ResourceIDs[owner.Resource]]
+					for _, deployment := range app.Sources {
+						if !deployment.Managed {
+							out.State.Unsupported = append(out.State.Unsupported, owner.Resource+": retirement cannot withdraw unmanaged execution")
+							break
+						}
+					}
+					for _, binding := range app.QueueBindings {
+						owned := false
+						for _, identity := range snapshot.QueueBindings {
+							if identity.Resource == owner.Resource && identity.BindingID == binding.ID {
+								owned = true
+								break
+							}
+						}
+						if !owned {
+							out.State.Unsupported = append(out.State.Unsupported, owner.Resource+": retirement cannot stop an unmanaged queue binding")
+						}
+					}
+				}
 			}
 		}
 	}
@@ -324,6 +359,8 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 			out.Owners = append(out.Owners, environmentsync.Ownership{Field: environmentsync.Field{Resource: resource, Path: owner.Path, Value: json.RawMessage(`null`)}, Manager: owner.Manager})
 		}
 	}
+	observeWorkloadRetirementImpacts(&out, snapshot, desired)
+	projectWorkloadRetirements(&out, snapshot, desired)
 	return out, nil
 }
 

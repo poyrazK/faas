@@ -23,16 +23,40 @@ import (
 
 func cmdMCP(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mcp init|deploy|status|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
+		PrintUsage(os.Stderr, "usage: gregale mcp serve|connections|init|capabilities|validate|test|deploy|readiness|overview|status|monitor|diagnostics|health|retirements|access|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
 		return 1
 	}
 	switch args[0] {
+	case "connections":
+		return cmdMCPConnections(args[1:])
+	case "serve":
+		return cmdMCPServe(args[1:])
 	case "init":
 		return cmdMCPInit(args[1:])
+	case "capabilities":
+		return cmdMCPCapabilities(args[1:])
+	case "test":
+		return cmdMCPSmoke(args[1:])
+	case "validate":
+		return cmdMCPValidate(args[1:])
 	case "deploy":
 		return cmdMCPDeploy(args[1:])
+	case "readiness":
+		return cmdMCPReadiness(args[1:])
 	case "status":
 		return cmdMCPStatus(args[1:])
+	case "overview":
+		return cmdMCPOverview(args[1:])
+	case "diagnostics":
+		return cmdMCPDiagnostics(args[1:])
+	case "health":
+		return cmdMCPConnectionHealth(args[1:])
+	case "retirements":
+		return cmdMCPOAuthRetirements(args[1:])
+	case "monitor":
+		return cmdMCPCatalogMonitor(args[1:])
+	case "access":
+		return cmdMCPAccess(args[1:])
 	case "policy":
 		return cmdMCPPolicy(args[1:])
 	case "tasks":
@@ -48,6 +72,13 @@ func cmdMCP(args []string) int {
 	case "complete":
 		return cmdMCPComplete(args[1:])
 	case "doctor":
+		for i, arg := range args[1:] {
+			if arg == "--stack" {
+				flags := append([]string{}, args[1:i+1]...)
+				flags = append(flags, args[i+2:]...)
+				return cmdMCPOverviewMode(flags, true)
+			}
+		}
 		for i, arg := range args[1:] {
 			if arg == "--hosting" {
 				flags := append([]string{}, args[1:i+1]...)
@@ -68,6 +99,14 @@ func cmdMCPInit(args []string) int {
 	dir := fs.String("path", "", "empty destination directory")
 	runtime := fs.String("runtime", "node", "starter language (node, go or python)")
 	fs.StringVar(runtime, "language", "node", "starter language alias (node, go or python)")
+	auth := fs.String("auth", "open", "access mode: open or external-oauth")
+	issuer := fs.String("issuer", "", "HTTPS OAuth issuer for private access")
+	jwks := fs.String("jwks-url", "", "HTTPS signing-key URL for private access")
+	resource := fs.String("resource", "", "canonical HTTPS MCP endpoint and token audience")
+	scopes := fs.String("scopes", "", "comma-separated required OAuth scopes")
+	authApp := unreleasedStringFlag(fs, "auth-app", "Gregale Auth app whose OAuth server issues the tokens; sets --auth external-oauth, --issuer and --jwks-url")
+	tasks := fs.Bool("tasks", false, "create separate web, worker and observer projects with durable Tasks enabled")
+	name := fs.String("name", "", "app slug prefix and shared task namespace (required with --tasks)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -77,7 +116,63 @@ func cmdMCPInit(args []string) int {
 	if *runtime != "node" && *runtime != "go" && *runtime != "python" {
 		return printErr("MCP init", errors.New("--language must be node, go, or python (--runtime is an alias)"))
 	}
-	return cmdInit([]string{"--template", "mcp-" + *runtime, "--path", *dir})
+	if *authApp != "" {
+		given := map[string]bool{}
+		fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+		if given["issuer"] || given["jwks-url"] || (given["auth"] && *auth != "external-oauth") {
+			return printErr("MCP init", errors.New("--auth-app replaces --auth, --issuer and --jwks-url"))
+		}
+		resolved, required, err := mcpAuthApp(*authApp, *scopes)
+		if err != nil {
+			return printErr("MCP init", err)
+		}
+		*auth, *issuer, *jwks, *scopes = "external-oauth", resolved.Issuer, resolved.JWKSURL, required
+	}
+	return runMCPInit(mcpInitOptions{Path: *dir, Runtime: *runtime, AuthMode: *auth,
+		Issuer: *issuer, JWKSURL: *jwks, Resource: *resource, Scopes: *scopes, Tasks: *tasks, Name: *name})
+}
+
+// mcpOpenIDScopes are the only scopes Gregale Auth's OAuth server issues.
+var mcpOpenIDScopes = map[string]bool{"openid": true, "email": true, "profile": true, "phone": true}
+
+// mcpAuthApp points a private MCP starter at a Gregale Auth app's OAuth
+// server. Its tokens carry the requested MCP endpoint as their audience.
+// It issues only OpenID scopes, so the starter requires openid unless the
+// caller names others of those.
+func mcpAuthApp(name, scopes string) (authIssuer, string, error) {
+	if !api.ValidAppSlug(name) {
+		return authIssuer{}, "", fmt.Errorf("invalid Auth app name %q", name)
+	}
+	client, err := authedClient()
+	if err != nil {
+		return authIssuer{}, "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	app, err := client.GetApp(ctx, name)
+	if err != nil {
+		return authIssuer{}, "", fmt.Errorf("find the Auth app: %w", err)
+	}
+	settings, err := fetchAuthSettings(ctx, app)
+	if err != nil {
+		return authIssuer{}, "", fmt.Errorf("read the Auth app's settings: %w", err)
+	}
+	if !settings.OAuth.Enabled {
+		return authIssuer{}, "", fmt.Errorf("the OAuth server of %s is off; turn it on with `gregale auth config %s --oauth-server on`", name, name)
+	}
+	if !settings.OAuth.DynamicRegistration {
+		PrintWarn(osStderr, "%s does not let clients register themselves; register each MCP client with `gregale auth oauth-clients add %s`, or turn on `--oauth-registration`", name, name)
+	}
+	if scopes == "" {
+		scopes = "openid"
+	}
+	for _, scope := range strings.Split(scopes, ",") {
+		if !mcpOpenIDScopes[strings.TrimSpace(scope)] {
+			return authIssuer{}, "", fmt.Errorf("scope %q: Gregale Auth issues only the openid, email, profile and phone scopes", scope)
+		}
+	}
+	issuer := settings.OAuth.Issuer
+	return authIssuer{Issuer: issuer, JWKSURL: issuer + "/.well-known/jwks.json"}, scopes, nil
 }
 
 func mcpToken(env string) (string, error) {
@@ -563,8 +658,12 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 }
 
 type mcpDeployOptions struct {
+	smokeFixtures                              string
+	allowToolExecution                         bool
 	path, slug, profile, tokenEnv, secretsFile string
 	releasePolicy, idempotencyKey              string
+	validateEndpoint                           string
+	accessAudit, accessAuditAlgorithms         string
 	mcpTaskMigrationOverride                   bool
 	timeout                                    int
 }
@@ -574,10 +673,15 @@ func cmdMCPDeploy(args []string) int {
 	var o mcpDeployOptions
 	fs.StringVar(&o.path, "path", ".", "source directory; uploads the current worktree")
 	fs.StringVar(&o.slug, "name", "", "app slug")
-	fs.StringVar(&o.profile, "profile", "", "app resource profile")
+	resourceSizeFlag(fs, &o.profile, "app resource size")
 	fs.StringVar(&o.tokenEnv, "token-env", "", "MCP client token for post-deployment verification")
 	fs.StringVar(&o.secretsFile, "secrets-file", "", "sealed app secrets configured before deployment")
+	fs.StringVar(&o.smokeFixtures, "fixtures", "", "run reviewed MCP smoke fixtures against the candidate before promotion")
+	fs.BoolVar(&o.allowToolExecution, "allow-tool-execution", false, "execute reviewed tool fixtures once; requires --fixtures")
+	fs.StringVar(&o.validateEndpoint, "validate-url", "", "require a local MCP endpoint to pass compatibility before uploading source")
 	fs.StringVar(&o.releasePolicy, "release-policy", "", "role-specific catalog baselines to verify before promotion")
+	fs.StringVar(&o.accessAudit, "access-audit", "", "optional stored-policy promotion gate: gateway or guest-only")
+	fs.StringVar(&o.accessAuditAlgorithms, "access-audit-algorithms", "", "reviewed gateway algorithms (default RS256,ES256; requires --access-audit)")
 	fs.BoolVar(&o.mcpTaskMigrationOverride, "mcp-task-migration-override", false, "allow this deployment to replace incompatible MCP task workers once")
 	fs.IntVar(&o.timeout, "timeout", 1200, "deployment wait timeout in seconds")
 	// A failed submission's recovery hint tells the user to retry with this
@@ -594,6 +698,10 @@ func cmdMCPDeploy(args []string) int {
 }
 
 func runMCPDeploy(o mcpDeployOptions) int {
+	smoke, err := loadMCPSmokeGate(o.smokeFixtures, o.allowToolExecution)
+	if err != nil {
+		return printErr("MCP smoke fixtures", err)
+	}
 	dir, err := filepath.Abs(o.path)
 	if err != nil {
 		return printErr("MCP source", err)
@@ -612,9 +720,26 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if cfg.Auth.Mode == "external-oauth" && token == "" {
 		return printErr("MCP verification", errors.New("external-oauth deploy requires --token-env with a client access token for verification"))
 	}
+	if o.validateEndpoint != "" {
+		report, validationErr := validateMCPEndpoint(context.Background(), o.validateEndpoint, token, mcphosting.ProtocolVersion, 30*time.Second)
+		if validationErr != nil {
+			return printErr("MCP compatibility gate", validationErr)
+		}
+		if !report.OK {
+			_ = writeJSONStdout(report)
+			return printErr("MCP compatibility gate", errors.New("validation failed before source upload"))
+		}
+	}
 	roles, err := loadMCPReleasePolicy(o.releasePolicy)
 	if err != nil {
 		return printErr("MCP release policy", err)
+	}
+	audit, err := newMCPAccessAuditOptions(o.accessAudit, o.accessAuditAlgorithms)
+	if err != nil {
+		return printErr("MCP access audit options", err)
+	}
+	if audit != nil && !mcpAuthorizationChecksPassed(mcpAccessSourceChecks(cfg, roles)) {
+		return printErr("MCP access audit source", errors.New("reviewed source and role declarations are inconsistent; inspect with mcp access audit"))
 	}
 	c, err := authedClient()
 	if err != nil {
@@ -647,7 +772,7 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if pinnedDigest != "" {
 		pinReceipt = &mcpCatalogPinReceipt{DiscoveryDeploymentID: discoveryID, SHA256: pinnedDigest}
 	}
-	return finishMCPDeploy(ctx, c, o.slug, candidate.ID, cfg, token, roles, pinReceipt)
+	return finishMCPDeployWithSmoke(ctx, c, o.slug, candidate.ID, cfg, token, roles, audit, smoke, pinReceipt)
 }
 
 func validateMCPDeploySecretsFile(path string) error {
@@ -676,7 +801,7 @@ func mcpDeployArgs(o mcpDeployOptions, dir string, secretsRequested ...bool) []s
 		args = append(args, "--mcp-task-migration-override")
 	}
 	if o.profile != "" {
-		args = append(args, "--profile", o.profile)
+		args = append(args, "--size", o.profile)
 	}
 	if includeSecrets && o.secretsFile != "" {
 		args = append(args, "--secrets-file", o.secretsFile)

@@ -1,17 +1,21 @@
 // adr: 462 — release-only managed migration credential delivery.
+// adr: 1190 — auth bindings reach serving processes and release tasks.
 
-package state
+package state_test
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/pkg/state"
+	"testing"
+)
 
 func TestManagedPostgresSecretDeliveryPolicy(t *testing.T) {
-	for _, access := range []string{"read_write", "data_api"} {
+	for _, access := range []string{"read_write", "data_api", "auth"} {
 		t.Run(access, func(t *testing.T) { testManagedPostgresSecretDeliveryPolicy(t, access) })
 	}
 }
 
 func testManagedPostgresSecretDeliveryPolicy(t *testing.T, access string) {
-	rows := []AppSecret{
+	rows := []state.AppSecret{
 		{Key: "TOKEN"},
 		{Key: "DATABASE_URL", ManagedPostgresBindingID: "runtime", ManagedPostgresAccess: access},
 		// Use an arbitrary key: access comes from the binding, not its name.
@@ -32,7 +36,7 @@ func testManagedPostgresSecretDeliveryPolicy(t *testing.T, access string) {
 		{name: "missing release secret", requested: map[string]string{"MISSING": "secret:MISSING"}, release: true, denied: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := SelectAppSecretsForDelivery(rows, tc.requested, tc.release)
+			got, err := state.SelectAppSecretsForDelivery(rows, tc.requested, tc.release)
 			if (err != nil) != tc.denied {
 				t.Fatalf("delivery error = %v", err)
 			}
@@ -50,8 +54,8 @@ func testManagedPostgresSecretDeliveryPolicy(t *testing.T, access string) {
 		})
 	}
 	for _, access := range []string{"", "administrator"} {
-		corrupt := []AppSecret{{Key: "SCHEMA_DSN", ManagedPostgresBindingID: "ddl", ManagedPostgresAccess: access}}
-		if _, err := SelectAppSecretsForDelivery(corrupt, nil, true); err == nil {
+		corrupt := []state.AppSecret{{Key: "SCHEMA_DSN", ManagedPostgresBindingID: "ddl", ManagedPostgresAccess: access}}
+		if _, err := state.SelectAppSecretsForDelivery(corrupt, nil, true); err == nil {
 			t.Fatal("missing/unknown binding metadata admitted")
 		}
 	}

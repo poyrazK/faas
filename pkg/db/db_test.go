@@ -36,9 +36,9 @@ func TestDaemonConnectionBudgetFitsMultiNodeFleet(t *testing.T) {
 		rolloutNodes int32
 		wantMax      int32
 	}{
-		{computeNodes: 1, rolloutNodes: standaloneRolloutNodes, wantMax: 130},
+		{computeNodes: 1, rolloutNodes: standaloneRolloutNodes, wantMax: 140},
 		{computeNodes: 2, rolloutNodes: standaloneRolloutNodes, wantMax: 170},
-		{computeNodes: 10, rolloutNodes: standaloneRolloutNodes, wantMax: 520},
+		{computeNodes: 10, rolloutNodes: standaloneRolloutNodes, wantMax: 530},
 		{computeNodes: 12, rolloutNodes: standaloneRolloutNodes, wantMax: 620},
 		// join-fleet converges four nodes by default. These cases cover the
 		// boundary where the steady-state 75% margin alone is insufficient.

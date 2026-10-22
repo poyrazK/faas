@@ -62,7 +62,7 @@ tests:
         alertname: FaasErrorRateSpike
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               component: apid
               family: traffic_anomaly
               mode: fleet
@@ -104,7 +104,7 @@ tests:
         alertname: FaasErrorRateDrop
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               component: apid
               family: traffic_anomaly
               mode: fleet

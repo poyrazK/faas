@@ -85,7 +85,7 @@ func diagnoseCommitSource(source api.CommitSourceResponse, now time.Time) commit
 		enabled.State, enabled.Code, enabled.Action = "fail", "paused", "Resume the source when its destination is ready."
 	}
 	policy := commitwork.DiagnosticCheck{Name: "operation_policy", State: "pass", Code: "bound"}
-	if source.OperationPolicy == "" {
+	if source.OperationPolicy == "" && source.Destination != "event" {
 		policy.State, policy.Code, policy.Action = "fail", "legacy_source", "Create a source bound to an active account-scoped queue policy."
 	}
 	health := commitwork.DiagnosticCheck{Name: "scheduler_observation", State: "pass", Code: source.RelayStatus}
@@ -140,16 +140,17 @@ func readCommitConnectionFile(path string) (string, error) {
 }
 
 type commitEventInspection struct {
-	Source         api.CommitSourceResponse        `json:"source"`
-	EventID        string                          `json:"event_id"`
-	DatabaseCommit string                          `json:"database_commit"`
-	Acceptance     string                          `json:"acceptance"`
-	Execution      string                          `json:"execution"`
-	Receipt        *api.CommitReceiptResponse      `json:"receipt,omitempty"`
-	Operation      *api.CommitOperationResponse    `json:"operation,omitempty"`
-	Blocked        *api.CommitBlockedEventResponse `json:"blocked,omitempty"`
-	Observation    string                          `json:"observation"`
-	Action         string                          `json:"action,omitempty"`
+	Source             api.CommitSourceResponse        `json:"source"`
+	EventID            string                          `json:"event_id"`
+	DatabaseCommit     string                          `json:"database_commit"`
+	Acceptance         string                          `json:"acceptance"`
+	Execution          string                          `json:"execution"`
+	Receipt            *api.CommitReceiptResponse      `json:"receipt,omitempty"`
+	PublicationReceipt *api.EventReceiptResponse       `json:"publication_receipt,omitempty"`
+	Operation          *api.CommitOperationResponse    `json:"operation,omitempty"`
+	Blocked            *api.CommitBlockedEventResponse `json:"blocked,omitempty"`
+	Observation        string                          `json:"observation"`
+	Action             string                          `json:"action,omitempty"`
 }
 
 // Receipt absence says nothing about commit or rollback in the customer DB.
@@ -165,6 +166,26 @@ func inspectCommitEvent(ctx context.Context, client commitReadClient, sourceID, 
 	if err == nil {
 		out.Receipt, out.Acceptance = &receipt, "accepted"
 		out.Observation = "Durable Gregale acceptance; the execution status and customer transaction outcome have not been established."
+		if receipt.Publication != nil {
+			out.Execution = "subscriber_evidence"
+			out.Action = "Read the publication receipt's recipient pages for independent delivery, execution and recovery status."
+			if reader, ok := client.(interface {
+				GetCommitPublicationReceipt(context.Context, api.CommitEventPublication, string, int) (api.EventReceiptResponse, error)
+			}); ok {
+				evidence, readErr := reader.GetCommitPublicationReceipt(ctx, *receipt.Publication, "", api.EventReceiptPageMax)
+				if readErr != nil {
+					var apiErr *APIError
+					if errors.As(readErr, &apiErr) && apiErr.Problem.Status == http.StatusNotFound {
+						out.Execution = "unavailable"
+						out.Observation = "Commit acceptance is retained; event delivery evidence is no longer retained."
+						return out, nil
+					}
+					return out, readErr
+				}
+				out.PublicationReceipt = &evidence
+			}
+			return out, nil
+		}
 		workID := receipt.OperationID
 		if workID == "" {
 			workID = receipt.InvocationID
@@ -212,12 +233,19 @@ func cmdCommitInspect(verb string, args []string) int {
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum wait; timing out does not cancel durable work")
 	interval := fs.Duration("interval", time.Second, "poll interval (100ms-1m)")
 	until := fs.String("until", "completed", "wait for accepted or completed")
+	subscription := fs.String("subscription-id", "", "original application subscriber to wait for; requires --until completed")
 	flags, positional := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil || rejectUnexpectedFlagArgs(fs) || len(positional) != 2 {
 		return 1
 	}
 	if *timeout <= 0 || *timeout > 24*time.Hour || *interval < 100*time.Millisecond || *interval > time.Minute || (*until != "accepted" && *until != "completed") {
 		return 1
+	}
+	if *subscription != "" {
+		id, err := uuid.Parse(*subscription)
+		if err != nil || id == uuid.Nil || *until != "completed" {
+			return 1
+		}
 	}
 	if verb != "wait" && fs.NFlag() != 0 {
 		return 1
@@ -244,6 +272,9 @@ func cmdCommitInspect(verb string, args []string) int {
 			return printErr("Cannot inspect Commit event", err)
 		}
 		return 0
+	}
+	if *subscription != "" {
+		return runCommitSubscriberWait(ctx, client, positional[0], positional[1], *subscription, *interval)
 	}
 	out, err := waitCommitEvent(ctx, client, positional[0], positional[1], *until, *interval)
 	if code := jsonOut(writeJSON(out)); code != 0 {
@@ -272,6 +303,9 @@ func waitCommitEvent(ctx context.Context, client commitReadClient, source, event
 			return last, err
 		}
 		last = out
+		if until == "completed" && out.Receipt != nil && out.Receipt.Publication != nil {
+			return out, fmt.Errorf("event publication has independent subscribers; use --subscription-id UUID --until completed or --until accepted")
+		}
 		if (until == "accepted" && out.Acceptance == "accepted") || out.Acceptance == "blocked" {
 			return out, nil
 		}

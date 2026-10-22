@@ -263,6 +263,8 @@ func (tx *exclusivePostgresTx) reserve(account string) error {
 func (tx *exclusivePostgresTx) effects(o ExclusiveOperation, effects []exclusivework.Effect) error {
 	for _, e := range effects {
 		id := uuid.NewString()
+		captureRun := ""
+		receiverSHA256 := ""
 		if e.WebhookID != "" {
 			body, err := operationEffectBody(o, e)
 			if err != nil {
@@ -288,11 +290,22 @@ func (tx *exclusivePostgresTx) effects(o ExclusiveOperation, effects []exclusive
 				return err
 			}
 			e.WebhookID = webhookID
-			if err := tx.q.EnqueueExclusiveWebhookEffect(tx.ctx, tx.db, sqlc.EnqueueExclusiveWebhookEffectParams{ID: id, WebhookID: webhookID, AppID: o.AppID, AccountID: o.AccountID, Payload: body}); err != nil {
+			captureRun, err = scenarioCaptureRunTx(tx.ctx, tx.db, o.AccountID, o.AppID)
+			if err != nil {
 				return err
 			}
+			if captureRun == "" {
+				if err := tx.q.EnqueueExclusiveWebhookEffect(tx.ctx, tx.db, sqlc.EnqueueExclusiveWebhookEffectParams{ID: id, WebhookID: webhookID, AppID: o.AppID, AccountID: o.AccountID, Payload: body}); err != nil {
+					return err
+				}
+			} else {
+				receiverSHA256, err = scenarioReceiverFingerprintTx(tx.ctx, tx.db, webhookID)
+				if err != nil {
+					return err
+				}
+			}
 		}
-		if err := tx.q.InsertExclusiveWorkEffect(tx.ctx, tx.db, sqlc.InsertExclusiveWorkEffectParams{ID: id, OperationID: o.ID, Generation: o.Generation, Name: e.Name, Payload: e.Payload, WebhookID: e.WebhookID, EventType: e.Type}); err != nil {
+		if err := tx.q.InsertExclusiveWorkEffect(tx.ctx, tx.db, sqlc.InsertExclusiveWorkEffectParams{ID: id, OperationID: o.ID, Generation: o.Generation, Name: e.Name, Payload: e.Payload, WebhookID: e.WebhookID, EventType: e.Type, RehearsalRunID: captureRun, ReceiverSha256: receiverSHA256}); err != nil {
 			return err
 		}
 	}
@@ -306,8 +319,8 @@ func (tx *exclusivePostgresTx) effectRecords(o ExclusiveOperation) ([]api.Operat
 	}
 	records := make([]api.OperationEffectRecord, 0, len(rows))
 	for _, row := range rows {
-		record := api.OperationEffectRecord{ID: row.EID, Name: row.Name, Generation: row.Generation, WebhookID: row.WebhookID, Type: row.EventType, Status: row.Status, Attempt: int(row.Attempt), LastError: row.LastError}
-		if row.WebhookID != "" {
+		record := api.OperationEffectRecord{ID: row.EID, Name: row.Name, Generation: row.Generation, WebhookID: row.WebhookID, Type: row.EventType, Status: row.Status, Attempt: int(row.Attempt), LastError: row.LastError, RehearsalRunID: row.RehearsalRunID}
+		if row.WebhookID != "" && row.RehearsalRunID == "" {
 			record.DeliveryID = row.EID
 		}
 		records = append(records, record)

@@ -41,6 +41,13 @@ instances, cold fallback, redeployment, or node failure. The ephemeral disk
 allowance includes application content and filesystem overhead, rather than
 guaranteeing that amount of free scratch space; see [ADR-158](adr/158-ephemeral-disk-boundary.md).
 
+While an image is assembled, its layers may write at most twice the plan's
+ephemeral disk allowance in file content (`LayerExtractionBudgetMultiple`).
+Content that a later layer replaces or deletes still counts toward this
+budget. An image that exceeds it fails with `app_layer_too_large` before
+assembly finishes. A registry blob download may wait up to 60 seconds for
+headers or for its next bytes, and may take up to 30 minutes in total.
+
 Direct OCI images use TCP listener readiness by default; Gregale does not
 invent a `/healthz` endpoint that the image never declared. An explicit
 deployment health-path override selects HTTP readiness instead.
@@ -204,11 +211,122 @@ GitHub-triggered images recheck their recorded source branch before cutover.
 Explicit rollback retains its existing behavior. See
 [ADR-681](adr/681-image-deployment-promotion-ordering.md).
 
+Prebuilt image services can also override the image's process
+([ADR-1337](adr/1337-compose-process-overrides-and-key-reporting.md)):
+
+```yaml
+services:
+  api:
+    image: ghcr.io/team/api:production
+    entrypoint: [tini, --]
+    command: [node, server.js]
+    user: "1000:1000"
+    working_dir: /srv/app
+    stop_signal: SIGINT
+    stop_grace_period: 20s
+    env_file: [.env.production]
+```
+
+`entrypoint` replaces the image ENTRYPOINT and, as in Docker, drops its CMD, so
+`command` supplies the arguments; `entrypoint: []` clears the ENTRYPOINT and
+needs a `command`. String entrypoints are split on spaces; anything with quotes
+or shell syntax must use the list form. `user` takes a name or id with an
+optional `:group`, resolved against the image's `/etc/passwd` and `/etc/group`.
+`working_dir` must be an absolute path. `stop_signal` accepts the signals
+guest-init delivers (SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2), and
+`stop_grace_period` is capped by the plan. Like commands, these overrides are
+captured per deployment, so queued deployments and rollbacks keep them.
+Source-built services set the same things in their Dockerfile; Compose
+overrides on them produce a scan warning.
+
+`env_file` contributes variable names only. The scan lists them as required
+environment keys, exactly like `environment:`; values never leave the source,
+so set them with `gregale env set` or secrets. An env file missing from the
+source (for example a git-ignored `.env`) is a warning, or silent with
+`required: false`. Quoted values, including multi-line double- or
+single-quoted ones, are read to their closing quote; a malformed line is
+reported with its file and line number and skipped.
+
+Source-built services pass `build.args` and `build.target` to their Dockerfile
+build, as `docker compose build` does
+([ADR-20261019142544](adr/20261019142544-compose-build-args-and-target.md)):
+
+```yaml
+services:
+  api:
+    build:
+      context: ./api
+      target: production
+      args:
+        NODE_VERSION: 22
+        APP_VERSION: ${APP_VERSION:-dev}
+        SENTRY_RELEASE:
+```
+
+`args` takes the map or the list form. `${VAR}` reads the source's `.env`, like
+the rest of the file; `$VAR` without braces is passed literally and warns. A name
+without a value (`SENTRY_RELEASE:`, or `- SENTRY_RELEASE` in the list form) also
+reads `.env`; when `.env` does not set
+it, the argument is left out and the Dockerfile's `ARG` default applies, with a
+warning. `target` must name a stage the Dockerfile declares with `FROM … AS`;
+an unknown stage fails the scan. A service whose build context has no Dockerfile
+builds with Railpack, so its `args` and `target` are warned and ignored. Up to
+64 arguments of at most 4 KiB each are accepted (`DockerfileBuildArgsMax`,
+`DockerfileBuildArgValueMaxBytes`).
+
+Each deployment keeps the arguments and target it was planned with, and changing
+either rebuilds instead of reusing a cached image. A public build URL with the
+same name as an argument wins. Build arguments end up in the image history, so
+keep secrets out of them and set those with `gregale secrets set`. Plans show the
+target and the argument names, not their values.
+
+`extends` and top-level `include` are resolved as Compose resolves them
+([ADR-20261019190527](adr/20261019190527-compose-extends-and-include.md)):
+
+```yaml
+include:
+  - services/api/compose.yaml        # build: . there builds services/api
+services:
+  worker:
+    extends: {file: common/base.yaml, service: node}
+    command: [node, worker.js]
+```
+
+A service is merged onto its base with the override-file rules: mappings merge,
+`ports`, `env_file`, `profiles`, `depends_on` and `environment` append, and
+other values are replaced. Build contexts and `env_file` paths in another
+directory stay relative to their own file. Included services join the project;
+a service defined in two files, an unknown base, a cycle or a missing file fails
+the scan, as in Compose. Remote includes are not loaded and warn. Variables are
+read from the root `.env` only, so an include's `project_directory` and
+`env_file` options, and a `.env` beside an included file, warn. At most 32 files
+are linked in one scan.
+
+The scan reports every other Compose key instead of dropping it silently:
+
+| Keys | Result |
+|---|---|
+| `build` (`context`, `dockerfile`, `args`, `target`), `command`, `depends_on`, `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `ports`, `profiles`, `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied (process keys and `healthcheck` only on prebuilt images). |
+| `container_name`, `init`, `stdin_open`, `tty`, `platform: linux/amd64`, `x-*` extensions | Ignored without a warning; they have no effect on a microVM service. |
+| `volumes`, `tmpfs` | Warning: no persistent volumes or bind mounts; each start gets a fresh filesystem. |
+| `deploy`, `scale`, `cpus`, `mem_limit` and other resource keys | Warning: CPU, memory and replicas come from the plan and app scaling. |
+| `restart` | Warning: the platform starts, parks and restarts services. |
+| `secrets`, `configs` | Warning: use `gregale secrets set` or environment variables. |
+| `networks`, `network_mode`, `links`, `external_links` | Warning: services reach each other through `depends_on` service bindings. |
+| `cap_add`, `privileged`, `devices`, `security_opt`, `ulimits` and other kernel controls | Warning: each service runs in its own microVM. |
+| `dns`, `extra_hosts`, `hostname` and other guest networking keys | Warning: guest networking is managed by the platform. |
+| `labels`, `logging`, `pull_policy`, any other `platform` | Warning. |
+| `build.secrets`, `build.ssh`, `build.dockerfile_inline`, other `build.*` keys | Warning: the builder uses only `build.context`, `build.dockerfile`, `build.args` and `build.target`. |
+| Any other service key | Warning: not supported. |
+
+Managed database and cache services (for example `postgres`) do not report
+their keys: the managed resource replaces the container.
+
 | Concern | Current contract | Qualification boundary |
 |---|---|---|
-| Image platform | Linux/amd64; compatible child selected from an OCI or Docker index | Other architectures and operating systems are rejected. |
-| Process | Image ENTRYPOINT + CMD, environment, working directory, and user | Metadata inspection cannot prove executables or users exist in the layers. Numeric or named `USER user:group` is preserved; explicit missing identities fail launch. Supplementary memberships are not imported. |
-| Main listener | Explicit deployment port, otherwise one exposed TCP port, otherwise 8080 | Multiple TCP declarations do not select the main port. Bind to `0.0.0.0`. |
+| Image platform | Linux/amd64; compatible child selected from an OCI or Docker index. A lone child without a platform annotation is selected and its config's platform checked. | Other architectures and operating systems are rejected. |
+| Process | Image ENTRYPOINT + CMD, environment, working directory, and user. As under Docker, an image without `USER` runs as root, and a numeric UID absent from the image's passwd runs with GID 0 ([ADR-1239](adr/1239-docker-compatible-image-process-identity.md)). Root-owned image files stay root-owned in the guest. | Metadata inspection cannot prove executables or users exist in the layers. Numeric or named `USER user:group` is preserved; explicit missing identities fail launch. Supplementary memberships are not imported. Redeploy to pick up root ownership for artifacts built before ADR-1239. |
+| Main listener | Explicit deployment port, otherwise one exposed TCP port, otherwise 8080. Port 80 is supported: when a workload in the VM declares it, the in-guest metadata endpoint moves from `169.254.169.254:80` to `169.254.169.254:8775`. | Multiple TCP declarations do not select the main port. Bind to `0.0.0.0`. Read the metadata URLs from `FAAS_EVENT_PUBLISH_ENDPOINT`, `FAAS_METADATA_ENV_ENDPOINT` and `FAAS_SECRETS_RELOAD_ACK_ENDPOINT` instead of hardcoding the address. |
 | Additional listeners | Declared TCP listeners use `<slug>--port-<name>.<apps-domain>` selectors through the gateway | These are HTTP gateway selectors. Raw TCP uses separately configured app-owned listeners; UDP uses the separate opt-in listener service below. |
 | Raw TCP ingress | Opt-in public edge binds stable app-owned TCP listener ports and forwards bytes through admission and vmmd; optional per-listener TLS termination | Disabled by default; requires gateway/firewall rollout. TLS defaults to passthrough; termination requires verified app-owned hostname and provisioned edge bundle. Native TLS acceptance remains pending. See [rollout](ops/tcp-ingress.md). |
 | Private TCP between services | Same-account services dial `<name>.svc.gregale:<port>` on any declared TCP listener or the serving port; compose `expose:` declares internal-only listeners (ADR-576) | Node-level rollout; until enabled, service names answer HTTP only. Internal listeners never get public selectors or raw TCP listeners. Ports 10080, 10081 and 443 stay on the HTTP mesh. See [networking](networking.md#private-tcp-between-services). |

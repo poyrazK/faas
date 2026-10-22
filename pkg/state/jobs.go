@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,7 +40,7 @@ import (
 
 // Job is one row of public.jobs (migrations/00255 + 00572 for command and
 // the image-materialization columns added by the Epic #1184 follow-up).
-// Kind is the closed vocabulary ('batch' | 'recurring') enforced by the
+// Kind is the closed vocabulary ('batch' | 'recurring' | 'image_run') enforced by the
 // jobs_kind_check and schedule-kind constraints; Status is ('active' | 'paused' | 'deleted')
 // enforced by jobs_status_check. EnvOverrides is jsonb so the customer-
 // facing knob is open-vocabulary; Command is the OCI entrypoint added
@@ -53,7 +54,7 @@ type Job struct {
 	ScheduleRevision int64
 	ID               string
 	AccountID        string
-	Kind             string // 'batch' | 'recurring'
+	Kind             string // 'batch' | 'recurring' | 'image_run' (ADR-1161)
 	Name             string
 	ImageRef         string
 	RAMMB            int
@@ -69,7 +70,9 @@ type Job struct {
 	UpdatedAt        time.Time
 	Command          []string // migrations/00572
 	// ImageResolvedDigest is the immutable OCI manifest digest selected from
-	// ImageRef by imaged. Empty until materialization succeeds.
+	// ImageRef by imaged. Source-backed GitOps Jobs instead record an explicit
+	// gregale-deployment:<UUID> identity, never an invented OCI digest. Empty
+	// until materialization or qualified graph activation succeeds.
 	ImageResolvedDigest string
 	// ImageStorageKey is the immutable ext4 artifact consumed by vmmd. New
 	// materializations use a per-attempt key; legacy verified artifacts may
@@ -87,6 +90,12 @@ type Job struct {
 	// contract while transient failures are retried durably.
 	ImageMaterializationAttempts      int
 	ImageMaterializationNextAttemptAt *time.Time
+	// ImageEntrypoint and ImageCmd are the source image's own ENTRYPOINT and
+	// CMD, recorded by imaged before it publishes a ready artifact (ADR-1161).
+	// ImageConfigRecorded is false for artifacts published before that.
+	ImageEntrypoint     []string
+	ImageCmd            []string
+	ImageConfigRecorded bool
 }
 
 // JobScheduleStore is the durable scheduling seam used by schedd. Listing is
@@ -165,7 +174,11 @@ type JobRun struct {
 	TaskTimeoutS         *int // effective policy; nil only for legacy runs
 	// Command is the executable and arguments captured when the run was
 	// created. Nil denotes a legacy row that predates run snapshots.
-	Command                     []string
+	Command []string
+	// ProcessUser and ProcessWorkdir override the image's USER and WORKDIR
+	// for an image run (ADR-1790); empty keeps the image's own.
+	ProcessUser                 string
+	ProcessWorkdir              string
 	ImageRefSnapshot            string
 	ImageResolvedDigestSnapshot string
 	ImageStorageKeySnapshot     string
@@ -203,6 +216,25 @@ type JobRunOptions struct {
 	FailurePolicy        string
 	EligibleAt           *time.Time
 	LatestStartAt        *time.Time
+	// Attach admits the run as an interactive image run (ADR-1330). The
+	// session row is written in the run's transaction.
+	Attach *JobRunAttach
+	// ProcessUser and ProcessWorkdir snapshot an image run's USER and
+	// WORKDIR overrides (ADR-1790).
+	ProcessUser    string
+	ProcessWorkdir string
+}
+
+// validateJobRunProcess mirrors the job_runs process CHECKs (ADR-1790) so
+// both stores reject the same overrides.
+func validateJobRunProcess(opts JobRunOptions) error {
+	if len(opts.ProcessUser) > api.ImageRunUserMaxBytes || strings.ContainsRune(opts.ProcessUser, 0) {
+		return fmt.Errorf("%w: process user is invalid", ErrInvalidArgument)
+	}
+	if err := api.ValidateImageRunWorkdir(opts.ProcessWorkdir); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	}
+	return nil
 }
 
 // JobInput binds an ordered input identity to one task. InputRef is passed to

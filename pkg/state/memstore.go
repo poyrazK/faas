@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net/netip"
 	"reflect"
@@ -22,14 +23,22 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/chaos"
+	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/rehearsalcold"
+	"github.com/onebox-faas/faas/pkg/rehearsalfault"
+	"github.com/onebox-faas/faas/pkg/rehearsalobj"
+	"github.com/onebox-faas/faas/pkg/rehearsalpg"
+	"github.com/onebox-faas/faas/pkg/rehearsalresume"
+	"github.com/onebox-faas/faas/pkg/rehearsalwork"
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -138,76 +147,199 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
-	mcpTaskPromotionHolds                map[string]MCPTaskPromotionHold
-	workflowFailureEvidence              map[string][]workflowFailureEvidence
-	workflowFailureCaptureStartedAt      time.Time
-	recoveryPolicies                     map[string]*memWorkflowRecoveryPolicy
-	eventRecoveryExecutionResults        map[recoveryResultKey]memRecoveryExecutionResult
-	managedRealtimeReducers              map[managedRealtimeHistoryKey]ManagedRealtimeReducerState
-	managedRealtimeSchedules             map[managedRealtimeScheduleKey]ManagedRealtimeSchedule
-	managedRealtimeScheduleHistory       map[managedRealtimeScheduleKey][]ManagedRealtimeScheduleHistoryEvent
-	managedRealtimeEventSchemas          map[managedRealtimeEventSchemaKey]ManagedRealtimeEventSchema
-	managedRealtimeBatches               map[managedRealtimeBatchKey]managedRealtimeBatchRecord
-	managedRealtimeSnapshots             map[managedRealtimeHistoryKey]ManagedRealtimeChannelSnapshot
-	realtimeNotificationTimeline         map[string][]api.ManagedRealtimeNotificationTimelineEvent
-	realtimeNotificationTimelineSequence int64
-	realtimePushRateReservations         map[string]map[string]time.Time
-	deploymentDependencyGates            map[string]DeploymentDependencyGate
-	invocationAttemptHistory             map[int64]retainedInvocationAttempt
-	nextInvocationAttemptID              int64
-	checkedRollbacks                     map[string]api.RollbackOperation
-	alertRollbacks                       map[string]api.AlertRollback
-	alertHistoricalClaims                map[string]string
-	recoveryPredecessors                 map[string]string
-	bindingReleasePolicies               map[bindingReleasePolicyKey]api.BindingReleasePolicy
-	bindingReleasePolicyHistory          []api.BindingReleasePolicy
-	operationData                        *operationMemory
-	operationCodePins                    map[string]time.Time
-	qualificationExecutions              map[string]EnvironmentQualificationExecutionStatus
-	environmentExternalOwners            map[string]environmentExternalFieldOwner
-	environmentGitOps                    map[string]*environmentGitOpsMemory
-	financialEvidence                    []FinancialUsageRecord
-	financialSamplingWindows             map[time.Time]financialSamplingWindow
-	financialNextSequence                int64
-	financialPrices                      map[string]FinancialPriceSnapshot
-	financialBudgets                     map[string]FinancialBudget
-	financialBudgetRevisions             map[string][]FinancialBudgetRevision
-	financialRetainedFrom                time.Time
-	exclusivePolicies                    map[string]ExclusiveWorkPolicy
-	exclusiveTriggerBindings             map[string]ExclusiveTriggerBinding
-	exclusiveKeys                        map[string]exclusiveKey
-	exclusiveOperations                  map[string]ExclusiveOperation
-	exclusiveEffects                     map[string][]exclusiveStoredEffect
-	exclusiveNow                         func() time.Time
-	exclusiveSubmissions                 map[string]string
-	capacityInstanceResources            map[string]capacityResources
-	serviceCapacityProtection            bool
-	serviceRecovery                      map[string]ServiceRecovery
-	devBridgeSessions                    map[string]devbridge.Session
-	devBridgeWebhookReplays              map[string]devbridge.WebhookReplay
-	featureFlagVersions                  map[string][]FeatureFlagVersion
-	safeReleaseWorkerLeaseUntil          time.Time
-	requestAuditEvents                   map[string]RequestAuditRecord
-	discoveredAPIRoutes                  map[string]DiscoveredAPIRoute
-	discoveryReceipts                    map[string]struct{}
-	revisionPins                         map[string]time.Time
-	imagePreparations                    map[string]ImagePreparation
-	deploymentActivationMu               sync.Mutex
-	deploymentActivationLocks            map[string]*deploymentActivationLock
-	productionLifecycleHistory           []api.RouteLifecycleHistoryEntry
-	nextProductionLifecycleReviewID      int64
-	productionLifecycleDecisions         map[string]api.RouteGateDecision
-	lifecycleApprovalConfigurations      map[string]string
-	lifecycleApprovalSuccessors          map[string]string
-	lifecycleRecovery                    bool
-	routeLifecycleApprovals              map[string]api.RouteLifecycleApproval
-	routeRemovalPolicies                 map[string]api.RouteRemovalPolicy
+	migrationContracts                         map[string]projectMigrationContract
+	projectCanaries                            map[string]projectCanaryRecord
+	workerReleasePins                          map[string]projectWorkerReleasePin
+	workerJobEvidence                          map[string]projectWorkerJobObservation
+	projectSubmissions                         map[string]projectSubmissionEntry
+	projectReleaseAdditions                    map[string]projectReleaseAdditionRecord
+	releaseWorkerDrains                        map[string]bool
+	releaseWorkerCandidates                    map[string]string
+	releaseSecretBundles                       map[string]releaseSecretBundle
+	releaseSecretPins                          map[string][]releaseSecretVersion
+	retiredSecretEncryptionKeys                map[string]bool
+	releaseConfigurationIntents                map[string]projectReleaseConfigCapture
+	releaseEnvironmentPins                     map[string][]AppEnv
+	promotionReleaseConfigurations             map[string]promotionReleaseConfiguration
+	migrationVerifications                     map[string]MigrationVerificationRecord
+	migrationCutovers                          map[string]MigrationCutoverRecord
+	projectMigrations                          map[string]ProjectMigrationRecord
+	publicBuildURLs                            map[string]map[string]string
+	operatorAlertEpisodes                      map[string]OperatorAlertEpisode
+	operatorAlertRules                         map[string]OperatorAlertRuleObservation
+	operatorAlertCollection                    OperatorAlertCollection
+	operatorAlertCollectionOutcomes            []OperatorAlertCollectionOutcome
+	operatorAlertCollectionDiagnostics         map[time.Time]api.ObsAlertCollectionRejection
+	operatorAlertRetention                     OperatorAlertRetention
+	initialRecoveryReviews                     map[string]api.WorkflowInitialRecoveryReview
+	initialCompletionNext                      map[string]time.Time
+	eventExecutionRoots                        map[executionLedgerRootKey]executionLedgerRoot
+	eventExecutionOutcomes                     map[executionLedgerOutcomeKey]executionLedgerOutcome
+	eventExecutionCoverage                     map[string]executionCoverage
+	mcpOAuthRetirements                        map[string]mcpRetirementEntry
+	mcpCatalogMonitors                         map[string]api.MCPCatalogMonitorSnapshot
+	mcpCatalogMonitorOwners                    map[string]string
+	mcpTaskPromotionHolds                      map[string]MCPTaskPromotionHold
+	workflowFailureEvidence                    map[string][]workflowFailureEvidence
+	workflowFailureCaptureStartedAt            time.Time
+	recoveryPolicies                           map[string]*memWorkflowRecoveryPolicy
+	eventRecoveryExecutionResults              map[recoveryResultKey]memRecoveryExecutionResult
+	managedRealtimeReducers                    map[managedRealtimeHistoryKey]ManagedRealtimeReducerState
+	managedRealtimeSchedules                   map[managedRealtimeScheduleKey]ManagedRealtimeSchedule
+	managedRealtimeScheduleHistory             map[managedRealtimeScheduleKey][]ManagedRealtimeScheduleHistoryEvent
+	managedRealtimeEventSchemas                map[managedRealtimeEventSchemaKey]ManagedRealtimeEventSchema
+	managedRealtimeBatches                     map[managedRealtimeBatchKey]managedRealtimeBatchRecord
+	managedRealtimeSnapshots                   map[managedRealtimeHistoryKey]ManagedRealtimeChannelSnapshot
+	realtimeNotificationTimeline               map[string][]api.ManagedRealtimeNotificationTimelineEvent
+	realtimeNotificationTimelineSequence       int64
+	realtimePushRateReservations               map[string]map[string]time.Time
+	deploymentDependencyGates                  map[string]DeploymentDependencyGate
+	invocationAttemptHistory                   map[int64]retainedInvocationAttempt
+	nextInvocationAttemptID                    int64
+	checkedRollbacks                           map[string]api.RollbackOperation
+	alertRollbacks                             map[string]api.AlertRollback
+	alertHistoricalClaims                      map[string]string
+	recoveryPredecessors                       map[string]string
+	bindingReleasePolicies                     map[bindingReleasePolicyKey]api.BindingReleasePolicy
+	bindingReleasePolicyHistory                []api.BindingReleasePolicy
+	operationData                              *operationMemory
+	operationCodePins                          map[string]time.Time
+	qualificationExecutions                    map[string]EnvironmentQualificationExecutionStatus
+	environmentExternalOwners                  map[string]environmentExternalFieldOwner
+	environmentGitOps                          map[string]*environmentGitOpsMemory
+	gitlabOAuthConnections                     map[string]GitLabOAuthConnection
+	financialEvidence                          []FinancialUsageRecord
+	financialSamplingWindows                   map[time.Time]financialSamplingWindow
+	financialNextSequence                      int64
+	financialPrices                            map[string]FinancialPriceSnapshot
+	financialBudgets                           map[string]FinancialBudget
+	financialBudgetRevisions                   map[string][]FinancialBudgetRevision
+	financialRetainedFrom                      time.Time
+	exclusivePolicies                          map[string]ExclusiveWorkPolicy
+	exclusiveTriggerBindings                   map[string]ExclusiveTriggerBinding
+	exclusiveKeys                              map[string]exclusiveKey
+	exclusiveOperations                        map[string]ExclusiveOperation
+	exclusiveEffects                           map[string][]exclusiveStoredEffect
+	exclusiveNow                               func() time.Time
+	exclusiveSubmissions                       map[string]string
+	capacityInstanceResources                  map[string]capacityResources
+	serviceCapacityProtection                  bool
+	serviceRecovery                            map[string]ServiceRecovery
+	devBridgeSessions                          map[string]devbridge.Session
+	devBridgeWebhookReplays                    map[string]devbridge.WebhookReplay
+	featureFlagVersions                        map[string][]FeatureFlagVersion
+	safeReleaseWorkerLeaseUntil                time.Time
+	requestAuditEvents                         map[string]RequestAuditRecord
+	discoveredAPIRoutes                        map[string]DiscoveredAPIRoute
+	discoveryReceipts                          map[string]struct{}
+	revisionPins                               map[string]time.Time
+	imagePreparations                          map[string]ImagePreparation
+	deploymentActivationMu                     sync.Mutex
+	deploymentActivationLocks                  map[string]*deploymentActivationLock
+	productionLifecycleHistory                 []api.RouteLifecycleHistoryEntry
+	nextProductionLifecycleReviewID            int64
+	productionLifecycleDecisions               map[string]api.RouteGateDecision
+	lifecycleApprovalConfigurations            map[string]string
+	lifecycleApprovalSuccessors                map[string]string
+	lifecycleRecovery                          bool
+	routeLifecycleApprovals                    map[string]api.RouteLifecycleApproval
+	routeRemovalPolicies                       map[string]api.RouteRemovalPolicy
+	productData                                *productMemory
+	scenarioPostgresFaults                     map[string]rehearsalfault.Row
+	scenarioManagedWork                        map[string]scenarioManagedJob
+	scenarioWorkerFaults                       map[string]rehearsalwork.WorkerFault
+	scenarioColdPreparations                   map[string]rehearsalcold.Preparation
+	scenarioSuspendResumes                     map[string]rehearsalresume.Receipt
+	internalCI                                 *ci.MemoryStore
+	hostingOIDCTrusts                          map[string]api.HostingOIDCTrust
+	hostingCredentials                         map[string]api.HostingAutomationCredential
+	hostingRetentionPolicies                   map[string]api.HostingRetentionPolicy
+	hostingCIRuns                              map[string]api.HostingCIRun
+	hostingHistory                             map[string][]api.HostingPromotionEvent
+	hostingPreviews                            map[string]api.HostingPreview
+	hostingDomains                             map[string]memHostingDomain
+	hostingDomainClaims                        map[string]string
+	hostingSites                               map[string]api.HostingSite
+	hostingReleases                            map[string]api.HostingRelease
+	hostingPublications                        map[string]hostingPublication
+	eventAcknowledgmentWriters                 map[string]eventAcknowledgmentWriter
+	eventAcknowledgmentCoverageHead            eventAcknowledgmentCoverageHead
+	eventAcknowledgmentMetrics                 map[eventAcknowledgmentMetricKey]eventAcknowledgmentMetric
+	eventAcknowledgments                       map[string]eventAcknowledgment
+	eventAcknowledgmentOutcomes                map[eventAcknowledgmentOutcomeKey]api.EventAcknowledgmentOutcome
+	projectReleaseStages                       map[string]projectReleaseStage
+	bindingVerificationRuns                    map[string]verificationRunRecord
+	graphVerificationRuns                      map[string]graphVerificationRecord
+	queueBindingCanaries                       map[string]queueCanaryRecord
+	orgAccessRevision                          int64
+	orgAccessRevisions                         map[orgAccountKey]int64
+	baseImageProducers                         map[string]BaseImageProducer
+	baseImageProducerCurrent                   map[string]string
+	deploymentRegistryVerifications            map[string]DeploymentRegistryVerification
+	buildExportPublications                    map[string]BuildExportPublication
+	sourceBuildRootfs                          map[string]SourceBuildRootfs
+	sourceBuildRootfsCurrent                   map[string]string
+	deploymentRegistryRootfs                   map[string]DeploymentRegistryRootfs
+	deploymentRegistryRootfsCurrent            map[string]string
+	deploymentArtifactScans                    map[string]DeploymentArtifactScan
+	deploymentArtifactScanCurrent              map[string]string
+	deploymentRuntimeScans                     map[string]DeploymentRuntimeScan
+	deploymentRuntimeScanCurrent               map[string]string
+	baseImageScans                             map[string]BaseImageScan
+	baseImageScanCurrent                       map[string]string
+	instanceApplicationStandardAdmissions      map[string]InstanceApplicationStandardAdmission
+	instanceApplicationStandardBoots           map[string]instanceStandardBoot
+	applicationStandardSnapshotCaptures        map[string]ApplicationStandardSnapshotCaptureRecord
+	instanceApplicationStandardBootTokens      map[string]string
+	instanceApplicationStandardPromotions      map[string]instanceStandardPromotion
+	instanceApplicationStandardPromotionTokens map[string]string
+	computeNodeRuntimeHistory                  map[string]runtimeadmission.Identity
+	computeNodeRuntimeIncarnations             map[string]string
+	computeNodeRuntimeProtocols                map[string]uint32
+	appEgressRevisions                         map[string]int64
+	applicationStandardVersions                map[string][]ApplicationStandardVersion
+	applicationStandardLogDestinations         map[string]ApplicationStandardLogDestination
+	applicationStandardPublishers              map[string]api.ApplicationStandardPublisher
+	applicationStandardAssignments             map[string]applicationStandardAssignmentRecord
+	applicationStandardEnrollments             map[string]ApplicationStandardEnrollment
+	applicationStandardExceptions              map[string]ApplicationStandardException
+	applicationStandardLogDeliveries           map[string]ApplicationStandardLogDeliveryObservation
+	applicationStandardLogConsumers            map[string]ApplicationStandardLogConsumerSession
+	applicationStandardLogConsumerSessions     map[string]ApplicationStandardLogConsumerSession
+	applicationStandardLogConsumerClosures     map[string]ApplicationStandardLogConsumerClosure
+	applicationStandardLogInventories          map[string]ApplicationStandardLogInventoryObservation
+	applicationStandardLogHealth               map[string]ApplicationStandardLogHealthObservation
+	applicationStandardEgressObservations      map[string]ApplicationStandardEgressObservation
+	applicationStandardReviewPlans             map[string]ApplicationStandardReviewPlan
+	applicationStandardOperations              map[string]ApplicationStandardOperation
+	applicationStandardWorkerClaims            map[string]ApplicationStandardWorkerClaim
+	applicationStandardEnrollmentClaims        map[string]ApplicationStandardEnrollmentClaim
+	standardObservationChecks                  map[string]standardAutomaticObservationCheck
+	standardRuntimeRefreshRequests             map[string]ApplicationStandardRuntimeRefreshRequest
+	applicationStandardControlBindings         map[string]standardControlBinding
+	applicationStandardControlBackups          map[string]standardControlBackup
+	financialBudgetEvaluations                 map[string]financialBudgetMemoryEvaluation
+	financialBudgetAlerts                      map[string]FinancialBudgetAlertDelivery
+	financialBudgetStops                       map[string]FinancialBudgetStop
+	financialBudgetChannels                    map[string][]string                            // policy id → channel ids (ADR-20261019193500)
+	financialBudgetChannelDeliveries           map[string]FinancialBudgetAlertChannelDelivery // alert id + "\n" + channel id
+	financialBudgetProjections                 map[string]FinancialBudgetAlertDelivery        // projection alert id (ADR-20261019193500)
+	financialObjectStorageEstimates            map[string]FinancialObjectStorageEstimate      // account + "\n" + period (ADR-20261020160000)
+	financialPreviewCommands                   map[string]FinancialPreviewCommandRuntime
+	financialComputeBooks                      map[string]financialComputeBook
+	financialComputeLeases                     map[string]financialComputeLease
+	financialComputeHolds                      map[string][]financialComputeHold
+	financialComputeOwners                     map[string]financialComputeOwner
+	financialComputeJobAttempts                map[string]financialComputeJobAttempt
 
-	eventCircuitBreakers      map[string]*eventCircuitRecord
-	eventSubscriptionControls map[string]*memEventSubscriptionControl
-	eventRecoveryJobs         map[string]*memEventRecoveryJob
-	workflowCodePins          map[string]time.Time
-	qualificationSnapshots    map[string]EnvironmentQualificationSnapshotReceipt
+	eventCircuitBreakers              map[string]*eventCircuitRecord
+	eventSubscriptionControls         map[string]*memEventSubscriptionControl
+	eventSubscriptionRateCommands     map[string]memSubscriptionRateCommand
+	eventSubscriptionCapacityCommands map[string]memSubscriptionCapacityCommand
+	eventRecoveryJobs                 map[string]*memEventRecoveryJob
+	workflowCodePins                  map[string]time.Time
+	qualificationSnapshots            map[string]EnvironmentQualificationSnapshotReceipt
+	mcpReadiness                      *memMCPReadiness
 	// Restore evidence survives cleanup of the target's runtime receipt.
 	qualificationRestoreReceipts map[string]EnvironmentQualificationRestoreReceipt
 	// Guest configuration hashes survive cleanup of private qualification VMs.
@@ -223,6 +355,20 @@ type MemStore struct {
 	// environmentWorkloadQueueServingAcks can arrive before the controller has
 	// created the serving receipt; keyed per graph/binding to mirror Postgres.
 	environmentWorkloadQueueServingAcks map[string]map[string]EnvironmentWorkloadServingQueueAck
+	// rollbackPrepared mirrors deployments.rollback_prepared_at (ADR-1446).
+	rollbackPrepared map[string]time.Time
+	// rollbackRecords mirrors deployment_rollbacks (ADR-1446).
+	rollbackRecords map[string]RollbackRecord
+	// configRevisions, configGuards and configGuardSecrets mirror
+	// app_config_revisions, app_config_guards and app_config_guard_secrets
+	// (ADR-1451). Revisions are kept in revision order per scope.
+	configRevisions    map[configScopeKey][]ConfigRevision
+	configGuards       map[string]ConfigGuard
+	configGuardSecrets map[string]map[string]ConfigGuardSecret
+	// releaseFreezes mirrors release_freezes (ADR-20261019071733).
+	releaseFreezes map[string]ReleaseFreeze
+	// releaseGates mirrors app_release_gates (ADR-20261019071734).
+	releaseGates map[string]ReleaseGate
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex
@@ -244,8 +390,15 @@ type MemStore struct {
 	// what PgStore's count(*) over (app_id) measures.
 	customMetrics               map[string]map[string]CustomMetric
 	mcpTaskCompatibilityReports map[string]MCPTaskCompatibilityReport
+	notificationChannels        map[string][]NotificationChannel // account id → channels (ADR-749), lazily made
+	alertRuleChannels           map[string][]string              // rule id → channel ids (ADR-749)
+	appSLOs                     map[string][]SLO                 // app id → definitions (ADR-747), lazily made
+	sloHours                    map[string]map[time.Time]memSLOHour
+	syntheticChecks             map[string][]SyntheticCheck // app id → checks (ADR-748), lazily made
+	syntheticRuns               map[string][]SyntheticCheckRun
 	objectBuckets               map[string]ObjectBucket
 	objectMutations             map[string]ObjectBucketMutation
+	objectNodeSettlements       map[string]ObjectNodeSettlement
 	objectWriteFences           map[string]ObjectBucketWriteFence
 	objectUploadGrants          map[string]ObjectUploadGrant
 	objectUsage                 map[string]ObjectBucketUsage
@@ -267,6 +420,9 @@ type MemStore struct {
 	objectReports               []api.ObjectStorageUsageReport
 	objectCustomerReportsV2     []api.ObjectStorageCustomerUsageReportV2
 	objectAuthorizations        map[string]int64
+	objectUsageCutovers         map[string]time.Time
+	objectOrgOwnedFrom          map[string]time.Time
+	orgAsyncQuotaPooled         map[string]time.Time
 	objectProviderRequests      map[string]int64
 	objectAccessGrants          map[string]ObjectBucketAccessGrant
 	objectS3Credentials         map[string]ObjectS3Credential
@@ -282,9 +438,16 @@ type MemStore struct {
 	outboundAIUsage             map[string][]OutboundAIUsageItem
 	outboundAIPrices            map[string]OutboundAIPriceList
 	outboundAIRoutes            map[string]OutboundAIRoute
+	outboundAIAccessTokens      map[string]OutboundAIAccessToken
 	outboundCredentialKeys      map[string][]OutboundCredentialKey
 	outboundAIBudgetAlerts      map[string][]OutboundAIBudgetAlert
 	outboundAIRequestLog        map[string][]OutboundAIRequestLogEntry
+	outboundAIRequestContent    map[string]OutboundAIRequestContent
+	outboundAIReplays           map[string]OutboundAIReplay
+	outboundAIEvaluations       map[string]OutboundAIEvaluation
+	outboundAIUserUsage         map[string][]OutboundAIUserUsageItem
+	outboundAITagUsage          map[string][]OutboundAITagUsageItem
+	outboundAITagLimits         map[string][]api.OutboundAITagLimit
 	outboundAppBindings         map[string]OutboundAppBinding
 	outboundCredentials         map[string][]byte
 	mu                          sync.Mutex
@@ -293,6 +456,7 @@ type MemStore struct {
 	// egressFlows is the ADR-371 egress flow log.
 	egressFlows               []EgressFlowRecord
 	accounts                  map[string]Account
+	orgResourcePolicies       map[string]Account
 	freeQuotaSuspended        map[string]bool
 	accountDeployRates        map[string]accountDeployRateRow
 	keys                      map[string]APIKey
@@ -302,6 +466,9 @@ type MemStore struct {
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
 	scenarioTestMembers       map[string]ScenarioTestMember
+	scenarioPostgres          map[string]rehearsalpg.Resource
+	scenarioObjects           map[string]rehearsalobj.Resource
+	scenarioActionPolicies    map[string]scenarioActionPolicy
 	scenarioTestChaosPlans    map[string]chaos.Lease
 	scenarioTestChaosMatches  map[string]map[string]int64
 	previewSets               map[string]PRPreviewSet
@@ -331,6 +498,14 @@ type MemStore struct {
 	// apiConsumers is keyed by APIConsumer.ID. A separate map keeps the
 	// stable customer identity independent from rotatable credentials.
 	apiConsumers                         map[string]APIConsumer
+	apiConsumerTrials                    map[string]APIConsumerTrial               // ADR-1314
+	apiConsumerMeterUsage                map[string]APIConsumerMeterUsageBucket    // ADR-1318
+	platformTenantMeterUsage             map[string]PlatformTenantMeterUsageBucket // ADR-1319
+	platformTenantTrials                 map[string]PlatformTenantTrial            // ADR-1322, by tenant
+	platformTenantBillingPolicies        map[string]PlatformTenantBillingPolicy    // ADR-1324, by account
+	platformTenantOverdueHolds           map[string]PlatformTenantOverdueHold      // ADR-1324, by tenant
+	apiConsumerBillingPolicies           map[string]APIConsumerBillingPolicy       // ADR-1315, by app
+	apiConsumerOverdueHolds              map[string]APIConsumerOverdueHold         // ADR-1315, by consumer
 	platformTenants                      map[string]PlatformTenant
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
@@ -374,8 +549,14 @@ type MemStore struct {
 	mailSuppressions map[string]mailSuppressionRow
 	// deployFailedEmailAt mirrors apps.last_deploy_failed_email_at for
 	// the in-memory implementation of the I1 cooldown gate.
-	deployFailedEmailAt map[string]time.Time
-	deployments         map[string]Deployment
+	deployFailedEmailAt          map[string]time.Time
+	deployments                  map[string]Deployment
+	deploymentSubmissionReceipts map[string]api.DeploymentSubmissionReceipt
+	deploymentPolicyStates       map[string]deploymentPolicyState
+	deploymentCronStates         map[string]deploymentPolicyState
+	deploymentCronActivations    map[string]cronActivation
+	deploymentCronOutcomes       map[string]cronOutcome
+	deploymentCronBefore         map[string][]Cron
 	// deploymentServingEndedAt mirrors deployments.serving_ended_at; see
 	// putDeploymentLocked.
 	deploymentServingEndedAt map[string]time.Time
@@ -406,6 +587,7 @@ type MemStore struct {
 	devSourceManifests   map[string]DevSourceManifest
 	devSourceManifestSeq int64
 	devSourcePatches     []DevSourcePatch
+	devWatch             map[string]DevWatchSetting
 	devSourcePatchSeq    int64
 	domains              map[string]CustomDomain
 	defaultDomains       map[string]string
@@ -453,28 +635,38 @@ type MemStore struct {
 	// migrationLeases mirrors the durable source-side migration lease table.
 	// It lets vmmd migration tests exercise restart-safe lease semantics without
 	// requiring Postgres.
-	migrationLeases map[string]MigrationLease // lease_token → lease
+	migrationLeases               map[string]MigrationLease
+	functionMigrationSources      map[string]FunctionMigrationSource      // instance_id → source
+	functionMigrationPermissions  map[string]functionMigrationPermissions // lease_token → permissions
+	functionMigrationDestinations map[string]FunctionMigrationDestination // lease_token → immutable destination epoch
+	migrationSources              map[string]MigrationSource
+	migrationAdmissions           map[string]MigrationAdmission
+	migrationResumeFences         map[string]bool
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).
-	workflowResumes             map[string][]WorkflowResume
-	workflowRuns                map[string]WorkflowRun
-	workflowRunCreateKeys       map[workflowRunCreateKey]workflowRunCreateKeyEntry
-	workflowSchedules           map[string]WorkflowScheduleCursor
-	workflowTenantSchedules     map[string]WorkflowScheduleCursor
-	workflowScheduleOccurrences map[string]WorkflowScheduleOccurrence
-	automationFailurePolicies   map[string]api.AutomationFailurePolicy
-	automationFailureGuards     map[string]automationFailureGuard
-	automationFailureHistory    map[string][]api.AutomationFailureTransition
-	automationPublishPolicies   map[string]api.AutomationPublishPolicy
-	automationPublishReceipts   map[string]automationPublishReceipt
-	automationVersion           int64
-	automations                 map[string]Automation
-	automationRevisions         map[string][]AutomationRevision
-	workflowSteps               map[string]map[string]WorkflowStep // run_id → step_name → step
-	workflowStepAttempts        map[workflowStepAttemptKey]WorkflowStepAttempt
-	workflowOperationEffects    map[workflowStepAttemptKey][]workflowOperationStoredEffect
-	workflowEvents              map[string][]WorkflowEvent // run_id → []WorkflowEvent
+	workflowResumes                   map[string][]WorkflowResume
+	workflowRuns                      map[string]WorkflowRun
+	workflowRunCreateKeys             map[workflowRunCreateKey]workflowRunCreateKeyEntry
+	automationLiveVerifications       map[string]automationLiveRecord
+	automationLiveSuites              map[string]automationLiveSuiteRecord
+	automationLiveBaselines           map[string][]api.AutomationLiveBaseline
+	automationLiveBaselineRetirements map[string]api.AutomationLiveBaselineRetirement
+	workflowSchedules                 map[string]WorkflowScheduleCursor
+	workflowTenantSchedules           map[string]WorkflowScheduleCursor
+	workflowScheduleOccurrences       map[string]WorkflowScheduleOccurrence
+	automationFailurePolicies         map[string]api.AutomationFailurePolicy
+	automationFailureGuards           map[string]automationFailureGuard
+	automationFailureHistory          map[string][]api.AutomationFailureTransition
+	automationPublishPolicies         map[string]api.AutomationPublishPolicy
+	automationPublishReceipts         map[string]automationPublishReceipt
+	automationVersion                 int64
+	automations                       map[string]Automation
+	automationRevisions               map[string][]AutomationRevision
+	workflowSteps                     map[string]map[string]WorkflowStep // run_id → step_name → step
+	workflowStepAttempts              map[workflowStepAttemptKey]WorkflowStepAttempt
+	workflowOperationEffects          map[workflowStepAttemptKey][]workflowOperationStoredEffect
+	workflowEvents                    map[string][]WorkflowEvent // run_id → []WorkflowEvent
 	// fireNowRequests mirrors cron_fire_now_requests (migrations/00193)
 	// for in-process handler tests. Keyed by request id (UUID);
 	// status transitions follow the production 5-state CHECK (pending
@@ -483,13 +675,24 @@ type MemStore struct {
 	// operatorIntents mirrors operator_intents (migrations/00431)
 	// for handler + subscriber tests. Keyed by intent id (UUID);
 	// status transitions follow the production 5-state CHECK.
-	operatorIntents map[string]OperatorIntent
+	operatorIntents             map[string]OperatorIntent
+	operatorRestarts            map[string]OperatorRestartExecution
+	operatorParks               map[string]OperatorParkExecution
+	operatorNodes               map[string]OperatorNodeResult
+	nodeLifecycleCompletions    map[nodeLifecycleCompletionKey]NodeLifecycleCompletionResult
+	nodeLeases                  map[string]NodeLease
+	operatorRecoverySubmissions map[string]operatorRecoverySubmissionRow
+	snapshotRecoveryGenerations map[string]int64
+	instanceSnapshotRecovery    map[string]instanceSnapshotRecovery
 	// runtimeConfigs mirrors runtime_config_entries (migration 00466).
 	// The key is config_key + scope + scope_id, matching the production
 	// unique constraint and the reconciliation lookup path.
 	runtimeConfigs          map[string]RuntimeConfig
 	runtimeConfigOperations map[string]RuntimeConfigOperation
 	runtimeConfigRevisions  []RuntimeConfigRevision
+	// runtimeConfigApplyReceipts mirrors runtime_config_apply_receipts
+	// (ADR-1700), keyed by the table's primary key.
+	runtimeConfigApplyReceipts map[string]RuntimeConfigApplyReceipt
 	// alertRules mirrors alert_rules for handler tests. Keyed by
 	// ruleID. AlertDelivery rows are kept separately so the
 	// delivery list query can walk just the matching subset on
@@ -500,8 +703,21 @@ type MemStore struct {
 	// translates a "win" into an INSERT-after-claim so two parallel
 	// claims inside the same bucket produce exactly one delivery
 	// row (mirrors the UNIQUE-index floor in Postgres).
-	alertRules      map[string]AlertRule
-	alertDeliveries map[string]AlertDelivery
+	readinessIncidents            map[string]readinessIncident
+	readinessIncidentEvents       map[string]readinessIncidentEventRecord
+	readinessIncidentCursors      map[string]time.Time
+	readinessIncidentSequence     int64
+	readinessPagerDutyAckPolicies map[string]MCPReadinessPagerDutyAcknowledgementConfig
+	readinessPagerDutyAckEvents   map[string]readinessPagerDutyAcknowledgementRecord
+	readinessPagerDutyPolicies    map[string]MCPReadinessPagerDutyConfig
+	readinessReminderDefaults     map[string]api.MCPReadinessReminderDefaults
+	readinessFallbackPolicies     map[string]MCPReadinessFallbackConfig
+	readinessMaintenance          map[string]readinessMaintenanceRecord
+	readinessNotificationActions  map[string]readinessNotificationActionRecord
+	readinessAttention            map[string]readinessAttentionRecord
+	readinessAttentionActions     map[string]readinessAttentionActionRecord
+	alertRules                    map[string]AlertRule
+	alertDeliveries               map[string]AlertDelivery
 	// appWebhooks + appWebhookDeliveries back the issue #476
 	// outbound webhook subscription + ledger surface. Keyed by
 	// webhookID / deliveryID. The unique (app_id, target_url)
@@ -510,6 +726,7 @@ type MemStore struct {
 	// query is a single goroutine today.
 	appWebhooks                     map[string]AppWebhook
 	appWebhookDeliveries            map[string]AppWebhookDelivery
+	appWebhookDeliverySources       map[string]string
 	entityOutboxAcceptances         map[string]string
 	appWebhookDeliveryAttempts      map[string][]AppWebhookDeliveryAttempt
 	appWebhookReplayGenerations     map[string]int
@@ -590,17 +807,26 @@ type MemStore struct {
 	profileCanaryChecks       map[string]*memProfileCanaryCheck
 	automaticRouteChecks      map[string]memAutomaticRouteCheck
 	canaryRouteGates          map[string]api.CanaryRouteGate
+	environmentBudgetConfigs  map[string]scopedBudgetRow
+	environmentBudgetReceipts map[string]memoryBudgetReceipt
 	routeMonitorConfigs       map[string]api.RouteMonitorConfig
 	routeMonitorNextCheck     map[string]time.Time
 	routeMonitorIncidents     map[string][]api.RouteMonitorIncident
 	// routeProbeData holds ADR-847 probe rounds and results; lazily created.
-	routeProbeOnce           sync.Once
-	routeProbeData           *memRouteProbes
-	routeHealthGates         map[string]api.RouteHealthGate
-	routeHealthHistory       map[string][]routeHealthStoredDecision
-	routeHealthNotifications map[string]routeHealthNotificationState
-	profilePeriodicMonitors  map[string]*memPeriodicMonitor
-	profileAlertStates       map[string]profileAlertState
+	routeProbeOnce             sync.Once
+	routeProbeData             *memRouteProbes
+	routeHealthGates           map[string]api.RouteHealthGate
+	promotionRecoveries        map[string]map[string]promotionRecoveryRecord
+	promotionMigrationRuntimes map[string]promotionMigrationRuntime
+	promotionMigrations        map[string]promotionMigrationCapture
+	promotionHealth            map[string]*api.ProjectPromotionHealth
+	promotionHealthLeases      map[string]promotionHealthLease
+	promotionHealthSchedules   map[string]promotionHealthSchedule
+	promotionControls          map[string]map[string]api.ProjectPromotionControl
+	routeHealthHistory         map[string][]routeHealthStoredDecision
+	routeHealthNotifications   map[string]routeHealthNotificationState
+	profilePeriodicMonitors    map[string]*memPeriodicMonitor
+	profileAlertStates         map[string]profileAlertState
 	// edgeRuleGeneration mirrors edge_rule_generation_seq. Gaps are allowed;
 	// values never decrease during the MemStore lifetime.
 	edgeRuleGeneration int64
@@ -711,6 +937,7 @@ type MemStore struct {
 
 	invocationEnvironmentQueueAdmissions map[string]InvocationEnvironmentQueueAdmission
 	invocationEnvironmentQueueReceipts   map[string]environmentQueueReceipt
+	invocationQueueLeaseReceipts         map[string]queueLeaseReceipt
 	invocationWorkEnvironmentAdmissions  map[string]InvocationWorkEnvironmentAdmission
 	invocationWorkEnvironmentDomains     map[string]string
 	// executions and executionPayloads mirror the ADR-171 durable intent
@@ -732,6 +959,10 @@ type MemStore struct {
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// appTaskAttach holds ADR-1037 interactive-session records by task id.
+	appTaskAttach map[string]AppTaskAttach
+	// jobRunAttach holds ADR-1330 interactive image-run sessions by run id.
+	jobRunAttach map[string]JobRunAttach
 	// runtimeSnapshots mirrors the durable sanitized runtime catalog. Keys are
 	// immutable compatibility catalog keys; retirement only changes state.
 	runtimeSnapshots map[string]RuntimeSnapshotRecord
@@ -857,6 +1088,9 @@ type MemStore struct {
 	// routePriorities holds ADR-978 saved route priorities keyed by app ID.
 	routePriorities     map[string]memRoutePriorities
 	platformTenantUsage map[string]APIConsumerUsageBucket
+	// platformTenantSourceRouteUsage counts surface and JWT-rule requests per
+	// route (ADR-1310).
+	platformTenantSourceRouteUsage map[string]PlatformTenantSourceRouteUsageBucket
 	// Consumer plans (ADR-953): plans by ID, assignments by ID, and admission
 	// counters by consumer ID.
 	apiConsumerPlans           map[string]APIConsumerPlan
@@ -867,6 +1101,27 @@ type MemStore struct {
 	apiConsumerTelemetryHours map[string]APIConsumerTelemetryHour
 	// apiConsumerUsageAlerts are recorded plan alert crossings (ADR-849).
 	apiConsumerUsageAlerts []APIConsumerUsageAlert
+	// apiConsumerCreditGrants (by ID), apiConsumerCreditApplications and
+	// apiConsumerSpendCaps (by consumer ID) back prepaid credits and spend
+	// caps (ADR-1306).
+	apiConsumerCreditGrants       map[string]APIConsumerCreditGrant
+	apiConsumerCreditApplications []apiConsumerCreditApplication
+	apiConsumerSpendCaps          map[string]APIConsumerSpendCap
+	// platformTenantCreditGrants (by ID), platformTenantCreditApplications
+	// and platformTenantSpendCaps (by tenant ID) do the same for platform
+	// tenants (ADR-20261019100331).
+	platformTenantCreditGrants       map[string]PlatformTenantCreditGrant
+	platformTenantCreditApplications []platformTenantCreditApplication
+	platformTenantSpendCaps          map[string]PlatformTenantSpendCap
+	// billingConnections and statementInvoiceExports back statement invoice
+	// exports (ADR-1502); keyed by account/provider and export ID.
+	billingConnections      map[string]BillingConnection
+	statementInvoiceExports map[string]StatementInvoiceExport
+	// billingRuns, billingRunItems (run ID → item key) and
+	// billingRunSchedules (account ID) back billing runs (ADR-1503).
+	billingRuns            map[string]BillingRun
+	billingRunItems        map[string]map[string]BillingRunItem
+	billingRunSchedules    map[string]BillingRunSchedule
 	apiConsumerUsageEvents map[string]usageEventIdentity
 	// apiConsumerRateCards is keyed by card ID. The production table is
 	// append-only and unique on (app_id, effective_from); MemStore mirrors
@@ -875,6 +1130,10 @@ type MemStore struct {
 	// platformTenantRateCards is keyed by card ID and unique per tenant and
 	// effective minute, matching the immutable Postgres commercial tariff log.
 	platformTenantRateCards map[string]PlatformTenantRateCard
+	// platformTenantPlans (by ID) and platformTenantPlanAssignments back
+	// tenant plans (ADR-1307).
+	platformTenantPlans           map[string]PlatformTenantPlan
+	platformTenantPlanAssignments []PlatformTenantPlanAssignment
 	// apiConsumerUsageStatements is keyed by statement ID. statement keys
 	// enforce one immutable snapshot per (app, consumer, period).
 	apiConsumerUsageStatements map[string]APIConsumerUsageStatement
@@ -907,7 +1166,7 @@ type MemStore struct {
 	// (migration 00050, issue #259).
 	invoices               map[string]Invoice
 	invoiceRefunds         map[string]InvoiceRefund
-	billingUsageDeliveries map[string]struct{}
+	billingUsageDeliveries map[string]billingUsageDelivery
 	// objectStorageBilling is the in-memory mirror of the finalized
 	// object-storage month-close ledger.
 	objectStorageBilling           map[string]ObjectStorageBillingRecord
@@ -1058,6 +1317,7 @@ type MemStore struct {
 	projectEnvironmentCloneObjectCredentials  map[string]ProjectEnvironmentCloneObjectCredentialPreparation
 	projectEnvironmentApprovals               map[string]ProjectEnvironmentApproval
 	projectEnvironmentConfigs                 map[string][]ProjectEnvironmentConfig
+	projectEnvironmentSecrets                 map[string]ProjectEnvironmentSecret
 	projectEnvironmentRoutePolicies           map[string]ProjectEnvironmentRoutePolicy
 	projectEnvironmentEdgePolicies            map[string]ProjectEnvironmentEdgePolicy
 	projectEnvironmentPromotions              map[string]ProjectEnvironmentPromotion
@@ -1096,6 +1356,10 @@ type MemStore struct {
 	runtimeUpgradeCutovers          map[string]RuntimeUpgradeCutover
 	runtimeUpgradeOperations        map[string]RuntimeUpgradeOperation
 	appHealthHistory                map[string]appHealthRecord
+	realtimeTickets                 map[string]storedRealtimeTicket
+	realtimeChannelWebhookFilters   map[string]RealtimeChannelWebhookFilter
+	managedRealtimeAccess           map[string]map[string]ManagedRealtimeAccess
+	workerRecovery                  map[string]WorkerRecovery
 }
 
 // installRepoKey mirrors the projects_install_repo_uniq partial index
@@ -1255,11 +1519,13 @@ type builderUsageRow struct {
 }
 
 type builderVMCleanupRow struct {
+	createdAt     time.Time
 	nextAttemptAt time.Time
 	claimedAt     *time.Time
 	claimToken    string
 	attempts      int
 	lastError     string
+	failedAttempt bool // Includes failed attempts whose error text is empty.
 }
 
 // NewMemStore returns an empty in-memory store with the synthetic
@@ -1380,8 +1646,21 @@ func NewMemStore() *MemStore {
 		fireNowRequests:                 map[string]FireNowRequest{},
 		operatorIntents:                 map[string]OperatorIntent{},
 		runtimeConfigs:                  map[string]RuntimeConfig{},
+		runtimeConfigApplyReceipts:      map[string]RuntimeConfigApplyReceipt{},
 		runtimeConfigOperations:         map[string]RuntimeConfigOperation{},
 		runtimeConfigRevisions:          []RuntimeConfigRevision{},
+		readinessMaintenance:            map[string]readinessMaintenanceRecord{},
+		readinessNotificationActions:    map[string]readinessNotificationActionRecord{},
+		readinessAttention:              map[string]readinessAttentionRecord{},
+		readinessAttentionActions:       map[string]readinessAttentionActionRecord{},
+		readinessIncidents:              map[string]readinessIncident{},
+		readinessPagerDutyAckPolicies:   map[string]MCPReadinessPagerDutyAcknowledgementConfig{},
+		readinessPagerDutyAckEvents:     map[string]readinessPagerDutyAcknowledgementRecord{},
+		readinessPagerDutyPolicies:      map[string]MCPReadinessPagerDutyConfig{},
+		readinessReminderDefaults:       map[string]api.MCPReadinessReminderDefaults{},
+		readinessFallbackPolicies:       map[string]MCPReadinessFallbackConfig{},
+		readinessIncidentEvents:         map[string]readinessIncidentEventRecord{},
+		readinessIncidentCursors:        map[string]time.Time{},
 		alertRules:                      map[string]AlertRule{},
 		alertDeliveries:                 map[string]AlertDelivery{},
 		appWebhooks:                     map[string]AppWebhook{},
@@ -1487,6 +1766,7 @@ func NewMemStore() *MemStore {
 
 		invocationEnvironmentQueueAdmissions: map[string]InvocationEnvironmentQueueAdmission{},
 		invocationEnvironmentQueueReceipts:   map[string]environmentQueueReceipt{},
+		invocationQueueLeaseReceipts:         map[string]queueLeaseReceipt{},
 		invocationWorkEnvironmentAdmissions:  map[string]InvocationWorkEnvironmentAdmission{},
 		invocationWorkEnvironmentDomains:     map[string]string{},
 		runtimeInstanceConfigProofs:          map[string]runtimeInstanceConfigProof{},
@@ -1542,7 +1822,7 @@ func NewMemStore() *MemStore {
 		// PR B writes via UpsertInvoice (webhook ingestion).
 		invoices:                       map[string]Invoice{},
 		invoiceRefunds:                 map[string]InvoiceRefund{},
-		billingUsageDeliveries:         map[string]struct{}{},
+		billingUsageDeliveries:         map[string]billingUsageDelivery{},
 		objectStorageBilling:           map[string]ObjectStorageBillingRecord{},
 		objectStorageBillingDeliveries: map[string]ObjectStorageBillingDelivery{},
 		// accountCredits starts empty; the operator-only
@@ -1731,12 +2011,12 @@ func (m *MemStore) CreateAccountWithPersonalOrg(_ context.Context, params Create
 
 	// 3. Owner membership row. The first owner for the org — the
 	//    last-owner guard from AddOrgMember is irrelevant here.
-	m.memberships[orgAccountKey{OrgID: org.ID, AccountID: acct.ID}] = OrgMembership{
+	m.setOrgMembershipLocked(orgAccountKey{OrgID: org.ID, AccountID: acct.ID}, OrgMembership{
 		OrgID:     org.ID,
 		AccountID: acct.ID,
 		Role:      OrgRoleOwner,
 		JoinedAt:  now,
-	}
+	})
 	return CreateAccountWithPersonalOrgResult{Account: acct, PersonalOrg: org}, nil
 }
 
@@ -2120,6 +2400,9 @@ func (m *MemStore) AuthenticateKey(_ context.Context, hash []byte) (Account, API
 func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if org, ok := m.orgs[id]; ok && !org.Personal {
+		return m.updateOrgResourcePlanLocked(org, plan)
+	}
 	a, ok := m.accounts[id]
 	if !ok {
 		return ErrNotFound
@@ -2139,7 +2422,7 @@ func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan
 		// Keep the in-memory backend aligned with PgStore's database
 		// invariant: a Free account cannot retain an opted-in streaming app.
 		for appID, app := range m.apps {
-			if app.AccountID == id && app.StreamingEnabled {
+			if app.AccountID == id && (m.personalAppLocked(app) || !m.orgs[app.OrgID].ResourceOwnershipEnabled) && app.StreamingEnabled {
 				app.StreamingEnabled = false
 				m.apps[appID] = app
 			}
@@ -2161,9 +2444,23 @@ func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan
 func (m *MemStore) UpdateAccountStatus(_ context.Context, id string, status AccountStatus) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if org, ok := m.orgs[id]; ok && !org.Personal {
+		a := m.orgResourceAccountLocked(org)
+		org.Status = OrgStatus(status)
+		org.DeletedPending = status == AccountDeletedPending
+		if status != AccountPastDue {
+			a.PastDueAt = nil
+		}
+		m.orgs[id] = org
+		m.saveOrgResourcePolicyLocked(a)
+		return nil
+	}
 	a, ok := m.accounts[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if status == AccountDeletedPending && a.Status != AccountDeletedPending && m.accountOwnershipErasureBlockedLocked(id) {
+		return ErrOrgAppOwnershipPending
 	}
 	a.Status = status
 	if status != AccountPastDue {
@@ -2193,6 +2490,15 @@ func (m *MemStore) syncPersonalOrgStatusLocked(id string, status AccountStatus) 
 func (m *MemStore) SuspendAccountForFreeQuota(_ context.Context, id string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if org, ok := m.orgs[id]; ok && !org.Personal {
+		if org.Status != OrgStatusActive {
+			return false, nil
+		}
+		org.Status = OrgStatusSuspended
+		m.orgs[id] = org
+		m.freeQuotaSuspended[id] = true
+		return true, nil
+	}
 	a, ok := m.accounts[id]
 	if !ok || a.Status != AccountActive {
 		return false, nil
@@ -2209,6 +2515,15 @@ func (m *MemStore) SuspendAccountForFreeQuota(_ context.Context, id string) (boo
 func (m *MemStore) RestoreFreeQuotaSuspension(_ context.Context, id string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if org, ok := m.orgs[id]; ok && !org.Personal {
+		if org.Status != OrgStatusSuspended || !m.freeQuotaSuspended[id] {
+			return false, nil
+		}
+		org.Status = OrgStatusActive
+		m.orgs[id] = org
+		delete(m.freeQuotaSuspended, id)
+		return true, nil
+	}
 	a, ok := m.accounts[id]
 	if !ok || a.Status != AccountSuspended || !m.freeQuotaSuspended[id] {
 		return false, nil
@@ -2423,6 +2738,40 @@ func (m *MemStore) UpdateAccountProviderCustomerID(_ context.Context, id, provid
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if org, ok := m.orgs[id]; ok && !org.Personal {
+		if other := m.stripeByCustomer[providerCustomerID]; other != "" && other != id {
+			return ErrConflict
+		}
+		if org.ProviderCustomerID != "" {
+			delete(m.stripeByCustomer, org.ProviderCustomerID)
+		}
+		provider := billingProviderForCustomerID(providerCustomerID)
+		existing := m.billingIdentities[billingIdentityKey(id, provider)]
+		org.StripeSubscriptionItem = ""
+		if existing.CustomerID == providerCustomerID {
+			org.StripeSubscriptionItem = existing.SubscriptionID
+		}
+		org.ProviderCustomerID = providerCustomerID
+		if err := m.validateObjectBillingAdoptionLocked(org); err != nil {
+			return err
+		}
+		org = m.activateOrgResourceOwnershipLocked(org)
+		m.orgs[id] = org
+		m.stripeByCustomer[providerCustomerID] = id
+
+		now := time.Now().UTC()
+		if existing.CreatedAt.IsZero() {
+			existing.CreatedAt = now
+		}
+		if existing.BillingFrom.IsZero() {
+			existing.BillingFrom = existing.CreatedAt
+		}
+		existing.AccountID, existing.Provider = id, provider
+		existing.CustomerID, existing.SubscriptionID = providerCustomerID, org.StripeSubscriptionItem
+		existing.UpdatedAt = now
+		m.billingIdentities[billingIdentityKey(id, provider)] = existing
+		return nil
+	}
 	a, ok := m.accounts[id]
 	if !ok {
 		return ErrNotFound
@@ -2464,6 +2813,14 @@ func (m *MemStore) UpdateAccountProviderCustomerID(_ context.Context, id, provid
 func (m *MemStore) UpdateAccountBillingInfo(_ context.Context, id, businessName, billingAddress, taxID string) (Account, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if org, ok := m.orgs[id]; ok && !org.Personal {
+		a := m.orgResourceAccountLocked(org)
+		a.BusinessName = businessName
+		a.BillingAddress = billingAddress
+		a.TaxID = taxID
+		m.saveOrgResourcePolicyLocked(a)
+		return a, nil
+	}
 	a, ok := m.accounts[id]
 	if !ok {
 		return Account{}, ErrNotFound
@@ -2493,6 +2850,23 @@ func billingProviderForCustomerID(customerID string) string {
 func (m *MemStore) UpdateAccountStripeSubscriptionItem(_ context.Context, id, subItem string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if org, ok := m.orgs[id]; ok && !org.Personal {
+		org.StripeSubscriptionItem = subItem
+		if err := m.validateObjectBillingAdoptionLocked(org); err != nil {
+			return err
+		}
+		org = m.activateOrgResourceOwnershipLocked(org)
+		m.orgs[id] = org
+		for key, identity := range m.billingIdentities {
+			if identity.AccountID == id && identity.CustomerID == org.ProviderCustomerID {
+				identity.SubscriptionID = subItem
+				m.billingIdentities[key] = identity
+			}
+		}
+		org = m.activateOrgResourceOwnershipLocked(org)
+		m.orgs[id] = org
+		return nil
+	}
 	a, ok := m.accounts[id]
 	if !ok {
 		return ErrNotFound
@@ -2554,13 +2928,18 @@ func (m *MemStore) UpsertBillingIdentity(_ context.Context, identity BillingIden
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.accounts[identity.AccountID]; !ok {
+	if _, ok := m.accounts[identity.AccountID]; !ok && (m.orgs[identity.AccountID].ID == "" || m.orgs[identity.AccountID].Personal) {
 		return ErrNotFound
 	}
 	for key, existing := range m.billingIdentities {
 		if key != billingIdentityKey(identity.AccountID, identity.Provider) &&
 			existing.Provider == identity.Provider && existing.CustomerID == identity.CustomerID {
 			return ErrConflict
+		}
+	}
+	if org, ok := m.orgs[identity.AccountID]; ok && !org.Personal {
+		if err := m.validateObjectBillingAdoptionLocked(org); err != nil {
+			return err
 		}
 	}
 	key := billingIdentityKey(identity.AccountID, identity.Provider)
@@ -2576,6 +2955,9 @@ func (m *MemStore) UpsertBillingIdentity(_ context.Context, identity BillingIden
 	}
 	identity.UpdatedAt = time.Now().UTC()
 	m.billingIdentities[key] = identity
+	if org, ok := m.orgs[identity.AccountID]; ok && !org.Personal {
+		m.orgs[org.ID] = m.activateOrgResourceOwnershipLocked(org)
+	}
 	return nil
 }
 
@@ -2586,6 +2968,9 @@ func (m *MemStore) AccountByBillingCustomerID(_ context.Context, provider, custo
 		if identity.Provider == provider && identity.CustomerID == customerID {
 			acct, ok := m.accounts[identity.AccountID]
 			if !ok {
+				if org, exists := m.orgs[identity.AccountID]; exists && !org.Personal {
+					return m.orgResourceAccountLocked(org), nil
+				}
 				return Account{}, ErrNotFound
 			}
 			return acct, nil
@@ -2645,6 +3030,9 @@ func (m *MemStore) CreateAPIKey(_ context.Context, accountID string, hash []byte
 func (m *MemStore) CreateOrgAPIKeyWithProvenance(_ context.Context, orgID, accountID string, hash []byte, label string, scopes []string, expiresAt *time.Time, createdIP, createdUA string, parent *string) (APIKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgCredentialMemberLocked(orgID, accountID); err != nil {
+		return APIKey{}, err
+	}
 	h := hex.EncodeToString(hash)
 	if _, dup := m.keyByHash[h]; dup {
 		return APIKey{}, fmt.Errorf("state: duplicate key hash")
@@ -2688,6 +3076,9 @@ func (m *MemStore) RotateOrgAPIKeyWithProvenance(_ context.Context, orgID, oldKe
 	old, ok := m.keys[oldKeyID]
 	if !ok || old.OrgID != orgID {
 		return APIKey{}, APIKey{}, ErrNotFound
+	}
+	if err := m.checkOrgCredentialMemberLocked(orgID, old.AccountID); err != nil {
+		return APIKey{}, APIKey{}, err
 	}
 	if old.Status == string(APIKeyStatusRevoked) {
 		return APIKey{}, APIKey{}, ErrAPIKeyRevoked
@@ -3035,6 +3426,9 @@ func (m *MemStore) SetAccountEgressAllowlistExtra(_ context.Context, accountID s
 func (m *MemStore) CreateOrgAPIKey(_ context.Context, orgID, accountID string, hash []byte, label string, scopes []string, expiresAt *time.Time) (APIKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgCredentialMemberLocked(orgID, accountID); err != nil {
+		return APIKey{}, err
+	}
 	if _, ok := m.accounts[accountID]; !ok {
 		return APIKey{}, ErrNotFound
 	}
@@ -3118,6 +3512,9 @@ func (m *MemStore) RotateOrgAPIKey(_ context.Context, orgID, oldKeyID string, ne
 	if !ok || old.OrgID != orgID {
 		return APIKey{}, APIKey{}, ErrNotFound
 	}
+	if err := m.checkOrgCredentialMemberLocked(orgID, old.AccountID); err != nil {
+		return APIKey{}, APIKey{}, err
+	}
 	if old.Status == string(APIKeyStatusRevoked) {
 		return APIKey{}, APIKey{}, ErrAPIKeyRevoked
 	}
@@ -3166,11 +3563,14 @@ func (m *MemStore) RotateOrgAPIKey(_ context.Context, orgID, oldKeyID string, ne
 // (projectsByAccountSlug, projectsByInstallRepo) keep the read paths
 // O(1) — the SQL btrees are the same shape.
 
-func (m *MemStore) CreateProject(_ context.Context, p Project) (Project, error) {
+func (m *MemStore) CreateProject(ctx context.Context, p Project) (Project, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.accounts[p.AccountID]; !ok {
-		return Project{}, ErrNotFound
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return Project{}, err
+	}
+	if err := m.resolveProjectOwnerLocked(&p); err != nil {
+		return Project{}, err
 	}
 	if p.ScanSource == "" {
 		p.ScanSource = ProjectScanSourceUnknown
@@ -3333,9 +3733,12 @@ func (m *MemStore) AppsForProject(_ context.Context, accountID, projectID string
 // SetProjectScanSource updates scan_source monotonically upward. Same
 // tier is a no-op (touches updated_at so observers see the activity).
 // Weaker tier returns ErrScanSourceDowngrade.
-func (m *MemStore) SetProjectScanSource(_ context.Context, projectID string, src ProjectScanSource) (Project, error) {
+func (m *MemStore) SetProjectScanSource(ctx context.Context, projectID string, src ProjectScanSource) (Project, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return Project{}, err
+	}
 	if src == "" {
 		src = ProjectScanSourceUnknown
 	}
@@ -3352,9 +3755,12 @@ func (m *MemStore) SetProjectScanSource(_ context.Context, projectID string, src
 	return p, nil
 }
 
-func (m *MemStore) UpdateProjectBinding(_ context.Context, accountID, projectID, repoFullName, productionBranch string, installID int64) (Project, error) {
+func (m *MemStore) UpdateProjectBinding(ctx context.Context, accountID, projectID, repoFullName, productionBranch string, installID int64) (Project, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return Project{}, err
+	}
 	p, ok := m.projects[projectID]
 	if !ok || p.AccountID != accountID {
 		return Project{}, ErrNotFound
@@ -3389,12 +3795,41 @@ func (m *MemStore) UpdateProjectBinding(_ context.Context, accountID, projectID,
 // apps it touched via SoftDeleteAppCascade). Returns ErrNotFound
 // when no project matches. Used by cmd/apid's scanService to
 // roll back a half-created project on a reconcile error.
-func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
+func (m *MemStore) DeleteProject(ctx context.Context, projectID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+	return m.deleteProjectLocked(projectID)
+}
+
+func (m *MemStore) deleteProjectLocked(projectID string) error {
+	if m.recoveryProtectedScopeLocked("", projectID, "") {
+		return ErrConflict
+	}
+	for _, site := range m.hostingSites {
+		if site.ProjectID == projectID {
+			return ErrConflict
+		}
+	}
 	p, ok := m.projects[projectID]
 	if !ok {
 		return ErrNotFound
+	}
+	// Re-resolve membership before removing any ownership indexes. If a
+	// scope guard rejects a legacy fixture, the entire detach remains atomic.
+	enrollmentBackup := m.cloneApplicationStandardEnrollmentsLocked()
+	detachedApps := map[string]App{}
+	for appID, app := range m.apps {
+		if app.ProjectID == projectID {
+			app.ProjectID = ""
+			if err := m.initializeApplicationStandardEnrollmentLocked(app); err != nil {
+				m.applicationStandardEnrollments = enrollmentBackup
+				return err
+			}
+			detachedApps[appID] = app
+		}
 	}
 	delete(m.projects, projectID)
 	for sourceID, memory := range m.environmentGitOps {
@@ -3421,11 +3856,8 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 	// history remains. m.apps is map[string]App (not pointer
 	// values), so we have to re-assign the whole struct to
 	// mutate a field.
-	for appID, a := range m.apps {
-		if a.ProjectID == projectID {
-			a.ProjectID = ""
-			m.apps[appID] = a
-		}
+	for appID, app := range detachedApps {
+		m.apps[appID] = app
 	}
 	for environmentID, env := range m.projectEnvironments {
 		if env.ProjectID == projectID {
@@ -3440,12 +3872,18 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 			delete(m.featureFlagVersions, environmentID)
 			m.deleteEnvironmentSecretRefsLocked("", environmentID)
 			m.deleteEnvironmentWorkloadIntentsLocked("", environmentID)
+			m.deleteEnvironmentBudgetConfigsLocked(environmentID)
 			delete(m.projectEnvironments, environmentID)
 		}
 	}
 	for key := range m.projectEnvironmentConfigs {
 		if strings.HasPrefix(key, projectID+"\x00") {
 			delete(m.projectEnvironmentConfigs, key)
+		}
+	}
+	for key, secret := range m.projectEnvironmentSecrets {
+		if secret.ProjectID == projectID {
+			delete(m.projectEnvironmentSecrets, key)
 		}
 	}
 	for key, policy := range m.projectEnvironmentRoutePolicies {
@@ -3515,9 +3953,12 @@ func (m *MemStore) ProjectEnvironmentByID(_ context.Context, id string) (Project
 	return environment, nil
 }
 
-func (m *MemStore) CreateProjectEnvironment(_ context.Context, env ProjectEnvironment) (ProjectEnvironment, error) {
+func (m *MemStore) CreateProjectEnvironment(ctx context.Context, env ProjectEnvironment) (ProjectEnvironment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectEnvironment{}, err
+	}
 	project, ok := m.projects[env.ProjectID]
 	if !ok || project.AccountID != env.AccountID {
 		return ProjectEnvironment{}, ErrNotFound
@@ -3544,9 +3985,12 @@ func (m *MemStore) CreateProjectEnvironment(_ context.Context, env ProjectEnviro
 	return env, nil
 }
 
-func (m *MemStore) UpdateProjectEnvironmentProtection(_ context.Context, accountID, projectID, slug string, protected bool) (ProjectEnvironment, error) {
+func (m *MemStore) UpdateProjectEnvironmentProtection(ctx context.Context, accountID, projectID, slug string, protected bool) (ProjectEnvironment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectEnvironment{}, err
+	}
 	project, ok := m.projects[projectID]
 	if !ok || project.AccountID != accountID {
 		return ProjectEnvironment{}, ErrNotFound
@@ -3568,7 +4012,7 @@ func (m *MemStore) DeleteProjectEnvironment(ctx context.Context, accountID, proj
 }
 
 func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
-	_ context.Context,
+	ctx context.Context,
 	accountID, projectID, slug string,
 	resources ProjectEnvironmentCleanupResources,
 	leaseToken string,
@@ -3579,6 +4023,12 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectEnvironmentCleanupJob{}, err
+	}
+	if m.recoveryProtectedScopeLocked(accountID, projectID, slug) {
+		return ProjectEnvironmentCleanupJob{}, ErrConflict
+	}
 
 	project, ok := m.projects[projectID]
 	if !ok || project.AccountID != accountID {
@@ -3599,6 +4049,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	}
 	if slug == "production" || slug == DefaultEnvScope || environment.Protected {
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
+	}
+	for _, site := range m.hostingSites {
+		if site.ProjectID == projectID && site.Environment == slug {
+			return ProjectEnvironmentCleanupJob{}, ErrConflict
+		}
 	}
 
 	for _, app := range m.apps {
@@ -3656,6 +4111,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	m.deleteEnvironmentWorkloadSpecsLocked(environmentID)
 	m.deleteEnvironmentSecretRefsLocked("", environmentID)
 	m.deleteEnvironmentWorkloadIntentsLocked("", environmentID)
+	m.deleteEnvironmentBudgetConfigsLocked(environmentID)
 	delete(m.projectEnvironments, environmentID)
 	for sourceID, memory := range m.environmentGitOps {
 		if memory.source.EnvironmentID == environmentID {
@@ -3663,6 +4119,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 		}
 	}
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
+	m.deleteProjectEnvironmentSecretsLocked(projectID, slug)
 	for key, policy := range m.projectEnvironmentRoutePolicies {
 		if policy.ProjectID == projectID && policy.EnvironmentSlug == slug {
 			delete(m.projectEnvironmentRoutePolicies, key)
@@ -3753,9 +4210,17 @@ func cloneProjectEnvironmentCleanupJob(job ProjectEnvironmentCleanupJob) Project
 	return job
 }
 
-func (m *MemStore) CreateProjectEnvironmentApproval(_ context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error) {
+func (m *MemStore) CreateProjectEnvironmentApproval(ctx context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectEnvironmentApproval{}, err
+	}
+	for _, existing := range m.projectEnvironmentApprovals {
+		if existing.ApprovalTokenHash == approval.ApprovalTokenHash {
+			return ProjectEnvironmentApproval{}, ErrConflict
+		}
+	}
 	if approval.AccountID == "" || approval.ProjectSlug == "" || approval.EnvironmentSlug == "" || approval.PlanTokenHash == "" || approval.ApprovalTokenHash == "" {
 		return ProjectEnvironmentApproval{}, ErrNotFound
 	}
@@ -3794,9 +4259,12 @@ func (m *MemStore) ProjectEnvironmentApprovalByToken(_ context.Context, accountI
 	return ProjectEnvironmentApproval{}, ErrNotFound
 }
 
-func (m *MemStore) ConsumeProjectEnvironmentApproval(_ context.Context, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash string, consumedAt time.Time) (ProjectEnvironmentApproval, error) {
+func (m *MemStore) ConsumeProjectEnvironmentApproval(ctx context.Context, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash string, consumedAt time.Time) (ProjectEnvironmentApproval, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectEnvironmentApproval{}, err
+	}
 	now := time.Now()
 	if consumedAt.IsZero() {
 		consumedAt = now
@@ -3816,7 +4284,7 @@ func (m *MemStore) ConsumeProjectEnvironmentApproval(_ context.Context, accountI
 // insert for project + apps + crons inside one Tx so the apid
 // "one keypress" path either lands the whole set or nothing.
 func (m *MemStore) ApplyProjectPlan(
-	_ context.Context,
+	ctx context.Context,
 	project Project,
 	apps []App,
 	crons []Cron,
@@ -3824,10 +4292,13 @@ func (m *MemStore) ApplyProjectPlan(
 ) (Project, []App, []Cron, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return Project{}, nil, nil, err
+	}
 
 	// 1. Account exists.
-	if _, ok := m.accounts[project.AccountID]; !ok {
-		return Project{}, nil, nil, ErrNotFound
+	if err := m.resolveProjectOwnerLocked(&project); err != nil {
+		return Project{}, nil, nil, err
 	}
 
 	// 2. Project slug collision guard.
@@ -3837,20 +4308,8 @@ func (m *MemStore) ApplyProjectPlan(
 		}
 	}
 
-	// 3. Count current deployed apps (mirror CreateAppIfUnderQuota).
-	observedApps := 0
-	for _, a := range m.apps {
-		if a.AccountID == project.AccountID && a.Status != AppDeleted &&
-			(a.Status == AppActive || a.Status == AppEvictedCold) && a.PreviewOfSlug == "" {
-			observedApps++
-		}
-	}
-	if observedApps+len(apps) > limits.DeployedApps {
-		return Project{}, nil, nil, &QuotaError{
-			Kind:     QuotaErrorKindApps,
-			Limit:    limits.DeployedApps,
-			Observed: observedApps + len(apps),
-		}
+	if err := m.checkAppQuotaDeltaLocked(App{AccountID: project.AccountID, OrgID: project.OrgID}, limits, len(apps)); err != nil {
+		return Project{}, nil, nil, err
 	}
 
 	// 4. Free-plan cron guard + cron quota check. Skipped entirely
@@ -3868,7 +4327,7 @@ func (m *MemStore) ApplyProjectPlan(
 		observedCrons := 0
 		for _, c := range m.crons {
 			for _, a := range m.apps {
-				if c.AppID == a.ID && a.AccountID == project.AccountID && a.Status != AppDeleted {
+				if c.AppID == a.ID && SameAppResourceOwner(a, App{AccountID: project.AccountID, OrgID: project.OrgID}) && a.Status != AppDeleted {
 					observedCrons++
 					break
 				}
@@ -3883,6 +4342,27 @@ func (m *MemStore) ApplyProjectPlan(
 		}
 	}
 
+	// 5. Insert project. Preserve the complete transaction state: environments
+	// are keyed by environment ID, and caller-supplied IDs must not overwrite
+	// prior apps or projects during rollback.
+	if project.ID != "" {
+		if _, exists := m.projects[project.ID]; exists {
+			return Project{}, nil, nil, ErrConflict
+		}
+	}
+	for _, app := range apps {
+		if app.ID != "" {
+			if _, exists := m.apps[app.ID]; exists {
+				return Project{}, nil, nil, ErrConflict
+			}
+		}
+	}
+	enrollmentBackup := m.cloneApplicationStandardEnrollmentsLocked()
+	addressIndexBackup := maps.Clone(m.serviceAddressIndex)
+	addressCursorsBackup := maps.Clone(m.serviceAddressCursors)
+	appsBackup := maps.Clone(m.apps)
+	projectsBackup := maps.Clone(m.projects)
+	environmentsBackup := maps.Clone(m.projectEnvironments)
 	if m.serviceCapacityProtection {
 		before := m.serviceCapacitySnapshotLocked()
 		backup := make(map[string]App, len(m.apps))
@@ -3932,8 +4412,15 @@ func (m *MemStore) ApplyProjectPlan(
 		if a.ID == "" {
 			a.ID = uuid.NewString()
 		}
+		if _, exists := m.apps[a.ID]; exists {
+			m.applicationStandardEnrollments = enrollmentBackup
+			m.serviceAddressIndex, m.serviceAddressCursors = addressIndexBackup, addressCursorsBackup
+			m.apps, m.projects, m.projectEnvironments = appsBackup, projectsBackup, environmentsBackup
+			return Project{}, nil, nil, ErrConflict
+		}
 		a.AccountID = project.AccountID
 		a.ProjectID = project.ID
+		a.OrgID = project.OrgID
 		m.ensureAppOrgLocked(&a)
 		if a.Status == "" {
 			a.Status = AppActive
@@ -3942,6 +4429,14 @@ func (m *MemStore) ApplyProjectPlan(
 			a.CPUMillicores = api.DefaultAppCPUMillicores
 		}
 		a.CreatedAt = now
+		if err := m.initializeApplicationStandardEnrollmentLocked(a); err != nil {
+			m.applicationStandardEnrollments = enrollmentBackup
+			m.serviceAddressIndex, m.serviceAddressCursors = addressIndexBackup, addressCursorsBackup
+			m.apps = appsBackup
+			m.projects = projectsBackup
+			m.projectEnvironments = environmentsBackup
+			return Project{}, nil, nil, err
+		}
 		m.ensureServiceAddressIndexLocked(&a)
 		m.apps[a.ID] = a
 		insertedApps = append(insertedApps, a)
@@ -3973,7 +4468,7 @@ func (m *MemStore) ApplyProjectPlan(
 // discovered after an earlier mutation; PostgreSQL provides the equivalent
 // guarantee with its transaction in pgstore.go.
 func (m *MemStore) ApplyProjectReconcile(
-	_ context.Context,
+	ctx context.Context,
 	project Project,
 	mutations []ProjectReconcileMutation,
 	desiredCrons []ProjectReconcileCron,
@@ -3982,6 +4477,9 @@ func (m *MemStore) ApplyProjectReconcile(
 ) (ProjectReconcileResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectReconcileResult{}, err
+	}
 
 	capacityBefore := m.serviceCapacitySnapshotLocked()
 	storedProject, ok := m.projects[project.ID]
@@ -3997,7 +4495,12 @@ func (m *MemStore) ApplyProjectReconcile(
 		cronsBackup[id] = cron
 	}
 	projectBackup := storedProject
+	enrollmentBackup := m.cloneApplicationStandardEnrollmentsLocked()
+	addressIndexBackup := maps.Clone(m.serviceAddressIndex)
+	addressCursorsBackup := maps.Clone(m.serviceAddressCursors)
 	rollback := func(err error) (ProjectReconcileResult, error) {
+		m.applicationStandardEnrollments = enrollmentBackup
+		m.serviceAddressIndex, m.serviceAddressCursors = addressIndexBackup, addressCursorsBackup
 		m.apps = appsBackup
 		m.crons = cronsBackup
 		m.projects[project.ID] = projectBackup
@@ -4071,14 +4574,8 @@ func (m *MemStore) ApplyProjectReconcile(
 		}
 	}
 
-	observedApps := 0
-	for _, app := range m.apps {
-		if app.AccountID == project.AccountID && (app.Status == AppActive || app.Status == AppEvictedCold) && app.PreviewOfSlug == "" {
-			observedApps++
-		}
-	}
-	if observedApps-removes+creates > limits.DeployedApps {
-		return rollback(&QuotaError{Kind: QuotaErrorKindApps, Limit: limits.DeployedApps, Observed: observedApps - removes + creates})
+	if err := m.checkAppQuotaDeltaLocked(App{AccountID: storedProject.AccountID, OrgID: storedProject.OrgID}, limits, creates-removes); err != nil {
+		return rollback(err)
 	}
 
 	if err := m.checkServiceCapacityChangeLocked(capacityBefore, false); err != nil {
@@ -4100,7 +4597,7 @@ func (m *MemStore) ApplyProjectReconcile(
 		projectCronCount := 0
 		for _, cron := range m.crons {
 			app, exists := m.apps[cron.AppID]
-			if !exists || app.Status == AppDeleted || app.AccountID != project.AccountID {
+			if !exists || app.Status == AppDeleted || !SameAppResourceOwner(app, App{AccountID: storedProject.AccountID, OrgID: storedProject.OrgID}) {
 				continue
 			}
 			observedCrons++
@@ -4143,6 +4640,9 @@ func (m *MemStore) ApplyProjectReconcile(
 				tombstone.Status = AppActive
 				tombstone.DeletedAt = nil
 				tombstone.DeleteGraceUntil = nil
+				if err := m.initializeApplicationStandardEnrollmentLocked(tombstone); err != nil {
+					return rollback(err)
+				}
 				m.ensureServiceAddressIndexLocked(&tombstone)
 				m.apps[tombstone.ID] = tombstone
 				out.Added = append(out.Added, tombstone)
@@ -4169,6 +4669,9 @@ func (m *MemStore) ApplyProjectReconcile(
 			}
 			if app.CreatedAt.IsZero() {
 				app.CreatedAt = time.Now()
+			}
+			if err := m.initializeApplicationStandardEnrollmentLocked(app); err != nil {
+				return rollback(err)
 			}
 			m.ensureServiceAddressIndexLocked(&app)
 			m.apps[app.ID] = app
@@ -4294,6 +4797,10 @@ func (m *MemStore) ensureAppOrgLocked(app *App) {
 	if app.OrgID != "" {
 		return
 	}
+	if project, exists := m.projects[app.ProjectID]; exists {
+		app.OrgID = project.OrgID
+		return
+	}
 	for _, org := range m.orgs {
 		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == app.AccountID {
 			app.OrgID = org.ID
@@ -4302,12 +4809,20 @@ func (m *MemStore) ensureAppOrgLocked(app *App) {
 	}
 }
 
-func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
+func (m *MemStore) CreateApp(ctx context.Context, app App) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return App{}, err
+	}
 	for _, a := range m.apps {
 		if a.Slug == app.Slug && a.Status != AppDeleted {
 			return App{}, fmt.Errorf("state: slug %q already taken", app.Slug)
+		}
+	}
+	if app.ID != "" {
+		if _, exists := m.apps[app.ID]; exists {
+			return App{}, ErrConflict
 		}
 	}
 	if app.ID == "" {
@@ -4363,6 +4878,12 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 		return App{}, err
 	}
 	m.ensureAppOrgLocked(&app)
+	if err := m.checkProjectWorkloadOwnerLocked(app); err != nil {
+		return App{}, err
+	}
+	if err := m.initializeApplicationStandardEnrollmentLocked(app); err != nil {
+		return App{}, err
+	}
 	m.ensureServiceAddressIndexLocked(&app)
 	m.apps[app.ID] = app
 	return app, nil
@@ -4374,9 +4895,12 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 // so a Free account that already holds 1 app always sees observed=1 on
 // the second call. The handler's CreateApp call site becomes store-
 // agnostic.
-func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.Limits) (App, error) {
+func (m *MemStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api.Limits) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return App{}, err
+	}
 	return m.createAppIfUnderQuotaLocked(app, limits)
 }
 
@@ -4396,11 +4920,18 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 	}
 	created := make([]App, 0, len(apps))
 	insertedIDs := make([]string, 0, len(apps))
+	addressIndexBefore := maps.Clone(m.serviceAddressIndex)
+	addressCursorsBefore := maps.Clone(m.serviceAddressCursors)
 	rollback := func(err error) ([]App, error) {
 		for _, id := range insertedIDs {
+			m.deleteScenarioWorkerFaultsForAppLocked(id)
 			delete(m.apps, id)
+			delete(m.applicationStandardEnrollments, id)
+			m.eraseStandardAppExceptionsLocked(id)
+			m.deleteStandardMaterializationControlsLocked(id)
 			delete(m.appHealthHistory, id)
 		}
+		m.serviceAddressIndex, m.serviceAddressCursors = addressIndexBefore, addressCursorsBefore
 		return nil, err
 	}
 	for _, app := range apps {
@@ -4426,44 +4957,12 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 	return created, nil
 }
 
-// checkAppQuotaLocked mirrors PgStore's checkAppQuotaTx predicates,
-// including the separate developer-environment cap. Caller holds m.mu.
-func (m *MemStore) checkAppQuotaLocked(app App, limits api.Limits) error {
-	observed := 0
-	developer := IsDeveloperApp(app)
-	preview := IsPRPreviewApp(app)
-	for _, a := range m.apps {
-		if a.AccountID != app.AccountID || (a.Status != AppActive && a.Status != AppEvictedCold) {
-			continue
-		}
-		if developer != IsDeveloperApp(a) || preview != IsPRPreviewApp(a) {
-			continue
-		}
-		observed++
-	}
-	limit := limits.DeployedApps
-	kind := QuotaErrorKindApps
-	if developer {
-		limit = limits.DeveloperApps
-		if limit <= 0 {
-			limit = limits.DeployedApps
-		}
-		kind = QuotaErrorKindDeveloperApps
-	} else if preview {
-		limit = limits.PreviewApps
-		if limit <= 0 {
-			limit = limits.DeployedApps
-		}
-		kind = QuotaErrorKindPreviewApps
-	}
-	if observed >= limit {
-		return &QuotaError{Kind: kind, Limit: limit, Observed: observed}
-	}
-	return nil
-}
-
 func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App, error) {
-	if _, ok := m.accounts[app.AccountID]; !ok {
+	limits, _, err := m.resolveAppQuotaLocked(&app, limits)
+	if err != nil {
+		return App{}, err
+	}
+	if !m.resourceNamespaceExistsLocked(app.AccountID) {
 		return App{}, ErrNotFound
 	}
 	// 1. Return the slug collision before quota. Deploy clients use this
@@ -4479,6 +4978,11 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 	}
 	// 3. Conditional insert. The lock keeps the collision check above and
 	// insert atomic for MemStore.
+	if app.ID != "" {
+		if _, exists := m.apps[app.ID]; exists {
+			return App{}, ErrConflict
+		}
+	}
 	if app.ID == "" {
 		app.ID = newID()
 	}
@@ -4524,6 +5028,9 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 		return App{}, err
 	}
 	m.ensureAppOrgLocked(&app)
+	if err := m.initializeApplicationStandardEnrollmentLocked(app); err != nil {
+		return App{}, err
+	}
 	m.ensureServiceAddressIndexLocked(&app)
 	m.apps[app.ID] = app
 	return app, nil
@@ -4547,7 +5054,7 @@ func (m *MemStore) AppByID(_ context.Context, id string) (App, error) {
 	if !ok {
 		return App{}, ErrNotFound
 	}
-	return a, nil
+	return cloneDeploymentPolicyPointers(a), nil
 }
 
 func (m *MemStore) AppBySlug(_ context.Context, slug string) (App, error) {
@@ -4555,7 +5062,7 @@ func (m *MemStore) AppBySlug(_ context.Context, slug string) (App, error) {
 	defer m.mu.Unlock()
 	for _, a := range m.apps {
 		if a.Slug == slug && a.Status != AppDeleted {
-			return a, nil
+			return cloneDeploymentPolicyPointers(a), nil
 		}
 	}
 	return App{}, ErrNotFound
@@ -4566,7 +5073,7 @@ func (m *MemStore) AppBySlugIncludingDeleted(_ context.Context, slug string) (Ap
 	defer m.mu.Unlock()
 	for _, a := range m.apps {
 		if a.Slug == slug {
-			return a, nil
+			return cloneDeploymentPolicyPointers(a), nil
 		}
 	}
 	return App{}, ErrNotFound
@@ -4840,7 +5347,7 @@ func (m *MemStore) ListApps(_ context.Context, accountID string) ([]App, error) 
 	defer m.mu.Unlock()
 	var out []App
 	for _, a := range m.apps {
-		if a.AccountID == accountID && a.Status != AppDeleted {
+		if (a.AccountID == accountID || a.OrgID == accountID) && a.Status != AppDeleted {
 			out = append(out, a)
 		}
 	}
@@ -5072,9 +5579,12 @@ func (m *MemStore) ConcurrencyForDeployment(_ context.Context, appID, deployment
 // UpdateDeploymentMinInstances mirrors PgStore.UpdateDeploymentMinInstances.
 // The handler validates against the parent app's plan ceiling; the store
 // rejects changes that would mutate a GitOps-managed deployment contract.
-func (m *MemStore) UpdateDeploymentMinInstances(_ context.Context, id string, min int) (Deployment, error) {
+func (m *MemStore) UpdateDeploymentMinInstances(ctx context.Context, id string, min int) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return Deployment{}, err
+	}
 	d, ok := m.deployments[id]
 	if !ok {
 		return Deployment{}, ErrNotFound
@@ -5100,6 +5610,10 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.migrationDeploymentRetiredLocked(id) {
+		return Deployment{}, 0, ErrConflict
+	}
+
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	if params.RequireSafeReleaseLease {
 		if m.safeReleaseWorkerLeaseUntil.IsZero() {
@@ -5197,6 +5711,7 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 	d.CanaryStep = persistedStep
 	d.CanaryStepStartedAt = &now
 	d.TrafficPercent = params.TrafficPercent
+	d.RolloutDecision = cloneRawJSON(params.Decision)
 	if terminal {
 		d.RolloutState = "complete"
 		d.RolloutCompletedAt = &now
@@ -5269,12 +5784,19 @@ func (m *MemStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPe
 	return m.updateDeploymentTraffic(ctx, id, newPercent, expectedServingID, nil)
 }
 
-func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (Deployment, error) {
+func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard, reviews ...*api.AppReleaseReview) (result Deployment, resultErr error) {
 	if newPercent < 0 || newPercent > 100 {
 		return Deployment{}, ErrInvalidTrafficPercent
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return Deployment{}, err
+	}
+	if m.migrationDeploymentRetiredLocked(id) {
+		return Deployment{}, ErrConflict
+	}
+
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
 
 	d, ok := m.deployments[id]
@@ -5284,13 +5806,30 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	if d.Status != DeployLive {
 		return Deployment{}, ErrDeploymentNotLive
 	}
+	ctx, admission := captureMCPAdmission(ctx, id, newPercent)
+	defer func() { m.finishMCPAdmissionLocked(admission, resultErr) }()
+	if err := m.checkMCPAccessPolicyLocked(ctx, d.AppID); err != nil {
+		return Deployment{}, err
+	}
+	if len(reviews) > 0 {
+		if len(reviews) != 1 || reviews[0] == nil {
+			return Deployment{}, ErrInvalidArgument
+		}
+		current, err := m.releaseReviewLocked(d.AppID, normalizedDeploymentScope(d.Scope))
+		if err != nil {
+			return Deployment{}, err
+		}
+		if err := validateReviewedTraffic(*reviews[0], current, newPercent); err != nil {
+			return Deployment{}, err
+		}
+	}
 	for _, sibling := range m.deployments {
-		if sibling.AppID == d.AppID && sibling.EnvironmentWorkloadManaged() {
+		if sibling.AppID == d.AppID && normalizedDeploymentScope(sibling.Scope) == normalizedDeploymentScope(d.Scope) && sibling.EnvironmentWorkloadManaged() {
 			return Deployment{}, ErrConflict
 		}
 	}
 	for _, other := range m.deployments {
-		if other.AppID == d.AppID && other.Status == DeployLive && other.CanaryTotalSteps > 0 &&
+		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive && other.CanaryTotalSteps > 0 &&
 			(other.RolloutState == "pending" || other.RolloutState == "rolling_out") {
 			return Deployment{}, ErrTrafficChangeDuringCanary
 		}
@@ -5307,7 +5846,7 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		servingID := ""
 		servingCount := 0
 		for otherID, other := range m.deployments {
-			if other.AppID == d.AppID && other.Status == DeployLive && other.TrafficPercent > 0 && otherID != id {
+			if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive && other.TrafficPercent > 0 && otherID != id {
 				servingID = otherID
 				servingCount++
 			}
@@ -5331,7 +5870,7 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	}
 	var siblings []sibling
 	for otherID, other := range m.deployments {
-		if other.AppID != appID || other.Status != DeployLive || otherID == id {
+		if other.AppID != appID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(d.Scope) || other.Status != DeployLive || otherID == id || m.migrationDeploymentRetiredLocked(otherID) {
 			continue
 		}
 		siblings = append(siblings, sibling{ID: otherID, Prior: other.TrafficPercent})
@@ -5405,6 +5944,24 @@ func (m *MemStore) ListInstancesByNodeID(_ context.Context, nodeID string) ([]In
 	return out, nil
 }
 
+// ListLiveInstancesByNodeID mirrors PgStore.ListLiveInstancesByNodeID: live
+// instances of the node's non-deleted apps.
+func (m *MemStore) ListLiveInstancesByNodeID(_ context.Context, nodeID string) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owned := make(map[string]bool, len(m.apps))
+	for _, a := range m.apps {
+		owned[a.ID] = a.NodeID == nodeID && a.Status != AppDeleted
+	}
+	var out []Instance
+	for _, ins := range m.instances {
+		if owned[ins.AppID] && IsLive(ins.State) {
+			out = append(out, ins)
+		}
+	}
+	return out, nil
+}
+
 // ListInstancesOnNodeID mirrors PgStore.ListInstancesOnNodeID. This is the
 // physical-placement view used by drain safety and node observability; it
 // intentionally does not consult the app's scheduler-owner NodeID because a
@@ -5472,7 +6029,7 @@ func (m *MemStore) ListInstancesForLifecycleReconciliation(_ context.Context, no
 
 // FailRunningInstanceIfOwnedByNode mirrors PgStore's conditional healthy-node
 // stale-instance transition. ErrConflict represents a state/node race.
-func (m *MemStore) FailRunningInstanceIfOwnedByNode(_ context.Context, id, nodeID string, terminalAt time.Time) error {
+func (m *MemStore) FailRunningInstanceIfOwnedByNode(ctx context.Context, id, nodeID string, terminalAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ins, ok := m.instances[id]
@@ -5480,7 +6037,7 @@ func (m *MemStore) FailRunningInstanceIfOwnedByNode(_ context.Context, id, nodeI
 		return ErrConflict
 	}
 	ins.State = string(StateFailed)
-	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[id], ins); err != nil {
 		return err
 	}
 	ts := terminalAt
@@ -5690,7 +6247,7 @@ func (m *MemStore) ListLiveInstancesOnNode(_ context.Context, nodeID string, max
 // lease_token alongside state='migrating' so the rollback
 // predicate at Phase 4 (CancelInstanceMigration) can match.
 // Returns ErrConflict on a lost race / row gone.
-func (m *MemStore) MarkInstanceMigrating(_ context.Context, instanceID, currentNodeID, leaseToken string) error {
+func (m *MemStore) MarkInstanceMigrating(ctx context.Context, instanceID, currentNodeID, leaseToken string) error {
 	if instanceID == "" {
 		return fmt.Errorf("state: mark instance migrating: empty instanceID")
 	}
@@ -5709,13 +6266,16 @@ func (m *MemStore) MarkInstanceMigrating(_ context.Context, instanceID, currentN
 	if ins.NodeID != currentNodeID || ins.State != string(StateRunning) {
 		return ErrConflict
 	}
-	ins.State = string(StateMigrating)
-	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
+	if err := m.markFunctionMigrationSourceLocked(ctx, ins, leaseToken); err != nil {
 		return err
 	}
+	ins.State = string(StateMigrating)
 	ins.LeaseToken = leaseToken
 	now := time.Now().UTC()
 	ins.MigrationStartedAt = &now
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[instanceID], ins); err != nil {
+		return err
+	}
 	m.instances[instanceID] = ins
 	return nil
 }
@@ -5725,7 +6285,7 @@ func (m *MemStore) MarkInstanceMigrating(_ context.Context, instanceID, currentN
 // the instance row (conditional on state='migrating' +
 // node_id=fromNodeID + lease_token=leaseToken), then stamp
 // apps.migrated_at. Returns ErrConflict on a lost race / row gone.
-func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeID, toNodeID, leaseToken string) error {
+func (m *MemStore) MigrateInstanceOwner(ctx context.Context, instanceID, fromNodeID, toNodeID, leaseToken string) error {
 	if instanceID == "" {
 		return fmt.Errorf("state: migrate instance owner: empty instanceID")
 	}
@@ -5734,6 +6294,9 @@ func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeI
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkNodeAdmissionLocked(ctx, toNodeID); err != nil {
+		return err
+	}
 	ins, ok := m.instances[instanceID]
 	if !ok {
 		return ErrNotFound
@@ -5758,13 +6321,14 @@ func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeI
 	ins.LeaseToken = leaseToken
 	ins.MigrationStartedAt = nil
 	ins.State = string(StateRunning)
-	if err := m.checkServiceCapacityInstanceLocked(ins); err != nil {
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[instanceID], ins); err != nil {
 		return err
 	}
-	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
+	if err := m.validateMigrationAdmissionCommitLocked(ctx, ins, fromNodeID, toNodeID, leaseToken); err != nil {
 		return err
 	}
 	m.instances[instanceID] = ins
+	m.consumeMigrationAdmissionLocked(ins, fromNodeID, leaseToken)
 	// Stamp apps.migrated_at to match the SQL transaction's
 	// second UPDATE.
 	delete(m.instanceRuntimeConfigReceipts, instanceID)
@@ -5779,7 +6343,7 @@ func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeI
 // CancelInstanceMigration. Conditional on state='migrating' +
 // node_id=originalNodeID + lease_token=leaseToken; restores
 // state='parked' and clears lease_token.
-func (m *MemStore) CancelInstanceMigration(_ context.Context, instanceID, originalNodeID, leaseToken string) error {
+func (m *MemStore) CancelInstanceMigration(ctx context.Context, instanceID, originalNodeID, leaseToken string) error {
 	if instanceID == "" {
 		return fmt.Errorf("state: cancel instance migration: empty instanceID")
 	}
@@ -5796,7 +6360,7 @@ func (m *MemStore) CancelInstanceMigration(_ context.Context, instanceID, origin
 		return ErrConflict
 	}
 	ins.State = "parked"
-	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[instanceID], ins); err != nil {
 		return err
 	}
 	ins.LeaseToken = ""
@@ -5823,6 +6387,9 @@ func (m *MemStore) ListExpiredMigrations(_ context.Context, maxPerTick int, olde
 	var out []Instance
 	for _, ins := range m.instances {
 		if ins.State != string(StateMigrating) || ins.LeaseToken == "" {
+			continue
+		}
+		if _, tracked := m.functionMigrationSources[ins.ID]; tracked {
 			continue
 		}
 		if !cutoff.IsZero() && (ins.MigrationStartedAt == nil || ins.MigrationStartedAt.After(cutoff)) {
@@ -5856,7 +6423,7 @@ func (m *MemStore) ListExpiredMigrations(_ context.Context, maxPerTick int, olde
 // ReinviteMigratingInstance. Conditional on state='migrating'
 // + lease_token=leaseToken; flips state='running' and clears
 // lease_token. Returns ErrConflict on predicate miss.
-func (m *MemStore) ReinviteMigratingInstance(_ context.Context, instanceID, leaseToken string) error {
+func (m *MemStore) ReinviteMigratingInstance(ctx context.Context, instanceID, leaseToken string) error {
 	if instanceID == "" {
 		return fmt.Errorf("state: reinvite migrating instance: empty instanceID")
 	}
@@ -5873,13 +6440,13 @@ func (m *MemStore) ReinviteMigratingInstance(_ context.Context, instanceID, leas
 		return ErrConflict
 	}
 	ins.State = string(StateRunning)
-	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
-		return err
-	}
 	now := time.Now().UTC()
 	ins.MigratedAt = &now
 	ins.LeaseToken = ""
 	ins.MigrationStartedAt = nil
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[instanceID], ins); err != nil {
+		return err
+	}
 	m.instances[instanceID] = ins
 	return nil
 }
@@ -5892,7 +6459,7 @@ func (m *MemStore) ReinviteMigratingInstance(_ context.Context, instanceID, leas
 // migrated_from_node_id is NULL pre-Phase-3; the wake path
 // dispatches via app.NodeID, so a dead instance.NodeID is
 // harmless).
-func (m *MemStore) AbortMigratingInstance(_ context.Context, instanceID, leaseToken string) error {
+func (m *MemStore) AbortMigratingInstance(ctx context.Context, instanceID, leaseToken string) error {
 	if instanceID == "" {
 		return fmt.Errorf("state: abort migrating instance: empty instanceID")
 	}
@@ -5909,7 +6476,7 @@ func (m *MemStore) AbortMigratingInstance(_ context.Context, instanceID, leaseTo
 		return ErrConflict
 	}
 	ins.State = string(StateParked)
-	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[instanceID], ins); err != nil {
 		return err
 	}
 	ins.LeaseToken = ""
@@ -5988,7 +6555,7 @@ func (m *MemStore) ListRunningInstancesOnDeadNodes(_ context.Context, threshold 
 // is reserved for explicit precondition violations (the caller
 // passed an instanceID the store has never heard of) — that signal
 // is too loud to use as a silent "the row disappeared" handler.
-func (m *MemStore) FailRunningInstanceOnDeadNode(_ context.Context, instanceID, nodeID string, threshold time.Time) error {
+func (m *MemStore) FailRunningInstanceOnDeadNode(ctx context.Context, instanceID, nodeID string, threshold time.Time) error {
 	if instanceID == "" {
 		return fmt.Errorf("state: fail running instance on dead node: empty instanceID")
 	}
@@ -6013,7 +6580,7 @@ func (m *MemStore) FailRunningInstanceOnDeadNode(_ context.Context, instanceID, 
 		}
 	}
 	ins.State = string(StateFailed)
-	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[instanceID], ins); err != nil {
 		return err
 	}
 	now := m.clock()
@@ -6025,25 +6592,17 @@ func (m *MemStore) FailRunningInstanceOnDeadNode(_ context.Context, instanceID, 
 func (m *MemStore) CountDeployedApps(_ context.Context, accountID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	n := 0
-	for _, a := range m.apps {
-		if a.AccountID == accountID && (a.Status == AppActive || a.Status == AppEvictedCold) && !IsDeveloperApp(a) && !IsPRPreviewApp(a) {
-			n++
-		}
-	}
-	return n, nil
+	app := App{AccountID: accountID}
+	m.ensureAppOrgLocked(&app)
+	return m.countAppQuotaLocked(app, true, QuotaErrorKindApps), nil
 }
 
 func (m *MemStore) CountDeveloperApps(_ context.Context, accountID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	n := 0
-	for _, a := range m.apps {
-		if a.AccountID == accountID && (a.Status == AppActive || a.Status == AppEvictedCold) && IsDeveloperApp(a) {
-			n++
-		}
-	}
-	return n, nil
+	app := App{AccountID: accountID}
+	m.ensureAppOrgLocked(&app)
+	return m.countAppQuotaLocked(app, true, QuotaErrorKindDeveloperApps), nil
 }
 
 // CountAppsWithEvictionPriority mirrors the pgstore read for the
@@ -6130,7 +6689,7 @@ func (m *MemStore) UpdateAppWithActivity(ctx context.Context, id string, p Updat
 	return app, outboxID, err
 }
 
-func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateAppParams, entry *OrgActivity, build OrgActivityAppConfigBuilder, outboxID *int64) (App, error) {
+func (m *MemStore) updateAppWithActivity(ctx context.Context, id string, p UpdateAppParams, entry *OrgActivity, build OrgActivityAppConfigBuilder, outboxID *int64) (App, error) {
 	if p.SetAppProtocol && (p.AppProtocol == nil || !api.IsValidAppProtocol(*p.AppProtocol)) {
 		return App{}, ErrInvalidArgument
 	}
@@ -6140,12 +6699,30 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return App{}, err
+	}
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	a, ok := m.apps[id]
 	if !ok {
 		return App{}, ErrNotFound
 	}
+	var guardErr error
+	p, guardErr = prepareServiceBindingPlanUpdate(a, p)
+	if guardErr != nil {
+		return App{}, guardErr
+	}
+	if (p.SetRequireSigned && boolOrFalse(p.RequireSigned) != a.RequireSigned && m.standardManagedControlLocked(a.ID, appstandards.RequireSigned)) ||
+		(p.SetSecurityPolicy && p.SecurityPolicy != nil && *p.SecurityPolicy != a.SecurityPolicy && m.standardManagedControlLocked(a.ID, appstandards.SecurityPolicy)) ||
+		(p.SetEgressAllowlist && !slices.Equal(derefPrefixes(p.EgressAllowlist), a.EgressAllowlist) && m.standardManagedControlLocked(a.ID, appstandards.EgressCIDRs)) ||
+		(p.SetEgressPorts && !slices.Equal(p.EgressPorts, a.EgressPorts) && m.standardManagedControlLocked(a.ID, appstandards.EgressExtraPorts)) {
+		return App{}, ErrApplicationStandardManagedControl
+	}
 	before := a
+	p, guardErr = m.prepareDeploySettingsUpdateLocked(a, p)
+	if guardErr != nil {
+		return App{}, guardErr
+	}
 	if a.ScalingPolicyRevision <= 0 {
 		a.ScalingPolicyRevision = 1
 	}
@@ -6233,7 +6810,14 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	if syncErr != nil {
 		return App{}, syncErr
 	}
-	m.apps[id] = a
+	if before.Status == AppDeleted && a.Status != AppDeleted {
+		if err := m.initializeApplicationStandardEnrollmentLocked(a); err != nil {
+			return App{}, err
+		}
+	}
+	m.advanceAppEgressRevisionLocked(before, a)
+	m.invalidateDeploymentPoliciesLocked(before, a, p.TouchDeploymentPolicies)
+	m.apps[id] = cloneDeploymentPolicyPointers(a)
 	if routeCheckAppInputsChanged(before, a) {
 		m.enqueueRoutePolicyChecksLocked(id)
 	}
@@ -6262,6 +6846,11 @@ func (m *MemStore) CompareAndSetAppStatus(_ context.Context, id string, from, to
 	a.Status = to
 	if err := m.checkServiceCapacityAppLocked(a); err != nil {
 		return false, err
+	}
+	if from == AppDeleted && to != AppDeleted {
+		if err := m.initializeApplicationStandardEnrollmentLocked(a); err != nil {
+			return false, err
+		}
 	}
 	if to != AppEvictedCold {
 		m.clearCurrentAppParkTransitionLocked(id)
@@ -6307,9 +6896,12 @@ func (m *MemStore) RenameApp(_ context.Context, accountID, oldSlug, newSlug stri
 // gating is the apid handler's job — the store writes the column
 // unconditionally. Returns ErrNotFound when the app is gone so a
 // redelivered PATCH returns 404 cleanly.
-func (m *MemStore) SetAppMinInstances(_ context.Context, appID string, min int) error {
+func (m *MemStore) SetAppMinInstances(ctx context.Context, appID string, min int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	a, ok := m.apps[appID]
 	if !ok {
 		return ErrNotFound
@@ -6350,14 +6942,17 @@ func (m *MemStore) DeleteApp(ctx context.Context, id string) error {
 
 // ScheduleAppDeletion stamps a restorable tombstone. Repeated calls preserve
 // the first deadline, matching the PostgreSQL COALESCE update.
-func (m *MemStore) ScheduleAppDeletion(_ context.Context, id string, graceUntil time.Time) (App, error) {
-	a, _, err := m.scheduleAppDeletion(id, graceUntil, nil)
+func (m *MemStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil time.Time) (App, error) {
+	a, _, err := m.scheduleAppDeletion(ctx, id, graceUntil, nil)
 	return a, err
 }
 
-func (m *MemStore) RestoreApp(_ context.Context, id string, limits api.Limits) (App, error) {
+func (m *MemStore) RestoreApp(ctx context.Context, id string, limits api.Limits) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return App{}, err
+	}
 	return m.restoreAppLocked(id, limits)
 }
 
@@ -6378,6 +6973,9 @@ func (m *MemStore) restoreAppLocked(id string, limits api.Limits) (App, error) {
 	a.DeletedAt = nil
 	a.DeleteGraceUntil = nil
 	if err := m.checkServiceCapacityAppLocked(a); err != nil {
+		return App{}, err
+	}
+	if err := m.initializeApplicationStandardEnrollmentLocked(a); err != nil {
 		return App{}, err
 	}
 	m.ensureServiceAddressIndexLocked(&a)
@@ -6486,6 +7084,11 @@ func (m *MemStore) ClaimAppDeletion(_ context.Context, id string) error {
 func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, dep := range m.deployments {
+		if dep.AppID == id && m.recoveryProtectedDeploymentLocked(dep.ID) {
+			return ErrConflict
+		}
+	}
 	a, ok := m.apps[id]
 	_, claimed := m.appDeletionClaims[id]
 	if !ok || !claimed || a.Status != AppDeleted || a.DeleteGraceUntil == nil || a.DeleteGraceUntil.After(time.Now()) {
@@ -6507,6 +7110,33 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	}
 	m.forgetOwnedOperationsLocked("", id)
 	delete(m.appDeletionClaims, id)
+
+	m.deleteAppStandardSnapshotCapturesLocked(id)
+	m.deleteAppSourceBuildRootfsLocked(id)
+	for key, proof := range m.deploymentRegistryRootfs {
+		if sameStandardUUID(proof.Input.AppID, id) {
+			delete(m.deploymentRegistryRootfs, key)
+			delete(m.deploymentRegistryRootfsCurrent, proof.Input.DeploymentID+"\x00"+proof.Input.WorkloadName)
+		}
+	}
+
+	for key, scan := range m.deploymentArtifactScans {
+		if sameStandardUUID(scan.Input.AppID, id) {
+			delete(m.deploymentArtifactScans, key)
+			delete(m.deploymentArtifactScanCurrent, scan.Input.DeploymentID+"\x00"+scan.Input.WorkloadName)
+		}
+	}
+	m.deleteAppRuntimeScansLocked(id)
+	for key, proof := range m.deploymentRegistryVerifications {
+		if sameStandardUUID(proof.Input.AppID, id) {
+			delete(m.deploymentRegistryVerifications, key)
+		}
+	}
+	for key, proof := range m.buildExportPublications {
+		if sameStandardUUID(proof.Input.Claims.AppID, id) {
+			delete(m.buildExportPublications, key)
+		}
+	}
 	m.deleteAppWorkOwnershipLocked(id)
 	for key, v := range m.envs {
 		if v.AppID == id {
@@ -6517,6 +7147,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	delete(m.savedRouteRequirements, id)
 	m.deleteProfileInvestigationsLocked(id)
 	delete(m.canaryRouteGates, id)
+	m.deleteEnvironmentBudgetsForAppLocked(id)
 	delete(m.routeMonitorConfigs, id)
 	delete(m.routeMonitorNextCheck, id)
 	delete(m.routeMonitorIncidents, id)
@@ -6543,12 +7174,16 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	}
 	for key, v := range m.invocations {
 		if v.AppID == id {
+			m.captureEventExecutionTransitionLocked(v, Invocation{}, time.Now().UTC(), true)
+			m.loseExecutionCoverageLocked(v.AppID, "invocation_deleted", time.Now().UTC())
 			delete(m.invocations, key)
+			delete(m.workerReleasePins, key)
 			delete(m.eventDeliverySlots, key)
 			m.deleteInvocationAttemptsLocked(key)
 			delete(m.keyedReplayChildren, key)
 			delete(m.plainReplayChildren, key)
 			delete(m.invocationEnvironmentQueueReceipts, key)
+			delete(m.invocationQueueLeaseReceipts, key)
 		}
 	}
 	for key, task := range m.appTasks {
@@ -6570,17 +7205,25 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key, v := range m.instances {
 		if v.AppID == id {
 			delete(m.instances, key)
-			delete(m.runtimeInstanceConfigProofs, key)
+			m.deleteNativeInstanceInputsLocked(key)
+			delete(m.releaseWorkerDrains, key)
 			delete(m.instanceRuntimeConfigReceipts, key)
 			m.deleteSecretRuntimeProcessesLocked(key)
 			delete(m.capacityInstanceResources, key)
 		}
 	}
+	delete(m.deploymentPolicyStates, id)
+	delete(m.deploymentCronStates, id)
+	delete(m.deploymentCronActivations, id)
+	delete(m.deploymentCronBefore, id)
 	depIDs := make(map[string]struct{})
 	for key, d := range m.deployments {
 		if d.AppID == id {
 			depIDs[key] = struct{}{}
 			delete(m.deployments, key)
+			delete(m.releaseEnvironmentPins, key)
+			m.deleteDeploymentSubmissionsLocked(key)
+			delete(m.publicBuildURLs, key)
 			delete(m.deploymentRuntimeEnvironmentOwners, key)
 			delete(m.operationCodePins, key)
 			delete(m.workflowCodePins, key)
@@ -6622,13 +7265,8 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.objectNotifications, key)
 		}
 	}
-	filteredUsage := m.usage[:0]
-	for _, v := range m.usage {
-		if v.AppID != id {
-			filteredUsage = append(filteredUsage, v)
-		}
-	}
-	m.usage = filteredUsage
+	// m.usage (usage_minutes) is retained like PgStore: it is the
+	// account's billing evidence for the month (ADR-1162).
 	filteredLogEvents := m.logEvents[:0]
 	for _, event := range m.logEvents {
 		if event.AppID != id {
@@ -6666,10 +7304,16 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		}
 	}
 	delete(m.serviceRecovery, id)
+	delete(m.workerRecovery, id)
 	m.deleteEnvironmentSecretRefsLocked(id, "")
 	m.deleteEnvironmentWorkloadIntentsLocked(id, "")
 	m.deleteWorkflowDispatchCursorsLocked(id)
+	m.deleteEventExecutionLedgerAppLocked(id)
+	m.deleteScenarioWorkerFaultsForAppLocked(id)
 	delete(m.apps, id)
+	delete(m.applicationStandardEnrollments, id)
+	m.eraseStandardAppExceptionsLocked(id)
+	m.deleteStandardMaterializationControlsLocked(id)
 	delete(m.appHealthHistory, id)
 	return nil
 }
@@ -6680,6 +7324,11 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, dep := range m.deployments {
+		if dep.AppID == id && m.recoveryProtectedDeploymentLocked(dep.ID) {
+			return App{}, ErrConflict
+		}
+	}
 	a, ok := m.apps[id]
 	if !ok {
 		return App{}, ErrNotFound
@@ -6694,6 +7343,9 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 		}
 	}
 	now := time.Now().UTC()
+	if err := m.retireDeletedAppLocked(a, now); err != nil {
+		return App{}, err
+	}
 	deadline := now.Add(AppDeleteGraceDuration())
 	a.Status = AppDeleted
 	if a.DeletedAt == nil {
@@ -6914,7 +7566,8 @@ func (m *MemStore) ListGithubInstallBindingsForAccount(_ context.Context, accoun
 // (PR-C). Idempotent on (AccountID, InstallationID) by map insert; the AccountID
 // FK isn't enforced in MemStore (in-memory), but the upsert still
 // rejects empty AccountID / AuditGithubLogin so test parity with
-// PgStore holds.
+// PgStore holds. Installation ownership is globally exclusive, just as the
+// PostgreSQL unique index requires.
 func (m *MemStore) UpsertGitHubInstall(_ context.Context, inst GitHubInstall) error {
 	if inst.AccountID == "" {
 		return ErrNotFound
@@ -6927,6 +7580,11 @@ func (m *MemStore) UpsertGitHubInstall(_ context.Context, inst GitHubInstall) er
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, existing := range m.githubInstalls {
+		if existing.InstallationID == inst.InstallationID && existing.AccountID != inst.AccountID {
+			return ErrConflict
+		}
+	}
 	m.githubInstalls[inst.AccountID+"\x00"+strconv.FormatInt(inst.InstallationID, 10)] = inst
 	return nil
 }
@@ -7100,16 +7758,26 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 // the new row. The race-free supersede closes the same TOCTOU the
 // image: branch had before, and gives the tarball branch the parity
 // it has always lacked.
-func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, error) {
-	created, _, err := m.createDeployment(d, nil, nil)
+func (m *MemStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
+	d.submissionAttemptID = deploymentSubmissionAttempt(ctx)
+	d.releaseConfigAttempt = projectReleaseConfigAttempt(ctx)
+	d.releaseWorkerAttempt = projectReleaseWorkerAttempt(ctx)
+	d.retryDeploymentID = deploymentRetryTarget(ctx, d.AppID)
+	created, _, err := m.createDeployment(ctx, d, nil, nil)
 	return created, err
 }
 
-func (m *MemStore) CreateDeploymentWithActivity(_ context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
-	return m.createDeployment(d, &activity, nil)
+func (m *MemStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
+	d.submissionAttemptID = deploymentSubmissionAttempt(ctx)
+	d.releaseConfigAttempt = projectReleaseConfigAttempt(ctx)
+	d.releaseWorkerAttempt = projectReleaseWorkerAttempt(ctx)
+	d.retryDeploymentID = deploymentRetryTarget(ctx, d.AppID)
+	return m.createDeployment(ctx, d, &activity, nil)
 }
 
-func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
+func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
+	reviewed := d.ExpectedReview != nil
+	var reviewedSpec ProjectEnvironmentWorkloadSpec
 	if d.EnvironmentWorkloadManaged() {
 		return Deployment{}, 0, ErrInvalidArgument
 	}
@@ -7118,10 +7786,78 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return Deployment{}, 0, err
+	}
 	app, ok := m.apps[d.AppID]
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, 0, ErrNotFound
 	}
+	if err := guardReleaseAdditionDeployment(d, m.projectReleaseAdditions[d.AppID]); err != nil {
+		return Deployment{}, 0, err
+	}
+	if d.retryDeploymentID != "" {
+		latest := m.latestPolicyDeploymentLocked(d.AppID)
+		if latest != d.retryDeploymentID || m.deployments[latest].Status != DeployFailed {
+			return Deployment{}, 0, ErrDeploymentRetryChanged
+		}
+	}
+
+	if d.submissionAttemptID != "" {
+		if !api.ValidDeploymentAttemptID(d.submissionAttemptID) {
+			return Deployment{}, 0, ErrInvalidArgument
+		}
+		if _, exists := m.deploymentSubmissionReceipts[submissionKey(d.AppID, d.submissionAttemptID)]; exists {
+			return Deployment{}, 0, ErrDeploymentSubmissionConflict
+		}
+	}
+	if d.releaseWorkerAttempt != "" {
+		if err := m.validateReleaseWorkerCandidateLocked(d); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
+	var releaseVariables []AppEnv
+	if d.releaseConfigAttempt != "" {
+		var err error
+		releaseVariables, err = m.candidateReleaseConfigurationLocked(d)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+	}
+	if d.releaseConfigAttempt == "" {
+		releaseVariables = m.inheritedReleaseVariablesLocked(d.AppID, d.Scope)
+	}
+
+	releaseSecrets, secretPinned, secretErr := m.candidateReleaseSecretsLocked(d)
+	if secretErr != nil {
+		return Deployment{}, 0, secretErr
+	}
+	if enrollment, ok := m.applicationStandardEnrollments[app.ID]; ok && (enrollment.State == "pending" || enrollment.State == "blocked" || enrollment.State == "applying") {
+		return Deployment{}, 0, ErrApplicationStandardsPending
+	}
+	if d.ExpectedReview != nil {
+		if err := validateReviewedDeployment(d); err != nil {
+			return Deployment{}, 0, ErrInvalidArgument
+		}
+		review, err := m.releaseReviewLocked(d.AppID, normalizedDeploymentScope(d.Scope))
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		if d.ReviewedRolloutMode != "" && review.Protected {
+			return Deployment{}, 0, ErrReleaseReviewChanged
+		}
+		if err := checkReleaseReview(*d.ExpectedReview, review); err != nil {
+			return Deployment{}, 0, err
+		}
+		reviewedSpec, err = m.prepareReviewedWorkloadLocked(app, d, review)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		d.ExpectedReview = nil
+		d.ReviewedRolloutMode = ""
+	}
+	d.ReviewedSettings = nil
+
 	var cloneRecord projectCloneWorkloadRecord
 	if len(cloneInputs) > 0 {
 		if len(cloneInputs) != 1 || cloneInputs[0] == nil || promotionInput != nil || activity != nil {
@@ -7158,10 +7894,28 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 		if err != nil {
 			return Deployment{}, 0, err
 		}
+		if configured, ok := m.promotionReleaseConfigurations[promotionInput.PromotionID]; ok {
+			w, err := configured.workload(app.ID, promotionInput.SourceDeploymentID)
+			if err != nil || !d.TrafficPercentExplicit || d.TrafficPercent != 0 {
+				return Deployment{}, 0, ErrConflict
+			}
+			releaseVariables = releaseVariableRows(promotedReleaseVariables(w, d.Scope))
+			if configured.Secrets != nil {
+				releaseSecrets, secretPinned = cloneReleaseSecrets(w.SecretTarget), true
+			}
+			if w.PromotedOverrideEnv != nil {
+				d.OverrideEnv = append(json.RawMessage(nil), (*w.PromotedOverrideEnv)...)
+			}
+		}
 	}
 	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
 		return Deployment{}, 0, err
 	}
+	buildGate, gateErr := newBuildDependencyGate(d, d.BuildDependencies, time.Now())
+	if gateErr != nil {
+		return Deployment{}, 0, gateErr
+	}
+	d.BuildDependencies = nil
 	dependencyGate, err := m.captureDeploymentDependenciesLocked(app, d)
 	if err != nil {
 		return Deployment{}, 0, err
@@ -7217,6 +7971,17 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 	proposal := d
 	if proposal.Status == "" {
 		proposal.Status = DeployPending
+	}
+	if proposal.Status == DeployLive {
+		gateSubject := proposal
+		gateSubject.Status = DeployPending
+		percent := proposal.TrafficPercent
+		if percent == 0 && !proposal.TrafficPercentExplicit && proposal.CanaryTotalSteps <= 0 && !serviceRollout {
+			percent = 100
+		}
+		if err := m.checkMCPReadinessLocked(gateSubject, percent); err != nil {
+			return Deployment{}, 0, err
+		}
 	}
 	if proposal.Status == DeployLive && m.environmentGitOpsManagedForScopeLocked(d.AppID, d.Scope) {
 		return Deployment{}, 0, ErrInvalidStateTransition
@@ -7305,6 +8070,12 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 		return Deployment{}, 0, fmt.Errorf("state: encode deployment stage state: %w", err)
 	}
 	d.StageState = stageState
+	if buildGate != nil {
+		d.StageState, err = projectBuildGate(d.StageState, buildGate)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+	}
 	// ADR-198 — mirror PgStore's `max(revision) + 1` per app. PgStore
 	// derives this in SQL under the apps FOR UPDATE lock; here m.mu
 	// serves the same role. A caller-supplied positive Revision is
@@ -7313,7 +8084,33 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 		d.Revision = m.nextDeploymentRevisionLocked(d.AppID)
 	}
 	m.recordRecoveryPredecessorLocked(d)
+	if reviewedSpec.ID != "" {
+		m.projectEnvironmentWorkloadSpecs[reviewedSpec.ID] = reviewedSpec
+		m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(reviewedSpec.EnvironmentID, app.ID)] = reviewedSpec.ID
+	}
 	m.putDeploymentLocked(d.ID, d)
+	if releaseVariables != nil {
+		if m.releaseEnvironmentPins == nil {
+			m.releaseEnvironmentPins = map[string][]AppEnv{}
+		}
+		m.releaseEnvironmentPins[d.ID] = append([]AppEnv{}, releaseVariables...)
+	}
+	if secretPinned {
+		if m.releaseSecretPins == nil {
+			m.releaseSecretPins = map[string][]releaseSecretVersion{}
+		}
+		m.releaseSecretPins[d.ID] = cloneReleaseSecrets(releaseSecrets)
+	}
+
+	if d.releaseWorkerAttempt != "" {
+		if m.releaseWorkerCandidates == nil {
+			m.releaseWorkerCandidates = map[string]string{}
+		}
+		m.releaseWorkerCandidates[d.ID] = d.releaseWorkerAttempt
+	}
+	if d.submissionAttemptID != "" {
+		m.saveDeploymentSubmissionLocked(d.submissionAttemptID, d)
+	}
 	if dependencyGate != nil {
 		m.deploymentDependencyGates[d.ID] = *dependencyGate
 	}
@@ -7345,6 +8142,13 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 	var outboxID int64
 	if activity != nil {
 		outboxID = m.enqueueOrgActivityOutboxLocked(*activity)
+	}
+	if reviewed {
+		review, err := m.releaseReviewLocked(d.AppID, normalizedDeploymentScope(d.Scope))
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		d.StagedReview = &review
 	}
 	return d, outboxID, nil
 }
@@ -7392,12 +8196,15 @@ func (m *MemStore) DeploymentByID(_ context.Context, id string) (Deployment, err
 	return d, nil
 }
 
-func (m *MemStore) SetDeploymentSecretReloadSignal(_ context.Context, id, signal string) error {
+func (m *MemStore) SetDeploymentSecretReloadSignal(ctx context.Context, id, signal string) error {
 	if id == "" || !validSecretReloadSignal(signal) {
 		return ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
@@ -7408,12 +8215,15 @@ func (m *MemStore) SetDeploymentSecretReloadSignal(_ context.Context, id, signal
 	return nil
 }
 
-func (m *MemStore) SetDeploymentSidecarSecretReloadSignal(_ context.Context, deploymentID, sidecarName, signal string) error {
+func (m *MemStore) SetDeploymentSidecarSecretReloadSignal(ctx context.Context, deploymentID, sidecarName, signal string) error {
 	if deploymentID == "" || sidecarName == "" || !ValidSecretRuntimeWorkloadName(sidecarName) || !validSecretReloadSignal(signal) {
 		return ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	d, ok := m.deployments[deploymentID]
 	if !ok {
 		return ErrNotFound
@@ -7765,24 +8575,37 @@ func (m *MemStore) SafedeployStampRollout(_ context.Context, id string, rolloutS
 // closed-set guards so handler tests can pin the same shape
 // against either store.
 func (m *MemStore) RecoverRollout(ctx context.Context, appID string, action, reason string) (Deployment, int64, error) {
-	return m.recoverRollout(ctx, appID, "", "", action, reason)
+	return m.recoverRollout(ctx, appID, "", "", action, reason, nil)
 }
 
 func (m *MemStore) RecoverRolloutForDeployment(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
 	if deploymentID == "" || expectedPredecessorID == "" || sameDeploymentID(deploymentID, expectedPredecessorID) || action != "abort" {
 		return Deployment{}, 0, ErrRolloutStateInvalid
 	}
-	return m.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason)
+	return m.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil)
 }
 
-func (m *MemStore) recoverRollout(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
+// RecoverRolloutForDeploymentWithDecision mirrors PgStore (ADR-1447).
+func (m *MemStore) RecoverRolloutForDeploymentWithDecision(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, decision json.RawMessage) (Deployment, int64, error) {
+	if deploymentID == "" || expectedPredecessorID == "" || sameDeploymentID(deploymentID, expectedPredecessorID) || action != "abort" {
+		return Deployment{}, 0, ErrRolloutStateInvalid
+	}
+	return m.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason, decision)
+}
+
+// RecoverRolloutWithDecision mirrors PgStore (ADR-1447).
+func (m *MemStore) RecoverRolloutWithDecision(ctx context.Context, appID string, action, reason string, decision json.RawMessage) (Deployment, int64, error) {
+	return m.recoverRollout(ctx, appID, "", "", action, reason, decision)
+}
+
+func (m *MemStore) recoverRollout(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, decision json.RawMessage) (Deployment, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
-	return m.recoverRolloutLocked(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil)
+	return m.recoverRolloutLocked(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil, decision)
 }
 
-func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, auditOverride *DeploymentAudit) (Deployment, int64, error) {
+func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, auditOverride *DeploymentAudit, decision json.RawMessage) (Deployment, int64, error) {
 	previousRecovery := m.lifecycleRecovery
 	m.lifecycleRecovery = action == "abort"
 	defer func() { m.lifecycleRecovery = previousRecovery }()
@@ -7926,6 +8749,8 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		return *target, auditID, nil
 	}
 
+	// ADR-1447: the transition records its decision, or clears a stale one.
+	target.RolloutDecision = cloneRawJSON(decision)
 	switch action {
 	case "advance":
 		// Stuck-detection gate. The CLI distinguishes
@@ -8004,7 +8829,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			Kind:         DeployTrafficChanged,
 			Actor:        "operator:cli:recover_rollout",
 			At:           now,
-			Data:         json.RawMessage(rolloutAuditData("advance", reason)),
+			Data:         json.RawMessage(rolloutAuditDataWithDecision("advance", reason, decision)),
 		})
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
@@ -8042,7 +8867,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			Kind:         DeployTrafficChanged,
 			Actor:        "operator:cli:recover_rollout",
 			At:           now,
-			Data:         json.RawMessage(rolloutAuditData("promote", reason)),
+			Data:         json.RawMessage(rolloutAuditDataWithDecision("promote", reason, decision)),
 		})
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
@@ -8073,7 +8898,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			m.putDeploymentLocked(expectedPredecessorID, predecessor)
 			m.putDeploymentLocked(target.ID, *target)
 			entry := DeploymentAudit{DeploymentID: uuid.MustParse(target.ID), Kind: DeployRolledBack, Actor: "operator:cli:recover_rollout", At: now,
-				Data: json.RawMessage(rolloutRecoveryAuditData(reason, expectedPredecessorID, bindingReleaseFences(ctx)))}
+				Data: json.RawMessage(withAuditDecision(rolloutRecoveryAuditData(reason, expectedPredecessorID, bindingReleaseFences(ctx)), decision))}
 			if auditOverride != nil {
 				entry = *auditOverride
 			}
@@ -8113,7 +8938,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			Kind:         DeployRolledBack,
 			Actor:        "operator:cli:recover_rollout",
 			At:           now,
-			Data:         json.RawMessage(rolloutAuditData("abort", reason)),
+			Data:         json.RawMessage(rolloutAuditDataWithDecision("abort", reason, decision)),
 		})
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
@@ -8574,6 +9399,9 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	}
 
 	if status == DeployLive {
+		if err := m.checkMCPReadinessLocked(d, d.TrafficPercent); err != nil {
+			return err
+		}
 		if _, err := m.checkDeploymentDependenciesLocked(id, time.Now().UTC(), false); err != nil {
 			return err
 		}
@@ -8652,6 +9480,17 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 		m.enqueueDeploymentLifecycleWebhooksLocked(d)
 	}
 
+	// Mirrors rebalanceTrafficAfterFailure: a failure that leaves the other
+	// live rows carrying all traffic must not collapse their split (H10-11).
+	remaining := 0
+	for id, other := range m.deployments {
+		if id != d.ID && other.AppID == d.AppID && other.Status == DeployLive && other.DeletedAt == nil {
+			remaining += other.TrafficPercent
+		}
+	}
+	if remaining == 100 {
+		return
+	}
 	var fallbackID string
 	var fallback Deployment
 	for id, candidate := range m.deployments {
@@ -8724,7 +9563,17 @@ func (m *MemStore) MarkDeploymentLiveIfLatest(ctx context.Context, id string) er
 func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLatest, recovery bool) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.migrationDeploymentRetiredLocked(id) {
+		return ErrConflict
+	}
+
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
+	// A prepared rollback is consumed by its promotion (ADR-1446).
+	defer func() {
+		if err == nil {
+			delete(m.rollbackPrepared, id)
+		}
+	}()
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
@@ -8825,6 +9674,11 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	if _, gateErr := m.checkDeploymentDependenciesLocked(id, time.Now().UTC(), false); gateErr != nil {
 		return gateErr
 	}
+	if d.Status == DeployLive || (d.CanaryTotalSteps <= 0 && IsServiceRollout(d)) {
+		if err := m.checkMCPReadinessLocked(d, d.TrafficPercent); err != nil {
+			return err
+		}
+	}
 	// Build the post-transition rows locally first. The callback can fail
 	// (for example, if the canonical spec cannot be loaded); keeping all
 	// mutations local until it succeeds gives MemStore the same atomic
@@ -8917,6 +9771,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		return err
 	}
 	if d.CanaryTotalSteps <= 0 {
+		if err := m.checkMCPReadinessLocked(d, 100); err != nil {
+			return err
+		}
 		if err := m.checkRouteRemovalTrafficLocked(map[string]int{id: 100}); err != nil {
 			return err
 		}
@@ -8981,6 +9838,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	}
 	sort.SliceStable(siblings, func(i, j int) bool { return siblings[i].ID < siblings[j].ID })
 	if len(siblings) == 0 && d.TrafficPercent != 100 {
+		if err := m.checkMCPReadinessLocked(d, 100); err != nil {
+			return err
+		}
 		// There is no previous revision to receive the residual. A
 		// first deployment cannot be meaningfully canaried, so make it
 		// a safe 100% completion instead of publishing a broken split.
@@ -9062,9 +9922,12 @@ func (m *MemStore) CancelDeploymentTxWithActivity(ctx context.Context, id, princ
 	return deployment, cancelledBuilds, outboxID, err
 }
 
-func (m *MemStore) cancelDeploymentTx(_ context.Context, id, principal string, reason CancelReason, activity *OrgActivity, activityOutboxID *int64) (Deployment, []string, error) {
+func (m *MemStore) cancelDeploymentTx(ctx context.Context, id, principal string, reason CancelReason, activity *OrgActivity, activityOutboxID *int64) (Deployment, []string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return Deployment{}, nil, err
+	}
 	d, ok := m.deployments[id]
 	if !ok {
 		return Deployment{}, nil, ErrNotFound
@@ -9176,6 +10039,9 @@ func (m *MemStore) ClearDeployment(_ context.Context, id, principal string) erro
 	if !ok {
 		return ErrNotFound
 	}
+	if m.buildArtifactOriginPinnedLocked(id) || m.recoveryProtectedDeploymentLocked(id) {
+		return ErrConflict
+	}
 	if d.Status == DeployLive {
 		return ErrCancelLiveForbidden
 	}
@@ -9189,9 +10055,12 @@ func (m *MemStore) ClearDeployment(_ context.Context, id, principal string) erro
 // ClearObsoleteDeployments (ADR-124) — memstore mirror. Honours
 // the "current + previous" retention window per app by skipping
 // the 2 most-recent rows per app regardless of status.
-func (m *MemStore) ClearObsoleteDeployments(_ context.Context, appID string, olderThan time.Time) (int, error) {
+func (m *MemStore) ClearObsoleteDeployments(ctx context.Context, appID string, olderThan time.Time) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return 0, err
+	}
 	count := 0
 	now := time.Now().UTC()
 	// Track per-app retention: keep the 2 most-recent for each app.
@@ -9233,6 +10102,9 @@ func (m *MemStore) ClearObsoleteDeployments(_ context.Context, appID string, old
 			continue
 		}
 		if skippable[id] {
+			continue
+		}
+		if m.buildArtifactOriginPinnedLocked(id) || m.recoveryProtectedDeploymentLocked(id) {
 			continue
 		}
 		if d.DeletedAt != nil {
@@ -9502,6 +10374,22 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	if gate, exists := m.deploymentDependencyGates[failedID]; exists {
 		m.deploymentDependencyGates[newDep.ID] = cloneDeploymentDependencyGate(gate)
 	}
+	if m.publicBuildURLs == nil {
+		m.publicBuildURLs = map[string]map[string]string{}
+	}
+	if oldGate, err := buildGateFromStages(src.StageState); err != nil {
+		return Deployment{}, err
+	} else if oldGate != nil {
+		gate, err := newBuildDependencyGate(newDep, oldGate.Dependencies, now)
+		if err != nil {
+			return Deployment{}, err
+		}
+		newDep.StageState, err = projectBuildGate(newDep.StageState, gate)
+		if err != nil {
+			return Deployment{}, err
+		}
+	}
+	m.publicBuildURLs[newDep.ID] = maps.Clone(m.publicBuildURLs[failedID])
 	m.putDeploymentLocked(newDep.ID, newDep)
 	return newDep, nil
 }
@@ -9625,6 +10513,9 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 	if err := m.rejectUncheckedBindingReleaseLocked(cur.AppID, cur.Scope); err != nil {
 		return "", err
 	}
+	if err := m.checkMCPReadinessLocked(m.deployments[targetID], 100); err != nil {
+		return "", err
+	}
 	if err := m.checkRouteRemovalTrafficLocked(map[string]int{targetID: 100}); err != nil {
 		return "", err
 	}
@@ -9734,6 +10625,10 @@ func (m *MemStore) prepareDeploymentRollbackLocked(appID, targetDeploymentID str
 	target.RolloutAbortedReason = ""
 	target.StageState = stage
 	m.putDeploymentLocked(targetDeploymentID, target)
+	if m.rollbackPrepared == nil {
+		m.rollbackPrepared = map[string]time.Time{}
+	}
+	m.rollbackPrepared[targetDeploymentID] = now
 	return target, nil
 }
 
@@ -9743,6 +10638,10 @@ func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, 
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if ((m.buildArtifactOriginPinnedLocked(d.ID) || m.recoveryProtectedDeploymentLocked(d.ID)) || candidateFrozenInputs(d).BuiltArtifact != nil) &&
+		(d.RootfsPath != path || d.RootfsKey != key || d.RootfsBytes != bytes) {
+		return ErrInvalidStateTransition
 	}
 	if d.EnvironmentWorkloadRuntime != "" && d.Status == DeployLive &&
 		(d.RootfsPath != path || d.RootfsKey != key || d.RootfsBytes != bytes) {
@@ -9776,6 +10675,9 @@ func (m *MemStore) SetDeploymentRootfsIfActive(_ context.Context, id, path, key 
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if ((m.buildArtifactOriginPinnedLocked(d.ID) || m.recoveryProtectedDeploymentLocked(d.ID)) || candidateFrozenInputs(d).BuiltArtifact != nil) && (d.RootfsPath != path || d.RootfsKey != key || d.RootfsBytes != bytes) {
+		return ErrInvalidStateTransition
 	}
 	if d.Status.IsTerminal() || d.Status == DeployLive {
 		return ErrInvalidStateTransition
@@ -10569,6 +11471,13 @@ func (m *MemStore) SetDeploymentSidecarLayer(_ context.Context, l DeploymentSide
 	if _, ok := m.deployments[l.DeploymentID]; !ok {
 		return DeploymentSidecarLayer{}, ErrNotFound
 	}
+	if m.recoveryProtectedDeploymentLocked(l.DeploymentID) {
+		existing, ok := m.deploymentSidecarLayers[l.DeploymentID+"\x00"+l.SidecarName]
+		if ok && existing.StorageKey == l.StorageKey && existing.Bytes == l.Bytes && existing.ContentDigest == l.ContentDigest {
+			return existing, nil
+		}
+		return DeploymentSidecarLayer{}, ErrConflict
+	}
 	if l.StorageKey != "" {
 		if err := m.requireLayerArtifactsRetainedLocked([]string{l.StorageKey}); err != nil {
 			return DeploymentSidecarLayer{}, err
@@ -11062,7 +11971,9 @@ func (m *MemStore) enqueueBuildVMCleanupLocked(buildID string, now time.Time) {
 	if _, exists := m.builderVMCleanup[buildID]; exists {
 		return
 	}
-	m.builderVMCleanup[buildID] = builderVMCleanupRow{nextAttemptAt: now}
+	// Match PostgreSQL's created_at DEFAULT now(), independently of a
+	// caller-supplied historical cancellation timestamp used for retry due time.
+	m.builderVMCleanup[buildID] = builderVMCleanupRow{createdAt: time.Now().UTC(), nextAttemptAt: now}
 }
 
 // ClaimBuildVMCleanup claims due or abandoned builder-VM teardown rows. The
@@ -11128,6 +12039,7 @@ func (m *MemStore) CompleteBuildVMCleanup(_ context.Context, buildID, claimToken
 	row.claimToken = ""
 	row.nextAttemptAt = time.Now().UTC()
 	row.lastError = cleanupErr.Error()
+	row.failedAttempt = true
 	row.lastError = safetext.Truncate(row.lastError, builderVMCleanupErrorMaxBytes)
 	m.builderVMCleanup[buildID] = row
 	return nil
@@ -11139,9 +12051,14 @@ func (m *MemStore) CompleteBuildVMCleanup(_ context.Context, buildID, claimToken
 // deferred (builds.target_node_id is not yet a column) so the
 // gauge degrades to a fleet-total — the dashboard renders
 // "X builds in the queue" without per-schedd attribution.
-func (m *MemStore) QueuedBuildsCount(_ context.Context) (int, error) {
+func (m *MemStore) QueuedBuildsCount(ctx context.Context) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 int
+		return zero0, err
+	}
+
 	n := 0
 	for _, b := range m.builds {
 		if b.Status == BuildQueued {
@@ -11220,7 +12137,7 @@ func (m *MemStore) ClaimQueuedBuild(_ context.Context, id string) (Build, error)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.builds[id]
-	if !ok || b.Status != BuildQueued {
+	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) {
 		return Build{}, ErrNotFound
 	}
 	b.Status = BuildRunning
@@ -11239,7 +12156,7 @@ func (m *MemStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, nod
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.builds[id]
-	if !ok || b.Status != BuildQueued || !m.buildEligibleOnNodeLocked(b, nodeID, affinityGrace, time.Now()) {
+	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) || !m.buildEligibleOnNodeLocked(b, nodeID, affinityGrace, time.Now()) {
 		return Build{}, ErrNotFound
 	}
 	b.Status = BuildRunning
@@ -11302,7 +12219,7 @@ func (m *MemStore) ClaimNextQueuedBuild(_ context.Context) (Build, error) {
 		found    bool
 	)
 	for id, b := range m.builds {
-		if b.Status != BuildQueued {
+		if b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) {
 			continue
 		}
 		if !found || b.EnqueuedAt.Before(earliest) {
@@ -11351,7 +12268,7 @@ func (m *MemStore) ClaimNextQueuedBuildWithFairness(_ context.Context, fairnessW
 	}
 	var queued []candidate
 	for id, b := range m.builds {
-		if b.Status != BuildQueued {
+		if b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) {
 			continue
 		}
 		dep, ok := m.deployments[b.DeploymentID]
@@ -11436,7 +12353,7 @@ func (m *MemStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, nod
 	}
 	queued := make([]candidate, 0)
 	for id, build := range m.builds {
-		if build.Status != BuildQueued || !m.buildEligibleOnNodeLocked(build, nodeID, affinityGrace, now) {
+		if build.Status != BuildQueued || !m.buildDependencyEligibleLocked(build, now) || !m.buildEligibleOnNodeLocked(build, nodeID, affinityGrace, now) {
 			continue
 		}
 		dep, ok := m.deployments[build.DeploymentID]
@@ -11918,12 +12835,15 @@ func (m *MemStore) CreateCronWithOptions(_ context.Context, appID, schedule, pat
 	if err := validateCronCreateRetryOptions(opts); err != nil {
 		return Cron{}, err
 	}
-	c := Cron{ID: newID(), AppID: appID, Schedule: schedule, Path: path,
+	c := Cron{ID: newCronID(), AppID: appID, Schedule: schedule, Path: path,
 		Command: append([]string(nil), opts.Command...), CommandShell: opts.CommandShell,
 		CommandTimeoutSeconds: opts.CommandTimeoutSeconds, CommandMaxOutputBytes: opts.CommandMaxOutputBytes,
 		RetryMax: opts.RetryMax, RetryBackoffSeconds: opts.RetryBackoffSeconds,
 		SchedulePolicy: workpolicy.Clone(opts.SchedulePolicy), FailureRules: workpolicy.Clone(opts.FailureRules),
 		ScheduleRevision: 1, Enabled: enabled, Timezone: opts.Timezone, SkipIfRunning: opts.SkipIfRunning, CreatedAt: time.Now()}
+	if len(c.Command) == 0 {
+		m.invalidateDeploymentCronsLocked(c.AppID)
+	}
 	m.crons[c.ID] = c
 	return c, nil
 }
@@ -12008,7 +12928,7 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 		}
 	}
 	c := Cron{
-		ID:                    newID(),
+		ID:                    newCronID(),
 		AppID:                 appID,
 		Schedule:              schedule,
 		Path:                  path,
@@ -12025,6 +12945,9 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 		Timezone:              opts.Timezone,
 		SkipIfRunning:         opts.SkipIfRunning,
 		CreatedAt:             time.Now(),
+	}
+	if len(c.Command) == 0 {
+		m.invalidateDeploymentCronsLocked(c.AppID)
 	}
 	m.crons[c.ID] = c
 	return c, nil
@@ -12105,6 +13028,9 @@ func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule,
 	if scheduleChanged || timezoneChanged {
 		c.ScheduleRevision++
 	}
+	if len(c.Command) == 0 {
+		m.invalidateDeploymentCronsLocked(c.AppID)
+	}
 	m.crons[id] = c
 	return c, nil
 }
@@ -12115,6 +13041,9 @@ func (m *MemStore) DeleteCron(_ context.Context, id, appID string) error {
 	c, ok := m.crons[id]
 	if !ok || c.AppID != appID {
 		return ErrNotFound
+	}
+	if len(c.Command) == 0 {
+		m.invalidateDeploymentCronsLocked(c.AppID)
 	}
 	delete(m.crons, id)
 	delete(m.exclusiveTriggerBindings, "cron\x00"+id)
@@ -12345,7 +13274,14 @@ func (m *MemStore) ClaimPendingOperatorIntent(_ context.Context) (OperatorIntent
 	var oldestID string
 	var oldestAt time.Time
 	for id, r := range m.operatorIntents {
-		if r.Status != OperatorIntentPending {
+		execution := m.operatorRestarts[id]
+		instance := m.instances[execution.Target.InstanceID]
+		recovered := r.Status == OperatorIntentOutcomeUnknown && execution.Phase == RestartDestroyed &&
+			execution.Target.MatchesInstance(instance) && (instance.State == string(StateRunning) || instance.State == string(StateStopped))
+		park := m.operatorParks[id]
+		parkInstance := m.instances[park.Target.InstanceID]
+		recoveredPark := r.Kind == OperatorIntentKindForcePark && r.Status == OperatorIntentOutcomeUnknown && park.Phase == ParkAcknowledged && park.CanReconcile(parkInstance)
+		if r.Status != OperatorIntentPending && !recovered && !recoveredPark {
 			continue
 		}
 		if oldestID == "" || r.RequestedAt.Before(oldestAt) ||
@@ -12359,6 +13295,9 @@ func (m *MemStore) ClaimPendingOperatorIntent(_ context.Context) (OperatorIntent
 	}
 	r := m.operatorIntents[oldestID]
 	r.Status = OperatorIntentRunning
+	r.ClaimToken = uuid.NewString()
+	r.Error = ""
+	r.FinishedAt = nil
 	now := time.Now().UTC()
 	r.StartedAt = &now
 	m.operatorIntents[oldestID] = r
@@ -12371,6 +13310,9 @@ func (m *MemStore) MarkOperatorIntentSucceeded(_ context.Context, id string, sna
 	r, ok := m.operatorIntents[id]
 	if !ok || r.Status != OperatorIntentRunning {
 		return ErrOperatorIntentNotFound
+	}
+	if r.Kind == OperatorIntentKindForceRestart || r.Kind == OperatorIntentKindForceColdBoot || r.Kind == OperatorIntentKindForcePark || IsOperatorNodeKind(r.Kind) {
+		return ErrConflict
 	}
 	r.Status = OperatorIntentSucceeded
 	r.SnapIDsMarkedStale = snapIDs
@@ -12386,6 +13328,9 @@ func (m *MemStore) MarkOperatorIntentFailed(_ context.Context, id, errMsg string
 	r, ok := m.operatorIntents[id]
 	if !ok || r.Status != OperatorIntentRunning {
 		return ErrOperatorIntentNotFound
+	}
+	if r.Kind == OperatorIntentKindForceRestart || r.Kind == OperatorIntentKindForceColdBoot || r.Kind == OperatorIntentKindForcePark || IsOperatorNodeKind(r.Kind) {
+		return ErrConflict
 	}
 	errMsg = safetext.Truncate(errMsg, api.AuditReasonMaxBytes)
 	r.Status = OperatorIntentFailed
@@ -12412,6 +13357,15 @@ func (m *MemStore) GetOperatorIntent(_ context.Context, id string) (OperatorInte
 	if !ok {
 		return OperatorIntent{}, ErrOperatorIntentNotFound
 	}
+	if execution, exists := m.operatorRestarts[id]; exists {
+		execution = cloneOperatorRestart(execution)
+		r.RestartExecution = &execution
+	}
+	if execution, exists := m.operatorParks[id]; exists {
+		execution = cloneOperatorPark(execution)
+		r.ParkExecution = &execution
+	}
+	r.SnapIDsMarkedStale = slices.Clone(r.SnapIDsMarkedStale)
 	return r, nil
 }
 
@@ -12462,11 +13416,12 @@ func (m *MemStore) ReclaimStuckRunningOperatorIntents(_ context.Context, thresho
 		if r.StartedAt == nil {
 			continue
 		}
-		if r.StartedAt.After(threshold) {
+		if !r.StartedAt.Before(threshold) {
 			continue
 		}
 		r.Status = OperatorIntentPending
 		r.StartedAt = nil
+		r.ClaimToken = ""
 		m.operatorIntents[id] = r
 		n++
 	}
@@ -12483,13 +13438,17 @@ func (m *MemStore) OperatorIntentOutcomeMissingCounts(_ context.Context, thresho
 	defer m.mu.Unlock()
 	out := make(map[string]int)
 	for _, r := range m.operatorIntents {
+		if r.Status == OperatorIntentOutcomeUnknown {
+			out[string(r.Kind)]++
+			continue
+		}
 		if r.Status != OperatorIntentRunning {
 			continue
 		}
 		if r.StartedAt == nil {
 			continue
 		}
-		if r.StartedAt.After(threshold) {
+		if !r.StartedAt.Before(threshold) {
 			continue
 		}
 		out[string(r.Kind)]++
@@ -12625,6 +13584,11 @@ func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slu
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if app, ok := m.apps[appID]; ok {
+		if policy, ok := m.appResourceAccountLocked(app); ok && policy.ResourceOwnershipEnabled {
+			limits = api.MustLimitsFor(policy.Plan)
+		}
+	}
 	perApp := 0
 	perAccount := 0
 	canonicalAppID := canonicalMemUUID(appID)
@@ -12653,7 +13617,7 @@ func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slu
 		if !knownApp {
 			// Preserve legacy lightweight fixtures without an app row.
 			perAccount++
-		} else if owner, ok := m.triggerAppLocked(trigger); ok && owner.AccountID == app.AccountID && owner.Status != AppDeleted {
+		} else if owner, ok := m.triggerAppLocked(trigger); ok && m.sameQueueQuotaSubjectLocked(owner, m.appBillingSubjectLocked(app.AccountID, app.ID)) && owner.Status != AppDeleted {
 			perAccount++
 		}
 	}
@@ -12684,6 +13648,7 @@ func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slu
 		Source:               nullableTriggerSource(source),
 		PayloadMaxBytes:      payloadMaxBytes,
 		BrokerPoisonStrategy: brokerPoisonStrategy,
+		Delivery:             api.TriggerDeliveryRecord,
 		CreatedAt:            pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		UpdatedAt:            pgtype.Timestamptz{Time: time.Now(), Valid: true},
 	}
@@ -12812,7 +13777,7 @@ func (m *MemStore) ListEnabledTriggers(_ context.Context) ([]sqlc.Trigger, error
 	defer m.mu.Unlock()
 	var out []sqlc.Trigger
 	for _, t := range m.triggers {
-		if t.Enabled {
+		if t.Enabled && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) {
 			out = append(out, t)
 		}
 	}
@@ -13058,7 +14023,15 @@ func (m *MemStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoc
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 Invocation
+		return zero0, err
+	}
+
 	if err := m.validateInvocationEnvironmentLocked(inv, info); err != nil {
+		return Invocation{}, err
+	}
+	if err := invocationAdmissionDepth(inv, m.pendingProductionInvocationsLocked(inv.AppID, inv.Source, nil)); err != nil {
 		return Invocation{}, err
 	}
 	return m.enqueueInvocationLocked(inv)
@@ -13073,6 +14046,9 @@ func (m *MemStore) enqueueInvocationLocked(inv Invocation) (Invocation, error) {
 		return Invocation{}, err
 	}
 	inv.DeploymentScope = scope
+	if m.workloadAdmissionRetiredLocked(inv.AppID, scope) {
+		return Invocation{}, ErrEnvironmentWorkloadRetired
+	}
 	if err := m.platformTenantInvocationAllowedLocked(inv); err != nil {
 		return Invocation{}, err
 	}
@@ -13123,6 +14099,9 @@ func (m *MemStore) enqueueInvocationLocked(inv Invocation) (Invocation, error) {
 		if slot.AccountID != "" {
 			m.recordEventDeliverySlotLocked(inv.ID, slot)
 		}
+	}
+	if err := m.admitScenarioManagedWorkLocked(&inv); err != nil {
+		return Invocation{}, err
 	}
 	m.setInvocationLocked(inv.ID, inv)
 	inv.ReplayRootCreatedAt = cloneEventReceiptTime(inv.ReplayRootCreatedAt)
@@ -13268,6 +14247,9 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	if !ok {
 		return Invocation{}, ErrNotFound
 	}
+	if m.workloadAdmissionRetiredLocked(inv.AppID, inv.DeploymentScope) {
+		return Invocation{}, ErrEnvironmentWorkloadRetired
+	}
 	if inv.State != InvocationPending {
 		return Invocation{}, ErrNotFound
 	}
@@ -13279,6 +14261,15 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	}
 	if _, owned := m.invocationEnvironmentQueueAdmissions[id]; owned {
 		return Invocation{}, ErrConflict
+	}
+	if m.scenarioWorkerDispatchBlockedLocked(inv.AppID) {
+		return Invocation{}, ErrConflict
+	}
+	if err := m.checkScenarioPostgresFaultDispatchLocked(inv.AppID, instanceID); err != nil {
+		return Invocation{}, err
+	}
+	if instanceID == "" && m.scenarioActionPolicies[inv.AppID].Member.ManagedWorkJSON != "" {
+		inv.InstanceID = ""
 	}
 	now := time.Now()
 	if inv.ReceivedAt == nil && inv.StartDeadlineAt != nil && inv.StartDeadlineAt.Before(now) {
@@ -13321,6 +14312,9 @@ func (m *MemStore) RequeueExpiredInvocations(_ context.Context, now time.Time, l
 	defer m.mu.Unlock()
 	ids := make([]string, 0)
 	for id, inv := range m.invocations {
+		if ack, ok := m.eventAcknowledgments[id]; ok && ack.phase == "awaiting" && ack.claim.Attempt == inv.Attempts && ack.claim.ReplayGeneration == inv.ReplayGeneration {
+			continue
+		}
 		if inv.State != InvocationDispatching || inv.LeaseExpiresAt == nil || inv.LeaseExpiresAt.After(now) {
 			continue
 		}
@@ -13352,13 +14346,13 @@ func (m *MemStore) RequeueExpiredInvocations(_ context.Context, now time.Time, l
 			if op.CurrentInvocationID != inv.ID {
 				return 0, ErrOperationStaleAttempt
 			}
-			if err := m.operationTransitionLocked(inv, uncertain); err != nil {
+			if err := m.operationTransitionLocked(&inv, uncertain); err != nil {
 				return 0, err
 			}
 		}
 		m.setInvocationLocked(id, inv)
 		if quotaReserved {
-			m.decrementAccountAsyncInflightLocked(inv.AccountID)
+			m.decrementAccountAsyncInflightLocked(invocationAsyncSubject(inv))
 		}
 	}
 	return len(ids), nil
@@ -13368,42 +14362,45 @@ func (m *MemStore) RequeueExpiredInvocations(_ context.Context, now time.Time, l
 // result blob. State must be dispatching; anything else returns
 // ErrNotFound so the drain doesn't double-complete a row that PG
 // already flipped.
-func (m *MemStore) CompleteInvocation(_ context.Context, id string, result json.RawMessage) error {
-	return m.completeInvocation(id, 0, nil, result)
+func (m *MemStore) CompleteInvocation(ctx context.Context, id string, result json.RawMessage) error {
+	return m.completeInvocationContext(ctx, id, 0, nil, result)
 }
 
-func (m *MemStore) CompleteInvocationWithWorkClassification(_ context.Context, id string, result json.RawMessage, decision workpolicy.Decision, outcomeCode string) error {
-	return m.completeInvocation(id, 0, nil, result, InvocationWorkClassification{Decision: &decision, OutcomeCode: outcomeCode})
+func (m *MemStore) CompleteInvocationWithWorkClassification(ctx context.Context, id string, result json.RawMessage, decision workpolicy.Decision, outcomeCode string) error {
+	return m.completeInvocationContext(ctx, id, 0, nil, result, InvocationWorkClassification{Decision: &decision, OutcomeCode: outcomeCode})
 }
 
-func (m *MemStore) CompleteKeyedInvocation(_ context.Context, id string, attempt int, result json.RawMessage) error {
+func (m *MemStore) CompleteKeyedInvocation(ctx context.Context, id string, attempt int, result json.RawMessage) error {
 	if attempt <= 0 {
 		return ErrNotFound
 	}
-	return m.completeInvocation(id, attempt, nil, result)
+	return m.completeInvocationContext(ctx, id, attempt, nil, result)
 }
 
-func (m *MemStore) CompleteKeyedInvocationWithWorkClassification(_ context.Context, id string, attempt int, result json.RawMessage, decision workpolicy.Decision, outcomeCode string) error {
+func (m *MemStore) CompleteKeyedInvocationWithWorkClassification(ctx context.Context, id string, attempt int, result json.RawMessage, decision workpolicy.Decision, outcomeCode string) error {
 	if attempt <= 0 {
 		return ErrNotFound
 	}
-	return m.completeInvocation(id, attempt, nil, result, InvocationWorkClassification{Decision: &decision, OutcomeCode: outcomeCode})
+	return m.completeInvocationContext(ctx, id, attempt, nil, result, InvocationWorkClassification{Decision: &decision, OutcomeCode: outcomeCode})
 }
 
-func (m *MemStore) completeInvocation(id string, attempt int, claim *InvocationClaim, result json.RawMessage, classification ...InvocationWorkClassification) error {
-	return m.completeInvocationAndQueueServingAck(id, attempt, claim, result, nil, classification...)
-}
-
-func (m *MemStore) completeInvocationWithQueueServingAck(id string, attempt int, result json.RawMessage,
+func (m *MemStore) completeInvocationWithQueueServingAck(ctx context.Context, id string, attempt int, result json.RawMessage,
 	queueServingAck *EnvironmentWorkloadQueueServingAcknowledgement) error {
-	return m.completeInvocationAndQueueServingAck(id, attempt, nil, result, queueServingAck)
+	return m.completeInvocationAndQueueServingAck(ctx, id, attempt, nil, result, queueServingAck)
 }
 
-func (m *MemStore) completeInvocationAndQueueServingAck(id string, attempt int, claim *InvocationClaim, result json.RawMessage,
+func (m *MemStore) completeInvocationAndQueueServingAck(ctx context.Context, id string, attempt int, claim *InvocationClaim, result json.RawMessage,
 	queueServingAck *EnvironmentWorkloadQueueServingAcknowledgement, classification ...InvocationWorkClassification) error {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
+	return m.completeInvocationAndQueueServingAckLocked(id, attempt, claim, result, queueServingAck, classification...)
+}
+func (m *MemStore) completeInvocationAndQueueServingAckLocked(id string, attempt int, claim *InvocationClaim, result json.RawMessage, queueServingAck *EnvironmentWorkloadQueueServingAcknowledgement, classification ...InvocationWorkClassification) error {
 	inv, ok := m.invocations[id]
 	if !ok || inv.State != InvocationDispatching {
 		return ErrNotFound
@@ -13445,7 +14442,7 @@ func (m *MemStore) completeInvocationAndQueueServingAck(id string, attempt int, 
 	inv.CompletedAt = &now
 	outcome := OutcomeSuccess
 	inv.Outcome = &outcome
-	if err := m.operationTransitionLocked(inv, false); err != nil {
+	if err := m.operationTransitionLocked(&inv, false); err != nil {
 		return err
 	}
 	if err := m.enqueueInvocationDestinationLocked(inv); err != nil {
@@ -13458,7 +14455,7 @@ func (m *MemStore) completeInvocationAndQueueServingAck(id string, attempt int, 
 	// monotonically grows the counter and the 11th claim returns
 	// ErrQuotaExceeded under MemStore but not under PgStore.
 	if quotaReserved {
-		m.decrementAccountAsyncInflightLocked(inv.AccountID)
+		m.decrementAccountAsyncInflightLocked(invocationAsyncSubject(inv))
 	}
 	if queueServingAck != nil {
 		queueServingAck.AppID = inv.AppID
@@ -13610,7 +14607,7 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 		outcome := failOpts.Outcome
 		inv.Outcome = &outcome
 	}
-	if err := m.operationTransitionLocked(inv, uncertain); err != nil {
+	if err := m.operationTransitionLocked(&inv, uncertain); err != nil {
 		return err
 	}
 	if inv.State == InvocationFailed || inv.State == InvocationDeadLetter {
@@ -13623,7 +14620,7 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 	// A slot belongs to the dispatching lease. Release it on every
 	// transition away from a cap-aware dispatch, including retries.
 	if quotaReserved {
-		m.decrementAccountAsyncInflightLocked(inv.AccountID)
+		m.decrementAccountAsyncInflightLocked(invocationAsyncSubject(inv))
 	}
 	return nil
 }
@@ -13636,17 +14633,7 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 func (m *MemStore) CountPendingInvocations(_ context.Context, appID string, source InvocationSource) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	n := 0
-	for _, inv := range m.invocations {
-		if inv.AppID != appID || inv.Source != source || !m.productionInvocationWorkLocked(inv) {
-			continue
-		}
-		if inv.State != InvocationPending && inv.State != InvocationDispatching {
-			continue
-		}
-		n++
-	}
-	return n, nil
+	return m.pendingProductionInvocationsLocked(appID, source, nil), nil
 }
 
 // CancelInvocation moves any non-terminal row to state=cancelled.
@@ -13680,7 +14667,7 @@ func (m *MemStore) CancelInvocation(_ context.Context, id string) error {
 	inv.QuotaReserved = false
 	now := time.Now()
 	inv.CompletedAt = &now
-	if err := m.operationTransitionLocked(inv, false); err != nil {
+	if err := m.operationTransitionLocked(&inv, false); err != nil {
 		return err
 	}
 	m.setInvocationLocked(id, inv)
@@ -13688,7 +14675,7 @@ func (m *MemStore) CancelInvocation(_ context.Context, id string) error {
 	// PR-B fixup (code-review #1185 finding #6): MemStore parity.
 	// Cancel is always terminal; the row leaves the in-flight set.
 	if quotaReserved {
-		m.decrementAccountAsyncInflightLocked(inv.AccountID)
+		m.decrementAccountAsyncInflightLocked(invocationAsyncSubject(inv))
 	}
 	return nil
 }
@@ -13707,7 +14694,7 @@ func (m *MemStore) CancelPendingInvocation(_ context.Context, id string) (Invoca
 	inv.QuotaReserved = false
 	now := time.Now()
 	inv.CompletedAt = &now
-	if err := m.operationTransitionLocked(inv, false); err != nil {
+	if err := m.operationTransitionLocked(&inv, false); err != nil {
 		return "", err
 	}
 	m.setInvocationLocked(id, inv)
@@ -14000,9 +14987,14 @@ func (m *MemStore) ListEventDeliveriesForApp(_ context.Context, appID string, li
 // in one pass — no transactional semantics needed because the lock
 // serialises the read against writers. Equivalent to the PgStore
 // triple-aggregate query (depth, in_flight, oldest_pending_at).
-func (m *MemStore) QueueState(_ context.Context, appID string) (QueueStats, error) {
+func (m *MemStore) QueueState(ctx context.Context, appID string) (QueueStats, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 QueueStats
+		return zero0, err
+	}
+
 	var s QueueStats
 	for _, inv := range m.invocations {
 		if inv.AppID != appID || inv.Source != InvocationQueue || !m.productionInvocationWorkLocked(inv) {
@@ -14034,9 +15026,14 @@ func (m *MemStore) QueueState(_ context.Context, appID string) (QueueStats, erro
 // QueueStateForQueue is QueueState filtered to one named queue binding.
 // An empty queue name intentionally does not broaden the match; legacy
 // app-wide callers should continue using QueueState.
-func (m *MemStore) QueueStateForQueue(_ context.Context, appID, queueName string) (QueueStats, error) {
+func (m *MemStore) QueueStateForQueue(ctx context.Context, appID, queueName string) (QueueStats, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 QueueStats
+		return zero0, err
+	}
+
 	var s QueueStats
 	for _, inv := range m.invocations {
 		if inv.AppID != appID || inv.QueueName != queueName || inv.Source != InvocationQueue || !m.productionInvocationWorkLocked(inv) {
@@ -14076,9 +15073,14 @@ func (m *MemStore) QueueStateForQueue(_ context.Context, appID, queueName string
 // Page 1 returns the oldest N rows; page 2 (with `before=<last id of
 // page 1>`) returns the next N rows newer than that anchor. The DESC
 // counterpart (QueueDeadLetter) flips the comparison to `<`.
-func (m *MemStore) QueuePeek(_ context.Context, appID string, limit int, before string) ([]Invocation, error) {
+func (m *MemStore) QueuePeek(ctx context.Context, appID string, limit int, before string) ([]Invocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []Invocation
+		return zero0, err
+	}
+
 	if limit <= 0 {
 		limit = 20
 	}
@@ -14133,9 +15135,14 @@ func (m *MemStore) QueuePeek(_ context.Context, appID string, limit int, before 
 // (anchor.created_at, anchor.id)`. The id tie-breaker mirrors the PG
 // partial index `(app_id, created_at DESC)` so rows with identical
 // created_at do not duplicate or skip across pages.
-func (m *MemStore) QueueDeadLetter(_ context.Context, appID string, limit int, before string) ([]Invocation, error) {
+func (m *MemStore) QueueDeadLetter(ctx context.Context, appID string, limit int, before string) ([]Invocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []Invocation
+		return zero0, err
+	}
+
 	if limit <= 0 {
 		limit = 20
 	}
@@ -14221,6 +15228,9 @@ func (m *MemStore) StampInstanceInvocation(_ context.Context, id, instanceID str
 	if !ok || inv.State != InvocationDispatching {
 		return ErrNotFound
 	}
+	if err := m.checkScenarioPostgresFaultDispatchLocked(inv.AppID, instanceID); err != nil {
+		return err
+	}
 	inv.InstanceID = instanceID
 	m.setInvocationLocked(id, inv)
 	return nil
@@ -14228,12 +15238,20 @@ func (m *MemStore) StampInstanceInvocation(_ context.Context, id, instanceID str
 
 // --- Instances --------------------------------------------------------------
 
-func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
+func (m *MemStore) CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
 	if err := validateMemStoreCreateInstanceState(state); err != nil {
 		return Instance{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkRuntimeGenerationLocked(ctx); err != nil {
+		return Instance{}, err
+	}
+	if IsLive(strings.ToLower(state)) {
+		if err := m.checkNodeAdmissionLocked(ctx, nodeID); err != nil {
+			return Instance{}, err
+		}
+	}
 	if err := m.requireInstanceLayerArtifactsLocked(deploymentID, state); err != nil {
 		return Instance{}, err
 	}
@@ -14281,6 +15299,11 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 		NodeID:       nodeID,
 		StartedAt:    time.Now(),
 	}
+	if app, ok := m.apps[appID]; ok && app.OrgID != "" {
+		// Owned runtime rows cross the native UUID protocol. Keep legacy
+		// unowned fixture IDs intact; newly owned rows mirror PostgreSQL.
+		ins.ID = canonicalStandardUUID(ins.ID)
+	}
 	if wakeID != "" {
 		ins.WakeID = wakeID
 	} else {
@@ -14296,8 +15319,26 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 	if err := m.checkServiceCapacityInstanceLocked(ins); err != nil {
 		return Instance{}, err
 	}
+	if err := m.guardInstanceStandardRuntimeLocked(ctx, ins, true); err != nil {
+		return Instance{}, err
+	}
+	// ADR-1741: the admission binds its snapshot-recovery lineage here,
+	// as the PgStore insert does in its transaction.
+	recovery, binding := snapshotRecoveryAdmissionFrom(ctx)
+	var recoveryGeneration int64
+	if binding {
+		recovery.bound = false
+		var err error
+		if recoveryGeneration, err = m.admissionSnapshotRecoveryGenerationLocked(deploymentID, recovery.SnapshotID); err != nil {
+			return Instance{}, err
+		}
+	}
 	m.recordInstanceCapacityLocked(ins)
 	m.instances[ins.ID] = ins
+	if binding {
+		m.recordAdmissionSnapshotRecoveryLocked(ins, recovery.SnapshotID, recoveryGeneration)
+		recovery.bound = true
+	}
 	return ins, nil
 }
 
@@ -14310,12 +15351,20 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 // non-default values are InstanceModeNormal and InstanceModeMirror;
 // the store validates the value before persisting it so malformed
 // state cannot pass in tests and fail only when PostgreSQL is used.
-func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID, mode string) (Instance, error) {
+func (m *MemStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID, mode string) (Instance, error) {
 	if err := validateMemStoreCreateInstanceState(state); err != nil {
 		return Instance{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkRuntimeGenerationLocked(ctx); err != nil {
+		return Instance{}, err
+	}
+	if IsLive(strings.ToLower(state)) {
+		if err := m.checkNodeAdmissionLocked(ctx, nodeID); err != nil {
+			return Instance{}, err
+		}
+	}
 	if err := m.requireInstanceLayerArtifactsLocked(deploymentID, state); err != nil {
 		return Instance{}, err
 	}
@@ -14337,6 +15386,9 @@ func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID
 		}
 	}
 	if mode == string(InstanceModeWorker) && State(state).CountsForRAM() {
+		if err := m.workerGraphAdmissionLocked(appID, deploymentID); err != nil {
+			return Instance{}, err
+		}
 		if err := m.checkAccountWorkerReservationLocked(appID, deploymentID); err != nil {
 			return Instance{}, err
 		}
@@ -14351,6 +15403,9 @@ func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID
 		StartedAt:    time.Now(),
 		Mode:         mode,
 	}
+	if app, ok := m.apps[appID]; ok && app.OrgID != "" {
+		ins.ID = canonicalStandardUUID(ins.ID)
+	}
 	if wakeID != "" {
 		ins.WakeID = wakeID
 	} else {
@@ -14359,20 +15414,43 @@ func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID
 	if err := m.checkServiceCapacityInstanceLocked(ins); err != nil {
 		return Instance{}, err
 	}
+	if err := m.guardInstanceStandardRuntimeLocked(ctx, ins, true); err != nil {
+		return Instance{}, err
+	}
+	// ADR-1741: the admission binds its snapshot-recovery lineage here,
+	// as the PgStore insert does in its transaction.
+	recovery, binding := snapshotRecoveryAdmissionFrom(ctx)
+	var recoveryGeneration int64
+	if binding {
+		recovery.bound = false
+		var err error
+		if recoveryGeneration, err = m.admissionSnapshotRecoveryGenerationLocked(deploymentID, recovery.SnapshotID); err != nil {
+			return Instance{}, err
+		}
+	}
 	m.recordInstanceCapacityLocked(ins)
 	m.instances[ins.ID] = ins
+	if binding {
+		m.recordAdmissionSnapshotRecoveryLocked(ins, recovery.SnapshotID, recoveryGeneration)
+		recovery.bound = true
+	}
 	return ins, nil
 }
 
 // CreateJobInstance mirrors the PostgreSQL job-task insert. Job instances
 // have no app or deployment row: the job definition owns the OCI image and
 // the run/task coordinates live on the job task row.
-func (m *MemStore) CreateJobInstance(_ context.Context, instanceID, jobID, runID string, taskIndex int, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
+func (m *MemStore) CreateJobInstance(ctx context.Context, instanceID, jobID, runID string, taskIndex int, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
 	if err := validateMemStoreCreateInstanceState(state); err != nil {
 		return Instance{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if IsLive(strings.ToLower(state)) {
+		if err := m.checkNodeAdmissionLocked(ctx, nodeID); err != nil {
+			return Instance{}, err
+		}
+	}
 	if _, ok := m.jobs[jobID]; !ok {
 		return Instance{}, ErrNotFound
 	}
@@ -14551,6 +15629,52 @@ func (m *MemStore) ListInstancesForApp(_ context.Context, appID string) ([]Insta
 	return out, nil
 }
 
+// ListBillingWindowInstances mirrors PgStore.ListBillingWindowInstances.
+// MemStore keeps no lifecycle ledger and does not stamp parked_at on every
+// transition, so it drops only instances it can show were inactive before
+// since: not live, with every recorded timestamp earlier than since.
+func (m *MemStore) ListBillingWindowInstances(_ context.Context, since, _ time.Time) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Instance
+	for _, ins := range m.instances {
+		if ins.AppID == "" {
+			continue
+		}
+		if IsLive(ins.State) || !memInstanceInactiveBefore(ins, since) {
+			out = append(out, ins)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].AppID != out[j].AppID {
+			return out[i].AppID < out[j].AppID
+		}
+		return out[i].StartedAt.After(out[j].StartedAt)
+	})
+	return out, nil
+}
+
+// memInstanceInactiveBefore reports whether every timestamp recorded on ins
+// is earlier than since. An instance with no timestamp is not provably
+// inactive.
+func memInstanceInactiveBefore(ins Instance, since time.Time) bool {
+	stamps := []time.Time{ins.StartedAt, ins.LastRequestAt, ins.ParkedAt}
+	if ins.TerminalAt != nil {
+		stamps = append(stamps, *ins.TerminalAt)
+	}
+	recorded := false
+	for _, at := range stamps {
+		if at.IsZero() {
+			continue
+		}
+		if !at.Before(since) {
+			return false
+		}
+		recorded = true
+	}
+	return recorded
+}
+
 func (m *MemStore) ListActiveInstancesForApp(_ context.Context, appID string, limit int) ([]Instance, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -14703,7 +15827,7 @@ func (m *MemStore) ListAllInstances(_ context.Context) ([]Instance, error) {
 	var out []Instance
 	for _, ins := range m.instances {
 		switch ins.State {
-		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm), string(StateDraining):
+		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm), string(StateFrozen), string(StateDraining):
 			out = append(out, ins)
 		}
 	}
@@ -14744,7 +15868,7 @@ func (m *MemStore) ListInstancesForAccount(_ context.Context, accountID string) 
 	defer m.mu.Unlock()
 	owned := make(map[string]struct{}, len(m.apps))
 	for _, a := range m.apps {
-		if a.AccountID == accountID {
+		if a.OrgID == accountID || (a.AccountID == accountID && (m.personalAppLocked(a) || !m.orgs[a.OrgID].ResourceOwnershipEnabled)) {
 			owned[a.ID] = struct{}{}
 		}
 	}
@@ -14780,7 +15904,7 @@ func (m *MemStore) ListInstancesForAccountPaged(_ context.Context, accountID str
 			continue
 		}
 		switch State(ins.State) {
-		case StateWaking, StateColdBooting, StateRunning, StateDraining, StateSnapshotting, StateWarm:
+		case StateWaking, StateColdBooting, StateRunning, StateDraining, StateSnapshotting, StateWarm, StateFrozen:
 		default:
 			continue
 		}
@@ -14826,7 +15950,7 @@ func (m *MemStore) ListLatestInstancePerApp(_ context.Context, accountID string)
 	return out, nil
 }
 
-func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) error {
+func (m *MemStore) UpdateInstanceState(ctx context.Context, id, state string) error {
 	if err := validateInstanceState(state); err != nil {
 		return err
 	}
@@ -14843,10 +15967,7 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 		return err
 	}
 	ins.State = state
-	if err := m.checkServiceCapacityInstanceLocked(ins); err != nil {
-		return err
-	}
-	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[id], ins); err != nil {
 		return err
 	}
 	m.instances[id] = ins
@@ -14857,7 +15978,7 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 // conditional UPDATE used by recovery races. A missing row and a stale
 // expected state both mean another writer won; ErrConflict keeps that path
 // benign for callers that are retrying a reconciliation sweep.
-func (m *MemStore) UpdateInstanceStateIf(_ context.Context, id, expectedState, nextState string) error {
+func (m *MemStore) UpdateInstanceStateIf(ctx context.Context, id, expectedState, nextState string) error {
 	if err := validateInstanceState(nextState); err != nil {
 		return err
 	}
@@ -14884,7 +16005,7 @@ func (m *MemStore) UpdateInstanceStateIf(_ context.Context, id, expectedState, n
 	if err := m.checkServiceCapacityInstanceLocked(ins); err != nil {
 		return err
 	}
-	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[id], ins); err != nil {
 		return err
 	}
 	m.instances[id] = ins
@@ -14913,7 +16034,7 @@ func (m *MemStore) IncInstanceRequestCount(_ context.Context, id string, delta i
 // the §6.1 watchdog's need to know "time of entry into current
 // state" for SNAPSHOTTING rows; parked_at is the column the watchdog
 // reads on that state.
-func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state string, parkedAt time.Time) error {
+func (m *MemStore) UpdateInstanceStateWithTimestamp(ctx context.Context, id, state string, parkedAt time.Time) error {
 	if err := validateInstanceState(state); err != nil {
 		return err
 	}
@@ -14931,10 +16052,7 @@ func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state
 	}
 	ins.State = state
 	ins.ParkedAt = parkedAt
-	if err := m.checkServiceCapacityInstanceLocked(ins); err != nil {
-		return err
-	}
-	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[id], ins); err != nil {
 		return err
 	}
 	m.instances[id] = ins
@@ -14945,7 +16063,7 @@ func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state
 // new state AND stamps terminal_at on the same locked read-modify-write
 // (PR #74). Engine.transition routes here for {STOPPED, FAILED}; today
 // no caller writes a different timestamp column for those states.
-func (m *MemStore) UpdateInstanceStateToTerminal(_ context.Context, id, state string, terminalAt time.Time) error {
+func (m *MemStore) UpdateInstanceStateToTerminal(ctx context.Context, id, state string, terminalAt time.Time) error {
 	if err := validateInstanceState(state); err != nil {
 		return err
 	}
@@ -14962,11 +16080,11 @@ func (m *MemStore) UpdateInstanceStateToTerminal(_ context.Context, id, state st
 		return err
 	}
 	ins.State = state
-	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
-		return err
-	}
 	ts := terminalAt
 	ins.TerminalAt = &ts
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[id], ins); err != nil {
+		return err
+	}
 	m.instances[id] = ins
 	return nil
 }
@@ -14978,7 +16096,7 @@ func (m *MemStore) UpdateInstanceStateToTerminal(_ context.Context, id, state st
 // can distinguish "no signal yet" (nil) from "signal arrived at zero"
 // (which is impossible given time.Time's zero check but kept for
 // symmetry). Returns ErrNotFound for missing rows.
-func (m *MemStore) SetInstanceFrameworkReadyAt(_ context.Context, id string, readyAt time.Time) error {
+func (m *MemStore) SetInstanceFrameworkReadyAt(ctx context.Context, id string, readyAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ins, ok := m.instances[id]
@@ -14987,7 +16105,7 @@ func (m *MemStore) SetInstanceFrameworkReadyAt(_ context.Context, id string, rea
 	}
 	ts := readyAt
 	ins.FrameworkReadyAt = &ts
-	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[id], ins); err != nil {
 		return err
 	}
 	m.instances[id] = ins
@@ -15000,7 +16118,7 @@ func (m *MemStore) SetInstanceFrameworkReadyAt(_ context.Context, id string, rea
 // admission path and by tests that plant a mirror instance without
 // going through the full wake-coord loop. Returns ErrNotFound when
 // the row is missing.
-func (m *MemStore) SetInstanceMode(_ context.Context, id string, mode InstanceMode) error {
+func (m *MemStore) SetInstanceMode(ctx context.Context, id string, mode InstanceMode) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ins, ok := m.instances[id]
@@ -15011,7 +16129,7 @@ func (m *MemStore) SetInstanceMode(_ context.Context, id string, mode InstanceMo
 		return err
 	}
 	ins.Mode = string(mode)
-	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[id], ins); err != nil {
 		return err
 	}
 	m.instances[id] = ins
@@ -15021,7 +16139,7 @@ func (m *MemStore) SetInstanceMode(_ context.Context, id string, mode InstanceMo
 // ClearInstanceFrameworkReadyAt mirrors pgstore.ClearInstanceFrameworkReadyAt
 // (PR #470-FU-B). Resets the framework_ready_at pointer to nil so the
 // next warm-capture cycle starts without a stale stamp.
-func (m *MemStore) ClearInstanceFrameworkReadyAt(_ context.Context, id string) error {
+func (m *MemStore) ClearInstanceFrameworkReadyAt(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ins, ok := m.instances[id]
@@ -15029,7 +16147,7 @@ func (m *MemStore) ClearInstanceFrameworkReadyAt(_ context.Context, id string) e
 		return ErrNotFound
 	}
 	ins.FrameworkReadyAt = nil
-	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[id], ins); err != nil {
 		return err
 	}
 	m.instances[id] = ins
@@ -15170,7 +16288,8 @@ func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold t
 	}
 	for _, row := range candidates {
 		delete(m.instances, row.id)
-		delete(m.runtimeInstanceConfigProofs, row.id)
+		m.deleteNativeInstanceInputsLocked(row.id)
+		delete(m.releaseWorkerDrains, row.id)
 		delete(m.instanceRuntimeConfigReceipts, row.id)
 		m.deleteSecretRuntimeProcessesLocked(row.id)
 		delete(m.capacityInstanceResources, row.id)
@@ -15186,6 +16305,9 @@ func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold t
 func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.migrationPendingLocked(id, "", false) {
+		return ErrConflict
+	}
 	if m.qualificationExecutionUnretiredLocked(id) {
 		return ErrConflict
 	}
@@ -15210,7 +16332,9 @@ func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.instances, id)
-	delete(m.runtimeInstanceConfigProofs, id)
+	delete(m.instanceSnapshotRecovery, id)
+	m.deleteNativeInstanceInputsLocked(id)
+	delete(m.releaseWorkerDrains, id)
 	delete(m.instanceRuntimeConfigReceipts, id)
 	m.deleteSecretRuntimeProcessesLocked(id)
 	delete(m.capacityInstanceResources, id)
@@ -15249,7 +16373,7 @@ func (m *MemStore) ListInstancesByStatesOlderThan(_ context.Context, states []St
 	return out, nil
 }
 
-func (m *MemStore) SetInstanceRuntime(_ context.Context, id, netns, hostIP string, guestUID int) error {
+func (m *MemStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP string, guestUID int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ins, ok := m.instances[id]
@@ -15260,14 +16384,14 @@ func (m *MemStore) SetInstanceRuntime(_ context.Context, id, netns, hostIP strin
 	ins.HostIP = hostIP
 	ins.GuestUID = guestUID
 	ins.StartedAt = time.Now()
-	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[id], ins); err != nil {
 		return err
 	}
 	m.instances[id] = ins
 	return nil
 }
 
-func (m *MemStore) PublishInstanceRuntime(_ context.Context, id, expectedState, netns, hostIP string, guestUID int) (Instance, error) {
+func (m *MemStore) PublishInstanceRuntime(ctx context.Context, id, expectedState, netns, hostIP string, guestUID int) (Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ins, ok := m.instances[id]
@@ -15282,7 +16406,7 @@ func (m *MemStore) PublishInstanceRuntime(_ context.Context, id, expectedState, 
 	ins.GuestUID = guestUID
 	ins.StartedAt = time.Now().UTC()
 	ins.State = string(StateRunning)
-	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[id], ins); err != nil {
 		return Instance{}, err
 	}
 	m.instances[id] = ins
@@ -15396,6 +16520,9 @@ func (m *MemStore) TouchInstancesWithRequestDelta(_ context.Context, touches []I
 func (m *MemStore) CreateSnapshot(_ context.Context, snap Snapshot) (Snapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if snap.RecoveryGeneration != 0 {
+		return Snapshot{}, ErrInvalidArgument
+	}
 	return m.createSnapshotLocked(snap)
 }
 
@@ -15435,6 +16562,14 @@ func (m *MemStore) PublishSnapshotIfRuntimeFresh(_ context.Context, snap Snapsho
 			return Snapshot{}, ErrSnapshotRuntimeStale
 		}
 	}
+	if err := m.checkStandardSnapshotRuntimeFreshLocked(snap, sourceInstanceID, sourceStartedAt); err != nil {
+		return Snapshot{}, err
+	}
+	generation := m.snapshotRecoveryGenerations[snap.DeploymentID]
+	if generation > 0 && (sourceInstanceID == "" || !m.instanceSnapshotRecoveryFreshLocked(sourceInstanceID)) {
+		return Snapshot{}, ErrSnapshotRuntimeStale
+	}
+	snap.RecoveryGeneration = generation
 	stored, err := m.createSnapshotLocked(snap)
 	if err == nil && haveReceipt {
 		if m.snapshotRuntimeConfigReceipts == nil {
@@ -15446,6 +16581,9 @@ func (m *MemStore) PublishSnapshotIfRuntimeFresh(_ context.Context, snap Snapsho
 }
 
 func (m *MemStore) createSnapshotLocked(snap Snapshot) (Snapshot, error) {
+	if snap.RecoveryGeneration < 0 || !snap.Stale && snap.RecoveryGeneration != m.snapshotRecoveryGenerations[snap.DeploymentID] {
+		return Snapshot{}, ErrSnapshotRuntimeStale
+	}
 	// StorageKey is required on both backends (see PgStore for the
 	// rationale). The in-memory store doesn't have a DB DEFAULT to
 	// fall back on, so the contract is enforced here as well —
@@ -15460,6 +16598,9 @@ func (m *MemStore) createSnapshotLocked(snap Snapshot) (Snapshot, error) {
 		// legacy callers; new warm-tier capture code passes
 		// SnapshotTierWarm explicitly.
 		snap.Tier = SnapshotTierInit
+	}
+	if err := m.guardStandardSnapshotPublicationLocked(snap); err != nil {
+		return Snapshot{}, err
 	}
 	if snap.ID == "" {
 		snap.ID = uuid.NewString()
@@ -15492,7 +16633,7 @@ func (m *MemStore) LatestSnapshot(_ context.Context, deploymentID string) (Snaps
 	var latest Snapshot
 	found := false
 	for _, s := range m.snapshots {
-		if s.DeploymentID != deploymentID || s.Stale {
+		if s.DeploymentID != deploymentID || s.Stale || s.RecoveryGeneration != m.snapshotRecoveryGenerations[deploymentID] {
 			continue
 		}
 		if deployment, ok := m.deployments[s.DeploymentID]; !ok ||
@@ -15538,7 +16679,7 @@ func (m *MemStore) LatestSnapshotForTier(_ context.Context, deploymentID, tier s
 	var latest Snapshot
 	found := false
 	for _, s := range m.snapshots {
-		if s.DeploymentID != deploymentID || s.Stale || s.Tier != tier {
+		if s.DeploymentID != deploymentID || s.Stale || s.Tier != tier || s.RecoveryGeneration != m.snapshotRecoveryGenerations[deploymentID] {
 			continue
 		}
 		if deployment, ok := m.deployments[s.DeploymentID]; !ok ||
@@ -15843,7 +16984,7 @@ func parseSubjectID(s string) *uuid.UUID {
 // the migration to have run on the memstore (which is test-only).
 func (m *MemStore) seedDefaultLocalNodeLocked() {
 	now := time.Now()
-	id := newID()
+	id := uuid.NewString()
 	local := DefaultLocalityLabel
 	m.computeNodes[id] = ComputeNode{
 		ID:             id,
@@ -15860,11 +17001,12 @@ func (m *MemStore) seedDefaultLocalNodeLocked() {
 		// synthetic default-local row carries api.VCPUSlots so a
 		// single-box install sees identical behaviour to the
 		// pre-migration box-wide gate.
-		VCPUBudget:      api.VCPUSlots,
-		Active:          true,
-		Lifecycle:       NodeLifecycleActive,
-		LastHeartbeatAt: now,
-		CreatedAt:       now,
+		VCPUBudget:          api.VCPUSlots,
+		Active:              true,
+		Lifecycle:           NodeLifecycleActive,
+		LifecycleGeneration: 1,
+		LastHeartbeatAt:     now,
+		CreatedAt:           now,
 		// Phase 2 / Gate A: per-node schedd dial target. The
 		// single-box synthetic row points at the legacy
 		// /run/faas/schedd.sock so the gateway's per-node cache
@@ -15935,14 +17077,24 @@ func (m *MemStore) ComputeNodeByName(_ context.Context, name string) (ComputeNod
 func (m *MemStore) ComputeNodeUsedMB(_ context.Context, nodeID string) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var used int64
+	used := m.functionMigrationNodeUsageLocked(nodeID).RAM
 	for _, ins := range m.instances {
 		if ins.NodeID != nodeID {
 			continue
 		}
 		switch ins.State {
 		case "waking", "cold_booting", "running", "draining", "warm":
-			used += int64(ins.RAMMB + api.PerVMOverheadMB)
+			used += m.migrationResidentRAMLocked(ins)
+		}
+	}
+	for _, a := range m.migrationAdmissions {
+		if a.Pending() && a.DestinationNodeID == nodeID {
+			used += int64(a.RAMMB)
+		}
+	}
+	for _, r := range m.migrationSources {
+		if r.SourceNodeID == nodeID {
+			used += m.migrationSourceCostLocked(r, true).RAM
 		}
 	}
 	return used, nil
@@ -15993,6 +17145,24 @@ func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs
 				cpu = api.DefaultAppCPUMillicores
 			}
 			used[ins.NodeID] += int64(cpu)
+			if m.migrationResidentLocked(ins) || m.originalMigrationSourceLocked(ins) {
+				used[ins.NodeID] += max(0, m.capacityInstanceResources[ins.ID].CPU-int64(cpu))
+			}
+		}
+	}
+	for _, a := range m.migrationAdmissions {
+		if _, ok := wanted[a.DestinationNodeID]; ok && a.Pending() {
+			used[a.DestinationNodeID] += int64(a.CPUMillicores)
+		}
+	}
+	for _, r := range m.migrationSources {
+		if _, ok := wanted[r.SourceNodeID]; ok {
+			used[r.SourceNodeID] += m.migrationSourceCostLocked(r, true).CPU
+		}
+	}
+	for node := range wanted {
+		if c := m.functionMigrationNodeUsageLocked(node); c.CPU != 0 {
+			used[node] += c.CPU
 		}
 	}
 	return used, nil
@@ -16024,8 +17194,8 @@ func (m *MemStore) MarkComputeNodeInactive(_ context.Context, nodeID string) err
 	}
 	n.Lifecycle = NodeLifecycleUnavailable
 	n.Active = false
-	m.computeNodes[nodeID] = n
-	return nil
+	_, err := m.storeComputeNodeLifecycleLocked(n)
+	return err
 }
 
 // SetComputeNodeRole overwrites the role column on a row by id
@@ -16064,7 +17234,7 @@ func (m *MemStore) CreateComputeNode(_ context.Context, node ComputeNode) (Compu
 	}
 	n := node
 	if n.ID == "" {
-		n.ID = newID()
+		n.ID = uuid.NewString()
 	}
 	if n.CreatedAt.IsZero() {
 		n.CreatedAt = time.Now()
@@ -16092,8 +17262,7 @@ func (m *MemStore) CreateComputeNode(_ context.Context, node ComputeNode) (Compu
 		}
 	}
 	n.Active = n.Lifecycle == NodeLifecycleActive || n.Lifecycle == NodeLifecycleRecovering
-	m.computeNodes[n.ID] = n
-	return n, nil
+	return m.storeComputeNodeLifecycleLocked(n)
 }
 
 // UpsertComputeNode mirrors pgstore's INSERT ... ON CONFLICT DO UPDATE
@@ -16114,11 +17283,10 @@ func (m *MemStore) UpsertComputeNode(_ context.Context, node ComputeNode) (Compu
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var existing *ComputeNode
-	for id, current := range m.computeNodes {
+	for _, current := range m.computeNodes {
 		if current.Name == node.Name {
 			current := current
 			existing = &current
-			delete(m.computeNodes, id)
 			break
 		}
 	}
@@ -16126,11 +17294,12 @@ func (m *MemStore) UpsertComputeNode(_ context.Context, node ComputeNode) (Compu
 	if existing != nil {
 		n.ID = existing.ID
 		n.CreatedAt = existing.CreatedAt
+		n.DrainInitiatedAt, n.DrainCompletedAt, n.RecoveryInitiatedAt = existing.DrainInitiatedAt, existing.DrainCompletedAt, existing.RecoveryInitiatedAt
 		if existing.Lifecycle == NodeLifecycleRetired {
 			n.Lifecycle = NodeLifecycleRetired
 		}
 	} else if n.ID == "" {
-		n.ID = newID()
+		n.ID = uuid.NewString()
 	}
 	if n.CreatedAt.IsZero() {
 		n.CreatedAt = time.Now()
@@ -16148,8 +17317,7 @@ func (m *MemStore) UpsertComputeNode(_ context.Context, node ComputeNode) (Compu
 		n.Lifecycle = NodeLifecycleActive
 	}
 	n.Active = n.Lifecycle == NodeLifecycleActive || n.Lifecycle == NodeLifecycleRecovering
-	m.computeNodes[n.ID] = n
-	return n, nil
+	return m.storeComputeNodeLifecycleLocked(n)
 }
 
 // UpsertComputeNodeFromOperator mirrors pgstore's operator-side
@@ -16207,11 +17375,10 @@ func (m *MemStore) upsertComputeNodeLocked(node ComputeNode, preserveTargetURLOn
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var existing *ComputeNode
-	for id, current := range m.computeNodes {
+	for _, current := range m.computeNodes {
 		if current.Name == node.Name {
 			current := current
 			existing = &current
-			delete(m.computeNodes, id)
 			break
 		}
 	}
@@ -16223,6 +17390,7 @@ func (m *MemStore) upsertComputeNodeLocked(node ComputeNode, preserveTargetURLOn
 		}
 		n.ID = existing.ID
 		n.CreatedAt = existing.CreatedAt
+		n.DrainInitiatedAt, n.DrainCompletedAt, n.RecoveryInitiatedAt = existing.DrainInitiatedAt, existing.DrainCompletedAt, existing.RecoveryInitiatedAt
 		if preserveTargetURLOnConflict && existing.TargetURL != "" {
 			n.TargetURL = existing.TargetURL
 		}
@@ -16233,7 +17401,7 @@ func (m *MemStore) upsertComputeNodeLocked(node ComputeNode, preserveTargetURLOn
 			n.GatewayTargetURL = existing.GatewayTargetURL
 		}
 	} else if n.ID == "" {
-		n.ID = newID()
+		n.ID = uuid.NewString()
 	}
 	if n.CreatedAt.IsZero() {
 		n.CreatedAt = time.Now()
@@ -16256,8 +17424,7 @@ func (m *MemStore) upsertComputeNodeLocked(node ComputeNode, preserveTargetURLOn
 		n.Lifecycle = existing.Lifecycle
 	}
 	n.Active = n.Lifecycle == NodeLifecycleActive || n.Lifecycle == NodeLifecycleRecovering
-	m.computeNodes[n.ID] = n
-	return n, nil
+	return m.storeComputeNodeLifecycleLocked(n)
 }
 
 // UpsertNodeKey inserts or updates a (compute_node_id, key_id) row
@@ -16336,8 +17503,8 @@ func (m *MemStore) SetComputeNodeActive(_ context.Context, id string, active boo
 		n.Lifecycle = NodeLifecycleUnavailable
 	}
 	n.Active = active
-	m.computeNodes[id] = n
-	return nil
+	_, err := m.storeComputeNodeLifecycleLocked(n)
+	return err
 }
 
 // NodeGet returns one ComputeNode by id with lifecycle fields populated.
@@ -16416,8 +17583,8 @@ func (m *MemStore) NodeSetLifecycle(_ context.Context, id string, expected, next
 			n.DrainCompletedAt = &now
 		}
 	}
-	m.computeNodes[id] = n
-	return nil
+	_, err := m.storeComputeNodeLifecycleLocked(n)
+	return err
 }
 
 // NodeListRecoverable excludes terminally stale unavailable inventory while
@@ -16469,43 +17636,20 @@ func (m *MemStore) NodeListDrainable(_ context.Context) ([]ComputeNode, error) {
 	return out, nil
 }
 
-// NodeMarkDrainCompleted flips lifecycle 'draining' → 'maintenance' and
-// stamps drain_completed_at (CAS on a draining state).
-func (m *MemStore) NodeMarkDrainCompleted(_ context.Context, id string, completedAt time.Time) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	n, ok := m.computeNodes[id]
-	if !ok {
-		return ErrNotFound
+// NodeMarkDrainCompleted is an unfenced legacy setter. Use CompleteNodeLifecycle.
+func (m *MemStore) NodeMarkDrainCompleted(ctx context.Context, id string, _ time.Time) error {
+	if _, err := m.NodeGet(ctx, id); err != nil {
+		return err
 	}
-	if n.Lifecycle != NodeLifecycleDraining && n.Lifecycle != NodeLifecycleForceDraining {
-		return ErrConflict
-	}
-	n.Lifecycle = NodeLifecycleMaintenance
-	n.Active = false
-	n.DrainCompletedAt = &completedAt
-	m.computeNodes[id] = n
-	return nil
+	return ErrConflict
 }
 
-// NodeMarkRecovered flips lifecycle 'recovering' → 'active' and
-// stamps last_recovery_outcome='succeeded' (CAS on 'recovering').
-func (m *MemStore) NodeMarkRecovered(_ context.Context, id string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	n, ok := m.computeNodes[id]
-	if !ok {
-		return ErrNotFound
+// NodeMarkRecovered is an unfenced legacy setter. Use CompleteNodeLifecycle.
+func (m *MemStore) NodeMarkRecovered(ctx context.Context, id string) error {
+	if _, err := m.NodeGet(ctx, id); err != nil {
+		return err
 	}
-	if n.Lifecycle != NodeLifecycleRecovering {
-		return ErrConflict
-	}
-	n.Lifecycle = NodeLifecycleActive
-	n.Active = true
-	outcome := "succeeded"
-	n.LastRecoveryOutcome = &outcome
-	m.computeNodes[id] = n
-	return nil
+	return ErrConflict
 }
 
 // InstanceListByNodeForRecovery returns the live and in-flight instances on
@@ -16651,7 +17795,15 @@ func (m *MemStore) DeleteComputeNode(_ context.Context, id string) error {
 			return ErrConflict
 		}
 	}
+	if m.nodeMigrationPendingLocked(id) {
+		return ErrConflict
+	}
 	delete(m.computeNodes, id)
+	delete(m.computeNodeRuntimeIncarnations, id)
+	delete(m.computeNodeRuntimeProtocols, id)
+	m.eraseStandardLogConsumerNodeLocked(id)
+	m.eraseStandardEgressLocked("", id)
+	m.eraseNativeRuntimeHistoryLocked(id)
 	// CP-1: cascade the heartbeat history. Mirrors the FK ON DELETE
 	// CASCADE on compute_node_heartbeats.node_id; the endpoint
 	// resolves the parent by name first, so a missing history rows
@@ -17197,6 +18349,11 @@ func (m *MemStore) ListEventsPage(_ context.Context, subject string, beforeAt ti
 // helper that does NOT re-lock. Standalone callers (handlers,
 // tests) go through this method and pay the lock normally.
 func (m *MemStore) InsertAuditLog(_ context.Context, entry AuditLog) error {
+	data, err := auditLogDataWithTrace(entry)
+	if err != nil {
+		return err
+	}
+	entry.Data = data
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.appendAuditLogLocked(entry)
@@ -17208,6 +18365,11 @@ func (m *MemStore) InsertAuditLog(_ context.Context, entry AuditLog) error {
 // directly so it can stay inside its own critical section without
 // deadlocking on a re-entry.
 func (m *MemStore) appendAuditLogLocked(entry AuditLog) {
+	var traceCopy *string
+	if entry.TraceID != nil {
+		value := *entry.TraceID
+		traceCopy = &value
+	}
 	var dataCopy json.RawMessage
 	if len(entry.Data) > 0 {
 		dataCopy = append(json.RawMessage(nil), entry.Data...)
@@ -17220,6 +18382,7 @@ func (m *MemStore) appendAuditLogLocked(entry AuditLog) {
 		Actor:        entry.Actor,
 		ReceivedAt:   entry.ReceivedAt,
 		Data:         dataCopy,
+		TraceID:      traceCopy,
 	})
 }
 
@@ -17866,11 +19029,12 @@ func (m *MemStore) appendUsage(_ context.Context, accountID, appID, instanceID s
 				m.usage[i].JobRunID = jobRunID
 				m.usage[i].JobExecutionClass = jobClass
 			}
-			m.recomputeMonthLocked(accountID, appID, key)
+			m.recomputeMonthLocked(m.usage[i].AccountID, appID, key)
 			m.retainFinancialUsageLocked(previousFinancialUsage, m.usage[i])
 			return nil
 		}
 	}
+	accountID = m.appBillingSubjectLocked(accountID, appID)
 	m.usage = append(m.usage, usageMinute{
 		AccountID: accountID, AppID: appID, MeterKind: meterKind, JobID: jobID,
 		JobRunID: jobRunID, JobExecutionClass: jobClass, InstanceID: instanceID,
@@ -17887,7 +19051,7 @@ func (m *MemStore) appendUsage(_ context.Context, accountID, appID, instanceID s
 // AppendNetworkUsageObservation mirrors PgStore's transactional cumulative
 // counter checkpoint. MemStore's single mutex makes the checkpoint advance and
 // usage delta append one atomic operation.
-func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, accountID, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool) (int64, int64, error) {
+func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool) (int64, int64, error) {
 	if netTxCumulative < 0 || netRxCumulative < 0 {
 		return 0, 0, fmt.Errorf("network usage counters must be non-negative")
 	}
@@ -17897,7 +19061,7 @@ func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, accountID, a
 	key := minute.UTC().Truncate(time.Minute)
 	usageIndex := -1
 	for i := range m.usage {
-		if m.usage[i].AccountID == accountID && m.usage[i].AppID == appID &&
+		if m.usage[i].AppID == appID &&
 			m.usage[i].InstanceID == instanceID && m.usage[i].Minute.Equal(key) {
 			usageIndex = i
 			break
@@ -17907,6 +19071,7 @@ func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, accountID, a
 		return 0, 0, fmt.Errorf("network usage base row missing for instance %s at %s", instanceID, key.Format(time.RFC3339))
 	}
 
+	billingAccountID := m.usage[usageIndex].AccountID
 	checkpoint := m.networkUsageCheckpoints[instanceID]
 	var netTxDelta, netRxDelta int64
 	if netTxValid {
@@ -17927,12 +19092,12 @@ func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, accountID, a
 		checkpoint.netRx = netRxCumulative
 		checkpoint.netRxValid = true
 	}
-	checkpoint.accountID = accountID
+	checkpoint.accountID = billingAccountID
 	m.networkUsageCheckpoints[instanceID] = checkpoint
 	previousFinancialUsage := m.usage[usageIndex]
 	m.usage[usageIndex].NetTxBytes += netTxDelta
 	m.usage[usageIndex].NetRxBytes += netRxDelta
-	m.recomputeMonthLocked(accountID, appID, key)
+	m.recomputeMonthLocked(billingAccountID, appID, key)
 	m.retainFinancialUsageLocked(previousFinancialUsage, m.usage[usageIndex])
 	return netTxDelta, netRxDelta, nil
 }
@@ -17952,6 +19117,7 @@ func (m *MemStore) AppendBuilderUsage(_ context.Context, accountID, appID, build
 			return nil
 		}
 	}
+	accountID = m.appBillingSubjectLocked(accountID, appID)
 	m.builderUsage = append(m.builderUsage, builderUsageRow{
 		BuildID:    buildID,
 		AccountID:  accountID,
@@ -18078,7 +19244,7 @@ func (m *MemStore) UpsertInvoice(_ context.Context, inv Invoice) error {
 		inv.PeriodEnd = inv.PeriodStart
 	}
 	if inv.Currency == "" {
-		inv.Currency = "eur"
+		inv.Currency = api.BillingCurrencyLower
 	}
 	if inv.Status == "" {
 		inv.Status = "open"
@@ -18320,7 +19486,7 @@ func (m *MemStore) SeedInvoiceForTest(inv Invoice) {
 		inv.ID = "inv-" + inv.ProviderInvoiceID
 	}
 	if inv.Currency == "" {
-		inv.Currency = "eur"
+		inv.Currency = api.BillingCurrencyLower
 	}
 	m.invoices[inv.ID] = cloneInvoice(inv)
 }
@@ -18617,9 +19783,10 @@ func (m *MemStore) LoadAllOverageCapCents(_ context.Context) (map[string]int64, 
 }
 
 // CurrentMonthOverageCents sums the account's compute usage_minutes.mb_seconds
-// from the UTC month start, removes the account plan's included calendar-
-// month allowance, and converts the remainder to integer cents. Integer
-// math only — never float on money (CLAUDE.md).
+// from the UTC month start, removes the month's included allowance (the
+// largest plan grant recorded this month, ADR-1162), and converts the
+// remainder to integer cents. Integer math only — never float on money
+// (CLAUDE.md).
 //
 // Mirrors pgstore.CurrentMonthOverageCents: the scan is O(rows-in-month)
 // which on a one-box is bounded. The `now` argument is the caller's
@@ -18643,7 +19810,13 @@ func (m *MemStore) CurrentMonthOverageCents(_ context.Context, accountID string)
 		}
 		mbSeconds += u.MBSeconds
 	}
-	return api.OverageCentsForMBSeconds(plan, mbSeconds), nil
+	var snapshots []FinancialPriceSnapshot
+	for _, p := range m.financialPrices {
+		if p.AccountID == accountID && p.PeriodStart.Equal(monthStart) {
+			snapshots = append(snapshots, p)
+		}
+	}
+	return monthOverageCents(plan, snapshots, now, mbSeconds), nil
 }
 
 // UpdateAccountOverageCapCents writes accounts.overage_cap_cents for
@@ -18812,6 +19985,15 @@ func (m *MemStore) UsageWindows(_ context.Context, start, end time.Time) ([]Usag
 	return out, nil
 }
 
+// billingUsageDelivery is one MemStore receipt; the first recorded quantity
+// wins, as in billing_usage_deliveries.
+type billingUsageDelivery struct {
+	provider, accountID string
+	meter               BillingMeter
+	hour                time.Time
+	quantity            int64
+}
+
 func billingUsageDeliveryKey(provider, accountID string, meter BillingMeter, hour time.Time) string {
 	return provider + "\x00" + accountID + "\x00" + string(meter) + "\x00" + hour.UTC().Truncate(time.Hour).Format(time.RFC3339)
 }
@@ -18891,7 +20073,10 @@ func (m *MemStore) RecordBillingMeterUsageDelivery(_ context.Context, provider, 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.billingUsageDeliveries[billingUsageDeliveryKey(provider, accountID, meter, windowStart)] = struct{}{}
+	key := billingUsageDeliveryKey(provider, accountID, meter, windowStart)
+	if _, exists := m.billingUsageDeliveries[key]; !exists { // Postgres: ON CONFLICT DO NOTHING
+		m.billingUsageDeliveries[key] = billingUsageDelivery{provider: provider, accountID: accountID, meter: meter, hour: windowStart.UTC().Truncate(time.Hour), quantity: quantity}
+	}
 	return nil
 }
 
@@ -19014,6 +20199,14 @@ func (m *MemStore) AppendSnapshotStorage(_ context.Context, accountID, appID str
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	day = utcDay(day)
+	subject := m.appBillingSubjectLocked(accountID, appID)
+	for _, saved := range m.snapshotStorage {
+		if saved.AppID == appID && saved.Day.Equal(day) {
+			subject = saved.AccountID
+			break
+		}
+	}
+	accountID = subject
 	if m.snapshotStorage == nil {
 		m.snapshotStorage = map[string]StorageUsage{}
 	}
@@ -20123,13 +21316,26 @@ func (m *MemStore) UpsertAppSecretWithKid(ctx context.Context, accountID, appID,
 // `ON CONFLICT (app_id, scope, key) DO UPDATE` semantics: an
 // existing row at the (app_id, scope, key) tuple is replaced and
 // updated_at bumped.
-func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, scope, key string, ciphertext []byte) error {
+func (m *MemStore) UpsertAppSecretInScope(ctx context.Context, accountID, appID, scope, key string, ciphertext []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+	if !m.secretEncryptionKeyAllowedLocked("") {
+		return ErrConflict
+	}
+	if m.releaseSecretsPinnedLocked(appID, scope) {
+		return ErrConflict
+	}
+
 	k := secretKey{AppID: appID, Scope: scope, Key: key}
 	existing, ok := m.secrets[k]
 	now := time.Now()
 	if !ok {
+		if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+			return err
+		}
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
 			Ciphertext: ciphertext, SecretClass: SecretClassPersistent,
@@ -20143,6 +21349,9 @@ func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, s
 	}
 	if existing.ManagedPostgresBindingID != "" || existing.ManagedObjectStorageCredentialID != "" {
 		return ErrConflict
+	}
+	if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+		return err
 	}
 	existing.Ciphertext = ciphertext
 	existing.SecretVersion++
@@ -20159,13 +21368,26 @@ func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, s
 // sibling (ADR-092 PR-A). Mirrors UpsertAppSecretInScope but
 // stamps kid alongside ciphertext (see ADR-089 PR-A for the
 // kid semantics).
-func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, appID, scope, key, kid string, ciphertext []byte) error {
+func (m *MemStore) UpsertAppSecretWithKidInScope(ctx context.Context, accountID, appID, scope, key, kid string, ciphertext []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+	if !m.secretEncryptionKeyAllowedLocked(kid) {
+		return ErrConflict
+	}
+	if m.releaseSecretsPinnedLocked(appID, scope) {
+		return ErrConflict
+	}
+
 	k := secretKey{AppID: appID, Scope: scope, Key: key}
 	existing, ok := m.secrets[k]
 	now := time.Now()
 	if !ok {
+		if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+			return err
+		}
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
 			Ciphertext: ciphertext, Kid: kid, SecretClass: SecretClassPersistent,
@@ -20179,6 +21401,9 @@ func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, a
 	}
 	if existing.ManagedPostgresBindingID != "" || existing.ManagedObjectStorageCredentialID != "" {
 		return ErrConflict
+	}
+	if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+		return err
 	}
 	existing.Ciphertext = ciphertext
 	existing.Kid = kid
@@ -20205,16 +21430,29 @@ func (m *MemStore) UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context
 
 // UpsertAppSecretWithClassInScope mirrors the atomic pgstore upsert. An empty
 // class preserves an existing row and defaults a new one to persistent.
-func (m *MemStore) UpsertAppSecretWithClassInScope(_ context.Context, accountID, appID, scope, key, kid, valueHash, secretClass string, ciphertext []byte) error {
+func (m *MemStore) UpsertAppSecretWithClassInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash, secretClass string, ciphertext []byte) error {
 	if secretClass != "" && !validSecretClass(secretClass) {
 		return ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+	if !m.secretEncryptionKeyAllowedLocked(kid) {
+		return ErrConflict
+	}
+	if m.releaseSecretsPinnedLocked(appID, scope) {
+		return ErrConflict
+	}
+
 	k := secretKey{AppID: appID, Scope: scope, Key: key}
 	existing, ok := m.secrets[k]
 	now := time.Now()
 	if !ok {
+		if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+			return err
+		}
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
 			Ciphertext: ciphertext, Kid: kid, ValueHash: valueHash,
@@ -20229,6 +21467,9 @@ func (m *MemStore) UpsertAppSecretWithClassInScope(_ context.Context, accountID,
 	}
 	if existing.ManagedPostgresBindingID != "" || existing.ManagedObjectStorageCredentialID != "" {
 		return ErrConflict
+	}
+	if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+		return err
 	}
 	existing.Ciphertext = ciphertext
 	existing.Kid = kid
@@ -20259,6 +21500,13 @@ func defaultSecretClass(value string) string {
 func (m *MemStore) ResealAppSecretWithKidAndValueHashInScope(_ context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.secretEncryptionKeyAllowedLocked(kid) {
+		return ErrConflict
+	}
+	if m.releaseSecretsPinnedLocked(appID, scope) {
+		return ErrConflict
+	}
+
 	k := secretKey{AppID: appID, Scope: scope, Key: key}
 	existing, ok := m.secrets[k]
 	if !ok || existing.AccountID != accountID {
@@ -20272,17 +21520,23 @@ func (m *MemStore) ResealAppSecretWithKidAndValueHashInScope(_ context.Context, 
 	return nil
 }
 
-func (m *MemStore) PutManagedPostgresSecret(_ context.Context, secret AppSecret) error {
+func (m *MemStore) PutManagedPostgresSecret(ctx context.Context, secret AppSecret) error {
 	if secret.AccountID == "" || secret.AppID == "" || secret.Scope == "" || secret.Key == "" ||
 		len(secret.Ciphertext) == 0 || secret.ManagedPostgresBindingID == "" ||
 		secret.ManagedCredentialRef == "" || secret.ManagedCredentialGeneration < 1 {
 		return ErrInvalidArgument
 	}
-	if secret.ManagedPostgresAccess != "read_write" && secret.ManagedPostgresAccess != "read_only" && secret.ManagedPostgresAccess != "migration" && secret.ManagedPostgresAccess != "data_api" {
+	if secret.ManagedPostgresAccess != "read_write" && secret.ManagedPostgresAccess != "read_only" && secret.ManagedPostgresAccess != "migration" && secret.ManagedPostgresAccess != "data_api" && secret.ManagedPostgresAccess != "auth" {
 		return ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+	if !m.secretEncryptionKeyAllowedLocked(secret.Kid) {
+		return ErrConflict
+	}
 	k := secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}
 	existing, ok := m.secrets[k]
 	if ok && (existing.ManagedPostgresBindingID != secret.ManagedPostgresBindingID || existing.ManagedPostgresAccess != secret.ManagedPostgresAccess ||
@@ -20326,12 +21580,15 @@ func (m *MemStore) PutManagedPostgresSecret(_ context.Context, secret AppSecret)
 	return nil
 }
 
-func (m *MemStore) DeleteManagedPostgresSecret(_ context.Context, credentialRef string) error {
+func (m *MemStore) DeleteManagedPostgresSecret(ctx context.Context, credentialRef string) error {
 	if credentialRef == "" {
 		return ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	for key, secret := range m.secrets {
 		if secret.ManagedCredentialRef == credentialRef {
 			m.deleteRuntimeAppSecretLocked(key)
@@ -20367,6 +21624,9 @@ func (m *MemStore) PutManagedObjectStorageSecret(_ context.Context, secret AppSe
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.secretEncryptionKeyAllowedLocked(secret.Kid) {
+		return ErrConflict
+	}
 	k := secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}
 	existing, ok := m.secrets[k]
 	if ok && (existing.AccountID != secret.AccountID || (existing.ManagedObjectStorageCredentialID != "" && existing.ManagedObjectStorageCredentialID != secret.ManagedObjectStorageCredentialID) || existing.ManagedPostgresBindingID != "") {
@@ -20448,9 +21708,16 @@ func (m *MemStore) DeleteAppSecretInScope(ctx context.Context, accountID, appID,
 	return err
 }
 
-func (m *MemStore) DeleteAppSecretInScopeWithRevocation(_ context.Context, accountID, appID, scope, key string) (AppSecretRevocation, error) {
+func (m *MemStore) DeleteAppSecretInScopeWithRevocation(ctx context.Context, accountID, appID, scope, key string) (AppSecretRevocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return AppSecretRevocation{}, err
+	}
+	if m.releaseSecretsPinnedLocked(appID, scope) {
+		return AppSecretRevocation{}, ErrConflict
+	}
+
 	k := secretKey{AppID: appID, Scope: scope, Key: key}
 	row, ok := m.secrets[k]
 	if !ok || row.AccountID != accountID {
@@ -20468,6 +21735,9 @@ func (m *MemStore) DeleteAppSecretInScopeWithRevocation(_ context.Context, accou
 		return AppSecretRevocation{}, err
 	}
 	revocation.Targets = targets
+	if err := m.credentialChangeLocked(accountID, appID, scope, key, true, revocation.CreatedAt); err != nil {
+		return AppSecretRevocation{}, err
+	}
 	m.deleteRuntimeAppSecretLocked(k)
 	m.secretRevocations[revocation.ID] = cloneAppSecretRevocation(revocation)
 	return revocation, nil
@@ -20829,6 +22099,10 @@ func (m *MemStore) RecordAppSecretDelivery(_ context.Context, result AppSecretDe
 	if instance.WakeID != result.WakeID || (!State(instance.State).CountsForRAM() && instance.State != string(StateFailed)) {
 		return 0, ErrConflict
 	}
+	if _, pinned := m.releaseSecretPins[result.Fence.DeploymentID]; pinned {
+		return 0, nil
+	}
+
 	for _, candidate := range result.Candidates {
 		secret, ok := m.secrets[secretKey{AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key}]
 		if candidate.Scope != scope || !ok || secret.AccountID != result.AccountID || secret.DeliveryVersion != candidate.Version {
@@ -21342,9 +22616,12 @@ func (m *MemStore) CountAppEnv(_ context.Context, accountID, appID string) (int,
 // Mirrors the shape of the pgstore implementation so handler tests
 // exercise the same composite-key shape the production store
 // enforces.
-func (m *MemStore) UpsertAppEnvInScope(_ context.Context, accountID, appID, scope, key, value string) error {
+func (m *MemStore) UpsertAppEnvInScope(ctx context.Context, accountID, appID, scope, key, value string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	memory, err := m.gitOpsGuardScopedWriteLocked(accountID, appID, scope, []string{"variables/" + key, "secret_refs/" + key})
 	if err != nil {
 		return err
@@ -21368,9 +22645,12 @@ func (m *MemStore) UpsertAppEnvInScope(_ context.Context, accountID, appID, scop
 }
 
 // DeleteAppEnvInScope is the scope-aware sibling of DeleteAppEnv.
-func (m *MemStore) DeleteAppEnvInScope(_ context.Context, accountID, appID, scope, key string) error {
+func (m *MemStore) DeleteAppEnvInScope(ctx context.Context, accountID, appID, scope, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	k := envKey{AppID: appID, Scope: scope, Key: key}
 	row, ok := m.envs[k]
 	if !ok || row.AccountID != accountID {
@@ -21475,15 +22755,25 @@ func (m *MemStore) ListAllAppEnv(_ context.Context, accountID, appID string) ([]
 // is the original write timestamp, preserved across rotations.
 // Mirrors PgStore's `(xmax = 0)` detection — there is no second
 // SELECT race.
-func (m *MemStore) UpsertAppTrustedSigner(_ context.Context, accountID, appID, signerName string, pubKey []byte, addedByAccountID string) (time.Time, bool, error) {
+func (m *MemStore) UpsertAppTrustedSigner(ctx context.Context, accountID, appID, signerName string, pubKey []byte, addedByAccountID string) (time.Time, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return time.Time{}, false, err
+	}
 	k := trustedSignerKey{AppID: appID, SignerName: signerName}
+	current, exists := m.trustedSigners[k]
+	if exists && current.AccountID != accountID {
+		return time.Time{}, false, ErrNotFound
+	}
+	if m.standardManagedControlLocked(appID, appstandards.TrustedPublishers) && (!exists || !bytes.Equal(current.CosignPublicKey, pubKey)) {
+		return time.Time{}, false, ErrApplicationStandardManagedControl
+	}
 	if existing, ok := m.trustedSigners[k]; ok {
 		if existing.AccountID != accountID {
 			return time.Time{}, false, ErrNotFound
 		}
-		existing.CosignPublicKey = pubKey
+		existing.CosignPublicKey = append([]byte(nil), pubKey...)
 		existing.AddedByAccountID = addedByAccountID
 		m.trustedSigners[k] = existing
 		return existing.AddedAt, true, nil
@@ -21493,7 +22783,7 @@ func (m *MemStore) UpsertAppTrustedSigner(_ context.Context, accountID, appID, s
 		AccountID:        accountID,
 		AppID:            appID,
 		SignerName:       signerName,
-		CosignPublicKey:  pubKey,
+		CosignPublicKey:  append([]byte(nil), pubKey...),
 		AddedAt:          now,
 		AddedByAccountID: addedByAccountID,
 	}
@@ -21503,13 +22793,19 @@ func (m *MemStore) UpsertAppTrustedSigner(_ context.Context, accountID, appID, s
 // DeleteAppTrustedSigner removes the (app_id, signer_name) row scoped to
 // accountID. Returns ErrNotFound when no row matches — handler renders
 // 404 CodeTrustedSignerNotFound.
-func (m *MemStore) DeleteAppTrustedSigner(_ context.Context, accountID, appID, signerName string) error {
+func (m *MemStore) DeleteAppTrustedSigner(ctx context.Context, accountID, appID, signerName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	k := trustedSignerKey{AppID: appID, SignerName: signerName}
 	row, ok := m.trustedSigners[k]
 	if !ok || row.AccountID != accountID {
 		return ErrNotFound
+	}
+	if m.standardManagedControlLocked(appID, appstandards.TrustedPublishers) {
+		return ErrApplicationStandardManagedControl
 	}
 	delete(m.trustedSigners, k)
 	return nil
@@ -21526,6 +22822,7 @@ func (m *MemStore) ListAppTrustedSigners(_ context.Context, accountID, appID str
 		if r.AppID != appID || r.AccountID != accountID {
 			continue
 		}
+		r.CosignPublicKey = append([]byte(nil), r.CosignPublicKey...)
 		out = append(out, r)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].SignerName < out[j].SignerName })
@@ -21545,6 +22842,7 @@ func (m *MemStore) ListAppTrustedSignersForApp(_ context.Context, appID string) 
 		if r.AppID != appID {
 			continue
 		}
+		r.CosignPublicKey = append([]byte(nil), r.CosignPublicKey...)
 		out = append(out, r)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].SignerName < out[j].SignerName })
@@ -21574,7 +22872,7 @@ func (m *MemStore) CountAppTrustedSigners(_ context.Context, accountID, appID st
 // DeletionGraceDuration returns the customer-visible grace window the
 // customer has to restore their account. MemStore and PgStore share
 // the constant so handler tests don't drift from production behavior.
-func DeletionGraceDuration() time.Duration { return 30 * 24 * time.Hour }
+func DeletionGraceDuration() time.Duration { return api.AccountDeletionGraceDays * 24 * time.Hour }
 
 // AppDeleteGraceDuration is the customer-visible restore window for app
 // tombstones. Keep the duration in state so apid, pkg/grace, and both store
@@ -21589,6 +22887,9 @@ func AppDeleteGraceDuration() time.Duration {
 func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.recoveryProtectedScopeLocked(id, "", "") {
+		return ErrConflict
+	}
 	a, ok := m.accounts[id]
 	if !ok {
 		return ErrNotFound
@@ -21602,13 +22903,16 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	if a.Status != AccountDeletedPending {
 		return ErrNotFound
 	}
+	if m.accountOwnershipErasureBlockedLocked(id) {
+		return ErrOrgAppOwnershipPending
+	}
 	for _, status := range m.qualificationExecutions {
 		if status.RetiredAt == nil && m.apps[status.Execution.AppID].AccountID == id {
 			return ErrConflict
 		}
 	}
 	for _, b := range m.objectBuckets {
-		if b.AccountID == id && b.State != "deleted" {
+		if b.AccountID == id && b.State != "deleted" && m.personalObjectBucketLocked(b) {
 			return ErrConflict
 		}
 	}
@@ -21616,8 +22920,9 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		return err
 	}
 	m.forgetOwnedOperationsLocked(id, "")
+	m.purgePersonalQueuesLocked(id)
 	for bucketID, b := range m.objectBuckets {
-		if b.AccountID == id {
+		if b.AccountID == id && m.personalObjectBucketLocked(b) {
 			delete(m.objectBuckets, bucketID)
 			delete(m.objectBucketObjectLock, bucketID)
 			for id, j := range m.objectVersionProtection {
@@ -21651,18 +22956,18 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		}
 	}
 	for receiptID, receipt := range m.objectUploadCompletions {
-		if receipt.AccountID == id {
+		if receipt.AccountID == id && m.purgePersonalObjectChildLocked(receipt.BucketID) {
 			delete(m.objectUploadCompletions, receiptID)
 		}
 	}
 	for routeID, route := range m.objectUploadRoutes {
-		if route.AccountID == id {
+		if route.AccountID == id && m.purgePersonalObjectChildLocked(route.BucketID) {
 			delete(m.objectUploadRoutes, routeID)
 		}
 	}
 
 	for jobID, j := range m.objectCapacityJobs {
-		if j.AccountID == id {
+		if j.AccountID == id && m.purgePersonalObjectChildLocked(j.BucketID) {
 			delete(m.objectCapacityJobs, jobID)
 		}
 	}
@@ -21672,22 +22977,22 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		}
 	}
 	for grantKey, grant := range m.objectAccessGrants {
-		if grant.AccountID == id {
+		if grant.AccountID == id && m.purgePersonalObjectChildLocked(grant.BucketID) {
 			delete(m.objectAccessGrants, grantKey)
 		}
 	}
 	for credentialID, credential := range m.objectS3Credentials {
-		if credential.AccountID == id {
+		if credential.AccountID == id && m.purgePersonalObjectChildLocked(credential.BucketID) {
 			delete(m.objectS3Credentials, credentialID)
 		}
 	}
 	for grantKey, grant := range m.objectS3CopySources {
-		if grant.AccountID == id {
+		if grant.AccountID == id && m.purgePersonalObjectChildLocked(m.objectS3Credentials[grant.CredentialID].BucketID) {
 			delete(m.objectS3CopySources, grantKey)
 		}
 	}
 	for uploadID, upload := range m.objectMultipartUploads {
-		if upload.AccountID == id {
+		if upload.AccountID == id && m.purgePersonalObjectChildLocked(upload.BucketID) {
 			delete(m.objectMultipartUploads, uploadID)
 			delete(m.objectMultipartInitiations, uploadID)
 			for key := range m.objectMultipartPartWriters {
@@ -21701,7 +23006,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	}
 	reports := m.objectReports[:0]
 	for _, r := range m.objectReports {
-		if r.AccountID != id {
+		if r.AccountID != id || m.hasLegacySharedAppsLocked(id) {
 			reports = append(reports, r)
 		}
 	}
@@ -21711,14 +23016,20 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.objectAuthorizations, key)
 		}
 	}
+	personalApps := make(map[string]bool)
+	for appID, app := range m.apps {
+		org := m.orgs[app.OrgID]
+		personalApps[appID] = app.AccountID == id && (app.OrgID == "" || org.Personal)
+	}
+	retainBilling := m.hasLegacySharedAppsLocked(id)
 	// Drop children first so the parent's final delete is the sentinel.
 	for k := range m.secrets {
-		if m.secrets[k].AccountID == id {
+		if m.secrets[k].AccountID == id && personalApps[m.secrets[k].AppID] {
 			m.deleteRuntimeAppSecretLocked(k)
 		}
 	}
 	for k := range m.registryCreds {
-		if m.registryCreds[k].AccountID == id {
+		if m.registryCreds[k].AccountID == id && personalApps[m.registryCreds[k].AppID] {
 			delete(m.registryCreds, k)
 		}
 	}
@@ -21728,32 +23039,33 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		}
 	}
 	for k := range m.envs {
-		if m.envs[k].AccountID == id {
+		if m.envs[k].AccountID == id && personalApps[m.envs[k].AppID] {
 			delete(m.envs, k)
 		}
 	}
 	for domain, d := range m.domains {
-		if app, ok := m.apps[d.AppID]; ok && app.AccountID == id {
+		if app, ok := m.apps[d.AppID]; ok && personalApps[app.ID] {
 			delete(m.domains, domain)
 			m.dropCustomDomainTLSHostsLocked(domain)
 		}
 	}
 	for cid, c := range m.crons {
-		if app, ok := m.apps[c.AppID]; ok && app.AccountID == id {
+		if app, ok := m.apps[c.AppID]; ok && personalApps[app.ID] {
 			delete(m.crons, cid)
 		}
 	}
 	for iid, ins := range m.instances {
-		if app, ok := m.apps[ins.AppID]; ok && app.AccountID == id {
+		if app, ok := m.apps[ins.AppID]; ok && personalApps[app.ID] {
 			delete(m.instances, iid)
-			delete(m.runtimeInstanceConfigProofs, iid)
+			m.deleteNativeInstanceInputsLocked(iid)
+			delete(m.releaseWorkerDrains, iid)
 			delete(m.instanceRuntimeConfigReceipts, iid)
 			m.deleteSecretRuntimeProcessesLocked(iid)
 			delete(m.capacityInstanceResources, iid)
 		}
 	}
 	for taskID, task := range m.appTasks {
-		if task.AccountID == id {
+		if task.AccountID == id && personalApps[task.AppID] {
 			delete(m.appTasks, taskID)
 		}
 	}
@@ -21822,7 +23134,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		}
 	}
 	for eventID, record := range m.requestAuditEvents {
-		if record.AccountID == id {
+		if record.AccountID == id && personalApps[record.AppID] {
 			delete(m.requestAuditEvents, eventID)
 		}
 	}
@@ -21832,9 +23144,12 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		}
 	}
 	for did, d := range m.deployments {
-		if app, ok := m.apps[d.AppID]; ok && app.AccountID == id {
+		if app, ok := m.apps[d.AppID]; ok && personalApps[app.ID] {
 			deletedDeployments[did] = struct{}{}
 			delete(m.deployments, did)
+			delete(m.releaseEnvironmentPins, did)
+			m.deleteDeploymentSubmissionsLocked(did)
+			delete(m.publicBuildURLs, did)
 			delete(m.deploymentRuntimeEnvironmentOwners, did)
 			delete(m.operationCodePins, did)
 			delete(m.workflowCodePins, did)
@@ -21851,17 +23166,23 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.builds, bid)
 		}
 	}
-	for aid, a := range m.apps {
-		if a.AccountID == id {
+	for aid := range m.apps {
+		if personalApps[aid] {
 			delete(m.serviceRecovery, aid)
+			delete(m.workerRecovery, aid)
 			m.deleteEnvironmentSecretRefsLocked(aid, "")
 			m.deleteEnvironmentWorkloadIntentsLocked(aid, "")
 			m.deleteWorkflowDispatchCursorsLocked(aid)
+			m.deleteScenarioWorkerFaultsForAppLocked(aid)
 			delete(m.apps, aid)
+			delete(m.applicationStandardEnrollments, aid)
+			m.eraseStandardAppExceptionsLocked(aid)
+			m.deleteStandardMaterializationControlsLocked(aid)
 			delete(m.appHealthHistory, aid)
 			delete(m.savedRouteRequirements, aid)
 			m.deleteProfileInvestigationsLocked(aid)
 			delete(m.canaryRouteGates, aid)
+			m.deleteEnvironmentBudgetsForAppLocked(aid)
 			delete(m.routeMonitorConfigs, aid)
 			delete(m.routeMonitorNextCheck, aid)
 			delete(m.routeMonitorIncidents, aid)
@@ -21875,12 +23196,12 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		}
 	}
 	for key, policy := range m.projectEnvironmentRoutePolicies {
-		if policy.AccountID == id {
+		if policy.AccountID == id && personalApps[policy.AppID] {
 			delete(m.projectEnvironmentRoutePolicies, key)
 		}
 	}
 	for key, policy := range m.projectEnvironmentEdgePolicies {
-		if policy.AccountID == id {
+		if policy.AccountID == id && personalApps[policy.AppID] {
 			delete(m.projectEnvironmentEdgePolicies, key)
 		}
 	}
@@ -21890,6 +23211,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.keyByHash, hex.EncodeToString(k.Hash))
 		}
 	}
+	delete(m.accountDeployRates, id)
 	for k := range m.idem {
 		// The MemStore idem key shape is "accountID\x00key" — strip
 		// the prefix to find this account's bucket.
@@ -21897,22 +23219,40 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.idem, k)
 		}
 	}
+	keptBuilder := m.builderUsage[:0]
+	for _, row := range m.builderUsage {
+		if row.AccountID != id || !personalApps[row.AppID] {
+			keptBuilder = append(keptBuilder, row)
+		}
+	}
+	m.builderUsage = keptBuilder
+	for key, row := range m.snapshotStorage {
+		if row.AccountID == id && personalApps[row.AppID] {
+			delete(m.snapshotStorage, key)
+		}
+	}
 	// usage_minutes + usageByMonth aggregates are keyed by accountID
 	// (no separate owner column); filter and rewrite both slices.
 	var kept []usageMinute
 	for _, u := range m.usage {
-		if u.AccountID != id {
+		if u.AccountID != id || !personalApps[u.AppID] {
 			kept = append(kept, u)
 		}
 	}
 	m.usage = kept
 	var keptMonth []Usage
 	for _, u := range m.usageByMonth {
-		if u.AccountID != id {
+		if u.AccountID != id || !personalApps[u.AppID] {
 			keptMonth = append(keptMonth, u)
 		}
 	}
 	m.usageByMonth = keptMonth
+	for deploymentID, deployment := range m.deployments {
+		if deployment.DeployedByUserID == id {
+			deployment.DeployedByUserID = ""
+			m.deployments[deploymentID] = deployment
+		}
+	}
 	// Finally: clear stripeByCustomer reverse-index, then the parent.
 	for sc, acid := range m.stripeByCustomer {
 		if acid == id {
@@ -21930,13 +23270,13 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		}
 	}
 	for key, identity := range m.billingIdentities {
-		if identity.AccountID == id {
+		if identity.AccountID == id && !retainBilling {
 			delete(m.billingIdentities, key)
 		}
 	}
 	deletedInvoiceIDs := make(map[string]struct{})
 	for key, invoice := range m.invoices {
-		if invoice.AccountID == id {
+		if invoice.AccountID == id && !retainBilling {
 			deletedInvoiceIDs[invoice.ID] = struct{}{}
 			delete(m.invoices, key)
 		}
@@ -21947,19 +23287,19 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		}
 	}
 	for key, credit := range m.accountCredits {
-		if credit.AccountID == id {
+		if credit.AccountID == id && !retainBilling {
 			delete(m.accountCredits, key)
 		}
 	}
 	keptLedger := m.creditLedger[:0]
 	for _, entry := range m.creditLedger {
-		if entry.AccountID != id {
+		if entry.AccountID != id || retainBilling {
 			keptLedger = append(keptLedger, entry)
 		}
 	}
 	m.creditLedger = keptLedger
 	for key := range m.billingUsageDeliveries {
-		if strings.Contains(key, "\x00"+id+"\x00") {
+		if strings.Contains(key, "\x00"+id+"\x00") && !retainBilling {
 			delete(m.billingUsageDeliveries, key)
 		}
 	}
@@ -21984,6 +23324,12 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.networkUsageCheckpoints, instanceID)
 		}
 	}
+	for key, work := range m.eventFanout {
+		if strings.HasPrefix(key, id+"\x00") && !m.companyObjectEventPayloadLocked(id, work.Payload) {
+			delete(m.eventFanout, key)
+		}
+	}
+
 	// Audit events (spec §17 G6 right-to-erasure). Drop events whose
 	// subject is the account id or whose data->>account_id matches.
 	// Mirrors the PgStore cascade; a non-JSON Data is left alone (the
@@ -21991,6 +23337,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	idUUID, _ := uuid.Parse(id)
 	var keptEvents []Event
 	for _, e := range m.events {
+		if m.companyObjectEventPayloadLocked(id, e.Data) {
+			keptEvents = append(keptEvents, e)
+			continue
+		}
+
 		if e.Subject != nil && idUUID != uuid.Nil && *e.Subject == idUUID {
 			continue
 		}
@@ -22042,23 +23393,98 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 
 	evidence := m.financialEvidence[:0]
 	for _, row := range m.financialEvidence {
-		if row.Evidence.AccountID != id {
+		if row.Evidence.AccountID != id || retainBilling {
 			evidence = append(evidence, row)
 		}
 	}
 	m.financialEvidence = evidence
 	for key, p := range m.financialPrices {
-		if p.AccountID == id {
+		if p.AccountID == id && !retainBilling {
 			delete(m.financialPrices, key)
 		}
 	}
 	for key, p := range m.financialBudgets {
-		if p.AccountID == id {
+		if p.AccountID == id && !retainBilling {
 			delete(m.financialBudgets, key)
 			delete(m.financialBudgetRevisions, key)
+			delete(m.financialBudgetEvaluations, key)
+		}
+	}
+	for key, alert := range m.financialBudgetAlerts {
+		if alert.AccountID == id {
+			delete(m.financialBudgetAlerts, key)
+		}
+	}
+	for key, d := range m.financialBudgetChannelDeliveries {
+		if d.Alert.AccountID == id {
+			delete(m.financialBudgetChannelDeliveries, key)
+		}
+	}
+	for key, a := range m.financialBudgetProjections {
+		if a.AccountID == id {
+			delete(m.financialBudgetProjections, key)
+		}
+	}
+	for key, e := range m.financialObjectStorageEstimates {
+		if e.AccountID == id {
+			delete(m.financialObjectStorageEstimates, key)
+		}
+	}
+	for key := range m.financialBudgetChannels {
+		if p, ok := m.financialBudgets[key]; !ok || p.AccountID == id {
+			delete(m.financialBudgetChannels, key)
+		}
+	}
+	for key, stop := range m.financialBudgetStops {
+		if stop.AccountID == id {
+			delete(m.financialBudgetStops, key)
+		}
+	}
+	for key, command := range m.financialPreviewCommands {
+		if command.AccountID == id {
+			delete(m.financialPreviewCommands, key)
+		}
+	}
+	for key, b := range m.financialComputeBooks {
+		if b.AccountID == id {
+			delete(m.financialComputeBooks, key)
+		}
+	}
+	for key, l := range m.financialComputeLeases {
+		if l.AccountID == id {
+			delete(m.financialComputeLeases, key)
+		}
+	}
+	delete(m.financialComputeHolds, id)
+	for key, a := range m.financialComputeJobAttempts {
+		if a.AccountID == id {
+			delete(m.financialComputeJobAttempts, key)
+		}
+	}
+	for key := range m.memberships {
+		if key.AccountID == id {
+			delete(m.memberships, key)
+			delete(m.orgAccessRevisions, key)
+		}
+	}
+	for _, project := range m.projects {
+		org := m.orgs[project.OrgID]
+		if project.AccountID == id && (project.OrgID == "" || org.Personal) {
+			if err := m.deleteProjectLocked(project.ID); err != nil {
+				return err
+			}
+		}
+	}
+	for orgID, org := range m.orgs {
+		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
+			delete(m.orgsBySlug, org.Slug)
+			delete(m.orgs, orgID)
 		}
 	}
 	delete(m.accounts, id)
+	if m.internalCI != nil {
+		m.internalCI.RemoveAccount(id)
+	}
 	delete(m.serviceAddressCursors, id)
 	return nil
 }
@@ -22234,7 +23660,8 @@ func (m *MemStore) ListCronsForAccount(_ context.Context, accountID string) ([]C
 // same field values the PgStore does (default gen_random_uuid +
 // default now() are faked by MemStore with newID/time.Now).
 func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, error) {
-	if !validAlertRollbackWindow(in) {
+	in = defaultMCPProtocolAlert(in)
+	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) {
 		return AlertRule{}, ErrInvalidArgument
 	}
 	m.mu.Lock()
@@ -22267,7 +23694,8 @@ func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, 
 // gates the count + insert. Account-wide rules (AppID == "") skip
 // the per-app branch but still hit the per-account branch.
 func (m *MemStore) CreateAlertRuleIfUnderQuota(_ context.Context, in AlertRule, limits api.Limits) (AlertRule, error) {
-	if !validAlertRollbackWindow(in) {
+	in = defaultMCPProtocolAlert(in)
+	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) {
 		return AlertRule{}, ErrInvalidArgument
 	}
 	m.mu.Lock()
@@ -22396,6 +23824,12 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if !ok {
 		return AlertRule{}, ErrNotFound
 	}
+	if p.MCPMinCalls != nil {
+		r.MCPMinCalls = *p.MCPMinCalls
+	}
+	if p.MCPForMinutes != nil {
+		r.MCPForMinutes = *p.MCPForMinutes
+	}
 	if p.Name != nil {
 		r.Name = *p.Name
 	}
@@ -22436,7 +23870,7 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if p.PostDeployRollbackWindowSeconds != nil {
 		r.PostDeployRollbackWindowSeconds = *p.PostDeployRollbackWindowSeconds
 	}
-	if !validAlertRollbackWindow(r) {
+	if !validMCPProtocolAlert(r) || !validAlertRollbackWindow(r) {
 		return AlertRule{}, ErrInvalidArgument
 	}
 	r.UpdatedAt = time.Now()
@@ -22451,6 +23885,38 @@ func (m *MemStore) DeleteAlertRule(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.alertRules, id)
+	delete(m.readinessIncidentCursors, id)
+	delete(m.readinessPagerDutyPolicies, id)
+	delete(m.readinessPagerDutyAckPolicies, id+":primary")
+	delete(m.readinessPagerDutyAckPolicies, id+":fallback")
+	for key, event := range m.readinessPagerDutyAckEvents {
+		if event.RuleID == id {
+			delete(m.readinessPagerDutyAckEvents, key)
+		}
+	}
+	delete(m.readinessReminderDefaults, id)
+	delete(m.readinessFallbackPolicies, id)
+	for key, event := range m.readinessIncidentEvents {
+		if event.RuleID == id {
+			delete(m.readinessIncidentEvents, key)
+			for receiptKey, action := range m.readinessNotificationActions {
+				if action.Request.EventID == key {
+					delete(m.readinessNotificationActions, receiptKey)
+				}
+			}
+		}
+	}
+	for key, incident := range m.readinessIncidents {
+		if incident.RuleID == id {
+			delete(m.readinessIncidents, key)
+			delete(m.readinessAttention, key)
+			for actionKey, action := range m.readinessAttentionActions {
+				if action.IncidentID == key {
+					delete(m.readinessAttentionActions, actionKey)
+				}
+			}
+		}
+	}
 	for key, delivery := range m.alertDeliveries {
 		if delivery.RuleID == id {
 			delete(m.alertDeliveries, key)
@@ -23423,6 +24889,10 @@ func (m *MemStore) ClaimAlertFire(_ context.Context, ruleID, idempotencyKey stri
 	if !ok {
 		return "", false, ErrNotFound
 	}
+	// Fire and recovery/retry writers share the journal's unique key.
+	if _, exists := m.alertDeliveries[idempotencyKey]; exists {
+		return "", false, nil
+	}
 	cacheKey := ruleID + "\x00" + idempotencyKey
 	if _, dup := m.alertClaimKeys[cacheKey]; dup {
 		return "", false, nil
@@ -23775,6 +25245,9 @@ func (m *MemStore) MarkAccountDeletionPending(_ context.Context, id string) erro
 	if !ok {
 		return ErrNotFound
 	}
+	if m.accountOwnershipErasureBlockedLocked(id) {
+		return ErrOrgAppOwnershipPending
+	}
 	if a.Status == AccountDeletedPending && a.DeletionRequestedAt != nil {
 		return nil
 	}
@@ -23973,6 +25446,14 @@ func (m *MemStore) BackdateGdprRequestsForTest(_ context.Context, accountID stri
 func (m *MemStore) LoadAndStampLastQuotaWarning(_ context.Context, id string, day time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if org, ok := m.orgs[id]; ok && !org.Personal {
+		a := m.orgResourceAccountLocked(org)
+		stamp := day.UTC().Truncate(24 * time.Hour)
+		already := a.LastQuotaWarningAt != nil && !a.LastQuotaWarningAt.Before(stamp)
+		a.LastQuotaWarningAt = &stamp
+		m.saveOrgResourcePolicyLocked(a)
+		return already, nil
+	}
 	a, ok := m.accounts[id]
 	if !ok {
 		return false, ErrNotFound
@@ -23991,6 +25472,12 @@ func (m *MemStore) LoadAndStampLastQuotaWarning(_ context.Context, id string, da
 func (m *MemStore) ClearQuotaWarning(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if org, ok := m.orgs[id]; ok && !org.Personal {
+		a := m.orgResourceAccountLocked(org)
+		a.LastQuotaWarningAt = nil
+		m.saveOrgResourcePolicyLocked(a)
+		return nil
+	}
 	a, ok := m.accounts[id]
 	if !ok {
 		return nil
@@ -24012,6 +25499,22 @@ func (m *MemStore) ClearQuotaWarning(_ context.Context, id string) error {
 func (m *MemStore) MarkDunningStep(_ context.Context, id string, from, to AccountStatus) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if org, ok := m.orgs[id]; ok && !org.Personal {
+		if AccountStatus(org.Status) != from {
+			return ErrNotFound
+		}
+		a := m.orgResourceAccountLocked(org)
+		if a.PastDueAt == nil {
+			now := time.Now().UTC()
+			a.PastDueAt = &now
+		}
+		org.Status = OrgStatus(to)
+		org.DeletedPending = to == AccountDeletedPending
+		m.orgs[id] = org
+		m.saveOrgResourcePolicyLocked(a)
+		delete(m.freeQuotaSuspended, id)
+		return nil
+	}
 	a, ok := m.accounts[id]
 	if !ok {
 		return ErrNotFound
@@ -24478,6 +25981,8 @@ func (m *MemStore) CreateOrg(_ context.Context, o Org) (Org, error) {
 	if o.Status == "" {
 		o.Status = OrgStatusActive
 	}
+	o.ResourceOwnershipEnabled = false
+	o = m.activateOrgResourceOwnershipLocked(o)
 	m.orgs[o.ID] = o
 	m.orgsBySlug[slugKey] = o.ID
 	return o, nil
@@ -24545,9 +26050,15 @@ func (m *MemStore) ListOrgsForAccount(_ context.Context, accountID string) ([]Or
 // UpdateOrgPlan / UpdateOrgName / UpdateOrgStatus / SoftDeleteOrg are
 // mirror updates. Each stamps UpdatedAt so the wire shape is monotonic
 // per row.
-func (m *MemStore) UpdateOrgPlan(_ context.Context, id string, plan api.Plan) error {
+func (m *MemStore) UpdateOrgPlan(ctx context.Context, id string, plan api.Plan) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if org, ok := m.orgs[id]; ok && !org.Personal {
+		return m.updateOrgResourcePlanLocked(org, plan)
+	}
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	o, ok := m.orgs[id]
 	if !ok {
 		return ErrNotFound
@@ -24562,9 +26073,12 @@ func (m *MemStore) UpdateOrgPlan(_ context.Context, id string, plan api.Plan) er
 // handler trims + bounds the name before reaching the Store; the
 // MemStore is permissive but the validation contract is identical to
 // the PgStore path.
-func (m *MemStore) UpdateOrgName(_ context.Context, id, name string) error {
+func (m *MemStore) UpdateOrgName(ctx context.Context, id, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	o, ok := m.orgs[id]
 	if !ok {
 		return ErrNotFound
@@ -24575,9 +26089,12 @@ func (m *MemStore) UpdateOrgName(_ context.Context, id, name string) error {
 	return nil
 }
 
-func (m *MemStore) UpdateOrgStatus(_ context.Context, id string, status OrgStatus) error {
+func (m *MemStore) UpdateOrgStatus(ctx context.Context, id string, status OrgStatus) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	o, ok := m.orgs[id]
 	if !ok {
 		return ErrNotFound
@@ -24588,12 +26105,25 @@ func (m *MemStore) UpdateOrgStatus(_ context.Context, id string, status OrgStatu
 	return nil
 }
 
-func (m *MemStore) SoftDeleteOrg(_ context.Context, id string) error {
+func (m *MemStore) SoftDeleteOrg(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	o, ok := m.orgs[id]
 	if !ok {
 		return ErrNotFound
+	}
+	for _, bucket := range m.objectBuckets {
+		if m.objectBucketOrgLocked(bucket).ID == id && bucket.State != "deleted" {
+			return ErrConflict
+		}
+	}
+	for _, binding := range m.queueBindings {
+		if binding.OrgID == id && binding.RetiredAt == nil {
+			return ErrConflict
+		}
 	}
 	o.DeletedPending = true
 	o.Status = OrgStatusDeletedPending
@@ -24609,9 +26139,12 @@ func (m *MemStore) SoftDeleteOrg(_ context.Context, id string) error {
 // external-insert path) and at the wire helper
 // `cmd/apid::enforceMemberCap`, NOT here — see pkg/state/pgstore.go
 // ::AddOrgMember for the rationale.
-func (m *MemStore) AddOrgMember(_ context.Context, orgID, accountID string, role OrgRole, invitedBy *string) error {
+func (m *MemStore) AddOrgMember(ctx context.Context, orgID, accountID string, role OrgRole, invitedBy *string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	_, ok := m.orgs[orgID]
 	if !ok {
 		return ErrNotFound
@@ -24628,22 +26161,25 @@ func (m *MemStore) AddOrgMember(_ context.Context, orgID, accountID string, role
 		}
 	}
 	now := time.Now().UTC()
-	m.memberships[k] = OrgMembership{
+	m.setOrgMembershipLocked(k, OrgMembership{
 		OrgID:              orgID,
 		AccountID:          accountID,
 		Role:               role,
 		InvitedByAccountID: invitedBy,
 		JoinedAt:           now,
 		RemovedAt:          nil,
-	}
+	})
 	return nil
 }
 
 // RemoveOrgMember stamps removed_at and rejects removing the only
 // active owner.
-func (m *MemStore) RemoveOrgMember(_ context.Context, orgID, accountID string) error {
+func (m *MemStore) RemoveOrgMember(ctx context.Context, orgID, accountID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	k := orgAccountKey{OrgID: orgID, AccountID: accountID}
 	mem, ok := m.memberships[k]
 	if !ok {
@@ -24654,15 +26190,18 @@ func (m *MemStore) RemoveOrgMember(_ context.Context, orgID, accountID string) e
 	}
 	now := time.Now().UTC()
 	mem.RemovedAt = &now
-	m.memberships[k] = mem
+	m.setOrgMembershipLocked(k, mem)
 	return nil
 }
 
 // UpdateOrgMemberRole updates the role and rejects demoting the only
 // active owner.
-func (m *MemStore) UpdateOrgMemberRole(_ context.Context, orgID, accountID string, role OrgRole) error {
+func (m *MemStore) UpdateOrgMemberRole(ctx context.Context, orgID, accountID string, role OrgRole) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	k := orgAccountKey{OrgID: orgID, AccountID: accountID}
 	mem, ok := m.memberships[k]
 	if !ok {
@@ -24672,7 +26211,7 @@ func (m *MemStore) UpdateOrgMemberRole(_ context.Context, orgID, accountID strin
 		return ErrOrgLastOwner
 	}
 	mem.Role = role
-	m.memberships[k] = mem
+	m.setOrgMembershipLocked(k, mem)
 	return nil
 }
 
@@ -24682,9 +26221,12 @@ func (m *MemStore) UpdateOrgMemberRole(_ context.Context, orgID, accountID strin
 // ordering. No-op on fromAccountID == toAccountID returns
 // ErrOrgLastOwner (a self-transfer would silently skip the swap and
 // the wire-shape contract is to refuse).
-func (m *MemStore) TransferOrgOwnership(_ context.Context, orgID, fromAccountID, toAccountID string) error {
+func (m *MemStore) TransferOrgOwnership(ctx context.Context, orgID, fromAccountID, toAccountID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	_, _, err := transferOrgOwnershipLocked(m, orgID, fromAccountID, toAccountID)
 	return err
 }
@@ -24730,9 +26272,12 @@ func (m *MemStore) OrgMemberByAccount(_ context.Context, orgID, accountID string
 }
 
 // CreateOrgInvitation inserts a pending invitation.
-func (m *MemStore) CreateOrgInvitation(_ context.Context, inv OrgInvitation) (OrgInvitation, error) {
+func (m *MemStore) CreateOrgInvitation(ctx context.Context, inv OrgInvitation) (OrgInvitation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return OrgInvitation{}, err
+	}
 	if inv.ID == "" {
 		inv.ID = newID()
 	}
@@ -24820,7 +26365,7 @@ func (m *MemStore) ConsumeOrgInvitation(_ context.Context, hash []byte, acceptin
 		JoinedAt:           now,
 		RemovedAt:          nil,
 	}
-	m.memberships[k] = mem
+	m.setOrgMembershipLocked(k, mem)
 	inv.ConsumedAt = &now
 	inv.AcceptingAccountID = &acceptingID
 	m.invitations[hashKey] = inv
@@ -24828,9 +26373,12 @@ func (m *MemStore) ConsumeOrgInvitation(_ context.Context, hash []byte, acceptin
 }
 
 // RevokeOrgInvitation stamps revoked_at on one org-scoped, still-pending row.
-func (m *MemStore) RevokeOrgInvitation(_ context.Context, orgID, invitationID, _ string) error {
+func (m *MemStore) RevokeOrgInvitation(ctx context.Context, orgID, invitationID, _ string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	var hashKey string
 	var inv OrgInvitation
 	for key, candidate := range m.invitations {
@@ -25417,7 +26965,7 @@ func (m *MemStore) CreateConsumerKey(_ context.Context, accountID, appID, name, 
 	// SQLSTATE 23514. Pin the surface here so pg ↔ memstore agree.
 	for _, s := range scopes {
 		switch s {
-		case "read", "write", "admin":
+		case "read", "write", "admin", "billing":
 			// ok
 		default:
 			return ConsumerKey{}, fmt.Errorf("memstore: CreateConsumerKey: scope %q is not in the closed-set {read, write, admin} (00329 vocab CHECK)", s)
@@ -25908,7 +27456,7 @@ func (m *MemStore) UpsertRegressionObservation(_ context.Context, _ sqlc.UpsertR
 // GetRegressionObservation is intentionally unsupported by MemStore;
 // regression observations are a Postgres-only request telemetry surface.
 func (m *MemStore) GetRegressionObservation(_ context.Context, _ sqlc.GetRegressionObservationParams) (sqlc.DebugRegressionObservation, error) {
-	panic("memstore: GetRegressionObservation unimplemented")
+	return sqlc.DebugRegressionObservation{}, errMemStoreRequestTelemetry
 }
 
 // ListActiveRegressionsByApp is intentionally unsupported by MemStore;
@@ -25921,7 +27469,7 @@ func (m *MemStore) ListActiveRegressionsByApp(_ context.Context, _ sqlc.ListActi
 // ApplyRegressionAction is intentionally unsupported by MemStore because
 // debugger lifecycle state is persisted with request telemetry in Postgres.
 func (m *MemStore) ApplyRegressionAction(_ context.Context, _ sqlc.ApplyRegressionActionParams) (sqlc.DebugRegressionObservation, error) {
-	panic("memstore: ApplyRegressionAction unimplemented")
+	return sqlc.DebugRegressionObservation{}, errMemStoreRequestTelemetry
 }
 
 // ResolveStaleRegressionObservations is intentionally unsupported by
@@ -26003,15 +27551,29 @@ func (m *MemStore) GetAccountAsyncQuota(_ context.Context, accountID string) (in
 // ClaimInvocation. Performs the cap check + counter increment +
 // pending→dispatching transition atomically under m.mu.
 // Returns ErrQuotaExceeded when the cap is hit.
-func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID string, leaseSeconds, maxInflight int) (Invocation, error) {
+func (m *MemStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID string, leaseSeconds, maxInflight int) (Invocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 Invocation
+		return zero0, err
+	}
+
 	inv, ok := m.invocations[id]
 	if !ok {
 		return Invocation{}, ErrNotFound
 	}
 	if inv.State != InvocationPending {
 		return Invocation{}, ErrNotFound
+	}
+	if m.scenarioWorkerDispatchBlockedLocked(inv.AppID) {
+		return Invocation{}, ErrConflict
+	}
+	if err := m.checkScenarioPostgresFaultDispatchLocked(inv.AppID, instanceID); err != nil {
+		return Invocation{}, err
+	}
+	if instanceID == "" && m.scenarioActionPolicies[inv.AppID].Member.ManagedWorkJSON != "" {
+		inv.InstanceID = ""
 	}
 	now := time.Now()
 	if inv.ReceivedAt == nil && inv.StartDeadlineAt != nil && inv.StartDeadlineAt.Before(now) {
@@ -26035,10 +27597,17 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	if m.queueBindingEnvironmentHeldLocked(inv) {
 		return Invocation{}, ErrQueueBindingEnvironmentUnavailable
 	}
-	row, ok := m.accountAsyncQuota[inv.AccountID]
+	subject, policyMax, err := m.queueQuotaSubjectLocked(inv, maxInflight)
+	if err != nil {
+		return Invocation{}, err
+	}
+	row, ok := m.accountAsyncQuota[subject]
+	if org, owned := m.orgs[subject]; owned && !org.Personal && org.ResourceOwnershipEnabled {
+		row.MaxInflight = policyMax
+	}
 	if !ok {
-		row = accountAsyncQuotaRow{MaxInflight: maxInflight}
-		m.accountAsyncQuota[inv.AccountID] = row
+		row = accountAsyncQuotaRow{MaxInflight: policyMax}
+		m.accountAsyncQuota[subject] = row
 	}
 	if row.CurrentInflight >= row.MaxInflight {
 		return Invocation{}, ErrQuotaExceeded
@@ -26052,6 +27621,7 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	leaseExpires := now.Add(time.Duration(leaseSeconds) * time.Second)
 	inv.State = InvocationDispatching
 	inv.QuotaReserved = true
+	inv.AsyncQuotaSubjectID = subject
 	inv.LeaseExpiresAt = &leaseExpires
 	if instanceID != "" {
 		inv.InstanceID = instanceID
@@ -26065,7 +27635,7 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	m.setInvocationLocked(id, inv)
 	m.syncInvocationOccurrenceLocked(inv, now)
 	row.CurrentInflight++
-	m.accountAsyncQuota[inv.AccountID] = row
+	m.accountAsyncQuota[subject] = row
 	return cloneInvocationWorkEnvelope(transport), nil
 }
 
@@ -26098,7 +27668,9 @@ func (m *MemStore) ListExpiredInvocationsForReaper(_ context.Context, now time.T
 		if _, _, linked := m.operationForInvocationLocked(id); linked {
 			continue
 		}
-		if inv.ResultRetentionUntil == nil {
+		// Terminal rows only, matching PgStore: a past horizon on a live
+		// row must never delete pending or dispatching work.
+		if inv.ResultRetentionUntil == nil || !invocationTerminalStates[inv.State] {
 			continue
 		}
 		if inv.ResultRetentionUntil.After(now) {
@@ -26124,12 +27696,16 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 		}
 		if inv, ok := m.invocations[id]; ok {
 			m.captureRecoveryInvocationResultLocked(inv, time.Now().UTC())
+			m.captureEventExecutionTransitionLocked(inv, Invocation{}, time.Now().UTC(), true)
+			m.loseExecutionCoverageLocked(inv.AppID, "invocation_deleted", time.Now().UTC())
 			delete(m.invocations, id)
+			delete(m.workerReleasePins, id)
 			delete(m.eventDeliverySlots, id)
 			m.deleteInvocationAttemptsLocked(id)
 			delete(m.keyedReplayChildren, id)
 			delete(m.plainReplayChildren, id)
 			delete(m.invocationEnvironmentQueueReceipts, id)
+			delete(m.invocationQueueLeaseReceipts, id)
 			delete(m.invocationWorkEnvironmentAdmissions, id)
 			delete(m.invocationEnvironmentQueueAdmissions, id)
 			n++
@@ -26203,7 +27779,7 @@ func (m *MemStore) forceDeadlineBreachedInvocations(ids []string) ([]Invocation,
 		inv.LastError = "deadline_at breached"
 		now := time.Now()
 		inv.CompletedAt = &now
-		if err := m.operationTransitionLocked(inv, uncertain); err != nil {
+		if err := m.operationTransitionLocked(&inv, uncertain); err != nil {
 			return nil, err
 		}
 		if err := m.enqueueInvocationDestinationLocked(inv); err != nil {
@@ -26211,7 +27787,7 @@ func (m *MemStore) forceDeadlineBreachedInvocations(ids []string) ([]Invocation,
 		}
 		m.setInvocationLocked(id, inv)
 		if quotaReserved {
-			m.decrementAccountAsyncInflightLocked(inv.AccountID)
+			m.decrementAccountAsyncInflightLocked(invocationAsyncSubject(inv))
 		}
 		forced = append(forced, inv)
 	}
@@ -26222,9 +27798,14 @@ func (m *MemStore) forceDeadlineBreachedInvocations(ids []string) ([]Invocation,
 // PgStore.RetryQueueDeadLetter. Resets a row in state='dead_letter'
 // back to 'pending' with attempts=0, last_error cleared,
 // last_replayed_at stamped. Scoped to the caller's accountID.
-func (m *MemStore) RetryQueueDeadLetter(_ context.Context, accountID, invocationID string) (Invocation, error) {
+func (m *MemStore) RetryQueueDeadLetter(ctx context.Context, accountID, invocationID string) (Invocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 Invocation
+		return zero0, err
+	}
+
 	inv, ok := m.invocations[invocationID]
 	if !ok || !m.productionInvocationWorkLocked(inv) {
 		return Invocation{}, ErrNotFound

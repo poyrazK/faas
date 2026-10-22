@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
+	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
+	"github.com/onebox-faas/faas/pkg/rehearsalrecorder"
 )
 
 var (
@@ -25,10 +27,34 @@ func (m *Manager) ExecuteAppTask(ctx context.Context, instance string, req appta
 // returning. Ordinary app and disposable source-execution instances fail the
 // AppTaskOnly fence before any payload is sent.
 func (m *Manager) ExecuteAppTaskWithOutput(ctx context.Context, instance string, req apptaskproto.Request, receive apptaskproto.OutputReceiver) (apptaskproto.Result, error) {
-	var zero apptaskproto.Result
 	if err := req.Validate(); err != nil {
-		return zero, err
+		return apptaskproto.Result{}, err
 	}
+	if req.Interactive {
+		return apptaskproto.Result{}, fmt.Errorf("%w: interactive request requires an attached client", apptaskproto.ErrInvalidRequest)
+	}
+	return m.runAppTask(ctx, instance, req, func(requestCtx context.Context, session *AppTaskSession) (apptaskproto.Result, error) {
+		return session.ExecuteWithOutput(requestCtx, req, receive)
+	})
+}
+
+// ExecuteInteractiveAppTask runs one interactive session (ADR-1037) against an
+// already-booted task guest with the same AppTaskOnly fence and unconditional
+// teardown as ExecuteAppTaskWithOutput.
+func (m *Manager) ExecuteInteractiveAppTask(ctx context.Context, instance string, req apptaskproto.Request, input <-chan apptaskproto.InputEvent, receive apptaskproto.OutputReceiver) (apptaskproto.Result, error) {
+	if err := req.Validate(); err != nil {
+		return apptaskproto.Result{}, err
+	}
+	if !req.Interactive {
+		return apptaskproto.Result{}, fmt.Errorf("%w: interactive request required", apptaskproto.ErrInvalidRequest)
+	}
+	return m.runAppTask(ctx, instance, req, func(requestCtx context.Context, session *AppTaskSession) (apptaskproto.Result, error) {
+		return session.Interact(requestCtx, req, input, receive)
+	})
+}
+
+func (m *Manager) runAppTask(ctx context.Context, instance string, req apptaskproto.Request, run func(context.Context, *AppTaskSession) (apptaskproto.Result, error)) (apptaskproto.Result, error) {
+	var zero apptaskproto.Result
 	if m == nil || m.vmm == nil {
 		return zero, ErrAppTaskNotConfigured
 	}
@@ -40,6 +66,21 @@ func (m *Manager) ExecuteAppTaskWithOutput(ctx context.Context, instance string,
 	m.mu.Unlock()
 	if !ok || inst == nil || !inst.AppTaskOnly {
 		return zero, ErrAppTaskInstanceNotFound
+	}
+	if req.Version == apptaskproto.RehearsalVersion && inst.Net.RehearsalRunID == "" {
+		return zero, m.rejectContainedCommandDispatch(ctx, instance, errors.New("contained command protocol requires installed containment"))
+	}
+	if inst.Net.RehearsalRunID != "" {
+		store, ok := m.rehearsalNetworkPolicies.(RehearsalCommandPolicyStore)
+		spec, decodeErr := rehearsalcommand.Decode(req.Command)
+		if !ok || decodeErr != nil || req.Interactive || req.CommandShell || req.TaskID != instance || req.MaxOutputBytes != rehearsalcommand.MaxReceiptBytes {
+			return zero, m.rejectContainedCommandDispatch(ctx, instance, errors.New("invalid contained command dispatch"))
+		}
+		identity := rehearsalrecorder.Identity{AccountID: inst.AccountID, AppID: inst.AppID, RunID: inst.Net.RehearsalRunID, InstanceID: instance, DeploymentID: inst.DeploymentID}
+		pinned, err := store.ScenarioRehearsalCommand(requestCtx, identity)
+		if err != nil || pinned.SHA256() != spec.SHA256() {
+			return zero, m.rejectContainedCommandDispatch(ctx, instance, errors.New("contained command dispatch differs from durable intent"))
+		}
 	}
 	dialer, ok := m.vmm.(AppTaskDialer)
 	if !ok {
@@ -72,10 +113,28 @@ func (m *Manager) ExecuteAppTaskWithOutput(ctx context.Context, instance string,
 		return zero, nilSessionErr
 	}
 
-	result, executeErr := session.ExecuteWithOutput(requestCtx, req, receive)
+	result, executeErr := run(requestCtx, session)
 	destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), appTaskDestroyTimeout)
+	var recorder *rehearsalrecorder.Session
+	if inst.Net.RehearsalRunID != "" && executeErr == nil {
+		spec, _ := rehearsalcommand.Decode(req.Command)
+		if _, err := rehearsalcommand.ParseReceipt(result.Stdout, instance, spec); err != nil || result.OutputTruncated {
+			executeErr = errors.New("contained command receipt unavailable")
+		} else {
+			recorder, executeErr = m.InstanceRehearsalRecorder(instance)
+			if executeErr == nil {
+				executeErr = recorder.PrepareRetirement(destroyCtx)
+			}
+		}
+	}
 	sessionDestroyErr := session.Destroy(destroyCtx)
 	managerDestroyErr := m.Destroy(destroyCtx, instance)
+	if recorder != nil {
+		if executeErr == nil && sessionDestroyErr == nil && managerDestroyErr == nil {
+			executeErr = recorder.FinishRetirement(destroyCtx, string(result.Stdout))
+		}
+		m.stopRehearsalRecorder(instance)
+	}
 	cancel()
 	var errs []error
 	if executeErr != nil {
@@ -91,4 +150,10 @@ func (m *Manager) ExecuteAppTaskWithOutput(ctx context.Context, instance string,
 		return zero, errors.Join(errs...)
 	}
 	return result, nil
+}
+
+func (m *Manager) rejectContainedCommandDispatch(ctx context.Context, instance string, reason error) error {
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), appTaskDestroyTimeout)
+	defer cancel()
+	return errors.Join(reason, m.Destroy(cleanup, instance))
 }

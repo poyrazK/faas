@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Metrics is the bounded observability surface for outboundd. Operator IDs
@@ -31,6 +33,25 @@ type Metrics struct {
 	aiTranslations         *prometheus.CounterVec
 	aiBudgetAlerts         *prometheus.CounterVec
 	credentialKeyEvents    *prometheus.CounterVec
+	aiContentFindings      *prometheus.CounterVec
+	aiMedia                *prometheus.CounterVec
+	aiReplays              *prometheus.CounterVec
+	aiEvaluations          *prometheus.CounterVec
+	aiBatches              *prometheus.CounterVec
+	aiUnmetered            *prometheus.CounterVec
+	aiToolUses             *prometheus.CounterVec
+	aiRouteCalls           *prometheus.CounterVec
+	aiCanaryCalls          *prometheus.CounterVec
+	aiCanaryRollbacks      *prometheus.CounterVec
+	aiModeration           *prometheus.CounterVec
+	aiLogExports           *prometheus.CounterVec
+	aiResponseChecks       *prometheus.CounterVec
+	aiRealtimeSessions     *prometheus.CounterVec
+	aiPromptPrefixShared   *prometheus.CounterVec
+	aiRealtimeActive       prometheus.Gauge
+	aiResponseFindings     *prometheus.CounterVec
+	aiPromptCacheMarks     *prometheus.CounterVec
+	aiResponseCacheSaved   *prometheus.CounterVec
 }
 
 // NewMetrics registers the outbound gateway metric families against reg.
@@ -93,7 +114,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		}, []string{"integration_id"}),
 		aiUsageRecordEvents: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_usage_record_events_total",
-			Help: "AI usage settlement writes by integration and bounded event (recorded, state_error, or unavailable).",
+			Help: "AI usage settlement writes by integration and bounded event (recorded, retried, state_error after the last attempt, or unavailable).",
 		}, []string{"integration_id", "event"}),
 		relayConnections: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_relay_connections_total",
@@ -119,6 +140,93 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_credential_key_events_total",
 			Help: "Provider key pool events by integration and bounded event (cooldown, rotated, or exhausted).",
 		}, []string{"integration_id", "event"}),
+		aiContentFindings: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_content_findings_total",
+			Help: "AI content policy findings by integration, detector (email, payment_card, iban, secret, or blocked_term) and action (redacted or blocked).",
+		}, []string{"integration_id", "kind", "action"}),
+		aiMedia: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_media_total",
+			Help: "Settled AI media usage by integration and kind (images, audio_seconds, characters, or video_seconds) (ADR-997, ADR-1432).",
+		}, []string{"integration_id", "kind"}),
+		aiReplays: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_replays_total",
+			Help: "AI replays the worker finished, by state (done or failed) (ADR-997).",
+		}, []string{"state"}),
+		aiEvaluations: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_evaluations_total",
+			Help: "AI evaluations the worker finished, by result (pass, fail, or failed) (ADR-1431).",
+		}, []string{"result"}),
+		aiBatches: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_batches_settled_total",
+			Help: "Provider batches the worker settled, by outcome (known, unknown, or error) (ADR-1431).",
+		}, []string{"outcome"}),
+		aiUnmetered: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_unmetered_calls_total",
+			Help: "Writes on AI integrations let through unmetered because the AI policy allows them, by integration (ADR-1432).",
+		}, []string{"integration_id"}),
+		aiToolUses: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_tool_uses_total",
+			Help: "Settled built-in tool uses by integration and tool (web_searches, file_searches, or code_session_gb) (ADR-1433).",
+		}, []string{"integration_id", "tool"}),
+		aiRouteCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_route_calls_total",
+			Help: "AI route calls by strategy and how the first target was picked (ordered, weighted, best, explore, or canary) (ADR-1434).",
+		}, []string{"strategy", "pick"}),
+		aiCanaryCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_route_canary_calls_total",
+			Help: "Calls of routes with an active canary, by the target tried first (canary or baseline) (ADR-1340).",
+		}, []string{"target"}),
+		aiCanaryRollbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_route_canary_rollbacks_total",
+			Help: "Model canaries outboundd rolled back, by reason (error_rate or latency) (ADR-1340).",
+		}, []string{"reason"}),
+		aiResponseCacheSaved: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_response_cache_saved_millicents_total",
+			Help: "Provider cost the response cache avoided, priced from cached responses' usage, by integration (ADR-1440).",
+		}, []string{"integration_id"}),
+		aiPromptCacheMarks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_prompt_cache_marks_total",
+			Help: "Prompt-cache breakpoints the gateway added to Claude requests by integration and mark (prefix or conversation) (ADR-1437).",
+		}, []string{"integration_id", "mark"}),
+		aiResponseChecks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_response_checks_total",
+			Help: "AI response checks by integration and result (passed, redacted, flagged, error, unchecked, or blocked) (ADR-1435).",
+		}, []string{"integration_id", "result"}),
+		aiResponseFindings: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_response_findings_total",
+			Help: "AI response check findings by integration, detector (email, payment_card, iban, secret, or blocked_term) and action (redacted or blocked) (ADR-1435).",
+		}, []string{"integration_id", "kind", "action"}),
+		aiModeration: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_moderation_total",
+			Help: "AI moderation checks by integration and result (passed, flagged, blocked, or error) (ADR-1340).",
+		}, []string{"integration_id", "result"}),
+		aiLogExports: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_log_exports_total",
+			Help: "Settled AI calls written to the log-drain export outbox, by integration (ADR-1340).",
+		}, []string{"integration_id"}),
+		aiRealtimeSessions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_realtime_sessions_total",
+			Help: "AI realtime sessions by event: opened, unmetered, and closed by the client, the provider, a cap, the duration bound, unreadable usage or an error (ADR 20261019072722).",
+		}, []string{"event"}),
+		aiPromptPrefixShared: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_prompt_cache_shared_total",
+			Help: "Shared prompt-prefix lookups by integration and result: repeated, first, refreshed or error (ADR 20261019132139).",
+		}, []string{"integration_id", "result"}),
+		aiRealtimeActive: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "outbound_ai_realtime_sessions_active",
+			Help: "AI realtime sessions open on this outboundd (ADR 20261019072722).",
+		}),
+	}
+	// The alert rules read these by reason or outcome alone. A series that
+	// starts at zero lets increase() see a process's first event.
+	for _, reason := range []string{api.OutboundAIRouteCanaryReasonErrorRate, api.OutboundAIRouteCanaryReasonLatency} {
+		m.aiCanaryRollbacks.WithLabelValues(reason)
+	}
+	for _, outcome := range []AIUsageOutcome{AIUsageOutcomeKnown, AIUsageOutcomeUnknown, AIUsageOutcomeError} {
+		m.aiBatches.WithLabelValues(string(outcome))
+	}
+	for _, event := range aiRealtimeSessionEvents {
+		m.aiRealtimeSessions.WithLabelValues(event)
 	}
 	collectors := []prometheus.Collector{
 		m.admissions,
@@ -140,6 +248,25 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiTranslations,
 		m.aiBudgetAlerts,
 		m.credentialKeyEvents,
+		m.aiContentFindings,
+		m.aiMedia,
+		m.aiReplays,
+		m.aiEvaluations,
+		m.aiBatches,
+		m.aiUnmetered,
+		m.aiToolUses,
+		m.aiRouteCalls,
+		m.aiCanaryCalls,
+		m.aiCanaryRollbacks,
+		m.aiModeration,
+		m.aiLogExports,
+		m.aiResponseChecks,
+		m.aiResponseFindings,
+		m.aiPromptCacheMarks,
+		m.aiResponseCacheSaved,
+		m.aiRealtimeSessions,
+		m.aiRealtimeActive,
+		m.aiPromptPrefixShared,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -257,6 +384,56 @@ func (m *Metrics) ObserveAIUsage(integrationID string, outcome AIUsageOutcome, u
 			m.aiTokens.WithLabelValues(integrationID, kind).Add(float64(value))
 		}
 	}
+	if m.aiMedia == nil {
+		return
+	}
+	for kind, value := range map[string]int64{"images": usage.Images, "audio_seconds": usage.AudioSeconds, "characters": usage.Characters,
+		"video_seconds": usage.VideoSeconds} {
+		if value > 0 {
+			m.aiMedia.WithLabelValues(integrationID, kind).Add(float64(value))
+		}
+	}
+	if m.aiToolUses == nil {
+		return
+	}
+	for tool, value := range map[string]int64{"web_searches": usage.WebSearches, "file_searches": usage.FileSearches,
+		"code_session_gb": usage.CodeSessionGB} {
+		if value > 0 {
+			m.aiToolUses.WithLabelValues(integrationID, tool).Add(float64(value))
+		}
+	}
+}
+
+// ObserveAIReplay counts one finished replay.
+func (m *Metrics) ObserveAIReplay(state string) {
+	if m == nil || m.aiReplays == nil {
+		return
+	}
+	m.aiReplays.WithLabelValues(state).Inc()
+}
+
+// ObserveAIEvaluation counts one finished evaluation.
+func (m *Metrics) ObserveAIEvaluation(result string) {
+	if m == nil || m.aiEvaluations == nil {
+		return
+	}
+	m.aiEvaluations.WithLabelValues(result).Inc()
+}
+
+// ObserveAIUnmetered counts one write let through unmetered.
+func (m *Metrics) ObserveAIUnmetered(integrationID string) {
+	if m == nil || m.aiUnmetered == nil {
+		return
+	}
+	m.aiUnmetered.WithLabelValues(integrationID).Inc()
+}
+
+// ObserveAIBatchSettled counts one settled provider batch.
+func (m *Metrics) ObserveAIBatchSettled(outcome AIUsageOutcome) {
+	if m == nil || m.aiBatches == nil {
+		return
+	}
+	m.aiBatches.WithLabelValues(string(outcome)).Inc()
 }
 
 func (m *Metrics) ObserveAICost(integrationID string, millicents int64) {
@@ -264,6 +441,112 @@ func (m *Metrics) ObserveAICost(integrationID string, millicents int64) {
 		return
 	}
 	m.aiCost.WithLabelValues(integrationID).Add(float64(millicents))
+}
+
+// ObserveAIRouteCall counts one route call by its strategy and how its
+// first target was picked.
+func (m *Metrics) ObserveAIRouteCall(strategy, pick string) {
+	if m == nil || m.aiRouteCalls == nil {
+		return
+	}
+	if strategy == "" {
+		strategy = api.OutboundAIRouteStrategyOrdered
+	}
+	m.aiRouteCalls.WithLabelValues(strategy, pick).Inc()
+}
+
+// ObserveAIRouteCanaryCall counts a call of a route with an active canary
+// by the target it tried first.
+func (m *Metrics) ObserveAIRouteCanaryCall(canary bool) {
+	if m == nil || m.aiCanaryCalls == nil {
+		return
+	}
+	target := "baseline"
+	if canary {
+		target = "canary"
+	}
+	m.aiCanaryCalls.WithLabelValues(target).Inc()
+}
+
+// ObserveAIRealtimeSession counts one realtime session event
+// (ADR 20261019072722).
+func (m *Metrics) ObserveAIRealtimeSession(event string) {
+	if m == nil || m.aiRealtimeSessions == nil {
+		return
+	}
+	m.aiRealtimeSessions.WithLabelValues(event).Inc()
+}
+
+// ObserveAIPromptPrefixShared counts one shared prompt-prefix lookup
+// (ADR 20261019132139).
+func (m *Metrics) ObserveAIPromptPrefixShared(integrationID, result string) {
+	if m == nil || m.aiPromptPrefixShared == nil {
+		return
+	}
+	m.aiPromptPrefixShared.WithLabelValues(integrationID, result).Inc()
+}
+
+// AddAIRealtimeActive moves the open realtime session gauge.
+func (m *Metrics) AddAIRealtimeActive(delta float64) {
+	if m == nil || m.aiRealtimeActive == nil {
+		return
+	}
+	m.aiRealtimeActive.Add(delta)
+}
+
+func (m *Metrics) ObserveAIRouteCanaryRollback(reason string) {
+	if m == nil || m.aiCanaryRollbacks == nil {
+		return
+	}
+	m.aiCanaryRollbacks.WithLabelValues(reason).Inc()
+}
+
+// ObserveAIResponseCacheSaved counts the provider cost one cache hit
+// avoided (ADR-1440).
+func (m *Metrics) ObserveAIResponseCacheSaved(integrationID string, millicents int64) {
+	if m == nil || m.aiResponseCacheSaved == nil || millicents <= 0 {
+		return
+	}
+	m.aiResponseCacheSaved.WithLabelValues(integrationID).Add(float64(millicents))
+}
+
+// ObserveAIPromptCacheMark counts one breakpoint the gateway added
+// (ADR-1437).
+func (m *Metrics) ObserveAIPromptCacheMark(integrationID, mark string) {
+	if m == nil || m.aiPromptCacheMarks == nil {
+		return
+	}
+	m.aiPromptCacheMarks.WithLabelValues(integrationID, mark).Inc()
+}
+
+// ObserveAIResponseCheck counts one response check's result (ADR-1435).
+func (m *Metrics) ObserveAIResponseCheck(integrationID, result string) {
+	if m == nil || m.aiResponseChecks == nil {
+		return
+	}
+	m.aiResponseChecks.WithLabelValues(integrationID, result).Inc()
+}
+
+// ObserveAIResponseFindings counts a response check's findings of one kind.
+func (m *Metrics) ObserveAIResponseFindings(integrationID, kind, action string, count int) {
+	if m == nil || m.aiResponseFindings == nil || count <= 0 {
+		return
+	}
+	m.aiResponseFindings.WithLabelValues(integrationID, kind, action).Add(float64(count))
+}
+
+func (m *Metrics) ObserveAIModeration(integrationID, result string) {
+	if m == nil || m.aiModeration == nil {
+		return
+	}
+	m.aiModeration.WithLabelValues(integrationID, result).Inc()
+}
+
+func (m *Metrics) ObserveAILogExport(integrationID string) {
+	if m == nil || m.aiLogExports == nil {
+		return
+	}
+	m.aiLogExports.WithLabelValues(integrationID).Inc()
 }
 
 func (m *Metrics) ObserveAIRouteFallback(reason string) {
@@ -285,6 +568,14 @@ func (m *Metrics) ObserveAIBudgetAlert(budget string, thresholdPercent int) {
 		return
 	}
 	m.aiBudgetAlerts.WithLabelValues(budget, strconv.Itoa(thresholdPercent)).Inc()
+}
+
+// ObserveAIContent counts one content policy finding (ADR-997).
+func (m *Metrics) ObserveAIContent(integrationID, kind, action string) {
+	if m == nil || m.aiContentFindings == nil {
+		return
+	}
+	m.aiContentFindings.WithLabelValues(integrationID, kind, action).Inc()
 }
 
 func (m *Metrics) ObserveCredentialKey(integrationID, event string) {

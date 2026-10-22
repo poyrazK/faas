@@ -3,7 +3,7 @@
 // read-only and never writes; these tests drive Tick directly against
 // a hermetic t.TempDir() wired through DiskDrift.WithSnapDir.
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -30,7 +31,7 @@ import (
 type driftFixture struct {
 	store *state.MemStore
 	ops   *wire.OpsMetrics
-	dd    *DiskDrift
+	dd    *sched.DiskDrift
 	root  string
 	// root is kept on the fixture for file creation; the sweep itself receives
 	// it through DiskDrift.WithSnapDir so parallel scheduler tests are isolated.
@@ -42,7 +43,7 @@ func newDriftFixture(t *testing.T) *driftFixture {
 	root := t.TempDir()
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("schedd")
-	dd := NewDiskDrift(store, nil).WithMetrics(ops).WithSnapDir(root)
+	dd := sched.NewDiskDrift(store, nil).WithMetrics(ops).WithSnapDir(root)
 	return &driftFixture{
 		store:   store,
 		ops:     ops,
@@ -401,7 +402,7 @@ func TestDiskDrift_NilMetricsNoPanic(t *testing.T) {
 	defer f.cleanup()
 
 	// Replace the dd with one that has nil metrics.
-	dd := NewDiskDrift(f.store, nil).WithSnapDir(f.root) // no WithMetrics call
+	dd := sched.NewDiskDrift(f.store, nil).WithSnapDir(f.root) // no WithMetrics call
 
 	f.seedSnapshot(t, "dep-1", 100, 200)
 	f.writeFile(t, "dep-1", "mem", make([]byte, 100))
@@ -431,7 +432,7 @@ func TestDiskDrift_StoreErrorIsNoOp(t *testing.T) {
 
 	// Swap the dd for one whose snapshotLister always errors. The
 	// sweep must log + return (0, nil) and increment zero.
-	dd := NewDiskDrift(&errLister{err: errors.New("db gone")}, nil).
+	dd := sched.NewDiskDrift(&errLister{err: errors.New("db gone")}, nil).
 		WithMetrics(f.ops)
 
 	drift, err := dd.Tick(context.Background())
@@ -745,7 +746,7 @@ func (f *fakeStorageLister) List(_ context.Context, _ string) ([]string, error) 
 // vmstate for every DB-known dep, drift stays at 0.
 func TestDiskDrift_StorageBackend_PresenceMatch(t *testing.T) {
 	store := state.NewMemStore()
-	dd := NewDiskDrift(store, nil).
+	dd := sched.NewDiskDrift(store, nil).
 		WithStorage(&fakeStorageLister{keys: []string{
 			"snap/d-1/mem",
 			"snap/d-1/vmstate",
@@ -771,7 +772,7 @@ func TestDiskDrift_StorageBackendSeedsIncompleteSnapshotIndex(t *testing.T) {
 		"snap/d-1/mem",
 		"snap/d-1/vmstate",
 	}}
-	dd := NewDiskDrift(store, nil).WithStorage(lister)
+	dd := sched.NewDiskDrift(store, nil).WithStorage(lister)
 	ctx := context.Background()
 	seedDriftRow(ctx, t, store, "d-1")
 	drift, err := dd.Tick(ctx)
@@ -792,7 +793,7 @@ func TestDiskDrift_StorageBackendSeedsIncompleteSnapshotIndex(t *testing.T) {
 // recorded in the DB.
 func TestDiskDrift_StorageBackend_MissingFileIncrements(t *testing.T) {
 	store := state.NewMemStore()
-	dd := NewDiskDrift(store, nil).
+	dd := sched.NewDiskDrift(store, nil).
 		WithStorage(&fakeStorageLister{keys: []string{
 			"snap/d-1/mem",
 			// vmstate deliberately absent.
@@ -812,7 +813,7 @@ func TestDiskDrift_StorageBackend_MissingFileIncrements(t *testing.T) {
 // orphan check: a key in storage with no matching DB row is drift.
 func TestDiskDrift_StorageBackend_OrphanDepIncrements(t *testing.T) {
 	store := state.NewMemStore()
-	dd := NewDiskDrift(store, nil).
+	dd := sched.NewDiskDrift(store, nil).
 		WithStorage(&fakeStorageLister{keys: []string{
 			"snap/d-orphan/mem",
 			"snap/d-orphan/vmstate",
@@ -826,11 +827,45 @@ func TestDiskDrift_StorageBackend_OrphanDepIncrements(t *testing.T) {
 	}
 }
 
+// H10-142: production keeps a backing sidecar beside every capture and keeps
+// stale captures until retention ends. Neither is drift; a real orphan still
+// is. On production this sweep reported 608 discrepancies an hour for 59
+// active rows, almost all of them these two shapes.
+func TestDiskDrift_StorageBackend_RetainedAndBackingAreNotDrift(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	seedDriftRow(ctx, t, store, "d-live")
+	seedDriftRow(ctx, t, store, "d-stale")
+	rows, err := store.ListSnapshotsForGC(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.DeploymentID == "d-stale" {
+			if err := store.MarkSnapshotStale(ctx, row.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	dd := sched.NewDiskDrift(store, nil).WithStorage(&fakeStorageLister{keys: []string{
+		"snap/d-live/mem", "snap/d-live/vmstate", "snap/d-live/backing",
+		"snap/d-stale/mem", "snap/d-stale/vmstate", "snap/d-stale/backing",
+		"snap/d-orphan/mem", "snap/d-orphan/vmstate",
+	}})
+	drift, err := dd.Tick(ctx)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if drift != 1 {
+		t.Fatalf("drift = %d, want 1 (only d-orphan)", drift)
+	}
+}
+
 // TestDiskDrift_StorageBackend_ListErrorIsUnavailable pins that a partial
 // remote inventory is surfaced as a failure rather than a clean zero.
 func TestDiskDrift_StorageBackend_ListErrorIsUnavailable(t *testing.T) {
 	store := state.NewMemStore()
-	dd := NewDiskDrift(store, nil).
+	dd := sched.NewDiskDrift(store, nil).
 		WithStorage(&fakeStorageLister{err: errors.New("registry down")})
 	drift, err := dd.Tick(context.Background())
 	if err == nil {
@@ -844,16 +879,16 @@ func TestDiskDrift_StorageBackend_ListErrorIsUnavailable(t *testing.T) {
 func TestDiskDrift_RemoteTimeoutIsFailureAndObservable(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("schedd")
-	dd := NewDiskDrift(store, nil).WithMetrics(ops).WithStorage(&blockingStorageLister{})
-	if dd.timeout != DefaultRemoteDiskDriftTickTimeout {
-		t.Fatalf("remote timeout=%s, want %s", dd.timeout, DefaultRemoteDiskDriftTickTimeout)
+	dd := sched.NewDiskDrift(store, nil).WithMetrics(ops).WithStorage(&blockingStorageLister{})
+	if (*dd.Timeout()) != sched.DefaultRemoteDiskDriftTickTimeout {
+		t.Fatalf("remote timeout=%s, want %s", (*dd.Timeout()), sched.DefaultRemoteDiskDriftTickTimeout)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
 	defer cancel()
 	if drift, err := dd.Tick(ctx); err == nil || drift != 0 {
 		t.Fatalf("Tick()=(%d,%v), want timeout failure", drift, err)
 	}
-	body := string(wireRenderMetrics(t, ops))
+	body := string(sched.WireRenderMetrics(t, ops))
 	for _, metric := range []string{
 		"schedd_snapshot_disk_drift_failures_total 1",
 		"schedd_snapshot_disk_drift_consecutive_failures 1",
@@ -875,7 +910,7 @@ func TestDiskDrift_ProductionSizedInventoryRecoversAfterTimeout(t *testing.T) {
 	}
 	lister := &timeoutThenStorageLister{keys: keys}
 	ops := wire.NewOpsMetrics("schedd")
-	drift := NewDiskDrift(store, nil).WithMetrics(ops).WithStorage(lister)
+	drift := sched.NewDiskDrift(store, nil).WithMetrics(ops).WithStorage(lister)
 
 	firstCtx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
 	defer cancel()
@@ -886,7 +921,7 @@ func TestDiskDrift_ProductionSizedInventoryRecoversAfterTimeout(t *testing.T) {
 		t.Fatalf("recovery Tick()=(%d,%v), want complete clean inventory", count, err)
 	}
 
-	body := string(wireRenderMetrics(t, ops))
+	body := string(sched.WireRenderMetrics(t, ops))
 	for _, metric := range []string{
 		"schedd_snapshot_disk_drift_failures_total 1",
 		"schedd_snapshot_disk_drift_consecutive_failures 0",
@@ -1008,7 +1043,7 @@ func TestDiskDriftCaptureRepositoryIndexRemainsReadOnly(t *testing.T) {
 		state.SnapshotVMStateKey(old),
 		state.SnapshotDriveKey(old),
 	}}}
-	drift, err := NewDiskDrift(store, nil).WithStorage(lister).Tick(ctx)
+	drift, err := sched.NewDiskDrift(store, nil).WithStorage(lister).Tick(ctx)
 	if err != nil || drift != 0 {
 		t.Fatalf("capture drift=%d err=%v", drift, err)
 	}
@@ -1052,7 +1087,7 @@ func TestParseSnapKeySupportsAllPublishedLayouts(t *testing.T) {
 		{"snap/dep/captures/not-a-uuid/mem", "", "", false},
 		{"snap/dep/captures/" + captureID + "/other", "", "", false},
 	} {
-		objectID, part, valid := parseSnapKey(tc.key)
+		objectID, part, valid := sched.ParseSnapKey(tc.key)
 		if objectID != tc.objectID || part != tc.part || valid != tc.valid {
 			t.Errorf("parseSnapKey(%q) = (%q, %q, %t), want (%q, %q, %t)", tc.key, objectID, part, valid, tc.objectID, tc.part, tc.valid)
 		}

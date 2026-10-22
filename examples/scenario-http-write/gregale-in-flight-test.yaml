@@ -1,0 +1,73 @@
+version: 1
+suites:
+  http-in-flight:
+    scenarios:
+      - {scenario: replace-during-write, engine: real-vm, profile: warm}
+scenarios:
+  replace-during-write:
+    project: http-in-flight-example
+    source: ./app
+    timeout: 5m
+    secrets:
+      CHECKOUT_DEADLINE_MS: '90000'
+    services:
+      payment:
+        source: ./payment
+        secrets:
+          HOLD_FIRST_KEY: in-flight
+    steps:
+      - name: baseline
+        requests:
+          - name: seed-charge
+            method: POST
+            path: /checkout
+            headers: {idempotency-key: baseline}
+            json: {customer: customer-one, sku: item-one, quantity: 1}
+            expect: {status: 200, json: {'/status': confirmed}}
+          - name: seed-ledger
+            method: GET
+            path: /durability
+            expect: {status: 200, json: {'/charges': 1, '/pending': 0}}
+            capture: {id: /ledger_id}
+      - name: replace-caller
+        restart:
+          workload: app
+          timeout: 1m
+          in_flight:
+            request:
+              name: interrupted-write
+              method: POST
+              path: /checkout
+              headers: {idempotency-key: in-flight}
+              json: {customer: customer-one, sku: item-one, quantity: 1}
+              expect: {status: 200}
+            checkpoints:
+              - workload: app
+                request:
+                  name: caller-pending
+                  method: GET
+                  path: /in-flight
+                  expect: {status: 200, json: {'/active': 1}}
+              - workload: payment
+                request:
+                  name: provider-pending
+                  method: GET
+                  path: /checkpoints/in-flight
+                  expect: {status: 200, json: {'/received': true, '/accepted': true, '/pending': true, '/committed': false, '/held': true}}
+          readiness:
+            name: replacement-idle
+            method: GET
+            path: /in-flight
+            expect: {status: 200, json: {'/active': 0}}
+          storage_checks:
+            - name: retained-ledger
+              method: GET
+              path: /durability
+              expect: {status: 200, json: {'/ledger_id': '${steps.seed-ledger.id}', '/charges': 1, '/pending': 1, '/held': 1}}
+      - name: reconcile-write
+        command: [node, ../test/in-flight-acceptance.mjs]
+        checks:
+          - name: reconciled-ledger
+            method: GET
+            path: /durability
+            expect: {status: 200, json: {'/charges': 2, '/pending': 0}}

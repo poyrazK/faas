@@ -135,6 +135,9 @@ type triggerDispatchRequest struct {
 	Source       string                  `json:"source"`
 	TriggerID    string                  `json:"trigger_id"`
 	Records      []triggerDispatchRecord `json:"records"`
+	// Delivery "batch" asks the gateway for one invocation carrying every
+	// record (ADR-1321); empty keeps one invocation per record.
+	Delivery string `json:"delivery,omitempty"`
 }
 
 // triggerDispatchResponse mirrors pkg/gateway/synth.go's batch
@@ -305,6 +308,10 @@ func (l *Loop) runTriggerTick(ctx context.Context) {
 			l.scheduleQueuePushLanes(ctx, t, store)
 			continue
 		}
+		if t.Kind == string(api.TriggerKindRealtime) {
+			l.scheduleRealtimeLanes(ctx, t, store)
+			continue
+		}
 		if err := l.dispatchOneTrigger(ctx, t, store, resolvePlan); err != nil {
 			if errors.Is(err, errTriggerGatewayDispatch) {
 				continue
@@ -334,7 +341,7 @@ func (l *Loop) triggerPlanResolver(ctx context.Context) func(string) api.Plan {
 		if appErr != nil {
 			return api.PlanFree
 		}
-		acct, acctErr := l.engine.Store().AccountByID(ctx, app.AccountID)
+		acct, acctErr := state.AppResourceAccount(ctx, l.engine.Store(), app)
 		if acctErr != nil {
 			return api.PlanFree
 		}
@@ -376,6 +383,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	if exclusiveBinding == nil && l.gatewayHTTPClient == nil {
 		return nil
 	}
+	t = l.longTimeoutTriggerBatch(ctx, t)
 
 	// 2. Poll. The broker may carry a W3C context in each record, but
 	// it is not available until Poll returns. Keep the poll span rooted
@@ -790,6 +798,10 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		l.log.Warn("sched trigger tick: gateway post",
 			"trigger_id", t.ID.String(),
 			"err", postErr)
+		if rt, ok := poller.(*realtimePoller); ok {
+			l.returnRealtimeBatch(ctx, t, rt, claimed, "dispatch_"+triggerReasonBrokerError)
+			return fmt.Errorf("%w: %w", errTriggerGatewayDispatch, postErr)
+		}
 		retryItems, exhaustedItems := l.markRetryAll(ctx, t, claimed, postErr.Error(), store)
 		l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeRetry, len(retryItems))
 		l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeDeadLetter, len(exhaustedItems))
@@ -832,6 +844,10 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		l.log.Warn("sched trigger tick: response parse",
 			"trigger_id", t.ID.String(),
 			"err", err)
+		if rt, ok := poller.(*realtimePoller); ok {
+			l.returnRealtimeBatch(ctx, t, rt, claimed, "gateway_response_malformed")
+			return nil
+		}
 		l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeDeadLetter, len(claimed))
 		l.observeESMRecordProcessingBatch(t.Kind, claimed)
 		// Audit finding #6 (paired with the post-error path
@@ -858,6 +874,9 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	statusByID := make(map[string]triggerDispatchResult, len(resp.Results))
 	for _, r := range resp.Results {
 		statusByID[r.ItemIdentifier] = r
+	}
+	if rt, ok := poller.(*realtimePoller); ok {
+		return l.finishRealtimeDispatch(ctx, t, rt, claimed, statusByID, store)
 	}
 	claimedByID := make(map[string]sqlc.TriggerRecord, len(claimed))
 	for _, record := range claimed {
@@ -1171,13 +1190,17 @@ func buildDispatchEnvelope(t sqlc.Trigger, batch []SourceRecord) triggerDispatch
 			Metadata:                   r.Metadata,
 		})
 	}
-	return triggerDispatchRequest{
+	env := triggerDispatchRequest{
 		InvocationID: "trigger-" + t.ID.String(),
 		AppID:        t.AppID.String(),
 		Source:       "esm",
 		TriggerID:    t.ID.String(),
 		Records:      recs,
 	}
+	if t.Delivery == api.TriggerDeliveryBatch {
+		env.Delivery = api.TriggerDeliveryBatch
+	}
+	return env
 }
 
 func (l *Loop) admitExclusiveBrokerBatch(ctx context.Context, store storeLike, trigger sqlc.Trigger, binding state.ExclusiveTriggerBinding, batch []SourceRecord, claimed []sqlc.TriggerRecord) triggerDispatchResponse {
@@ -1268,9 +1291,60 @@ func (l *Loop) admitExclusiveBrokerBatch(ctx context.Context, store storeLike, t
 	return response
 }
 
+// triggerBatchDefaultWait bounds a batch for an app at the default
+// invocation timeout: the 60 s the trigger client enforced before ADR-1180.
+const triggerBatchDefaultWait = 60 * time.Second
+
+// appAsyncInvocationTimeout is how long one invocation of appID may run
+// (ADR-1180). A failed lookup keeps the 30 s floor.
+func appAsyncInvocationTimeout(ctx context.Context, store interface {
+	state.AccountReader
+	AppByID(context.Context, string) (state.App, error)
+}, appID string) time.Duration {
+	app, err := store.AppByID(ctx, appID)
+	if err != nil {
+		return api.AsyncInvocationTimeoutFloor
+	}
+	return state.AsyncInvocationTimeout(ctx, store, app)
+}
+
+// longTimeoutTriggerBatch delivers a long-timeout app's records one per batch
+// (ADR-1180), as named-queue push lanes already do. The gateway gives a batch
+// room for one whole record of such an app; records behind it would time out
+// without running and spend their attempts. The cap applies before Poll,
+// because a record polled but left out of the batch stays claimed until its
+// lease or visibility timeout lapses.
+func (l *Loop) longTimeoutTriggerBatch(ctx context.Context, t sqlc.Trigger) sqlc.Trigger {
+	if t.BatchSizeMax == 1 || l.engine == nil {
+		return t
+	}
+	if appAsyncInvocationTimeout(ctx, l.engine.Store(), t.AppID.String()) > api.AsyncInvocationTimeoutFloor {
+		t.BatchSizeMax = 1
+	}
+	return t
+}
+
+// triggerBatchContext bounds one batch POST. The gateway may spend one whole
+// record of a long-timeout app on it (ADR-1180), so schedd waits that long;
+// other apps keep the 60 s default.
+func (l *Loop) triggerBatchContext(ctx context.Context, appID string) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	wait := triggerBatchDefaultWait
+	if l.engine != nil {
+		if timeout := appAsyncInvocationTimeout(ctx, l.engine.Store(), appID); timeout > api.AsyncInvocationTimeoutFloor {
+			wait = api.TriggerBatchDispatchTimeout(timeout) + api.AsyncInvocationLeaseMargin
+		}
+	}
+	return context.WithTimeout(ctx, wait)
+}
+
 // postBatch hits the gateway's batch endpoint via the existing
 // GatewaySynth HTTP transport.
 func (l *Loop) postBatch(ctx context.Context, env triggerDispatchRequest) ([]byte, error) {
+	ctx, cancel := l.triggerBatchContext(ctx, env.AppID)
+	defer cancel()
 	body, err := json.Marshal(env)
 	if err != nil {
 		return nil, fmt.Errorf("marshal envelope: %w", err)
@@ -1382,6 +1456,13 @@ func (l *Loop) handleRateLimitedBatch(ctx context.Context, poller triggerSource,
 		if !record.ReceivedAt.IsZero() {
 			l.observeESMRecordProcessing(t.Kind, time.Since(record.ReceivedAt).Seconds())
 		}
+	}
+	if rt, ok := poller.(*realtimePoller); ok {
+		// The handler never ran: return the attempt to the group.
+		if err := rt.Nack(ctx, t, items, triggerReasonRateLimited); err != nil {
+			l.log.Warn("sched trigger tick: return rate-limited realtime batch", "trigger_id", t.ID.String(), "err", err)
+		}
+		return
 	}
 	if queue, ok := poller.(*queuePoller); ok {
 		if err := queue.finishInvocations(ctx, t, items, "dead_letter", "dead_letter", "rate_limited", triggerReasonRateLimited, `{"trigger_dispatch":"rate_limited"}`); err != nil {
@@ -1901,12 +1982,23 @@ func (l *Loop) recordTriggerConsumerHealth(ctx context.Context, store storeLike,
 		return
 	}
 	at := time.Now().UTC()
+	if l.now != nil {
+		at = l.now().UTC()
+	}
+	errText := ""
+	if res.Error != nil {
+		errText = res.Error.Error()
+	}
+	// An unchanged outcome is written at most every
+	// triggerHealthWriteInterval; the broker stats below are skipped too.
+	triggerID := t.ID.String()
+	if !l.triggerHealthDue(triggerID, at, errText) {
+		return
+	}
 	observation := state.TriggerConsumerHealthObservation{
 		LastPollAt: at,
 		Success:    res.Error == nil,
-	}
-	if res.Error != nil {
-		observation.Error = res.Error.Error()
+		Error:      errText,
 	}
 	if res.Error == nil {
 		if poller, _, err := l.pollerForTrigger(t); err == nil && poller != nil {
@@ -1941,10 +2033,12 @@ func (l *Loop) recordTriggerConsumerHealth(ctx context.Context, store storeLike,
 		}
 		observation.LagAgeSeconds = &lagAgeSeconds
 	}
-	if err := writer.RecordTriggerConsumerHealth(ctx, t.ID.String(), observation); err != nil {
+	if err := writer.RecordTriggerConsumerHealth(ctx, triggerID, observation); err != nil {
 		l.log.Warn("sched trigger tick: record consumer health",
-			"trigger_id", t.ID.String(), "err", err)
+			"trigger_id", triggerID, "err", err)
+		return
 	}
+	l.triggerHealthWritten(triggerID, at, errText)
 }
 
 func (l *Loop) observeESMRecordProcessingBatch(source string, records []sqlc.TriggerRecord) {

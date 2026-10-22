@@ -66,7 +66,7 @@ func cmdBillingFinancial(command string, args []string) int {
 }
 
 func financialMoney(n int64) string {
-	return fmt.Sprintf("EUR %d.%05d", n/(100*api.MillicentsPerCent), n%(100*api.MillicentsPerCent))
+	return fmt.Sprintf("%s %d.%05d", api.BillingCurrency, n/(100*api.MillicentsPerCent), n%(100*api.MillicentsPerCent))
 }
 
 func printFinancialCosts(w io.Writer, response api.FinancialCostsResponse) {

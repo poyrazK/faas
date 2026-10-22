@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -137,7 +138,7 @@ type recordingSynth struct {
 	invokeErr      error
 }
 
-type claimLosingStore struct{ state.Store }
+type claimLosingStore struct{ Store state.Store }
 
 func (s claimLosingStore) ClaimInvocation(ctx context.Context, id, instanceID string, leaseSeconds int) (state.Invocation, error) {
 	if _, err := s.Store.ClaimInvocation(ctx, id, instanceID, leaseSeconds); err != nil {
@@ -226,6 +227,47 @@ func newAppAndCron(t *testing.T, store state.Store, accountID string, enabled bo
 		t.Fatalf("backdate cron: %v", err)
 	}
 	return app, c
+}
+
+// ADR-1180: a cron fire for a function whose invocations may run past 30 s
+// is persisted and left to the drain, so it cannot hold the cron loop.
+func TestCronDispatch_LongTimeoutFunctionHandsOffToDrain(t *testing.T) {
+	t.Parallel()
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, _ := store.CreateAccount(ctx, "long-cron@example.com", api.PlanPro)
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "long", Type: state.AppTypeFunction, RAMMB: 256,
+		Manifest: state.AppManifest{RequestTimeoutS: 120}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Status: state.DeployLive, Kind: state.DeploymentKindImage}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := store.CreateCron(ctx, app.ID, "* * * * *", "/report", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	past := time.Date(2026, 7, 17, 11, 0, 0, 0, time.UTC)
+	if _, err := store.UpdateCron(ctx, c.ID, nil, nil, nil, &past); err != nil {
+		t.Fatal(err)
+	}
+	eng, _ := makeEngine(t, store, &fakeWakeVMM{})
+	synth := &recordingSynth{}
+	now := time.Date(2026, 7, 17, 12, 2, 0, 0, time.UTC)
+	loop := NewLoop(nil, eng, slog.Default()).WithGatewaySynth(synth).WithClock(func() time.Time { return now })
+
+	loop.runCronTick(ctx)
+	if got := synth.calls.Load(); got != 0 {
+		t.Fatalf("cron loop delivered %d long invocations inline, want 0", got)
+	}
+	rows, err := store.ListInvocationsForAccount(ctx, acct.ID, 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Source != state.InvocationCron || rows[0].State != state.InvocationPending {
+		t.Fatalf("cron rows = %+v, want one pending row for the drain", rows)
+	}
 }
 
 // TestCronDispatch_FiresOncePerBoundary is the headline gate for M7:
@@ -507,10 +549,10 @@ func TestCronDispatch_ClaimLostHandsOffWithoutDuplicateInvoke(t *testing.T) {
 	base := state.NewMemStore()
 	store := claimLosingStore{Store: base}
 	ctx := context.Background()
-	acct, _ := store.CreateAccount(ctx, "claim-race@example.com", api.PlanHobby)
-	_, cron := newAppAndCron(t, store, acct.ID, true)
+	acct, _ := store.Store.CreateAccount(ctx, "claim-race@example.com", api.PlanHobby)
+	_, cron := newAppAndCron(t, statetest.NewStore(store), acct.ID, true)
 	vmm := &fakeWakeVMM{}
-	eng, _ := makeEngine(t, store, vmm)
+	eng, _ := makeEngine(t, statetest.NewStore(store), vmm)
 	synth := &recordingSynth{}
 	loop := NewLoop(nil, eng, slog.Default()).WithGatewaySynth(synth)
 
@@ -768,12 +810,12 @@ func TestCronDispatch_CronFiredAuditFailureDoesNotRollback(t *testing.T) {
 
 	wrapped := &failingEventStore{Store: inner}
 	vmm := &fakeWakeVMM{}
-	eng, _ := makeEngine(t, wrapped, vmm)
+	eng, _ := makeEngine(t, statetest.NewStore(wrapped), vmm)
 	synth := &recordingSynth{}
 	now := time.Date(2026, 7, 17, 12, 2, 0, 0, time.UTC)
 	loop := NewLoop(nil, eng, slog.Default()).
 		WithGatewaySynth(synth).
-		WithAudit(audit.New(wrapped, slog.Default(), nil, "schedd")).
+		WithAudit(audit.New(statetest.NewStore(wrapped), slog.Default(), nil, "schedd")).
 		WithClock(func() time.Time { return now })
 
 	loop.runCronTick(ctx)

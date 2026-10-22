@@ -14,12 +14,15 @@ import (
 
 // cmdPlatformTenants manages one account customer across several apps.
 func cmdPlatformTenants(args []string) int {
-	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|credentials-list|credentials-apply|info|activation|link-consumer|link-surface|usage|activity|suspend|resume|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff> [flags]", "platform-tenants")
+	if len(args) == 0 || hiddenMonetizationVerb("platform-tenants", args[0]) {
+		PrintUsage(os.Stderr, releasedUsage("platform-tenants", "usage: gregale platform-tenants <list|add|apply|credentials-list|credentials-apply|info|activation|link-consumer|link-surface|usage|activity|suspend|resume|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete> [flags]"), "platform-tenants")
 		return 1
 	}
 	verb := args[0]
 	if handled, code := cmdPlatformTenantBilling(verb, args[1:]); handled {
+		return code
+	}
+	if handled, code := cmdPlatformTenantPlans(verb, args[1:]); handled {
 		return code
 	}
 	fs := newFlagSet("platform-tenants-"+verb, flag.ContinueOnError)

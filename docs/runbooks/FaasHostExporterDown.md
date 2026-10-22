@@ -1,7 +1,7 @@
 # FaasHostExporterDown
 
 Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml` (group `faas_host_resources`).
-Metric: `up{job=~"node|node-compute"}`. Severity: page.
+Metric: `up{job=~"node|node-compute"}`. Severity: warn (ADR-1236).
 
 ## Symptom
 

@@ -1,0 +1,4 @@
+ok  	github.com/onebox-faas/faas/pkg/fcvm	6.292s
+ok  	github.com/onebox-faas/faas/pkg/sched	1.436s
+ok  	github.com/onebox-faas/faas/pkg/vmmdgrpc	1.323s
+ok  	github.com/onebox-faas/faas/pkg/runtimeadmission	1.037s

@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-func TestPreBootStageTimings_SkipLearnAndChangedIdentity(t *testing.T) {
-	for _, kind := range []string{"known identical", "learn identical", "changed instance"} {
+func TestPreBootStageTimings_SkipLearnAndChangedEnv(t *testing.T) {
+	for _, kind := range []string{"known identical", "learn identical", "changed env"} {
 		t.Run(kind, func(t *testing.T) {
 			sessions, mountRoot := fakeLoopMounts(t)
 			v := newStagingVMM(t, "captured")
@@ -23,11 +23,14 @@ func TestPreBootStageTimings_SkipLearnAndChangedIdentity(t *testing.T) {
 			env := oldEnv
 			if kind == "learn identical" {
 				v.preBoot = newPreBootLedger()
-			} else if kind == "changed instance" {
+			} else if kind == "changed env" {
 				// A fresh per-instance drive fixture avoids overwriting 0400
 				// files as an unprivileged test user. The capture ledger stays.
+				// A new instance identity alone no longer forces a write
+				// (TestStagePreBootFilesUnless_IgnoresPlacementIdentity);
+				// any other env change does.
 				sessions, mountRoot = fakeLoopMounts(t)
-				env = []byte(`{"FAAS_INSTANCE_ID":"restored"}`)
+				env = []byte(`{"FAAS_INSTANCE_ID":"restored","K":"changed"}`)
 			}
 			v2 := newStagingVMMFrom(t, v, "restored")
 			before := *sessions
@@ -50,8 +53,8 @@ func TestPreBootStageTimings_SkipLearnAndChangedIdentity(t *testing.T) {
 				if kind == "learn identical" && (timings.Write != 0 || timings.FilesWritten != 0) {
 					t.Fatalf("identical files were charged to writes: %+v", timings)
 				}
-				if kind == "changed instance" && (timings.Write <= 0 || timings.FilesWritten != 2) {
-					t.Fatalf("changed identity did not retain all writes: %+v", timings)
+				if kind == "changed env" && (timings.Write <= 0 || timings.FilesWritten != 2) {
+					t.Fatalf("changed env did not retain all writes: %+v", timings)
 				}
 			}
 			got, err := os.ReadFile(filepath.Join(*mountRoot, apiEnvPath))

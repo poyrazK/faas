@@ -85,12 +85,12 @@ func TestPGCloneSnapshotCreationCustodyCompensatesUnverifiedCapture(t *testing.T
 			if !errors.Is(err, managedpostgres.ErrUnavailable) || p.ownedCreates != 1 || p.ownedReads != 1 || old.finds != 0 {
 				t.Fatalf("recovery: %v creates=%d reads=%d finds=%d", err, p.ownedCreates, p.ownedReads, old.finds)
 			}
-			receipt, err := store.ProjectEnvironmentClonePostgresSnapshotForLease(t.Context(), f.lease, sourceID)
+			receipt, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotForLease(t.Context(), f.lease, sourceID)
 			if err != nil || receipt.State != "requested" || receipt.ProviderSnapshotID != "" {
 				t.Fatalf("custody became retention: %+v %v", receipt, err)
 			}
 			op := f.lease.Operation
-			f.lease.Operation, err = store.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
+			f.lease.Operation, err = store.PgStore.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -114,11 +114,11 @@ func TestPGCloneSnapshotCreationCustodyCompensatesUnverifiedCapture(t *testing.T
 					t.Fatalf("cleanup retry: %v %v", done, err)
 				}
 			}
-			receipt, err = store.ProjectEnvironmentClonePostgresSnapshotForLease(t.Context(), f.lease, sourceID)
+			receipt, err = store.PgStore.ProjectEnvironmentClonePostgresSnapshotForLease(t.Context(), f.lease, sourceID)
 			if err != nil || receipt.State != "deleted" || receipt.ProviderSnapshotID != "" || old.deletes != 0 {
 				t.Fatalf("cleanup fabricated retention: %+v %v deletes=%d", receipt, err, old.deletes)
 			}
-			if _, err := store.ProjectEnvironmentBySlug(t.Context(), op.AccountID, op.ProjectID, "snapshots"); !errors.Is(err, state.ErrNotFound) {
+			if _, err := store.PgStore.ProjectEnvironmentBySlug(t.Context(), op.AccountID, op.ProjectID, "snapshots"); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("unverified environment published: %v", err)
 			}
 		})

@@ -1,0 +1,56 @@
+version: 1
+assertion_profiles:
+  connection-limit:
+    connection_attempts: {request: dependency-probe, max_attempts_per_request: 2, min_requests: 3}
+  health-stays-responsive:
+    healthy_routes:
+      health: {p95: 750ms, error_rate: 0, min_samples: 3}
+  dependency-recovers:
+    recovery_deadlines:
+      dependency-probe:
+        within: 1s
+        sustain: 1s
+        window: 1s
+        thresholds: {p95: 750ms, error_rate: 0, min_samples: 2}
+suites:
+  connection-assertions:
+    scenarios:
+      - {scenario: connection-assertions, engine: real-vm, profile: warm}
+scenarios:
+  connection-assertions:
+    project: connection-assertions
+    source: ./native-probe
+    timeout: 5m
+    secrets:
+      PROBE_DEPENDENCY_HOST: ${service.payment.host}
+      PROBE_DEPENDENCY_PORT: ${service.payment.port}
+      PROBE_DELAY_MS: '25'
+    services:
+      payment:
+        source: ./native-probe
+        tcp_ports: [6379]
+    steps:
+      - name: baseline
+        requests:
+          - {name: ready, method: GET, path: /dependency, expect: {status: 200, json: {'/dependency': reachable}}}
+      - name: bounded-connections
+        requests:
+          - {name: dependency-probe, method: GET, path: /dependency, expect: {status: 200, json: {'/dependency': reachable}}}
+          - {name: health, method: GET, path: /, expect: {status: 200, json: {'/ready': true}}}
+        load:
+          duration: 8s
+          streams:
+            - {name: dependency, requests: [dependency-probe], rate: 5, vus: 2}
+            - {name: health, requests: [health], rate: 5, vus: 2}
+          thresholds: {error_rate: 1}
+          chaos_schedule:
+            - {name: baseline, duration: 2s, assertions: [health-stays-responsive]}
+            - name: fault
+              duration: 2s
+              assertions: [connection-limit, health-stays-responsive]
+              rules:
+                - {from: connection-assertions, to: payment, kind: tcp_timeout, port: 6379, direction: downstream, percent: 100, min_matches: 1}
+            - {name: recovery, duration: 4s, assertions: [health-stays-responsive, dependency-recovers]}
+      - name: restored
+        requests:
+          - {name: dependency-restored, method: GET, path: /dependency, expect: {status: 200, json: {'/dependency': reachable}}}

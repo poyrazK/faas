@@ -78,6 +78,18 @@ func (m *MemStore) getWorkflowRecoveryHistory(ctx context.Context, account, app 
 			if err := json.Unmarshal(raw, &r); err != nil {
 				return out, fmt.Errorf("decode retained recovery review: %w", err)
 			}
+
+			for _, repairs := range []struct {
+				kind     string
+				receipts map[string]api.WorkflowInitialEvidenceRepairReceipt
+			}{{"parent", r.ParentEvidenceRepairs}, {"child", r.EvidenceRepairs}} {
+				for action, receipt := range repairs.receipts {
+					execution := p.Executions[action]
+					if execution != nil && !recoveryHistoryHasRepair(p, action, repairs.kind, receipt.RequestID) {
+						add(retryRepairHistory(r, *execution, repairs.kind, receipt))
+					}
+				}
+			}
 			job := m.eventRecoveryJobs[canonicalMemUUID(r.JobID)]
 			if job == nil || !sameMemUUID(job.Job.AppID, app) {
 				continue
@@ -119,6 +131,21 @@ func (m *MemStore) getWorkflowRecoveryHistory(ctx context.Context, account, app 
 						recoveryHistoryExecution(add, base, *execution)
 					}
 				}
+			}
+		}
+		for _, r := range m.initialRecoveryReviews {
+			if !sameMemUUID(r.AppID, app) || r.EvidenceRepair == nil {
+				continue
+			}
+			recorded := false
+			for _, event := range p.History {
+				if event.Entry.Kind == "initial_evidence_repaired" && event.Entry.ReviewID == r.ID && event.Entry.RequestID == r.EvidenceRepair.RequestID {
+					recorded = true
+					break
+				}
+			}
+			if !recorded {
+				add(initialRepairHistory(r))
 			}
 		}
 		if i := p.HealthIncident; i != nil {

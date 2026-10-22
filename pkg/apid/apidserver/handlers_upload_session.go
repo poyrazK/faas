@@ -58,8 +58,10 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -409,6 +411,10 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 
+	// Receiving the chunk may have spent the request budget: 16 MiB at the
+	// supported 512 KiB/s takes 32 s (H9-157). The bookkeeping gets its own bound.
+	ctx, cancel := context.WithTimeout(reqbudget.WithoutBudget(context.WithoutCancel(r.Context())), uploadCommitFinishTimeout)
+	defer cancel()
 	// The database CAS protects the offset, while this lock protects
 	// the paired row/file transition. Re-read after acquiring it: the
 	// first row read can race a commit, cancel, or the reaper while the
@@ -416,7 +422,7 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 	mu := acquireUploadSessionLock(uploadID)
 	mu.Lock()
 	defer mu.Unlock()
-	row, err = s.store.GetUploadSession(r.Context(), uploadID)
+	row, err = s.store.GetUploadSession(ctx, uploadID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
@@ -432,7 +438,7 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	if row.Status != "open" {
-		s.writeUploadSessionTerminalProblem(r.Context(), w, row)
+		s.writeUploadSessionTerminalProblem(ctx, w, row)
 		return
 	}
 	if uploadSessionExpired(row) {
@@ -485,14 +491,14 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 
 	// Atomic CAS: only durable bytes may become the advertised offset.
 	newReceived := clientOffset + int64(len(chunk))
-	appendRow, err := s.store.AppendUploadBytes(r.Context(), sqlc.AppendUploadBytesParams{
+	appendRow, err := s.store.AppendUploadBytes(ctx, sqlc.AppendUploadBytesParams{
 		ID:                    uploadID,
 		NewReceivedBytes:      newReceived,
 		ExpectedReceivedBytes: clientOffset,
 	})
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
-			current, getErr := s.store.GetUploadSession(r.Context(), uploadID)
+			current, getErr := s.store.GetUploadSession(ctx, uploadID)
 			if getErr != nil {
 				api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeUploadSessionOffsetConflict,
 					"Upload session offset conflict",
@@ -512,13 +518,23 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleCommitUpload is POST /v1/uploads/{id}/commit. Validates
-// tarball shape over the .part file, enqueues the build, records
-// the dedupe row, and marks the session committed.
 // uploadCommitFinishTimeout bounds the bookkeeping after a commit has created
 // its deployment (outcome, session state, response read).
 const uploadCommitFinishTimeout = 15 * time.Second
 
+// uploadCommitProcessTimeout bounds a commit's archive processing: a 60 s
+// floor plus 2 MiB/s for the scans, hashing and publish, about three
+// minutes for the largest source a plan allows.
+func uploadCommitProcessTimeout(bytes int64) time.Duration {
+	const floor, bytesPerSecond = 60 * time.Second, 2 << 20
+	return floor + time.Duration(bytes/bytesPerSecond)*time.Second
+}
+
+// handleCommitUpload is POST /v1/uploads/{id}/commit. Validates
+// tarball shape over the .part file, enqueues the build, records
+// the dedupe row, and marks the session committed.
+//
+//nolint:contextcheck // Once every byte has arrived, r carries a context detached from the request budget under a size-scaled bound (H10-26); the outcome is recorded idempotently (H9-127).
 func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	uploadID := r.PathValue("id")
 	// Serialize per-upload_id upload/file critical sections to
@@ -544,7 +560,20 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
 		return
 	}
+	attemptID, ok := uploadSubmissionAttemptID(w, r)
+	if !ok {
+		return
+	}
+	if attemptID != "" {
+		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), attemptID))
+	}
+	if s.replayUploadSubmission(w, r, row.AppSlug) {
+		return
+	}
 	if outcome, outcomeErr := s.store.GetUploadCommitOutcome(r.Context(), uploadID); outcomeErr == nil {
+		if !s.attachUploadSubmission(w, r, row.AppSlug, outcome.DeploymentID) {
+			return
+		}
 		api.WriteProblem(w, api.ErrUploadSessionAlreadyCommitted(uploadID, outcome.DeploymentID))
 		return
 	} else if !errors.Is(outcomeErr, state.ErrNotFound) {
@@ -567,6 +596,16 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			fmt.Sprintf("Session received %d of %d bytes; PATCH the remaining bytes before committing.", row.ReceivedBytes, row.TotalSize)))
 		return
 	}
+	// The rest of the commit unpacks, scans, hashes and publishes the whole
+	// archive before it records the deployment. For a 240 MiB source that
+	// outran the 30 s deploy-submission ceiling on production-us, and every
+	// store call after the scans failed with "context deadline exceeded", so
+	// no retry could succeed (hunt #10, H10-26). It runs under a size-scaled
+	// bound instead; the outcome is recorded idempotently (H9-127), so a client
+	// that stops waiting recovers the deployment on its retry.
+	ctx, cancel := reqbudget.Detached(r.Context(), uploadCommitProcessTimeout(row.TotalSize))
+	defer cancel()
+	r = r.WithContext(ctx)
 
 	app, err := s.store.AppBySlug(r.Context(), row.AppSlug)
 	if err != nil {
@@ -610,7 +649,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		}
 	}(r.Context())
 	limits := api.MustLimitsFor(acct.Plan)
-	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars, OverrideFreeze: opts.OverrideFreeze}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(opts.Healthcheck)
 	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
 	if healthProblem != nil {
@@ -653,6 +692,11 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 	}
+	if prob := s.releaseFreezeProblem(r, acct, app, rolloutReq.Scope, rolloutReq.OverrideFreeze); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
 	if prob := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -733,7 +777,10 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	if !s.admitCanaryDeployment(w, r, rollout) {
 		return
 	}
-	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !opts.NoTriggers)
+	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !opts.NoTriggers)
+	if stagedManifest.cronIntent != nil {
+		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
+	}
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return

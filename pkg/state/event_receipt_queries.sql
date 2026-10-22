@@ -185,7 +185,25 @@ SELECT b.app_id,b.subscription_id,b.consumer_kind,coalesce(a.slug,'')::text AS a
        count(*) FILTER (WHERE b.routing_state='pending')::bigint AS pending_recipients,
        count(*) FILTER (WHERE b.routing_state='processing')::bigint AS processing_recipients,
        count(*) FILTER (WHERE b.capacity_scope<>'')::bigint AS capacity_waiting_recipients,
+       count(*) FILTER (WHERE observation.reason='capacity_consumer')::bigint AS capacity_consumer_waiting_recipients,
+       count(*) FILTER (WHERE observation.reason='capacity_app')::bigint AS capacity_app_waiting_recipients,
+       count(*) FILTER (WHERE observation.reason='capacity_account')::bigint AS capacity_account_waiting_recipients,
        count(*) FILTER (WHERE observation.reason='ordering_blocked')::bigint AS ordering_waiting_recipients,
+       jsonb_build_object(
+        'circuit_open', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='circuit_open'),
+        'circuit_probe_wait', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='circuit_probe_wait'),
+        'circuit_recovery_rate_limited', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='circuit_recovery_rate_limited'),
+        'subscription_paused', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='subscription_paused'),
+        'subscription_rate_limited', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='subscription_rate_limited'),
+        'ordering_blocked', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='ordering_blocked'),
+        'capacity_consumer', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='capacity_consumer'),
+        'capacity_app', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='capacity_app'),
+        'capacity_account', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='capacity_account'),
+        'routing_in_progress', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='routing_in_progress'),
+        'receipt_processing', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='receipt_processing'),
+        'retry_backoff', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='retry_backoff'),
+        'workflow_routing', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='workflow_routing'),
+        'ready', count(*) FILTER (WHERE b.routing_state='pending' AND observation.reason='ready')) AS pending_waiting_reasons,
        min(b.accepted_at)::timestamptz AS oldest_accepted_at
 FROM event_routing_backlog b JOIN event_fanout_outbox o ON o.id=b.outbox_id AND o.account_id=b.account_id LEFT JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
 
@@ -211,3 +229,35 @@ ORDER BY b.app_id,b.subscription_id,b.consumer_kind LIMIT sqlc.arg(page_limit)::
 SELECT count(*)::bigint FROM event_fanout_outbox
 WHERE account_id=sqlc.arg(account_id)::uuid AND created_at<=sqlc.arg(cutoff)::timestamptz
   AND recipient_snapshot IS NULL AND state IN ('pending','processing');
+
+-- name: EventRecipientBlockerTarget :one
+SELECT o.id, o.created_at, (o.recipient_snapshot IS NOT NULL)::boolean AS snapshot_captured,
+       (target.recipient IS NOT NULL)::boolean AS recipient_found,
+       coalesce(target.recipient->>'app_id','')::text AS app_id,
+       CASE WHEN target.origin='backfill' OR o.recipient_claims
+            THEN coalesce(r.state,o.recipient_progress->(target.recipient->>'id')->>'state','pending')
+            ELSE coalesce(o.recipient_progress->(target.recipient->>'id')->>'state','pending') END::text AS routing_state
+FROM event_fanout_outbox o
+LEFT JOIN LATERAL (
+ SELECT captured.recipient, 'acceptance'::text AS origin
+ FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) captured(recipient)
+ WHERE captured.recipient->>'id'=sqlc.arg(subscription_id)::text
+ UNION ALL
+ SELECT added.recipient,'backfill'::text FROM event_fanout_recipients added
+ WHERE added.outbox_id=o.id AND added.subscription_id=sqlc.arg(subscription_id)::text AND added.receipt_position IS NOT NULL
+) target ON true
+LEFT JOIN event_fanout_recipients r ON r.outbox_id=o.id AND r.subscription_id=sqlc.arg(subscription_id)::text
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.source=sqlc.arg(event_source)::text AND o.event_id=sqlc.arg(event_id)::text;
+
+-- name: EventRecipientBlockerWaiting :many
+SELECT b.*, o.source, o.event_id, o.event_type, coalesce(a.slug,'')::text AS app_slug,
+       (a.id IS NOT NULL AND a.status <> 'deleted')::boolean AS target_available, ordering.blocker AS ordering_blocker, control.reason::text AS delivery_control_reason
+FROM event_routing_backlog b JOIN event_fanout_outbox o ON o.id=b.outbox_id AND o.account_id=b.account_id
+LEFT JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
+
+LEFT JOIN LATERAL (SELECT event_recipient_order_blocker(b.outbox_id,b.subscription_id,
+ (SELECT item FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) item WHERE item->>'id'=b.subscription_id LIMIT 1),b.routing_mode='recipient') AS blocker) ordering ON b.routing_state='pending'
+CROSS JOIN LATERAL (SELECT event_subscription_delivery_waiting_reason(b.account_id,b.app_id,b.subscription_id,sqlc.arg(observed_at)::timestamptz) AS reason) control
+CROSS JOIN LATERAL (SELECT CASE WHEN b.routing_state='pending' AND NOT (b.routing_mode='event' AND coalesce(b.lease_until>sqlc.arg(observed_at)::timestamptz,false)) AND control.reason<>'' THEN control.reason ELSE event_backlog_waiting_reason(b.routing_state,b.capacity_scope,b.routing_mode,b.lease_until,b.next_attempt_at,b.consumer_kind,ordering.blocker,sqlc.arg(observed_at)::timestamptz) END AS reason) observation
+WHERE b.account_id=sqlc.arg(account_id)::uuid AND b.outbox_id=sqlc.arg(outbox_id)::bigint
+ AND b.subscription_id=sqlc.arg(subscription_id)::text;

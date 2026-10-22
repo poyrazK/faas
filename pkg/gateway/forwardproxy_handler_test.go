@@ -91,6 +91,10 @@ func (s *stubVmmdClient) RetireEnvironmentQualificationArtifacts(context.Context
 	return nil, status.Error(codes.Unimplemented, "gateway stub cannot retire qualification artifacts")
 }
 
+func (s *stubVmmdClient) RetireManagedPostgresDrain(context.Context, *vmmdpb.RetireManagedPostgresDrainRequest, ...grpc.CallOption) (*vmmdpb.RetireManagedPostgresDrainResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub cannot retire PostgreSQL cutover workloads")
+}
+
 func (s *stubVmmdClient) ForwardHTTPStream(ctx context.Context, _ ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ForwardHTTPStreamRequest, vmmdpb.ForwardHTTPStreamResponse], error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -150,6 +154,10 @@ func (s *stubVmmdClient) ImportDatabaseVolume(context.Context, ...grpc.CallOptio
 }
 
 func (s *stubVmmdClient) SyncDatabaseArchive(context.Context, *vmmdpb.SyncDatabaseArchiveRequest, ...grpc.CallOption) (*vmmdpb.SyncDatabaseArchiveResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
+func (s *stubVmmdClient) DatabaseArchiveHold(context.Context, *vmmdpb.DatabaseArchiveHoldRequest, ...grpc.CallOption) (*vmmdpb.DatabaseArchiveHoldResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
 }
 
@@ -217,6 +225,9 @@ func (s *stubVmmdClient) ExecuteAppTask(context.Context, *vmmdpb.ExecuteAppTaskR
 func (s *stubVmmdClient) ExecuteAppTaskStream(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteAppTaskEvent], error) {
 	panic("ExecuteAppTaskStream: not stubbed in handler integration test")
 }
+func (s *stubVmmdClient) AttachAppTask(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.AttachAppTaskRequest, vmmdpb.AttachAppTaskEvent], error) {
+	panic("AttachAppTask: not stubbed in handler integration test")
+}
 func (s *stubVmmdClient) WaitJobExit(context.Context, *vmmdpb.WaitJobExitRequest, ...grpc.CallOption) (*vmmdpb.JobExitResponse, error) {
 	panic("WaitJobExit: not stubbed in handler integration test")
 }
@@ -246,6 +257,12 @@ func (s *stubVmmdClient) WarmSnapshot(context.Context, *vmmdpb.WarmSnapshotReque
 }
 func (s *stubVmmdClient) ResumeWarmInstance(context.Context, *vmmdpb.ResumeWarmInstanceRequest, ...grpc.CallOption) (*vmmdpb.ResumeWarmInstanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway stub does not resume warm instances")
+}
+func (s *stubVmmdClient) FreezeInstance(context.Context, *vmmdpb.FreezeInstanceRequest, ...grpc.CallOption) (*vmmdpb.FreezeInstanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub does not freeze instances")
+}
+func (s *stubVmmdClient) ThawInstance(context.Context, *vmmdpb.ThawInstanceRequest, ...grpc.CallOption) (*vmmdpb.ThawInstanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub does not thaw instances")
 }
 func (s *stubVmmdClient) Destroy(context.Context, *vmmdpb.DestroyRequest, ...grpc.CallOption) (*vmmdpb.DestroyResponse, error) {
 	return &vmmdpb.DestroyResponse{}, nil

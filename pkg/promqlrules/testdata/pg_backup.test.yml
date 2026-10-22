@@ -1,0 +1,57 @@
+# PgBackupStale firing and quiet coverage. The stale case needs 27h of
+# samples, so this fixture loads only pg_backup.rules.yml and evaluates
+# every 5m instead of running all of faas.rules.yml across a day.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/pg_backup.rules.yml
+
+evaluation_interval: 5m
+
+tests:
+  - interval: 5m
+    name: "a backup that never pushed pages"
+    input_series:
+      - series: 'apid_pg_backup_last_pushed_seconds{job="apid",instance="127.0.0.1:9101"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: PgBackupStale
+        exp_alerts:
+          - exp_labels:
+              job: "apid"
+              instance: "127.0.0.1:9101"
+              severity: "warn"
+              family: "pg_backup"
+            exp_annotations:
+              summary: "Postgres basebackup has no recent verified off-host copy"
+              description: "The last verified push timestamp is missing or older than 26 hours.\nCheck `systemctl status faas-pg-basebackup-push.timer` and\n`journalctl -u faas-pg-basebackup-push.service` on the CP host.\nRunbook: docs/runbooks/PostgresBackup.md\n"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PostgresBackup.md"
+
+  - interval: 5m
+    name: "a backup older than 26h pages"
+    input_series:
+      - series: 'apid_pg_backup_last_pushed_seconds{job="apid",instance="127.0.0.1:9101"}'
+        values: '1x330'
+    alert_rule_test:
+      - eval_time: 27h
+        alertname: PgBackupStale
+        exp_alerts:
+          - exp_labels:
+              job: "apid"
+              instance: "127.0.0.1:9101"
+              severity: "warn"
+              family: "pg_backup"
+            exp_annotations:
+              summary: "Postgres basebackup has no recent verified off-host copy"
+              description: "The last verified push timestamp is missing or older than 26 hours.\nCheck `systemctl status faas-pg-basebackup-push.timer` and\n`journalctl -u faas-pg-basebackup-push.service` on the CP host.\nRunbook: docs/runbooks/PostgresBackup.md\n"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PostgresBackup.md"
+
+  - interval: 5m
+    name: "an hourly backup stays quiet"
+    input_series:
+      - series: 'apid_pg_backup_last_pushed_seconds{job="apid",instance="127.0.0.1:9101"}'
+        values: '1+300x330'
+    alert_rule_test:
+      - eval_time: 27h
+        alertname: PgBackupStale
+        exp_alerts: []

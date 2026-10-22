@@ -685,8 +685,9 @@ func ReapAggressive(now time.Time, snapshot []InstanceInfo, desiredByApp map[str
 		// recently served) stay alive — matches ReapIdle's
 		// "freshness floor" direction.
 		sort.Slice(g.candidates, func(a, b int) bool {
-			if !g.candidates[a].LastRequest.Equal(g.candidates[b].LastRequest) {
-				return g.candidates[a].LastRequest.Before(g.candidates[b].LastRequest)
+			aLast, bLast := idleReference(g.candidates[a]), idleReference(g.candidates[b])
+			if !aLast.Equal(bLast) {
+				return aLast.Before(bLast)
 			}
 			return g.candidates[a].Instance < g.candidates[b].Instance
 		})
@@ -719,7 +720,7 @@ func SelectEvictions(residentMB int, now time.Time, instances []InstanceInfo) []
 			break
 		}
 		evict = append(evict, in.Instance)
-		remaining -= in.admissionMB()
+		remaining -= in.evictionFreedMB()
 	}
 	return evict
 }
@@ -750,11 +751,21 @@ func SelectMemoryEvictions(now time.Time, instances []InstanceInfo, usedMB, ceil
 		evict = append(evict, in.Instance)
 		freed, ok := residentMB[in.Instance]
 		if !ok || freed <= 0 {
-			freed = in.admissionMB()
+			freed = in.evictionFreedMB()
 		}
 		remaining[in.NodeID] = used - freed
 	}
 	return evict
+}
+
+// evictionFreedMB is the reservation an eviction releases when the instance's
+// memory is not measured: plan RAM + 8 MB, or for a frozen instance (ADR-1151)
+// the floor its frozen reservation books at least.
+func (in InstanceInfo) evictionFreedMB() int {
+	if in.State == state.StateFrozen {
+		return api.MeasuredChargeFloorMB
+	}
+	return in.admissionMB()
 }
 
 // evictionCandidates returns the instances RAM-pressure eviction may park, in
@@ -763,6 +774,12 @@ func evictionCandidates(now time.Time, instances []InstanceInfo) []InstanceInfo 
 	// Candidates: running instances old enough to evict.
 	var cands []InstanceInfo
 	for _, in := range instances {
+		// ADR-1151: a frozen VM is idle by definition, so it is always a
+		// candidate and goes before any running one.
+		if in.State == state.StateFrozen {
+			cands = append(cands, in)
+			continue
+		}
 		if in.State != state.StateRunning {
 			continue
 		}
@@ -790,6 +807,10 @@ func evictionCandidates(now time.Time, instances []InstanceInfo) []InstanceInfo 
 	// through to the !reserved branch on both sides, preserving the
 	// historical LRU behaviour bit-for-bit.
 	sort.Slice(cands, func(a, b int) bool {
+		af, bf := cands[a].State == state.StateFrozen, cands[b].State == state.StateFrozen
+		if af != bf {
+			return af // frozen first
+		}
 		ar, br := cands[a].EvictionPriority == string(api.EvictionPriorityReserved),
 			cands[b].EvictionPriority == string(api.EvictionPriorityReserved)
 		if ar != br {
@@ -799,8 +820,13 @@ func evictionCandidates(now time.Time, instances []InstanceInfo) []InstanceInfo 
 		if as != bs {
 			return !as // non-Scale first
 		}
-		if !cands[a].LastRequest.Equal(cands[b].LastRequest) {
-			return cands[a].LastRequest.Before(cands[b].LastRequest)
+		// LRU by last activity. idleReference falls back to the start time:
+		// a NULL last_request_at (no request flushed yet, or a worker that
+		// serves none) would otherwise sort as the oldest possible activity
+		// and be evicted ahead of instances idle for hours.
+		aLast, bLast := idleReference(cands[a]), idleReference(cands[b])
+		if !aLast.Equal(bLast) {
+			return aLast.Before(bLast)
 		}
 		return cands[a].Instance < cands[b].Instance
 	})

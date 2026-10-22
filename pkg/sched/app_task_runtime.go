@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
+	"github.com/onebox-faas/faas/pkg/rehearsalrecorder"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -44,14 +46,20 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if app.AccountID != request.AccountID || app.Status == state.AppDeleted {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
 	}
+	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
+		return ResolvedAppTaskRuntime{}, err
+	}
 	dep, err := e.store.DeploymentByID(ctx, request.DeploymentID)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task deployment: %w", err)
 	}
 	if dep.AppID != app.ID || dep.RootfsKey == "" || dep.RootfsKey != request.ArtifactKey ||
-		dep.ImageDigest == "" || dep.ImageDigest != request.ImageDigest ||
+		dep.ImageDigest != request.ImageDigest ||
 		normalizedDeploymentScope(dep.Scope) != normalizedDeploymentScope(request.DeploymentScope) {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
+	}
+	if err := e.checkFinancialBudgetAdmission(ctx, app, dep.ID); err != nil {
+		return ResolvedAppTaskRuntime{}, err
 	}
 	if securityQuarantineErr(dep) != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("%w: deployment is security quarantined", state.ErrAppTaskDeploymentUnavailable)
@@ -60,7 +68,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task workload settings: %w", err)
 	}
-	acct, err := e.store.AccountByID(ctx, request.AccountID)
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task account: %w", err)
 	}
@@ -79,18 +87,57 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		PreferredNodeID: app.NodeID,
 	})
 	if err != nil {
-		return ResolvedAppTaskRuntime{}, err
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("placement", err)
 	}
 	if err := e.verifyPrimeLayer(ctx, app.ID, request.ArtifactKey); err != nil {
-		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task artifact: %w", err)
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("prime_layer", fmt.Errorf("sched: resolve app task artifact: %w", err))
 	}
 	task, err := e.store.AppTaskByID(ctx, request.AccountID, request.AppID, request.ID)
 	if err != nil || task.DeploymentID != dep.ID || task.Kind != request.Kind {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
 	}
-	runtimeValues, err := e.loadRuntimeDeploymentValuesForTask(ctx, app, dep, task.Kind == state.AppTaskKindRelease)
+	// Only a current managed probe can restore a reviewed source build without
+	// an OCI digest. Ordinary tasks retain their image-only admission contract.
+	if dep.ImageDigest == "" && (task.BindingVerification == nil || task.BindingVerification.ManagedService == nil) {
+		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
+	}
+	if task.BindingVerification != nil && task.BindingVerification.ManagedService != nil {
+		store, ok := e.store.(state.ManagedServiceProbeStore)
+		if !ok || state.ManagedServiceProbeCurrent(ctx, store, task) != nil {
+			return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
+		}
+	}
+	runID, err := e.rehearsalNetworkRun(ctx, app.ID)
 	if err != nil {
-		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task sealed env: %w", err)
+		return ResolvedAppTaskRuntime{}, err
+	}
+	if runID != "" || rehearsalcommand.IsCommand(task.Command) {
+		store, ok := e.store.(interface {
+			ScenarioRehearsalCommand(context.Context, rehearsalrecorder.Identity) (rehearsalcommand.Spec, error)
+		})
+		if !ok || runID == "" {
+			return ResolvedAppTaskRuntime{}, errors.New("contained command policy unavailable")
+		}
+		if _, err := store.ScenarioRehearsalCommand(ctx, rehearsalrecorder.Identity{AccountID: app.AccountID, AppID: app.ID, RunID: runID, InstanceID: request.ID, DeploymentID: dep.ID}); err != nil {
+			return ResolvedAppTaskRuntime{}, err
+		}
+	}
+	migration := task.Kind == state.AppTaskKindRelease
+	if recorder, ok := e.store.(state.ProjectMigrationTaskRuntimeStore); ok && !migration {
+		contract, readErr := recorder.ProjectMigrationTaskIsContract(ctx, task)
+		if readErr != nil {
+			return ResolvedAppTaskRuntime{}, readErr
+		}
+		migration = contract
+	}
+	runtimeValues, err := e.loadRuntimeDeploymentValuesForTask(ctx, app, dep, migration)
+	if err != nil {
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("sealed_env", fmt.Errorf("sched: resolve app task sealed env: %w", err))
+	}
+	if recorder, ok := e.store.(state.ProjectMigrationTaskRuntimeStore); ok {
+		if err := recorder.BindProjectMigrationTaskRuntime(ctx, task, runtimeValues.ConfigFence); err != nil {
+			return ResolvedAppTaskRuntime{}, err
+		}
 	}
 	apiEnv, err := appendEnvironmentGitOpsServiceBindings(runtimeValues.APIEnv, runtimeValues.MainSecrets.Entries, dep)
 	if err != nil {
@@ -98,12 +145,13 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
-	pinnedBase, err := e.artifactBaseKey(ctx, app, request.ArtifactKey)
+	pinnedBase, err := e.deploymentBaseKey(ctx, app, dep, request.ArtifactKey)
 	if err != nil {
-		return ResolvedAppTaskRuntime{}, err
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("base_layer", err)
 	}
 	spec := AppSpec{
-		BaseKey: pinnedBase, LayerKey: request.ArtifactKey,
+		RehearsalRunID: runID,
+		BaseKey:        pinnedBase, LayerKey: request.ArtifactKey,
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		CPUMillicores: int32(effectiveAppCPUMillicores(app)), EgressMbit: int32(limits.EgressMbit),
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan), ExecutionMode: executionModeForApp(app),
@@ -124,20 +172,76 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if spec.BaseKey == "" || spec.LayerKey == "" || !spec.Plan.Valid() {
 		return ResolvedAppTaskRuntime{}, errors.New("sched: app task runtime projection is incomplete")
 	}
+	runtimeID := request.ID
+	if recorder, ok := e.store.(state.PromotionMigrationRuntimeStore); ok {
+		id, err := recorder.RegisterPromotionMigrationRuntime(ctx, task, placement.NodeID)
+		if err != nil {
+			return ResolvedAppTaskRuntime{}, err
+		}
+		if id != "" {
+			runtimeID = id
+		}
+	}
 	if err := e.ledger.Admit(Request{
-		Instance: request.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
+		Instance: runtimeID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
 		MaxConcurrency: app.MaxConcurrency, Kind: KindAppTask, NodeID: placement.NodeID,
 		NodeCeilingMB: placement.CeilingMB, VCPUBudget: placement.VCPUBudget,
 		CPUBudgetMillicores: placement.CPUBudgetMillicores,
 	}); err != nil {
-		return ResolvedAppTaskRuntime{}, err
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("admission", err)
+	}
+	var publish func(context.Context, *AppTaskRestoreOutcome) error
+	if runID != "" {
+		publisher, ok := e.store.(interface {
+			RecordScenarioCommandNetwork(context.Context, rehearsalrecorder.Identity, string, string, string) error
+		})
+		if !ok || task.LeaseToken == nil {
+			e.ledger.Release(runtimeID)
+			return ResolvedAppTaskRuntime{}, errors.New("contained command network publisher unavailable")
+		}
+		identity := rehearsalrecorder.Identity{AccountID: app.AccountID, AppID: app.ID, RunID: runID, InstanceID: request.ID, DeploymentID: dep.ID}
+		publish = func(ctx context.Context, out *AppTaskRestoreOutcome) error {
+			return publisher.RecordScenarioCommandNetwork(ctx, identity, placement.NodeID, *task.LeaseToken, out.HostIP)
+		}
+	}
+	var commands state.FinancialPreviewCommandStore
+	if app.PreviewOfSlug != "" {
+		var ok bool
+		commands, ok = e.store.(state.FinancialPreviewCommandStore)
+		deadline, bounded := ctx.Deadline()
+		if !ok || !bounded || task.LeaseToken == nil || request.LeaseToken != *task.LeaseToken {
+			e.ledger.Release(runtimeID)
+			return ResolvedAppTaskRuntime{}, state.ErrAppTaskLeaseLost
+		}
+		if err := commands.RegisterFinancialPreviewCommand(ctx, state.FinancialPreviewCommandRuntime{TaskID: request.ID, LeaseToken: request.LeaseToken,
+			AccountID: app.AccountID, AppID: app.ID, DeploymentID: dep.ID, NodeID: placement.NodeID, EnvironmentID: runtimeValues.Snapshot.EnvironmentID,
+			RAMMB: app.RAMMB, CPUMillicores: effectiveAppCPUMillicores(app), RecordedAt: e.financialBudgetNow(), PrepareUntil: deadline.UTC()}); err != nil {
+			e.ledger.Release(runtimeID)
+			return ResolvedAppTaskRuntime{}, err
+		}
 	}
 	return ResolvedAppTaskRuntime{
-		NodeID: placement.NodeID,
-		Spec:   AppTaskRestoreSpec{Instance: request.ID, DeploymentID: dep.ID, App: spec},
+		publish:   publish,
+		NodeID:    placement.NodeID,
+		RuntimeID: runtimeID,
+		Spec: AppTaskRestoreSpec{Instance: runtimeID, DeploymentID: dep.ID, App: spec,
+			RequireServiceCallerIdentity: task.BindingVerification != nil && task.BindingVerification.ManagedService != nil},
 		release: func() {
-			e.ledger.Release(request.ID)
+			if commands != nil {
+				cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultAppTaskFinalizeTimeout)
+				defer cancel()
+				if err := commands.RetireFinancialPreviewCommand(cleanup, request.ID, request.LeaseToken, e.financialBudgetNow()); err != nil {
+					e.log.Warn("preview command teardown receipt failed", "task", request.ID, "err", err)
+				}
+			}
+			e.ledger.Release(runtimeID)
+		},
+		ready: func(readyCtx context.Context) error {
+			if commands != nil {
+				return commands.ActivateFinancialPreviewCommand(readyCtx, request.ID, request.LeaseToken)
+			}
+			return nil
 		},
 	}, nil
 }

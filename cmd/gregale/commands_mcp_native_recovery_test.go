@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -13,13 +13,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 )
 
 func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
-	original := mcpNativeCheckWorkers
-	defer func() { mcpNativeCheckWorkers = original }()
+	original := (*main.McpNativeCheckWorkers)
+	defer func() { (*main.McpNativeCheckWorkers) = original }()
 	for _, tc := range []struct {
 		name                                                                                                      string
 		changed, parked, incompatible, race, lost, postFailure, retirementChanged, retirementLost, retirementRace bool
@@ -29,7 +30,7 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 		{name: "lost response", lost: true}, {name: "canonical unhealthy", postFailure: true}, {name: "retire changed generation", retirementChanged: true}, {name: "retire lost park response", retirementLost: true}, {name: "retire deployment changes at park", retirementRace: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			mcpNativeCheckWorkers = func(context.Context, *Client, mcpNativeReleasePlan, *mcpNativeReleaseState) error {
+			(*main.McpNativeCheckWorkers) = func(context.Context, *main.Client, main.McpNativeReleasePlan, *main.McpNativeReleaseState) error {
 				if tc.incompatible {
 					return errors.New("not ready")
 				}
@@ -81,7 +82,7 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 				case "/v1/capabilities":
 					json.NewEncoder(w).Encode(api.CapabilitiesResponse{ConditionalParking: true})
 				case "/v1/apps/web/deployments":
-					json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{{ID: current, AppID: "web-id", Status: statusLive, TrafficPercent: 100}}})
+					json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{{ID: current, AppID: "web-id", Status: main.StatusLive, TrafficPercent: 100}}})
 				case "/v1/apps/web":
 					json.NewEncoder(w).Encode(api.AppResponse{ID: "web-id", Slug: "web", URL: endpoint.URL, StreamingEnabled: true, PublicAuth: api.PublicAuthStatus{Mode: api.AppPublicAuthModeOpen}})
 				case "/v1/deployments/stable":
@@ -89,7 +90,7 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 					if current == "stable" {
 						traffic = 100
 					}
-					json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "stable", AppID: "web-id", Status: statusLive, TrafficPercent: traffic})
+					json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "stable", AppID: "web-id", Status: main.StatusLive, TrafficPercent: traffic})
 				case "/v1/deployments/stable/url":
 					json.NewEncoder(w).Encode(api.DeploymentPreviewURL{Alive: true, URL: endpoint.URL})
 				case "/v1/apps/observer":
@@ -99,7 +100,7 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 				case "/v1/apps/metrics/custom-metrics":
 					json.NewEncoder(w).Encode(api.CustomMetricListResponse{Metrics: []api.CustomMetricResponse{{Name: "mcp_tasks_observer_heartbeat", Value: 1, ObservedAt: time.Now()}}})
 				case "/v1/apps/previous/deployments/latest":
-					json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "old", AppID: "previous-id", Status: statusLive})
+					json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "old", AppID: "previous-id", Status: main.StatusLive})
 				case "/v1/apps/previous/instances":
 					json.NewEncoder(w).Encode([]api.InstanceResponse{{ID: "old-instance", DeploymentID: "old", State: "running"}})
 				case "/v1/apps/previous/logs":
@@ -156,18 +157,18 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 						w.WriteHeader(500)
 						return
 					}
-					json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "stable", AppID: "web-id", Status: statusLive, TrafficPercent: 100})
+					json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "stable", AppID: "web-id", Status: main.StatusLive, TrafficPercent: 100})
 				default:
 					t.Errorf("unexpected route: %s", r.URL.Path)
 					w.WriteHeader(404)
 				}
 			}))
 			defer control.Close()
-			p := mcpNativeReleasePlan{WorkerApp: "candidate-worker", WebApp: "web", WebPath: root, WorkerPath: root, PreviousWorkerApps: []string{"previous"}, ObserverApp: "observer", ObserverMetricApp: "metrics"}
-			s := mcpNativeReleaseState{WorkerDeployment: "worker-candidate", WorkerIDs: []string{"12345678-1234-1234-1234-123456789abc"}, Version: 1, Fingerprint: "source", Stage: "web_promoted", ServingCaptured: true, ServingDeployment: "stable", WebDeployment: "candidate", Promoted: true, PreviousDeployments: map[string]string{"previous": "old"}, Parked: map[string]bool{"previous": tc.parked}}
+			p := main.McpNativeReleasePlan{WorkerApp: "candidate-worker", WebApp: "web", WebPath: root, WorkerPath: root, PreviousWorkerApps: []string{"previous"}, ObserverApp: "observer", ObserverMetricApp: "metrics"}
+			s := main.McpNativeReleaseState{WorkerDeployment: "worker-candidate", WorkerIDs: []string{"12345678-1234-1234-1234-123456789abc"}, Version: 1, Fingerprint: "source", Stage: "web_promoted", ServingCaptured: true, ServingDeployment: "stable", WebDeployment: "candidate", Promoted: true, PreviousDeployments: map[string]string{"previous": "old"}, Parked: map[string]bool{"previous": tc.parked}}
 			path := filepath.Join(t.TempDir(), "state.json")
-			client := NewClient(control.URL, "operator")
-			err = restoreMCPNativeWeb(context.Background(), client, p, &s, path)
+			client := main.NewClient(control.URL, "operator")
+			err = main.RestoreMCPNativeWeb(context.Background(), client, p, &s, path)
 			wantError := tc.changed || tc.parked || tc.incompatible || tc.race || tc.postFailure
 			if (err != nil) != wantError {
 				t.Fatalf("err=%v state=%+v", err, s)
@@ -188,14 +189,14 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 				if s.Stage != "web_restored" || s.Promoted || current != "stable" {
 					t.Fatalf("bad restoration %+v", s)
 				}
-				if err := restoreMCPNativeWeb(context.Background(), client, p, &s, path); err != nil {
+				if err := main.RestoreMCPNativeWeb(context.Background(), client, p, &s, path); err != nil {
 					t.Fatal(err)
 				}
 				if patches != 1 {
 					t.Fatal("resume repeated traffic write")
 				}
 				retirement = true
-				err := retireMCPNativeWorker(context.Background(), client, p, &s, path)
+				err := main.RetireMCPNativeWorker(context.Background(), client, p, &s, path)
 				if tc.retirementChanged {
 					if err == nil || parks != 0 {
 						t.Fatal("retired changed generation")
@@ -212,7 +213,7 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 					if err == nil || s.Stage != "retirement_pending" {
 						t.Fatal("lost park response lost checkpoint")
 					}
-					err = retireMCPNativeWorker(context.Background(), client, p, &s, path)
+					err = main.RetireMCPNativeWorker(context.Background(), client, p, &s, path)
 				}
 				if err != nil {
 					t.Fatal(err)
@@ -250,14 +251,14 @@ func TestMCPNativeRecoveryInspectionDoesNotConfigureIngress(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_inspection")
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	if code := recoverMCPNativeRelease(mcpNativeReleasePlan{WebApp: "web", ObserverApp: "observer", TimeoutSeconds: 1}, mcpNativeReleaseState{ServingCaptured: true, ServingDeployment: "stable", WebDeployment: "candidate"}, "unused", "unused", false); code != 0 {
+	if code := main.RecoverMCPNativeRelease(main.McpNativeReleasePlan{WebApp: "web", ObserverApp: "observer", TimeoutSeconds: 1}, main.McpNativeReleaseState{ServingCaptured: true, ServingDeployment: "stable", WebDeployment: "candidate"}, "unused", "unused", false); code != 0 {
 		t.Fatalf("inspection exit %d", code)
 	}
 	var report struct {
-		CandidateWorkersReady bool                     `json:"candidateWorkersReady"`
-		Checks                []mcpNativeRecoveryCheck `json:"checks"`
+		CandidateWorkersReady bool                          `json:"candidateWorkersReady"`
+		Checks                []main.McpNativeRecoveryCheck `json:"checks"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		t.Fatalf("decode recovery report: %v; output=%s", err, stdout.String())
@@ -265,7 +266,7 @@ func TestMCPNativeRecoveryInspectionDoesNotConfigureIngress(t *testing.T) {
 	if report.CandidateWorkersReady || len(report.Checks) != 5 {
 		t.Fatalf("recovery report lost readiness checks: %+v", report)
 	}
-	byName := make(map[string]mcpNativeRecoveryCheck, len(report.Checks))
+	byName := make(map[string]main.McpNativeRecoveryCheck, len(report.Checks))
 	for _, check := range report.Checks {
 		if check.Detail == "" {
 			t.Errorf("check %q omitted its explanation", check.Name)

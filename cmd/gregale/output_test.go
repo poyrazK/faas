@@ -58,9 +58,28 @@ func TestMain(m *testing.M) {
 		}
 		owned = true
 	}
+	// Source/session helpers canonicalize paths. Keep the sandbox fence in
+	// that same form on macOS, where /var resolves through /private/var.
+	var err error
+	if sandbox, err = filepath.EvalSymlinks(sandbox); err != nil {
+		panic(err)
+	}
 	for key, dir := range map[string]string{"HOME": sandbox, "XDG_CONFIG_HOME": sandbox + "/.config", "XDG_CACHE_HOME": sandbox + "/.cache", "XDG_STATE_HOME": sandbox + "/.local/state"} {
 		_ = os.Setenv(key, dir)
 	}
+	// Keep t.TempDir and project linking within the owned sandbox. Inherited
+	// contexts and synthetic ancestor .git markers must not escape that root.
+	tempRoot := filepath.Join(sandbox, "tmp")
+	if err := os.MkdirAll(tempRoot, 0o700); err != nil {
+		panic(err)
+	}
+	_ = os.Setenv("TMPDIR", tempRoot)
+	_ = os.Setenv("TMP", tempRoot)
+	_ = os.Setenv("TEMP", tempRoot)
+	// Go 1.26's testing.TempDir prefers GOTMPDIR over TMPDIR. Preserve the
+	// same owned boundary even when the outer build uses another scratch root.
+	_ = os.Setenv("GOTMPDIR", tempRoot)
+	testOnlyProjectContextRoot = sandbox
 	previousNoColor, hadNoColor := os.LookupEnv("NO_COLOR")
 	_ = os.Unsetenv("NO_COLOR")
 	resetNOColorCache()

@@ -8,6 +8,8 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.workflow_recovery_policy_decision import WorkflowRecoveryPolicyDecision
 
@@ -26,7 +28,6 @@ class WorkflowRecoveryReviewReadyWebhookPayload:
     review_id: UUID
     app_id: UUID
     app: str
-    job_id: UUID
     policy_version: int
     prepared_at: datetime.datetime
     observed_at: datetime.datetime
@@ -35,6 +36,9 @@ class WorkflowRecoveryReviewReadyWebhookPayload:
     status_url: str
     review_command: str
     export_command: str
+    initial_failure_id: UUID | Unset = UNSET
+    """Captured initial failure for parentless reviews. Parent-job reviews carry job_id instead."""
+    job_id: UUID | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,8 +49,6 @@ class WorkflowRecoveryReviewReadyWebhookPayload:
         app_id = str(self.app_id)
 
         app = self.app
-
-        job_id = str(self.job_id)
 
         policy_version = self.policy_version
 
@@ -67,6 +69,14 @@ class WorkflowRecoveryReviewReadyWebhookPayload:
 
         export_command = self.export_command
 
+        initial_failure_id: str | Unset = UNSET
+        if not isinstance(self.initial_failure_id, Unset):
+            initial_failure_id = str(self.initial_failure_id)
+
+        job_id: str | Unset = UNSET
+        if not isinstance(self.job_id, Unset):
+            job_id = str(self.job_id)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -75,7 +85,6 @@ class WorkflowRecoveryReviewReadyWebhookPayload:
                 "review_id": review_id,
                 "app_id": app_id,
                 "app": app,
-                "job_id": job_id,
                 "policy_version": policy_version,
                 "prepared_at": prepared_at,
                 "observed_at": observed_at,
@@ -86,6 +95,10 @@ class WorkflowRecoveryReviewReadyWebhookPayload:
                 "export_command": export_command,
             }
         )
+        if initial_failure_id is not UNSET:
+            field_dict["initial_failure_id"] = initial_failure_id
+        if job_id is not UNSET:
+            field_dict["job_id"] = job_id
 
         return field_dict
 
@@ -101,8 +114,6 @@ class WorkflowRecoveryReviewReadyWebhookPayload:
         app_id = UUID(d.pop("app_id"))
 
         app = d.pop("app")
-
-        job_id = UUID(d.pop("job_id"))
 
         policy_version = d.pop("policy_version")
 
@@ -125,12 +136,25 @@ class WorkflowRecoveryReviewReadyWebhookPayload:
 
         export_command = d.pop("export_command")
 
+        _initial_failure_id = d.pop("initial_failure_id", UNSET)
+        initial_failure_id: UUID | Unset
+        if isinstance(_initial_failure_id, Unset):
+            initial_failure_id = UNSET
+        else:
+            initial_failure_id = UUID(_initial_failure_id)
+
+        _job_id = d.pop("job_id", UNSET)
+        job_id: UUID | Unset
+        if isinstance(_job_id, Unset):
+            job_id = UNSET
+        else:
+            job_id = UUID(_job_id)
+
         workflow_recovery_review_ready_webhook_payload = cls(
             event_id=event_id,
             review_id=review_id,
             app_id=app_id,
             app=app,
-            job_id=job_id,
             policy_version=policy_version,
             prepared_at=prepared_at,
             observed_at=observed_at,
@@ -139,6 +163,8 @@ class WorkflowRecoveryReviewReadyWebhookPayload:
             status_url=status_url,
             review_command=review_command,
             export_command=export_command,
+            initial_failure_id=initial_failure_id,
+            job_id=job_id,
         )
 
         workflow_recovery_review_ready_webhook_payload.additional_properties = d

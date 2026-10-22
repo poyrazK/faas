@@ -1,0 +1,57 @@
+{
+  "nonproduction": true,
+  "account_id": "REPLACE_ACCOUNT_ID",
+  "target": {
+    "app": "acceptance-worker",
+    "app_id": "REPLACE_APP_ID",
+    "scope": "default"
+  },
+  "steps": [
+    {
+      "id": "plan",
+      "tool": "gregale_plan_workload_rollout",
+      "arguments": {
+        "app": "acceptance-worker",
+        "retained_deployment_id": "REPLACE_RETAINED_DEPLOYMENT_ID",
+        "reason": "Rebuild retained source under current reviewed settings"
+      },
+      "expect": {
+        "rollout_mode": "worker",
+        "source.commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "target_deployment_id": "REPLACE_RETAINED_DEPLOYMENT_ID"
+      }
+    },
+    {
+      "id": "apply",
+      "tool": "gregale_apply_workload_rollout",
+      "arguments": {
+        "plan_id": {
+          "ref": "plan.plan_id"
+        }
+      },
+      "expect": {
+        "deployment.app_id": "REPLACE_APP_ID"
+      },
+      "replay": [
+        "deployment.id",
+        "deployment.build_id"
+      ]
+    },
+    {
+      "id": "observe",
+      "tool": "gregale_get_rollout",
+      "arguments": {
+        "app": "acceptance-worker",
+        "deployment_id": {
+          "ref": "apply.deployment.id"
+        }
+      },
+      "poll": true,
+      "timeout_seconds": 900,
+      "expect": {
+        "worker_observation.generation_converged": true,
+        "worker_observation.queue_processing_confirmed": false
+      }
+    }
+  ]
+}

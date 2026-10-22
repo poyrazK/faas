@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -10,13 +11,17 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // Only an exact canary abort has a synchronous, known traffic recipient.
 // Service rollouts retain their separate gateway acknowledgement/drain path.
-func (s *server) recoverPinnedCanaryRollout(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, req api.RecoverRolloutRequest) {
+//
+// workerDecision is meterd's validated abort evidence (ADR-1447); a person's
+// request records abort_manual instead.
+func (s *server) recoverPinnedCanaryRollout(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, req api.RecoverRolloutRequest, workerDecision json.RawMessage) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	r = r.WithContext(ctx)
@@ -54,6 +59,13 @@ func (s *server) recoverPinnedCanaryRollout(w http.ResponseWriter, r *http.Reque
 	if problem := s.durable.ValidatorReleaseProblem(ctx, app, predecessor); problem != nil {
 		api.WriteProblem(w, problem)
 		return
+	}
+	if req.ExpectedReview != nil {
+		if !state.IsServiceRollout(candidate) || req.ExpectedReview.AppID != app.ID || recoveryScope(req.ExpectedReview.Scope) != recoveryScope(candidate.Scope) {
+			api.WriteProblem(w, api.ErrValidation("expected_review requires exact service recovery in the reviewed scope"))
+			return
+		}
+		r = r.WithContext(state.WithServiceRecoveryReview(ctx, *req.ExpectedReview))
 	}
 	if state.IsServiceRollout(candidate) {
 		s.requestPinnedServiceAbort(w, r, acct, app, candidate, predecessor, req.Reason)
@@ -104,8 +116,16 @@ func (s *server) recoverPinnedCanaryRollout(w http.ResponseWriter, r *http.Reque
 	var updated state.Deployment
 	var auditID int64
 	req.Reason = safetext.Truncate(req.Reason, api.AuditReasonMaxBytes)
+	decision := workerDecision
+	if decision == nil && !isInternalSafeDeployRequest(r) {
+		decision = release.ManualDecision(api.RolloutRuleAbortManual, candidate, time.Now())
+	}
 	problem, err := s.withBindingReleaseObservations(r, acct, app, observations, func(writeCtx context.Context) error {
 		var writeErr error
+		if decisions, ok := s.store.(state.RolloutDecisionStore); ok {
+			updated, auditID, writeErr = decisions.RecoverRolloutForDeploymentWithDecision(writeCtx, app.ID, candidate.ID, predecessor.ID, "abort", req.Reason, decision)
+			return writeErr
+		}
 		updated, auditID, writeErr = recoverer.RecoverRolloutForDeployment(writeCtx, app.ID, candidate.ID, predecessor.ID, "abort", req.Reason)
 		return writeErr
 	})
@@ -133,6 +153,9 @@ func (s *server) recoverPinnedCanaryRollout(w http.ResponseWriter, r *http.Reque
 			"app": app.ID, "deployment": updated.ID, "expected_predecessor": predecessor.ID,
 			"action": "abort", "reason": req.Reason, "deployment_audit": auditID, "actor": acct.ID,
 		})
+	}
+	if isInternalSafeDeployRequest(r) {
+		s.freezeAfterAutomaticRollback(ctx, acct.ID, app, updated.ID, automaticRollbackCause("circuit_breaker", updated))
 	}
 	s.notifyCanaryTraffic(r, app, updated)
 	writeJSON(w, http.StatusOK, api.RolloutTransitionResponse{Deployment: s.deploymentResponse(ctx, updated, app), AuditID: int64ToAuditIDString(auditID), Recovery: receipt})

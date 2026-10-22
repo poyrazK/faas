@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
+	gitopsdiagnostics "github.com/onebox-faas/faas/pkg/environmentgitops/diagnostics"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -49,6 +50,15 @@ func (s *server) environmentGitOpsDashboardData(r *http.Request, acct state.Acco
 	if err != nil {
 		return data, err
 	}
+	if commit := r.URL.Query().Get("target_commit_sha"); commit != "" {
+		data.RecoveryCommit = commit
+		recovery, problem := s.recoveryService().Observe(r, acct)
+		if problem != nil {
+			data.RecoveryError = "Recovery eligibility could not be checked. Verify the target commit and Git provider access, then refresh."
+		} else {
+			data.Recovery = &recovery
+		}
+	}
 	data.Status = &api.EnvironmentGitOpsStatusResponse{Source: source, Runs: runs}
 	data.Status.Approval, err = s.environmentGitApprovalForSource(r.Context(), source)
 	if err != nil {
@@ -58,7 +68,13 @@ func (s *server) environmentGitOpsDashboardData(r *http.Request, acct state.Acco
 	if err != nil {
 		return data, err
 	}
+	data.Status.WorkloadRetirements, err = s.environmentGitOpsWorkloadRetirements(r.Context(), acct.ID, source.ID)
+	if err != nil {
+		return data, err
+	}
 	setEnvironmentGitOpsDashboardFreshness(&data, time.Now().UTC())
+	explanation := gitopsdiagnostics.Assess(*data.Status, time.Now().UTC())
+	data.Status.Explanation = &explanation
 	for _, run := range runs {
 		view := dashboard.EnvironmentGitOpsRunView{Run: run}
 		var plan api.EnvironmentGitOpsPlan
@@ -98,7 +114,7 @@ func setEnvironmentGitOpsDashboardFreshness(data *dashboard.EnvironmentGitOpsDat
 	data.SourcePollStale, data.SourceVerificationStale = !checked.After(cutoff), !verified.After(cutoff)
 }
 
-func (s *server) renderDashboardEnvironmentGitOps(w http.ResponseWriter, r *http.Request, acct state.Account, review *api.PreviewEnvironmentGitRevisionResponse) {
+func (s *server) renderDashboardEnvironmentGitOps(w http.ResponseWriter, r *http.Request, acct state.Account, review *api.PreviewEnvironmentGitRevisionResponse, previews ...*api.PreviewEnvironmentGitPlanResponse) {
 	data, err := s.environmentGitOpsDashboardData(r, acct)
 	if errors.Is(err, state.ErrNotFound) {
 		http.NotFound(w, r)
@@ -116,6 +132,9 @@ func (s *server) renderDashboardEnvironmentGitOps(w http.ResponseWriter, r *http
 	http.SetCookie(w, &http.Cookie{Name: dashboardEnvironmentGitOpsCookie, Value: token, Path: "/", HttpOnly: true,
 		Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
 	data.CSRFToken, data.Review = token, review
+	if len(previews) != 0 {
+		data.PlanPreview = previews[0]
+	}
 	if review != nil {
 		data.Definition = dashboard.PrettyAuditData(review.Definition)
 	}
@@ -145,30 +164,49 @@ func (s *server) dashboardEnvironmentGitOpsMutation(w http.ResponseWriter, r *ht
 		api.WriteProblem(w, api.ErrValidation("Invalid environment GitOps form."))
 		return
 	}
-	if r.PathValue("action") != "review" {
+	if r.PathValue("action") != "review" && r.PathValue("action") != "plan" {
 		handler = dashboardJSONHandler(s.requireVerifiedEmail(accountHandler(handler)))
 	}
 	resp := s.forwardDashboardJSON(r, acct, method, r.URL.Path, "", "", body, handler)
 	if !dashboardMutationSucceeded(w, resp) {
 		return
 	}
-	if r.PathValue("action") == "review" {
-		var review api.PreviewEnvironmentGitRevisionResponse
-		if json.Unmarshal(resp.Body.Bytes(), &review) != nil {
-			api.WriteProblem(w, api.ErrCapacity("Could not read the reviewed Git revision."))
-			return
-		}
-		s.renderDashboardEnvironmentGitOps(w, r, acct, &review)
+	if r.PathValue("action") == "review" || r.PathValue("action") == "plan" {
+		s.renderDashboardEnvironmentGitOpsPreview(w, r, acct, resp.Body.Bytes())
 		return
 	}
 	target := "/dashboard/projects/" + url.PathEscape(r.PathValue("slug")) + "/environments/" + url.PathEscape(r.PathValue("environment")) + "/gitops"
 	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
+func (s *server) renderDashboardEnvironmentGitOpsPreview(w http.ResponseWriter, r *http.Request, acct state.Account, body []byte) {
+	if r.PathValue("action") == "review" {
+		var review api.PreviewEnvironmentGitRevisionResponse
+		if json.Unmarshal(body, &review) != nil {
+			api.WriteProblem(w, api.ErrCapacity("Could not read the reviewed Git revision."))
+			return
+		}
+		s.renderDashboardEnvironmentGitOps(w, r, acct, &review)
+		return
+	}
+	if r.PathValue("action") == "plan" {
+		var preview api.PreviewEnvironmentGitPlanResponse
+		if json.Unmarshal(body, &preview) != nil {
+			api.WriteProblem(w, api.ErrCapacity("Could not read the candidate plan."))
+			return
+		}
+		s.renderDashboardEnvironmentGitOps(w, r, acct, nil, &preview)
+		return
+	}
+}
+
 func (s *server) environmentGitOpsDashboardRequest(r *http.Request) (any, dashboardJSONHandler, string, error) {
 	action := r.PathValue("action")
 	if action == "bind" {
-		return api.CreateEnvironmentGitSourceRequest{Ref: r.FormValue("ref"), ManifestPath: r.FormValue("manifest_path"), Mode: "report", ApprovalPolicy: r.FormValue("approval_policy")}, s.createEnvironmentGitSource, http.MethodPost, nil
+		return api.CreateEnvironmentGitSourceRequest{Provider: r.FormValue("provider"), Repository: r.FormValue("repository"), Ref: r.FormValue("ref"), ManifestPath: r.FormValue("manifest_path"), Mode: "report", ApprovalPolicy: r.FormValue("approval_policy")}, s.createEnvironmentGitSource, http.MethodPost, nil
+	}
+	if action == "plan" {
+		return api.PreviewEnvironmentGitRevisionRequest{CommitSHA: r.FormValue("commit_sha")}, s.previewEnvironmentGitPlan, http.MethodPost, nil
 	}
 	if action == "review" {
 		return api.PreviewEnvironmentGitRevisionRequest{CommitSHA: r.FormValue("commit_sha")}, s.previewEnvironmentGitRevision, http.MethodPost, nil

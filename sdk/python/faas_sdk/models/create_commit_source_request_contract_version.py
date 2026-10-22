@@ -1,10 +1,11 @@
 from typing import Literal
 
-CreateCommitSourceRequestContractVersion = Literal[1, 2]
+CreateCommitSourceRequestContractVersion = Literal[1, 2, 3]
 
 CREATE_COMMIT_SOURCE_REQUEST_CONTRACT_VERSION_VALUES: set[CreateCommitSourceRequestContractVersion] = {
     1,
     2,
+    3,
 }
 
 

@@ -7,27 +7,6 @@ import (
 	"time"
 )
 
-// RealtimeLimits describes the managed realtime endpoint allowance for a plan.
-// It is kept separate from Limits so adding the opt-in realtime surface does
-// not change the long-lived Limits struct consumed by every daemon.
-type RealtimeLimits struct {
-	Plan                Plan
-	EndpointsPerApp     int
-	EndpointsPerAccount int
-}
-
-var realtimeLimits = map[Plan]RealtimeLimits{
-	PlanFree:  {Plan: PlanFree},
-	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10},
-	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50},
-	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250},
-}
-
-func RealtimeLimitsFor(p Plan) (RealtimeLimits, bool) {
-	l, ok := realtimeLimits[p]
-	return l, ok
-}
-
 const (
 	RealtimeCallbackAuthTokenMaxBytes = 256
 	RealtimeAuthTokenMaxBytes         = 256
@@ -128,6 +107,7 @@ type FinalizeManagedRealtimeAuthResponse struct {
 // connection or published to an endpoint channel. DataBase64 is decoded
 // before the request is forwarded to the realtime owner.
 type ManagedRealtimeMessageRequest struct {
+	TTLSeconds       int               `json:"ttl_seconds,omitempty"`
 	ExpectedSequence *int64            `json:"expected_sequence,omitempty"`
 	Metadata         map[string]string `json:"metadata,omitempty"`
 	DataBase64       string            `json:"data_base64"`
@@ -137,6 +117,7 @@ type ManagedRealtimeMessageRequest struct {
 // ManagedRealtimePrincipalMessageRequest sends to one verified OIDC principal.
 // Retained sends may request an acknowledgement deadline and push/webhook fallback.
 type ManagedRealtimePrincipalMessageRequest struct {
+	TTLSeconds              int                     `json:"ttl_seconds,omitempty"`
 	NotificationNotBefore   string                  `json:"notification_not_before,omitempty"`
 	NotificationCollapseKey string                  `json:"notification_collapse_key,omitempty"`
 	NotificationTTLSeconds  int                     `json:"notification_ttl_seconds,omitempty"`
@@ -177,23 +158,24 @@ type ManagedRealtimePublishResponse struct {
 // outcomes. Unsupported counts older v2 clients that have not negotiated
 // direct-message frames.
 type ManagedRealtimePrincipalSendResponse struct {
-	FallbackDeadline string `json:"fallback_deadline,omitempty"`
-	Sequence         int64  `json:"sequence,omitempty"`
-	Durable          bool   `json:"durable,omitempty"`
-	MessageID        string `json:"message_id,omitempty"`
-	ReceiptRequested bool   `json:"receipt_requested,omitempty"`
-	ReceiptStatus    string `json:"receipt_status,omitempty"`
-	Acknowledged     int    `json:"acknowledged,omitempty"`
-	Pending          int    `json:"pending,omitempty"`
-	TimedOut         int    `json:"timed_out,omitempty"`
-	Recipients       int    `json:"recipients"`
-	Queued           int    `json:"queued"`
-	Unsupported      int    `json:"unsupported"`
-	QueueFull        int    `json:"queue_full"`
-	Failed           int    `json:"failed"`
-	NodesQueried     int    `json:"nodes_queried"`
-	NodesUnavailable int    `json:"nodes_unavailable"`
-	Partial          bool   `json:"partial"`
+	DeliveryExpiresAt *time.Time `json:"delivery_expires_at,omitempty"`
+	FallbackDeadline  string     `json:"fallback_deadline,omitempty"`
+	Sequence          int64      `json:"sequence,omitempty"`
+	Durable           bool       `json:"durable,omitempty"`
+	MessageID         string     `json:"message_id,omitempty"`
+	ReceiptRequested  bool       `json:"receipt_requested,omitempty"`
+	ReceiptStatus     string     `json:"receipt_status,omitempty"`
+	Acknowledged      int        `json:"acknowledged,omitempty"`
+	Pending           int        `json:"pending,omitempty"`
+	TimedOut          int        `json:"timed_out,omitempty"`
+	Recipients        int        `json:"recipients"`
+	Queued            int        `json:"queued"`
+	Unsupported       int        `json:"unsupported"`
+	QueueFull         int        `json:"queue_full"`
+	Failed            int        `json:"failed"`
+	NodesQueried      int        `json:"nodes_queried"`
+	NodesUnavailable  int        `json:"nodes_unavailable"`
+	Partial           bool       `json:"partial"`
 }
 
 type ManagedRealtimePrincipalReceiptDelivery struct {
@@ -263,6 +245,7 @@ const (
 // ManagedRealtimeRetainedMessageRequest writes to the ordered outbound log.
 // Its idempotency key is effective while the matching message is retained.
 type ManagedRealtimeRetainedMessageRequest struct {
+	TTLSeconds       int               `json:"ttl_seconds,omitempty"`
 	ExpectedSequence *int64            `json:"expected_sequence,omitempty"`
 	Metadata         map[string]string `json:"metadata,omitempty"`
 	DataBase64       string            `json:"data_base64"`
@@ -271,6 +254,8 @@ type ManagedRealtimeRetainedMessageRequest struct {
 }
 
 type ManagedRealtimeRetainedMessageResponse struct {
+	ExpiresAt       *time.Time        `json:"expires_at,omitempty"`
+	Expired         bool              `json:"expired,omitempty"`
 	Metadata        map[string]string `json:"metadata,omitempty"`
 	TargetMessageID string            `json:"target_message_id,omitempty"`
 	Version         int64             `json:"version"`
@@ -325,6 +310,26 @@ type ManagedRealtimeConnectionListResponse struct {
 	Partial          bool                                `json:"partial"`
 	NodesQueried     int                                 `json:"nodes_queried"`
 	NodesUnavailable int                                 `json:"nodes_unavailable"`
+}
+
+// ManagedRealtimeChannelOccupancy is how many subscriptions a channel has
+// across the fleet (ADR-1324). Subscribers counts every open subscription:
+// WebSocket, read-only ticket and SSE. PresenceMembers counts distinct
+// presence members, which may group several connections of one principal.
+type ManagedRealtimeChannelOccupancy struct {
+	Channel         string `json:"channel"`
+	Subscribers     int    `json:"subscribers"`
+	PresenceMembers int    `json:"presence_members"`
+}
+
+// ManagedRealtimeOccupancyResponse answers an occupancy read. Partial is true
+// when a realtime node could not be asked; counts then cover the nodes that
+// answered.
+type ManagedRealtimeOccupancyResponse struct {
+	Channels         []ManagedRealtimeChannelOccupancy `json:"channels"`
+	Partial          bool                              `json:"partial"`
+	NodesQueried     int                               `json:"nodes_queried"`
+	NodesUnavailable int                               `json:"nodes_unavailable"`
 }
 
 // ManagedRealtimeDrainRequest selects a bounded set of live connections to
@@ -553,16 +558,19 @@ func ValidateRealtimeOrigins(origins []string) error {
 
 // ManagedRealtimeInboxMessageResponse is a retained principal notification.
 type ManagedRealtimeInboxMessageResponse struct {
-	TargetMessageID string `json:"target_message_id,omitempty"`
-	Version         int64  `json:"version"`
-	Event           string `json:"event"`
-	Deleted         bool   `json:"deleted"`
-	MessageID       string `json:"message_id"`
-	Sequence        int64  `json:"sequence"`
-	DataBase64      string `json:"data_base64"`
-	Binary          bool   `json:"binary"`
-	CreatedAt       string `json:"created_at"`
-	ExpiresAt       string `json:"expires_at"`
+	TTLSeconds        int        `json:"ttl_seconds,omitempty"`
+	DeliveryExpiresAt *time.Time `json:"delivery_expires_at,omitempty"`
+	Expired           bool       `json:"expired,omitempty"`
+	TargetMessageID   string     `json:"target_message_id,omitempty"`
+	Version           int64      `json:"version"`
+	Event             string     `json:"event"`
+	Deleted           bool       `json:"deleted"`
+	MessageID         string     `json:"message_id"`
+	Sequence          int64      `json:"sequence"`
+	DataBase64        string     `json:"data_base64"`
+	Binary            bool       `json:"binary"`
+	CreatedAt         string     `json:"created_at"`
+	ExpiresAt         string     `json:"expires_at"`
 }
 
 type ManagedRealtimeInboxResponse struct {
@@ -592,10 +600,20 @@ type ManagedRealtimeChannelSnapshotResponse struct {
 	ExpiresAt           time.Time            `json:"expires_at"`
 }
 
+// ManagedRealtimeBatchMessageRequest distinguishes an inherited TTL from zero.
+type ManagedRealtimeBatchMessageRequest struct {
+	ExpectedSequence *int64            `json:"expected_sequence,omitempty"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
+	DataBase64       string            `json:"data_base64"`
+	Binary           bool              `json:"binary,omitempty"`
+	TTLSeconds       *int              `json:"ttl_seconds,omitempty"`
+}
+
 type ManagedRealtimeChannelBatchRequest struct {
-	ExpectedSequence *int64                          `json:"expected_sequence,omitempty"`
-	BatchID          string                          `json:"batch_id"`
-	Messages         []ManagedRealtimeMessageRequest `json:"messages"`
+	TTLSeconds       int                                  `json:"ttl_seconds,omitempty"`
+	ExpectedSequence *int64                               `json:"expected_sequence,omitempty"`
+	BatchID          string                               `json:"batch_id"`
+	Messages         []ManagedRealtimeBatchMessageRequest `json:"messages"`
 }
 type ManagedRealtimeChannelBatchResponse struct {
 	BatchID  string                           `json:"batch_id"`

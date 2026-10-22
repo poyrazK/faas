@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func (p *cloneSnapshotProvider) RestoreSnapshot(ctx context.Context, d managedpostgres.RestoreSourceDefinition, r managedpostgres.SnapshotRestoreRequest) (managedpostgres.SnapshotRestoreObservation, error) {
@@ -56,7 +57,7 @@ func (p *cloneSnapshotProvider) FindSnapshotRestore(ctx context.Context, d manag
 }
 
 type cloneSnapshotRestoreFailureStore struct {
-	*state.PgStore
+	PgStore                                            *state.PgStore
 	loseReservation, loseClaim, failRecord, loseRecord bool
 }
 
@@ -100,9 +101,9 @@ func cloneSnapshotRestoreWorkerFixture(t *testing.T, major ...int) (cloneCoordin
 		t.Fatal(err)
 	}
 	store := &cloneSnapshotRestoreFailureStore{PgStore: f.store.PgStore}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	provider.beforeForkCreate = func(ctx context.Context, r managedpostgres.SnapshotRestoreRequest) error {
-		receipt, err := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(ctx, f.lease, sourceID)
+		receipt, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(ctx, f.lease, sourceID)
 		if err != nil {
 			return err
 		}
@@ -143,14 +144,14 @@ func TestPGClonePostgresSnapshotRestoreWorkerRecoversOwnedFork(t *testing.T) {
 	if err == nil || p.forkCreates != 1 {
 		t.Fatalf("lost record acknowledgement: %v", err)
 	}
-	receipt, err := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID)
+	receipt, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID)
 	if err != nil || receipt.State != "restored" || receipt.TargetProviderResourceID != p.forkActual.ProviderResourceID {
 		t.Fatalf("durable target: %+v %v", receipt, err)
 	}
-	if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.lease, err = store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +162,7 @@ func TestPGClonePostgresSnapshotRestoreWorkerRecoversOwnedFork(t *testing.T) {
 	if f.lease.Operation.Resources[0].TargetID != "" {
 		t.Fatal("native storage proof published a catalogue target")
 	}
-	if _, err := store.ProjectEnvironmentBySlug(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.TargetEnvironment); !errors.Is(err, state.ErrNotFound) {
+	if _, err := store.PgStore.ProjectEnvironmentBySlug(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.TargetEnvironment); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("storage restore published environment: %v", err)
 	}
 }
@@ -179,7 +180,7 @@ func TestPGClonePostgresSnapshotRestoreWorkerDoesNotRepeatUnknownDispatch(t *tes
 	if !errors.Is(err, managedpostgres.ErrUnavailable) || complete || p.forkCreates != 0 || p.forkFinds != 1 {
 		t.Fatalf("redispatched uncertain intent: complete=%v err=%v", complete, err)
 	}
-	if r, err := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID); err != nil || r.State != "requested" || r.TargetProviderResourceID != "" {
+	if r, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID); err != nil || r.State != "requested" || r.TargetProviderResourceID != "" {
 		t.Fatalf("missing fork discarded authority: %+v %v", r, err)
 	}
 }

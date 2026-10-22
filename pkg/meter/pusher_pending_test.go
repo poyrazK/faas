@@ -83,6 +83,7 @@ func TestPushPendingRetriesFailedWindowsFromDurableUsage(t *testing.T) {
 	provider := &recordingStripe{err: retryErr}
 	now := t0.Add(2 * time.Hour)
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	completeUsageThrough(t, ctx, store, now)
 	if pushed, err := pusher.PushPending(ctx, 30*24*time.Hour); pushed != 0 || !errors.Is(err, retryErr) {
 		t.Fatalf("first PushPending = (%d, %v), want (0, temporary error)", pushed, err)
 	}
@@ -107,6 +108,7 @@ func TestPushPendingLeavesPeerHeldWindowUndelivered(t *testing.T) {
 	}
 	provider := &recordingStripe{err: billing.ErrUsageDeliveryInProgress}
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	completeUsageThrough(t, ctx, store, now)
 	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); pushed != 0 || err != nil {
 		t.Fatalf("held PushPending = (%d, %v), want quiet pending result", pushed, err)
 	}
@@ -130,6 +132,7 @@ func TestPushPendingHonorsLookback(t *testing.T) {
 
 	provider := &recordingStripe{}
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	completeUsageThrough(t, ctx, store, now)
 	pushed, err := pusher.PushPending(ctx, 24*time.Hour)
 	if err != nil || pushed != 1 {
 		t.Fatalf("PushPending = (%d, %v), want one in-range window", pushed, err)
@@ -170,6 +173,7 @@ func TestPushPendingDoesNotRebillUsageBeforeProviderIdentity(t *testing.T) {
 
 	provider := &recordingStripe{}
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	completeUsageThrough(t, ctx, store, now)
 	pushed, err := pusher.PushPending(ctx, 24*time.Hour)
 	if err != nil || pushed != 1 {
 		t.Fatalf("PushPending = (%d, %v), want one post-switch window", pushed, err)
@@ -190,7 +194,7 @@ func TestPushHourOverageProviderExcludesIncludedCalendarMonthUsage(t *testing.T)
 	// The prior hour consumes the entire Hobby allowance. The current
 	// hour is therefore the first one Polar should receive, and only its
 	// two billable GB-hours should be sent.
-	if err := store.AppendUsage(ctx, acct.ID, "app-a", "instance-a", start.Add(-time.Minute), 50*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
+	if err := store.AppendUsage(ctx, acct.ID, "app-a", "instance-a", start.Add(-time.Minute), api.IncludedMBSeconds(api.PlanHobby), 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.AppendUsage(ctx, acct.ID, "app-a", "instance-a", start.Add(5*time.Minute), 2*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
@@ -199,6 +203,7 @@ func TestPushHourOverageProviderExcludesIncludedCalendarMonthUsage(t *testing.T)
 
 	provider := &recordingOverage{}
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	completeUsageThrough(t, ctx, store, now)
 	pushed, err := pusher.PushHour(ctx)
 	if err != nil || pushed != 1 {
 		t.Fatalf("PushHour = (%d, %v), want (1, nil)", pushed, err)
@@ -209,7 +214,9 @@ func TestPushHourOverageProviderExcludesIncludedCalendarMonthUsage(t *testing.T)
 	}
 }
 
-func TestPushPendingOverageCapDoesNotSendCrossingWindow(t *testing.T) {
+// ADR-1162: the window that crosses the cap is billed exactly up to the cap and
+// settled, instead of being held for a back-bill if the cap is raised later.
+func TestPushPendingOverageCapBillsCrossingWindowUpToCap(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
 	acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
@@ -229,16 +236,22 @@ func TestPushPendingOverageCapDoesNotSendCrossingWindow(t *testing.T) {
 
 	provider := &recordingOverage{}
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	completeUsageThrough(t, ctx, store, now)
 	pushed, err := pusher.PushPending(ctx, 24*time.Hour)
 	if err != nil {
 		t.Fatalf("PushPending = (%d, %v), want successful partial replay", pushed, err)
 	}
-	if pushed != 1 {
-		t.Fatalf("PushPending pushed = %d, want 1 window below cap", pushed)
+	if pushed != 2 {
+		t.Fatalf("PushPending pushed = %d, want the window below the cap and the crossing window", pushed)
 	}
+	// The 1-cent cap allows 1 GB-h of overage: the first half GB-h window in
+	// full, then only half of the crossing 1 GB-h window.
 	calls := provider.Calls()
-	if len(calls) != 1 || calls[0].MBSeconds != halfGBHour {
-		t.Fatalf("provider calls = %+v, want only the half-GB-hour window", calls)
+	if len(calls) != 2 || calls[0].MBSeconds != halfGBHour || calls[1].MBSeconds != halfGBHour {
+		t.Fatalf("provider calls = %+v, want two half-GB-hour deliveries", calls)
+	}
+	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); pushed != 0 || err != nil {
+		t.Fatalf("second PushPending = (%d, %v), want the capped window settled", pushed, err)
 	}
 }
 
@@ -259,6 +272,7 @@ func TestPushHourOverageCapZeroSkipsProvider(t *testing.T) {
 
 	provider := &recordingOverage{}
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	completeUsageThrough(t, ctx, store, now)
 	pushed, err := pusher.PushHour(ctx)
 	if err != nil {
 		t.Fatalf("PushHour = (%d, %v)", pushed, err)
@@ -278,6 +292,7 @@ func TestPushPendingSkipsIncompleteBillingIdentity(t *testing.T) {
 	}
 	provider := &recordingOverage{}
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	completeUsageThrough(t, ctx, store, now)
 	pushed, err := pusher.PushPending(ctx, 24*time.Hour)
 	if err != nil {
 		t.Fatalf("PushPending = (%d, %v)", pushed, err)
@@ -302,6 +317,7 @@ func TestPushPendingEgressLiveSubtractsMonthlyAllowance(t *testing.T) {
 
 	provider := &recordingEgressProvider{mode: billing.MeterDeliveryLive}
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	completeUsageThrough(t, ctx, store, now)
 	pushed, err := pusher.PushPending(ctx, 24*time.Hour)
 	if err != nil || pushed != 1 {
 		t.Fatalf("PushPending = (%d, %v), want one live egress event", pushed, err)
@@ -324,6 +340,7 @@ func TestPushPendingEgressShadowNeverCallsProviderOrReplaysOnLive(t *testing.T) 
 
 	provider := &recordingEgressProvider{mode: billing.MeterDeliveryShadow}
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	completeUsageThrough(t, ctx, store, now)
 	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 0 {
 		t.Fatalf("shadow PushPending = (%d, %v), want no external push", pushed, err)
 	}
@@ -352,11 +369,17 @@ func TestPushPendingEgressLiveHonorsCombinedOverageCap(t *testing.T) {
 	}
 	provider := &recordingEgressProvider{mode: billing.MeterDeliveryLive}
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
-	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 0 {
-		t.Fatalf("PushPending = (%d, %v), want cap-safe no-op", pushed, err)
+	completeUsageThrough(t, ctx, store, now)
+	// 1 GiB of egress overage costs 2 cents; the 1-cent cap bills exactly half
+	// of it and settles the window (ADR-1162).
+	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 1 {
+		t.Fatalf("PushPending = (%d, %v), want one capped delivery", pushed, err)
 	}
-	if calls := provider.MeterCalls(); len(calls) != 0 {
-		t.Fatalf("capped egress calls = %+v, want none", calls)
+	if calls := provider.MeterCalls(); len(calls) != 1 || calls[0].Quantity != gib/2 {
+		t.Fatalf("capped egress calls = %+v, want one half-GiB delivery", calls)
+	}
+	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 0 {
+		t.Fatalf("replay = (%d, %v), want the capped window settled", pushed, err)
 	}
 }
 
@@ -375,6 +398,7 @@ func TestPushPendingEgressLiveNeverBackfillsBeforeActivation(t *testing.T) {
 	}
 	provider := &recordingEgressProvider{mode: billing.MeterDeliveryLive, effectiveFrom: activation}
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	completeUsageThrough(t, ctx, store, now)
 	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 1 {
 		t.Fatalf("PushPending = (%d, %v), want only post-activation event", pushed, err)
 	}

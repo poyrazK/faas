@@ -14,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -100,6 +101,50 @@ func TestSynthAdapterForwardInvocationStampsPlatformHeaders(t *testing.T) {
 	}
 	if out.State != state.InvocationDispatching {
 		t.Fatalf("state = %q, want dispatching", out.State)
+	}
+}
+
+// ADR-1180: a synthetic invocation reaches the guest with the app's async
+// timeout as its deadline, so the runner lets it run past 30 s.
+func TestSynthAdapterSendsTheAppsAsyncDeadline(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "async-deadline@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		slug            string
+		requestTimeoutS int
+		wantMs          int64
+	}{
+		{slug: "default-timeout", wantMs: 30_000},
+		{slug: "short-timeout", requestTimeoutS: 3, wantMs: 30_000},
+		{slug: "long-timeout", requestTimeoutS: 120, wantMs: 120_000},
+		{slug: "over-ceiling", requestTimeoutS: 900, wantMs: 300_000},
+	} {
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: tc.slug, Type: state.AppTypeFunction,
+			Manifest: state.AppManifest{RequestTimeoutS: tc.requestTimeoutS}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got int64
+		a := &synthAdapter{store: store, forward: func(gateway.Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if b, ok := reqbudget.FromContext(r.Context()); ok {
+					got = b.Remaining(time.Time{}).Milliseconds()
+				}
+				w.WriteHeader(http.StatusOK)
+			})
+		}}
+		if _, err := a.forwardInvocation(ctx, gateway.Target{InstanceID: "i", NodeID: "n"},
+			state.Invocation{ID: "inv-" + tc.slug, AppID: app.ID, Source: state.InvocationAsyncInvoke}); err != nil {
+			t.Fatalf("%s: forwardInvocation: %v", tc.slug, err)
+		}
+		// The budget starts at the timeout and only counts down.
+		if got > tc.wantMs || got < tc.wantMs-5_000 {
+			t.Errorf("%s: deadline %d ms, want about %d ms", tc.slug, got, tc.wantMs)
+		}
 	}
 }
 

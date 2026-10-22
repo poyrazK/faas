@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/apid/mcpreadiness"
 	"log/slog"
 	"net"
 	"net/http"
@@ -40,10 +41,17 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"github.com/onebox-faas/faas/pkg/apid/managedpg"
+
+	"github.com/onebox-faas/faas/pkg/apid/apptaskattach"
+	"github.com/onebox-faas/faas/pkg/apid/imagerun"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
+	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
 	"github.com/onebox-faas/faas/pkg/apid/object"
+	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
+	"github.com/onebox-faas/faas/pkg/apid/routeinsights"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/auth"
 	"github.com/onebox-faas/faas/pkg/authcode"
@@ -51,21 +59,26 @@ import (
 	billingloader "github.com/onebox-faas/faas/pkg/billing/loader"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
-	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/eventrecording"
 	"github.com/onebox-faas/faas/pkg/eventretention"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/grace"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/internalmail"
+
+	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/logintoken"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/promotionrollout"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -302,6 +315,16 @@ func resolvePrometheusURL(getenv func(string) string, boxRole role.Role) string 
 	}
 	if boxRole == role.RoleControlPlane {
 		return prometheusURLDefault
+	}
+	return ""
+}
+
+func resolveAlertmanagerURL(getenv func(string) string, boxRole role.Role) string {
+	if value := getenv("FAAS_ALERTMANAGER_URL"); value != "" {
+		return value
+	}
+	if boxRole == role.RoleControlPlane {
+		return "http://127.0.0.1:9094"
 	}
 	return ""
 }
@@ -576,11 +599,21 @@ func apidConfigPath(lookup func(string) *flag.Flag) string {
 
 // Main runs the apid daemon; cmd/apid calls it.
 func Main() {
+	pipelineAlerts := flag.Bool("data-pipeline-alert-worker", false, "monitor pipeline health and deliver opt-in webhooks without replication or API listeners")
+	pipelineWorker := flag.Bool("data-pipeline-worker", false, "reconcile managed Postgres mirrors without API listeners")
 	cloneWorker := flag.Bool("clone-worker", false, "run the bounded project-environment clone worker without API listeners")
 	runtimeUpgradeWorker := flag.Bool("runtime-upgrade-worker", false, "run the private runtime upgrade worker without API listeners; requires native qualification for each operation")
-	wire.Daemon("apid", func(ctx context.Context, log *slog.Logger) error {
-		if *cloneWorker && *runtimeUpgradeWorker {
+	// The API mode hands off on reload; the worker modes' units do not
+	// reload (ADR-1736).
+	wire.HandoffDaemon("apid", func(ctx context.Context, log *slog.Logger) error {
+		if (*cloneWorker && *runtimeUpgradeWorker) || (*pipelineWorker && (*cloneWorker || *runtimeUpgradeWorker)) || (*pipelineAlerts && (*cloneWorker || *runtimeUpgradeWorker || *pipelineWorker)) {
 			return errors.New("apid: worker modes are mutually exclusive")
+		}
+		if *pipelineAlerts {
+			return runDataPipelineAlertWorker(ctx, log)
+		}
+		if *pipelineWorker {
+			return runDataPipelineWorker(ctx, log)
 		}
 		if *runtimeUpgradeWorker {
 			return runRuntimeUpgradeWorker(ctx, log)
@@ -708,6 +741,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// back listener confuses operators reading the headers.
 	httpsec.SetHSTSEnabled(httpsec.HSTSEnabledFromEnv(os.Getenv))
 
+	stopEventWriter, err := eventrecording.Start(ctx, state.NewPgStore(pool), "apid", cfg.EventAcknowledgmentWriterSlot, cfg.EventAcknowledgmentWriterRoster, log)
+	if err != nil {
+		return err
+	}
+	defer stopEventWriter()
 	deps.store = func() state.Store { return state.NewPgStore(pool) }
 	// Wire the canonical OpenAPI projector before any deployment can be
 	// promoted. state.MarkDeploymentLive invokes it inside the same Postgres
@@ -738,12 +776,23 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// block short-circuits to nil when pool is nil.
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
+		go srv.runCronActivationWorker(ctx)
+		go srv.runSafeProjectReleaseWorker(ctx)
+		go srv.runPromotionHealthWorker(ctx)
+		go srv.runMailOutbox(ctx)
+		go srv.runHostingReconciler(ctx)
 		go srv.runSafeReleaseEmergencyAbort(ctx)
 		go srv.runServiceRolloutBindingWorker(ctx)
 		go srv.runCheckedRollbackWorker(ctx)
 		go srv.runAlertRollbackWorker(ctx)
 		go srv.runRollbackOn5xxWorker(ctx)
+		go srv.runConfigGuardWorker(ctx)
+		go srv.runPostReleaseWatchWorker(ctx)
+		go srv.plainRollbacks().Run(ctx)
 		go srv.operation.RunOperationArtifactCleanup(ctx)
+		go srv.operation.RunScheduleFirer(ctx)
+		go srv.operation.RunOperationQueueReleaser(ctx)
+		go srv.operation.RunChildSettlementSignals(ctx)
 		go srv.object.RunObjectStorageRecovery(ctx)
 		go srv.object.RunObjectStorageAccounting(ctx)
 		go srv.runManagedPostgresReconciler(ctx)
@@ -753,17 +802,26 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedPostgresUsageCollector(ctx)
 		go srv.runManagedPostgresHealthCollector(ctx)
 		go srv.runAppHealthCollector(ctx)
+		go mcpcatalog.RunManagedObservers(ctx, srv.store, srv.domain, hostIdentitiesForUnseal, log, srv.mcpReadinessPreview)
+		readinessMonitor := &mcpreadiness.MonitorRunner{Handler: mcpreadiness.New(srv.store, srv.mcpReadinessPreview, nil), Identities: hostIdentitiesForUnseal, Log: log}
+		go readinessMonitor.Run(ctx)
 		go srv.realtime.RunManagedRealtimeEndpointReconciler(ctx)
 		go srv.realtime.RunManagedRealtimeChannelRouteReconciler(ctx)
 		go srv.realtime.RunManagedRealtimeOwnerReaper(ctx)
 		go srv.realtime.RunManagedRealtimeHistoryReaper(ctx)
 		go srv.realtime.RunManagedRealtimeEntityExpirations(ctx)
 		go srv.realtime.RunManagedRealtimeSchedules(ctx)
+		go srv.realtime.RunRealtimeConsumerGroupAlerts(ctx)
+		go srv.realtime.RunRealtimeConsumerGroupDeadRetention(ctx)
+		go srv.realtime.RunRealtimeReplayJobs(ctx)
+		go srv.realtime.RunRealtimeConsumerGroupWorkerHealth(ctx)
+
 		go srv.realtime.RunManagedRealtimeFallbacks(ctx)
 		go srv.realtime.RunManagedRealtimePush(ctx)
 		go srv.realtime.RunManagedRealtimeDrainWorker(ctx)
 		go srv.runManagedExecutionWorkflowWorker(ctx)
 		go srv.durable.RunAlarms(ctx)
+		go srv.durable.RunDurableEntityRegistryCleanup(ctx)
 		go srv.durable.RunOutbox(ctx)
 		go srv.durable.RunMaintenance(ctx)
 		go srv.durable.RunHealth(ctx)
@@ -824,8 +882,23 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// that the apid gRPC receiver (Stage 4) already honors.
 		startDebugRegressionCron(ctx, srv, log, deps.getenv)
 		startProfileDeploymentChecks(ctx, srv, log)
+		// API monetization workers pause while its runtime setting is off
+		// (ADR-20261018090210).
+		srv.billingRuns.Enabled = srv.apiMonetizationEnabled
+		srv.statementInvoices.Enabled = srv.apiMonetizationEnabled
+		srv.consumerCredits.Enabled = srv.apiMonetizationEnabled
+		srv.consumerControls.Enabled = srv.apiMonetizationEnabled
+		srv.billingRuns.Start(ctx, log)                // ADR-1503
+		srv.statementInvoices.Start(ctx, log)          // ADR-1504
+		srv.consumerCredits.Start(ctx, log)            // ADR-1306
+		srv.consumerControls.Start(ctx, log)           // ADR-1315
+		srv.productControl.StartOverdueHolds(ctx, log) // ADR-20261018212918
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		srv.startIssuesMaintenance(ctx)
+		srv.startIssueTrackerAutoSync(ctx)
+		srv.startIssueTrackerReminders(ctx)
+		srv.startIssueApplicationReminders(ctx)
+		srv.startIssueSlackDelivery(ctx)
 		// G6 grace timer (spec §17 G6, ADR-021): the 30-day deletion
 		// grace sweep lives in apid (not meterd) because the write
 		// side (DELETE /v1/account, POST /v1/account/restore) is here
@@ -883,6 +956,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// audit auditor makes with pkg/audit.Auditor.SetOps).
 		eventRetentionCleanup.SetOps(srv.ops)
 		go func() { _ = eventRetentionCleanup.Run(ctx) }()
+		// ADR-1198: proactive route insights. Every RouteInsightInterval the
+		// evaluator records which routes keep running apps awake and which are
+		// measured safe to cache; a trigger notifies subscribed app webhooks.
+		if insightStore, ok := srv.store.(routeinsights.Store); ok {
+			insights := &routeinsights.Evaluator{Store: insightStore, Log: log}
+			go func() { _ = insights.Run(ctx) }()
+		}
 		// Issue #562 / PR-A: log archive shipper. Walks the local
 		// spool dir every cfg.FlushInterval (5 min default) and
 		// gzip-PUTs .partial files to s3://{bucket}/faas-logs/{instance}/
@@ -1141,6 +1221,12 @@ func dpaPathFromEnv(getenv func(string) string) string {
 }
 
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
+	// stopping is the unit's SIGTERM. ctx also ends once a two-generation
+	// hand-off's successor serves (ADR-1736): this generation's background
+	// work stops with it while its requests finish.
+	stopping := ctx
+	ctx, endGeneration := context.WithCancel(ctx)
+	defer endGeneration()
 	ops := wire.NewOpsMetrics("apid")
 	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "apid", wire.Version, log, ops.Registry(), ops.MetricPrefix())
 	if traceErr != nil {
@@ -1415,6 +1501,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// resolved config rides on *server via WithOAuthConfig so the
 	// handlers, /v1/auth/capabilities, and renderLoginForm share one
 	// source of truth (no os.Getenv at request time).
+	slackOAuthCfg, err := issueslack.LoadOAuthConfig(deps.getenv)
+	if err != nil {
+		return fmt.Errorf("apid Slack OAuth configuration: %w", err)
+	}
+	linearOAuthCfg, err := issuetracker.LoadLinearOAuthConfig(deps.getenv)
+	if err != nil {
+		return fmt.Errorf("apid Linear OAuth configuration: %w", err)
+	}
 	oauthCfg, err := auth.LoadSignInConfigFromEnv(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid OAuth configuration: %w", err)
@@ -1434,8 +1528,54 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithAtomicWorkerReleaseEnabled(deps.getenv("FAAS_ATOMIC_WORKER_RELEASES_ENABLED") == "1").
+		WithProjectCanariesEnabled(deps.getenv("FAAS_PROJECT_CANARIES_ENABLED") == "1").
+		WithPromotionHealthEnabled(deps.getenv("FAAS_PROMOTION_HEALTH_ENABLED") == "1").
+		WithPromotionServiceGraphEnabled(deps.getenv("FAAS_PROMOTION_SERVICE_GRAPH_ENABLED") == "1").
+		WithPromotionMigrationsEnabled(deps.getenv("FAAS_PROMOTION_MIGRATIONS_ENABLED") == "1").
+		WithPromotionWorkersEnabled(deps.getenv("FAAS_PROMOTION_WORKERS_ENABLED") == "1").
+		WithProjectReleaseSecretsEnabled(deps.getenv("FAAS_PROJECT_RELEASE_SECRETS_ENABLED") == "1").
+		WithAtomicServiceAdditionsEnabled(deps.getenv("FAAS_ATOMIC_SERVICE_ADDITIONS_ENABLED") == "1").
+		WithProjectMigrationContractsEnabled(deps.getenv("FAAS_PROJECT_MIGRATION_CONTRACTS_ENABLED") == "1").
+		WithInteractiveAppTasksEnabled(apptaskattach.EnabledFromEnv(deps.getenv)).
+		WithImageRunsEnabled(imagerun.EnabledFromEnv(deps.getenv)).
+		WithInternalCIConfig(ci.ConfigFromEnv(deps.getenv)).
+		WithInteractiveImageRunsEnabled(imagerun.InteractiveEnabledFromEnv(deps.getenv)).
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
+		WithRealtimeTicketsPreviewEnabled(deps.getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1").
+		WithRealtimeAccessPreviewEnabled(deps.getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1").
+		WithRealtimeOccupancyPreviewEnabled(deps.getenv("FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED") == "1").
+		WithRealtimeUsageEnabled(deps.getenv("FAAS_REALTIME_USAGE_ENABLED") == "1").
+		WithRealtimeFairUseEnabled(deps.getenv("FAAS_REALTIME_FAIR_USE_ENABLED") == "1").
+		WithTriggerBatchDeliveryEnabled(deps.getenv("FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
+	srv.promotionRollout = promotionrollout.FromEnv(deps.getenv, wire.GitSHA)
+	if err := srv.configureMailOutbox(ctx, deps.pool, deps.getenv); err != nil {
+		return fmt.Errorf("apid: producer mail outbox: %w", err)
+	}
+
+	srv.rehearsalNetworkEnabled = deps.getenv("FAAS_REHEARSAL_NETWORK_CONTAINMENT") == "1"
+	srv.rehearsalSimulationEnabled = deps.getenv("FAAS_REHEARSAL_ACTION_SIMULATION") == "1"
+	srv.rehearsalWorkersEnabled = deps.getenv("FAAS_REHEARSAL_WORKERS") == "1"
+	srv.rehearsalWorkerFaultsEnabled = deps.getenv("FAAS_REHEARSAL_WORKER_FAULTS") == "1"
+	srv.rehearsalPostgresFaultsEnabled = deps.getenv("FAAS_REHEARSAL_POSTGRES_FAULTS") == "1"
+	srv.rehearsalSuspendResumeEnabled = deps.getenv("FAAS_REHEARSAL_SUSPEND_RESUME") == "1"
+	srv.rehearsalRunningSuspendEnabled = deps.getenv("FAAS_REHEARSAL_RUNNING_JOB_SUSPEND") == "1"
+	srv.rehearsalColdStartEnabled = deps.getenv("FAAS_REHEARSAL_COLD_START") == "1"
+	srv.rehearsalCommandsEnabled = deps.getenv("FAAS_REHEARSAL_COMMAND_EXECUTION") == "1"
+	if err := srv.configureRehearsalObjects(ctx, deps.getenv); err != nil {
+		return err
+	}
+	if err := srv.configureRehearsalPostgres(ctx, deps.getenv); err != nil {
+		return err
+	}
+	closeCIStorage, err := srv.configureInternalCIStorage(ctx, deps.getenv)
+	if err != nil {
+		return fmt.Errorf("apid internal CI storage: %w", err)
+	}
+	defer closeCIStorage()
+	srv.linearOAuthConfig = linearOAuthCfg
+	srv.issueSlackOAuthConfig = slackOAuthCfg
 	srv.guestTracingEnabled = deps.getenv("FAAS_GUEST_TRACING_ENABLED") == "1"
 	if err := srv.configureProfiles(deps.getenv); err != nil {
 		return fmt.Errorf("apid profiling: %w", err)
@@ -1447,17 +1587,38 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureOperations(*cfg, deps.getenv); err != nil {
 		return err
 	}
+	if err := srv.configureDataRepair(*cfg, deps.getenv); err != nil {
+		return err
+	}
 	srv.operation.StartOperationNotifications(ctx)
+	srv.configureProductControl(*cfg, deps.getenv)
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
 		return err
 	}
-	srv.configureAIGateway(*cfg, deps.getenv)
+	if err := srv.configureWorkloadTrust(*cfg, deps.getenv); err != nil {
+		return err
+	}
+	if err := srv.configureAIGateway(*cfg, deps.getenv); err != nil {
+		return fmt.Errorf("apid: AI gateway: %w", err)
+	}
 	billingMode, err := billing.ModeFromEnv(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid: billing mode: %w", err)
 	}
 	srv.WithBillingMode(billingMode)
 	srv.devBridgeEnabled = deps.getenv("FAAS_DEV_BRIDGE_ENABLED") == "1"
+	srv.serviceMap.Enabled = deps.getenv("FAAS_SERVICE_MAP_ENABLED") == "1"
+	srv.changeTimelineEnabled = deps.getenv("FAAS_CHANGE_TIMELINE_ENABLED") == "1"
+	srv.anomalyAlertsEnabled = deps.getenv("FAAS_ANOMALY_ALERTS_ENABLED") == "1"
+	srv.seedEnvPlatformFlags(deps.getenv) // ADR-1700 boot fallbacks for the gates above
+
+	srv.customMetricHistoryEnabled = deps.getenv("FAAS_CUSTOM_METRIC_HISTORY_ENABLED") == "1"
+	if srv.customMetricHistoryEnabled {
+		// ADR-745: expose fresh pushed gauges so Prometheus keeps history.
+		if exportStore, ok := srv.store.(state.CustomMetricExportStore); ok {
+			ops.Registry().MustRegister(newCustomMetricExporter(exportStore, time.Now, srv.log))
+		}
+	}
 	srv.devBridgeURL = deps.getenv("FAAS_DEV_BRIDGE_RELAY_URL")
 	if srv.devBridgeURL == "" {
 		srv.devBridgeURL = "http://127.0.0.1:9098"
@@ -1467,6 +1628,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid object storage configuration: %w", err)
 	}
 	srv.WithObjectStorage(objectRegistry)
+	if err := srv.configureHosting(deps.getenv); err != nil {
+		return fmt.Errorf("apid internal hosting configuration: %w", err)
+	}
 	if err := srv.configureDurableEntities(ctx, deps.getenv); err != nil {
 		return fmt.Errorf("apid durable entities configuration: %w", err)
 	}
@@ -1483,6 +1647,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if srv.postgresStorage, err = managedpg.ParseRollout("FAAS_MANAGED_POSTGRES_STORAGE_RESIZE_ACCOUNTS", deps.getenv("FAAS_MANAGED_POSTGRES_STORAGE_RESIZE_ACCOUNTS")); err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
+	if err := srv.configureLiveQueries(deps.pool, deps.getenv); err != nil {
+		return fmt.Errorf("apid live queries configuration: %w", err)
+	}
+	srv.configureDataAPIUsage(deps.pool)
+	if err := srv.configureDataPipelines(*cfg, deps.pool); err != nil {
+		return err
+	}
 	srv.WithResendWebhookSecret(resendSecret)
 	// Issue #246 acceptance item 8: wire the meterd-owned bounce
 	// handler so Resend bounce / complaint events feed the
@@ -1497,6 +1668,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// before any listener is exposed. Database state wins over the
 	// bootstrap fallback for catalogued runtime settings.
 	srv.WithRuntimeConfigManager(newRuntimeConfigManager(deps.getenv))
+	// ADR-1700: report what this apid applies so the console shows
+	// convergence per consumer, not only the database acknowledgement.
+	srv.runtimeConfig.enableReceipts("apid")
 	// Seed legacy consumers from the same bootstrap snapshot before the
 	// durable reconciliation. The durable operator value must win after a
 	// restart; calling WithDataPlacement after reconcile would overwrite it
@@ -1646,10 +1820,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Metrics: budgetMetrics,
 		Log:     log,
 		DefaultFor: func(r *http.Request) time.Duration {
-			if reqbudget.IsSyncInvokeRequest(r) {
-				// invokeApp applies the plan-specific 5s/30s wait;
-				// give that handler the full platform ceiling so the
-				// outer apid budget does not truncate paid plans.
+			if reqbudget.IsDeploymentResponseCheckRequest(r) {
+				return api.DeploymentResponseCheckTimeout
+			}
+			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) || managedrealtime.IsRealtimeGroupClaimRequest(r) {
+				// invokeApp applies the plan-specific 5s/30s wait, a deploy
+				// commit scans its source archive (H9-157), and realtime
+				// group claims may long-poll; all get the platform ceiling
+				// instead of the 5 s default.
 				return api.RequestBudgetMax
 			}
 			return 0
@@ -1743,12 +1921,26 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		resolvePrometheusURL(deps.getenv, cfg.Role),
 		deps.getenv("FAAS_STATUSPAGE_PATH"),
 	)
+	srv.WithAlertmanagerObservability(resolveAlertmanagerURL(deps.getenv, cfg.Role))
 	// ADR-847: synthetic route probes stay off unless the public origin the
 	// probes enter through is configured.
 	if origin := strings.TrimSpace(deps.getenv("FAAS_ROUTE_PROBE_URL")); origin != "" {
 		srv.WithRouteProbes(routeprobe.Client{BaseURL: origin, AppsDomain: cfg.GetAppsDomain(deps.getenv), HTTP: &http.Client{Timeout: api.RouteHealthProbeRequestTimeout}})
 	}
 	go srv.runStatusEvaluator(ctx)
+	buildQueueMetrics := operatorobs.NewBuildQueueMetrics(srv.ops.Registry())
+	queueMetricsCtx, stopQueueMetrics := context.WithCancel(ctx)
+	defer stopQueueMetrics()
+	// Legacy count-only adapters remain observably unavailable; never compose
+	// count and oldest timestamps from separate database snapshots.
+	queueReader, _ := srv.store.(operatorobs.BuildQueueReader)
+	go buildQueueMetrics.Run(queueMetricsCtx, queueReader, log)
+	recoveryMetrics := operatorobs.NewBuildRecoveryMetrics(srv.ops.Registry())
+	recoveryReader, _ := srv.store.(state.BuildRecoveryObservationStore)
+	go recoveryMetrics.Run(queueMetricsCtx, recoveryReader, log)
+	alertMetrics := operatorobs.NewMaintenanceMetrics(srv.ops.Registry())
+	go operatorobs.RunAlertCollector(ctx, srv.store, srv.promqlClient, log, alertMetrics)
+	go operatorobs.RunAlertRetention(ctx, srv.store, log, alertMetrics)
 
 	// G2: load the host age recipient so the secrets PUT handler can seal.
 	// vmmd owns the private half; we only need the public recipient string.
@@ -1844,6 +2036,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	} else {
 		log.Warn("FAAS_HOST_AGE_IDENTITY_PATH unset — MFA /confirm, /verify, /disable, /recover will return 503")
+	}
+
+	if err := srv.configureProductEmail(deps.getenv); err != nil {
+		return fmt.Errorf("apid: configure product email: %w", err)
+	}
+	if srv.productControl.Enabled && srv.productControl.EmailTransport != nil {
+		go srv.runProductEmail(ctx)
 	}
 
 	// ADR-117 PR-C: load the host HMAC key so sealAndPersist
@@ -1986,7 +2185,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				Store:        store,
 				Audit:        rekeyAudit,
 				Identities:   identities,
-				HostHMACKey:  hostHMACKey(),
+				HostHMACKey:  hostHMACKeyBytes(),
 				ProgressPath: progressPath,
 				Log:          log,
 			})
@@ -2022,6 +2221,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go srv.runRouteProbeWorker(ctx)
 	go srv.runWorkflowReadinessSubscriptionWorker(ctx)
 	go srv.runWorkflowReadinessReminderWorker(ctx)
+	go srv.runApplicationStandardWorker(ctx)
+	go srv.runMigrationVerificationWorker(ctx)
+	go srv.runMigrationCutoverWorker(ctx)
 	if deps.bgBefore != nil {
 		deps.bgBefore(ctx, log, srv)
 	}
@@ -2078,6 +2280,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	metricsAddr := resolveMetricsAddr(deps.getenv, cfg.GetMetricsAddr(deps.getenv))
 	canaryServiceToken := strings.TrimSpace(deps.getenv("FAAS_CANARY_PROGRESSION_TOKEN"))
 	safeDeployServiceToken := strings.TrimSpace(deps.getenv("FAAS_SAFEDEPLOY_TOKEN"))
+	if metricsAddr == "" && deps.getenv(internalmail.QuotaWarningOutboxEnableEnv) == "1" {
+		return errors.New("apid: quota warning mail requires the loopback operator listener")
+	}
+	if metricsAddr == "" && deps.getenv(internalmail.NonpaymentDeletionOutboxEnableEnv) == "1" {
+		return errors.New("apid: non-payment deletion mail requires the loopback operator listener")
+	}
+	if metricsAddr == "" && deps.getenv(internalmail.AccountSuspendedOutboxEnableEnv) == "1" {
+		return errors.New("apid: suspension mail requires the loopback operator listener")
+	}
 	if metricsAddr == "" && (canaryServiceToken != "" || safeDeployServiceToken != "") {
 		return errors.New("apid: Safe Deploy service tokens require the loopback operator listener")
 	}
@@ -2103,6 +2314,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			_ = l.Close()
 			return err
 		}
+		if err := srv.mountInternalMailQuotaWarning(metricsMux, metricsAddr, deps.getenv); err != nil {
+			_ = l.Close()
+			return err
+		}
+		if err := srv.mountInternalMailNonpaymentDeletion(metricsMux, metricsAddr, deps.getenv); err != nil {
+			_ = l.Close()
+			return err
+		}
+		if err := srv.mountInternalMailSuspension(metricsMux, metricsAddr, deps.getenv); err != nil {
+			_ = l.Close()
+			return err
+		}
 		wire.ControlMuxLite(metricsMux, apidProbe.ReadyFunc(), apidProbe.ReasonFunc())
 		metricsSrv = &http.Server{
 			Addr:    metricsAddr,
@@ -2120,7 +2343,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			IdleTimeout:       60 * time.Second,
 			MaxHeaderBytes:    int(api.DefaultMaxHeaderBytes),
 		}
-		mLis, err := net.Listen("tcp", metricsAddr)
+		mLis, err := wire.ListenInherited("tcp", metricsAddr)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: metrics listen %q: %w", metricsAddr, err)
@@ -2421,48 +2644,58 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reaching this point means the HTTP listener and its dependencies are
 	// fully constructed.
 	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
+	defer srv.startInternalCIWorker(ctx, log)()
 	defer srv.startEnvironmentGitDriftReporting(ctx, deps.getenv)()
-	notifyStop := daemonunit.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
+	defer srv.startEnvironmentGitAcceptanceEnforcement(ctx, deps.getenv)()
+	notifyStop := wire.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
+	// The drain lets a connection faas-apid.socket handed over just before
+	// shutdown deliver its request; net/http drops one it reads after
+	// Shutdown began (ADR-1736).
+	httpDrain := wire.NewHTTPDrain(httpSrv)
+	// Requests run under streamsCtx so a hand-off's old generation can end
+	// its SSE streams and long polls before its drain bound cuts them.
+	streamsCtx, endStreams := context.WithCancel(context.WithoutCancel(stopping))
+	defer endStreams()
+	httpSrv.BaseContext = func(net.Listener) context.Context { return streamsCtx }
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("apid listening", "addr", listenBind)
-		if err := httpSrv.Serve(l); err != nil && err != http.ErrServerClosed {
+		if err := httpDrain.ServeErr(httpSrv.Serve(httpDrain.Listener(l))); err != nil {
 			errc <- err
 		}
 	}()
+	// On `systemctl reload` a successor takes the sockets once it passed
+	// this generation's pre-traffic checks; this generation then stops its
+	// background work (ctx) and finishes its requests.
+	handedOff := make(chan struct{})
+	wire.WatchHandoffs(ctx, "apid", log, func() {
+		close(handedOff)
+		endGeneration()
+	}, HandoffChecks(listenBind, metricsAddr)...)
 	select {
 	case err := <-errc:
 		return err
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(stopping), 10*time.Second)
+		select {
+		case <-handedOff:
+			cancel()
+			shutdownCtx, cancel = wire.OldGenerationDrain(stopping, 10*time.Second, endStreams, log)
+		default:
+		}
 		defer cancel()
+		// Internal gRPC and /metrics stop within the restart grace either
+		// way: their clients reconnect, after a hand-off to the successor.
+		sideStopped := make(chan struct{})
+		go func() {
+			defer close(sideStopped)
+			stopAPIDSideServers(stopping, metricsSrv, advisorySrv, bridgeSrv, appErrSrv, spansWriterSrv)
+		}()
 		//nolint:contextcheck // shutdown context must outlive request ctx; detached from caller per net/http contract.
-		_ = httpSrv.Shutdown(shutdownCtx)
-		if metricsSrv != nil {
-			//nolint:contextcheck // shutdown context must outlive request ctx; detached from caller per net/http contract.
-			_ = metricsSrv.Shutdown(shutdownCtx)
-		}
-		if advisorySrv != nil {
-			// GracefulStop lets in-flight ForwardStatelessAdvisory
-			// calls finish writing their audit row before exit.
-			advisorySrv.GracefulStop()
-		}
-		if bridgeSrv != nil {
-			// GracefulStop lets in-flight EnqueueBuild RPCs finish
-			// writing the deployment + build rows before exit.
-			// A non-graceful Stop would leave the githubd dispatcher
-			// with a gRPC error mid-enqueue, which the dispatcher
-			// handles with log + skip — but graceful is cheaper.
-			bridgeSrv.GracefulStop()
-		}
-		if appErrSrv != nil {
-			appErrSrv.GracefulStop()
-		}
-		if spansWriterSrv != nil {
-			spansWriterSrv.GracefulStop()
-		}
+		_ = httpDrain.Shutdown(shutdownCtx, httpSrv)
+		<-sideStopped
 		// Issue #286: drain the async failed-login audit channel
 		// so in-flight rows land in the events table before the
 		// daemon exits. Close is idempotent — safe to call from
@@ -2473,6 +2706,34 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		return nil
 	}
+}
+
+// stopAPIDSideServers stops /metrics and the internal gRPC servers within the
+// restart grace. GracefulStop lets in-flight RPCs (an advisory's audit row, a
+// bridge EnqueueBuild's deployment and build rows) finish; a stream still
+// open at the grace is closed and its client reconnects.
+func stopAPIDSideServers(stopping context.Context, metricsSrv *http.Server, grpcServers ...*grpc.Server) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(stopping), 10*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	if metricsSrv != nil {
+		wg.Go(func() { _ = metricsSrv.Shutdown(ctx) })
+	}
+	for _, gs := range grpcServers {
+		if gs == nil {
+			continue
+		}
+		wg.Go(func() {
+			done := make(chan struct{})
+			go func() { gs.GracefulStop(); close(done) }()
+			select {
+			case <-done:
+			case <-ctx.Done():
+				gs.Stop()
+			}
+		})
+	}
+	wg.Wait()
 }
 
 // pgNotifier is the production notification adapter. Writes delegate to

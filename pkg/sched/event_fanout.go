@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,6 +22,10 @@ const eventInvocationPath = "/"
 const eventFanoutRecoveryBatch = 100
 const eventFanoutSubscriptionBatch = 256
 const eventFanoutRecipientMaxAttempts = api.EventRoutingRetryDefaultAttempts
+
+// eventFanoutSafetyTick re-runs the fanout sweep when no event_published
+// wake arrives; a wake that lands while a sweep runs is coalesced away.
+const eventFanoutSafetyTick = 5 * time.Second
 
 type eventFanoutRouteError struct {
 	code      string
@@ -92,7 +97,7 @@ func (l *Loop) routePublishedEventAt(ctx context.Context, payload string, accept
 			if _, err := l.routeSubscription(ctx, envelope, eventPayload, state.PublishedEventRecipient{
 				ID: row.ID, AccountID: row.AccountID, AppID: row.AppID,
 				Source: row.Source, Type: row.Type, Filter: row.Filter, SchemaVersions: row.SchemaVersions,
-			}, now, false); err != nil {
+			}, now, false, 0); err != nil {
 				routeErrs = append(routeErrs, err)
 			}
 		}
@@ -200,7 +205,7 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 			}
 			matched, routeErr = result.Matched, err
 		} else {
-			matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, recipient, now, true)
+			matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, recipient, now, true, work.ID)
 		}
 		finishedAt := time.Now().UTC()
 		if l.now != nil {
@@ -230,7 +235,7 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 	return err
 }
 
-func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, eventPayload []byte, row state.PublishedEventRecipient, now time.Time, requireActiveApp bool) (bool, error) {
+func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, eventPayload []byte, row state.PublishedEventRecipient, now time.Time, requireActiveApp bool, acceptanceID int64) (bool, error) {
 	if row.ObjectNotification != nil {
 		return l.routeObjectNotification(ctx, envelope, row, now)
 	}
@@ -284,14 +289,21 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 		"tracestate":  envelope.Tracestate,
 		"baggage":     envelope.Baggage,
 	}
+	eventHeaders := map[string]string{
+		"x-gregale-event-id":              envelope.ID,
+		"x-gregale-event-source":          envelope.Source,
+		"x-gregale-event-type":            envelope.Type,
+		"x-gregale-event-subscription-id": row.ID,
+	}
+	if acceptanceID > 0 {
+		if row.AcknowledgmentLeaseSeconds > 0 {
+			eventHeaders["x-gregale-event-acknowledgment-lease-seconds"] = strconv.Itoa(row.AcknowledgmentLeaseSeconds)
+		}
+		eventHeaders["x-gregale-event-acceptance-id"] = strconv.FormatInt(acceptanceID, 10)
+	}
 	headers, err := json.Marshal(pkgtrace.MergeHeaderMap(
 		pkgtrace.ExtractHeaders(ctx, producerHeaders),
-		map[string]string{
-			"x-gregale-event-id":              envelope.ID,
-			"x-gregale-event-source":          envelope.Source,
-			"x-gregale-event-type":            envelope.Type,
-			"x-gregale-event-subscription-id": row.ID,
-		},
+		eventHeaders,
 	))
 	if err != nil {
 		return true, fmt.Errorf("subscription %s: encode invocation headers: %w", row.ID, &eventFanoutRouteError{
@@ -447,6 +459,11 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 	}
 	l.runEventHistoryPrune(ctx, now)
 	if now.Sub(l.eventFanoutLastPrune) >= 10*time.Second {
+		if commands, ok := l.engine.store.(state.EventSubscriptionCapacityCommandRetentionStore); ok {
+			if _, err := commands.PruneEventSubscriptionCapacityCommands(ctx, now); err != nil && l.log != nil {
+				l.log.Warn("sched: prune capacity command receipts failed", "err", err)
+			}
+		}
 		if retention, ok := l.engine.store.(state.PublishedEventRetentionStore); ok {
 			if _, err := retention.PruneDeliveredPublishedEvents(ctx, now.Add(-state.PublishedEventIdentityRetention), 5000); err != nil {
 				if l.log != nil {
@@ -646,7 +663,7 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 				}
 				matched, routeErr = result.Matched, err
 			} else {
-				matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, work.Recipient, now, true)
+				matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, work.Recipient, now, true, work.OutboxID)
 			}
 		}
 		finishedAt := time.Now().UTC()

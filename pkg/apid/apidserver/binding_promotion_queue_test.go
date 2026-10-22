@@ -10,12 +10,13 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // Private consumers cannot be paused through the public trigger API. Model
 // a paused consumer observation without transferring its mutation authority.
 type pausedPromotionConsumerStore struct {
-	*state.MemStore
+	MemStore  *state.MemStore
 	bindingID string
 }
 
@@ -41,7 +42,7 @@ func TestBindingPromotionQueueReadinessAndRecovery(t *testing.T) {
 			}
 		}},
 		{"paused", "queue_consumer_paused", func(_ *testing.T, e testEnv, _ state.App, binding state.QueueBinding, _ string) {
-			e.s.store = &pausedPromotionConsumerStore{MemStore: e.store, bindingID: binding.ID}
+			e.s.store = statetest.NewMem(&pausedPromotionConsumerStore{MemStore: e.store, bindingID: binding.ID})
 		}},
 		{"degraded", "queue_consumer_degraded", func(t *testing.T, e testEnv, _ state.App, _ state.QueueBinding, id string) {
 			if err := e.store.RecordTriggerConsumerHealth(context.Background(), id, state.TriggerConsumerHealthObservation{LastPollAt: time.Now().UTC(), Error: "PRIVATE_QUEUE_ERROR"}); err != nil {
@@ -143,7 +144,7 @@ func TestBindingPromotionQueueUnobservedDisabledAndExternalConsumers(t *testing.
 	}
 }
 
-type expiringQueuePromotionStore struct{ *state.MemStore }
+type expiringQueuePromotionStore struct{ MemStore *state.MemStore }
 
 func (s *expiringQueuePromotionStore) PromoteDeploymentWithBindings(ctx context.Context, id string, fence state.BindingPromotionFence, serving string) (state.BindingPromotionResult, error) {
 	// Simulate waiting for the traffic lock without changing any inventory row.
@@ -167,7 +168,7 @@ func TestBindingPromotionQueuePollExpiresAtTrafficWrite(t *testing.T) {
 	if err := e.store.RecordTriggerConsumerHealth(context.Background(), id, state.TriggerConsumerHealthObservation{LastPollAt: polled, Success: true}); err != nil {
 		t.Fatal(err)
 	}
-	e.s.store = &expiringQueuePromotionStore{e.store}
+	e.s.store = statetest.NewMem(&expiringQueuePromotionStore{e.store})
 	r := e.do(t, http.MethodPost, "/v1/deployments/"+candidate.ID+"/promote", api.BindingPromotionRequest{AllowUnsupported: true, MaxVerificationAge: "1h"}, nil)
 	var problem api.Problem
 	if err := json.Unmarshal(r.Body.Bytes(), &problem); err != nil {
@@ -191,11 +192,11 @@ func TestBindingPromotionRejectsQueueFailureAfterPassedCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.s.store = &changingBindingPromotionStore{MemStore: e.store, before: func() {
+	e.s.store = statetest.NewMem(&changingBindingPromotionStore{MemStore: e.store, before: func() {
 		if err := e.store.RecordTriggerConsumerHealth(context.Background(), id, state.TriggerConsumerHealthObservation{LastPollAt: time.Now(), Error: "PRIVATE_QUEUE_ERROR"}); err != nil {
 			t.Fatal(err)
 		}
-	}}
+	}})
 	r := e.do(t, http.MethodPost, "/v1/deployments/"+candidate.ID+"/promote", api.BindingPromotionRequest{AllowUnsupported: true}, nil)
 	if r.Code != 409 || !strings.Contains(r.Body.String(), "promotion_observations_changed") || strings.Contains(r.Body.String(), "PRIVATE_QUEUE_ERROR") {
 		t.Fatalf("consumer failure raced traffic write: %d %s", r.Code, r.Body.String())
@@ -210,7 +211,8 @@ func TestBindingPromotionDeadlineUsesEarliestRequiredObservation(t *testing.T) {
 		{Type: api.BindingTypePostgres, Status: "passed", CheckedAt: &proofAt},
 		{Type: api.BindingTypeQueue, Status: "unsupported"},
 	}}
-	inventory := api.AppBindingInventory{Bindings: []api.AppBindingInventoryItem{{Type: api.BindingTypeQueue, Name: "events", Binding: "worker", State: "enabled", Access: "push", ObservedAt: &pollAt}}}
+	shared := ""
+	inventory := api.AppBindingInventory{Bindings: []api.AppBindingInventoryItem{{Type: api.BindingTypeQueue, Name: "events", Binding: "worker", Scope: "app", QueueEnvironment: &shared, State: "enabled", Access: "push", ObservedAt: &pollAt}}}
 	deadline, finding := bindingPromotionDeadline(report, inventory, time.Hour)
 	if !deadline.Equal(pollAt.Add(api.QueueConsumerMaxPollAge)) || finding.Code != "queue_consumer_stale" || finding.Binding != "worker" {
 		t.Fatalf("queue poll did not bound promotion: %v %+v", deadline, finding)

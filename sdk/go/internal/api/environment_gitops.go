@@ -9,9 +9,11 @@ import (
 )
 
 // CreateEnvironmentGitSourceRequest selects a definition in the project's
-// verified repository. Repository and installation identities come from the
-// server's GitHub connection, never from this request.
+// verified repository. GitHub identity comes from the project installation;
+// GitLab identity is verified against the account OAuth connection.
 type CreateEnvironmentGitSourceRequest struct {
+	Provider       string `json:"provider,omitempty"`
+	Repository     string `json:"repository,omitempty"`
 	Ref            string `json:"ref,omitempty"`
 	ManifestPath   string `json:"manifest_path"`
 	Mode           string `json:"mode,omitempty"`
@@ -42,8 +44,10 @@ type ApproveEnvironmentGitRevisionResponse struct {
 }
 
 type EnvironmentGitOpsStatusResponse struct {
-	Source EnvironmentGitSource   `json:"source"`
-	Runs   []EnvironmentGitOpsRun `json:"runs"`
+	WorkloadEvidence    *EnvironmentWorkloadActivationEvidence `json:"workload_evidence,omitempty"`
+	WorkloadRetirements []EnvironmentWorkloadRetirement        `json:"workload_retirements,omitempty"`
+	Source              EnvironmentGitSource                   `json:"source"`
+	Runs                []EnvironmentGitOpsRun                 `json:"runs"`
 }
 
 type AdoptEnvironmentGitOpsRequest struct {
@@ -60,6 +64,7 @@ type RemoveEnvironmentGitOpsOverrideRequest struct {
 }
 
 type EnvironmentGitSourceSpec struct {
+	Provider       string `json:"provider,omitempty"`
 	RepositoryID   int64  `json:"repository_id"`
 	InstallationID int64  `json:"installation_id"`
 	Repository     string `json:"repository"`
@@ -139,15 +144,16 @@ type EnvironmentGitOpsChange struct {
 }
 
 type EnvironmentGitOpsPlan struct {
-	Manager         string                    `json:"manager"`
-	Revision        string                    `json:"revision"`
-	CommitSHA       string                    `json:"commit_sha,omitempty"`
-	Generation      int64                     `json:"generation"`
-	DesiredDigest   string                    `json:"desired_digest"`
-	ObservedVersion int64                     `json:"observed_version"`
-	Hash            string                    `json:"plan_hash"`
-	Changes         []EnvironmentGitOpsChange `json:"changes"`
-	BlockingReasons []string                  `json:"blocking_reasons"`
+	RetirementImpacts []EnvironmentWorkloadRetirementImpact `json:"retirement_impacts,omitempty"`
+	Manager           string                                `json:"manager"`
+	Revision          string                                `json:"revision"`
+	CommitSHA         string                                `json:"commit_sha,omitempty"`
+	Generation        int64                                 `json:"generation"`
+	DesiredDigest     string                                `json:"desired_digest"`
+	ObservedVersion   int64                                 `json:"observed_version"`
+	Hash              string                                `json:"plan_hash"`
+	Changes           []EnvironmentGitOpsChange             `json:"changes"`
+	BlockingReasons   []string                              `json:"blocking_reasons"`
 }
 
 func (p EnvironmentGitOpsPlan) CanApply() bool { return len(p.BlockingReasons) == 0 }
@@ -164,8 +170,13 @@ func (p EnvironmentGitOpsPlan) HasDrift() bool {
 }
 
 func (s EnvironmentGitSourceSpec) Validate() error {
+	provider := s.Provider
+	if provider == "" {
+		provider = "github"
+	}
 	parts := strings.Split(s.Repository, "/")
-	if s.RepositoryID <= 0 || s.InstallationID <= 0 || len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(s.Repository, " \t\r\n") {
+	if s.RepositoryID <= 0 || provider == "github" && (s.InstallationID <= 0 || len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(s.Repository, " \t\r\n")) ||
+		provider == "gitlab" && (s.InstallationID != 0 || !validGitLabRepositoryPath(s.Repository)) || provider != "github" && provider != "gitlab" {
 		return fmt.Errorf("Git source requires a verified repository and installation identity")
 	}
 	if !validEnvironmentGitRef(s.Ref) || s.ApprovalPolicy == "protected_branch" && !strings.HasPrefix(s.Ref, "refs/heads/") {
@@ -178,6 +189,27 @@ func (s EnvironmentGitSourceSpec) Validate() error {
 		return fmt.Errorf("Git source needs report/enforce mode and manual/protected_branch approval_policy")
 	}
 	return nil
+}
+
+func validGitLabRepositoryPath(repository string) bool {
+	if len(repository) > 512 || len(repository) == 0 || strings.TrimSpace(repository) != repository {
+		return false
+	}
+	parts := strings.Split(repository, "/")
+	if len(parts) < 2 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." || strings.HasSuffix(part, ".git") {
+			return false
+		}
+		for _, char := range part {
+			if char != '-' && char != '_' && char != '.' && (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func validEnvironmentGitRef(ref string) bool {
@@ -217,4 +249,20 @@ type EnvironmentFieldOwnershipRequest struct {
 }
 type EnvironmentFieldOwnershipResponse struct {
 	Status string `json:"status"`
+}
+
+// EnvironmentWorkloadRetirementImpact is a review-time inventory. Work counts
+// are informational and can grow before cutover; identities and retained
+// configuration remain bound by the plan's normal freshness hash.
+type EnvironmentWorkloadRetirementImpact struct {
+	Resource            string          `json:"resource"`
+	AppID               string          `json:"app_id"`
+	Routes              []DeclaredRoute `json:"routes,omitempty"`
+	QueueBindingIDs     []string        `json:"queue_binding_ids,omitempty"`
+	ConsumerIDs         []string        `json:"consumer_ids,omitempty"`
+	JobID               string          `json:"job_id,omitempty"`
+	PendingInvocations  int64           `json:"pending_invocations"`
+	InFlightInvocations int64           `json:"in_flight_invocations"`
+	QueuedTasks         int64           `json:"queued_tasks"`
+	InFlightTasks       int64           `json:"in_flight_tasks"`
 }

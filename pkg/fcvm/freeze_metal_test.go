@@ -94,12 +94,15 @@ func TestMetalFreezeThawCycle(t *testing.T) {
 	wakeToByte := time.Since(started)
 
 	for cycle := 0; cycle < 3; cycle++ {
-		rep, err := m.Freeze(ctx, id)
+		rep, err := m.Freeze(ctx, id, FreezeOptions{Reclaim: true})
 		if err != nil {
 			t.Fatalf("freeze %d: %v", cycle, err)
 		}
 		if rep.AfterBytes > rep.BeforeBytes {
 			t.Errorf("freeze %d: charge grew across reclaim: %+v", cycle, rep)
+		}
+		if frozen, since := m.FrozenState(id); !frozen || since.IsZero() {
+			t.Fatalf("freeze %d: FrozenState = %v, %v", cycle, frozen, since)
 		}
 		if _, err := (&http.Client{Timeout: 300 * time.Millisecond}).Get(url); err == nil {
 			t.Fatalf("freeze %d: paused guest answered HTTP", cycle)
@@ -110,6 +113,9 @@ func TestMetalFreezeThawCycle(t *testing.T) {
 			t.Fatalf("thaw %d: %v", cycle, err)
 		}
 		resumed := time.Since(started)
+		if frozen, _ := m.FrozenState(id); frozen {
+			t.Fatalf("thaw %d: instance still reported frozen", cycle)
+		}
 		resp, err := firstByte(url, 5*time.Second)
 		if err != nil {
 			t.Fatalf("thaw %d: guest does not serve: %v", cycle, err)

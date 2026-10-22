@@ -38,7 +38,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -178,23 +178,31 @@ func buildManifestForRequest(req VMRequest, timeoutSec int) (api.BuildManifest, 
 		return api.BuildManifest{}, fmt.Errorf("builderd: Dockerfile path: %w", err)
 	}
 	return api.BuildManifest{
-		SchemaVersion:   1,
-		BuildID:         req.BuildID,
-		TenantID:        req.TenantID,
-		DeploymentID:    req.DeploymentID,
-		SourceTarPath:   "/build/src.tar",
-		BuildContext:    "/build/src",
-		Workdir:         workdir,
-		DockerfilePath:  dockerfilePath,
-		OutDir:          "/build/out",
-		Framework:       MapFramework(req.Framework),
-		Runtime:         req.Runtime,
-		RuntimeBaseRef:  req.RuntimeBaseRef,
-		Function:        req.Function,
-		DependencyCache: req.DependencyCacheKey != "",
-		KeepWarm:        req.KeepWarm,
-		TimeoutSec:      timeoutSec,
-		LogTailBytes:    64 * 1024,
+		PublicBuildURLs:       req.PublicBuildURLs,
+		DockerfileBuild:       req.DockerfileBuild.Clone(),
+		BuildDependencyDigest: req.BuildDependencyDigest,
+		SchemaVersion:         1,
+		BuildID:               req.BuildID,
+		TenantID:              req.TenantID,
+		DeploymentID:          req.DeploymentID,
+		SourceTarPath:         "/build/src.tar",
+		BuildContext:          "/build/src",
+		Workdir:               workdir,
+		DockerfilePath:        dockerfilePath,
+		OutDir:                "/build/out",
+		Framework:             MapFramework(req.Framework),
+		Runtime:               req.Runtime,
+		RuntimeBaseRef:        req.RuntimeBaseRef,
+		IssueSourceMaps:       req.IssueSourceMaps,
+		SourceSHA256:          req.SourceSHA256,
+		Function:              req.Function,
+		SharedRuntime:         req.SharedRuntime,
+		DevWatchCommand:       req.DevWatchCommand,
+		DevWatchHost:          req.DevWatchHost,
+		DependencyCache:       req.DependencyCacheKey != "",
+		KeepWarm:              req.KeepWarm,
+		TimeoutSec:            timeoutSec,
+		LogTailBytes:          64 * 1024,
 	}, nil
 }
 
@@ -300,8 +308,8 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 			// imaged's staged base and vmmd's scan gate. The legacy
 			// builder-base.ext4 spelling bypassed the published scan
 			// sidecar and made every metal build fail closed.
-			BaseKey:    sched.BaseKey("builder"), // ADR-025: storage key → vmmd resolves via StorageBackend
-			LayerKey:   drive1Path,               // absolute host path; vmmd treats as direct path (abs path bypass)
+			BaseKey:    storagekey.Base("builder"), // ADR-025: storage key → vmmd resolves via StorageBackend
+			LayerKey:   drive1Path,                 // absolute host path; vmmd treats as direct path (abs path bypass)
 			VcpuCount:  api.BuildVMVCPU,
 			MemSizeMib: int32(api.BuildVMRAMMB),
 		},
@@ -385,7 +393,7 @@ func (d *VMMDriver) RestoreWarmBuilder(ctx context.Context, req VMRequest, snaps
 	resp, err := d.cli.CreateFromSnapshot(ctx, &vmmdpb.CreateFromSnapshotRequest{
 		Instance: instance,
 		App: &vmmdpb.AppSpec{
-			BaseKey:    sched.BaseKey("builder"),
+			BaseKey:    storagekey.Base("builder"),
 			LayerKey:   snapshot.LayerPath,
 			VcpuCount:  api.BuildVMVCPU,
 			MemSizeMib: int32(api.BuildVMRAMMB),
@@ -667,6 +675,9 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		}
 		exitCode = done.ExitCode
 		res.ExitCode = exitCode
+		res.PublicBuildURLsSHA256 = done.PublicBuildURLsSHA256
+		res.DockerfileBuildSHA256 = done.DockerfileBuildSHA256
+		res.BuildDependencyDigest = done.BuildDependencyDigest
 		res.LogTailBytes = int64(len(done.LogTail))
 		res.LogTail = done.LogTail
 		res.FailureClass = done.FailureClass
@@ -675,6 +686,8 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		res.BuildkitVer = done.BuildkitVersion
 		res.RailpackVer = done.RailpackVersion
 		res.DevPatch = done.DevPatch
+		res.SharedRuntime = done.SharedRuntime
+		res.DependencyCacheUnchanged = done.DependencyCacheUnchanged
 	} else if exitCode == 0 {
 		// A clean host exit alone does not prove that a customer build ran.
 		exitCode = -1
@@ -684,9 +697,22 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		if h.DependencyCacheKey != "" {
 			cachePath, pathErr := dependencyCachePath(d.driveDir, h.DependencyCacheKey)
 			cacheSource := filepath.Join(h.ExportDir, "build", "out", "cache")
-			if pathErr != nil {
+			switch {
+			case pathErr != nil:
 				res.DependencyCacheStoreError = pathErr.Error()
-			} else {
+			case res.DependencyCacheUnchanged:
+				// The guest kept the imported cache: nothing was exported, and
+				// the stored generation is still the right one. Refresh its
+				// age so the TTL sweep keeps it.
+				now := time.Now()
+				d.dependencyCacheMu.Lock()
+				touchErr := os.Chtimes(cachePath, now, now)
+				d.dependencyCacheMu.Unlock()
+				_ = os.RemoveAll(cacheSource)
+				if touchErr != nil {
+					res.DependencyCacheStoreError = touchErr.Error()
+				}
+			default:
 				d.dependencyCacheMu.Lock()
 				cacheErr := publishDependencyCache(cacheSource, cachePath, dependencyCacheMaxBytes)
 				if cacheErr == nil {

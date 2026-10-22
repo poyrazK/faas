@@ -69,12 +69,15 @@ func TestMaterializeStorageRetainsCacheFileOrCopiesOpenedStream(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Restore fills are installed after the wake has them.
+			t.Cleanup(cache.WaitDeferred)
 			backend := &observedMaterializationBackend{StorageBackend: cache}
 			if mode == "cross-device" {
 				backend.linkErr = syscall.EXDEV
 			}
 			if mode == "evicted" {
 				backend.beforeLink = func() {
+					cache.WaitDeferred()
 					if err := cache.Delete(context.Background(), "snap/dep/mem"); err != nil {
 						t.Fatal(err)
 					}
@@ -105,6 +108,7 @@ func TestMaterializeStorageRetainsCacheFileOrCopiesOpenedStream(t *testing.T) {
 				t.Fatalf("closes=%d parent fetches=%d, want 1 each", backend.closes.Load(), parent.gets.Load())
 			}
 			if mode == "cache-miss" {
+				cache.WaitDeferred()
 				src, err := os.Stat(storage.CacheFileForKey(root, "snap/dep/mem"))
 				if err != nil {
 					t.Fatal(err)

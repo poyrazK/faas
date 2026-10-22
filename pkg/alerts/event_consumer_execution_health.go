@@ -18,7 +18,11 @@ func (e *Evaluator) observeEventConsumerExecution(ctx context.Context, rule stat
 	if err != nil {
 		return 0, false, skipDegraded
 	}
-	if h.Truncated || h.MissingRoots > 0 || h.Unknown > 0 || h.RetainedRoots == 0 {
+	currentMetric := string(rule.Metric) == "event_execution_dead_letters"
+	if !currentMetric && h.WindowCoverage != "" && !h.CompleteWindowEvidence() {
+		return 0, false, skipInsufficient
+	}
+	if (currentMetric || h.WindowCoverage == "") && (h.Truncated || h.MissingRoots > 0 || h.Unknown > 0 || h.RetainedRoots == 0) {
 		return 0, false, skipInsufficient
 	}
 	var value float64

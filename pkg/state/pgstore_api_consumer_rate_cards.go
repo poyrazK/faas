@@ -11,7 +11,8 @@ import (
 )
 
 const apiConsumerRateCardSelectCols = `id, account_id, app_id, currency, unit,
-       price_millicents_per_unit, included_units_per_month, tiers, route_weights, coalesce(plan_id::text, ''), effective_from, created_at`
+       price_millicents_per_unit, included_units_per_month, tiers, route_weights, coalesce(plan_id::text, ''), effective_from, created_at, tier_mode,
+       base_fee_millicents_per_month, minimum_millicents_per_month, prorate_monthly_fees`
 
 type apiConsumerRateCardRowScanner interface {
 	Scan(dest ...any) error
@@ -33,6 +34,10 @@ func scanAPIConsumerRateCardRow(row apiConsumerRateCardRowScanner) (APIConsumerR
 		&card.PlanID,
 		&card.EffectiveFrom,
 		&card.CreatedAt,
+		&card.TierMode,
+		&card.BaseFeeMillicentsPerMonth,
+		&card.MinimumMillicentsPerMonth,
+		&card.ProrateMonthlyFees,
 	); err != nil {
 		return APIConsumerRateCard{}, err
 	}
@@ -82,10 +87,12 @@ func (s *PgStore) CreateAPIConsumerRateCardVersion(ctx context.Context, in APICo
 	}
 	row := s.pool.QueryRow(ctx,
 		`insert into api_consumer_rate_cards
-		       (account_id, app_id, currency, unit, price_millicents_per_unit, included_units_per_month, tiers, route_weights, plan_id, effective_from)
-		 values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::jsonb, $8::jsonb, nullif($9::text, '')::uuid, $10)
+		       (account_id, app_id, currency, unit, price_millicents_per_unit, included_units_per_month, tiers, route_weights, plan_id, effective_from, tier_mode,
+		        base_fee_millicents_per_month, minimum_millicents_per_month, prorate_monthly_fees)
+		 values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::jsonb, $8::jsonb, nullif($9::text, '')::uuid, $10, $11, $12, $13, $14)
 		 returning `+apiConsumerRateCardSelectCols,
-		in.AccountID, in.AppID, in.Currency, APIConsumerRateCardUnitRequest, in.PriceMillicentsPerUnit, in.IncludedUnitsPerMonth, rawTiers, rawWeights, in.PlanID, in.EffectiveFrom)
+		in.AccountID, in.AppID, in.Currency, in.Unit, in.PriceMillicentsPerUnit, in.IncludedUnitsPerMonth, rawTiers, rawWeights, in.PlanID, in.EffectiveFrom, in.TierMode,
+		in.BaseFeeMillicentsPerMonth, in.MinimumMillicentsPerMonth, in.ProrateMonthlyFees)
 	card, err := scanAPIConsumerRateCardRow(row)
 	if err != nil {
 		var pgErr *pgconn.PgError

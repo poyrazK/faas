@@ -8,6 +8,13 @@
 # created by this role (see below) — it is required for the vmmd
 # socket at /run/faas/vmmd.sock to chown correctly.
 
+- name: vmmd_service — install strict egress packet tools
+  ansible.builtin.apt:
+    name:
+      - iproute2
+      - ethtool
+    state: present
+
 - name: vmmd_service — install /etc/faas (create dir, mode 0750)
   ansible.builtin.file:
     path: /etc/faas
@@ -84,6 +91,15 @@
     group: root
     mode: "0644"
 
+- name: vmmd_service — set developer live patch gate (ADR-740)
+  ansible.builtin.template:
+    src: 99-faas-dev-patch.conf.j2
+    dest: /etc/systemd/system/faas-vmmd.service.d/99-faas-dev-patch.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-vmmd
+
 - name: vmmd_service — install prepared wake networks drop-in (ADR-149)
   ansible.builtin.template:
     src: 99-faas-prepared-networks.conf.j2
@@ -92,6 +108,9 @@
     group: root
     mode: "0644"
   notify: restart faas-vmmd
+
+- name: vmmd_service — converge the workload-identity signing key (ADR-1141)
+  ansible.builtin.include_tasks: workload_identity.yml
 
 - name: vmmd_service — remove legacy schedd target override
   ansible.builtin.file:

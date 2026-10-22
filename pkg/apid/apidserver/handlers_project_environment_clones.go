@@ -3,6 +3,7 @@ package apidserver
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,7 +38,12 @@ func (s *server) fullProjectEnvironmentCloneProblem(r *http.Request, acct state.
 	if err != nil {
 		return api.ErrCapacity("could not verify clone configuration schema coverage")
 	}
+	hostingVisible, _ := s.adminAllows(acct)
+	hostingVisible = hostingVisible && s.runtimeBool(runtimeConfigFrontendHosting, false)
 	for _, blocker := range coverage.Blockers {
+		if strings.HasPrefix(blocker.Table, "hosting_") && !hostingVisible {
+			continue
+		}
 		field := "resource_coverage." + blocker.Table
 		if blocker.Column != "" {
 			field += "." + blocker.Column

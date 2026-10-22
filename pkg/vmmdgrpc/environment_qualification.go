@@ -62,7 +62,7 @@ func (s *Server) qualificationRetirementFrame(ctx context.Context, p *vmmdpb.Env
 }
 
 func (s *Server) validateQualificationEnvelope(ctx context.Context, frame state.EnvironmentQualificationExecution) (state.EnvironmentQualificationExecution, error) {
-	if s.nodeID == "" || frame.NodeID != s.nodeID {
+	if s.qualificationNodeID == "" || frame.NodeID != s.qualificationNodeID {
 		return frame, state.ErrConflict
 	}
 	md, _ := metadata.FromIncomingContext(ctx)

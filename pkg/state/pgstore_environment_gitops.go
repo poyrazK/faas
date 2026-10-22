@@ -25,6 +25,7 @@ func environmentGitSourceFromSQL(row sqlc.EnvironmentGitSource, environment stri
 		ID: pgUUIDString(row.ID), AccountID: pgUUIDString(row.AccountID), ProjectID: pgUUIDString(row.ProjectID),
 		EnvironmentID: pgUUIDString(row.EnvironmentID), EnvironmentSlug: environment,
 		Spec: EnvironmentGitSourceSpec{
+			Provider:     row.Provider,
 			RepositoryID: row.RepositoryID, InstallationID: row.InstallationID,
 			Repository: row.Repository, Ref: row.SourceRef, ManifestPath: row.ManifestPath,
 			Mode: row.Mode, ApprovalPolicy: row.ApprovalPolicy, Prune: row.Prune,
@@ -70,6 +71,9 @@ func (s *PgStore) CreateEnvironmentGitSource(ctx context.Context, accountID, pro
 	if err := spec.Validate(); err != nil {
 		return EnvironmentGitSource{}, fmt.Errorf("git source: %w: %w", ErrInvalidArgument, err)
 	}
+	if spec.Provider == "" {
+		spec.Provider = "github"
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return EnvironmentGitSource{}, err
@@ -86,7 +90,7 @@ func (s *PgStore) CreateEnvironmentGitSource(ctx context.Context, accountID, pro
 	row, err := q.CreateEnvironmentGitSource(ctx, tx, sqlc.CreateEnvironmentGitSourceParams{
 		AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), EnvironmentSlug: environment,
 		RepositoryID: spec.RepositoryID, InstallationID: spec.InstallationID, Repository: spec.Repository,
-		SourceRef: spec.Ref, ManifestPath: spec.ManifestPath, Mode: spec.Mode, ApprovalPolicy: spec.ApprovalPolicy, Prune: spec.Prune,
+		SourceRef: spec.Ref, ManifestPath: spec.ManifestPath, Mode: spec.Mode, ApprovalPolicy: spec.ApprovalPolicy, Prune: spec.Prune, Provider: spec.Provider,
 	})
 	if err != nil {
 		return EnvironmentGitSource{}, mapErr(err)
@@ -170,6 +174,9 @@ func (s *PgStore) ApproveEnvironmentDesiredRevision(ctx context.Context, input A
 		}); err != nil {
 			return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, err
 		}
+	}
+	if err := pgEnvironmentGitRolloutNotification(ctx, tx, input.SourceID, "", nil, time.Now().UTC()); err != nil {
+		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, mapErr(err)
@@ -308,7 +315,9 @@ func (s *PgStore) FinishEnvironmentGitOps(ctx context.Context, lease Environment
 	if err := validateGitOpsRunFinish(lease, status, plan, steps, now, next); err != nil {
 		return err
 	}
-	tx, err := s.pool.Begin(ctx)
+	// Outcome assessment combines graph, runtime and serving receipts. Keep
+	// those facts and the atomic outbox on the same database snapshot.
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return err
 	}
@@ -355,6 +364,14 @@ func (s *PgStore) FinishEnvironmentGitOps(ctx context.Context, lease Environment
 	}
 	if count != 1 {
 		return ErrConflict
+	}
+	var notificationPlan api.EnvironmentGitOpsPlan
+	_ = json.Unmarshal(plan, &notificationPlan)
+	if err := pgEnvironmentGitRolloutNotification(ctx, tx, lease.Source.ID, lease.RunID, &notificationPlan, now); err != nil {
+		return err
+	}
+	if err := pgEnvironmentGitNotification(ctx, tx, lease.Source.ID, "drift", environmentGitReportNotificationStatus(status, notificationPlan), lease.RunID, errorCode, notificationPlan, now); err != nil {
+		return err
 	}
 	if status == "converged" {
 		if _, err := q.SetEnvironmentAppliedRevision(ctx, tx, sqlc.SetEnvironmentAppliedRevisionParams{SourceID: mustPgUUID(lease.Source.ID), Generation: lease.Source.Generation}); err != nil {

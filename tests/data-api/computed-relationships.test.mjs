@@ -11,12 +11,21 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 const enabled = Boolean(process.env.DATA_API_TEST_DATABASE_URL && process.env.DATA_API_POSTGREST_BIN && process.env.DATA_API_RUNTIME_DIR)
 
+// A probe port is closed before it is used, so the OS can hand the same port
+// to the next probe; PostgREST then refuses an admin port equal to its server
+// port. Never return a port twice in one test file.
+const issuedPorts = new Set()
 async function port() {
-  const server = net.createServer()
-  await new Promise(r => server.listen(0, '127.0.0.1', r))
-  const value = server.address().port
-  await new Promise(r => server.close(r))
-  return value
+  for (;;) {
+    const server = net.createServer()
+    await new Promise(r => server.listen(0, '127.0.0.1', r))
+    const value = server.address().port
+    await new Promise(r => server.close(r))
+    if (!issuedPorts.has(value)) {
+      issuedPorts.add(value)
+      return value
+    }
+  }
 }
 
 test('computed relationships and RPC projections match typed PostgREST, RLS, grants and diffs', { skip: !enabled, timeout: 60000 }, async t => {
@@ -93,7 +102,7 @@ test('computed relationships and RPC projections match typed PostgREST, RLS, gra
     INSERT INTO api.invoices VALUES('alice',101,1,42),('alice',102,1,84),('alice',103,1,999),('bob',101,1,24)`)
   const loginURL = new URL(ownerURL); loginURL.username = role; loginURL.password = 'test-only'
   const snapshot = await inspect(loginURL.toString(), ['api'])
-  assert.equal(snapshot.version, 3)
+  assert.equal(snapshot.version, 4)
   assert.deepEqual(snapshot.functions.map(f => f.name), ['invoice_history', 'invoice_summary', 'latest_card_invoice', 'latest_invoice', 'related_orders', 'search_invoices'])
   assert.deepEqual(snapshot.functions.find(f => f.name === 'latest_invoice').setof, { from: 'orders', to: 'invoices', one_to_one: true })
   assert.deepEqual(snapshot.functions.find(f => f.name === 'search_invoices').setof, { from: '', to: 'invoices', one_to_one: false })

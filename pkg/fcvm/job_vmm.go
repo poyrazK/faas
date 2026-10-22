@@ -44,6 +44,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/jobresult"
+	"github.com/onebox-faas/faas/pkg/ociidentity"
 )
 
 // JobManifest is the JSON shape vmmd writes to drive1 at
@@ -83,7 +84,34 @@ type JobManifest struct {
 	StartHeld           bool              `json:"start_held,omitempty"`
 	VsockJobExitPort    int               `json:"vsock_job_exit_port,omitempty"`
 	VsockJobExitMsgType int               `json:"vsock_job_exit_msg_type,omitempty"`
+	// Interactive is set only for an interactive image run (ADR-1330). A
+	// guest-init that predates it rejects the unknown field and fails the
+	// task rather than running the command without stdin.
+	Interactive *JobInteractive `json:"interactive,omitempty"`
+	// ImageProcess runs the command with the image's ENV, USER and WORKDIR
+	// from /etc/faas/app.json (ADR-1790); User and Workdir override them.
+	ImageProcess bool   `json:"image_process,omitempty"`
+	User         string `json:"user,omitempty"`
+	Workdir      string `json:"workdir,omitempty"`
 }
+
+// JobInteractive is ADR-1330's guest contract: the supervisor accepts one
+// session on the app-task session port within the attach window, then runs
+// the job command with the session's terminal or pipes as its stdio.
+type JobInteractive struct {
+	TTY              bool `json:"tty,omitempty"`
+	AttachTimeoutSec int  `json:"attach_timeout_s"`
+}
+
+const (
+	// JobInteractiveDefaultAttachTimeout is the attach window when the caller
+	// does not choose one; JobInteractiveMaxAttachTimeout caps it.
+	JobInteractiveDefaultAttachTimeout = 60 * time.Second
+	JobInteractiveMaxAttachTimeout     = 5 * time.Minute
+	// JobInteractiveMaxTaskTimeoutSec is the session limit, matching the
+	// guest session protocol's hard range.
+	JobInteractiveMaxTaskTimeoutSec = 3600
+)
 
 // JobExitPayload is the JSON the guest-init supervisor writes via
 // STREAM (port 1026, msg_type 4) when the customer's command exits.
@@ -170,6 +198,19 @@ func (s JobColdBootSpec) Validate() error {
 	case s.Tap == "":
 		return fmt.Errorf("fcvm: job cold boot: empty tap device")
 	}
+	if err := s.validateImageProcess(); err != nil {
+		return err
+	}
+	if in := s.Interactive; in != nil {
+		switch {
+		case s.StartHeld:
+			return fmt.Errorf("fcvm: job cold boot: an interactive job cannot be start-held")
+		case s.TaskTimeoutSec > JobInteractiveMaxTaskTimeoutSec:
+			return fmt.Errorf("fcvm: job cold boot: interactive task_timeout_s %d exceeds %d", s.TaskTimeoutSec, JobInteractiveMaxTaskTimeoutSec)
+		case in.AttachTimeoutSec < 1 || time.Duration(in.AttachTimeoutSec)*time.Second > JobInteractiveMaxAttachTimeout:
+			return fmt.Errorf("fcvm: job cold boot: attach_timeout_s %d is outside 1..%d", in.AttachTimeoutSec, int(JobInteractiveMaxAttachTimeout/time.Second))
+		}
+	}
 	for i, arg := range s.Command {
 		if strings.IndexByte(arg, 0) >= 0 {
 			return fmt.Errorf("fcvm: job cold boot: command arg %d contains NUL", i)
@@ -182,6 +223,24 @@ func (s JobColdBootSpec) Validate() error {
 		if len(value) > 32*1024 || strings.IndexByte(value, 0) >= 0 {
 			return fmt.Errorf("fcvm: job cold boot: env value for %q is invalid or too large", key)
 		}
+	}
+	return nil
+}
+
+// validateImageProcess checks ADR-1790's overrides, which apply only to an
+// image process.
+func (s JobColdBootSpec) validateImageProcess() error {
+	if !s.ImageProcess {
+		if s.ProcessUser != "" || s.ProcessWorkdir != "" {
+			return fmt.Errorf("fcvm: job cold boot: a process user or workdir requires an image process")
+		}
+		return nil
+	}
+	if len(s.ProcessUser) > api.ImageRunUserMaxBytes || ociidentity.ValidateSpec(s.ProcessUser) != nil {
+		return fmt.Errorf("fcvm: job cold boot: invalid process user")
+	}
+	if err := api.ValidateImageRunWorkdir(s.ProcessWorkdir); err != nil {
+		return fmt.Errorf("fcvm: job cold boot: %w", err)
 	}
 	return nil
 }
@@ -296,6 +355,10 @@ func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobCol
 		StartHeld:           spec.StartHeld,
 		VsockJobExitPort:    VsockJobExitPort,
 		VsockJobExitMsgType: VsockJobExitMsgType,
+		Interactive:         spec.Interactive,
+		ImageProcess:        spec.ImageProcess,
+		User:                spec.ProcessUser,
+		Workdir:             spec.ProcessWorkdir,
 	}
 
 	// bootNoWait provisions a private drive1 first, then stages the manifest and

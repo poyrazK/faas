@@ -12,10 +12,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type latestDeploymentsListAppsErrorStore struct {
-	state.Store
+	Store state.Store
 }
 
 func (latestDeploymentsListAppsErrorStore) ListApps(context.Context, string) ([]state.App, error) {
@@ -136,7 +137,7 @@ func TestListLatestDeploymentsByAppReturnsUnavailableWhenAppsCannotBeLoaded(t *t
 	}); err != nil {
 		t.Fatal(err)
 	}
-	(*(*e.S()).Store()) = latestDeploymentsListAppsErrorStore{Store: (*e.Store())}
+	(*(*e.S()).Store()) = statetest.NewStore(latestDeploymentsListAppsErrorStore{Store: (*e.Store())})
 
 	rec := e.Do(t, http.MethodGet, "/v1/deployments/latest-by-app", nil, nil)
 	if rec.Code != http.StatusServiceUnavailable {

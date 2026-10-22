@@ -97,6 +97,12 @@ func isolateQualificationWakeRequest(req WakeRequest) (WakeRequest, error) {
 // every native launch effect to this frame; a normal JobColdBoot request
 // cannot borrow a qualification reservation.
 func (m *Manager) BootEnvironmentQualificationJob(ctx context.Context, frame state.EnvironmentQualificationExecution, req JobBootRequest) (*Instance, error) {
+	if err := m.checkFinancialComputeBypass(ctx, frame.AppID); err != nil {
+		return nil, err
+	}
+	if err := m.rejectRehearsalExecution(ctx, frame.AppID); err != nil {
+		return nil, err
+	}
 	j, err := m.qualificationJournal(frame)
 	if err != nil {
 		return nil, err
@@ -155,6 +161,12 @@ type nativeQualificationRestoreVMM interface {
 // distinct, privately tracked target. It never uses generic Restore/Wake,
 // which may cold-boot on a miss and publishes through serving indexes.
 func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame state.EnvironmentQualificationExecution, req WakeRequest) (_ *Instance, err error) {
+	if err := m.checkFinancialComputeBypass(ctx, req.AppID); err != nil {
+		return nil, err
+	}
+	if err := m.rejectRehearsalExecution(ctx, frame.AppID); err != nil {
+		return nil, err
+	}
 	j, err := m.qualificationRestoreJournal(frame)
 	if err != nil {
 		return nil, err
@@ -224,6 +236,7 @@ func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame sta
 				err = errors.Join(err, m.alloc.Release(lease.Instance))
 				m.mu.Lock()
 				delete(m.processGenerations, lease.Instance)
+				delete(m.processStartedAt, lease.Instance)
 				delete(m.pendingProcessExits, lease.Instance)
 				m.mu.Unlock()
 				return
@@ -244,9 +257,9 @@ func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame sta
 	}
 	m.mu.Lock()
 	if m.waking == nil {
-		m.waking = make(map[string]struct{})
+		m.waking = make(map[string]wakingInstance)
 	}
-	m.waking[frame.InstanceID] = struct{}{}
+	m.waking[frame.InstanceID] = wakingInstance{}
 	m.mu.Unlock()
 	if err := m.setupNetwork(bootCtx, nc); err != nil {
 		return nil, fmt.Errorf("native qualification restore: private network setup: %w", err)
@@ -341,6 +354,9 @@ func isolateQualificationJobNetwork(nc netns.Config) netns.Config {
 // physical generation. Schedd supplies the frozen workload payload; vmmd
 // verifies its placement, artifact and guest reservation at this boundary.
 func (m *Manager) WakeEnvironmentQualification(ctx context.Context, frame state.EnvironmentQualificationExecution, req WakeRequest) (*Instance, error) {
+	if err := m.rejectRehearsalExecution(ctx, frame.AppID); err != nil {
+		return nil, err
+	}
 	j, err := m.qualificationJournal(frame)
 	if err != nil {
 		return nil, err
@@ -494,6 +510,7 @@ func (m *Manager) retireUnownedQualificationTarget(ctx context.Context, instance
 	delete(m.pendingCleanup, instance)
 	delete(m.pendingProcessExits, instance)
 	delete(m.processGenerations, instance)
+	delete(m.processStartedAt, instance)
 	delete(m.waking, instance)
 	return proof, nil
 }

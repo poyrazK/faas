@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/objectchecksum"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -119,6 +120,8 @@ type ObjectWriter interface {
 
 // ObjectWriteConfirmer requires the exact private receipt, size and a valid ETag.
 // Absence or elapsed time cannot prove settlement.
+// ErrWriteRejected is permitted only for an exact, durable terminal rejection;
+// a missing receipt, timeout or unavailable provider must remain uncertain.
 type ObjectWriteConfirmer interface {
 	ConfirmTrackedObject(context.Context, string, string, string, int64) (UploadResult, error)
 }
@@ -165,8 +168,9 @@ type TrackedObjectWriter interface {
 }
 
 type UploadResult struct {
-	VerifiedProtection string               `json:"-"`
-	Encryption         api.ObjectEncryption `json:"encryption,omitzero"`
+	Checksum           objectchecksum.Digest `json:"-"`
+	VerifiedProtection string                `json:"-"`
+	Encryption         api.ObjectEncryption  `json:"encryption,omitzero"`
 	ETag               string
 	ProviderVersionID  string `json:"-"`
 }
@@ -329,9 +333,10 @@ type CopyObjectRequest struct {
 }
 
 type CopyObjectResult struct {
-	VerifiedProtection string               `json:"-"`
-	Encryption         api.ObjectEncryption `json:"encryption,omitzero"`
-	ProviderVersionID  string               `json:"-"`
+	Checksum           objectchecksum.Digest `json:"-"`
+	VerifiedProtection string                `json:"-"`
+	Encryption         api.ObjectEncryption  `json:"encryption,omitzero"`
+	ProviderVersionID  string                `json:"-"`
 	ETag               string
 	LastModified       time.Time
 }
@@ -409,6 +414,7 @@ type DateConditionalMultipartPartCopier interface {
 }
 
 type MultipartPartCopyRequest struct {
+	Checksum                         objectchecksum.Policy `json:"-"`
 	SourceKey, Key, ProviderUploadID string
 	SourceProviderVersionID          string `json:"-"`
 	PartNumber                       int32
@@ -498,6 +504,7 @@ type SignedRequest = api.ObjectSignedRequest
 // persisted as object metadata so a completion response lost between the
 // provider and Gregale can be verified without exposing its upload ID.
 type MultipartCreateRequest struct {
+	Checksum      objectchecksum.Policy       `json:"-"`
 	BeforeRequest func(context.Context) error `json:"-"`
 	SessionID     string
 	Key           string
@@ -506,6 +513,7 @@ type MultipartCreateRequest struct {
 }
 
 type MultipartPartRequest struct {
+	Checksum         objectchecksum.Digest `json:"-"`
 	Key              string
 	ProviderUploadID string
 	PartNumber       int32
@@ -524,6 +532,7 @@ type MultipartListPartsRequest struct {
 }
 
 type MultipartPart struct {
+	Checksum     objectchecksum.Digest `json:"-"`
 	PartNumber   int32
 	ETag         string
 	SizeBytes    int64
@@ -541,6 +550,7 @@ type CompletedPart struct {
 }
 
 type MultipartCompleteRequest struct {
+	Checksum         objectchecksum.Snapshot     `json:"-"`
 	Encryption       *ResolvedObjectEncryption   `json:"-"`
 	Recovering       bool                        `json:"-"`
 	RecoveryCursor   string                      `json:"-"`
@@ -650,6 +660,9 @@ func fingerprint(c BackendConfig) string {
 			storageClass = "STANDARD"
 		}
 		identity += "\x00" + c.GCSLocation + "\x00" + storageClass
+	}
+	if c.OwnedNodeReceipts {
+		identity += "\x00owned-node-receipts-v1"
 	}
 	sum := sha256.Sum256([]byte(identity))
 	return hex.EncodeToString(sum[:])

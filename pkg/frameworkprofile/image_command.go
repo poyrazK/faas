@@ -4,16 +4,41 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const ImageCommandVersion = "v1"
+const (
+	ImageCommandVersion = "v1"
+	// ImageCommandProcessVersion adds the Compose process overrides
+	// (ADR-1337). An imaged that predates it rejects the contract instead of
+	// silently starting the image's own entrypoint, user or directory.
+	ImageCommandProcessVersion = "v2"
+)
 
 // ImageCommand freezes the Compose replacement for OCI CMD. Nil inherits the
 // artifact's CMD; a non-nil slice replaces it while retaining OCI ENTRYPOINT.
+// Process, present only in v2, freezes the Compose entrypoint, user,
+// working_dir and stop contract; a Process entrypoint also drops the image
+// CMD, so Cmd is then the whole argument list.
 // Its own version remains independent of advisory source-profile inference.
 type ImageCommand struct {
-	Version string   `json:"version"`
-	Cmd     []string `json:"cmd"`
+	Version string              `json:"version"`
+	Cmd     []string            `json:"cmd"`
+	Process *api.ComposeProcess `json:"process,omitempty"`
+}
+
+// newImageCommand captures v1, or v2 when the service overrides its process.
+func newImageCommand(command []string, process *api.ComposeProcess) (*ImageCommand, error) {
+	captured := &ImageCommand{Version: ImageCommandVersion, Cmd: slices.Clone(command)}
+	if process.IsZero() {
+		return captured, nil
+	}
+	if err := process.Validate(); err != nil {
+		return nil, err
+	}
+	captured.Version, captured.Process = ImageCommandProcessVersion, process.Clone()
+	return captured, nil
 }
 
 // CaptureImageCommand builds a persisted image profile before work is queued.
@@ -36,20 +61,29 @@ func ImageCommandFromProfile(profile []byte) (*ImageCommand, error) {
 		return nil, nil
 	}
 	var captured struct {
-		Version string          `json:"version"`
-		Cmd     json.RawMessage `json:"cmd"`
+		Version string              `json:"version"`
+		Cmd     json.RawMessage     `json:"cmd"`
+		Process *api.ComposeProcess `json:"process"`
 	}
 	if err := json.Unmarshal(raw, &captured); err != nil {
 		return nil, fmt.Errorf("decode captured image command: %w", err)
 	}
-	if captured.Version != ImageCommandVersion || len(captured.Cmd) == 0 {
+	switch {
+	case len(captured.Cmd) == 0:
 		return nil, fmt.Errorf("unsupported captured image command contract")
+	case captured.Version == ImageCommandVersion && captured.Process != nil,
+		captured.Version == ImageCommandProcessVersion && captured.Process.IsZero(),
+		captured.Version != ImageCommandVersion && captured.Version != ImageCommandProcessVersion:
+		return nil, fmt.Errorf("unsupported captured image command contract")
+	}
+	if err := captured.Process.Validate(); err != nil {
+		return nil, fmt.Errorf("decode captured image process: %w", err)
 	}
 	var command []string
 	if err := json.Unmarshal(captured.Cmd, &command); err != nil {
 		return nil, fmt.Errorf("decode captured image CMD: %w", err)
 	}
-	return &ImageCommand{Version: captured.Version, Cmd: command}, nil
+	return &ImageCommand{Version: captured.Version, Cmd: command, Process: captured.Process}, nil
 }
 
 // PreserveImageRuntime updates inferred metadata without allowing the worker

@@ -4,7 +4,7 @@
 // records the request and returns the supplied payload, plus
 // t.Setenv for FAAS_API / FAAS_TOKEN, plus the osStdout seam for
 // human-mode assertions.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -48,11 +49,11 @@ func TestCmdMetrics_HappyPath_DefaultRange(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdMetrics([]string{"abc-123"}); code != 0 {
+	if code := main.CmdMetrics([]string{"abc-123"}); code != 0 {
 		t.Fatalf("metrics = %d, want 0", code)
 	}
 	if *gotPath != "/v1/apps/abc-123/metrics" {
@@ -88,7 +89,7 @@ func TestCmdMetrics_HappyPath_ExplicitRange(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdMetrics([]string{"--range", "1h", "abc-123"}); code != 0 {
+	if code := main.CmdMetrics([]string{"--range", "1h", "abc-123"}); code != 0 {
 		t.Fatalf("metrics --range 1h = %d, want 0", code)
 	}
 	if *gotPath != "/v1/apps/abc-123/metrics" {
@@ -116,14 +117,14 @@ func TestCmdMetrics_DegradedSourceWarnsOnZeroes(t *testing.T) {
 	defer srv.Close()
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdMetrics([]string{"abc-123"}); code != 0 {
+	if code := main.CmdMetrics([]string{"abc-123"}); code != 0 {
 		t.Fatalf("metrics = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "degraded: prometheus unreachable") {
@@ -134,20 +135,23 @@ func TestCmdMetrics_DegradedSourceWarnsOnZeroes(t *testing.T) {
 // --- client-side rejections -------------------------------------------------
 
 func TestCmdMetrics_NoPositional(t *testing.T) {
-	_, readStderr, restore := swapIO(t)
+	previous := (*main.NonInteractive)
+	(*main.NonInteractive) = true
+	t.Cleanup(func() { (*main.NonInteractive) = previous })
+	_, readStderr, restore := main.SwapIO(t)
 	defer restore()
-	if code := cmdMetrics(nil); code != 1 {
+	if code := main.CmdMetrics(nil); code != 1 {
 		t.Errorf("metrics bare = %d, want 1", code)
 	}
-	if !strings.Contains(readStderr(), "usage: gregale metrics") {
+	if !strings.Contains(readStderr(), "app target is required") {
 		t.Errorf("stderr missing usage line\nfull: %s", readStderr())
 	}
 }
 
 func TestCmdMetrics_TooManyPositionals(t *testing.T) {
-	_, readStderr, restore := swapIO(t)
+	_, readStderr, restore := main.SwapIO(t)
 	defer restore()
-	if code := cmdMetrics([]string{"a", "b"}); code != 1 {
+	if code := main.CmdMetrics([]string{"a", "b"}); code != 1 {
 		t.Errorf("metrics a b = %d, want 1", code)
 	}
 	if !strings.Contains(readStderr(), "usage: gregale metrics") {
@@ -160,7 +164,7 @@ func TestCmdMetrics_Unauthenticated(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
-	if code := cmdMetrics([]string{"abc-123"}); code == 0 {
+	if code := main.CmdMetrics([]string{"abc-123"}); code == 0 {
 		t.Error("metrics without token must fail")
 	}
 }
@@ -177,18 +181,18 @@ func TestCmdMetrics_JSON_SingleRecord(t *testing.T) {
 	defer srv.Close()
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	(*main.JsonOutput) = true
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdMetrics([]string{"abc-123"}); code != 0 {
+	if code := main.CmdMetrics([]string{"abc-123"}); code != 0 {
 		t.Fatalf("metrics json = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -226,8 +230,147 @@ func TestRun_DispatchMetrics(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	if code := run([]string{"metrics", "abc-123"}); code != 0 {
+	if code := main.Run([]string{"metrics", "abc-123"}); code != 0 {
 		t.Errorf("run metrics = %d, want 0", code)
+	}
+}
+
+// --- service map (ADR-1131) ---------------------------------------------------
+
+func serviceMapServer(t *testing.T, payload api.ServiceMapResponse) (*string, *string) {
+	t.Helper()
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		_ = json.NewEncoder(w).Encode(payload)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	return &gotPath, &gotQuery
+}
+
+func captureMetricsStdout(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var stdout bytes.Buffer
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
+	return &stdout
+}
+
+func TestCmdMetrics_Services_OmittedRangeDefersToServer(t *testing.T) {
+	gotPath, gotQuery := serviceMapServer(t, api.ServiceMapResponse{
+		Range: "1h", Source: "prometheus", Truncated: true,
+		Edges: []api.ServiceMapEdge{{
+			CallerAppSlug: "public-api", TargetAppSlug: "billing",
+			Calls: 12040, Errors: 48, ErrorRatePct: 0.4, LatencyP50MS: 11.2, LatencyP95MS: 38,
+			ColdCalls: 9030, ColdCallPct: 75, SuggestWakeAhead: true,
+		}, {
+			CallerAppSlug: "billing", TargetAppSlug: "ledger",
+			Calls: 40, WakeAheadStarted: 10, WakeAheadUsed: 8,
+		}},
+	})
+	stdout := captureMetricsStdout(t)
+
+	if code := main.CmdMetrics([]string{"--services"}); code != 0 {
+		t.Fatalf("metrics --services = %d, want 0", code)
+	}
+	if *gotPath != "/v1/service-map" || *gotQuery != "" {
+		t.Fatalf("request = %q?%q, want /v1/service-map with no range", *gotPath, *gotQuery)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"Range:      1h",
+		"public-api → billing",
+		"Calls:      12040 (errors 48, 0.40%)",
+		"p50=11.2ms p95=38.0ms",
+		"Woke:       9030 calls (75%) found the target parked",
+		"run `gregale wake-ahead public-api on` to restore billing while public-api wakes",
+		"Wake-ahead: 8 of 10 restores used",
+		"showing the 2 busiest edges",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\nfull: %s", want, out)
+		}
+	}
+}
+
+// Private TCP sessions get their own line; an edge with only TCP traffic
+// does not print empty HTTP call and latency lines.
+func TestCmdMetrics_Services_TCPSessions(t *testing.T) {
+	serviceMapServer(t, api.ServiceMapResponse{
+		Range: "1h", Source: "prometheus",
+		Edges: []api.ServiceMapEdge{{
+			CallerAppSlug: "public-api", TargetAppSlug: "billing",
+			Calls: 100, TCPSessions: 4,
+		}, {
+			CallerAppSlug: "billing", TargetAppSlug: "postgres",
+			TCPSessions: 30, TCPErrors: 2, TCPColdSessions: 5,
+		}},
+	})
+	stdout := captureMetricsStdout(t)
+
+	if code := main.CmdMetrics([]string{"--services"}); code != 0 {
+		t.Fatalf("metrics --services = %d, want 0", code)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"Calls:      100 (errors 0, 0.00%)",
+		"TCP:        4 sessions (errors 0, 0 woke the target)",
+		"billing → postgres\n  TCP:        30 sessions (errors 2, 5 woke the target)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\nfull: %s", want, out)
+		}
+	}
+	if n := strings.Count(out, "Calls:"); n != 1 {
+		t.Errorf("Calls lines = %d, want 1 (the TCP-only edge has none)\nfull: %s", n, out)
+	}
+}
+
+func TestCmdMetrics_Services_ExplicitRange(t *testing.T) {
+	_, gotQuery := serviceMapServer(t, api.ServiceMapResponse{Range: "24h", Source: "prometheus"})
+	stdout := captureMetricsStdout(t)
+
+	if code := main.CmdMetrics([]string{"--services", "--range", "24h"}); code != 0 {
+		t.Fatalf("metrics --services --range 24h = %d, want 0", code)
+	}
+	if *gotQuery != "range=24h" {
+		t.Fatalf("query = %q, want range=24h", *gotQuery)
+	}
+	if !strings.Contains(stdout.String(), "(no service-to-service calls in window)") {
+		t.Fatalf("empty map should say so\nfull: %s", stdout.String())
+	}
+}
+
+func TestCmdMetrics_Services_DegradedSourceWarns(t *testing.T) {
+	serviceMapServer(t, api.ServiceMapResponse{Range: "1h", Source: "degraded: telemetry timeout"})
+	stdout := captureMetricsStdout(t)
+
+	if code := main.CmdMetrics([]string{"--services"}); code != 0 {
+		t.Fatalf("metrics --services = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), "Prometheus is unavailable") {
+		t.Fatalf("degraded map should warn\nfull: %s", stdout.String())
+	}
+}
+
+func TestCmdMetrics_Services_RejectsAccountAndSlug(t *testing.T) {
+	for _, args := range [][]string{
+		{"--services", "--account"},
+		{"--services", "abc-123"},
+		{"--services", "--app", "abc-123"},
+	} {
+		_, readStderr, restore := main.SwapIO(t)
+		if code := main.CmdMetrics(args); code != 1 {
+			t.Errorf("metrics %v = %d, want 1", args, code)
+		}
+		if !strings.Contains(readStderr(), "--services") {
+			t.Errorf("metrics %v: usage should mention --services\nfull: %s", args, readStderr())
+		}
+		restore()
 	}
 }
 

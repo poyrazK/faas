@@ -32,6 +32,7 @@
 # (2026-10-08).
 # Refreshed 2026-10-10 for independently duplicated merged main @ c761890061: ADR-686 and ADR-911.
 # Removed stale ADR-680; earlier branch-owned route/billing renumbering is retained.
+# Refreshed 2026-10-19 for independently duplicated merged main @ b3d5ac1c7b: ADR-1321, ADR-1322 and ADR-1324.
 021
 022
 031
@@ -111,14 +112,107 @@
 # Existing collisions inherited from main at 195c48c80.
 
 # Existing collision inherited from merged main at 375203115 (2026-10-11).
+934
+935
+936
+937
+938
+939
+940
+941
+942
+943
+944
+945
+946
+947
+948
+949
+950
+951
+952
+953
+954
+955
+956
+958
+960
+961
+962
+963
+964
+965
+966
 968
 
 # Existing collisions inherited from merged main at 820481b7a (2026-10-11).
 829
 830
 831
+969
 971
 972
-
-# Existing collision inherited from merged main at 45a0b575a (2026-10-12).
-981
+# Refreshed from main 2026-10-13: duplicates main gained independently,
+# not introduced by the PR that added them here.
+1000
+1027
+1028
+1029
+1030
+1031
+1032
+1033
+1034
+1035
+1036
+1037
+1038
+1039
+1111
+1112
+1113
+1114
+1115
+1116
+1117
+# Refreshed 2026-10-15 from main @ 42e0519585 after the v0.1.18-rc.261 release
+# gate failed on them (rule 1: duplicates main gained independently):
+# ADR-1151..1155, 1161..1163, 1170, 1180 collided when #4689 merged; ADR-1259 across
+# #4688 and #4715; ADR-1237..1258 and 1260 when #4687 merged after #4648 and #4688.
+1151
+1152
+1153
+1154
+1155
+1161
+1162
+1163
+1170
+1180
+1237
+1238
+1239
+1240
+1241
+1242
+1243
+1244
+1245
+1246
+1247
+1248
+1249
+1250
+1251
+1252
+1253
+1254
+1255
+1256
+1257
+1258
+1259
+1260
+1321
+1322
+1324

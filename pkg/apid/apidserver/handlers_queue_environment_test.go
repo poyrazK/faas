@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func scopedQueueHTTPFixture(t *testing.T) (apidserver.TestEnv, state.Project, state.App) {
@@ -201,8 +202,8 @@ func TestQueueEnvironmentHTTPRecreationHoldsOriginalWork(t *testing.T) {
 }
 
 type recreateQueueEnvironmentOnAdmission struct {
-	*state.MemStore
-	before func()
+	MemStore *state.MemStore
+	before   func()
 }
 
 func (s *recreateQueueEnvironmentOnAdmission) EnqueueInvocation(ctx context.Context, inv state.Invocation) (state.Invocation, error) {
@@ -226,14 +227,14 @@ func TestQueueEnvironmentHTTPAdmissionRaceFailsClosedWithFlagContext(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	(*(*e.S()).Store()) = &recreateQueueEnvironmentOnAdmission{MemStore: (*e.Store()), before: func() {
+	(*(*e.S()).Store()) = statetest.NewMem(&recreateQueueEnvironmentOnAdmission{MemStore: (*e.Store()), before: func() {
 		if err := (*e.Store()).DeleteProjectEnvironment(ctx, (*e.Acct()).ID, project.ID, "staging"); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := (*e.Store()).CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: (*e.Acct()).ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
 			t.Fatal(err)
 		}
-	}}
+	}})
 	rec := e.Do(t, http.MethodPost, "/v1/apps/queue-worker/queues/send", api.QueueSendRequest{Environment: "staging", Payload: json.RawMessage(`{}`), FlagContext: flagContext}, nil)
 	apidserver.AssertProblem(t, rec, http.StatusConflict, "queue_binding_environment_unavailable")
 	n, err := (*e.Store()).CountPendingInvocations(ctx, app.ID, state.InvocationQueue)

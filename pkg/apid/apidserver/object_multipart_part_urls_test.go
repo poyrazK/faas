@@ -20,12 +20,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type blockedMultipartURLStore struct {
-	*state.MemStore
-	entered chan struct{}
-	release chan struct{}
+	MemStore *state.MemStore
+	entered  chan struct{}
+	release  chan struct{}
 }
 
 func (p blockedMultipartURLStore) IssueObjectMultipartURLCredential(ctx context.Context, c state.ObjectS3Credential, u state.ObjectMultipartUpload, policy api.ObjectStoragePolicy) (state.ObjectS3Credential, error) {
@@ -50,7 +51,7 @@ func TestObjectMultipartSignedURLWithheldAfterMutation(t *testing.T) {
 			}
 			apidserver.CreateApp(t, e, "sign-race")
 			p := blockedMultipartURLStore{MemStore: (*e.Store()), entered: make(chan struct{}), release: make(chan struct{})}
-			(*(*e.S()).Store()) = p
+			(*(*e.S()).Store()) = statetest.NewMem(p)
 			var release sync.Once
 			defer release.Do(func() { close(p.release) })
 			(*e.S()).WithObjectStorage(apidserver.ObjectRegistry(t, &apidserver.FakeObjectProvider{}, &apidserver.FakeObjectProvider{}, "external"))

@@ -36,6 +36,11 @@ func (s *PgStore) cloneProjectEnvironmentOnce(ctx context.Context, clone Project
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, fmt.Errorf("state: begin project environment clone: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if lease != nil {
+		if _, err := sqlc.New().LockCloneCheckpointUnusedReservationClock(ctx, tx); err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, mapProjectCloneSnapshotErr(err)
+		}
+	}
 	if err := lockProjectEnvironmentCloneReservationTx(ctx, tx, clone); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, mapProjectCloneSnapshotErr(err)
 	}
@@ -130,6 +135,11 @@ func (s *PgStore) cloneProjectEnvironmentOnce(ctx context.Context, clone Project
 	if err := checkProjectEnvironmentCloneTargetScope(ctx, tx, clone); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
+	if lease != nil {
+		if err := requireCloneConfigurationOwnershipScopeTx(ctx, tx, clone); err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+	}
 	if !clone.ShareResources && !clone.ManagedBindingsPrepared {
 		if err := checkProjectEnvironmentCloneManagedBindings(ctx, tx, clone); err != nil {
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
@@ -154,6 +164,9 @@ func (s *PgStore) cloneProjectEnvironmentOnce(ctx context.Context, clone Project
 	}
 	if lease != nil {
 		if err := saveCloneMaterializationTx(ctx, tx, lease.Operation, created); err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		if err := saveCloneConfigurationOwnershipTx(ctx, tx, lease.Operation, created.ID); err != nil {
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 		}
 		// Waiting on intent/resource locks cannot extend an expired worker.

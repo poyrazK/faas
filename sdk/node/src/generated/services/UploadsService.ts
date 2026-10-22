@@ -135,11 +135,23 @@ export class UploadsService {
    */
   public static commitUpload({
     id,
+    deploymentAttemptId,
   }: {
     /**
      * Upload session id to finalize (returned by POST /v1/uploads).
      */
     id: string,
+    /**
+     * Persist a random opaque ID before submission to recover lost acceptance
+     * replies. The accepted attempt remains bound to its original deployment,
+     * including after failure or supersession. Missing receipts never authorize
+     * resubmission. Independent from Idempotency-Key replay.
+     * Concurrent accepted/in-progress attempts may return 409 with
+     * deployment_attempt_accepted or deployment_attempt_pending; recover
+     * acceptance using the receipt instead of treating that conflict as rejection.
+     *
+     */
+    deploymentAttemptId?: string,
   }): CancelablePromise<DeploymentResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -147,10 +159,13 @@ export class UploadsService {
       path: {
         'id': id,
       },
+      headers: {
+        'Deployment-Attempt-ID': deploymentAttemptId,
+      },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         404: `code: not_found`,
-        409: `code: conflict`,
+        409: `Upload session conflict or code application_standards_pending while inherited controls await persistence.`,
         410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
       },
     });

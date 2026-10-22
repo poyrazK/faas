@@ -13,11 +13,11 @@ PGCONNECT_TIMEOUT=5 psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -Atc 'SELECT 1' >
 export FAAS_PGTEST_TEMPLATE_DATABASE=1 GREGALE_ISSUES_SDK_ACCEPTANCE=1
 npm run build --prefix sdk/node
 npm run test:build --prefix sdk/node
-node --test sdk/node/dist-test/test/issues.test.js
+node --test sdk/node/dist-test/test/issues.test.js sdk/node/dist-test/test/issue-source-maps.test.js sdk/node/dist-test/test/issue-split-management.test.js
 node --test tests/issues-smoke/run.test.mjs
 PYTHONPATH=sdk/python python3 -m pytest -q sdk/python/tests/test_issues.py
-FAAS_REPLAY_CHECK_VERSIONS=20260930100000001,20261001175404001 go test -timeout=5m -ldflags='-s -w -linkmode=internal' -count=1 ./migrations -run '^TestNewMigrationsAreReplaySafe$'
-go test -timeout=5m -ldflags='-s -w -linkmode=internal' -count=1 ./pkg/issues ./pkg/apid/apidserver -run '^TestIssue'
+FAAS_REPLAY_CHECK_VERSIONS=20260930100000001,20261001175404001,20261012080121001,20261012080121002 go test -timeout=5m -ldflags='-s -w -linkmode=internal' -count=1 ./migrations -run '^TestNewMigrationsAreReplaySafe$'
+go test -timeout=5m -ldflags='-s -w -linkmode=internal' -count=1 ./pkg/issues ./pkg/apid/apidserver -run '^(TestIssue|TestCause)'
 go test -timeout=5m -ldflags='-s -w -linkmode=internal' -count=1 ./pkg/api ./pkg/productcap ./cmd/gregale ./pkg/dashboard
 go run ./cmd/sdk-coverage
 go run ./cmd/api-hosting-scorecard

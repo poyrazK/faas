@@ -629,4 +629,67 @@ export class RunsService {
       },
     });
   }
+  /**
+   * Attach to an interactive app task (WebSocket).
+   * ADR-1037. Served by the compute gateway, not apid. Requires the account
+   * credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
+   * task's create response, and the `gregale-app-task-attach-v1`
+   * WebSocket subprotocol. Optional `rows`/`cols` set the initial terminal
+   * size. The token is consumed by the first successful attach. Binary
+   * messages start with a type byte: client 0x01 stdin, 0x02 resize
+   * (rows, cols as big-endian uint16), 0x03 stdin close; server 0x10
+   * attached, 0x11 stdout, 0x12 stderr, 0x13 terminal JSON
+   * (`status`, `exit_code`, `failure`).
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static attachAppTask({
+    slug,
+    id,
+    rows,
+    cols,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a deployment-attached app task.
+     */
+    id: string,
+    /**
+     * Initial terminal height for TTY sessions; defaults to 24.
+     */
+    rows?: number,
+    /**
+     * Initial terminal width for TTY sessions; defaults to 80.
+     */
+    cols?: number,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/tasks/{id}/attach',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'rows': rows,
+        'cols': cols,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The task VM is still starting; retry after the Retry-After interval.`,
+        410: `The session ended, already has a client, or its attach window closed.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
 }

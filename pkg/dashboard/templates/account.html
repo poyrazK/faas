@@ -109,6 +109,22 @@
         Or from the dashboard: <a href="/dashboard/apps/new">Deploy from the dashboard →</a>
       </p>
 
+      {{if .Data.GitLabOAuthAvailable}}
+      <h2>GitLab.com GitOps</h2>
+      <p>Connect a GitLab.com account to review environment definitions from a private repository. GitLab sources currently support report mode and manual approval.</p>
+      {{if .Data.GitLabUsername}}<p>Connected as {{.Data.GitLabUsername}}.</p>{{end}}
+      <form method="POST" action="/v1/gitlab/connect">
+        <input type="hidden" name="csrf_token" value="{{.Data.GitLabConnectConfirmToken}}">
+        <button type="submit" class="btn-cta">{{if .Data.GitLabUsername}}Reconnect GitLab{{else}}Connect GitLab{{end}}</button>
+      </form>
+      {{if .Data.GitLabUsername}}
+      <form method="POST" action="/v1/gitlab/disconnect">
+        <input type="hidden" name="csrf_token" value="{{.Data.GitLabDisconnectConfirmToken}}">
+        <button type="submit">Disconnect GitLab</button>
+      </form>
+      {{end}}
+      {{end}}
+
       {{if .Data.FlashSurface}}
         <p class="flash" style="background:#fffbe6;border:1px solid #f0c000;padding:0.5rem 0.75rem;margin:1rem 0;border-radius:4px;">{{.Data.FlashSurface}}</p>
       {{end}}

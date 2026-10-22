@@ -6,14 +6,21 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	gitopsapi "github.com/onebox-faas/faas/pkg/apid/gitops"
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
+	gitopsdiagnostics "github.com/onebox-faas/faas/pkg/environmentgitops/diagnostics"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func writeEnvironmentGitOpsError(w http.ResponseWriter, err error) {
+	if p := gitopsapi.RetentionProblem(err); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	switch {
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, "environment_git_source_not_found", "Git source not found", "No environment Git source or managed field exists in this scope."))
@@ -78,18 +85,18 @@ func (s *server) createEnvironmentGitSource(w http.ResponseWriter, r *http.Reque
 	if request.Mode == "" {
 		request.Mode = "report"
 	}
-	if rejectEnvironmentGitEnforcement(w, request.Mode) {
+	if s.rejectEnvironmentGitEnforcement(w, request.Mode) {
 		return
 	}
 	if request.ApprovalPolicy == "" {
 		request.ApprovalPolicy = "manual"
 	}
-	if request.Ref == "" {
+	if request.Ref == "" && request.Provider != "gitlab" {
 		request.Ref = "refs/heads/" + project.ProductionBranch
 	}
-	repositoryID, err := s.verifyEnvironmentGitRepository(r.Context(), acct.ID, project.InstallID, project.RepoFullName, 0)
-	if err != nil {
-		writeEnvironmentGitOpsError(w, err)
+	spec, problem := s.environmentGitSourceSpecForRequest(r.Context(), acct, project, request)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	store, ok := s.store.(state.EnvironmentGitOpsStore)
@@ -97,21 +104,28 @@ func (s *server) createEnvironmentGitSource(w http.ResponseWriter, r *http.Reque
 		writeEnvironmentGitOpsError(w, errors.New("unavailable store"))
 		return
 	}
-	source, err := store.CreateEnvironmentGitSource(r.Context(), acct.ID, project.ID, environment.Slug, state.EnvironmentGitSourceSpec{
-		RepositoryID: repositoryID, InstallationID: project.InstallID, Repository: project.RepoFullName,
-		Ref: request.Ref, ManifestPath: request.ManifestPath, Mode: request.Mode, ApprovalPolicy: request.ApprovalPolicy, Prune: request.Prune,
-	})
+	source, err := store.CreateEnvironmentGitSource(r.Context(), acct.ID, project.ID, environment.Slug, spec)
 	if err != nil {
 		writeEnvironmentGitOpsError(w, err)
 		return
 	}
-	s.audit.Emit(r.Context(), "project.environment.git_source.created", &acct.ID, map[string]any{"source_id": source.ID, "environment_id": source.EnvironmentID, "repository_id": repositoryID})
+	s.audit.Emit(r.Context(), "project.environment.git_source.created", &acct.ID, map[string]any{"source_id": source.ID, "environment_id": source.EnvironmentID, "repository_id": spec.RepositoryID, "provider": spec.Provider})
 	writeJSON(w, http.StatusCreated, source)
 }
 
 func (s *server) readEnvironmentGitRevision(ctx context.Context, acct state.Account, source state.EnvironmentGitSource, commitSHA string) (environmentsync.DesiredState, *api.Problem) {
 	if !isCanonicalCommitSHA(commitSHA) {
-		return environmentsync.DesiredState{}, api.ErrValidation("commit_sha must be an immutable lowercase GitHub commit SHA.")
+		return environmentsync.DesiredState{}, api.ErrValidation("commit_sha must be an immutable lowercase Git commit SHA.")
+	}
+	if source.Spec.Provider == "gitlab" {
+		desired, _, err := s.readVerifiedGitLabSource(ctx, acct, source, commitSHA)
+		if err != nil {
+			if errors.Is(err, errGitLabDefinitionInvalid) || errors.Is(err, errGitLabScopeMismatch) {
+				return environmentsync.DesiredState{}, api.ErrValidation("The GitLab revision has an invalid definition or target scope.")
+			}
+			return environmentsync.DesiredState{}, api.ErrSourceRefUnavailable("Could not verify the GitLab revision and its definition.")
+		}
+		return desired, nil
 	}
 	if _, err := s.verifyEnvironmentGitRepository(ctx, acct.ID, source.Spec.InstallationID, source.Spec.Repository, source.Spec.RepositoryID); err != nil {
 		return environmentsync.DesiredState{}, api.ErrSourceRefUnavailable("Could not verify the bound repository identity.")
@@ -224,6 +238,13 @@ func (s *server) getEnvironmentGitOps(w http.ResponseWriter, r *http.Request, ac
 		writeEnvironmentGitOpsError(w, err)
 		return
 	}
+	response.WorkloadRetirements, err = s.environmentGitOpsWorkloadRetirements(r.Context(), acct.ID, source.ID)
+	if err != nil {
+		writeEnvironmentGitOpsError(w, err)
+		return
+	}
+	explanation := gitopsdiagnostics.Assess(response, time.Now().UTC())
+	response.Explanation = &explanation
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -297,7 +318,7 @@ func (s *server) updateEnvironmentGitSource(w http.ResponseWriter, r *http.Reque
 		api.WriteProblem(w, api.ErrValidation("Invalid source controls."))
 		return
 	}
-	if rejectEnvironmentGitEnforcement(w, request.Mode) {
+	if s.rejectEnvironmentGitEnforcement(w, request.Mode) {
 		return
 	}
 	store, ok := s.store.(state.EnvironmentGitOpsControlStore)

@@ -76,10 +76,9 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Soft-delete the org.
 
-     Sets `status='deleted_pending'` + `deleted_pending=true`
-    on the row (PR 5). Hard delete + GDPR purge lands in PR 8.
-    Authz: owner-only (`org.delete`). Personal orgs are
-    immutable.
+     Marks the company organization as deleted_pending. Live managed
+    PostgreSQL databases must complete deletion first. Owner-only
+    (`org.delete`); personal organizations are immutable.
 
     Args:
         slug (str):
@@ -110,10 +109,9 @@ def sync(
 ) -> Any | Problem | None:
     """Soft-delete the org.
 
-     Sets `status='deleted_pending'` + `deleted_pending=true`
-    on the row (PR 5). Hard delete + GDPR purge lands in PR 8.
-    Authz: owner-only (`org.delete`). Personal orgs are
-    immutable.
+     Marks the company organization as deleted_pending. Live managed
+    PostgreSQL databases must complete deletion first. Owner-only
+    (`org.delete`); personal organizations are immutable.
 
     Args:
         slug (str):
@@ -139,10 +137,9 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Soft-delete the org.
 
-     Sets `status='deleted_pending'` + `deleted_pending=true`
-    on the row (PR 5). Hard delete + GDPR purge lands in PR 8.
-    Authz: owner-only (`org.delete`). Personal orgs are
-    immutable.
+     Marks the company organization as deleted_pending. Live managed
+    PostgreSQL databases must complete deletion first. Owner-only
+    (`org.delete`); personal organizations are immutable.
 
     Args:
         slug (str):
@@ -171,10 +168,9 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Soft-delete the org.
 
-     Sets `status='deleted_pending'` + `deleted_pending=true`
-    on the row (PR 5). Hard delete + GDPR purge lands in PR 8.
-    Authz: owner-only (`org.delete`). Personal orgs are
-    immutable.
+     Marks the company organization as deleted_pending. Live managed
+    PostgreSQL databases must complete deletion first. Owner-only
+    (`org.delete`); personal organizations are immutable.
 
     Args:
         slug (str):

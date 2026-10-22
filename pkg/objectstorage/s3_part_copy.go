@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/objectchecksum"
 )
 
 var _ MultipartPartCopier = (*S3)(nil)
@@ -24,7 +25,7 @@ func (p *S3) CopyMultipartPart(ctx context.Context, bucket string, r MultipartPa
 	return p.copyMultipartPart(ctx, bucket, bucket, r, source)
 }
 func (p *S3) copyMultipartPart(ctx context.Context, sourceBucket, bucket string, r MultipartPartCopyRequest, source CopySourceSnapshot) (CopyObjectResult, error) {
-	if bucket == "" || !ValidKey(r.SourceKey) || !ValidKey(r.Key) || r.ProviderUploadID == "" || r.PartNumber < 1 || r.PartNumber > api.MaxMultipartParts || ctx.Err() != nil || !validCopySourceSize(source, api.MaxObjectUploadBytes) || r.SourceProviderVersionID != "" && r.SourceProviderVersionID != source.ProviderVersionID {
+	if !r.Checksum.Valid() || bucket == "" || !ValidKey(r.SourceKey) || !ValidKey(r.Key) || r.ProviderUploadID == "" || r.PartNumber < 1 || r.PartNumber > api.MaxMultipartParts || ctx.Err() != nil || !validCopySourceSize(source, api.MaxObjectUploadBytes) || r.SourceProviderVersionID != "" && r.SourceProviderVersionID != source.ProviderVersionID {
 		return CopyObjectResult{}, errors.Join(ErrWriteRejected, ErrInvalid)
 	}
 	if _, err := MultipartCopySize(source, r.Range); err != nil {
@@ -49,5 +50,13 @@ func (p *S3) copyMultipartPart(ctx context.Context, sourceBucket, bucket string,
 	if !validCopyResponseSource(out.ResultMetadata, aws.ToString(out.CopySourceVersionId), source.ProviderVersionID) {
 		return CopyObjectResult{}, ErrUnavailable
 	}
-	return CopyObjectResult{ETag: aws.ToString(out.CopyPartResult.ETag), LastModified: aws.ToTime(out.CopyPartResult.LastModified)}, nil
+	d := objectchecksum.Digest{Policy: r.Checksum}
+	if !r.Checksum.Empty() {
+		c := out.CopyPartResult
+		d.Value = checksumValue(r.Checksum.Algorithm, c.ChecksumCRC32, c.ChecksumCRC32C, c.ChecksumCRC64NVME, c.ChecksumSHA1, c.ChecksumSHA256)
+		if !r.Checksum.Valid() || !objectchecksum.ValidPart(r.Checksum.Algorithm, d.Value) {
+			return CopyObjectResult{}, ErrUnavailable
+		}
+	}
+	return CopyObjectResult{Checksum: d, ETag: aws.ToString(out.CopyPartResult.ETag), LastModified: aws.ToTime(out.CopyPartResult.LastModified)}, nil
 }

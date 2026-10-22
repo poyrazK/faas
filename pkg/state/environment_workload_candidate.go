@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
+	"github.com/onebox-faas/faas/pkg/gitlabsource"
 )
 
 var ErrEnvironmentWorkloadPreparationUnavailable = errors.New("environment workload preparation adapter is unavailable")
@@ -22,7 +23,10 @@ var ErrEnvironmentWorkloadPreparationUnavailable = errors.New("environment workl
 // after activation so deployments keep the exact Git-managed runtime contract;
 // EnvironmentWorkloadHeld separately controls whether the candidate may run.
 type EnvironmentWorkloadRuntime struct {
-	Variables map[string]string `json:"variables,omitempty"`
+	SourceProvider     string            `json:"source_provider,omitempty"`
+	SourceRepositoryID int64             `json:"source_repository_id,omitempty"`
+	SourceRepository   string            `json:"source_repository,omitempty"`
+	Variables          map[string]string `json:"variables,omitempty"`
 	// SecretRefs freezes the environment-scoped alias-to-secret mapping that
 	// was observed after the reviewed reconciliation. Secret values and
 	// delivery versions are resolved only at qualification time and are never
@@ -34,6 +38,7 @@ type EnvironmentWorkloadRuntime struct {
 	Schedule          *api.EnvironmentJobSchedule                `json:"schedule,omitempty"`
 	ServiceBindings   map[string]EnvironmentScopedServiceBinding `json:"service_bindings,omitempty"`
 	Source            *api.EnvironmentWorkloadSource             `json:"source,omitempty"`
+	BuiltArtifact     *EnvironmentWorkloadBuiltArtifact          `json:"built_artifact,omitempty"`
 	SourceArchive     *EnvironmentWorkloadSourceArtifact         `json:"source_archive,omitempty"`
 	SourceDeployments []string                                   `json:"source_deployments,omitempty"`
 	DeploymentInputs  *EnvironmentWorkloadDeploymentInputs       `json:"deployment_inputs,omitempty"`
@@ -84,6 +89,9 @@ type EnvironmentWorkloadSourceRequest struct {
 }
 
 type EnvironmentWorkloadSourceArtifact struct {
+	// ContextFormat records that the published bytes are the canonical, isolated
+	// context. Older/full-provider archives never qualify for unchanged reuse.
+	ContextFormat    string `json:"context_format,omitempty"`
 	RevisionID       string `json:"revision_id"`
 	CommitSHA        string `json:"commit_sha"`
 	DefinitionDigest string `json:"definition_digest"`
@@ -165,6 +173,15 @@ func (d Deployment) ScopedWorkloadRuntime() (*EnvironmentWorkloadRuntime, error)
 			return nil, fmt.Errorf("%w: inherited workload inputs disagree with candidate", ErrInvalidArgument)
 		}
 	}
+	if frozen.Source != nil && frozen.Source.Kind == "image" {
+		if frozen.Source.FullRootfs {
+			if d.FullRootfsOverride == nil || !*d.FullRootfsOverride {
+				return nil, fmt.Errorf("%w: reviewed image requires full-rootfs opt-in", ErrInvalidArgument)
+			}
+		} else if frozen.DeploymentInputs == nil && d.FullRootfsOverride != nil {
+			return nil, fmt.Errorf("%w: unreviewed image full-rootfs override", ErrInvalidArgument)
+		}
+	}
 	if err := validateEnvironmentServiceBindings(d.AppID, frozen.ServiceBindings); err != nil {
 		return nil, fmt.Errorf("%w: invalid frozen scoped service bindings", err)
 	}
@@ -174,9 +191,14 @@ func (d Deployment) ScopedWorkloadRuntime() (*EnvironmentWorkloadRuntime, error)
 	if frozen.Source != nil && frozen.Source.Kind == "function" && (frozen.AppType != AppTypeFunction || frozen.RuntimeBase != frozen.Source.Runtime) {
 		return nil, fmt.Errorf("%w: frozen function runner differs from source", ErrInvalidArgument)
 	}
-	if frozen.SourceArchive != nil {
+	if frozen.BuiltArtifact != nil {
+		if !builtArtifactMatchesDeployment(d, frozen) {
+			return nil, fmt.Errorf("%w: frozen build artifact disagrees with candidate", ErrInvalidArgument)
+		}
+	} else if frozen.SourceArchive != nil {
 		if err := validateEnvironmentSourceArtifact(*frozen.SourceArchive); err != nil || frozen.Source == nil ||
-			(frozen.Source.Kind != "source" && frozen.Source.Kind != "dockerfile" && frozen.Source.Kind != "function") || d.Kind != DeploymentKindGitHub ||
+			(frozen.Source.ReuseUnchangedBuild != (frozen.SourceArchive.ContextFormat == api.EnvironmentGitBuildContextFormat)) ||
+			(frozen.Source.Kind != "source" && frozen.Source.Kind != "dockerfile" && frozen.Source.Kind != "function") || frozen.Source.BuildArtifactID != "" || frozen.Source.BuildArtifactHash != "" || !validEnvironmentGitCandidateProvenance(d, frozen) ||
 			d.ImageDigest != "" ||
 			d.SourcePath != frozen.SourceArchive.Path || d.SourceSHA256 != frozen.SourceArchive.SHA256 || d.SourceBytes != frozen.SourceArchive.Bytes ||
 			d.BuildID != frozen.SourceArchive.BuildID || d.LogPath != frozen.SourceArchive.LogPath || d.SourceRoot != frozen.Source.Directory ||
@@ -329,6 +351,8 @@ func frozenCandidateInputsMatch(stored []byte, expected EnvironmentWorkloadRunti
 	// The source archive is attached after the reviewed input snapshot is made.
 	// Compare all authority fields while allowing that separately validated
 	// materialization receipt to be present on a retry.
+	prior.BuiltArtifact = nil
+	expected.BuiltArtifact = nil
 	prior.SourceArchive = nil
 	expected.SourceArchive = nil
 	priorJSON, err := json.Marshal(prior)
@@ -524,7 +548,7 @@ func workloadCandidateInputs(source EnvironmentGitSource, revision EnvironmentDe
 		}
 		app := byID[ids[resource]]
 		intent := app.WorkloadIntent
-		workloadSource, _, reason := observedWorkloadSource(app, snapshot.Repository)
+		workloadSource, _, reason := observedWorkloadSource(app, snapshot.GitSource)
 		if app.ID == "" {
 			return nil, fmt.Errorf("%w: candidate %s has no mapped workload", ErrEnvironmentWorkloadPreparationUnavailable, resource)
 		}
@@ -544,7 +568,7 @@ func workloadCandidateInputs(source EnvironmentGitSource, revision EnvironmentDe
 		if !maps.Equal(app.SecretRefs, workload.SecretRefs) {
 			return nil, fmt.Errorf("%w: scoped secret references must exactly match the reviewed workload references", ErrEnvironmentWorkloadPreparationUnavailable)
 		}
-		if workloadSource.Kind != "image" && (!sourceOwned || intent.SourceRevision != revision.CommitSHA) {
+		if workloadSource.Kind != "image" && (!sourceOwned || workloadSource.BuildArtifactID == "" && intent.SourceRevision != revision.CommitSHA) {
 			return nil, fmt.Errorf("%w: source builds require owned source intent at the reviewed commit", ErrEnvironmentWorkloadPreparationUnavailable)
 		}
 		if workloadSource.Kind == "function" && (app.Type != AppTypeFunction || app.RuntimeBase != workloadSource.Runtime) {
@@ -570,7 +594,7 @@ func workloadCandidateInputs(source EnvironmentGitSource, revision EnvironmentDe
 		if err != nil {
 			return nil, err
 		}
-		frozen := EnvironmentWorkloadRuntime{SourceID: source.ID, EnvironmentID: source.EnvironmentID, RevisionID: revision.ID, DefinitionDigest: revision.Digest,
+		frozen := EnvironmentWorkloadRuntime{SourceProvider: source.Spec.Provider, SourceRepositoryID: source.Spec.RepositoryID, SourceRepository: source.Spec.Repository, SourceID: source.ID, EnvironmentID: source.EnvironmentID, RevisionID: revision.ID, DefinitionDigest: revision.Digest,
 			Generation: source.Generation, IntentVersion: snapshot.Version, Resource: resource, PlanHash: plan.Hash,
 			AppID: app.ID, Scope: snapshot.Environment, AppType: app.Type, RuntimeBase: app.RuntimeBase, WorkloadClass: app.WorkloadClass,
 			Baseline: app.Manifest, StartCommand: app.StartCommand, Runtime: runtime, Variables: maps.Clone(workload.Variables),
@@ -595,19 +619,31 @@ func workloadCandidateInputs(source EnvironmentGitSource, revision EnvironmentDe
 			}
 			frozen.SourceDeployments = append(frozen.SourceDeployments, baseline.ID)
 		}
-		raw, err := json.Marshal(frozen)
-		if err != nil {
-			return nil, err
-		}
 		input := Deployment{AppID: app.ID, Scope: snapshot.Environment, Kind: DeploymentKindImage,
-			ImageDigest: workloadSource.Image, CommitSHA: revision.CommitSHA, DeployedVia: "api", EnvironmentWorkloadRuntime: string(raw)}
+			ImageDigest: workloadSource.Image, CommitSHA: revision.CommitSHA, DeployedVia: "api"}
 		if workloadSource.Kind != "image" {
 			input.Kind, input.SourceRoot = DeploymentKindGitHub, workloadSource.Directory
 			input.SourceURL = "github://" + source.Spec.Repository + "@" + revision.CommitSHA
+			if source.Spec.Provider == "gitlab" {
+				input.Kind = DeploymentKindTarball
+				input.SourceURL = gitlabsource.ProvenanceURL(source.Spec.RepositoryID, source.Spec.Repository, revision.CommitSHA)
+			}
 		}
 		if frozen.DeploymentInputs != nil {
 			frozen.DeploymentInputs.apply(&input)
 		}
+		if workloadSource.Kind == "image" && workloadSource.FullRootfs {
+			if frozen.DeploymentInputs != nil && (frozen.DeploymentInputs.FullRootfs == nil || !*frozen.DeploymentInputs.FullRootfs) {
+				return nil, fmt.Errorf("%w: existing deployment full-rootfs policy differs from reviewed image source", ErrEnvironmentWorkloadPreparationUnavailable)
+			}
+			enabled := true
+			input.FullRootfsOverride = &enabled
+		}
+		raw, err := json.Marshal(frozen)
+		if err != nil {
+			return nil, err
+		}
+		input.EnvironmentWorkloadRuntime = string(raw)
 		out = append(out, input)
 	}
 	if err := validateServiceBindingCandidateGraph(desired, out); err != nil {
@@ -664,4 +700,14 @@ func validateServiceBindingCandidateGraph(desired environmentsync.DesiredState, 
 		}
 	}
 	return nil
+}
+
+func validEnvironmentGitCandidateProvenance(d Deployment, frozen EnvironmentWorkloadRuntime) bool {
+	if frozen.SourceProvider == "gitlab" {
+		return d.Kind == DeploymentKindTarball && gitlabsource.MatchesProvenance(d.SourceURL, frozen.SourceRepositoryID, frozen.SourceRepository, d.CommitSHA)
+	}
+	if frozen.SourceProvider != "" && frozen.SourceProvider != "github" {
+		return false
+	}
+	return d.Kind == DeploymentKindGitHub
 }

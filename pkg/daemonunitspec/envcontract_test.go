@@ -21,7 +21,7 @@ var envLiteral = regexp.MustCompile(`"(FAAS_[A-Z0-9_]+)"`)
 // run on the operator's machine, and their env is not a deploy concern.
 var daemonDirs = []string{
 	"cmd/apid", "cmd/bridged", "cmd/schedd", "cmd/vmmd", "cmd/imaged", "cmd/builderd",
-	"cmd/meterd", "cmd/githubd", "cmd/gatewayd-internal", "cmd/gatewayd-public", "cmd/s3-gatewayd",
+	"cmd/meterd", "cmd/githubd", "cmd/gatewayd-internal", "cmd/gatewayd-public", "cmd/s3-gatewayd", "cmd/maild", "cmd/mail-report", "cmd/mail-metrics", "cmd/mail-feedback",
 	"cmd/vmmd-stream-bridge", "cmd/vmmd-raw-bridge", "cmd/vmmd-tcp-bridge", "cmd/vmmd-udp-bridge", "cmd/realtimed", "cmd/profiled",
 }
 
@@ -85,7 +85,7 @@ func scanLiterals(t *testing.T, root string, dirs []string) map[string]map[strin
 // imports them, so their env reads belong to apid, not "shared". List a
 // package here only if no other daemon imports it (pkg/apid/apidsource is
 // also used by githubd and stays shared).
-var apidOwnedPkgs = []string{"pkg/apid/apidserver/", "pkg/apid/durable/", "pkg/apid/receivers/"}
+var apidOwnedPkgs = []string{"pkg/apid/apidserver/", "pkg/apid/durable/", "pkg/apid/receivers/", "pkg/apid/release/"}
 
 func ownerOf(rel string) string {
 	for _, prefix := range apidOwnedPkgs {
@@ -181,7 +181,7 @@ func TestEnvContract_Sorted(t *testing.T) {
 // sets it.
 func TestEnvContract_EveryReadIsDeclared(t *testing.T) {
 	root := repoRoot(t)
-	reads := scanLiterals(t, root, append(append([]string{}, daemonDirs...), "pkg", "guest"))
+	reads := scanLiterals(t, root, append(append([]string{}, daemonDirs...), "pkg", "guest", "internal"))
 	byName := EnvContractByName()
 	var missing []string
 	for name, files := range reads {
@@ -218,7 +218,7 @@ func TestEnvContract_EveryReadIsDeclared(t *testing.T) {
 // by something, so the doc never advertises a knob that does nothing.
 func TestEnvContract_NoStaleEntries(t *testing.T) {
 	root := repoRoot(t)
-	reads := scanLiterals(t, root, append(append([]string{}, daemonDirs...), "pkg", "guest"))
+	reads := scanLiterals(t, root, append(append([]string{}, daemonDirs...), "pkg", "guest", "internal"))
 	// Script consumers: shell under deploy/scripts, shell embedded in role
 	// tasks (postgres archive_command), and ExecStart lines in units.
 	scripts := readTree(t, root, []string{"deploy/scripts", "deploy/ansible/roles", "deploy/systemd"}, func(p string) bool {
@@ -390,4 +390,43 @@ func renderEnvContractDoc() string {
 		fmt.Fprintf(&b, "| `%s` | %s | `%s` | %s | %s | `%s` | %s |\n", v.Name, strings.Join(v.Owners, ", "), v.Source, required, v.Default, v.Validate, note)
 	}
 	return b.String()
+}
+
+func TestEnvContractDurableObjectManagementRemainsOptIn(t *testing.T) {
+	// ADR-989..998: shipping the management code must not enable an
+	// unqualified durable-object feature through daemon environment defaults.
+	contract := EnvContractByName()
+	for _, suffix := range []string{
+		"BROWSER_SESSIONS_ENABLED", "QUOTA_MIGRATION_ENABLED", "QUOTA_POLICY_ENABLED",
+		"REGISTRY_CLEANUP_ENABLED", "REGISTRY_CLEANUP_WORKER_ENABLED", "REGISTRY_ENABLED",
+		"RETIREMENT_ENABLED", "SOCKETS_ENABLED", "TENANT_QUOTAS_ENABLED",
+	} {
+		name := "FAAS_DURABLE_ENTITY_" + suffix
+		v, ok := contract[name]
+		if !ok || v.Source != EnvSourceDefault || v.Default != "0" || v.Required || len(v.Owners) != 1 || v.Owners[0] != "apid" {
+			t.Errorf("%s must remain optional and disabled for apid: %+v", name, v)
+		}
+	}
+}
+
+func TestEnvContractHostingRemainsOptIn(t *testing.T) {
+	// adr: 202610171453 — daemon defaults must not expose the internal pilot.
+	count := 0
+	for _, v := range EnvContract {
+		if !strings.HasPrefix(v.Name, "FAAS_FRONTEND_HOSTING_") {
+			continue
+		}
+		if v.Required {
+			t.Errorf("disabled hosting must not require %s", v.Name)
+		}
+		if strings.HasSuffix(v.Name, "_ENABLED") {
+			count++
+			if v.Default != "0" || (v.Source != EnvSourceRuntimeConfig && v.Source != EnvSourceDevOnly) {
+				t.Errorf("hosting admission must default off: %+v", v)
+			}
+		}
+	}
+	if count == 0 {
+		t.Fatal("missing hosting admission environment contracts")
+	}
 }
