@@ -280,6 +280,11 @@ type server struct {
 	// distinguishes "gatewayd not reachable" from "no traffic
 	// yet". Set via env FAAS_GATEWAYD_CONTROL_URL at boot.
 	gatewaydControlURL string
+	// gatewaydControlFromRegistry resolves the control URL per request from
+	// the compute-node registry (ADR-20261022004500); gatewayControlNext
+	// rotates through the active nodes.
+	gatewaydControlFromRegistry bool
+	gatewayControlNext          atomic.Uint64
 	// realtimeClient is retained so the leased fleet adapter can use the local
 	// Unix owner for endpoint registration and connection discovery.
 	realtimeClient *realtime.Client
@@ -1052,11 +1057,9 @@ func (s *server) WithHostHashFunc(fn func(host string) (string, error)) *server 
 // (/v1/internal/apps/{slug}/routes and /streaming-cap). Default
 // http://127.0.0.1:9090 matches gatewayd-internal's default
 // control bind (see pkg/gateway/control.go ControlAddr);
-// production overrides via FAAS_GATEWAYD_CONTROL_URL when the
-// daemons are split across nodes (cross-box deployments will
-// need the public-facing reverse-proxy to terminate mTLS before
-// reaching gatewayd-internal's control mux — out of scope for
-// this PR; same-box is the only supported posture today).
+// a split control plane instead sets FAAS_GATEWAYD_CONTROL_FROM_REGISTRY
+// and reaches a compute node's private control listener
+// (ADR-20261022004500, gatewayControlURL).
 func (s *server) WithGatewaydControlURL(url string) *server {
 	s.gatewaydControlURL = url
 	return s

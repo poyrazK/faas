@@ -69,6 +69,8 @@ faas_control_plane_allowed_ports:
   - 8080
   - 9091
   - 9092
+  # gatewayd-internal's private control listener (ADR-20261022004500).
+  - 9097
   - 9100
   - 9102
   - 9103

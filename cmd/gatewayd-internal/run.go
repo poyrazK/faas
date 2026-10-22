@@ -3876,9 +3876,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// nil pgStore (tests / single-box dev without a DB) renders
 	// the lookup_unavailable problem so the dashboard can
 	// distinguish "DB missing" from "unknown slug".
+	// appsControl is also served on the compute node's private control
+	// listener (ADR-20261022004500), so apid on the control plane reaches it.
+	var appsControl http.HandlerFunc
 	if deps.pgStore != nil {
 		pgStore := deps.pgStore
-		controlMux.HandleFunc("/v1/internal/apps/", func(w http.ResponseWriter, r *http.Request) {
+		appsControl = func(w http.ResponseWriter, r *http.Request) {
 			// Path-keyed: ServeMux's HandleFunc uses prefix
 			// match, so /v1/internal/apps/foo/routes,
 			// /v1/internal/apps/foo/service-endpoints,
@@ -3946,7 +3949,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				return
 			}
 			internalRoutesHandler(handler, resolve, log).ServeHTTP(w, r)
-		})
+		}
+		controlMux.HandleFunc("/v1/internal/apps/", appsControl)
 	}
 	// ADR-168/169: expose the node-local service proxy on the trusted control
 	// listener and, when configured, on the tenant bridge. Both listeners use
@@ -4400,6 +4404,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			errc <- err
 		}
 	}()
+	if addr := privateControlAddr(cfg.Role, os.Getenv); addr != "" {
+		var apps http.Handler
+		if appsControl != nil {
+			apps = appsControl
+		}
+		privateMux := newPrivateControlMux(apps, http.HandlerFunc(responseChecker.Capabilities))
+		go func() {
+			log.Info("gatewayd private control listening", "addr", addr)
+			if err := gateway.RunControlServer(handoffCtx, addr, privateMux); err != nil {
+				errc <- err
+			}
+		}()
+	}
 
 	// Internal unix-socket RPC for schedd's cron dispatch (spec §4.4,
 	// M7). Best-effort: if the socket can't bind (e.g. /run/faas
