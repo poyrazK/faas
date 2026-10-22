@@ -1439,13 +1439,25 @@ const (
 
 // Platform flag (ADR-1700) structural bounds. They keep every daemon's
 // compiled snapshot small; larger audiences belong in a group or a rollout.
+// Organizations per rule and self-serve opt-ins: ADR 20261021080640.
 const (
 	PlatformFlagsMaxRules            = 32
 	PlatformFlagsMaxAccountsPerRule  = 1000
+	PlatformFlagsMaxOrgsPerRule      = 1000
 	PlatformFlagsMaxGroups           = 100
 	PlatformFlagsMaxAccountsPerGroup = 5000
 	PlatformFlagsMaxDefinitionBytes  = 64 << 10
 	PlatformFlagsMaxGroupsBytes      = 512 << 10
+	// PlatformFlagsMaxOptInSubjects caps the accounts plus organizations
+	// that may opt in to one self-serve preview.
+	PlatformFlagsMaxOptInSubjects = 5000
+	PlatformFlagsMaxOptInsBytes   = 256 << 10
+	// Automatic ramps: stages per ramp and the time a stage must hold
+	// before the worker judges it.
+	PlatformFlagsMinRampStages          = 2
+	PlatformFlagsMaxRampStages          = 10
+	PlatformFlagsMinRampIntervalSeconds = 300
+	PlatformFlagsMaxRampIntervalSeconds = 7 * 24 * 3600
 )
 
 // MaxOutboundRequestsPerDay is the structural upper bound for a
@@ -12049,7 +12061,10 @@ const (
 // Data API workload bounds (ADR-650). Embedded config.mjs mirrors these
 // constants; the CLI tripwire tests keep the runtime and platform contract aligned.
 const (
-	DataAPIMaxPoolConnections = 2
+	// Engine connections per runtime (ADR-20261021180534): the default and the
+	// largest DATA_API_POOL an owner may set.
+	DataAPIDefaultPoolConnections = 2
+	DataAPIMaxPoolConnections     = 8
 	// Read-only connection-budget planning, not SQL quotas or reservations.
 	DataAPIConnectionBudgetMaxDatabases      = 100
 	DataAPIConnectionBudgetMaxBindings       = 1024

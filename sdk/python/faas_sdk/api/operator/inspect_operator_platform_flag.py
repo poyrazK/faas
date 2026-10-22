@@ -1,3 +1,4 @@
+import datetime
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
@@ -9,19 +10,31 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.operator_platform_flag_decision import OperatorPlatformFlagDecision
 from ...models.problem import Problem
-from ...types import UNSET, Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     key: str,
     *,
     account_id: UUID,
+    org_id: UUID | Unset = UNSET,
+    at: datetime.datetime | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
 
     json_account_id = str(account_id)
     params["account_id"] = json_account_id
+
+    json_org_id: str | Unset = UNSET
+    if not isinstance(org_id, Unset):
+        json_org_id = str(org_id)
+    params["org_id"] = json_org_id
+
+    json_at: str | Unset = UNSET
+    if not isinstance(at, Unset):
+        json_at = at.isoformat()
+    params["at"] = json_at
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -86,6 +99,8 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     account_id: UUID,
+    org_id: UUID | Unset = UNSET,
+    at: datetime.datetime | Unset = UNSET,
 ) -> Response[OperatorPlatformFlagDecision | Problem]:
     """Explain a platform flag for an account
 
@@ -97,6 +112,8 @@ def sync_detailed(
     Args:
         key (str):
         account_id (UUID):
+        org_id (UUID | Unset):
+        at (datetime.datetime | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -109,6 +126,8 @@ def sync_detailed(
     kwargs = _get_kwargs(
         key=key,
         account_id=account_id,
+        org_id=org_id,
+        at=at,
     )
 
     response = client.get_httpx_client().request(
@@ -123,6 +142,8 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     account_id: UUID,
+    org_id: UUID | Unset = UNSET,
+    at: datetime.datetime | Unset = UNSET,
 ) -> OperatorPlatformFlagDecision | Problem | None:
     """Explain a platform flag for an account
 
@@ -134,6 +155,8 @@ def sync(
     Args:
         key (str):
         account_id (UUID):
+        org_id (UUID | Unset):
+        at (datetime.datetime | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -147,6 +170,8 @@ def sync(
         key=key,
         client=client,
         account_id=account_id,
+        org_id=org_id,
+        at=at,
     ).parsed
 
 
@@ -155,6 +180,8 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     account_id: UUID,
+    org_id: UUID | Unset = UNSET,
+    at: datetime.datetime | Unset = UNSET,
 ) -> Response[OperatorPlatformFlagDecision | Problem]:
     """Explain a platform flag for an account
 
@@ -166,6 +193,8 @@ async def asyncio_detailed(
     Args:
         key (str):
         account_id (UUID):
+        org_id (UUID | Unset):
+        at (datetime.datetime | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -178,6 +207,8 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         key=key,
         account_id=account_id,
+        org_id=org_id,
+        at=at,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -190,6 +221,8 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     account_id: UUID,
+    org_id: UUID | Unset = UNSET,
+    at: datetime.datetime | Unset = UNSET,
 ) -> OperatorPlatformFlagDecision | Problem | None:
     """Explain a platform flag for an account
 
@@ -201,6 +234,8 @@ async def asyncio(
     Args:
         key (str):
         account_id (UUID):
+        org_id (UUID | Unset):
+        at (datetime.datetime | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -215,5 +250,7 @@ async def asyncio(
             key=key,
             client=client,
             account_id=account_id,
+            org_id=org_id,
+            at=at,
         )
     ).parsed

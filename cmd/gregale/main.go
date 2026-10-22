@@ -271,6 +271,9 @@ func run(args []string) (status int) {
 		// switch in cmdPreview itself rather than living as
 		// siblings in main.go.
 		return cmdPreview(args[1:])
+	case "previews":
+		// ADR 20261021080640: join or leave self-serve platform previews.
+		return cmdPreviews(args[1:])
 	case "scan":
 		// Phase 3 (repo decomposition) — dry-run entry point. Prints
 		// the plan as a table or --json, never writes. The

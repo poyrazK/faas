@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperatorPlatformFlagConvergence } from './OperatorPlatformFlagConvergence.js';
+import type { OperatorPlatformFlagOptIns } from './OperatorPlatformFlagOptIns.js';
 import type { OperatorRuntimeConfigApplyReceipt } from './OperatorRuntimeConfigApplyReceipt.js';
 import type { PlatformFlagDefinition } from './PlatformFlagDefinition.js';
 /**
@@ -19,6 +20,10 @@ export type OperatorPlatformFlag = {
   capability?: string;
   adr: string;
   consumers: Array<string>;
+  /**
+   * Subject attributes every consumer can supply, so rules may constrain them; a write using any other is refused (ADR 20261021080640).
+   */
+  attributes: Array<'account' | 'plan' | 'org'>;
   legacy_env: Array<string>;
   retire_by?: string;
   definition: PlatformFlagDefinition;
@@ -29,5 +34,6 @@ export type OperatorPlatformFlag = {
   updated_at?: string;
   receipts: Array<OperatorRuntimeConfigApplyReceipt>;
   convergence: OperatorPlatformFlagConvergence;
+  opt_ins: OperatorPlatformFlagOptIns;
 };
 

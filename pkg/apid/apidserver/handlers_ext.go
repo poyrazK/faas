@@ -1086,7 +1086,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("CPU profiling is unavailable on this installation"))
 		return
 	}
-	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingEnabled {
+	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingFor(acct) {
 		api.WriteProblem(w, api.ErrCapacity("request tracing is unavailable on this installation"))
 		return
 	}
