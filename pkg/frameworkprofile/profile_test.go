@@ -68,6 +68,25 @@ func TestAnalyzeProfilesCommonAPIs(t *testing.T) {
 			},
 			framework: "gin", command: "go run .", port: 8080,
 		},
+		{
+			// Railpack runs the Procfile's web process (Hunt 12 H12-3).
+			name: "flask with a Procfile",
+			files: fstest.MapFS{
+				"requirements.txt": &fstest.MapFile{Data: []byte("flask\ngunicorn\n")},
+				"handler.py":       &fstest.MapFile{Data: []byte("from flask import Flask\napp = Flask(__name__)\n")},
+				"Procfile":         &fstest.MapFile{Data: []byte("# web server\nworker: python jobs.py\nweb: gunicorn --workers 2 handler:app\n")},
+			},
+			framework: "flask", command: "gunicorn --workers 2 handler:app", port: 8000,
+		},
+		{
+			name: "Procfile without a web process",
+			files: fstest.MapFS{
+				"requirements.txt": &fstest.MapFile{Data: []byte("flask\n")},
+				"handler.py":       &fstest.MapFile{Data: []byte("from flask import Flask\napp = Flask(__name__)\n")},
+				"Procfile":         &fstest.MapFile{Data: []byte("worker: python jobs.py\n")},
+			},
+			framework: "flask", command: "gunicorn handler:app --bind 0.0.0.0:$PORT", port: 8000,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

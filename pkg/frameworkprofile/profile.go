@@ -140,6 +140,16 @@ func Analyze(fsys fs.FS) (Profile, error) {
 	if framework != markers.FrameworkUnknown {
 		profile.FrameworkVer = markers.VersionFromFS(fsys, framework)
 	}
+	if framework != markers.FrameworkDocker && framework != markers.FrameworkUnknown {
+		// Railpack starts a source build with the Procfile's web process
+		// when there is one, so that is the command the guest runs. The
+		// inferred framework default was reported instead: hello-python
+		// showed `gunicorn handler:app --bind 0.0.0.0:$PORT` while the
+		// guest ran `gunicorn --workers 2 handler:app` (Hunt 12 H12-3).
+		if web := procfileWebCommand(fsys); web != "" {
+			profile.StartCommand = web
+		}
+	}
 	if framework != markers.FrameworkDocker {
 		if health := inferHealthPath(fsys); health != "" {
 			profile.HealthPath = health
@@ -570,6 +580,18 @@ func firstPort(body string) int {
 		return 0
 	}
 	return port
+}
+
+// procfileWebCommand returns the Procfile's web process command, or "".
+// Lines are Heroku-format `name: command`, split at the first colon.
+func procfileWebCommand(fsys fs.FS) string {
+	for _, line := range strings.Split(readFile(fsys, "Procfile"), "\n") {
+		name, command, ok := strings.Cut(strings.TrimSpace(line), ":")
+		if ok && strings.TrimSpace(name) == "web" {
+			return strings.TrimSpace(command)
+		}
+	}
+	return ""
 }
 
 func fileExists(fsys fs.FS, path string) bool {
