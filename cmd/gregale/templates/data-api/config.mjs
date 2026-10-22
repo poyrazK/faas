@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 
 // Mirrors pkg/api/limits.go; TestDataAPIRuntimeBounds checks this contract.
-export const limits = Object.freeze({ pool: 2, poolMax: 8, connectionReportMs: 5000, connectionReportIntervalMs: 15000, connectionReportBytes: 4096, rows: 1000, bodyBytes: 1048576, responseBytes: 16777216, outputBytes: 1048576, queryMs: 15000, lockMs: 5000, relations: 1000, columns: 10000, types: 20000, queuedRequests: 8, admissionWaitMs: 1000, overloadRetrySeconds: 1, healthProbeMs: 2000, healthBytes: 8192, rateLimitDefaultPerSecond: 10, rateLimitDefaultBurst: 20, rateLimitMaxPerSecond: 1000, rateLimitMaxBurst: 1000, rateLimitMaxSubjects: 4096, rateLimitSweepMs: 1000, userConcurrencyMaxSubjects: 4096, userConcurrencyCooldownMs: 15000, publicReadMaxRelations: 64, serverKeySubjectMaxBytes: 255, publicReadMaxAgeSeconds: 3600, cacheTagMaxBytes: 128, cacheTagsMax: 32, serverKeyPermissionsBytes: 4096, serverKeyPermissionsEntries: 64, publicRpcMaxFunctions: 64, usageReportMs: 5000, usageReportIntervalMs: 15000, usageReportMaxHours: 48, usageMonthlyCapMax: 1000000000000, usageRestoreJumpMs: 5000, storageObjectDefaultBytes: 26214400, storageObjectMaxBytes: 104857600, storageTransfers: 4, storageTransferMs: 120000, storageSignSeconds: 60 })
+export const limits = Object.freeze({ pool: 2, poolMax: 8, connectionReportMs: 5000, connectionReportIntervalMs: 15000, connectionReportBytes: 4096, rows: 1000, bodyBytes: 1048576, responseBytes: 16777216, outputBytes: 1048576, queryMs: 15000, lockMs: 5000, relations: 1000, columns: 10000, types: 20000, queuedRequests: 8, admissionWaitMs: 1000, overloadRetrySeconds: 1, healthProbeMs: 2000, healthBytes: 8192, rateLimitDefaultPerSecond: 10, rateLimitDefaultBurst: 20, rateLimitMaxPerSecond: 1000, rateLimitMaxBurst: 1000, rateLimitMaxSubjects: 4096, rateLimitSweepMs: 1000, userConcurrencyMaxSubjects: 4096, userConcurrencyCooldownMs: 15000, publicReadMaxRelations: 64, serverKeySubjectMaxBytes: 255, publicReadMaxAgeSeconds: 3600, cacheTagMaxBytes: 128, cacheTagsMax: 32, serverKeyPermissionsBytes: 4096, serverKeyPermissionsEntries: 64, publicRpcMaxFunctions: 64, usageReportMs: 5000, usageReportIntervalMs: 15000, usageReportMaxHours: 48, usageMonthlyCapMax: 1000000000000, usageRestoreJumpMs: 5000, storageObjectDefaultBytes: 26214400, storageObjectMaxBytes: 104857600, storageTransfers: 4, storageTransferMs: 120000, storageSignSeconds: 60, changeEventsBatch: 100, changeEventsBatchBytes: 1048576, changeEventDataBytes: 65536, changeEventsLeaseMs: 60000, changeEventsPublishMs: 10000, changeEventsIdleMinMs: 1000, changeEventsIdleMaxMs: 30000 })
 
 export const relationPart = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/
 const schemaPart = /^[a-z][a-z0-9_]{0,62}$/
@@ -247,6 +247,23 @@ export function usageConfig(env) {
   return Object.freeze({ endpoint: new URL('/v1/runtime/data-api/usage', api).href, identity: identity.href, caps: monthlyCaps(env.DATA_API_MONTHLY_CAPS) })
 }
 
+// Change hooks (ADR-20261022121642): DATA_API_CHANGE_EVENTS_URL is the
+// platform origin the relay publishes recorded changes to. The change event
+// table lives in the first exposed schema.
+export function changeEventsConfig(env, schemas) {
+  if (env.DATA_API_CHANGE_EVENTS_URL === undefined) return null
+  const invalid = () => { throw new Error('Invalid Data API change events configuration') }
+  let api, identity
+  try {
+    api = new URL(env.DATA_API_CHANGE_EVENTS_URL)
+    identity = new URL(env.FAAS_WORKLOAD_IDENTITY_ENDPOINT)
+  } catch { return invalid() }
+  if (api.protocol !== 'https:' || api.username || api.password || api.pathname !== '/' || api.search || api.hash ||
+    identity.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(identity.hostname) || identity.username || identity.password || identity.pathname !== '/oidc/token' || identity.search || identity.hash) return invalid()
+  identity.searchParams.set('audience', 'gregale:data-api:events')
+  return Object.freeze({ schema: schemas[0], endpoint: new URL('/v1/runtime/data-api/events', api).href, identity: identity.href })
+}
+
 // File storage (ADR-20261021101510): a bucket binding's secret suffixes.
 const suffixes = ['ENDPOINT', 'REGION', 'BUCKET', 'ACCESS_KEY_ID', 'SECRET_ACCESS_KEY']
 
@@ -312,7 +329,7 @@ export function runtimeConfig(env) {
   const pool = poolConfig(env.DATA_API_POOL, coordinatedRefresh)
   const engine = coordinatedRefresh ? pool - 1 : pool
   return { connection, role, schemas, auth, secret, storage, pool, engine, serverKeyConcurrency: serverKeyConcurrencyConfig(env.DATA_API_SERVER_KEY_CONCURRENCY, engine), serverKeyRateLimit: rateLimitConfig(env, 'DATA_API_SERVER_KEY_RATE_LIMIT'), coordinatedRefresh, sqlDeadline, queryShapes, readOnly, aggregates, publicRead: publicReadConfig(env.DATA_API_PUBLIC_READ, schemas), serverKeys: serverKeyConfig(env),
-    publicRpc: publicRpcConfig(env.DATA_API_PUBLIC_RPC, schemas), usage: usageConfig(env), publicReadMaxAge: publicReadMaxAge(env.DATA_API_PUBLIC_READ_MAX_AGE, env.DATA_API_PUBLIC_READ !== undefined || env.DATA_API_PUBLIC_RPC !== undefined), connectionObservation: connectionObservationConfig(env), rateLimit: rateLimitConfig(env), userConcurrency: userConcurrencyConfig(env, engine), acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
+    publicRpc: publicRpcConfig(env.DATA_API_PUBLIC_RPC, schemas), usage: usageConfig(env), changeEvents: changeEventsConfig(env, schemas), publicReadMaxAge: publicReadMaxAge(env.DATA_API_PUBLIC_READ_MAX_AGE, env.DATA_API_PUBLIC_READ !== undefined || env.DATA_API_PUBLIC_RPC !== undefined), connectionObservation: connectionObservationConfig(env), rateLimit: rateLimitConfig(env), userConcurrency: userConcurrencyConfig(env, engine), acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
     postgrestEnv: { PGRST_DB_URI: connection, PGRST_DB_SCHEMAS: schemas.join(','), PGRST_JWT_SECRET: secret.toString('base64url'),
       PGRST_SERVER_HOST: '127.0.0.1', PGRST_SERVER_PORT: '3000', PGRST_ADMIN_SERVER_PORT: '3001', PGRST_SERVER_TIMING_ENABLED: 'true',
       PGRST_DB_POOL: String(engine), PGRST_DB_MAX_ROWS: String(limits.rows), ...(sqlDeadline ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_deadline_request', PGRST_DB_CONFIG: 'false' } : coordinatedRefresh ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_request' } : {}), PGRST_DB_CHANNEL_ENABLED: 'false', PGRST_DB_PREPARED_STATEMENTS: 'false', ...(aggregates ? { PGRST_DB_AGGREGATES_ENABLED: 'true' } : {}),

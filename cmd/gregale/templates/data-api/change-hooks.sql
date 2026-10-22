@@ -14,6 +14,7 @@ CREATE TABLE {{schema}}.gregale_change_events (
   old_row jsonb,
   new_row jsonb,
   changed text[],
+  truncated boolean NOT NULL DEFAULT false,
   txid bigint NOT NULL DEFAULT txid_current(),
   captured_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   attempts integer NOT NULL DEFAULT 0,
@@ -36,7 +37,9 @@ CREATE SCHEMA gregale_hooks;
 REVOKE ALL ON SCHEMA gregale_hooks FROM PUBLIC;
 
 -- capture records one change. Its arguments are the key columns, the payload
--- ('row' or 'keys'), excluded columns and the hooked relation's name.
+-- ('row' or 'keys'), excluded columns and the hooked relation's name. Rows
+-- larger than 64 KiB together are left out and the event marked truncated;
+-- consumers read the row by its key.
 CREATE FUNCTION gregale_hooks.capture() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
@@ -47,6 +50,7 @@ DECLARE
   new_row jsonb;
   changed text[];
   row_key jsonb;
+  truncated boolean := false;
 BEGIN
   IF current_setting('gregale_hooks.skip', true) = 'on' THEN
     RETURN NULL;
@@ -69,9 +73,13 @@ BEGIN
   IF TG_ARGV[1] = 'keys' THEN
     old_row := NULL;
     new_row := NULL;
+  ELSIF coalesce(octet_length(old_row::text), 0) + coalesce(octet_length(new_row::text), 0) > 65536 THEN
+    old_row := NULL;
+    new_row := NULL;
+    truncated := true;
   END IF;
-  INSERT INTO {{schema}}.gregale_change_events (relation_schema, relation_name, op, row_key, old_row, new_row, changed)
-  VALUES (TG_ARGV[3], TG_ARGV[4], lower(TG_OP), row_key, old_row, new_row, changed);
+  INSERT INTO {{schema}}.gregale_change_events (relation_schema, relation_name, op, row_key, old_row, new_row, changed, truncated)
+  VALUES (TG_ARGV[3], TG_ARGV[4], lower(TG_OP), row_key, old_row, new_row, changed, truncated);
   RETURN NULL;
 END
 $$;

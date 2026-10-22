@@ -203,6 +203,19 @@ test('change hooks record committed changes and only the relay reads them', { sk
     await su.query('DELETE FROM api.gregale_change_events')
   })
 
+  await t.test('rows over 64 KiB are left out of the event', async () => {
+    await su.query(`SET ROLE ${owner}`)
+    await su.query(`CREATE TABLE api.docs (id int PRIMARY KEY, body text);
+      ALTER TABLE api.docs ENABLE ROW LEVEL SECURITY;
+      CREATE POLICY open_docs ON api.docs USING (true) WITH CHECK (true);`)
+    await su.query("SELECT gregale_hooks.enable('api.docs')")
+    await su.query('RESET ROLE')
+    await as(serving, userClaims, () => serving.query("INSERT INTO api.docs VALUES (1, repeat('x', 70000)), (2, 'small')"))
+    const { rows } = await su.query('SELECT row_key, new_row, truncated FROM api.gregale_change_events ORDER BY id')
+    assert.deepEqual(rows, [{ row_key: { id: 1 }, new_row: null, truncated: true }, { row_key: { id: 2 }, new_row: { id: 2, body: 'small' }, truncated: false }])
+    await su.query('DELETE FROM api.gregale_change_events')
+  })
+
   await t.test('claims and settlements reject malformed arguments', async () => {
     for (const statement of ["SELECT * FROM api.gregale_change_claim('bad relay', 10, 60000)", "SELECT * FROM api.gregale_change_claim('r', 101, 60000)", "SELECT * FROM api.gregale_change_claim('r', 10, 10)", "SELECT api.gregale_change_settle('r', '{}', '{}', 0)"]) {
       await assert.rejects(as(serving, relayClaims, () => serving.query(statement)), error => error.code === '22023', statement)

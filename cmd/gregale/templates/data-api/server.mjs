@@ -19,6 +19,7 @@ import { qualifiedConnectionEngine, startConnectionReporter } from './connection
 import { createPoolObservation } from './pool.mjs'
 import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
 import { storageRoute, handleStorage, storageAnonymousTarget, storageServerKeyAllows, checkStorageTable } from './storage.mjs'
+import { changeEventsTable, createChangeRelay, checkChangeEvents } from './changes.mjs'
 import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, clientKey, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions } from './access.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
@@ -36,6 +37,8 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     problem(res, 503, 'data_api_overloaded')
   })
   const usage = createUsage(config.usage, { access: accessReport(config) })
+  // Change hooks (ADR-20261022121642) borrow free engine slots, never queue.
+  const changes = createChangeRelay(config, { upstreamPort, tryAcquire: admitted.tryAcquire })
   const transfers = { active: 0 }
   const server = http.createServer(async (req, res) => {
     const guarded = /^\/__gregale\/contract\/([a-f0-9]{64})(\/rest\/v1\/.*)$/.exec(req.url)
@@ -74,11 +77,15 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       if (storage.code) return problem(res, storage.status, storage.code)
     } else if (!req.url.startsWith('/rest/v1/') && req.url !== '/openapi.json' && req.url !== '/__gregale/schema') return problem(res, 404, 'not_found')
     const writes = storage ? storage.write : !['GET', 'HEAD'].includes(req.method)
+    // A committed write may have recorded changes: publish them promptly.
+    if (changes && writes) res.once('finish', () => { if (res.statusCode < 300) changes.kick() })
     let rpc
     if (req.url.startsWith('/rest/v1/')) {
       const raw = req.url.slice('/rest/v1/'.length).split('?')[0]
       let path
       try { path = decodeURIComponent(raw) } catch { return problem(res, 400, 'invalid_path') }
+      // Only the change event relay reads its table, over loopback.
+      if (path === changeEventsTable) return problem(res, 404, 'not_found')
       if (path.includes('/')) {
         const match = /^rpc\/([a-z][a-z0-9_]{0,62})$/.exec(path)
         const read = ['GET', 'HEAD'].includes(req.method)
@@ -225,7 +232,8 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     }).finally(() => serverKeyLease?.settled())
   })
   server.usage = usage
-  server.on('close', () => usage?.stop())
+  server.changes = changes
+  server.on('close', () => { usage?.stop(); changes?.stop() })
   return server
 }
 
@@ -330,6 +338,10 @@ function openAPISpec(response, res, config, restBasePath, deadline) {
       delete document.schemes
       document.basePath = restBasePath
       const schema = response.req.getHeader('accept-profile') ?? config.schemas[0]
+      // The change event table is the relay's, never part of the API.
+      delete document.paths?.[`/${changeEventsTable}`]
+      delete document.definitions?.[changeEventsTable]
+      for (const name of Object.keys(document.parameters ?? {})) if (name === `body.${changeEventsTable}` || name.startsWith(`rowFilter.${changeEventsTable}.`)) delete document.parameters[name]
       for (const path of Object.keys(document.paths ?? {})) if (path.startsWith('/rpc/')) {
         if (!config.functions?.some(f => f.schema === schema && f.name === path.slice(5))) delete document.paths[path]
         else for (const method of Object.keys(document.paths[path])) if (method !== 'post' && method !== 'parameters' && !(method === 'get' && publicRpcListed(config, { schema, name: path.slice(5) }))) delete document.paths[path][method]
@@ -363,6 +375,14 @@ export async function main(env = process.env) {
     try { await checkStorageTable(config.connection, config.storage.schema) } catch {
       runtimeFailure('data_api_storage_unsafe')
       config.storageUnavailable = true
+    }
+  }
+  if (config.changeEvents) {
+    // Like storage, change hooks fail closed alone; the API keeps serving and
+    // recorded changes wait in the table until a runtime can publish them.
+    try { await checkChangeEvents(config.connection, config.changeEvents.schema) } catch {
+      runtimeFailure('data_api_change_events_unavailable')
+      config.changeEventsUnavailable = true
     }
   }
   const snapshot = await inspect(config.connection, config.schemas)
