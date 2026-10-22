@@ -4263,6 +4263,7 @@ from .profile_capture_trigger import ProfileCaptureTrigger
 from .profile_capture_view import ProfileCaptureView
 from .profile_capture_view_kind import ProfileCaptureViewKind
 from .profile_capture_view_unit import ProfileCaptureViewUnit
+from .profile_capture_webhook_payload import ProfileCaptureWebhookPayload
 from .profile_compare_request import ProfileCompareRequest
 from .profile_compare_response import ProfileCompareResponse
 from .profile_coverage import ProfileCoverage
@@ -10042,6 +10043,7 @@ __all__ = (
     "ProfileCaptureView",
     "ProfileCaptureViewKind",
     "ProfileCaptureViewUnit",
+    "ProfileCaptureWebhookPayload",
     "ProfileCompareRequest",
     "ProfileCompareResponse",
     "ProfileCoverage",
