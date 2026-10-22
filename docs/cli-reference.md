@@ -1927,13 +1927,13 @@ Show account status
 
 ### account dpa
 
-Show DPA metadata
+Print the Data Processing Agreement template (placeholders are filled when the agreement is signed)
 
 `gregale account dpa [-o <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `-o <PATH>` | write DPA metadata to a file |  |
+| `-o <PATH>` | write the DPA template to a file |  |
 
 ### account slo
 
@@ -6407,7 +6407,9 @@ Inspect and manage background worker pools
 
 ### workers list
 
-List background worker pools
+List background worker pools, or one pool by app
+
+`gregale workers list [<app>]`
 
 ### workers status
 
@@ -9471,7 +9473,7 @@ Create public GET smoke checks from a local OpenAPI document
 |---|---|---|
 | `--from <PATH>` | local OpenAPI 3.0 or 3.1 document | required |
 | `--project <SLUG>` | Gregale project slug | required |
-| `--source <DIR>` | application source directory |  |
+| `--source <DIR>` | application source directory, relative to the manifest (default: the workload holding --from, else .) |  |
 | `--scenario <NAME>` | scenario name |  |
 | `--output <PATH>` | new manifest path |  |
 

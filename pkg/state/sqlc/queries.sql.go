@@ -85208,6 +85208,31 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 	return items, nil
 }
 
+const restampRuntimeInstanceConfigProof = `-- name: RestampRuntimeInstanceConfigProof :execrows
+UPDATE runtime_instance_config_proofs proof SET config_fingerprint=$1::text
+FROM instances i
+WHERE proof.instance_id=$2::uuid AND i.id=proof.instance_id AND i.wake_id=proof.wake_id
+    AND i.node_id=proof.node_id AND i.deployment_id=proof.deployment_id
+    AND proof.config_fingerprint=$3::text
+`
+
+type RestampRuntimeInstanceConfigProofParams struct {
+	ConfigFingerprint   string
+	InstanceID          pgtype.UUID
+	PreviousFingerprint string
+}
+
+// ADR-051 amendment (2026-10-22): moves a booted instance's proof from the
+// fingerprint it was published with to the one its own observed workload
+// class gives. Only the current wake's proof, and only from that fingerprint.
+func (q *Queries) RestampRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg RestampRuntimeInstanceConfigProofParams) (int64, error) {
+	result, err := db.Exec(ctx, restampRuntimeInstanceConfigProof, arg.ConfigFingerprint, arg.InstanceID, arg.PreviousFingerprint)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const restoreCanaryBaselineDefault = `-- name: RestoreCanaryBaselineDefault :execrows
 UPDATE project_release_sets SET active=true,expires_at=NULL WHERE id=$1::uuid AND NOT active
 `
@@ -89334,6 +89359,27 @@ func (q *Queries) SetInvoiceEnrichment(ctx context.Context, db DBTX, arg SetInvo
 		arg.UpdatedAt,
 	)
 	return err
+}
+
+const setObservedAppWorkloadClass = `-- name: SetObservedAppWorkloadClass :execrows
+UPDATE apps SET workload_class=$1::text
+WHERE id=$2::uuid AND account_id=$3::uuid AND status<>'deleted'
+`
+
+type SetObservedAppWorkloadClassParams struct {
+	WorkloadClass string
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+}
+
+// ADR-051: the workload class a cold boot observed. The caller holds the app
+// row exclusively.
+func (q *Queries) SetObservedAppWorkloadClass(ctx context.Context, db DBTX, arg SetObservedAppWorkloadClassParams) (int64, error) {
+	result, err := db.Exec(ctx, setObservedAppWorkloadClass, arg.WorkloadClass, arg.AppID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setOutboundBindingProbePolicy = `-- name: SetOutboundBindingProbePolicy :one

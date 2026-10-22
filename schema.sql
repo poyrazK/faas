@@ -46363,7 +46363,10 @@ CREATE TABLE public.product_control_customers (
     plan text NOT NULL,
     suspended boolean DEFAULT false NOT NULL,
     auth_organization_id uuid,
-    CONSTRAINT product_control_customers_auth_organization_id_check CHECK (((auth_organization_id IS NULL) OR (auth_organization_id <> '00000000-0000-0000-0000-000000000000'::uuid)))
+    trial_starts_at timestamp with time zone,
+    trial_ends_at timestamp with time zone,
+    CONSTRAINT product_control_customers_auth_organization_id_check CHECK (((auth_organization_id IS NULL) OR (auth_organization_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT product_control_customers_trial_chk CHECK ((((trial_starts_at IS NULL) = (trial_ends_at IS NULL)) AND ((trial_ends_at IS NULL) OR (trial_ends_at > trial_starts_at))))
 );
 
 
