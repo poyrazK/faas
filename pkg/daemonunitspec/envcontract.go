@@ -207,6 +207,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_COMPUTE_VCPUS", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "host vCPU count reported by node_join"},
 	{Name: "FAAS_CONSUMER_USAGE_OUTBOX_ROOT", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "optional durable financial usage spool override; defaults to /var/lib/faas/consumer-usage"},
 	{Name: "FAAS_CONTROL_PLANE_API_TARGET", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceUnit},
+	{Name: "FAAS_CUSTOM_DASHBOARDS_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDefault, Default: "0", Note: "ADR-20261022173833 operator gate for /v1/dashboards (saved custom dashboards); explicit 1 enables the internal preview"},
 	{Name: "FAAS_CUSTOM_DOMAIN_ADDRESSES", Owners: []string{"apid", "shared"}, Source: EnvSourceDropin, Note: "ADR-520; comma-separated public edge addresses offered for apex A/AAAA records and accepted by the routing probe; invalid entries fail apid at boot"},
 	{Name: "FAAS_CUSTOM_DOMAIN_TARGET", Owners: []string{"apid", "shared"}, Source: EnvSourceDropin, Note: "ADR-520; hostname customers CNAME a custom domain to; must resolve straight to the public edge. Unset = the apps-domain apex"},
 	{Name: "FAAS_CUSTOM_DOMAIN_TLS", Owners: []string{"apid", "gatewayd-public", "shared"}, Source: EnvSourceDropin, Note: "ADR-520; on_demand = the public edge issues customer certificates after asking gatewayd-public, apid owns custom-domain certificate status. Unset = no self-hosted customer certificates"},

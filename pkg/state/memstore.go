@@ -1022,6 +1022,8 @@ type MemStore struct {
 	logEvents      []LogEvent
 	// logSavedSearches mirrors log_saved_searches by id (ADR-20261018083536).
 	logSavedSearches map[string]LogSavedSearch
+	// dashboards mirrors the dashboards table by id (ADR-20261022173833).
+	dashboards map[string]Dashboard
 	// Captured boot inputs belong to the instance wake and physical node.
 	runtimeInstanceConfigProofs map[string]runtimeInstanceConfigProof
 	// deploymentSidecarLayers (issue #463 / ADR-069 / PR-B)

@@ -3833,6 +3833,18 @@
     "kind": "operational"
   },
   {
+    "table": "dashboards",
+    "columns": [
+      "account_id",
+      "created_at",
+      "id",
+      "name",
+      "updated_at",
+      "widgets"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "data_api_runtime_connection_observations",
     "columns": [
       "account_id",

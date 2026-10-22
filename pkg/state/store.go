@@ -3019,6 +3019,7 @@ type Store interface {
 	LogEventStore
 	LogProjectionStore
 	LogSavedSearchStore
+	DashboardStore
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error

@@ -116,6 +116,17 @@
       "acceptance_test": "pkg/profiling/profile_test.go::TestCPUProfileDeploymentComparison"
     },
     {
+      "id": "custom-dashboards",
+      "name": "Custom dashboards",
+      "category": "observability",
+      "description": "Save named dashboards that combine request metrics, log search counts, custom metrics, and SLOs across an account's apps.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261022173833-custom-dashboards",
+      "operator_flag": "FAAS_CUSTOM_DASHBOARDS_ENABLED",
+      "acceptance_test": "pkg/apid/dashboards/service_test.go::TestDashboardLifecycle"
+    },
+    {
       "id": "custom-domains",
       "name": "Custom domains",
       "category": "edge",

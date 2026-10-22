@@ -22,7 +22,7 @@ var cliHelpGroups = []struct {
 	}},
 	{"Operate & observe", []string{
 		"logs", "tail", "inspect", "debug", "trace", "metrics", "analytics", "status", "ps", "wake",
-		"park", "wake-ahead", "wake-timeline", "throttle-suggestions", "issues", "alerts", "channels",
+		"park", "wake-ahead", "wake-timeline", "throttle-suggestions", "issues", "alerts", "channels", "dashboards",
 		"slo", "slos", "synthetics", "log-drains", "audit-events",
 	}},
 	{"Configure", []string{

@@ -1018,11 +1018,17 @@ from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
 from .daily_usage_point import DailyUsagePoint
 from .daily_usage_response import DailyUsageResponse
+from .dashboard import Dashboard
 from .dashboard_discard_account_failed_event_body import DashboardDiscardAccountFailedEventBody
 from .dashboard_discard_failed_event_body import DashboardDiscardFailedEventBody
 from .dashboard_replay_account_failed_event_body import DashboardReplayAccountFailedEventBody
 from .dashboard_replay_app_debug_request_body import DashboardReplayAppDebugRequestBody
 from .dashboard_replay_failed_event_body import DashboardReplayFailedEventBody
+from .dashboard_request import DashboardRequest
+from .dashboard_widget import DashboardWidget
+from .dashboard_widget_kind import DashboardWidgetKind
+from .dashboard_widget_window import DashboardWidgetWindow
+from .dashboards_response import DashboardsResponse
 from .data_api_access_config import DataAPIAccessConfig
 from .data_api_access_config_version import DataAPIAccessConfigVersion
 from .data_api_connection_budgets import DataAPIConnectionBudgets
@@ -7019,11 +7025,17 @@ __all__ = (
     "DailyUsageListResponse",
     "DailyUsagePoint",
     "DailyUsageResponse",
+    "Dashboard",
     "DashboardDiscardAccountFailedEventBody",
     "DashboardDiscardFailedEventBody",
     "DashboardReplayAccountFailedEventBody",
     "DashboardReplayAppDebugRequestBody",
     "DashboardReplayFailedEventBody",
+    "DashboardRequest",
+    "DashboardsResponse",
+    "DashboardWidget",
+    "DashboardWidgetKind",
+    "DashboardWidgetWindow",
     "DataAPIAccessConfig",
     "DataAPIAccessConfigVersion",
     "DataAPIConnectionBudgets",

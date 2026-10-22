@@ -128,6 +128,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_COMPUTE_VCPUS` | vmmd | `dropin` |  |  | `` | host vCPU count reported by node_join |
 | `FAAS_CONSUMER_USAGE_OUTBOX_ROOT` | gatewayd-internal | `default` |  |  | `` | optional durable financial usage spool override; defaults to /var/lib/faas/consumer-usage |
 | `FAAS_CONTROL_PLANE_API_TARGET` | gatewayd-public, shared | `unit` |  |  | `` |  |
+| `FAAS_CUSTOM_DASHBOARDS_ENABLED` | apid | `default` |  | 0 | `` | ADR-20261022173833 operator gate for /v1/dashboards (saved custom dashboards); explicit 1 enables the internal preview |
 | `FAAS_CUSTOM_DOMAIN_ADDRESSES` | apid, shared | `dropin` |  |  | `` | ADR-520; comma-separated public edge addresses offered for apex A/AAAA records and accepted by the routing probe; invalid entries fail apid at boot |
 | `FAAS_CUSTOM_DOMAIN_TARGET` | apid, shared | `dropin` |  |  | `` | ADR-520; hostname customers CNAME a custom domain to; must resolve straight to the public edge. Unset = the apps-domain apex |
 | `FAAS_CUSTOM_DOMAIN_TLS` | apid, gatewayd-public, shared | `dropin` |  |  | `` | ADR-520; on_demand = the public edge issues customer certificates after asking gatewayd-public, apid owns custom-domain certificate status. Unset = no self-hosted customer certificates |

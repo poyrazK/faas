@@ -1803,6 +1803,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", serviceMapFile),
 		filepath.Join(root, "pkg", "api", changeTimelineFile),
 		filepath.Join(root, "pkg", "api", "log_search.go"), // ADR-20261018083536 log search DTOs
+		filepath.Join(root, "pkg", "api", "dashboards.go"), // ADR-20261022173833 custom dashboard DTOs
 		filepath.Join(root, "pkg", "api", customMetricSeriesFile),
 		filepath.Join(root, "pkg", "api", applicationStandardsFile),
 		filepath.Join(root, "pkg", "api", applicationStandardResourcesFile),

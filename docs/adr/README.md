@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261022173833: Custom dashboards](20261022173833-custom-dashboards.md)
 - [ADR-20261022172052: Alerts carry what the logs show](20261022172052-alert-log-context.md)
 - [ADR-20261021210000: Enrolled apps receive no account events](20261021210000-rehearsal-event-fanout-exclusion.md)
 - [ADR-20261021180000: Rehearsal capture of realtime publishes and signals](20261021180000-rehearsal-realtime-capture.md)

@@ -1048,6 +1048,23 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "dashboards",
+		DocSlug: "dashboards",
+		Short:   "Save dashboards that combine metrics, log counts and SLOs across apps",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List the account's dashboards", Examples: []string{"gregale dashboards list"}},
+			{Name: "get", Short: "Show a dashboard's widgets", Positionals: []string{"<dashboard-id>"}},
+			{Name: "create", Short: "Create a dashboard from a widgets JSON file", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "file", Short: "JSON file with the widgets array (- for stdin)", Req: true, Value: "PATH"},
+			}, Examples: []string{"gregale dashboards create checkout --file checkout.json"}},
+			{Name: "replace", Short: "Replace a dashboard's name and widgets", Positionals: []string{"<dashboard-id>"}, Flags: []cliFlag{
+				{Name: "name", Short: "dashboard name", Req: true, Value: "NAME"},
+				{Name: "file", Short: "JSON file with the widgets array (- for stdin)", Req: true, Value: "PATH"},
+			}},
+			{Name: "rm", Short: "Delete a dashboard", Positionals: []string{"<dashboard-id>"}},
+		},
+	},
+	{
 		Name:    "slos",
 		DocSlug: "slos",
 		Short:   "Define SLOs and track their error budgets",

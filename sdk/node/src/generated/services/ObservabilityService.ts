@@ -6,6 +6,9 @@ import type { AppLogDrainAnalyticsResponse } from '../models/AppLogDrainAnalytic
 import type { AppLogDrainHealthResponse } from '../models/AppLogDrainHealthResponse.js';
 import type { AppLogDrainResponse } from '../models/AppLogDrainResponse.js';
 import type { CreateAppLogDrainRequest } from '../models/CreateAppLogDrainRequest.js';
+import type { Dashboard } from '../models/Dashboard.js';
+import type { DashboardRequest } from '../models/DashboardRequest.js';
+import type { DashboardsResponse } from '../models/DashboardsResponse.js';
 import type { LogEventFacetsResponse } from '../models/LogEventFacetsResponse.js';
 import type { LogEventsResponse } from '../models/LogEventsResponse.js';
 import type { LogSavedSearch } from '../models/LogSavedSearch.js';
@@ -226,6 +229,115 @@ export class ObservabilityService {
         'trace_id': traceId,
         'q': q,
         'saved': saved,
+      },
+    });
+  }
+  /**
+   * List the account's custom dashboards.
+   * ADR-20261022173833 internal preview behind `FAAS_CUSTOM_DASHBOARDS_ENABLED=1`.
+   * Returns the account's saved dashboards by name.
+   *
+   * @returns DashboardsResponse The account's dashboards.
+   * @returns Problem The preview is disabled.
+   * @throws ApiError
+   */
+  public static listDashboards(): CancelablePromise<DashboardsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/dashboards',
+    });
+  }
+  /**
+   * Create a custom dashboard.
+   * Saves a named dashboard of up to 24 widgets. Each widget references a
+   * signal by kind (app_metric, log_count, custom_metric, slo) and an app
+   * the account owns. An account keeps at most 20 dashboards.
+   *
+   * @returns Problem Invalid widgets, a taken name (dashboard_name_taken), the per-account limit (dashboard_quota_exceeded), or the preview is disabled.
+   * @returns Dashboard The created dashboard, with widget defaults applied.
+   * @throws ApiError
+   */
+  public static createDashboard({
+    requestBody,
+  }: {
+    requestBody: DashboardRequest,
+  }): CancelablePromise<Problem | Dashboard> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/dashboards',
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Get a custom dashboard.
+   * Returns one of the account's dashboards with its widgets.
+   * @returns Dashboard The dashboard.
+   * @returns Problem No such dashboard (dashboard_not_found), or the preview is disabled.
+   * @throws ApiError
+   */
+  public static getDashboard({
+    id,
+  }: {
+    /**
+     * Dashboard id.
+     */
+    id: string,
+  }): CancelablePromise<Dashboard | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/dashboards/{id}',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Replace a custom dashboard.
+   * Replaces the dashboard's name and widgets.
+   * @returns Dashboard The replaced dashboard.
+   * @returns Problem Invalid widgets, a taken name, no such dashboard, or the preview is disabled.
+   * @throws ApiError
+   */
+  public static replaceDashboard({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Dashboard id.
+     */
+    id: string,
+    requestBody: DashboardRequest,
+  }): CancelablePromise<Dashboard | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/dashboards/{id}',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Delete a custom dashboard.
+   * Deletes one of the account's dashboards.
+   * @returns Problem No such dashboard (dashboard_not_found), or the preview is disabled.
+   * @throws ApiError
+   */
+  public static deleteDashboard({
+    id,
+  }: {
+    /**
+     * Dashboard id.
+     */
+    id: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/dashboards/{id}',
+      path: {
+        'id': id,
       },
     });
   }

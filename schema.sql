@@ -32330,6 +32330,22 @@ CREATE TABLE public.customer_workflow_readiness_subscriptions (
 
 
 --
+-- Name: dashboards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dashboards (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    widgets jsonb DEFAULT '[]'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT dashboards_name_shape CHECK ((name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT dashboards_widgets_shape CHECK (((jsonb_typeof(widgets) = 'array'::text) AND (jsonb_array_length(widgets) <= 24) AND (octet_length((widgets)::text) <= 32768)))
+);
+
+
+--
 -- Name: data_api_access_configs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -56126,6 +56142,22 @@ ALTER TABLE ONLY public.customer_workflow_readiness_notifications
 
 ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
     ADD CONSTRAINT customer_workflow_readiness_subscriptions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: dashboards dashboards_account_name_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dashboards
+    ADD CONSTRAINT dashboards_account_name_uniq UNIQUE (account_id, name);
+
+
+--
+-- Name: dashboards dashboards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dashboards
+    ADD CONSTRAINT dashboards_pkey PRIMARY KEY (id);
 
 
 --
@@ -85097,6 +85129,14 @@ ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
 
 ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
     ADD CONSTRAINT customer_workflow_readiness_subscriptions_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dashboards dashboards_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dashboards
+    ADD CONSTRAINT dashboards_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

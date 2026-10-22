@@ -559,6 +559,9 @@ func run(args []string) (status int) {
 	case "channels":
 		// ADR-749: Slack, PagerDuty and email alert destinations.
 		return cmdChannels(args[1:])
+	case "dashboards":
+		// ADR-20261022173833: saved custom dashboards.
+		return cmdDashboards(args[1:])
 	case "slos":
 		// ADR-747: customer-defined SLO definitions (distinct from `slo`).
 		return cmdSLOs(args[1:])

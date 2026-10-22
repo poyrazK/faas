@@ -3071,6 +3071,15 @@ type CustomerWorkflowReadinessSubscription struct {
 	LeaseUntil       pgtype.Timestamptz
 }
 
+type Dashboard struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	Name      string
+	Widgets   []byte
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 // ADR-20261016151947 Data API access settings last reported by the runtime, applied to anonymous and server-key live reads.
 type DataApiAccessConfig struct {
 	AppID      pgtype.UUID

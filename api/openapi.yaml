@@ -20486,6 +20486,102 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/dashboards:
+    get:
+      tags: [observability]
+      operationId: listDashboards
+      summary: List the account's custom dashboards.
+      description: |
+        ADR-20261022173833 internal preview behind `FAAS_CUSTOM_DASHBOARDS_ENABLED=1`.
+        Returns the account's saved dashboards by name.
+      responses:
+        '200':
+          description: The account's dashboards.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardsResponse' }
+        default:
+          description: The preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      tags: [observability]
+      operationId: createDashboard
+      summary: Create a custom dashboard.
+      description: |
+        Saves a named dashboard of up to 24 widgets. Each widget references a
+        signal by kind (app_metric, log_count, custom_metric, slo) and an app
+        the account owns. An account keeps at most 20 dashboards.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DashboardRequest' }
+      responses:
+        '201':
+          description: The created dashboard, with widget defaults applied.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dashboard' }
+        default:
+          description: Invalid widgets, a taken name (dashboard_name_taken), the per-account limit (dashboard_quota_exceeded), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/dashboards/{id}:
+    parameters:
+      - $ref: '#/components/parameters/DashboardID'
+    get:
+      tags: [observability]
+      operationId: getDashboard
+      summary: Get a custom dashboard.
+      description: Returns one of the account's dashboards with its widgets.
+      responses:
+        '200':
+          description: The dashboard.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dashboard' }
+        default:
+          description: No such dashboard (dashboard_not_found), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      tags: [observability]
+      operationId: replaceDashboard
+      summary: Replace a custom dashboard.
+      description: Replaces the dashboard's name and widgets.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DashboardRequest' }
+      responses:
+        '200':
+          description: The replaced dashboard.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dashboard' }
+        default:
+          description: Invalid widgets, a taken name, no such dashboard, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [observability]
+      operationId: deleteDashboard
+      summary: Delete a custom dashboard.
+      description: Deletes one of the account's dashboards.
+      responses:
+        '204':
+          description: Deleted.
+        default:
+          description: No such dashboard (dashboard_not_found), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/apps/{slug}/log-searches:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -64878,6 +64974,12 @@ components:
       in: query
       description: Name of one of the app's saved log searches. Its filters apply unless the request sets the same parameter.
       schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+    DashboardID:
+      name: id
+      in: path
+      required: true
+      description: Dashboard id.
+      schema: { type: string, format: uuid }
     LogSavedSearchName:
       name: name
       in: path
@@ -110886,6 +110988,50 @@ components:
           type: array
           items: { $ref: '#/components/schemas/LogFacetCount' }
         routes_truncated: { type: boolean, description: More routes matched than the ten returned. }
+    DashboardWidget:
+      type: object
+      description: 'One typed reference to a signal (ADR-20261022173833). app_metric and custom_metric use metric, log_count uses query, slo uses slo_id.'
+      required: [title, kind, app]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 80 }
+        kind: { type: string, enum: [app_metric, log_count, custom_metric, slo] }
+        app: { type: string, description: 'Slug of an app the account owns.' }
+        metric:
+          type: string
+          description: 'app_metric: request_count, error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms or cold_start_pct. custom_metric: the pushed metric name.'
+        query: { type: string, description: 'log_count: log search filters as a URL query string (source, level, status, route, deployment_id, request_id, trace_id, q).' }
+        slo_id: { type: string, format: uuid, description: 'slo: the SLO id.' }
+        window: { type: string, enum: ['5m', '1h', '6h', '24h', '7d'], description: 'Defaults to 1h; ignored by slo widgets.' }
+    Dashboard:
+      type: object
+      description: An account's saved dashboard.
+      required: [id, name, widgets, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        widgets:
+          type: array
+          items: { $ref: '#/components/schemas/DashboardWidget' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    DashboardRequest:
+      type: object
+      description: Body of a dashboard create or replace.
+      required: [name, widgets]
+      properties:
+        name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+        widgets:
+          type: array
+          maxItems: 24
+          items: { $ref: '#/components/schemas/DashboardWidget' }
+    DashboardsResponse:
+      type: object
+      description: The account's dashboards by name.
+      required: [dashboards]
+      properties:
+        dashboards:
+          type: array
+          items: { $ref: '#/components/schemas/Dashboard' }
     LogSavedSearch:
       type: object
       description: One app's named log search filters (ADR-20261018083536).

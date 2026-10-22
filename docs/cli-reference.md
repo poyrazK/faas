@@ -18,6 +18,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`ai`](#ai) | Configure the AI gateway: providers, cost caps, guardrails and usage |
 | [`channels`](#channels) | Manage where alerts are sent: Slack, PagerDuty or email |
+| [`dashboards`](#dashboards) | Save dashboards that combine metrics, log counts and SLOs across apps |
 | [`slos`](#slos) | Define SLOs and track their error budgets |
 | [`synthetics`](#synthetics) | Schedule HTTP checks against an app |
 | [`alerts`](#alerts) | Manage an app&#39;s alert rules |
@@ -3073,6 +3074,62 @@ Send a marked test notification
 Delete a channel
 
 `gregale channels rm <channel-id>`
+
+
+## dashboards
+
+Save dashboards that combine metrics, log counts and SLOs across apps
+
+`gregale dashboards [<subcommand>]`
+
+### dashboards list
+
+List the account&#39;s dashboards
+
+Examples:
+
+```sh
+gregale dashboards list
+```
+
+### dashboards get
+
+Show a dashboard&#39;s widgets
+
+`gregale dashboards get <dashboard-id>`
+
+### dashboards create
+
+Create a dashboard from a widgets JSON file
+
+`gregale dashboards create --file <PATH> <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | JSON file with the widgets array (- for stdin) | required |
+
+Examples:
+
+```sh
+gregale dashboards create checkout --file checkout.json
+```
+
+### dashboards replace
+
+Replace a dashboard&#39;s name and widgets
+
+`gregale dashboards replace --name <NAME> --file <PATH> <dashboard-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | dashboard name | required |
+| `--file <PATH>` | JSON file with the widgets array (- for stdin) | required |
+
+### dashboards rm
+
+Delete a dashboard
+
+`gregale dashboards rm <dashboard-id>`
 
 
 ## slos

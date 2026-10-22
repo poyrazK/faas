@@ -219,6 +219,7 @@ func Run(t *testing.T, open Open) {
 		{"log_event_projection_sources", testLogProjectionSources},
 		{"log_saved_searches", testLogSavedSearches},
 		{"log_search_alert_rule_round_trips", testLogSearchAlertRuleRoundTrips},
+		{"dashboards_are_account_scoped", testDashboards},
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
 		{"scenario_test_namespace_is_scoped_and_reaped", testScenarioTestNamespace},

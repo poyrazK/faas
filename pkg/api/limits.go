@@ -13127,6 +13127,16 @@ const (
 	AlertLogContextDeploysMax     = 3
 )
 
+// Custom dashboards (ADR-20261022173833).
+const (
+	DashboardsPerAccount   = 20
+	DashboardWidgetsMax    = 24
+	DashboardDefaultWindow = "1h"
+)
+
+// DashboardWindows are the windows a dashboard widget may read.
+var DashboardWindows = []string{"5m", "1h", "6h", "24h", "7d"}
+
 // Runtime log projection into the ledger (ADR-20261018083536 slice B). vmmd
 // forwards warn and error lines within a per-app, per-node minute budget and
 // reports the overflow as one system line per app and minute; apid caps each
