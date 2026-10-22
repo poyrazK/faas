@@ -324,6 +324,12 @@ value. Deployments that list their secrets explicitly (`env_secrets`) receive
 only what they list, and Git-managed scheduled Jobs receive only their reviewed
 definition.
 
+Creating an environment from another (`gregale projects environments create
+--from`) copies the source's shared secrets along with the services' own
+secrets. Promotion does not copy them: each environment keeps its own. A
+release qualification records the shared secrets it ran with, and promoting
+that release is refused if one of them changed afterwards.
+
 Values are write-only: listings show each key's version, sealing `kid`, value
 fingerprint and timestamps, never the value. A change reaches each service at
 its next boot; running instances keep the value they started with, and paused or

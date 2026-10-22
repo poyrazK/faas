@@ -119,6 +119,7 @@ type contractTestStore interface {
 	state.ProjectEnvironmentQueueConsumerStore
 	state.ProjectEnvironmentQueueDeliveryStore
 	state.ProjectEnvironmentQueueInvocationStore
+	state.ProjectEnvironmentSecretStore
 	state.ProjectEnvironmentWorkPolicyStore
 	state.ProjectEnvironmentWorkloadQualificationStore
 	state.ProjectEnvironmentWorkloadSpecStore

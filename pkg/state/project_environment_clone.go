@@ -46,6 +46,7 @@ type ProjectEnvironmentCloneResult struct {
 	VariablesCopied        int
 	SecretsCopied          int
 	SecretReferencesCopied int
+	ProjectSecretsCopied   int // ADR-1139
 	WorkloadsCopied        int
 	BindingsCopied         int
 	RoutesCopied           int
@@ -311,6 +312,7 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 		result.SecretsCopied = m.copyProjectEnvironmentSecretsLocked(apps, valueScopes, clone.TargetSlug, created.CreatedAt)
 	}
 	if clone.capturedValues == nil {
+		result.ProjectSecretsCopied = m.copyProjectEnvironmentSharedSecretsLocked(clone, created.CreatedAt)
 		result.SecretReferencesCopied = m.copyProjectEnvironmentSecretReferencesLocked(apps, source.ID, created, now)
 		m.copyProjectEnvironmentSecretSuppressionsLocked(apps, source.ID, created, now)
 	}

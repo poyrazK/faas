@@ -33,6 +33,9 @@ class ProjectEnvironmentCloneResponse:
     secret_references_copied: int | Unset = UNSET
     """Destination-to-source references copied under the new catalog environment identity. Git source bindings,
     ownership, overrides and runtime receipts are not copied."""
+    project_secrets_copied: int | Unset = UNSET
+    """Secrets the source environment shares with every service, copied to the new environment (ADR-1139). Values
+    are never returned."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -57,6 +60,8 @@ class ProjectEnvironmentCloneResponse:
 
         secret_references_copied = self.secret_references_copied
 
+        project_secrets_copied = self.project_secrets_copied
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -73,6 +78,8 @@ class ProjectEnvironmentCloneResponse:
         )
         if secret_references_copied is not UNSET:
             field_dict["secret_references_copied"] = secret_references_copied
+        if project_secrets_copied is not UNSET:
+            field_dict["project_secrets_copied"] = project_secrets_copied
 
         return field_dict
 
@@ -104,6 +111,8 @@ class ProjectEnvironmentCloneResponse:
 
         secret_references_copied = d.pop("secret_references_copied", UNSET)
 
+        project_secrets_copied = d.pop("project_secrets_copied", UNSET)
+
         project_environment_clone_response = cls(
             configuration_copied=configuration_copied,
             variables_copied=variables_copied,
@@ -114,6 +123,7 @@ class ProjectEnvironmentCloneResponse:
             policies_copied=policies_copied,
             shared_resources=shared_resources,
             secret_references_copied=secret_references_copied,
+            project_secrets_copied=project_secrets_copied,
         )
 
         project_environment_clone_response.additional_properties = d
