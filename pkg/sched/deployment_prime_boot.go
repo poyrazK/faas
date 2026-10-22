@@ -66,6 +66,10 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		result.RejectionReason = "prime_runtime_release_unavailable"
 		return result, err
 	}
+	pushDelivery, err := e.workerPushDelivery(ctx, app)
+	if err != nil {
+		return result, fmt.Errorf("sched: prime: %w", err)
+	}
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: primeLayer,
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
@@ -75,6 +79,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
 		DisableStartupCPUBoost: dep.DisableStartupCPUBoost,
 		ExecutionMode:          executionModeForApp(app),
+		WorkerPushDelivery:     pushDelivery,
 		Plan:                   acct.Plan, AccountID: acct.ID,
 		AppID: appID, DeploymentID: dep.ID,
 		SealedEnv:     sealedEnv.Entries,

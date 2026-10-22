@@ -405,6 +405,15 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 		return result, nil
 	}
 	if clone.capturedValues == nil {
+		// ADR-1139. A durable clone refuses a source with shared secrets at
+		// capture until it can capture them.
+		projectSecretsCopied, err := sqlc.New().CopyProjectEnvironmentSecrets(ctx, tx, sqlc.CopyProjectEnvironmentSecretsParams{
+			AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug, TargetSlug: clone.TargetSlug,
+		})
+		if err != nil {
+			return result, mapErr(err)
+		}
+		result.ProjectSecretsCopied = int(projectSecretsCopied)
 		refsCopied, err := sqlc.New().CopyProjectEnvironmentSecretReferences(ctx, tx, sqlc.CopyProjectEnvironmentSecretReferencesParams{
 			AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug, TargetSlug: clone.TargetSlug,
 		})

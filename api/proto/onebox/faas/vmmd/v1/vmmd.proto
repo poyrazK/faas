@@ -761,6 +761,11 @@ message AppSpec {
   // characterization class. Empty preserves legacy inference for rolling
   // upgrades and older callers.
   string execution_mode = 18;
+  // worker_push_delivery marks a worker-mode app with a push queue binding.
+  // Push deliveries reach it over private HTTP, so vmmd accepts a bound
+  // server from it at startup instead of an execution_mode_conflict. False
+  // (and older schedd) keeps the no-bind worker contract.
+  bool worker_push_delivery = 34;
   // readiness_probe_json is the optional recurring primary-app traffic probe
   // (distinct from the startup healthcheck and liveness probe). Empty keeps
   // legacy routing behavior; otherwise vmmd decodes the deployment's validated

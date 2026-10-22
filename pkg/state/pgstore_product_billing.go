@@ -136,7 +136,11 @@ func productMonthFeePG(ctx context.Context, db sqlc.DBTX, scope ProductBillingSc
 	held := make([]productcontrol.PlanHeld, 0, len(rows))
 	catalogs := map[string]api.ProductCatalog{}
 	for _, r := range rows {
-		held = append(held, productcontrol.PlanHeld{Revision: r.Revision, Plan: r.Plan, Since: r.Since.Time.UTC(), First: r.FirstAssignment})
+		h := productcontrol.PlanHeld{Revision: r.Revision, Plan: r.Plan, Since: r.Since.Time.UTC(), First: r.FirstAssignment}
+		if r.HeldUntil.Valid {
+			h.Until = r.HeldUntil.Time.UTC()
+		}
+		held = append(held, h)
 		if _, ok := catalogs[r.Revision]; ok {
 			continue
 		}
@@ -146,7 +150,14 @@ func productMonthFeePG(ctx context.Context, db sqlc.DBTX, scope ProductBillingSc
 		}
 		catalogs[r.Revision] = catalog
 	}
-	return productMonthFee(held, scope.Period, func(revision string) (api.ProductCatalog, bool) {
+	// The trial's minutes owe no fee (ADR-20261021195901).
+	var trial *productcontrol.Trial
+	if customer, err := productCustomerTx(ctx, db, scope.AccountID, scope.AppID, scope.TenantID); err == nil {
+		trial = productTrial(customer)
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	return productMonthFee(held, scope.Period, trial, func(revision string) (api.ProductCatalog, bool) {
 		c, ok := catalogs[revision]
 		return c, ok
 	}), nil

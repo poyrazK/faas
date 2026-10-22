@@ -457,6 +457,8 @@ func projectsCLICompletionPositions() []cliCompletionPosition {
 var (
 	// orgSlugFlag is the --org flag every org-scoped verb requires.
 	orgSlugFlag = cliFlag{Name: "org", Short: "organization slug", Value: "SLUG", Req: true}
+	// previewsOrgFlag acts for an organization instead of the account.
+	previewsOrgFlag = cliFlag{Name: "org", Short: "act for this organization (owner or admin to join or leave)", Value: "SLUG"}
 	// orgMemberRoles are the roles a member can be invited to or given.
 	orgMemberRoles = []string{"admin", "developer", "viewer", "billing"}
 	// issueAppFlags is the --app flag every issues verb requires.
@@ -568,8 +570,8 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "restore", Short: "Cancel a pending deletion"},
 			{Name: "status", Short: "Show account status"},
-			{Name: "dpa", Short: "Show DPA metadata", Flags: []cliFlag{
-				{Name: "o", ShortName: "o", Short: "write DPA metadata to a file", Value: "PATH"},
+			{Name: "dpa", Short: "Print the Data Processing Agreement template (placeholders are filled when the agreement is signed)", Flags: []cliFlag{
+				{Name: "o", ShortName: "o", Short: "write the DPA template to a file", Value: "PATH"},
 			}},
 			{Name: "slo", Short: "Account-wide SLO panel"},
 			{Name: "billing-connection", Short: "Connect, show, or disconnect a Stripe, Paddle or Lago key for statement invoice exports; connect reads the key from stdin", Positionals: []string{"{connect|status|disconnect}", "{stripe|paddle|lago}"}, Flags: []cliFlag{
@@ -2132,7 +2134,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "workers",
 		Short:   "Inspect and manage background worker pools",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List background worker pools"},
+			{Name: "list", Short: "List background worker pools, or one pool by app", Positionals: []string{"[<app>]"}},
 			{Name: "status", Short: "Show real-time status and autoscaling for a worker pool", Positionals: []string{"[<app>]"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (optional; defaults to linked context)", Value: "slug"},
 			}},
@@ -2961,7 +2963,7 @@ var cliCommands = []cliCommand{
 		}}, {Name: "init", Short: "Create public GET smoke checks from a local OpenAPI document", Examples: []string{"gregale test init --from openapi.yaml --project my-api --source ."}, Flags: []cliFlag{
 			{Name: "from", Short: "local OpenAPI 3.0 or 3.1 document", Value: "PATH", Req: true},
 			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
-			{Name: "source", Short: "application source directory", Value: "DIR"},
+			{Name: "source", Short: "application source directory, relative to the manifest (default: the workload holding --from, else .)", Value: "DIR"},
 			{Name: "scenario", Short: "scenario name", Value: "NAME"},
 			{Name: "output", Short: "new manifest path", Value: "PATH"},
 		}}, {Name: "recovery-trend", Short: "Render offline recovery performance trends from ordered campaign reports", Flags: []cliFlag{
@@ -3195,6 +3197,21 @@ var cliCommands = []cliCommand{
 				{Name: "timeout", Short: "maximum wait (seconds, or a duration such as 10m)", Value: "SECONDS|DURATION"},
 			}},
 			{Name: "destroy", Short: "Tear down a preview app", Examples: []string{"gregale preview destroy pr-42-my-api"}, Positionals: []string{"<preview-slug>"}},
+		},
+	},
+	{
+		Name:    "previews",
+		DocSlug: "previews",
+		Short:   "Join or leave platform previews (previews list|join|leave)",
+		HelpNotes: []string{
+			"Joining releases an early platform feature to your account; a preview never adds a plan entitlement.",
+			"With --org, an owner or admin joins for the whole organization: members get it while acting for the company.",
+		},
+		Subcommands: []cliSub{
+			{Name: "list", Aliases: []string{"ls"}, Short: "List previews you can join or already joined", Common: true, Flags: []cliFlag{previewsOrgFlag}},
+			{Name: "join", Short: "Join a preview", Common: true, Positionals: []string{"<key>"}, Flags: []cliFlag{previewsOrgFlag},
+				Examples: []string{"gregale previews join change_timeline", "gregale previews join change_timeline --org acme"}},
+			{Name: "leave", Short: "Leave a preview", Positionals: []string{"<key>"}, Flags: []cliFlag{previewsOrgFlag}},
 		},
 	},
 	{
@@ -5216,6 +5233,9 @@ var cliCommands = []cliCommand{
 				{Name: "usage-reporting", Value: "on|off", Short: "report usage to the platform (on for new Data APIs)", ClosedSet: []string{"on", "off"}},
 				{Name: "monthly-caps", Value: "requests=N[,anonymous=N]|off", Short: "monthly owner caps; reached caps answer 429 until the next UTC month"},
 				{Name: "aggregates", Value: "on|off", Short: "aggregate queries; on also enables the SQL deadline", ClosedSet: []string{"on", "off"}},
+				{Name: "pool", Value: "N|default", Short: "engine connections per instance, 1 to 8 (default 2)"},
+				{Name: "server-key-concurrency", Value: "N|default", Short: "admission slots server keys may hold together (default: all but one)"},
+				{Name: "server-key-rate-limit", Value: "N[,burst=M]|off", Short: "requests per second per server key; refusals answer 429"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 				{Name: "no-restart", Short: "store settings without a fresh restart"},
 			}},
