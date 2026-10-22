@@ -513,6 +513,8 @@ type MemStore struct {
 	// stable customer identity independent from rotatable credentials.
 	apiConsumers                         map[string]APIConsumer
 	apiConsumerTrials                    map[string]APIConsumerTrial               // ADR-1314
+	apiConsumerSignupSettings            map[string]APIConsumerSignupSettings      // ADR-20261021143000, by app ID
+	apiConsumerSignups                   map[string]APIConsumerSignup              // ADR-20261021143000
 	apiConsumerMeterUsage                map[string]APIConsumerMeterUsageBucket    // ADR-1318
 	platformTenantMeterUsage             map[string]PlatformTenantMeterUsageBucket // ADR-1319
 	platformTenantTrials                 map[string]PlatformTenantTrial            // ADR-1322, by tenant

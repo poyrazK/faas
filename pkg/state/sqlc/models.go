@@ -421,6 +421,46 @@ type ApiConsumerRouteUsageMinute struct {
 	UpdatedAt     pgtype.Timestamptz
 }
 
+// An API customer's self-service sign-up (ADR-20261021143000); pending rows are deleted a week after they expire.
+type ApiConsumerSignup struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Email              string
+	Name               string
+	PlanID             pgtype.UUID
+	Provider           string
+	Livemode           bool
+	ProviderCustomerID pgtype.Text
+	CheckoutSessionID  pgtype.Text
+	ClaimHash          []byte
+	Status             string
+	ConsumerID         pgtype.UUID
+	KeyID              pgtype.UUID
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	CompletedAt        pgtype.Timestamptz
+}
+
+// Self-service sign-up for an app's API customers (ADR-20261021143000).
+type ApiConsumerSignupSetting struct {
+	AppID               pgtype.UUID
+	AccountID           pgtype.UUID
+	Enabled             bool
+	Provider            string
+	PlanIds             []pgtype.UUID
+	KeyScopes           []string
+	DisplayName         string
+	TermsUrl            string
+	ReturnUrl           string
+	TrialDays           int32
+	DailyLimit          int32
+	CustomerPlanChanges bool
+	CustomerClosing     bool
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
 // Monthly spend cap per API consumer; apid checks the month to date and the gateway denies capped consumers (ADR-1306).
 type ApiConsumerSpendCap struct {
 	ConsumerID           pgtype.UUID

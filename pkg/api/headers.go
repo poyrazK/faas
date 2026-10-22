@@ -195,7 +195,7 @@ func ClearGuestIdentityHeaders(h http.Header) {
 // IsWorkflowStepHeader reports one of the workflow step headers.
 func IsWorkflowStepHeader(name string) bool {
 	return strings.EqualFold(name, WorkflowRunIDHeader) || strings.EqualFold(name, WorkflowStepHeader) ||
-		strings.EqualFold(name, WorkflowAttemptHeader)
+		strings.EqualFold(name, WorkflowAttemptHeader) || strings.EqualFold(name, WorkflowCodeModeHeader)
 }
 
 // IsPlatformStampedHeader reports a header the gateway authors on the hop it

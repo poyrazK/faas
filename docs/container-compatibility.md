@@ -241,8 +241,11 @@ optional `:group`, resolved against the image's `/etc/passwd` and `/etc/group`.
 guest-init delivers (SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2), and
 `stop_grace_period` is capped by the plan. Like commands, these overrides are
 captured per deployment, so queued deployments and rollbacks keep them.
-Source-built services set the same things in their Dockerfile; Compose
-overrides on them produce a scan warning.
+Source-built services take the same overrides
+([ADR-20261022160000](adr/20261022160000-compose-process-on-built-services.md)):
+an `entrypoint` is folded into the service's start command (the entrypoint,
+then the command), and `user`, `working_dir` and the stop contract are applied
+to the built image as a Dockerfile's USER, WORKDIR and STOPSIGNAL would be.
 
 `env_file` contributes variable names only. The scan lists them as required
 environment keys, exactly like `environment:`; values never leave the source,
@@ -311,7 +314,7 @@ The scan reports every other Compose key instead of dropping it silently:
 
 | Keys | Result |
 |---|---|
-| `build` (`context`, `dockerfile`, `args`, `target`), `command`, `depends_on`, `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `ports`, `profiles`, `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied (process keys only on prebuilt images). |
+| `build` (`context`, `dockerfile`, `args`, `target`), `command`, `depends_on`, `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `ports`, `profiles`, `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied. |
 | `container_name`, `init`, `stdin_open`, `tty`, `platform: linux/amd64`, `x-*` extensions | Ignored without a warning; they have no effect on a microVM service. |
 | `volumes`, `tmpfs` | Warning: no persistent volumes or bind mounts; each start gets a fresh filesystem. |
 | `deploy`, `scale`, `cpus`, `mem_limit` and other resource keys | Warning: CPU, memory and replicas come from the plan and app scaling. |

@@ -1673,6 +1673,11 @@ func validateSingleAppManifestTargets(cwd, slug string) error {
 			return fmt.Errorf("async_routes entry %d targets app %q, but this single-app deploy targets %q; fix the app name or use --project", i+1, route.App, slug)
 		}
 	}
+	for i, route := range m.Routes {
+		if route.To != slug {
+			return fmt.Errorf("routes entry %d sends traffic to app %q, but this single-app deploy targets %q; fix `to` or use --project", i+1, route.To, slug)
+		}
+	}
 	printManifestWarnings(m)
 	return nil
 }

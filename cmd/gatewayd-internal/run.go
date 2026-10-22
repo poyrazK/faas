@@ -78,6 +78,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
@@ -1045,6 +1046,9 @@ type runDeps struct {
 	// (ADR-20261018090210), following the api_monetization_enabled runtime
 	// setting. Nil keeps monetization off.
 	apiMonetization func() bool
+	// apiMonetizationFlags is the api_monetization platform flag
+	// (ADR-20261020170649), kept current by the runtime-config watcher.
+	apiMonetizationFlags *platformflags.Set
 	// Private identity is built only with the process-wide drain tracker.
 	runtimeIngressIdentity http.Handler
 	listen                 func(network, addr string) (net.Listener, error)
@@ -1533,6 +1537,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	tenantSurfacesFlag := runtimeconfig.NewBoolFlag(api.TenantSurfacesEnabled())
 	apiMonetizationFlag := runtimeconfig.NewBoolFlag(api.APIMonetizationEnabled())
 	deps.apiMonetization = apiMonetizationFlag.Load
+	deps.apiMonetizationFlags = platformflags.NewSet(nil)
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(osGetenv))
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
 	router := pgRouter{
@@ -2148,7 +2153,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	if pool != nil {
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 		defer runtimeCancel()
-		watcher := runtimeconfig.New(pgStore, pool,
+		keys, apply := runtimeconfig.WithPlatformFlags(
 			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization},
 			func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 				enabled, err := runtimeconfig.Bool(value)
@@ -2165,7 +2170,8 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 					httpsec.SetHSTSEnabled(enabled)
 				}
 				return nil
-			}, log)
+			}, deps.apiMonetizationFlags)
+		watcher := runtimeconfig.New(pgStore, pool, keys, apply, log)
 		watcher.Daemon = "gatewayd-internal" // ADR-1700 apply receipts
 		if err := watcher.Reconcile(runtimeCtx); err != nil {
 			log.Warn("gatewayd: initial runtime config reconcile failed", "err", err)
@@ -2852,6 +2858,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
 	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
 	handler.WithAPIMonetization(deps.apiMonetization)
+	handler.WithAPIMonetizationFlags(deps.apiMonetizationFlags)
 	// ADR-978: order the warm-capacity queue by route priority. Rules are
 	// read only for requests that have to queue, through a 30 s cache.
 	if pgStore := deps.pgStore; pgStore != nil {
@@ -3991,6 +3998,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		serviceProxyConfig := gateway.ServiceProxyConfig{
 			AdmitRuntime:              financialBudgetServiceAdmission(pgStore),
 			APIMonetization:           deps.apiMonetization,
+			APIMonetizationFor:        handler.APIMonetizationEnabledFor,
 			AdmitManagedAsync:         gateway.NewRehearsalAsyncAdmitter(pgStore),
 			Provider:                  serviceEndpointProvider,
 			Resolve:                   newServiceProxyResolver(pgStore),

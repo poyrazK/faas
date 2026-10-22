@@ -34,6 +34,22 @@ func (e *Engine) frozenTierEnabled() bool { return e.frozenTier.Load() }
 // tier itself is enabled.
 func (e *Engine) EnableFrozenTierApps() { e.frozenTierApps.Store(true) }
 
+// EnableEarlyFreeze freezes quiet between_requests instances after quiet
+// instead of at their idle timeout (schedd `frozen_tier_early_freeze_after_s`,
+// ADR-20261021215353). Frozen time is not billed, so such an instance stops
+// accruing usage shortly after its last request. It has no effect unless the
+// frozen tier is enabled.
+func (e *Engine) EnableEarlyFreeze(quiet time.Duration) {
+	e.earlyFreezeAfterMS.Store(quiet.Milliseconds())
+}
+
+func (e *Engine) earlyFreezeAfter() time.Duration {
+	if !e.frozenTierEnabled() {
+		return 0
+	}
+	return time.Duration(e.earlyFreezeAfterMS.Load()) * time.Millisecond
+}
+
 // frozenTierAllows reports whether the frozen tier may freeze an idle
 // instance of app (ADR-1151): a request-serving workload whose declared
 // pause is not never. Apps other than functions also need the apps switch.
@@ -53,6 +69,21 @@ func (e *Engine) frozenTierAllows(app state.App, mode, privateNetworkID string) 
 // the reaper then parks it as before. residentMB is the instance's latest
 // measured memory, 0 when unmeasured.
 func (e *Engine) FreezeIdle(ctx context.Context, instanceID string, residentMB int) (handled bool, err error) {
+	return e.freeze(ctx, instanceID, residentMB, false)
+}
+
+// FreezeEarly freezes a quiet RUNNING instance before its idle timeout
+// (ADR-20261021215353). Only instances the frozen tier would freeze at the
+// idle timeout and whose declared pause is between_requests qualify; anything
+// else reports handled=false and stays running for the idle reaper.
+func (e *Engine) FreezeEarly(ctx context.Context, instanceID string, residentMB int) (handled bool, err error) {
+	if e.earlyFreezeAfter() <= 0 {
+		return false, nil
+	}
+	return e.freeze(ctx, instanceID, residentMB, true)
+}
+
+func (e *Engine) freeze(ctx context.Context, instanceID string, residentMB int, early bool) (handled bool, err error) {
 	if !e.frozenTierEnabled() {
 		return false, nil
 	}
@@ -65,7 +96,7 @@ func (e *Engine) FreezeIdle(ctx context.Context, instanceID string, residentMB i
 		return false, err
 	}
 	defer e.unlockApp(ins.AppID)
-	if reason, err := e.freezeRefusal(ctx, *ins); err != nil || reason != "" {
+	if reason, err := e.freezeRefusal(ctx, *ins, early); err != nil || reason != "" {
 		if reason != "" {
 			e.observeFreeze(reason)
 		}
@@ -103,7 +134,11 @@ func (e *Engine) FreezeIdle(ctx context.Context, instanceID string, residentMB i
 	}
 	charge := frozenChargeMB(ins.RAMMB, float64(residentMB))
 	e.ledger.Freeze(ins.ID, charge)
-	e.observeFreeze("frozen")
+	if early {
+		e.observeFreeze("frozen_early")
+	} else {
+		e.observeFreeze("frozen")
+	}
 	if e.frozenFastPath.Load() {
 		e.issueThawTicket(ctx, *ins, charge)
 	}

@@ -56,6 +56,14 @@ func withGuestExecutionEvidence(r *http.Request, usageHeader bool) *http.Request
 	return r.WithContext(context.WithValue(r.Context(), guestExecutionEvidenceContextKey{}, &guestExecutionEvidence{usageHeader: usageHeader}))
 }
 
+// ownUsageHeader has the platform consume the request's Gregale-Usage once
+// its account is known to have API monetization (ADR-20261020170649).
+func ownUsageHeader(r *http.Request) {
+	if evidence := guestExecutionEvidenceOf(r); evidence != nil {
+		evidence.usageHeader = true
+	}
+}
+
 // usageHeaderOwned reports whether the request's Gregale-Usage header is
 // the platform's to consume.
 func usageHeaderOwned(ctx context.Context) bool {

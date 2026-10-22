@@ -43,6 +43,51 @@ because their DNS and certificate ownership is external to Gregale.
 `gregale domains doctor` checks DNS, certificate state, and the route without
 changing the domain.
 
+## Serve several apps on one domain
+
+A domain is attached to one app, and edge rules send parts of it to other apps
+in the same account. Declare the layout in `gregale.yaml` so it deploys with
+the code:
+
+```yaml
+routes:
+  - name: api
+    match_host: shop.example.com
+    match_path: /api/**
+    to: api              # app slug, or its workload name in a project deploy
+    strip_prefix: /api   # optional: /api/items reaches the app as /items
+  - name: hooks
+    match_host: shop.example.com
+    match_path: /hooks/**
+    to: webhooks
+    match_methods: [POST]
+```
+
+Requests that match no route go to the domain's own app, for example the web
+frontend. Each route becomes a `kind=route` edge rule on its target app, plus a
+`kind=rewrite` rule when `strip_prefix` is set; `gregale edge-rules list --app
+api` shows them. Route names are stable per target app: later deploys update a
+route with the same name and remove manifest-owned routes that are no longer
+declared. Rules you created yourself are never adopted or deleted; a manifest
+route with the same kind, host, path and methods as one of them fails the
+deploy until you remove one. Omitting `routes` leaves managed routes unchanged,
+`routes: []` clears them, and `--no-triggers` skips them.
+
+In a single-app deploy every route must target the app being deployed. In a
+project deploy (`gregale deploy --project`) a route may name any workload, and
+only selected workloads are reconciled. `match_path` is a glob (`/api/**`),
+not an OpenAPI template. Routes are YAML-only and not yet available for
+organization-owned projects.
+
+Without a manifest, create the same rules directly:
+
+```bash
+gregale edge-rules create --app api --kind route --match-host shop.example.com \
+  --match-path '/api/**' --route-target-slug api
+gregale edge-rules create --app api --kind rewrite --match-host shop.example.com \
+  --match-path '/api/**' --rewrite-from /api --rewrite-to /
+```
+
 Wildcard domains (`*.example.com`, Pro and Scale) prove ownership with the
 TXT record at `_faas-verify.example.com` and route with a wildcard CNAME.
 Each subdomain gets its own certificate on its first HTTPS connection; at
