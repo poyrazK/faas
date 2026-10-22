@@ -227,6 +227,7 @@ const RuntimeConfigDomainDoctor = runtimeConfigDomainDoctor
 const RuntimeConfigDomainDoctorTTL = runtimeConfigDomainDoctorTTL
 const RuntimeConfigHSTS = runtimeConfigHSTS
 const RuntimeConfigS3 = runtimeConfigS3
+const RuntimeConfigPlatformReleasePause = runtimeConfigPlatformReleasePause
 const SafeReleaseEmergencyGrace = safeReleaseEmergencyGrace
 const ScanSpoolRootEnv = scanSpoolRootEnv
 const ScheddMetricsDiscoveryPath = scheddMetricsDiscoveryPath
