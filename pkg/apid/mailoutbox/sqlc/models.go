@@ -353,6 +353,10 @@ type PlatformMailProducerOutbox struct {
 	DeploymentFailureAt              pgtype.Timestamptz
 }
 
+type ScenarioTestActionPolicy struct {
+	AppID pgtype.UUID
+}
+
 type Session struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID

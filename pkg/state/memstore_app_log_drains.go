@@ -144,7 +144,10 @@ func (m *MemStore) ListAppLogDrainsForApp(_ context.Context, appID string) ([]Ap
 func (m *MemStore) ListEnabledAppLogDrains(_ context.Context) ([]AppLogDrain, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	rows := listAppLogDrains(func(d AppLogDrain) bool { return d.Enabled }, m.appLogDrains)
+	rows := listAppLogDrains(func(d AppLogDrain) bool {
+		_, enrolled := m.scenarioActionPolicies[d.AppID] // mirrors PgStore (ADR-20261019180000)
+		return d.Enabled && !enrolled
+	}, m.appLogDrains)
 	for i := range rows {
 		rows[i].StandardBinding = m.standardLogBindingLocked(rows[i])
 	}

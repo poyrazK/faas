@@ -112,6 +112,11 @@ func Run(t *testing.T, open Open) {
 		{"ownership_recovery_pages_are_scoped_exclusive_and_bounded", testOwnershipRecoveryPages},
 		{"ownership_recovery_transfer_fences_health_cooldown_and_peers", testOwnershipRecoveryTransfer},
 		{"scenario_rehearsal_reads_for_unenrolled_app", testScenarioRehearsalReadsForUnenrolledApp},
+		{"rehearsal_apps_leave_account_alerts", testRehearsalAppsLeaveAccountAlerts},
+		{"rehearsal_app_logs_stay_inside_the_run", testRehearsalAppLogsStayInsideTheRun},
+		{"rehearsal_apps_never_poll_real_brokers", testRehearsalAppsNeverPollRealBrokers},
+		{"rehearsal_crons_never_fire_from_the_clock", testRehearsalCronsNeverFireFromTheClock},
+		{"rehearsal_apps_receive_no_account_events", testRehearsalAppsReceiveNoAccountEvents},
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"archived_logs_are_scoped_to_the_owning_app", testInstanceLogsOwnedByApp},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
@@ -3489,6 +3494,30 @@ func testAppSecretRuntimeProcessGenerationFence(t *testing.T, fx *Fixture) {
 	}
 	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(third, third)); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("reactivated a retired generation: %v", err)
+	}
+	// ADR-508 amendment 1: a guest process attempt that vmmd started after a
+	// registration (a restore that fell back to cold boot under the same
+	// instance) may replace it without knowing its generation; a start from
+	// an attempt that predates the registration is still fenced.
+	live, stray, fresh := strings.Repeat("d", 32), strings.Repeat("e", 32), strings.Repeat("f", 32)
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(live, third)); err != nil {
+		t.Fatalf("BeginAppSecretRuntimeProcess(after retire): %v", err)
+	}
+	earlier := process(stray, "")
+	earlier.ProcessStartedAt = time.Now().Add(-time.Hour)
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, earlier); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("an earlier process attempt replaced a later registration: %v", err)
+	}
+	replacement := process(fresh, "")
+	replacement.ProcessStartedAt = time.Now()
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, replacement); err != nil {
+		t.Fatalf("a later process attempt was fenced by the replaced attempt's registration: %v", err)
+	}
+	if err := ack(live); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("accepted ACK from the replaced attempt's process: %v", err)
+	}
+	if err := ack(fresh); err != nil {
+		t.Fatalf("ACK the replacement attempt's process: %v", err)
 	}
 }
 

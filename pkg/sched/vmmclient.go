@@ -713,6 +713,20 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 	// in vmmdgrpc.Logs consults MD as the runtime source; the
 	// proto field is the documentation seam.
 	fields, _ := wire.FromContext(ctx)
+	// A boot without wake correlation (the deploy prime) still names its
+	// app, deployment and instance: vmmd reads the deployment from this
+	// metadata, records a worker deployment as proven by it (ADR-20261018101500)
+	// and lets the booting guest register its secret-reload process (ADR-508).
+	// Wake events stay keyed on the wake id, which is not filled in here.
+	if fields.AppID == "" {
+		fields.AppID = app.AppID
+	}
+	if fields.DeploymentID == "" {
+		fields.DeploymentID = app.DeploymentID
+	}
+	if fields.InstanceID == "" {
+		fields.InstanceID = instance
+	}
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	boot := c.cli.CreateColdBoot
 	if app.RehearsalRunID != "" {

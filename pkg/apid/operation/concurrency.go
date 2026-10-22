@@ -126,24 +126,69 @@ func (s *Service) GetPlatformTenantSelfOperationQueue(w http.ResponseWriter, r *
 }
 
 // RunOperationQueueReleaser starts queued Operations as customers' slots
-// free, until ctx ends.
+// free, until ctx ends. Every Operation save notifies
+// customer_operation_changed; while anything is queued the releaser runs
+// within operationQueueWakeDelay of such a change, so a finished Operation
+// hands its slot on at once. The periodic pass catches dropped
+// notifications and refreshes the queue gauges.
 func (s *Service) RunOperationQueueReleaser(ctx context.Context) {
 	store, ok := s.Host.Store().(state.OperationConcurrencyStore)
 	if !ok {
 		return
 	}
+	wakes, unsubscribe, err := s.Host.Subscribe(ctx, []string{"customer_operation_changed"})
+	if err != nil {
+		s.Host.Logger().Warn("operation queue releaser polls only: subscribe failed", "err", err)
+		wakes = nil
+	} else {
+		defer unsubscribe()
+	}
 	ticker := time.NewTicker(operationQueueReleaseInterval)
 	defer ticker.Stop()
+	var soon <-chan time.Time
+	queued := s.releaseQueuedOperations(ctx, store, true)
 	for {
-		released, err := store.ReleaseQueuedOperations(ctx, time.Now())
-		s.Metrics.operationQueueReleases(released)
-		if err != nil && ctx.Err() == nil {
-			s.Host.Logger().Warn("operation queue release failed", "err", err)
-		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			queued = s.releaseQueuedOperations(ctx, store, true)
+		case _, ok := <-wakes:
+			if !ok {
+				wakes = nil
+				continue
+			}
+			if queued && soon == nil {
+				soon = time.After(operationQueueWakeDelay)
+			}
+		case <-soon:
+			soon = nil
+			queued = s.releaseQueuedOperations(ctx, store, false)
 		}
 	}
+}
+
+// operationQueueWakeDelay coalesces a burst of Operation changes into one
+// release pass.
+const operationQueueWakeDelay = 250 * time.Millisecond
+
+// releaseQueuedOperations runs one pass and reports whether work is still
+// queued. A periodic pass also refreshes the queue gauges.
+func (s *Service) releaseQueuedOperations(ctx context.Context, store state.OperationConcurrencyStore, periodic bool) bool {
+	released, err := store.ReleaseQueuedOperations(ctx, time.Now())
+	s.Metrics.operationQueueReleases(released)
+	if err != nil && ctx.Err() == nil {
+		s.Host.Logger().Warn("operation queue release failed", "err", err)
+	}
+	queued, oldest, err := store.OperationQueueStats(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.Host.Logger().Warn("operation queue stats failed", "err", err)
+		}
+		return true
+	}
+	if periodic {
+		s.Metrics.operationQueue(queued, oldest, time.Now())
+	}
+	return queued > 0
 }

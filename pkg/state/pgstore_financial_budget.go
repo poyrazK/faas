@@ -84,6 +84,11 @@ func (s *PgStore) mutateFinancialBudget(ctx context.Context, account, id string,
 				if err := compute.initialize(financial.ComputeScopeKey(spec.Scope), true); err != nil {
 					return FinancialBudget{}, err
 				}
+				if financial.StrictAppCompute(spec) {
+					if err := computeClearEnvironmentOnly(compute, spec.Scope.ID, financial.ComputeMonth(clock.Time)); err != nil {
+						return FinancialBudget{}, err
+					}
+				}
 			}
 			if financial.StrictAccountEgress(spec) && !continuingStrict {
 				if err := compute.initializeEgress(); err != nil {

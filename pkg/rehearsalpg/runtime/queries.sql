@@ -67,7 +67,55 @@ SELECT NOT EXISTS(SELECT 1 FROM pg_catalog.pg_extension WHERE extname<>'plpgsql'
 SELECT n.nspname::text AS schema_name,c.relname::text AS table_name,c.relkind::text AS kind,c.relpersistence::text AS persistence
 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
 WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname::text NOT LIKE 'pg_toast%'
- AND n.nspname::text NOT LIKE 'pg_temp_%' AND c.relkind IN ('r','p','v','m','f') ORDER BY n.nspname,c.relname LIMIT 17;
+ AND n.nspname::text NOT LIKE 'pg_temp_%' AND c.relkind IN ('r','p','v','m','f') ORDER BY n.nspname,c.relname LIMIT 65;
+
+-- name: SchemaInventory :many
+-- Every user-schema object a migration can create, with a definition that is
+-- stable across two databases built from the same fixture: no OIDs or
+-- database names (ADR-20261020180000). Table rows are counted separately.
+WITH user_ns AS (
+ SELECT oid,nspname FROM pg_catalog.pg_namespace WHERE nspname NOT IN ('pg_catalog','information_schema')
+  AND nspname::text NOT LIKE 'pg_toast%' AND nspname::text NOT LIKE 'pg_temp_%'
+)
+SELECT o.kind::text AS kind,o.name::text AS name,o.definition::text AS definition,o.rel_schema::text AS rel_schema,o.rel_name::text AS rel_name FROM (
+ SELECT CASE c.relkind WHEN 'r' THEN 'table' WHEN 'p' THEN 'partitioned_table' WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized_view'
+   WHEN 'f' THEN 'foreign_table' ELSE 'sequence' END AS kind,
+  n.nspname||'.'||c.relname AS name,
+  CASE WHEN c.relkind IN ('v','m') THEN pg_catalog.pg_get_viewdef(c.oid)
+   WHEN c.relkind='S' THEN coalesce((SELECT pg_catalog.format('%s start %s increment %s',pg_catalog.format_type(s.seqtypid,NULL),s.seqstart,s.seqincrement)
+    FROM pg_catalog.pg_sequence s WHERE s.seqrelid=c.oid),'')
+   ELSE coalesce((SELECT string_agg(pg_catalog.format('%I %s%s%s',a.attname,pg_catalog.format_type(a.atttypid,a.atttypmod),
+     CASE WHEN a.attnotnull THEN ' not null' ELSE '' END,coalesce(' default '||pg_catalog.pg_get_expr(d.adbin,d.adrelid),'')),', ' ORDER BY a.attnum)
+    FROM pg_catalog.pg_attribute a LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+    WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped),'')||CASE WHEN c.relpersistence='u' THEN ' unlogged' ELSE '' END END AS definition,
+  CASE WHEN c.relkind='r' THEN n.nspname ELSE '' END AS rel_schema,CASE WHEN c.relkind='r' THEN c.relname ELSE '' END AS rel_name
+ FROM pg_catalog.pg_class c JOIN user_ns n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p','v','m','f','S')
+ UNION ALL
+ SELECT 'index',n.nspname||'.'||i.relname,pg_catalog.pg_get_indexdef(x.indexrelid),'',''
+ FROM pg_catalog.pg_index x JOIN pg_catalog.pg_class i ON i.oid=x.indexrelid JOIN user_ns n ON n.oid=i.relnamespace
+ UNION ALL
+ SELECT 'constraint',n.nspname||'.'||t.relname||'.'||c.conname,pg_catalog.pg_get_constraintdef(c.oid),'',''
+ FROM pg_catalog.pg_constraint c JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN user_ns n ON n.oid=t.relnamespace
+ UNION ALL
+ SELECT 'type',n.nspname||'.'||t.typname,CASE t.typtype
+   WHEN 'e' THEN 'enum ('||coalesce((SELECT string_agg(pg_catalog.quote_literal(e.enumlabel),', ' ORDER BY e.enumsortorder) FROM pg_catalog.pg_enum e WHERE e.enumtypid=t.oid),'')||')'
+   WHEN 'd' THEN 'domain '||pg_catalog.format_type(t.typbasetype,t.typtypmod)||coalesce(' default '||t.typdefault,'')
+   ELSE 'type '||t.typtype::text END,'',''
+ FROM pg_catalog.pg_type t JOIN user_ns n ON n.oid=t.typnamespace
+ WHERE t.typtype IN ('e','d','r','m') OR t.typtype='c' AND EXISTS(SELECT 1 FROM pg_catalog.pg_class c WHERE c.oid=t.typrelid AND c.relkind='c')
+ UNION ALL
+ SELECT 'function',n.nspname||'.'||p.proname||'('||pg_catalog.pg_get_function_identity_arguments(p.oid)||')',
+  'sha256:'||pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_functiondef(p.oid),'UTF8')),'hex'),'',''
+ FROM pg_catalog.pg_proc p JOIN user_ns n ON n.oid=p.pronamespace WHERE p.prokind IN ('f','p')
+ UNION ALL
+ SELECT 'trigger',n.nspname||'.'||c.relname||'.'||t.tgname,pg_catalog.pg_get_triggerdef(t.oid),'',''
+ FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN user_ns n ON n.oid=c.relnamespace WHERE NOT t.tgisinternal
+) o ORDER BY o.kind,o.name LIMIT 257;
+
+-- name: FormatCount :one
+-- Server quoting builds the bounded row count of one undeclared table.
+SELECT pg_catalog.format('SELECT count(*) FROM (SELECT 1 FROM ONLY %I.%I LIMIT 10001) s',
+ sqlc.arg(schema_name)::text,sqlc.arg(table_name)::text)::text;
 -- name: Columns :many
 SELECT a.attname::text AS name,(t.oid<16384 AND tn.nspname='pg_catalog' AND pn.nspname='pg_catalog'
  AND t.typname IN ('bool','int2','int4','int8','float4','float8','numeric','text','varchar','bpchar','bytea','uuid','date','time','timetz','timestamp','timestamptz','interval','json','jsonb'))::boolean AS supported

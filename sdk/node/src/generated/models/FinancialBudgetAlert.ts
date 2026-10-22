@@ -8,6 +8,10 @@ import type { FinancialBudgetEvaluation } from './FinancialBudgetEvaluation.js';
  */
 export type FinancialBudgetAlert = {
   id: string;
+  /**
+   * Absent for a crossed threshold. projection marks a projected-overrun alert (ADR-20261019193500), whose threshold_millicents is the limit.
+   */
+  kind?: 'projection';
   policy_revision: number;
   threshold_millicents: number;
   evaluation: FinancialBudgetEvaluation;
