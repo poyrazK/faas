@@ -602,7 +602,14 @@ func (p *Progression) abortCircuitBreaker(ctx context.Context, row CanaryRow, de
 	case strings.HasPrefix(decision.Reason, "crash loop"):
 		reason = "circuit breaker: crash loop (repeated liveness restarts); restoring predecessor " + observation.StableDeploymentID
 	case strings.HasPrefix(decision.Reason, "release gate"):
-		reason = "circuit breaker: a release gate failed; restoring predecessor " + observation.StableDeploymentID
+		// Name the gate: "a release gate failed" left the customer to guess
+		// which one (Hunt 12 H12-36). The name is stable across retries; the
+		// observed values after it are not, so they stay in the log.
+		if name := releaseGateName(decision.Reason); name != "" {
+			reason = "circuit breaker: release gate " + name + " failed; restoring predecessor " + observation.StableDeploymentID
+		} else {
+			reason = "circuit breaker: a release gate failed; restoring predecessor " + observation.StableDeploymentID
+		}
 	}
 	key := "canary-circuit-breaker-abort-" + row.ID + "-" + observation.StableDeploymentID
 	var err error
@@ -671,6 +678,21 @@ func circuitBreakerAbortEvent(reason string) string {
 	default:
 		return "hold_recovery_failed"
 	}
+}
+
+// releaseGateName is the gate a "release gate <name>: <summary>" decision
+// names, or "" when the reason has another shape.
+func releaseGateName(reason string) string {
+	rest, ok := strings.CutPrefix(reason, "release gate ")
+	if !ok {
+		return ""
+	}
+	name, _, ok := strings.Cut(rest, ":")
+	name = strings.TrimSpace(name)
+	if !ok || name == "" || len(name) > 64 || strings.ContainsAny(name, " \t\r\n;") {
+		return ""
+	}
+	return name
 }
 
 func circuitBreakerHoldEvent(reason string) string {
