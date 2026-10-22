@@ -6723,6 +6723,11 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 	if logSource == logsSourceHTTP {
 		return runHTTPLogsQuery(context.Background(), slug, deploymentRef, strings.TrimSpace(*requestID), strings.TrimSpace(*traceID), *route, normalizedSince, *status, *limit, *all, now)
 	}
+	if archiveSelector != nil {
+		if code := expandArchiveInstance(slug, archiveSelector); code != 0 {
+			return code
+		}
+	}
 	return runLogs(context.Background(), slug, deploymentRef, api.LogFilter{
 		Grep:  *grep,
 		Since: normalizedSince,
