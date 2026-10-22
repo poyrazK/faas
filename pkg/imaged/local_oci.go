@@ -541,6 +541,13 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	}
 	defer cleanup()
 
+	healthcheck, err := sourceComposeHealthcheck(*dep)
+	if err != nil {
+		return fmt.Errorf("imaged: frozen Compose healthcheck: %w", err)
+	}
+	if config, err = applySourceComposeHealthcheck(config, healthcheck); err != nil {
+		return fmt.Errorf("imaged: Compose healthcheck: %w", err)
+	}
 	manifest, err := manifestFromLocalOCIConfig(config, *dep)
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest: %w", err)
@@ -559,6 +566,11 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	manifest = h.stampProfilingOnDemand(applyAppLifecycle(manifest, app), acct)
 	if err := manifest.Validate(); err != nil {
 		return fmt.Errorf("imaged: built OCI manifest invalid: %w", err)
+	}
+	if healthcheck != nil {
+		if err := h.recordSourceHealthcheck(ctx, dep, manifest); err != nil {
+			return err
+		}
 	}
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		return fmt.Errorf("imaged: persist local OCI secret reload support: %w", err)

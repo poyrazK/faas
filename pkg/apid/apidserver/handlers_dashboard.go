@@ -917,7 +917,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		AnnouncedCaptures:  s.announcedProfileCaptures(ctx, log, acct, app),
 		ProductControlURL:  s.productControlConsoleURL(app.Slug),
 		ProfilingAvailable: s.profileBackend != nil && api.MustLimitsFor(acct.Plan).Profiling.Enabled,
-		ApplicationAuth:    s.applicationAuthEnabled(acct),
+		ApplicationAuth:    s.applicationAuthEnabled(appFlagSubject(acct, app)),
 		Operational:        &operational,
 		App:                appRow,
 		AppCosts:           appCosts,

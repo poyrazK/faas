@@ -109,7 +109,7 @@ type Workload struct {
 	// every ARG at its default.
 	DockerfileBuild  *api.DockerfileBuildOptions
 	Image            string                  // prebuilt OCI image when the source declares one
-	ImageHealthcheck *api.ComposeHealthcheck // partial Compose override for prebuilt images
+	ImageHealthcheck *api.ComposeHealthcheck // partial Compose healthcheck override, prebuilt or built
 	// ImageProcess carries a prebuilt image's Compose entrypoint, user,
 	// working_dir and stop contract (ADR-1337). Nil inherits the image.
 	ImageProcess *api.ComposeProcess
@@ -153,6 +153,9 @@ type Workload struct {
 	// PlatformTenantRequired is an explicit ingress policy declaration.
 	// Nil preserves an existing app's policy during reconciliation.
 	PlatformTenantRequired *bool
+	// Unpublished marks a Compose service without `ports:`. Docker publishes
+	// nothing for it, so a new app for it is internal (ADR-20261022131852).
+	Unpublished bool
 	// InternalPorts are internal-only TCP listeners from compose expose:
 	// (ADR-576). Nil means the source declares none, so reconcile keeps the
 	// app's existing internal listeners; non-nil replaces them.
@@ -187,6 +190,7 @@ type ServiceBindingTransport string
 const (
 	ServiceBindingPolicyAccount  ServiceBindingPolicy    = "account"
 	ServiceBindingPolicyDeclared ServiceBindingPolicy    = "declared"
+	ServiceBindingPolicyProject  ServiceBindingPolicy    = "project"
 	ServiceBindingTransportHTTP  ServiceBindingTransport = "http"
 	ServiceBindingTransportHTTPS ServiceBindingTransport = "https"
 )

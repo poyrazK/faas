@@ -46,11 +46,13 @@ const (
 	runtimeConfigFrontendHostingDomains             = "frontend_hosting_domains_enabled"
 	runtimeConfigAPIMonetization                    = "api_monetization_enabled"
 	runtimeConfigProductControlPlanPricing          = "product_control_plan_pricing_enabled"
+	runtimeConfigPlatformReleasePause               = runtimeconfig.KeyPlatformReleasePause
 
 	// Platform flags (ADR-1700) are catalogued from pkg/platformflags; their
 	// values are a flag definition or the shared account groups.
 	runtimeConfigKindPlatformFlag       = "platform_flag"
 	runtimeConfigKindPlatformFlagGroups = "platform_flag_groups"
+	runtimeConfigKindPlatformFlagOptIns = "platform_flag_opt_ins"
 	runtimeConfigCategoryPlatformFlags  = "Platform flags"
 
 	// pg_notify is deliberately only a wake-up signal. This repair interval
@@ -100,6 +102,7 @@ var runtimeConfigCatalog = []runtimeConfigDefinition{
 	{Key: runtimeConfigDomainDoctorTTL, Label: "Domain doctor TTL", Description: "Maximum age in seconds before a domain doctor result is stale.", Category: "Operational policies", Kind: "integer", Default: json.RawMessage("300"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDataPlacement, Label: "Data placement", Description: "Enable customer data-upstream placement and affinity behavior.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigAppErrors, Label: "Automatic app errors", Description: "Accept and aggregate gateway error reports; enabling the socket is a graceful daemon change.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyGraceful, ControllerEnabled: false, Mutable: true},
+	{Key: runtimeConfigPlatformReleasePause, Label: "Break glass: pause releases", Description: "Refuse every new deployment and scheduled release start on the platform, and stop builders claiming queued builds (ADR 20261022140000). Running apps keep serving and rollbacks still work. For incident containment; set with gregalectl break-glass pause.", Category: "Security", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigRekey, Label: "Background secret rekey", Description: "Run the background app-secret re-seal worker when host identities are ready; worker lifecycle is rolling.", Category: "Security", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyRolling, ControllerEnabled: false, Mutable: true},
 	{Key: runtimeConfigHSTS, Label: "Strict transport security", Description: "Emit the HSTS response header on the customer-facing API.", Category: "Security", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: "request_read_timeout", Label: "Request read timeout", Description: "HTTP request body read timeout.", Category: "HTTP listener", Kind: "duration", Default: json.RawMessage(`"60s"`), ApplyMode: state.RuntimeConfigApplyGraceful, ControllerEnabled: false, Mutable: true},
@@ -197,17 +200,23 @@ func newRuntimeConfigManager(getenv func(string) string) *runtimeConfigManager {
 	return m
 }
 
-// platformFlagDefinitions catalogues every platform flag and the shared
-// groups row as hot runtime configuration, applied through the same
-// versioned path as the other hot settings.
+// platformFlagDefinitions catalogues every platform flag, its self-serve
+// opt-ins (ADR 20261021080640) and the shared groups row as hot runtime
+// configuration, applied through the same versioned path as the other hot
+// settings.
 func platformFlagDefinitions() []runtimeConfigDefinition {
 	specs := platformflags.Catalog()
-	defs := make([]runtimeConfigDefinition, 0, len(specs)+1)
+	defs := make([]runtimeConfigDefinition, 0, 2*len(specs)+1)
 	for _, spec := range specs {
 		defs = append(defs, runtimeConfigDefinition{
 			Key: platformflags.ConfigKey(spec.Key), Label: spec.Label, Description: spec.Description,
 			Category: runtimeConfigCategoryPlatformFlags, Kind: runtimeConfigKindPlatformFlag,
 			Default: spec.Default.Marshal(), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true,
+		}, runtimeConfigDefinition{
+			Key: platformflags.OptInsConfigKey(spec.Key), Label: spec.Label + " opt-ins",
+			Description: "Accounts and organizations that joined the " + spec.Label + " preview themselves.",
+			Category:    runtimeConfigCategoryPlatformFlags, Kind: runtimeConfigKindPlatformFlagOptIns,
+			Default: json.RawMessage(`{}`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true,
 		})
 	}
 	return append(defs, runtimeConfigDefinition{
@@ -499,6 +508,10 @@ func validateRuntimeConfigValue(def runtimeConfigDefinition, value json.RawMessa
 		}
 	case runtimeConfigKindPlatformFlagGroups:
 		if _, err := platformflags.ParseGroups(value); err != nil {
+			return fmt.Errorf("%s: %w", def.Key, err)
+		}
+	case runtimeConfigKindPlatformFlagOptIns:
+		if _, err := platformflags.ParseOptIns(value); err != nil {
 			return fmt.Errorf("%s: %w", def.Key, err)
 		}
 	case "string", "enum", "secret_reference":

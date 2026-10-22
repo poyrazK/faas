@@ -150,6 +150,45 @@ func setFlagOutput(fs *flag.FlagSet, human io.Writer) {
 		return
 	}
 	fs.SetOutput(&humanFlagErrorWriter{name: fs.Name(), dst: human, flags: fs})
+	if jsonUsageHelp {
+		fs.Usage = func() { printFlagSetHelp(osStdout, fs) }
+	}
+}
+
+// flagHelpPrinted records that a verb the help manifest does not describe
+// answered --help from its own parser. The parse "error" that carried the
+// request is then silent, and run reports success.
+var flagHelpPrinted bool
+
+// helpRequestPath is the command the user typed before its first flag, for
+// naming a verb whose FlagSet name is internal.
+var helpRequestPath string
+
+func printFlagSetHelp(w io.Writer, fs *flag.FlagSet) {
+	if flagHelpPrinted {
+		return
+	}
+	flagHelpPrinted = true
+	path := helpRequestPath
+	if path == "" {
+		path = flagSetCommandName(fs.Name())
+	}
+	_, _ = fmt.Fprintf(w, "Flags for gregale %s:\n", path)
+	fs.VisitAll(func(f *flag.Flag) {
+		label := "--" + f.Name
+		value, usage := flag.UnquoteUsage(f)
+		switch value {
+		case "":
+		case "string":
+			label += " <VALUE>"
+		case "int", "int64", "uint", "uint64", "float":
+			label += " <N>"
+		default:
+			label += " <" + strings.ToUpper(value) + ">"
+		}
+		printHelpEntry(w, label, usage)
+	})
+	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", cliDocsURL)
 }
 
 // invokedCommandPath is the public command path of the current run(), for

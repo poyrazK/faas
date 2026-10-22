@@ -3628,6 +3628,10 @@ type WakeRequest struct {
 	// ExecutionMode is the declared lifecycle mode used to constrain the
 	// cold-boot characterization result. Empty preserves legacy inference.
 	ExecutionMode string
+	// WorkerPushDelivery marks a worker-mode app with a push queue binding.
+	// Push deliveries reach it over private HTTP, so a bound server at
+	// startup is that delivery listener, not an execution-mode conflict.
+	WorkerPushDelivery bool
 	// LivenessProbe (issue #554 / ADR-078) is the per-deployment
 	// override JSON (api.DeploymentLivenessProbe). The engine resolves
 	// this from deployments.override_liveness_probe at Wake time and

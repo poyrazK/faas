@@ -1721,6 +1721,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", envDiffFile),
 		filepath.Join(root, "pkg", "api", operatorConfigFile),
 		filepath.Join(root, "pkg", "api", operatorPlatformFlagsFile), // ADR-1700 — platform flags
+		filepath.Join(root, "pkg", "api", "previews.go"),             // ADR 20261021080640 — self-serve previews
 		filepath.Join(root, "pkg", "api", obsFile),
 		filepath.Join(root, "pkg", "api", "obs_triage.go"),
 		filepath.Join(root, "pkg", "api", "obs_triage_history.go"),

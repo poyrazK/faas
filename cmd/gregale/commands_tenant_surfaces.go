@@ -73,7 +73,7 @@ func cmdTenantSurfacesList(args []string) int {
 	}
 	surfaces, err := client.ListTenantSurfaces(context.Background(), *slug)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list tenant surfaces", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeNDJSON(surfaces))
@@ -164,7 +164,7 @@ func cmdTenantSurfacesRm(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if err := client.DeleteTenantSurface(context.Background(), *slug, surfaceID); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete tenant surface", err)
 	}
 	PrintOK(osStdout, "Removed")
 	return 0

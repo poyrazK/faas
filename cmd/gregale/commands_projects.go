@@ -961,7 +961,7 @@ func cmdProjectsEnvironmentsList(args []string) int {
 	}
 	environments, err := client.ListProjectEnvironments(context.Background(), args[0])
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list project environments", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeNDJSON(environments))
@@ -1000,7 +1000,7 @@ func cmdProjectsEnvironmentCreate(args []string) int {
 		Slug: positional[1], Protected: protected, FromEnvironment: *from, ShareResources: *shareResources,
 	})
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create environment", err)
 	}
 	return renderProjectEnvironment(environment)
 }
@@ -1020,7 +1020,7 @@ func cmdProjectsEnvironmentProtection(args []string, protected bool) int {
 	}
 	environment, err := client.UpdateProjectEnvironment(context.Background(), args[0], args[1], api.UpdateProjectEnvironmentRequest{Protected: &protected})
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update environment protection", err)
 	}
 	return renderProjectEnvironment(environment)
 }
@@ -1054,7 +1054,7 @@ func cmdProjectsList(args []string) int {
 	}
 	projects, err := client.ListProjects(context.Background())
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list projects", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeNDJSON(projects))
@@ -1077,7 +1077,7 @@ func cmdProjectsInfo(args []string) int {
 	}
 	project, err := client.GetProject(context.Background(), args[0])
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not read project", err)
 	}
 	return renderProject(project)
 }
@@ -1113,7 +1113,7 @@ func cmdProjectsUpdate(args []string) int {
 	}
 	project, err := client.UpdateProject(context.Background(), positional[0], req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update project", err)
 	}
 	return renderProject(project)
 }
@@ -1147,7 +1147,7 @@ func cmdProjectsRemove(args []string) int {
 		return 0
 	}
 	if err := client.DeleteProject(context.Background(), positional[0]); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete project", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{"slug": positional[0], "deleted": true, "workloads_detached": len(preview.Workloads)}))

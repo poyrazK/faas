@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -13,6 +14,19 @@ import (
 type visibilityTestStore struct {
 	*state.MemStore
 	retained, timeNow time.Time
+	// legacyCurrency returns the stored snapshots as PgStore returns rows
+	// recorded before the USD switch: valid, but priced in EUR.
+	legacyCurrency bool
+}
+
+func (s *visibilityTestStore) ListFinancialPriceSnapshots(ctx context.Context, account string, start time.Time) ([]state.FinancialPriceSnapshot, error) {
+	prices, err := s.MemStore.ListFinancialPriceSnapshots(ctx, account, start)
+	for i := range prices {
+		if s.legacyCurrency {
+			prices[i].Price.Currency = financial.LegacyBillingCurrency
+		}
+	}
+	return prices, err
 }
 
 func (s *visibilityTestStore) FinancialEvidenceCoverage(context.Context) (time.Time, error) {
@@ -75,5 +89,51 @@ func TestFinancialVisibility(t *testing.T) {
 	got, err = ReadFinancialCosts(t.Context(), store, other.ID, start, store.timeNow)
 	if err != nil || got.KnownUsageMillicents != 0 || got.Meters[0].Coverage.Complete || got.Meters[0].Forecast.Available {
 		t.Fatalf("missing prices or tenant isolation ignored: %+v, %v", got, err)
+	}
+}
+
+// October's price snapshots recorded before the USD switch are in EUR
+// (ADR-1430). They stay valid history, but pricing them failed every October
+// cost report with a 503 ("could not read retained financial evidence" from
+// `gregale app <slug> costs`). Their usage is reported as unpriced instead,
+// under its own reason, without inventing an exchange rate.
+func TestFinancialVisibilityReportsLegacyCurrencyUsageAsUnpriced(t *testing.T) {
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	store := &visibilityTestStore{MemStore: state.NewMemStore(), retained: start, timeNow: start.Add(24 * time.Hour)}
+	a, err := store.CreateAccount(t.Context(), "legacy-currency@example.com", api.PlanScale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0), EffectiveFrom: start, Plan: api.PlanScale, DeliveryMode: "live", Price: financial.Price{Version: "scale-v1", Meter: "compute", Currency: financial.BillingCurrency, Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: 50 * api.SecondsPerGBHour}}
+	if _, err := store.PutFinancialPriceSnapshot(t.Context(), p); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendUsage(t.Context(), a.ID, "app", "a", start, 125*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	for at := start; at.Before(store.timeNow); at = at.Add(time.Minute) {
+		if err := store.RecordFinancialSamplingWindow(t.Context(), at, true, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	priced, err := ReadFinancialCosts(t.Context(), store, a.ID, start, store.timeNow)
+	if err != nil || priced.Meters[0].Accrued.Quantity == 0 {
+		t.Fatalf("USD baseline = %+v, %v", priced, err)
+	}
+	store.legacyCurrency = true
+	got, err := ReadFinancialCosts(t.Context(), store, a.ID, start, store.timeNow)
+	if err != nil {
+		t.Fatalf("a pre-switch EUR snapshot failed the whole report: %v", err)
+	}
+	compute := got.Meters[0]
+	if compute.Coverage.Complete || compute.Coverage.UnpricedQuantity != priced.Meters[0].Accrued.Quantity || got.KnownUsageMillicents != 0 ||
+		!slices.Contains(compute.Coverage.Reasons, "legacy_currency_prices") || slices.Contains(compute.Coverage.Reasons, "missing_historical_prices") {
+		t.Fatalf("legacy usage coverage = %+v, known %d", compute.Coverage, got.KnownUsageMillicents)
+	}
+	if compute.Forecast.Available || compute.Forecast.Reason != "legacy_currency_prices" {
+		t.Fatalf("legacy usage forecast = %+v", compute.Forecast)
+	}
+	if len(compute.PriceContracts) != 1 || compute.PriceContracts[0].Price.Currency != financial.LegacyBillingCurrency {
+		t.Fatalf("the legacy price contract was hidden: %+v", compute.PriceContracts)
 	}
 }

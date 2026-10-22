@@ -27,6 +27,12 @@ type frozenTicket struct {
 	fence      state.RuntimeAppConfigFence
 	generation int64
 	chargeMB   int
+	// owner is the deployment's scaling owner as read at freeze, for the
+	// coordinated wake's selection (ADR-1740 amendment 2026-10-22).
+	owner state.RuntimeScalingState
+	// app is the apps row read at freeze, which the application-standards
+	// rule is evaluated on; plan.app is it resolved for the deployment.
+	app state.App
 }
 
 // frozenTickets holds the tickets of this schedd's frozen VMs, by app. They
@@ -68,6 +74,15 @@ func (t *frozenTickets) drop(instanceID string) {
 // Tickets of VMs that left the frozen state some other way are dropped on
 // the way.
 func (t *frozenTickets) take(appID, preferred string, frozen func(instanceID string) bool) (frozenTicket, bool) {
+	return t.choose(appID, preferred, frozen, true)
+}
+
+// peek is take without removing the ticket.
+func (t *frozenTickets) peek(appID, preferred string, frozen func(instanceID string) bool) (frozenTicket, bool) {
+	return t.choose(appID, preferred, frozen, false)
+}
+
+func (t *frozenTickets) choose(appID, preferred string, frozen func(instanceID string) bool, remove bool) (frozenTicket, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	var best frozenTicket
@@ -83,7 +98,7 @@ func (t *frozenTickets) take(appID, preferred string, frozen func(instanceID str
 			best, found = ticket, true
 		}
 	}
-	if found {
+	if found && remove {
 		delete(t.byApp[appID], best.plan.frozen.ID)
 	}
 	if len(t.byApp[appID]) == 0 {
@@ -189,9 +204,12 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 			return frozenTicket{}, noThawTicket("managed_standards")
 		}
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	acct, teamOrg, err := e.generationAccount(ctx, app)
 	if err != nil {
 		return frozenTicket{}, err
+	}
+	if teamOrg {
+		return frozenTicket{}, noThawTicket("organization")
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !acct.Active() || !ok {
@@ -234,7 +252,40 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 	} else {
 		return frozenTicket{}, fmt.Errorf("sched: frozen fast path: node: %w", nodeErr)
 	}
-	return frozenTicket{plan: plan, fence: captured, generation: basis.Generation, chargeMB: chargeMB}, nil
+	return frozenTicket{plan: plan, fence: captured, generation: basis.Generation, chargeMB: chargeMB, owner: scaling, app: app}, nil
+}
+
+// ticketSelection is a coordinated production wake's selection taken from
+// the app's thaw ticket instead of EnsureWake's fresh reads (ADR-1740
+// amendment 2026-10-22). The ticket names the deployment, app settings,
+// account and scaling owner the freeze read, and the guarded thaw commits
+// only while the app's runtime generation, which every change to them
+// moves, is the ticket's. Only the fast path may decide from it: the
+// selection is marked, so admission reads afresh, and a wake the fast path
+// does not take drops it.
+func (e *Engine) ticketSelection(ctx context.Context, appID, deploymentID string) (wakeEnvironment, frozenTicket, bool) {
+	if !e.frozenFastPath.Load() || deploymentID != "" || ScopeFrom(ctx) != "" || e.ledger.Concurrency(appID) > 0 {
+		return wakeEnvironment{}, frozenTicket{}, false
+	}
+	ticket, ok := e.thawTickets.peek(appID, PreferredInstanceFromContext(ctx), e.ledger.IsFrozen)
+	if !ok {
+		return wakeEnvironment{}, frozenTicket{}, false
+	}
+	plan := ticket.plan
+	return wakeEnvironment{app: plan.app, deployment: plan.dep, owner: ticket.owner, account: plan.acct, limits: plan.limits, fromTicket: true}, ticket, true
+}
+
+// checkThawAdmission runs, at once, the admission checks a thaw ticket does
+// not stand in for: the financial budget for the ticket's deployment, whose
+// rows move no runtime generation, and the application-standards rule on the
+// apps row read at freeze. EnsureWake's fresh path runs the same two.
+func (e *Engine) checkThawAdmission(ctx context.Context, ticket frozenTicket) error {
+	var budgetErr, standardsErr error
+	concurrently(
+		func() { budgetErr = e.checkFinancialBudgetAdmission(ctx, ticket.plan.app, ticket.plan.dep.ID) },
+		func() { standardsErr = e.checkApplicationStandardEnrollment(ctx, ticket.app) },
+	)
+	return errors.Join(budgetErr, standardsErr)
 }
 
 // thawFromTicketLocked is wake phase 1's fast path (ADR-1740). It runs
@@ -269,10 +320,21 @@ func (e *Engine) thawFromTicketLocked(ctx context.Context, appID, deploymentID, 
 	// production deployment from fresh reads moments ago. The ticket serves
 	// it only for that deployment and environment; another selection means
 	// the frozen VM is not the one the wake chose.
-	if selected, ok := wakeEnvironmentFrom(ctx); ok && !ticket.serves(selected) {
+	selected, haveSelection := wakeEnvironmentFrom(ctx)
+	if haveSelection && !ticket.serves(selected) {
 		e.thawTickets.put(ticket)
 		e.observeFastPathSkip(appID, "selection")
 		return WakeResult{}, false
+	}
+	// A wake that did not come through EnsureWake (the scheduler's Wake RPC)
+	// has not checked the budget or the standards rule: check them before
+	// the VM resumes. A refusal leaves the ordinary path to report it.
+	if !haveSelection || !selected.admissionChecked {
+		if err := e.checkThawAdmission(ctx, ticket); err != nil {
+			e.thawTickets.put(ticket)
+			e.observeFastPathSkip(appID, "admission")
+			return WakeResult{}, false
+		}
 	}
 	plan, timing := ticket.plan, thawTiming{wakeStarted: wakeStarted, thawTried: time.Now()}
 	if _, _, refused := e.wakeServingCapacity(plan.app, plan.limits, plan.dep.ID, plan.environmentKey, plan.production).refusal(); refused {
@@ -326,4 +388,30 @@ func (e *Engine) refreezeLocked(ctx context.Context, thawer FrozenVMM, ticket fr
 		return
 	}
 	e.log.Debug("sched: frozen fast path refused; frozen again", "instance", frozen.ID, "refused_by", why)
+}
+
+// ticketedWakeEnvironment is EnsureWake's selection for a production wake a
+// thaw ticket can serve. The app read, which decides ownership and lifecycle
+// and which the runtime generation does not cover, and the budget check run
+// at once; the ticket supplies the rest (ADR-1740 amendment 2026-10-22).
+// ok=false sends the wake through the fresh reads, which report any refusal
+// as they always have.
+func (e *Engine) ticketedWakeEnvironment(ctx context.Context, appID, deploymentID string) (wakeEnvironment, *state.App, bool) {
+	selected, ticket, ok := e.ticketSelection(ctx, appID, deploymentID)
+	if !ok {
+		return wakeEnvironment{}, nil, false
+	}
+	var (
+		app                  state.App
+		appErr, admissionErr error
+	)
+	concurrently(
+		func() { app, appErr = e.store.AppByID(ctx, appID) },
+		func() { admissionErr = e.checkThawAdmission(ctx, ticket) },
+	)
+	if appErr != nil || admissionErr != nil || !e.ownsApp(app) || app.Status != state.AppActive {
+		return wakeEnvironment{}, nil, false
+	}
+	selected.admissionChecked = true
+	return selected, &app, true
 }

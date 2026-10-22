@@ -94,7 +94,7 @@ Format for future ADRs: `ADR-NNN · title · status · decision · consequences`
 
 | ADR | Decision | Why | Rejected alternatives |
 |---|---|---|---|
-| 001 | Control plane in **Go**, monorepo, static binaries | firecracker-go-sdk is first-party and actively maintained (Go 1.26.9 toolchain); single-binary deploys; agents generate/test Go well | Rust (slower iteration, no first-party SDK), Node/Python (RAM cost on a budgeted box) |
+| 001 | Control plane in **Go**, monorepo, static binaries | firecracker-go-sdk is first-party and actively maintained (Go 1.26.10 toolchain); single-binary deploys; agents generate/test Go well | Rust (slower iteration, no first-party SDK), Node/Python (RAM cost on a budgeted box) |
 | 002 | **Builds on the control-plane nodes** (option B), governed | Founder decision; €0 extra; reuse existing capacity | Off-host builder VM (revisit at Gate B if build queue p95 > 60 s) |
 | 003 | **Builds run inside ephemeral builder microVMs**, not host containers | Untrusted `npm install` gets the same VM-grade isolation as untrusted runtime code; RAM cap is the VM boundary (exact, unbreachable); reuses vmmd primitives; kills rootless-runc attack surface on the host | Rootless BuildKit directly on host (weaker isolation, cgroup escapes are kernel bugs away), host docker (unacceptable) |
 | 004 | Zero-config engine: **Railpack** (BuildKit-based, Go); **Dockerfile** escape hatch; **pre-built OCI** accepted | Railpack is Nixpacks' successor (Nixpacks in maintenance mode), produces far smaller images — directly protects the 130 MB fleet snapshot target | Nixpacks (larger images), CNB Buildpacks (multi-GB builder images don't fit our RAM/disk budget) |
@@ -1182,7 +1182,7 @@ This subsection is the cross-reference page for the three v1.1 ADRs. Steady-stat
 | Dependency install step (npm/pip/go mod/cargo) exited non-zero | `pkg/builderd/vm_metal.go::classifyBuildFailure` extended with the `pkg` discriminator | RFC 7807 `dep_install_failed` 422 with `pkg` (npm/pip/go/cargo) on the wire. CLI recommends `npm install` locally to reproduce | error-explanations cluster, amendment 1 |
 | App boot timeout (readiness probe waited the full `startup_timeout_s` and `/healthz` never returned 200) | `pkg/sched/engine.go::KillStuck` carries `StuckReason` into the typed Problem | RFC 7807 `app_startup_timeout` 422 distinct from idle timeout (which parks). CLI hints to increase `startup_timeout_s` or defer boot work until after the `/healthz` listener is up | error-explanations cluster, amendment 1 |
 | App process exited during startup (crash loop, or a non-zero exit in the characterization report) | `pkg/fcvm/vmm.go::guestStoppedDuringStartup` requires guest-init's supervisor restart/crash-loop lines; `characterizationBootOutcome` reads the reported exit code | RFC 7807 `app_startup_crash` 422 carrying the workload's last output lines. A guest that died without supervisor output (overlay/pivot/init failure) stays a platform error. Customer-caused codes (`api.CustomerCausedDeploymentFailureCodes`) are excluded from the public status page's deployment-success SLO (§12) | error-explanations cluster, amendment 1 |
-| Workload behavior contradicts its declared `execution_mode` (a worker bound a port or exited cleanly, a job served) | `pkg/fcvm/vmm.go::characterizationBootOutcome` compares the mode with the characterized class | RFC 7807 `execution_mode_conflict` 422, customer-caused (excluded from the public status page like `app_startup_crash`); production-us hunt #10 (H10-135) found it surfacing as `internal` | error-explanations cluster, amendment 1 |
+| Workload behavior contradicts its declared `execution_mode` (a worker bound a port or exited cleanly, a job served; a worker with a push queue binding may bind its HTTP delivery listener, ADR 20261021153953) | `pkg/fcvm/vmm.go::characterizationBootOutcome` compares the mode with the characterized class | RFC 7807 `execution_mode_conflict` 422, customer-caused (excluded from the public status page like `app_startup_crash`); production-us hunt #10 (H10-135) found it surfacing as `internal` | error-explanations cluster, amendment 1 |
 | Tarball or base image is a stateful shape (Dockerfile `VOLUME`, top-level `data/` / `db/` / `var/`, or a stateful base image) | `pkg/oci` + G13 stateless-only gate | RFC 7807 `stateless_only_violation` 422 (already shipped pre-cluster). Now flows through the same 5-line renderer from `pkg/whycopy` row `stateless_only_violation` so the prose is uniform with the new codes | error-explanations cluster, amendment 1 |
 
 **Operator runbook pointers:**
@@ -1991,7 +1991,7 @@ The per-VM request-concurrency bound (`concurrency_per_vm`, issue #559) is indep
 
 ## 14. Delivery plan (for agents; sequential, each gate = passing acceptance tests)
 
-Conventions for all milestones: Go 1.26.9 (the version pinned by `go.mod`);
+Conventions for all milestones: Go 1.26.10 (the version pinned by `go.mod`);
 integration tests that need KVM are tagged `//go:build metal` and run on the
 dedicated native x86_64 Linux acceptance host via `make test-metal`; unit tests
 must pass with `make test` on any machine.

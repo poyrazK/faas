@@ -262,10 +262,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusForbidden, "outbound_internal_not_authorized", "The gateway's own call cannot use this outbound integration", "")
 		return
 	}
+	// ADR-20261019152416: the gateway's own probe of an enforced candidate's
+	// binding calls in process as the candidate's app.
+	qualification, isQualification := qualificationPrincipalFromContext(r.Context())
+	if isQualification && !qualificationAllowed(integration, qualification, r.Method, path) {
+		writeProblem(w, http.StatusForbidden, "outbound_qualification_not_authorized", "The qualification probe cannot use this outbound integration", "")
+		return
+	}
 	var workflowIdentity *WorkflowIdentity
 	var executionIdentity ExecutionIdentity
 	var isExecution bool
-	if !isReplay && !isInternal {
+	if !isReplay && !isInternal && !isQualification {
 		if workflowIdentity, ok = h.callerWorkflowIdentity(w, r, integration, path); !ok {
 			return
 		}
@@ -279,6 +286,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		principalID = "replay:" + replay.replayID
 	} else if isInternal {
 		principalID = internal.caller + ":" + internal.accountID
+	} else if isQualification {
+		appID = qualification.appID
+		principalID = "qualification:" + qualification.requestID
 	} else if isExecution {
 		if h.ExecutionAuthorizer == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_execution_authorization_unavailable", "Runs outbound authorization is unavailable", "1")
@@ -553,7 +563,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		setReplayableBody(upstreamReq, aiReq.body)
 		cacheBody = aiReq.body
 	}
-	cacheEligible := workflowIdentity == nil && batch == nil && (outboundCacheRequestEligible(upstreamReq, integration.ResponseCacheTTLSeconds) ||
+	cacheEligible := workflowIdentity == nil && batch == nil && !isQualification && (outboundCacheRequestEligible(upstreamReq, integration.ResponseCacheTTLSeconds) ||
 		aiCacheEligible(upstreamReq, aiReq, integration.ResponseCacheTTLSeconds))
 	cacheKey := ""
 	if cacheEligible {

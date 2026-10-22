@@ -113,6 +113,8 @@ var EventsForInstance = eventsForInstance
 var EventuallyEventsForInstance = eventuallyEventsForInstance
 var ExecutionCoordinatorTestConfig = executionCoordinatorTestConfig
 var ExecutionModeForApp = executionModeForApp
+var QualificationWorkerPushDelivery = qualificationWorkerPushDelivery
+var WorkerPushDelivery = (*Engine).workerPushDelivery
 var ExerciseApplicationStandardComposedWaves = exerciseApplicationStandardComposedWaves
 var ExerciseApplicationStandardOrdinaryWarmMeasuredPromotion = exerciseApplicationStandardOrdinaryWarmMeasuredPromotion
 var ExerciseServiceRecoveryRestart = exerciseServiceRecoveryRestart
@@ -143,6 +145,11 @@ var NewExecutionCoordinatorFixture = newExecutionCoordinatorFixture
 var NewFakeNotify = newFakeNotify
 var NewFireNowHarness = newFireNowHarness
 var NewFrozenFixture = newFrozenFixture
+var NewFrozenFixtureInStore = newFrozenFixtureInStore
+
+// SetStore replaces the store the fixture's engine reads through.
+func (r *frozenFixture) SetStore(s state.Store) { r.e.store = s }
+
 var NewMockChecker = newMockChecker
 var NewNodeCapacityTable = newNodeCapacityTable
 var NewNodePresenceTracker = newNodePresenceTracker
@@ -223,6 +230,10 @@ var XNewEngine = newEngine
 const XEventFanoutSafetyTick = eventFanoutSafetyTick
 
 func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
+
+// XRunEventRecipientSweep runs only the sweep's independent recipient stage.
+// adr: 614 — recipients are claimed in batches and unrouted claims released.
+func (l *Loop) XRunEventRecipientSweep(ctx context.Context) { l.runEventRecipientSweep(ctx) }
 
 var XNewMemCacheOverageChecker = newMemCacheOverageChecker
 var XTestWorkerScopedDemandLifecycle = testWorkerScopedDemandLifecycle

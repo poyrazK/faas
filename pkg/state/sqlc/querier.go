@@ -510,6 +510,9 @@ type Querier interface {
 	// catalog identity. Ownership and runtime evidence are deliberately absent.
 	CopyProjectEnvironmentSecretReferences(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretReferencesParams) (int64, error)
 	CopyProjectEnvironmentSecretSuppressions(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretSuppressionsParams) error
+	// An environment clone copies the source environment's shared secrets as it
+	// copies app secrets: the envelope is not bound to an environment.
+	CopyProjectEnvironmentSecrets(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretsParams) (int64, error)
 	CountActiveBindingVerificationRuns(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountActiveMigrationVerifications(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountActiveMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error)
@@ -936,6 +939,12 @@ type Querier interface {
 	// Holding a deployment is independent of whether its execution lease expired.
 	EnvironmentQualificationNetworkInstances(ctx context.Context, db DBTX, arg EnvironmentQualificationNetworkInstancesParams) ([]EnvironmentQualificationNetworkInstancesRow, error)
 	EnvironmentQualificationNodeUsedMB(ctx context.Context, db DBTX, arg EnvironmentQualificationNodeUsedMBParams) (int64, error)
+	// NULL blocks activation; 'infinity' means the candidate has no object storage binding.
+	EnvironmentQualificationObjectStorageDeadline(ctx context.Context, db DBTX, arg EnvironmentQualificationObjectStorageDeadlineParams) (pgtype.Timestamptz, error)
+	// NULL blocks activation; 'infinity' means the candidate has no active outbound binding.
+	EnvironmentQualificationOutboundDeadline(ctx context.Context, db DBTX, arg EnvironmentQualificationOutboundDeadlineParams) (pgtype.Timestamptz, error)
+	// NULL blocks activation; 'infinity' means the candidate has no PostgreSQL binding.
+	EnvironmentQualificationPostgresDeadline(ctx context.Context, db DBTX, arg EnvironmentQualificationPostgresDeadlineParams) (pgtype.Timestamptz, error)
 	EnvironmentQualificationRestoreCurrent(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreCurrentParams) (bool, error)
 	EnvironmentQualificationRestoreReceipt(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreReceiptParams) (EnvironmentQualificationRestoreReceipt, error)
 	EnvironmentQualificationRestoreReservation(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreReservationParams) (EnvironmentQualificationRestoreReservation, error)
@@ -1091,11 +1100,19 @@ type Querier interface {
 	EventRecipientBlockerTarget(ctx context.Context, db DBTX, arg EventRecipientBlockerTargetParams) (EventRecipientBlockerTargetRow, error)
 	EventRecipientBlockerWaiting(ctx context.Context, db DBTX, arg EventRecipientBlockerWaitingParams) ([]EventRecipientBlockerWaitingRow, error)
 	EventRecipientClaim(ctx context.Context, db DBTX, arg EventRecipientClaimParams) (EventRecipientClaimRow, error)
+	// One scan claims what back-to-back EventRecipientClaim calls would claim, in
+	// the same order: each round takes one recipient from every eligible account
+	// in service order and rotates the account's consumers. A consumer with
+	// delivery controls contributes one recipient per batch, so its admission
+	// gate sees current counters before its next claim.
+	EventRecipientClaimBatch(ctx context.Context, db DBTX, arg EventRecipientClaimBatchParams) ([]EventRecipientClaimBatchRow, error)
 	EventRecipientFinish(ctx context.Context, db DBTX, arg EventRecipientFinishParams) (int64, error)
 	EventRecipientGuardedReplayReceipt(ctx context.Context, db DBTX, arg EventRecipientGuardedReplayReceiptParams) (EventRecipientGuardedReplayReceiptRow, error)
 	EventRecipientInitializeReceipt(ctx context.Context, db DBTX, arg EventRecipientInitializeReceiptParams) (int64, error)
 	EventRecipientInsert(ctx context.Context, db DBTX, arg EventRecipientInsertParams) error
 	EventRecipientLockReceipt(ctx context.Context, db DBTX, id int64) (int64, error)
+	// Returns an unprocessed batch claim as if it had not been made.
+	EventRecipientReleaseClaim(ctx context.Context, db DBTX, arg EventRecipientReleaseClaimParams) (int64, error)
 	EventRecipientReplay(ctx context.Context, db DBTX, arg EventRecipientReplayParams) (int64, error)
 	EventRecipientReplayCandidates(ctx context.Context, db DBTX, arg EventRecipientReplayCandidatesParams) ([]EventRecipientReplayCandidatesRow, error)
 	EventRecipientReplayGenerationGuard(ctx context.Context, db DBTX, arg EventRecipientReplayGenerationGuardParams) (EventRecipientReplayGenerationGuardRow, error)
@@ -1216,6 +1233,11 @@ type Querier interface {
 	EventRetentionHealth(ctx context.Context, db DBTX, arg EventRetentionHealthParams) (EventRetentionHealthRow, error)
 	EventRetryFinishReceipt(ctx context.Context, db DBTX, arg EventRetryFinishReceiptParams) (int64, error)
 	EventRoutingClaimReceipt(ctx context.Context, db DBTX, arg EventRoutingClaimReceiptParams) (EventRoutingClaimReceiptRow, error)
+	// One scan claims up to batch_limit receipts for recipient adoption, as
+	// repeated EventRoutingClaimReceipt adoption claims would: each round takes
+	// one receipt from every eligible account in service order. Within an
+	// account, receipts keep the consumer order they had before the batch.
+	EventRoutingClaimReceiptsForAdoption(ctx context.Context, db DBTX, arg EventRoutingClaimReceiptsForAdoptionParams) ([]EventRoutingClaimReceiptsForAdoptionRow, error)
 	// Evaluate the wall clock only after all admission locks have been acquired.
 	EventRoutingClaimValid(ctx context.Context, db DBTX, arg EventRoutingClaimValidParams) (bool, error)
 	EventRoutingDeferReceipt(ctx context.Context, db DBTX, arg EventRoutingDeferReceiptParams) (int64, error)
@@ -1226,6 +1248,8 @@ type Querier interface {
 	EventRoutingReceipt(ctx context.Context, db DBTX, id int64) (EventFanoutOutbox, error)
 	// An uncertain commit response must not overwrite its durable admission proof.
 	EventRoutingRecordProgress(ctx context.Context, db DBTX, arg EventRoutingRecordProgressParams) (string, error)
+	// Returns an unprocessed adoption claim as if it had not been made.
+	EventRoutingReleaseAdoptionClaim(ctx context.Context, db DBTX, arg EventRoutingReleaseAdoptionClaimParams) (int64, error)
 	EventRoutingRetryLockTarget(ctx context.Context, db DBTX, arg EventRoutingRetryLockTargetParams) (EventSubscription, error)
 	EventRoutingRetrySet(ctx context.Context, db DBTX, arg EventRoutingRetrySetParams) error
 	EventRoutingRetryTarget(ctx context.Context, db DBTX, arg EventRoutingRetryTargetParams) (EventSubscription, error)
@@ -4304,6 +4328,15 @@ type Querier interface {
 	PeekProductionQueue(ctx context.Context, db DBTX, arg PeekProductionQueueParams) ([]Invocation, error)
 	PendingEnvironmentGitOpsEffects(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitopsEffect, error)
 	PendingEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitopsRuntimeEffect, error)
+	// ADR-20261019121546: settled managed S3 credentials of a graph's enforced
+	// candidates without a receipt for this attempt, with their sealed deliveries.
+	PendingEnvironmentQualificationObjectStorageChecks(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]PendingEnvironmentQualificationObjectStorageChecksRow, error)
+	// ADR-20261019152416: probe-ready outbound bindings of enforced candidates
+	// with a live lease and no receipt for their current revision, soonest lease first.
+	PendingEnvironmentQualificationOutboundProbes(ctx context.Context, db DBTX, rowLimit int32) ([]PendingEnvironmentQualificationOutboundProbesRow, error)
+	// ADR-20261019072523: settled managed PostgreSQL deliveries of a graph's
+	// enforced candidates that have no receipt for their current credential.
+	PendingEnvironmentQualificationPostgresChecks(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]PendingEnvironmentQualificationPostgresChecksRow, error)
 	PendingLayerArtifactDeletions(ctx context.Context, db DBTX) ([]PendingLayerArtifactDeletionsRow, error)
 	PendingManagedPostgresCutoverPreflights(ctx context.Context, db DBTX, batchSize int32) ([]ManagedPostgresCutover, error)
 	PendingPromotionHealth(ctx context.Context, db DBTX, batchSize int32) ([]PendingPromotionHealthRow, error)
@@ -5129,6 +5162,9 @@ type Querier interface {
 	RecordEnvironmentGitOpsEvent(ctx context.Context, db DBTX, arg RecordEnvironmentGitOpsEventParams) error
 	RecordEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg RecordEnvironmentGitSourcePollParams) error
 	RecordEnvironmentQualificationJobSmokeReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationJobSmokeReceiptParams) (EnvironmentQualificationJobSmokeReceipt, error)
+	RecordEnvironmentQualificationObjectStorageReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationObjectStorageReceiptParams) error
+	RecordEnvironmentQualificationOutboundReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationOutboundReceiptParams) error
+	RecordEnvironmentQualificationPostgresReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationPostgresReceiptParams) error
 	RecordEnvironmentQualificationRestoreReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationRestoreReceiptParams) (EnvironmentQualificationRestoreReceipt, error)
 	RecordEnvironmentQualificationServiceExchange(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationServiceExchangeParams) error
 	RecordEnvironmentQualificationSmokeReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationSmokeReceiptParams) (EnvironmentQualificationSmokeReceipt, error)
@@ -5429,6 +5465,10 @@ type Querier interface {
 	// Resolve an app's active insights that no evaluation has observed since
 	// stale_before.
 	ResolveStaleRouteInsights(ctx context.Context, db DBTX, arg ResolveStaleRouteInsightsParams) (int64, error)
+	// ADR-051 amendment (2026-10-22): moves a booted instance's proof from the
+	// fingerprint it was published with to the one its own observed workload
+	// class gives. Only the current wake's proof, and only from that fingerprint.
+	RestampRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg RestampRuntimeInstanceConfigProofParams) (int64, error)
 	RestoreCanaryBaselineDefault(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	RestoreDeploymentHTTPcrons(ctx context.Context, db DBTX, arg RestoreDeploymentHTTPcronsParams) (int64, error)
 	RestoreProfileGateStableTraffic(ctx context.Context, db DBTX, arg RestoreProfileGateStableTrafficParams) (int64, error)
@@ -5635,12 +5675,16 @@ type Querier interface {
 	ScenarioActionSnapshotSummary(ctx context.Context, db DBTX, arg ScenarioActionSnapshotSummaryParams) (ScenarioActionSnapshotSummaryRow, error)
 	ScenarioCaptureReceiver(ctx context.Context, db DBTX, webhookID string) (ScenarioCaptureReceiverRow, error)
 	ScenarioCapturedActions(ctx context.Context, db DBTX, arg ScenarioCapturedActionsParams) ([]ScenarioCapturedActionsRow, error)
+	ScenarioCapturedEventByIdentity(ctx context.Context, db DBTX, arg ScenarioCapturedEventByIdentityParams) (ScenarioCapturedEventByIdentityRow, error)
 	// Whether a captured event with this source and ID carries the same type,
 	// schema version and data. A run's events are few and read under the run
 	// lock, so the run index bounds this lookup (ADR-20261021120000).
 	ScenarioCapturedEventIdentity(ctx context.Context, db DBTX, arg ScenarioCapturedEventIdentityParams) (bool, error)
 	ScenarioCapturedEvents(ctx context.Context, db DBTX, arg ScenarioCapturedEventsParams) ([]ScenarioCapturedEventsRow, error)
+	ScenarioCapturedPlatformCallByID(ctx context.Context, db DBTX, arg ScenarioCapturedPlatformCallByIDParams) (ScenarioCapturedPlatformCallByIDRow, error)
 	ScenarioCapturedPlatformCalls(ctx context.Context, db DBTX, arg ScenarioCapturedPlatformCallsParams) ([]ScenarioCapturedPlatformCallsRow, error)
+	// A capture is read back only inside its own run (ADR-20261022082721).
+	ScenarioCapturedQueueMessageByID(ctx context.Context, db DBTX, arg ScenarioCapturedQueueMessageByIDParams) (ScenarioCapturedQueueMessageByIDRow, error)
 	ScenarioCapturedQueueMessages(ctx context.Context, db DBTX, arg ScenarioCapturedQueueMessagesParams) ([]ScenarioCapturedQueueMessagesRow, error)
 	// A captured workflow run is named by its starter, target, workflow and
 	// start ordinal, so a later event to it compares across sibling runs.
@@ -5777,6 +5821,9 @@ type Querier interface {
 	SetMigrationAdmissionCleaned(ctx context.Context, db DBTX, arg SetMigrationAdmissionCleanedParams) (int64, error)
 	SetMigrationAdmissionCleaning(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	SetMigrationSourceRetiring(ctx context.Context, db DBTX, leaseToken string) (int64, error)
+	// ADR-051: the workload class a cold boot observed. The caller holds the app
+	// row exclusively.
+	SetObservedAppWorkloadClass(ctx context.Context, db DBTX, arg SetObservedAppWorkloadClassParams) (int64, error)
 	SetOperationScheduleState(ctx context.Context, db DBTX, arg SetOperationScheduleStateParams) (CustomerOperationSchedule, error)
 	SetOperatorParkBarrier(ctx context.Context, db DBTX, arg SetOperatorParkBarrierParams) (int64, error)
 	SetOperatorParkInstanceState(ctx context.Context, db DBTX, arg SetOperatorParkInstanceStateParams) (int64, error)
