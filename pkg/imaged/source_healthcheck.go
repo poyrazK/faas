@@ -13,8 +13,8 @@ import (
 
 // sourceComposeHealthcheck returns the Compose healthcheck a built service
 // froze at enqueue (ADR-20261019195000). Nil leaves the built image's own
-// HEALTHCHECK, and its readiness, exactly as before. A stage retry carries no
-// profile and so builds without the override.
+// HEALTHCHECK, and its readiness, exactly as before. A stage retry copies the
+// failed deployment's profile, so it keeps the override.
 func sourceComposeHealthcheck(dep state.Deployment) (*api.ComposeHealthcheck, error) {
 	check, err := frameworkprofile.ImageHealthcheckFromProfile(dep.InferredProfile)
 	if err != nil || check == nil {

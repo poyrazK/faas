@@ -29,7 +29,7 @@ func cmdWorkflowSchedules(args []string) int {
 	}
 	response, err := client.ListWorkflowSchedules(context.Background(), *app)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list workflow schedules", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(response))

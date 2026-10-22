@@ -200,7 +200,7 @@ func cmdAlertAdd(args []string) int {
 		PostDeployRollbackWindowSeconds: &windowSeconds,
 	})
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create alert rule", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
@@ -540,7 +540,7 @@ func cmdAlertUpdate(args []string) int {
 	}
 	resp, err := client.UpdateAlertRule(context.Background(), *slug, id, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update alert rule", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
@@ -631,7 +631,7 @@ func cmdAlertRm(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if err := client.DeleteAlertRule(context.Background(), *slug, id); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete alert rule", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{"app": *slug, "id": id, "deleted": true}))

@@ -20,3 +20,6 @@ credentials, opened only by outboundd.
    bound to it, so pending promotion approvals for them must be renewed.
 4. The contract step (removing the fleet identity from outboundd) ships in a
    later release.
+
+The full checklist, with checks and rollbacks for each step, is
+[docs/runbooks/seal-domains-rollout.md](../../../../docs/runbooks/seal-domains-rollout.md).

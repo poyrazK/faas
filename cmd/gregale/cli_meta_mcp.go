@@ -146,7 +146,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "retry", Short: "Retry provider retirement", Flags: []cliFlag{{Name: "id", Short: "retirement UUID", Value: "ID", Req: true}, {Name: "allow-active-grant-revocation", Short: "allow active grant revocation", Bool: true}, {Name: "timeout", Short: "API deadline", Value: "DURATION"}}},
 			{Name: "acknowledge-manual", Short: "Acknowledge manual provider cleanup", Flags: []cliFlag{{Name: "id", Short: "retirement UUID", Value: "ID", Req: true}, {Name: "timeout", Short: "API deadline", Value: "DURATION"}}},
 		}},
-		{Name: "deploy", Short: "Pin the candidate catalog to its revision, verify MCP discovery and promote", Flags: []cliFlag{{Name: "path", Short: "source directory (default .)", Value: "DIR"}, {Name: "name", Short: "app slug", Value: "SLUG", Req: true}, {Name: "size", Short: "app RAM/CPU resource size", Value: "SIZE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}}, {Name: "profile", Short: "deprecated: use --size", Value: "SIZE"}, {Name: "token-env", Short: "client token for external OAuth verification", Value: "ENV"}, {Name: "secrets-file", Short: "sealed app secrets", Value: "PATH"}, {Name: "release-policy", Short: "role-specific catalog baselines to verify before promotion", Value: "PATH"}, {Name: "validate-url", Short: "pre-upload compatibility gate endpoint", Value: "URL"}, {Name: "fixtures", Short: "candidate smoke fixtures", Value: "PATH"}, {Name: "allow-tool-execution", Short: "execute reviewed tool fixtures once", Bool: true}, {Name: "access-audit", Short: "optional stored-policy gate with gateway or guest-only placement", Value: "PLACEMENT", ClosedSet: []string{"gateway", "guest-only"}}, {Name: "access-audit-algorithms", Short: "reviewed gateway algorithms for --access-audit (default RS256,ES256)", Value: "LIST"}, {Name: "idempotency-key", Short: "retry identity printed by a failed submission", Value: "KEY"}, {Name: "mcp-task-migration-override", Short: "allow this deployment to replace incompatible MCP task workers once", Bool: true}, {Name: "timeout", Short: "deployment wait timeout in seconds (default 1200)", Value: "SECONDS"}}, Examples: []string{"gregale mcp deploy --path ./my-mcp --name my-mcp --size small"}},
+		{Name: "deploy", Short: "Pin the candidate catalog, verify MCP discovery and promote", Flags: []cliFlag{{Name: "path", Short: "source directory (default .)", Value: "DIR"}, {Name: "name", Short: "app slug", Value: "SLUG", Req: true}, {Name: "size", Short: "app RAM/CPU resource size", Value: "SIZE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}}, {Name: "profile", Short: "deprecated: use --size", Value: "SIZE"}, {Name: "token-env", Short: "client token for external OAuth verification", Value: "ENV"}, {Name: "secrets-file", Short: "sealed app secrets", Value: "PATH"}, {Name: "release-policy", Short: "role-specific catalog baselines to verify before promotion", Value: "PATH"}, {Name: "validate-url", Short: "pre-upload compatibility gate endpoint", Value: "URL"}, {Name: "fixtures", Short: "candidate smoke fixtures", Value: "PATH"}, {Name: "allow-tool-execution", Short: "execute reviewed tool fixtures once", Bool: true}, {Name: "access-audit", Short: "optional stored-policy gate with gateway or guest-only placement", Value: "PLACEMENT", ClosedSet: []string{"gateway", "guest-only"}}, {Name: "access-audit-algorithms", Short: "reviewed gateway algorithms for --access-audit (default RS256,ES256)", Value: "LIST"}, {Name: "idempotency-key", Short: "retry identity printed by a failed submission", Value: "KEY"}, {Name: "mcp-task-migration-override", Short: "allow this deployment to replace incompatible MCP task workers once", Bool: true}, {Name: "timeout", Short: "deployment wait timeout in seconds (default 1200)", Value: "SECONDS"}}, Examples: []string{"gregale mcp deploy --path ./my-mcp --name my-mcp --size small"}},
 		{Name: "access", Short: "Inspect reviewed OAuth and gateway access-policy drift", Subcommands: []cliSub{
 			{Name: "audit", Short: "Compare source and role policy with stored account gateway rules", Flags: []cliFlag{
 				{Name: "app", Short: "MCP application slug", Value: "SLUG", Req: true},
@@ -157,7 +157,7 @@ func mcpCLICommand() cliCommand {
 				{Name: "timeout", Short: "overall audit deadline (default 30s, at most 2m)", Value: "DURATION"},
 			}, Examples: []string{"gregale mcp access audit --app my-mcp --path ./my-mcp --auth-placement gateway --json", "gregale mcp access audit --app my-mcp --auth-placement guest-only --release-policy release.json"}},
 		}},
-		{Name: "overview", Short: "Inspect serving replicas, Task workers, observer readiness and promotion holds", Flags: []cliFlag{
+		{Name: "overview", Short: "Inspect replicas, Task workers, observers and promotion holds", Flags: []cliFlag{
 			{Name: "app", Short: "serving HTTP MCP application", Value: "SLUG", Req: true},
 			{Name: "worker-app", Short: "optional separate durable Task worker application", Value: "SLUG"},
 			{Name: "observer-app", Short: "observer to inspect (defaults to worker scaling link)", Value: "SLUG"},
@@ -166,7 +166,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "release-policy", Short: "role-specific reviewed catalog baselines", Value: "PATH"},
 			{Name: "timeout", Short: "overall inspection deadline (default 30s, at most 2m)", Value: "DURATION"},
 		}, Examples: []string{"gregale mcp overview --app my-mcp", "gregale mcp overview --app reports-web --worker-app reports-worker --observer-app reports-observer --json", "gregale mcp overview --app my-mcp --release-policy release.json"}},
-		{Name: "status", Short: "Qualify serving MCP replicas and watch hosting health or catalog changes", Flags: []cliFlag{
+		{Name: "status", Short: "Qualify serving replicas and watch health or catalog changes", Flags: []cliFlag{
 			{Name: "app", Short: "Gregale MCP app slug", Value: "SLUG", Req: true},
 			{Name: "endpoint", Short: "literal MCP endpoint path (default /mcp)", Value: "PATH"},
 			{Name: "token-env", Short: "MCP client bearer token environment variable", Value: "ENV"},
@@ -175,7 +175,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "watch", Short: "poll until interrupted and report status changes", Bool: true},
 			{Name: "interval", Short: "poll interval with --watch (default 30s)", Value: "DURATION"},
 		}, Examples: []string{"gregale mcp status --app my-mcp", "gregale mcp status --app my-mcp --token-env MCP_READER_TOKEN", "gregale mcp status --app my-mcp --release-policy release.json --json", "gregale mcp status --app my-mcp --watch --interval 15s --json"}},
-		{Name: "doctor", Short: "Check discovery, Origin rejection, compatibility and optional streaming", Flags: append(append([]cliFlag{}, remote...),
+		{Name: "doctor", Short: "Check discovery, Origin rejection, compatibility and streaming", Notes: []string{"The streaming check is optional."}, Flags: append(append([]cliFlag{}, remote...),
 			cliFlag{Name: "stack", Short: "check hosting overview and reviewed OAuth configuration", Bool: true},
 			cliFlag{Name: "hosting", Short: "run the existing Task hosting doctor", Bool: true},
 			cliFlag{Name: "path", Short: "source configuration directory (with --stack)", Value: "DIR"},
@@ -257,7 +257,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "prompts", Short: "subscribe to prompt definition changes"},
 		}, Examples: []string{"gregale mcp watch --app my-mcp --baseline gregale-mcp.lock.json"}},
 		{Name: "config", Short: "Emit remote MCP connection JSON without credentials", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp config --app my-mcp --name my-mcp"}},
-		{Name: "lock", Short: "Capture MCP catalog definitions without reading resources, rendering prompts or invoking tools", Flags: []cliFlag{
+		{Name: "lock", Short: "Capture MCP catalog definitions without invoking anything", Notes: []string{"Does not read resources, render prompts or invoke tools."}, Flags: []cliFlag{
 			{Name: "url", Short: "full MCP endpoint URL", Value: "URL"},
 			{Name: "app", Short: "resolve a Gregale app endpoint", Value: "SLUG"},
 			{Name: "endpoint", Short: "endpoint path with --app (default /mcp)", Value: "PATH"},
