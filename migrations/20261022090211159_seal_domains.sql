@@ -22,9 +22,21 @@ COMMENT ON TABLE seal_domain_probe IS
 -- the copy githubd opens; secret_value stays written for the release that
 -- reads only it and is dropped in a later release.
 ALTER TABLE github_webhook_secrets ADD COLUMN IF NOT EXISTS secret_sealed bytea;
-ALTER TABLE github_webhook_secrets
-    ADD CONSTRAINT github_webhook_secrets_secret_sealed_chk
-    CHECK (secret_sealed IS NULL OR octet_length(secret_sealed) BETWEEN 1 AND 4096) NOT VALID;
+-- Guarded so a replay over an applied schema is a no-op.
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conname = 'github_webhook_secrets_secret_sealed_chk'
+           AND conrelid = 'github_webhook_secrets'::regclass
+    ) THEN
+        ALTER TABLE github_webhook_secrets
+            ADD CONSTRAINT github_webhook_secrets_secret_sealed_chk
+            CHECK (secret_sealed IS NULL OR octet_length(secret_sealed) BETWEEN 1 AND 4096) NOT VALID;
+    END IF;
+END $$;
+-- +goose StatementEnd
 
 COMMENT ON COLUMN github_webhook_secrets.secret_sealed IS
     'The webhook secret sealed to the source domain write recipients (ADR 20261022111812); githubd prefers it over secret_value.';

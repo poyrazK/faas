@@ -22,6 +22,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -256,18 +257,17 @@ var byteaColumnRe = regexp.MustCompile(`^\s+([a-z0-9_]+) bytea\b`)
 
 // scanPlainColumns lists bytea columns that no domain owns.
 func scanPlainColumns(schemaPath string) ([]string, error) {
-	f, err := os.Open(schemaPath)
+	body, err := os.ReadFile(schemaPath)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
 	known := map[string]bool{}
 	for _, c := range append(append([]sealdomain.Column{}, sealdomain.ProbeColumns...), sealdomain.PlaintextSecretColumns...) {
 		known[c.String()] = true
 	}
 	var out []string
 	table := ""
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(bytes.NewReader(body))
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	for sc.Scan() {
 		line := sc.Text()
