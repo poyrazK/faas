@@ -24,6 +24,10 @@ class DeployDevSourceBody:
     """Canonical cached source revision. Omit for a complete snapshot."""
     dev_source_deleted: str | Unset = UNSET
     """JSON string array of canonical archive paths removed since dev_source_base."""
+    dev_source_build_now: str | Unset = UNSET
+    """Set to true to build this sync at once even when it reaches the running instance as a live patch
+    (ADR-20261021221906). Without it, such a sync's build waits until the developer stops saving and a later sync
+    replaces it."""
     dockerfile: bool | Unset = UNSET
     runtime: DeployDevSourceBodyRuntime | Unset = UNSET
     handler: str | Unset = UNSET
@@ -45,6 +49,8 @@ class DeployDevSourceBody:
         dev_source_base = self.dev_source_base
 
         dev_source_deleted = self.dev_source_deleted
+
+        dev_source_build_now = self.dev_source_build_now
 
         dockerfile = self.dockerfile
 
@@ -104,6 +110,9 @@ class DeployDevSourceBody:
         if not isinstance(self.dev_source_deleted, Unset):
             files.append(("dev_source_deleted", (None, str(self.dev_source_deleted).encode(), "text/plain")))
 
+        if not isinstance(self.dev_source_build_now, Unset):
+            files.append(("dev_source_build_now", (None, str(self.dev_source_build_now).encode(), "text/plain")))
+
         if not isinstance(self.dockerfile, Unset):
             files.append(("dockerfile", (None, str(self.dockerfile).encode(), "text/plain")))
 
@@ -141,6 +150,8 @@ class DeployDevSourceBody:
 
         dev_source_deleted = d.pop("dev_source_deleted", UNSET)
 
+        dev_source_build_now = d.pop("dev_source_build_now", UNSET)
+
         dockerfile = d.pop("dockerfile", UNSET)
 
         _runtime = d.pop("runtime", UNSET)
@@ -165,6 +176,7 @@ class DeployDevSourceBody:
             dev_source_target=dev_source_target,
             dev_source_base=dev_source_base,
             dev_source_deleted=dev_source_deleted,
+            dev_source_build_now=dev_source_build_now,
             dockerfile=dockerfile,
             runtime=runtime,
             handler=handler,

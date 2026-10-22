@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar
 
@@ -14,9 +15,9 @@ T = TypeVar("T", bound="DevPatchPreview")
 
 @_attrs_define
 class DevPatchPreview:
-    """Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync could have been
-    applied as a live source patch to the deployment that was live at upload time (ADR-740 phase 1). It is a measurement
-    only; the normal developer build always runs.
+    """Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync can be applied as a
+    live source patch to the deployment that was live at upload time (ADR-740) and, when it was published as one,
+    whether its build waits for the developer to stop saving (ADR-20261021221906).
 
     """
 
@@ -29,6 +30,9 @@ class DevPatchPreview:
     """Why the sync could not use a live patch. Absent when eligible."""
     generation: int | Unset = UNSET
     """Set when this sync published a live patch; poll getDevPatchStatus with it."""
+    build_deferred_until: datetime.datetime | Unset = UNSET
+    """Set when this sync's build waits behind its live patch (ADR-20261021221906). The build starts at this time unless a
+    later sync replaces it first; a patch that fails to apply starts it at once."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -44,6 +48,10 @@ class DevPatchPreview:
 
         generation = self.generation
 
+        build_deferred_until: str | Unset = UNSET
+        if not isinstance(self.build_deferred_until, Unset):
+            build_deferred_until = self.build_deferred_until.isoformat()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -57,6 +65,8 @@ class DevPatchPreview:
             field_dict["reason"] = reason
         if generation is not UNSET:
             field_dict["generation"] = generation
+        if build_deferred_until is not UNSET:
+            field_dict["build_deferred_until"] = build_deferred_until
 
         return field_dict
 
@@ -78,12 +88,20 @@ class DevPatchPreview:
 
         generation = d.pop("generation", UNSET)
 
+        _build_deferred_until = d.pop("build_deferred_until", UNSET)
+        build_deferred_until: datetime.datetime | Unset
+        if isinstance(_build_deferred_until, Unset):
+            build_deferred_until = UNSET
+        else:
+            build_deferred_until = datetime.datetime.fromisoformat(_build_deferred_until)
+
         dev_patch_preview = cls(
             eligible=eligible,
             changed_paths=changed_paths,
             patch_bytes=patch_bytes,
             reason=reason,
             generation=generation,
+            build_deferred_until=build_deferred_until,
         )
 
         dev_patch_preview.additional_properties = d
