@@ -35,14 +35,25 @@ type Host interface {
 
 // Service serves the map. Enabled is the FAAS_SERVICE_MAP_ENABLED operator
 // gate; while it is off the API answers 503 and the dashboard says so.
+// Released, when set, is the service_map platform flag (ADR 20261021080640)
+// and decides per request instead.
 type Service struct {
-	Host    Host
-	Enabled bool
+	Host     Host
+	Enabled  bool
+	Released func(r *http.Request, acct state.Account) bool
+}
+
+// enabledFor reports whether the map is released to the request's account.
+func (s *Service) enabledFor(r *http.Request, acct state.Account) bool {
+	if s.Released != nil {
+		return s.Released(r, acct)
+	}
+	return s.Enabled
 }
 
 // Get serves GET /v1/service-map?range=.
 func (s *Service) Get(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.Enabled {
+	if !s.enabledFor(r, acct) {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "service_map_unavailable",
 			"Service map unavailable", "the service map preview is not enabled"))
 		return
@@ -125,7 +136,7 @@ func (s *Service) markWakeAhead(ctx context.Context, nodes []api.ServiceMapNode,
 // falls back to the default instead of failing the page.
 func (s *Service) DashboardData(r *http.Request, acct state.Account) (dashboard.ServiceMapData, error) {
 	data := dashboard.ServiceMapData{
-		Enabled:          s.Enabled,
+		Enabled:          s.enabledFor(r, acct),
 		PlanAllowed:      acct.Plan.PerAppMetricsAllowed(),
 		Range:            api.ServiceMapDefaultRange,
 		Ranges:           appmetrics.Ranges(),

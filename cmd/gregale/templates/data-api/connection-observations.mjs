@@ -1,4 +1,4 @@
-import { limits } from './config.mjs'
+import { limits, enginePool } from './config.mjs'
 import { createPoolObservation } from './pool.mjs'
 
 export function qualifiedConnectionEngine(version) {
@@ -32,7 +32,7 @@ export function createConnectionReporter(config, pool, fetchImpl = fetch, lifecy
       } finally { reader.releaseLock() }
       const identity = JSON.parse(Buffer.concat(chunks).toString('utf8'))
       if (identity.token_type !== 'Bearer' || typeof identity.access_token !== 'string' || !identity.access_token || identity.access_token.length > limits.healthBytes) return
-      const engine = config.coordinatedRefresh ? limits.pool - 1 : limits.pool
+      const engine = enginePool(config)
       const report = { version: 1, binding_id: observation.binding_id,
         database_identity: observation.database_identity, database_generation: observation.database_generation, credential_generation: observation.credential_generation,
         role: config.role, runtime_model: 'postgrest-14.3-pools-v1',
@@ -47,7 +47,7 @@ export function createConnectionReporter(config, pool, fetchImpl = fetch, lifecy
 
 export function startConnectionReporter(config, readyPort = 3001) {
   if (!config.connectionObservation) return () => {}
-  const pool = config.poolObservation ?? createPoolObservation(readyPort, config.coordinatedRefresh ? limits.pool - 1 : limits.pool)
+  const pool = config.poolObservation ?? createPoolObservation(readyPort, enginePool(config))
   const controller = new AbortController()
   const report = createConnectionReporter(config, pool, fetch, controller.signal)
   let stopped = false, timer

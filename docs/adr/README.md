@@ -1,7 +1,9 @@
 # Architecture Decision Records
 
+- [Platform flags: company targeting, full coverage, scheduled and automatic rollouts, self-serve previews](20261021080640-platform-flag-extensions.md)
 - [Product Control free trials](20261021195901-product-control-free-trials.md)
 - [ADR-20261021210000: Enrolled apps receive no account events](20261021210000-rehearsal-event-fanout-exclusion.md)
+- [Data API engine pool size and server-key limits](20261021180534-data-api-engine-pool-and-server-key-limits.md)
 - [ADR-20261021180000: Rehearsal capture of realtime publishes and signals](20261021180000-rehearsal-realtime-capture.md)
 - [ADR-20261021150000: Rehearsal capture of workflow starts and events](20261021150000-rehearsal-workflow-capture.md)
 - [ADR-20261021120000: Rehearsal capture of public-API event publishes](20261021120000-rehearsal-public-api-event-capture.md)

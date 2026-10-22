@@ -457,6 +457,8 @@ func projectsCLICompletionPositions() []cliCompletionPosition {
 var (
 	// orgSlugFlag is the --org flag every org-scoped verb requires.
 	orgSlugFlag = cliFlag{Name: "org", Short: "organization slug", Value: "SLUG", Req: true}
+	// previewsOrgFlag acts for an organization instead of the account.
+	previewsOrgFlag = cliFlag{Name: "org", Short: "act for this organization (owner or admin to join or leave)", Value: "SLUG"}
 	// orgMemberRoles are the roles a member can be invited to or given.
 	orgMemberRoles = []string{"admin", "developer", "viewer", "billing"}
 	// issueAppFlags is the --app flag every issues verb requires.
@@ -3198,6 +3200,21 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "previews",
+		DocSlug: "previews",
+		Short:   "Join or leave platform previews (previews list|join|leave)",
+		HelpNotes: []string{
+			"Joining releases an early platform feature to your account; a preview never adds a plan entitlement.",
+			"With --org, an owner or admin joins for the whole organization: members get it while acting for the company.",
+		},
+		Subcommands: []cliSub{
+			{Name: "list", Aliases: []string{"ls"}, Short: "List previews you can join or already joined", Common: true, Flags: []cliFlag{previewsOrgFlag}},
+			{Name: "join", Short: "Join a preview", Common: true, Positionals: []string{"<key>"}, Flags: []cliFlag{previewsOrgFlag},
+				Examples: []string{"gregale previews join change_timeline", "gregale previews join change_timeline --org acme"}},
+			{Name: "leave", Short: "Leave a preview", Positionals: []string{"<key>"}, Flags: []cliFlag{previewsOrgFlag}},
+		},
+	},
+	{
 		Name:    "tenant-surfaces",
 		DocSlug: "tenant-surfaces",
 		Short:   "Manage tenant surfaces (multi-hostname SAN bundle per app)",
@@ -5216,6 +5233,9 @@ var cliCommands = []cliCommand{
 				{Name: "usage-reporting", Value: "on|off", Short: "report usage to the platform (on for new Data APIs)", ClosedSet: []string{"on", "off"}},
 				{Name: "monthly-caps", Value: "requests=N[,anonymous=N]|off", Short: "monthly owner caps; reached caps answer 429 until the next UTC month"},
 				{Name: "aggregates", Value: "on|off", Short: "aggregate queries; on also enables the SQL deadline", ClosedSet: []string{"on", "off"}},
+				{Name: "pool", Value: "N|default", Short: "engine connections per instance, 1 to 8 (default 2)"},
+				{Name: "server-key-concurrency", Value: "N|default", Short: "admission slots server keys may hold together (default: all but one)"},
+				{Name: "server-key-rate-limit", Value: "N[,burst=M]|off", Short: "requests per second per server key; refusals answer 429"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 				{Name: "no-restart", Short: "store settings without a fresh restart"},
 			}},

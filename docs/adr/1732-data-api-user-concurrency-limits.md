@@ -1,6 +1,9 @@
 # ADR-1732: Data API per-user concurrent request limits
 
 Status: Accepted
+- **Amended (ADR 20261021180534):** the admission capacity follows the
+  configurable engine pool, and a setting above it acts as the capacity
+  instead of failing startup.
 
 ## Context
 
