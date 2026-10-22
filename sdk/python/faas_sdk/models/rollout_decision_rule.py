@@ -2,6 +2,8 @@ from typing import Literal
 
 RolloutDecisionRule = Literal[
     "abort_5xx",
+    "abort_approval_rejected",
+    "abort_approval_timeout",
     "abort_cold_boot_p95",
     "abort_cpu_per_request",
     "abort_crash_loop",
@@ -19,6 +21,7 @@ RolloutDecisionRule = Literal[
     "advance_manual",
     "advance_no_predecessor",
     "advance_probe_evidence",
+    "hold_awaiting_approval",
     "hold_health_alert",
     "hold_insufficient_samples",
     "hold_observation_unavailable",
@@ -27,6 +30,8 @@ RolloutDecisionRule = Literal[
 
 ROLLOUT_DECISION_RULE_VALUES: set[RolloutDecisionRule] = {
     "abort_5xx",
+    "abort_approval_rejected",
+    "abort_approval_timeout",
     "abort_cold_boot_p95",
     "abort_cpu_per_request",
     "abort_crash_loop",
@@ -44,6 +49,7 @@ ROLLOUT_DECISION_RULE_VALUES: set[RolloutDecisionRule] = {
     "advance_manual",
     "advance_no_predecessor",
     "advance_probe_evidence",
+    "hold_awaiting_approval",
     "hold_health_alert",
     "hold_insufficient_samples",
     "hold_observation_unavailable",

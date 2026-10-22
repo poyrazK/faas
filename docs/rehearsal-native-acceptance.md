@@ -42,7 +42,10 @@ no provider bucket or credentials. Do not substitute a control-plane database.
 
 On this installation only, explicitly configure the existing containment,
 simulation, command, PostgreSQL fixture, object fixture, managed-worker,
-suspend/resume and running-job suspend gates. App tasks also require
+suspend/resume and running-job suspend gates. Containment also requires
+`FAAS_REHEARSAL_NETWORK_CONTAINMENT=1` on the host's vmmd, not only on apid
+([ADR-20261019120000](adr/20261019120000-rehearsal-runtime-hot-path-isolation.md)).
+App tasks also require
 `FAAS_APP_TASK_API_ENABLED=1` on apid and `FAAS_APP_TASK_DISPATCH=1` on schedd.
 The acceptance runner changes none of these settings. Admission elsewhere
 remains disabled until the relevant native matrices are complete and reviewed.

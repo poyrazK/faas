@@ -2178,6 +2178,13 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
+	// ADR-20261020085706: a release waiting for approval cannot gain traffic.
+	if req.TrafficPercent > d.TrafficPercent {
+		if p := s.releaseApprovalTrafficProblem(r, app, d); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+	}
 	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -5983,6 +5990,7 @@ func (s *server) deploymentResponse(parent context.Context, d state.Deployment, 
 	if len(d.OverrideCmd) > 0 {
 		resp.OverrideCmd = d.OverrideCmd
 	}
+	resp.ScheduledRelease = s.deploymentScheduleView(parent, d, app)
 	if len(d.OverrideEnv) > 0 {
 		// Decode the jsonb map to surface the KEYS only. Values are
 		// never echoed (ADR-053 §Decision 4). Stable order: sorted
@@ -7558,13 +7566,8 @@ func (s *server) getBuildSbom(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, prob)
 		return
 	}
-	var f io.ReadCloser
-	var err error
-	if s.sbomStorage != nil {
-		f, err = s.sbomStorage.Get(r.Context(), sbomKey)
-	} else if s.sbomRoot != "" {
-		f, err = os.Open(filepath.Join(s.sbomRoot, sbomKey)) //nolint:forbidigo // trusted root + validated database key; single-box compatibility fallback
-	} else {
+	f, err := s.openBuildSBOM(r.Context(), sbomKey)
+	if errors.Is(err, errSBOMStorageUnset) {
 		api.WriteProblem(w, api.ErrBuildSBOMUnavailable())
 		return
 	}
@@ -7604,11 +7607,36 @@ func (s *server) resolveSbomKey(r *http.Request, buildID string, acct state.Acco
 	if err != nil || prov.SBOMStorageKey == "" {
 		return "", api.ErrBuildSBOMUnavailable()
 	}
-	clean := filepath.Clean(prov.SBOMStorageKey)
-	if strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "..") || clean == "." {
+	clean, ok := cleanSBOMKey(prov.SBOMStorageKey)
+	if !ok {
 		return "", api.ErrBuildSBOMUnavailable()
 	}
 	return clean, nil
+}
+
+// errSBOMStorageUnset means apid has neither SBOM storage nor a local root.
+var errSBOMStorageUnset = errors.New("apid: SBOM storage is not configured")
+
+// cleanSBOMKey validates a database SBOM key before any storage backend
+// sees it: relative, inside the root.
+func cleanSBOMKey(key string) (string, bool) {
+	clean := filepath.Clean(key)
+	if strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "..") || clean == "." {
+		return "", false
+	}
+	return clean, true
+}
+
+// openBuildSBOM opens a validated SBOM key from shared storage, or from the
+// local root on a single box.
+func (s *server) openBuildSBOM(ctx context.Context, key string) (io.ReadCloser, error) {
+	if s.sbomStorage != nil {
+		return s.sbomStorage.Get(ctx, key)
+	}
+	if s.sbomRoot != "" {
+		return os.Open(filepath.Join(s.sbomRoot, key)) //nolint:forbidigo // trusted root + validated database key; single-box compatibility fallback
+	}
+	return nil, errSBOMStorageUnset
 }
 
 // policyPtrFromReq converts the wire DTO `*api.ScalingPolicy` to the

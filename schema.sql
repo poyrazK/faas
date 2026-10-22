@@ -7679,9 +7679,11 @@ BEGIN
         EXCEPTION WHEN invalid_text_representation THEN
             RAISE EXCEPTION 'tenant event identity must be UUIDs' USING ERRCODE = '23514';
         END;
-        recipients := coalesce((SELECT jsonb_agg(recipient ORDER BY recipient->>'id')
+        recipients := coalesce((SELECT jsonb_agg(w.recipient ORDER BY w.recipient->>'id')
             FROM workflow_tenant_event_recipients(NEW.subject, target_app, target_tenant,
-                NEW.data->>'source', NEW.data->>'type')), '[]'::jsonb);
+                NEW.data->>'source', NEW.data->>'type') AS w(recipient)
+            WHERE NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x
+                WHERE x.app_id = (w.recipient->>'app_id')::uuid)), '[]'::jsonb);
     ELSE
         SELECT coalesce(jsonb_agg(jsonb_build_object(
             'id', s.id, 'account_id', s.account_id, 'app_id', s.app_id,
@@ -7714,10 +7716,13 @@ BEGIN
           ON p.app_id = b.app_id AND p.name = b.policy_name
         WHERE s.account_id = NEW.subject AND s.enabled AND a.status <> 'deleted'
           AND event_fanout_pattern_matches(s.source, NEW.data->>'source')
-          AND event_fanout_pattern_matches(s.type, NEW.data->>'type');
+          AND event_fanout_pattern_matches(s.type, NEW.data->>'type')
+          AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x WHERE x.app_id = s.app_id);
 
-        recipients := recipients || coalesce((SELECT jsonb_agg(recipient ORDER BY recipient->>'id')
-            FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type')), '[]'::jsonb);
+        recipients := recipients || coalesce((SELECT jsonb_agg(w.recipient ORDER BY w.recipient->>'id')
+            FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type') AS w(recipient)
+            WHERE NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x
+                WHERE x.app_id = (w.recipient->>'app_id')::uuid)), '[]'::jsonb);
     END IF;
 
     INSERT INTO event_fanout_outbox
@@ -25033,8 +25038,10 @@ BEGIN
   OR policy.network_mode IS DISTINCT FROM 'contained' OR policy.simulation_plan IS NULL
   OR policy.sealed_at IS NOT NULL OR policy.recorder_closing OR policy.simulation_failed
   OR spec->>'run_id'<>policy.run_id OR spec->>'deployment_id'<>NEW.deployment_id::text
-  OR NEW.kind<>'manual' OR NEW.command_shell OR NEW.max_output_bytes<>65536
-  OR NOT EXISTS(SELECT 1 FROM deployments WHERE id=NEW.deployment_id AND app_id=NEW.app_id AND status='live')
+  OR NEW.command_shell OR NEW.max_output_bytes<>65536
+  OR NOT (NEW.kind='manual' AND EXISTS(SELECT 1 FROM deployments WHERE id=NEW.deployment_id AND app_id=NEW.app_id AND status='live')
+   OR NEW.kind='release' AND EXISTS(SELECT 1 FROM deployments d WHERE d.id=NEW.deployment_id AND d.app_id=NEW.app_id AND d.status='snapshotting'
+    AND scenario_rehearsal_release_matches(NEW.command,d.id,d.release_command,d.release_command_shell)))
   OR EXISTS(SELECT 1 FROM app_task_attach_sessions WHERE task_id=NEW.id) THEN
   RAISE EXCEPTION 'contained command admission is unavailable' USING ERRCODE='23514';
  END IF;
@@ -25127,10 +25134,27 @@ CREATE FUNCTION public.scenario_rehearsal_execution_active(target_app uuid, exec
  OR EXISTS(SELECT 1 FROM app_tasks t JOIN scenario_test_action_policies p ON p.app_id=t.app_id
   WHERE t.id=execution_id AND t.app_id=target_app AND t.account_id=p.account_id
   AND (deployment IS NULL OR t.deployment_id=deployment) AND t.status IN ('restoring','running')
-  AND t.kind='manual' AND NOT t.command_shell AND t.max_output_bytes=65536
+  AND t.kind IN ('manual','release') AND NOT t.command_shell AND t.max_output_bytes=65536
   AND scenario_rehearsal_command_spec(t.command)->>'run_id'=p.run_id
   AND scenario_rehearsal_command_spec(t.command)->>'deployment_id'=t.deployment_id::text
   AND p.network_mode='contained' AND p.simulation_plan IS NOT NULL AND p.sealed_at IS NULL));
+$$;
+
+
+--
+-- Name: scenario_rehearsal_release_matches(text[], uuid, text[], boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_rehearsal_release_matches(command text[], deployment uuid, release_command text[], release_shell boolean) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT coalesce(cardinality(release_command)>0
+  AND (NOT release_shell OR cardinality(release_command)=1)
+  AND scenario_rehearsal_command_spec(command)->>'deployment_id'=deployment::text
+  AND NOT (scenario_rehearsal_command_spec(command) ? 'env')
+  AND NOT (scenario_rehearsal_command_spec(command) ? 'files')
+  AND scenario_rehearsal_command_spec(command)->'command'=to_jsonb(CASE WHEN release_shell
+   THEN ARRAY['/bin/sh','-lc',release_command[1]] ELSE release_command END),false);
 $$;
 
 
@@ -28730,6 +28754,31 @@ CREATE TABLE public.app_registry_credentials (
     CONSTRAINT app_registry_credentials_password_chk CHECK ((length(password_encrypted) > 0)),
     CONSTRAINT app_registry_credentials_registry_chk CHECK (((length(registry) > 0) AND (length(registry) <= 253))),
     CONSTRAINT app_registry_credentials_username_chk CHECK (((length(username) > 0) AND (length(username) <= 256)))
+);
+
+
+--
+-- Name: app_release_approval_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_release_approval_policies (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    required_approvals smallint NOT NULL,
+    after_stage smallint NOT NULL,
+    timeout_minutes integer NOT NULL,
+    approvers text NOT NULL,
+    allow_self_approval boolean NOT NULL,
+    notify_channel_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    updated_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_release_approval_policies_after_stage_check CHECK (((after_stage >= 1) AND (after_stage <= 10))),
+    CONSTRAINT app_release_approval_policies_approvers_check CHECK ((approvers = ANY (ARRAY['admin'::text, 'developer'::text]))),
+    CONSTRAINT app_release_approval_policies_notify_channel_ids_check CHECK ((cardinality(notify_channel_ids) <= 5)),
+    CONSTRAINT app_release_approval_policies_required_approvals_check CHECK (((required_approvals >= 1) AND (required_approvals <= 5))),
+    CONSTRAINT app_release_approval_policies_timeout_minutes_check CHECK (((timeout_minutes >= 10) AND (timeout_minutes <= 10080))),
+    CONSTRAINT app_release_approval_policies_updated_by_check CHECK (((length(updated_by) >= 1) AND (length(updated_by) <= 320)))
 );
 
 
@@ -33273,6 +33322,28 @@ CREATE TABLE public.deployment_registry_verifications (
     CONSTRAINT deployment_registry_verifications_payload_check CHECK (((octet_length(payload) >= 1) AND (octet_length(payload) <= 65536))),
     CONSTRAINT deployment_registry_verifications_signature_check CHECK (((octet_length(signature) >= 1) AND (octet_length(signature) <= 80))),
     CONSTRAINT deployment_registry_verifications_workload_name_check CHECK (((workload_name = ''::text) OR ((workload_name <> 'main'::text) AND (workload_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))))
+);
+
+
+--
+-- Name: deployment_release_approvals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_release_approvals (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    approver_account_id uuid,
+    approver text NOT NULL,
+    approver_role text NOT NULL,
+    decision text NOT NULL,
+    comment text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_release_approvals_approver_check CHECK (((length(approver) >= 1) AND (length(approver) <= 320))),
+    CONSTRAINT deployment_release_approvals_approver_role_check CHECK ((approver_role = ANY (ARRAY['owner'::text, 'admin'::text, 'developer'::text, 'personal'::text]))),
+    CONSTRAINT deployment_release_approvals_comment_check CHECK ((length(comment) <= 200)),
+    CONSTRAINT deployment_release_approvals_decision_check CHECK ((decision = ANY (ARRAY['approve'::text, 'reject'::text])))
 );
 
 
@@ -40847,6 +40918,34 @@ CREATE TABLE public.managed_postgres_live_keys (
 --
 
 COMMENT ON TABLE public.managed_postgres_live_keys IS 'ADR-20261016151947 live-query secrets per managed database, sealed to livequeryd; at most one active and one retiring key.';
+
+
+--
+-- Name: managed_postgres_live_logins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_live_logins (
+    database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    sealed_login bytea NOT NULL,
+    recipient text NOT NULL,
+    provider_identity_id text NOT NULL,
+    slot text NOT NULL,
+    awake text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_postgres_live_logins_awake_check CHECK ((awake ~ '^(neon:[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,64})?$'::text)),
+    CONSTRAINT managed_postgres_live_logins_provider_identity_id_check CHECK ((provider_identity_id ~ '^[a-z0-9_]{1,63}$'::text)),
+    CONSTRAINT managed_postgres_live_logins_recipient_check CHECK ((recipient ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT managed_postgres_live_logins_sealed_login_check CHECK (((octet_length(sealed_login) >= 1) AND (octet_length(sealed_login) <= 8192))),
+    CONSTRAINT managed_postgres_live_logins_slot_check CHECK ((slot ~ '^[a-z0-9_]{1,63}$'::text))
+);
+
+
+--
+-- Name: TABLE managed_postgres_live_logins; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_live_logins IS 'ADR-20261016151947 replication login per live managed database, sealed to livequeryd; livequeryd discovers its databases here.';
 
 
 --
@@ -49573,6 +49672,33 @@ CREATE TABLE public.recent_build_claims (
 
 
 --
+-- Name: release_approval_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.release_approval_events (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    event text NOT NULL,
+    channel_ids uuid[] NOT NULL,
+    payload jsonb NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    delivered_at timestamp with time zone,
+    CONSTRAINT release_approval_events_attempts_check CHECK (((attempts >= 0) AND (attempts <= 10))),
+    CONSTRAINT release_approval_events_channel_ids_check CHECK (((cardinality(channel_ids) >= 1) AND (cardinality(channel_ids) <= 5))),
+    CONSTRAINT release_approval_events_event_check CHECK ((event = ANY (ARRAY['requested'::text, 'approved'::text, 'rejected'::text, 'expired'::text, 'schedule_started'::text, 'schedule_blocked'::text]))),
+    CONSTRAINT release_approval_events_last_error_check CHECK ((length(last_error) <= 512)),
+    CONSTRAINT release_approval_events_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 8192))),
+    CONSTRAINT release_approval_events_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'delivered'::text, 'failed'::text])))
+);
+
+
+--
 -- Name: release_bundles; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -51168,6 +51294,85 @@ CREATE TABLE public.saved_route_requirements (
 
 
 --
+-- Name: scenario_captured_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_captured_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    run_id text NOT NULL,
+    app_id uuid NOT NULL,
+    source text NOT NULL,
+    type text NOT NULL,
+    schema_version text DEFAULT ''::text NOT NULL,
+    data jsonb,
+    oversized boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    event_id text,
+    CONSTRAINT scenario_captured_events_check CHECK ((oversized = (data IS NULL))),
+    CONSTRAINT scenario_captured_events_data_check CHECK (((data IS NULL) OR (octet_length((data)::text) <= 262144))),
+    CONSTRAINT scenario_captured_events_event_id_check CHECK (((event_id IS NULL) OR ((char_length(event_id) >= 1) AND (char_length(event_id) <= 256)))),
+    CONSTRAINT scenario_captured_events_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT scenario_captured_events_schema_version_check CHECK ((char_length(schema_version) <= 256)),
+    CONSTRAINT scenario_captured_events_source_check CHECK (((char_length(source) >= 1) AND (char_length(source) <= 256))),
+    CONSTRAINT scenario_captured_events_type_check CHECK (((char_length(type) >= 1) AND (char_length(type) <= 256)))
+);
+
+
+--
+-- Name: scenario_captured_platform_calls; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_captured_platform_calls (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    run_id text NOT NULL,
+    app_id uuid NOT NULL,
+    kind text NOT NULL,
+    target text NOT NULL,
+    name text NOT NULL,
+    idempotency_key text,
+    message jsonb,
+    oversized boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT scenario_captured_platform_calls_check CHECK ((oversized = (message IS NULL))),
+    CONSTRAINT scenario_captured_platform_calls_idempotency_key_check CHECK (((idempotency_key IS NULL) OR ((char_length(idempotency_key) >= 1) AND (char_length(idempotency_key) <= 255)))),
+    CONSTRAINT scenario_captured_platform_calls_kind_check CHECK ((kind = ANY (ARRAY['workflow_run'::text, 'workflow_event'::text, 'realtime_publish'::text, 'realtime_signal'::text]))),
+    CONSTRAINT scenario_captured_platform_calls_message_check CHECK (((message IS NULL) OR (octet_length((message)::text) <= 262144))),
+    CONSTRAINT scenario_captured_platform_calls_name_check CHECK (((char_length(name) >= 1) AND (char_length(name) <= 256))),
+    CONSTRAINT scenario_captured_platform_calls_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT scenario_captured_platform_calls_target_check CHECK (((target ~ '^(workload|app|run|endpoint):'::text) AND (char_length(target) <= 512)))
+);
+
+
+--
+-- Name: scenario_captured_queue_messages; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_captured_queue_messages (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    run_id text NOT NULL,
+    app_id uuid NOT NULL,
+    kind text NOT NULL,
+    target text NOT NULL,
+    queue_name text DEFAULT ''::text NOT NULL,
+    schedule text DEFAULT ''::text NOT NULL,
+    message jsonb,
+    oversized boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT scenario_captured_queue_messages_check CHECK ((oversized = (message IS NULL))),
+    CONSTRAINT scenario_captured_queue_messages_check1 CHECK ((((kind = 'delayed_task'::text) = (schedule <> ''::text)) OR oversized)),
+    CONSTRAINT scenario_captured_queue_messages_kind_check CHECK ((kind = ANY (ARRAY['queue'::text, 'delayed_task'::text]))),
+    CONSTRAINT scenario_captured_queue_messages_message_check CHECK (((message IS NULL) OR (octet_length((message)::text) <= 262144))),
+    CONSTRAINT scenario_captured_queue_messages_queue_name_check CHECK ((char_length(queue_name) <= 256)),
+    CONSTRAINT scenario_captured_queue_messages_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT scenario_captured_queue_messages_schedule_check CHECK (((schedule = ''::text) OR (schedule = 'absolute'::text) OR (schedule ~ '^delay:[0-9]{1,8}$'::text))),
+    CONSTRAINT scenario_captured_queue_messages_target_check CHECK ((target ~ '^(workload|app):[a-z0-9][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
 -- Name: scenario_cold_preparations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -51469,6 +51674,39 @@ CREATE TABLE public.schedule_occurrences (
     CONSTRAINT schedule_occurrences_schedule_policy_check CHECK (((jsonb_typeof(schedule_policy) = 'object'::text) AND ((schedule_policy ->> 'version'::text) = '1'::text))),
     CONSTRAINT schedule_occurrences_schedule_revision_check CHECK ((schedule_revision >= 1)),
     CONSTRAINT schedule_occurrences_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'skipped_overlap'::text, 'missed_deadline'::text, 'coalesced'::text, 'waiting_replacement'::text, 'uncertain'::text])))
+);
+
+
+--
+-- Name: scheduled_releases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scheduled_releases (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    release_at timestamp with time zone NOT NULL,
+    canary jsonb,
+    notify_channel_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    override_freeze text DEFAULT ''::text NOT NULL,
+    override_freeze_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    state text DEFAULT 'scheduled'::text NOT NULL,
+    outcome_code text DEFAULT ''::text NOT NULL,
+    outcome_detail text DEFAULT ''::text NOT NULL,
+    scheduled_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    CONSTRAINT scheduled_releases_canary_check CHECK (((canary IS NULL) OR ((jsonb_typeof(canary) = 'object'::text) AND (octet_length((canary)::text) <= 4096)))),
+    CONSTRAINT scheduled_releases_check CHECK (((state = 'started'::text) = (started_at IS NOT NULL))),
+    CONSTRAINT scheduled_releases_notify_channel_ids_check CHECK ((cardinality(notify_channel_ids) <= 5)),
+    CONSTRAINT scheduled_releases_outcome_code_check CHECK ((length(outcome_code) <= 64)),
+    CONSTRAINT scheduled_releases_outcome_detail_check CHECK ((length(outcome_detail) <= 500)),
+    CONSTRAINT scheduled_releases_override_freeze_check CHECK ((length(override_freeze) <= 200)),
+    CONSTRAINT scheduled_releases_override_freeze_ids_check CHECK ((cardinality(override_freeze_ids) <= 50)),
+    CONSTRAINT scheduled_releases_scheduled_by_check CHECK (((length(scheduled_by) >= 1) AND (length(scheduled_by) <= 320))),
+    CONSTRAINT scheduled_releases_state_check CHECK ((state = ANY (ARRAY['scheduled'::text, 'started'::text, 'blocked'::text, 'expired'::text, 'cancelled'::text, 'superseded'::text])))
 );
 
 
@@ -54048,6 +54286,14 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 
 --
+-- Name: app_release_approval_policies app_release_approval_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_release_approval_policies
+    ADD CONSTRAINT app_release_approval_policies_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_release_gates app_release_gates_app_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -56285,6 +56531,22 @@ ALTER TABLE ONLY public.deployment_registry_rootfs
 
 ALTER TABLE ONLY public.deployment_registry_verifications
     ADD CONSTRAINT deployment_registry_verifications_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: deployment_release_approvals deployment_release_approvals_deployment_id_approver_account_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_release_approvals
+    ADD CONSTRAINT deployment_release_approvals_deployment_id_approver_account_key UNIQUE (deployment_id, approver_account_id);
+
+
+--
+-- Name: deployment_release_approvals deployment_release_approvals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_release_approvals
+    ADD CONSTRAINT deployment_release_approvals_pkey PRIMARY KEY (id);
 
 
 --
@@ -59573,6 +59835,14 @@ ALTER TABLE ONLY public.managed_postgres_health
 
 ALTER TABLE ONLY public.managed_postgres_live_keys
     ADD CONSTRAINT managed_postgres_live_keys_pkey PRIMARY KEY (kid);
+
+
+--
+-- Name: managed_postgres_live_logins managed_postgres_live_logins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_live_logins
+    ADD CONSTRAINT managed_postgres_live_logins_pkey PRIMARY KEY (database_id);
 
 
 --
@@ -63368,6 +63638,22 @@ ALTER TABLE ONLY public.realtime_usage_hours
 
 
 --
+-- Name: release_approval_events release_approval_events_deployment_id_event_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_approval_events
+    ADD CONSTRAINT release_approval_events_deployment_id_event_key UNIQUE (deployment_id, event);
+
+
+--
+-- Name: release_approval_events release_approval_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_approval_events
+    ADD CONSTRAINT release_approval_events_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: release_bundles release_bundles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -63960,6 +64246,30 @@ ALTER TABLE ONLY public.saved_route_requirements
 
 
 --
+-- Name: scenario_captured_events scenario_captured_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_events
+    ADD CONSTRAINT scenario_captured_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scenario_captured_platform_calls scenario_captured_platform_calls_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_platform_calls
+    ADD CONSTRAINT scenario_captured_platform_calls_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scenario_captured_queue_messages scenario_captured_queue_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_queue_messages
+    ADD CONSTRAINT scenario_captured_queue_messages_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: scenario_cold_preparations scenario_cold_preparations_app_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -64181,6 +64491,14 @@ ALTER TABLE ONLY public.scenario_worker_faults
 
 ALTER TABLE ONLY public.schedule_occurrences
     ADD CONSTRAINT schedule_occurrences_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scheduled_releases scheduled_releases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scheduled_releases
+    ADD CONSTRAINT scheduled_releases_pkey PRIMARY KEY (id);
 
 
 --
@@ -67535,6 +67853,13 @@ CREATE INDEX deployment_registry_rootfs_deployment_idx ON public.deployment_regi
 --
 
 CREATE INDEX deployment_registry_verifications_latest ON public.deployment_registry_verifications USING btree (deployment_id, workload_name, verified_at DESC, id DESC);
+
+
+--
+-- Name: deployment_release_approvals_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_release_approvals_app ON public.deployment_release_approvals USING btree (app_id, created_at);
 
 
 --
@@ -73019,6 +73344,13 @@ CREATE INDEX recent_build_claims_org_id_idx ON public.recent_build_claims USING 
 
 
 --
+-- Name: release_approval_events_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX release_approval_events_due ON public.release_approval_events USING btree (next_attempt_at) WHERE (state = 'pending'::text);
+
+
+--
 -- Name: release_bundles_applied_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -73495,6 +73827,27 @@ CREATE INDEX runtime_upgrade_verifications_due ON public.runtime_upgrade_verific
 
 
 --
+-- Name: scenario_captured_events_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scenario_captured_events_run_idx ON public.scenario_captured_events USING btree (account_id, run_id, created_at, id);
+
+
+--
+-- Name: scenario_captured_platform_calls_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scenario_captured_platform_calls_run_idx ON public.scenario_captured_platform_calls USING btree (account_id, run_id, created_at, id);
+
+
+--
+-- Name: scenario_captured_queue_messages_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scenario_captured_queue_messages_run_idx ON public.scenario_captured_queue_messages USING btree (account_id, run_id, created_at, id);
+
+
+--
 -- Name: scenario_command_network_address; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -73604,6 +73957,34 @@ CREATE INDEX schedule_occurrences_pending ON public.schedule_occurrences USING b
 --
 
 CREATE INDEX schedule_occurrences_succeeded_job_release_proof ON public.schedule_occurrences USING btree (job_id, schedule_revision, finished_at, id) WHERE ((job_id IS NOT NULL) AND (job_run_id IS NOT NULL) AND (status = 'succeeded'::text));
+
+
+--
+-- Name: scheduled_releases_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scheduled_releases_account ON public.scheduled_releases USING btree (account_id, created_at);
+
+
+--
+-- Name: scheduled_releases_deployment; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scheduled_releases_deployment ON public.scheduled_releases USING btree (deployment_id, created_at);
+
+
+--
+-- Name: scheduled_releases_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scheduled_releases_due ON public.scheduled_releases USING btree (release_at) WHERE (state = 'scheduled'::text);
+
+
+--
+-- Name: scheduled_releases_one_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX scheduled_releases_one_pending ON public.scheduled_releases USING btree (app_id) WHERE (state = 'scheduled'::text);
 
 
 --
@@ -82445,6 +82826,22 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 
 --
+-- Name: app_release_approval_policies app_release_approval_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_release_approval_policies
+    ADD CONSTRAINT app_release_approval_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_release_approval_policies app_release_approval_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_release_approval_policies
+    ADD CONSTRAINT app_release_approval_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_release_gates app_release_gates_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -85194,6 +85591,38 @@ ALTER TABLE ONLY public.deployment_registry_rootfs
 
 ALTER TABLE ONLY public.deployment_registry_verifications
     ADD CONSTRAINT deployment_registry_verifications_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_release_approvals deployment_release_approvals_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_release_approvals
+    ADD CONSTRAINT deployment_release_approvals_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_release_approvals deployment_release_approvals_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_release_approvals
+    ADD CONSTRAINT deployment_release_approvals_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_release_approvals deployment_release_approvals_approver_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_release_approvals
+    ADD CONSTRAINT deployment_release_approvals_approver_account_id_fkey FOREIGN KEY (approver_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: deployment_release_approvals deployment_release_approvals_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_release_approvals
+    ADD CONSTRAINT deployment_release_approvals_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --
@@ -89034,6 +89463,14 @@ ALTER TABLE ONLY public.managed_postgres_health
 
 ALTER TABLE ONLY public.managed_postgres_live_keys
     ADD CONSTRAINT managed_postgres_live_keys_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_live_logins managed_postgres_live_logins_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_live_logins
+    ADD CONSTRAINT managed_postgres_live_logins_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --
@@ -93925,6 +94362,30 @@ ALTER TABLE ONLY public.recent_build_claims
 
 
 --
+-- Name: release_approval_events release_approval_events_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_approval_events
+    ADD CONSTRAINT release_approval_events_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_approval_events release_approval_events_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_approval_events
+    ADD CONSTRAINT release_approval_events_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_approval_events release_approval_events_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_approval_events
+    ADD CONSTRAINT release_approval_events_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: release_freezes release_freezes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -94621,6 +95082,54 @@ ALTER TABLE ONLY public.saved_route_requirements
 
 
 --
+-- Name: scenario_captured_events scenario_captured_events_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_events
+    ADD CONSTRAINT scenario_captured_events_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_captured_events scenario_captured_events_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_events
+    ADD CONSTRAINT scenario_captured_events_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.scenario_test_action_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_captured_platform_calls scenario_captured_platform_calls_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_platform_calls
+    ADD CONSTRAINT scenario_captured_platform_calls_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_captured_platform_calls scenario_captured_platform_calls_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_platform_calls
+    ADD CONSTRAINT scenario_captured_platform_calls_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.scenario_test_action_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_captured_queue_messages scenario_captured_queue_messages_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_queue_messages
+    ADD CONSTRAINT scenario_captured_queue_messages_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_captured_queue_messages scenario_captured_queue_messages_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_queue_messages
+    ADD CONSTRAINT scenario_captured_queue_messages_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.scenario_test_action_policies(app_id) ON DELETE CASCADE;
+
+
+--
 -- Name: scenario_cold_preparations scenario_cold_preparations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -94898,6 +95407,30 @@ ALTER TABLE ONLY public.schedule_occurrences
 
 ALTER TABLE ONLY public.schedule_occurrences
     ADD CONSTRAINT schedule_occurrences_job_run_id_fkey FOREIGN KEY (job_run_id) REFERENCES public.job_runs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: scheduled_releases scheduled_releases_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scheduled_releases
+    ADD CONSTRAINT scheduled_releases_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scheduled_releases scheduled_releases_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scheduled_releases
+    ADD CONSTRAINT scheduled_releases_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scheduled_releases scheduled_releases_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scheduled_releases
+    ADD CONSTRAINT scheduled_releases_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

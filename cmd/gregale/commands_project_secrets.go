@@ -65,6 +65,9 @@ func cmdProjectsEnvironmentSecretsWrite(args []string, rotate bool) int {
 		PrintUsage(os.Stderr, projectSecretsUsage, "projects environments")
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	pairs, err := projectSecretPairs(positional[2:], *fromStdin, *file)
 	if err != nil {
 		return printErr("Invalid secret input", err)

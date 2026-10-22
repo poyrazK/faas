@@ -655,8 +655,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REGION` | meterd, shared | `default` |  |  | `` | optional host region for meterd; the scheduler also injects the platform-authored workload identity value |
 | `FAAS_REHEARSAL_ACTION_SIMULATION` | apid | `default` |  | 0 | `` | opt-in simulated outbound actions for contained rehearsals; keep disabled until native containment qualification |
 | `FAAS_REHEARSAL_COLD_START` | apid | `default` |  | 0 | `` | opt-in contained cold-start rehearsal; disabled pending native lifecycle qualification |
-| `FAAS_REHEARSAL_COMMAND_EXECUTION` | apid | `default` |  | 0 | `` | opt-in contained command microVM execution; disabled pending native command isolation qualification |
-| `FAAS_REHEARSAL_NETWORK_CONTAINMENT` | apid | `default` |  | 0 | `` | opt-in contained rehearsal enrollment; disabled pending native network qualification |
+| `FAAS_REHEARSAL_COMMAND_EXECUTION` | apid, imaged | `default` |  | 0 | `` | opt-in contained command microVM execution (apid recipe commands; imaged contained release commands, ADR-20261020150000); disabled pending native command isolation qualification |
+| `FAAS_REHEARSAL_NETWORK_CONTAINMENT` | apid, vmmd | `default` |  | 0 | `` | opt-in contained rehearsal enrollment (apid) and durable rehearsal policy reads on wake/resume (vmmd); enable on every vmmd before apid; disabled pending native network qualification (ADR-20261019120000) |
 | `FAAS_REHEARSAL_OBJECT_FIXTURES` | apid, gatewayd-internal | `default` |  | 0 | `` | opt-in isolated rehearsal object fixture API and private proxy; disabled pending native containment qualification |
 | `FAAS_REHEARSAL_POSTGRES_ADMIN_URL` | apid | `secrets-env` |  |  | `` | optional dedicated rehearsal fixture-cluster admin DSN in /etc/faas/sealed.env; never point at platform metadata or production databases |
 | `FAAS_REHEARSAL_POSTGRES_FAULTS` | apid | `default` |  | 0 | `` | opt-in contained PostgreSQL disconnect and recovery rehearsals; disabled pending native fault-injection qualification |

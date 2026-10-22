@@ -51,6 +51,19 @@ func (m *Manager) InstanceExternalActionIdentity(ctx context.Context, instance s
 	return appID, accountID, nil
 }
 
+// InstanceRehearsalEventIdentity returns the installed identity of a contained
+// instance. Its published events are captured into that run instead of the
+// account's event bus (ADR-20261020090000); the store re-verifies the run.
+func (m *Manager) InstanceRehearsalEventIdentity(instance string) (appID, accountID, runID string, contained bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst := m.live[instance]
+	if inst == nil || inst.Net.RehearsalRunID == "" || inst.AppID == "" {
+		return "", "", "", false
+	}
+	return inst.AppID, inst.AccountID, inst.Net.RehearsalRunID, true
+}
+
 // WithRehearsalNetworkPolicies is daemon wiring, installed before any admission.
 // Every application wake consults durable policy, including legacy RPC callers.
 func (m *Manager) WithRehearsalNetworkPolicies(store RehearsalNetworkPolicyStore) *Manager {

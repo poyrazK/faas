@@ -95,6 +95,7 @@ const (
 	OrgActionManageAppSecrets                  OrgAction = "org.manage_app_secrets"
 	OrgActionManageAppSecurity                 OrgAction = "org.manage_app_security"
 	OrgActionDeleteApp                         OrgAction = "org.delete_app"
+	OrgActionApproveAppRelease                 OrgAction = "org.approve_app_release"
 	ReadObjectStorage                          OrgAction = "org.read_object_storage"
 	ManageObjectStorage                        OrgAction = "org.manage_object_storage"
 	BindObjectStorage                          OrgAction = "org.bind_object_storage"
@@ -148,6 +149,7 @@ var AllOrgActions = []OrgAction{
 	OrgActionManageAppSecrets,
 	OrgActionManageAppSecurity,
 	OrgActionDeleteApp,
+	OrgActionApproveAppRelease,
 	ReadObjectStorage, ManageObjectStorage, BindObjectStorage, ReadObjectStorageUsage,
 	OrgActionReadQueues,
 	OrgActionConfigureQueues,

@@ -66,7 +66,16 @@ func main() {
 // host with the parser and the memory it needs. -role all runs both in one
 // process.
 func run(ctx context.Context, log *slog.Logger) error {
-	if *databasesFile != "" {
+	// The first parse compiles the SQL parser to native code, which takes
+	// seconds. Start it now, beside connecting and restoring checkpoints, so
+	// no subscriber waits for it. An engine with a remote compiler never
+	// parses.
+	if *role != "engine" {
+		go func() {
+			log.Info("livequeryd: SQL parser ready", "took", livequery.WarmParser().Round(time.Millisecond))
+		}()
+	}
+	if *databasesFile != "" || *discoverBackends != "" {
 		return runDatabases(ctx, log)
 	}
 	if *checkpointDir != "" {
@@ -249,22 +258,6 @@ func compilerMux(pool *pgxpool.Pool) http.Handler {
 	mux.Handle("/compile", livequery.CompilerHandler(pool))
 	return mux
 }
-
-func ensurePublication(ctx context.Context, pool *pgxpool.Pool, name string) error {
-	var exists bool
-	if err := pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = $1)", name).Scan(&exists); err != nil {
-		return fmt.Errorf("livequeryd: look up publication: %w", err)
-	}
-	if exists {
-		return nil
-	}
-	if _, err := pool.Exec(ctx, "CREATE PUBLICATION "+quoteIdent(name)+" FOR ALL TABLES"); err != nil {
-		return fmt.Errorf("livequeryd: create publication: %w", err)
-	}
-	return nil
-}
-
-func quoteIdent(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
 
 // devKeyring reads the development secret, if any. In production the key
 // ring comes from the control plane (-keys-dsn-file).

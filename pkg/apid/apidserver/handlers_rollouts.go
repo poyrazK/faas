@@ -106,6 +106,11 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrValidation("reviewed recovery requires exact abort selectors"))
 		return
 	}
+	// ADR-20261020085706: advance and promote cannot skip an approval wait.
+	if p := s.recoverRolloutApprovalProblem(r, app, req.Action); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	if req.DeploymentID != "" || req.ExpectedPredecessorDeploymentID != "" {
 		s.recoverPinnedCanaryRollout(w, r, acct, app, req, nil)
 		return

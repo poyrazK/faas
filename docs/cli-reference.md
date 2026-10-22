@@ -28,6 +28,8 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`apps`](#apps) | List your apps |
 | [`app`](#app) | Inspect an app, change settings, or manage its runtime |
 | [`billing`](#billing) | Manage your subscription, payment method, budgets and cost reports |
+| [`approvals`](#approvals) | Make production releases wait in their canary for approval |
+| [`scheduled-releases`](#scheduled-releases) | Build production releases now and start them at a set time |
 | [`freeze`](#freeze) | Pause production releases for a window, weekly, or after rollbacks |
 | [`release-gates`](#release-gates) | Stop rollouts on SLO, error or metric regressions and roll back |
 | [`canary`](#canary) | Advance canary stages, check their gates, or simulate a preset |
@@ -5554,6 +5556,162 @@ Export a partial FOCUS 1.4 invoice projection
 | `--out <PATH>` | new output file (required for zip); - writes stdout |  |
 
 
+## approvals
+
+Make production releases wait in their canary for approval
+
+`gregale approvals [<subcommand>]`
+
+Examples:
+
+```sh
+gregale approvals require --app my-api --approvals 2 --notify releases
+gregale approvals require --app my-api --approvals 1 --approvers developer --timeout 4h
+gregale approvals pending --app my-api
+gregale approvals approve 3f9c1e2a-0b7d-4c55-9e1a-2d6f8b4c7e10 --comment "canary looks clean"
+gregale approvals reject v42 --app my-api --reason "checkout latency is up"
+```
+
+### approvals require
+
+Require approvals for an app&#39;s production releases
+
+`gregale approvals require [--app <slug>] --approvals <N> [--after-stage <N>] [--timeout <DURATION>] [--approvers <ROLE>] [--allow-self-approval] [--notify <CHANNEL,...>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project app) |  |
+| `--approvals <N>` | approvals each production release needs (1-5) | required |
+| `--after-stage <N>` | canary stage the release waits in (default 1) |  |
+| `--timeout <DURATION>` | abort a release that waits longer (default 24h) |  |
+| `--approvers <ROLE>` | who may approve (default admin: owners and admins) | one of `admin` · `developer` |
+| `--allow-self-approval` | count the deployer&#39;s own approval |  |
+| `--notify <CHANNEL,...>` | Slack or email channels told when a release waits, is decided or times out |  |
+
+### approvals policy
+
+Show an app&#39;s approval policy
+
+`gregale approvals policy [--app <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project app) |  |
+
+### approvals off
+
+Stop requiring approvals for an app
+
+`gregale approvals off [--app <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project app) |  |
+
+### approvals pending
+
+List an app&#39;s releases waiting for approval
+
+`gregale approvals pending [--app <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project app) |  |
+
+### approvals status
+
+Show a release&#39;s approvals
+
+`gregale approvals status [--app <slug>] <deployment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug, to resolve a vN revision |  |
+
+### approvals approve
+
+Approve a release
+
+`gregale approvals approve [--app <slug>] [--comment <TEXT>] <deployment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug, to resolve a vN revision |  |
+| `--comment <TEXT>` | note recorded with the approval |  |
+
+### approvals reject
+
+Reject a release and abort its rollout
+
+`gregale approvals reject [--app <slug>] --reason <TEXT> <deployment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug, to resolve a vN revision |  |
+| `--reason <TEXT>` | why the release is rejected | required |
+
+
+## scheduled-releases
+
+Build production releases now and start them at a set time
+
+`gregale scheduled-releases [<subcommand>]`
+
+Examples:
+
+```sh
+gregale deploy --at 02:00 --release-notify releases
+gregale scheduled-releases list
+gregale scheduled-releases set v42 --app my-api --at "2026-10-22 09:00" --rollout safe
+gregale scheduled-releases set v42 --app my-api --at now
+gregale scheduled-releases cancel v42 --app my-api
+```
+
+### scheduled-releases list
+
+List scheduled releases, pending ones first
+
+`gregale scheduled-releases list [--app <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | only this app&#39;s schedules |  |
+
+### scheduled-releases show
+
+Show a release&#39;s schedule
+
+`gregale scheduled-releases show [--app <slug>] <deployment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug, to resolve a vN revision |  |
+
+### scheduled-releases set
+
+Schedule, or move, the start of a release waiting without traffic
+
+`gregale scheduled-releases set [--app <slug>] --at <WHEN> [--rollout <MODE>] [--notify <CHANNEL,...>] [--override-freeze <REASON>] <deployment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug, to resolve a vN revision |  |
+| `--at <WHEN>` | when the rollout starts: now, +2h, 02:00, &#34;2026-10-22 02:00&#34; (local) or RFC 3339 | required |
+| `--rollout <MODE>` | how the release reaches traffic (default: the app release policy) | one of `safe` · `fast` · `immediate` |
+| `--notify <CHANNEL,...>` | Slack or email channels told when the release starts or cannot start |  |
+| `--override-freeze <REASON>` | release into deploy freezes active at that time; the reason is audited |  |
+
+### scheduled-releases cancel
+
+Cancel a pending schedule; the release stays built without traffic
+
+`gregale scheduled-releases cancel [--app <slug>] <deployment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug, to resolve a vN revision |  |
+
+
 ## freeze
 
 Pause production releases for a window, weekly, or after rollbacks
@@ -8523,6 +8681,24 @@ gregale deployment advance DEPLOYMENT_UUID --expected-step 1
 gregale deployment advance v42 --app my-api --expected-step 1
 ```
 
+### deployment diff
+
+Show what changed between a release and the one before it: code, config keys, packages, runtime settings and the release command
+
+`gregale deployment diff [--against <ID|vN>] [--app <SLUG>] <id|vN>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--against <ID|vN>` | release to compare with (default: the release that served before it) |  |
+| `--app <SLUG>` | app slug, to resolve vN revisions |  |
+
+Examples:
+
+```sh
+gregale deployment diff v42 --app my-api
+gregale deployment diff v42 --against v38 --app my-api
+```
+
 ### deployment summary
 
 Show the release diff and rollback target
@@ -8705,7 +8881,7 @@ Deploy an app, function, or project
 
 See also: [`deploys`](#deploys), [`deployment`](#deployment), [`deployments`](#deployments).
 
-`gregale deploy [<subcommand>] [--atomic] [--add-services] [--verify] [--workers] [--stabilize] [--progressive] [--worker-health] [--migrate] [--release-secrets-file <PATH>] [--release-secrets-request-id <ID>] [--config-file <PATH>] [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--issue-source-maps <PATH>] [--issue-source-map-directory <PATH>] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--size <SIZE>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--rollout <MODE>] [--override-freeze <REASON>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--preview] [--plan] [--dry-run] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [<subcommand>] [--atomic] [--add-services] [--verify] [--workers] [--stabilize] [--progressive] [--worker-health] [--migrate] [--release-secrets-file <PATH>] [--release-secrets-request-id <ID>] [--config-file <PATH>] [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--issue-source-maps <PATH>] [--issue-source-map-directory <PATH>] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--size <SIZE>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--rollout <MODE>] [--override-freeze <REASON>] [--at <WHEN>] [--release-notify <CHANNEL,...>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--preview] [--plan] [--dry-run] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 Source defaults to committed HEAD when origin exists; otherwise local files. Use --source=worktree to include local changes.
 
@@ -8767,6 +8943,8 @@ RAM/CPU: use --size SIZE (--profile SIZE after the command is deprecated). Conne
 | `--project-slug <SLUG>` | kebab slug for the project (one-key provision) |  |
 | `--rollout <MODE>` | how this release reaches traffic: safe (adaptive canary with rollback; waits for 100%), fast (5% -&gt; 50% -&gt; 100%) or immediate; default: the app release policy | one of `safe` · `fast` · `immediate` |
 | `--override-freeze <REASON>` | release to production during a deploy freeze; the reason is audited |  |
+| `--at <WHEN>` | build now and start the production rollout at this time: +2h, 02:00, &#34;2026-10-22 02:00&#34; (local) or RFC 3339; freezes are checked then |  |
+| `--release-notify <CHANNEL,...>` | Slack or email channels told when a scheduled release starts or cannot start (with --at) |  |
 | `--canary-preset <PRESET>` | deprecated: use --rollout. Canary ladder preset | one of `none` · `slow` · `balanced` · `aggressive` · `1-10-50-100` · `adaptive` · `custom` |
 | `--canary-stages <STAGES>` | deprecated: use --rollout; custom percent@duration canary stages (requires --canary-preset custom) |  |
 | `--safe` | deprecated: use --rollout safe |  |
@@ -17228,12 +17406,14 @@ gregale traffic set --app my-api --deployment v7 --percent 30
 
 Promote a live deployment to 100% production traffic
 
-`gregale traffic promote [--app <SLUG>] --deployment <ID> [--if-serving <ID>] [--require-bindings] [--max-verification-age <DURATION>] [--allow-unsupported] [--require-application-ack] [--route-removal-mode <MODE>] [--route-readiness <PATH>] [--route-mapping <PATH>] [--route-owner-approval <PATH>] [--route-evidence-max-age <DURATION>]`
+`gregale traffic promote [--app <SLUG>] --deployment <ID> [--at <WHEN>] [--release-notify <CHANNEL,...>] [--if-serving <ID>] [--require-bindings] [--max-verification-age <DURATION>] [--allow-unsupported] [--require-application-ack] [--route-removal-mode <MODE>] [--route-readiness <PATH>] [--route-mapping <PATH>] [--route-owner-approval <PATH>] [--route-evidence-max-age <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
 | `--deployment <ID>` | deployment id or vN revision to promote | required |
+| `--at <WHEN>` | start the release&#39;s rollout at this time instead of now: +2h, 09:00, &#34;2026-10-22 09:00&#34; (local) or RFC 3339 |  |
+| `--release-notify <CHANNEL,...>` | Slack or email channels told when the scheduled release starts or cannot start (with --at) |  |
 | `--if-serving <ID>` | require this deployment id or vN revision to remain at 100% traffic |  |
 | `--require-bindings` | enforce a bindings check at the server&#39;s traffic write |  |
 | `--max-verification-age <DURATION>` | maximum probe age (default 10m); requires --require-bindings |  |
@@ -17250,6 +17430,7 @@ Examples:
 ```sh
 gregale traffic promote my-api --deployment v7
 gregale traffic promote --app my-api --deployment v7 --if-serving v6
+gregale traffic promote --app my-api --deployment v7 --at 09:00
 ```
 
 ### traffic status

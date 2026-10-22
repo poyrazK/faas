@@ -5185,6 +5185,138 @@ groups:
           description: "An enabled apid health collector has not completed a catalog sweep within its freshness window. Check apid logs and catalog connectivity; provider failures are recorded as degraded checks and do not stop successful sweeps."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
 
+  # Live queries (ADR-20261016151947). The hub (livequeryd) is a dark-launched
+  # preview, so every alert warns rather than pages. One process serves several
+  # databases: hub series carry a database label, and a single-database hub's
+  # carry none.
+  - name: faas_live_queries
+    interval: 30s
+    rules:
+      - alert: FaasLiveQueryHubDown
+        expr: up{job="livequeryd"} == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "The live-query hub is down on {{ $labels.instance }}"
+          description: "Prometheus has not scraped livequeryd for 5m, so no live query on this control plane receives new results. Check systemctl status faas-livequeryd and its journal; systemd stops restarting a hub that fails five times in a minute."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQueryDatabaseNotServed
+        expr: livequery_hub_up == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "Live queries are not served for database {{ $labels.database }}"
+          description: "livequeryd has not run the database's hub for 5m: opening the database, its slot or its checkpoint keeps failing, and realtimed gets 503 for it. The hub retries with backoff up to once a minute. GET /databases on the hub's metrics listener shows its state; the journal shows the error."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQueryHubRestarting
+        expr: increase(livequery_hub_restarts_total[30m]) >= 3
+        for: 5m
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "The live-query hub for database {{ $labels.database }} keeps restarting"
+          description: "Serving the database failed at least three times in 30m. Each restart drops its subscribers until realtimed resubscribes them. Read the hub's journal for the error that stops it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQueryResumeFailing
+        expr: |
+          sum without (reason) (increase(livequery_resumes_total{reason="failed"}[15m])) > 0
+          and on (job, instance, database)
+          livequery_released == 1
+        for: 10m
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "A released live-query hub cannot reconnect to database {{ $labels.database }}"
+          description: "The hub released the database so it could scale to zero, and every attempt to reconnect for 10m has failed. Commits made meanwhile reach subscribers only after it reconnects. Check the database's compute state and the replication slot."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQuerySlotLagHigh
+        expr: livequery_slot_lag_bytes > 1073741824
+        for: 15m
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "The live-query slot of database {{ $labels.database }} retains more than 1 GiB of WAL"
+          description: "The replication slot holds back WAL the hub has not confirmed for 15m. The database's storage grows until it does; a hub that stopped decoding, or a database the hub stopped serving, leaves its slot behind."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQuerySlotLost
+        expr: sum without (reason) (increase(livequery_resnapshots_total{reason="slot_lost"}[30m])) > 0
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "The live-query slot of database {{ $labels.database }} was lost"
+          description: "The hub restored from its checkpoint but its replication slot was gone, so every live query was read again from scratch. Find what dropped the slot: a database restore, a branch reset, or an operator."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQueryKeysUnreadable
+        expr: |
+          sum without (result) (increase(livequery_key_refreshes_total{result="error"}[10m])) > 0
+          unless on (job, instance, database)
+          sum without (result) (increase(livequery_key_refreshes_total{result="ok"}[10m])) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "The live-query hub cannot read the live keys of database {{ $labels.database }}"
+          description: "Every read of the database's live keys from the control plane failed for 15m. The hub keeps the keys it has, so existing seals still open, but new and rotated keys are not picked up and revocations do not apply. Check the hub's read-only control-plane connection."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQueryCommitToDeltaSlow
+        expr: |
+          histogram_quantile(0.95, sum by (job, instance, database, le) (rate(livequery_commit_to_delta_seconds_bucket[10m]))) > 1
+        for: 15m
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "Live-query results for database {{ $labels.database }} lag commits"
+          description: "For 15m, 5% of transactions took more than 1s from commit to their live-query frames; the ADR measured p95 near 100ms. Look at livequery_round_duration_seconds, statements per round and slot lag on the live-queries dashboard."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQuerySlowConsumer
+        expr: increase(livequery_slow_consumers_total[10m]) > 0
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "The live-query hub cut off a slow connection for database {{ $labels.database }}"
+          description: "A connection fell too far behind its frames and was closed. realtimed carries every client of a database over one connection, so its subscribers resubscribe. Check realtimed's health and the network between it and the hub."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQueryUpstreamFlapping
+        expr: increase(realtimed_live_upstream_drops_total[15m]) > 3
+        for: 5m
+        labels:
+          severity: warn
+          component: realtimed
+          family: live_queries
+        annotations:
+          summary: "realtimed on {{ $labels.instance }} keeps losing its live-query hub connections"
+          description: "More than three hub connections dropped in 15m. Subscriptions go stale until realtimed redials and resubscribes them. Check the hub's health, its TLS certificates and the network path to it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
   - name: faas_stale_deployments
     interval: 30s
     rules:
