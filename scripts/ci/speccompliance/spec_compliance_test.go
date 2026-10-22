@@ -299,6 +299,12 @@ var routeExclude = map[string]bool{
 	"GET /v1/apps/{slug}/product/billing/overdue-holds":                      true,
 	"GET /v1/product-control/customer/{slug}/billing-details":                true,
 	"PUT /v1/product-control/customer/{slug}/billing-details":                true,
+	"GET /v1/product-control/customer/{slug}/offer":                          true,
+	"POST /v1/product-control/customer/{slug}/signup":                        true,
+	"GET /v1/product-control/customer/{slug}/payment-method":                 true,
+	"POST /v1/product-control/customer/{slug}/payment-method/checkout":       true,
+	"POST /v1/product-control/customer/{slug}/payment-method/complete":       true,
+	"GET /v1/product-control/portal-signup.js":                               true,
 	"POST /v1/apps/{slug}/product/billing/documents/{document}/invoice":      true,
 	// ADR-1701: internal Product Control pilot; absent from the public SDK contract.
 	"POST /v1/platform-tenant-self/product/start":                                  true,

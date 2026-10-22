@@ -18,13 +18,16 @@ type ProductStartRequest struct {
 type ProductCatalogSpec struct {
 	// AuthApp is an account-owned Application Auth app. The latest catalog
 	// selects the portal realm; customer assignments still pin their prices.
-	AuthApp     string                    `json:"auth_app,omitempty"`
-	Access      *ProductAccessPolicy      `json:"access,omitempty"`
-	SelfService *ProductPlanPolicy        `json:"self_service,omitempty"`
-	Team        *ProductTeamPolicy        `json:"team,omitempty"`
-	Currency    string                    `json:"currency"`
-	Features    map[string]ProductFeature `json:"features"`
-	Plans       map[string]ProductPlan    `json:"plans"`
+	AuthApp     string               `json:"auth_app,omitempty"`
+	Access      *ProductAccessPolicy `json:"access,omitempty"`
+	SelfService *ProductPlanPolicy   `json:"self_service,omitempty"`
+	Team        *ProductTeamPolicy   `json:"team,omitempty"`
+	// Signup lets visitors create their own workspace through the portal
+	// (ADR-20261022100735); omitted when off.
+	Signup   *ProductSignupPolicy      `json:"signup,omitempty"`
+	Currency string                    `json:"currency"`
+	Features map[string]ProductFeature `json:"features"`
+	Plans    map[string]ProductPlan    `json:"plans"`
 }
 
 type ProductFeature struct {

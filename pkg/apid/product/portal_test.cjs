@@ -22,7 +22,7 @@ const fixture = (currentQuote = quote) => ({
   usage: { period: '2026-10', currency: 'EUR', lines: [] }, operations: [],
 });
 function browser(custom = async () => undefined, storage = new Map(), url = 'https://portal.example/v1/product-control/portal') {
-  const elements = new Map(), calls = [], confirms = [], timers = [];
+  const elements = new Map(), calls = [], confirms = [], timers = [], navigations = [], replaced = [];
   const get = id => { if (!elements.has(id)) elements.set(id, new Element(id)); return elements.get(id); };
   const document = { getElementById: get, createElement: tag => new Element(tag) };
   const tails = new Map();
@@ -44,13 +44,13 @@ function browser(custom = async () => undefined, storage = new Map(), url = 'htt
   };
   const BrowserURL = URL;
   const context = vm.createContext({ document, fetch, crypto: { subtle: webcrypto.subtle, randomUUID }, TextEncoder, URL: BrowserURL, URLSearchParams, AbortController,
-    location: { href: url }, history: { replaceState() {} }, navigator: { locks }, localStorage: { get length() { return storage.size; }, key: index => [...storage.keys()][index] ?? null, getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) },
+    location: { href: url, assign: target => navigations.push(target) }, history: { replaceState: (state, title, target) => replaced.push(target) }, navigator: { locks }, localStorage: { get length() { return storage.size; }, key: index => [...storage.keys()][index] ?? null, getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) },
     setTimeout: (task, ms) => { timers.push({ task, ms }); return timers.length; }, clearTimeout() {}, window: { confirm: text => { confirms.push(text); return true; } } });
-  for (const name of ['portal-core.js', 'portal-plans.js', 'portal-team.js', 'portal-guidance.js', 'portal-help.js', 'portal-notifications.js', 'portal-activity.js', 'portal-run.js', 'portal-history.js', 'portal-email.js', 'portal.js']) vm.runInContext(fs.readFileSync(`${__dirname}/${name}`, 'utf8'), context);
+  for (const name of ['portal-core.js', 'portal-plans.js', 'portal-team.js', 'portal-guidance.js', 'portal-help.js', 'portal-notifications.js', 'portal-activity.js', 'portal-run.js', 'portal-history.js', 'portal-email.js', 'portal-signup.js', 'portal.js']) vm.runInContext(fs.readFileSync(`${__dirname}/${name}`, 'utf8'), context);
   const signIn = async () => { get('app').value = 'exports'; get('email').value = 'alice@example.com'; get('password').value = 'private-password'; await get('connect').onsubmit({ preventDefault() {} }); await settle(); };
   const form = () => get('features').children[0].children.find(el => el.tag === 'form');
   const submit = async count => { const f = form(); f.children[0].children[0].value = String(count); await f.onsubmit({ preventDefault() {} }); await settle(); };
-  return { get, calls, confirms, timers, signIn, submit, storage, context };
+  return { get, calls, confirms, timers, navigations, replaced, signIn, submit, storage, context };
 }
 
 test('password recovery uses the current product without submitting credentials or mail', async () => {
@@ -1497,4 +1497,147 @@ test('work history accepts nanosecond outcomes returned by the memory store', as
   const page=historyPage();page.entries[0].outcome.resolved_at='2026-09-02T00:00:00.123456789Z';
   const b=browser(async path=>path.includes('/work-history?')?teamResponse(page):undefined);
   await b.signIn();await searchHistory(b);assert.match(textTree(b.get('history-list')),/Completed/);assert.match(b.get('history-status').textContent,/Checked/);
+});
+
+const offerFixture = (signUp = 'https://auth.example/ui/sign-up?redirect_to=https%3A%2F%2Fportal.example') => ({ product: 'exports', currency: 'EUR', provider: 'stripe', sign_up_url: signUp,
+  plans: [{ plan: 'starter', label: 'Starter', revision: quote, currency: 'EUR', monthly_fee_millicents: 2900000, trial_days: 14, features: [{ name: 'export', label: 'Export', monthly_starts: 100, unit_price_millicents: 25000, starts: 0, remaining_starts: 100, included_starts: 10 }] }] });
+const workspacesFixture = list => ({ workspaces: list, receipt_max_bytes: 8192, receipt_max_entries: 64, replay_seconds: 86400, help_text_max_bytes: 2000, help_page_size: 20, notification_page_size: 20, work_history_page_size: 25, work_history_cursor_max_bytes: 2048, activity_page_size: 25, activity_cursor_max_bytes: 2048 });
+const signupKey = 'gregale.product.signup.v1:exports';
+const browse = async b => { b.get('app').value = 'exports'; await b.get('signup-open').onclick(); await settle(); };
+
+test('visitors see the offered plans and the Auth sign-up page before signing in', async () => {
+  const b = browser(async path => path.endsWith('/exports/offer') ? teamResponse(offerFixture()) : undefined);
+  await browse(b);
+  assert.equal(b.calls.length, 1); assert.equal(b.calls[0].options.method, undefined);
+  assert.equal(b.get('signup-section').hidden, false); assert.equal(b.get('signup-form').hidden, true);
+  assert.equal(b.get('signup-account').hidden, false); assert.equal(b.get('signup-account').href, offerFixture().sign_up_url);
+  const plans = textTree(b.get('signup-plans'));
+  assert.match(plans, /Starter/); assert.match(plans, /EUR 29\.00 per month · 14-day free trial/); assert.match(plans, /Export: 10 included runs, then EUR 0\.25 per successful run, up to 100 starts a month/);
+  assert.match(b.get('signup-status').textContent, /return here and sign in/);
+  assert.equal(b.storage.size, 0);
+});
+
+test('a product without signup or with a hostile offer shows no sign-up page', async () => {
+  const closed = browser(async path => path.endsWith('/offer') ? teamResponse({ code: 'not_found' }, 404) : undefined);
+  await browse(closed);
+  assert.match(closed.get('signup-status').textContent, /does not offer sign-up/); assert.equal(closed.get('signup-account').hidden, true);
+  for (const signUp of ['javascript:alert(1)', 'http://auth.example/ui/sign-up', 'not a url']) {
+    const b = browser(async path => path.endsWith('/offer') ? teamResponse(offerFixture(signUp)) : undefined);
+    await browse(b);
+    assert.equal(b.get('signup-account').hidden, true); assert.equal(b.get('signup-account').href, '#'); assert.match(b.get('signup-status').textContent, /could not be checked/);
+  }
+  const invalid = browser(); invalid.get('app').value = '../other'; await invalid.get('signup-open').onclick();
+  assert.equal(invalid.calls.length, 0); assert.match(invalid.get('signup-status').textContent, /Enter your product name/);
+});
+
+test('a signed-in user without a workspace creates one on an offered plan', async () => {
+  const created = randomUUID(); let made = false;
+  const b = browser(async path => {
+    if (path.endsWith('/workspaces')) return teamResponse(workspacesFixture(made ? [{ organization_id: created, tenant_id: ids.tenant, name: 'Acme' }] : []));
+    if (path.endsWith('/offer')) return teamResponse(offerFixture());
+    if (path.endsWith('/signup')) { made = true; return teamResponse({ organization_id: created, workspace: 'Acme', customer: { tenant_id: ids.tenant, plan: 'starter' } }); }
+  });
+  await b.signIn();
+  assert.equal(b.get('login').hidden, true); assert.equal(b.get('signup-form').hidden, false); assert.equal(b.get('signup-account').hidden, true); assert.equal(b.get('workspace').hidden, true);
+  b.get('signup-name').value = '  Acme  '; b.get('signup-plan').value = 'starter';
+  await b.get('signup-form').onsubmit({ preventDefault() {} }); await settle();
+  const posts = b.calls.filter(call => call.path.endsWith('/signup'));
+  assert.equal(posts.length, 1); assert.equal(posts[0].path, '/v1/product-control/customer/exports/signup'); assert.equal(posts[0].options.method, 'POST');
+  const body = JSON.parse(posts[0].options.body);
+  assert.match(body.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/); assert.equal(body.plan, 'starter'); assert.equal(body.workspace_name, 'Acme');
+  assert.match(b.confirms.at(-1), /Create workspace "Acme" on plan Starter\?\nEUR 29\.00 per month · 14-day free trial/);
+  assert.equal(b.storage.has(signupKey), false);
+  assert.equal(b.get('workspace').hidden, false); assert.equal(b.get('signup-section').hidden, true); assert.equal(b.get('organization').value, created);
+  assert.match(b.get('message').textContent, /Workspace Acme created on plan Starter/);
+});
+
+test('a failed signup retries with the same request ID and a conflict starts over', async () => {
+  let attempt = 0;
+  const b = browser(async path => {
+    if (path.endsWith('/workspaces')) return teamResponse(workspacesFixture([]));
+    if (path.endsWith('/offer')) return teamResponse(offerFixture());
+    if (path.endsWith('/signup')) { attempt++; return attempt === 1 ? teamResponse({ detail: 'Stripe is unavailable.' }, 503) : teamResponse({ code: 'conflict', detail: 'That request already made another workspace.' }, 409); }
+  });
+  await b.signIn();
+  b.get('signup-name').value = 'Acme'; b.get('signup-plan').value = 'starter';
+  await b.get('signup-form').onsubmit({ preventDefault() {} }); await settle();
+  assert.equal(b.get('signup-status').textContent, 'Stripe is unavailable.'); assert.equal(b.get('signup-submit').disabled, false);
+  const saved = JSON.parse(b.storage.get(signupKey)).id;
+  await b.get('signup-form').onsubmit({ preventDefault() {} }); await settle();
+  const sent = b.calls.filter(call => call.path.endsWith('/signup')).map(call => JSON.parse(call.options.body).id);
+  assert.deepEqual(sent, [saved, saved]);
+  assert.match(b.get('signup-status').textContent, /Try again to start a new request/); assert.equal(b.storage.has(signupKey), false);
+  b.get('signup-plan').value = 'unknown'; await b.get('signup-form').onsubmit({ preventDefault() {} }); await settle();
+  assert.equal(b.calls.filter(call => call.path.endsWith('/signup')).length, 2); assert.equal(b.get('signup-status').textContent, 'Choose a plan.');
+});
+
+test('a user without a workspace in a product without signup is told to ask the product team', async () => {
+  const b = browser(async path => path.endsWith('/workspaces') ? teamResponse(workspacesFixture([])) : path.endsWith('/offer') ? teamResponse({}, 404) : undefined);
+  await b.signIn();
+  assert.match(b.get('message').textContent, /no customer workspace for this product/); assert.equal(b.get('signup-form').hidden, true);
+});
+
+const billingManager = () => { const view = fixture(); view.access.permissions.manage_billing = true; return view; };
+const card = { provider: 'stripe', brand: 'visa', last4: '4242', exp_month: 4, exp_year: 2030 };
+
+test('billing managers add a card on the provider page only after consent', async () => {
+  const b = browser(async path => {
+    if (path.endsWith('/product')) return teamResponse(billingManager());
+    if (path.endsWith('/payment-method')) return teamResponse({ available: true });
+    if (path.endsWith('/payment-method/checkout')) return teamResponse({ url: 'https://checkout.stripe.com/c/pay/cs_test_1' });
+  });
+  await b.signIn();
+  assert.equal(b.get('payment-section').hidden, false); assert.match(b.get('payment-card').textContent, /No card on file/); assert.equal(b.get('payment-add').textContent, 'Add a card');
+  await b.get('payment-add').onclick(); await settle();
+  assert.equal(b.calls.filter(call => call.path.endsWith('/checkout')).length, 0); assert.match(b.get('payment-status').textContent, /Confirm that your product team may charge/);
+  b.get('payment-consent').checked = true;
+  await b.get('payment-add').onclick(); await settle();
+  const checkout = b.calls.filter(call => call.path.endsWith('/payment-method/checkout'));
+  assert.equal(checkout.length, 1); assert.equal(checkout[0].options.method, 'POST'); assert.deepEqual(JSON.parse(checkout[0].options.body), { consent: true }); assert.equal(checkout[0].options.headers['X-Product-Organization'], ids.org);
+  assert.deepEqual(b.navigations, ['https://checkout.stripe.com/c/pay/cs_test_1']);
+});
+
+test('a provider page that is not https is never opened', async () => {
+  const b = browser(async path => {
+    if (path.endsWith('/product')) return teamResponse(billingManager());
+    if (path.endsWith('/payment-method')) return teamResponse({ available: true, payment_method: card });
+    if (path.endsWith('/payment-method/checkout')) return teamResponse({ url: 'javascript:alert(1)' });
+  });
+  await b.signIn();
+  assert.match(b.get('payment-card').textContent, /Visa ending 4242 · expires 04\/2030/); assert.equal(b.get('payment-add').textContent, 'Replace card');
+  b.get('payment-consent').checked = true; await b.get('payment-add').onclick(); await settle();
+  assert.deepEqual(b.navigations, []); assert.match(b.get('payment-status').textContent, /could not be opened/); assert.equal(b.get('payment-add').disabled, false);
+});
+
+test('a returning Checkout completes in its own workspace and leaves the address', async () => {
+  const other = randomUUID();
+  const url = `https://portal.example/v1/product-control/portal?app=exports&workspace=${other}&checkout=cs_test_a1B2`;
+  const b = browser(async path => {
+    if (path.endsWith('/workspaces')) return teamResponse(workspacesFixture([{ organization_id: ids.org, tenant_id: ids.tenant, name: 'Alice' }, { organization_id: other, tenant_id: ids.tenant, name: 'Other' }]));
+    if (path.endsWith('/product')) return teamResponse(billingManager());
+    if (path.endsWith('/payment-method/complete')) return teamResponse({ available: true, payment_method: card });
+    if (path.endsWith('/payment-method')) return teamResponse({ available: true });
+  }, new Map(), url);
+  await settle();
+  assert.deepEqual(b.replaced, ['https://portal.example/v1/product-control/portal?app=exports']);
+  assert.equal(b.get('organization').value, other);
+  const complete = b.calls.filter(call => call.path.endsWith('/payment-method/complete'));
+  assert.equal(complete.length, 1); assert.deepEqual(JSON.parse(complete[0].options.body), { session_id: 'cs_test_a1B2' }); assert.equal(complete[0].options.headers['X-Product-Organization'], other);
+  assert.match(b.get('payment-card').textContent, /Visa ending 4242/); assert.match(b.get('payment-status').textContent, /Your card is saved/);
+});
+
+test('a cancelled, foreign or malformed Checkout return saves nothing', async () => {
+  for (const [workspace, checkout, status] of [[ids.org, 'cancelled', /cancelled/], [randomUUID(), 'cs_test_1', /^$/], [ids.org, 'cs_test_1"><script>', /unexpected reference/]]) {
+    const url = `https://portal.example/v1/product-control/portal?app=exports&workspace=${workspace}&checkout=${encodeURIComponent(checkout)}`;
+    const b = browser(async path => path.endsWith('/product') ? teamResponse(billingManager()) : path.endsWith('/payment-method') ? teamResponse({ available: true }) : undefined, new Map(), url);
+    await settle();
+    assert.equal(b.calls.filter(call => call.path.endsWith('/complete')).length, 0); assert.match(b.get('payment-status').textContent, status); assert.equal(b.get('organization').value, ids.org);
+  }
+});
+
+test('members without billing management never load the payment method', async () => {
+  const b = browser(); await b.signIn();
+  assert.equal(b.calls.filter(call => call.path.includes('/payment-method')).length, 0); assert.equal(b.get('payment-section').hidden, true);
+  const unavailable = browser(async path => path.endsWith('/product') ? teamResponse(billingManager()) : path.endsWith('/payment-method') ? teamResponse({ available: false }) : undefined);
+  await unavailable.signIn(); assert.equal(unavailable.get('payment-section').hidden, true);
 });
