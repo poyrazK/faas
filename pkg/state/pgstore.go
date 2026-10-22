@@ -29395,26 +29395,31 @@ func (s *PgStore) PerAccountRateLimitAggregate(ctx context.Context, arg sqlc.Per
 // overwritten; the test at
 // migrations/00208_github_webhook_secrets_test.go pins the
 // round-trip.
-func (s *PgStore) UpsertGithubWebhookSecret(ctx context.Context, installationID int64, secret []byte, upgradedBy string) (time.Time, string, error) {
+func (s *PgStore) UpsertGithubWebhookSecret(ctx context.Context, installationID int64, secret GithubWebhookSecret, upgradedBy string) (time.Time, string, error) {
 	if installationID == 0 {
 		return time.Time{}, "", fmt.Errorf("state: UpsertGithubWebhookSecret: installation_id must be non-zero")
 	}
-	if len(secret) == 0 {
+	if len(secret.Value) == 0 {
 		return time.Time{}, "", fmt.Errorf("state: UpsertGithubWebhookSecret: secret must be non-empty (use a 32-byte random value per GitHub's recommendation)")
 	}
 	if upgradedBy == "" {
 		upgradedBy = "platform"
 	}
+	var sealed []byte
+	if len(secret.Sealed) > 0 {
+		sealed = secret.Sealed
+	}
 	var upgradedAt time.Time
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO github_webhook_secrets (installation_id, secret_value, upgraded_by)
-		VALUES ($1, $2, $3)
+		INSERT INTO github_webhook_secrets (installation_id, secret_value, secret_sealed, upgraded_by)
+		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (installation_id) DO UPDATE
-		SET secret_value = EXCLUDED.secret_value,
-		    upgraded_at  = now(),
-		    upgraded_by  = EXCLUDED.upgraded_by
+		SET secret_value  = EXCLUDED.secret_value,
+		    secret_sealed = EXCLUDED.secret_sealed,
+		    upgraded_at   = now(),
+		    upgraded_by   = EXCLUDED.upgraded_by
 		RETURNING upgraded_at, upgraded_by
-	`, installationID, secret, upgradedBy).Scan(&upgradedAt, &upgradedBy)
+	`, installationID, secret.Value, sealed, upgradedBy).Scan(&upgradedAt, &upgradedBy)
 	if err != nil {
 		return time.Time{}, "", fmt.Errorf("state: UpsertGithubWebhookSecret: %w", err)
 	}
@@ -29427,23 +29432,23 @@ func (s *PgStore) UpsertGithubWebhookSecret(ctx context.Context, installationID 
 // webhook is rejected rather than falling back to the platform-
 // wide FAAS_GITHUB_WEBHOOK_SECRET, per PR-D's adoption posture).
 //
-// The bytea is returned as a raw byte slice; the caller
-// (pkg/githubd/webhook_secret.go::PGWebhookSecretResolver)
-// passes the bytes directly to VerifyPushSignature.
-func (s *PgStore) GetGithubWebhookSecret(ctx context.Context, installationID int64) ([]byte, error) {
+// Sealed is the copy sealed for githubd (ADR 20261022111812);
+// githubd opens it in preference to the plaintext Value, which
+// is kept only for the release that reads nothing else.
+func (s *PgStore) GetGithubWebhookSecret(ctx context.Context, installationID int64) (GithubWebhookSecret, error) {
 	if installationID == 0 {
-		return nil, ErrNotFound
+		return GithubWebhookSecret{}, ErrNotFound
 	}
-	var secret []byte
+	var secret GithubWebhookSecret
 	err := s.pool.QueryRow(ctx,
-		`SELECT secret_value FROM github_webhook_secrets WHERE installation_id = $1`,
+		`SELECT secret_value, secret_sealed FROM github_webhook_secrets WHERE installation_id = $1`,
 		installationID,
-	).Scan(&secret)
+	).Scan(&secret.Value, &secret.Sealed)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
+			return GithubWebhookSecret{}, ErrNotFound
 		}
-		return nil, fmt.Errorf("state: GetGithubWebhookSecret: %w", err)
+		return GithubWebhookSecret{}, fmt.Errorf("state: GetGithubWebhookSecret: %w", err)
 	}
 	return secret, nil
 }

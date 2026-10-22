@@ -49,6 +49,8 @@ vmlinux-*
 /outboundd
 /gregale
 /gregale-mfa-qr.png
+# `go build ./cmd/sdk-coverage` output; `make` runs the gate with `go run`.
+/sdk-coverage
 
 # JavaScript dependencies and generated Data API client output
 node_modules/

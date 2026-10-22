@@ -148,6 +148,10 @@
         - faas_cp_converge_roles | default(none) is none or 'cp_state_backup' in faas_cp_converge_roles
     - role: control_plane_service
       when: faas_cp_converge_roles | default(none) is none or 'control_plane_service' in faas_cp_converge_roles
+    - role: seal_domains
+      when:
+        - faas_seal_domains_managed | default(false) | bool
+        - faas_cp_converge_roles | default(none) is none or 'seal_domains' in faas_cp_converge_roles
     - role: internal_mail_service
       when:
         - faas_internal_mail_managed | default(false) | bool

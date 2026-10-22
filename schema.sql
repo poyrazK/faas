@@ -37549,8 +37549,16 @@ CREATE TABLE public.github_webhook_secrets (
     installation_id bigint NOT NULL,
     secret_value bytea NOT NULL,
     upgraded_at timestamp with time zone DEFAULT now() NOT NULL,
-    upgraded_by text DEFAULT 'platform'::text NOT NULL
+    upgraded_by text DEFAULT 'platform'::text NOT NULL,
+    secret_sealed bytea
 );
+
+
+--
+-- Name: COLUMN github_webhook_secrets.secret_sealed; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.github_webhook_secrets.secret_sealed IS 'The webhook secret sealed to the source domain write recipients (ADR 20261022111812); githubd prefers it over secret_value.';
 
 
 --
@@ -52005,6 +52013,28 @@ CREATE TABLE public.scheduled_releases (
 
 
 --
+-- Name: seal_domain_probe; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.seal_domain_probe (
+    domain text NOT NULL,
+    recipient text NOT NULL,
+    sealed_blob bytea NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT seal_domain_probe_domain_check CHECK ((domain ~ '^[a-z][a-z-]{0,31}$'::text)),
+    CONSTRAINT seal_domain_probe_recipient_check CHECK ((recipient ~ '^age1[0-9a-z]+$'::text)),
+    CONSTRAINT seal_domain_probe_sealed_blob_check CHECK (((octet_length(sealed_blob) >= 1) AND (octet_length(sealed_blob) <= 4096)))
+);
+
+
+--
+-- Name: TABLE seal_domain_probe; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.seal_domain_probe IS 'One non-secret secretbox probe per seal domain, sealed to the domain recipient alone (ADR 20261022111812).';
+
+
+--
 -- Name: service_caller_key_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -58588,6 +58618,14 @@ ALTER TABLE ONLY public.github_webhook_secrets
 
 
 --
+-- Name: github_webhook_secrets github_webhook_secrets_secret_sealed_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.github_webhook_secrets
+    ADD CONSTRAINT github_webhook_secrets_secret_sealed_chk CHECK (((secret_sealed IS NULL) OR ((octet_length(secret_sealed) >= 1) AND (octet_length(secret_sealed) <= 4096)))) NOT VALID;
+
+
+--
 -- Name: gitlab_oauth_connections gitlab_oauth_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -64825,6 +64863,14 @@ ALTER TABLE ONLY public.schedule_occurrences
 
 ALTER TABLE ONLY public.scheduled_releases
     ADD CONSTRAINT scheduled_releases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: seal_domain_probe seal_domain_probe_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.seal_domain_probe
+    ADD CONSTRAINT seal_domain_probe_pkey PRIMARY KEY (domain);
 
 
 --

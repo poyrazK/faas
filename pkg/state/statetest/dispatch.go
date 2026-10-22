@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/checkpointselection"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyarchive"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copycontents"
@@ -119,6 +120,8 @@ var memDispatched = map[string]bool{
 	"ListTCPListenerTLSObservations":                          true,
 	"ListWorkflowScheduleCandidates":                          true,
 	"LiveDeploymentForScope":                                  true,
+	"FinancialComputeBalance":                                 true,
+	"FinancialComputePolicies":                                true,
 	"ManagedPostgresAdmissionFenced":                          true,
 	"MigrateInstanceOwner":                                    true,
 	"MigrateInstanceOwnerWithRuntimeConfig":                   true,
@@ -826,6 +829,24 @@ func (s *Mem) LiveDeploymentForScope(p0 context.Context, p1 string, p2 string) (
 		return o.LiveDeploymentForScope(p0, p1, p2)
 	}
 	return s.MemStore.LiveDeploymentForScope(p0, p1, p2)
+}
+
+func (s *Mem) FinancialComputeBalance(p0 context.Context, p1 state.FinancialBudget, p2 time.Time) (financial.ComputeBalance, error) {
+	if o, ok := s.over.(interface {
+		FinancialComputeBalance(context.Context, state.FinancialBudget, time.Time) (financial.ComputeBalance, error)
+	}); ok {
+		return o.FinancialComputeBalance(p0, p1, p2)
+	}
+	return s.MemStore.FinancialComputeBalance(p0, p1, p2)
+}
+
+func (s *Mem) FinancialComputePolicies(p0 context.Context, p1 string, p2 string) ([]state.FinancialBudget, error) {
+	if o, ok := s.over.(interface {
+		FinancialComputePolicies(context.Context, string, string) ([]state.FinancialBudget, error)
+	}); ok {
+		return o.FinancialComputePolicies(p0, p1, p2)
+	}
+	return s.MemStore.FinancialComputePolicies(p0, p1, p2)
 }
 
 func (s *Mem) ManagedPostgresAdmissionFenced(p0 context.Context, p1 string) (bool, error) {

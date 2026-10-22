@@ -268,6 +268,8 @@ var MfaRecipient = &mfaRecipient
 var ObsJailInternalMarkers = &obsJailInternalMarkers
 var ObsSealedBlobMarkers = &obsSealedBlobMarkers
 var OutboundCredentialRecipient = &outboundCredentialRecipient
+var OutboundDomainRecipient = &outboundDomainRecipient
+var OutboundWriteMode = &outboundWriteMode
 var PgBackupStateRoot = &pgBackupStateRoot
 var PlanCache = &planCache
 var PlanCacheRoot = &planCacheRoot
@@ -281,6 +283,8 @@ var TimeNow = &timeNow
 var TxtLookupFunc = &txtLookupFunc
 
 // Package-level funcs
+var LoadSealDomains = loadSealDomains
+var SealOutboundCredential = sealOutboundCredential
 var AccountAbuseHoldView = accountAbuseHoldView
 var ActivatedAPIDListener = activatedAPIDListener
 var AggregateWakeTimeline = aggregateWakeTimeline
