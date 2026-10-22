@@ -2984,7 +2984,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		handler.WithASNReader(deps.asnReader)
 	}
 	// ADR-973 — verified crawlers via forward-confirmed reverse DNS.
-	handler.WithBotVerifier(gateway.NewBotVerifier(nil))
+	// ADR-20261022083601 — plus operators' published IP ranges, which apid
+	// stores and this gateway rereads: search crawlers verify without DNS,
+	// and AI crawlers verify at all. Without the store the ranges stay
+	// empty.
+	botVerifier := gateway.NewBotVerifier(nil)
+	if rangeStore, ok := any(deps.pgStore).(state.EdgeCrawlerRangesReader); ok && deps.pgStore != nil {
+		crawlerRanges := gateway.NewCrawlerRanges()
+		botVerifier.WithCrawlerRanges(crawlerRanges)
+		go crawlerRanges.Run(ctx, rangeStore, 0, log)
+	}
+	handler.WithBotVerifier(botVerifier)
 	// ADR-960 — per-rule hit counts, flushed to Postgres once a minute. Only
 	// a store with the hit-count capability gets a recorder, so test and
 	// legacy wiring keep counting disabled.

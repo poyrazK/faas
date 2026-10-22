@@ -24,6 +24,17 @@ type EdgeProtectionResponse struct {
 	// Challenge counts kind=challenge decisions (ADR-831 amendment 7). Its
 	// 403s also appear in Rejections under gate "challenge".
 	Challenge EdgeProtectionChallenge `json:"challenge"`
+	// AICrawlers counts requests whose User-Agent names an AI crawler
+	// (ADR-20261022083601), largest first, before any rule acted on them.
+	AICrawlers []EdgeProtectionAICrawler `json:"ai_crawlers"`
+}
+
+// EdgeProtectionAICrawler is one AI crawler's requests over the range.
+type EdgeProtectionAICrawler struct {
+	Name     string `json:"name"`
+	Operator string `json:"operator"`
+	Purpose  string `json:"purpose"`
+	Count    int64  `json:"count"`
 }
 
 // EdgeProtectionChallenge is the kind=challenge part of an

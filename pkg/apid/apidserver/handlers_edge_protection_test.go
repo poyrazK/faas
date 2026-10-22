@@ -60,6 +60,11 @@ func TestAppEdgeProtectionSummarizesPerAppCounters(t *testing.T) {
 				{"metric":{"outcome":"bypassed"},"value":[0,"5"]},
 				{"metric":{"outcome":"invalid"},"value":[0,"2"]},
 				{"metric":{"outcome":"expired"},"value":[0,"1"]}]}}`
+		case strings.Contains(query, "gateway_ai_crawler_requests_total"):
+			return `{"status":"success","data":{"resultType":"vector","result":[
+				{"metric":{"crawler":"chatgpt-user"},"value":[0,"3"]},
+				{"metric":{"crawler":"gptbot"},"value":[0,"20"]},
+				{"metric":{"crawler":"retired-bot"},"value":[0,"7"]}]}}`
 		case strings.Contains(query, "gateway_validate_failures_total"):
 			return `{"status":"success","data":{"resultType":"vector","result":[
 				{"metric":{"mode":"observe"},"value":[0,"4"]},
@@ -100,6 +105,13 @@ func TestAppEdgeProtectionSummarizesPerAppCounters(t *testing.T) {
 	// adr: 831 — amendment 7: challenge outcomes, expired solutions counted as invalid.
 	if want := (api.EdgeProtectionChallenge{Issued: 12, Solved: 9, Rejected: 30, Passed: 40, Bypassed: 5, Invalid: 3}); out.Challenge != want {
 		t.Fatalf("challenge = %+v, want %+v", out.Challenge, want)
+	}
+	// adr: 20261022083601 — AI crawler requests by crawler, largest first,
+	// with the catalog's operator and purpose; unknown names are skipped.
+	if len(out.AICrawlers) != 2 ||
+		out.AICrawlers[0] != (api.EdgeProtectionAICrawler{Name: "gptbot", Operator: "OpenAI", Purpose: "training", Count: 20}) ||
+		out.AICrawlers[1].Name != "chatgpt-user" || out.AICrawlers[1].Purpose != "assistant" {
+		t.Fatalf("ai crawlers = %+v", out.AICrawlers)
 	}
 	if rec := e.Do(t, "GET", "/v1/apps/shielded/edge-protection?range=30d", nil, nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid range = %d", rec.Code)

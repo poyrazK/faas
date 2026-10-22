@@ -59,8 +59,12 @@ type Input struct {
 	// (ADR-973): verified_bot is then the known crawler the User-Agent
 	// header claims. The simulator does no DNS.
 	VerifiedBot bool
-	Headers     http.Header
-	Body        []byte
+	// VerifiedAICrawler simulates a client IP inside the published ranges
+	// of the AI crawler the User-Agent claims (ADR-20261022083601), so
+	// verified_ai_crawler is that crawler when it publishes ranges.
+	VerifiedAICrawler bool
+	Headers           http.Header
+	Body              []byte
 	// CorsPresets supplies caller-resolved presets for preset-backed CORS
 	// rules. Missing or cross-account presets remain incomplete instead of
 	// being guessed.
@@ -2636,8 +2640,25 @@ func traceConditionMatches(rule api.EdgeRuleResponse, input Input, requestPath, 
 	return program.Matches(api.EdgeRuleMatchInput{
 		Method: method, Path: requestPath, Host: input.Host, Headers: headers,
 		ClientIP: net.ParseIP(input.ClientIP), Country: input.Country, ASN: input.ASN,
-		VerifiedBot: traceVerifiedBot(input.VerifiedBot, headers),
+		VerifiedBot:       traceVerifiedBot(input.VerifiedBot, headers),
+		VerifiedAICrawler: traceVerifiedAICrawler(input.VerifiedAICrawler, headers),
 	})
+}
+
+// traceVerifiedAICrawler is the simulated verified_ai_crawler value
+// (ADR-20261022083601). A crawler without published ranges never verifies,
+// as at the gateway.
+func traceVerifiedAICrawler(verified bool, headers http.Header) func() string {
+	if !verified {
+		return nil
+	}
+	return func() string {
+		crawler, ok := api.ClaimedAICrawler(headers.Get("User-Agent"))
+		if !ok || crawler.RangesURL == "" {
+			return ""
+		}
+		return crawler.Name
+	}
 }
 
 // traceVerifiedBot is the simulated verified_bot value (ADR-973).

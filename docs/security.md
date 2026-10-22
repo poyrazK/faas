@@ -391,6 +391,57 @@ In log mode the rule's matches appear as `logged` events instead.
 gregale edge-rules events --app my-site --outcome rejected
 ```
 
+## AI crawlers
+
+AI companies crawl the web for three reasons, and edge rules can treat each
+differently:
+
+| Purpose | What it fetches for | Examples |
+|---|---|---|
+| `training` | pages to train models on | GPTBot, ClaudeBot, CCBot, Bytespider, meta-externalagent, Amazonbot |
+| `search` | an AI search index | OAI-SearchBot, Claude-SearchBot, PerplexityBot |
+| `assistant` | a page a user asked an assistant about | ChatGPT-User, Claude-User, Perplexity-User, MistralAI-User, DuckAssistBot |
+
+The edge protection summary (`gregale edge-rules summary`, or the Edge
+protection panel) shows how many requests each AI crawler made, whatever
+your rules did with them.
+
+The quickest control is the **Control AI crawlers** recipe. By default it
+blocks training crawlers and leaves AI search, assistants, search engines
+and people alone. Like every recipe it starts in log mode, so you see what
+it would block first:
+
+```sh
+gregale edge-rules recipe control-ai-crawlers --app my-site
+gregale edge-rules recipe control-ai-crawlers --app my-site --set purposes=all --set action=challenge
+```
+
+For your own rules, conditions can use three fields:
+
+- `ai_crawler`: the AI crawler the User-Agent names, such as `gptbot` or
+  `claudebot`.
+- `ai_crawler_purpose`: `training`, `search` or `assistant`.
+- `verified_ai_crawler`: the crawler, set only when the request comes from
+  the IP ranges its operator publishes. OpenAI, Perplexity, DuckDuckGo and
+  Mistral publish ranges. Crawlers that do not, such as ClaudeBot and CCBot,
+  are never verified.
+
+Anyone can send any User-Agent. Blocking by `ai_crawler` also blocks
+scrapers that pretend to be a crawler, which is usually what you want. To
+let a crawler through, or to block only impersonators, also test
+`verified_ai_crawler`:
+
+```sh
+# Block anything that claims to be GPTBot but is not from OpenAI's ranges.
+gregale edge-rules create --app my-site --kind ip --match-host @app --match-path '/**' \
+  --ip-deny 0.0.0.0/0 --ip-deny ::/0 \
+  --match '{"all":[{"field":"ai_crawler","op":"eq","value":"gptbot"},{"field":"verified_ai_crawler","op":"missing"}]}'
+```
+
+Published ranges are refreshed every 12 hours and stop counting after 7
+days without a refresh. The same ranges let Googlebot, Bingbot and
+Applebot verify as `verified_bot` without a DNS lookup.
+
 ## Outbound connections and DNS
 
 Workloads reach the internet by name. Outbound TCP is allowed only to addresses

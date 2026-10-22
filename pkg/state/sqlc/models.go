@@ -3953,6 +3953,14 @@ type DurableWorkRetainedDeploymentRef struct {
 	DeploymentID pgtype.UUID
 }
 
+type EdgeCrawlerIpRange struct {
+	Crawler         string
+	SourceUrl       string
+	Prefixes        []string
+	SourceCreatedAt pgtype.Text
+	FetchedAt       pgtype.Timestamptz
+}
+
 type EdgeRule struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID

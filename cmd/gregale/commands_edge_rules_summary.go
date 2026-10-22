@@ -80,6 +80,14 @@ func renderEdgeProtection(w io.Writer, slug string, s api.EdgeProtectionResponse
 		_, _ = fmt.Fprintf(w, "  %-28s %d pages served, %d solved, %d non-browser refused, %d passed on an earlier solve, %d verified API clients, %d invalid\n",
 			"challenge:", c.Issued, c.Solved, c.Rejected, c.Passed, c.Bypassed, c.Invalid)
 	}
+	if len(s.AICrawlers) > 0 {
+		parts := make([]string, 0, len(s.AICrawlers))
+		for _, c := range s.AICrawlers {
+			parts = append(parts, fmt.Sprintf("%s %d (%s, %s)", c.Name, c.Count, c.Operator, c.Purpose))
+		}
+		_, _ = fmt.Fprintf(w, "  %-28s %s\n", "ai crawlers:", strings.Join(parts, ", "))
+		_, _ = fmt.Fprintf(w, "  %-28s gregale edge-rules recipe control-ai-crawlers --app %s\n", "control them:", slug)
+	}
 }
 
 // renderEdgeProtectionWAF prints the kind=waf section only when a WAF rule

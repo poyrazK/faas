@@ -110,6 +110,12 @@ type EdgeRuleMatchContext struct {
 	botOnce     sync.Once
 	bot         string
 
+	// ADR-20261022083601: verified AI crawler, resolved at most once and
+	// only when a verified_ai_crawler condition is evaluated.
+	verifiedAICrawler func() string
+	aiOnce            sync.Once
+	aiCrawler         string
+
 	// ADR-960: hit recording, deduplicated per request (a kind can be looked
 	// up more than once while serving one request).
 	hits     EdgeRuleHitRecorder
@@ -341,6 +347,7 @@ func edgeRuleMatchInputFor(ctx context.Context, requestPath, method string) api.
 		input.Country = m.resolvedCountry()
 		input.ASN = m.resolvedASN()
 		input.VerifiedBot = m.verifiedBot
+		input.VerifiedAICrawler = m.verifiedAICrawler
 	}
 	return input
 }

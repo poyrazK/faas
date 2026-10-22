@@ -4932,6 +4932,17 @@
     "kind": "configuration"
   },
   {
+    "table": "edge_crawler_ip_ranges",
+    "columns": [
+      "crawler",
+      "fetched_at",
+      "prefixes",
+      "source_created_at",
+      "source_url"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
     "table": "edge_rule_set_versions",
     "columns": [
       "app_id",

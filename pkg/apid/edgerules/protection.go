@@ -46,6 +46,7 @@ func (s *Service) AppEdgeProtection(ctx context.Context, app state.App, rng stri
 		ValidationFailures: []api.EdgeProtectionCount{},
 		Rejections:         []api.EdgeProtectionRejection{},
 		WAF:                api.NewEdgeProtectionWAF(),
+		AICrawlers:         []api.EdgeProtectionAICrawler{},
 	}
 	if s.Host.PromQL() == nil {
 		resp.Source = appmetrics.SourceDegradedPrefix + "prometheus not configured"
@@ -61,7 +62,7 @@ func (s *Service) AppEdgeProtection(ctx context.Context, app state.App, rng stri
 			degraded := api.EdgeProtectionResponse{AppID: resp.AppID, Range: rng, AsOf: resp.AsOf,
 				Source:             appmetrics.SourceDegradedPrefix + "prometheus unavailable",
 				ValidationFailures: []api.EdgeProtectionCount{}, Rejections: []api.EdgeProtectionRejection{},
-				WAF: api.NewEdgeProtectionWAF()}
+				WAF: api.NewEdgeProtectionWAF(), AICrawlers: []api.EdgeProtectionAICrawler{}}
 			return degraded
 		}
 		for _, sample := range samples {
@@ -164,6 +165,16 @@ func edgeProtectionQueries(resp *api.EdgeProtectionResponse, appID, rng string) 
 			},
 		},
 		{
+			"sum by (crawler) " + windowedCount(fmt.Sprintf(`gateway_ai_crawler_requests_total{app=%q}`, appID), rng),
+			func(labels map[string]string, count int64) {
+				// Only catalog crawlers are counted, so a name the catalog
+				// no longer has is skipped rather than shown without context.
+				if c, ok := api.EdgeAICrawlerByName(labels["crawler"]); ok {
+					resp.AICrawlers = append(resp.AICrawlers, api.EdgeProtectionAICrawler{Name: c.Name, Operator: c.Operator, Purpose: c.Purpose, Count: count})
+				}
+			},
+		},
+		{
 			"sum by (category) " + windowedCount(fmt.Sprintf(`gateway_waf_detections_total{app=%q}`, appID), rng),
 			func(labels map[string]string, count int64) {
 				resp.WAF.Categories = append(resp.WAF.Categories, api.EdgeProtectionCount{Name: labels["category"], Count: count})
@@ -191,6 +202,13 @@ func sortEdgeProtection(resp *api.EdgeProtectionResponse) {
 	}
 	byCount(resp.WAF.Categories)
 	byCount(resp.WAF.TopRules)
+	sort.Slice(resp.AICrawlers, func(i, j int) bool {
+		a, b := resp.AICrawlers[i], resp.AICrawlers[j]
+		if a.Count != b.Count {
+			return a.Count > b.Count
+		}
+		return a.Name < b.Name
+	})
 	sort.Slice(resp.ValidationFailures, func(i, j int) bool { return resp.ValidationFailures[i].Name < resp.ValidationFailures[j].Name })
 	sort.Slice(resp.Rejections, func(i, j int) bool {
 		a, b := resp.Rejections[i], resp.Rejections[j]

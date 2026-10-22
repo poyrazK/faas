@@ -46,6 +46,7 @@ const (
 	EdgeRuleRecipeBlockCountries      = "block-countries"
 	EdgeRuleRecipeBlockScannerPaths   = "block-scanner-paths"
 	EdgeRuleRecipeChallengePath       = "challenge-path"
+	EdgeRuleRecipeControlAICrawlers   = "control-ai-crawlers"
 )
 
 // EdgeRuleScannerPath is one path prefix vulnerability scanners probe.
@@ -154,6 +155,19 @@ var EdgeRuleRecipes = []EdgeRuleRecipe{
 			{Name: "methods", Label: "Methods", Help: "Comma-separated; empty means every method, so a sign-in page and its form post are both covered."},
 		},
 		build: buildChallengePath,
+	},
+	{
+		ID:      EdgeRuleRecipeControlAICrawlers,
+		Kind:    "ip",
+		Title:   "Control AI crawlers",
+		Summary: "Block or challenge the crawlers AI companies run (GPTBot, ClaudeBot, CCBot, PerplexityBot, Bytespider and others) by what they fetch for: training models, AI search, or assistants answering a user. By default it blocks training crawlers only; search engines and people are unaffected.",
+		LogNote: "In log mode the match count is the AI crawler requests it would block or challenge.",
+		Params: []EdgeRuleRecipeParam{
+			{Name: "purposes", Label: "Purposes", Help: "Comma-separated: training (collects pages to train models), search (indexes pages for AI search), assistant (fetches a page a user asked about), or all.", Default: AICrawlerPurposeTraining},
+			{Name: "action", Label: "Action", Help: "block answers 403; challenge asks for the browser check, which crawlers cannot pass.", Default: "block"},
+			recipePathParam,
+		},
+		build: buildControlAICrawlers,
 	},
 }
 
@@ -366,6 +380,39 @@ func buildChallengePath(v recipeValues) (CreateEdgeRuleRequest, error) {
 		Action:       action,
 		Match:        &EdgeRuleMatchExpr{Field: "verified_bot", Op: "missing"},
 	}, nil
+}
+
+func buildControlAICrawlers(v recipeValues) (CreateEdgeRuleRequest, error) {
+	var purposes []string
+	for _, p := range recipeSplit(strings.ToLower(v["purposes"])) {
+		if p == "all" {
+			purposes = append([]string(nil), AICrawlerPurposes...)
+			break
+		}
+		if !containsMatchValue(AICrawlerPurposes, p) {
+			return CreateEdgeRuleRequest{}, fmt.Errorf("purposes: unknown purpose %q (%s, or all)", p, strings.Join(AICrawlerPurposes, ", "))
+		}
+		if !containsMatchValue(purposes, p) {
+			purposes = append(purposes, p)
+		}
+	}
+	if len(purposes) == 0 {
+		return CreateEdgeRuleRequest{}, fmt.Errorf("purposes: name at least one of %s, or all", strings.Join(AICrawlerPurposes, ", "))
+	}
+	req := CreateEdgeRuleRequest{
+		MatchPath: v["path"],
+		Match:     &EdgeRuleMatchExpr{Field: "ai_crawler_purpose", Op: "in", Values: purposes},
+	}
+	switch strings.ToLower(strings.TrimSpace(v["action"])) {
+	case "block":
+		req.Kind, req.Action = "ip", recipeDenyAll()
+	case "challenge":
+		req.Kind = "challenge"
+		req.Action, _ = json.Marshal(EdgeRuleChallengeAction{})
+	default:
+		return CreateEdgeRuleRequest{}, fmt.Errorf("action must be block or challenge (got %q)", v["action"])
+	}
+	return req, nil
 }
 
 // recipeSplit splits a comma- or whitespace-separated list.

@@ -6123,6 +6123,13 @@ haveApp:
 	// table — a customer who flipped the whole app should never see
 	// a per-route 503 from a different Problem.code, because that
 	// would leak the existence of the fine-grained rule.
+	//
+	// ADR-20261022083601: AI crawler traffic is counted before any gate,
+	// so the edge-protection summary shows it whether or not a rule then
+	// blocks it.
+	if crawler, ok := api.ClaimedAICrawler(r.Header.Get("User-Agent")); ok {
+		h.metrics.ObserveAICrawlerRequest(app.ID, crawler.Name)
+	}
 	if h.applyAppsMaintenanceMode(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
