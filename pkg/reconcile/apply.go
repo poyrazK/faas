@@ -411,6 +411,9 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		RequireAuthn:           plan.RequireAuthnDefault(),
 		PublicAuthMode:         plan.PublicAuthModeDefault(),
 		PlatformTenantRequired: w.PlatformTenantRequired != nil && *w.PlatformTenantRequired,
+		// Create-only, like the auth defaults: an existing app keeps the
+		// visibility its owner set.
+		Visibility: reposcan.NewWorkloadVisibility(w),
 	}
 	applyProjectImage(&app.Manifest, w)
 	return app

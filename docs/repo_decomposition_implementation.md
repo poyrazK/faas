@@ -48,6 +48,10 @@ another app, the plan gives the app `<project>-<name>` instead (for example
 project the workload keeps its name: `depends_on`, the injected
 `GREGALE_SERVICE_<NAME>_URL` and `<name>.svc.gregale` all use `api`.
 
+A Compose service without `ports:` becomes an internal app: reachable from the
+project's other services, with no public URL (ADR-20261022131852). Services
+that publish `ports:` are public.
+
 For Compose workloads, `depends_on` is carried into the plan, validated as a
 cycle-free graph, and used to order app creation/build enqueueing. Each
 workload also receives platform-owned `GREGALE_SERVICE_<NAME>_URL` variables
