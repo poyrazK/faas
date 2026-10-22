@@ -11,6 +11,8 @@ T = TypeVar("T", bound="DebugStatusHealth")
 
 @_attrs_define
 class DebugStatusHealth:
+    """The serving deployments' traffic over the window."""
+
     requests: int
     server_errors: int
     p95_ms: int

@@ -15,6 +15,8 @@ T = TypeVar("T", bound="DebugStatusDeployment")
 
 @_attrs_define
 class DebugStatusDeployment:
+    """One deployment currently serving traffic."""
+
     id: UUID
     traffic_percent: int
     created_at: datetime.datetime

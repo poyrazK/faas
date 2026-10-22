@@ -31,6 +31,7 @@ class DebugStatusResponse:
     window_start: datetime.datetime
     window_end: datetime.datetime
     health: DebugStatusHealth
+    """The serving deployments' traffic over the window."""
     deployments: list[DebugStatusDeployment]
     regressions: list[DebugRegressionItem]
     regressions_total: int
