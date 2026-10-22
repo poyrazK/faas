@@ -89,6 +89,7 @@ var cliRelatedCommands = [][]string{
 	{"env", "secrets"},
 	{"connect", "github"},
 	{"plan", "billing", "usage", "invoices", "overage-cap"},
+	{"preview", "previews"},
 }
 
 // cliSeeAlso returns the members of commands related to name, in set order.
