@@ -157,6 +157,27 @@ On a native x86_64 KVM host, with `native_process_recovery` and
   by its predecessor. Native owner-restart recovery, including #4885's financial
   recovery tests, depends on it.
 
+## Implementation notes (2026-10-22)
+
+- The runtime authority and capture record live in the native journal under
+  `runtime-captures/<instance>.json`, with backing evidence under
+  `runtime-captures/backings/<capture>.json`. The capture ID is the
+  scheduler's capture UUID inside the v2 memory key.
+- The capture permit carries either the qualification incoming record or the
+  runtime authority. Every producer check uses the same accessors and re-reads
+  whichever durable record is set.
+- Runtime publication intents are version 2. They carry `runtime` instead of
+  `incoming`, so qualification restore and artifact retirement reject them.
+- After completion vmmd removes the intent, its four receipts and the record.
+  The objects then belong to the snapshot row and imaged's GC.
+- The Manager no longer resumes a VM after a failed native warm capture, and
+  skips its own backing-sidecar write, because the producer published that
+  object exclusively.
+- Not yet implemented: deleting partial objects from a failed capture. They are
+  retained and logged on every backend, and the incomplete record and intent
+  stay in the journals. GCS generation-conditional deletion (decision 5) must
+  land before `native_runtime_capture` is enabled on a GCS-backed node.
+
 ## Rejected alternatives
 
 - **Remove the refusal and keep the ordinary capture under native recovery.**

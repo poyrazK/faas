@@ -17,6 +17,13 @@
 # Default: "" (disabled)
 # native_snapshot_publication_root = "/var/lib/faas/vmmd-publications"
 
+# native_runtime_capture: EXPERIMENTAL. Run ordinary park and warm captures
+# through the native producer instead of refusing them (ADR 20261022184951).
+# Requires native_process_recovery = true, native_snapshot_publication_root and
+# native_image_staging_root. Leave off until native capture acceptance passes.
+# Default: false
+# native_runtime_capture = true
+
 # socket_path: unix-domain socket path. Mode 0660, group 'faas' (ADR-015).
 # Default: /run/faas/vmmd.sock
 # socket_path = "/run/faas/vmmd.sock"

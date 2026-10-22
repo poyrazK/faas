@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -20,11 +21,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"golang.org/x/sys/unix"
 )
 
 func TestMetalNativeCaptureSequence(t *testing.T) {
+	runNativeMetalCaptureSequences(t, "TestMetalNativeCaptureSequence", "GREGALE_NATIVE_CAPTURE_SEQUENCE_CHILD", false)
+}
+
+// adr: 20261022184951 — an ordinary park/warm capture runs the same producer.
+func TestMetalNativeRuntimeCaptureSequence(t *testing.T) {
+	runNativeMetalCaptureSequences(t, "TestMetalNativeRuntimeCaptureSequence", "GREGALE_NATIVE_RUNTIME_CAPTURE_SEQUENCE_CHILD", true)
+}
+
+func runNativeMetalCaptureSequences(t *testing.T, name, childEnv string, runtimeCapture bool) {
 	if runtime.GOARCH != "amd64" || os.Geteuid() != 0 {
 		t.Skip("requires x86_64 Linux acceptance host and root")
 	}
@@ -37,9 +49,9 @@ func TestMetalNativeCaptureSequence(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
-	if os.Getenv("GREGALE_NATIVE_CAPTURE_SEQUENCE_CHILD") != "1" {
-		cmd := exec.CommandContext(ctx, "unshare", "--mount", "--propagation", "private", os.Args[0], "-test.run=^TestMetalNativeCaptureSequence$", "-test.timeout=90s", "-test.v")
-		cmd.Env = append(os.Environ(), "GREGALE_NATIVE_CAPTURE_SEQUENCE_CHILD=1")
+	if os.Getenv(childEnv) != "1" {
+		cmd := exec.CommandContext(ctx, "unshare", "--mount", "--propagation", "private", os.Args[0], "-test.run=^"+name+"$", "-test.timeout=90s", "-test.v")
+		cmd.Env = append(os.Environ(), childEnv+"=1")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("isolated native capture sequence: %v\n%s", err, out)
@@ -51,14 +63,14 @@ func TestMetalNativeCaptureSequence(t *testing.T) {
 	defer stop()
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 	for _, outcome := range []string{"complete", "lost_create", "lost_resume"} {
-		t.Run(outcome, func(t *testing.T) { nativeMetalCaptureSequence(t, ctx, peer, outcome) })
+		t.Run(outcome, func(t *testing.T) { nativeMetalCaptureSequence(t, ctx, peer, outcome, runtimeCapture) })
 		if ctx.Err() != nil {
 			t.Fatal("native capture fixture effect budget exhausted:", ctx.Err())
 		}
 	}
 }
 
-func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome string) {
+func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome string, runtimeCapture bool) {
 	t.Helper()
 	// A short jail path keeps the UUID-qualified API socket under sun_path's
 	// limit. Only the explicit jail subdirectory is mounted as tmpfs.
@@ -93,13 +105,21 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 	}
 	_, frame, _ := nativeQualificationFixture(t)
 	q := r.journal.qualifications(frame.NodeID)
-	incoming, err := q.claim(ctx, frame)
-	if err != nil {
-		t.Fatal(err)
-	}
 	lease := qualificationLease(frame.InstanceID)
-	if err := q.owner.prepare(nativeQualificationContext(ctx, incoming), lease); err != nil {
-		t.Fatal(err)
+	var incoming nativeQualificationRecord
+	if runtimeCapture {
+		// An ordinary launch has no qualification incoming record.
+		if err := r.journal.prepare(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		incoming, err = q.claim(ctx, frame)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := q.owner.prepare(nativeQualificationContext(ctx, incoming), lease); err != nil {
+			t.Fatal(err)
+		}
 	}
 	owner, err := q.owner.read(lease.Instance)
 	if err != nil {
@@ -228,7 +248,16 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 		t.Fatal(err)
 	}
 	lost := strings.TrimPrefix(outcome, "lost_")
-	cmd = exec.CommandContext(ctx, "/capture-peer", "-capture", incoming.Generation, "-drive", layerImageName, "-lost", lost)
+	captureID := incoming.Generation
+	var spec SnapshotSpec
+	if runtimeCapture {
+		deployment := uuid.NewString()
+		captureID = uuid.NewString()
+		memory := state.SnapshotCaptureMemKey(deployment, state.SnapshotTierWarm, captureID)
+		spec = SnapshotSpec{StorageKey: memory, VMStateStorageKey: state.SnapshotVMStateKey(state.Snapshot{StorageKey: memory}),
+			nativeRuntime: &nativeRuntimeCaptureRequest{DeploymentID: deployment, FCVersion: "1.7.0", Backing: backing}}
+	}
+	cmd = exec.CommandContext(ctx, "/capture-peer", "-capture", captureID, "-drive", layerImageName, "-lost", lost)
 	cmd.Dir = "/"
 	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWNS, Chroot: root, Credential: &syscall.Credential{Uid: uint32(lease.UID), Gid: uint32(lease.GID)}}
 	cmd.ExtraFiles = []*os.File{readyWrite}
@@ -259,6 +288,14 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 		t.Fatal(err)
 	}
 	r.remember(owner)
+	if runtimeCapture {
+		v.nativeRuntimeCapture = true
+		spec.nativeRuntime.NativeGeneration = owner.Generation
+		info, captureErr := v.captureNativeRuntimeSnapshot(ctx, lease, spec)
+		join()
+		checkNativeMetalRuntimeCapture(t, ctx, v, canonical, objectRoot, intentRoot, lease, spec, outcome, info, captureErr, log.String())
+		return
+	}
 	incoming, err = q.read(lease.Instance)
 	if err != nil {
 		t.Fatal(err)
@@ -346,5 +383,65 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 	}
 	if _, err := os.Lstat(filepath.Join(intentRoot, incoming.Generation+".json")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A completed runtime capture publishes the whole cohort under the scheduler's
+// keys and releases its producer bookkeeping. An uncertain one keeps its
+// durable start and intent, publishes nothing and refuses another capture.
+func checkNativeMetalRuntimeCapture(t *testing.T, ctx context.Context, v *JailerVMM, canonical storage.StorageBackend, objectRoot, intentRoot string, lease Lease, spec SnapshotSpec, outcome string, info SnapshotInfo, captureErr error, peerLog string) {
+	t.Helper()
+	keys := nativeRuntimeCaptureKeys(spec.StorageKey)
+	record, recordErr := v.nativeRecovery.journal.runtimeCaptures().read(lease.Instance)
+	intents, err := os.ReadDir(intentRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome == "complete" {
+		if captureErr != nil || info.MemBytes != 12 || info.VMStateBytes != 16 || info.StoredBytes <= 0 || peerLog != "pause\ncreate\nresume\n" {
+			t.Fatal("runtime capture sequence failed:", info, captureErr, peerLog)
+		}
+		for key, expected := range map[string]string{keys.Memory: "original-mem", keys.VMState: "original-vmstate", keys.Drive: "original-private-drive"} {
+			reader, err := canonical.Get(ctx, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, readErr := io.ReadAll(reader)
+			if err := errors.Join(readErr, reader.Close()); err != nil || string(body) != expected {
+				t.Fatal("runtime cohort changed frozen/original bytes", key, string(body), err)
+			}
+		}
+		reader, err := canonical.Get(ctx, keys.Backing)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var backing BackingIdentity
+		decodeErr := json.NewDecoder(reader).Decode(&backing)
+		if err := errors.Join(decodeErr, reader.Close()); err != nil || backing != spec.nativeRuntime.Backing {
+			t.Fatal("runtime capture published another backing identity", backing, err)
+		}
+		if len(intents) != 0 {
+			t.Fatal("completed runtime capture kept its publication intent or receipts", intents)
+		}
+		if !errors.Is(recordErr, os.ErrNotExist) {
+			t.Fatal("completed runtime capture kept its durable record", record, recordErr)
+		}
+		return
+	}
+	want := "pause\ncreate\n"
+	if outcome == "lost_resume" {
+		want += "resume\n"
+	}
+	if captureErr == nil || !info.IsZero() || peerLog != want {
+		t.Fatal("uncertain runtime control replayed or supplied completion:", info, captureErr, peerLog)
+	}
+	if entries, err := os.ReadDir(objectRoot); err != nil || len(entries) != 0 {
+		t.Fatal("uncertain runtime control reached object publication", err, entries)
+	}
+	if recordErr != nil || !record.Capture.CompletedAt.IsZero() || len(intents) != 1 {
+		t.Fatal("uncertain runtime capture lost its durable start or intent", record, recordErr, intents)
+	}
+	if _, err := v.captureNativeRuntimeSnapshot(ctx, lease, spec); err == nil {
+		t.Fatal("a second capture replaced an uncertain runtime capture")
 	}
 }

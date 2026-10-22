@@ -27,7 +27,7 @@ func (v *JailerVMM) preflightNativeSnapshotPublicationTo(ctx context.Context, le
 		return keys, err
 	}
 	r := v.nativeRecovery
-	if r == nil || r.journal == nil || r.generation(lease.Instance) != permit.Incoming.NativeGeneration {
+	if r == nil || r.journal == nil || r.generation(lease.Instance) != permit.nativeGeneration() {
 		return keys, errors.New("native snapshot publication: original local producer is required")
 	}
 	if err := r.checkDaemonOwnership(); err != nil {
@@ -56,20 +56,18 @@ func (v *JailerVMM) preflightNativeSnapshotPublicationTo(ctx context.Context, le
 
 func nativeSnapshotPublicationKeys(ctx context.Context, lease Lease) (permit nativeSnapshotCapturePermit, keys state.EnvironmentQualificationSnapshot, err error) {
 	permit, ok := ctx.Value(nativeSnapshotCaptureContextKey{}).(nativeSnapshotCapturePermit)
-	if !ok || permit.Incoming.Execution.InstanceID != lease.Instance || !sameNativePhysicalLease(lease, permit.Incoming.NativeLease) ||
+	if !ok || permit.instanceID() != lease.Instance || !sameNativePhysicalLease(lease, permit.nativeLease()) ||
 		!liveNativeSnapshotOwner(permit.Physical) || !sameNativePhysicalLease(lease, permit.Physical.Lease) {
 		return permit, keys, errors.New("native snapshot publication: original capture capability is required")
 	}
-	if err := permit.Incoming.validate(permit.Incoming.Execution.NodeID); err != nil {
+	if err := permit.validateStarted(); err != nil {
 		return permit, keys, err
 	}
-	if err := permit.Capture.validate(permit.Incoming); err != nil {
-		return permit, keys, err
-	}
-	if !permit.Capture.CompletedAt.IsZero() || !permit.Incoming.CreateStarted || permit.Incoming.Revoked {
-		return permit, keys, errors.New("native snapshot publication: original incomplete capture is required")
-	}
-	return permit, qualificationSnapshotProof(permit.Incoming, SnapshotInfo{}), ctx.Err()
+	objects := permit.keys()
+	keys = state.EnvironmentQualificationSnapshot{CaptureID: permit.Capture.CaptureID, NativeGeneration: permit.nativeGeneration(),
+		KernelBootID: permit.kernelBootID(), StorageKey: objects.Memory, VMStateStorageKey: objects.VMState,
+		DriveStorageKey: objects.Drive, BackingStorageKey: objects.Backing}
+	return permit, keys, ctx.Err()
 }
 
 // The reader boundary owns the physical and original output locks until the
@@ -89,7 +87,7 @@ func (v *JailerVMM) publishNativeSnapshotOutput(ctx context.Context, lease Lease
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithDeadline(ctx, permit.Incoming.Deadline)
+	ctx, cancel := context.WithDeadline(ctx, permit.deadline())
 	defer cancel()
 	keys, err := v.preflightNativeSnapshotPublication(ctx, lease)
 	if err != nil {
@@ -166,7 +164,7 @@ func (v *JailerVMM) checkNativeSnapshotPublicationOwner(ctx context.Context, lea
 		return owner, err
 	}
 	r := v.nativeRecovery
-	if r.generation(lease.Instance) != permit.Incoming.NativeGeneration {
+	if r.generation(lease.Instance) != permit.nativeGeneration() {
 		return owner, errors.New("native snapshot publication: original daemon producer changed during IO")
 	}
 	if err := r.checkDaemonOwnership(); err != nil {

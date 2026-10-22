@@ -6,6 +6,7 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -40,6 +41,11 @@ type Config struct {
 	// directory for native image and snapshot output claims. Configure it
 	// before native recovery; it does not enable qualification capture.
 	NativeImageStagingRoot string `toml:"native_image_staging_root"`
+	// NativeRuntimeCapture runs ordinary park and warm captures through the
+	// native producer instead of refusing them (ADR 20261022184951). It
+	// requires native process recovery and both private roots above, and
+	// stays off until native capture acceptance passes.
+	NativeRuntimeCapture bool `toml:"native_runtime_capture"`
 	// ResourceJournalDir persists lease intent and process incarnations before
 	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
 	ResourceJournalDir string `toml:"resource_journal_dir"`
@@ -587,6 +593,9 @@ func LoadConfig(path string) (*Config, error) {
 	if err := validateNativeImageStagingConfig(c.NativeProcessRecovery, c.NativeImageStagingRoot); err != nil {
 		return nil, err
 	}
+	if err := validateNativeRuntimeCaptureConfig(c); err != nil {
+		return nil, err
+	}
 	// Gate-B: resolve Role AFTER toml.Unmarshal so the post-decode
 	// c.Role is consulted against FAAS_VMMD_ROLE. Setting Role in
 	// the defaults-struct literal lets toml.Unmarshal overwrite it,
@@ -897,6 +906,18 @@ func LoadConfig(path string) (*Config, error) {
 
 func validateNativeSnapshotPublicationConfig(nativeRecovery bool, root string) error {
 	return validateNativePrivateRootConfig(nativeRecovery, root, "native_snapshot_publication_root")
+}
+
+// The native producer needs its publication journal and persistent output
+// staging; without them every capture would refuse at preflight.
+func validateNativeRuntimeCaptureConfig(c *Config) error {
+	if !c.NativeRuntimeCapture {
+		return nil
+	}
+	if !c.NativeProcessRecovery || c.NativeSnapshotPublicationRoot == "" || c.NativeImageStagingRoot == "" {
+		return errors.New("vmmd: native_runtime_capture requires native_process_recovery = true, native_snapshot_publication_root and native_image_staging_root")
+	}
+	return nil
 }
 
 func validateNativeImageStagingConfig(nativeRecovery bool, root string) error {

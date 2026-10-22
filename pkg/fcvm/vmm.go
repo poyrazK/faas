@@ -58,6 +58,7 @@ type JailerVMM struct {
 	nativeRecovery                *nativeProcessRecoveryRuntime // opt-in, configured before admission
 	nativeImageStagingRoot        string                        // opt-in persistent disk claims; configure before native recovery
 	nativeSnapshotPublicationRoot string                        // opt-in immutable capture intent; configure before native recovery
+	nativeRuntimeCapture          bool                          // ADR 20261022184951: native park/warm capture; requires native recovery
 	chrootBase                    string                        // /srv/fc/jail
 	fcName                        string                        // chroot dir name jailer derives from the exec-file basename
 	readyTimeout                  time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
@@ -3469,6 +3470,13 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		// This legacy path creates memory/state files before drive export.
 		// Native capture requires its original output/publication session;
 		// refuse before hooks, pause, file creation or failed-capture deletion.
+		// Ordinary protocol-1 park and warm captures may instead run the
+		// native producer (ADR 20261022184951); migration and admitted
+		// protocol-2 captures keep this refusal.
+		if v.nativeRuntimeCaptureEnabled() && spec.nativeRuntime != nil && spec.admittedParent.Binding.ProtocolVersion == 0 &&
+			spec.admittedGrant == nil && spec.functionMigration == nil && spec.functionMigrationGrant == nil {
+			return v.captureNativeRuntimeSnapshot(ctx, l, spec)
+		}
 		return SnapshotInfo{}, fmt.Errorf("native recovery: snapshot publication producer is unavailable: %w", state.ErrConflict)
 	}
 	capture, err := v.beginNativeSnapshot(ctx, l, spec)

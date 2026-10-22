@@ -5794,6 +5794,7 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 
+	spec.nativeRuntime = m.nativeRuntimeCapture(inst, spec)
 	info, snapshotErr := m.vmm.Snapshot(operationCtx, inst.Lease, spec)
 	info, snapshotErr = checkedNativeSnapshotResult(operationCtx, spec, info, snapshotErr)
 	if snapshotErr != nil {
@@ -5811,7 +5812,10 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	if err := errors.Join(snapshotErr, cleanupErr); err != nil {
 		return SnapshotInfo{}, cleanupErr == nil, fmt.Errorf("park %s: %w", instance, err)
 	}
-	m.writeSnapshotBacking(context.WithoutCancel(ctx), instance, spec.StorageKey)
+	if spec.nativeRuntime == nil {
+		// The native producer already published the backing object exclusively.
+		m.writeSnapshotBacking(context.WithoutCancel(ctx), instance, spec.StorageKey)
+	}
 	m.log.Info("parked", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, true, nil
 }
@@ -5871,12 +5875,15 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	if m.functionResourcesEnabled(inst) {
 		info, err, retire = m.warmFunctionSnapshot(ctx, inst, spec, flight)
 	} else {
+		spec.nativeRuntime = m.nativeRuntimeCapture(inst, spec)
 		info, err = m.warmSnapshotInstance(ctx, inst, spec)
 	}
 	if err != nil {
 		return SnapshotInfo{}, err
 	}
-	m.writeSnapshotBacking(ctx, instance, spec.StorageKey)
+	if spec.nativeRuntime == nil {
+		m.writeSnapshotBacking(ctx, instance, spec.StorageKey)
+	}
 	m.log.Info("warm_snapshot", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
 }
@@ -5892,6 +5899,16 @@ func (m *Manager) warmSnapshotInstance(ctx context.Context, inst *Instance, spec
 	defer func() { restartProbes(resumed) }()
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
 	info, err = checkedNativeSnapshotResult(ctx, spec, info, err)
+	if spec.nativeRuntime != nil {
+		// The native producer owns its one-shot resume and never replays an
+		// uncertain effect (ADR 20261022184951). A failed capture is not
+		// resumed here; the engine destroys a VM whose warm capture failed.
+		if err != nil {
+			return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: snapshot: %w", instance, err)
+		}
+		resumed = true
+		return info, ctx.Err()
+	}
 	if err != nil {
 		// A failure before the early resume may leave the VM paused;
 		// a publication failure occurs after it is already running.

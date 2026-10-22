@@ -342,6 +342,11 @@ failure_report_dir = %q
 				}
 			}
 			cfg += fmt.Sprintf("native_process_recovery = true\nprepared_networks = 0\nnative_image_staging_root = %q\nnative_snapshot_publication_root = %q\n", images, publications)
+			// Strict budgets need the native owner; their apps must still park
+			// and wake from snapshots (ADR 20261022184951).
+			if os.Getenv("FAAS_FINANCIAL_SYSTEM_ACCEPTANCE") == "1" {
+				cfg += "native_runtime_capture = true\n"
+			}
 		}
 		if which&VMMDMetrics != 0 {
 			addr := freeTCPAddr(t)

@@ -955,6 +955,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.NativeProcessRecovery {
 		jailer.WithNativeProcessRecovery()
 	}
+	if cfg.NativeRuntimeCapture {
+		jailer.WithNativeRuntimeCapture()
+	}
 	mgr := fcvm.NewManager(
 		wire.ExecRunner{},
 		jailer,

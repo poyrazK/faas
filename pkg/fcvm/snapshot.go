@@ -256,8 +256,11 @@ type SnapshotSpec struct {
 	admittedGrant          *runtimeadmission.SnapshotGrant
 	functionMigrationGrant *runtimeadmission.FunctionMigrationGrant
 	functionMigration      *FunctionMigrationBinding
-	StageMemPath           string // vmmd-allocated; never caller-supplied post-#96 slice 3
-	VMStatePath            string // host location vmmd hands to the FC socket during pause
+	// Only Manager.Park and Manager.WarmSnapshot set this, for ordinary
+	// protocol-1 captures on a native recovery host (ADR 20261022184951).
+	nativeRuntime *nativeRuntimeCaptureRequest
+	StageMemPath  string // vmmd-allocated; never caller-supplied post-#96 slice 3
+	VMStatePath   string // host location vmmd hands to the FC socket during pause
 	// StorageKey (mem only) is the storage key the mem blob is published
 	// under post-snapshot.
 	StorageKey string
