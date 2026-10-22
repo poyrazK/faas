@@ -381,6 +381,14 @@ func compactUsage(usage string) string {
 	case !hasFlags:
 		synopsis = append(synopsis, "...")
 	}
+	// Required flags often carry the error itself ("jobs add" without
+	// --image prints this line), so keep them when they fit.
+	if required := requiredUsageFlags(fields[i:]); len(required) > 0 {
+		withRequired := append(append([]string{}, synopsis...), required...)
+		if utf8.RuneCountInString(prefix+strings.Join(withRequired, " ")+" [flags]") <= usageSynopsisLimit {
+			synopsis = withRequired
+		}
+	}
 	if hasFlags {
 		synopsis = append(synopsis, "[flags]")
 	}
@@ -393,6 +401,37 @@ func compactUsage(usage string) string {
 		out += "\n" + rest
 	}
 	return out
+}
+
+var (
+	usageCleanFlag = regexp.MustCompile(`^--[a-z0-9][a-z0-9-]*$`)
+	usageFlagValue = regexp.MustCompile(`^([A-Z][A-Z0-9_]*|<[^<>|\[\]]+>|[a-z0-9-]+(\|[a-z0-9-]+)+)$`)
+)
+
+// requiredUsageFlags returns the flags (with their values) that a synopsis
+// lists outside any [optional] or (alternative) group, up to the first
+// "|" separating alternative command forms.
+func requiredUsageFlags(tokens []string) []string {
+	var required []string
+	depth := 0
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		if depth == 0 && token == "|" {
+			break
+		}
+		if depth == 0 && usageCleanFlag.MatchString(token) {
+			required = append(required, token)
+			if i+1 < len(tokens) && usageFlagValue.MatchString(tokens[i+1]) {
+				required = append(required, tokens[i+1])
+				i++
+			}
+			continue
+		}
+		opened := strings.Count(token, "[") + strings.Count(token, "(")
+		closed := strings.Count(token, "]") + strings.Count(token, ")")
+		depth = max(0, depth+opened-closed)
+	}
+	return required
 }
 
 // LiveTicker is a per-command redraw buffer for tabular progress UI

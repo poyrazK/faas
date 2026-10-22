@@ -29,6 +29,9 @@ func TestCompactUsageShortensLongSynopses(t *testing.T) {
 		{"positional forms only", "usage: gregale bucket protection " + strings.Repeat("<status app bucket operation-id> | ", 6), "usage: gregale bucket protection ...\n  All options: gregale bucket protection --help"},
 		{"trailing note kept", "usage: gregale workflows wait <run-id>" + flags + "; provide a UUID and a positive timeout", "usage: gregale workflows wait <run-id> [flags]\n  provide a UUID and a positive timeout\n  All options: gregale workflows wait --help"},
 		{"bracketed semicolon is synopsis", "usage: gregale releases bind <project> [--file FILE; required except prepare]" + flags, "usage: gregale releases bind <project> [flags]\n  All options: gregale releases bind --help"},
+		{"required flags kept", "usage: gregale jobs add <name> --image REF" + flags, "usage: gregale jobs add <name> --image REF [flags]\n  All options: gregale jobs add --help"},
+		{"required value alternatives kept", "usage: gregale x recover <id> --action resume|resolve" + flags, "usage: gregale x recover <id> --action resume|resolve [flags]\n  All options: gregale x recover --help"},
+		{"required flags dropped when too long", "usage: gregale x NAME " + strings.Repeat("--required-flag-name VALUE ", 8) + strings.TrimSpace(flags), "usage: gregale x NAME [flags]\n  All options: gregale x --help"},
 		{"error detail kept", "usage: gregale init" + flags + "\n  error: --template is required", "usage: gregale init [flags]\n  All options: gregale init --help\n  error: --template is required"},
 		{"not a usage line", strings.Repeat("x", 200), strings.Repeat("x", 200)},
 	} {
