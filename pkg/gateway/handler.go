@@ -3172,8 +3172,10 @@ func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app Ap
 	}
 	for _, denyNet := range rule.Deny {
 		if denyNet.Contains(clientIP) {
+			// ip_denied, not the API-key code insufficient_scope (Hunt 12
+			// H12-39).
 			api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
-				api.CodeForbidden, "IP denied",
+				api.CodeIPDenied, "IP denied",
 				"client IP matches a deny CIDR on this edge rule"))
 			if h.edgeRuleAudit != nil {
 				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.ip_blocked", nil, map[string]any{
@@ -3209,7 +3211,7 @@ func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app Ap
 		}
 		if !allowed {
 			api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
-				api.CodeForbidden, "IP not allowed",
+				api.CodeIPDenied, "IP not allowed",
 				"client IP does not match any allow CIDR on this edge rule"))
 			if h.edgeRuleAudit != nil {
 				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.ip_blocked", nil, map[string]any{
