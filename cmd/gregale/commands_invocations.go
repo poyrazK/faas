@@ -219,6 +219,12 @@ func cmdInvocationsList(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	// The ledger is account-wide, so a row needs its app: "POST /healthz
+	// failed" named no app (Hunt 12 H12-33).
+	var slugs map[string]string
+	if !jsonOutput {
+		slugs = appSlugsByID(client)
+	}
 	items, next, err := collectListPages(context.Background(), *before, *all, func(ctx context.Context, cursor string) ([]api.Invocation, string, error) {
 		page, err := client.ListInvocations(ctx, cursor, *limit)
 		return page.Invocations, page.NextBefore, err
@@ -241,7 +247,7 @@ func cmdInvocationsList(args []string) int {
 		return 0
 	}
 	for _, inv := range resp.Invocations {
-		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\n", inv.ID, inv.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), inv.State, inv.Method, inv.Path)
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", inv.ID, inv.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), inv.State, inv.Method, inv.Path, appLabel(slugs, inv.AppID), inv.Source)
 	}
 	if resp.NextBefore != "" {
 		_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", resp.NextBefore)
