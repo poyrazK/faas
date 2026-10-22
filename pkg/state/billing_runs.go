@@ -481,7 +481,7 @@ func (m *MemStore) discoverProductCustomersLocked(run BillingRun, add func(Billi
 			continue
 		}
 		scope := ProductBillingScope{AccountID: run.AccountID, AppID: app, TenantID: tenantID, Period: period}
-		fee := productMonthFee(m.productMonthPlansLocked(scope), period, func(revision string) (api.ProductCatalog, bool) {
+		fee := productMonthFee(m.productMonthPlansLocked(scope), period, m.productTrialLocked(app, tenantID), func(revision string) (api.ProductCatalog, bool) {
 			c, ok := d.revisions[app+"/"+revision]
 			return c, ok
 		})

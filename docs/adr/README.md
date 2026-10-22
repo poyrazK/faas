@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Product Control free trials](20261021195901-product-control-free-trials.md)
 - [ADR-20261021210000: Enrolled apps receive no account events](20261021210000-rehearsal-event-fanout-exclusion.md)
 - [Data API engine pool size and server-key limits](20261021180534-data-api-engine-pool-and-server-key-limits.md)
 - [ADR-20261021180000: Rehearsal capture of realtime publishes and signals](20261021180000-rehearsal-realtime-capture.md)

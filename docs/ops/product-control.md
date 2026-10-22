@@ -719,6 +719,49 @@ A plan can charge a monthly fee besides its run prices
 - **Release gate.** Plan fees need the same `product_control_plan_pricing_enabled`
   setting as included starts, because an earlier apid would finalize statements
   without them.
+### Free trials
+
+A plan can offer a free trial
+([ADR-20261021195901](../adr/20261021195901-product-control-free-trials.md)):
+
+```json
+"pro": {"label": "Pro", "monthly_fee_millicents": 2900000, "trial_days": 14, "features": {"export": {"included_starts": 100, "unit_price_millicents": 20000, "monthly_starts": 1000}}}
+```
+
+- **Starting.** A customer's first assignment to a plan with `trial_days` starts
+  their trial, if they never had one in the app, by any assignment path: owner
+  assignment, reviewed change, self-service change or onboarding. It lasts the
+  plan's days from the assignment. A customer gets one trial per app. Changing
+  plans keeps its end, and a customer whose trial has ended starts no other.
+- **Runs.** Starts during the trial cost nothing and are marked `trial` in their
+  admission evidence. They count toward `monthly_starts`, which still limits the
+  trial, but not toward `included_starts`, so the plan's included starts are
+  counted afresh when the trial ends. Usage shows `trial_starts` per feature. A
+  confirmation made during the trial goes stale (409 `product_quote_changed`) once
+  the start price it bound changes.
+- **Fees.** A month's fee covers only its minutes outside the trial, from the
+  customer's first assignment. It is the highest fee among the plans held in those
+  minutes, prorated by their share of the month. A month wholly inside the trial
+  owes nothing. The review's fee names the trial it excludes, and the invoice item
+  reads "…, excluding the free trial from 2026-11-01 to 2026-11-04".
+- **Owner control.** `PUT /v1/apps/{slug}/product/customers/{tenant}/trial` with
+  `{"ends_at": "…"}` moves a running trial's end, no earlier than the next UTC
+  minute and no more than 90 days after it started. `DELETE` ends it at the next
+  minute. A customer without a running trial is refused with 409
+  `product_trial_unavailable`. Changes are audited as
+  `product.customer.trial_changed`.
+
+  ```sh
+  gregale product customers trial --app exports --tenant TENANT_UUID --ends-at 2026-11-30T00:00:00Z
+  gregale product customers trial --app exports --tenant TENANT_UUID --end
+  ```
+- **Where it shows.** Customers and `gregale product quote` show `trial_starts_at`
+  and `trial_ends_at`. The portal says runs are free until the trial ends, and its
+  plan comparison names a plan's trial. The owner's plan review shows the trial a
+  change keeps or starts.
+- **Release gate.** `trial_days` and the trial routes need the
+  `product_control_plan_pricing_enabled` setting, because an earlier apid would
+  charge the trial's runs and fee.
 
 ## Deployment bindings
 

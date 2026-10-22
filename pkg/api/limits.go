@@ -204,6 +204,9 @@ const (
 	// ProductControlMaxMonthlyFeeMillicents bounds a plan's monthly fee
 	// (ADR-20261021154511): 100,000 in the catalog currency's major unit.
 	ProductControlMaxMonthlyFeeMillicents int64 = 10000000000
+	// ProductControlMaxTrialDays bounds a plan's trial and how far an owner
+	// can extend one from its start (ADR-20261021195901).
+	ProductControlMaxTrialDays = 90
 	// ProductControlPlanHistoryMonthMaxPlans bounds the distinct plans one
 	// customer month is read with for its fee.
 	ProductControlPlanHistoryMonthMaxPlans = 1000
