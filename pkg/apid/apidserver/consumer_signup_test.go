@@ -14,9 +14,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing/stripeinvoice"
 )
 
-// signupStripe fakes the Stripe calls of a key check and a consumer
+// consumerSignupStripe fakes the Stripe calls of a key check and a consumer
 // sign-up. complete reports whether the customer finished the checkout.
-type signupStripe struct {
+type consumerSignupStripe struct {
 	mu             sync.Mutex
 	complete       bool
 	customers      []string
@@ -26,7 +26,7 @@ type signupStripe struct {
 	portalReturn   string
 }
 
-func (f *signupStripe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (f *consumerSignupStripe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	_ = r.ParseForm()
@@ -65,7 +65,7 @@ func (f *signupStripe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func TestConsumerSignup(t *testing.T) {
 	withBillingKeys(t)
 	e := apidserver.Setup(t, api.PlanHobby)
-	stripe := &signupStripe{}
+	stripe := &consumerSignupStripe{}
 	srv := httptest.NewServer(stripe)
 	defer srv.Close()
 	client := &stripeinvoice.Client{BaseURL: srv.URL, HTTP: srv.Client()}
