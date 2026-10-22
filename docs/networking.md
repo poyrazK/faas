@@ -1457,8 +1457,9 @@ redis-cli -h "$GREGALE_SERVICE_CACHE_HOST" -p 6379 PING
 ```
 
 The same caller policy as HTTP service calls applies when the connection
-opens: same account, the caller's `depends_on` (under the `declared` policy),
-the target's allowed callers, and preview scoping. A target that grants a
+opens: same account, the caller's `depends_on` (under the `declared` policy,
+and for targets outside the caller's project under `project`), the target's
+allowed callers, and preview scoping. A target that grants a
 caller only method/path scopes (`x-gregale-allow-call-scopes`) refuses that
 caller's raw TCP connections, because those scopes cannot be enforced on raw
 bytes.
