@@ -6,11 +6,12 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func (s *Service) ManageRealtimeAccess(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.AccessPreviewEnabled {
+	if !s.previewOn(r, acct, platformflags.RealtimeAccess, s.AccessPreviewEnabled) {
 		httpkit.NotFound(w, "realtime access preview unavailable")
 		return
 	}
@@ -18,7 +19,7 @@ func (s *Service) ManageRealtimeAccess(w http.ResponseWriter, r *http.Request, a
 	if !ok {
 		return
 	}
-	if ep.AuthMode != "oidc_jwt" && !s.TicketsPreviewEnabled {
+	if ep.AuthMode != "oidc_jwt" && !s.previewOn(r, acct, platformflags.RealtimeTickets, s.TicketsPreviewEnabled) {
 		api.WriteProblem(w, api.ErrRealtimeInvalid("access controls require OIDC authentication"))
 		return
 	}

@@ -66,7 +66,7 @@ func validDataAPIConnectionBudget(b api.ManagedPostgresConnectionBudget, now tim
 	i, d := b.Inventory, b.Demand
 	for _, count := range []int64{i.Bindings, i.DataAPIConsumers, i.AuthConsumers, i.MigrationBindings, i.OtherBindings, i.ResidentInstances, i.ParkedInstances, i.AuxiliaryInstances, i.ActiveTasks, i.RotationPending, i.OverlapConsumers, i.StaleNodeInstances,
 		d.DataAPIResidentEstimate, d.DataAPIWakeEstimate, d.AuthWakeEstimate, d.ControlHeadroom, d.MigrationHeadroom, d.ModeledPeakConnections} {
-		if count < 0 || count > api.DataAPIConnectionBudgetMaxCount*api.DataAPIConnectionBudgetMaxBindings*api.AuthMaxPoolConnections {
+		if count < 0 || count > api.DataAPIConnectionBudgetMaxCount*api.DataAPIConnectionBudgetMaxBindings*max(api.AuthMaxPoolConnections, api.DataAPIMaxPoolConnections) {
 			return false
 		}
 	}
@@ -168,12 +168,15 @@ func validRuntimeConnectionCoverage(b api.ManagedPostgresConnectionBudget, now t
 		return false
 	}
 	for _, count := range []int64{r.ObservedInstances, r.UnobservedInstances, r.ParkedInstances, r.ConfiguredConnections} {
-		if count < 0 || count > api.DataAPIConnectionBudgetMaxCount*api.DataAPIConnectionBudgetMaxBindings*api.AuthMaxPoolConnections {
+		if count < 0 || count > api.DataAPIConnectionBudgetMaxCount*api.DataAPIConnectionBudgetMaxBindings*max(api.AuthMaxPoolConnections, api.DataAPIMaxPoolConnections) {
 			return false
 		}
 	}
-	if r.ConfiguredConnections != r.ObservedInstances*api.DataAPIMaxPoolConnections || r.ConfiguredConnections > b.Demand.DataAPIResidentEstimate ||
-		(r.ObservedInstances+r.UnobservedInstances)*api.DataAPIMaxPoolConnections != b.Demand.DataAPIResidentEstimate ||
+	// Each instance reports 1 to DataAPIMaxPoolConnections engine and refresh
+	// connections (ADR-20261021180534); older servers report the default.
+	// Unobserved instances add 1 to DataAPIMaxPoolConnections each to the estimate.
+	if r.ConfiguredConnections < r.ObservedInstances || r.ConfiguredConnections > r.ObservedInstances*api.DataAPIMaxPoolConnections ||
+		b.Demand.DataAPIResidentEstimate-r.ConfiguredConnections < r.UnobservedInstances || b.Demand.DataAPIResidentEstimate-r.ConfiguredConnections > r.UnobservedInstances*api.DataAPIMaxPoolConnections ||
 		r.ObservedInstances+r.UnobservedInstances > b.Inventory.ResidentInstances || r.ParkedInstances > b.Inventory.ParkedInstances {
 		return false
 	}
