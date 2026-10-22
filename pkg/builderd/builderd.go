@@ -1859,22 +1859,54 @@ func boundedGuestBuildLogTail(raw string) string {
 		daemonSection  = "\n[buildkitd]\n"
 		customerHeader = "[build]\n"
 	)
+	raw = dropBuildkitdRefLockRetries(raw)
 	build, daemon, split := strings.Cut(raw, daemonSection)
 	body := strings.TrimPrefix(build, customerHeader)
 	if split && strings.TrimSpace(body) != "" {
-		daemon = strings.TrimSpace(safetext.TruncateTail(daemon, daemonTail))
+		daemon = strings.TrimSpace(tailWholeLines(daemon, daemonTail))
 		budget := maxBytes - len(customerHeader) - len(daemonSection) - len(daemon)
-		out := customerHeader + strings.TrimSpace(safetext.TruncateTail(body, budget))
+		out := customerHeader + strings.TrimSpace(tailWholeLines(body, budget))
 		if daemon != "" {
 			out += daemonSection + daemon
 		}
 		return strings.TrimSpace(out)
 	}
-	// safetext.TruncateTail advances to the next rune boundary, so a cut
-	// landing inside a multi-byte character drops the partial rune instead of
-	// prefixing the customer's build log with a stray U+FFFD. It also
-	// subsumes the ToValidUTF8 pass this used to do by hand.
-	return strings.TrimSpace(safetext.TruncateTail(raw, maxBytes))
+	return strings.TrimSpace(tailWholeLines(raw, maxBytes))
+}
+
+// dropBuildkitdRefLockRetries removes BuildKit content-store retries from
+// a successful or failed build log. When the image and cache exporters write
+// the same layer, buildkitd logs `level=error msg="(*service).Write failed"
+// ... ref layer-sha256:... locked for ...` and retries; the export still
+// succeeds. Customers read those lines as build errors (Hunt 11 H11-2) and
+// they used most of the 3 KiB tail.
+func dropBuildkitdRefLockRetries(raw string) string {
+	if !strings.Contains(raw, "(*service).Write failed") {
+		return raw
+	}
+	lines := strings.SplitAfter(raw, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if strings.Contains(line, "(*service).Write failed") && strings.Contains(line, " locked for ") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "")
+}
+
+// tailWholeLines is safetext.TruncateTail that also drops the partial first
+// line a byte cut leaves, so the log does not open mid-message. TruncateTail
+// advances to the next rune boundary (no stray U+FFFD) and subsumes the
+// ToValidUTF8 pass this used to do by hand.
+func tailWholeLines(s string, maxBytes int) string {
+	tail := safetext.TruncateTail(s, maxBytes)
+	if len(tail) < len(safetext.Clean(s)) {
+		if i := strings.IndexByte(tail, '\n'); i >= 0 && i < len(tail)-1 {
+			tail = tail[i+1:]
+		}
+	}
+	return tail
 }
 
 // materializeSource preserves the package-local helper used by older tests;
