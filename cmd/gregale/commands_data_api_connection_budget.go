@@ -66,7 +66,7 @@ func validDataAPIConnectionBudget(b api.ManagedPostgresConnectionBudget, now tim
 	i, d := b.Inventory, b.Demand
 	for _, count := range []int64{i.Bindings, i.DataAPIConsumers, i.AuthConsumers, i.MigrationBindings, i.OtherBindings, i.ResidentInstances, i.ParkedInstances, i.AuxiliaryInstances, i.ActiveTasks, i.RotationPending, i.OverlapConsumers, i.StaleNodeInstances,
 		d.DataAPIResidentEstimate, d.DataAPIWakeEstimate, d.AuthWakeEstimate, d.ControlHeadroom, d.MigrationHeadroom, d.ModeledPeakConnections} {
-		if count < 0 || count > api.DataAPIConnectionBudgetMaxCount*api.DataAPIConnectionBudgetMaxBindings*api.AuthMaxPoolConnections {
+		if count < 0 || count > api.DataAPIConnectionBudgetMaxCount*api.DataAPIConnectionBudgetMaxBindings*max(api.AuthMaxPoolConnections, api.DataAPIMaxPoolConnections) {
 			return false
 		}
 	}
@@ -168,7 +168,7 @@ func validRuntimeConnectionCoverage(b api.ManagedPostgresConnectionBudget, now t
 		return false
 	}
 	for _, count := range []int64{r.ObservedInstances, r.UnobservedInstances, r.ParkedInstances, r.ConfiguredConnections} {
-		if count < 0 || count > api.DataAPIConnectionBudgetMaxCount*api.DataAPIConnectionBudgetMaxBindings*api.AuthMaxPoolConnections {
+		if count < 0 || count > api.DataAPIConnectionBudgetMaxCount*api.DataAPIConnectionBudgetMaxBindings*max(api.AuthMaxPoolConnections, api.DataAPIMaxPoolConnections) {
 			return false
 		}
 	}

@@ -93,8 +93,10 @@ export function userConcurrencyPolicy(value, capacity = limits.pool) {
 function userConcurrencyConfig(env, capacity) {
   const value = env.DATA_API_USER_CONCURRENCY
   if (value === undefined) return null
-  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) throw new Error('Invalid DATA_API_USER_CONCURRENCY')
-  return userConcurrencyPolicy(Number(value), capacity)
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value) || Number(value) > limits.poolMax) throw new Error('Invalid DATA_API_USER_CONCURRENCY')
+  // A value above the engine pool acts as the pool (ADR-20261021180534), so
+  // changing the pool alone never stops the runtime from starting.
+  return userConcurrencyPolicy(Math.min(Number(value), capacity), capacity)
 }
 
 export function rateLimitPolicy(value) {
@@ -131,14 +133,14 @@ export function enginePool(config) {
 }
 
 // Server-key requests together hold at most this many admission slots:
-// by default all but one, so users and visitors always keep a slot. A value
-// above the engine pool acts as the pool, so changing the pool alone never
-// stops the runtime from starting.
+// by default all but one, so users and visitors always keep a slot. A limit
+// at or above the engine pool keeps nothing back, so it is null and only
+// admission bounds server keys; changing the pool alone never stops the
+// runtime from starting.
 export function serverKeyConcurrencyConfig(value, engine) {
-  if (value === undefined) return Math.max(1, engine - 1)
-  const limit = Number(value)
-  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value) || limit > limits.poolMax) throw new Error('Invalid DATA_API_SERVER_KEY_CONCURRENCY')
-  return Math.min(limit, engine)
+  const limit = value === undefined ? engine - 1 : Number(value)
+  if (value !== undefined && (typeof value !== 'string' || !/^[1-9]\d*$/.test(value) || limit > limits.poolMax)) throw new Error('Invalid DATA_API_SERVER_KEY_CONCURRENCY')
+  return limit >= 1 && limit < engine ? limit : null
 }
 
 export function databaseURL(value) {

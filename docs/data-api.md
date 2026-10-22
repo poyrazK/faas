@@ -34,8 +34,10 @@ occur. Different database snapshots are independent.
 The planning model counts each Data API runtime at the connections it reports
 (its [engine pool](#engine-pool-size), including the reserved reader when
 coordinated refresh splits the pool). Unreported and planned runtimes count at
-the largest pool reported for the same binding, or two when none is reported,
-and Auth runtimes at four each. It retains nonterminal resident states and parked instances,
+the largest pool validly reported for the same binding, and never below two.
+With no valid report they count at two, or at eight when the app sets
+`DATA_API_POOL`, whose sealed value the platform cannot read. Auth runtimes
+count at four each. It retains nonterminal resident states and parked instances,
 deduplicates app/scope/access consumers, and plans for the greater of observed
 resident-plus-parked instances or effective concurrency plus one overlap slot
 when rotation/deployment overlap is observed. Existing replacements are not
@@ -102,8 +104,9 @@ waiters. Data API bindings connect through the provider's connection pooler,
 so a larger pool adds pooled client sessions rather than PostgreSQL server
 connections. Watch `data-api health`'s connection budget when you raise it.
 Coordinated refresh keeps one connection of the pool for its reader, so it
-needs a pool of at least two. Keep `DATA_API_USER_CONCURRENCY` at or below
-the pool, or the runtime refuses to start.
+needs a pool of at least two. A `DATA_API_USER_CONCURRENCY` above the pool
+acts as the pool. Upgrade the CLI before changing the pool: older CLIs
+report health from a runtime with another pool as inconsistent.
 
 ### Server-key limits
 
@@ -111,11 +114,14 @@ Server keys skip the per-user limits, so they have their own:
 
 - **Concurrency.** Server-key requests together hold at most all but one of
   the pool's slots, so signed-in users and visitors always keep one.
-  `--server-key-concurrency N` changes that from 1 to 8; a value above the
-  pool acts as the pool. A request past the limit answers
+  `--server-key-concurrency N` changes that from 1 to 8; a value at or above
+  the pool removes the separate limit, as does a one-connection pool. A
+  request past the limit waits in order, like admission's queue: up to eight
+  wait, for up to one second. After that it answers
   `429 data_api_concurrency_limited` with `reason: "server_key"` and
-  `Retry-After: 1`. It is refused at once rather than queued, so backends
-  should retry.
+  `Retry-After`, so backends should retry. A request whose client
+  disconnects after its query starts keeps its slot for up to 15 seconds,
+  because the query may still be running.
 - **Rate.** `--server-key-rate-limit 50` (or `50,burst=100`) adds a token
   bucket per key slot, so each of the two keys has its own budget. A request
   past it answers `429 data_api_rate_limited` with `reason: "server_key"`.
@@ -129,9 +135,9 @@ reason, never the key.
 Set `DATA_API_USER_CONCURRENCY=1` in the deployment environment to limit each
 verified user to one concurrent authenticated request per runtime. The setting
 is optional and absent means disabled. It accepts decimal integers from one to
-the serving admission capacity: the [engine pool](#engine-pool-size) (two by
-default), less one with coordinated refresh.
-Invalid settings fail startup. Rebuild from the updated runtime template and
+eight. A value above the serving admission capacity, the
+[engine pool](#engine-pool-size) (two by default) less one with coordinated
+refresh, acts as that capacity. Invalid settings fail startup. Rebuild from the updated runtime template and
 fresh-restart after changing deployment settings.
 
 The policy covers REST, RPC, schema and OpenAPI routes. JWTs with the same verified

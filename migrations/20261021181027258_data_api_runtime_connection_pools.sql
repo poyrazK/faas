@@ -38,6 +38,8 @@ ALTER TABLE data_api_runtime_connection_observations DROP CONSTRAINT IF EXISTS d
 
 ALTER TABLE data_api_runtime_connection_observations DROP CONSTRAINT IF EXISTS data_api_runtime_connection_observations_check;
 
+RESET lock_timeout;
+
 -- +goose Down
 SET lock_timeout = '5s';
 

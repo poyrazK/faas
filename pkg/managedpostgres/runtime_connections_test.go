@@ -165,7 +165,9 @@ func TestRuntimeConnectionReportRejectsUnboundedAndStaleInputs(t *testing.T) {
 	for _, change := range []func(*RuntimeConnectionReport){
 		func(r *RuntimeConnectionReport) { r.EngineConnections = 0 },
 		func(r *RuntimeConnectionReport) { r.EngineConnections = api.DataAPIMaxPoolConnections + 1 },
-		func(r *RuntimeConnectionReport) { r.EngineConnections, r.RefreshConnections = api.DataAPIMaxPoolConnections, 1 },
+		func(r *RuntimeConnectionReport) {
+			r.EngineConnections, r.RefreshConnections = api.DataAPIMaxPoolConnections, 1
+		},
 		func(r *RuntimeConnectionReport) { r.RefreshConnections = 2 },
 		func(r *RuntimeConnectionReport) { r.RuntimeModel = "unqualified" },
 		func(r *RuntimeConnectionReport) { r.ObservedAt = now.Add(time.Second) },

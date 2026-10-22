@@ -20,6 +20,7 @@ type capacityAPI struct {
 	mu      sync.Mutex
 	present []api.AppSecretResponse
 	writes  []string
+	lists   int
 }
 
 func newCapacityAPI(t *testing.T, present ...string) *capacityAPI {
@@ -34,6 +35,7 @@ func newCapacityAPI(t *testing.T, present ...string) *capacityAPI {
 		body, _ := io.ReadAll(r.Body)
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/shop-data/secrets":
+			c.lists++
 			_ = json.NewEncoder(w).Encode(api.AppSecretListResponse{Secrets: c.present})
 		case strings.HasPrefix(r.URL.Path, "/v1/apps/shop-data/secrets/"):
 			key := strings.TrimPrefix(r.URL.Path, "/v1/apps/shop-data/secrets/")
@@ -82,14 +84,19 @@ func TestDataAPIConfigureCapacitySettings(t *testing.T) {
 		{[]string{"--pool", "6"}, "PUT DATA_API_POOL=6|restart"},
 		{[]string{"--pool", "default", "--no-restart"}, "DELETE DATA_API_POOL="},
 		{[]string{"--server-key-concurrency", "3", "--no-restart"}, "PUT DATA_API_SERVER_KEY_CONCURRENCY=3"},
-		{[]string{"--server-key-rate-limit", "50,burst=100", "--no-restart"}, "DELETE DATA_API_SERVER_KEY_RATE_LIMIT_PER_SECOND=|DELETE DATA_API_SERVER_KEY_RATE_LIMIT_BURST=|PUT DATA_API_SERVER_KEY_RATE_LIMIT_PER_SECOND=50|PUT DATA_API_SERVER_KEY_RATE_LIMIT_BURST=100"},
-		{[]string{"--server-key-rate-limit", "20", "--no-restart"}, "DELETE DATA_API_SERVER_KEY_RATE_LIMIT_PER_SECOND=|DELETE DATA_API_SERVER_KEY_RATE_LIMIT_BURST=|PUT DATA_API_SERVER_KEY_RATE_LIMIT_PER_SECOND=20"},
+		{[]string{"--server-key-concurrency", "default", "--no-restart"}, "DELETE DATA_API_SERVER_KEY_CONCURRENCY="},
+		// The new rate is written before anything is removed.
+		{[]string{"--server-key-rate-limit", "50,burst=100", "--no-restart"}, "PUT DATA_API_SERVER_KEY_RATE_LIMIT_PER_SECOND=50|PUT DATA_API_SERVER_KEY_RATE_LIMIT_BURST=100"},
+		{[]string{"--server-key-rate-limit", "20", "--no-restart"}, "PUT DATA_API_SERVER_KEY_RATE_LIMIT_PER_SECOND=20|DELETE DATA_API_SERVER_KEY_RATE_LIMIT_BURST="},
 		{[]string{"--server-key-rate-limit", "off", "--no-restart"}, "DELETE DATA_API_SERVER_KEY_RATE_LIMIT_PER_SECOND=|DELETE DATA_API_SERVER_KEY_RATE_LIMIT_BURST="},
 	} {
 		code, errors, writes := configureCapacity(t, c, tc.args...)
 		if code != 0 || strings.Join(writes, "|") != tc.write {
 			t.Fatalf("%v: exit %d %s, writes %v", tc.args, code, errors, writes)
 		}
+	}
+	if c.lists != 0 {
+		t.Fatalf("settings other than a one-connection pool listed secrets %d times", c.lists)
 	}
 	for _, bad := range [][]string{
 		{"--pool", "0"}, {"--pool", "9"}, {"--pool", "02"}, {"--server-key-concurrency", "9"},
@@ -101,15 +108,21 @@ func TestDataAPIConfigureCapacitySettings(t *testing.T) {
 	}
 }
 
-func TestDataAPIConfigurePoolGuardsTheRefreshReaderAndWarnsAboutUserLimits(t *testing.T) {
+func TestDataAPIConfigurePoolGuardsTheRefreshReader(t *testing.T) {
 	c := newCapacityAPI(t, "DATA_API_COORDINATED_REFRESH", "DATA_API_USER_CONCURRENCY")
 	code, errors, writes := configureCapacity(t, c, "--pool", "1", "--no-restart")
 	if code == 0 || len(writes) != 0 || !strings.Contains(errors, "coordinated refresh") {
 		t.Fatalf("a one-connection pool was accepted beside coordinated refresh: %d %s %v", code, errors, writes)
 	}
-	code, errors, writes = configureCapacity(t, c, "--pool", "4", "--no-restart")
-	if code != 0 || strings.Join(writes, "|") != "PUT DATA_API_POOL=4" || !strings.Contains(errors, "DATA_API_USER_CONCURRENCY") {
-		t.Fatalf("pool with user limits: %d %s %v", code, errors, writes)
+	// The runtime treats a per-user limit above the pool as the pool, so a
+	// pool change beside one needs no warning.
+	code, errors, writes = configureCapacity(t, c, "--pool", "default")
+	if code != 0 || strings.Join(writes, "|") != "DELETE DATA_API_POOL=|restart" || strings.Contains(errors, "DATA_API_USER_CONCURRENCY") {
+		t.Fatalf("pool beside user limits: %d %s %v", code, errors, writes)
+	}
+	plain := newCapacityAPI(t, "DATA_API_USER_CONCURRENCY")
+	if code, errors, writes := configureCapacity(t, plain, "--pool", "1", "--no-restart"); code != 0 || strings.Join(writes, "|") != "PUT DATA_API_POOL=1" || plain.lists != 1 {
+		t.Fatalf("one-connection pool without refresh: %d %s %v (%d lists)", code, errors, writes, plain.lists)
 	}
 }
 
@@ -124,8 +137,14 @@ func TestDataAPIServerKeyRefusalsAreDiagnosed(t *testing.T) {
 	if report.Partial || report.Failures.ConcurrencyLimited != 1 || report.Failures.RateLimited != 1 {
 		t.Fatalf("server-key refusals were misclassified: %+v", report)
 	}
+	cooling := main.NewDataAPIDiagnosticsCollector("", "")
+	cooling.Observe(strings.TrimSuffix(concurrency, "}") + `,"concurrency_limit":{"reason":"server_key","max_concurrent":3,"active":0,"cooling_down":3,"retry_after_seconds":14}}`)
+	cooling.Finish()
+	if report := *cooling.Report(); report.Partial || report.Failures.ConcurrencyLimited != 1 {
+		t.Fatalf("a server-key refusal while slots cool down was misclassified: %+v", report)
+	}
 	inconsistent := main.NewDataAPIDiagnosticsCollector("", "")
-	inconsistent.Observe(strings.TrimSuffix(concurrency, "}") + `,"concurrency_limit":{"reason":"server_key","max_concurrent":3,"active":2,"cooling_down":1,"retry_after_seconds":1}}`)
+	inconsistent.Observe(strings.TrimSuffix(concurrency, "}") + `,"concurrency_limit":{"reason":"server_key","max_concurrent":3,"active":1,"cooling_down":1,"retry_after_seconds":1}}`)
 	inconsistent.Finish()
 	if !(*inconsistent.Report()).Partial {
 		t.Fatal("a server-key refusal with free slots was accepted")

@@ -3,6 +3,8 @@ package managedpostgres
 import (
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestConnectionBudgetRuntimeCoverageSeparatesResidentAndWakeEvidence(t *testing.T) {
@@ -45,7 +47,9 @@ func TestConnectionBudgetRuntimeCoverageSeparatesResidentAndWakeEvidence(t *test
 
 // adr: 20261021180534 — a configured engine pool reaches the budget through
 // observed reports, and unobserved or planned instances of the binding are
-// estimated at the largest pool observed, never below the default.
+// estimated at the largest valid pool observed, never below the default, or
+// at the largest settable pool when DATA_API_POOL is set and nothing valid is
+// observed.
 func TestConnectionBudgetEstimatesFromTheLargestObservedPool(t *testing.T) {
 	s := budgetSnapshot()
 	b := &s.Bindings[0]
@@ -65,7 +69,22 @@ func TestConnectionBudgetEstimatesFromTheLargestObservedPool(t *testing.T) {
 	}
 	b.ObservedConnections, b.ObservedMaxConnections = 12, 6
 	got = describeConnectionBudget(s, s.CheckedAt)
-	if got.Demand.RuntimeObservations.ObservedInstances != 0 || got.Demand.DataAPIResidentEstimate != 2*6 {
-		t.Fatal("more connections than one instance can hold were accepted", got)
+	if got.Demand.RuntimeObservations.ObservedInstances != 0 || got.Demand.DataAPIResidentEstimate != 2*2 || got.Demand.DataAPIWakeEstimate != 3*2 {
+		t.Fatal("rejected reports still set the estimate", got)
+	}
+	b.PoolConfigured = true
+	got = describeConnectionBudget(s, s.CheckedAt)
+	if got.Demand.DataAPIResidentEstimate != 2*api.DataAPIMaxPoolConnections || got.Demand.DataAPIWakeEstimate != 3*api.DataAPIMaxPoolConnections {
+		t.Fatal("a configured pool without valid reports was assumed to be the default", got)
+	}
+	b.ObservedResidents, b.ObservedConnections, b.ObservedMaxConnections = 0, 0, 0
+	got = describeConnectionBudget(s, s.CheckedAt)
+	if got.Demand.DataAPIResidentEstimate != 2*api.DataAPIMaxPoolConnections || got.Demand.DataAPIWakeEstimate != 3*api.DataAPIMaxPoolConnections {
+		t.Fatal("a parked binding with a configured pool was estimated at the default", got)
+	}
+	b.ObservedResidents, b.ObservedConnections, b.ObservedMaxConnections = 1, 6, 6
+	got = describeConnectionBudget(s, s.CheckedAt)
+	if got.Demand.DataAPIResidentEstimate != 6+6 || got.Demand.DataAPIWakeEstimate != 3*6 {
+		t.Fatal("valid reports did not take precedence over the configured-pool bound", got)
 	}
 }

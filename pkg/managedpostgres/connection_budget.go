@@ -76,6 +76,8 @@ type connectionBudgetBinding struct {
 	ObservedMaxConnections int64     `json:"observed_max_connections"`
 	ObservationsCheckedAt  time.Time `json:"observations_checked_at"`
 	ObservationsExpiresAt  time.Time `json:"observations_expires_at"`
+	// Whether the binding's app and scope set DATA_API_POOL; its value is sealed.
+	PoolConfigured bool `json:"pool_configured"`
 }
 
 type ConnectionBudgetStore interface {

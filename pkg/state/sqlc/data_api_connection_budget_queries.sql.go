@@ -183,6 +183,7 @@ WITH owned AS (
   'residents',inventory.residents,'parked',inventory.parked,'auxiliary',inventory.auxiliary,
   'observed_residents',inventory.observed_residents,'observed_connections',inventory.observed_connections,'observed_max_connections',inventory.observed_max_connections,
   'observations_checked_at',inventory.observations_checked_at,'observations_expires_at',inventory.observations_expires_at,
+  'pool_configured',EXISTS(SELECT 1 FROM app_secrets s WHERE s.app_id=b.app_id AND s.scope=b.scope AND s.key='DATA_API_POOL'),
   'stale_nodes',inventory.stale_nodes,'deployments',inventory.deployments,'sidecars',inventory.sidecars,'migrating',inventory.migrating,
   'tasks',(SELECT count(*) FROM app_tasks t WHERE t.app_id=b.app_id AND t.account_id=$3::text::uuid
     AND coalesce(nullif(t.deployment_scope,''),'default')=b.scope AND t.status NOT IN ('succeeded','failed','cancelled','skipped'))) AS item

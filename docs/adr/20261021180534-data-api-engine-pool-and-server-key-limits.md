@@ -40,6 +40,10 @@ admission slot, and signed-in users and visitors queue behind it.
 - **Admission.** HTTP admission, per-user concurrency (ADR-1732) and pool
   observations follow the engine pool. The queue stays eight FIFO waiters
   with a one-second wait.
+- **Limits above the pool.** A `DATA_API_USER_CONCURRENCY` above the engine
+  pool acts as the pool instead of stopping startup, as ADR-1732 had it. The
+  CLI cannot read sealed settings, so a pool change alone must never leave a
+  runtime that refuses to start.
 - **Not a plan quota.** The ceiling is a technical bound, not a plan
   quota: the financial model prices compute, not sessions. Database
   capacity stays the connection budget's subject.
@@ -55,24 +59,34 @@ admission slot, and signed-in users and visitors queue behind it.
     then count as unobserved, as any missing report does.
 - **Budget.** An observed instance contributes its reported connections.
   Unobserved and planned instances of a binding are estimated at the largest
-  per-instance pool recently observed for that binding, or at the default when
-  none is observed. Coverage keeps saying partial or unknown exactly as
-  before, so a larger setting is never assumed to be the default without
-  evidence.
+  per-instance pool in the binding's valid reports, never below the default.
+  Without valid reports, a binding whose app and scope set `DATA_API_POOL`
+  counts at the largest pool, eight: the value is sealed, so the budget can
+  see only that it is set. Otherwise it counts at the default. Coverage keeps
+  saying partial or unknown exactly as before, so a larger setting is never
+  assumed to be the default without evidence.
 
 ### Server-key limits
 
 - **Concurrency.** Server-key requests together may hold at most
-  `DATA_API_SERVER_KEY_CONCURRENCY` admission slots. The default is the
-  engine pool minus one when it is at least two, so signed-in users and
-  visitors always keep a slot; with a pool of one it is that one slot.
-  - Beyond the limit a server-key request answers
-    `429 data_api_concurrency_limited`, `reason: "server_key"`,
-    `Retry-After: 1`, before JWT work or SQL.
+  `DATA_API_SERVER_KEY_CONCURRENCY` admission slots, queued or running. The
+  default is the engine pool minus one, so signed-in users and visitors
+  always keep a slot. A limit at or above the engine pool keeps nothing back,
+  so only admission bounds server keys, as before; that includes the default
+  on a one-connection engine.
+  - Beyond the limit a server-key request waits in FIFO order, within
+    admission's bounds: eight waiters and one second. It then answers
+    `429 data_api_concurrency_limited`, `reason: "server_key"`, with
+    `Retry-After`, before SQL.
+  - A slot is held until both the handler and the response finish. A
+    request whose client leaves after its SQL was dispatched keeps its slot
+    for one query budget, as per-user leases do (ADR-1732), because a
+    disconnect does not stop the SQL. Otherwise a backend could drop
+    connections and retry to take the slot users keep.
   - `data-api configure --server-key-concurrency N|default` sets it, from 1
-    to 8. A value above the engine pool acts as the pool, because the CLI
-    cannot read the current pool and a setting the runtime refuses would stop
-    the API from starting.
+    to 8. A value at or above the engine pool removes the separate limit,
+    because the CLI cannot read the current pool and a setting the runtime
+    refuses would stop the API from starting.
 - **Rate.** `DATA_API_SERVER_KEY_RATE_LIMIT_PER_SECOND` and
   `DATA_API_SERVER_KEY_RATE_LIMIT_BURST` add an optional token bucket per key
   slot, bounded like the per-user policy.
@@ -88,9 +102,14 @@ admission slot, and signed-in users and visitors queue behind it.
 - Owners who raise the pool should watch `data-api connection-budget`. The
   pooler bounds server connections, but a larger pool still raises client
   sessions and the budget's estimates.
-- Backends using server keys can no longer starve users. A backend sending
-  more concurrent requests than the limit gets 429s with `Retry-After: 1` and
-  should retry.
+- Backends using server keys can no longer starve users. A backend sending a
+  few more concurrent requests than the limit sees them wait, as they used to
+  in admission's queue. One that keeps more waiting than the queue holds, or
+  for longer than its wait, gets 429s with `Retry-After` and should retry.
+- CLIs from before this decision check health and diagnostics against the
+  fixed pool. They call health from a runtime with another pool inconsistent,
+  and diagnostics with server-key refusals partial. Teams should upgrade the
+  CLI before changing the pool; the runtime's data is unchanged.
 
 ## Rejected alternatives
 
@@ -102,6 +121,8 @@ admission slot, and signed-in users and visitors queue behind it.
 - **A per-plan pool table.** No plan quota for sessions exists in the
   financial model. The budget, not the plan, decides whether a database can
   take more.
-- **Queueing server-key requests separately.** A second queue would add
-  ordering and fairness rules. A fast 429 with `Retry-After` keeps admission
-  simple and makes backends retry.
+- **Refusing server-key requests past the limit at once.** On the default
+  pool the limit is one, so a backend making two parallel calls, which used
+  to queue briefly in admission, would start failing on upgrade. A FIFO wait
+  bounded exactly like admission's keeps those backends working, and the
+  slot users keep stays free.

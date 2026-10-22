@@ -7,14 +7,14 @@ import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
 import { traceRequest, markRequest, markAccess, markQueryShape, markDatabaseTimings, requestID, runtimeFailure } from './logging.mjs'
 import { parseDatabaseTimings, unknownDatabaseTimings } from './database-timing.mjs'
 import { inspect, fingerprint, enrichOpenAPI } from './types.mjs'
-import { runtimeConfig, servingContracts, limits } from './config.mjs'
+import { runtimeConfig, servingContracts, limits, enginePool } from './config.mjs'
 import { createAdmission } from './admission.mjs'
 import { createHealth } from './health.mjs'
 import { createDeadline } from './deadline.mjs'
 import { checkSQLDeadlineConnection } from './sql-deadline.mjs'
 import { streamResponse } from './response-limit.mjs'
 import { createRateLimiter, admitRateLimit, admitServerKeyRate } from './rate-limit.mjs'
-import { createUserConcurrency, admitUserConcurrency, admitServerKeyConcurrency } from './user-concurrency.mjs'
+import { createUserConcurrency, admitUserConcurrency, createServerKeyConcurrency, admitServerKeyConcurrency } from './user-concurrency.mjs'
 import { qualifiedConnectionEngine, startConnectionReporter } from './connection-observations.mjs'
 import { createPoolObservation } from './pool.mjs'
 import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
@@ -28,10 +28,10 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
   const rateLimiter = createRateLimiter(config.rateLimit)
   // Anonymous clients always have a budget and never use subject tracking slots.
   const anonymousLimiter = config.publicRead || config.publicRpc ? createRateLimiter(config.rateLimit ?? { perSecond: limits.rateLimitDefaultPerSecond, burst: limits.rateLimitDefaultBurst }) : null
-  const userConcurrency = createUserConcurrency(config.userConcurrency, config.engine)
+  const userConcurrency = createUserConcurrency(config.userConcurrency, enginePool(config))
   const serverKeyRate = config.serverKeyRateLimit ? createRateLimiter(config.serverKeyRateLimit) : null
-  const serverKeyRequests = { active: 0 }
-  const admitted = createAdmission(config.engine, res => {
+  const serverKeyConcurrency = config.serverKeyConcurrency ? createServerKeyConcurrency(config.serverKeyConcurrency) : null
+  const admitted = createAdmission(enginePool(config), res => {
     res.setHeader('Retry-After', String(limits.overloadRetrySeconds))
     problem(res, 503, 'data_api_overloaded')
   })
@@ -116,10 +116,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     if (serverKeyPermissions && !(storage ? storageServerKeyAllows(storage, serverKeyPermissions, config) : serverKeyAllows(req, serverKeyPermissions, config, rpc))) return problem(res, 403, 'server_key_permission_denied')
     if (access === 'server' && config.readOnly === true && writes) return problem(res, 403, 'read_only_identity')
     // Server keys skip per-user budgets but have their own (ADR-20261021180534).
-    if (access === 'server') {
-      if (serverKeyRate && !admitServerKeyRate(serverKeyRate, serverKeySlot, res, problem)) return
-      if (!admitServerKeyConcurrency(serverKeyRequests, config.serverKeyConcurrency, res, problem)) return
-    }
+    if (access === 'server' && serverKeyRate && !admitServerKeyRate(serverKeyRate, serverKeySlot, res, problem)) return
     // Owner caps are checked before admission, against month-to-date totals.
     const cap = usage?.capReached(access)
     if (cap) {
@@ -134,12 +131,17 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       if (!Number.isSafeInteger(declared) || declared < 0) return problem(res, 400, 'storage_invalid_length')
       if (declared > config.storage.maxObjectBytes) return problem(res, 413, 'storage_object_too_large', { limit: config.storage.maxObjectBytes, observed: declared })
     } else if (!Number.isSafeInteger(declared) || declared < 0 || declared > limits.bodyBytes) return problem(res, 413, 'request_too_large')
+    // A server-key lease spans admission's queue too, and settles even when
+    // admission never runs the handler.
+    const serverKeyLease = access === 'server' && serverKeyConcurrency ? await admitServerKeyConcurrency(serverKeyConcurrency, req, res, problem) : null
+    if (serverKeyLease === false) return
     return admitted(req, res, async release => {
       const deadline = createDeadline(req, res, () => {
         if (!res.headersSent) res.setHeader('Connection', 'close')
         problem(res, 504, 'request_deadline_exceeded')
       })
-      let userLease
+      // Server-key leases settle exactly as user leases do.
+      let userLease = serverKeyLease ?? undefined
       try {
         let payload, concurrencyKey = null
         if (access === 'user') {
@@ -220,7 +222,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
         proxy(req, res, internal, upstreamPort, config, guarded ? `/__gregale/contract/${guarded[1]}/rest/v1` : '/rest/v1', deadline, userLease, guarded ? null : publicCache)
       } catch { problem(res, 503, 'data_api_unavailable') }
       finally { if (userLease) userLease.settled() }
-    })
+    }).finally(() => serverKeyLease?.settled())
   })
   server.usage = usage
   server.on('close', () => usage?.stop())

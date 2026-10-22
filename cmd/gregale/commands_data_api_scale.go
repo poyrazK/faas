@@ -63,93 +63,109 @@ func parseDataAPIServerKeyRate(value string) (perSecond, burst int, off bool, er
 	return perSecond, burst, false, nil
 }
 
-// validateDataAPIScale checks the flags before anything is written.
-func validateDataAPIScale(s dataAPIScaleSettings) error {
+// dataAPIScale is dataAPIScaleSettings parsed once; a zero count with its
+// setting given means "default" or "off".
+type dataAPIScale struct {
+	dataAPIScaleSettings
+	pool, serverKeyConcurrency int
+	ratePerSecond, rateBurst   int
+}
+
+// parseDataAPIScale checks the flags before anything is written.
+func parseDataAPIScale(s dataAPIScaleSettings) (dataAPIScale, error) {
+	p := dataAPIScale{dataAPIScaleSettings: s}
+	var err error
 	if s.Pool != "" {
-		if _, _, err := dataAPICount("pool", s.Pool, "default", api.DataAPIMaxPoolConnections); err != nil {
-			return err
+		if p.pool, _, err = dataAPICount("pool", s.Pool, "default", api.DataAPIMaxPoolConnections); err != nil {
+			return p, err
 		}
 	}
 	if s.ServerKeyConcurrency != "" {
-		if _, _, err := dataAPICount("server-key-concurrency", s.ServerKeyConcurrency, "default", api.DataAPIMaxPoolConnections); err != nil {
-			return err
+		if p.serverKeyConcurrency, _, err = dataAPICount("server-key-concurrency", s.ServerKeyConcurrency, "default", api.DataAPIMaxPoolConnections); err != nil {
+			return p, err
 		}
 	}
 	if s.ServerKeyRateLimit != "" {
-		if _, _, _, err := parseDataAPIServerKeyRate(s.ServerKeyRateLimit); err != nil {
+		if p.ratePerSecond, p.rateBurst, _, err = parseDataAPIServerKeyRate(s.ServerKeyRateLimit); err != nil {
+			return p, err
+		}
+	}
+	return p, nil
+}
+
+// configureDataAPIScale stores the capacity settings. The runtime treats a
+// per-user or server-key limit above the engine pool as the pool, so no pool
+// change can stop it from starting.
+func configureDataAPIScale(ctx context.Context, client *api.Client, app, scope string, p dataAPIScale, receipt *dataAPIConfigureReceipt) error {
+	set := func(key, value string) error { return client.SetSecretWithScope(ctx, app, key, value, scope) }
+	unset := func(key string) error { return unsetDataAPISetting(ctx, client, app, key, scope) }
+	if p.Pool != "" {
+		if err := configureDataAPIPool(ctx, client, app, scope, p.pool, set, unset); err != nil {
 			return err
 		}
+		receipt.Pool = p.Pool
+		receipt.Changed = append(receipt.Changed, "pool")
+	}
+	if p.ServerKeyConcurrency != "" {
+		var err error
+		if p.serverKeyConcurrency > 0 {
+			err = set(dataAPIServerKeyConcurrencyKey, strconv.Itoa(p.serverKeyConcurrency))
+		} else {
+			err = unset(dataAPIServerKeyConcurrencyKey)
+		}
+		if err != nil {
+			return err
+		}
+		receipt.ServerKeyConcurrency = p.ServerKeyConcurrency
+		receipt.Changed = append(receipt.Changed, "server_key_concurrency")
+	}
+	if p.ServerKeyRateLimit != "" {
+		if err := configureDataAPIServerKeyRate(p.ratePerSecond, p.rateBurst, set, unset); err != nil {
+			return err
+		}
+		receipt.ServerKeyRateLimit = p.ServerKeyRateLimit
+		receipt.Changed = append(receipt.Changed, "server_key_rate_limit")
 	}
 	return nil
 }
 
-// configureDataAPIScale stores the capacity settings. A one-connection pool
-// cannot keep a coordinated-refresh reader, so it is refused before writing.
-func configureDataAPIScale(ctx context.Context, client *api.Client, app, scope string, s dataAPIScaleSettings, receipt *dataAPIConfigureReceipt) ([]string, error) {
-	var warnings []string
-	if s.empty() {
-		return nil, nil
-	}
-	secrets, err := client.ListSecretsWithScope(ctx, app, scope)
-	if err != nil {
-		return nil, err
-	}
-	present := map[string]bool{}
-	for _, secret := range secrets.Secrets {
-		if secret.Scope == "" || secret.Scope == scope {
-			present[secret.Key] = true
-		}
-	}
-	set := func(key, value string) error { return client.SetSecretWithScope(ctx, app, key, value, scope) }
-	unset := func(key string) error { return unsetDataAPISetting(ctx, client, app, key, scope) }
-	if s.Pool != "" {
-		pool, reset, _ := dataAPICount("pool", s.Pool, "default", api.DataAPIMaxPoolConnections)
-		if pool == 1 && present["DATA_API_COORDINATED_REFRESH"] {
-			return nil, errors.New("coordinated refresh keeps one connection for its reader; use --pool 2 or more")
-		}
-		if reset {
-			err = unset(dataAPIPoolKey)
-		} else {
-			err = set(dataAPIPoolKey, s.Pool)
-		}
+// configureDataAPIPool stores the pool, or removes it for 0. A one-connection
+// pool cannot keep a coordinated-refresh reader, so it is refused before
+// writing; the runtime accepts DATA_API_COORDINATED_REFRESH only as 1, so the
+// key's presence means refresh is on.
+func configureDataAPIPool(ctx context.Context, client *api.Client, app, scope string, pool int, set func(string, string) error, unset func(string) error) error {
+	if pool == 1 {
+		secrets, err := client.ListSecretsWithScope(ctx, app, scope)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if present["DATA_API_USER_CONCURRENCY"] {
-			warnings = append(warnings, "DATA_API_USER_CONCURRENCY is set: keep it at or below the engine pool, or the runtime refuses to start")
-		}
-		receipt.Pool = s.Pool
-		receipt.Changed = append(receipt.Changed, "pool")
-	}
-	if s.ServerKeyConcurrency != "" {
-		if s.ServerKeyConcurrency == "default" {
-			err = unset(dataAPIServerKeyConcurrencyKey)
-		} else {
-			err = set(dataAPIServerKeyConcurrencyKey, s.ServerKeyConcurrency)
-		}
-		if err != nil {
-			return nil, err
-		}
-		receipt.ServerKeyConcurrency = s.ServerKeyConcurrency
-		receipt.Changed = append(receipt.Changed, "server_key_concurrency")
-	}
-	if s.ServerKeyRateLimit != "" {
-		perSecond, burst, off, _ := parseDataAPIServerKeyRate(s.ServerKeyRateLimit)
-		for _, key := range []string{dataAPIServerKeyRateKey, dataAPIServerKeyBurstKey} {
-			if err = unset(key); err != nil {
-				return nil, err
+		for _, secret := range secrets.Secrets {
+			if secret.Key == "DATA_API_COORDINATED_REFRESH" && (secret.Scope == "" || secret.Scope == scope) {
+				return errors.New("coordinated refresh keeps one connection for its reader; use --pool 2 or more")
 			}
 		}
-		if !off {
-			if err = set(dataAPIServerKeyRateKey, strconv.Itoa(perSecond)); err == nil && burst > 0 {
-				err = set(dataAPIServerKeyBurstKey, strconv.Itoa(burst))
-			}
-			if err != nil {
-				return nil, err
-			}
-		}
-		receipt.ServerKeyRateLimit = s.ServerKeyRateLimit
-		receipt.Changed = append(receipt.Changed, "server_key_rate_limit")
 	}
-	return warnings, nil
+	if pool == 0 {
+		return unset(dataAPIPoolKey)
+	}
+	return set(dataAPIPoolKey, strconv.Itoa(pool))
+}
+
+// configureDataAPIServerKeyRate writes the new rate before removing anything,
+// so a failed write never leaves server keys without the limit they had. Off
+// removes the rate first: a burst left alone still limits at the default rate.
+func configureDataAPIServerKeyRate(perSecond, burst int, set func(string, string) error, unset func(string) error) error {
+	if perSecond == 0 {
+		if err := unset(dataAPIServerKeyRateKey); err != nil {
+			return err
+		}
+		return unset(dataAPIServerKeyBurstKey)
+	}
+	if err := set(dataAPIServerKeyRateKey, strconv.Itoa(perSecond)); err != nil {
+		return err
+	}
+	if burst > 0 {
+		return set(dataAPIServerKeyBurstKey, strconv.Itoa(burst))
+	}
+	return unset(dataAPIServerKeyBurstKey)
 }

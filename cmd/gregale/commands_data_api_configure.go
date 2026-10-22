@@ -186,7 +186,8 @@ func cmdDataAPIConfigure(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale data-api configure NAME [--public-read SCHEMA.RELATION[,...] | --no-public-read] [--public-rpc SCHEMA.FUNCTION[,...] | --no-public-rpc] [--public-read-cache DURATION|off] [--aggregates on|off] [--usage-reporting on|off] [--monthly-caps requests=N[,anonymous=N]|off] [--pool N|default] [--server-key-concurrency N|default] [--server-key-rate-limit N[,burst=M]|off] [--scope SCOPE] [--no-restart]", "data-api")
 		return 1
 	}
-	if err := validateDataAPIScale(scale); err != nil {
+	capacity, err := parseDataAPIScale(scale)
+	if err != nil {
 		return printErr("Invalid capacity setting", err)
 	}
 	cacheSeconds := 0
@@ -241,12 +242,8 @@ func cmdDataAPIConfigure(args []string) int {
 	if err = configureDataAPIUsage(ctx, client, app, *scope, *usageReporting, *monthlyCaps, &receipt); err != nil {
 		return printErr("Could not configure usage reporting", err)
 	}
-	warnings, err := configureDataAPIScale(ctx, client, app, *scope, scale, &receipt)
-	if err != nil {
+	if err = configureDataAPIScale(ctx, client, app, *scope, capacity, &receipt); err != nil {
 		return printErr("Could not configure capacity", err)
-	}
-	for _, warning := range warnings {
-		PrintWarn(osStderr, "%s", warning)
 	}
 	if !*noRestart {
 		restart, restartErr := client.RestartAppFresh(ctx, app)

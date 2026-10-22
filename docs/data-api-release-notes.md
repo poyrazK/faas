@@ -60,8 +60,9 @@ closes five product gaps, all opt-in:
 - **Engine pool and server-key limits.** `data-api configure --pool N` runs
   up to eight engine connections per instance instead of two, and connection
   budgets follow the reported pools. Server keys keep a slot free for users
-  by default, with optional `--server-key-concurrency` and
-  `--server-key-rate-limit`.
+  by default: their requests past it wait briefly in order, then answer 429.
+  `--server-key-concurrency` and `--server-key-rate-limit` are optional.
+  Upgrade the CLI before changing the pool.
 - **File storage.** `gregale data-api storage enable` binds a bucket and turns
   storage on. Files stream through the Data API, and RLS policies on
   `storage_objects` decide every upload, download and removal, so file lists
