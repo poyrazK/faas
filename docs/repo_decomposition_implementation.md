@@ -41,6 +41,13 @@ $ gregale deploy
 `Y` creates the project, four apps, one cron row, and enqueues four builds.
 That is the whole interaction.
 
+Each new workload's app slug is its name. When the name cannot be a slug,
+because it is reserved (`api`, `billing`, `admin`, …), too short, or held by
+another app, the plan gives the app `<project>-<name>` instead (for example
+`shop-api`; ADR-20261022120205). Existing members keep their slugs. Inside the
+project the workload keeps its name: `depends_on`, the injected
+`GREGALE_SERVICE_<NAME>_URL` and `<name>.svc.gregale` all use `api`.
+
 For Compose workloads, `depends_on` is carried into the plan, validated as a
 cycle-free graph, and used to order app creation/build enqueueing. Each
 workload also receives platform-owned `GREGALE_SERVICE_<NAME>_URL` variables

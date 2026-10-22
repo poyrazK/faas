@@ -19,7 +19,7 @@ export type PlanWorkload = {
    */
   public_url?: string;
   /**
-   * Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans and existing allocations.
+   * Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug, which get the project-prefixed name (ADR-20261022120205).
    */
   app_slug?: string;
   name: string;

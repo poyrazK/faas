@@ -41,7 +41,8 @@ class PlanWorkload:
     wildcard app URLs are disabled."""
     app_slug: str | Unset = UNSET
     """Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original
-    identity. Present for migration scans and existing allocations."""
+    identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug,
+    which get the project-prefixed name (ADR-20261022120205)."""
     platform_tenant_required: bool | Unset = UNSET
     """Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override.
     Omitted preserves existing app policy; new apps default to false."""
