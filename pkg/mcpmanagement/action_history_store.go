@@ -15,6 +15,8 @@ import (
 type actionReceipt struct {
 	DeploymentID        string `json:"deployment_id,omitempty"`
 	RollbackOperationID string `json:"rollback_operation_id,omitempty"`
+	RecoveryRequestID   string `json:"recovery_request_id,omitempty"`
+	HandoffGeneration   int64  `json:"handoff_generation,omitempty"`
 	RegressionVersion   string `json:"regression_version,omitempty"`
 	TriageAction        string `json:"triage_action,omitempty"`
 	TriageState         string `json:"triage_state,omitempty"`
@@ -26,22 +28,23 @@ type actionPhase struct {
 }
 
 type actionRecord struct {
-	PlanID        string       `json:"plan_id"`
-	Action        string       `json:"action"`
-	AccountID     string       `json:"account_id"`
-	APIBase       string       `json:"api_base"`
-	App           string       `json:"app"`
-	AppID         string       `json:"app_id"`
-	Scope         string       `json:"scope"`
-	Project       string       `json:"project,omitempty"`
-	ProjectID     string       `json:"project_id,omitempty"`
-	EnvironmentID string       `json:"environment_id,omitempty"`
-	RecordedAt    time.Time    `json:"recorded_at"`
-	UpdatedAt     time.Time    `json:"updated_at"`
-	PlanExpiresAt time.Time    `json:"plan_expires_at"`
-	RetainedUntil time.Time    `json:"retained_until"`
-	Apply         actionPhase  `json:"apply"`
-	Promotion     *actionPhase `json:"promotion,omitempty"`
+	PlanID        string          `json:"plan_id"`
+	Action        string          `json:"action"`
+	AccountID     string          `json:"account_id"`
+	APIBase       string          `json:"api_base"`
+	App           string          `json:"app"`
+	AppID         string          `json:"app_id"`
+	Scope         string          `json:"scope"`
+	Project       string          `json:"project,omitempty"`
+	ProjectID     string          `json:"project_id,omitempty"`
+	EnvironmentID string          `json:"environment_id,omitempty"`
+	RecordedAt    time.Time       `json:"recorded_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+	PlanExpiresAt time.Time       `json:"plan_expires_at"`
+	RetainedUntil time.Time       `json:"retained_until"`
+	Apply         actionPhase     `json:"apply"`
+	Promotion     *actionPhase    `json:"promotion,omitempty"`
+	Workload      *actionWorkload `json:"workload,omitempty"`
 }
 
 type actionHistorySnapshot struct {
@@ -55,25 +58,28 @@ func validActionID(id string) bool {
 }
 
 func supportedHistoryAction(action string) bool {
-	return action == "deploy" || action == "rollback" || action == "regression_action"
+	return action == "deploy" || action == "rollback" || action == "regression_action" || workloadHistoryAction(action)
 }
 
 func (m *management) restoreActionHistory() error {
-	var saved actionHistorySnapshot
-	if err := m.opts.planStore.read("actions/"+m.opts.planNamespace, &saved); err != nil {
-		return err
-	}
-	if saved.Version != 1 && (saved.Version != 0 || len(saved.Items) != 0) || len(saved.Items) > api.ManagementMCPActionHistoryMax {
-		return errors.New("invalid management action history format or capacity")
-	}
-	for id, entry := range saved.Items {
-		if id != entry.PlanID || validateActionRecord(entry) != nil || entry.APIBase != m.opts.APIBase || m.opts.accountID != "" && entry.AccountID != m.opts.accountID {
-			return errors.New("invalid management action history binding")
+	m.actions = make(map[string]actionRecord)
+	for _, namespace := range []string{"actions/", workloadActionsNamespace} {
+		var saved actionHistorySnapshot
+		if err := m.opts.planStore.read(namespace+m.opts.planNamespace, &saved); err != nil {
+			return err
 		}
-	}
-	m.actions = saved.Items
-	if m.actions == nil {
-		m.actions = make(map[string]actionRecord)
+		if saved.Version != 1 && (saved.Version != 0 || len(saved.Items) != 0) || len(saved.Items) > api.ManagementMCPActionHistoryMax {
+			return errors.New("invalid management action history format or capacity")
+		}
+		for id, entry := range saved.Items {
+			if id != entry.PlanID || validateActionRecord(entry) != nil || workloadHistoryAction(entry.Action) != (namespace == workloadActionsNamespace) || entry.APIBase != m.opts.APIBase || m.opts.accountID != "" && entry.AccountID != m.opts.accountID {
+				return errors.New("invalid management action history binding")
+			}
+			if _, duplicate := m.actions[id]; duplicate {
+				return errors.New("duplicate management action history identity")
+			}
+			m.actions[id] = entry
+		}
 	}
 	before := make(map[string]actionRecord, len(m.actions))
 	for id, entry := range m.actions {
@@ -138,6 +144,15 @@ func (m *management) syncActionHistory(now time.Time) error {
 
 func recordAction(p *releasePlan) actionRecord {
 	entry := actionRecord{PlanID: p.ID, Action: p.Action, AccountID: p.AccountID, APIBase: p.APIBase, App: p.App, AppID: p.AppID, Scope: p.Scope, Project: p.Project, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID, PlanExpiresAt: p.ExpiresAt, RetainedUntil: p.ExpiresAt.Add(api.ManagementMCPActionHistoryRetention), Apply: deploymentActionPhase(p, p.attempted, p.result)}
+	if workloadHistoryAction(p.Action) {
+		entry.Workload = &actionWorkload{Mode: p.RolloutMode}
+		if p.Action == "service_abort" {
+			entry.Workload.DeploymentID, entry.Workload.PredecessorDeploymentID = p.TargetDeploymentID, p.PredecessorDeploymentID
+		} else {
+			entry.Workload.RetainedDeploymentID = p.TargetDeploymentID
+		}
+		entry.Apply = workloadActionPhase(p)
+	}
 	if p.Action == "deploy" {
 		phase := deploymentActionPhase(p, p.promotionAttempted, p.promoted)
 		entry.Promotion = &phase
@@ -198,7 +213,7 @@ func validateActionRecord(entry actionRecord) error {
 			return errors.New("invalid action phase")
 		}
 	}
-	return nil
+	return validateWorkloadAction(entry)
 }
 
 func actionNewer(a, b actionRecord) bool {

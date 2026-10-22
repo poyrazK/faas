@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261022183756: Management MCP workload rollout and service abort history](20261022183756-management-mcp-workload-action-history.md)
 - [ADR-20261022161757: Connection-local management MCP action history and recovery](20261022161757-management-mcp-action-history.md)
 - [ADR-20261022140000: Break-glass controls for a compromised secret store](20261022140000-break-glass-controls.md)
 - [ADR-20261022111812: Seal domains: a sealed value opens only where it is read](20261022111812-seal-domains-per-reader.md)

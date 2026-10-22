@@ -25,6 +25,7 @@ type releaseFixture struct {
 	latest      string
 	deployments map[string]api.DeploymentResponse
 	keys        map[string]api.DeploymentResponse
+	recoveries  map[string]api.RolloutTransitionResponse
 	writes      int
 	ambiguous   bool
 	waitReads   int
@@ -118,6 +119,10 @@ func (f *releaseFixture) mutate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing idempotency key", 400)
 		return
 	}
+	if old, ok := f.recoveries[key]; ok {
+		_ = json.NewEncoder(w).Encode(old)
+		return
+	}
 	if old, ok := f.keys[key]; ok {
 		_ = json.NewEncoder(w).Encode(old)
 		return
@@ -173,10 +178,20 @@ func (f *releaseFixture) mutate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		d = f.deployments[body.DeploymentID]
-		d.ServiceRolloutHandoff = &api.ServiceRolloutHandoffResponse{Action: "abort", Phase: "pending", PredecessorDeploymentID: body.ExpectedPredecessorDeploymentID}
+		d.ServiceRolloutHandoff = &api.ServiceRolloutHandoffResponse{Action: "abort", Phase: "pending", Generation: 3, PredecessorDeploymentID: body.ExpectedPredecessorDeploymentID}
 		f.deployments[d.ID] = d
 		f.writes++
-		_ = json.NewEncoder(w).Encode(api.RolloutTransitionResponse{Deployment: d, ServiceRecovery: &api.ServiceRolloutRecoveryReceipt{DeploymentID: d.ID, PredecessorDeploymentID: body.ExpectedPredecessorDeploymentID, RequestID: "recovery-one", Status: "accepted"}})
+		result := api.RolloutTransitionResponse{Deployment: d, ServiceRecovery: &api.ServiceRolloutRecoveryReceipt{DeploymentID: d.ID, PredecessorDeploymentID: body.ExpectedPredecessorDeploymentID, RequestID: "recovery-one", Status: "accepted"}}
+		if f.recoveries == nil {
+			f.recoveries = make(map[string]api.RolloutTransitionResponse)
+		}
+		f.recoveries[key] = result
+		if f.ambiguous {
+			f.ambiguous = false
+			api.WriteProblem(w, api.NewProblem(503, "capacity", "Temporary failure", "Retry the same plan"))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(result)
 		return
 	case "POST /v1/apps/alpha/rollback":
 		var body api.RollbackRequest

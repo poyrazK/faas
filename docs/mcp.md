@@ -49,7 +49,7 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 |---|---|
 | `gregale_preflight` | Read-only app/environment consent, release-review/health/operations compatibility and durable-state checks. Unknown capabilities require native review/admission. |
 | `gregale_context` | Selected profile, API endpoint, account ID, plan, status, and platform capabilities. |
-| `gregale_list_actions` | Bounded connection-local deploy, rollback and regression-triage history for one exact app/environment, with keyset continuation. |
+| `gregale_list_actions` | Bounded connection-local deploy, rollback, service/worker rollout, service abort and regression-triage history for one exact app/environment, with keyset continuation. |
 | `gregale_get_action` | One recorded plan's attempts, redacted native receipts and recovery guidance; historical acceptance does not prove deployment completion. |
 | `gregale_list_apps` | Apps sorted by slug; `limit` defaults to 20, maximum 100; continue with `next_offset`. |
 | `gregale_get_app` | One app's status, URLs, deployment availability, and resource settings. |
@@ -1553,9 +1553,10 @@ or platform writes, and do not plan/apply configuration changes.
 ## Recover reviewed actions
 
 Use `gregale_list_actions` with `app` and optional `project`/`environment` to find
-this connection's recorded image/source deploy, rollback and regression-triage
-plans. Use `gregale_get_action` with the same selector and an exact `plan_id`
-to inspect its apply phase and, for request deploys, separate promotion phase.
+this connection's recorded image/source deploy, rollback, service/worker rollout,
+service abort and regression-triage plans. Use `gregale_get_action` with the same
+selector and an exact `plan_id` to inspect its apply phase and, for request deploys,
+separate promotion phase.
 These tools are read-only and remain available when writes are disabled.
 The catalog contains 51 read/planning tools, or 60 with writes enabled.
 
@@ -1580,6 +1581,24 @@ Acceptance and promotion receipts do not establish completion or healthy traffic
 triage does not prove service recovery. `native_completion` is explicitly
 `not_observed` for this historical view. Inspection grants no write permission.
 
+Workload records include `workload.mode` (`service` or `worker`). Retained rollouts
+can identify `workload.retained_deployment_id`; service aborts pin
+`workload.deployment_id` and `workload.predecessor_deployment_id`. An accepted
+receipt identifies the exact created deployment or abort candidate, with a
+`recovery_request_id` for reverse handoff. A native `handoff_generation` is present
+only when supplied; it is not a deployment revision or worker generation counter.
+Source commits, images, rollout policies and gateway/error details are excluded.
+
+When a deployment ID is known, `observation` supplies `tool: gregale_get_rollout`
+and exact app/deployment/project/environment `arguments`. Invoke it explicitly
+to observe native barriers or worker residency. History performs no follow-up
+reads and continues to report `native_completion: not_observed`. A lost rollout
+response has no fabricated deployment target. A lost abort response can still
+point to its reviewed candidate. Retry through `gregale_apply_workload_rollout`
+or `gregale_apply_service_abort` with the original unexpired plan and current
+consent. Accepted service aborts may still await routing acknowledgements and
+draining; accepted worker rollouts do not prove queue acknowledgement or delivery.
+
 History retains at most 256 records per connection, through 24 hours after each
 plan's original expiry. Live supported plans take priority over archived records.
 Paging accepts `limit` 1–50 (default 20) and the returned `next_before` cursor,
@@ -1599,14 +1618,17 @@ Reads recheck current account, app and named-environment identities before
 releasing data. Regression records additionally require current diagnostic
 consent; lists omit them without it. Reasons, routes, source/configuration
 payloads, secrets, native error prose, approval tokens and replay keys are excluded.
-This is bounded connection history, not a complete account audit log. Workload
-rollouts, environment promotions and route-budget actions are outside this first
-profile. Existing unexpired supported plans are imported on upgrade; previously
+This is bounded connection history, not a complete account audit log. Environment
+promotions/rollbacks and route-budget actions remain outside this profile.
+Existing unexpired supported plans are imported on upgrade; previously
 expired/discarded plans cannot be recovered. Older bridges ignore the additive
-history namespace, so their later actions may be absent after their plan expires.
+history namespaces, so their later actions may be absent after their plan expires.
+Workload records use a companion namespace to preserve N-1 readers of the original
+history format; both namespaces share the 256-record bound and atomic commit.
 Phase states describe the last recorded bridge snapshot; inspect native state
 before replanning an expired action even if its old phase was `not_attempted`. See
-[ADR-20261022161757](adr/20261022161757-management-mcp-action-history.md).
+[ADR-20261022161757](adr/20261022161757-management-mcp-action-history.md) and
+[ADR-20261022183756](adr/20261022183756-management-mcp-workload-action-history.md).
 
 ## Enable reviewed release actions
 

@@ -1,4 +1,5 @@
 // adr: 20261022161757
+// adr: 20261022183756
 package mcpmanagement
 
 import (
@@ -348,6 +349,19 @@ func TestActionHistoryRemoteRefreshGrantIsolationAndRevocation(t *testing.T) {
 	_ = response.Body.Close()
 	cs, ctx := f.connect(tokens, "2026-07-28")
 	id := planID(t, callTool(t, ctx, cs, "gregale_plan_deploy", planDeployArgs{App: "alpha", Image: testImage, Reason: "PRIVATE_REFRESH_REASON"}, false))
+	f.mu.Lock()
+	f.apiHook = func(w http.ResponseWriter, r *http.Request, account string) bool {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/apps/alpha" {
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: account + "-app", Slug: "alpha", Type: "app", Manifest: api.AppManifest{ExecutionMode: api.ExecutionModeWorker}})
+			return true
+		}
+		return false
+	}
+	f.mu.Unlock()
+	workloadID := planID(t, callTool(t, ctx, cs, "gregale_plan_workload_rollout", workloadPlanArgs(), false))
+	f.mu.Lock()
+	f.apiHook = nil
+	f.mu.Unlock()
 	_ = cs.Close()
 	refresh := url.Values{"grant_type": {"refresh_token"}, "client_id": {f.clientID}, "refresh_token": {tokens.RefreshToken}}.Encode()
 	var rotated tokenResponse
@@ -360,6 +374,10 @@ func TestActionHistoryRemoteRefreshGrantIsolationAndRevocation(t *testing.T) {
 	if json.Unmarshal(result["action"], &entry) != nil || entry.PlanID != id || !entry.PlanAvailable {
 		t.Fatal("OAuth refresh lost the original action history")
 	}
+	result = callTool(t, ctx, cs, "gregale_get_action", getActionArgs{App: "alpha", PlanID: workloadID}, false)
+	if json.Unmarshal(result["action"], &entry) != nil || entry.PlanID != workloadID || entry.Workload == nil || entry.Workload.Mode != api.ExecutionModeWorker {
+		t.Fatal("OAuth refresh lost companion workload history")
+	}
 	_ = cs.Close()
 	var independent tokenResponse
 	response = f.exchange(f.authorizeAccount("fp_test_alice_remote_key", true), testVerifier, f.resource, f.clientID)
@@ -371,6 +389,7 @@ func TestActionHistoryRemoteRefreshGrantIsolationAndRevocation(t *testing.T) {
 		t.Fatal("a new grant for the same client/account inherited action history")
 	}
 	callTool(t, otherCtx, other, "gregale_get_action", getActionArgs{App: "alpha", PlanID: id}, true)
+	callTool(t, otherCtx, other, "gregale_get_action", getActionArgs{App: "alpha", PlanID: workloadID}, true)
 	response = f.request("POST", "/oauth/token", strings.NewReader(refresh), "application/x-www-form-urlencoded", "")
 	_ = response.Body.Close()
 	denied := f.request("POST", "/mcp", strings.NewReader(`{}`), "application/json", rotated.AccessToken)
@@ -380,7 +399,7 @@ func TestActionHistoryRemoteRefreshGrantIsolationAndRevocation(t *testing.T) {
 	}
 	store.mu.Lock()
 	for namespace := range store.records {
-		if strings.HasPrefix(namespace, "actions/") {
+		if strings.HasPrefix(namespace, "actions/") || strings.HasPrefix(namespace, workloadActionsNamespace) {
 			store.mu.Unlock()
 			t.Fatal("revocation retained the original grant's stored action history")
 		}

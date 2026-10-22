@@ -32,9 +32,10 @@ type getActionArgs struct {
 
 type actionView struct {
 	actionRecord
-	PlanAvailable bool   `json:"plan_available"`
-	NextStep      string `json:"next_step"`
-	RetryTool     string `json:"retry_tool,omitempty"`
+	PlanAvailable bool               `json:"plan_available"`
+	NextStep      string             `json:"next_step"`
+	RetryTool     string             `json:"retry_tool,omitempty"`
+	Observation   *actionObservation `json:"observation,omitempty"`
 }
 
 type actionHistoryMetadata struct {
@@ -66,7 +67,7 @@ type actionCursor struct {
 }
 
 func registerActionHistory(s *mcp.Server, m *management) {
-	register(s, m, "gregale_list_actions", "List this connection's bounded, redacted deploy, rollback and regression-triage action history for one exact app/environment. Historical receipts do not prove deployment completion or grant retry authority. Regression records require current diagnostic consent.", m.listActions)
+	register(s, m, "gregale_list_actions", "List this connection's bounded, redacted deploy, rollback, service/worker rollout, service abort and regression-triage action history for one exact app/environment. Historical receipts do not prove deployment completion or grant retry authority. Regression records require current diagnostic consent.", m.listActions)
 	register(s, m, "gregale_get_action", "Inspect one connection-local plan's recorded attempts and receipts, including after plan expiry. Lost responses remain outcome_unknown until recovered through the existing guarded apply tool. Never substitute a new plan for an ambiguous expired attempt.", m.getAction)
 }
 
@@ -110,7 +111,7 @@ func (m *management) guardActionHistory(value any, args appArgs, target actionRe
 }
 
 func (m *management) actionHistoryMetadata(now time.Time) actionHistoryMetadata {
-	return actionHistoryMetadata{ObservedAt: now, Durable: m.opts.planStore != nil, Coverage: "bounded_connection_history_not_account_audit", SupportedActions: []string{"deploy", "rollback", "regression_action"}, RetentionSeconds: int64(api.ManagementMCPActionHistoryRetention / time.Second), Capacity: api.ManagementMCPActionHistoryMax, NativeCompletion: "not_observed"}
+	return actionHistoryMetadata{ObservedAt: now, Durable: m.opts.planStore != nil, Coverage: "bounded_connection_history_not_account_audit", SupportedActions: []string{"deploy", "rollback", "regression_action", "workload_rollout", "service_abort"}, RetentionSeconds: int64(api.ManagementMCPActionHistoryRetention / time.Second), Capacity: api.ManagementMCPActionHistoryMax, NativeCompletion: "not_observed"}
 }
 
 func (m *management) listActions(ctx context.Context, args listActionsArgs) (any, error) {
@@ -187,7 +188,11 @@ func (m *management) getAction(ctx context.Context, args getActionArgs) (any, er
 // original plan review, native guards, plan expiry, or completion observation.
 func (m *management) actionView(entry actionRecord, now time.Time) actionView {
 	view := actionView{actionRecord: entry, PlanAvailable: m.actionPlanAvailable(entry, now), NextStep: "inspect_recorded_receipt"}
-	phase, tool := entry.Apply, map[string]string{"deploy": "gregale_apply_deploy", "rollback": "gregale_apply_rollback", "regression_action": "gregale_apply_regression_action"}[entry.Action]
+	phase, tool := entry.Apply, map[string]string{"deploy": "gregale_apply_deploy", "rollback": "gregale_apply_rollback", "regression_action": "gregale_apply_regression_action", "workload_rollout": "gregale_apply_workload_rollout", "service_abort": "gregale_apply_service_abort"}[entry.Action]
+	view.Observation = workloadActionObservation(entry)
+	if phase.State == "accepted" && view.Observation != nil {
+		view.NextStep = "observe_native_rollout"
+	}
 	if entry.Promotion != nil && entry.Promotion.State == "outcome_unknown" {
 		phase, tool = *entry.Promotion, "gregale_promote_deployment"
 	}

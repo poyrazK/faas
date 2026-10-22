@@ -7,6 +7,23 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP workload action history — 2026-10-22 (branch, not released)
+
+Action listing/inspection now includes image/source service and worker rollouts
+and service aborts, with redacted exact generation/recovery references and explicit
+scoped rollout observation arguments. Accepted intent remains separate from
+native completion and queue processing. A companion namespace preserves N-1
+history readers while sharing atomic replay/history commits and the combined
+256-record bound. Catalog remains 51 read/planning tools, 60 with writes enabled.
+Full MCP race tests pass, including receipts, encrypted restart, lost-response
+recovery, expiry, named consent/identity changes, OAuth isolation and
+compatibility/capacity. Pinned real Codex 0.159.0-alpha.3 verifies the same worker
+plan across restart/refresh/revocation in all three read-only client profiles,
+with zero model requests and deployment writes. Scoped lint, stdio CLI contracts
+and the spec/documentation gate pass without generated drift.
+See [ADR-20261022183756](adr/20261022183756-management-mcp-workload-action-history.md).
+Native/provider deployment qualification remains separate.
+
 ## Management MCP action history — 2026-10-22 (branch, not released)
 
 The bridge adds read-only, connection-scoped action listing and inspection for

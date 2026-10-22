@@ -1,5 +1,6 @@
 // adr: 1618
 // adr: 20261022161757
+// adr: 20261022183756
 package mcpmanagement
 
 import (
@@ -53,6 +54,7 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	var profileReads, historyPageReads, wakePageReads, wakeTimelineReads, wakeHistoryReads, errorGroupsReads, errorRequestsReads, timeseriesReads, analyticsReads, requestReads, performanceReads, criticalPathReads, comparisonReads, regressionReads, residencyReads, traceReads, nativeWrites atomic.Int32
 	var replaced atomic.Bool
 	var performanceEmpty, tracePartial atomic.Bool
+	var historyWorker atomic.Bool
 	var residencyEmpty atomic.Bool
 	if requestMode != "" {
 		f.mu.Lock()
@@ -347,6 +349,16 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 		}
 		f.mu.Unlock()
 	}
+	f.mu.Lock()
+	previousHook := f.apiHook
+	f.apiHook = func(w http.ResponseWriter, req *http.Request, account string) bool {
+		if historyWorker.Load() && req.Method == http.MethodGet && req.URL.Path == "/v1/apps/alpha" {
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: account + "-app", Slug: "alpha", Type: "app", Manifest: api.AppManifest{ExecutionMode: api.ExecutionModeWorker}})
+			return true
+		}
+		return previousHook != nil && previousHook(w, req, account)
+	}
+	f.mu.Unlock()
 	certificate, ca := codexFixtureCertificate(t)
 	f.server.TLS.Certificates = []tls.Certificate{certificate}
 	f.client.Transport.(*http.Transport).TLSClientConfig.RootCAs.AppendCertsFromPEM(ca)
@@ -401,6 +413,10 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 			return
 		}
 		switch req.URL.Path {
+		case "/history-worker":
+			historyWorker.Store(true)
+		case "/history-request":
+			historyWorker.Store(false)
 		case "/approve":
 			var input struct {
 				AuthorizationURL string `json:"authorization_url"`
@@ -542,7 +558,7 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	if json.Unmarshal(output, &report) != nil || report["revocation"] != "passed" || report["refresh"] != "passed" || report["restart"] != "passed" {
 		t.Fatal("incomplete real-client evidence")
 	}
-	if report["action_history"] != "passed" {
+	if report["action_history"] != "passed" || report["workload_action_history"] != "passed" {
 		t.Fatal("incomplete real-client action history restart/refresh evidence")
 	}
 	if requestMode != "" && (report["request_diagnostics"] != requestMode || report["request_discovery"] != "passed" || nativeWrites.Load() != 0 || requestReads.Load() != map[string]int32{"denied": 0, "approved": 32}[requestMode]) {

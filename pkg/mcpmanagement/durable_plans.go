@@ -90,8 +90,17 @@ func (m *management) persistPlans() error {
 		}
 		records[id] = storedPlan{RegressionResult: p.regressionResult, BudgetResult: p.budgetResult, Plan: *p, AppHash: p.appHash, LatestID: p.latestID, Attempted: p.attempted, Result: p.result, Promoted: p.promoted, PromotionAttempted: p.promotionAttempted, Review: p.review}
 	}
+	legacy, workloads := make(map[string]actionRecord), make(map[string]actionRecord)
+	for id, entry := range m.actions {
+		if workloadHistoryAction(entry.Action) {
+			workloads[id] = entry
+		} else {
+			legacy[id] = entry
+		}
+	}
 	return m.opts.planStore.updateMany(map[string]any{
-		"plans/" + m.opts.planNamespace:   records,
-		"actions/" + m.opts.planNamespace: actionHistorySnapshot{Version: 1, Items: m.actions},
+		"plans/" + m.opts.planNamespace:                 records,
+		"actions/" + m.opts.planNamespace:               actionHistorySnapshot{Version: 1, Items: legacy},
+		workloadActionsNamespace + m.opts.planNamespace: actionHistorySnapshot{Version: 1, Items: workloads},
 	})
 }

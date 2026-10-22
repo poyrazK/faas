@@ -174,10 +174,12 @@ func (s *StateStore) updateMany(values map[string]any) error {
 	}
 	if snapshot, ok := values["oauth"].(oauthSnapshot); ok {
 		for key := range s.records {
-			if strings.HasPrefix(key, "plans/") || strings.HasPrefix(key, "environment-plans/") || strings.HasPrefix(key, "actions/") {
-				grantID := strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(key, "environment-plans/"), "plans/"), "actions/")
-				if _, active := snapshot.Grants[grantID]; !active {
-					delete(s.records, key)
+			for _, prefix := range []string{"plans/", "environment-plans/", "actions/", workloadActionsNamespace} {
+				if grantID, matched := strings.CutPrefix(key, prefix); matched {
+					if _, active := snapshot.Grants[grantID]; !active {
+						delete(s.records, key)
+					}
+					break
 				}
 			}
 		}
