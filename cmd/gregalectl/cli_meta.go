@@ -264,6 +264,27 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchBreakGlass,
+		DocSlug: "break-glass",
+		Short:   "Incident containment: pause releases platform-wide, revoke every control-plane credential (ADR 20261022140000)",
+		Subcommands: []cliSub{
+			{Name: "pause", Short: "Refuse new deployments and hold queued builds platform-wide", Flags: []cliFlag{{Name: "reason", Short: "why (recorded)"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "resume", Short: "Lift the release pause", Flags: []cliFlag{{Name: "reason", Short: "why (recorded)"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "status", Short: "Show the release pause and live credential counts", Flags: []cliFlag{{Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "revoke-credentials", Short: "Revoke every live session, API key and access token (dry run without --yes)", Flags: []cliFlag{{Name: "kinds", Short: "credential kinds to revoke"}, {Name: "reason", Short: "why (recorded)"}, {Name: "yes", Short: "revoke instead of counting"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+		},
+	},
+	{
+		Name:    dispatchSealDomain,
+		DocSlug: "seal-domain",
+		Short:   "Provision, verify, and migrate per-reader seal domains (ADR 20261022111812)",
+		Subcommands: []cliSub{
+			{Name: "init", Short: "Create <domain>.age and <domain>.age.pub", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "force", Short: "coordinated identity replacement"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "verify", Short: "Prove this node's domain identity opens the domain probe", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "publish", Short: "write the probe when the domain has none"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "metrics-file", Short: "node_exporter textfile output"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "migrate", Short: "Re-seal a domain's stored envelopes", Flags: []cliFlag{{Name: "domain", Short: "seal domain (outbound or source)"}, {Name: "dir", Short: "domain identity directory"}, {Name: "fleet-key", Short: "fleet.age identity"}, {Name: "host-key", Short: "legacy host.age identity"}, {Name: "readers-verified", Short: "every reader holds the domain identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+		},
+	},
+	{
 		// PR-911 image rollout (PR #929 mega; ADR-110 + ADR-111). Operator
 		// surfaces draining + activation of compute_nodes rows so the
 		// deployctl upgrade-node orchestrator can reason about which box

@@ -21179,6 +21179,13 @@ BEGIN
           WHERE t.id=d.trigger_id AND t.app_id=d.app_id AND t.account_id=d.account_id AND t.kind='queue' AND t.source='queue')))))) THEN
       RETURN true;
     END IF;
+    -- Rehearsal evidence follows its run and is erased with the identity; only
+    -- a fixture that still holds a database or bucket blocks until its cleanup
+    -- finishes (ADR-20261022155043).
+    IF EXISTS (SELECT 1 FROM scenario_postgres_fixtures WHERE account_id=identity_id AND status NOT IN ('complete','deleted'))
+       OR EXISTS (SELECT 1 FROM scenario_object_fixtures WHERE account_id=identity_id AND status NOT IN ('complete','deleted')) THEN
+        RETURN true;
+    END IF;
     FOR resource_table IN SELECT unnest(ARRAY[
         'alert_deliveries',
         'alert_rules',
@@ -21316,16 +21323,6 @@ BEGIN
         'managed_postgres_connection_capacity',
         'data_api_runtime_connection_observations',
         'data_repair_rehearsals',
-        'scenario_cold_preparations',
-        'scenario_managed_work',
-        'scenario_object_fixtures',
-        'scenario_postgres_faults',
-        'scenario_postgres_fixtures',
-        'scenario_suspend_resumes',
-        'scenario_test_action_policies',
-        'scenario_test_chaos_matches',
-        'scenario_test_members',
-        'scenario_worker_faults',
         'schedule_occurrences',
         'tenant_surfaces',
         'workflow_automation_publish_receipts',
@@ -23763,36 +23760,38 @@ END $$;
 --
 
 CREATE FUNCTION public.refresh_event_routing_backlog(p_outbox_id bigint, p_subscription_id text DEFAULT NULL::text) RETURNS void
-    LANGUAGE sql
+    LANGUAGE plpgsql
     AS $$
-WITH candidates AS MATERIALIZED (
-    SELECT * FROM event_routing_backlog_source
-    WHERE outbox_id=p_outbox_id AND (p_subscription_id IS NULL OR subscription_id=p_subscription_id)
-), inserted AS (
-    INSERT INTO event_routing_backlog
-        (outbox_id,subscription_id,account_id,app_id,accepted_at,routing_mode,routing_state,capacity_scope,
-         attempts,capacity_deferrals,next_attempt_at,lease_until,consumer_kind,origin,workflow_name)
-    SELECT outbox_id,subscription_id,account_id,app_id,accepted_at,routing_mode,routing_state,capacity_scope,
-           attempts,capacity_deferrals,next_attempt_at,lease_until,consumer_kind,origin,workflow_name
-    FROM candidates ORDER BY subscription_id
-    ON CONFLICT (outbox_id,subscription_id) DO UPDATE SET
-        account_id=excluded.account_id,app_id=excluded.app_id,accepted_at=excluded.accepted_at,
-        routing_mode=excluded.routing_mode,routing_state=excluded.routing_state,capacity_scope=excluded.capacity_scope,
-        attempts=excluded.attempts,capacity_deferrals=excluded.capacity_deferrals,
-        next_attempt_at=excluded.next_attempt_at,lease_until=excluded.lease_until,
-        consumer_kind=excluded.consumer_kind,origin=excluded.origin,workflow_name=excluded.workflow_name
-    WHERE (event_routing_backlog.account_id,event_routing_backlog.app_id,event_routing_backlog.accepted_at,
-           event_routing_backlog.routing_mode,event_routing_backlog.routing_state,event_routing_backlog.capacity_scope,
-           event_routing_backlog.attempts,event_routing_backlog.capacity_deferrals,event_routing_backlog.next_attempt_at,
-           event_routing_backlog.lease_until,event_routing_backlog.consumer_kind,event_routing_backlog.origin,
-           event_routing_backlog.workflow_name)
-       IS DISTINCT FROM (excluded.account_id,excluded.app_id,excluded.accepted_at,excluded.routing_mode,excluded.routing_state,
-                         excluded.capacity_scope,excluded.attempts,excluded.capacity_deferrals,excluded.next_attempt_at,
-                         excluded.lease_until,excluded.consumer_kind,excluded.origin,excluded.workflow_name)
-)
-DELETE FROM event_routing_backlog b WHERE b.outbox_id=p_outbox_id
-    AND (p_subscription_id IS NULL OR b.subscription_id=p_subscription_id)
-    AND NOT EXISTS (SELECT 1 FROM candidates c WHERE c.subscription_id=b.subscription_id);
+BEGIN
+    WITH candidates AS MATERIALIZED (
+        SELECT * FROM event_routing_backlog_source
+        WHERE outbox_id=p_outbox_id AND (p_subscription_id IS NULL OR subscription_id=p_subscription_id)
+    ), inserted AS (
+        INSERT INTO event_routing_backlog
+            (outbox_id,subscription_id,account_id,app_id,accepted_at,routing_mode,routing_state,capacity_scope,
+             attempts,capacity_deferrals,next_attempt_at,lease_until,consumer_kind,origin,workflow_name)
+        SELECT outbox_id,subscription_id,account_id,app_id,accepted_at,routing_mode,routing_state,capacity_scope,
+               attempts,capacity_deferrals,next_attempt_at,lease_until,consumer_kind,origin,workflow_name
+        FROM candidates ORDER BY subscription_id
+        ON CONFLICT (outbox_id,subscription_id) DO UPDATE SET
+            account_id=excluded.account_id,app_id=excluded.app_id,accepted_at=excluded.accepted_at,
+            routing_mode=excluded.routing_mode,routing_state=excluded.routing_state,capacity_scope=excluded.capacity_scope,
+            attempts=excluded.attempts,capacity_deferrals=excluded.capacity_deferrals,
+            next_attempt_at=excluded.next_attempt_at,lease_until=excluded.lease_until,
+            consumer_kind=excluded.consumer_kind,origin=excluded.origin,workflow_name=excluded.workflow_name
+        WHERE (event_routing_backlog.account_id,event_routing_backlog.app_id,event_routing_backlog.accepted_at,
+               event_routing_backlog.routing_mode,event_routing_backlog.routing_state,event_routing_backlog.capacity_scope,
+               event_routing_backlog.attempts,event_routing_backlog.capacity_deferrals,event_routing_backlog.next_attempt_at,
+               event_routing_backlog.lease_until,event_routing_backlog.consumer_kind,event_routing_backlog.origin,
+               event_routing_backlog.workflow_name)
+           IS DISTINCT FROM (excluded.account_id,excluded.app_id,excluded.accepted_at,excluded.routing_mode,excluded.routing_state,
+                             excluded.capacity_scope,excluded.attempts,excluded.capacity_deferrals,excluded.next_attempt_at,
+                             excluded.lease_until,excluded.consumer_kind,excluded.origin,excluded.workflow_name)
+    )
+    DELETE FROM event_routing_backlog b WHERE b.outbox_id=p_outbox_id
+        AND (p_subscription_id IS NULL OR b.subscription_id=p_subscription_id)
+        AND NOT EXISTS (SELECT 1 FROM candidates c WHERE c.subscription_id=b.subscription_id);
+END;
 $$;
 
 
@@ -27894,6 +27893,83 @@ COMMENT ON TABLE public.api_consumer_route_usage_minutes IS 'Billable units per 
 
 
 --
+-- Name: api_consumer_signup_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_signup_settings (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    provider text NOT NULL,
+    plan_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    key_scopes text[] NOT NULL,
+    display_name text NOT NULL,
+    terms_url text DEFAULT ''::text NOT NULL,
+    return_url text DEFAULT ''::text NOT NULL,
+    trial_days integer DEFAULT 0 NOT NULL,
+    daily_limit integer NOT NULL,
+    customer_plan_changes boolean DEFAULT false NOT NULL,
+    customer_closing boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_signup_settings_limit_chk CHECK (((daily_limit >= 1) AND (daily_limit <= 1000))),
+    CONSTRAINT api_consumer_signup_settings_name_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 80))),
+    CONSTRAINT api_consumer_signup_settings_plans_chk CHECK ((cardinality(plan_ids) <= 20)),
+    CONSTRAINT api_consumer_signup_settings_provider_chk CHECK ((provider = 'stripe'::text)),
+    CONSTRAINT api_consumer_signup_settings_scopes_chk CHECK (((cardinality(key_scopes) >= 1) AND (cardinality(key_scopes) <= 4))),
+    CONSTRAINT api_consumer_signup_settings_trial_chk CHECK (((trial_days >= 0) AND (trial_days <= 365))),
+    CONSTRAINT api_consumer_signup_settings_urls_chk CHECK (((char_length(terms_url) <= 2048) AND (char_length(return_url) <= 2048)))
+);
+
+
+--
+-- Name: TABLE api_consumer_signup_settings; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_signup_settings IS 'Self-service sign-up for an app''s API customers (ADR-20261021143000).';
+
+
+--
+-- Name: api_consumer_signups; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_signups (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    email text NOT NULL,
+    name text NOT NULL,
+    plan_id uuid,
+    provider text NOT NULL,
+    livemode boolean NOT NULL,
+    provider_customer_id text,
+    checkout_session_id text,
+    claim_hash bytea NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    consumer_id uuid,
+    key_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT api_consumer_signups_claim_chk CHECK ((octet_length(claim_hash) = 32)),
+    CONSTRAINT api_consumer_signups_completed_chk CHECK (((status = 'completed'::text) = (completed_at IS NOT NULL))),
+    CONSTRAINT api_consumer_signups_email_chk CHECK (((char_length(email) >= 3) AND (char_length(email) <= 254))),
+    CONSTRAINT api_consumer_signups_expiry_chk CHECK ((expires_at > created_at)),
+    CONSTRAINT api_consumer_signups_name_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 128))),
+    CONSTRAINT api_consumer_signups_provider_chk CHECK ((provider = 'stripe'::text)),
+    CONSTRAINT api_consumer_signups_provider_ids_chk CHECK (((char_length(COALESCE(provider_customer_id, ''::text)) <= 255) AND (char_length(COALESCE(checkout_session_id, ''::text)) <= 255))),
+    CONSTRAINT api_consumer_signups_status_chk CHECK ((status = ANY (ARRAY['pending'::text, 'completed'::text])))
+);
+
+
+--
+-- Name: TABLE api_consumer_signups; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_signups IS 'An API customer''s self-service sign-up (ADR-20261021143000); pending rows are deleted a week after they expire.';
+
+
+--
 -- Name: api_consumer_spend_caps; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -29542,7 +29618,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['issue.compound_threshold_reached'::text, 'usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'event_recovery.execution_attention'::text) OR (event = 'automation.recovery_review_ready'::text) OR (event = 'automation.recovery_review_finished'::text) OR (event = 'automation.recovery_policy_paused'::text) OR (event = 'automation.recovery_queue_blocked'::text) OR (event = ANY (ARRAY['automation.recovery_health_alert'::text, 'automation.recovery_health_recovered'::text])) OR (event = 'outbound.ai_budget.threshold'::text) OR (event = 'realtime.channel.published'::text) OR (event = 'realtime.channel.acknowledged'::text) OR (event = 'realtime.consumer_group.dead_lettered'::text) OR (event = ANY (ARRAY['realtime.consumer_group.lag_exceeded'::text, 'realtime.consumer_group.lag_recovered'::text])) OR (event = 'realtime.consumer_group.dead_letter_expiring'::text) OR (event = 'realtime.consumer_group.delivery_expired'::text) OR (event = ANY (ARRAY['realtime.consumer_group.worker_lost'::text, 'realtime.consumer_group.worker_recovered'::text])) OR (event = ANY (ARRAY['realtime.consumer_group.circuit_opened'::text, 'realtime.consumer_group.circuit_half_open'::text, 'realtime.consumer_group.circuit_closed'::text])) OR (event = ANY (ARRAY['realtime.replay_job.completed'::text, 'realtime.replay_job.cancelled'::text, 'realtime.replay_job.processing_failed'::text])) OR (event = 'automation.recovery_polling_status'::text) OR (event = ANY (ARRAY['issue.tracker_sync.attention'::text, 'issue.tracker_sync.recovered'::text])) OR (event = 'issue.frequency_threshold_reached'::text))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['issue.compound_threshold_reached'::text, 'usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'event_recovery.execution_attention'::text) OR (event = 'automation.recovery_review_ready'::text) OR (event = 'automation.recovery_review_finished'::text) OR (event = 'automation.recovery_policy_paused'::text) OR (event = 'automation.recovery_queue_blocked'::text) OR (event = ANY (ARRAY['automation.recovery_health_alert'::text, 'automation.recovery_health_recovered'::text])) OR (event = 'outbound.ai_budget.threshold'::text) OR (event = 'realtime.channel.published'::text) OR (event = 'realtime.channel.acknowledged'::text) OR (event = 'realtime.consumer_group.dead_lettered'::text) OR (event = ANY (ARRAY['realtime.consumer_group.lag_exceeded'::text, 'realtime.consumer_group.lag_recovered'::text])) OR (event = 'realtime.consumer_group.dead_letter_expiring'::text) OR (event = 'realtime.consumer_group.delivery_expired'::text) OR (event = ANY (ARRAY['realtime.consumer_group.worker_lost'::text, 'realtime.consumer_group.worker_recovered'::text])) OR (event = ANY (ARRAY['realtime.consumer_group.circuit_opened'::text, 'realtime.consumer_group.circuit_half_open'::text, 'realtime.consumer_group.circuit_closed'::text])) OR (event = ANY (ARRAY['realtime.replay_job.completed'::text, 'realtime.replay_job.cancelled'::text, 'realtime.replay_job.processing_failed'::text])) OR (event = 'automation.recovery_polling_status'::text) OR (event = ANY (ARRAY['issue.tracker_sync.attention'::text, 'issue.tracker_sync.recovered'::text])) OR (event = 'issue.frequency_threshold_reached'::text) OR (event = ANY (ARRAY['consumer.usage_threshold'::text, 'consumer.signed_up'::text, 'consumer.plan_changed'::text, 'consumer.closed'::text])))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -37548,8 +37624,16 @@ CREATE TABLE public.github_webhook_secrets (
     installation_id bigint NOT NULL,
     secret_value bytea NOT NULL,
     upgraded_at timestamp with time zone DEFAULT now() NOT NULL,
-    upgraded_by text DEFAULT 'platform'::text NOT NULL
+    upgraded_by text DEFAULT 'platform'::text NOT NULL,
+    secret_sealed bytea
 );
+
+
+--
+-- Name: COLUMN github_webhook_secrets.secret_sealed; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.github_webhook_secrets.secret_sealed IS 'The webhook secret sealed to the source domain write recipients (ADR 20261022111812); githubd prefers it over secret_value.';
 
 
 --
@@ -51654,9 +51738,10 @@ CREATE TABLE public.scenario_captured_queue_messages (
     message jsonb,
     oversized boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    scheduled_at timestamp with time zone,
     CONSTRAINT scenario_captured_queue_messages_check CHECK ((oversized = (message IS NULL))),
     CONSTRAINT scenario_captured_queue_messages_check1 CHECK ((((kind = 'delayed_task'::text) = (schedule <> ''::text)) OR oversized)),
-    CONSTRAINT scenario_captured_queue_messages_kind_check CHECK ((kind = ANY (ARRAY['queue'::text, 'delayed_task'::text]))),
+    CONSTRAINT scenario_captured_queue_messages_kind_check_v2 CHECK ((kind = ANY (ARRAY['queue'::text, 'delayed_task'::text, 'async_invoke'::text]))),
     CONSTRAINT scenario_captured_queue_messages_message_check CHECK (((message IS NULL) OR (octet_length((message)::text) <= 262144))),
     CONSTRAINT scenario_captured_queue_messages_queue_name_check CHECK ((char_length(queue_name) <= 256)),
     CONSTRAINT scenario_captured_queue_messages_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
@@ -52001,6 +52086,28 @@ CREATE TABLE public.scheduled_releases (
     CONSTRAINT scheduled_releases_scheduled_by_check CHECK (((length(scheduled_by) >= 1) AND (length(scheduled_by) <= 320))),
     CONSTRAINT scheduled_releases_state_check CHECK ((state = ANY (ARRAY['scheduled'::text, 'started'::text, 'blocked'::text, 'expired'::text, 'cancelled'::text, 'superseded'::text])))
 );
+
+
+--
+-- Name: seal_domain_probe; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.seal_domain_probe (
+    domain text NOT NULL,
+    recipient text NOT NULL,
+    sealed_blob bytea NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT seal_domain_probe_domain_check CHECK ((domain ~ '^[a-z][a-z-]{0,31}$'::text)),
+    CONSTRAINT seal_domain_probe_recipient_check CHECK ((recipient ~ '^age1[0-9a-z]+$'::text)),
+    CONSTRAINT seal_domain_probe_sealed_blob_check CHECK (((octet_length(sealed_blob) >= 1) AND (octet_length(sealed_blob) <= 4096)))
+);
+
+
+--
+-- Name: TABLE seal_domain_probe; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.seal_domain_probe IS 'One non-secret secretbox probe per seal domain, sealed to the domain recipient alone (ADR 20261022111812).';
 
 
 --
@@ -54080,6 +54187,22 @@ ALTER TABLE ONLY public.api_consumer_rate_cards
 
 ALTER TABLE ONLY public.api_consumer_route_usage_minutes
     ADD CONSTRAINT api_consumer_route_usage_minutes_pkey PRIMARY KEY (account_id, app_id, consumer_key, window_start, route);
+
+
+--
+-- Name: api_consumer_signup_settings api_consumer_signup_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_signup_settings
+    ADD CONSTRAINT api_consumer_signup_settings_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: api_consumer_signups api_consumer_signups_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_signups
+    ADD CONSTRAINT api_consumer_signups_pkey PRIMARY KEY (id);
 
 
 --
@@ -58576,6 +58699,14 @@ ALTER TABLE ONLY public.github_webhook_deliveries
 
 ALTER TABLE ONLY public.github_webhook_secrets
     ADD CONSTRAINT github_webhook_secrets_pkey PRIMARY KEY (installation_id);
+
+
+--
+-- Name: github_webhook_secrets github_webhook_secrets_secret_sealed_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.github_webhook_secrets
+    ADD CONSTRAINT github_webhook_secrets_secret_sealed_chk CHECK (((secret_sealed IS NULL) OR ((octet_length(secret_sealed) >= 1) AND (octet_length(secret_sealed) <= 4096)))) NOT VALID;
 
 
 --
@@ -64819,6 +64950,14 @@ ALTER TABLE ONLY public.scheduled_releases
 
 
 --
+-- Name: seal_domain_probe seal_domain_probe_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.seal_domain_probe
+    ADD CONSTRAINT seal_domain_probe_pkey PRIMARY KEY (domain);
+
+
+--
 -- Name: service_caller_key_history service_caller_key_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -65856,6 +65995,20 @@ CREATE UNIQUE INDEX api_consumer_rate_cards_default_unit_effective_uniq ON publi
 --
 
 CREATE UNIQUE INDEX api_consumer_rate_cards_plan_unit_effective_uniq ON public.api_consumer_rate_cards USING btree (plan_id, unit, effective_from) WHERE (plan_id IS NOT NULL);
+
+
+--
+-- Name: api_consumer_signups_app_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_signups_app_created_idx ON public.api_consumer_signups USING btree (app_id, created_at DESC);
+
+
+--
+-- Name: api_consumer_signups_pending_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_signups_pending_expiry_idx ON public.api_consumer_signups USING btree (expires_at) WHERE (status = 'pending'::text);
 
 
 --
@@ -82297,6 +82450,46 @@ ALTER TABLE ONLY public.api_consumer_route_usage_minutes
 
 ALTER TABLE ONLY public.api_consumer_route_usage_minutes
     ADD CONSTRAINT api_consumer_route_usage_minutes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_signup_settings api_consumer_signup_settings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_signup_settings
+    ADD CONSTRAINT api_consumer_signup_settings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_signup_settings api_consumer_signup_settings_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_signup_settings
+    ADD CONSTRAINT api_consumer_signup_settings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_signups api_consumer_signups_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_signups
+    ADD CONSTRAINT api_consumer_signups_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_signups api_consumer_signups_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_signups
+    ADD CONSTRAINT api_consumer_signups_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_signups api_consumer_signups_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_signups
+    ADD CONSTRAINT api_consumer_signups_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE SET NULL;
 
 
 --

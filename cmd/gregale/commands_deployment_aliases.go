@@ -56,7 +56,7 @@ func cmdDeploymentAliasesList(args []string) int {
 	}
 	page, err := client.ListDeploymentAliases(context.Background(), slug)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list deployment aliases", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(page))
@@ -112,7 +112,7 @@ func cmdDeploymentAliasSet(args []string) int {
 	}
 	alias, err := client.SetDeploymentAlias(context.Background(), slug, *name, api.SetDeploymentAliasRequest{DeploymentID: deploymentID})
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not set deployment alias", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(alias))
@@ -148,7 +148,7 @@ func cmdDeploymentAliasDelete(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if err := client.DeleteDeploymentAlias(context.Background(), slug, *name); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete deployment alias", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{"app": slug, "name": *name, "deleted": true}))

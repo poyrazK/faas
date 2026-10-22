@@ -492,6 +492,7 @@ type ServiceBindingPolicy string
 const (
 	ServiceBindingPolicyAccount  ServiceBindingPolicy = "account"
 	ServiceBindingPolicyDeclared ServiceBindingPolicy = "declared"
+	ServiceBindingPolicyProject  ServiceBindingPolicy = "project"
 )
 
 type PreviewServiceCallsPolicy string

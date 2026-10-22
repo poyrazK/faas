@@ -2689,6 +2689,9 @@ func (l *Loop) runReaper(ctx context.Context) {
 	idleParkByApp := map[string]struct{}{}
 	idleParkByEnvironment := map[string]InstanceInfo{}
 	cooldownHeldByApp := map[string]struct{}{}
+	// ADR-20261021215353: quiet between_requests instances freeze before
+	// their idle timeout; ReapIdle only selects instances past it.
+	l.earlyFreezeFromReaper(ctx, snapshot, now, func(id string) int { return activityByInstance[id].ResidentMB })
 	for _, id := range ReapIdle(now, snapshot, l.ops, cooldownHeldByApp) {
 		// ADR-1151: an eligible instance freezes in place instead of
 		// parking; anything else parks as before.

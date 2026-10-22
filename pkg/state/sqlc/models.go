@@ -420,6 +420,46 @@ type ApiConsumerRouteUsageMinute struct {
 	UpdatedAt     pgtype.Timestamptz
 }
 
+// An API customer's self-service sign-up (ADR-20261021143000); pending rows are deleted a week after they expire.
+type ApiConsumerSignup struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Email              string
+	Name               string
+	PlanID             pgtype.UUID
+	Provider           string
+	Livemode           bool
+	ProviderCustomerID pgtype.Text
+	CheckoutSessionID  pgtype.Text
+	ClaimHash          []byte
+	Status             string
+	ConsumerID         pgtype.UUID
+	KeyID              pgtype.UUID
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	CompletedAt        pgtype.Timestamptz
+}
+
+// Self-service sign-up for an app's API customers (ADR-20261021143000).
+type ApiConsumerSignupSetting struct {
+	AppID               pgtype.UUID
+	AccountID           pgtype.UUID
+	Enabled             bool
+	Provider            string
+	PlanIds             []pgtype.UUID
+	KeyScopes           []string
+	DisplayName         string
+	TermsUrl            string
+	ReturnUrl           string
+	TrialDays           int32
+	DailyLimit          int32
+	CustomerPlanChanges bool
+	CustomerClosing     bool
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
 // Monthly spend cap per API consumer; apid checks the month to date and the gateway denies capped consumers (ADR-1306).
 type ApiConsumerSpendCap struct {
 	ConsumerID           pgtype.UUID
@@ -5725,6 +5765,8 @@ type GithubWebhookSecret struct {
 	SecretValue    []byte
 	UpgradedAt     pgtype.Timestamptz
 	UpgradedBy     string
+	// The webhook secret sealed to the source domain write recipients (ADR 20261022111812); githubd prefers it over secret_value.
+	SecretSealed []byte
 }
 
 type GitlabOauthConnection struct {
@@ -13452,17 +13494,18 @@ type ScenarioCapturedPlatformCall struct {
 }
 
 type ScenarioCapturedQueueMessage struct {
-	ID        pgtype.UUID
-	AccountID pgtype.UUID
-	RunID     string
-	AppID     pgtype.UUID
-	Kind      string
-	Target    string
-	QueueName string
-	Schedule  string
-	Message   []byte
-	Oversized bool
-	CreatedAt pgtype.Timestamptz
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	RunID       string
+	AppID       pgtype.UUID
+	Kind        string
+	Target      string
+	QueueName   string
+	Schedule    string
+	Message     []byte
+	Oversized   bool
+	CreatedAt   pgtype.Timestamptz
+	ScheduledAt pgtype.Timestamptz
 }
 
 type ScenarioColdPreparation struct {
@@ -13675,6 +13718,14 @@ type ScheduledRelease struct {
 	CreatedAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
 	StartedAt         pgtype.Timestamptz
+}
+
+// One non-secret secretbox probe per seal domain, sealed to the domain recipient alone (ADR 20261022111812).
+type SealDomainProbe struct {
+	Domain     string
+	Recipient  string
+	SealedBlob []byte
+	UpdatedAt  pgtype.Timestamptz
 }
 
 type ServiceCallerKey struct {

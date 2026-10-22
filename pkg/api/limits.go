@@ -207,6 +207,10 @@ const (
 	// ProductControlMaxTrialDays bounds a plan's trial and how far an owner
 	// can extend one from its start (ADR-20261021195901).
 	ProductControlMaxTrialDays = 90
+	// ProductControlSignupMaxWorkspacesPerUser bounds the workspaces one
+	// Application Auth user owns in a product through self-serve signup
+	// (ADR-20261022100735).
+	ProductControlSignupMaxWorkspacesPerUser = 3
 	// ProductControlPlanHistoryMonthMaxPlans bounds the distinct plans one
 	// customer month is read with for its fee.
 	ProductControlPlanHistoryMonthMaxPlans = 1000
@@ -614,6 +618,26 @@ const (
 	ConsumerSpendCapBatchSize     = 500
 )
 
+// Consumer self-service sign-up (ADR-20261021143000).
+const (
+	// An app takes this many sign-ups per UTC day unless its settings say
+	// otherwise, and at most the maximum.
+	ConsumerSignupDailyLimitDefault = 100
+	ConsumerSignupDailyLimitMax     = 1000
+	// One client address starts at most this many sign-ups an hour, and
+	// reads the form or completes a sign-up at most this often a minute.
+	ConsumerSignupPerIPPerHour        = 10
+	ConsumerSignupReadsPerIPPerMinute = 60
+	// A sign-up completes within its TTL; its Checkout Session expires an
+	// hour earlier, so a customer who saved a card can still claim the key.
+	ConsumerSignupTTL         = 24 * time.Hour
+	ConsumerSignupCheckoutTTL = 23 * time.Hour
+	// Pending sign-ups are deleted this long after they expire.
+	ConsumerSignupRetention = 7 * 24 * time.Hour
+	// The owner's sign-up list shows at most this many.
+	ConsumerSignupListMax = 100
+)
+
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,
 // ADR-1324).
 const (
@@ -628,6 +652,10 @@ const (
 	// An invoice holding its consumer has its payment status read at least
 	// this often, so paying it lifts the hold within minutes.
 	ConsumerOverdueHeldSyncInterval = 15 * time.Minute
+	// APIMonetizationUnreleasedRetry is how long a monetization worker sets
+	// aside a billing run or invoice sync of an account monetization is not
+	// released to (ADR-20261020170649).
+	APIMonetizationUnreleasedRetry = 15 * time.Minute
 	// Only a payment status read within this long holds a consumer or
 	// tenant: when Gregale cannot read the invoice (a rotated or removed
 	// key), the hold lifts rather than outlasting a payment it cannot see
@@ -5846,6 +5874,12 @@ const (
 	// the same capacity as 1 h in the ADR's simulation while holding fewer
 	// resident VMs.
 	FrozenTTLSeconds = 600
+	// FrozenEarlyFreezeMinSeconds and FrozenEarlyFreezeMaxSeconds bound
+	// schedd's frozen_tier_early_freeze_after_s (ADR-20261021215353): at
+	// least the 2 s quiet pause, and well inside the shortest app idle
+	// timeout's order of magnitude.
+	FrozenEarlyFreezeMinSeconds = 2
+	FrozenEarlyFreezeMaxSeconds = 300
 	// FrozenMaxPerNode caps a node's frozen instances: each holds a
 	// Firecracker process, a jail uid and a network namespace.
 	FrozenMaxPerNode = 1000
@@ -7820,6 +7854,25 @@ const (
 	// JSON/base64 encoding and age-recipient overhead; it is not a
 	// customer-visible allowance.
 	ExecutionSealedPayloadMaxBytes = 3 << 20
+)
+
+// Code-first workflows (ADR-20261021204307). The journal bound covers the
+// outputs, event payloads and errors sent to the entry handler on every
+// durable boundary, so a run's per-boundary cost stays small. With the run
+// input (at most WorkflowRunInputMaxBytes) the request stays under
+// WorkflowCodeRequestMaxBytes, which base64-encoded fits the gateway's 4 MiB
+// synthetic dispatch body. One call's answer must fit the scheduler's 1 MiB
+// invocation response, so its results are bounded by
+// WorkflowCodeResponseMaxBytes.
+const (
+	WorkflowCodeMaxOps                         = 1000
+	WorkflowCodeJournalMaxBytes          int64 = 3 << 19  // 1.5 MiB
+	WorkflowCodeRequestMaxBytes          int64 = 11 << 18 // 2.75 MiB
+	WorkflowCodeResponseMaxBytes         int64 = 960 << 10
+	WorkflowCodeOpNameMaxBytes                 = 128
+	WorkflowCodeErrorMaxBytes                  = 4 << 10
+	WorkflowCodeStepDefaultMaxAttempts         = 3
+	WorkflowCodeDriverDefaultMaxAttempts       = 5
 )
 
 // ExecutionPlanLimits is the complete admission envelope for disposable

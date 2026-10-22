@@ -39,7 +39,7 @@ func addQueueGroups(snapshot *api.ScenarioActionSnapshot, groups map[string]Chan
 	for _, message := range snapshot.QueueMessages {
 		id, err := uuid.Parse(message.ID)
 		delayed := message.Kind == api.ScenarioQueueKindDelayedTask
-		if err != nil || ids[id.String()] || !workloads[message.Workload] || message.Kind != api.ScenarioQueueKindQueue && !delayed ||
+		if err != nil || ids[id.String()] || !workloads[message.Workload] || message.Kind != api.ScenarioQueueKindQueue && message.Kind != api.ScenarioQueueKindAsyncInvoke && !delayed ||
 			!queueTargetPattern.MatchString(message.Target) || len(message.QueueName) > 256 || len(message.Message) > api.MaxScenarioCapturedQueueMessageBytes ||
 			delayed != queueSchedulePattern.MatchString(message.Schedule) || !delayed && message.Schedule != "" {
 			return errors.New("invalid captured queue message identity")

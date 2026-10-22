@@ -37,6 +37,10 @@ func validatePlatformTenantPolicy(plan api.Plan, workloads []reposcan.Workload) 
 func ProjectImageLifecycleAdmissionReasons(plan api.Plan, workloads []reposcan.Workload) []string {
 	var reasons []string
 	for _, workload := range workloads {
+		// Built services carry Compose process overrides too (ADR-20261022160000).
+		if err := workload.ImageProcess.ValidatePlan(plan); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q: image process: %s", workload.Name, err))
+		}
 		mode := scanExecutionMode(workload)
 		if workload.Image == "" && mode == "" {
 			continue
@@ -44,9 +48,6 @@ func ProjectImageLifecycleAdmissionReasons(plan api.Plan, workloads []reposcan.W
 		manifest := api.AppManifest{ExecutionMode: mode}
 		if err := manifest.ValidateLifecyclePlan(plan); err != nil {
 			reasons = append(reasons, fmt.Sprintf("workload %q: %s", workload.Name, err))
-		}
-		if err := workload.ImageProcess.ValidatePlan(plan); err != nil {
-			reasons = append(reasons, fmt.Sprintf("workload %q: image process: %s", workload.Name, err))
 		}
 	}
 	return reasons

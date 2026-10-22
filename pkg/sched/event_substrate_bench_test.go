@@ -31,6 +31,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 const (
@@ -65,10 +66,10 @@ func TestEventSubstrateBench(t *testing.T) {
 	// Seed every tenant before building the engine that serves the run, so
 	// its admission ledger loads their running instances as schedd's would.
 	nodeID := *sched.XNewEngine(t, schedStore, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").DefaultLocalNodeID()
-	tenants := seedEventBenchTenants(ctx, t, schedStore, nodeID, "stage", cfg.Accounts)
+	tenants := seedEventBenchTenants(ctx, t, schedStore, nodeID, "stage", cfg)
 	pipelineTenants := make(map[int][]eventBenchTenant, len(cfg.PipelineRates))
 	for _, rate := range cfg.PipelineRates {
-		pipelineTenants[rate] = seedEventBenchTenants(ctx, t, schedStore, nodeID, fmt.Sprintf("rate%d", rate), cfg.Accounts)
+		pipelineTenants[rate] = seedEventBenchTenants(ctx, t, schedStore, nodeID, fmt.Sprintf("rate%d", rate), cfg)
 	}
 	eventBenchAnalyze(ctx, t, pool)
 	vmm := &sched.FakeVMM{}
@@ -81,7 +82,7 @@ func TestEventSubstrateBench(t *testing.T) {
 
 	// Isolated stages: each one runs alone against the backlog the previous
 	// stage left, so its rate is that stage's ceiling on this host.
-	published, publish := runEventBenchPublish(ctx, t, publisher, tenants, cfg.Events, cfg.Publishers)
+	published, publish := runEventBenchPublish(ctx, t, publisher, tenants, cfg)
 	report.Stages = append(report.Stages, publish)
 	// Production tables carry planner statistics; a fresh database has none
 	// for tables that grew during publishing.
@@ -116,6 +117,19 @@ type eventBenchConfig struct {
 	PipelineRates      []int `json:"pipeline_rates_per_second"`
 	PipelineSeconds    int   `json:"pipeline_seconds"`
 	PipelineSettleSecs int   `json:"pipeline_settle_seconds"`
+	// OrderedKeys > 0 routes every tenant's subscription through an ordered
+	// work-policy lane (ADR-795) keyed on data.key, cycling each tenant's
+	// events through that many keys.
+	OrderedKeys int `json:"ordered_keys,omitempty"`
+}
+
+// eventKey is the ordering key of a tenant's n-th event, or "" when the run
+// is unordered.
+func (c eventBenchConfig) eventKey(n int) string {
+	if c.OrderedKeys == 0 {
+		return ""
+	}
+	return fmt.Sprintf("k%d", n%c.OrderedKeys)
 }
 
 func eventBenchConfigFromEnv(t *testing.T) eventBenchConfig {
@@ -129,6 +143,7 @@ func eventBenchConfigFromEnv(t *testing.T) eventBenchConfig {
 		PipelineRates:      slices.Clone(api.EventSubstrateBenchPipelineRates),
 		PipelineSeconds:    eventBenchEnvInt(t, "FAAS_EVENT_SUBSTRATE_BENCH_PIPELINE_SECONDS", api.EventSubstrateBenchPipelineSeconds),
 		PipelineSettleSecs: int(api.EventSubstrateBenchPipelineSettle / time.Second),
+		OrderedKeys:        eventBenchEnvInt(t, "FAAS_EVENT_SUBSTRATE_BENCH_ORDERED_KEYS", 0),
 	}
 	if raw := os.Getenv("FAAS_EVENT_SUBSTRATE_BENCH_PIPELINE_RATES"); raw != "" {
 		cfg.PipelineRates = nil
@@ -198,10 +213,10 @@ type eventBenchTenant struct {
 	subscriptionID string
 }
 
-func seedEventBenchTenants(ctx context.Context, t *testing.T, store *state.PgStore, nodeID, prefix string, count int) []eventBenchTenant {
+func seedEventBenchTenants(ctx context.Context, t *testing.T, store *state.PgStore, nodeID, prefix string, cfg eventBenchConfig) []eventBenchTenant {
 	t.Helper()
-	tenants := make([]eventBenchTenant, 0, count)
-	for i := range count {
+	tenants := make([]eventBenchTenant, 0, cfg.Accounts)
+	for i := range cfg.Accounts {
 		name := fmt.Sprintf("bench-%s-%d", prefix, i)
 		account, err := store.CreateAccount(ctx, name+"@example.test", api.PlanScale)
 		if err != nil {
@@ -227,6 +242,16 @@ func seedEventBenchTenants(ctx context.Context, t *testing.T, store *state.PgSto
 		if err != nil {
 			t.Fatalf("UpsertEventSubscription: %v", err)
 		}
+		if cfg.OrderedKeys > 0 {
+			policy := workpolicy.Policy{Name: "bench-order", MaxRunningPerKey: 1, PendingUpdates: workpolicy.PendingAll}
+			if _, err := store.UpsertAppWorkPolicy(ctx, account.ID, app.ID, policy); err != nil {
+				t.Fatalf("UpsertAppWorkPolicy: %v", err)
+			}
+			if _, err := store.SetEventWorkBinding(ctx, app.ID, subscription.ID, policy.Name, "data.key",
+				state.EventWorkBindingOptions{Ordered: true}); err != nil {
+				t.Fatalf("SetEventWorkBinding: %v", err)
+			}
+		}
 		tenants = append(tenants, eventBenchTenant{account: account, subscriptionID: subscription.ID})
 	}
 	return tenants
@@ -239,8 +264,12 @@ type eventBenchEvent struct {
 	publishedAt  time.Time
 }
 
-func publishEventBenchEvent(ctx context.Context, publisher *appevents.Service, tenant eventBenchTenant, id string) (eventBenchEvent, time.Duration, error) {
-	body, err := json.Marshal(api.PublishEventRequest{ID: id, Source: eventBenchSource, Type: eventBenchType, Data: json.RawMessage(`{"bench":true}`)})
+func publishEventBenchEvent(ctx context.Context, publisher *appevents.Service, tenant eventBenchTenant, id, key string) (eventBenchEvent, time.Duration, error) {
+	data := json.RawMessage(`{"bench":true}`)
+	if key != "" {
+		data = json.RawMessage(`{"bench":true,"key":"` + key + `"}`)
+	}
+	body, err := json.Marshal(api.PublishEventRequest{ID: id, Source: eventBenchSource, Type: eventBenchType, Data: data})
 	if err != nil {
 		return eventBenchEvent{}, 0, err
 	}
@@ -258,8 +287,9 @@ func publishEventBenchEvent(ctx context.Context, publisher *appevents.Service, t
 	}, elapsed, nil
 }
 
-func runEventBenchPublish(ctx context.Context, t *testing.T, publisher *appevents.Service, tenants []eventBenchTenant, total, workers int) ([]eventBenchEvent, eventBenchStage) {
+func runEventBenchPublish(ctx context.Context, t *testing.T, publisher *appevents.Service, tenants []eventBenchTenant, cfg eventBenchConfig) ([]eventBenchEvent, eventBenchStage) {
 	t.Helper()
+	total, workers := cfg.Events, cfg.Publishers
 	events := make([]eventBenchEvent, total)
 	latencies := make([]time.Duration, total)
 	var errors atomic.Int64
@@ -271,7 +301,7 @@ func runEventBenchPublish(ctx context.Context, t *testing.T, publisher *appevent
 		go func() {
 			defer wg.Done()
 			for i := worker; i < total; i += workers {
-				event, latency, err := publishEventBenchEvent(ctx, publisher, tenants[i%len(tenants)], fmt.Sprintf("stage-%d", i))
+				event, latency, err := publishEventBenchEvent(ctx, publisher, tenants[i%len(tenants)], fmt.Sprintf("stage-%d", i), cfg.eventKey(i/len(tenants)))
 				if err != nil {
 					errors.Add(1)
 					firstErr.CompareAndSwap(nil, err.Error())
@@ -561,7 +591,7 @@ func runEventBenchPipeline(ctx context.Context, t *testing.T, loop *sched.Loop, 
 		go func() {
 			defer wg.Done()
 			for i := range queue {
-				event, _, err := publishEventBenchEvent(ctx, publisher, tenants[i%len(tenants)], fmt.Sprintf("rate%d-%d", rate, i))
+				event, _, err := publishEventBenchEvent(ctx, publisher, tenants[i%len(tenants)], fmt.Sprintf("rate%d-%d", rate, i), cfg.eventKey(i/len(tenants)))
 				if err != nil {
 					errors.Add(1)
 					firstErr.CompareAndSwap(nil, err.Error())

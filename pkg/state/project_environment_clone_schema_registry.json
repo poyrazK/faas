@@ -666,6 +666,50 @@
     "kind": "operational"
   },
   {
+    "table": "api_consumer_signup_settings",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "customer_closing",
+      "customer_plan_changes",
+      "daily_limit",
+      "display_name",
+      "enabled",
+      "key_scopes",
+      "plan_ids",
+      "provider",
+      "return_url",
+      "terms_url",
+      "trial_days",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "api_consumer_signups",
+    "columns": [
+      "account_id",
+      "app_id",
+      "checkout_session_id",
+      "claim_hash",
+      "completed_at",
+      "consumer_id",
+      "created_at",
+      "email",
+      "expires_at",
+      "id",
+      "key_id",
+      "livemode",
+      "name",
+      "plan_id",
+      "provider",
+      "provider_customer_id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "api_consumer_usage_alerts",
     "columns": [
       "account_id",
@@ -6710,6 +6754,7 @@
     "columns": [
       "installation_id",
       "secret_value",
+      "secret_sealed",
       "upgraded_at",
       "upgraded_by"
     ],
@@ -15644,6 +15689,7 @@
       "queue_name",
       "run_id",
       "schedule",
+      "scheduled_at",
       "target"
     ],
     "kind": "operational"
@@ -15885,6 +15931,16 @@
       "work_decision"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "seal_domain_probe",
+    "columns": [
+      "domain",
+      "recipient",
+      "sealed_blob",
+      "updated_at"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "service_caller_key_history",

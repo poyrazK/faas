@@ -231,6 +231,10 @@ const XEventFanoutSafetyTick = eventFanoutSafetyTick
 
 func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
 
+// XRunEventRecipientSweep runs only the sweep's independent recipient stage.
+// adr: 614 — recipients are claimed in batches and unrouted claims released.
+func (l *Loop) XRunEventRecipientSweep(ctx context.Context) { l.runEventRecipientSweep(ctx) }
+
 var XNewMemCacheOverageChecker = newMemCacheOverageChecker
 var XTestWorkerScopedDemandLifecycle = testWorkerScopedDemandLifecycle
 

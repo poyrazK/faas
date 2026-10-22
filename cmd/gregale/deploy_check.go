@@ -199,7 +199,7 @@ func renderDeploymentCheck(report api.ProjectDeploymentReadiness) {
 }
 
 func deploymentCheckCommand() cliSub {
-	return cliSub{Name: "check", Short: "Check project prerequisites without uploading source or submitting work", Examples: []string{"gregale deploy check --project --json", "gregale deploy check --project --atomic --verify", "gregale deploy check --project --project-slug shop --from staging --environment production --sync-config --verify"}, Flags: []cliFlag{
+	return cliSub{Name: "check", Short: "Check project prerequisites without uploading or submitting", Examples: []string{"gregale deploy check --project --json", "gregale deploy check --project --atomic --verify", "gregale deploy check --project --project-slug shop --from staging --environment production --sync-config --verify"}, Flags: []cliFlag{
 		{Name: "project", Short: "check the complete project", Bool: true, Req: true},
 		{Name: "project-slug", Short: "project slug (defaults to linked context or selected directory)", Value: "SLUG"},
 		{Name: "path", Short: "selected source directory", Value: "DIR"},

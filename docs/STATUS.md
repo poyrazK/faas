@@ -7,19 +7,22 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
-## Event substrate benchmark (V12) — 2026-10-20
+## Event substrate benchmark (V12) — 2026-10-22
 
 `make bench-event-substrate` measures event publish, fanout routing, the
-invocation drain and webhook delivery on disposable PostgreSQL. The first run
-on `gregale-internal-test-1`, a busy 2 vCPU shared host
-([report](ops/evidence/20261020-event-substrate-bench/REPORT.md)), sustained
-**5 events/s end to end** (p95 publish-to-handler 1.2 s). Above that, fanout
-routing falls behind: it ran 14.8 events/s over a 2,000-event backlog and
-slows as the backlog grows, because `EventRecipientClaim` re-runs the
-ordering scan for every candidate. Publish (307/s) and the drain (48/s) are
-not the bottleneck; webhook delivery sits at its 6.2/s design ceiling. Event
-caps stay where they are until fanout routing is fixed and the benchmark is
-re-run on the reference node.
+invocation drain and webhook delivery on disposable PostgreSQL, on
+`gregale-internal-test-1`, a 2 vCPU shared host. The first run
+([report](ops/evidence/20261020-event-substrate-bench/REPORT.md)) sustained
+5 events/s end to end. Skipping the ordering scan for recipients without a
+work policy (#5090) and the webhook backlog drain (#5091) raised that to 20
+events/s and webhook delivery to about 150/s. Batched fanout claims
+(`perf/event-fanout-batch-claim`,
+[report](ops/evidence/20261022-event-fanout-batch-claims/REPORT.md)) bring
+fanout to 74 events/s over a 2,000-event backlog and the pipeline to
+**48.5 events/s at 50 offered** (p95 830 ms), and ordered work-policy lanes
+from under 1 to 21.7 events/s. Fanout is still the first stage to fall
+behind, at 200 events/s offered. Event caps stay where they are until the
+benchmark is re-run on the reference node.
 
 ## Tenant egress denies NAT64 — 2026-10-18 (branch, not released)
 
@@ -1758,6 +1761,17 @@ remain open; production admission is disabled.
   (2026-10-19): the scan resolves `extends` (same file, other file, chains)
   and top-level `include` (with their own paths), replacing the ADR-1337
   warnings. Unit tests pass; no native run.
+- **Compose healthchecks on built services.**
+  [ADR-20261019195000](adr/20261019195000-compose-healthcheck-on-built-services.md)
+  (2026-10-22): a source-built service's Compose `healthcheck` is frozen per
+  deployment, merged onto the built image's HEALTHCHECK and enforced by the
+  ADR-683/684 readiness gate and recovery. Unit and conformance tests pass; no
+  native run.
+- **Compose process overrides on built services.**
+  [ADR-20261022160000](adr/20261022160000-compose-process-on-built-services.md)
+  (2026-10-22): a built service's `entrypoint` joins its start command, and
+  `user`, `working_dir`, `stop_signal` and `stop_grace_period` are frozen per
+  deployment and applied to the built image. Unit tests pass; no native run.
 - **No native run recorded.** The `containers` native lane has no recorded
   passing run; [container qualification](container-qualification.md) remains
   the coverage plan.

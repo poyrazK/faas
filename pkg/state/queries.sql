@@ -300,7 +300,8 @@ SET inferred_profile = (sqlc.arg(profile)::jsonb - 'image_command' - 'image_heal
     CASE WHEN inferred_profile ? 'image_healthcheck'
          THEN jsonb_build_object('image_healthcheck', inferred_profile -> 'image_healthcheck')
          ELSE '{}'::jsonb END
-WHERE id = sqlc.arg(deployment_id)::uuid AND kind = 'image'
+WHERE id = sqlc.arg(deployment_id)::uuid
+  AND (kind = 'image' OR inferred_profile ? 'image_healthcheck')
   AND status IN ('pending', 'building', 'imaging');
 
 -- name: ReadSnapshotPublicationDeployment :one

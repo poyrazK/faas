@@ -200,7 +200,7 @@ func cmdRegistryRm(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if err := client.DeleteAppRegistryCredential(context.Background(), *slug, registryAPI); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete registry credential", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{"registry": *registry, "deleted": true}))

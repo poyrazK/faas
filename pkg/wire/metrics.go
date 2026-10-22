@@ -6215,7 +6215,7 @@ func (m *OpsMetrics) WarmPoolResumeTotal(outcome string) prometheus.Counter {
 
 // Bounded label sets of the frozen-tier series (ADR-1151).
 var (
-	FrozenFreezeOutcomes = []string{"frozen", "busy", "error", "ineligible", "no_snapshot", "node_full"}
+	FrozenFreezeOutcomes = []string{"frozen", "frozen_early", "busy", "error", "ineligible", "no_snapshot", "node_full"}
 	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity", "fast", "fast_refused"}
 	// FrozenFastPathSkipReasons and FrozenThawTicketOutcomes are the closed
 	// label sets of the ADR-1740 fast path's series.
