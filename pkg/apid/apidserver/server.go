@@ -45,6 +45,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/outboundai"
 	"github.com/onebox-faas/faas/pkg/apid/platformflagadmin"
 	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
+	"github.com/onebox-faas/faas/pkg/apid/previews"
 	"github.com/onebox-faas/faas/pkg/apid/product"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/apid/queueleases"
@@ -166,6 +167,7 @@ type server struct {
 	// (ADR-1700): customer Flags and the AI gateway gate and rollout.
 	platformFlagBootstrap map[string]platformflags.Definition
 	platformFlagAdmin     platformflagadmin.Service // ADR-1700; Host wired in newServer
+	previews              previews.Service          // ADR 20261021080640; Host wired in newServer
 	// workloadVerifier is the cluster workload trust (ADR-1141); nil when unset.
 	workloadVerifier *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
@@ -1419,6 +1421,12 @@ func newServerWithDeps(
 	}
 	s.object.InventoryWake = make(chan struct{}, 1)
 	s.operation.Host = operationHost{s}
+	s.operation.SchedulesReleased = func(accountID string) bool {
+		return s.platformFlagOr(platformflags.OperationSchedules, platformflags.Subject{AccountID: accountID}, api.OperationSchedulesEnabled(accountID))
+	}
+	s.operation.ChildrenReleased = func(accountID string) bool {
+		return s.platformFlagOr(platformflags.OperationChildren, platformflags.Subject{AccountID: accountID}, api.OperationChildrenEnabled(accountID))
+	}
 	s.productControl.Host = operationHost{s}
 	s.productControl.StartOperation = s.operation.StartProductOperation
 	s.productControl.AuthOrigin = s.productAuthOrigin
@@ -1446,7 +1454,15 @@ func newServerWithDeps(
 	s.consumerControls.Host = consumerControlsHost{s}
 	s.tenantPlans.Host = tenantPlansHost{s}
 	s.serviceMap.Host = serviceMapHost{s}
+	s.serviceMap.Released = func(r *http.Request, acct state.Account) bool {
+		return s.platformFlagOr(platformflags.ServiceMap, flagSubject(r, acct), s.serviceMap.Enabled)
+	}
 	s.platformFlagAdmin.Host = platformFlagAdminHost{s}
+	s.previews.Host = previewsHost{s}
+	s.realtime.PreviewReleased = func(r *http.Request, acct state.Account, flagKey string, legacy bool) bool {
+		return s.platformFlagOr(flagKey, flagSubject(r, acct), legacy)
+	}
+	s.realtime.EndpointPreviews = s.realtimeEndpointPreviews
 	// ADR-120: wire the package-level appsDomainFunc seam (declared at
 	// cmd/apid/dns_probes.go:125) to the server's apps base domain so
 	// checkPointsToGregale has the configured Gregale apex in
@@ -2320,6 +2336,13 @@ func (s *server) handler() http.Handler {
 	// because there's no slug path.
 	mux.HandleFunc("GET /v1/apps/metrics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppsMetrics)))
 	mux.HandleFunc("GET /v1/service-map", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.serviceMap.Get))) // ADR-1131
+	// Self-serve previews (ADR 20261021080640).
+	mux.HandleFunc("GET /v1/previews", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.previews.List)))
+	mux.HandleFunc("PUT /v1/previews/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.previews.Join))))
+	mux.HandleFunc("DELETE /v1/previews/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.previews.Leave))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/previews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.previews.OrgList)))))
+	mux.HandleFunc("PUT /v1/orgs/{slug}/previews/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.previews.OrgJoin)))))
+	mux.HandleFunc("DELETE /v1/orgs/{slug}/previews/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.previews.OrgLeave)))))
 	// Issue #696 / ADR-082 — per-app SLO panel. Closed-set
 	// windowed vocabulary (1h | 24h | 7d). Auth chain matches
 	// /v1/apps/{slug}/metrics: read-only, NO MFA, primary

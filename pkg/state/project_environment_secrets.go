@@ -14,6 +14,11 @@ import (
 // plan's ProjectSecretCountMax for one project environment.
 var ErrProjectEnvironmentSecretLimit = errors.New("state: project environment secret limit reached")
 
+// ErrProjectSecretCloneTransferUnsupported refuses a durable clone capture of
+// an environment with shared secrets: the capture cannot carry them yet, and
+// a clone without them would boot its services without credentials.
+var ErrProjectSecretCloneTransferUnsupported = errors.New("durable clones of an environment with shared secrets are not supported yet; clone it without the durable checkpoint")
+
 // ProjectEnvironmentSecret is one sealed secret shared by every service of a
 // project environment (ADR-1139). Ciphertext is a single-key age envelope; it
 // is set on writes and runtime reads and left empty in listings.
@@ -143,6 +148,27 @@ type projectSecretRekeyRow struct {
 
 func projectSecretRekeyRowOf(p ProjectEnvironmentSecret) projectSecretRekeyRow {
 	return projectSecretRekeyRow{p.Key, p.Kid, p.Ciphertext, p.ValueHash, p.SecretVersion, p.CreatedAt, p.UpdatedAt}
+}
+
+// copyProjectEnvironmentSharedSecretsLocked mirrors CopyProjectEnvironmentSecrets
+// for an environment clone.
+func (m *MemStore) copyProjectEnvironmentSharedSecretsLocked(clone ProjectEnvironmentClone, at time.Time) int {
+	copied := 0
+	for _, secret := range m.projectEnvironmentSecretsLocked(clone.ProjectID, clone.SourceSlug) {
+		if secret.AccountID != clone.AccountID {
+			continue
+		}
+		secret.EnvironmentSlug, secret.CreatedAt, secret.UpdatedAt = clone.TargetSlug, at, at
+		if m.projectEnvironmentSecrets == nil {
+			m.projectEnvironmentSecrets = map[string]ProjectEnvironmentSecret{}
+		}
+		m.projectEnvironmentSecrets[projectEnvironmentSecretKey(clone.ProjectID, clone.TargetSlug, secret.Key)] = secret
+		copied++
+	}
+	if copied > 0 {
+		m.projectRuntimeChangeLocked(clone.ProjectID, clone.TargetSlug, at)
+	}
+	return copied
 }
 
 func (m *MemStore) deleteProjectEnvironmentSecretsLocked(projectID, environmentSlug string) {

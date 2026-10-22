@@ -20,8 +20,10 @@ test('user concurrency is opt-in, strictly bounded and respects the refresh rese
   assert.equal(runtimeConfig({ ...env, DATA_API_USER_CONCURRENCY: '1' }).userConcurrency, 1)
   assert.equal(runtimeConfig({ ...env, DATA_API_USER_CONCURRENCY: '2' }).userConcurrency, 2)
   assert.equal(runtimeConfig({ ...env, DATA_API_USER_CONCURRENCY: '1', DATA_API_COORDINATED_REFRESH: '1' }).userConcurrency, 1)
-  for (const value of ['', '0', '-1', '1.5', '01', ' 1', '1e0', '3', '999999999999999999999', true]) assert.throws(() => runtimeConfig({ ...env, DATA_API_USER_CONCURRENCY: value }))
-  assert.throws(() => runtimeConfig({ ...env, DATA_API_USER_CONCURRENCY: '2', DATA_API_COORDINATED_REFRESH: '1' }))
+  for (const value of ['', '0', '-1', '1.5', '01', ' 1', '1e0', '9', '999999999999999999999', true]) assert.throws(() => runtimeConfig({ ...env, DATA_API_USER_CONCURRENCY: value }))
+  // ADR-20261021180534: a value above the engine pool acts as the pool.
+  assert.equal(runtimeConfig({ ...env, DATA_API_USER_CONCURRENCY: '3' }).userConcurrency, 2)
+  assert.equal(runtimeConfig({ ...env, DATA_API_USER_CONCURRENCY: '2', DATA_API_COORDINATED_REFRESH: '1' }).userConcurrency, 1)
   assert.throws(() => createUserConcurrency(3))
   const disabled = createUserConcurrency(null)
   for (let i = 0; i <= limits.userConcurrencyMaxSubjects; i++) assert.equal(disabled.take(String(i)).lease, null)

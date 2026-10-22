@@ -236,11 +236,13 @@ func validDataAPIHealth(ready *bool, c *dataAPIHealthChecks, a *dataAPIHealthAdm
 	if !slices.Contains([]string{"reachable", "unreachable"}, c.Engine) || !slices.Contains([]string{"ready", "unready", "unknown"}, c.SQL) || !slices.Contains([]string{"reachable", "unknown"}, c.Database) || !slices.Contains([]string{"disabled", "active", "paused", "unavailable"}, c.Refresh) {
 		return false
 	}
+	// The engine pool is configurable (ADR-20261021180534); coordinated
+	// refresh keeps one connection of it.
 	capacity := api.DataAPIMaxPoolConnections
 	if c.Refresh != "disabled" {
 		capacity--
 	}
-	if *a.Capacity != capacity || *a.QueueCapacity != api.DataAPIMaxQueuedRequests || *a.Active < 0 || *a.Active > capacity || *a.Queued < 0 || *a.Queued > api.DataAPIMaxQueuedRequests {
+	if *a.Capacity < 1 || *a.Capacity > capacity || *a.QueueCapacity != api.DataAPIMaxQueuedRequests || *a.Active < 0 || *a.Active > *a.Capacity || *a.Queued < 0 || *a.Queued > api.DataAPIMaxQueuedRequests {
 		return false
 	}
 	expectedReady := c.SQL == "ready" && c.Refresh != "unavailable"
