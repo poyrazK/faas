@@ -288,6 +288,29 @@ same name as an argument wins. Build arguments end up in the image history, so
 keep secrets out of them and set those with `gregale secrets set`. Plans show the
 target and the argument names, not their values.
 
+Build-time secrets use `build.secrets`
+([ADR-20261022185329](adr/20261022185329-compose-build-secrets.md)):
+
+```yaml
+services:
+  api:
+    build:
+      context: ./api
+      secrets: [npm_token]          # RUN --mount=type=secret,id=npm_token ...
+secrets:
+  npm_token:
+    environment: NPM_TOKEN          # gregale secrets set NPM_TOKEN
+```
+
+Each entry names a top-level secret declared with `environment: NAME`; the
+build mounts the app secret `NAME` from the deployment's scope, under the id
+the entry gives (`{source, target}` sets the id to `target`). `file:` and
+external secrets are not uploaded and are left out with a warning. The value is
+opened only inside the builder VM, mounted with BuildKit's secret mount, and
+never stored in the image, its cache or Gregale's records; a build whose
+secret is not set fails with its name. Builds with secrets run on a fresh
+builder. At most 16 secrets per build (`DockerfileBuildSecretsMax`).
+
 `extends` and top-level `include` are resolved as Compose resolves them
 ([ADR-20261019190527](adr/20261019190527-compose-extends-and-include.md)):
 
@@ -314,7 +337,7 @@ The scan reports every other Compose key instead of dropping it silently:
 
 | Keys | Result |
 |---|---|
-| `build` (`context`, `dockerfile`, `args`, `target`), `command`, `depends_on`, `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `ports`, `profiles`, `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied. |
+| `build` (`context`, `dockerfile`, `args`, `target`, `secrets`), `command`, `depends_on`, `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `ports`, `profiles`, `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied. |
 | `container_name`, `init`, `stdin_open`, `tty`, `platform: linux/amd64`, `x-*` extensions | Ignored without a warning; they have no effect on a microVM service. |
 | `volumes`, `tmpfs` | Warning: no persistent volumes or bind mounts; each start gets a fresh filesystem. |
 | `deploy`, `scale`, `cpus`, `mem_limit` and other resource keys | Warning: CPU, memory and replicas come from the plan and app scaling. |
@@ -324,7 +347,7 @@ The scan reports every other Compose key instead of dropping it silently:
 | `cap_add`, `privileged`, `devices`, `security_opt`, `ulimits` and other kernel controls | Warning: each service runs in its own microVM. |
 | `dns`, `extra_hosts`, `hostname` and other guest networking keys | Warning: guest networking is managed by the platform. |
 | `labels`, `logging`, `pull_policy`, any other `platform` | Warning. |
-| `build.secrets`, `build.ssh`, `build.dockerfile_inline`, other `build.*` keys | Warning: the builder uses only `build.context`, `build.dockerfile`, `build.args` and `build.target`. |
+| `build.ssh`, `build.dockerfile_inline`, other `build.*` keys | Warning: the builder uses only `build.context`, `build.dockerfile`, `build.args`, `build.target` and `build.secrets`. |
 | Any other service key | Warning: not supported. |
 
 Managed database and cache services (for example `postgres`) do not report

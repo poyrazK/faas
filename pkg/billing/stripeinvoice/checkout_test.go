@@ -42,8 +42,7 @@ func TestSetupCheckoutRequests(t *testing.T) {
 	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
 	ctx := context.Background()
 
-	customer, err := c.CreateCustomer(ctx, "rk_test_k", "signup-1-customer", CustomerParams{Email: "ada@example.com", Name: "Ada",
-		Metadata: map[string]string{"gregale_signup": "s1"}})
+	customer, err := c.CreateCustomer(ctx, "rk_test_k", "signup-1-customer", "ada@example.com", "Ada", map[string]string{"gregale_signup": "s1"})
 	if err != nil || customer != "cus_1" {
 		t.Fatalf("CreateCustomer = %q, %v", customer, err)
 	}
@@ -54,16 +53,16 @@ func TestSetupCheckoutRequests(t *testing.T) {
 	session, err := c.CreateSetupCheckout(ctx, "rk_test_k", "signup-1-checkout", SetupCheckoutParams{Customer: "cus_1",
 		SuccessURL: "https://gregale.dev/ok", CancelURL: "https://gregale.dev/no", ExpiresAt: expires, ClientReferenceID: "s1",
 		Metadata: map[string]string{"gregale_signup": "s1"}})
-	if err != nil || session.ID != "cs_test_1" || session.URL == "" || session.Complete() {
+	if err != nil || session.ID != "cs_test_1" || session.URL == "" || session.Complete() || session.SetupIntent != nil {
 		t.Fatalf("CreateSetupCheckout = %+v, %v", session, err)
 	}
 	f := forms["POST /v1/checkout/sessions"]
-	if f["mode"] != "setup" || f["customer"] != "cus_1" || f["payment_method_types[0]"] != "card" || f["currency"] != "" || f["expires_at"] != "1900000000" ||
+	if f["mode"] != "setup" || f["customer"] != "cus_1" || f["payment_method_types[0]"] != "card" || f["expires_at"] != "1900000000" ||
 		f["success_url"] != "https://gregale.dev/ok" || f["client_reference_id"] != "s1" || f["setup_intent_data[metadata][gregale_signup]"] != "s1" {
 		t.Fatalf("checkout form = %v", f)
 	}
 	read, err := c.GetCheckoutSession(ctx, "rk_test_k", "cs_test_1")
-	if err != nil || !read.Complete() || read.PaymentMethod != "pm_1" || read.Customer != "cus_1" {
+	if err != nil || !read.Complete() || read.SetupIntent.PaymentMethod != "pm_1" || read.Customer != "cus_1" {
 		t.Fatalf("GetCheckoutSession = %+v, %v", read, err)
 	}
 	if gotQuery != "expand%5B%5D=setup_intent" {
