@@ -62,6 +62,24 @@ func (e *streamBridgeEntry) mapKey() string {
 	return e.instance
 }
 
+// streamBridgeStart is what prewarm needs to start an instance's bridge.
+type streamBridgeStart struct {
+	target      *netns.PublicForwardTarget
+	instance    string
+	netns       string
+	port        uint32
+	appProtocol string
+}
+
+// rememberLocked records the start of an entry. The caller holds m.mu.
+func (m *streamBridgeManager) rememberLocked(entry *streamBridgeEntry, appProtocol string) {
+	if m.started == nil {
+		m.started = make(map[string]streamBridgeStart)
+	}
+	m.started[entry.mapKey()] = streamBridgeStart{target: entry.target, instance: entry.instance, netns: entry.netns,
+		port: entry.port, appProtocol: appProtocol}
+}
+
 type streamBridgeLease struct {
 	manager *streamBridgeManager
 	entry   *streamBridgeEntry
@@ -78,6 +96,10 @@ func (l *streamBridgeLease) release() {
 type streamBridgeManager struct {
 	mu      sync.Mutex
 	entries map[string]*streamBridgeEntry
+	// started holds, by entry key, what started each live instance's bridge.
+	// It outlives the entry (idle reaping, a freeze) so a thaw can start the
+	// bridge again beside the resume; forget drops it with the instance.
+	started map[string]streamBridgeStart
 	log     *slog.Logger
 
 	idleTimeout  time.Duration
@@ -101,6 +123,7 @@ func newStreamBridgeManager(log *slog.Logger) *streamBridgeManager {
 	}
 	return &streamBridgeManager{
 		entries:      make(map[string]*streamBridgeEntry),
+		started:      make(map[string]streamBridgeStart),
 		log:          log,
 		idleTimeout:  streamBridgeIdleTimeout,
 		reapInterval: streamBridgeReapInterval,
@@ -154,6 +177,7 @@ func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHT
 				lastUsed: m.now(),
 			}
 			m.entries[entry.mapKey()] = entry
+			m.rememberLocked(entry, req.GetAppProtocol())
 			m.starts.Add(1)
 			m.mu.Unlock()
 
@@ -248,6 +272,7 @@ func (m *streamBridgeManager) prewarm(ctx context.Context, req *vmmdpb.ForwardHT
 		lastUsed: m.now(),
 	}
 	m.entries[entry.mapKey()] = entry
+	m.rememberLocked(entry, req.GetAppProtocol())
 	bridgeCtx := m.reaperCtx
 	m.starts.Add(1)
 	m.mu.Unlock()
@@ -263,10 +288,51 @@ func (m *streamBridgeManager) prewarm(ctx context.Context, req *vmmdpb.ForwardHT
 // safe while prewarm is still starting: startEntry observes entry.closed and
 // tears down any child it managed to create.
 func (m *streamBridgeManager) forget(ctx context.Context, instance string) {
+	m.closeInstance(ctx, instance, true)
+}
+
+// suspend closes an instance's bridges while its guest is frozen (ADR-1151)
+// and keeps what started them, so resume can start them again at the thaw.
+func (m *streamBridgeManager) suspend(ctx context.Context, instance string) {
+	m.closeInstance(ctx, instance, false)
+}
+
+// resume starts again, in the background, every bridge the instance had
+// before suspend or idle reaping closed it. The first request after a thaw
+// then joins a bridge that started beside the resume instead of spawning one
+// on its own path.
+func (m *streamBridgeManager) resume(ctx context.Context, instance string) int {
+	if m == nil || instance == "" {
+		return 0
+	}
+	m.mu.Lock()
+	var starts []streamBridgeStart
+	for _, start := range m.started {
+		if start.instance == instance {
+			starts = append(starts, start)
+		}
+	}
+	m.mu.Unlock()
+	for _, start := range starts {
+		m.prewarm(withPublicTarget(ctx, start.target), &vmmdpb.ForwardHTTPRequestInit{
+			Instance: start.instance, Port: start.port, AppProtocol: start.appProtocol,
+		}, start.netns)
+	}
+	return len(starts)
+}
+
+func (m *streamBridgeManager) closeInstance(ctx context.Context, instance string, dropStarts bool) {
 	if m == nil || instance == "" {
 		return
 	}
 	m.mu.Lock()
+	if dropStarts {
+		for key, start := range m.started {
+			if start.instance == instance {
+				delete(m.started, key)
+			}
+		}
+	}
 	var stopped []*streamBridgeEntry
 	for key, entry := range m.entries {
 		if entry.instance != instance {
