@@ -553,6 +553,15 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 			if !p.DockerfileBuild.IsZero() {
 				profile.DockerfileBuild = p.DockerfileBuild.Clone()
 			}
+			// A Compose healthcheck on a built service is frozen like a
+			// prebuilt image's (ADR-20261019195000); imaged merges it onto
+			// the built image's HEALTHCHECK.
+			if p.ImageHealthcheck != nil {
+				if err := p.ImageHealthcheck.Validate(); err != nil {
+					return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: Compose healthcheck: %w", err)
+				}
+				profile.ImageHealthcheck = &frameworkprofile.ImageHealthcheck{Version: frameworkprofile.ImageHealthcheckVersion, Override: p.ImageHealthcheck.Clone()}
+			}
 			if inferredProfile, err = json.Marshal(profile); err != nil {
 				if p.Log != nil {
 					p.Log.Warn("apidsource.Enqueue: encode source profile", "app", p.AppID, "err", err)
