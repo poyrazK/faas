@@ -214,6 +214,106 @@ How each gate judges:
 A gate that has too few requests or values (`--min-samples`, default 20) is
 not judged. A gate never holds a rollout on missing evidence.
 
+## What changed between releases
+
+`gregale deployment diff` shows what a release changes compared with the
+release that served before it
+([ADR-20261021101117](adr/20261021101117-release-diff.md)):
+
+```bash
+gregale deployment diff v42                 # against the release before it
+gregale deployment diff v42 --against v38   # against any release of the app
+```
+
+It reports:
+- **Code:** both commits, a GitHub compare link when both releases came
+  from the same repository, and whether the image changed.
+- **Configuration:** env variables and secrets added, removed or changed,
+  by key. Values are never shown.
+- **Packages:** packages added, removed or upgraded, from the two builds'
+  SBOMs (at most 100 per list).
+- **Runtime settings:** handler, runtime base, port, entrypoint, command,
+  probes, minimum instances, sidecars, workflows and env override keys.
+- **Release command:** the step that runs database migrations.
+
+A section shows as unknown when its history is gone: config history keeps
+the last 100 revisions per scope, and image releases have no build SBOM.
+The approval page and the "approval needed" message show the same
+comparison. `gregale deployment summary` remains the quick cockpit view:
+rollout status, rollback target, and release fields against the previous
+deployment.
+
+## Release approvals
+
+Require people to approve each production release before it takes more than
+its first canary stage
+([ADR-20261020085706](adr/20261020085706-release-approvals.md)):
+
+```bash
+# Two owners or admins, other than the deployer, approve every release.
+gregale approvals require --approvals 2
+# One person, developers included, within four hours.
+gregale approvals require --approvals 1 --approvers developer --timeout 4h
+
+gregale approvals pending                 # releases waiting right now
+gregale approvals approve <deployment> --comment "canary looks clean"
+gregale approvals reject <deployment> --reason "checkout latency is up"
+gregale approvals status <deployment>
+gregale approvals off
+```
+
+The release starts its canary as usual. At the stage the policy names
+(`--after-stage`, default 1), it waits. `gregale deploy` shows the wait and
+the approve command. The canary still judges the waiting stage, so a
+regression aborts the release even while it waits. Once enough people
+approve, the rollout continues on its next step.
+
+Waiting ends in one of three ways:
+- **Enough approvals:** the rollout continues.
+- **A rejection:** the rollout is aborted at once (rule
+  `abort_approval_rejected`), and the previous release takes its traffic
+  back.
+- **The timeout passes** (default 24 hours): the rollout is aborted in the
+  same way (rule `abort_approval_timeout`).
+
+While a release waits, nothing gives it more traffic: not `canary advance`,
+`rollouts recover --action promote`, `traffic set`, or
+`POST /v1/deployments/{id}/promote`. Rollbacks and aborts are never held.
+
+Who may approve:
+- **Approvers:** with `--approvers admin` (the default), organization owners
+  and admins; `developer` adds developers.
+- **The deployer:** their own approval does not count unless you pass
+  `--allow-self-approval`. An app outside an organization has one person,
+  whose own approval always counts.
+- **Changing the policy:** only owners and admins can change or remove it.
+
+Tell people when a release waits, is approved or rejected, or times out:
+
+```bash
+echo "https://hooks.slack.com/services/…" | gregale channels add --name releases --kind slack --secret-stdin
+gregale approvals require --approvals 2 --notify releases
+```
+
+`--notify` takes up to five Slack or email channels; PagerDuty channels are
+refused, because a release waiting for approval is not an incident. Each
+event is sent once per release.
+
+The Slack message for a waiting release has **Approve**, **Reject** and
+**Review** buttons, and the email has the same links. They open
+`/dashboard/releases/<deployment>/approval` in Gregale; if you are not signed
+in, Gregale asks you to sign in first. The decision is made on that page,
+under your own Gregale account, so your organization role, MFA and the
+self-approval rule apply exactly as in the CLI. The buttons grant nothing by
+themselves.
+
+Releases need a canary to wait in. While the policy is on, a production
+release with `--rollout immediate` or `--traffic-percent` is refused with
+`release_approval_canary_required`. A release deployed with `--no-traffic`
+can't be given traffic by hand either; start it with
+`gregale scheduled-releases set <release> --at now`, which rolls it out
+through a canary that waits for approval.
+
 ## Deploy freezes
 
 A freeze stops new production releases of one app, or of every app in the
@@ -264,6 +364,59 @@ An `--after-rollback` freeze is a policy. Each time the rollout circuit
 breaker, the post-release watch, the first-wake 5xx guard or an alert rule
 rolls an app back, Gregale freezes that app for the given time. The freeze
 names the release that was rolled back, and you can lift it like any other.
+
+## Scheduled releases
+
+Build a release now and start it later: at a quiet hour, at a launch time, or
+when the team is around to watch
+([ADR-20261021152201](adr/20261021152201-scheduled-releases.md)):
+
+```bash
+# Build now; start the rollout at 02:00 local time and tell #releases how it went.
+gregale deploy --at 02:00 --release-notify releases
+# Other ways to say when: +2h, "2026-10-22 09:00" (local time), or an RFC 3339 time.
+gregale deploy --at "2026-10-22 09:00" --rollout fast
+
+gregale scheduled-releases list
+gregale scheduled-releases show v44 --app my-api
+gregale scheduled-releases set v44 --app my-api --at +30m   # move it
+gregale scheduled-releases set v44 --app my-api --at now    # start it on the next pass
+gregale scheduled-releases cancel v44 --app my-api
+```
+
+The build, readiness check and snapshot happen right away, so a broken build
+shows up while you are still there. The release then waits live without
+traffic; production stays on the current release, and nothing wakes the
+waiting one. At its time, Gregale starts the rollout the deploy would have
+had: the same canary (`--rollout safe` or `fast`, or the app's release
+policy), or all traffic at once for `--rollout immediate`.
+
+Just before it starts, Gregale checks again:
+- **Freezes.** A freeze active at that moment stops the release, including a
+  freeze created after you scheduled it. Scheduling into a freeze you know
+  about needs `--override-freeze REASON`, which covers exactly the freezes
+  active at the scheduled time.
+- **Approvals.** If the app requires approvals, the release must roll out
+  through a canary, and it waits for approval in that canary like any other
+  release. A policy added while the release waited applies to it.
+- **Newer releases.** If a newer release serves traffic by then, the
+  scheduled one is superseded and never starts.
+
+If the build is still running, or another rollout is still in progress,
+Gregale waits for up to an hour past the scheduled time, then gives up
+(`expired`). A release that could not start stays built without traffic:
+schedule it again, or promote it by hand. `--release-notify` channels (Slack
+or email, up to five) hear when the release starts and when it can't.
+
+While a release waits for its time, `gregale traffic set` and `gregale
+traffic promote` refuse it with `release_scheduled`; move or cancel the
+schedule instead. `gregale traffic promote --deployment v44 --at 09:00`
+schedules a release you deployed with `--no-traffic`.
+
+A scheduled release is a production release of a request app: previews,
+named environments, services, workers and jobs release immediately. An app
+has one pending schedule at a time; scheduling another release cancels the
+earlier schedule and leaves that release waiting without traffic.
 
 ## Revisions
 
