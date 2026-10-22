@@ -97,20 +97,15 @@ func scheduledRolloutSpec(rollout string) (*api.CanaryPresetSpec, error) {
 	return nil, fmt.Errorf("--rollout must be safe, fast or immediate; got %q", rollout)
 }
 
-// scheduledReleaseTarget parses the shared <deployment> [--app] arguments.
-func scheduledReleaseTarget(fs *flag.FlagSet, app *string, args []string, usage string) (*Client, string, int) {
-	if err := parseInterspersed(fs, args); err != nil {
-		return nil, "", 1
-	}
-	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, usage, "scheduled-releases")
-		return nil, "", 1
-	}
+// scheduledReleaseTarget resolves the <deployment> a handler acts on. Each
+// handler checks its positional count itself, before any client call, where
+// the mutation-args guard test reads it.
+func scheduledReleaseTarget(app, deployment string) (*Client, string, int) {
 	client, err := authedClient()
 	if err != nil {
 		return nil, "", printErr("Not logged in", err)
 	}
-	id, err := resolveDeploymentArg(context.Background(), client, *app, fs.Arg(0))
+	id, err := resolveDeploymentArg(context.Background(), client, app, deployment)
 	if err != nil {
 		return nil, "", printErr("Could not resolve the release", err)
 	}
@@ -151,7 +146,14 @@ func scheduledReleasesList(args []string) int {
 func scheduledReleasesShow(args []string) int {
 	fs := newFlagSet("scheduled-releases show", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug, to resolve a vN revision")
-	client, id, code := scheduledReleaseTarget(fs, app, args, "usage: gregale scheduled-releases show <deployment> [--app <slug>]")
+	if err := parseInterspersed(fs, args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale scheduled-releases show <deployment> [--app <slug>]", "scheduled-releases")
+		return 1
+	}
+	client, id, code := scheduledReleaseTarget(*app, fs.Arg(0))
 	if client == nil {
 		return code
 	}
@@ -169,7 +171,14 @@ func scheduledReleasesSet(args []string) int {
 	rollout := fs.String("rollout", "", "how the release reaches traffic: safe, fast or immediate (default: the app release policy)")
 	notify := fs.String("notify", "", "Slack or email channels told when the release starts or cannot start")
 	overrideFreeze := fs.String("override-freeze", "", "release into deploy freezes active at that time; the reason is audited")
-	client, id, code := scheduledReleaseTarget(fs, app, args, "usage: gregale scheduled-releases set <deployment> --at <when> [--app <slug>] [--rollout safe|fast|immediate] [--notify CHANNEL,...]")
+	if err := parseInterspersed(fs, args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale scheduled-releases set <deployment> --at <when> [--app <slug>] [--rollout safe|fast|immediate] [--notify CHANNEL,...]", "scheduled-releases")
+		return 1
+	}
+	client, id, code := scheduledReleaseTarget(*app, fs.Arg(0))
 	if client == nil {
 		return code
 	}
@@ -193,7 +202,14 @@ func scheduledReleasesSet(args []string) int {
 func scheduledReleasesCancel(args []string) int {
 	fs := newFlagSet("scheduled-releases cancel", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug, to resolve a vN revision")
-	client, id, code := scheduledReleaseTarget(fs, app, args, "usage: gregale scheduled-releases cancel <deployment> [--app <slug>]")
+	if err := parseInterspersed(fs, args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale scheduled-releases cancel <deployment> [--app <slug>]", "scheduled-releases")
+		return 1
+	}
+	client, id, code := scheduledReleaseTarget(*app, fs.Arg(0))
 	if client == nil {
 		return code
 	}
