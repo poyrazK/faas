@@ -234,6 +234,9 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 		if guidance := flagValueGuidance(diagnostic, w.flags, path); guidance != "" {
 			diagnostic += "\n  " + guidance
 		}
+		if hint := globalFlagPlacementHint(diagnostic, path); hint != "" {
+			diagnostic += "\n  " + hint
+		}
 		_, err := fmt.Fprintf(w.dst, "Invalid command flags\n  %s\n  run 'gregale %s --help' for usage\n",
 			diagnostic, path)
 		return len(p), err
@@ -243,6 +246,21 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 	}
 	_, err := io.WriteString(w.dst, text)
 	return len(p), err
+}
+
+// globalFlagPlacementHint explains a prefix-only global flag given after the
+// command: `gregale deploy --non-interactive` failed with a bare "unknown
+// flag" (Hunt 12 H12-27).
+func globalFlagPlacementHint(diagnostic, path string) string {
+	for _, global := range []struct{ name, example string }{
+		{"non-interactive", "--non-interactive"},
+		{"profile", "--profile NAME"},
+	} {
+		if diagnostic == "unknown flag --"+global.name || strings.HasPrefix(diagnostic, "unknown flag --"+global.name+"=") {
+			return fmt.Sprintf("--%s is a global flag: put it before the command, as in 'gregale %s %s'", global.name, global.example, path)
+		}
+	}
+	return ""
 }
 
 type jsonFlagErrorWriter struct {
