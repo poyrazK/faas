@@ -59,6 +59,31 @@ func decodeInheritedProjectSecrets(snapshot RuntimeAppValuesSnapshot, projectID 
 	return inheritedProjectSecrets(snapshot, rows), nil
 }
 
+// WithProjectSecretRevision adds the environment's shared secrets to a
+// qualification's secret revision hashes under api.ProjectSecretsRevisionKey,
+// so a promotion refuses once one changed after qualification. An environment
+// without project secrets adds nothing, which keeps qualifications recorded
+// before ADR-1139 comparable.
+func WithProjectSecretRevision(hashes map[string]string, secrets []ProjectEnvironmentSecret) (map[string]string, error) {
+	if len(secrets) == 0 {
+		return hashes, nil
+	}
+	revisions := make([]api.ProjectEnvironmentSecretRevision, 0, len(secrets))
+	for _, secret := range secrets {
+		revisions = append(revisions, api.ProjectEnvironmentSecretRevision{Key: secret.Key, Version: secret.SecretVersion})
+	}
+	hash, err := api.ProjectEnvironmentSecretRevisionHash(revisions)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(hashes)+1)
+	for key, value := range hashes {
+		out[key] = value
+	}
+	out[api.ProjectSecretsRevisionKey] = hash
+	return out, nil
+}
+
 type inheritedSecret struct {
 	Key       string
 	Version   int64
