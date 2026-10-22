@@ -48,14 +48,16 @@ func printEdgeRuleEvents(slug string, out api.EdgeRuleEventsResponse) {
 		_, _ = fmt.Fprintf(osStdout, "(no edge-rule events on %s since %s)\n", slug, out.Since.Format("2006-01-02 15:04 MST"))
 		return
 	}
-	_, _ = fmt.Fprintf(osStdout, "%-20s %-8s %-24s %-7s %-39s %-3s %s\n", "TIME", "OUTCOME", "RULE", "METHOD", "CLIENT", "CC", "HOST+PATH")
+	// Rows are UTC like the empty-result line and the rest of the CLI; they
+	// were printed in the viewer's local zone with no label (Hunt 12).
+	_, _ = fmt.Fprintf(osStdout, "%-20s %-8s %-24s %-7s %-39s %-3s %s\n", "TIME (UTC)", "OUTCOME", "RULE", "METHOD", "CLIENT", "CC", "HOST+PATH")
 	for _, e := range out.Events {
 		rule := e.RuleName
 		if rule == "" {
 			rule = e.RuleID
 		}
 		_, _ = fmt.Fprintf(osStdout, "%-20s %-8s %-24s %-7s %-39s %-3s %s\n",
-			e.OccurredAt.Local().Format("2006-01-02 15:04:05"), e.Outcome, truncate(rule, 24), e.Method,
+			e.OccurredAt.UTC().Format("2006-01-02 15:04:05"), e.Outcome, truncate(rule, 24), e.Method,
 			e.ClientIP, e.Country, truncate(e.Host+e.Path, 80))
 		if waf := e.WAFSummary(); waf != "" {
 			_, _ = fmt.Fprintf(osStdout, "%-20s waf: %s\n", "", waf)
