@@ -51,6 +51,8 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_context` | Selected profile, API endpoint, account ID, plan, status, and platform capabilities. |
 | `gregale_list_actions` | Bounded connection-local deploy, rollback, service/worker rollout, service abort and regression-triage history for one exact app/environment, with keyset continuation. |
 | `gregale_get_action` | One recorded plan's attempts, redacted native receipts and recovery guidance; historical acceptance does not prove deployment completion. |
+| `gregale_list_environment_actions` | Connection-local promotion/rollback history for an exact project and target environment; requires consent for both environments and every project workload. |
+| `gregale_get_environment_action` | One environment plan's recorded approval/attempt, redacted promotion reference and recovery guidance; no approval credentials or automatic execution. |
 | `gregale_list_apps` | Apps sorted by slug; `limit` defaults to 20, maximum 100; continue with `next_offset`. |
 | `gregale_get_app` | One app's status, URLs, deployment availability, and resource settings. |
 | `gregale_list_deployments` | Account deployment history; bounded `limit`; continue with `next_before`. |
@@ -1558,7 +1560,7 @@ service abort and regression-triage plans. Use `gregale_get_action` with the sam
 selector and an exact `plan_id` to inspect its apply phase and, for request deploys,
 separate promotion phase.
 These tools are read-only and remain available when writes are disabled.
-The catalog contains 51 read/planning tools, or 60 with writes enabled.
+The catalog contains 53 read/planning tools, or 62 with writes enabled.
 
 For a lost apply response:
 
@@ -1599,7 +1601,8 @@ or `gregale_apply_service_abort` with the original unexpired plan and current
 consent. Accepted service aborts may still await routing acknowledgements and
 draining; accepted worker rollouts do not prove queue acknowledgement or delivery.
 
-History retains at most 256 records per connection, through 24 hours after each
+History retains at most 256 records shared across app/workload and environment
+actions per connection, through 24 hours after each
 plan's original expiry. Live supported plans take priority over archived records.
 Paging accepts `limit` 1–50 (default 20) and the returned `next_before` cursor,
 bound to the connection, account and immutable app/environment. New records do
@@ -1618,17 +1621,51 @@ Reads recheck current account, app and named-environment identities before
 releasing data. Regression records additionally require current diagnostic
 consent; lists omit them without it. Reasons, routes, source/configuration
 payloads, secrets, native error prose, approval tokens and replay keys are excluded.
-This is bounded connection history, not a complete account audit log. Environment
-promotions/rollbacks and route-budget actions remain outside this profile.
+This is bounded connection history, not a complete account audit log. Route-budget
+actions remain outside this profile.
 Existing unexpired supported plans are imported on upgrade; previously
 expired/discarded plans cannot be recovered. Older bridges ignore the additive
 history namespaces, so their later actions may be absent after their plan expires.
 Workload records use a companion namespace to preserve N-1 readers of the original
-history format; both namespaces share the 256-record bound and atomic commit.
+history format; all history namespaces share the 256-record bound and atomic commit.
 Phase states describe the last recorded bridge snapshot; inspect native state
 before replanning an expired action even if its old phase was `not_attempted`. See
 [ADR-20261022161757](adr/20261022161757-management-mcp-action-history.md) and
 [ADR-20261022183756](adr/20261022183756-management-mcp-workload-action-history.md).
+
+### Recover environment promotions and rollbacks
+
+Use `gregale_list_environment_actions` with
+`{"project":"shop","environment":"production","limit":20}`, then
+`gregale_get_environment_action` with the same selectors and exact `plan_id`.
+These project-level records require current read consent for both source and
+target environments and every project workload. Source consent removal omits
+records from lists and withholds detail; identity or membership changes can deny
+the entire read. App history remains app-scoped.
+
+`approval_pending` records the bridge's last human-review state and optional
+`approval_expires_at`. Inspection does not check whether the human has since
+approved or denied it. Review URLs, tickets, private exchange codes, approval
+credentials, preview tokens/hashes, reasons and workload payloads are excluded.
+Resume only through `gregale_apply_environment_promotion` with the **same
+unexpired plan ID**; its existing flow obtains/polls human review and enforces
+current target write consent. Expired review metadata cannot extend approval.
+
+`outcome_unknown` preserves the original retry handle after a lost response.
+Retry the indicated existing promotion/rollback tool with that same unexpired
+plan and current authorization. After expiry, inspect native state before
+replanning. `accepted` records a checked promotion ID, not observed completion or
+traffic health, even if a native rollback receipt reported completion. When known,
+`observation` points explicitly to `gregale_get_environment_promotion` with exact
+selectors. A rollback can reference its reviewed promotion before acceptance;
+an unknown new promotion has no guessed operation ID.
+
+Environment history follows the same retention/page bounds, encrypted restart,
+OAuth grant isolation and shared capacity as app history.
+`capacity_scope: all_connection_action_history` makes the shared bound explicit.
+All replay and history records commit atomically. The additive environment
+namespace preserves older readers; upgrades import only live original plans.
+See [ADR-20261022192200](adr/20261022192200-management-mcp-environment-action-history.md).
 
 ## Enable reviewed release actions
 

@@ -83,6 +83,10 @@ func (m *management) persistPlans() error {
 	if m.opts.planStore == nil {
 		return nil
 	}
+	environments, err := m.storedEnvironmentPlans()
+	if err != nil {
+		return err
+	}
 	records := make(map[string]storedPlan, len(m.plans))
 	for id, p := range m.plans {
 		if time.Now().After(p.ExpiresAt) {
@@ -99,8 +103,10 @@ func (m *management) persistPlans() error {
 		}
 	}
 	return m.opts.planStore.updateMany(map[string]any{
-		"plans/" + m.opts.planNamespace:                 records,
-		"actions/" + m.opts.planNamespace:               actionHistorySnapshot{Version: 1, Items: legacy},
-		workloadActionsNamespace + m.opts.planNamespace: actionHistorySnapshot{Version: 1, Items: workloads},
+		"environment-plans/" + m.opts.planNamespace:        environments,
+		environmentActionsNamespace + m.opts.planNamespace: environmentActionSnapshot{Version: 1, Items: m.environmentActions},
+		"plans/" + m.opts.planNamespace:                    records,
+		"actions/" + m.opts.planNamespace:                  actionHistorySnapshot{Version: 1, Items: legacy},
+		workloadActionsNamespace + m.opts.planNamespace:    actionHistorySnapshot{Version: 1, Items: workloads},
 	})
 }

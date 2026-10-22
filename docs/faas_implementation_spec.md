@@ -3097,3 +3097,12 @@ does not observe completion or infer worker queue processing. A companion journa
 namespace preserves N-1 readers, sharing the same atomic commit and combined
 256-record bound. See
 [ADR-20261022183756](adr/20261022183756-management-mcp-workload-action-history.md).
+
+Project/environment action history also covers promotions and rollbacks through
+separate read-only listing/detail tools. Current consent must cover source and
+target identities and every project workload. Recorded human approval pending,
+native outcome unknown and accepted references remain separate; credentials,
+review links and workload payloads are excluded. All replay/history namespaces
+commit atomically and share the 256-record bound. Reads never approve, apply or
+observe native completion. See
+[ADR-20261022192200](adr/20261022192200-management-mcp-environment-action-history.md).

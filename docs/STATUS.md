@@ -7,6 +7,21 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP environment action history — 2026-10-22 (branch, not released)
+
+Project/environment listing and detail now cover promotion/rollback plans,
+recorded human approval, ambiguous attempts and redacted promotion references.
+Reads recheck both immutable environments and whole-project workload consent;
+they do not poll approval or apply releases. All replay/history namespaces commit
+atomically and share the 256-record connection bound. Catalog: 53 read/planning
+tools, 62 with writes enabled. Full MCP race checks and pinned real Codex
+0.159.0-alpha.3 acceptance pass, including the same environment plan across
+restart/refresh/revocation in three read-only client profiles with zero model
+requests and deployment writes. Both changed Go packages pass lint; stdio CLI
+contracts and the spec/documentation gate pass without generated drift.
+See [ADR-20261022192200](adr/20261022192200-management-mcp-environment-action-history.md).
+Native/provider deployment qualification remains separate.
+
 ## Management MCP workload action history — 2026-10-22 (branch, not released)
 
 Action listing/inspection now includes image/source service and worker rollouts

@@ -1,6 +1,7 @@
 // adr: 1618
 // adr: 20261022161757
 // adr: 20261022183756
+// adr: 20261022192200
 package mcpmanagement
 
 import (
@@ -352,6 +353,10 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	f.mu.Lock()
 	previousHook := f.apiHook
 	f.apiHook = func(w http.ResponseWriter, req *http.Request, account string) bool {
+		if req.Method == http.MethodGet && req.URL.Path == "/v1/projects/shop/environments/production/promotion-preview" {
+			_ = json.NewEncoder(w).Encode(api.ProjectEnvironmentPromotionPreviewResponse{ProjectSlug: "shop", FromEnvironment: "staging", ToEnvironment: "production", CanPromote: true, ApprovalRequired: true, PromotionHash: strings.Repeat("a", 64), PromotionToken: "PRIVATE_ENV_PREVIEW"})
+			return true
+		}
 		if historyWorker.Load() && req.Method == http.MethodGet && req.URL.Path == "/v1/apps/alpha" {
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: account + "-app", Slug: "alpha", Type: "app", Manifest: api.AppManifest{ExecutionMode: api.ExecutionModeWorker}})
 			return true
@@ -428,8 +433,12 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 			flow := f.beginAt(req.Context(), input.AuthorizationURL)
 			for _, decision := range []string{"start-login", "check-login", "approve"} {
 				var response *http.Response
-				if decision == "approve" && requestMode == "approved" {
-					response = f.submitConsent(flow, url.Values{"request_id": {flow.requestID}, "csrf": {flow.csrf}, "decision": {decision}, "app_access": {"all"}, "request_read_apps": {"alpha"}}, f.server.URL)
+				if decision == "approve" {
+					form := url.Values{"request_id": {flow.requestID}, "csrf": {flow.csrf}, "decision": {decision}, "app_access": {"all"}, "environments": {"shop/staging", "shop/production"}}
+					if requestMode == "approved" {
+						form.Set("request_read_apps", "alpha")
+					}
+					response = f.submitConsent(flow, form, f.server.URL)
 				} else {
 					response = f.consent(flow, decision, "", f.server.URL, flow.csrf, false)
 				}
@@ -558,7 +567,7 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	if json.Unmarshal(output, &report) != nil || report["revocation"] != "passed" || report["refresh"] != "passed" || report["restart"] != "passed" {
 		t.Fatal("incomplete real-client evidence")
 	}
-	if report["action_history"] != "passed" || report["workload_action_history"] != "passed" {
+	if report["action_history"] != "passed" || report["workload_action_history"] != "passed" || report["environment_action_history"] != "passed" {
 		t.Fatal("incomplete real-client action history restart/refresh evidence")
 	}
 	if requestMode != "" && (report["request_diagnostics"] != requestMode || report["request_discovery"] != "passed" || nativeWrites.Load() != 0 || requestReads.Load() != map[string]int32{"denied": 0, "approved": 32}[requestMode]) {

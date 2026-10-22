@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"reflect"
-	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -81,6 +80,13 @@ func (m *management) restoreActionHistory() error {
 			m.actions[id] = entry
 		}
 	}
+	if err := m.restoreEnvironmentActionHistory(); err != nil {
+		return err
+	}
+	environmentsBefore := make(map[string]environmentActionRecord, len(m.environmentActions))
+	for id, entry := range m.environmentActions {
+		environmentsBefore[id] = entry
+	}
 	before := make(map[string]actionRecord, len(m.actions))
 	for id, entry := range m.actions {
 		before[id] = entry
@@ -88,7 +94,7 @@ func (m *management) restoreActionHistory() error {
 	if err := m.syncActionHistory(time.Now().UTC()); err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(before, m.actions) {
+	if !reflect.DeepEqual(before, m.actions) || !reflect.DeepEqual(environmentsBefore, m.environmentActions) {
 		// Import only still-live legacy plans. History cannot reconstruct plans
 		// already discarded by an older bridge, or mint new replay authority.
 		return m.persistPlans()
@@ -123,22 +129,10 @@ func (m *management) syncActionHistory(now time.Time) error {
 			delete(m.actions, id)
 		}
 	}
-	// All active supported plans fit inside the plan bound. Preserve them before
-	// keeping the newest archived records; capacity never evicts replay payloads.
-	entries := make([]actionRecord, 0, len(m.actions))
-	for _, entry := range m.actions {
-		entries = append(entries, entry)
+	if err := m.syncEnvironmentActionHistory(now); err != nil {
+		return err
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		iLive, jLive := m.actionPlanAvailable(entries[i], now), m.actionPlanAvailable(entries[j], now)
-		if iLive != jLive {
-			return iLive
-		}
-		return actionNewer(entries[i], entries[j])
-	})
-	for _, entry := range entries[min(len(entries), api.ManagementMCPActionHistoryMax):] {
-		delete(m.actions, entry.PlanID)
-	}
+	m.pruneActionHistories(now)
 	return nil
 }
 

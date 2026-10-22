@@ -55,19 +55,20 @@ type Options struct {
 }
 
 type management struct {
-	grantLifecycle   *Lifecycle
-	lifecycle        *Lifecycle
-	toolWrites       map[string]bool
-	toolNames        map[string]bool
-	admission        *requestAdmission
-	resourceServer   *mcp.Server
-	subscriptions    *resourceSubscriptions
-	client           *api.Client
-	opts             Options
-	mu               sync.Mutex
-	plans            map[string]*releasePlan
-	environmentPlans map[string]*environmentPlan
-	actions          map[string]actionRecord
+	grantLifecycle     *Lifecycle
+	lifecycle          *Lifecycle
+	toolWrites         map[string]bool
+	toolNames          map[string]bool
+	admission          *requestAdmission
+	resourceServer     *mcp.Server
+	subscriptions      *resourceSubscriptions
+	client             *api.Client
+	opts               Options
+	mu                 sync.Mutex
+	plans              map[string]*releasePlan
+	environmentPlans   map[string]*environmentPlan
+	actions            map[string]actionRecord
+	environmentActions map[string]environmentActionRecord
 }
 
 // NewServer constructs a management server without making API calls.
@@ -160,6 +161,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	register(s, m, "gregale_preflight", "Check selected app/environment consent, read endpoint compatibility and durable bridge status without plans or writes. Passed reads do not prove mutation authorization or native qualification.", m.preflight)
 	registerRouteBudgets(s, m)
 	registerActionHistory(s, m)
+	registerEnvironmentActionHistory(s, m)
 	registerRegressionActions(s, m)
 	registerInspection(s, m)
 	registerRequestDiagnostics(s, m)
