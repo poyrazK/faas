@@ -35,6 +35,10 @@ type ProductBillingFee struct {
 	MonthlyFeeMillicents int64      `json:"monthly_fee_millicents"`
 	AmountMillicents     int64      `json:"amount_millicents"`
 	ProratedFrom         *time.Time `json:"prorated_from,omitempty"`
+	// TrialStartsAt and TrialEndsAt are the part of a trial in the month,
+	// whose minutes the fee excludes (ADR-20261021195901).
+	TrialStartsAt *time.Time `json:"trial_starts_at,omitempty"`
+	TrialEndsAt   *time.Time `json:"trial_ends_at,omitempty"`
 }
 
 type ProductBillingLine struct {

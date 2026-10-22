@@ -283,6 +283,14 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 		if dep.AppID != appID || api.ValidateScope(scope) != nil {
 			return state.ErrConflict
 		}
+		// A deployment still being deployed owns its worker: Prime publishes
+		// the worker RUNNING before apid marks the deployment live, and a
+		// reconcile in between would stop it as a retired generation. It
+		// stays out of the plan, neither kept nor stopped; the account cap
+		// still counts it.
+		if app.Status == state.AppActive && deploymentInFlight(dep.Status) {
+			continue
+		}
 		if onlyScope == "" || onlyScope == scope {
 			if state.State(ins.State) == state.StateMigrating {
 				return fmt.Errorf("worker environment %s is migrating: %w", scope, state.ErrConflict)
@@ -888,4 +896,14 @@ func (e *Engine) capWorkerReplicasToAccount(ctx context.Context, app state.App, 
 		return available, &b, nil
 	}
 	return desired, nil, nil
+}
+
+// deploymentInFlight reports whether a deployment is still being deployed:
+// not yet live, and neither failed, superseded nor cancelled.
+func deploymentInFlight(status state.DeploymentStatus) bool {
+	switch status {
+	case state.DeployPending, state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting:
+		return true
+	}
+	return false
 }

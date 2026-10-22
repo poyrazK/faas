@@ -12630,7 +12630,9 @@
       "plan",
       "revision",
       "suspended",
-      "tenant_id"
+      "tenant_id",
+      "trial_ends_at",
+      "trial_starts_at"
     ],
     "kind": "configuration"
   },
