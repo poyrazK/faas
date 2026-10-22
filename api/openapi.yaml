@@ -30143,6 +30143,24 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/deployments/{id}/timeline:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getReleaseTimeline
+      summary: Show a release's phase and history (ADR-20261022120744).
+      description: "Composes what Gregale recorded about one release into a phase, a one-line summary and its events, oldest first: creation, schedule, approvals, rollout start, each canary step with the decision and gate results behind it, holds, completion, the post-release watch, abort or rollback, and the release that replaced it. Reads at most 500 audit rows; truncated=true means older history was left out."
+      responses:
+        '200':
+          description: The release timeline.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseTimeline' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/deployments/{id}/schedule:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -107671,6 +107689,54 @@ components:
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ReleaseApprovalStatus' } }
+    ReleaseTimeline:
+      description: "One release's phase and what happened to it (ADR-20261022120744)."
+      type: object
+      required: [deployment_id, app, status, phase, summary, traffic_percent, created_at, events]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        app: { type: string }
+        revision: { type: integer, minimum: 0 }
+        scope: { type: string }
+        status: { type: string, description: "The deployment's status, such as live or superseded." }
+        phase:
+          type: string
+          enum: [building, failed, cancelled, rolled_back, scheduled, awaiting_approval, superseded, held, rolling_out, watching, released]
+          description: "Where the release is, matched in this order."
+        summary: { type: string, description: "One line, such as \"Rolling out: step 2 of 4, 10% of traffic\"." }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        canary_step: { type: integer, minimum: 0, description: "Zero-based current canary step." }
+        canary_total_steps: { type: integer, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        deployed_by: { type: string }
+        commit_sha: { type: string }
+        pr_number: { type: integer, minimum: 0 }
+        tag: { type: string }
+        reason: { type: string }
+        stable_deployment_id: { type: string, format: uuid, description: "The release this one replaces; an abort returns traffic to it." }
+        stable_revision: { type: integer, minimum: 0 }
+        replaced_by_deployment_id: { type: string, format: uuid, description: "The newer release of the same scope that took over." }
+        replaced_by_revision: { type: integer, minimum: 0 }
+        watch_until: { type: string, format: date-time, description: "When the post-release watch stops judging the release." }
+        approval: { $ref: '#/components/schemas/ReleaseApprovalStatus' }
+        schedule: { $ref: '#/components/schemas/ScheduledRelease' }
+        gates: { type: array, items: { $ref: '#/components/schemas/ReleaseGateResult' }, description: "The results of the newest decision that judged release gates." }
+        events: { type: array, items: { $ref: '#/components/schemas/ReleaseTimelineEvent' } }
+        truncated: { type: boolean, description: "Older audit history was left out." }
+    ReleaseTimelineEvent:
+      description: "One thing that happened to a release."
+      type: object
+      required: [at, kind, summary]
+      properties:
+        at: { type: string, format: date-time }
+        kind:
+          type: string
+          enum: [created, scheduled, schedule_started, schedule_blocked, schedule_cancelled, approval_requested, approved, rejected, approval_expired, rollout_started, advanced, traffic_changed, held, completed, aborted, rollback_requested, rolled_back, watch_passed, superseded, note]
+        summary: { type: string, description: "What happened, in one sentence." }
+        actor: { type: string, description: "A person's email, or Gregale for automatic steps." }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100, description: "The release's traffic share after this event." }
+        repeats: { type: integer, minimum: 0, description: "Further holds with the same rule this event stands for." }
+        decision: { $ref: '#/components/schemas/RolloutDecision' }
     ReleaseDiff:
       description: "What changed between two releases of one app (ADR-20261021101117)."
       type: object

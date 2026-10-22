@@ -1156,6 +1156,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/deployments/{id}/approvals":                                                         "GetReleaseApproval",
 	"POST /v1/deployments/{id}/approvals":                                                        "DecideReleaseApproval",
 	"GET /v1/deployments/{id}/diff":                                                              "GetReleaseDiff",
+	"GET /v1/deployments/{id}/timeline":                                                          "GetReleaseTimeline",
 	"GET /v1/scheduled-releases":                                                                 "ListScheduledReleases",
 	"GET /v1/deployments/{id}/schedule":                                                          "GetDeploymentSchedule",
 	"PUT /v1/deployments/{id}/schedule":                                                          "ScheduleDeployment",

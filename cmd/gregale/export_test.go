@@ -1620,6 +1620,7 @@ var RejectDevTriggerAppSelection = rejectDevTriggerAppSelection
 var ReleaseDiffLines = releaseDiffLines
 var ReleaseGateRequest = releaseGateRequest
 var ReleaseSummaryLine = releaseSummaryLine
+var ReleaseTimelineLines = releaseTimelineLines
 var ReleasedUsage = releasedUsage
 var RemoveTestFaultRules = removeTestFaultRules
 var RenderAccountSLO = renderAccountSLO

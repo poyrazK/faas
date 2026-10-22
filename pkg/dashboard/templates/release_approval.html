@@ -47,7 +47,7 @@
       </div>
     </form>
     <p id="result" role="alert"></p>
-    <p><a id="app-link" href="/dashboard" hidden>Open the app</a></p>
+    <p><a id="release-link" href="/dashboard/releases/{{.Data.DeploymentID}}">Open the release page</a> · <a id="app-link" href="/dashboard" hidden>Open the app</a></p>
     <noscript>Enable JavaScript to review this release, or run <code>gregale approvals status {{.Data.DeploymentID}}</code>.</noscript>
     <input type="hidden" id="deployment" value="{{.Data.DeploymentID}}">
     <input type="hidden" id="intent" value="{{.Data.Intent}}">

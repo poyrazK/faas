@@ -243,6 +243,37 @@ comparison. `gregale deployment summary` remains the quick cockpit view:
 rollout status, rollback target, and release fields against the previous
 deployment.
 
+## The release page
+
+Every release has a page at `/dashboard/releases/<id>` that tells its whole
+story in one place
+([ADR-20261022120744](adr/20261022120744-release-page.md)). The terminal shows
+the same history:
+
+```bash
+gregale deployment timeline v42           # phase, gates, approvals, then every event
+gregale deployment timeline v42 --json    # GET /v1/deployments/{id}/timeline
+```
+
+The page and the command show:
+- **Where the release is:** building, scheduled, waiting for approval,
+  rolling out, held, watched after the rollout, released, rolled back or
+  replaced, with one line saying why. For example: "Held at step 2 of 4, 10%
+  of traffic: 12 of 50 requests".
+- **What happened, oldest first:** creation, the schedule, approval requests
+  and decisions, the rollout start, each canary step with the evidence
+  behind it, holds, release gate results, completion, the post-release
+  watch, an abort or rollback, and the release that replaced it. Repeated
+  holds for the same reason show as one line with a count.
+- **What changed:** the same comparison as `gregale deployment diff`.
+
+While a canary rolls out, the page can advance it one step or abort it and
+return traffic to the stable release. It uses the same API routes as the CLI,
+so the same roles, MFA, approval, freeze and gate checks apply. A release
+waiting for approval links to its approval page. The page refreshes itself
+while the release is in flight. The deployment page (build, scan and logs)
+and the approval page link to it.
+
 ## Release approvals
 
 Require people to approve each production release before it takes more than

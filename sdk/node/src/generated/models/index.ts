@@ -2501,6 +2501,8 @@ export type { ReleaseFreezeWeekly } from './ReleaseFreezeWeekly.js';
 export type { ReleaseGate } from './ReleaseGate.js';
 export type { ReleaseGateResult } from './ReleaseGateResult.js';
 export type { ReleaseRestorePoint } from './ReleaseRestorePoint.js';
+export type { ReleaseTimeline } from './ReleaseTimeline.js';
+export type { ReleaseTimelineEvent } from './ReleaseTimelineEvent.js';
 export type { RemoveEnvironmentGitOpsOverrideRequest } from './RemoveEnvironmentGitOpsOverrideRequest.js';
 export type { RenameAppRequest } from './RenameAppRequest.js';
 export type { ReplaceProjectEnvironmentQueueBindingsRequest } from './ReplaceProjectEnvironmentQueueBindingsRequest.js';

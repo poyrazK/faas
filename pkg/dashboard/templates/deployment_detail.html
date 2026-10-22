@@ -195,6 +195,7 @@
       <h1>Deployment <code>{{.Data.Deployment.ID}}</code></h1>
       <p>
         <a href="/dashboard/apps/{{.Data.App.Slug}}">← Back to {{.Data.App.Slug}}</a>
+        · <a href="/dashboard/releases/{{.Data.Deployment.ID}}">Release timeline: rollout, gates and approvals →</a>
       </p>
       <p>
         <span class="badge {{.Data.Deployment.Status}}">{{.Data.Deployment.Status}}</span>

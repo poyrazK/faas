@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; --muted: #6b7280; --ok: #15803d; --bad: #b91c1c; --warn: #b45309; --line: #d1d5db; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; max-width: 860px; margin: 2.5rem auto; padding: 0 1.25rem; line-height: 1.5; }
+    h1 { margin-bottom: .25rem; }
+    h2 { margin-top: 2rem; font-size: 1.15rem; }
+    .phase { display: inline-block; padding: .1rem .55rem; border-radius: 999px; border: 1px solid currentColor; font-size: .85rem; font-weight: 600; }
+    .phase.good { color: var(--ok); } .phase.bad { color: var(--bad); } .phase.wait { color: var(--warn); }
+    .summary { font-size: 1.1rem; margin: .5rem 0 1rem; }
+    dl { display: grid; grid-template-columns: max-content 1fr; gap: .2rem 1rem; }
+    dt { font-weight: 600; } dd { margin: 0; overflow-wrap: anywhere; }
+    .bar { height: .6rem; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; max-width: 420px; }
+    .bar span { display: block; height: 100%; background: currentColor; }
+    .actions { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-top: 1rem; }
+    button { padding: .5rem .9rem; font: inherit; }
+    input[type=text] { font: inherit; padding: .4rem; min-width: 16rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+    ol.timeline { list-style: none; padding: 0; margin: 0; }
+    ol.timeline li { display: grid; grid-template-columns: 9.5rem 1fr; gap: .75rem; padding: .45rem 0; border-bottom: 1px solid var(--line); }
+    .when, .muted { color: var(--muted); font-size: .9rem; }
+    .kind { font-weight: 600; }
+    details { margin-top: .25rem; } details pre { white-space: pre-wrap; font-size: .85rem; }
+    .passed { color: var(--ok); } .failed { color: var(--bad); }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="muted"><a id="app-link" href="/dashboard">Dashboard</a></p>
+    <h1 id="title">Release</h1>
+    <p><span id="phase" class="phase" hidden></span></p>
+    <p id="summary" class="summary" role="status" aria-live="polite">Loading the release…</p>
+    <div id="progress" hidden><div class="bar" aria-hidden="true"><span id="bar"></span></div><p id="progress-text" class="muted"></p></div>
+    <dl id="details" hidden></dl>
+    <div id="actions" class="actions" hidden>
+      <a id="approval-link" hidden>Review the approval</a>
+      <button type="button" id="advance" hidden>Advance one step</button>
+      <input type="text" id="abort-reason" maxlength="200" placeholder="Why abort? (optional)" hidden>
+      <button type="button" id="abort" hidden>Abort and roll back</button>
+      <button type="button" id="abort-confirm" hidden>Confirm: return traffic to the stable release</button>
+    </div>
+    <p id="result" role="alert"></p>
+    <section id="gates-section" hidden>
+      <h2>Release gates</h2>
+      <table><thead><tr><th>Gate</th><th>Result</th><th>Evidence</th></tr></thead><tbody id="gates"></tbody></table>
+    </section>
+    <section id="approval-section" hidden>
+      <h2>Approvals</h2>
+      <p id="approval"></p>
+    </section>
+    <section id="changes" hidden>
+      <h2>What changed</h2>
+      <p id="changes-summary"></p>
+      <p id="changes-code"></p>
+      <ul id="changes-list"></ul>
+    </section>
+    <h2>Timeline</h2>
+    <p id="truncated" class="muted" hidden>Older history is not shown.</p>
+    <ol id="timeline" class="timeline"></ol>
+    <p class="muted"><a id="deployment-link" hidden>Build, scan and logs for this release</a></p>
+    <noscript>Enable JavaScript to see this release, or run <code>gregale deployment timeline {{.Data.DeploymentID}}</code>.</noscript>
+    <input type="hidden" id="deployment" value="{{.Data.DeploymentID}}">
+  </main>
+  <script nonce="{{.Nonce}}">
+    'use strict';
+    const id = document.getElementById('deployment').value;
+    const base = '/v1/deployments/' + encodeURIComponent(id);
+    const $ = (name) => document.getElementById(name);
+    const text = (name, value) => { $(name).textContent = value || '—'; };
+    const get = { credentials: 'same-origin', cache: 'no-store', referrerPolicy: 'no-referrer' };
+    const live = new Set(['building', 'scheduled', 'awaiting_approval', 'rolling_out', 'held', 'watching']);
+    const tone = { released: 'good', watching: 'good', rolled_back: 'bad', failed: 'bad', awaiting_approval: 'wait', held: 'wait', scheduled: 'wait' };
+    let current = null;
+    let timer = null;
+    const problemText = async (response) => {
+      try { const p = await response.json(); return p.detail || p.title || ('HTTP ' + response.status); }
+      catch (_) { return 'HTTP ' + response.status; }
+    };
+    const when = (iso) => { const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString(); };
+    const revision = (rev, did) => rev ? 'v' + rev : (did || '').slice(0, 8);
+    const releaseLink = (rev, did) => {
+      const a = document.createElement('a');
+      a.href = '/dashboard/releases/' + encodeURIComponent(did); a.textContent = revision(rev, did);
+      return a;
+    };
+    const row = (list, label, value) => {
+      if (value === undefined || value === null || value === '' || value === 0) { return; }
+      const dt = document.createElement('dt'); dt.textContent = label;
+      const dd = document.createElement('dd');
+      if (value instanceof Node) { dd.appendChild(value); } else { dd.textContent = String(value); }
+      list.append(dt, dd);
+    };
+    const decisionText = (d) => {
+      const lines = [d.kind + ' · ' + d.rule + (d.summary ? ': ' + d.summary : '')];
+      lines.push('step ' + (d.step + 1) + ', ' + d.traffic_percent + '% of traffic');
+      const side = (name, s) => { if (s) { lines.push(name + ': ' + s.requests + ' requests, ' + s.server_errors + ' server errors' + (s.p95_latency_ms ? ', p95 ' + s.p95_latency_ms + ' ms' : '')); } };
+      side('candidate', d.candidate); side('stable', d.stable);
+      for (const g of (d.gates || [])) { lines.push('gate ' + g.name + ' ' + (g.passed ? 'passed' : 'failed') + ': ' + g.summary); }
+      return lines.join('\n');
+    };
+    const renderHeader = (t) => {
+      document.title = 'Release ' + revision(t.revision, t.deployment_id) + ' of ' + t.app + ' — Gregale';
+      text('title', 'Release ' + revision(t.revision, t.deployment_id) + ' of ' + t.app);
+      const phase = $('phase');
+      phase.textContent = t.phase.replace(/_/g, ' '); phase.className = 'phase ' + (tone[t.phase] || ''); phase.hidden = false;
+      text('summary', t.summary);
+      $('app-link').href = '/dashboard/apps/' + encodeURIComponent(t.app); $('app-link').textContent = t.app;
+      $('deployment-link').href = '/dashboard/apps/' + encodeURIComponent(t.app) + '/deployments/' + encodeURIComponent(t.deployment_id);
+      $('deployment-link').hidden = false;
+      const showBar = t.canary_total_steps > 0 || t.traffic_percent > 0;
+      $('progress').hidden = !showBar;
+      $('bar').style.width = Math.max(0, Math.min(100, t.traffic_percent)) + '%';
+      let progress = t.traffic_percent + '% of traffic';
+      if (t.canary_total_steps > 0) { progress += ' · canary step ' + Math.min(t.canary_step + 1, t.canary_total_steps) + ' of ' + t.canary_total_steps; }
+      text('progress-text', progress);
+      const list = $('details');
+      list.replaceChildren();
+      row(list, 'Deployed by', t.deployed_by);
+      row(list, 'Commit', t.commit_sha ? t.commit_sha.slice(0, 12) : '');
+      row(list, 'Pull request', t.pr_number ? '#' + t.pr_number : '');
+      row(list, 'Tag', t.tag);
+      row(list, 'Reason', t.reason);
+      row(list, 'Environment', t.scope);
+      row(list, 'Created', when(t.created_at));
+      if (t.stable_deployment_id) { row(list, 'Replaces', releaseLink(t.stable_revision, t.stable_deployment_id)); }
+      if (t.replaced_by_deployment_id) { row(list, 'Replaced by', releaseLink(t.replaced_by_revision, t.replaced_by_deployment_id)); }
+      row(list, 'Watched until', t.watch_until ? when(t.watch_until) : '');
+      list.hidden = list.children.length === 0;
+    };
+    const renderActions = (t) => {
+      const inFlight = t.phase === 'rolling_out' || t.phase === 'held';
+      const waiting = t.phase === 'awaiting_approval';
+      $('approval-link').href = '/dashboard/releases/' + encodeURIComponent(t.deployment_id) + '/approval';
+      $('approval-link').hidden = !waiting;
+      $('advance').hidden = !(inFlight && t.canary_total_steps > 0);
+      const canAbort = (inFlight || waiting) && !!t.stable_deployment_id;
+      $('abort').hidden = !canAbort;
+      if (!canAbort) { $('abort-reason').hidden = true; $('abort-confirm').hidden = true; }
+      $('actions').hidden = !(waiting || inFlight);
+    };
+    const renderGates = (t) => {
+      const body = $('gates');
+      body.replaceChildren();
+      for (const g of (t.gates || [])) {
+        const tr = document.createElement('tr');
+        const name = document.createElement('td'); name.textContent = g.name + ' (' + g.kind.replace(/_/g, ' ') + ')';
+        const result = document.createElement('td'); result.textContent = g.passed ? 'passed' : 'failed'; result.className = g.passed ? 'passed' : 'failed';
+        const evidence = document.createElement('td'); evidence.textContent = g.summary;
+        tr.append(name, result, evidence);
+        body.appendChild(tr);
+      }
+      $('gates-section').hidden = body.children.length === 0;
+    };
+    const renderApproval = (t) => {
+      const a = t.approval;
+      $('approval-section').hidden = !a;
+      if (!a) { return; }
+      let line = a.state.replace(/_/g, ' ') + ' · ' + a.approvals + ' of ' + (a.required_approvals || 0) + ' approval(s)';
+      if (a.expires_at && a.state === 'waiting') { line += ' · aborted if not approved by ' + when(a.expires_at); }
+      text('approval', line);
+    };
+    const renderTimeline = (t) => {
+      const list = $('timeline');
+      list.replaceChildren();
+      for (const e of (t.events || [])) {
+        const li = document.createElement('li');
+        const at = document.createElement('div'); at.className = 'when'; at.textContent = when(e.at);
+        const body = document.createElement('div');
+        const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = e.kind.replace(/_/g, ' ');
+        const summary = document.createElement('div'); summary.textContent = e.summary + (e.repeats ? ' (' + (e.repeats + 1) + ' times)' : '');
+        body.append(kind, summary);
+        if (e.actor) { const by = document.createElement('div'); by.className = 'muted'; by.textContent = 'by ' + e.actor; body.appendChild(by); }
+        if (e.decision) {
+          const details = document.createElement('details');
+          const s = document.createElement('summary'); s.textContent = 'Evidence';
+          const pre = document.createElement('pre'); pre.textContent = decisionText(e.decision);
+          details.append(s, pre); body.appendChild(details);
+        }
+        li.append(at, body);
+        list.appendChild(li);
+      }
+      $('truncated').hidden = !t.truncated;
+    };
+    const renderChanges = (d) => {
+      text('changes-summary', d.summary);
+      const code = $('changes-code');
+      code.replaceChildren();
+      if (d.code && (d.code.from_commit || d.code.to_commit)) {
+        code.append('Commit ' + (d.code.from_commit || '—').slice(0, 12) + ' → ' + (d.code.to_commit || '—').slice(0, 12) + ' ');
+        if (typeof d.code.compare_url === 'string' && d.code.compare_url.startsWith('https://github.com/')) {
+          const a = document.createElement('a');
+          a.href = d.code.compare_url; a.rel = 'noreferrer noopener'; a.target = '_blank'; a.textContent = 'compare on GitHub';
+          code.append(a);
+        }
+      }
+      const list = $('changes-list');
+      list.replaceChildren();
+      const item = (line) => { const li = document.createElement('li'); li.textContent = line; list.appendChild(li); };
+      const keys = (label, rows) => { for (const k of (rows || [])) { item(label + ' ' + k.key + ' ' + k.change); } };
+      if (d.config && d.config.known) { keys('Variable', d.config.variables); keys('Secret', d.config.secrets); }
+      const deps = d.dependencies || {};
+      if (deps.known) {
+        for (const p of (deps.changed || []).slice(0, 10)) { item('Package ' + p.name + ' ' + p.from + ' → ' + p.to); }
+        const more = (deps.added || []).length + (deps.removed || []).length + Math.max((deps.changed || []).length - 10, 0);
+        if (more > 0) { item(more + ' more package change(s); run gregale deployment diff ' + id); }
+      }
+      for (const f of (d.runtime || [])) { item('Setting ' + f.field + ': ' + (f.from || '—') + ' → ' + (f.to || '—')); }
+      if (d.database && d.database.changed) { item('Release command: ' + (d.database.from_release_command || 'none') + ' → ' + (d.database.to_release_command || 'none')); }
+      $('changes').hidden = false;
+    };
+    const render = (t) => {
+      current = t;
+      renderHeader(t); renderActions(t); renderGates(t); renderApproval(t); renderTimeline(t);
+      clearTimeout(timer);
+      if (live.has(t.phase)) { timer = setTimeout(() => load().catch(() => {}), 15000); }
+    };
+    const load = async () => {
+      const response = await fetch(base + '/timeline', get);
+      if (!response.ok) { text('summary', 'Could not load this release: ' + await problemText(response)); return; }
+      render(await response.json());
+    };
+    const loadChanges = async () => {
+      const response = await fetch(base + '/diff', get);
+      if (response.ok) { renderChanges(await response.json()); }
+    };
+    const post = async (url, body, done) => {
+      for (const b of ['advance', 'abort', 'abort-confirm']) { $(b).disabled = true; }
+      text('result', '');
+      try {
+        const response = await fetch(url, {
+          method: 'POST', credentials: 'same-origin', cache: 'no-store', referrerPolicy: 'no-referrer',
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+          body: JSON.stringify(body)
+        });
+        if (!response.ok) { text('result', await problemText(response)); return; }
+        text('result', done);
+        await load();
+      } catch (_) { text('result', 'Could not reach Gregale. Try again.'); }
+      finally { for (const b of ['advance', 'abort', 'abort-confirm']) { $(b).disabled = false; } }
+    };
+    $('advance').addEventListener('click', () => {
+      if (!current) { return; }
+      post(base + '/canary/advance', { expected_step: current.canary_step }, 'Advanced one step.');
+    });
+    $('abort').addEventListener('click', () => {
+      $('abort').hidden = true; $('abort-reason').hidden = false; $('abort-confirm').hidden = false; $('abort-reason').focus();
+    });
+    $('abort-confirm').addEventListener('click', () => {
+      if (!current) { return; }
+      const reason = $('abort-reason').value.trim() || 'Aborted from the release page';
+      post('/v1/apps/' + encodeURIComponent(current.app) + '/rollouts/recover', {
+        action: 'abort', deployment_id: current.deployment_id,
+        expected_predecessor_deployment_id: current.stable_deployment_id, reason: reason
+      }, 'Aborted; traffic is returning to the stable release.');
+      $('abort-reason').hidden = true; $('abort-confirm').hidden = true;
+    });
+    load().catch(() => text('summary', 'Could not reach Gregale. Try again.'));
+    loadChanges().catch(() => {});
+  </script>
+</body>
+</html>
