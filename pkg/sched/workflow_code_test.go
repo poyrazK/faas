@@ -99,7 +99,7 @@ func (e *codeTestExecutor) ExecuteStep(_ context.Context, _, path, _ string, hea
 	}
 	var request workflowcode.Request
 	if err := json.Unmarshal(body, &request); err != nil {
-		return 400, []byte(err.Error()), nil
+		return 400, []byte(err.Error()), nil //nolint:nilerr // a malformed request is an HTTP 400 from the handler, not a transport failure
 	}
 	if request.Protocol != api.WorkflowCodeProtocol {
 		return 400, nil, nil
