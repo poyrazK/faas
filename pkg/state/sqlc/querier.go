@@ -3505,6 +3505,10 @@ type Querier interface {
 	LockCloneCheckpointWakeDispatchInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (pgtype.UUID, error)
 	// Match the permanent retirement fence's table-before-instance lock order.
 	LockCloneCheckpointWakeDispatchTables(ctx context.Context, db DBTX) error
+	// Customer Operation approval forms, concurrency policies and queued Operations
+	// were added after the migration-owned writer fence. Their scope-only rows have
+	// no environment foreign key, so keep their writers out of the deletion window.
+	LockCloneCustomerOperationEnvironmentCleanupBorrowers(ctx context.Context, db DBTX) error
 	LockCloneDeploymentCleanupBorrowerWriters(ctx context.Context, db DBTX) error
 	// Deployment UUID arrays and rehearsal receipts retain original artifacts without
 	// a foreign-key lock; exclude their writers through deletion and receipt commit.
