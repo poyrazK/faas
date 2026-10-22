@@ -2,6 +2,7 @@
 -- migration-compat: expand
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 -- ADR-733 crash snapshots. apid owns crash_snapshot_settings (customer
 -- intent). A request row comes from gatewayd-internal (HTTP 5xx) or apid

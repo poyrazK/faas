@@ -2,6 +2,7 @@
 -- migration-compat: expand
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 -- ADR-732: production fork intent. apid writes one row per request; schedd
 -- claims queued rows under a lease, restores the app's newest capture into a

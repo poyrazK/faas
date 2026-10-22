@@ -2,6 +2,7 @@
 -- migration-compat: expand
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 -- ADR-732 fork exec. apid records a command for a running fork; the schedd
 -- holding the fork's lease runs it through vmmd inside the quarantined fork
