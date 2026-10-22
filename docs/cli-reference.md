@@ -19,6 +19,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`ai`](#ai) | Configure the AI gateway: providers, cost caps, guardrails and usage |
 | [`channels`](#channels) | Manage where alerts are sent: Slack, PagerDuty or email |
 | [`dashboards`](#dashboards) | Save dashboards that combine metrics, log counts and SLOs across apps |
+| [`incidents`](#incidents) | List open and recent incidents: alerts, route monitors and platform status |
 | [`slos`](#slos) | Define SLOs and track their error budgets |
 | [`synthetics`](#synthetics) | Schedule HTTP checks against an app |
 | [`alerts`](#alerts) | Manage an app&#39;s alert rules |
@@ -3142,6 +3143,44 @@ Replace a dashboard&#39;s name and widgets
 Delete a dashboard
 
 `gregale dashboards rm <dashboard-id>`
+
+
+## incidents
+
+List open and recent incidents: alerts, route monitors and platform status
+
+`gregale incidents [<subcommand>]`
+
+### incidents list
+
+List open incidents and those resolved in the window
+
+`gregale incidents list [--app <SLUG>] [--open] [--since <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | keep one app&#39;s incidents |  |
+| `--open` | open incidents only |  |
+| `--since <DURATION>` | resolved incidents from this long ago (default 7d, at most 30d) |  |
+
+Examples:
+
+```sh
+gregale incidents list
+gregale incidents list --app shop --open
+```
+
+### incidents show
+
+Show an incident with its notifications, log context and changes
+
+`gregale incidents show <incident-id>`
+
+Examples:
+
+```sh
+gregale incidents show INCIDENT_ID
+```
 
 
 ## slos

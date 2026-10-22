@@ -10,6 +10,8 @@ import type { Dashboard } from '../models/Dashboard.js';
 import type { DashboardData } from '../models/DashboardData.js';
 import type { DashboardRequest } from '../models/DashboardRequest.js';
 import type { DashboardsResponse } from '../models/DashboardsResponse.js';
+import type { IncidentDetail } from '../models/IncidentDetail.js';
+import type { IncidentsResponse } from '../models/IncidentsResponse.js';
 import type { LogEventFacetsResponse } from '../models/LogEventFacetsResponse.js';
 import type { LogEventsResponse } from '../models/LogEventsResponse.js';
 import type { LogSavedSearch } from '../models/LogSavedSearch.js';
@@ -364,6 +366,73 @@ export class ObservabilityService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/dashboards/{id}/data',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * List the account's incidents.
+   * ADR-20261022193512 internal preview behind `FAAS_INCIDENTS_ENABLED=1`.
+   * One list of alert rule firing periods, route monitor incidents and
+   * platform incidents from the status page: everything open plus what
+   * resolved since `since`, open first, then newest first, at most 100.
+   * A source that cannot be read is named in `unavailable_sources`.
+   *
+   * @returns IncidentsResponse The incidents.
+   * @returns Problem An invalid query, an unknown app, or the preview is disabled.
+   * @throws ApiError
+   */
+  public static listIncidents({
+    app,
+    status,
+    since,
+  }: {
+    /**
+     * Keep one app's incidents (platform incidents always show).
+     */
+    app?: string,
+    /**
+     * `open` lists open incidents only; `all` (the default) adds resolved ones.
+     */
+    status?: 'open' | 'all',
+    /**
+     * RFC 3339; resolved incidents from here on. Default 7 days ago, at most 30.
+     */
+    since?: string,
+  }): CancelablePromise<IncidentsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/incidents',
+      query: {
+        'app': app,
+        'status': status,
+        'since': since,
+      },
+    });
+  }
+  /**
+   * Read an incident and its evidence.
+   * The incident with what the platform has for it: an alert's
+   * notifications and the log context its newest one carried, a platform
+   * incident's status updates, and for an app incident the app's change
+   * timeline from an hour before it opened until it resolved.
+   *
+   * @returns IncidentDetail The incident.
+   * @returns Problem No such incident (incident_not_found), or the preview is disabled.
+   * @throws ApiError
+   */
+  public static getIncident({
+    id,
+  }: {
+    /**
+     * Incident id, prefixed with its source (`alert-`, `route-`, `platform-`).
+     */
+    id: string,
+  }): CancelablePromise<IncidentDetail | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/incidents/{id}',
       path: {
         'id': id,
       },

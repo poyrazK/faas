@@ -225,10 +225,11 @@ func TestDetailCarriesFiresLogContextAndChanges(t *testing.T) {
 
 func TestPlatformDetailAndGate(t *testing.T) {
 	f := newFixture(t)
+	started := f.now.Add(-30 * time.Minute)
 	ev, err := f.store.CreatePublicStatusEvent(context.Background(), state.StatusEventCreate{
 		IdempotencyKey: "incident-2", Kind: publicstatus.KindIncident, Title: "Deploys delayed",
 		Impact: publicstatus.StatePartialOutage, Components: []publicstatus.Component{publicstatus.ComponentDeployments},
-		State: publicstatus.LifecycleIdentified, Message: "Builder queue backed up",
+		State: publicstatus.LifecycleIdentified, StartsAt: &started, Message: "Builder queue backed up",
 	})
 	if err != nil {
 		t.Fatal(err)
