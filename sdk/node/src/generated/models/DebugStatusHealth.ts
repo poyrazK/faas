@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * The serving deployments' traffic over the window.
+ */
 export type DebugStatusHealth = {
   requests: number;
   server_errors: number;

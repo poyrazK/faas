@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * One deployment currently serving traffic.
+ */
 export type DebugStatusDeployment = {
   id: string;
   traffic_percent: number;
