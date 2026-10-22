@@ -126,7 +126,9 @@ func (m *Manager) fetchBackingFile(ctx context.Context, key string) (string, err
 	if !errors.Is(err, errBackingNotCached) {
 		return path, err
 	}
-	rc, getErr := m.storage.Get(ctx, key)
+	// The node cache installs a durable fill before Get returns, so the file
+	// resolves without reading the stream; the fill must not be deferred.
+	rc, getErr := m.storage.Get(storage.WithDurableCacheFill(ctx), key)
 	if getErr != nil {
 		return "", fmt.Errorf("%w: fetch %q: %w", ErrSnapshotBackingUnverified, key, getErr)
 	}
