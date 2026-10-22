@@ -18630,7 +18630,8 @@ func scanComputeNode(row pgx.Row) (ComputeNode, error) {
 		&n.LastHeartbeatAt, &n.CreatedAt, &n.Region, &n.Zone,
 		&n.ScheddTargetURL, &n.GatewayTargetURL, &n.PublicIp, &n.PublicIpSetAt,
 		&n.ReleaseID, &n.ManifestHash, &n.HostCertificate, &n.CertFingerprint,
-		&n.Role, &n.Generation, &n.Lifecycle, &n.LifecycleGeneration); err != nil {
+		&n.Role, &n.Generation, &n.Lifecycle, &n.LifecycleGeneration,
+		&n.Readiness, &n.ReadinessReason); err != nil {
 		return ComputeNode{}, mapErr(err)
 	}
 	return n, nil
@@ -18643,7 +18644,7 @@ func (s *pgCore) ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error) 
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation
+		       lifecycle, lifecycle_generation, readiness, readiness_reason
 		  from compute_nodes
 		 where active = true
 		 order by name
@@ -18675,7 +18676,7 @@ func (s *PgStore) ListAllComputeNodes(ctx context.Context) ([]ComputeNode, error
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation
+		       lifecycle, lifecycle_generation, readiness, readiness_reason
 		  from compute_nodes
 		 order by name
 	`)
@@ -18701,7 +18702,7 @@ func (s *pgCore) ComputeNodeByID(ctx context.Context, id string) (ComputeNode, e
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation
+		       lifecycle, lifecycle_generation, readiness, readiness_reason
 		  from compute_nodes
 		 where id = $1
 	`, id)
@@ -18719,7 +18720,7 @@ func (s *PgStore) ComputeNodeByName(ctx context.Context, name string) (ComputeNo
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation
+		       lifecycle, lifecycle_generation, readiness, readiness_reason
 		  from compute_nodes
 		 where name = $1
 	`, name)
@@ -18875,6 +18876,25 @@ func (s *PgStore) ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeID
 		used[resource.NodeID] += resource.CpuMillicores
 	}
 	return used, nil
+}
+
+// SetComputeNodeReadiness implements ComputeNodeReadinessStore. The update
+// matches only a changed verdict, so an unchanged one neither writes the row
+// nor fires compute_node_changed.
+func (s *PgStore) SetComputeNodeReadiness(ctx context.Context, nodeID string, readiness NodeReadiness, reason string) (bool, error) {
+	if !readiness.Valid() {
+		return false, fmt.Errorf("state: set compute_node %s readiness: invalid value %q", nodeID, readiness)
+	}
+	tag, err := s.pool.Exec(ctx, `
+		update compute_nodes
+		   set readiness = $2, readiness_reason = nullif($3, '')
+		 where id = $1
+		   and (readiness is distinct from $2 or readiness_reason is distinct from nullif($3, ''))
+	`, nodeID, string(readiness), reason)
+	if err != nil {
+		return false, fmt.Errorf("state: set compute_node %s readiness: %w", nodeID, err)
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func (s *PgStore) HeartbeatComputeNode(ctx context.Context, nodeID string) error {
@@ -19344,7 +19364,7 @@ func (s *PgStore) CreateComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation
+		          lifecycle, lifecycle_generation, readiness, readiness_reason
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget, string(lifecycle),
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -19422,7 +19442,7 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation
+		          lifecycle, lifecycle_generation, readiness, readiness_reason
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -19500,7 +19520,7 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation
+		          lifecycle, lifecycle_generation, readiness, readiness_reason
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, vcpuBudget, lifecycle,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
@@ -19623,7 +19643,7 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation
+		          lifecycle, lifecycle_generation, readiness, readiness_reason
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
@@ -19884,7 +19904,7 @@ func (s *PgStore) ListComputeNodes(ctx context.Context, includeInactive bool) ([
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation
+		       lifecycle, lifecycle_generation, readiness, readiness_reason
 		  from compute_nodes
 	`
 	if !includeInactive {
@@ -19920,7 +19940,7 @@ func (s *PgStore) ListComputeNodesPage(ctx context.Context, includeInactive bool
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation
+		       lifecycle, lifecycle_generation, readiness, readiness_reason
 		  from compute_nodes
 	`
 	if !includeInactive {

@@ -2581,6 +2581,8 @@ type ComputeNode struct {
 	VmmdAdmissionProtocol int16
 	ServiceAddressReadyAt pgtype.Timestamptz
 	LifecycleGeneration   int64
+	Readiness             string
+	ReadinessReason       pgtype.Text
 }
 
 type ComputeNodeHeartbeat struct {
