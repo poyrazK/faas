@@ -336,18 +336,23 @@ func TestQueueEnvironmentHTTPIdempotencyKeysStayInTheirEnvironment(t *testing.T)
 		t.Fatalf("production send after stage refusal: %d", code)
 	}
 
-	// Binding creation is scoped the same way.
-	bind := func(scope, name string) api.QueueBindingResponse {
+	// Binding creation is scoped the same way: the shared request runs instead
+	// of replaying the stage binding, while a stage retry still replays.
+	bind := func(scope string) (int, bool, api.QueueBindingResponse) {
 		t.Helper()
-		rec := e.Do(t, http.MethodPost, "/v1/apps/queue-worker/queue-bindings", api.CreateQueueBindingRequest{Environment: scope, Name: name, QueueName: name, Mode: "push", WorkloadClass: "worker"}, map[string]string{"Idempotency-Key": "bind-1"})
+		rec := e.Do(t, http.MethodPost, "/v1/apps/queue-worker/queue-bindings", api.CreateQueueBindingRequest{Environment: scope, Name: "payments", QueueName: "payments", Mode: "push", WorkloadClass: "worker"}, map[string]string{"Idempotency-Key": "bind-1"})
 		var binding api.QueueBindingResponse
-		if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &binding) != nil {
-			t.Fatalf("bind %q: %d %s", scope, rec.Code, rec.Body)
-		}
-		return binding
+		_ = json.Unmarshal(rec.Body.Bytes(), &binding)
+		return rec.Code, rec.Header().Get("Idempotent-Replayed") == "true", binding
 	}
-	stageBinding, sharedBinding := bind("staging", "payments"), bind("", "refunds")
-	if stageBinding.ID == sharedBinding.ID || stageBinding.Environment != "staging" || sharedBinding.Environment != "" || sharedBinding.Name != "refunds" {
-		t.Fatalf("binding receipts crossed environments: %+v %+v", stageBinding, sharedBinding)
+	code, replayed, stageBinding := bind("staging")
+	if code != http.StatusCreated || replayed || stageBinding.Environment != "staging" {
+		t.Fatalf("stage bind: %d replayed=%v %+v", code, replayed, stageBinding)
+	}
+	if code, replayed, binding := bind(""); replayed || code == http.StatusCreated && binding.Environment == "staging" {
+		t.Fatalf("shared bind replayed the stage receipt: %d %+v", code, binding)
+	}
+	if code, replayed, binding := bind("staging"); code != http.StatusCreated || !replayed || binding.ID != stageBinding.ID {
+		t.Fatalf("stage bind retry: %d replayed=%v %+v", code, replayed, binding)
 	}
 }
