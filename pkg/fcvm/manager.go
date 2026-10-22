@@ -885,7 +885,9 @@ type Manager struct {
 	// waking marks leases between acquisition and live-map publication.
 	// ProcessExited records a pending marker only for this narrow phase;
 	// an exit observed after explicit Destroy has removed live must not
-	// be mistaken for a future Wake of the same id.
+	// be mistaken for a future Wake of the same id. A Wake records the
+	// request's runtime identity so a booting guest can register its
+	// secret execution before exec (ADR-508), ahead of publication.
 	waking map[string]wakingInstance
 	// provenWorkers holds the deployments whose declared worker passed the
 	// full characterization window on this node; their later cold boots
@@ -2833,11 +2835,13 @@ func (m *Manager) InstanceIdentity(instance string) (appID, accountID string, er
 
 // wakingInstance is the identity a wake fixed for its lease before the
 // instance is published live. Qualification restores leave it empty: their
-// candidates get no workload identity.
+// candidates get no workload identity. deploymentID lets a booting guest
+// register its secret-reload process before exec (ADR-508).
 type wakingInstance struct {
-	appID     string
-	accountID string
-	contained bool // a rehearsal run contains it (ADR-20261017201005)
+	deploymentID string
+	appID        string
+	accountID    string
+	contained    bool // a rehearsal run contains it (ADR-20261017201005)
 }
 
 // WorkloadTokenIdentity resolves the identity a workload-identity token is
@@ -2981,17 +2985,36 @@ func (m *Manager) ExecutionRelayIdentity(instance string) (accountID, executionI
 }
 
 // InstanceRuntimeSecretIdentity resolves the deployment, app, and account
-// principal for a live guest stream under one lock. Keeping the tuple atomic
+// principal for a guest stream under one lock. Keeping the tuple atomic
 // prevents a park/reuse race from mixing identities during runtime secret
-// refresh.
+// refresh. A guest that is still booting resolves to its Wake request's
+// identity: guest-init registers each secret-reload process before exec
+// (ADR-508), and readiness, hence publication, waits on that process.
 func (m *Manager) InstanceRuntimeSecretIdentity(instance string) (deploymentID, appID, accountID string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	inst, ok := m.live[instance]
-	if !ok {
-		return "", "", "", fmt.Errorf("fcvm: runtime secret identity %s: not live", instance)
+	if inst, ok := m.live[instance]; ok {
+		return inst.DeploymentID, inst.AppID, inst.AccountID, nil
 	}
-	return inst.DeploymentID, inst.AppID, inst.AccountID, nil
+	if w, ok := m.waking[instance]; ok && w.deploymentID != "" && w.appID != "" && w.accountID != "" {
+		return w.deploymentID, w.appID, w.accountID, nil
+	}
+	return "", "", "", fmt.Errorf("fcvm: runtime secret identity %s: not live", instance)
+}
+
+// InstanceProcessStartedAt reports when the instance's current guest process
+// attempt started; a restore that falls back to cold boot starts a new one.
+// Zero when the instance has no attempt on this daemon.
+func (m *Manager) InstanceProcessStartedAt(instance string) time.Time {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.processStartedAt[instance]
+}
+
+// failedRestoreConsoleKeeper is the optional VMM capability that keeps a failed
+// restore's console before the fallback cold boot truncates it.
+type failedRestoreConsoleKeeper interface {
+	PreserveFailedRestoreConsole(instance string) (string, error)
 }
 
 // InstanceIdentityByCID resolves the peer CID and its app/account principal
@@ -4464,7 +4487,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if m.waking == nil {
 		m.waking = make(map[string]wakingInstance)
 	}
-	m.waking[req.Instance] = wakingInstance{appID: req.AppID, accountID: req.AccountID, contained: req.RehearsalRunID != ""}
+	m.waking[req.Instance] = wakingInstance{deploymentID: req.DeploymentID, appID: req.AppID, accountID: req.AccountID, contained: req.RehearsalRunID != ""}
 	m.mu.Unlock()
 	lease = m.beginProcessAttempt(lease)
 	m.beginFunctionExecutionBoot(lease, req)
@@ -5455,6 +5478,11 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			if killErr := m.vmm.Kill(context.WithoutCancel(ctx), lease); killErr != nil {
 				return WakeColdBoot, fmt.Errorf("wake %s: cannot clean failed restore before cold boot: %w", req.Instance, errors.Join(rErr, killErr))
 			}
+			if keeper, ok := m.vmm.(failedRestoreConsoleKeeper); ok {
+				if kept, keepErr := keeper.PreserveFailedRestoreConsole(lease.Instance); keepErr == nil {
+					m.log.Warn("fcvm: kept failed restore console", "instance", req.Instance, "path", kept)
+				}
+			}
 			lease = m.beginProcessAttempt(lease)
 			m.beginFunctionExecutionBoot(lease, req)
 		}
@@ -6312,6 +6340,19 @@ func (m *Manager) RegisterInstanceForTest(instanceID, deploymentID string, ident
 		m.live[instanceID].AppID = identity[0]
 		m.live[instanceID].AccountID = identity[1]
 	}
+	return m
+}
+
+// RegisterContainedInstanceForTest registers a live instance whose rehearsal
+// containment is installed for runID. Test-only by naming convention.
+func (m *Manager) RegisterContainedInstanceForTest(instanceID, deploymentID, appID, accountID, runID string) *Manager {
+	m = m.RegisterInstanceForTest(instanceID, deploymentID, appID, accountID)
+	if m == nil {
+		return m
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.live[instanceID].Net.RehearsalRunID = runID
 	return m
 }
 

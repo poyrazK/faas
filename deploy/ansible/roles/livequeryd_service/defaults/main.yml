@@ -27,6 +27,18 @@ faas_livequeryd_enabled: true
 #       neon_endpoint: ep-1
 faas_livequeryd_databases: []
 
+# Discovery: serve every live database of these managed Postgres backends
+# (BackendConfig IDs whose live_hub_url names this hub), read from the control
+# plane. apid issues each database's login when live queries are enabled and
+# seals it to this hub's identity, so discovered databases need no entry
+# above, and disabling live queries stops them. Needs a provider that issues
+# live logins. Listed databases are served beside discovered ones.
+faas_livequeryd_discover_backends: []
+# Release discovered databases whose provider names how to wake-check them
+# (Neon) after this long idle, for example "5m"; empty never releases. Needs
+# faas_livequeryd_neon_api_key_src.
+faas_livequeryd_discover_release_after: ""
+
 # Controller-local secret files shared by every database. Each is copied to
 # /etc/faas/secrets/livequeryd/ as 0400 root:root and reaches the hub as a
 # systemd credential, never on its command line:

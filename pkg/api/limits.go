@@ -835,6 +835,50 @@ const ReleaseGateDefaultMinEvents = 3
 const ReleaseGateDefaultMinSamples = 20
 const ReleaseGateErrorClassesMax = 5
 
+// Release approvals (ADR-20261020085706). A policy requires 1 to
+// ReleaseApprovalsRequiredMax approvals, waits in canary stage 1 to
+// ReleaseApprovalStageMax, and aborts a release that waited longer than its
+// timeout (ReleaseApprovalTimeoutMin to ReleaseApprovalTimeoutMax, default
+// ReleaseApprovalTimeoutDefault). A decision's comment is at most
+// ReleaseApprovalCommentMax characters. Plan-independent, but the wait
+// happens in a canary, so only plans with traffic splits can set a policy.
+const ReleaseApprovalsRequiredMax = 5
+const ReleaseApprovalStageMax = 10
+const ReleaseApprovalTimeoutMin = 10 * time.Minute
+const ReleaseApprovalTimeoutMax = 7 * 24 * time.Hour
+const ReleaseApprovalTimeoutDefault = 24 * time.Hour
+const ReleaseApprovalCommentMax = 200
+
+// A policy notifies at most ReleaseApprovalNotifyChannelsMax channels; meterd
+// tries an approval event at most ReleaseApprovalNotifyAttemptsMax times,
+// waiting ReleaseApprovalNotifyRetryBase doubled per attempt between tries.
+const ReleaseApprovalNotifyChannelsMax = 5
+const ReleaseApprovalNotifyAttemptsMax = 6
+const ReleaseApprovalNotifyRetryBase = time.Minute
+
+// A release diff (ADR-20261021101117) lists at most ReleaseDiffPackagesMax
+// packages per change kind and reads at most ReleaseDiffSBOMMaxBytes of each
+// build's SBOM.
+const ReleaseDiffPackagesMax = 100
+const ReleaseDiffSBOMMaxBytes = 16 << 20
+
+// Scheduled releases (ADR-20261021152201). A release may be scheduled at
+// most ScheduledReleaseMaxAhead ahead, and up to ScheduledReleasePastSkew in
+// the past for clock skew. apid looks for due schedules every
+// ScheduledReleaseCheckInterval, ScheduledReleaseBatch at a time, and gives
+// up on a release that is still not ready ScheduledReleaseStartGrace after
+// its time. A schedule notifies at most ScheduledReleaseNotifyChannelsMax
+// channels; a listing returns at most ScheduledReleaseListMax schedules.
+// Plan-independent: scheduling changes when a release starts, not what it
+// may use.
+const ScheduledReleaseMaxAhead = 7 * 24 * time.Hour
+const ScheduledReleasePastSkew = time.Minute
+const ScheduledReleaseCheckInterval = 15 * time.Second
+const ScheduledReleaseBatch = 20
+const ScheduledReleaseStartGrace = time.Hour
+const ScheduledReleaseNotifyChannelsMax = 5
+const ScheduledReleaseListMax = 50
+
 // Verified rollback outcomes (ADR-1446). apid resolves each plain rollback
 // every RollbackOutcomeCheckInterval: complete once the target serves,
 // failed when it leaves activation without serving or when

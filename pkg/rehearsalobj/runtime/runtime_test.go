@@ -481,6 +481,42 @@ func TestObjectCollectorReplacementCannotAdoptAnEmptyCaptureWindow(t *testing.T)
 		})
 	}
 }
+
+// A caller abandoning its own request before admission records nothing
+// durable, so it must not fail the collector for every namespace it serves
+// (ADR-20261019120000). Genuine lookup errors still fail it.
+func TestObjectCollectorIgnoresCallerAbortBeforeAdmission(t *testing.T) {
+	for _, abort := range []bool{true, false} {
+		t.Run(map[bool]string{true: "caller abort", false: "lookup error"}[abort], func(t *testing.T) {
+			f := newObjectFixture(t, "memory")
+			resolve := f.handler.Resolve
+			f.handler.Resolve = func(ctx context.Context, addr string) (string, string, error) {
+				if ctx.Err() != nil {
+					return "", "", ctx.Err()
+				}
+				if !abort {
+					return "", "", errors.New("routing table unavailable")
+				}
+				return resolve(ctx, addr)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			r := f.request(t, "GET", "/imports/customers/other.txt", nil, nil)
+			if abort {
+				r = r.WithContext(ctx)
+			}
+			w := httptest.NewRecorder()
+			f.handler.ServeHTTP(w, r)
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403", w.Code)
+			}
+			if got := f.handler.Collector.failed.Load(); got == abort {
+				t.Fatalf("collector failed = %v after %s", got, map[bool]string{true: "caller abort", false: "lookup error"}[abort])
+			}
+		})
+	}
+}
+
 func TestObjectCollectorFailureCannotCloseAPassingWindow(t *testing.T) {
 	f := newObjectFixture(t, "memory")
 	f.handler.Collector.Fail()

@@ -640,6 +640,19 @@ func (r *warmHintBroadcaster) Subscribe(p0 int) (<-chan WarmHintEvent, func()) {
 }
 func (r *warmHintBroadcaster) SubscriberCount() int { return r.subscriberCount() }
 
+// CreateRuntimeWithRehearsalRun boots spec through createRuntimeWithStandards
+// with the app's rehearsal run already read, as a wake hands it over.
+// adr: 20261021090000
+func CreateRuntimeWithRehearsalRun(ctx context.Context, vmm RoutedVMM, spec AppSpec, runID string) error {
+	e := &Engine{vmm: vmm}
+	// A wake's correlation envelope names the instance, so the boot needs no
+	// instance lookup.
+	ctx = wire.WithContext(ctx, wire.CorrelationFields{WakeID: "8f0e2b4c-2f3a-4c55-9d7e-0c1f6a2b3c4d", InstanceID: "instance", NodeID: "node", AppID: spec.AppID})
+	ctx = withBootPrepared(ctx, bootPrepared{instanceID: "instance", rehearsalRunID: runID, haveRehearsal: true, haveCapture: true})
+	_, err := e.createRuntimeWithStandards(ctx, "node", "instance", string(state.StateColdBooting), spec, nil, false)
+	return err
+}
+
 // Members of workPool
 func (r *workPool) Drain()                                          { r.drain() }
 func (r *workPool) Submit(p0 workKind, p1 string, p2 func()) string { return r.submit(p0, p1, p2) }

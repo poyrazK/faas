@@ -1766,6 +1766,79 @@ var cliCommands = []cliCommand{
 		Examples: []string{"gregale billing export --month 2026-09 --out invoices.zip", "gregale billing export --month 2026-09 --format csv --out invoices.csv"},
 	},
 	{
+		Name:    "approvals",
+		DocSlug: "approvals",
+		Short:   "Make production releases wait in their canary for approval",
+		Examples: []string{
+			"gregale approvals require --app my-api --approvals 2 --notify releases",
+			"gregale approvals require --app my-api --approvals 1 --approvers developer --timeout 4h",
+			"gregale approvals pending --app my-api",
+			"gregale approvals approve 3f9c1e2a-0b7d-4c55-9e1a-2d6f8b4c7e10 --comment \"canary looks clean\"",
+			"gregale approvals reject v42 --app my-api --reason \"checkout latency is up\"",
+		},
+		Subcommands: []cliSub{
+			{Name: "require", Short: "Require approvals for an app's production releases", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+				{Name: "approvals", Short: "approvals each production release needs (1-5)", Value: "N", Req: true},
+				{Name: "after-stage", Short: "canary stage the release waits in (default 1)", Value: "N"},
+				{Name: "timeout", Short: "abort a release that waits longer (default 24h)", Value: "DURATION"},
+				{Name: "approvers", Short: "who may approve (default admin: owners and admins)", Value: "ROLE", ClosedSet: []string{"admin", "developer"}},
+				{Name: "allow-self-approval", Short: "count the deployer's own approval", Bool: true},
+				{Name: "notify", Short: "Slack or email channels told when a release waits, is decided or times out", Value: "CHANNEL,..."},
+			}},
+			{Name: "policy", Short: "Show an app's approval policy", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+			{Name: "off", Short: "Stop requiring approvals for an app", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+			{Name: "pending", Short: "List an app's releases waiting for approval", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+			{Name: "status", Short: "Show a release's approvals", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
+			}},
+			{Name: "approve", Short: "Approve a release", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
+				{Name: "comment", Short: "note recorded with the approval", Value: "TEXT"},
+			}},
+			{Name: "reject", Short: "Reject a release and abort its rollout", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
+				{Name: "reason", Short: "why the release is rejected", Value: "TEXT", Req: true},
+			}},
+		},
+	},
+	{
+		Name:    "scheduled-releases",
+		DocSlug: "scheduled-releases",
+		Short:   "Build production releases now and start them at a set time",
+		Examples: []string{
+			"gregale deploy --at 02:00 --release-notify releases",
+			"gregale scheduled-releases list",
+			"gregale scheduled-releases set v42 --app my-api --at \"2026-10-22 09:00\" --rollout safe",
+			"gregale scheduled-releases set v42 --app my-api --at now",
+			"gregale scheduled-releases cancel v42 --app my-api",
+		},
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List scheduled releases, pending ones first", Flags: []cliFlag{
+				{Name: "app", Short: "only this app's schedules", Value: "slug"},
+			}},
+			{Name: "show", Short: "Show a release's schedule", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
+			}},
+			{Name: "set", Short: "Schedule, or move, the start of a release waiting without traffic", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
+				{Name: "at", Short: "when the rollout starts: now, +2h, 02:00, \"2026-10-22 02:00\" (local) or RFC 3339", Value: "WHEN", Req: true},
+				{Name: "rollout", Short: "how the release reaches traffic (default: the app release policy)", Value: "MODE", ClosedSet: []string{"safe", "fast", "immediate"}},
+				{Name: "notify", Short: "Slack or email channels told when the release starts or cannot start", Value: "CHANNEL,..."},
+				{Name: "override-freeze", Short: "release into deploy freezes active at that time; the reason is audited", Value: "REASON"},
+			}},
+			{Name: "cancel", Short: "Cancel a pending schedule; the release stays built without traffic", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
+			}},
+		},
+	},
+	{
 		Name:    "freeze",
 		DocSlug: "freeze",
 		Short:   "Pause production releases for a window, weekly, or after rollbacks",
@@ -2513,6 +2586,10 @@ var cliCommands = []cliCommand{
 			{Name: "retry-hold", Positionals: []string{"<ID|vN>"}, Short: "Schedule an MCP promotion hold retry with all activation checks", Examples: []string{"gregale deployment retry-hold v42 --app my-api"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
 			{Name: "runtime", Positionals: []string{"<ID|vN>"}, Short: "Inspect runtime identity or preview a published runtime change", Examples: []string{"gregale deployment runtime v42 --app my-function", "gregale deployment runtime v42 --app my-function --target RELEASE_ID --json"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug for a vN revision"}, {Name: "target", Value: "RELEASE_ID", Short: "published runtime release to preview without applying"}}},
 			{Name: "advance", Positionals: []string{"<ID|vN>"}, Short: "Advance a canary by one stage with route enforcement", Examples: []string{"gregale deployment advance DEPLOYMENT_UUID --expected-step 1", "gregale deployment advance v42 --app my-api --expected-step 1"}, Flags: []cliFlag{{Name: "expected-step", Value: "N", Short: "observed current canary step (see deployment summary)", Req: true}, {Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
+			{Name: "diff", Short: "Show what changed between a release and the one before it: code, config keys, packages, runtime settings and the release command", Examples: []string{"gregale deployment diff v42 --app my-api", "gregale deployment diff v42 --against v38 --app my-api"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
+				{Name: "against", Value: "ID|vN", Short: "release to compare with (default: the release that served before it)"},
+				{Name: "app", Value: "SLUG", Short: "app slug, to resolve vN revisions"},
+			}},
 			{Name: "summary", Short: "Show the release diff and rollback target", Examples: []string{"gregale deployment summary --app my-api --interactive", "gregale deployment summary v42 --app my-api", "gregale deployment summary v42 --app my-api --json"}, Positionals: []string{"[<id|vN>]"}, Flags: []cliFlag{
 				{Name: "interactive", Short: "choose a release from app history and show its summary", Bool: true},
 				{Name: "app", Short: "app slug (defaults to linked context or interactive picker)", Value: "SLUG"},
@@ -2705,6 +2782,8 @@ var cliCommands = []cliCommand{
 			{Name: "project-slug", Group: "Projects", Short: "kebab slug for the project (one-key provision)", Value: "SLUG"},
 			{Name: "rollout", Group: "Rollout and health", Short: "how this release reaches traffic: safe (adaptive canary with rollback; waits for 100%), fast (5% -> 50% -> 100%) or immediate; default: the app release policy", Value: "MODE", ClosedSet: []string{"safe", "fast", "immediate"}},
 			{Name: "override-freeze", Group: "Rollout and health", Short: "release to production during a deploy freeze; the reason is audited", Value: "REASON"},
+			{Name: "at", Group: "Rollout and health", Short: "build now and start the production rollout at this time: +2h, 02:00, \"2026-10-22 02:00\" (local) or RFC 3339; freezes are checked then", Value: "WHEN"},
+			{Name: "release-notify", Group: "Rollout and health", Short: "Slack or email channels told when a scheduled release starts or cannot start (with --at)", Value: "CHANNEL,..."},
 			{Name: "canary-preset", Group: "Rollout and health", Short: "deprecated: use --rollout. Canary ladder preset", Value: "PRESET", ClosedSet: []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "adaptive", "custom"}},
 			{Name: "canary-stages", Group: "Rollout and health", Short: "deprecated: use --rollout; custom percent@duration canary stages (requires --canary-preset custom)", Value: "STAGES"},
 			{Name: "safe", Group: "Rollout and health", Short: "deprecated: use --rollout safe"},
@@ -6020,10 +6099,13 @@ var cliCommands = []cliCommand{
 				Examples: []string{
 					"gregale traffic promote my-api --deployment v7",
 					"gregale traffic promote --app my-api --deployment v7 --if-serving v6",
+					"gregale traffic promote --app my-api --deployment v7 --at 09:00",
 				},
 				Flags: []cliFlag{
 					{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
 					{Name: "deployment", Short: "deployment id or vN revision to promote", Req: true, Value: "ID"},
+					{Name: "at", Short: "start the release's rollout at this time instead of now: +2h, 09:00, \"2026-10-22 09:00\" (local) or RFC 3339", Value: "WHEN"},
+					{Name: "release-notify", Short: "Slack or email channels told when the scheduled release starts or cannot start (with --at)", Value: "CHANNEL,..."},
 					{Name: "if-serving", Short: "require this deployment id or vN revision to remain at 100% traffic", Value: "ID"},
 					{Name: "require-bindings", Short: "enforce a bindings check at the server's traffic write"},
 					{Name: "max-verification-age", Short: "maximum probe age (default 10m); requires --require-bindings", Value: "DURATION"},
