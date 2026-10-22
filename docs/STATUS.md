@@ -7,6 +7,20 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP action history — 2026-10-22 (branch, not released)
+
+The bridge adds read-only, connection-scoped action listing and inspection for
+deploy/rollback and regression-triage plans. Redacted history commits atomically
+with replay state, survives encrypted restart and retains expired metadata without
+restoring write authority. Catalog: 51 read/planning tools, 60 with writes enabled.
+Full MCP race tests and pinned Codex 0.159.0-alpha.3 restart/refresh/revocation
+acceptance pass, along with API tests and stdio CLI contracts. Read-only client
+fixtures make zero model requests and zero deployment writes. Scoped Go lint
+and the spec/documentation gate pass without generated drift. Implementation
+and recovery contracts are recorded in
+[ADR-20261022161757](adr/20261022161757-management-mcp-action-history.md).
+Native/provider deployment qualification remains separate.
+
 ## Event substrate benchmark (V12) — 2026-10-22
 
 `make bench-event-substrate` measures event publish, fanout routing, the

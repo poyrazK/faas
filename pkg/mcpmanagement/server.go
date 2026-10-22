@@ -67,6 +67,7 @@ type management struct {
 	mu               sync.Mutex
 	plans            map[string]*releasePlan
 	environmentPlans map[string]*environmentPlan
+	actions          map[string]actionRecord
 }
 
 // NewServer constructs a management server without making API calls.
@@ -138,6 +139,9 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	if err := m.restoreEnvironmentPlans(); err != nil {
 		return nil, nil, err
 	}
+	if err := m.restoreActionHistory(); err != nil {
+		return nil, nil, err
+	}
 	s := mcp.NewServer(&mcp.Implementation{Name: "gregale-management", Version: opts.Version}, &mcp.ServerOptions{
 		CompletionHandler: m.completeArgument,
 		SubscribeHandler:  m.subscribeResource, UnsubscribeHandler: m.unsubscribeResource,
@@ -155,6 +159,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	register(s, m, "gregale_get_metrics", "Inspect recent app metrics. The source field identifies degraded telemetry; zero values alone do not establish app health.", m.getMetrics)
 	register(s, m, "gregale_preflight", "Check selected app/environment consent, read endpoint compatibility and durable bridge status without plans or writes. Passed reads do not prove mutation authorization or native qualification.", m.preflight)
 	registerRouteBudgets(s, m)
+	registerActionHistory(s, m)
 	registerRegressionActions(s, m)
 	registerInspection(s, m)
 	registerRequestDiagnostics(s, m)

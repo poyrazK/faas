@@ -263,6 +263,9 @@ func TestManagementPersistenceFailurePreventsAPIMutation(t *testing.T) {
 	if _, err := m.applyDeploy(t.Context(), applyArgs{PlanID: output.(releasePlan).ID}); err == nil {
 		t.Fatal("write passed failed persistence")
 	}
+	if _, err := m.getAction(t.Context(), getActionArgs{App: "alpha", PlanID: output.(releasePlan).ID}); err == nil {
+		t.Fatal("history exposed an attempt that could not be committed")
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.writes != 0 || store.available() {

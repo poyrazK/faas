@@ -360,7 +360,7 @@ func TestManagementPlanExpirationAndCapacity(t *testing.T) {
 		t.Fatal("expired plan was retained")
 	}
 	for range maxReleasePlans {
-		if _, err := m.savePlan(&releasePlan{Action: "deploy", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+		if _, err := m.savePlan(&releasePlan{Action: "deploy", AccountID: "account-one", APIBase: "https://api.example", App: "alpha", AppID: "app-one", Scope: api.DefaultEnvScope, ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 			t.Fatal(err)
 		}
 	}

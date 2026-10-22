@@ -3069,3 +3069,22 @@ settling historical handoffs, preserve journals and receipts, and qualify native
 migration/process-death/leak behavior before deployment. See
 [ADR-1530](adr/1530-durable-migration-source-retirement.md) and the
 [source retirement guide](ops/migration-source-retirement.md).
+
+## Management MCP action history (ADR-20261022161757)
+
+The management bridge exposes read-only, connection-local listing and inspection
+of reviewed deploy/rollback and regression-triage attempts and redacted receipts.
+History and replay payloads commit in the same encrypted, fsynced snapshot before
+native mutation and after its receipt. Acceptance is distinct from completion;
+uncertain outcomes remain unknown until an existing guarded retry recovers a
+receipt. Metadata never recreates or extends an expired plan's write authority.
+
+History retains at most 256 records per connection through 24 hours after the
+original plan expiry, prioritizing active supported plans. Pages contain 1–50
+records (default 20) with context-bound keyset continuation; cursor input is at
+most 1024 bytes. Current account/app/environment identities are checked before
+and after reads, with separate diagnostic consent for regression records. OAuth
+refresh preserves a grant's history; revocation removes it. Coverage is bounded
+and connection-local, not a complete account audit trail. See
+[ADR-20261022161757](adr/20261022161757-management-mcp-action-history.md) and
+[MCP recovery](mcp.md#recover-reviewed-actions).

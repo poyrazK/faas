@@ -143,6 +143,12 @@ func (s *StateStore) read(namespace string, value any) error {
 }
 
 func (s *StateStore) update(namespace string, value any) error {
+	return s.updateMany(map[string]any{namespace: value})
+}
+
+// updateMany commits related records in one encrypted, fsynced snapshot. In
+// particular, an action's history and its replay payload must not diverge.
+func (s *StateStore) updateMany(values map[string]any) error {
 	if s == nil {
 		return nil
 	}
@@ -151,19 +157,25 @@ func (s *StateStore) update(namespace string, value any) error {
 	if s.failure != nil || s.closed {
 		return errors.New("MCP state unavailable; restart after restoring storage")
 	}
-	data, err := json.Marshal(value)
-	if err != nil {
-		return err
+	encoded := make(map[string]json.RawMessage, len(values))
+	for namespace, value := range values {
+		data, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		encoded[namespace] = data
 	}
-	if value == nil {
-		delete(s.records, namespace)
-	} else {
-		s.records[namespace] = data
+	for namespace, value := range values {
+		if value == nil {
+			delete(s.records, namespace)
+		} else {
+			s.records[namespace] = encoded[namespace]
+		}
 	}
-	if snapshot, ok := value.(oauthSnapshot); ok && namespace == "oauth" {
+	if snapshot, ok := values["oauth"].(oauthSnapshot); ok {
 		for key := range s.records {
-			if strings.HasPrefix(key, "plans/") || strings.HasPrefix(key, "environment-plans/") {
-				grantID := strings.TrimPrefix(strings.TrimPrefix(key, "environment-plans/"), "plans/")
+			if strings.HasPrefix(key, "plans/") || strings.HasPrefix(key, "environment-plans/") || strings.HasPrefix(key, "actions/") {
+				grantID := strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(key, "environment-plans/"), "plans/"), "actions/")
 				if _, active := snapshot.Grants[grantID]; !active {
 					delete(s.records, key)
 				}

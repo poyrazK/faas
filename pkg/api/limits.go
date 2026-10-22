@@ -24,6 +24,14 @@ import (
 // DeploymentAttemptIDBytes is the encoded size of a random 128-bit submission identity.
 const DeploymentAttemptIDBytes = 32
 
+// Management MCP history is connection-local metadata, not an account audit log.
+const (
+	ManagementMCPActionHistoryMax       = 256
+	ManagementMCPActionHistoryPageMax   = 50
+	ManagementMCPActionHistoryRetention = 24 * time.Hour
+	ManagementMCPActionCursorMaxBytes   = 1024
+)
+
 // Migration verification shares normal task and wake admission. These bounds
 // limit orchestration receipts, not customer compute entitlements.
 const (

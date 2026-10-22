@@ -1,4 +1,5 @@
 // adr: 1618
+// adr: 20261022161757
 package mcpmanagement
 
 import (
@@ -540,6 +541,9 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	var report map[string]any
 	if json.Unmarshal(output, &report) != nil || report["revocation"] != "passed" || report["refresh"] != "passed" || report["restart"] != "passed" {
 		t.Fatal("incomplete real-client evidence")
+	}
+	if report["action_history"] != "passed" {
+		t.Fatal("incomplete real-client action history restart/refresh evidence")
 	}
 	if requestMode != "" && (report["request_diagnostics"] != requestMode || report["request_discovery"] != "passed" || nativeWrites.Load() != 0 || requestReads.Load() != map[string]int32{"denied": 0, "approved": 32}[requestMode]) {
 		t.Fatal("incomplete request consent evidence or unexpected native writes")

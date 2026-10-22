@@ -77,6 +77,9 @@ func (m *management) restorePlans() error {
 // Called with the management lock held. Persist the attempt BEFORE the customer
 // API write, so a process death after commit retries the original key and body.
 func (m *management) persistPlans() error {
+	if err := m.syncActionHistory(time.Now().UTC()); err != nil {
+		return err
+	}
 	if m.opts.planStore == nil {
 		return nil
 	}
@@ -87,5 +90,8 @@ func (m *management) persistPlans() error {
 		}
 		records[id] = storedPlan{RegressionResult: p.regressionResult, BudgetResult: p.budgetResult, Plan: *p, AppHash: p.appHash, LatestID: p.latestID, Attempted: p.attempted, Result: p.result, Promoted: p.promoted, PromotionAttempted: p.promotionAttempted, Review: p.review}
 	}
-	return m.opts.planStore.update("plans/"+m.opts.planNamespace, records)
+	return m.opts.planStore.updateMany(map[string]any{
+		"plans/" + m.opts.planNamespace:   records,
+		"actions/" + m.opts.planNamespace: actionHistorySnapshot{Version: 1, Items: m.actions},
+	})
 }

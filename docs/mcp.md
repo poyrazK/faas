@@ -49,6 +49,8 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 |---|---|
 | `gregale_preflight` | Read-only app/environment consent, release-review/health/operations compatibility and durable-state checks. Unknown capabilities require native review/admission. |
 | `gregale_context` | Selected profile, API endpoint, account ID, plan, status, and platform capabilities. |
+| `gregale_list_actions` | Bounded connection-local deploy, rollback and regression-triage history for one exact app/environment, with keyset continuation. |
+| `gregale_get_action` | One recorded plan's attempts, redacted native receipts and recovery guidance; historical acceptance does not prove deployment completion. |
 | `gregale_list_apps` | Apps sorted by slug; `limit` defaults to 20, maximum 100; continue with `next_offset`. |
 | `gregale_get_app` | One app's status, URLs, deployment availability, and resource settings. |
 | `gregale_list_deployments` | Account deployment history; bounded `limit`; continue with `next_before`. |
@@ -1547,6 +1549,64 @@ Prompt retrieval fetches no scheduler/request evidence; app completion suggests
 only currently consented identities. These are independent reads, not an atomic
 snapshot. The tool and prompt add no probes, replay, collection, model requests
 or platform writes, and do not plan/apply configuration changes.
+
+## Recover reviewed actions
+
+Use `gregale_list_actions` with `app` and optional `project`/`environment` to find
+this connection's recorded image/source deploy, rollback and regression-triage
+plans. Use `gregale_get_action` with the same selector and an exact `plan_id`
+to inspect its apply phase and, for request deploys, separate promotion phase.
+These tools are read-only and remain available when writes are disabled.
+The catalog contains 51 read/planning tools, or 60 with writes enabled.
+
+For a lost apply response:
+
+1. Read `gregale_list_actions` with `{"app":"demo","limit":20}`.
+2. Inspect the selected `plan_id` through `gregale_get_action`.
+3. An `outcome_unknown` phase means the native request may have committed.
+   If the original plan is available and writes are enabled, retry the indicated
+   existing apply/promotion tool with that **same plan ID**. Normal expiry,
+   current authority, consent and immutable identity checks still run.
+4. If the plan expired, inspect native deployment/rollback state before planning
+   anything new. Historical metadata cannot recreate a replay payload or extend
+   expiry. A missing record is not proof that no write occurred.
+
+`not_attempted` records no native attempt; review the original full plan before
+applying it. `accepted` records a deployment/rollback API receipt, including a
+deployment ID and asynchronous rollback operation ID when supplied. Follow those
+IDs through `gregale_get_deployment`/`gregale_get_rollback` and scoped health.
+Acceptance and promotion receipts do not establish completion or healthy traffic.
+`committed` identifies a guarded triage receipt and its version/state; resolving
+triage does not prove service recovery. `native_completion` is explicitly
+`not_observed` for this historical view. Inspection grants no write permission.
+
+History retains at most 256 records per connection, through 24 hours after each
+plan's original expiry. Live supported plans take priority over archived records.
+Paging accepts `limit` 1–50 (default 20) and the returned `next_before` cursor,
+bound to the connection, account and immutable app/environment. New records do
+not shift subsequent pages; pruning may remove older entries during paging.
+`recorded_at` is when this bridge first recorded/imported the plan;
+`updated_at` changes with its recorded attempt/receipt.
+
+With encrypted HTTP state, replay payloads and redacted history commit in the
+same fsynced snapshot before a native write and after its receipt. History
+survives restart and OAuth refresh for the same grant; a new grant has separate
+history. Revocation removes its stored history. Stdio/ephemeral HTTP history is
+memory-only and lost on restart; `durable` reports the distinction. Storage
+failure withholds history rather than publishing an uncommitted result.
+
+Reads recheck current account, app and named-environment identities before
+releasing data. Regression records additionally require current diagnostic
+consent; lists omit them without it. Reasons, routes, source/configuration
+payloads, secrets, native error prose, approval tokens and replay keys are excluded.
+This is bounded connection history, not a complete account audit log. Workload
+rollouts, environment promotions and route-budget actions are outside this first
+profile. Existing unexpired supported plans are imported on upgrade; previously
+expired/discarded plans cannot be recovered. Older bridges ignore the additive
+history namespace, so their later actions may be absent after their plan expires.
+Phase states describe the last recorded bridge snapshot; inspect native state
+before replanning an expired action even if its old phase was `not_attempted`. See
+[ADR-20261022161757](adr/20261022161757-management-mcp-action-history.md).
 
 ## Enable reviewed release actions
 
