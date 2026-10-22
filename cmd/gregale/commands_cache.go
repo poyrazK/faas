@@ -17,6 +17,8 @@ import (
 
 const cacheDeclareUsage = "usage: gregale cache GET|HEAD <path> for <duration> [--app SLUG] [--host HOST] [--stale-while-revalidate DURATION] [--stale-if-error DURATION] [--vary-on HEADER] [--priority N]"
 
+const cachePurgeUsage = "usage: gregale cache purge [<slug> | --app SLUG] [--path GLOB | --tag TAG]"
+
 // cmdCache implements the declarative cache shorthand and explicit purges.
 // The shorthand resolves --app from linked project context when omitted, so
 // the common case reads exactly like the product contract:
@@ -24,7 +26,7 @@ const cacheDeclareUsage = "usage: gregale cache GET|HEAD <path> for <duration> [
 //	gregale cache GET /products/:id for 30s
 func cmdCache(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, cacheDeclareUsage+"\n       gregale cache purge <slug> [--path GLOB | --tag TAG]", "cache")
+		PrintUsage(os.Stderr, cacheDeclareUsage+"\n       "+strings.TrimPrefix(cachePurgeUsage, "usage: "), "cache")
 		return 1
 	}
 	switch strings.ToUpper(args[0]) {
@@ -33,13 +35,14 @@ func cmdCache(args []string) int {
 	case "PURGE":
 		return cmdCachePurge(args[1:])
 	default:
-		PrintUsage(os.Stderr, cacheDeclareUsage+"\n       gregale cache purge <slug> [--path GLOB | --tag TAG]", "cache")
+		PrintUsage(os.Stderr, cacheDeclareUsage+"\n       "+strings.TrimPrefix(cachePurgeUsage, "usage: "), "cache")
 		return 1
 	}
 }
 
 func cmdCachePurge(args []string) int {
 	fs := newFlagSet("cache purge", flag.ContinueOnError)
+	appFlag := fs.String("app", "", "app slug (defaults to linked project context)")
 	pathGlob := fs.String("path", "", "optional normalized request path glob")
 	tag := fs.String("tag", "", "optional cache tag")
 	// Accept both the documented positional-first form and the
@@ -49,8 +52,24 @@ func cmdCachePurge(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) != 1 || !validCLISlug(positional[0]) {
-		PrintUsage(os.Stderr, "usage: gregale cache purge <slug> [--path GLOB | --tag TAG]", "cache")
+	if len(positional) > 1 {
+		PrintUsage(os.Stderr, cachePurgeUsage, "cache")
+		return 1
+	}
+	// `cache GET` takes --app (or the linked app), so purge takes the same
+	// spellings as well as the <slug> positional (Hunt 12 H12-21).
+	app := strings.TrimSpace(*appFlag)
+	if len(positional) == 1 {
+		if err := mergeLeadingSlug(&app, positional[0]); err != nil {
+			return printErr("Invalid cache purge", err)
+		}
+	}
+	slug, err := resolveAppFlagOrContext(app)
+	if err != nil {
+		return printErr("Could not resolve app slug", fmt.Errorf("pass <slug> or --app <slug>, or run inside a linked project: %w", err))
+	}
+	if !validCLISlug(slug) {
+		PrintUsage(os.Stderr, cachePurgeUsage, "cache")
 		return 1
 	}
 	var hasPath, hasTag bool
@@ -72,7 +91,6 @@ func cmdCachePurge(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	slug := positional[0]
 	if hasTag {
 		err = client.PurgeAppCacheTag(context.Background(), slug, *tag)
 	} else {

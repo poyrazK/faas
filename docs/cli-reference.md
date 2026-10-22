@@ -17453,10 +17453,11 @@ Cache HEAD responses for a route
 
 Purge cached responses for one app
 
-`gregale cache purge [--path <GLOB>] [--tag <TAG>] <slug>`
+`gregale cache purge [--app <SLUG>] [--path <GLOB>] [--tag <TAG>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app slug (defaults to linked project context) |  |
 | `--path <GLOB>` | optional normalized request path glob |  |
 | `--tag <TAG>` | optional cache tag |  |
 
