@@ -313,6 +313,39 @@ neither CPU nor stack captures attribute. Captures gain Go's `block` and
   reason that says to redeploy instead of claiming the guest has no
   collectors.
 
+## Amendment: JavaScript stacks of a stuck Node main thread
+
+The Node collector runs on the main thread, so a capture of a thread stuck in
+JavaScript, the case a slow-request snapshot exists for, could only report
+event-loop handles. guest-init now reaches such a thread through Node's
+inspector during a stacks capture:
+
+- The preload reports on each control poll whether its inspector is open
+  (`open:<port>`) or may be opened with SIGUSR1 (`sigusr1:<process.debugPort>`).
+  It reports neither when the application listens for SIGUSR1 or runs with
+  `--disable-sigusr1`, so no application behaviour is triggered. The bridge
+  remembers the report for ten minutes, past the collector's registration,
+  because a stuck thread stops polling.
+- For a stacks capture, guest-init visits those processes one at a time
+  within the window and grace: it sends SIGUSR1 when needed, connects to the
+  loopback inspector, and checks the target is that pid. An event loop that
+  runs a `setImmediate` within 200 ms is idle and left to the collector, which
+  reports handles as before. Otherwise guest-init pauses the thread, reads the
+  call frames, evaluates the preload's hook for the loop's handles (which also
+  marks the epoch so the collector does not repeat the snapshot later), and
+  resumes it immediately; resume is sent even when no pause was seen, before
+  the debugger is disabled. An inspector the capture opened is closed with a
+  deferred `inspector.close()`. A thread that does not pause within a second
+  is reported as busy outside JavaScript.
+- The stack becomes a `threads`/`count` pprof profile, encoded in guest-init
+  with protowire; apid still does all parsing.
+
+Rejected: a resident worker thread per Node process that could sample the
+main thread without guest-init. It costs about 15 MB of RSS in every
+instrumented process and its snapshots, for a capture taken rarely. Also
+rejected: keeping the inspector open permanently, which would expose a
+debugger on loopback to any SSRF in the application.
+
 ## Rejected alternatives
 
 - **apid → schedd gRPC.** Violates the ownership rule (apid records intent in

@@ -339,10 +339,19 @@ gregale debug capture my-app --type stacks
 - **Go** — every goroutine's stack (`runtime/pprof` goroutine profile).
 - **Python** — every thread's stack, plus the stack of every pending asyncio
   task, so an async handler awaiting a slow call shows where it waits.
-- **Node** — what the event loop is waiting on: active sockets, timers,
-  file-system and DNS requests by type. A JavaScript thread cannot sample its
-  own stack while it runs the collector, so Node has no per-function stacks;
-  a CPU-bound handler shows up in a CPU capture instead.
+- **Node** — when the event loop is free, what it is waiting on: active
+  sockets, timers, file-system and DNS requests by type. When the main thread
+  is stuck in JavaScript (a busy loop, a large synchronous computation), the
+  JavaScript stack it is stuck in, with function, file and line, plus what
+  the loop holds. A stuck main thread cannot run the collector, so Gregale
+  reaches it through Node's inspector: it opens the inspector on the VM's
+  loopback with SIGUSR1, confirms the event loop does not run a
+  `setImmediate` within 200 ms, pauses the thread for the few milliseconds
+  it takes to read the stack, resumes it, and closes the inspector again.
+  This needs the managed Node runtime's collector; an application that
+  listens for SIGUSR1 itself, or runs with `--disable-sigusr1`, is never
+  signalled and reports only what the loop waits on. A thread busy in native
+  code or garbage collection shows as "busy outside JavaScript".
 
 Values are counts: the flamegraph is as wide as the number of goroutines or
 threads parked on each path.

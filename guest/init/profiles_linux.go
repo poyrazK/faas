@@ -95,6 +95,10 @@ type profileBridge struct {
 	// collector of the application's own can be told apart from it.
 	pprofSeen time.Time
 	pprofAck  string
+	// inspectors are the Node inspectors collectors reported, kept past their
+	// registration; nodeStack samples one (tests replace it).
+	inspectors map[string]nodeInspector
+	nodeStack  nodeStackSampler
 }
 
 var guestProfiles struct {
@@ -119,7 +123,8 @@ func newProfileBridge(cfg *api.ProfilingConfig, send func(context.Context, profi
 	}
 	control := base
 	control.Epoch = newProfileEpoch()
-	return &profileBridge{base: base, control: control, processes: map[string]time.Time{}, acks: map[string]string{}, slots: make(chan struct{}, api.ProfileMaxConcurrentUploads), send: send}
+	return &profileBridge{base: base, control: control, processes: map[string]time.Time{}, acks: map[string]string{}, slots: make(chan struct{}, api.ProfileMaxConcurrentUploads), send: send,
+		inspectors: map[string]nodeInspector{}}
 }
 
 // startProfileBridge serves the local collector bridge when continuous
@@ -175,6 +180,7 @@ func (b *profileBridge) controlHandler(w http.ResponseWriter, r *http.Request) {
 			if b.capture != nil && b.control.Epoch == b.capture.epoch && len(b.capture.processes) < api.ProfileMaxProcesses {
 				b.capture.processes[pid] = true
 			}
+			b.rememberNodeInspector(pid, r.URL.Query().Get("inspector"))
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")

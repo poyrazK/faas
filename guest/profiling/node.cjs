@@ -42,11 +42,32 @@ if (process.env.FAAS_PROFILING_ENABLED === '1') {
   // Stacks: a JS thread cannot sample its own stack while it runs this
   // collector, so Node reports what the event loop is waiting on: active
   // handles and requests by type (sockets, timers, file system requests).
+  // When the main thread is stuck in JavaScript, guest-init pauses it through
+  // the inspector instead (ADR-1155) and marks the epoch here, so this
+  // collector does not report the same snapshot again once the thread frees.
+  const activeResources = () => (typeof process.getActiveResourcesInfo === 'function' ? process.getActiveResourcesInfo() : []);
+  let stacksTaken = '';
+  Object.defineProperty(globalThis, Symbol.for('gregale.profiling'), {value: Object.freeze({
+    pausedSnapshot(tag) { stacksTaken = String(tag); return JSON.stringify(activeResources()); },
+    closeInspector() { try { require('node:inspector').close(); } catch (_) { /* best effort */ } },
+  })});
+  // inspectorState tells guest-init how to reach this process's inspector:
+  // already open on a port, openable with SIGUSR1 on process.debugPort, or
+  // not at all. An application listening for SIGUSR1 is never signalled.
+  function inspectorState() {
+    try {
+      const url = require('node:inspector').url();
+      if (url) return 'open:' + new URL(url).port;
+      const flags = process.execArgv.join(' ') + ' ' + (process.env.NODE_OPTIONS || '');
+      if (flags.includes('--disable-sigusr1') || process.listenerCount('SIGUSR1') > 0) return '';
+      return 'sigusr1:' + process.debugPort;
+    } catch (_) { return ''; }
+  }
   function stacksProfile() {
     const f = require('pprof-format');
     const strings = new f.StringTable();
     const counts = new Map();
-    const active = typeof process.getActiveResourcesInfo === 'function' ? process.getActiveResourcesInfo() : [];
+    const active = activeResources();
     for (const type of active) counts.set(type, (counts.get(type) || 0) + 1);
     const functions = [], locations = [];
     const frame = name => {
@@ -102,7 +123,8 @@ if (process.env.FAAS_PROFILING_ENABLED === '1') {
   async function tick() {
     let active = false;
     try {
-      const config = await request('/control?pid=' + process.pid);
+      const inspector = inspectorState();
+      const config = await request('/control?pid=' + process.pid + (inspector ? '&inspector=' + encodeURIComponent(inspector) : ''));
       if (capture && (config.suspended || config.epoch !== capture.epoch || !config.enabled)) {
         // A new epoch means a checkpoint or restore: discard the window.
         if (config.epoch === capture.epoch) await stopCapture();
@@ -116,7 +138,7 @@ if (process.env.FAAS_PROFILING_ENABLED === '1') {
       } else if (config.enabled && config.capture && !capture && config.epoch !== epoch) {
         epoch = config.epoch;
         startCapture(config);
-        if (kinds(config).includes('stacks')) await uploadStacks(config.epoch);
+        if (kinds(config).includes('stacks') && stacksTaken !== config.epoch) await uploadStacks(config.epoch);
       } else if (config.enabled && !config.capture && !running && !heapRunning) {
         const want = kinds(config);
         epoch = config.epoch;

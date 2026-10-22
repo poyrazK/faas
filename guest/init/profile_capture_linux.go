@@ -62,6 +62,11 @@ func (b *profileBridge) runCapture(req profileproto.CaptureRequest, sleep func(t
 	b.control = profileControl{Enabled: true, Epoch: c.epoch, WindowSeconds: window, Kinds: append([]string(nil), req.Kinds...), Capture: true,
 		CheckpointSeconds: int(req.Checkpoint() / time.Second)}
 	b.mu.Unlock()
+	if req.WantsKind(api.ProfileKindStacks) {
+		// A Node main thread stuck in JavaScript cannot answer its collector;
+		// snapshot it through the inspector within the window and grace.
+		go b.sampleNodeStacks(c, max(req.Duration()+profileproto.CaptureGrace-time.Second, time.Second))
+	}
 
 	interrupted := captureWait(sleep, req.Duration(), c.stop)
 	b.mu.Lock()

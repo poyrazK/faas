@@ -491,6 +491,17 @@ const (
 	// behave as for an uninstrumented process.
 	ProfilePprofFetchTimeout  = 5 * time.Second
 	ProfilePprofProbeInterval = 2 * time.Second
+	// Node stack snapshots through the inspector (ADR-1155). guest-init
+	// remembers a Node process's reported inspector for
+	// ProfileNodeInspectorRememberFor, so a main thread stuck longer than the
+	// collector's poll interval is still reachable. An event loop that does
+	// not run a setImmediate within ProfileNodeLivenessTimeout counts as
+	// stuck; its main thread is then paused, waiting at most
+	// ProfileNodePauseTimeout, and resumed at once.
+	ProfileNodeInspectorRememberFor = 10 * time.Minute
+	ProfileNodeInspectorConnect     = 2 * time.Second
+	ProfileNodeLivenessTimeout      = 200 * time.Millisecond
+	ProfileNodePauseTimeout         = time.Second
 	// Automatic heap captures on memory pressure (ADR-1155). guest-init reports
 	// pressure when MemAvailable falls to the threshold share of MemTotal and
 	// re-arms once it recovers above the re-arm share.
