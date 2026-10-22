@@ -5894,6 +5894,7 @@ var cliCommands = []cliCommand{
 		Short:   "Watch invocations finish across your account in real time",
 		// The stream is always followed; there is no --follow flag on
 		// cmdTail (commands5.go) and the manifest must not invent one.
+		Positionals: []string{"[<slug>]"},
 		Flags: []cliFlag{
 			{Name: "app", Short: "filter to a single app slug (optional)", Value: "slug"},
 			{Name: "include-stateless", Short: "also print stateless.advisory frames (default: hide)"},

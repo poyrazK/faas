@@ -16993,7 +16993,7 @@ Watch invocations finish across your account in real time
 
 See also: [`logs`](#logs).
 
-`gregale tail [--app <slug>] [--include-stateless]`
+`gregale tail [<slug>] [--app <slug>] [--include-stateless]`
 
 | Flag | Meaning | |
 |---|---|---|
