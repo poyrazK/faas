@@ -3830,6 +3830,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/dependencies", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugDependencyLatencyHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/critical-paths", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugCriticalPathHistoryHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/running", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugRunningHandler))))
+	mux.HandleFunc("GET /v1/apps/{slug}/debug/rollout", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugRolloutHandler))))
+	mux.HandleFunc("GET /v1/apps/{slug}/debug/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugStatusHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/deployment-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProfileDeploymentPolicy))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/profiles/deployment-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.saveProfileDeploymentPolicy))))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/periodic-monitors", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProfilePeriodicMonitors))))

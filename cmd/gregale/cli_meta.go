@@ -4359,6 +4359,8 @@ var cliCommands = []cliCommand{
 		DocSlug: "debug",
 		Short:   "Inspect production requests and regressions",
 		Subcommands: []cliSub{
+			{Name: "status", Common: true, Short: "One summary of health, release, regressions, and recent failures", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "since", Short: "lookback window (default 1h)", Value: "DURATION"}}, Examples: []string{"gregale debug status checkout-api"}},
+			{Name: "rollout", Short: "Explain why a release was rolled back or is held, with request evidence", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "deployment-id", Short: "deployment to explain (default: the newest canary rollout)", Value: "UUID"}}, Examples: []string{"gregale debug rollout checkout-api"}},
 			debugRequestsCLISubcommand(),
 			{Name: "profiles", Short: "Sampled CPU functions and deployment comparison", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "deployment-id", Value: "UUID", Short: "candidate deployment"}, {Name: "runtime", Value: "NAME", Short: "runtime name"}, {Name: "start", Value: "RFC3339", Short: "capture start"}, {Name: "end", Value: "RFC3339", Short: "capture end"}, {Name: "baseline-id", Value: "UUID", Short: "baseline deployment"}, {Name: "baseline-start", Value: "RFC3339", Short: "baseline capture start"}, {Name: "baseline-end", Value: "RFC3339", Short: "baseline capture end"}}},
 			{Name: "dependencies", Short: "Show observed dependency latency and regressions", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "since", Short: "lookback window", Value: "DURATION"}}},

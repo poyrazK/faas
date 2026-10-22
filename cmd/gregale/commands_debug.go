@@ -18,6 +18,8 @@
 //	gregale debug coverage <slug> [--since <dur>]
 //	gregale debug dependencies <slug> [--since <dur>]
 //	gregale debug running <slug> [--since <dur>] [--limit <n>]
+//	gregale debug status <slug> [--since <dur>]
+//	gregale debug rollout <slug> [--deployment-id UUID]
 //	gregale debug bundle <slug> <request-id-or-row-id> [--since <dur>] [--source <id> --mirror <id>] [--output PATH]
 //	gregale debug regressions watch <slug> [--since <dur>] [--interval D] [--once]
 //	gregale debug regressions <slug> [--since <dur>]
@@ -51,7 +53,7 @@ import (
 
 // debugCmdUsage is the canonical usage text. Mirrors the shape of
 // commands_invocations.go's PrintUsage strings.
-const debugCmdUsage = "usage: gregale debug <requests|coverage|dependencies|running|regressions|compare|bundle> ..."
+const debugCmdUsage = "usage: gregale debug <status|rollout|requests|coverage|dependencies|running|regressions|compare|bundle> ..."
 
 const debugRequestsCmdUsage = "usage: gregale debug requests <list|export|watch|get|show|evidence|explain|trace|inspect|replay> ..."
 
@@ -66,7 +68,7 @@ func cmdDebug(args []string) int {
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests export   export metadata-only request telemetry\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests explain  synthesize root-cause findings and next actions\n  requests trace    show the linked OTel span tree\n  requests replay   queue a request replay\n  coverage          show observed debugger signal coverage\n  running           explain why an app is still running\n  regressions       list detected regressions (use --all for every app)\n  regressions watch watch live regression events (--poll for polling)\n  regressions acknowledge|dismiss|resolve|reopen change regression triage state\n  compare           compare two deployments\n  bundle            export a redacted incident bundle with coverage", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  status            one summary: health, release, regressions, recent failures\n  rollout           explain a rolled-back or held release with request evidence\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests export   export metadata-only request telemetry\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests explain  synthesize root-cause findings and next actions\n  requests trace    show the linked OTel span tree\n  requests replay   queue a request replay\n  coverage          show observed debugger signal coverage\n  running           explain why an app is still running\n  regressions       list detected regressions (use --all for every app)\n  regressions watch watch live regression events (--poll for polling)\n  regressions acknowledge|dismiss|resolve|reopen change regression triage state\n  compare           compare two deployments\n  bundle            export a redacted incident bundle with coverage", debugCmdDocsTopic)
 		_, _ = fmt.Fprintln(os.Stderr, "  requests inspect  select a request and render the complete investigation")
 		_, _ = fmt.Fprintln(os.Stderr, "  profiles          CPU profiles and deployment comparison")
 		_, _ = fmt.Fprintln(os.Stderr, "  dependencies      show historical dependency latency and regressions")
@@ -83,6 +85,10 @@ func cmdDebug(args []string) int {
 		return cmdDebugDependencies(args[1:])
 	case "running":
 		return cmdDebugRunning(args[1:])
+	case "status":
+		return cmdDebugStatus(args[1:])
+	case "rollout":
+		return cmdDebugRollout(args[1:])
 	case "regressions":
 		return cmdDebugRegressions(args[1:])
 	case "compare":
