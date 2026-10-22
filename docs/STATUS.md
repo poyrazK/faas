@@ -1767,6 +1767,11 @@ remain open; production admission is disabled.
   deployment, merged onto the built image's HEALTHCHECK and enforced by the
   ADR-683/684 readiness gate and recovery. Unit and conformance tests pass; no
   native run.
+- **Compose process overrides on built services.**
+  [ADR-20261022160000](adr/20261022160000-compose-process-on-built-services.md)
+  (2026-10-22): a built service's `entrypoint` joins its start command, and
+  `user`, `working_dir`, `stop_signal` and `stop_grace_period` are frozen per
+  deployment and applied to the built image. Unit tests pass; no native run.
 - **No native run recorded.** The `containers` native lane has no recorded
   passing run; [container qualification](container-qualification.md) remains
   the coverage plan.
