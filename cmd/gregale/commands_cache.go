@@ -52,17 +52,16 @@ func cmdCachePurge(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) > 1 {
+	// `cache GET` takes --app (or the linked app), so purge takes the same
+	// spellings as well as the <slug> positional (Hunt 12 H12-21).
+	slugArg, positional := peelLeadingSlug(positional)
+	if len(positional) != 0 {
 		PrintUsage(os.Stderr, cachePurgeUsage, "cache")
 		return 1
 	}
-	// `cache GET` takes --app (or the linked app), so purge takes the same
-	// spellings as well as the <slug> positional (Hunt 12 H12-21).
 	app := strings.TrimSpace(*appFlag)
-	if len(positional) == 1 {
-		if err := mergeLeadingSlug(&app, positional[0]); err != nil {
-			return printErr("Invalid cache purge", err)
-		}
+	if err := mergeLeadingSlug(&app, slugArg); err != nil {
+		return printErr("Invalid cache purge", err)
 	}
 	slug, err := resolveAppFlagOrContext(app)
 	if err != nil {
