@@ -1445,6 +1445,11 @@ func newServerWithDeps(
 	s.productControl.BillingDetails = s.statementInvoices.PaddleBillingDetails
 	s.productControl.PutBillingDetails = s.statementInvoices.PutPaddleBillingDetails
 	s.productControl.PlanPricingEnabled = func() bool { return s.runtimeBool(runtimeConfigProductControlPlanPricing, false) }
+	s.productControl.SignupEnabled = func() bool { return s.runtimeBool(runtimeConfigProductControlSignup, false) }
+	s.productControl.SignupCustomer = s.statementInvoices.SignupCustomer
+	s.productControl.PaymentMethod = s.statementInvoices.StripePaymentMethod
+	s.productControl.PaymentMethodCheckout = s.statementInvoices.StripeSetupCheckout
+	s.productControl.CompletePaymentMethod = s.statementInvoices.CompleteStripeSetup
 	s.dataRepair.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}

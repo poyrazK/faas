@@ -3,6 +3,7 @@
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
 - [ADR-20261022140000: Break-glass controls for a compromised secret store](20261022140000-break-glass-controls.md)
 - [ADR-20261022111812: Seal domains: a sealed value opens only where it is read](20261022111812-seal-domains-per-reader.md)
+- [Product Control self-serve signup and card on file](20261022100735-product-control-self-serve-signup.md)
 - [ADR-20261022082721: Rehearsal reads of captured work, inbox and async invoke](20261022082721-rehearsal-captured-reads-inbox-async-invoke.md)
 - [Platform flags: company targeting, full coverage, scheduled and automatic rollouts, self-serve previews](20261021080640-platform-flag-extensions.md)
 - [Product Control free trials](20261021195901-product-control-free-trials.md)

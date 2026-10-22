@@ -207,6 +207,10 @@ const (
 	// ProductControlMaxTrialDays bounds a plan's trial and how far an owner
 	// can extend one from its start (ADR-20261021195901).
 	ProductControlMaxTrialDays = 90
+	// ProductControlSignupMaxWorkspacesPerUser bounds the workspaces one
+	// Application Auth user owns in a product through self-serve signup
+	// (ADR-20261022100735).
+	ProductControlSignupMaxWorkspacesPerUser = 3
 	// ProductControlPlanHistoryMonthMaxPlans bounds the distinct plans one
 	// customer month is read with for its fee.
 	ProductControlPlanHistoryMonthMaxPlans = 1000

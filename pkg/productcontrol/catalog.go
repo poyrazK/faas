@@ -26,6 +26,9 @@ func Compile(spec api.ProductCatalogSpec) (api.ProductCatalog, error) {
 	if err := ValidateAccess(spec.Access); err != nil {
 		return api.ProductCatalog{}, err
 	}
+	if err := ValidateSignupPolicy(spec); err != nil {
+		return api.ProductCatalog{}, err
+	}
 	if spec.AuthApp != "" && !slug.MatchString(spec.AuthApp) {
 		return api.ProductCatalog{}, fmt.Errorf("auth_app must be an Application Auth app slug")
 	}
