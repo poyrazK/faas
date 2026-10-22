@@ -817,10 +817,8 @@ The product owner's decisions on amendment 6's proposals:
   level 2 stays preview: it flagged 20 of the 38 legitimate requests.
 - **`warn` and `block` stay in preview, and the gate stays p95 at most
   2 ms** (proposals 2 and 7). Restating it as 5 ms was declined. The
-  in-path check is to be measured on an idle production compute node
-  (approved), and the results recorded here; if the 2 ms gate is missed
-  there, the engine work below is the way out of preview, not a looser
-  gate.
+  production measurement below misses the gate, so the engine work below
+  is the way out of preview, not a looser gate.
 - **`kind=challenge` stays in preview** with them.
 - **Coraza pre-filter** (proposal 3): reported upstream as
   [corazawaf/coraza#1790](https://github.com/corazawaf/coraza/issues/1790),
@@ -836,3 +834,50 @@ The product owner's decisions on amendment 6's proposals:
   missed; proposal 4); a CPU weight for gatewayd-internal in a slice of
   its own (proposal 8); running `warn` alongside the proxied request
   (proposal 6); memoizing regex results (proposal 5).
+
+### In-path latency on a production compute node
+
+`TestEdgeWAFInlineLoad_E2E` on `gregale-compute-2` (n2-standard-4: 4 vCPUs,
+two physical cores, Xeon 2.8 GHz; load average 0.04 before; two tenant
+microVMs running), built from 54ddc924f3. apid, gatewayd-internal and a
+throwaway Postgres ran in private mount and network namespaces, with empty
+filesystems over `/run/faas`, `/var/lib/faas` and `/etc/faas` and loopback
+only, so they could reach no production socket, state or network; all of
+it was removed afterwards. The load generator shared the node. Five passes,
+interleaved: no WAF rule twice, a `warn` rule three times, 15 s per rate.
+
+| Rate (req/s) | Check p50 | Check p95 | Check p99 | Within 2 ms | Skipped | Gateway CPU per request (no WAF) | Client p95 (no WAF) |
+|---|---|---|---|---|---|---|---|
+| 100 | 1.87-1.96 ms | 4.01-4.36 ms | 4.9-7.1 ms | 53-58% | 1.6-2.3% | 3.9-4.1 ms (1.7) | 6.0-7.3 ms (2.9-3.3) |
+| 250 | 1.90-1.96 ms | 4.23-4.46 ms | 5.8-6.8 ms | 52-56% | 7.0-7.9% | 3.6-3.7 ms (1.4) | 6.9-7.6 ms (3.0-3.5) |
+| 500 | 2.00-2.23 ms | 4.78-6.48 ms | 8.8-9.9 ms | 43-50% | 19.5-22.8% | 3.4-3.6 ms (1.2) | 13-41 ms (3.2-3.6) |
+| 1000 | 2.37-2.40 ms | 6.39-6.81 ms | 9.7-9.8 ms | 37-38% | 33.5-37.1% | 4.0 ms (1.0) | 8.7-9.0 s (7.5-10 ms) |
+
+No benign request was warned in any pass; the attacks not warned match the
+skipped checks.
+
+Findings:
+
+1. **The 2 ms gate is missed on a production node too.** The median check
+   is about 1.9 ms and p95 4.0-4.5 ms at 100-250 requests per second, at
+   the low end of what amendment 6 measured on the shared test node (p95
+   4.4-7.4 ms). The test node's numbers were not inflated by its
+   neighbours as much as amendment 6 feared: the check costs about 2 ms of
+   CPU on this processor. Dedicated cores do not close the gap; a cheaper
+   check has to.
+2. **A `warn` rule adds about 2.2 ms of gateway CPU per request** (3.4-4.1
+   against 1.0-1.75 ms without). At 1000 requests per second that is all
+   four vCPUs: the gateway saturated, a third of checks were skipped, and
+   clients waited seconds. With no WAF rule the same rate stayed under
+   10 ms at p95. The load generator shared the node, so a dedicated node
+   would saturate somewhat later, but a node's checked capacity is a few
+   hundred requests per second, as amendment 6 found.
+3. **Skips exceed 1% from 100 requests per second** (1.6-2.3%), so the
+   two check slots are already contended at low rates.
+
+The engine options listed above are therefore needed to leave preview:
+the pre-filter (19%) and dropping the three largest unix
+command-injection rules (10%) together would bring the median to about
+1.4 ms, still short of a 2 ms p95, so memoizing regex results (proposal
+5) or running `warn` alongside the request (proposal 6) is likely needed
+as well.
