@@ -36,7 +36,7 @@ func ResolveManagedServiceProbe(ctx context.Context, store ManagedServiceProbeSt
 	if err != nil {
 		return zero, err
 	}
-	if !managed || !found || !route.RequireHTTPS || route.CallerAppID != appID || route.CallerDeploymentID != deploymentID || route.AccountID != app.AccountID {
+	if !managed || !found || route.CallerAppID != appID || route.CallerDeploymentID != deploymentID || route.AccountID != app.AccountID {
 		return zero, ErrConflict
 	}
 	targetApp, err := store.AppByID(ctx, route.TargetAppID)
@@ -66,6 +66,11 @@ func ResolveManagedServiceProbe(ctx context.Context, store ManagedServiceProbeSt
 	}
 	spec := api.ManagedServiceProbeSpec{Version: 1, CallerDeploymentID: dep.ID, Scope: normalizedDeploymentScope(dep.Scope), Service: service, Binding: binding,
 		TargetAppID: targetApp.ID, TargetDeploymentID: targetDep.ID, ReleaseID: route.ReleaseSetID}
+	if !route.RequireHTTPS {
+		// ADR-20261019200059. An HTTPS spec keeps the empty transport, so its
+		// context revision and existing receipts are unchanged.
+		spec.Transport = api.ServiceBindingTransportHTTP
+	}
 	callerArtifact, err := bindingVerificationArtifact(dep)
 	if err != nil {
 		return zero, err

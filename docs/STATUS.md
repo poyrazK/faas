@@ -32,6 +32,77 @@ per-netns and host renders, the Ansible template, the user-space checks and
 `docs/denylist.md` all follow the catalog; `make egress-render-matrix` passes
 on all nine rows. No deployment uses NAT64. Open: `nft -c` validation of the
 rendered ruleset and a metal run of the egress sweep.
+## HTTP service edges as binding evidence — 2026-10-19
+
+Service-binding verification no longer requires the private HTTPS listener,
+which no deployment manifest enables. Plain HTTP is the default caller
+transport (ADR-276).
+
+For a caller on HTTP:
+- `gregale bindings probe` and the managed probe send the marked probe over
+  the URL the caller's binding actually holds,
+  `http://<service>.svc.gregale:10081`. The gateway still requires the declared
+  binding.
+- Enforced GitOps qualification accepts the caller's completed plaintext
+  exchange.
+
+Receipts must match the caller's own transport, and HTTPS callers keep the TLS
+contract. Older guests reject an HTTP managed probe spec, so version skew fails
+closed.
+
+Portable gateway, API, bindingcheck, apid and memory/PostgreSQL tests cover
+this. Guest probe tests are Linux-only and run in CI. Native KVM acceptance
+and qualification dispatch remain pending.
+See [ADR-20261019200059](adr/20261019200059-http-service-binding-evidence.md).
+
+## Outbound bindings in candidate qualification — 2026-10-19
+
+Enforced managed GitOps graphs also admit customer outbound integration
+bindings that have a probe policy. Candidates still cannot reach the outbound
+gateway, and no identity is minted for them. Instead, outboundd lists each
+candidate's probe-ready bindings and sends the configured probe through its
+own handler in process, as the candidate's app, under the binding's route
+rules and limits. It records an immutable receipt pinned to a revision of the
+integration, binding, plan, credential, key pool and probe policy. Any change
+to those facts needs a new probe.
+
+Some outbound bindings still keep candidates held:
+- an active binding without a probe policy or customer-sealed credential
+- an operator app attachment
+
+Disabled integrations are skipped, as binding verification skips them.
+
+This is evidence about the gateway and the provider, not proof that candidate
+code calls the integration. Portable memory and PostgreSQL tests plus
+outbound handler tests cover the lifecycle. Native KVM acceptance and
+qualification dispatch remain pending.
+See [ADR-20261019152416](adr/20261019152416-candidate-outbound-binding-qualification.md).
+
+## Object storage bindings in candidate qualification — 2026-10-19
+
+Enforced managed GitOps graphs also admit managed object storage bindings and
+policy `object_storage_requirements`. apid opens the six sealed deliveries each
+candidate receives and runs the existing bucket canary in the required mode
+(read, write with cleanup, or read_write with download) against the public S3
+endpoint, then records an immutable receipt pinned to those delivery versions.
+Rotation, insufficient permission and requirements without a binding keep
+candidates held. Outbound integrations stay blocked: their evidence needs a
+platform identity for a running instance, which candidates do not have.
+See [ADR-20261019121546](adr/20261019121546-candidate-object-storage-binding-qualification.md).
+
+## PostgreSQL bindings in candidate qualification — 2026-10-19
+
+Enforced managed GitOps graphs no longer block activation because a member has
+a managed PostgreSQL binding. Qualification candidates still cannot reach their
+database, so apid verifies each candidate's exact sealed credential from the
+control plane (TLS authentication, role and privileges, read-only) and records
+an immutable receipt pinned to the credential generation and delivery version.
+Runtime credentials must match the candidate's captured and restored inputs;
+migration credentials are release-only. Data API and Auth bindings stay blocked.
+This is credential evidence, not proof that candidate code reaches the
+database. Portable memory and PostgreSQL tests cover the lifecycle; native KVM
+acceptance and qualification dispatch remain pending.
+See [ADR-20261019072523](adr/20261019072523-candidate-postgres-binding-qualification.md).
 
 ## Checked binding retirement — 2026-10-17
 
