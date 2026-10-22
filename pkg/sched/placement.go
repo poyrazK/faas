@@ -166,6 +166,9 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 		if !n.Active {
 			continue
 		}
+		if containsNodeID(r.ExcludeNodeIDs, n.ID) {
+			continue
+		}
 		if n.AdmissionCeilingMB <= 0 {
 			refusedRAM = true
 			continue
