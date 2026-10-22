@@ -573,7 +573,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	}
 	out, err := client.CreateEdgeRule(context.Background(), *slug, req)
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create edge rule", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
@@ -1026,7 +1026,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	}
 	out, err := client.UpdateEdgeRule(context.Background(), id, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update edge rule", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
@@ -1076,7 +1076,7 @@ func cmdEdgeRulesRm(args []string) int {
 		}
 	}
 	if err := client.DeleteEdgeRule(context.Background(), id); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete edge rule", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]string{"id": id, "status": "deleted"}))
