@@ -1142,6 +1142,60 @@
     "kind": "operational"
   },
   {
+    "table": "app_fork_execs",
+    "columns": [
+      "account_id",
+      "app_id",
+      "command",
+      "command_shell",
+      "created_at",
+      "exit_code",
+      "failure_code",
+      "failure_message",
+      "finished_at",
+      "fork_id",
+      "id",
+      "max_output_bytes",
+      "output_truncated",
+      "requested_by",
+      "started_at",
+      "status",
+      "stderr",
+      "stdout",
+      "timeout_seconds",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_forks",
+    "columns": [
+      "access_token_hash",
+      "account_id",
+      "app_id",
+      "cancel_requested_at",
+      "crash_capture_id",
+      "created_at",
+      "deployment_id",
+      "expires_at",
+      "failure_code",
+      "failure_message",
+      "finished_at",
+      "id",
+      "instance_id",
+      "lease_expires_at",
+      "lease_owner",
+      "lease_token",
+      "requested_by",
+      "snapshot_id",
+      "started_at",
+      "status",
+      "ttl_seconds",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_health_collection_state",
     "columns": [
       "account_id",
@@ -3343,6 +3397,46 @@
       "id",
       "max_age_seconds",
       "name",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "crash_captures",
+    "columns": [
+      "account_id",
+      "app_id",
+      "captured_at",
+      "deployment_id",
+      "encrypted_at",
+      "expires_at",
+      "failure_code",
+      "failure_message",
+      "fc_version",
+      "finished_at",
+      "id",
+      "instance_id",
+      "mem_bytes",
+      "plaintext_state",
+      "reason",
+      "requested_at",
+      "route",
+      "sealed_key",
+      "status",
+      "status_code",
+      "storage_key",
+      "trigger",
+      "updated_at",
+      "vmstate_storage_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "crash_snapshot_settings",
+    "columns": [
+      "account_id",
+      "app_id",
+      "enabled",
       "updated_at"
     ],
     "kind": "configuration"
