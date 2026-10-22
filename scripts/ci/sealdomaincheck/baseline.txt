@@ -44,6 +44,7 @@ loader pkg/apid/mailoutbox/verification_config.go 1
 loader pkg/datapipeline/config.go 2
 loader pkg/internalmail/keyring_config.go 2
 plain accounts.mfa_recovery_codes_hash
+plain api_consumer_signups.claim_hash
 plain api_keys.key_sha256
 plain app_openapi_docs.doc_sha256
 plain app_task_attach_sessions.attach_token_sha256

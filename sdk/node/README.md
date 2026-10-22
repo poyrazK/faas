@@ -558,6 +558,28 @@ export async function POST(request: Request) {
 ```
 
 `isTriggerBatch(request.headers)` tells batch and single-record deliveries apart.
+
+## Code-first workflows
+
+`@gregale/sdk-node/workflows` serves a workflow written as async code
+(ADR-20261021204307). Declare `code: { run: order_followup }` on the workflow in
+`gregale.yaml` and serve the entry handler:
+
+```ts
+import { defineWorkflow, serveWorkflows, runWorkflowLocally } from '@gregale/sdk-node/workflows';
+
+const orderFollowup = defineWorkflow('order_followup', async (order: { id: string }, wf) => {
+  const charge = await wf.step('charge', ({ idempotencyKey }) => chargeCard(order.id, idempotencyKey));
+  await wf.sleep('delivery_delay', '3d');
+  const approval = await wf.waitForEvent('approval', { event: 'approved', timeout: '7d' });
+  return { charge, approved: approval !== null };
+});
+
+export const POST = serveWorkflows([orderFollowup]); // Fetch handler; toNodeListener() for node:http
+```
+
+`runWorkflowLocally(orderFollowup, input, { events })` runs a workflow to
+completion in-process for unit tests. See [code-first workflows](../../docs/code-workflows.md).
 Options: `concurrency` (1-100) for records that do not depend on each other's
 order, `stopOnFailure` to retry every record after a failure in order, and
 `onError` to log each failure. A malformed body throws `TriggerBatchError`;

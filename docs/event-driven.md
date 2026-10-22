@@ -32,6 +32,9 @@ workflows:
           report_id: "{{steps.generate.output.report_id}}"
 ```
 
+To write the flow as ordinary async code instead of a step list, see
+[code-first workflows](code-workflows.md).
+
 Deploy the manifest with your application handlers. Gregale starts the workflow
 directly; an HTTP cron-to-workflow adapter is unnecessary. `run: generate_report`
 invokes the app's `/generate_report` handler via the existing workflow executor.
