@@ -1095,6 +1095,16 @@ type ScalingConfig struct {
 	MaxQueueDepth           int `yaml:"max_queue_depth,omitempty"`
 	WakeMaxQueueDepth       int `yaml:"wake_max_queue_depth,omitempty"`
 	WakeMaxQueueWaitSeconds int `yaml:"wake_max_queue_wait_seconds,omitempty"`
+	// PerInstanceConcurrency is how many requests one instance serves at
+	// once (ADR-20261022203523). Set it to the server's own concurrency, for
+	// example gunicorn's --workers, and the platform scales out on the next
+	// request instead of queueing it on a full instance. Zero uses the plan's
+	// concurrency_per_vm; the API applies that upper bound.
+	//
+	//	scaling:
+	//	  max_instances: 3
+	//	  per_instance_concurrency: 2
+	PerInstanceConcurrency int `yaml:"per_instance_concurrency,omitempty"`
 	// Timezone is the IANA zone the schedules below are evaluated in
 	// (ADR-195). Empty means UTC.
 	Timezone string `yaml:"timezone,omitempty"`
@@ -1225,6 +1235,9 @@ func (s *ScalingConfig) Validate() error {
 	if s.WakeMaxQueueWaitSeconds < 0 || s.WakeMaxQueueWaitSeconds > api.WakeQueueMaxWaitSeconds {
 		return fmt.Errorf("scaling: wake_max_queue_wait_seconds must be between 0 and %d; got %d", api.WakeQueueMaxWaitSeconds, s.WakeMaxQueueWaitSeconds)
 	}
+	if s.PerInstanceConcurrency < 0 {
+		return fmt.Errorf("scaling: per_instance_concurrency must be >= 0; got %d", s.PerInstanceConcurrency)
+	}
 	// The closed metric set and the per-metric value rules come from
 	// pkg/api (ADR-194) rather than being restated here. This file used to
 	// carry its own copy of the switch, and it drifted: it accepted `rps`
@@ -1307,6 +1320,7 @@ func (s *ScalingConfig) ToAPI() *api.ScalingPolicy {
 		MaxQueueDepth:           s.MaxQueueDepth,
 		WakeMaxQueueDepth:       s.WakeMaxQueueDepth,
 		WakeMaxQueueWaitSeconds: s.WakeMaxQueueWaitSeconds,
+		PerInstanceConcurrency:  s.PerInstanceConcurrency,
 	}
 	if s.MinInstances != nil {
 		out.MinInstances = *s.MinInstances

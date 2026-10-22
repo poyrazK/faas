@@ -1775,6 +1775,11 @@ type ScalingPolicy struct {
 	// WakeMaxQueueWaitSeconds overrides the per-app cold-wake wait budget. Zero
 	// uses the plan default; positive values are capped at 60 seconds.
 	WakeMaxQueueWaitSeconds int `json:"wake_max_queue_wait_seconds,omitempty"`
+	// PerInstanceConcurrency is how many requests one instance of the app
+	// serves at once (ADR-20261022203523). The gateway admits at most this
+	// many to an instance and scales out on the next one. Zero uses the
+	// plan's concurrency_per_vm; the handler bounds positive values to it.
+	PerInstanceConcurrency int `json:"per_instance_concurrency,omitempty"`
 	// Timezone is the IANA zone every schedule's cron is evaluated in
 	// (ADR-195). Empty means UTC.
 	Timezone string `json:"timezone,omitempty"`
@@ -1865,6 +1870,7 @@ func (s *ScalingPolicy) UnmarshalJSON(data []byte) error {
 		"max_queue_depth":             {},
 		"wake_max_queue_depth":        {},
 		"wake_max_queue_wait_seconds": {},
+		"per_instance_concurrency":    {},
 		"timezone":                    {},
 		"schedules":                   {},
 	}

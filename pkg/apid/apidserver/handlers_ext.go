@@ -150,6 +150,24 @@ func validateIdleTimeout(v int, limits api.Limits) *api.Problem {
 	return nil
 }
 
+// validatePerInstanceConcurrency gates and bounds
+// scaling_policy.per_instance_concurrency (ADR-20261022203523). Until the
+// account is listed in FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS the field is
+// answered exactly like the unknown field it is to an N-1 apid. Keeping the
+// stored value, or clearing it to 0, is always allowed, so a read-modify-write
+// of another policy field never fails for an account that was delisted.
+func validatePerInstanceConcurrency(requested int, acct state.Account, app state.App) *api.Problem {
+	stored := 0
+	if app.ScalingPolicy != nil {
+		stored = app.ScalingPolicy.PerInstanceConcurrency
+	}
+	if requested > 0 && requested != stored && !api.PerInstanceConcurrencyEnabled(acct.ID) {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid scaling policy", "unknown field(s): per_instance_concurrency")
+	}
+	return api.ValidatePerInstanceConcurrency(acct.Plan, requested)
+}
+
 func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api.Limits, app state.App) *api.Problem {
 	if req.RetryPolicy != nil {
 		if _, problem := marshalAppRetryPolicy(req.RetryPolicy); problem != nil {
@@ -788,6 +806,9 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 				"Invalid scaling policy",
 				fmt.Sprintf("wake_max_queue_wait_seconds must be between 0 and %d", api.WakeQueueMaxWaitSeconds))
+		}
+		if problem := validatePerInstanceConcurrency(sp.PerInstanceConcurrency, acct, app); problem != nil {
+			return problem
 		}
 		// Worker-class carve-out (PR-D): live here in the validator
 		// (rather than at the call site in updateApp) so an
@@ -7669,6 +7690,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 		MaxQueueDepth:           sp.MaxQueueDepth,
 		WakeMaxQueueDepth:       sp.WakeMaxQueueDepth,
 		WakeMaxQueueWaitSeconds: sp.WakeMaxQueueWaitSeconds,
+		PerInstanceConcurrency:  sp.PerInstanceConcurrency,
 	}
 	if sp.Target != nil {
 		out.Target = &state.ScalingTarget{

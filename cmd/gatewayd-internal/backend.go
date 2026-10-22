@@ -612,12 +612,14 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 	maxQueueDepth := 0
 	wakeMaxQueueDepth := 0
 	wakeMaxQueueWaitSeconds := 0
+	perInstanceConcurrency := 0
 	if app.ScalingPolicy != nil {
 		concurrencyOverflow = app.ScalingPolicy.ConcurrencyOverflow
 		maxQueueWaitMS = app.ScalingPolicy.MaxQueueWaitMS
 		maxQueueDepth = app.ScalingPolicy.MaxQueueDepth
 		wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
 		wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
+		perInstanceConcurrency = app.ScalingPolicy.PerInstanceConcurrency
 	}
 	requestRateLimitRPS, requestRateLimitBurst := 0, 0
 	if app.RequestRateLimitRPS != nil {
@@ -638,6 +640,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		Plan:                         acct.Plan,
 		RequestInvocationsEnabled:    app.AcceptsRequestInvocations(),
 		MaxConcurrency:               app.MaxConcurrency,
+		PerInstanceConcurrency:       perInstanceConcurrency,
 		ConcurrencyOverflow:          concurrencyOverflow,
 		MaxQueueWaitMS:               maxQueueWaitMS,
 		MaxQueueDepth:                maxQueueDepth,

@@ -539,6 +539,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PADDLE_WEBHOOK_TOLERANCE_SECONDS` | shared | `default` |  |  | `` |  |
 | `FAAS_PERSISTENT_PROTOCOL_V1` | guest | `guest` |  |  | `` |  |
 | `FAAS_PERSISTENT_WORKER` | shared | `internal` |  |  | `` | set by the builder path for its own worker process |
+| `FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs, or *, that may set scaling_policy.per_instance_concurrency (ADR-20261022203523); unset admits none, and a stored value keeps applying until it is set to 0 |
 | `FAAS_PGTEST_TEMPLATE_DATABASE` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_PLAN_CACHE_ROOT` | apid | `default` |  |  | `` |  |
 | `FAAS_PMEM_BASE_DIR` | vmmd | `default` |  | auto | `` | per-account pmem base copies (ADR-908); default auto keeps each copy on the mount of its base; empty or off keeps every base on virtio-blk; a path must be on the same reflink-capable mount as the cached bases |

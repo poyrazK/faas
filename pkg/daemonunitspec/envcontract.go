@@ -618,6 +618,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PADDLE_WEBHOOK_TOLERANCE_SECONDS", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PERSISTENT_PROTOCOL_V1", Owners: []string{"guest"}, Source: EnvSourceGuest},
 	{Name: "FAAS_PERSISTENT_WORKER", Owners: []string{"shared"}, Source: EnvSourceInternal, Note: "set by the builder path for its own worker process"},
+	{Name: "FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS", Owners: []string{"apid", "shared"}, Source: EnvSourceDefault, Note: "comma-separated account UUIDs, or *, that may set scaling_policy.per_instance_concurrency (ADR-20261022203523); unset admits none, and a stored value keeps applying until it is set to 0"},
 	{Name: "FAAS_PGTEST_TEMPLATE_DATABASE", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_PLAN_CACHE_ROOT", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PMEM_BASE_DIR", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Default: "auto", Note: "per-account pmem base copies (ADR-908); default auto keeps each copy on the mount of its base; empty or off keeps every base on virtio-blk; a path must be on the same reflink-capable mount as the cached bases"},

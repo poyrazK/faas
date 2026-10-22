@@ -84164,7 +84164,7 @@ components:
         plan_cpu_max_millicores: { type: integer, description: "Largest sustained CPU allowance the current plan permits, in millicores." }
         cpu_weight: { type: integer, description: "Relative cgroup CPU scheduling weight applied when the host is contended." }
         max_instances: { type: integer, description: "Effective per-app live-instance ceiling after applying the scaling policy." }
-        concurrency_per_instance: { type: integer, description: "Maximum in-flight requests accepted by one instance. Handler-level concurrency remains the application's responsibility." }
+        concurrency_per_instance: { type: integer, description: "Maximum in-flight requests accepted by one instance: the app's scaling_policy.per_instance_concurrency when set, otherwise the plan's concurrency_per_vm." }
         concurrency_queue_depth: { type: integer, description: "Effective maximum number of requests allowed to wait for warm instance capacity." }
         concurrency_queue_wait_ms: { type: integer, format: int64, description: "Effective maximum warm saturation wait in milliseconds." }
         app_request_rate_rps: { type: integer, description: "Effective per-app edge token-bucket refill rate, in requests per second, after any app-level runtime override." }
@@ -88906,6 +88906,11 @@ components:
           minimum: 0
           maximum: 60
           example: 30
+        per_instance_concurrency:
+          description: "Requests one instance serves at once (ADR-20261022203523). The gateway admits at most this many to an instance and scales out on the next request; requests over every instance's limit wait in the warm queue (30 s unless max_queue_wait_ms is set). 0 uses the plan's concurrency_per_vm, which is also the upper bound."
+          type: integer
+          minimum: 0
+          example: 2
         timezone:
           description: "IANA timezone every schedule's cron expression is evaluated in (ADR-195). Empty means UTC. One zone per app rather than one per schedule: a business has a working day, not a working day per rule."
           type: string

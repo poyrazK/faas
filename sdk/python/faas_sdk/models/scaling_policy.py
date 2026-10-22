@@ -64,6 +64,10 @@ class ScalingPolicy:
     """Per-app cold-wake waiter cap. 0 uses the plan default; positive values are capped at 8x the plan default."""
     wake_max_queue_wait_seconds: int | Unset = UNSET
     """Per-app cold-wake wait budget in seconds. 0 uses the plan default; capped at 60 seconds."""
+    per_instance_concurrency: int | Unset = UNSET
+    """Requests one instance serves at once (ADR-20261022203523). The gateway admits at most this many to an instance
+    and scales out on the next request; requests over every instance's limit wait in the warm queue (30 s unless
+    max_queue_wait_ms is set). 0 uses the plan's concurrency_per_vm, which is also the upper bound."""
     timezone: str | Unset = UNSET
     """IANA timezone every schedule's cron expression is evaluated in (ADR-195). Empty means UTC. One zone per app
     rather than one per schedule: a business has a working day, not a working day per rule."""
@@ -113,6 +117,8 @@ class ScalingPolicy:
 
         wake_max_queue_wait_seconds = self.wake_max_queue_wait_seconds
 
+        per_instance_concurrency = self.per_instance_concurrency
+
         timezone = self.timezone
 
         schedules: list[dict[str, Any]] | Unset = UNSET
@@ -147,6 +153,8 @@ class ScalingPolicy:
             field_dict["wake_max_queue_depth"] = wake_max_queue_depth
         if wake_max_queue_wait_seconds is not UNSET:
             field_dict["wake_max_queue_wait_seconds"] = wake_max_queue_wait_seconds
+        if per_instance_concurrency is not UNSET:
+            field_dict["per_instance_concurrency"] = per_instance_concurrency
         if timezone is not UNSET:
             field_dict["timezone"] = timezone
         if schedules is not UNSET:
@@ -209,6 +217,8 @@ class ScalingPolicy:
 
         wake_max_queue_wait_seconds = d.pop("wake_max_queue_wait_seconds", UNSET)
 
+        per_instance_concurrency = d.pop("per_instance_concurrency", UNSET)
+
         timezone = d.pop("timezone", UNSET)
 
         _schedules = d.pop("schedules", UNSET)
@@ -232,6 +242,7 @@ class ScalingPolicy:
             max_queue_depth=max_queue_depth,
             wake_max_queue_depth=wake_max_queue_depth,
             wake_max_queue_wait_seconds=wake_max_queue_wait_seconds,
+            per_instance_concurrency=per_instance_concurrency,
             timezone=timezone,
             schedules=schedules,
         )

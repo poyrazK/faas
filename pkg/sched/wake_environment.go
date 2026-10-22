@@ -140,7 +140,7 @@ func wakeEnvironmentChanged() error {
 }
 
 func (e *Engine) wakeFanoutForEnvironment(selected wakeEnvironment) WakeFanout {
-	fanout := WakeFanout{MaxInFlight: effectiveMaxConcurrency(selected.app, selected.limits), PerVM: selected.limits.ConcurrencyPerVMBound}
+	fanout := WakeFanout{MaxInFlight: effectiveMaxConcurrency(selected.app, selected.limits), PerVM: effectivePerInstanceConcurrency(selected.app, selected.limits)}
 	if e.ledger != nil {
 		fanout.Existing = selected.concurrency(e.ledger)
 	}

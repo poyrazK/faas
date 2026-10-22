@@ -211,7 +211,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--size micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--function-concurrency N] [--revision-pin-ttl DURATION] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--release-policy safe|fast|immediate] [--release-probe-paths PATH,PATH] [--pre-auth off|observe|enforce] [--pre-auth-rps N] [--pre-auth-burst N] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--size micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--per-instance-concurrency N] [--idle SEC] [--request-timeout SEC] [--function-concurrency N] [--revision-pin-ttl DURATION] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--release-policy safe|fast|immediate] [--release-probe-paths PATH,PATH] [--pre-auth off|observe|enforce] [--pre-auth-rps N] [--pre-auth-burst N] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -230,6 +230,7 @@ func cmdApp(args []string) int {
 	maxQueueWaitMS := fs.Int("max-queue-wait-ms", 0, "maximum queued concurrency wait in milliseconds (0 = plan default)")
 	wakeMaxQueueDepth := fs.Int("wake-max-queue-depth", 0, "per-app cold-wake waiter cap (0 = plan default)")
 	wakeMaxQueueWaitSeconds := fs.Int("wake-max-queue-wait-seconds", 0, "per-app cold-wake wait budget in seconds (0 = plan default, max 60)")
+	perInstanceConcurrency := fs.Int("per-instance-concurrency", 0, "requests one instance serves at once; the next request scales out (0 = plan's concurrency per VM)")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	revisionPinTTL := fs.Duration("revision-pin-ttl", 0, "revision pin lifetime (0 disables; whole seconds, maximum 168h)")
 	requestTimeout := fs.Int("request-timeout", 0, "per-app request timeout in seconds (0 = plan default, max 30)")
@@ -470,10 +471,16 @@ func cmdApp(args []string) int {
 		v := *conc
 		req.MaxConcurrency = &v
 	}
-	if explicit["concurrency-overflow"] || explicit["max-queue-depth"] || setQueueWait || explicit["wake-max-queue-depth"] || explicit["wake-max-queue-wait-seconds"] {
+	if explicit["concurrency-overflow"] || explicit["max-queue-depth"] || setQueueWait || explicit["wake-max-queue-depth"] || explicit["wake-max-queue-wait-seconds"] || explicit["per-instance-concurrency"] {
+		if explicit["per-instance-concurrency"] && *perInstanceConcurrency < 0 {
+			return printErr("Invalid concurrency policy", errNegativePerInstanceConcurrency(*perInstanceConcurrency))
+		}
 		policy, err := cliScalingPolicyPatchWithQueues(ctx, environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}, slug, *concurrencyOverflow, queueWaitMS, *maxQueueDepth, explicit["concurrency-overflow"], setQueueWait, explicit["max-queue-depth"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
 		if err != nil {
 			return printErr("Invalid concurrency policy", err)
+		}
+		if explicit["per-instance-concurrency"] {
+			policy.PerInstanceConcurrency = *perInstanceConcurrency
 		}
 		req.ScalingPolicy = policy
 	}
@@ -809,6 +816,11 @@ func cmdApp(args []string) int {
 			fmt.Printf("%-30s %s\n", "concurrency per vm:", "—")
 		} else {
 			fmt.Printf("%-30s %d\n", "concurrency per vm:", a.ConcurrencyPerVMBound)
+		}
+		// ADR-20261022203523: the app's own per-instance limit, which the
+		// gateway enforces and scales out past. Shown only when declared.
+		if a.ScalingPolicy != nil && a.ScalingPolicy.PerInstanceConcurrency > 0 {
+			fmt.Printf("%-30s %d\n", "requests per instance:", a.EffectiveLimits.ConcurrencyPerInstance)
 		}
 		// An unset idle timeout is stored as NULL and the type default
 		// applies (600 s for apps on Scale, 30 s for functions — ADR-974);
@@ -1555,6 +1567,13 @@ func cliScalingPolicyPatchWithQueues(ctx context.Context, client interface {
 		policy.WakeMaxQueueWaitSeconds = wakeMaxQueueWaitSeconds
 	}
 	return policy, nil
+}
+
+// errNegativePerInstanceConcurrency rejects --per-instance-concurrency
+// below zero before any request (ADR-20261022203523). The upper bound is the
+// plan's concurrency per VM, which the API enforces.
+func errNegativePerInstanceConcurrency(value int) error {
+	return fmt.Errorf("--per-instance-concurrency must be >= 0 (0 uses the plan's concurrency per VM); got %d", value)
 }
 
 const manifestTriggerCleanupTimeout = 10 * time.Second

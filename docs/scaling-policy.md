@@ -22,6 +22,7 @@ For deploys, the policy can be kept beside the source in `gregale.yaml`:
 scaling:
   min_instances: 1
   max_instances: 4
+  per_instance_concurrency: 0 # requests one instance serves at once; 0 uses the plan bound
   targets:
     - metric: concurrent_requests
       value: 80
@@ -35,6 +36,50 @@ scaling:
   wake_max_queue_depth: 32 # 0 uses the plan default; max 8x plan default
   wake_max_queue_wait_seconds: 30 # 0 uses the plan default; max 60
 ```
+
+## Requests per instance
+
+By default the gateway sends an instance up to your plan's concurrency per VM
+(Free 4, Hobby 5, Pro 25, Scale 80) before it tries another one. A server that
+handles fewer requests at once queues the rest itself, and the platform cannot
+see that it is full. `gunicorn --workers 2`, for example, serves two requests
+at a time. Tell the platform how many your server handles:
+
+```yaml
+scaling:
+  max_instances: 3
+  per_instance_concurrency: 2   # gunicorn --workers 2
+```
+
+```bash
+gregale app APP_ID scale --per-instance-concurrency 2
+```
+
+With this setting the gateway sends each instance at most two requests. The
+third concurrent request asks for another instance at once, up to
+`max_instances`, and goes to whichever instance has a free slot first. When
+every instance is full and the app is at its instance ceiling, requests wait
+at the gateway in the warm queue. An app with `per_instance_concurrency` set
+waits up to 30 seconds by default, because a full instance is normal for it.
+`max_queue_wait_ms` changes that wait, and `concurrency_overflow: drop` refuses
+the request at once.
+
+- `0`, or leaving it out, uses the plan's concurrency per VM. The value can be
+  at most that.
+- Set it to what your server really serves at once: gunicorn `--workers`
+  (times `--threads` for threaded workers), uvicorn `--workers`, puma workers
+  × threads. Node, Go and asyncio servers usually handle many requests at once
+  and do not need it.
+- A lower value can run more instances for the same traffic, and each running
+  instance is billed as usual. `max_instances` caps how many can run.
+- Streaming responses and WebSocket connections hold their slot until they
+  close.
+- `gregale app APP_ID` shows the value as `requests per instance`.
+
+This is different from `concurrent_requests` under `targets`, which is a
+scaling target the scheduler samples over time. `per_instance_concurrency` is
+a limit the gateway enforces on every request. See
+[ADR-20261022203523](adr/20261022203523-per-instance-request-concurrency.md).
 
 ## Scaling signals
 

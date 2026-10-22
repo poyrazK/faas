@@ -785,7 +785,7 @@ func openCustomerFile(path string) (*os.File, error) {
 
 // --- app scale / rename (called from cmdAppDispatch) ------------------------
 
-const appScaleUsage = "usage: gregale app <slug> scale [--interactive | --plan [--out PATH] | --apply PLAN.json --confirm] [--environment SLUG] [--size micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
+const appScaleUsage = "usage: gregale app <slug> scale [--interactive | --plan [--out PATH] | --apply PLAN.json --confirm] [--environment SLUG] [--size micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--per-instance-concurrency N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
 
 // cmdAppScale is the subcommand form of `gregale app <slug> scale ...`.
 // Uses the same fs.Visit pattern so 0 is distinguishable from "unset".
@@ -814,6 +814,7 @@ func cmdAppScale(slug string, args []string) int {
 	maxQueueWaitMS := fs.Int("max-queue-wait-ms", 0, "maximum queued concurrency wait in milliseconds (0 = plan default)")
 	wakeMaxQueueDepth := fs.Int("wake-max-queue-depth", 0, "per-app cold-wake waiter cap (0 = plan default)")
 	wakeMaxQueueWaitSeconds := fs.Int("wake-max-queue-wait-seconds", 0, "per-app cold-wake wait budget in seconds (0 = plan default, max 60)")
+	perInstanceConcurrency := fs.Int("per-instance-concurrency", 0, "requests one instance serves at once; the next request scales out (0 = plan's concurrency per VM)")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	requestTimeout := fs.Int("request-timeout", 0, "per-app request timeout in seconds (0 = plan default, max 30)")
 	min := fs.Int("min", 0, "min instances kept warm (Pro/Scale only; 0 = scale to zero)")
@@ -908,7 +909,10 @@ func cmdAppScale(slug string, args []string) int {
 		v := *conc
 		req.MaxConcurrency = &v
 	}
-	if explicit["concurrency-overflow"] || explicit["max-queue-depth"] || setQueueWait || explicit["wake-max-queue-depth"] || explicit["wake-max-queue-wait-seconds"] {
+	if explicit["concurrency-overflow"] || explicit["max-queue-depth"] || setQueueWait || explicit["wake-max-queue-depth"] || explicit["wake-max-queue-wait-seconds"] || explicit["per-instance-concurrency"] {
+		if explicit["per-instance-concurrency"] && *perInstanceConcurrency < 0 {
+			return printErr("Invalid concurrency policy", errNegativePerInstanceConcurrency(*perInstanceConcurrency))
+		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
@@ -916,6 +920,9 @@ func cmdAppScale(slug string, args []string) int {
 		policy, err := cliScalingPolicyPatchWithQueues(context.Background(), environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}, slug, *concurrencyOverflow, queueWaitMS, *maxQueueDepth, explicit["concurrency-overflow"], setQueueWait, explicit["max-queue-depth"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
 		if err != nil {
 			return printErr("Invalid concurrency policy", err)
+		}
+		if explicit["per-instance-concurrency"] {
+			policy.PerInstanceConcurrency = *perInstanceConcurrency
 		}
 		req.ScalingPolicy = policy
 	}
