@@ -622,6 +622,11 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			resolved, err = p.resolveCaller(dependencyCtx, r.RemoteAddr)
 		}
 		if err != nil {
+			// The guest only sees a generic 503, and the call's span is dropped
+			// before authorization stamps a tenant, so this line is the only
+			// record of why (production-us e2e Bug 4: every service call from a
+			// draining node failed after the 2 s lookup bound, unexplained).
+			p.log.Warn("gateway: service caller identity lookup failed", "service", service, "remote", r.RemoteAddr, "err", err)
 			p.metrics.IncServiceCall(ServiceCallUnauthenticated)
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "caller identity is unavailable")
 			return

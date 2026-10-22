@@ -509,6 +509,9 @@ type Querier interface {
 	// catalog identity. Ownership and runtime evidence are deliberately absent.
 	CopyProjectEnvironmentSecretReferences(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretReferencesParams) (int64, error)
 	CopyProjectEnvironmentSecretSuppressions(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretSuppressionsParams) error
+	// An environment clone copies the source environment's shared secrets as it
+	// copies app secrets: the envelope is not bound to an environment.
+	CopyProjectEnvironmentSecrets(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretsParams) (int64, error)
 	CountActiveBindingVerificationRuns(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountActiveMigrationVerifications(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountActiveMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error)
@@ -5407,6 +5410,10 @@ type Querier interface {
 	// Resolve an app's active insights that no evaluation has observed since
 	// stale_before.
 	ResolveStaleRouteInsights(ctx context.Context, db DBTX, arg ResolveStaleRouteInsightsParams) (int64, error)
+	// ADR-051 amendment (2026-10-22): moves a booted instance's proof from the
+	// fingerprint it was published with to the one its own observed workload
+	// class gives. Only the current wake's proof, and only from that fingerprint.
+	RestampRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg RestampRuntimeInstanceConfigProofParams) (int64, error)
 	RestoreCanaryBaselineDefault(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	RestoreDeploymentHTTPcrons(ctx context.Context, db DBTX, arg RestoreDeploymentHTTPcronsParams) (int64, error)
 	RestoreProfileGateStableTraffic(ctx context.Context, db DBTX, arg RestoreProfileGateStableTrafficParams) (int64, error)
@@ -5755,6 +5762,9 @@ type Querier interface {
 	SetMigrationAdmissionCleaned(ctx context.Context, db DBTX, arg SetMigrationAdmissionCleanedParams) (int64, error)
 	SetMigrationAdmissionCleaning(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	SetMigrationSourceRetiring(ctx context.Context, db DBTX, leaseToken string) (int64, error)
+	// ADR-051: the workload class a cold boot observed. The caller holds the app
+	// row exclusively.
+	SetObservedAppWorkloadClass(ctx context.Context, db DBTX, arg SetObservedAppWorkloadClassParams) (int64, error)
 	SetOperationScheduleState(ctx context.Context, db DBTX, arg SetOperationScheduleStateParams) (CustomerOperationSchedule, error)
 	SetOperatorParkBarrier(ctx context.Context, db DBTX, arg SetOperatorParkBarrierParams) (int64, error)
 	SetOperatorParkInstanceState(ctx context.Context, db DBTX, arg SetOperatorParkInstanceStateParams) (int64, error)
