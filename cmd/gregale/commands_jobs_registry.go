@@ -148,7 +148,7 @@ func cmdJobsRegistryRm(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if err := client.DeleteJobRegistryCredential(context.Background(), args[0], registryAPI); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete registry credential", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{"registry": args[2], "deleted": true}))

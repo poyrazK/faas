@@ -89496,7 +89496,8 @@ SET inferred_profile = ($1::jsonb - 'image_command' - 'image_healthcheck') ||
     CASE WHEN inferred_profile ? 'image_healthcheck'
          THEN jsonb_build_object('image_healthcheck', inferred_profile -> 'image_healthcheck')
          ELSE '{}'::jsonb END
-WHERE id = $2::uuid AND kind = 'image'
+WHERE id = $2::uuid
+  AND (kind = 'image' OR inferred_profile ? 'image_healthcheck')
   AND status IN ('pending', 'building', 'imaging')
 `
 

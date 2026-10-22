@@ -197,6 +197,9 @@ func renderManCommand(w io.Writer, c cliCommand) {
 				if len(s.Examples) > 0 {
 					writeManExamples(w, s.Examples)
 				}
+				for _, note := range s.Notes {
+					writeRoffParagraph(w, note)
+				}
 				for _, child := range s.Subcommands {
 					_, _ = fmt.Fprintln(w, ".RS")
 					_, _ = fmt.Fprintln(w, ".TP")
@@ -205,6 +208,9 @@ func renderManCommand(w io.Writer, c cliCommand) {
 					writeRoffParagraph(w, mdSubSynopsis(c, []string{s.Name, child.Name}, child.Positionals, child.Flags))
 					if len(child.Examples) > 0 {
 						writeManExamples(w, child.Examples)
+					}
+					for _, note := range child.Notes {
+						writeRoffParagraph(w, note)
 					}
 					_, _ = fmt.Fprintln(w, ".RE")
 				}

@@ -36,7 +36,7 @@ func accountWebhookCLISubcommand() cliSub {
 			{Name: "page-token", Short: "opaque delivery cursor", Value: "CURSOR"},
 		}},
 		{Name: "retry", Short: "Retry one failed delivery", Positionals: []string{"<id>", "<delivery-id>"}},
-		{Name: "rotate-secret", Short: "Replace the signing secret using --from-stdin or --secret", Positionals: []string{"<id>"}, Flags: secret},
+		{Name: "rotate-secret", Short: "Replace the signing secret", Notes: []string{"Read it with --from-stdin, or pass --secret."}, Positionals: []string{"<id>"}, Flags: secret},
 	}}
 }
 
@@ -116,7 +116,7 @@ func debugRequestsCLISubcommand() cliSub {
 		{Name: "evidence", Short: "Show request evidence and explanation", Positionals: request},
 		{Name: "explain", Short: "Synthesize findings and next actions", Positionals: request},
 		{Name: "trace", Short: "Show the linked span tree", Positionals: request},
-		{Name: "inspect", Short: "Inspect one retained request or select --latest", Positionals: []string{"<slug>", "[<request-id-or-row-id>]"}, Flags: inspect},
+		{Name: "inspect", Short: "Inspect one retained request, or the latest one", Positionals: []string{"<slug>", "[<request-id-or-row-id>]"}, Flags: inspect},
 		{Name: "replay", Short: "Queue a request replay against a mirror target", Positionals: request, Flags: []cliFlag{
 			{Name: "deployment-id", Short: "enabled mirror target deployment", Value: "UUID"},
 			{Name: "deployment", Short: "alias for --deployment-id", Value: "UUID"},
