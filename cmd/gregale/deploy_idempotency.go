@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -25,6 +26,7 @@ type deployIdempotencyIntent struct {
 	Handler                  string                     `json:"handler,omitempty"`
 	Image                    string                     `json:"image,omitempty"`
 	Repo                     string                     `json:"repo,omitempty"`
+	HasSecrets               bool                       `json:"has_secrets,omitempty"`
 	Ref                      string                     `json:"ref,omitempty"`
 	SourceBranch             string                     `json:"source_branch,omitempty"`
 	SourceSHA256             string                     `json:"source_sha256,omitempty"`
@@ -32,6 +34,8 @@ type deployIdempotencyIntent struct {
 	SourceRoot               string                     `json:"source_root,omitempty"`
 	Profile                  string                     `json:"profile,omitempty"`
 	Dockerfile               bool                       `json:"dockerfile,omitempty"`
+	PlatformTenantRequired   *bool                      `json:"platform_tenant_required,omitempty"`
+	PublicAuth               *api.PublicAuthBlock       `json:"public_auth,omitempty"`
 	RequireAuthn             *bool                      `json:"require_authn,omitempty"`
 	AppProtocol              string                     `json:"app_protocol,omitempty"`
 	ExecutionMode            string                     `json:"execution_mode,omitempty"`
@@ -48,13 +52,15 @@ type deployIdempotencyIntent struct {
 	Environment              string                     `json:"environment,omitempty"`
 	RollbackOn5xx            *bool                      `json:"rollback_on_5xx,omitempty"`
 	DisableStartupCPUBoost   *bool                      `json:"disable_startup_cpu_boost,omitempty"`
-	MCPTaskMigrationOverride bool                       `json:"mcp_task_migration_override,omitempty"`
 	OverrideFreeze           string                     `json:"override_freeze,omitempty"`
+	ReleaseAt                string                     `json:"release_at,omitempty"`
+	ReleaseNotify            []string                   `json:"release_notify,omitempty"`
 	Healthcheck              *api.DeploymentHealthcheck `json:"healthcheck,omitempty"`
 	NoTriggers               bool                       `json:"no_triggers,omitempty"`
 	ProjectSlug              string                     `json:"project_slug,omitempty"`
 	DeployOnly               string                     `json:"deploy_only,omitempty"`
 	DeployExclude            string                     `json:"deploy_exclude,omitempty"`
+	MCPTaskMigrationOverride bool                       `json:"mcp_task_migration_override,omitempty"`
 }
 
 // validateDeployIdempotencyKey validates the user-facing logical key before
@@ -76,7 +82,7 @@ func validateDeployIdempotencyKey(key string) error {
 	return nil
 }
 
-// deployIdempotencyKey returns a stable logical key. An explicit key is
+// deployIdempotencyKey returns the invocation's logical retry key. An explicit key is
 // intentionally treated as a logical key and scoped below per transport so a
 // source-ref deploy cannot collide with a multipart deploy in apid's
 // account-wide replay cache.
@@ -87,6 +93,17 @@ func deployIdempotencyKey(explicit string, intent deployIdempotencyIntent) (stri
 	}
 	if explicit != "" {
 		return explicit, nil
+	}
+	// Mutable refs must get a fresh identity per invocation; otherwise a live
+	// replay can hide a newer branch or tag head for the cache's entire TTL.
+	// Secret bundles also need a fresh identity without exposing value digests.
+	// The key remains fixed for every transport retry within this invocation.
+	if (intent.Repo != "" && !immutableDeployRef(intent.Ref)) || intent.HasSecrets {
+		var nonce [16]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return "", fmt.Errorf("create deploy retry identity: %w", err)
+		}
+		return "gregale-deploy-" + hex.EncodeToString(nonce[:]), nil
 	}
 	payload, err := json.Marshal(intent)
 	if err != nil {
@@ -108,4 +125,13 @@ func deployOperationIdempotencyKey(base, operation string) string {
 	}
 	digest := sha256.Sum256([]byte(base + "\x00" + operation))
 	return "gregale-" + operation + "-" + hex.EncodeToString(digest[:])
+}
+
+// Only a full commit SHA is immutable; short SHAs, branches, and tags can move.
+func immutableDeployRef(ref string) bool {
+	if len(ref) != 40 {
+		return false
+	}
+	_, err := hex.DecodeString(ref)
+	return err == nil
 }

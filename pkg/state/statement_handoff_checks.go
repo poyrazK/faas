@@ -117,6 +117,18 @@ func statementHandoffBlocked(ctx context.Context, q rowQuerier, accountID, sourc
 		if err != nil {
 			return false, fmt.Errorf("check platform tenant handoff overlap: %w", err)
 		}
+	case StatementSourceProductControl:
+		// A Product Control statement invoices only its own app, customer and
+		// month of receipts; no other statement covers them.
+		var exists bool
+		err := q.QueryRow(ctx, `select exists (select 1 from product_control_billing_documents
+			where id = $1::uuid and account_id = $2::uuid and kind = 'statement')`, statementID, accountID).Scan(&exists)
+		if err != nil {
+			return false, fmt.Errorf("load product control statement: %w", err)
+		}
+		if !exists {
+			return false, ErrNotFound
+		}
 	default:
 		return false, ErrNotFound
 	}
@@ -139,6 +151,12 @@ func (m *MemStore) StatementHandoffBlocked(_ context.Context, accountID, sourceK
 			return false, ErrNotFound
 		}
 		return m.tenantHandoffOverlapLocked(statement), nil
+	case StatementSourceProductControl:
+		row, ok := m.productLocked().documents[statementID]
+		if !ok || row.account != accountID || row.document.Kind != "statement" {
+			return false, ErrNotFound
+		}
+		return false, nil
 	}
 	return false, ErrNotFound
 }

@@ -1,0 +1,31 @@
+# ADR-20261020170649: API monetization released per account
+
+- **Status:** accepted
+- **Date:** 2026-10-20
+- **Amends:** ADR-20261018090210, which rejected a per-account allowlist as the release gate. The all-or-nothing switch stays; a platform flag (ADR-1700) now releases monetization to chosen accounts beside it.
+- **Decision:** An account has API monetization when the `api_monetization_enabled` runtime switch is on, or when the new `api_monetization` platform flag admits it.
+  - **Decided by account only.** The gateway knows the account, not the plan, so plan rules never match. apid and its workers decide the same way.
+  - **apid routes.**
+    - **Off for every account:** routes still answer the unregistered-route 404 before authentication (ADR-20261018090210).
+    - **Partly released:** routes reach authentication, as live queries do (ADR-1700). An account outside the flag then gets the unregistered-route 404 from the account wrapper every authenticated route shares. The consumer-key self-service routes check the app owner's account after authenticating the key.
+  - **Per-account decisions.** These follow the account:
+    - which app and platform tenant webhook events can be chosen;
+    - `trial_days` on consumer creation;
+    - the consumer key `billing` scope.
+  - **Discovery.** The served OpenAPI document and docs know no account, so they show monetization only once the switch is on or the flag admits every account (enabled, default on, no rules). The CLI keeps its shell opt-in, `FAAS_API_MONETIZATION_ENABLED`.
+  - **Workers.** Billing runs, invoice syncs, spend cap checks and overdue holds run while any account has monetization.
+    - **Accounts outside the flag:** their billing runs and invoice syncs are set aside for `APIMonetizationUnreleasedRetry` (15 minutes). Their scheduled runs do not start. Their spend caps are not rechecked, and their overdue hold changes are not audited.
+  - **Gateway.** `gatewayd-internal` reads the flag through its runtime-configuration watcher (ADR-1700 receipts as `gatewayd-internal`). For an account the flag admits it enforces:
+    - plans, spend caps and overdue holds;
+    - holding responses until usage is durable (ADR-1505);
+    - consuming `Gregale-Usage` (ADR-1318), on public requests and on service calls once the caller's account is known.
+  - **Sandbox qualification.** `make monetization-sandbox` runs the export path end to end against the real Stripe, Paddle and Lago sandboxes, with keys from `GREGALE_SANDBOX_*`. It is a build-tagged test (`monetization_sandbox`), so CI never needs provider keys. `docs/ops/api-monetization-release.md` is the runbook.
+- **Why:** Monetization moves customers' money and was only tested against fakes. It should be tried on internal accounts with real providers before general availability. All-or-nothing meant either nobody or every customer.
+- **Consequences:**
+  - **Discoverable once partly released.** Once any account has the flag, an unauthenticated probe of a monetization route gets 401 instead of 404. Authenticated accounts outside it still see no such route.
+  - **Plan rules never match.** Use accounts, groups or rollout percentages.
+  - **Data stays.** Removing an account from the flag deletes nothing. Its runs and syncs resume when it is admitted again.
+- **Rejected alternatives:**
+  - Deciding the pre-authentication 404 from the request's credentials would duplicate authentication before routing.
+  - A second environment list beside the flag would repeat the drift ADR-1700 removed.
+  - Evaluating plan rules in the gateway would need the account's plan on every request.

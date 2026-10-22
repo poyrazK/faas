@@ -44,6 +44,10 @@ func (v *JailerVMM) RestoreSnapshotVerified(ctx context.Context, lease Lease, re
 
 func (v *JailerVMM) prepareVerifiedSnapshotLoad(ctx context.Context, lease Lease, req SnapshotRestoreInputs, keepPaused bool) (context.Context, RestoreSpec, *snapshotSourceFlight, error) {
 	req.Capture, req.Sources = req.Capture.Clone(), slices.Clone(req.Sources)
+	if req.FunctionMigration != nil {
+		g := req.FunctionMigration.Clone()
+		req.FunctionMigration = &g
+	}
 	req.Runtime = cloneSnapshotRestoreRuntime(req.Runtime)
 	if err := checkVerifiedSnapshotLoadRequest(lease, req); err != nil {
 		return nil, RestoreSpec{}, nil, err
@@ -82,8 +86,14 @@ func checkVerifiedSnapshotLoadRequestAt(lease Lease, req SnapshotRestoreInputs, 
 		return err
 	}
 	evidence := runtimeadmission.SnapshotRestoreEvidence{Version: runtimeadmission.SnapshotRestoreVersion, CaptureToken: req.Binding.SnapshotCaptureToken, FCVersion: req.Snapshot.FCVersion, Capture: req.Capture}
-	if err := evidence.Check(req.Binding, req.Sources, req.Snapshot.StorageKey, req.Snapshot.VMStateStorageKey, req.Snapshot.FCVersion, int64(req.Runtime.MemSizeMiB)<<20, clock); err != nil {
-		return err
+	var evidenceErr error
+	if req.FunctionMigration != nil {
+		evidenceErr = checkFunctionOrSnapshotRestoreInputs(req, clock)
+	} else {
+		evidenceErr = evidence.Check(req.Binding, req.Sources, req.Snapshot.StorageKey, req.Snapshot.VMStateStorageKey, req.Snapshot.FCVersion, int64(req.Runtime.MemSizeMiB)<<20, clock)
+	}
+	if evidenceErr != nil {
+		return evidenceErr
 	}
 	for i, workload := range req.Runtime.Workloads {
 		expected := DriveLayerMain
@@ -104,7 +114,7 @@ func snapshotRestoreSpec(lease Lease, req SnapshotRestoreInputs, keepPaused bool
 		ServiceDiscoveryIP: r.ServiceDiscoveryIP, VsockDevice: NewVsockDevice(lease.Slot),
 		StorageKey: req.Snapshot.StorageKey, VMStateStorageKey: req.Snapshot.VMStateStorageKey,
 		HealthcheckPath: r.HealthcheckPath, HealthcheckGRPC: r.HealthcheckGRPC,
-		HealthcheckGRPCService: r.HealthcheckGRPCService, StartupDeadlineS: r.StartupDeadlineS,
+		HealthcheckGRPCService: r.HealthcheckGRPCService, StartupDeadlineS: r.StartupDeadlineS, ImageHealthcheckRequired: r.ImageHealthcheckRequired,
 		KeepPaused: keepPaused}
 }
 

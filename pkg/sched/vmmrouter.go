@@ -1033,6 +1033,23 @@ func (r *VMMRouter) CancelLiveMigration(ctx context.Context, dyingNodeID, instan
 	return cli.CancelLiveMigration(ctx, dyingNodeID, instanceID, leaseToken)
 }
 
+func (r *VMMRouter) CancelFunctionMigrationSource(ctx context.Context, node, id, token string) (bool, error) {
+	client, err := r.resolveFor(ctx, node)
+	if err != nil {
+		return false, err
+	}
+	qualified, ok := client.(functionMigrationCanceller)
+	if !ok {
+		return false, state.ErrMigrationCommitUnresolved
+	}
+	if r.migrationResume != nil {
+		if err := r.migrationResume(ctx, id, node, token); err != nil {
+			return false, err
+		}
+	}
+	return qualified.CancelFunctionMigrationSource(ctx, node, id, token)
+}
+
 // UpdateEgressAllowlist (ADR-031 + ADR-033, tier-2 PR-B) routes the
 // patch to the vmmd that owns the live instance. The egress_drift
 // subscriber hands us a single (appID, allowlist) pair; we resolve

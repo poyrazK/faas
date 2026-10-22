@@ -36,6 +36,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
+
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -202,6 +204,9 @@ func (m *Manager) announceFreeze(inst *Instance) (gate chan struct{}, frozen boo
 	if inst.Frozen {
 		return nil, true, nil
 	}
+	if functionExecutionBusy(inst) {
+		return nil, false, ErrInstanceBusy
+	}
 	if reason := freezeRefusal(inst); reason != "" {
 		return nil, false, fmt.Errorf("%w: %s", ErrNotFreezable, reason)
 	}
@@ -304,7 +309,8 @@ type ThawOptions struct {
 	RunResumeHook bool
 }
 
-// Thaw resumes a frozen instance in place without the optional work.
+// Thaw resumes a frozen instance in place. Qualified automatic resources
+// always run their restore hook before the VM becomes available again.
 func (m *Manager) Thaw(ctx context.Context, instance string) error {
 	return m.ThawWith(ctx, instance, ThawOptions{})
 }
@@ -329,6 +335,9 @@ func (m *Manager) ThawWith(ctx context.Context, instance string, opts ThawOption
 		return err
 	}
 	// The guest runs again: its memory stays resident from here on.
+	if m.functionActivity != nil && functionlifetime.NativeNode(inst.Runtime) {
+		opts.RunResumeHook = true
+	}
 	m.setFrozenSwap(inst.Lease, false)
 	if err := m.resumeAndProbe(operationCtx, "thaw", inst, opts.RunResumeHook); err != nil {
 		return err
@@ -373,6 +382,10 @@ func (m *Manager) AwaitFrozen(ctx context.Context, instance string) (bool, error
 		var gate chan struct{}
 		m.mu.Lock()
 		if inst := m.live[instance]; inst != nil {
+			if functionMigrationActive(inst) {
+				m.mu.Unlock()
+				return false, ErrInstanceBusy
+			}
 			frozen, gate = inst.Frozen, inst.freezing
 		}
 		m.mu.Unlock()

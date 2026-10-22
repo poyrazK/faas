@@ -58,18 +58,31 @@ func renderCLIPreview(w io.Writer, preview *cliPreviewSummary) {
 	if preview == nil {
 		return
 	}
-	_, _ = fmt.Fprintf(w, "Preview: %s\n  Connection: %s\n  App: %s\n  Environment: %s\n", preview.Verification, preview.Profile, preview.App, preview.Environment)
-	_, _ = fmt.Fprintf(w, "  Connection selection: %s\n", preview.ProfileSource)
-	if preview.AppSource != "" {
-		_, _ = fmt.Fprintf(w, "  Target selection: app from %s; environment from %s\n", preview.AppSource, preview.EnvironmentSource)
+	// Each target names where it came from, unless it is the plain default.
+	// JSON keeps every source field.
+	connection := preview.Profile
+	if preview.ProfileSource != "selected connection" {
+		connection += " (" + preview.ProfileSource + ")"
 	}
+	environment := preview.Environment
+	if preview.EnvironmentSource != "default scope" {
+		environment = withPreviewSource(environment, preview.EnvironmentSource)
+	}
+	_, _ = fmt.Fprintf(w, "Preview: %s\n  Connection: %s\n  App: %s\n  Environment: %s\n", preview.Verification, connection, withPreviewSource(preview.App, preview.AppSource), environment)
 	if preview.Source != "" {
 		_, _ = fmt.Fprintf(w, "  Source: %s\n", preview.Source)
 	}
 	if preview.LocalChanges != "" {
 		_, _ = fmt.Fprintf(w, "  Local changes: %s\n", preview.LocalChanges)
 	}
-	_, _ = fmt.Fprintf(w, "  Verification limits: %s\n", preview.Limits)
+	_, _ = fmt.Fprintf(w, "  Limits: %s\n", preview.Limits)
+}
+
+func withPreviewSource(value, source string) string {
+	if source == "" {
+		return value
+	}
+	return value + " (from " + source + ")"
 }
 
 func renderDiffPreviewJSON(w io.Writer, diff deploydiff.Diff, preview *cliPreviewSummary) error {

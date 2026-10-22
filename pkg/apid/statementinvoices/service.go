@@ -67,7 +67,14 @@ type Service struct {
 	// monetization is released by a runtime setting (ADR-20261018090210).
 	// Nil runs it.
 	Enabled func() bool
+	// Released reports whether API monetization is released to an account
+	// (ADR-20261020170649); the worker skips accounts it is not. Nil
+	// releases every account.
+	Released func(accountID string) bool
 }
+
+// released reports whether the worker serves an account's monetization.
+func (s *Service) released(accountID string) bool { return s.Released == nil || s.Released(accountID) }
 
 // tick runs one background tick unless Enabled pauses the worker; paused,
 // no provider reads and no overdue digests.
@@ -452,6 +459,17 @@ func (s *Service) openConnection(ctx context.Context, store state.StatementInvoi
 		daysUntilDue: stored.DaysUntilDue, automaticTax: stored.AutomaticTax}, nil
 }
 
+// StripeKey opens the account's Stripe connection for consumer sign-up
+// (ADR-20261021143000).
+func (s *Service) StripeKey(ctx context.Context, accountID string) (string, bool, *api.Problem) {
+	store, ok := s.Host.Store().(state.StatementInvoiceExportStore)
+	if !ok {
+		return "", false, api.ErrInternal("billing connections are unavailable")
+	}
+	conn, problem := s.openConnection(ctx, store, accountID, state.BillingProviderStripe, stripeProvider{client: s.stripeInvoiceClient()})
+	return conn.key, conn.livemode, problem
+}
+
 func (s *Service) openKey(accountID string, stored state.BillingConnection) (string, bool) {
 	namespace, plain, err := s.Host.OpenSecret(stored.SealedSecret)
 	if err != nil || namespace != keyNamespace(stored.Provider, accountID) {
@@ -471,10 +489,16 @@ func statementInvoiceItems(inv billing.StatementInvoice) []statementInvoiceItem 
 	items := make([]statementInvoiceItem, 0, len(inv.Lines)+1)
 	for _, line := range inv.Lines {
 		noun := unitNoun(line.Unit)
+		if line.Label != "" {
+			noun = line.Label
+		}
 		description := fmt.Sprintf("%d %s at %s %s each", line.Units, noun, formatMillicentsDecimal(line.PriceMillicentsPerUnit), inv.Currency)
 		switch {
 		case line.Credit:
 			description = "Prepaid credit applied"
+		case line.Fee == state.StatementFeeBase && line.Label != "":
+			// A Product Control plan fee names its plan (ADR-20261021154511).
+			description = line.Label
 		case line.Fee == state.StatementFeeBase:
 			description = "Monthly base fee"
 		case line.Fee == state.StatementFeeMinimum && line.AmountMillicents < 0:

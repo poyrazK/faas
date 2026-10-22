@@ -131,3 +131,78 @@ func (c *Client) ListConsumerBillingStatements(ctx context.Context, app string) 
 	var out ConsumerBillingStatementsResponse
 	return out, c.do(ctx, "GET", "/v1/consumer-billing/"+url.PathEscape(app)+"/statements", nil, &out)
 }
+
+// Customer self-service with a billing-scope key (ADR-20261021183000).
+
+// CodeConsumerSelfServiceUnavailable reports a self-service action the app
+// owner does not offer, or one the customer's billing setup cannot do.
+const CodeConsumerSelfServiceUnavailable = "consumer_self_service_unavailable"
+
+// ConsumerBillingPlansResponse lists the plans a customer can switch
+// between. CanChange is false unless the owner lets customers change plans.
+type ConsumerBillingPlansResponse struct {
+	CurrentPlanID string               `json:"current_plan_id,omitempty"`
+	CanChange     bool                 `json:"can_change"`
+	CanClose      bool                 `json:"can_close"`
+	Plans         []ConsumerSignupPlan `json:"plans"`
+}
+
+// ChangeConsumerBillingPlanRequest switches the customer to one of the
+// offered plans from the next minute.
+type ChangeConsumerBillingPlanRequest struct {
+	PlanID string `json:"plan_id"`
+}
+
+// ConsumerBillingPlanChangeResponse is the scheduled plan change.
+type ConsumerBillingPlanChangeResponse struct {
+	PlanID        string    `json:"plan_id"`
+	EffectiveFrom time.Time `json:"effective_from"`
+}
+
+// CreateConsumerBillingPortalRequest opens the payment provider's customer
+// portal; ReturnURL defaults to the app's sign-up return URL.
+type CreateConsumerBillingPortalRequest struct {
+	ReturnURL string `json:"return_url,omitempty"`
+}
+
+// ConsumerBillingPortalResponse is a short-lived portal URL to send the
+// customer to.
+type ConsumerBillingPortalResponse struct {
+	URL string `json:"url"`
+}
+
+// ConsumerBillingCloseResponse is the closed account. The key stops
+// working at once; usage until then is still billed.
+type ConsumerBillingCloseResponse struct {
+	ConsumerID string    `json:"consumer_id"`
+	ClosedAt   time.Time `json:"closed_at"`
+}
+
+// ListConsumerBillingPlans lists the plans the consumer can switch
+// between. Requires a consumer key.
+func (c *Client) ListConsumerBillingPlans(ctx context.Context, app string) (ConsumerBillingPlansResponse, error) {
+	var out ConsumerBillingPlansResponse
+	return out, c.do(ctx, "GET", "/v1/consumer-billing/"+url.PathEscape(app)+"/plans", nil, &out)
+}
+
+// ChangeConsumerBillingPlan switches the consumer's plan. Requires a
+// consumer key.
+func (c *Client) ChangeConsumerBillingPlan(ctx context.Context, app string, req ChangeConsumerBillingPlanRequest) (ConsumerBillingPlanChangeResponse, error) {
+	var out ConsumerBillingPlanChangeResponse
+	return out, c.do(ctx, "PUT", "/v1/consumer-billing/"+url.PathEscape(app)+"/plan", req, &out)
+}
+
+// CreateConsumerBillingPortalSession returns a payment provider portal URL
+// where the consumer updates their card and sees invoices. Requires a
+// consumer key.
+func (c *Client) CreateConsumerBillingPortalSession(ctx context.Context, app string, req CreateConsumerBillingPortalRequest) (ConsumerBillingPortalResponse, error) {
+	var out ConsumerBillingPortalResponse
+	return out, c.do(ctx, "POST", "/v1/consumer-billing/"+url.PathEscape(app)+"/portal", req, &out)
+}
+
+// CloseConsumerBillingAccount closes the consumer's account. Requires a
+// consumer key, which stops working.
+func (c *Client) CloseConsumerBillingAccount(ctx context.Context, app string) (ConsumerBillingCloseResponse, error) {
+	var out ConsumerBillingCloseResponse
+	return out, c.do(ctx, "POST", "/v1/consumer-billing/"+url.PathEscape(app)+"/close", struct{}{}, &out)
+}

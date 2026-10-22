@@ -55,7 +55,7 @@ type objectLockMutation func(pgx.Tx, ObjectBucketObjectLock, ObjectBucketVersion
 
 // Follow admission's account-before-bucket lock order. The bucket serializes
 // policy and versioning journals, including concurrent first enrollment.
-func (s *PgStore) mutateObjectBucketObjectLock(ctx context.Context, account, app, bucket string, fn objectLockMutation) (ObjectBucketObjectLock, error) {
+func (s *pgCore) mutateObjectBucketObjectLock(ctx context.Context, account, app, bucket string, fn objectLockMutation) (ObjectBucketObjectLock, error) {
 	if account == "" {
 		j, err := readObjectBucketObjectLock(ctx, s.pool, bucket)
 		if err != nil {
@@ -110,7 +110,7 @@ func (s *PgStore) mutateObjectBucketObjectLock(ctx context.Context, account, app
 	return cloneObjectBucketObjectLock(j), mapErr(tx.Commit(ctx))
 }
 
-func (s *PgStore) GetObjectBucketObjectLock(ctx context.Context, account, app, bucket string) (ObjectBucketObjectLock, error) {
+func (s *pgCore) GetObjectBucketObjectLock(ctx context.Context, account, app, bucket string) (ObjectBucketObjectLock, error) {
 	b, err := s.GetObjectBucket(ctx, account, app, bucket)
 	if err != nil {
 		return ObjectBucketObjectLock{}, err
@@ -125,7 +125,7 @@ func (s *PgStore) GetObjectBucketObjectLock(ctx context.Context, account, app, b
 	return j, err
 }
 
-func (s *PgStore) RequestObjectBucketObjectLock(ctx context.Context, account, app, bucket string, c api.ObjectBucketObjectLockConfiguration) (ObjectBucketObjectLock, error) {
+func (s *pgCore) RequestObjectBucketObjectLock(ctx context.Context, account, app, bucket string, c api.ObjectBucketObjectLockConfiguration) (ObjectBucketObjectLock, error) {
 	return s.mutateObjectBucketObjectLock(ctx, account, app, bucket, func(tx pgx.Tx, j ObjectBucketObjectLock, v ObjectBucketVersioning, now time.Time) (ObjectBucketObjectLock, ObjectBucketVersioning, bool, error) {
 		if j.DesiredConfiguration != nil && j.DesiredConfiguration.Equal(c) {
 			return j, v, false, nil
@@ -156,7 +156,7 @@ func (s *PgStore) RequestObjectBucketObjectLock(ctx context.Context, account, ap
 	})
 }
 
-func (s *PgStore) ObserveObjectBucketObjectLock(ctx context.Context, account, app, bucket string, revision int64, c api.ObjectBucketObjectLockConfiguration, known bool) (ObjectBucketObjectLock, error) {
+func (s *pgCore) ObserveObjectBucketObjectLock(ctx context.Context, account, app, bucket string, revision int64, c api.ObjectBucketObjectLockConfiguration, known bool) (ObjectBucketObjectLock, error) {
 	return s.mutateObjectBucketObjectLock(ctx, account, app, bucket, func(tx pgx.Tx, j ObjectBucketObjectLock, v ObjectBucketVersioning, now time.Time) (ObjectBucketObjectLock, ObjectBucketVersioning, bool, error) {
 		j, err := observeObjectBucketObjectLock(j, revision, c, known, objectLockVersioningReady(v), now)
 		if err != nil {
@@ -173,7 +173,7 @@ func (s *PgStore) ObserveObjectBucketObjectLock(ctx context.Context, account, ap
 	})
 }
 
-func (s *PgStore) DueObjectBucketObjectLock(ctx context.Context, limit int32) ([]ObjectBucketObjectLock, error) {
+func (s *pgCore) DueObjectBucketObjectLock(ctx context.Context, limit int32) ([]ObjectBucketObjectLock, error) {
 	if limit < 1 || limit > api.ObjectBucketObjectLockBatch {
 		return nil, ErrConflict
 	}
@@ -209,7 +209,7 @@ func objectLockDrainReady(ctx context.Context, db sqlc.DBTX, bucket string) (boo
 	return r.Pending == 0 && !r.Unsafe && !r.Multipart && !capacity, err
 }
 
-func (s *PgStore) ClaimObjectBucketObjectLock(ctx context.Context, bucket, token string) (ObjectBucketObjectLock, error) {
+func (s *pgCore) ClaimObjectBucketObjectLock(ctx context.Context, bucket, token string) (ObjectBucketObjectLock, error) {
 	return s.mutateObjectBucketObjectLock(ctx, "", "", bucket, func(tx pgx.Tx, j ObjectBucketObjectLock, v ObjectBucketVersioning, now time.Time) (ObjectBucketObjectLock, ObjectBucketVersioning, bool, error) {
 		r, err := sqlc.New().ObjectCapacityReadiness(ctx, tx, mustPgUUID(bucket))
 		if err != nil {
@@ -224,7 +224,7 @@ func (s *PgStore) ClaimObjectBucketObjectLock(ctx context.Context, bucket, token
 	})
 }
 
-func (s *PgStore) DispatchObjectBucketObjectLock(ctx context.Context, bucket, token string) (ObjectBucketObjectLock, error) {
+func (s *pgCore) DispatchObjectBucketObjectLock(ctx context.Context, bucket, token string) (ObjectBucketObjectLock, error) {
 	return s.mutateObjectBucketObjectLock(ctx, "", "", bucket, func(tx pgx.Tx, j ObjectBucketObjectLock, v ObjectBucketVersioning, now time.Time) (ObjectBucketObjectLock, ObjectBucketVersioning, bool, error) {
 		drained, err := objectLockDrainReady(ctx, tx, bucket)
 		if err != nil {
@@ -238,7 +238,7 @@ func (s *PgStore) DispatchObjectBucketObjectLock(ctx context.Context, bucket, to
 	})
 }
 
-func (s *PgStore) FinishObjectBucketObjectLock(ctx context.Context, bucket, token string, c api.ObjectBucketObjectLockConfiguration) (ObjectBucketObjectLock, error) {
+func (s *pgCore) FinishObjectBucketObjectLock(ctx context.Context, bucket, token string, c api.ObjectBucketObjectLockConfiguration) (ObjectBucketObjectLock, error) {
 	return s.mutateObjectBucketObjectLock(ctx, "", "", bucket, func(tx pgx.Tx, j ObjectBucketObjectLock, v ObjectBucketVersioning, now time.Time) (ObjectBucketObjectLock, ObjectBucketVersioning, bool, error) {
 		drained, err := objectLockDrainReady(ctx, tx, bucket)
 		if err != nil {
@@ -252,7 +252,7 @@ func (s *PgStore) FinishObjectBucketObjectLock(ctx context.Context, bucket, toke
 	})
 }
 
-func (s *PgStore) RetryObjectBucketObjectLock(ctx context.Context, bucket, token, code string) error {
+func (s *pgCore) RetryObjectBucketObjectLock(ctx context.Context, bucket, token, code string) error {
 	_, err := s.mutateObjectBucketObjectLock(ctx, "", "", bucket, func(_ pgx.Tx, j ObjectBucketObjectLock, v ObjectBucketVersioning, now time.Time) (ObjectBucketObjectLock, ObjectBucketVersioning, bool, error) {
 		j, err := retryObjectBucketObjectLock(j, token, code, now)
 		return j, v, false, err

@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -141,7 +142,13 @@ func (f httpFixtureServer) run(ctx context.Context, id string, proof api.Operati
 	if err := f.progress(ctx, id, proof, "uploading"); err != nil {
 		return nil, err
 	}
-	if input.Mode != "complete" {
+	if input.Mode == "fanout" {
+		// ADR-20261018183000: start one child with this attempt's proof, then
+		// start it again to prove the key replays the same child.
+		if err := f.fanout(ctx, id, proof); err != nil {
+			return nil, err
+		}
+	} else if input.Mode != "complete" {
 		status, err := f.waitDirective(ctx, id, proof)
 		if err != nil {
 			return nil, err
@@ -272,4 +279,52 @@ func (f httpFixtureServer) fixtureEvent(ctx context.Context, id string, proof ap
 		return response.StatusCode, nil
 	}
 	return response.StatusCode, fmt.Errorf("fixture barrier unavailable")
+}
+
+// httpFixtureChildKey names the one child a fanout parent starts.
+const httpFixtureChildKey = "child-1"
+
+// fanout starts the child twice: the first start creates it, the replay must
+// return the same child. Child routes are gated and outside the SDK, so the
+// fixture sends the runtime proof headers itself.
+func (f httpFixtureServer) fanout(ctx context.Context, id string, proof api.OperationRuntimeProof) error {
+	first, err := f.startChild(ctx, id, proof, http.StatusCreated)
+	if err != nil {
+		return err
+	}
+	replay, err := f.startChild(ctx, id, proof, http.StatusOK)
+	if err != nil {
+		return err
+	}
+	if !replay.Replayed || replay.Operation.ID != first.Operation.ID || first.Key != httpFixtureChildKey {
+		return fmt.Errorf("child start did not replay by key")
+	}
+	return nil
+}
+
+func (f httpFixtureServer) startChild(ctx context.Context, id string, proof api.OperationRuntimeProof, want int) (api.OperationChildStartResponse, error) {
+	var out api.OperationChildStartResponse
+	client, err := f.client(ctx)
+	if err != nil {
+		return out, err
+	}
+	body, _ := json.Marshal(api.OperationChildRequest{Operation: "export", Key: httpFixtureChildKey, Input: json.RawMessage(`{"mode":"complete"}`)})
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.BaseURL()+"/v1/runtime/operations/"+id+"/children", bytes.NewReader(body))
+	if err != nil {
+		return out, err
+	}
+	request.Header.Set("Authorization", "Bearer "+client.Token())
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(api.InvocationIDHeader, proof.InvocationID)
+	request.Header.Set(api.OperationAttemptHeader, strconv.Itoa(proof.Attempt))
+	request.Header.Set(api.OperationCapabilityHeader, proof.Capability)
+	response, err := client.HTTPClient().Do(request)
+	if err != nil {
+		return out, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != want {
+		return out, fmt.Errorf("child start answered %d, want %d", response.StatusCode, want)
+	}
+	return out, json.NewDecoder(response.Body).Decode(&out)
 }

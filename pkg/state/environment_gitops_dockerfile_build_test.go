@@ -16,7 +16,7 @@ func TestObservedWorkloadSourceRefusesDockerfileBuildOptions(t *testing.T) {
 		Kind: state.DeploymentKindGitHub, SourceURL: "github://acme/shop@" + commit, CommitSHA: commit, SourceRoot: "api",
 	}}}
 	app.Manifest.BuildDockerfile = "Dockerfile"
-	source, _, reason := state.ObservedWorkloadSource(app, "acme/shop")
+	source, _, reason := state.ObservedWorkloadSource(app, state.EnvironmentGitSourceSpec{Repository: "acme/shop"})
 	if reason != "" || source == nil || source.Kind != "dockerfile" || source.Dockerfile != "Dockerfile" {
 		t.Fatalf("plain Dockerfile app: source=%+v reason=%q", source, reason)
 	}
@@ -25,13 +25,13 @@ func TestObservedWorkloadSourceRefusesDockerfileBuildOptions(t *testing.T) {
 		{Args: map[string]string{"NODE_ENV": "production"}},
 	} {
 		app.Manifest.DockerfileBuild = options
-		source, _, reason = state.ObservedWorkloadSource(app, "acme/shop")
+		source, _, reason = state.ObservedWorkloadSource(app, state.EnvironmentGitSourceSpec{Repository: "acme/shop"})
 		if source != nil || reason != "live Dockerfile build arguments or target require a reviewed scoped import" {
 			t.Fatalf("options %+v: source=%+v reason=%q", options, source, reason)
 		}
 	}
 	app.Manifest.DockerfileBuild = &api.DockerfileBuildOptions{}
-	if source, _, reason = state.ObservedWorkloadSource(app, "acme/shop"); reason != "" || source == nil {
+	if source, _, reason = state.ObservedWorkloadSource(app, state.EnvironmentGitSourceSpec{Repository: "acme/shop"}); reason != "" || source == nil {
 		t.Fatalf("empty options refused: source=%+v reason=%q", source, reason)
 	}
 }

@@ -1439,6 +1439,45 @@ worker:
 	}
 }
 
+// The CLI and apid's source deploys both apply LifecycleRequest, so the
+// lifecycle hooks and worker settings it builds are the app update either
+// path sends.
+func TestManifestLifecycleRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name, content string
+		check         func(t *testing.T, req api.UpdateAppRequest, ok bool)
+	}{
+		{"no lifecycle or worker block", "release:\n  command: ./migrate\n", func(t *testing.T, _ api.UpdateAppRequest, ok bool) {
+			if ok {
+				t.Fatal("a manifest without lifecycle or worker asked for an app update")
+			}
+		}},
+		{"lifecycle hooks", "lifecycle:\n  before_checkpoint:\n    path: /internal/before-checkpoint\n    timeout_ms: 2000\n  after_restore:\n    path: /internal/after-restore\n    timeout_ms: 1500\n",
+			func(t *testing.T, req api.UpdateAppRequest, ok bool) {
+				if !ok || req.BeforeCheckpoint == nil || req.BeforeCheckpoint.Path != "/internal/before-checkpoint" || req.BeforeCheckpoint.TimeoutMS != 2000 ||
+					req.AfterRestore == nil || req.AfterRestore.Path != "/internal/after-restore" || req.AfterRestore.TimeoutMS != 1500 || req.ExecutionMode != nil {
+					t.Fatalf("request = %+v, ok=%v", req, ok)
+				}
+			}},
+		{"worker block", "worker:\n  command: ./consumer\n  drain_timeout: 45s\n  stop_signal: SIGINT\n  scale:\n    min: 0\n    max: 50\n    metric: queue_lag\n    target: 500\n",
+			func(t *testing.T, req api.UpdateAppRequest, ok bool) {
+				if !ok || req.ExecutionMode == nil || *req.ExecutionMode != api.ExecutionModeWorker || req.WorkerReplicas == nil ||
+					req.StopGracePeriodS == nil || *req.StopGracePeriodS != 45 || req.StopSignal == nil || *req.StopSignal != "SIGINT" {
+					t.Fatalf("request = %+v, ok=%v", req, ok)
+				}
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := ParseBytes([]byte(tc.content))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, ok := m.LifecycleRequest()
+			tc.check(t, req, ok)
+		})
+	}
+}
+
 func TestWorkerManifest_CustomMetricScaleParsesName(t *testing.T) {
 	dir := t.TempDir()
 	content := `
@@ -1691,6 +1730,22 @@ func TestParseManifestErrorsNameKeysNotGoTypes(t *testing.T) {
 		if strings.Contains(err.Error(), "gregalemanifest.") || strings.Contains(err.Error(), "hostingconfig.") || strings.Contains(err.Error(), "unmarshal errors") {
 			t.Errorf("error still names Go internals: %q", err)
 		}
+	}
+}
+
+func TestContractCommandManifest(t *testing.T) {
+	for _, command := range []string{"node migrate.js contract", "echo\x00invalid", strings.Repeat("x", api.AppTaskMaxCommandArgBytes+1)} {
+		config := &ReleaseConfig{Command: "node migrate.js expand", ContractCommand: command}
+		err := config.Validate()
+		if command == "node migrate.js contract" && err != nil {
+			t.Fatal(err)
+		}
+		if command != "node migrate.js contract" && err == nil {
+			t.Fatal("invalid cleanup command accepted")
+		}
+	}
+	if err := (&ReleaseConfig{ContractCommand: "node migrate.js contract"}).Validate(); err != nil {
+		t.Fatalf("Procfile expansion owner cannot declare cleanup: %v", err)
 	}
 }
 

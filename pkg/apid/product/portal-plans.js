@@ -91,11 +91,19 @@
       for (const label of ['Feature', 'Current plan', 'Proposed plan']) head.append(node('th', label)); table.append(head);
       const before = new Map(preview.before.features.map(feature => [feature.name, feature]));
       const after = new Map(preview.after.features.map(feature => [feature.name, feature]));
-      const describe = (feature, currency) => feature ? `${this.host.amount(feature.unit_price_millicents, currency)} per successful run · ${feature.monthly_starts} starts/month · ${feature.starts} used · ${feature.remaining_starts} remaining` : 'Not included';
+      // Included starts come first at no charge (ADR-20261021154511).
+      const included = feature => feature.included_starts > 0 ? `${feature.included_starts} included, then ` : '';
+      const describe = (feature, currency) => feature ? `${included(feature)}${this.host.amount(feature.unit_price_millicents, currency)} per successful run · ${feature.monthly_starts} starts/month · ${feature.starts} used · ${feature.remaining_starts} remaining` : 'Not included';
       for (const name of [...new Set([...before.keys(), ...after.keys()])].sort()) {
         const row = node('tr'); row.append(node('th', (after.get(name) || before.get(name)).label), node('td', describe(before.get(name), preview.before.currency)), node('td', describe(after.get(name), preview.after.currency))); table.append(row);
       }
-      container.append(table, node('p', 'The change applies immediately to future starts. Existing runs retain their agreed prices. A lower allowance can leave no starts remaining until the next UTC month.'));
+      // A month owes the highest fee among the plans held in it (ADR-20261021154511).
+      const fee = terms => terms.monthly_fee_millicents > 0 ? `${this.host.amount(terms.monthly_fee_millicents, terms.currency)} per month` : 'No monthly fee';
+      const fees = node('tr'); fees.append(node('th', 'Monthly fee'), node('td', fee(preview.before)), node('td', fee(preview.after))); table.append(fees);
+      // A workspace gets one free trial (ADR-20261021195901).
+      if (preview.after.trial_days > 0) { const trial = node('tr'); trial.append(node('th', 'Free trial'), node('td', ''), node('td', `${preview.after.trial_days} days free if this workspace has not had a trial`)); table.append(trial); }
+      const feeNote = preview.before.monthly_fee_millicents > 0 || preview.after.monthly_fee_millicents > 0 ? ' This month is charged the higher of the two monthly fees; a lower fee applies from next month.' : '';
+      container.append(table, node('p', `The change applies immediately to future starts. Existing runs retain their agreed prices. A lower allowance can leave no starts remaining until the next UTC month.${feeNote}`));
     }
     async confirm() {
       const generation = this.host.epoch(), selected = this.preview;

@@ -82,3 +82,57 @@ func TestRoutesInsightsCLIEmptyAndInvalid(t *testing.T) {
 		}
 	}
 }
+
+// adr: 20261020161310 — --fix lists the insights, then applies the fix the
+// listing showed by sending its fix id back.
+func TestRoutesInsightsFixCLI(t *testing.T) {
+	insights := []api.RouteInsight{
+		{ID: "ins-1", Kind: api.RouteInsightCacheStale, Method: "GET", Route: "/catalog", State: api.RouteInsightActive,
+			Message: "GET /catalog is cached for 5m0s, but refills found it changed.", Evidence: json.RawMessage(`{}`),
+			FirstDetectedAt: "2026-10-20T06:00:00Z", LastDetectedAt: "2026-10-20T12:00:00Z",
+			Fix: &api.RouteInsightFix{ID: "fix-abc", Action: api.RouteInsightFixSetCacheMaxAge, Summary: "Change the max-age of cache rule r1 from 300s to 30s. Then purge the route's cached responses.", MaxAgeSeconds: 30, RuleID: "r1", PurgeCache: true}},
+		{ID: "ins-2", Kind: api.RouteInsightKeptAwake, Method: "GET", Route: "/health", State: api.RouteInsightActive,
+			Message: "GET /health keeps demo awake.", Evidence: json.RawMessage(`{}`), FirstDetectedAt: "2026-10-20T06:00:00Z", LastDetectedAt: "2026-10-20T12:00:00Z"},
+	}
+	var fixed []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/demo/routes/insights":
+			main.WriteJSONTest(w, api.RouteInsightsResponse{Slug: "demo", Insights: insights})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/demo/routes/insights/ins-1/fix":
+			var req api.RouteInsightFixRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decode: %v", err)
+			}
+			fixed = append(fixed, req.FixID)
+			main.WriteJSONTest(w, api.RouteInsightFixResponse{Fix: *insights[0].Fix, Rule: api.EdgeRuleResponse{ID: "r1"}, CachePurge: api.RouteInsightPurgeRequested, Resolved: 1})
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	code, out := runRouteInsightsCLI(t, server, "routes", "insights", "demo")
+	if code != 0 || !strings.Contains(out, "Fix:  Change the max-age of cache rule r1") || !strings.Contains(out, "ID:   ins-1") ||
+		!strings.Contains(out, "gregale routes insights demo --fix ID") || strings.Contains(out, "ID:   ins-2") {
+		t.Fatalf("listing: exit %d\n%s", code, out)
+	}
+	code, out = runRouteInsightsCLI(t, server, "routes", "insights", "demo", "--fix", "ins-1")
+	if code != 0 || len(fixed) != 1 || fixed[0] != "fix-abc" {
+		t.Fatalf("fix: exit %d fixed %v\n%s", code, fixed, out)
+	}
+	for _, want := range []string{"Applied: Change the max-age of cache rule r1", "Edge rule: r1", "Cache purge requested for GET /catalog."} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("fix output missing %q:\n%s", want, out)
+		}
+	}
+	for _, id := range []string{"ins-2", "missing"} {
+		if code, _ := runRouteInsightsCLI(t, server, "routes", "insights", "demo", "--fix", id); code == 0 {
+			t.Fatalf("--fix %s: want a non-zero exit", id)
+		}
+	}
+	if len(fixed) != 1 {
+		t.Fatalf("refused fixes were sent: %v", fixed)
+	}
+}

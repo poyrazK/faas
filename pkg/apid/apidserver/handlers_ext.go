@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/orgbilling"
 	"github.com/onebox-faas/faas/pkg/apid/release"
@@ -979,9 +980,13 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, environmentProblem)
 		return
 	}
-	var req api.UpdateAppRequest
-	if err := decodeJSON(r, &req); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+	req, decodeErr := httpkit.DecodeUpdateAppRequest(r)
+	if decodeErr != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", decodeErr.Error()))
+		return
+	}
+	if problem := validateDeploySettingsCondition(req, environment); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	if req.ExpectedServiceBindingFingerprint != nil {
@@ -1081,7 +1086,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("CPU profiling is unavailable on this installation"))
 		return
 	}
-	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingEnabled {
+	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingFor(acct) {
 		api.WriteProblem(w, api.ErrCapacity("request tracing is unavailable on this installation"))
 		return
 	}
@@ -1514,6 +1519,8 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	configActivityAtomic := false
+	params.TouchDeploymentPolicies = req.Profiling != nil || req.Tracing != nil
+	params = guardedDeploySettingsParams(req, acct, params)
 	var configActivityOutboxID int64
 	var updated state.App
 	var err error
@@ -1540,7 +1547,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		if errors.Is(err, state.ErrServiceBindingPlanConflict) {
+		if problem := deploySettingsUpdateProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
+		} else if errors.Is(err, state.ErrServiceBindingPlanConflict) {
 			api.WriteProblem(w, serviceBindingPlanConflictProblem())
 		} else if problem := state.ServiceCapacityProblem(err); problem != nil {
 			api.WriteProblem(w, problem)
@@ -1990,8 +1999,16 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such deployment")
 		return
 	}
-	resp := s.withRolloutHold(r.Context(), s.deploymentResponseWithBuild(r.Context(), d, app))
-	writeJSON(w, http.StatusOK, s.withRelease(r.Context(), resp, d))
+	response := s.withRolloutHold(r.Context(), s.deploymentResponseWithBuild(r.Context(), d, app))
+	if store, ok := s.store.(state.DeploymentConfigurationStore); ok {
+		configuration, err := store.DeploymentConfiguration(r.Context(), acct.ID, d.ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not read deployment configuration status"))
+			return
+		}
+		response.Configuration = &configuration
+	}
+	writeJSON(w, http.StatusOK, s.withRelease(r.Context(), response, d))
 }
 
 // updateDeploymentMinInstances (issue #557 closure / ADR-074) is the
@@ -2161,6 +2178,13 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		// locked → 403; illegal value → 422).
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
+	}
+	// ADR-20261020085706: a release waiting for approval cannot gain traffic.
+	if req.TrafficPercent > d.TrafficPercent {
+		if p := s.releaseApprovalTrafficProblem(r, app, d); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
 	}
 	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
 	if problem != nil {
@@ -5967,6 +5991,7 @@ func (s *server) deploymentResponse(parent context.Context, d state.Deployment, 
 	if len(d.OverrideCmd) > 0 {
 		resp.OverrideCmd = d.OverrideCmd
 	}
+	resp.ScheduledRelease = s.deploymentScheduleView(parent, d, app)
 	if len(d.OverrideEnv) > 0 {
 		// Decode the jsonb map to surface the KEYS only. Values are
 		// never echoed (ADR-053 §Decision 4). Stable order: sorted
@@ -7542,13 +7567,8 @@ func (s *server) getBuildSbom(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, prob)
 		return
 	}
-	var f io.ReadCloser
-	var err error
-	if s.sbomStorage != nil {
-		f, err = s.sbomStorage.Get(r.Context(), sbomKey)
-	} else if s.sbomRoot != "" {
-		f, err = os.Open(filepath.Join(s.sbomRoot, sbomKey)) //nolint:forbidigo // trusted root + validated database key; single-box compatibility fallback
-	} else {
+	f, err := s.openBuildSBOM(r.Context(), sbomKey)
+	if errors.Is(err, errSBOMStorageUnset) {
 		api.WriteProblem(w, api.ErrBuildSBOMUnavailable())
 		return
 	}
@@ -7588,11 +7608,36 @@ func (s *server) resolveSbomKey(r *http.Request, buildID string, acct state.Acco
 	if err != nil || prov.SBOMStorageKey == "" {
 		return "", api.ErrBuildSBOMUnavailable()
 	}
-	clean := filepath.Clean(prov.SBOMStorageKey)
-	if strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "..") || clean == "." {
+	clean, ok := cleanSBOMKey(prov.SBOMStorageKey)
+	if !ok {
 		return "", api.ErrBuildSBOMUnavailable()
 	}
 	return clean, nil
+}
+
+// errSBOMStorageUnset means apid has neither SBOM storage nor a local root.
+var errSBOMStorageUnset = errors.New("apid: SBOM storage is not configured")
+
+// cleanSBOMKey validates a database SBOM key before any storage backend
+// sees it: relative, inside the root.
+func cleanSBOMKey(key string) (string, bool) {
+	clean := filepath.Clean(key)
+	if strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "..") || clean == "." {
+		return "", false
+	}
+	return clean, true
+}
+
+// openBuildSBOM opens a validated SBOM key from shared storage, or from the
+// local root on a single box.
+func (s *server) openBuildSBOM(ctx context.Context, key string) (io.ReadCloser, error) {
+	if s.sbomStorage != nil {
+		return s.sbomStorage.Get(ctx, key)
+	}
+	if s.sbomRoot != "" {
+		return os.Open(filepath.Join(s.sbomRoot, key)) //nolint:forbidigo // trusted root + validated database key; single-box compatibility fallback
+	}
+	return nil, errSBOMStorageUnset
 }
 
 // policyPtrFromReq converts the wire DTO `*api.ScalingPolicy` to the

@@ -1,13 +1,11 @@
 package sched
 
 import (
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"maps"
 	"reflect"
 	"slices"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -60,19 +58,17 @@ func appendEnvironmentGitOpsServiceBindings(env []fcvm.APIEnvEntry, sealed []fcv
 }
 
 func environmentGitOpsJobBindingIntentMatches(job state.Job, run state.JobRun, accountID string, intent state.EnvironmentWorkloadIntent) bool {
-	_, digest, hasDigest := strings.Cut(job.ImageRef, "@")
-	digestBytes, digestErr := hex.DecodeString(strings.TrimPrefix(digest, "sha256:"))
-	if !hasDigest || !strings.HasPrefix(digest, "sha256:") || digestErr != nil || len(digestBytes) != 32 || job.ImageResolvedDigest != digest {
+	if !state.EnvironmentGitOpsJobSourceMatches(intent, job) {
 		return false
 	}
 	if intent.JobID != job.ID || intent.AccountID != accountID || intent.AppID == "" ||
-		intent.Source == nil || intent.Source.Kind != "image" || intent.Source.Image != job.ImageRef || intent.Schedule == nil ||
+		intent.Source == nil || intent.Schedule == nil ||
 		!validEnvironmentGitOpsJobVariables(intent.Variables) ||
 		intent.Schedule.Cron != job.CronSchedule || intent.Schedule.Timezone != job.CronTimezone ||
 		!reflect.DeepEqual(intent.Schedule.SchedulePolicy, job.SchedulePolicy) ||
 		!reflect.DeepEqual(intent.Schedule.FailureRules, job.FailureRules) ||
 		job.Kind != "recurring" || job.Status != "active" || job.MaxParallelism != 1 || job.RetryMax != 0 ||
-		job.ScheduleRevision <= 0 || len(job.Command) != 0 || !gitOpsJobEnvironmentMatches(job.EnvOverrides, intent.Variables) ||
+		job.ScheduleRevision <= 0 || !gitOpsJobEnvironmentMatches(job.EnvOverrides, intent.Variables) ||
 		job.ImageMaterializationStatus != "ready" || job.ImageResolvedDigest == "" || job.ImageStorageKey == "" ||
 		run.ID == "" || run.JobID != job.ID || run.AccountID != accountID || run.Tasks != 1 || run.Parallelism != 1 ||
 		run.ExecutionClass != "standard" || run.FailurePolicy != "continue" || run.RetryMax == nil || *run.RetryMax != job.RetryMax ||

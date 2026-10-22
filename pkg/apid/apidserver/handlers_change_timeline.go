@@ -20,7 +20,7 @@ import (
 // transitions. A dark preview: without FAAS_CHANGE_TIMELINE_ENABLED=1 it
 // answers 503.
 func (s *server) getAppChangeTimeline(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.changeTimelineFor(acct) {
+	if !s.changeTimelineFor(flagSubject(r, acct)) {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "change_timeline_unavailable",
 			"Change timeline unavailable", "the change timeline preview is not enabled"))
 		return

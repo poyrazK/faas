@@ -194,6 +194,10 @@ func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
 			m.handleLive(ctx, c, data, subscription)
 			continue
 		}
+		if c.liveOnly {
+			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Code: "live_only_connection"})
+			continue
+		}
 		var frame resumeClientFrame
 		if err := json.Unmarshal(data, &frame); err != nil {
 			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Code: "invalid_frame"})
@@ -582,7 +586,7 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 // watchSubscriptionOccupancy starts live occupancy frames when the subscribe
 // frame asked for them and the preview is on (ADR-1324).
 func (m *Manager) watchSubscriptionOccupancy(ctx context.Context, c *connection, frame resumeClientFrame) {
-	if frame.Occupancy && m.cfg.OccupancyPreview && !m.watchOccupancy(c.info.EndpointID, frame.Channel, c) {
+	if frame.Occupancy && c.endpointConfig().occupancyOn(m.cfg) && !m.watchOccupancy(c.info.EndpointID, frame.Channel, c) {
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "occupancy_limit"})
 	}
 }

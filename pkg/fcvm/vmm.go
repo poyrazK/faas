@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/guestmemproto"
 	"github.com/onebox-faas/faas/pkg/jailsetup"
+	"github.com/onebox-faas/faas/pkg/resumetimingproto"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/runtimepolicyproto"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -131,6 +132,8 @@ type JailerVMM struct {
 	// bind VMADDR_CID_HOST, so daemon-wide AF_VSOCK listeners are not a valid
 	// transport on the supported nested-virtualization topology.
 	guestVsockStreamHandlers map[uint32]GuestVsockStreamHandler
+	guestVsockLeaseHandlers  map[uint32]func(Lease, net.Conn) (string, error)
+	functionPauseBarrier     func(string) error
 	guestVsockObserver       GuestVsockTransportObserver
 	// characterizationReceipts coordinate the receiver started during boot
 	// with Manager.Wake's later WaitCharacterizationReport call. A single
@@ -143,6 +146,11 @@ type JailerVMM struct {
 	// the probe within the readyTimeout deadline.
 	hcClient *http.Client
 	recs     map[string]*instanceRecord // instance -> per-process bookkeeping (M6 builder VMs)
+	// consoleOpens are console files Restore and boot start creating before
+	// startJailer takes them (console_file.go). consoleLogDir overrides
+	// /var/log/faas in tests.
+	consoleOpens  map[string]*consoleFileOpen
+	consoleLogDir string
 	// rings is the per-instance log ring buffer (issue #254 / Move 4).
 	// Created in Boot/Restore before startJailer so cmd.Stdout can be wired
 	// to the ring's writer; closed in Kill/DestroyWithExport so the byte
@@ -1127,7 +1135,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	if spec.SkipReady {
 		return v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil)
 	}
-	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.ImageHealthcheckRequired, spec.StartupDeadlineS, spec.ExecutionMode, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil, &breakdown); err != nil {
+	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.ImageHealthcheckRequired, spec.StartupDeadlineS, spec.ExecutionMode, spec.WorkerPushDelivery, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil, &breakdown); err != nil {
 		return err
 	}
 	breakdown.TotalMs = time.Since(t0).Milliseconds()
@@ -1137,7 +1145,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 }
 
 func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest) error {
-	return v.boot(ctx, l, cfg, true, "", false, "", false, 0, "", workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask, jobManifest, nil)
+	return v.boot(ctx, l, cfg, true, "", false, "", false, 0, "", false, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask, jobManifest, nil)
 }
 
 // Boot provisions the chroot, starts the jailed firecracker with a full config,
@@ -1162,10 +1170,10 @@ func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheck
 	if err := v.prepareJournalLaunch(l); err != nil {
 		return err
 	}
-	return v.boot(ctx, l, cfg, false, healthcheckPath, false, "", false, 0, "", nil, nil, nil, "", false, nil, nil)
+	return v.boot(ctx, l, cfg, false, healthcheckPath, false, "", false, 0, "", false, nil, nil, nil, "", false, nil, nil)
 }
 
-func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, healthcheckGRPC bool, healthcheckGRPCService string, imageHealthcheckRequired bool, startupDeadlineS int, executionMode string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) (err error) {
+func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, healthcheckGRPC bool, healthcheckGRPCService string, imageHealthcheckRequired bool, startupDeadlineS int, executionMode string, workerPushDelivery bool, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) (err error) {
 	if err := v.ensureNativeLaunch(ctx, l); err != nil {
 		return err
 	}
@@ -1174,6 +1182,8 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return err
 	}
 	v.cancelStartupCPUBoostTail(l.Instance)
+	discardConsole := v.preopenConsoleFile(l.Instance)
+	defer discardConsole()
 	bootStartedAt := time.Now()
 	root, err := v.mkChrootForOwner(ctx, stagingOwner, l.Instance)
 	if err != nil {
@@ -1304,7 +1314,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 			}
 		}
 		readinessStartedAt := time.Now()
-		err = v.waitApplicationReady(ctx, l, healthcheckPath, healthcheckGRPC, healthcheckGRPCService, startupDeadlineS, executionMode, imageHealthcheckRequired, characterization)
+		err = v.waitApplicationReady(ctx, l, healthcheckPath, healthcheckGRPC, healthcheckGRPCService, startupDeadlineS, executionMode, workerPushDelivery, imageHealthcheckRequired, characterization)
 		if err != nil {
 			return fmt.Errorf("vmm: readiness: %w", err)
 		}
@@ -1953,6 +1963,8 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return err
 	}
 	v.cancelStartupCPUBoostTail(l.Instance)
+	discardConsole := v.preopenConsoleFile(l.Instance)
+	defer discardConsole()
 	// Start the breakdown before any chroot or storage work. The manager's
 	// RestoreMs already covers this full method; keeping the detailed log on
 	// the same boundary makes its total_ms comparable to that field and keeps
@@ -2267,13 +2279,18 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		// startJailer), so the UDS is live by the time /snapshot/load
 		// completes. Trigger the resume hook now to re-seed entropy and step
 		// the clock before the app can bind :8080 (spec §11 V6).
-		if err = v.TriggerResumeHook(ctx, l, time.Now().UnixNano()); err != nil {
+		if spec.verifiedSnapshot != nil && spec.verifiedSnapshot.request.FunctionMigration != nil {
+			err = v.triggerResumeHookOnce(ctx, l, time.Now().UnixNano(), nil)
+		} else {
+			err = v.TriggerResumeHook(ctx, l, time.Now().UnixNano())
+		}
+		if err != nil {
 			return fmt.Errorf("vmm: resume hook: %w", err)
 		}
 	}
 	tResume := time.Now()
 	if !spec.KeepPaused && !spec.SkipReady {
-		if err = v.waitApplicationReady(ctx, l, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.StartupDeadlineS, "", spec.ImageHealthcheckRequired, nil); err != nil {
+		if err = v.waitApplicationReady(ctx, l, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.StartupDeadlineS, "", false, spec.ImageHealthcheckRequired, nil); err != nil {
 			return fmt.Errorf("vmm: readiness after restore: %w", err)
 		}
 	}
@@ -2447,11 +2464,35 @@ func (v *JailerVMM) RegisterGuestVsockStreamHandler(port uint32, handler GuestVs
 	if v.guestVsockStreamHandlers == nil {
 		v.guestVsockStreamHandlers = make(map[uint32]GuestVsockStreamHandler)
 	}
-	if _, exists := v.guestVsockStreamHandlers[port]; exists {
+	if _, exists := v.guestVsockStreamHandlers[port]; exists || v.guestVsockLeaseHandlers[port] != nil {
 		v.mu.Unlock()
 		return fmt.Errorf("guest vsock handler already registered on port %d", port)
 	}
 	v.guestVsockStreamHandlers[port] = handler
+	observer := v.guestVsockObserver
+	v.mu.Unlock()
+	if observer != nil {
+		observer(port, "", nil)
+	}
+	return nil
+}
+
+// Lease-scoped receivers capture the boot/restore process generation before
+// accepting traffic. A delayed connection cannot bind to a later VM with the
+// same allocator slot and instance ID.
+func (v *JailerVMM) registerGuestVsockLeaseHandler(port uint32, handler func(Lease, net.Conn) (string, error)) error {
+	if v == nil || port == 0 || handler == nil {
+		return errors.New("invalid lease-scoped guest receiver")
+	}
+	v.mu.Lock()
+	if v.guestVsockStreamHandlers[port] != nil || v.guestVsockLeaseHandlers[port] != nil {
+		v.mu.Unlock()
+		return errors.New("guest receiver port already registered")
+	}
+	if v.guestVsockLeaseHandlers == nil {
+		v.guestVsockLeaseHandlers = make(map[uint32]func(Lease, net.Conn) (string, error))
+	}
+	v.guestVsockLeaseHandlers[port] = handler
 	observer := v.guestVsockObserver
 	v.mu.Unlock()
 	if observer != nil {
@@ -2486,6 +2527,9 @@ func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease) error {
 	handlers := make(map[uint32]GuestVsockStreamHandler, len(v.guestVsockStreamHandlers))
 	for port, handler := range v.guestVsockStreamHandlers {
 		handlers[port] = handler
+	}
+	for port, handler := range v.guestVsockLeaseHandlers {
+		handlers[port] = func(_ string, conn net.Conn) (string, error) { return handler(l, conn) }
 	}
 	v.mu.Unlock()
 	for port, handler := range handlers {
@@ -2711,13 +2755,25 @@ const (
 // resume request.
 var ErrGuestLacksRestoreReseed = errors.New("vmm: restored guest-init lacks the userspace RNG reseed barrier (ADR-687)")
 
-func readResumeCapabilities(conn net.Conn) error {
+// readResumeCapabilities reads the capability byte after an OK ack and, when
+// the guest announces it, the guest-side timing frame (ADR-022 amendment).
+// The timings are advisory: a malformed frame costs the diagnostics, never
+// the restore, so it returns nil timings rather than an error.
+func readResumeCapabilities(conn net.Conn) (*resumetimingproto.Timings, error) {
 	_ = conn.SetReadDeadline(time.Now().Add(resumeCapabilityWait))
 	caps := make([]byte, 1)
 	if _, err := io.ReadFull(conn, caps); err != nil || caps[0]&resumeCapUserspaceReseed == 0 {
-		return ErrGuestLacksRestoreReseed
+		return nil, ErrGuestLacksRestoreReseed
 	}
-	return nil
+	if caps[0]&resumetimingproto.CapTimings == 0 {
+		return nil, nil
+	}
+	timings, err := resumetimingproto.ReadFrame(conn)
+	if err != nil {
+		slog.Default().Debug("resume hook: guest timing frame unreadable", "err", err)
+		return nil, nil
+	}
+	return &timings, nil
 }
 
 // extensionHookMsgEvent is the host-initiated lifecycle notification type.
@@ -2966,6 +3022,7 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 	if _, err := io.ReadFull(conn, ack[:]); err != nil {
 		return fmt.Errorf("vmm: read resume ack: %w", err)
 	}
+	acked := time.Now()
 	ackValue := ack[0]
 	if ackValue != 0 {
 		if ackValue == resumeHookAckAfterRestore {
@@ -2976,7 +3033,8 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 		}
 		return fmt.Errorf("vmm: resume hook failed (ack=%d)", ackValue)
 	}
-	if err := readResumeCapabilities(conn); err != nil {
+	guest, err := readResumeCapabilities(conn)
+	if err != nil {
 		return err
 	}
 	if validatePeer != nil {
@@ -2994,11 +3052,46 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 	}
 	// Keep host transport setup separate from waiting for the guest hook.
 	// Durations and the lease ID are sufficient; never log the entropy payload.
-	slog.Default().Info("resume hook timing", "instance", l.Instance,
+	ackWait := acked.Sub(sent)
+	attrs := []any{"instance", l.Instance,
 		"connect_ms", connected.Sub(started).Milliseconds(),
 		"write_ms", sent.Sub(connected).Milliseconds(),
-		"ack_ms", time.Since(sent).Milliseconds(), "attempts", attempts)
+		"ack_ms", ackWait.Milliseconds(), "attempts", attempts}
+	if guest != nil {
+		attrs = append(attrs, resumeGuestTimingAttrs(*guest, ackWait)...)
+		v.wakePhaseMetrics.ObserveResumeGuestStages(*guest, ackWait)
+	}
+	slog.Default().Info("resume hook timing", attrs...)
 	return nil
+}
+
+// resumeGuestOutside is the part of the host's ack wait the guest did not
+// account for: vsock transport both ways and the time before guest-init's
+// handler ran at all (vCPU resume, guest scheduling, faulting guest-init back
+// in). Host and guest durations come from separate monotonic clocks, so a
+// small negative difference is clamped to zero.
+func resumeGuestOutside(t resumetimingproto.Timings, ackWait time.Duration) time.Duration {
+	return max(ackWait-time.Duration(t.TotalUs)*time.Microsecond, 0)
+}
+
+// resumeGuestTimingAttrs renders the guest's resume stages for the
+// "resume hook timing" record.
+func resumeGuestTimingAttrs(t resumetimingproto.Timings, ackWait time.Duration) []any {
+	return []any{
+		"guest_total_us", t.TotalUs,
+		"guest_outside_us", resumeGuestOutside(t, ackWait).Microseconds(),
+		"guest_read_us", t.ReadUs,
+		"guest_entropy_us", t.EntropyUs,
+		"guest_hwrng_us", t.HWRNGUs,
+		"guest_clock_us", t.ClockUs,
+		"guest_uuid_marker_us", t.UUIDMarkerUs,
+		"guest_userspace_reseed_us", t.UserspaceReseedUs,
+		"guest_reseed_clients", t.ReseedClients,
+		"guest_reseed_slowest_us", t.ReseedSlowestUs,
+		"guest_reseed_slowest_runtime", t.ReseedSlowestRuntime,
+		"guest_profiles_us", t.ProfilesUs,
+		"guest_after_restore_us", t.AfterRestoreUs,
+	}
 }
 
 // TriggerBeforeCheckpoint is a fail-closed barrier before a terminal init
@@ -5296,6 +5389,7 @@ func (v *JailerVMM) mkChrootLegacy(instance string) (string, error) {
 // this call so the lookup here is always non-nil. Firecracker writes its
 // own stderr only on configuration errors; that stream remains discarded
 // to avoid mixing error noise into the customer's log tail.
+
 func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...string) error {
 	if err := v.prepareJournalLaunch(l); err != nil {
 		return err
@@ -5357,11 +5451,8 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	}
 	isolateLifecycleChild(cmd)
 	ring := v.ringFor(l.Instance)
-	consolePath := filepath.Join("/var/log/faas", "vm-"+l.Instance+".console")
-	var consoleFile *os.File
-	if f, openErr := os.OpenFile(consolePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640); openErr == nil {
-		consoleFile = f
-	}
+	consolePath := v.consoleLogPath(l.Instance)
+	consoleFile := v.takeConsoleFile(l.Instance)
 	stdout := io.Discard
 	var consoleWriter *customerConsoleWriter
 	if ring != nil {
@@ -6474,7 +6565,7 @@ func grpcHealthcheckNotReadyProblem(l Lease, service string, responseCount int, 
 // as readiness; request and service modes may not. A terminal startup exit
 // fails fast with the captured log tail instead of waiting for a misleading
 // TCP timeout.
-func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healthcheckPath string, healthcheckGRPC bool, healthcheckGRPCService string, startupDeadlineS int, executionMode string, receipt *characterizationReceipt) error {
+func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healthcheckPath string, healthcheckGRPC bool, healthcheckGRPCService string, startupDeadlineS int, executionMode string, workerPushDelivery bool, receipt *characterizationReceipt) error {
 	readyCtx, cancelReady := context.WithCancel(ctx)
 	defer cancelReady()
 	readyCh := make(chan error, 1)
@@ -6515,7 +6606,7 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 				}
 			}
 			if receiptReceived && receipt.err == nil {
-				if terminal, outcomeErr := characterizationBootOutcome(receipt.report, executionMode); terminal {
+				if terminal, outcomeErr := characterizationBootOutcome(receipt.report, executionMode, workerPushDelivery); terminal {
 					return outcomeErr
 				}
 				if mismatchErr := characterizationReadinessMismatch(receipt.report, executionMode, err); mismatchErr != nil {
@@ -6538,7 +6629,7 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 				}
 				continue
 			}
-			if terminal, outcomeErr := characterizationBootOutcome(receipt.report, executionMode); terminal {
+			if terminal, outcomeErr := characterizationBootOutcome(receipt.report, executionMode, workerPushDelivery); terminal {
 				return outcomeErr
 			}
 		case <-ctx.Done():
@@ -6552,7 +6643,7 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 	}
 }
 
-func characterizationBootOutcome(report api.CharacterizationReport, executionMode string) (bool, error) {
+func characterizationBootOutcome(report api.CharacterizationReport, executionMode string, workerPushDelivery bool) (bool, error) {
 	if report.ObservedPort == 0 && report.ExitCode > 0 {
 		tail := []rune(strings.TrimSpace(report.LogTail))
 		if len(tail) > 4096 {
@@ -6578,7 +6669,14 @@ func characterizationBootOutcome(report api.CharacterizationReport, executionMod
 		switch report.ObservedClass {
 		case "worker":
 			return true, nil
-		case "job", "http", "graphql", "grpc":
+		case "http":
+			// Push deliveries are private HTTP POSTs to the worker's port,
+			// so a push-bound worker's listener is its delivery contract.
+			if workerPushDelivery {
+				return true, nil
+			}
+			return true, executionModeConflict(executionMode, report)
+		case "job", "graphql", "grpc":
 			return true, executionModeConflict(executionMode, report)
 		}
 	case api.ExecutionModeJob:
@@ -7459,6 +7557,23 @@ func (e *fcAPIError) Error() string {
 }
 
 func (v *JailerVMM) apiCall(ctx context.Context, method, instance, path string, body any) error {
+	if method == http.MethodPatch && path == "/vm" && v.functionPauseBarrier != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		var change struct {
+			State string `json:"state"`
+		}
+		if err := json.Unmarshal(data, &change); err != nil {
+			return err
+		}
+		if change.State == "Paused" {
+			if err := v.functionPauseBarrier(instance); err != nil {
+				return err
+			}
+		}
+	}
 	return v.apiCallWithClient(ctx, v.fcClient(instance), method, path, body)
 }
 

@@ -44,7 +44,7 @@ func cmdAppsTCP(slug string, args []string) int {
 		}
 		listeners, err := client.ListAppTCPListeners(context.Background(), slug)
 		if err != nil {
-			return printErr("Request failed", err)
+			return printErr("Could not list TCP listeners", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeNDJSON(listeners))
@@ -82,7 +82,7 @@ func cmdAppsTCP(slug string, args []string) int {
 			TLS: policy,
 		})
 		if err != nil {
-			return printErr("Create failed", err)
+			return printErr("Could not create TCP listener", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(out))
@@ -130,7 +130,7 @@ func cmdAppsTCP(slug string, args []string) int {
 		enabled := verb == "enable"
 		out, err := client.UpdateAppTCPListener(context.Background(), slug, args[0], api.UpdateTCPListenerRequest{Enabled: &enabled})
 		if err != nil {
-			return printErr("Request failed", err)
+			return printErr("Could not update TCP listener", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(out))
@@ -148,7 +148,7 @@ func cmdAppsTCP(slug string, args []string) int {
 			return 1
 		}
 		if err := client.DeleteAppTCPListener(context.Background(), slug, args[0]); err != nil {
-			return printErr("Delete failed", err)
+			return printErr("Could not delete TCP listener", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]any{"slug": slug, "name": args[0], "deleted": true}))

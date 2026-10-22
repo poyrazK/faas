@@ -208,7 +208,7 @@ func cmdDeployments(args []string) int {
 	}
 	page := api.DeploymentListResponse{Items: items, NextBefore: next}
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list deployments", err)
 	}
 	if jsonOutput {
 		// Envelope (not NDJSON) so `next_before` survives; see file header.
@@ -335,7 +335,7 @@ func cmdDeploymentsExcludeClear(args []string) int {
 			_, _ = fmt.Fprintf(osStdout, "no persisted exclusion for %q in project %q (already clear)\n", *slug, *projectSlug)
 			return 0
 		}
-		return printErr("Request failed", err)
+		return printErr("Could not clear deployment exclusion", err)
 	}
 	_, _ = fmt.Fprintf(osStdout, "cleared persisted exclusion: project=%q slug=%q\n", *projectSlug, *slug)
 	return 0
@@ -344,7 +344,7 @@ func cmdDeploymentsExcludeClear(args []string) int {
 // cmdDeployment dispatches deployment inspection and lifecycle commands.
 func cmdDeployment(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment runtime <id> [--target RELEASE_ID] | gregale deployment summary <id> --app SLUG | gregale deployment wait <id> [--rollout] [--progress] [--timeout SECONDS] | gregale deployment advance <id> --expected-step N | gregale deployment set-min-instances <id> --min N", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment runtime <id> [--target RELEASE_ID] | gregale deployment summary <id> --app SLUG | gregale deployment diff <id> [--against <id>] | gregale deployment wait <id> [--rollout] [--progress] [--timeout SECONDS] | gregale deployment advance <id> --expected-step N | gregale deployment set-min-instances <id> --min N", "deployment")
 		return 1
 	}
 	switch args[0] {
@@ -358,6 +358,8 @@ func cmdDeployment(args []string) int {
 		return cmdDeploymentSetMinInstances(args[1:])
 	case "summary":
 		return cmdDeploymentSummary(args[1:])
+	case "diff":
+		return cmdDeploymentDiff(args[1:])
 	case "wait":
 		return cmdDeploymentWait(args[1:])
 	case "get":
@@ -578,6 +580,7 @@ func cmdDeploymentGet(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "image_digest:", d.ImageDigest)
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "kind:", d.Kind)
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "status:", d.Status)
+	renderDeploymentConfiguration(d)
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "created_at:", d.CreatedAt)
 	// Issue #977 / ADR-116: annotation block. Each field is
 	// conditional on non-empty so pre-feature rows render the
@@ -811,7 +814,7 @@ func cmdDeploymentSetMinInstances(args []string) int {
 	}
 	d, err := client.PatchDeployment(context.Background(), id, api.UpdateDeploymentRequest{MinInstances: min})
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update deployment", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(d))

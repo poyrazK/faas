@@ -7,19 +7,22 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
-## Event substrate benchmark (V12) — 2026-10-20
+## Event substrate benchmark (V12) — 2026-10-22
 
 `make bench-event-substrate` measures event publish, fanout routing, the
-invocation drain and webhook delivery on disposable PostgreSQL. The first run
-on `gregale-internal-test-1`, a busy 2 vCPU shared host
-([report](ops/evidence/20261020-event-substrate-bench/REPORT.md)), sustained
-**5 events/s end to end** (p95 publish-to-handler 1.2 s). Above that, fanout
-routing falls behind: it ran 14.8 events/s over a 2,000-event backlog and
-slows as the backlog grows, because `EventRecipientClaim` re-runs the
-ordering scan for every candidate. Publish (307/s) and the drain (48/s) are
-not the bottleneck; webhook delivery sits at its 6.2/s design ceiling. Event
-caps stay where they are until fanout routing is fixed and the benchmark is
-re-run on the reference node.
+invocation drain and webhook delivery on disposable PostgreSQL, on
+`gregale-internal-test-1`, a 2 vCPU shared host. The first run
+([report](ops/evidence/20261020-event-substrate-bench/REPORT.md)) sustained
+5 events/s end to end. Skipping the ordering scan for recipients without a
+work policy (#5090) and the webhook backlog drain (#5091) raised that to 20
+events/s and webhook delivery to about 150/s. Batched fanout claims
+(`perf/event-fanout-batch-claim`,
+[report](ops/evidence/20261022-event-fanout-batch-claims/REPORT.md)) bring
+fanout to 74 events/s over a 2,000-event backlog and the pipeline to
+**48.5 events/s at 50 offered** (p95 830 ms), and ordered work-policy lanes
+from under 1 to 21.7 events/s. Fanout is still the first stage to fall
+behind, at 200 events/s offered. Event caps stay where they are until the
+benchmark is re-run on the reference node.
 
 ## Tenant egress denies NAT64 — 2026-10-18 (branch, not released)
 
@@ -32,6 +35,77 @@ per-netns and host renders, the Ansible template, the user-space checks and
 `docs/denylist.md` all follow the catalog; `make egress-render-matrix` passes
 on all nine rows. No deployment uses NAT64. Open: `nft -c` validation of the
 rendered ruleset and a metal run of the egress sweep.
+## HTTP service edges as binding evidence — 2026-10-19
+
+Service-binding verification no longer requires the private HTTPS listener,
+which no deployment manifest enables. Plain HTTP is the default caller
+transport (ADR-276).
+
+For a caller on HTTP:
+- `gregale bindings probe` and the managed probe send the marked probe over
+  the URL the caller's binding actually holds,
+  `http://<service>.svc.gregale:10081`. The gateway still requires the declared
+  binding.
+- Enforced GitOps qualification accepts the caller's completed plaintext
+  exchange.
+
+Receipts must match the caller's own transport, and HTTPS callers keep the TLS
+contract. Older guests reject an HTTP managed probe spec, so version skew fails
+closed.
+
+Portable gateway, API, bindingcheck, apid and memory/PostgreSQL tests cover
+this. Guest probe tests are Linux-only and run in CI. Native KVM acceptance
+and qualification dispatch remain pending.
+See [ADR-20261019200059](adr/20261019200059-http-service-binding-evidence.md).
+
+## Outbound bindings in candidate qualification — 2026-10-19
+
+Enforced managed GitOps graphs also admit customer outbound integration
+bindings that have a probe policy. Candidates still cannot reach the outbound
+gateway, and no identity is minted for them. Instead, outboundd lists each
+candidate's probe-ready bindings and sends the configured probe through its
+own handler in process, as the candidate's app, under the binding's route
+rules and limits. It records an immutable receipt pinned to a revision of the
+integration, binding, plan, credential, key pool and probe policy. Any change
+to those facts needs a new probe.
+
+Some outbound bindings still keep candidates held:
+- an active binding without a probe policy or customer-sealed credential
+- an operator app attachment
+
+Disabled integrations are skipped, as binding verification skips them.
+
+This is evidence about the gateway and the provider, not proof that candidate
+code calls the integration. Portable memory and PostgreSQL tests plus
+outbound handler tests cover the lifecycle. Native KVM acceptance and
+qualification dispatch remain pending.
+See [ADR-20261019152416](adr/20261019152416-candidate-outbound-binding-qualification.md).
+
+## Object storage bindings in candidate qualification — 2026-10-19
+
+Enforced managed GitOps graphs also admit managed object storage bindings and
+policy `object_storage_requirements`. apid opens the six sealed deliveries each
+candidate receives and runs the existing bucket canary in the required mode
+(read, write with cleanup, or read_write with download) against the public S3
+endpoint, then records an immutable receipt pinned to those delivery versions.
+Rotation, insufficient permission and requirements without a binding keep
+candidates held. Outbound integrations stay blocked: their evidence needs a
+platform identity for a running instance, which candidates do not have.
+See [ADR-20261019121546](adr/20261019121546-candidate-object-storage-binding-qualification.md).
+
+## PostgreSQL bindings in candidate qualification — 2026-10-19
+
+Enforced managed GitOps graphs no longer block activation because a member has
+a managed PostgreSQL binding. Qualification candidates still cannot reach their
+database, so apid verifies each candidate's exact sealed credential from the
+control plane (TLS authentication, role and privileges, read-only) and records
+an immutable receipt pinned to the credential generation and delivery version.
+Runtime credentials must match the candidate's captured and restored inputs;
+migration credentials are release-only. Data API and Auth bindings stay blocked.
+This is credential evidence, not proof that candidate code reaches the
+database. Portable memory and PostgreSQL tests cover the lifecycle; native KVM
+acceptance and qualification dispatch remain pending.
+See [ADR-20261019072523](adr/20261019072523-candidate-postgres-binding-qualification.md).
 
 ## Checked binding retirement — 2026-10-17
 
@@ -431,6 +505,56 @@ Both CI tiers run these harness checks. Native execution remains pending: this
 workspace has no KVM device or designated peer credentials. Host power loss,
 partitions, automatic recovery-policy and drain qualification remain separate.
 The earlier heartbeat smoke is available separately. Nothing deployed.
+
+## Measured Node function migration destinations — 2026-10-17
+
+[ADR-20261018030615](adr/20261018030615-function-migration-destination.md) adds qualification-only
+measured destination restore, durable readiness and ownership epochs, a separate
+execution activation fence, and confirmed destination retirement before source
+recovery. Current configuration and artifact approval are rechecked at commit;
+pending destination RAM/CPU/vCPU claims survive scheduler restart in the database.
+Original native admission history remains immutable. Production activation and
+two-host Node 22/24 KVM/TLS SQL qualification remain pending. See the
+[evidence](ops/evidence/20261017-function-migration-destination/REPORT.md).
+
+## Measured Node function migration source permissions — 2026-10-17
+
+[ADR-20261018030614](adr/20261018030614-function-migration-admission.md) adds separate capture and
+recovery permissions to the qualification-only source path. Each permission
+binds the measured parent, original wake, source lease and capture files, and
+uses the existing current-input and artifact approval fences. Recovery permission
+is issued after schedd fences ownership; lease expiry cannot renew capture
+authority. Duplicate RPCs preserve a valid in-flight permission and reuse the
+single physical recovery result. RUNNING publication checks current recovery
+permission again. The Node 22/24 native SQL matrix now includes cancellation,
+expiry, failed probes and held recovery ACK timeout. Native execution is pending;
+production activation and destination adoption remain gated. See the
+[evidence](ops/evidence/20261017-function-migration-admission/REPORT.md).
+
+## Node function migration source rollback — 2026-10-17
+
+[ADR-20261018030613](adr/20261018030613-function-migration-source-rollback.md) adds a qualification-only
+source path: mandatory all-interpreter checkpoint drainage, paused publication,
+a durable scheduler rollback fence, and one acknowledged pool-recovery attempt.
+Cancellation and expired leases retain source capacity until recovery or physical
+retirement is confirmed. schedd completes RUNNING or STOPPED after that result;
+vmmd never writes the instance ownership row. ADR-20261018030614 above adds measured source
+permission; destination adoption remains refused. Native KVM/vsock, restart/private-environment
+acceptance and production activation remain pending. See the
+[evidence](ops/evidence/20261017-function-migration-source-rollback/REPORT.md).
+
+## Node function warm-snapshot recovery — 2026-10-17
+
+[ADR-20261018030612](adr/20261018030612-function-warm-snapshot-resource-recovery.md) adds qualified
+warm capture with PostgreSQL drainage, paused publication and all-worker recovery
+before the original VM admits traffic. Cancelled/failed capture also recovers;
+unconfirmed recovery seals admission and retires the original physical VM.
+Measured checkpoint authority is explicit, and schedd checks idleness again
+before terminal park or snapshot-reuse destruction. Migration remains refused.
+Portable host race and real TLS/SCRAM SQL tests pass on Node 22/24; see the
+[evidence](ops/evidence/20261017-function-warm-snapshot-recovery/REPORT.md).
+This is local implementation evidence. Native KVM/vsock and recovery
+qualification remain pending, and ordinary production builds keep activation off.
 ## Product Control customer work history — 2026-10-17
 
 [ADR-1727](adr/1727-product-control-customer-work-history.md) adds a private
@@ -1632,6 +1756,22 @@ remain open; production admission is disabled.
   the artifact cache and acknowledged by the builder guest.
   - Unit tests pass. A native multi-stage build (with and without a target,
     and a changed argument on identical source) has not run.
+- **Compose extends and include.**
+  [ADR-20261019190527](adr/20261019190527-compose-extends-and-include.md)
+  (2026-10-19): the scan resolves `extends` (same file, other file, chains)
+  and top-level `include` (with their own paths), replacing the ADR-1337
+  warnings. Unit tests pass; no native run.
+- **Compose healthchecks on built services.**
+  [ADR-20261019195000](adr/20261019195000-compose-healthcheck-on-built-services.md)
+  (2026-10-22): a source-built service's Compose `healthcheck` is frozen per
+  deployment, merged onto the built image's HEALTHCHECK and enforced by the
+  ADR-683/684 readiness gate and recovery. Unit and conformance tests pass; no
+  native run.
+- **Compose process overrides on built services.**
+  [ADR-20261022160000](adr/20261022160000-compose-process-on-built-services.md)
+  (2026-10-22): a built service's `entrypoint` joins its start command, and
+  `user`, `working_dir`, `stop_signal` and `stop_grace_period` are frozen per
+  deployment and applied to the built image. Unit tests pass; no native run.
 - **No native run recorded.** The `containers` native lane has no recorded
   passing run; [container qualification](container-qualification.md) remains
   the coverage plan.
@@ -1693,10 +1833,68 @@ separate these process checks from native VM qualification. Native execution is
 pending: this workspace lacks KVM. Function hooks execute in one worker; this
 does not qualify VM-wide pool draining or durable post-response `waitUntil`.
 
+## Node background completion foundation — 2026-10-16
+
+ADR-20261018005023 adds a negotiated response/execution completion protocol. Portable
+runner and generated-adapter tests cover early HTTP/1 and HTTP/2 response EOF,
+registered promises and children, rejection, central plan limits, neighbour
+isolation, deadlines/disconnect cleanup, crash recovery and recycle retention.
+Worker slots remain occupied through actual completion or cancellation cleanup;
+uncooperative workers are retired after the existing acknowledgement grace.
+Production runner mains leave activation disabled. Acknowledged VM registration,
+VM-wide checkpoint protection, Python background execution and native snapshot
+qualification remain separate work. No deployment or durable execution is
+claimed. See [ADR-20261018005023](adr/20261018005023-function-background-completion-protocol.md) and
+the [acceptance procedure](ops/function-backend-concurrency-acceptance.md).
+[Portable evidence](ops/evidence/20261016-function-background-completion/REPORT.md)
+records the disabled activation boundary and native prerequisite failures.
+
+## Node VM execution lifetime and checkpoint admission — 2026-10-16
+
+[ADR-20261018030610](adr/20261018030610-function-vm-execution-lifetime.md) adds host-acknowledged,
+incarnation-scoped execution reservations before handler dispatch. HTTP EOF
+does not release them; actual worker completion/cancellation does. Lost replies,
+late messages and runner generation changes retain ownership conservatively.
+Host Stats and idle/freeze/quiet-pause gates observe the reservations. Schedd
+establishes idle admission before snapshot reuse, and capture seals admission
+before pause. Qualified lifecycle callbacks visit every loaded Node interpreter
+and wait for all cleanup fences. Expired ownership retires the original VM
+through existing teardown and schedd notification; vmmd adds no instance-row
+writes. Portable race and TLS/SCRAM SQL evidence is recorded in the
+[report](ops/evidence/20261016-function-vm-lifetime/REPORT.md).
+
+Activation exists only in `metal,function_background_native` acceptance builds;
+normal production builds remain off. A strict native deployed-function gate is
+implemented, but this workspace lacks root/KVM and cannot qualify its execution
+or native leak checks. Native fault injection and SQL pool draining across all
+interpreters remain required before activation. Private environment-qualification
+restores, Python background execution, durable work and performance parity are
+not qualified by these portable checks. No deployment was performed.
+
+## Automatic Node function PostgreSQL lifecycle — 2026-10-17
+
+[ADR-20261018030611](adr/20261018030611-function-postgres-resource-lifecycle.md) adds automatic SDK
+pool registration before driver creation in qualified generated adapters. It
+supplies default lifecycle endpoints, preserves custom hooks, consumes their
+response cleanup before drainage and waits for every registered pool in every
+loaded interpreter. Restore/thaw rebuilds pools and probes readiness before
+customer hooks or admission. Timed-out close retains ownership until actual
+drainage. Registration is bounded to 16 pool owners per interpreter; connection
+budgets remain per driver/worker/VM. Qualified warm and migration captures fail
+closed pending a continuing-VM recovery protocol.
+
+The portable and native SQL acceptance sources independently witness session
+closure while checkpoint acknowledgement is held. The native phase additionally
+requires deployed snapshot restore, thaw and worker/runner failure recovery.
+The [evidence report](ops/evidence/20261017-function-postgres-lifecycle/REPORT.md)
+records executed checks and outstanding gates. Production activation remains
+off. Native KVM execution, native faults and leak checks remain unqualified in
+this workspace. The prior PR remains closed and unmerged; no deployment occurred.
+
 ## Deployed PostgreSQL starter qualification — 2026-10-12
 
-The [native acceptance gate](ops/managed-postgres-native-acceptance.md) now requires
-thirteen phases, including the shipped Node starter, real public API rotation,
+That revision of the [native acceptance gate](ops/managed-postgres-native-acceptance.md)
+required thirteen phases, including the shipped Node starter, real public API rotation,
 restored pools and failed-hook cold fallback. The portable public API and restricted
 TLS/SCRAM SQL tests passed locally; [evidence and limits](ops/evidence/20261012-managed-postgres-deployed-starter/REPORT.md)
 record the narrowed API build and outstanding guest execution. The internal GCE

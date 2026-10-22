@@ -21,6 +21,24 @@ type EdgeProtectionResponse struct {
 	// WAF counts kind=waf inspections. Requests a block rule answered with
 	// 403 also appear in Rejections under gate "waf".
 	WAF EdgeProtectionWAF `json:"waf"`
+	// Challenge counts kind=challenge decisions (ADR-831 amendment 7). Its
+	// 403s also appear in Rejections under gate "challenge".
+	Challenge EdgeProtectionChallenge `json:"challenge"`
+}
+
+// EdgeProtectionChallenge is the kind=challenge part of an
+// EdgeProtectionResponse: Issued challenge pages served to browsers, Solved
+// passes earned, Rejected non-browser requests answered 403
+// challenge_required, Passed requests let through on an earlier pass,
+// Bypassed requests let through on a verified API key, consumer key or JWT,
+// and Invalid solutions refused (bad work or an expired token).
+type EdgeProtectionChallenge struct {
+	Issued   int64 `json:"issued"`
+	Solved   int64 `json:"solved"`
+	Rejected int64 `json:"rejected"`
+	Passed   int64 `json:"passed"`
+	Bypassed int64 `json:"bypassed"`
+	Invalid  int64 `json:"invalid"`
 }
 
 // EdgeProtectionWAF is the kind=waf part of an EdgeProtectionResponse.

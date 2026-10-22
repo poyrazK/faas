@@ -32,7 +32,7 @@ func (s *server) dashboardAuthSettingsApp(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return acct, app, false
 	}
-	if !s.applicationAuthEnabled(acct) {
+	if !s.applicationAuthEnabled(appFlagSubject(acct, app)) {
 		http.NotFound(w, r)
 		return acct, app, false
 	}
@@ -148,7 +148,7 @@ func authSettingsChange(form url.Values) (authsettings.Change, error) {
 	if err := hostedPageChange(form, &change); err != nil {
 		return change, err
 	}
-	for name, target := range map[string]**bool{"signup": &change.Signup, "autoconfirm": &change.Autoconfirm, "leaked_password_check": &change.LeakedPasswordCheck, "mfa": &change.MFA, "mfa_phone": &change.MFAPhone, "recovery_codes": &change.RecoveryCodes, "passkeys": &change.Passkeys, "sso": &change.SSO, "org_sso": &change.OrgSSO, "oauth_server": &change.OAuthServer, "oauth_registration": &change.OAuthRegistration, "anonymous": &change.Anonymous, "identity_linking": &change.IdentityLinking, "self_deletion": &change.SelfDeletion, "org_claims": &change.OrgClaims, "block_disposable": &change.BlockDisposable, "impersonation": &change.Impersonation, "single_session": &change.SingleSession, "org_domains": &change.OrgDomains} {
+	for name, target := range map[string]**bool{"signup": &change.Signup, "autoconfirm": &change.Autoconfirm, "leaked_password_check": &change.LeakedPasswordCheck, "mfa": &change.MFA, "mfa_phone": &change.MFAPhone, "recovery_codes": &change.RecoveryCodes, "passkeys": &change.Passkeys, "sso": &change.SSO, "org_sso": &change.OrgSSO, "oauth_server": &change.OAuthServer, "oauth_registration": &change.OAuthRegistration, "anonymous": &change.Anonymous, "identity_linking": &change.IdentityLinking, "self_deletion": &change.SelfDeletion, "org_claims": &change.OrgClaims, "block_disposable": &change.BlockDisposable, "impersonation": &change.Impersonation, "single_session": &change.SingleSession, "org_domains": &change.OrgDomains, "service_accounts": &change.ServiceAccounts} {
 		if !form.Has(name) {
 			continue
 		}

@@ -71,6 +71,18 @@ Six findings explain the table.
    migration file of #5052 is in meterd's and imaged's binaries, so both
    ran changed bytes for a query neither runs.
 
+7. **Daemon code reached the same lookup through templates of its own**
+   (added 2026-10-21). With `grpcnotrace`, gatewayd-internal still linked
+   all 4,169 `*PgStore` methods: `pkg/gateway` rendered its challenge page
+   with `html/template`, whose `Execute` reaches `text/template`'s
+   `evalField` and `MethodByName`. apid does the same through
+   `pkg/dashboard.Render`. A one-line store fix therefore rewrote
+   gatewayd-internal and redeployed the edge lane, canary and followers.
+   Without that `Execute`, gatewayd-internal links 213 `*PgStore` methods
+   and its unstripped binary shrinks from 162 MB to 76 MB. No other daemon
+   reaches it: `-ldflags=-dumpdep` on the 16 lane and main compute daemons,
+   and no other daemon imports a template package of its own.
+
 What stays: a line inserted above a function shifts the line numbers that
 every binary linking later functions of the same file carries in
 `.gopclntab`. Those binaries run the same code; the report lists them as
@@ -94,7 +106,11 @@ the 70,000-line generated `queries.sql.go`, above queries vmmd runs.
    under its old names. `scripts/ci/daemon_deps.json` lists the packages a
    release binary must not link (`make daemon-deps-check`, ci-light), with
    `golang.org/x/net/trace` forbidden in every daemon so finding 4 cannot
-   return through a new import.
+   return through a new import. Since finding 7, `html/template` and
+   `text/template` are forbidden in every daemon but apid, whose dashboard
+   uses them; libraries that only parse a template (goose) or serve a debug
+   page no daemon mounts (`net/rpc`) may import them. Daemon pages escape
+   their values with `html.EscapeString`.
 3. **No blanket narrowing of `pkg/state` per daemon.** Finding 5 measured it
    at zero effect. The test-store rules in CLAUDE.md stand; new code may
    still take a small interface where that makes a fake easier.
@@ -102,7 +118,16 @@ the 70,000-line generated `queries.sql.go`, above queries vmmd runs.
    (report-only, poyrazK/faas#5056) comments the closure set and, of it,
    the binaries whose code or only line table changes.
 
-## Proposed next step (needs an owner decision; not part of this record's changes)
+## Next step: selection by code (decided 2026-10-21)
+
+Decided and built in ADR-1650, "Selection by code": the release keeps the
+closure as its candidate set, builds the candidates at base and head as
+`blast_radius.py` does (the build and digest code now lives in
+`scripts/ci/binary_code.py`, shared by both), and a host restarts a unit
+only when the code it runs differs from the release's. `lines` binaries do
+not restart; ADR-1650 gives the reasons. Unit versions keep naming the
+commit a binary was built from, and a host keeps the version of a unit
+whose code it already runs. The proposal as first written:
 
 **Select per-unit release binaries by code, not by closure.** The release
 lane would build each closure candidate at the base release and at head
@@ -124,8 +149,8 @@ whose code it runs. Costs and open points:
 ## Consequences
 
 - vmmd, imaged and builderd no longer restart for scheduler-only fixes;
-  vmmd no longer restarts for store query changes it does not run (once
-  selection by code lands).
+  vmmd no longer restarts for store query changes it does not run (with
+  selection by code, ADR-1650).
 - Daemon binaries shrink (vmmd 112.4 MB → 47.0 MB stripped), which lowers
   RSS on every node.
 - `pkg/sched` re-exports the moved contracts; code outside `pkg/sched`

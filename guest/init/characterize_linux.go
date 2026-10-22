@@ -36,7 +36,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -117,6 +119,10 @@ type RunArgs struct {
 	RingBufferTail func() string      // the supervisor's log ring buffer tail
 	Log            *slog.Logger
 	Now            func() time.Time // injectable for tests
+	// ProvenWorker shortens the window to
+	// api.ProvenWorkerCharacterizationWindow: vmmd booted a declared worker
+	// whose deployment already passed the full window (ADR-20261018101500).
+	ProvenWorker bool
 }
 
 // runCharacterization is the boot-side entry point. It observes the
@@ -260,7 +266,7 @@ func deriveGuestCharacterizationClass(port int, l7Hint string, exitCode int, exi
 // §"Characterization window"), the single source shared with the
 // host's wait in pkg/fcvm/manager.go.
 func waitForBind(ctx context.Context, args RunArgs, res *CharacterizationResult) (bool, string, int, bool) {
-	deadline := args.Now().Add(api.CharacterizationDeadline)
+	deadline := args.Now().Add(characterizationWindow(args))
 	want := args.Manifest.EffectivePort()
 	var firstSeen time.Time
 	for {
@@ -291,6 +297,27 @@ func waitForBind(ctx context.Context, args RunArgs, res *CharacterizationResult)
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
+}
+
+// bootProvenWorker reports whether vmmd booted this guest with
+// api.ProvenWorkerBootArg.
+var bootProvenWorker = sync.OnceValue(func() bool {
+	cmdline, err := os.ReadFile("/proc/cmdline")
+	return err == nil && hasBootArg(string(cmdline), api.ProvenWorkerBootArg)
+})
+
+func hasBootArg(cmdline, arg string) bool {
+	return slices.Contains(strings.Fields(cmdline), arg)
+}
+
+// characterizationWindow is how long waitForBind watches for a listener. A
+// declared worker booted with api.ProvenWorkerBootArg only has to show that
+// its process started and stayed up (ADR-20261018101500).
+func characterizationWindow(args RunArgs) time.Duration {
+	if args.ProvenWorker {
+		return api.ProvenWorkerCharacterizationWindow
+	}
+	return api.CharacterizationDeadline
 }
 
 // probeListeningLinux is the linux-only /proc walk. Called by

@@ -21,6 +21,9 @@ const (
 
 	StatementSourceAppConsumer    = "app_consumer"
 	StatementSourcePlatformTenant = "platform_tenant"
+	// StatementSourceProductControl is a finalized Product Control
+	// statement document (ADR-20261018212918).
+	StatementSourceProductControl = "product_control"
 
 	StatementInvoiceExportCreating  = "creating"
 	StatementInvoiceExportCompleted = "completed"
@@ -199,7 +202,7 @@ func validateStatementInvoiceExport(e StatementInvoiceExport) error {
 			return fmt.Errorf("%w: %s must be a UUID", ErrInvalidArgument, name)
 		}
 	}
-	if e.SourceKind != StatementSourceAppConsumer && e.SourceKind != StatementSourcePlatformTenant {
+	if e.SourceKind != StatementSourceAppConsumer && e.SourceKind != StatementSourcePlatformTenant && e.SourceKind != StatementSourceProductControl {
 		return fmt.Errorf("%w: unknown statement source %q", ErrInvalidArgument, e.SourceKind)
 	}
 	if !ValidBillingProvider(e.Provider) || e.Customer == "" || !isUpperASCIICurrency(e.Currency) ||

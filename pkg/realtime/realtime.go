@@ -205,6 +205,45 @@ type Endpoint struct {
 	// (ADR-20261016151947): those of databases bound to the endpoint's app. A seal
 	// whose key is not listed is refused before it reaches a hub.
 	LiveRoutes []LiveRoute
+
+	// Previews are apid's decisions of the realtime preview platform flags
+	// for this endpoint's account. Nil means apid sent none, so the daemon's
+	// preview switches alone decide.
+	Previews *EndpointPreviews
+}
+
+// EndpointPreviews are per-account preview decisions (ADR 20261021080640).
+// The daemon's switch stays a node capability: a preview is on for an
+// endpoint only when the switch is on and, if apid decided, apid allows it.
+type EndpointPreviews struct {
+	Resume    bool `json:"resume,omitempty"`
+	Tickets   bool `json:"tickets,omitempty"`
+	Access    bool `json:"access,omitempty"`
+	Occupancy bool `json:"occupancy,omitempty"`
+}
+
+func (e Endpoint) resumeOn(cfg Config) bool {
+	return cfg.ResumePreview && (e.Previews == nil || e.Previews.Resume)
+}
+
+func (e Endpoint) ticketsOn(cfg Config) bool {
+	return cfg.TicketPreview && (e.Previews == nil || e.Previews.Tickets)
+}
+
+func (e Endpoint) accessOn(cfg Config) bool {
+	return cfg.AccessPreview && (e.Previews == nil || e.Previews.Access)
+}
+
+func (e Endpoint) occupancyOn(cfg Config) bool {
+	return cfg.OccupancyPreview && (e.Previews == nil || e.Previews.Occupancy)
+}
+
+func clonePreviews(p *EndpointPreviews) *EndpointPreviews {
+	if p == nil {
+		return nil
+	}
+	out := *p
+	return &out
 }
 
 // Hooks receives connection lifecycle events. Connect is synchronous with
@@ -483,6 +522,12 @@ type connection struct {
 	// live frame.
 	live     LiveSession
 	liveOnce sync.Once
+	// browser is set before the read loop when the upgrade carried an Origin
+	// header; Data API server keys are refused on such connections.
+	browser bool
+	// liveOnly marks a v2 connection without OIDC: it carries live frames
+	// only, and channel frames are refused.
+	liveOnly bool
 
 	outbound       chan Message
 	outboundMu     sync.Mutex
@@ -895,20 +940,28 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ticketToken = browserToken
 	}
 	usesTicket := isTicket(ticketToken)
-	if usesTicket && (!wantsResume || !m.cfg.TicketPreview || m.cfg.TicketReader == nil) {
+	liveOnly := false
+	if usesTicket && (!wantsResume || !endpoint.ticketsOn(m.cfg) || m.cfg.TicketReader == nil) {
 		http.Error(w, "ticket unavailable", http.StatusUnauthorized)
 		return
 	}
 	if wantsResume {
-		if !m.cfg.ResumePreview || m.cfg.HistoryReader == nil {
+		if !endpoint.resumeOn(m.cfg) || m.cfg.HistoryReader == nil {
 			http.Error(w, "realtime resume unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		if !usesTicket && endpoint.ClientAuth.Mode != AuthModeOIDCJWT {
-			http.Error(w, "realtime resume requires OIDC authentication", http.StatusForbidden)
-			return
+			// ADR-20261016151947: an endpoint with live routes accepts v2 without
+			// OIDC for live frames only. Anonymous and server-key Data API reads
+			// are admitted frame by frame; channels need an authenticated
+			// connection.
+			if len(endpoint.LiveRoutes) == 0 {
+				http.Error(w, "realtime resume requires OIDC authentication", http.StatusForbidden)
+				return
+			}
+			liveOnly = true
 		}
-		if _, ok := m.hooks.(ChannelAuthorizer); !ok && !usesTicket {
+		if _, ok := m.hooks.(ChannelAuthorizer); !ok && !usesTicket && !liveOnly {
 			http.Error(w, "realtime channel authorization unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -966,7 +1019,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			if m.cfg.AccessPreview {
+			if endpoint.accessOn(m.cfg) {
 				issuedAt, err = verifiedTokenIssuedAt(token)
 				if err != nil {
 					m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
@@ -987,13 +1040,16 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if liveOnly && strings.TrimSpace(principal) == "" {
+		principal = "live" // a visitor without a session; live frames carry their own credential
+	}
 	if wantsResume && strings.TrimSpace(principal) == "" {
 		m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
 		m.rejectedConnections.Add(1)
 		http.Error(w, "realtime resume requires a stable principal", http.StatusUnauthorized)
 		return
 	}
-	if !usesTicket && m.cfg.AccessPreview && endpoint.ClientAuth.Mode == AuthModeOIDCJWT {
+	if !usesTicket && endpoint.accessOn(m.cfg) && endpoint.ClientAuth.Mode == AuthModeOIDCJWT {
 		if m.cfg.AccessReader == nil {
 			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
 			m.rejectedConnections.Add(1)
@@ -1055,6 +1111,8 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return ""
 	}(), verifiedConnection)
 	state.gate.Unlock()
+	conn.browser = r.Header.Get("Origin") != ""
+	conn.liveOnly = liveOnly
 	m.runConnection(r.Context(), conn)
 }
 
@@ -1244,7 +1302,9 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 	connect.CallbackPath = c.endpoint.ConnectPath
 	connect.CallbackAuthToken = c.currentCallbackAuthToken()
 	accepted, err := true, error(nil)
-	if c.ticketToken == "" {
+	// A live-only connection carries no identity for the app to judge; each
+	// live frame brings its own credential, so the app is not asked.
+	if c.ticketToken == "" && !c.liveOnly {
 		accepted, err = m.callConnect(ctx, connect)
 	}
 	if err != nil {
@@ -1518,7 +1578,7 @@ func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 	disconnect.CallbackAuthToken = callbackAuthToken
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), m.cfg.CallbackTimeout)
 	defer cancel()
-	if c.ticketToken != "" {
+	if c.ticketToken != "" || c.liveOnly {
 		return
 	}
 	if err := m.hooks.Disconnect(ctx, disconnect); err != nil {

@@ -33,6 +33,14 @@ Exit codes, for the deploy workflow:
   2  usage or configuration error
   3  inconclusive (Prometheus unreachable, a platform rule not loaded):
      no evidence is not a pass; treat as a failure
+  4  superseded (watch mode): another run owns the watch record
+
+Watch mode (--watch-record, docs/adr/20261020214632-automatic-unit-deploy-
+safety-rails.md): the post-deploy watch runs this gate for 30 minutes with
+--max-hold 30m, so each rule must stay true for its own `for:`. Every round
+it reads the control plane's watch record and stops (4) once another run
+owns it: a newer deploy took the watch over. --max-blind-rounds lets it ride
+out a short Prometheus outage over that longer window.
 
 Usage (from the control-plane runner, where Prometheus listens on loopback):
   scripts/ci/slo_gate.py --unit schedd --deployed-at "$(date +%s)" \\
@@ -53,7 +61,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime
 
-PASS, FAIL, USAGE, INCONCLUSIVE = 0, 1, 2, 3
+PASS, FAIL, USAGE, INCONCLUSIVE, SUPERSEDED = 0, 1, 2, 3, 4
 
 # Evaluated for every unit: a regression in any unit shows up here first.
 PLATFORM_ALERTS = (
@@ -198,11 +206,19 @@ class Gate:
     unscraped_since: float | None = None
     unconfigured_logged: bool = False
     blind_rounds: int = 0
+    max_blind_rounds: int = MAX_ERROR_ROUNDS
+    # Watch mode: returns why this gate no longer owns the watch, or None.
+    superseded: object = None
 
     def run(self) -> int:
         start = self.now()
         names = {r.name for r in self.rules}
         while True:
+            if self.superseded is not None:
+                why = self.superseded()
+                if why:
+                    self.log(f"slo-gate: stopping: {why}")
+                    return SUPERSEDED
             verdict = self.judge_rules(names)
             if verdict is None and self.jobs:
                 verdict = self.judge_scrape()
@@ -287,8 +303,8 @@ class Gate:
     def blind(self, why: str) -> int | None:
         self.blind_rounds += 1
         self.log(f"slo-gate: {why}")
-        if self.blind_rounds >= MAX_ERROR_ROUNDS:
-            self.log(f"::error::slo-gate: blind for {MAX_ERROR_ROUNDS} rounds; inconclusive")
+        if self.blind_rounds >= self.max_blind_rounds:
+            self.log(f"::error::slo-gate: blind for {self.max_blind_rounds} rounds; inconclusive")
             return INCONCLUSIVE
         return None
 
@@ -313,6 +329,10 @@ def main(argv: list[str], prom_factory=Prometheus, now=time.time, sleep=time.sle
     parser.add_argument("--job", action="append", help="scrape job of the unit (repeatable; overrides the unit table)")
     parser.add_argument("--component", action="append", help="alert component label of the unit (repeatable)")
     parser.add_argument("--list", action="store_true", help="print the selected rules and exit")
+    parser.add_argument("--watch-record", help="watch mode: the control plane's unit watch record")
+    parser.add_argument("--owner", help="watch mode: the run that must own --watch-record")
+    parser.add_argument("--max-blind-rounds", type=int, default=MAX_ERROR_ROUNDS,
+                        help="consecutive rounds without evidence before the gate is inconclusive")
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
@@ -320,8 +340,11 @@ def main(argv: list[str], prom_factory=Prometheus, now=time.time, sleep=time.sle
     if args.unit not in UNITS and args.job is None and args.component is None:
         log(f"::error::slo-gate: unknown unit {args.unit!r}; known: {', '.join(UNITS)} (or pass --job/--component)")
         return USAGE
-    if args.interval <= 0 or args.duration <= 0:
-        log("::error::slo-gate: --interval and --duration must be positive")
+    if args.interval <= 0 or args.duration <= 0 or args.max_blind_rounds < 1:
+        log("::error::slo-gate: --interval, --duration and --max-blind-rounds must be positive")
+        return USAGE
+    if bool(args.watch_record) != bool(args.owner):
+        log("::error::slo-gate: --watch-record and --owner go together")
         return USAGE
 
     jobs, components = unit_scope(args)
@@ -343,8 +366,28 @@ def main(argv: list[str], prom_factory=Prometheus, now=time.time, sleep=time.sle
     if args.list:
         return PASS
     log(f"slo-gate: unit {args.unit}: {len(rules)} rules, jobs {jobs or '-'}, {args.duration:.0f}s at {args.interval:.0f}s intervals")
-    gate = Gate(prom, rules, jobs, args.duration, args.interval, args.deployed_at, args.max_hold, log=log, now=now, sleep=sleep)
+    gate = Gate(prom, rules, jobs, args.duration, args.interval, args.deployed_at, args.max_hold, log=log, now=now,
+                sleep=sleep, max_blind_rounds=args.max_blind_rounds)
+    if args.watch_record:
+        gate.superseded = lambda: watch_owner_changed(args.watch_record, args.owner)
     return gate.run()
+
+
+def watch_owner_changed(path: str, owner: str) -> str | None:
+    """Why the run `owner` no longer owns the watch record at path, or None
+    while it does. An unreadable record is not a reason to stop: the gate
+    keeps judging and the watch decides at its end."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            record = json.load(f)
+    except FileNotFoundError:
+        return "the watch record was closed"
+    except (OSError, ValueError):
+        return None
+    current = record.get("owner_run") if isinstance(record, dict) else None
+    if current != owner:
+        return f"run {current} now owns the watch"
+    return None
 
 
 if __name__ == "__main__":

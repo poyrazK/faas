@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -959,7 +960,10 @@ type Handler struct {
 	// apiMonetization is the API monetization release gate
 	// (ADR-20261018090210); nil keeps monetization off.
 	apiMonetization func() bool
-	gate            *WakeGate
+	// apiMonetizationFlags is the api_monetization platform flag: it
+	// releases monetization to the accounts it admits (ADR-20261020170649).
+	apiMonetizationFlags *platformflags.Set
+	gate                 *WakeGate
 	// admissionQueue protects the control plane from a simultaneous cold
 	// burst across many apps. It is intentionally separate from gate:
 	// gate coalesces waiters for one app, while admissionQueue orders the
@@ -1279,8 +1283,13 @@ type Handler struct {
 	wafInspector WAFInspector
 	// wafInline checks headers and URI in-path for warn and block
 	// kind=waf rules (ADR-831 amendment 4). Nil makes them observe.
-	wafInline  WAFInlineChecker
-	operations OperationRouteEnqueuer
+	wafInline WAFInlineChecker
+	// challengeKey signs kind=challenge tokens and passes (ADR-831
+	// amendment 7). Nil leaves challenge rules unenforced.
+	challengeKey []byte
+	// challengeNow is the challenge clock; nil means time.Now.
+	challengeNow func() time.Time
+	operations   OperationRouteEnqueuer
 	// geoReader is the country lookup used by applyEdgeRuleGeo and
 	// country-keyed throttles (ADR-091 D21). A nil reader is allowed
 	// at boot, but a matched policy that needs geography fails closed.
@@ -5587,6 +5596,22 @@ func (h *Handler) apiMonetizationEnabled() bool {
 	return h.apiMonetization != nil && h.apiMonetization()
 }
 
+// WithAPIMonetizationFlags installs the api_monetization platform flag
+// (ADR-20261020170649), which releases monetization to the accounts it admits
+// while the runtime switch is off.
+func (h *Handler) WithAPIMonetizationFlags(flags *platformflags.Set) *Handler {
+	h.apiMonetizationFlags = flags
+	return h
+}
+
+// APIMonetizationEnabledFor reports whether monetization applies to an
+// account's traffic: released to every account, or to this one by the flag.
+// The flag is decided by account only, so plan rules never match.
+func (h *Handler) APIMonetizationEnabledFor(accountID string) bool {
+	return h.apiMonetizationEnabled() ||
+		h.apiMonetizationFlags.Enabled(platformflags.APIMonetization, platformflags.Subject{AccountID: accountID})
+}
+
 // WithRequestAudit enables exact completed-request evidence in the fsynced
 // usage envelope. Enable only after apid supports the audit receipt field.
 func (h *Handler) WithRequestAudit(enabled bool) { h.requestAuditEnabled = enabled }
@@ -5994,6 +6019,9 @@ haveApp:
 			}
 		}
 		r = withAppAndAccount(r, accountUUID, appUUID)
+		if h.APIMonetizationEnabledFor(app.AccountID) {
+			ownUsageHeader(r)
+		}
 	}
 	if h.requestAuditEnabled {
 		// Snapshot the public gateway's single verified XFF value before
@@ -6231,6 +6259,14 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	// ADR-831 amendment 7: the challenge page posts its solution here. It
+	// runs after the IP and geo gates, so a blocked client cannot earn a
+	// pass, and before the body-reading gates, so a validate or limit rule
+	// cannot reject the form.
+	if h.handleChallengeSolve(w, r, app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
 	if h.applyEdgeRuleJWT(w, r, app) {
 		h.metrics.ObserveEdgeRejection(app.ID, "jwt", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
@@ -6350,6 +6386,14 @@ haveApp:
 	// operator-authorized deployment smoke available for rollout readiness.
 	if app.PlatformTenantRequired && !deploymentSmoke && authenticatedFrom(r.Context()).PlatformTenantID == "" {
 		api.WriteProblem(w, api.ErrPlatformTenantRequired())
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
+	// ADR-831 amendment 7 / kind=challenge. After every auth gate, so a
+	// verified credential bypasses it, and before respond, cache and wake, so
+	// an unsolved client never reaches the app.
+	if h.applyEdgeRuleChallenge(w, r, app, deploymentSmoke) {
+		h.metrics.ObserveEdgeRejection(app.ID, "challenge", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -6480,7 +6524,14 @@ haveApp:
 					return
 				}
 				var releaseErr error
-				projectReleaseID, projectReleaseDeploymentID, releaseErr = resolver.ResolveProjectRelease(r.Context(), app.ID, projectReleaseScope, requested)
+				canary, supportsCanary := h.backend.(interface {
+					ResolveProjectCanary(context.Context, string, string, string) (string, string, error)
+				})
+				if requested == "" && supportsCanary {
+					projectReleaseID, projectReleaseDeploymentID, releaseErr = canary.ResolveProjectCanary(r.Context(), app.ID, projectReleaseScope, uuid.NewString())
+				} else {
+					projectReleaseID, projectReleaseDeploymentID, releaseErr = resolver.ResolveProjectRelease(r.Context(), app.ID, projectReleaseScope, requested)
+				}
 				if releaseErr != nil {
 					status := http.StatusServiceUnavailable
 					if errors.Is(releaseErr, ErrReleaseGone) {
@@ -6818,7 +6869,7 @@ haveApp:
 	}
 	if routeProbe {
 		exactDeploymentID = probeDeploymentID
-		exactDeploymentScope = app.Scope
+		exactDeploymentScope = h.routeProbeScope(app, probeDeploymentID, probeToken)
 		exactDeploymentTrigger = sched.TriggerGateway
 		exactUnavailableTitle = "Route probe unavailable"
 		exactUnavailableDetail = "the probed deployment has no routable target"

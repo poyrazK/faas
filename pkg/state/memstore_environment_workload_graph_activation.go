@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"maps"
 	"slices"
 	"sort"
 	"time"
@@ -51,6 +52,30 @@ func (m *MemStore) ActivateEnvironmentGitOpsWorkloadGraph(ctx context.Context, l
 	}
 	if !evidence.Qualified || !environmentGraphSupportsProductionServing(graph) {
 		return ProjectReleaseSet{}, false, nil
+	}
+	// Stage source artifact bindings with the release, so failed activation cannot
+	// replace a schedule's layer or make an unqualified build dispatchable.
+	originalJobs := m.jobs
+	m.jobs = maps.Clone(m.jobs)
+	jobsCommitted := false
+	defer func() {
+		if !jobsCommitted {
+			m.jobs = originalJobs
+		}
+	}()
+	for _, member := range graph.Members {
+		if member.ExecutionMode != api.ExecutionModeJob || !member.ScheduleConfigured {
+			continue
+		}
+		intent := m.appEnvironmentWorkloadIntents[environmentWorkloadIntentKey{AppID: member.AppID, EnvironmentID: graph.EnvironmentID}]
+		if intent.Source == nil || intent.Source.Kind == "image" || member.CandidateDeploymentID == "" {
+			continue
+		}
+		job, ready := bindEnvironmentGitOpsSourceJob(graph, member, intent, m.jobs[member.JobID], m.deployments[member.CandidateDeploymentID])
+		if !ready {
+			return ProjectReleaseSet{}, false, nil
+		}
+		m.jobs[job.ID] = job
 	}
 	if !m.environmentGitOpsScheduledJobsReadyLocked(memory, graph, "paused") {
 		return ProjectReleaseSet{}, false, nil
@@ -132,6 +157,7 @@ func (m *MemStore) ActivateEnvironmentGitOpsWorkloadGraph(ctx context.Context, l
 			}
 		}
 	}
+	jobsCommitted = true
 	rollback = func() {}
 	if memory.bindingReleases == nil {
 		memory.bindingReleases = map[string]string{}

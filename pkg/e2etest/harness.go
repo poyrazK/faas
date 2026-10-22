@@ -99,6 +99,9 @@ type Harness struct {
 	ScheddSock string
 	VMMDPath   string
 	VMMDSock   string
+	// VMMDMetricsURL is vmmd's /metrics endpoint, set only when the test
+	// starts the harness with VMMDMetrics.
+	VMMDMetricsURL string
 
 	// startedAt bounds which guest consoles belong to this harness: only files
 	// modified after it are dumped on failure (see DumpLogs).
@@ -161,6 +164,8 @@ type Harness struct {
 	// Per-daemon state. nil for a daemon not started (e.g. quota test skips
 	// the metal-only daemons).
 	procs []*exec.Cmd
+	// Controlled fault stops remain reaped until their explicit restart.
+	expectedStops map[*exec.Cmd]bool
 	// scheddEnv/config retain the launch recipe so metal acceptance tests can
 	// fault-inject a schedd restart without reaching into this package's
 	// private process list.
@@ -206,6 +211,14 @@ func snapshotProcs() []*exec.Cmd {
 // subprocess runs in its own goroutine draining stdout/stderr to a per-daemon
 // buffer (logged on teardown so a flaky failure has the daemon's last words).
 func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *Harness {
+	t.Helper()
+	return StartWithAPIDEnv(t, pool, which, nil, extraEnv...)
+}
+
+// StartWithAPIDEnv confines provider proxies, trust roots and OAuth keys to
+// apid. Builder and image downloads retain their own normal transport trust.
+// APID restarts reuse the same scoped launch environment.
+func StartWithAPIDEnv(t *testing.T, pool *pgxpool.Pool, which Which, apidOnlyEnv []string, extraEnv ...string) *Harness {
 	t.Helper()
 
 	tmp := harnessTempDir(t)
@@ -275,7 +288,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 		if scheddVerifies {
 			h.ensureSignPub(t)
 		}
-		startAPID(t, h, bin, dbURL, extraEnv...)
+		startAPID(t, h, bin, dbURL, append(append([]string(nil), extraEnv...), apidOnlyEnv...)...)
 	}
 
 	// Both socket paths are fixed up front: vmmd's env carries schedd's target
@@ -329,6 +342,11 @@ failure_report_dir = %q
 				}
 			}
 			cfg += fmt.Sprintf("native_process_recovery = true\nprepared_networks = 0\nnative_image_staging_root = %q\nnative_snapshot_publication_root = %q\n", images, publications)
+		}
+		if which&VMMDMetrics != 0 {
+			addr := freeTCPAddr(t)
+			cfg += fmt.Sprintf("metrics_addr = %q\n", addr)
+			h.VMMDMetricsURL = "http://" + addr + "/metrics"
 		}
 		if ca := os.Getenv("FAAS_E2E_SERVICE_HTTPS_CA"); ca != "" {
 			cfg += fmt.Sprintf("service_proxy_ca_path = %q\n", ca)
@@ -469,6 +487,10 @@ const (
 	// the per-test Unix socket. It lets CI exercise the durable drain without
 	// pretending a missing vmmd bridge is a successful customer response.
 	GatewaySynthStub
+	// VMMDMetrics gives vmmd a loopback /metrics listener (VMMDMetricsURL).
+	// It starts no daemon of its own. vmmd binds a fixed reserved port here,
+	// so only tests that read its counters opt in.
+	VMMDMetrics
 )
 
 // DeployWake is the daemon set the image deploy → snapshot → park → wake
@@ -1839,6 +1861,7 @@ func (h *Harness) killChild(name string) error {
 			}
 			h.markKilled(proc)
 		}
+		h.markDaemonStopped(proc)
 		return nil
 	}
 	return fmt.Errorf("e2etest: %s process not found", name)
@@ -1900,6 +1923,18 @@ func (h *Harness) SetAPIDEnv(key, value string) error {
 	return nil
 }
 
+// APIDPID identifies the live child for peer-credential checks in fault tests.
+func (h *Harness) APIDPID() (int, error) {
+	if h != nil {
+		for _, proc := range h.procs {
+			if proc != nil && proc.Process != nil && proc.ProcessState == nil && filepath.Base(proc.Path) == "apid" {
+				return proc.Process.Pid, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("e2etest: live apid process not found")
+}
+
 // KillAPID terminates and reaps the apid child while leaving the rest of the
 // harness alive. Reaping here is important because Harness.stop owns the
 // single Wait call for every process it starts.
@@ -1924,6 +1959,7 @@ func (h *Harness) KillAPID() error {
 			}
 			h.markKilled(proc)
 		}
+		h.markDaemonStopped(proc)
 		return nil
 	}
 	return fmt.Errorf("e2etest: apid process not found")
@@ -2237,15 +2273,7 @@ func (h *Harness) requireDaemonsAlive(t *testing.T) {
 	// scheduled. One sleep for the whole set, not one per daemon.
 	time.Sleep(150 * time.Millisecond)
 
-	// A daemon stopped on purpose by KillAPID or KillSchedd awaits its own
-	// Restart; restarting the other one must not report it as a crash.
-	live := make([]*exec.Cmd, 0, len(h.procs))
-	for _, p := range h.procs {
-		if !h.killed[p] {
-			live = append(live, p)
-		}
-	}
-	if name, out, dead := firstDeadDaemon(live); dead {
+	if name, out, dead := firstDeadDaemon(h.watchedDaemons()); dead {
 		t.Fatalf("e2etest: %s exited during startup; nothing it owns will happen, "+
 			"and the failure would otherwise surface much later as an unrelated "+
 			"timeout.\n%s", name, out)

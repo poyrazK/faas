@@ -251,3 +251,37 @@ func TestDeployPlanRejectsInvalidManifest(t *testing.T) {
 		t.Fatalf("stderr does not explain the manifest error: %q", stderr.String())
 	}
 }
+
+// Defaults are marked on the rows they set instead of being repeated in a
+// list, and each target says where it came from only when that is not the
+// plain default.
+func TestRenderSimpleAppPlanMarksDefaultsInline(t *testing.T) {
+	plan, err := simpleapp.Resolve(simpleapp.Spec{Slug: "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview := main.NewCLIPreview("local inference", "demo", "", "working tree", "", "No login or remote state checked.")
+	preview.AppSource, preview.EnvironmentSource = "source directory name", "default scope"
+	var out bytes.Buffer
+	if code := main.RenderSimpleAppPlan(&out, plan, false, preview); code != 0 {
+		t.Fatalf("render code = %d", code)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"  App: demo (from source directory name)\n",
+		"  Environment: default\n",
+		"  execution:          request (default)\n",
+		"  scaling:            scale to zero (default)\n",
+		"  resources:          plan-default (default)\n",
+		"  Limits: No login or remote state checked.\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"Connection selection", "Target selection", "defaults applied", "execution_mode=request"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("output still contains %q:\n%s", unwanted, got)
+		}
+	}
+}

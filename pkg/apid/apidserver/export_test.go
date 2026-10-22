@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
+	"github.com/onebox-faas/faas/pkg/apid/consumersignup"
 	"github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
@@ -45,6 +46,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/gitlabsource"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -226,6 +228,7 @@ const RuntimeConfigDomainDoctor = runtimeConfigDomainDoctor
 const RuntimeConfigDomainDoctorTTL = runtimeConfigDomainDoctorTTL
 const RuntimeConfigHSTS = runtimeConfigHSTS
 const RuntimeConfigS3 = runtimeConfigS3
+const RuntimeConfigPlatformReleasePause = runtimeConfigPlatformReleasePause
 const SafeReleaseEmergencyGrace = safeReleaseEmergencyGrace
 const ScanSpoolRootEnv = scanSpoolRootEnv
 const ScheddMetricsDiscoveryPath = scheddMetricsDiscoveryPath
@@ -267,6 +270,8 @@ var MfaRecipient = &mfaRecipient
 var ObsJailInternalMarkers = &obsJailInternalMarkers
 var ObsSealedBlobMarkers = &obsSealedBlobMarkers
 var OutboundCredentialRecipient = &outboundCredentialRecipient
+var OutboundDomainRecipient = &outboundDomainRecipient
+var OutboundWriteMode = &outboundWriteMode
 var PgBackupStateRoot = &pgBackupStateRoot
 var PlanCache = &planCache
 var PlanCacheRoot = &planCacheRoot
@@ -280,6 +285,8 @@ var TimeNow = &timeNow
 var TxtLookupFunc = &txtLookupFunc
 
 // Package-level funcs
+var LoadSealDomains = loadSealDomains
+var SealOutboundCredential = sealOutboundCredential
 var AccountAbuseHoldView = accountAbuseHoldView
 var ActivatedAPIDListener = activatedAPIDListener
 var AggregateWakeTimeline = aggregateWakeTimeline
@@ -911,6 +918,7 @@ func (r *server) BillingRuns() *billingruns.Service             { return &r.bill
 func (r *server) ConsumerBilling() *consumerbilling.Service     { return &r.consumerBilling }
 func (r *server) ConsumerCredits() *consumercredits.Service     { return &r.consumerCredits }
 func (r *server) ConsumerControls() *consumercontrols.Service   { return &r.consumerControls }
+func (r *server) ConsumerSignup() *consumersignup.Service       { return &r.consumerSignup }
 func (r *server) TenantPlans() *tenantplans.Service             { return &r.tenantPlans }
 func (r *server) Store() *state.Store                           { return &r.store }
 func (r *server) StripeWebhookSecret() *string                  { return &r.stripeWebhookSecret }
@@ -1222,6 +1230,9 @@ func (r *server) RenderDeveloperEnvironments(p0 http.ResponseWriter, p1 *http.Re
 func (r *server) RenderPreviewsList(p0 http.ResponseWriter, p1 *http.Request, p2 *slog.Logger, p3 state.Account) {
 	r.renderPreviewsList(p0, p1, p2, p3)
 }
+func (r *server) RenderReleaseApprovalPage(p0 http.ResponseWriter, p1 *http.Request) {
+	r.renderReleaseApprovalPage(p0, p1)
+}
 func (r *server) ReplaceProjectEnvironmentQueueBindings(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.replaceProjectEnvironmentQueueBindings(p0, p1, p2)
 }
@@ -1260,6 +1271,12 @@ func (r *server) SetPostReleaseTelemetry(t PostReleaseTelemetry) {
 // (ADR-20261019071734).
 func (r *server) SetReleaseGateEvidence(e state.ReleaseGateEvidenceStore) {
 	r.releaseGateEvidence = e
+}
+
+// StartDueScheduledReleases runs one pass of the scheduled release worker
+// (ADR-20261021152201) at now.
+func (r *server) StartDueScheduledReleases(ctx context.Context, now time.Time) {
+	r.startDueScheduledReleases(ctx, now)
 }
 func (r *server) RollbackProjectEnvironmentPromotion(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rollbackProjectEnvironmentPromotion(p0, p1, p2)
@@ -1492,6 +1509,19 @@ func WorkloadTrust(cfg Config, getenv func(string) string, pathEnv, path, issuer
 	return workloadTrust(cfg, getenv, pathEnv, path, issuerEnv, issuer)
 }
 
+func (s *server) GitLabClientForTest(client gitlabsource.Client) { s.gitlab = client }
+
+var SealGitLabTokensForTest = sealGitLabTokens
+var GitOpsBuildArchiveForTest = environmentGitOpsBuildArchive
+
+func (s *server) PrepareGitOpsSourceForTest(ctx context.Context, lease state.EnvironmentGitOpsLease, request state.EnvironmentWorkloadSourceRequest) (state.EnvironmentWorkloadSourceArtifact, error) {
+	return s.prepareEnvironmentGitArchive(ctx, lease, request)
+}
+
+func (s *server) ReadGitOpsSourceForTest(ctx context.Context, source state.EnvironmentGitSource) (state.EnvironmentGitSourcePollResult, error) {
+	return (&environmentGitSourceReader{server: s}).ReadEnvironmentGitSource(ctx, source)
+}
+
 func (r *server) MountInternalMailSuspension(mux *http.ServeMux, addr string, getenv func(string) string) error {
 	return r.mountInternalMailSuspension(mux, addr, getenv)
 }
@@ -1544,4 +1574,48 @@ func (s *server) ConfigureLiveQueriesForTest(getenv func(string) string) error {
 // get none before the store is read.
 func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error) {
 	return s.liveRoutes(ctx, nil, accountID, appID)
+}
+
+// ApplyManifestPathRoutesForTest reconciles manifest routes on app
+// (ADR-20261021223225). rollback undoes the changes it recorded.
+func (s *server) ApplyManifestPathRoutesForTest(ctx context.Context, acct state.Account, app state.App, routes []gregalemanifest.PathRoute) (rollback func() error, problem *api.Problem) {
+	staged := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
+	problem = s.applySourceRefManifestPathRoutes(ctx, acct, app, routes, &staged)
+	return func() error { return s.rollbackSourceRefManifest(ctx, staged) }, problem
+}
+
+var ManifestPathRouteKeyPrefix = manifestPathRouteKeyPrefix
+var ProjectPathRoutesForApp = projectPathRoutesForApp
+var ProjectPathRoutePlanWarning = projectPathRoutePlanWarning
+var ValidateProjectManifestPathRoutes = validateProjectManifestPathRoutes
+
+// VerifyCandidatePostgresCredentialsForTest runs the GitOps backend's
+// pre-activation credential step (ADR-20261019072523) with an injected verifier.
+func VerifyCandidatePostgresCredentialsForTest(ctx context.Context, intent state.EnvironmentGitOpsIntentStore, graphID string,
+	verify func(context.Context, state.EnvironmentQualificationPostgresCheck) error) error {
+	b := &environmentGitOpsBackend{server: &server{candidatePostgresVerifier: verify}, intent: intent}
+	return b.verifyCandidatePostgresCredentials(ctx, graphID)
+}
+
+// VerifyCandidatePostgresCredentialForTest runs the production verifier's
+// sealed-credential checks with explicit host material and probe.
+func VerifyCandidatePostgresCredentialForTest(ctx context.Context, c state.EnvironmentQualificationPostgresCheck, identities []*age.X25519Identity,
+	hmacKey []byte, probe func(context.Context, string, managedpostgres.CredentialAccess, int) error) error {
+	sink := &appSecretCredentialSink{hmacKey: func() []byte { return hmacKey }, identities: func() []*age.X25519Identity { return identities }, probe: probe}
+	return verifyCandidatePostgresCredentialWith(ctx, sink, c)
+}
+
+// VerifyCandidateObjectStorageCredentialsForTest runs the GitOps backend's
+// pre-activation bucket credential step (ADR-20261019121546) with an injected verifier.
+func VerifyCandidateObjectStorageCredentialsForTest(ctx context.Context, intent state.EnvironmentGitOpsIntentStore, graphID string,
+	verify func(context.Context, state.EnvironmentQualificationObjectStorageCheck) error) error {
+	b := &environmentGitOpsBackend{server: &server{candidateObjectStorageVerifier: verify}, intent: intent}
+	return b.verifyCandidateObjectStorageCredentials(ctx, graphID)
+}
+
+// VerifyCandidateObjectStorageCredentialForTest runs the production verifier
+// with explicit host material and an injected bucket canary.
+func VerifyCandidateObjectStorageCredentialForTest(ctx context.Context, c state.EnvironmentQualificationObjectStorageCheck, identities []*age.X25519Identity,
+	hmacKey []byte, canary func(context.Context, string, string, func(string) string) api.ObjectStorageBindingProbeReport) error {
+	return verifyCandidateObjectStorageCredentialWith(ctx, identities, hmacKey, canary, c)
 }

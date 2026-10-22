@@ -16,28 +16,33 @@ import (
 // this verb, a gate failure left the bad release serving and the only
 // documented remedy was to rerun CD.
 
-func TestRollbackActivatesTheNewestRetainedRelease(t *testing.T) {
+func TestRollbackActivatesTheRecordedPredecessor(t *testing.T) {
 	root := t.TempDir()
 	older := makeRelease(t, root, "v1")
-	// Retention keeps several; the newest verified one that is not active wins.
 	middle := makeRelease(t, root, "v2")
-	active := makeRelease(t, root, "v3")
-	touch(t, older, -2*time.Hour)
-	touch(t, middle, -time.Hour)
-
+	makeRelease(t, root, "v3")
 	current := filepath.Join(root, "current")
-	if err := os.Symlink(active, current); err != nil {
+	if err := os.Symlink(older, current); err != nil {
 		t.Fatal(err)
 	}
-	runtime := &fakeRuntime{}
-	controller := newController(t, root, current, runtime)
+	controller := newController(t, root, current, &fakeRuntime{})
+	for _, id := range []string{"v2", "v3"} {
+		if err := controller.Deploy(context.Background(), id); err != nil {
+			t.Fatalf("Deploy %s: %v", id, err)
+		}
+	}
+	// Directory times are not the record: the oldest release is the newest
+	// directory here, and must not win.
+	touch(t, older, time.Hour)
 
-	target, err := controller.Rollback(context.Background())
+	runtime := &fakeRuntime{}
+	controller = newController(t, root, current, runtime)
+	target, err := controller.Rollback(context.Background(), RollbackRequest{})
 	if err != nil {
 		t.Fatalf("Rollback: %v", err)
 	}
 	if target != middle {
-		t.Fatalf("rolled back to %q, want the newest non-active release %q", target, middle)
+		t.Fatalf("rolled back to %q, want the release v3 replaced %q", target, middle)
 	}
 
 	// The full activation sequence must run — a rollback that only moves the
@@ -56,6 +61,41 @@ func TestRollbackActivatesTheNewestRetainedRelease(t *testing.T) {
 	if resolved != middle {
 		t.Fatalf("current points at %q, want %q", resolved, middle)
 	}
+
+	// A second rollback undoes the deploy before that one.
+	if target, err := controller.Rollback(context.Background(), RollbackRequest{}); err != nil || target != older {
+		t.Fatalf("second Rollback = %q, %v; want %q", target, err, older)
+	}
+}
+
+// TestRollbackRefusesWithoutARecordedPredecessor: a host whose active
+// release was activated before the history existed, or one already rolled
+// back as far as the history goes, names no release to restore. Guessing the
+// newest directory is what restored a rolled-back release in production.
+func TestRollbackRefusesWithoutARecordedPredecessor(t *testing.T) {
+	root := t.TempDir()
+	makeRelease(t, root, "v1")
+	active := makeRelease(t, root, "v2")
+	current := filepath.Join(root, "current")
+	if err := os.Symlink(active, current); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &fakeRuntime{}
+	controller := newController(t, root, current, runtime)
+
+	_, err := controller.Rollback(context.Background(), RollbackRequest{})
+	if !errors.Is(err, ErrNoRecordedRelease) || !strings.Contains(err.Error(), `records no release before "v2"`) || !strings.Contains(err.Error(), "retained: v1") {
+		t.Fatalf("Rollback error = %v, want a refusal that names the retained releases", err)
+	}
+	if len(runtime.calls) != 0 {
+		t.Fatalf("runtime was touched on a refused rollback: %v", runtime.calls)
+	}
+
+	// The operator names the release instead.
+	target, err := controller.Rollback(context.Background(), RollbackRequest{Target: "v1"})
+	if err != nil || target != filepath.Join(root, "v1") {
+		t.Fatalf("Rollback --to v1 = %q, %v", target, err)
+	}
 }
 
 func TestRollbackRefusesWhenNothingIsActive(t *testing.T) {
@@ -63,7 +103,7 @@ func TestRollbackRefusesWhenNothingIsActive(t *testing.T) {
 	makeRelease(t, root, "v1")
 	controller := newController(t, root, filepath.Join(root, "current"), &fakeRuntime{})
 
-	if _, err := controller.Rollback(context.Background()); err == nil {
+	if _, err := controller.Rollback(context.Background(), RollbackRequest{}); err == nil {
 		t.Fatal("Rollback succeeded with no active release")
 	} else if !strings.Contains(err.Error(), "no release is active") {
 		t.Fatalf("error = %v, want it to name the missing active release", err)
@@ -80,9 +120,9 @@ func TestRollbackRefusesWhenNoOtherReleaseIsRetained(t *testing.T) {
 	runtime := &fakeRuntime{}
 	controller := newController(t, root, current, runtime)
 
-	if _, err := controller.Rollback(context.Background()); err == nil {
+	if _, err := controller.Rollback(context.Background(), RollbackRequest{}); err == nil {
 		t.Fatal("Rollback succeeded with only the active release retained")
-	} else if !strings.Contains(err.Error(), "no verified retained release") {
+	} else if !strings.Contains(err.Error(), "records no release before") {
 		t.Fatalf("error = %v, want it to name the missing rollback target", err)
 	}
 	if len(runtime.calls) != 0 {
@@ -108,7 +148,7 @@ func TestRollbackRefusesADriftedTarget(t *testing.T) {
 	runtime := &fakeRuntime{}
 	controller := newController(t, root, current, runtime)
 
-	if _, err := controller.Rollback(context.Background()); err == nil {
+	if _, err := controller.Rollback(context.Background(), RollbackRequest{Target: "v1"}); err == nil {
 		t.Fatal("Rollback activated a release whose contents no longer match its manifest")
 	}
 	for _, call := range runtime.calls {
@@ -135,7 +175,7 @@ func TestRollbackReportsAnUnhealthyTarget(t *testing.T) {
 	runtime := &fakeRuntime{healthyErr: errors.New("gateway not ready")}
 	controller := newController(t, root, current, runtime)
 
-	if _, err := controller.Rollback(context.Background()); err == nil {
+	if _, err := controller.Rollback(context.Background(), RollbackRequest{Target: "v1"}); err == nil {
 		t.Fatal("Rollback reported success while the target was unhealthy")
 	} else if !strings.Contains(err.Error(), "gateway not ready") {
 		t.Fatalf("error = %v, want the underlying health failure preserved", err)
@@ -162,15 +202,16 @@ func TestRollbackIsSerializedWithDeploy(t *testing.T) {
 	}
 	defer func() { _ = held.Close() }()
 
-	if _, err := controller.Rollback(context.Background()); err == nil {
+	if _, err := controller.Rollback(context.Background(), RollbackRequest{}); err == nil {
 		t.Fatal("Rollback proceeded while another deployment held the lock")
 	} else if !strings.Contains(err.Error(), "another deployment is active") {
 		t.Fatalf("error = %v, want the deploy-lock contention message", err)
 	}
 }
 
-// touch back-dates a release directory so newestVerifiedRollback's ordering is
-// deterministic rather than dependent on filesystem timestamp resolution.
+// touch sets a release directory's time relative to now, so an ordering by
+// directory time is deterministic rather than dependent on filesystem
+// timestamp resolution.
 func touch(t *testing.T, dir string, age time.Duration) {
 	t.Helper()
 	when := time.Now().Add(age)

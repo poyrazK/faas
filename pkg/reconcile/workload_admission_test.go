@@ -147,7 +147,10 @@ func TestReconcileRejectsInvalidWorkloadBeforeWrites(t *testing.T) {
 			Tier: reposcan.TierCompose,
 			Workloads: []reposcan.Workload{
 				{Name: "valid-api", RootDir: "valid", Source: "compose.yaml: valid-api", Tier: reposcan.TierCompose},
-				{Name: "API_service", RootDir: "invalid", Source: "compose.yaml: API_service", Tier: reposcan.TierCompose},
+				// A name that cannot be a slug is now prefixed (ADR-20261022120205);
+				// a Serverless function without an adapter still fails admission.
+				{Name: "API_service", RootDir: "invalid", Source: "compose.yaml: API_service", Tier: reposcan.TierCompose,
+					DetectedBy: reposcan.Detection{Detector: "serverless"}},
 			},
 		},
 		"sha-invalid", "main", nil,

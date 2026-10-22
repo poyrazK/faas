@@ -120,12 +120,16 @@ type OpsMetrics struct {
 	warmPoolResumeTotal *prometheus.CounterVec
 	// Frozen tier (ADR-1151): freeze attempts, thaws and parks by bounded
 	// outcome or reason, and the instances currently frozen.
-	frozenFreezeTotal   *prometheus.CounterVec
-	frozenThawTotal     *prometheus.CounterVec
-	ownerCacheTotal     *prometheus.CounterVec
-	frozenParksTotal    *prometheus.CounterVec
-	frozenCompressTotal *prometheus.CounterVec
-	frozenInstances     prometheus.Gauge
+	frozenFreezeTotal *prometheus.CounterVec
+	frozenThawTotal   *prometheus.CounterVec
+	// ADR-1740: thaws that skipped the frozen fast path, and the thaw
+	// tickets a freeze issued or refused, by bounded reason.
+	frozenFastPathSkipped *prometheus.CounterVec
+	frozenThawTickets     *prometheus.CounterVec
+	ownerCacheTotal       *prometheus.CounterVec
+	frozenParksTotal      *prometheus.CounterVec
+	frozenCompressTotal   *prometheus.CounterVec
+	frozenInstances       prometheus.Gauge
 	// warmupErrors (Tier A8 / ADR-083). Per-(app slug) probe-failure
 	// counter for the standby warm-up scraper. Bounded cardinality
 	// (operator-managed FAAS_STANDBY_WARMUP_SLUGS_PATH); see
@@ -2238,9 +2242,23 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, outcome := range FrozenThawOutcomes {
 		frozenThawTotal.WithLabelValues(outcome)
 	}
+	frozenFastPathSkipped := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_frozen_fast_path_skipped_total",
+		Help: "Wakes of an app with a frozen VM that did not take the frozen fast path (ADR-1740), by reason: deployment (the wake named one), scope, selection (the coordinated wake selected another deployment or environment), no_ticket, admission (the budget or application-standards check refused; the ordinary path reports it), capacity.",
+	}, []string{"reason"})
+	for _, reason := range FrozenFastPathSkipReasons {
+		frozenFastPathSkipped.WithLabelValues(reason)
+	}
+	frozenThawTickets := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_frozen_thaw_tickets_total",
+		Help: "Thaw tickets recorded when a VM froze (ADR-1740) by outcome: issued, error (a read failed), or why the VM must thaw through the ordinary path (organization: a team organization's app).",
+	}, []string{"outcome"})
+	for _, outcome := range FrozenThawTicketOutcomes {
+		frozenThawTickets.WithLabelValues(outcome)
+	}
 	ownerCacheTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_owner_cache_total",
-		Help: "schedd owner cache (ADR-1741) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved), guarded_publish (a boot published on its admission's generation), guarded_publish_moved (the generation moved during the boot; it published through the fence).",
+		Help: "schedd owner cache (ADR-1741) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved), guarded_publish (a boot published on its admission's generation), guarded_publish_moved (the generation moved during the boot; it published through the fence), selection (a coordinated wake selected other than the entry's deployment; it decided from its own reads), organization (a team organization's app, which the cache does not serve).",
 	}, []string{"outcome"})
 	for _, outcome := range OwnerCacheOutcomes {
 		ownerCacheTotal.WithLabelValues(outcome)
@@ -3920,7 +3938,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
 		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
-		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, frozenFreezeTotal, frozenThawTotal, ownerCacheTotal, frozenParksTotal, frozenCompressTotal, frozenInstances, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, frozenFreezeTotal, frozenThawTotal, frozenFastPathSkipped, frozenThawTickets, ownerCacheTotal, frozenParksTotal, frozenCompressTotal, frozenInstances, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
@@ -5434,6 +5452,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		warmPoolResumeTotal:                        warmPoolResumeTotal,
 		frozenFreezeTotal:                          frozenFreezeTotal,
 		frozenThawTotal:                            frozenThawTotal,
+		frozenFastPathSkipped:                      frozenFastPathSkipped,
+		frozenThawTickets:                          frozenThawTickets,
 		ownerCacheTotal:                            ownerCacheTotal,
 		frozenParksTotal:                           frozenParksTotal,
 		frozenCompressTotal:                        frozenCompressTotal,
@@ -6195,11 +6215,16 @@ func (m *OpsMetrics) WarmPoolResumeTotal(outcome string) prometheus.Counter {
 
 // Bounded label sets of the frozen-tier series (ADR-1151).
 var (
-	FrozenFreezeOutcomes = []string{"frozen", "busy", "error", "ineligible", "no_snapshot", "node_full"}
+	FrozenFreezeOutcomes = []string{"frozen", "frozen_early", "busy", "error", "ineligible", "no_snapshot", "node_full"}
 	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity", "fast", "fast_refused"}
+	// FrozenFastPathSkipReasons and FrozenThawTicketOutcomes are the closed
+	// label sets of the ADR-1740 fast path's series.
+	FrozenFastPathSkipReasons = []string{"deployment", "scope", "selection", "no_ticket", "admission", "capacity"}
+	FrozenThawTicketOutcomes  = []string{"issued", "error", "mode", "not_selected", "operator_cold_boot",
+		"app_inactive", "managed_standards", "account", "organization", "shape", "config"}
 	// OwnerCacheOutcomes are schedd_owner_cache_total's closed label set
 	// (ADR-1741).
-	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused", "guarded_publish", "guarded_publish_moved"}
+	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused", "guarded_publish", "guarded_publish_moved", "selection", "organization"}
 	FrozenParkReasons  = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
 		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park"}
 	// FrozenCompressOutcomes: compressed keeps the VM frozen; insufficient,
@@ -6221,6 +6246,23 @@ func (m *OpsMetrics) FrozenThawTotal(outcome string) prometheus.Counter {
 		return nil
 	}
 	return m.frozenThawTotal.WithLabelValues(outcome)
+}
+
+// FrozenFastPathSkipped counts wakes that skipped the frozen fast path for
+// one reason (ADR-1740).
+func (m *OpsMetrics) FrozenFastPathSkipped(reason string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.frozenFastPathSkipped.WithLabelValues(reason)
+}
+
+// FrozenThawTickets counts thaw tickets by outcome (ADR-1740).
+func (m *OpsMetrics) FrozenThawTickets(outcome string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.frozenThawTickets.WithLabelValues(outcome)
 }
 
 // OwnerCacheTotal is the owner cache counter for one outcome (ADR-1741).

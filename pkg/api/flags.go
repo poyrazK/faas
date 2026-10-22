@@ -304,3 +304,21 @@ func accountListed(list, accountID string) bool {
 func OperationChildrenEnabled(accountID string) bool {
 	return accountListed(os.Getenv("FAAS_OPERATION_CHILDREN_ACCOUNTS"), accountID)
 }
+
+// OperationConcurrencyEnabled reports whether per-customer Operation
+// concurrency (ADR-20261018210500) is available to accountID. Default off:
+// FAAS_OPERATION_CONCURRENCY_ACCOUNTS, a comma-separated list of account
+// UUIDs, names the accounts whose policies queue work and that see the
+// concurrency routes. Read at every call.
+func OperationConcurrencyEnabled(accountID string) bool {
+	return accountListed(os.Getenv("FAAS_OPERATION_CONCURRENCY_ACCOUNTS"), accountID)
+}
+
+// OperationApprovalInputsEnabled reports whether approval input forms
+// (ADR-20261019001500) are available to accountID. Default off:
+// FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS, a comma-separated list of account
+// UUIDs, names the accounts whose decisions may carry input and that see the
+// form routes. Read at every call.
+func OperationApprovalInputsEnabled(accountID string) bool {
+	return accountListed(os.Getenv("FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS"), accountID)
+}

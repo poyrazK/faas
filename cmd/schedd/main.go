@@ -985,9 +985,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if leaser := sched.NewPgLeaserFromPool(pool, ownerNodeID, nil); leaser != nil {
 		engine.WithJobLeaser(sched.AdaptJobLeaser(leaser))
 	}
+	// adr: 1578
+	// Reconstruct measured destination work before ledger seeding and serving.
+	// Failures retain durable capacity/ownership for the fenced expiry path.
+	migrationRecoveryReady := true
+	if recovered, err := engine.RecoverFunctionMigrations(ctx); err != nil {
+		migrationRecoveryReady = false
+		log.Warn("recover function migrations at startup", "recovered", recovered, "err", err)
+	}
 	// Rebuild admission accounting from any instances still live from a prior
 	// run before we start admitting new wakes.
-	seedLedgerReady := true
+	seedLedgerReady := migrationRecoveryReady
 	if err := engine.SeedLedger(ctx); err != nil {
 		seedLedgerReady = false
 		log.Warn("seed ledger", "err", err)
@@ -1009,7 +1017,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if qualificationDispatchEnabled {
 		log.Info("schedd: environment GitOps qualification dispatch enabled by explicit gate")
 	} else if qualificationDispatchRequested {
-		log.Warn("schedd: environment GitOps qualification dispatch withheld because admission ledger seeding failed")
+		log.Warn("schedd: environment GitOps qualification dispatch withheld because migration recovery or admission ledger seeding failed")
 	} else {
 		log.Info("schedd: environment GitOps qualification dispatch disabled; native acceptance is still required")
 	}
@@ -1664,7 +1672,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if cfg.FrozenTierApps {
 			engine.EnableFrozenTierApps()
 		}
-		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps,
+		if cfg.FrozenTierWorkers {
+			engine.EnableFrozenTierWorkers()
+		}
+		if cfg.FrozenTierEarlyFreezeAfterS > 0 {
+			engine.EnableEarlyFreeze(time.Duration(cfg.FrozenTierEarlyFreezeAfterS) * time.Second)
+		}
+		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps, "workers", cfg.FrozenTierWorkers,
+			"early_freeze_after_s", cfg.FrozenTierEarlyFreezeAfterS,
 			"frozen_ttl_seconds", api.FrozenTTLSeconds, "frozen_max_per_node", api.FrozenMaxPerNode)
 	}
 	if cfg.FrozenFastPath {
@@ -2337,6 +2352,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// missed until the trigger re-fires. Pair the boot-fatal
 	// (sibling to the dial above) with a 5s retry ticker so a
 	// transient Postgres blip recovers without a daemon restart.
+	// A queue message also wakes its app's idle worker pool now rather than
+	// at the next targets tick (ADR-20261018101500).
+	onTriggerNotification := func(n db.Notification) {
+		if triggerWakeNotification(n) {
+			loop.WakeupTriggers()
+		}
+		if appID, ok := queueInvocationApp(n); ok {
+			targetsTrigger.WakeWorkerPool(ctx, appID)
+		}
+	}
 	triggerNotifC, triggerSubErr := db.SubscribeWithReconnect(ctx, pool,
 		[]string{db.NotifyTriggerReady, db.NotifyTriggerChanged, db.NotifyInvocationDue}, log)
 	if triggerSubErr != nil {
@@ -2372,9 +2397,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 							if !ok {
 								break
 							}
-							if triggerWakeNotification(n) {
-								loop.WakeupTriggers()
-							}
+							onTriggerNotification(n)
 						}
 					}
 				}
@@ -2390,9 +2413,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					if !ok {
 						return
 					}
-					if triggerWakeNotification(n) {
-						loop.WakeupTriggers()
-					}
+					onTriggerNotification(n)
 				}
 			}
 		}()
@@ -2535,6 +2556,22 @@ func triggerWakeNotification(n db.Notification) bool {
 		return false
 	}
 	return payload.Source == string(state.InvocationQueue) || payload.Source == string(state.InvocationDelayedTask)
+}
+
+// queueInvocationApp returns the app of an invocation_due notification for a
+// queue message.
+func queueInvocationApp(n db.Notification) (string, bool) {
+	if n.Channel != db.NotifyInvocationDue {
+		return "", false
+	}
+	var payload struct {
+		AppID  string `json:"app_id"`
+		Source string `json:"source"`
+	}
+	if json.Unmarshal([]byte(n.Payload), &payload) != nil || payload.Source != string(state.InvocationQueue) {
+		return "", false
+	}
+	return payload.AppID, payload.AppID != ""
 }
 
 // eventRecipientClaimsEnabled defaults to independent routing. Explicit values

@@ -51,6 +51,20 @@ func runtimeAppValuesDB(ctx context.Context, db sqlc.DBTX, accountID, appID, dep
 			ManagedCredentialGeneration: value.ManagedCredentialGeneration, ManagedObjectStorageCredentialID: value.ManagedObjectStorageCredentialID,
 		})
 	}
+	if len(row.ReleaseSecrets) > 0 {
+		var secrets []releaseSecretVersion
+		if json.Unmarshal(row.ReleaseSecrets, &secrets) != nil {
+			return RuntimeAppValuesSnapshot{}, ErrConflict
+		}
+		if err := applyReleaseSecretSnapshot(&result, secrets); err != nil {
+			return RuntimeAppValuesSnapshot{}, err
+		}
+	}
+	// ADR-1139: read after the app's own secrets are final, so the keys the
+	// app sets itself leave the inherited set.
+	if result.InheritedSecrets, err = decodeInheritedProjectSecrets(result, pgUUIDString(row.ProjectID), row.ProjectSecrets); err != nil {
+		return RuntimeAppValuesSnapshot{}, err
+	}
 	var settings ProjectEnvironmentWorkloadSettings
 	var artifact projectCloneArtifact
 	result.SidecarLayers = []DeploymentSidecarLayer{}

@@ -69,6 +69,7 @@ func (s *server) liveRoutes(ctx context.Context, store *livekeys.Store, accountI
 		return nil, err
 	}
 	routes := make([]realtime.LiveRoute, 0, len(keys))
+	access := s.dataAPIAccess(ctx, appID)
 	for _, k := range keys {
 		hub, err := s.managedPostgres.LiveHub(managedpostgres.Database{ID: k.DatabaseID, BackendID: k.BackendID, BackendFingerprint: k.BackendFingerprint})
 		if err != nil || hub == "" {
@@ -78,8 +79,11 @@ func (s *server) liveRoutes(ctx context.Context, store *livekeys.Store, accountI
 			s.log.Warn("live routes truncated", "app_id", appID, "limit", api.LiveQueryRoutesPerEndpoint)
 			break
 		}
-		routes = append(routes, realtime.LiveRoute{KID: k.KID, Database: k.DatabaseID, URL: hub,
-			SealedRole: k.SealedRole, DataAPIRole: k.DataAPIRole})
+		route := realtime.LiveRoute{KID: k.KID, Database: k.DatabaseID, URL: hub, SealedRole: k.SealedRole, DataAPIRole: k.DataAPIRole}
+		if k.DataAPIRole != "" {
+			route.DataAPIAccess = access // the app's own Data API rules govern reads without a token
+		}
+		routes = append(routes, route)
 	}
 	return routes, nil
 }

@@ -1,7 +1,42 @@
 # Architecture Decision Records
 
+- [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
+- [Compose process overrides on source-built services](20261022160000-compose-process-on-built-services.md)
+- [ADR-20261022140000: Break-glass controls for a compromised secret store](20261022140000-break-glass-controls.md)
+- [ADR-20261022111812: Seal domains: a sealed value opens only where it is read](20261022111812-seal-domains-per-reader.md)
+- [Product Control self-serve signup and card on file](20261022100735-product-control-self-serve-signup.md)
+- [ADR-20261022082721: Rehearsal reads of captured work, inbox and async invoke](20261022082721-rehearsal-captured-reads-inbox-async-invoke.md)
+- [ADR-20261021223225: Path routes in gregale.yaml](20261021223225-manifest-routes.md) — manifest-owned kind=route (+ rewrite for strip_prefix) edge rules on the target app; rewrite to the root strips cleanly
+- [ADR-20261021215353: Early freeze — stop billing shortly after the last request](20261021215353-early-freeze.md) — schedd `frozen_tier_early_freeze_after_s` (amends ADR-1151)
+- [ADR-20261021204307: Code-first workflows](20261021204307-code-first-workflows.md) — one entry handler replays the run's journal; Node, Python and Go SDKs
+- [Platform flags: company targeting, full coverage, scheduled and automatic rollouts, self-serve previews](20261021080640-platform-flag-extensions.md)
+- [Product Control free trials](20261021195901-product-control-free-trials.md)
+- [ADR-20261021210000: Enrolled apps receive no account events](20261021210000-rehearsal-event-fanout-exclusion.md)
+- [Data API engine pool size and server-key limits](20261021180534-data-api-engine-pool-and-server-key-limits.md)
+- [ADR-20261021180000: Rehearsal capture of realtime publishes and signals](20261021180000-rehearsal-realtime-capture.md)
+- [ADR-20261021150000: Rehearsal capture of workflow starts and events](20261021150000-rehearsal-workflow-capture.md)
+- [ADR-20261021120000: Rehearsal capture of public-API event publishes](20261021120000-rehearsal-public-api-event-capture.md)
+- [ADR-20261021090000: Rehearsal queue capture](20261021090000-rehearsal-queue-capture.md)
+- [ADR-20261020200000: Rehearsal crons fire from the recipe, not the clock](20261020200000-rehearsal-crons-fire-from-the-recipe.md)
+- [ADR-20261020180000: Rehearsal PostgreSQL schema inventory](20261020180000-rehearsal-postgres-schema-inventory.md)
+- [ADR-20261020150000: Contained rehearsals run the candidate's release command](20261020150000-rehearsal-contained-release-commands.md)
+- [ADR-20261020090000: Rehearsal event capture](20261020090000-rehearsal-event-capture.md)
+- [ADR-20261019180000: Rehearsal side effects stay inside the run](20261019180000-rehearsal-side-effects-stay-inside-the-run.md)
+- [ADR-20261019120000: Rehearsal runtime hooks stay off ordinary hot paths](20261019120000-rehearsal-runtime-hot-path-isolation.md)
+- [Compose healthchecks on source-built services](20261019195000-compose-healthcheck-on-built-services.md)
+- [Product Control plan fees, included starts and overage](20261021154511-product-control-plan-fees-and-overage.md)
+- [Data API file storage](20261021101510-data-api-file-storage.md)
+- [Keep the edge lane off the store type: edge store](20261021092138-edge-store-blast-radius.md)
+- [Product Control billing records survive app purge](20261020090607-product-control-billing-records-survive-app-purge.md)
+- [Product Control customers keep their billing details in the owner's Paddle](20261020120000-product-control-customer-billing-details.md)
+- [Safety rails for automatic per-unit deploys](20261020214632-automatic-unit-deploy-safety-rails.md)
+- [Push-bound workers may listen for their deliveries](20261021153953-push-bound-worker-delivery-listener.md)
 - [What a fix restarts: daemon blast radius](20261020160744-daemon-blast-radius.md)
+- [Object storage in budgets](20261020160000-object-storage-in-budgets.md)
+- [Budget alerts on notification channels, and projected overruns](20261019193500-budget-alert-channels.md)
 - [Finished invocations without a horizon get the plan default retention](20261019104819-invocation-default-retention.md)
+- [Resolve Compose extends and include](20261019190527-compose-extends-and-include.md)
+
 - [Compose build arguments and target stage for Dockerfile builds](20261019142544-compose-build-args-and-target.md)
 
 - [Data API usage reporting and owner monthly caps](20261019102108-data-api-usage-and-owner-caps.md)
@@ -73,6 +108,9 @@
 - [Durable Node acknowledgment intents](20261017105545-node-durable-acknowledgment-intents.md)
 
 - [Node deferred event acknowledgment worker](20261017-node-event-acknowledgment-worker.md)
+- [ADR-20261019120046: Preserve configuration when deployment acceptance is uncertain](20261019120046-deploy-submission-outcomes.md) — explicit submission outcomes and commit uncertainty across processes
+
+- [ADR-20261019120045: Deploy upload recovery across CLI processes](20261019120045-deploy-upload-recovery.md) — content and intent checkpoints, interruption recovery, and expired-session replacement keys
 
 ADR-001 through ADR-010 are **accepted and locked for v1**; they live inline in
 [`../faas_implementation_spec.md`](../faas_implementation_spec.md) §3, not as
@@ -137,6 +175,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 20261019103000 | [Frozen worker pools](20261019103000-frozen-worker-pools.md) | accepted; behind `frozen_tier_workers` | A pool scaling in freezes a surplus worker that holds no lease and thaws it before booting new ones; a frozen worker stops instead of parking and gives up its account slot when another pool needs it |
+| 20261018101500 | [Worker pools scale out off the scheduler loop, with brief characterization for proven workers](20261018101500-worker-pool-scale-out-off-loop.md) | accepted | The targets trigger reconciles worker apps in background runs, one per account at a time; a declared worker whose deployment passed the full window on the node boots with `faas.worker=proven` and is characterized in 1 s |
 | 1728 | [Owner-authorized deployment response checks](1728-owner-authorized-deployment-response-checks.md) | accepted; native deployment validation pending | Exact-deployment GET checks through the trusted gateway, with bounded HTTP evidence and no forwarded account credentials |
 | 2026101709 | [Receipt-bound repairable operation transactions](2026101709-repairable-operation-transactions.md) | accepted for internal qualification | Go, Node and Python capture, business writes and receipt bindings commit together; replay survives payload compaction |
 | 2026101708 | [Application writer capture readiness](2026101708-repair-capture-readiness.md) | accepted for internal qualification | Read-only checks on the actual application writer connection |
@@ -200,6 +240,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1725 | [Product Control customer workspace activity](1725-product-control-workspace-activity.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
 | 1726 | [Product Control customer run details](1726-product-control-customer-run-details.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
 | 1727 | [Product Control customer work history](1727-product-control-customer-work-history.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 20261018212918 | [Product Control payment collection through owner billing connections](20261018212918-product-control-payment-collection.md) | accepted for internal implementation; not implemented | Product Control statements export to the owner's own Stripe/Paddle/Lago, with payment status, opt-in overdue holds and month-close billing runs; Paddle embedded billing deferred |
 | 1583 | [Default-off same-repository PR execution automation](1583-internal-ci-pull-request-automation.md) | implemented behind default-off CI gates; native qualification pending | Explicit PR target filters, fresh source verification, per-PR slots and existing cleanup fences |
 | 1582 | [Bounded internal CI JUnit diagnostics](1582-internal-ci-junit-reports.md) | implemented behind default-off CI gates; native qualification pending | Verified attempt-bound reports, bounded failure detail and aggregate-only GitHub Checks |
 | 1581 | [Internal CI branch serialization and verified-head supersession](1581-internal-ci-branch-concurrency.md) | implemented behind default-off CI gates; native qualification pending | One automatic branch slot, verified-head opt-in supersession, durable cancellation and cleanup fencing |
@@ -228,6 +269,14 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1286 | [Dashboard workflow diagnosis and recovery](1286-dashboard-workflow-diagnosis-and-recovery.md) | accepted | Scoped diagnostics and attempt inspection, recovery previews, confirmed idempotent continuation and cancellation |
 | 1285 | [Guided automation dashboard](1285-guided-automation-dashboard.md) | accepted | App-owner starter, validation, simulation, checked publishing, and run inspection flow |
 | 1540 | [Function cancellation completion and trusted lifecycle context](1540-function-cancellation-cleanup-and-lifecycle-context.md) | accepted | Shared slots remain occupied through cleanup; Node abort signals, Python cancellation events and socket-derived function lifecycle context support bounded database work |
+| 20261018005023 | [Negotiated Node post-response execution completion](20261018005023-function-background-completion-protocol.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030610 | [Acknowledged function VM execution lifetime](20261018030610-function-vm-execution-lifetime.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030611 | [Automatic PostgreSQL ownership in Node functions](20261018030611-function-postgres-resource-lifecycle.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030612 | [Recover Node resources after warm capture](20261018030612-function-warm-snapshot-resource-recovery.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030613 | [Recover a function migration source after rollback](20261018030613-function-migration-source-rollback.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030614 | [Admit function migration capture and source recovery](20261018030614-function-migration-admission.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030615 | [Restore and publish a measured function migration destination](20261018030615-function-migration-destination.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030616 | [Reconstruct measured function handoffs at scheduler startup](20261018030616-function-migration-scheduler-restart.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
 | 202610171901 | [Organization application authorization](202610171901-organization-application-authorization.md) | accepted; local validation | Current membership, operation roles, credential scopes and caller attribution |
 | 202610171902 | [Organization offboarding fences](202610171902-organization-offboarding-fences.md) | accepted; local validation | Transaction ordering, credential revocation and stream cancellation |
 | 202610171903 | [Organization application quota ownership](202610171903-organization-application-quota-ownership.md) | accepted; local validation | Shared application admission across creator namespaces |
@@ -340,7 +389,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 20261019100332 | [Prorated monthly fees across card changes and revocation](20261019100332-prorated-fees-across-card-changes.md) | accepted | Prorating cards charge fees and minimums for the share of the month they are in force, and until a revocation unless the month was already finalized |
 | 20261019100333 | [Paddle invoices sent by Paddle](20261019100333-paddle-send-collection.md) | accepted | Paddle connections can collect with `send`: exports bill the draft transaction with the customer's newest address so Paddle emails it |
 | 20261019180000 | [One export attempt at a time, retargetable refusals, floored minimums and fresh overdue holds](20261019180000-monetization-review-fixes.md) | accepted | Exports claim their statement so concurrent attempts get a 409; a provider refusal before creation can be retried with another customer; finalized minimums fall only by new usage; holds need a payment status read within 24 h |
+| 20261020170649 | [API monetization released per account](20261020170649-api-monetization-per-account-release.md) | accepted | The `api_monetization` platform flag releases monetization to chosen accounts beside the all-or-nothing switch; routes 404 after authentication for others, workers and gateways decide per account; `make monetization-sandbox` qualifies the providers |
 | 20261020211500 | [Handoff reservations, usage-only credit in spend caps, reprice on change, credit on self-service statements](20261020211500-monetization-hardening.md) | accepted | Exports reserve their handoff before calling the provider; credit that paid fees no longer lifts a spend cap; spend checks reprice only on new usage or every 15 minutes; consumer statements show credit and amount due |
+| 20261021143000 | [Customers sign up for an API themselves, with Stripe Checkout](20261021143000-consumer-self-signup.md) | accepted | A hosted page and public API let an app's customers pick a plan, save a card in the owner's Stripe and get a consumer key; claim tokens, per-address and daily limits |
+| 20261021183000 | [Customers manage their own account, and owners hear about it by webhook](20261021183000-customer-self-service-and-webhooks.md) | accepted | A billing-scope key lists plans, switches between offered plans, opens Stripe's customer portal or closes the account, as the owner allows; consumer.signed_up, consumer.plan_changed and consumer.closed webhooks |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 1446 | [Safe releases by default](1446-safe-releases-by-default.md) | accepted; n2 drills passed | Default balanced canary and 5xx rollback for production releases, bounded low-traffic hold, crash-loop gate, unfenced plain rollback, verified rollback outcomes |
@@ -790,6 +842,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1320 | [Object-storage plan allowances, plan ceilings, and the overage cap](1320-object-storage-plan-allowances-ceilings-and-overage-cap.md) | accepted; every plan at zero until pricing | `Limits.ObjectStorage` holds per-plan ceilings and allowances; allowances are removed before month-close pricing and follow plan history; ceilings tighten the operator policy at URL admission and gateway checks; the month-close charge is held under the overage cap after the month's compute and live egress |
 | 1239 | [Docker-compatible image process identity](1239-docker-compatible-image-process-identity.md) | accepted | Root-owned layer entries are published as root when imaged holds CAP_CHOWN; customer images without USER run as root; a numeric UID absent from passwd runs with GID 0 (amends ADR-411 and ADR-136 §5) |
 | 1430 | [USD pricing and plan entitlements from the October 2026 COGS report](1430-plan-entitlements-from-october-2026-cogs-report.md) | accepted | Billing in USD only at $0/$10/$30/$99 with $0.01/GB-h overage; RAM per app 256/512/1024/2048 MB and 20/200/1,000/3,000 included GB-h; 1/10/50/200 GiB included object storage with a Free hard stop (write/read split deferred); managed PostgreSQL 1/1/3/10 databases, pooled 0.5/1/5/20 GiB and 5/25/75/200 CU-h ceilings, Free gains one development database |
+| 20261019193600 | [Ledger dual-run reconciliation for compute delivery](20261019193600-ledger-dual-run-reconciliation.md) | accepted | meterd compares the ledger's net compute quantity with the pusher's provider receipts per paid account for the current and previous UTC month (match/pending/capped/incomplete/drift/failed); delivery stays on the pusher until a later ADR has a closed month with no drift |
 | 1180 | [Long async, queue and cron invocations](1180-long-async-invocations.md) | accepted | Background invocations run for the app's request timeout (≥30 s); leases renewed while the run lasts; long runs leave the drain tick and cron loop |
 | 1288 | [Compose-declared build context](1288-compose-declared-build-context.md) | accepted | Project apply stages a Compose-declared Dockerfile service's directory as its archive root (Docker Compose's context); every other workload keeps the repository archive (ADR-144). Keyed on the workload's detector, not the project scan source (H10-25) |
 | 1343 | [App edge on compute nodes behind Cloudflare Tunnel](1343-app-edge-on-compute-nodes.md) | proposed | Every compute node runs a `cloudflared` connector and a gatewayd-public that routes to its own gatewayd-internal socket; `*.<apps domain>` moves to the tunnel, platform hosts and custom domains stay on the control plane; credential-bound app paths are forwarded to the control plane; CPU/RAM hold-back, per-node monitoring and connector withdrawal before drain; off by default, on per manifest |
@@ -1361,6 +1414,33 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-869: Reconnectable durable entity sessions](869-reconnectable-durable-entity-sessions.md)
 - [ADR-870: Durable session recovery and lifecycle](870-durable-session-recovery-and-lifecycle.md)
 
+- [ADR-977: Decompose cmd/apid into pkg/apid domain packages](977-apid-package-decomposition.md)
+
+- [ADR-20261019120044: Deploy acceptance and secret ordering](20261019120044-deploy-acceptance-and-secret-ordering.md)
+
+- [ADR-20261019120048: Saved deploy sessions](20261019120048-saved-deploy-sessions.md)
+
+- [ADR-20261019120047: Atomic deploy settings recovery](20261019120047-atomic-deploy-settings-recovery.md)
+
+- [ADR-20261019120049: Durable deployment submission receipts](20261019120049-deployment-submission-receipts.md)
+
+- [ADR-20261019120050: Durable pre-submission profiling and tracing recovery](20261019120050-durable-deploy-policy-staging.md)
+
+- [ADR-20261019120051: Durable manifest cron staging and recovery](20261019120051-durable-deploy-cron-staging.md)
+
+- [ADR-20261019120010: Progressive project canary policy](20261019120010-project-progressive-canary-policy.md)
+
+- [ADR-20261019120011: Durable project worker release pins](20261019120011-durable-project-worker-release-pins.md)
+
+- [ADR-20261019120012: Retained project worker pools for pinned jobs](20261019120012-retained-project-worker-pools.md)
+
+- [ADR-20261019120013: Staged project canary publication and transactional promotion](20261019120013-staged-project-canary-publication.md)
+
+- [ADR-20261019120022: Snapshot-aware HTTP environment promotion](20261019120022-snapshot-aware-environment-promotion.md)
+
+- [ADR-20261019120023: Health-gated HTTP environment promotion](20261019120023-health-gated-environment-promotion.md)
+
+- [ADR-20261019120024: Destination-aware HTTP service graph promotion](20261019120024-destination-aware-service-graph-promotion.md)
 
 - [ADR-1237: Local management MCP server](1237-local-management-mcp.md)
 - [ADR-1238: Reviewed management MCP releases and delegated OAuth](1238-management-mcp-releases-and-oauth.md)
@@ -1565,6 +1645,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1132: Wake-ahead evidence survives gateway restarts](1132-wake-ahead-evidence-survives-restarts.md)
 
 - [ADR-1331: Retained GitOps workload retirement and reviewed recovery](1331-gitops-workload-retirement.md)
+- [ADR-20261017190801: Provider-bound GitLab review and workload provenance](20261017190801-gitlab-reviewed-gitops.md)
 
 - [ADR-1520: Rate-limit token leasing](1520-rate-limit-token-leasing.md)
 - [ADR-1522: Recoverable operator restart execution](1522-recoverable-operator-restart-execution.md)
@@ -1667,6 +1748,30 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
 - [ADR-1591: Managed Postgres data pipelines](1591-managed-postgres-data-pipelines.md)
 
+- [ADR-20261017190802: Reviewed source-backed scheduled Jobs](20261017190802-gitops-source-scheduled-jobs.md)
+
+- [ADR-20261017190803: Read-only GitOps promotion proposals](20261017190803-gitops-promotion-proposals.md)
+
+- [ADR-20261017190804: Reuse signed build artifacts across GitOps environments](20261017190804-gitops-built-artifact-reuse.md)
+
+- [ADR-20261017190805: Reviewed GitOps rollback proposals](20261017190805-gitops-reviewed-rollback-proposals.md)
+
+- [ADR-20261017190806: GitOps recovery catalog](20261017190806-gitops-recovery-catalog.md)
+
+- [ADR-20261017190807: Bounded GitOps recovery artifact retention](20261017190807-gitops-bounded-recovery-retention.md)
+
+- [ADR-20261017190808: Signed artifact promotion and rollback for scheduled Jobs](20261017190808-gitops-scheduled-job-artifact-promotion-and-rollback.md)
+
+- [ADR-20261017190809: Reuse signed builds for unchanged isolated GitOps contexts](20261017190809-gitops-unchanged-build-context-reuse.md)
+
+- [ADR-20261017190810: Reviewed GitOps promotion pull and merge requests](20261017190810-gitops-promotion-review-requests.md)
+
+- [ADR-20261017190811: Reviewed GitOps recovery pull and merge requests](20261017190811-gitops-rollback-review-requests.md)
+
+- [ADR-20261017190812: Wait for a GitOps commit's recorded serving evidence](20261017190812-gitops-wait-for-serving-commit.md)
+
+- [ADR-20261017190813: Durable GitOps rollout outcome notifications](20261017190813-gitops-rollout-outcome-notifications.md)
+
 - [ADR-20261017191501: Browser and Task migration parity for Go/Python MCP starters](20261017191501-mcp-go-python-starter-parity.md)
 - [ADR-20261017191502: Bounded starter protocol observations](20261017191502-mcp-starter-protocol-telemetry.md)
 - [ADR-20261017191503: Read-only MCP operations dashboard](20261017191503-read-only-mcp-operations-dashboard.md)
@@ -1724,5 +1829,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1136: Project environment configuration reaches every service as environment variables](1136-project-environment-config-as-environment-variables.md)
 - [ADR-1137: Declared dependencies seed opt-in wake-ahead](1137-declared-dependencies-seed-wake-ahead.md) — an opted-in app wakes its declared dependencies until 20 wakes of evidence decide (amends ADR-977)
 - [ADR-1138: Service calls join the caller's trace when it serves one request](1138-service-calls-join-the-callers-trace.md) — a call without traceparent from an instance serving exactly one request continues that request's trace, marked trace_inferred
+- [ADR-1139: Project environment secrets reach every service of the environment](1139-project-environment-secrets.md) — sealed secrets set once per project environment, below each app's own values, covered by rekey and key retirement (amends ADR-1136)
 
 - [ADR-20261018181846: Route priority in the cold-wake queue](20261018181846-route-priority-in-the-wake-queue.md)
+
+- [ADR-20261020161310: Route insight fixes, dashboard panel and alerts](20261020161310-route-insight-fixes-and-alerts.md)

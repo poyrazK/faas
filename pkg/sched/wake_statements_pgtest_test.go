@@ -34,6 +34,11 @@ type statementTracer struct {
 	// pids is the backend that ran each statement, which tells one
 	// transaction's statements from concurrent ones.
 	pids []uint32
+	// latency, when set, delays each armed statement as a network round
+	// trip to the control plane would. Local statements take well under a
+	// millisecond, so without it concurrent ones may not overlap in time
+	// and the count of sequential round trips depends on scheduling.
+	latency time.Duration
 }
 
 type statementIndexKey struct{}
@@ -43,11 +48,13 @@ func (s *statementTracer) TraceQueryStart(ctx context.Context, conn *pgx.Conn, d
 		return ctx
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.names = append(s.names, statementName(data.SQL))
 	s.intervals = append(s.intervals, [2]time.Time{time.Now()})
 	s.pids = append(s.pids, conn.PgConn().PID())
-	return context.WithValue(ctx, statementIndexKey{}, len(s.intervals)-1)
+	index, latency := len(s.intervals)-1, s.latency
+	s.mu.Unlock()
+	time.Sleep(latency)
+	return context.WithValue(ctx, statementIndexKey{}, index)
 }
 
 func (s *statementTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryEndData) {
@@ -173,8 +180,11 @@ func tracedPgStore(t *testing.T) (*state.PgStore, *pgxpool.Pool, *statementTrace
 	tracer := &statementTracer{}
 	cfg.ConnConfig.Tracer = tracer
 	// Production pools keep idle connections; without them concurrent reads
-	// would wait for new connections and look sequential.
+	// would wait for new connections and look sequential. pgxpool's default
+	// size follows the CPU count (4 on a 2-CPU CI runner, one of them held
+	// for LISTEN below), so the pool takes schedd's production budget.
 	cfg.MinConns = 8
+	cfg.MaxConns = db.DaemonMaxConnections["schedd"]
 	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("traced pool: %v", err)
@@ -335,65 +345,103 @@ func TestPostgresThawStatements(t *testing.T) {
 	}
 }
 
-// ADR-1740: a ticketed thaw sends the runtime-values reads beside the vmmd
-// call and then one guarded statement; none of the ordinary path's reads.
+// ADR-1740: a ticketed thaw is one guarded statement; none of the ordinary
+// path's reads. The gateway's coordinated wake (EnsureWake) first selects the
+// production deployment from fresh reads, and then thaws the same way
+// (ADR-1740 amendment 2026-10-21).
 func TestPostgresTicketedThawStatements(t *testing.T) {
-	pf := seedPostgresFrozen(t)
-	ctx := t.Context()
-	pf.e.EnableFrozenFastPath()
-	pf.e.issueThawTicket(ctx, pf.ins, frozenChargeMB(pf.ins.RAMMB, 150))
-	if _, ok := pf.e.thawTickets.byApp[pf.app.ID][pf.ins.ID]; !ok {
-		t.Fatal("no thaw ticket for an eligible frozen VM")
-	}
-	listener, err := pf.pool.Acquire(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Release()
-	if _, err := listener.Exec(ctx, "listen "+db.NotifyInstanceChanged); err != nil {
-		t.Fatal(err)
-	}
+	// The ordinary thaw path's statements, and the gate the ticket stands in
+	// for; a ticketed thaw runs none of them.
+	ordinary := []string{"PublishOwnedInstanceRuntime", "SaveRuntimeInstanceConfigProof", "ReadRuntimeAppValuesForDeployment",
+		"InstanceSnapshotRecoveryFresh", "ReadRuntimeInstanceConfigProof", "EnvironmentWorkloadAdmissionRetired"}
+	for _, tc := range []struct {
+		name string
+		wake func(ctx context.Context, e *Engine, appID string) (string, error)
+		// maxRoundTrips bounds the sequential round trips before the answer.
+		maxRoundTrips int
+	}{
+		// The scheduler's Wake RPC checks the budget and the standards rule
+		// before the resume, at once, then thaws.
+		{name: "wake", maxRoundTrips: 2, wake: func(ctx context.Context, e *Engine, appID string) (string, error) {
+			result, err := e.Wake(ctx, appID, "", "", "")
+			return result.InstanceID, err
+		}},
+		// EnsureWake takes its selection from the ticket (ADR-1740 amendment
+		// 2026-10-22): the app read, the budget check and the standards
+		// rule at once, then the thaw. It read ten rows one after another
+		// before.
+		{name: "coordinated wake", maxRoundTrips: 2, wake: func(ctx context.Context, e *Engine, appID string) (string, error) {
+			out, err := e.EnsureWake(ctx, appID, TriggerGateway)
+			if err != nil || out.Instance == nil {
+				return "", err
+			}
+			return out.Instance.InstanceID, nil
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pf := seedPostgresFrozen(t)
+			pf.tracer.latency = 5 * time.Millisecond
+			ctx := t.Context()
+			pf.e.EnableFrozenFastPath()
+			pf.e.issueThawTicket(ctx, pf.ins, frozenChargeMB(pf.ins.RAMMB, 150))
+			if _, ok := pf.e.thawTickets.byApp[pf.app.ID][pf.ins.ID]; !ok {
+				t.Fatal("no thaw ticket for an eligible frozen VM")
+			}
+			listener, err := pf.pool.Acquire(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Release()
+			if _, err := listener.Exec(ctx, "listen "+db.NotifyInstanceChanged); err != nil {
+				t.Fatal(err)
+			}
 
-	pf.tracer.armed.Store(true)
-	result, err := pf.e.Wake(ctx, pf.app.ID, "", "", "")
-	answered := time.Now()
-	pf.tracer.armed.Store(false)
-	if err != nil || result.InstanceID != pf.ins.ID || pf.vmm.thaws != 1 {
-		t.Fatalf("Wake: %+v, %v, thaws %d", result, err, pf.vmm.thaws)
-	}
-	var names []string
-	for i, name := range pf.tracer.recorded() {
-		pf.tracer.mu.Lock()
-		ended := pf.tracer.intervals[i][1]
-		pf.tracer.mu.Unlock()
-		if !ended.IsZero() && !ended.After(answered) {
-			names = append(names, name)
-		}
-	}
-	t.Logf("ticketed thaw: %v, %d sequential round trips", names, pf.tracer.sequentialRoundTrips(answered))
-	// The ticket carries the workload-retirement gate's verdict (ADR-1741):
-	// the thaw is one statement guarded by the app's runtime generation.
-	want := map[string]int{"ThawFrozenInstance": 1}
-	got := map[string]int{}
-	for _, name := range names {
-		got[name]++
-	}
-	if len(got) != len(want) {
-		t.Fatalf("statements before the answer = %v, want exactly %v", got, want)
-	}
-	for name, n := range want {
-		if got[name] != n {
-			t.Fatalf("statements before the answer = %v, want exactly %v", got, want)
-		}
-	}
-	wait, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	n, err := listener.Conn().WaitForNotification(wait)
-	if err != nil || n.Payload != instanceChangedPayload(pf.ins.ID, pf.app.ID, state.StateRunning, pf.ins.WakeID) {
-		t.Fatalf("instance_changed = %+v, %v", n, err)
-	}
-	if events := runningTransitions(t, pf.store, pf.ins.ID, "frozen_thaw"); events != 1 {
-		t.Fatalf("frozen_thaw events = %d, want 1", events)
+			pf.tracer.armed.Store(true)
+			instanceID, err := tc.wake(ctx, pf.e, pf.app.ID)
+			answered := time.Now()
+			pf.tracer.armed.Store(false)
+			if err != nil || instanceID != pf.ins.ID || pf.vmm.thaws != 1 {
+				t.Fatalf("wake: %s, %v, thaws %d", instanceID, err, pf.vmm.thaws)
+			}
+			var names []string
+			for i, name := range pf.tracer.recorded() {
+				pf.tracer.mu.Lock()
+				ended := pf.tracer.intervals[i][1]
+				pf.tracer.mu.Unlock()
+				if !ended.IsZero() && !ended.After(answered) {
+					names = append(names, name)
+				}
+			}
+			roundTrips := pf.tracer.sequentialRoundTrips(answered)
+			t.Logf("%s: %d statements %v, %d sequential round trips", tc.name, len(names), names, roundTrips)
+			if roundTrips > tc.maxRoundTrips {
+				t.Fatalf("%d sequential round trips before the answer, want at most %d", roundTrips, tc.maxRoundTrips)
+			}
+			got := map[string]int{}
+			for _, name := range names {
+				got[name]++
+			}
+			// The ticket carries the workload-retirement gate's verdict
+			// (ADR-1741): the thaw is one statement guarded by the app's
+			// runtime generation.
+			if got["ThawFrozenInstance"] != 1 {
+				t.Fatalf("statements before the answer = %v, want ThawFrozenInstance once", got)
+			}
+			for _, name := range ordinary {
+				if got[name] != 0 {
+					t.Fatalf("statements before the answer = %v; %s is the ordinary path's", got, name)
+				}
+			}
+			wait, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			n, err := listener.Conn().WaitForNotification(wait)
+			if err != nil || n.Payload != instanceChangedPayload(pf.ins.ID, pf.app.ID, state.StateRunning, pf.ins.WakeID) {
+				t.Fatalf("instance_changed = %+v, %v", n, err)
+			}
+			if events := runningTransitions(t, pf.store, pf.ins.ID, "frozen_thaw"); events != 1 {
+				t.Fatalf("frozen_thaw events = %d, want 1", events)
+			}
+		})
 	}
 }
 

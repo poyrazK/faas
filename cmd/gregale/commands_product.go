@@ -23,21 +23,25 @@ import (
 type productCommand struct {
 	verb, app, file, definition, tenant, plan, revision, period, cursor, feature, input, key string
 	operation, scope, authApp, authOrg, quote                                                string
-	reviewHash, reason, billingID, document, invoice                                         string
+	reviewHash, reason, billingID, document, invoice, billingProvider, billingCustomer       string
 	output, policyFile, helpID                                                               string
 	emailStatus, deliveryID                                                                  string
-	failedAttempt                                                                            int
+	failedAttempt, overdueDays                                                               int
 	externalRef, customerName, workspace, authTokenFile, onboardingID                        string
 	confirm                                                                                  bool
 	amountMillicents                                                                         int64
 	after                                                                                    int
 	suspended, self                                                                          bool
+	// trialEndsAt and endTrial move or end a customer's trial
+	// (ADR-20261021195901).
+	trialEndsAt string
+	endTrial    bool
 }
 
 func parseProductCommand(args []string) (productCommand, error) {
 	var c productCommand
 	if len(args) == 0 {
-		return c, errors.New("use gregale product <init|validate|apply|inspect|features|plans|customers|doctor|pilot|email|quote|start|explain|usage|statements|access|plan-policy|team-policy>")
+		return c, errors.New("use gregale product <init|validate|apply|inspect|features|plans|customers|doctor|pilot|email|quote|start|explain|usage|statements|billing|access|plan-policy|team-policy>")
 	}
 	c.verb = args[0]
 	args = args[1:]
@@ -47,6 +51,13 @@ func parseProductCommand(args []string) (productCommand, error) {
 		}
 		c.verb += " " + args[0]
 		args = args[1:]
+	}
+	if c.verb == "billing" {
+		if len(args) < 2 || args[0] != "overdue-policy" {
+			return c, errors.New("use gregale product billing overdue-policy <inspect|set|clear>")
+		}
+		c.verb += " overdue-policy " + args[1]
+		args = args[2:]
 	}
 	if c.verb == "explain" {
 		if len(args) == 0 {
@@ -117,8 +128,15 @@ func parseProductCommand(args []string) (productCommand, error) {
 		fs.StringVar(&c.authOrg, "auth-org", "", "Application Auth organization UUID (empty unlinks login)")
 		fs.StringVar(&c.revision, "revision", "", "catalog revision (default current)")
 		fs.BoolVar(&c.suspended, "suspended", false, "pause new feature starts")
-	case "statements list", "statements review", "statements receipts", "statements finalize", "statements waive", "statements credit", "statements handoff", "statements handoff-status":
+	case "customers trial":
+		fs.StringVar(&c.tenant, "tenant", "", "customer platform tenant UUID")
+		fs.StringVar(&c.trialEndsAt, "ends-at", "", "new end of the running trial (RFC 3339, from the next minute)")
+		fs.BoolVar(&c.endTrial, "end", false, "end the running trial at the next UTC minute")
+	case "statements list", "statements review", "statements receipts", "statements finalize", "statements waive", "statements credit", "statements handoff", "statements handoff-status", "statements export", "statements export-status":
 		productBillingFlags(fs, &c)
+	case "billing overdue-policy inspect", "billing overdue-policy clear":
+	case "billing overdue-policy set":
+		fs.IntVar(&c.overdueDays, "block-overdue-after-days", -1, "days after an invoice's due date before a customer's new starts are refused (0 to 365)")
 	case "usage":
 		fs.StringVar(&c.tenant, "tenant", "", "customer platform tenant UUID")
 		fs.StringVar(&c.period, "period", productcontrol.Period(time.Now()), "UTC usage month YYYY-MM")
@@ -194,6 +212,14 @@ func parseProductCommand(args []string) (productCommand, error) {
 	if c.verb == "customers assign" && (c.tenant == "" || c.plan == "") {
 		return c, errors.New("--tenant and --plan are required")
 	}
+	if c.verb == "customers trial" {
+		if id, err := uuid.Parse(c.tenant); err != nil || id == uuid.Nil || id.String() != c.tenant {
+			return c, errors.New("--tenant requires a canonical customer UUID")
+		}
+		if _, err := time.Parse(time.RFC3339, c.trialEndsAt); (err != nil) == !c.endTrial {
+			return c, errors.New("use exactly one of --ends-at RFC3339 or --end")
+		}
+	}
 	if c.verb == "customers onboard" || c.verb == "customers workspaces" || c.verb == "customers onboarding" {
 		if err := validateProductOnboardingCommand(c); err != nil {
 			return c, err
@@ -203,6 +229,9 @@ func parseProductCommand(args []string) (productCommand, error) {
 		if err := validateProductBillingCommand(c); err != nil {
 			return c, err
 		}
+	}
+	if c.verb == "billing overdue-policy set" && (c.overdueDays < 0 || c.overdueDays > api.ProductOverdueBlockMaxDays) {
+		return c, fmt.Errorf("--block-overdue-after-days must be 0 to %d (0 holds as soon as an invoice is past due)", api.ProductOverdueBlockMaxDays)
 	}
 	if c.verb == "usage" {
 		if err := productcontrol.ValidatePeriod(c.period); err != nil {
@@ -233,7 +262,7 @@ func parseProductCommand(args []string) (productCommand, error) {
 
 func cmdProduct(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale product <init|validate|apply|inspect|features|plans|customers|doctor|pilot|email|quote|start|explain|usage|statements|access|plan-policy|team-policy>", "product-control")
+		PrintUsage(os.Stderr, "usage: gregale product <init|validate|apply|inspect|features|plans|customers|doctor|pilot|email|quote|start|explain|usage|statements|billing|access|plan-policy|team-policy>", "product-control")
 		return 1
 	}
 	c, err := parseProductCommand(args)
@@ -381,10 +410,18 @@ func runProductCommand(ctx context.Context, client *Client, c productCommand) (a
 		return page, err
 	case "customers assign":
 		return client.SetProductCustomer(ctx, c.app, api.ProductCustomer{TenantID: c.tenant, Plan: c.plan, Revision: c.revision, Suspended: c.suspended, AuthOrganizationID: c.authOrg})
+	case "customers trial":
+		if c.endTrial {
+			return client.EndProductCustomerTrial(ctx, c.app, c.tenant)
+		}
+		ends, _ := time.Parse(time.RFC3339, c.trialEndsAt)
+		return client.SetProductCustomerTrialEnd(ctx, c.app, c.tenant, ends)
 	case "customers onboard", "customers workspaces", "customers onboarding":
 		return runProductOnboardingCommand(ctx, client, c)
-	case "statements list", "statements review", "statements receipts", "statements finalize", "statements waive", "statements credit", "statements handoff", "statements handoff-status":
+	case "statements list", "statements review", "statements receipts", "statements finalize", "statements waive", "statements credit", "statements handoff", "statements handoff-status", "statements export", "statements export-status":
 		return runProductBillingCommand(ctx, client, c)
+	case "billing overdue-policy inspect", "billing overdue-policy set", "billing overdue-policy clear":
+		return runProductOverdueCommand(ctx, client, c)
 	case "usage":
 		var usage api.ProductUsage
 		var err error
@@ -410,16 +447,22 @@ func runProductCommand(ctx context.Context, client *Client, c productCommand) (a
 		if !ok || view.Customer.Suspended {
 			return nil, errors.New("feature is unavailable in the assigned plan")
 		}
-		remaining := grant.MonthlyStarts
+		var used int64
 		for _, line := range view.Usage.Lines {
 			if line.Feature == c.feature {
-				remaining -= line.Starts
+				used += line.Starts
 			}
 		}
-		if remaining < 0 {
-			remaining = 0
+		// The next start is free during the trial and while included starts
+		// remain; trial starts use none (ADR-20261021154511, ADR-20261021195901).
+		next, _, _ := productcontrol.StartPrice(grant, view.Customer, used-view.Usage.TrialStarts[c.feature], time.Now())
+		out := map[string]any{"quote": view.Quotes[c.feature], "feature": c.feature, "plan": view.Customer.Plan, "currency": view.Catalog.Spec.Currency, "unit_price_millicents": grant.UnitPriceMillicents,
+			"monthly_starts": grant.MonthlyStarts, "remaining_starts": max(0, grant.MonthlyStarts-used), "included_starts": grant.IncludedStarts,
+			"next_start_price_millicents": next, "period": view.Usage.Period, "revision": view.Catalog.Revision}
+		if view.Customer.TrialEndsAt != nil {
+			out["trial_ends_at"] = view.Customer.TrialEndsAt
 		}
-		return map[string]any{"quote": view.Quotes[c.feature], "feature": c.feature, "plan": view.Customer.Plan, "currency": view.Catalog.Spec.Currency, "unit_price_millicents": grant.UnitPriceMillicents, "monthly_starts": grant.MonthlyStarts, "remaining_starts": remaining, "period": view.Usage.Period, "revision": view.Catalog.Revision}, nil
+		return out, nil
 	case "start":
 		return startProductFeature(ctx, client, c)
 	case "explain":

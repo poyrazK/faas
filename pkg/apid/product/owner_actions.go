@@ -134,7 +134,7 @@ func (s *Service) reviewOwnerPlan(r *http.Request, c *ownerContext, a *ownerActi
 	a.ID, a.Hash, a.Revision, a.Organization = uuid.NewString(), p.Hash, p.After.Revision, p.After.AuthOrganizationID
 	confirmation := c.data.Confirmation
 	confirmation.Title = "Confirm customer plan"
-	confirmation.Description = "Apply these terms immediately to future admissions. Monthly starts already used do not reset. Accepted runs retain their original prices and access. No subscription proration is performed."
+	confirmation.Description = "Apply these terms immediately to future admissions. Monthly starts already used do not reset. Accepted runs retain their original prices and access. This month's fee is the highest of the plans held this month, so a lower fee applies from next month."
 	beforePlan, beforeRevision, beforeAccess := "Unassigned", "—", "No access"
 	if p.Before != nil {
 		beforePlan = p.Before.Plan
@@ -148,7 +148,14 @@ func (s *Service) reviewOwnerPlan(r *http.Request, c *ownerContext, a *ownerActi
 	if p.After.Suspended {
 		afterAccess = "Suspended"
 	}
-	confirmation.Details = []dashboard.ProductControlComparison{{Feature: "Plan", Before: beforePlan, After: p.After.Plan}, {Feature: "Revision", Before: beforeRevision, After: p.After.Revision}, {Feature: "Product access", Before: beforeAccess, After: afterAccess}, {Feature: "Auth organization (preserved for existing customers)", After: p.After.AuthOrganizationID}}
+	beforeFee := "—"
+	if p.Before != nil && p.BeforeCatalog != nil {
+		beforeFee = ownerPlanFee(*p.BeforeCatalog, p.Before.Plan)
+	}
+	confirmation.Details = []dashboard.ProductControlComparison{{Feature: "Plan", Before: beforePlan, After: p.After.Plan}, {Feature: "Revision", Before: beforeRevision, After: p.After.Revision},
+		{Feature: "Monthly fee", Before: beforeFee, After: ownerPlanFee(p.Catalog, p.After.Plan)},
+		{Feature: "Free trial", Before: ownerTrial(p.Before, 0), After: ownerTrial(p.Before, p.Catalog.Spec.Plans[p.After.Plan].TrialDays)},
+		{Feature: "Product access", Before: beforeAccess, After: afterAccess}, {Feature: "Auth organization (preserved for existing customers)", After: p.After.AuthOrganizationID}}
 	names := map[string]bool{}
 	for name := range p.Catalog.Spec.Features {
 		names[name] = true
@@ -184,12 +191,40 @@ func (s *Service) reviewOwnerPlan(r *http.Request, c *ownerContext, a *ownerActi
 	return nil
 }
 
+// ownerTrial describes a customer's trial, or the one an assignment to a plan
+// offering days would start (ADR-20261021195901).
+func ownerTrial(customer *api.ProductCustomer, days int64) string {
+	switch {
+	case customer != nil && customer.TrialEndsAt != nil && customer.TrialEndsAt.After(time.Now()):
+		return "Until " + customer.TrialEndsAt.UTC().Format(time.DateOnly)
+	case customer != nil && customer.TrialEndsAt != nil:
+		return "Ended " + customer.TrialEndsAt.UTC().Format(time.DateOnly)
+	case days > 0:
+		return "Starts now for " + strconv.FormatInt(days, 10) + " days"
+	}
+	return "None"
+}
+
+// ownerPlanFee describes a plan's monthly fee (ADR-20261021154511).
+func ownerPlanFee(catalog api.ProductCatalog, plan string) string {
+	fee := catalog.Spec.Plans[plan].MonthlyFeeMillicents
+	if fee == 0 {
+		return "None"
+	}
+	return ownerMoney(catalog.Spec.Currency, fee) + " / UTC month"
+}
+
 func ownerGrantDescription(catalog api.ProductCatalog, customer api.ProductCustomer, feature string) string {
 	grant, ok := catalog.Spec.Plans[customer.Plan].Features[feature]
 	if !ok || customer.Suspended {
 		return "No access"
 	}
-	return ownerMoney(catalog.Spec.Currency, grant.UnitPriceMillicents) + " per verified success; " + strconv.FormatInt(grant.MonthlyStarts, 10) + " starts / UTC month"
+	price := ownerMoney(catalog.Spec.Currency, grant.UnitPriceMillicents) + " per verified success; "
+	if grant.IncludedStarts > 0 {
+		// Included starts come first at no charge (ADR-20261021154511).
+		price = strconv.FormatInt(grant.IncludedStarts, 10) + " included, then " + price
+	}
+	return price + strconv.FormatInt(grant.MonthlyStarts, 10) + " starts / UTC month"
 }
 
 func (s *Service) reviewOwnerReceipt(r *http.Request, c *ownerContext, a *ownerAction) error {
@@ -256,7 +291,7 @@ func (s *Service) applyOwnerAction(r *http.Request, c *ownerContext, a ownerActi
 		id = doc.ID
 	case "handoff":
 		var handoff api.ProductInvoiceHandoff
-		handoff, err = c.billing.HandoffProductBilling(r.Context(), scope, a.Document, a.Reference)
+		handoff, err = s.handoffManually(r.Context(), c.billing, c.account.ID, scope, a.Document, a.Reference)
 		id = handoff.DocumentID
 	default:
 		return state.ErrInvalidArgument

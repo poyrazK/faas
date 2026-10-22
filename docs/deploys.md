@@ -1,5 +1,19 @@
 # Deploys
 
+Atomic projects can opt into adding independent HTTP source services with
+`gregale deploy --project --atomic --add-services --verify --yes`. Run
+`gregale deploy check --project --atomic --add-services --verify` first to inspect
+prerequisites without reserving apps. Admission remains disabled by default
+until [native qualification](adr/20261019120043-atomic-http-service-additions.md) passes.
+Every existing serving service must remain present with unchanged settings.
+New services pass startup readiness before the graph switches; `--verify` checks
+existing critical routes and restores the original membership on regression.
+New services have no baseline probe history. Failed or withdrawn additions keep
+their app IDs and consume quota but have no default route. An identical retry
+can reuse them after the earlier attempt finishes. Removal, dependencies, declared
+environment keys, schedules, workers, images, migration commands, configuration
+snapshots and progressive rollout are unsupported in this first version.
+
 The normal deploy path is source-first and wait-by-default:
 
 ```bash
@@ -9,11 +23,44 @@ gregale deploy --tarball build/source.tar.gz
 gregale deploy --image ghcr.io/acme/api@sha256:...
 ```
 
+Interrupted single-app deploys save a local session. Run
+`gregale deploy resume --app my-api`, or `gregale deploy resume SESSION_ID --json`,
+to reconnect to the same accepted deployment and finish pending lifecycle/scaling
+settings without local source. Resume checks saved app identity and conflicting
+settings before writing. See [saved deploy recovery](cli/deploy.md#recover-an-interrupted-deployment).
+
+A release can be live while its cron configuration is still incomplete. Inspect
+an API, Git, or CLI deployment with `gregale deployment <deployment-id>` or
+`gregale deployment v42 --app my-api --json`. Deployment details include
+`configuration.crons.status`, a stable `reason` code, an explanation and recovery
+hint. Status is `pending`, `activated`, `conflicted`, `discarded`, or `not_managed`
+when no deferred activation is recorded. Current schedules stay active while
+builds or partial rollouts are in progress.
+
+Pending cron changes activate automatically when the release is ready and owns
+all production traffic. A conflict reports operator edits, changed quotas, or
+cron identity changes. A discarded intent reports failed, canceled or
+superseded work. Inspection and saved-session resume do not submit another build
+or overwrite schedules. Inspect the stated reason and current crons before
+starting a new deployment attempt to resolve a terminal conflict.
+
+In JSON, `configuration.complete` covers server-managed cron activation.
+The deploy receipt's `configuration_complete` also covers pending saved CLI
+lifecycle and scaling settings. An `activated` result records that the intent
+was applied; a later deployment can subsequently change schedules.
+
 Use `--no-wait` when a CI job only needs the queued deployment ID. Use
 `--timeout 900` to bound a wait, and `--idempotency-key KEY` when a retry must
-represent the same logical deploy. Without a key, the CLI derives one from the
-source digest and flags, so repeating an identical deploy returns the
-deployment already in progress or live. A deployment that failed, was
+represent the same logical deploy. Archive and full-commit-SHA deploys without
+secrets derive a key from the source and flags, so repeating an identical deploy
+returns the deployment already in progress or live. Branches, tags, short SHAs,
+and secret bundles use a fresh key per invocation; transport retries reuse it.
+A local wait timeout or interruption preserves accepted deployment configuration;
+resume with `gregale deployment wait <deployment-id>`. Submission errors report
+accepted, rejected, or unknown acceptance. Accepted and unknown outcomes retain
+staged triggers, profiling, and tracing; only definite rejection restores prior
+settings. Inspect deployment history and reuse the printed retry key when
+acceptance is unknown. A deployment that failed, was
 cancelled, or was superseded is never replayed: re-running the same deploy
 starts a new one.
 `--reason`, `--tag`, and `--deployed-by` annotate deployment history.
@@ -167,6 +214,106 @@ How each gate judges:
 A gate that has too few requests or values (`--min-samples`, default 20) is
 not judged. A gate never holds a rollout on missing evidence.
 
+## What changed between releases
+
+`gregale deployment diff` shows what a release changes compared with the
+release that served before it
+([ADR-20261021101117](adr/20261021101117-release-diff.md)):
+
+```bash
+gregale deployment diff v42                 # against the release before it
+gregale deployment diff v42 --against v38   # against any release of the app
+```
+
+It reports:
+- **Code:** both commits, a GitHub compare link when both releases came
+  from the same repository, and whether the image changed.
+- **Configuration:** env variables and secrets added, removed or changed,
+  by key. Values are never shown.
+- **Packages:** packages added, removed or upgraded, from the two builds'
+  SBOMs (at most 100 per list).
+- **Runtime settings:** handler, runtime base, port, entrypoint, command,
+  probes, minimum instances, sidecars, workflows and env override keys.
+- **Release command:** the step that runs database migrations.
+
+A section shows as unknown when its history is gone: config history keeps
+the last 100 revisions per scope, and image releases have no build SBOM.
+The approval page and the "approval needed" message show the same
+comparison. `gregale deployment summary` remains the quick cockpit view:
+rollout status, rollback target, and release fields against the previous
+deployment.
+
+## Release approvals
+
+Require people to approve each production release before it takes more than
+its first canary stage
+([ADR-20261020085706](adr/20261020085706-release-approvals.md)):
+
+```bash
+# Two owners or admins, other than the deployer, approve every release.
+gregale approvals require --approvals 2
+# One person, developers included, within four hours.
+gregale approvals require --approvals 1 --approvers developer --timeout 4h
+
+gregale approvals pending                 # releases waiting right now
+gregale approvals approve <deployment> --comment "canary looks clean"
+gregale approvals reject <deployment> --reason "checkout latency is up"
+gregale approvals status <deployment>
+gregale approvals off
+```
+
+The release starts its canary as usual. At the stage the policy names
+(`--after-stage`, default 1), it waits. `gregale deploy` shows the wait and
+the approve command. The canary still judges the waiting stage, so a
+regression aborts the release even while it waits. Once enough people
+approve, the rollout continues on its next step.
+
+Waiting ends in one of three ways:
+- **Enough approvals:** the rollout continues.
+- **A rejection:** the rollout is aborted at once (rule
+  `abort_approval_rejected`), and the previous release takes its traffic
+  back.
+- **The timeout passes** (default 24 hours): the rollout is aborted in the
+  same way (rule `abort_approval_timeout`).
+
+While a release waits, nothing gives it more traffic: not `canary advance`,
+`rollouts recover --action promote`, `traffic set`, or
+`POST /v1/deployments/{id}/promote`. Rollbacks and aborts are never held.
+
+Who may approve:
+- **Approvers:** with `--approvers admin` (the default), organization owners
+  and admins; `developer` adds developers.
+- **The deployer:** their own approval does not count unless you pass
+  `--allow-self-approval`. An app outside an organization has one person,
+  whose own approval always counts.
+- **Changing the policy:** only owners and admins can change or remove it.
+
+Tell people when a release waits, is approved or rejected, or times out:
+
+```bash
+echo "https://hooks.slack.com/services/…" | gregale channels add --name releases --kind slack --secret-stdin
+gregale approvals require --approvals 2 --notify releases
+```
+
+`--notify` takes up to five Slack or email channels; PagerDuty channels are
+refused, because a release waiting for approval is not an incident. Each
+event is sent once per release.
+
+The Slack message for a waiting release has **Approve**, **Reject** and
+**Review** buttons, and the email has the same links. They open
+`/dashboard/releases/<deployment>/approval` in Gregale; if you are not signed
+in, Gregale asks you to sign in first. The decision is made on that page,
+under your own Gregale account, so your organization role, MFA and the
+self-approval rule apply exactly as in the CLI. The buttons grant nothing by
+themselves.
+
+Releases need a canary to wait in. While the policy is on, a production
+release with `--rollout immediate` or `--traffic-percent` is refused with
+`release_approval_canary_required`. A release deployed with `--no-traffic`
+can't be given traffic by hand either; start it with
+`gregale scheduled-releases set <release> --at now`, which rolls it out
+through a canary that waits for approval.
+
 ## Deploy freezes
 
 A freeze stops new production releases of one app, or of every app in the
@@ -217,6 +364,70 @@ An `--after-rollback` freeze is a policy. Each time the rollout circuit
 breaker, the post-release watch, the first-wake 5xx guard or an alert rule
 rolls an app back, Gregale freezes that app for the given time. The freeze
 names the release that was rolled back, and you can lift it like any other.
+
+### Platform release pause
+
+While Gregale handles a security incident, it may pause new releases for
+every account
+([ADR-20261022140000](adr/20261022140000-break-glass-controls.md)). Deploys
+and new schedules then fail with 503 `platform_release_paused`, which nothing
+in the request overrides. Queued builds wait, and scheduled releases start
+once the pause is lifted. Your running apps keep serving, rollbacks still
+work, and you can still change env vars and secrets, so you can rotate a
+credential during the incident. Retry the deploy after the pause is lifted.
+
+## Scheduled releases
+
+Build a release now and start it later: at a quiet hour, at a launch time, or
+when the team is around to watch
+([ADR-20261021152201](adr/20261021152201-scheduled-releases.md)):
+
+```bash
+# Build now; start the rollout at 02:00 local time and tell #releases how it went.
+gregale deploy --at 02:00 --release-notify releases
+# Other ways to say when: +2h, "2026-10-22 09:00" (local time), or an RFC 3339 time.
+gregale deploy --at "2026-10-22 09:00" --rollout fast
+
+gregale scheduled-releases list
+gregale scheduled-releases show v44 --app my-api
+gregale scheduled-releases set v44 --app my-api --at +30m   # move it
+gregale scheduled-releases set v44 --app my-api --at now    # start it on the next pass
+gregale scheduled-releases cancel v44 --app my-api
+```
+
+The build, readiness check and snapshot happen right away, so a broken build
+shows up while you are still there. The release then waits live without
+traffic; production stays on the current release, and nothing wakes the
+waiting one. At its time, Gregale starts the rollout the deploy would have
+had: the same canary (`--rollout safe` or `fast`, or the app's release
+policy), or all traffic at once for `--rollout immediate`.
+
+Just before it starts, Gregale checks again:
+- **Freezes.** A freeze active at that moment stops the release, including a
+  freeze created after you scheduled it. Scheduling into a freeze you know
+  about needs `--override-freeze REASON`, which covers exactly the freezes
+  active at the scheduled time.
+- **Approvals.** If the app requires approvals, the release must roll out
+  through a canary, and it waits for approval in that canary like any other
+  release. A policy added while the release waited applies to it.
+- **Newer releases.** If a newer release serves traffic by then, the
+  scheduled one is superseded and never starts.
+
+If the build is still running, or another rollout is still in progress,
+Gregale waits for up to an hour past the scheduled time, then gives up
+(`expired`). A release that could not start stays built without traffic:
+schedule it again, or promote it by hand. `--release-notify` channels (Slack
+or email, up to five) hear when the release starts and when it can't.
+
+While a release waits for its time, `gregale traffic set` and `gregale
+traffic promote` refuse it with `release_scheduled`; move or cancel the
+schedule instead. `gregale traffic promote --deployment v44 --at 09:00`
+schedules a release you deployed with `--no-traffic`.
+
+A scheduled release is a production release of a request app: previews,
+named environments, services, workers and jobs release immediately. An app
+has one pending schedule at a time; scheduling another release cancels the
+earlier schedule and leaves that release waiting without traffic.
 
 ## Revisions
 
@@ -473,3 +684,655 @@ manual stage advances remain immediate.
 While a canary is pending or rolling out, the generic traffic-split endpoint
 returns `409 traffic_change_during_canary`. Advance or recover the rollout
 before applying a separate traffic split.
+
+A saved `gregale deploy` attempt can recover a lost acceptance reply with
+`gregale deploy resume SESSION_ID`. Image, multipart and source-ref submissions
+use a durable server receipt; resumable uploads use their committed upload
+receipt. Recovery reconnects to the original deployment without source files or
+another submission. Missing receipts leave acceptance uncertain; see
+[deploy recovery](cli/deploy.md) and [ADR-20261019120049](adr/20261019120049-deployment-submission-receipts.md).
+
+Project deploys also defer HTTP cron replacements until each workload is ready
+in production with all traffic. A cron-only change queues that workload even
+when its source is unchanged. Reapplying identical pending changes reuses the
+accepted deployment; failed workloads keep their active schedules while healthy
+workloads activate independently. Apply receipts include each workload's
+`configuration` outcome, and CLI text shows pending or blocked cron activation.
+`--no-triggers`, excluded workloads and preview deployments preserve production
+schedules. Command crons remain unchanged by HTTP schedule replacement. Removing
+an app still removes its schedules. When reallocating account cron quota across
+workloads, retry after the workloads freeing capacity have activated.
+
+Waited project deploys finish only after workload readiness, full traffic and
+rollout completion, and activation of server-managed HTTP cron changes. A blocked
+or discarded configuration fails the command (exit 1) and reports its reason and
+recovery hint. A timeout (exit 3) names the unfinished phase; live workloads retain
+their live status and configuration diagnostic. The server continues processing,
+and checking deployment status never submits another build. `--no-wait` still
+returns immediately with pending configuration in its receipt. Older servers
+without configuration diagnostics retain their readiness-based wait behavior.
+
+Accepted project deploys now save a private recovery session before waiting,
+including when using `--no-wait`. The CLI prints a copyable
+`gregale deploy resume SESSION_ID` command. Project JSON receipts include
+`session_id`, `resume_command` and `recovery_saved`. Resume checks the original
+workload deployment IDs through readiness, rollout and cron activation without
+source files, manifests or secrets, and never creates another build. Successful
+workloads remain successful; workloads that were not accepted stay visible and
+require an explicit new deployment attempt. Use the session ID for projects;
+`--app` continues to select individual app deploy sessions.
+
+If saving fails, the command returns nonzero and retains accepted workload IDs
+in its receipt with `recovery_saved:false`. Inspect those IDs before retrying.
+Lost-response recovery requires the updated receipt endpoint described below. Use the original endpoint, profile and
+credential when resuming; sessions are isolated by that connection.
+
+Project deploy recovery also covers a lost apply response. The CLI saves an
+attempt before submission and prints its session/resume command on uncertain
+outcomes. `gregale deploy resume SESSION_ID` discovers accepted workloads through
+`GET /v1/project-submissions/{attempt_id}` and checks their original deployment
+IDs. It never repeats apply or uploads source. Interrupted submissions expose
+partial acceptance; unconfirmed workloads require inspection before an explicit
+new attempt. A missing receipt remains uncertain. Default deploy invocations use
+fresh attempts; reuse an explicit idempotency key only for the same request.
+Changing request bytes requires a new key. Existing sessions with a received
+acceptance receipt remain compatible. Deploy the receipt migration and updated
+APID before relying on lost-response recovery with the updated CLI.
+
+### Check project deployment readiness
+
+Run a read-only check before uploading source or starting builds:
+
+```sh
+gregale deploy check --project --project-slug shop --json
+gregale deploy check --project --project-slug shop --atomic --verify --config-file release.json
+gregale deploy check --project --project-slug shop --from staging --environment production --sync-config --verify --workers
+```
+
+The report collects missing runtime keys, invalid dependencies, quota and rollback
+retention limits, incompatible release options, worker consumer restrictions,
+unavailable verification policy and missing rollout qualification. It uses the
+same repository detector and source-selection policy as deployment; use
+`--source=worktree` to include local changes. A `--secrets-file` supplies proposed
+key names for the check; its values stay on this machine. The command never
+submits a deployment, stages credentials, records qualification or executes probes.
+
+CI exits **0** for ready, **1** for blocked and **2** for unknown/unavailable.
+Each check includes a stable code, affected workload when applicable and a remedy.
+An older server produces unknown and a nonzero exit. Protected targets report that
+the final deployment/promotion plan needs approval; this check does not issue,
+consume or validate a separate approval credential.
+
+Save `state_hash` and pass `--expected-state HASH` on a subsequent check to detect
+changed intent or configuration. Unreadable required state has no comparison hash.
+A ready result covers the declared inputs and current control-plane prerequisites;
+deployment still validates source bytes, capacity and runtime health. See
+[ADR-20261019120041](adr/20261019120041-project-deployment-readiness.md).
+
+Verified atomic project deploys can opt into one existing push-queue worker with
+`gregale deploy --project --atomic --verify --workers`. The first milestone
+requires HTTP workloads plus exactly one production worker, one enabled push
+binding and one matching consumer. It also accepts `--config-file` and `--migrate`.
+The worker starts with its candidate configuration while production queue work
+continues to use the previous graph. Startup/configuration proof gates the shared
+HTTP/worker cutover; the previous generation then receives bounded graceful
+shutdown (default 30 seconds, maximum accepted 60 seconds).
+
+Rollback restores the prior graph and paired variables. Completed jobs and
+external or database effects remain. Post-cutover jobs retain normal retry/lease
+semantics. Admission is disabled by default until native KVM acceptance;
+operators enable it with `FAAS_ATOMIC_WORKER_RELEASES_ENABLED=1` after completing
+[ADR-20261019120008 qualification](adr/20261019120008-atomic-project-push-worker-handoff.md).
+
+For real queue health verification, add `--worker-health`:
+
+```sh
+gregale deploy --project --atomic --verify --workers --worker-health
+```
+
+This requires at least five completed delivery attempts in each candidate verification
+window and five baseline attempts in the five minutes before cutover. It compares
+failures, retries, processing time, queue wait and due backlog. Low traffic reports
+`insufficient_evidence`; it never finalizes a release as healthy. Repeated regressions
+restore the retained release, worker admission and paired configuration. Job side
+effects remain committed. The existing ten-minute verification deadline applies.
+The baseline needs real delivery evidence from the updated gateway before opting in.
+Worker admission remains disabled pending native qualification. See
+[ADR-20261019120009](adr/20261019120009-project-worker-job-health-verification.md) for thresholds and scope.
+
+Named production project worker jobs now persist their release graph at the first
+claimed delivery. Retries and operator queue replays retain that graph across
+cutovers and gateway restarts. New jobs select the current graph independently.
+Expired graphs fail delivery rather than silently move the job to another release;
+these pins do not extend the release retention window. Explicit revision pins keep
+their existing behavior. See [ADR-20261019120011](adr/20261019120011-durable-project-worker-release-pins.md).
+While an unexpired pin owns pending or dispatching work, the scheduler keeps a
+separate retained worker pool and can restart a missing worker from that deployment.
+It protects the last worker while draining excess replicas, then drains the pool
+after the last job finishes. Existing worker/account/concurrency limits still apply;
+insufficient capacity delays recovery rather than changing the job's release.
+See [ADR-20261019120012](adr/20261019120012-retained-project-worker-pools.md).
+Progressive canaries are now available through an explicit opt-in contract:
+
+```sh
+gregale deploy --project --atomic --verify --progressive --config-file release.json
+# Include a production worker only with real delivery verification:
+gregale deploy --project --atomic --verify --progressive --config-file release.json --workers --worker-health
+```
+
+The first version requires paired non-secret configuration snapshots. New unpinned
+requests and first-delivery queue jobs select a whole graph at 5%, then 25%, then
+100%. Each stage needs two fresh healthy rounds; low worker traffic cannot promote
+a release. The baseline graph and configuration head remain active until the 100%
+transition, when graph, configuration and controller checkpoint commit together.
+The candidate graph ID remains stable through promotion and controller restarts.
+
+Regression before activation stops new candidate cohorts; regression afterward
+restores the previous graph/configuration together. Existing job and explicit version
+pins retain their graph until retention expires. Operator graph/configuration changes
+stop the attempt rather than being overwritten. Unknown baseline health requires
+operator action; an expired full-traffic checkpoint fails closed for new unassigned
+work until recovery. Public receipts show `verification.percent` and `generation`.
+
+Server admission remains disabled pending native qualification. The
+`FAAS_PROJECT_CANARIES_ENABLED=1` gate is for the private qualification harness;
+workers additionally require the existing atomic-worker admission gate. See
+[ADR-20261019120013](adr/20261019120013-staged-project-canary-publication.md) and the
+[native progressive acceptance lane](ops/project-progressive-release-native-acceptance.md).
+
+Inspect or control a progressive attempt using its durable submission ID:
+
+```sh
+gregale deploy status ATTEMPT_ID
+gregale deploy abort ATTEMPT_ID
+gregale deploy recover ATTEMPT_ID
+```
+
+`status` shows the traffic stage, generation, blocking reason, latest control
+request and available actions. Abort before 100% leaves the baseline graph/config
+unchanged. At 100%, abort blocks new unassigned work while fresh baseline health
+is checked; qualified restoration commits graph and configuration together.
+`recover` retries that verification for a blocked attempt within the retained
+graph's lifetime. It cannot force unhealthy or expired baselines, overwrite newer
+operator changes, or retarget pinned jobs. Worker restoration still needs real
+baseline delivery evidence; the command does not generate synthetic jobs.
+
+Control commands return when their decision is durably accepted. Use `status`
+to distinguish pending recovery from completed restoration. For an ambiguous
+response, retry with the printed `--request-id ID --generation N`; the same
+most recent decision is idempotent. See [ADR-20261019120014](adr/20261019120014-progressive-deploy-operator-controls.md).
+
+For failures that appear after initial rollout success, opt into stabilization:
+
+```sh
+gregale deploy --project --atomic --verify --progressive --stabilize --config-file release.json
+```
+
+This keeps monitoring critical HTTP probes and real worker health for ten minutes
+after success. Workers still require `--workers --worker-health`. Existing revision
+retention must be at least 21 minutes. The deploy command returns on rollout
+success; use `gregale deploy status ATTEMPT_ID` to inspect the continuing watch.
+Two confirmed regressions can restore graph/config together while the baseline
+remains qualified and this attempt still owns production. Newer production intent
+stops the old monitor. Unknown health never authorizes rollback or becomes a
+healthy verdict merely because the window ended. Monitoring status and its health
+verdict are separate fields. See [ADR-20261019120015](adr/20261019120015-post-success-project-stabilization.md).
+
+### Migration compatibility before cutover
+
+New `--migrate` atomic project plans check the current production version again
+**after** the expansion command finishes and **before** publishing the candidate.
+Configure read-only critical probes that exercise the application's database
+paths. Command success alone does not permit cutover.
+
+Missing, unauthenticated or unavailable probe results keep the deployment waiting
+within its existing deadline. A complete failed baseline sample stops the attempt
+and preserves the current production graph. Inspect the existing task logs and
+database state before submitting another migration; schema changes are not
+reversed and the completed command is not replayed. The receipt exposes
+`release_command.baseline_verification`; `gregale deploy status
+<attempt-id>` also shows this checkpoint.
+
+Passing probes provides evidence for the configured paths, not a proof that every
+SQL change is compatible. Keep expansion backward compatible with retained code
+and workers. Destructive cleanup is not part of `--migrate`; stabilization does
+not by itself prove that old versions and pinned work have drained.
+
+### Guarded schema cleanup
+
+With schema-contract admission enabled on a qualified server, declare both phases
+for the expansion owner:
+
+```yaml
+release:
+  command: node migrate.js expand
+  contract_command: node migrate.js contract
+```
+
+Deploy using `--project --atomic --verify --migrate --progressive --stabilize
+--config-file release.json`. For a multi-workload project, keep one Procfile
+`release:` owner and declare only `release.contract_command` in its manifest.
+Workers additionally require the existing worker/health flags.
+
+After rollout and stabilization succeed:
+
+```sh
+gregale deploy status ATTEMPT_ID
+gregale deploy contract ATTEMPT_ID
+```
+
+Cleanup waits for expired retained versions and code pins, drained work, and old
+instances that stopped or parked. Legacy fallback traffic weights must also select
+the current revision at 100%; graph expiry alone does not disable an explicit old
+revision that still has a positive traffic weight. Unknown health, uncertain old tasks, newer
+production intent or changed runtime inputs block it. The command runs against
+the expansion's artifact and runtime fingerprint; credential changes, including
+rotation, conservatively require a fresh deployment rather than silently choosing
+a different database target.
+
+The CLI prints the durable request ID and generation. After an ambiguous response,
+reuse them with `--request-id ID --generation N`; an admitted attempt keeps the
+same cleanup task. Use `deploy status` and the existing app-task logs to check its
+result. Acceptance is asynchronous. A failed or uncertain cleanup is not replayed,
+and retired deployment IDs remain fenced, so they cannot be selected for rollback.
+Schema changes are not reversed. Investigate the database before a new attempt.
+
+`FAAS_PROJECT_MIGRATION_CONTRACTS_ENABLED` defaults off pending native qualification;
+upgraded API, scheduler and state components are required. Passing critical probes
+checks the configured paths, not every SQL operation or externally managed work.
+
+### Roll forward after failed or uncertain cleanup
+
+Inspect `gregale deploy status FAILED_ATTEMPT` and its cleanup task logs. Establish
+that the original execution has stopped, inspect actual database state, and repair
+SQL explicitly if necessary. Keep that private operational evidence outside the
+deploy journal. An unknown task exit remains unknown after recovery.
+
+Deploy compatible corrected code as a different atomic verified attempt with
+paired configuration (`--project --atomic --verify --config-file repair.json`).
+Remove obsolete release declarations, or declare a separately reviewed expansion
+when needed. The original cleanup command is not part of this repair deployment.
+Wait for verification/stabilization, retire legacy fallback traffic through the
+usual revision traffic controls, and allow retained graphs, pins, work and old
+instances to drain.
+
+Then record incident closure:
+
+```bash
+gregale deploy resolve-contract FAILED_ATTEMPT \
+  --replacement-attempt REPAIR_ATTEMPT \
+  --database-state-checked --execution-quiescent \
+  --evidence-hash SHA256_OF_PRIVATE_EVIDENCE
+```
+
+The CLI binds the inspected task and cleanup generation and prints a durable
+request ID. Reuse `--request-id` and the same identities/attestations after an
+ambiguous response. State and configured critical-route checks must still match
+before first acceptance. Existing accepted resolutions replay after newer deploys.
+Retirement fences extend to drained non-current code, while the original cleanup
+keeps its failed or uncertain outcome. `deploy status` shows the resolution and
+replacement attempt. A missing cleanup receipt cannot be overridden with force.
+
+This action remains available for existing incidents when new cleanup admission
+is disabled. Database and execution checks are explicit operator attestations;
+configured HTTP probes do not establish arbitrary SQL compatibility or prove
+that an unobserved external execution has stopped.
+
+At full traffic, a new `abort` or `recover` decision requires an unexpired retained
+baseline. If retention has ended, the server returns HTTP 410 with
+`project_release_baseline_expired`; deploy a compatible replacement. Rejection
+preserves the current graph, configuration and existing control decision. Replaying
+an already accepted request still returns its historical decision.
+
+### Atomic application secret rotation
+
+Qualified operators can opt into encrypted production secret snapshots:
+
+```sh
+gregale deploy --project --atomic --verify --yes \
+  --config-file release.json --release-secrets-file credentials.json
+```
+
+`credentials.json` maps existing workload names to complete secret value sets:
+
+```json
+{"frontend":{"API_KEY":"replacement-value"}}
+```
+
+Use existing application-owned production keys. Omitted workloads inherit their
+prior secret snapshot; an empty workload map removes its serving secrets. The
+first version supports HTTP workloads with persistent secrets and excludes managed
+credentials, workers, migrations, sidecars, explicit secret grants and reload hooks.
+The CLI excludes this file from source packing and sends values separately over
+TLS. APID encrypts them before storage and returns version IDs, which are then
+bound into the scan/apply plan. The candidate uses its proposed secrets while the
+old release keeps its earlier versions. Cutover and rollback select code, variables
+and immutable secret references through the same project graph.
+
+If staging loses its response, reuse the printed ID with
+`--release-secrets-request-id ID` and the same file contents within 24 hours.
+Staging is limited to 32 live bundles per project and the shared 64 KiB document
+bound. Public receipts and local sessions contain version IDs and fingerprints,
+never secret values or encrypted envelopes. JSON receipts show candidate references
+under `configuration.secrets.versions` and rollback references under
+`configuration.secrets.previous_versions`.
+
+Once pinned, production secret edits through `secrets set`, deletion or resealing
+are rejected; use another atomic secret release. Keep both external credentials
+valid while rollback remains possible. Host-key rotation of pinned applications
+requires a future snapshot-aware rekey workflow; retain the old host identities.
+The secret registry remains the legacy source, while release receipts identify
+which versions a deployment actually uses.
+
+`FAAS_PROJECT_RELEASE_SECRETS_ENABLED` defaults off until the
+`project-release-secrets-only` native lane passes and its evidence is reviewed.
+See [ADR-20261019120020](adr/20261019120020-atomic-project-secret-snapshots.md).
+
+## Promote a tested HTTP configuration snapshot
+
+Use the existing environment promotion command to transfer a tested artifact and
+its pinned non-secret variables together:
+
+```sh
+gregale projects environments promote my-project --from staging --to production --sync-config --yes --wait
+```
+
+Both environments must have complete active HTTP release graphs. The preview
+lists changed variable keys and binds the exact configuration versions. Production
+keeps its own secrets, secret version pins, authentication credentials, service
+bindings and infrastructure assignments. An explicitly empty source variable set
+clears the candidate's variables. Promotion reuses the source artifact without a
+new build, and protected targets still require source qualification and approval.
+
+A change after preview requires a fresh preview. Once published, verification
+checks the graph, artifact and captured configuration identities. Its automatic
+rollback restores the previous graph and pinned variables with the previous
+configuration document. Later production edits block rollback from overwriting
+them. Interrupted requests resume from the stored capture using the same
+idempotency key. Secret envelope rotation preserves the approved identity.
+
+Workers, jobs, migrations, sidecars, reload hooks and owned work/queue policies
+remain outside this snapshot transfer milestone. Generated service URL variables
+require the opt-in verified service graph mode described below. Environment-owned
+bindings remain at the destination. Qualify guest values,
+cold boot and application health on the native acceptance host before rollout.
+See [ADR-20261019120022](adr/20261019120022-snapshot-aware-environment-promotion.md).
+
+### Verify destination health during environment promotion
+
+For snapshot-aware HTTP promotion, operators can enable the qualified
+`FAAS_PROMOTION_HEALTH_ENABLED=1` admission mode. It is disabled by default
+pending [native qualification](ops/promotion-health-native-acceptance.md).
+Configure read-only GET/HEAD route-health probes for every workload first.
+Both environments need active complete HTTP graphs, pinned configuration and
+at least 21 minutes of revision retention; at most five project probes apply.
+
+```bash
+gregale projects environments preview shop --from staging --to production --sync-config --verify
+gregale projects environments promote shop --from staging --to production --sync-config --verify --yes --wait --progress --timeout 25m
+```
+
+The server returns an accepted running operation. Two complete healthy rounds,
+one minute apart, are required while candidates serve no normal traffic. Graph
+and configuration then cut over atomically, followed by two new healthy rounds
+before success. Probe requests preserve destination scope and customer auth.
+Use a dependency-checking application endpoint to test database access.
+
+Inspect `gregale projects environments status shop PROMOTION_ID --to production`
+for phase, verdict, deadline and bounded probe counts in JSON. Missing results,
+authentication failures and unexpected HTTP responses remain unknown health.
+Preflight has a ten-minute deadline and leaves the previous release active on
+failure. Repeated post-cutover regressions with a healthy retained baseline
+restore its graph, configuration and runtime variables. If baseline health cannot
+be confirmed, or newer destination intent conflicts, status requires operator
+action. A client timeout does not stop server processing; retries and daemon
+restarts retain deadlines and checkpoints. See [ADR-20261019120023](adr/20261019120023-health-gated-environment-promotion.md).
+
+### Promote a complete HTTP service graph
+
+After native qualification, enable `FAAS_PROMOTION_SERVICE_GRAPH_ENABLED=1`
+alongside the health admission flag and use the same `--sync-config --verify`
+command. Every declared destination dependency must belong to the complete project
+HTTP graph, and required source binding keys must exist at the destination.
+The server regenerates platform service URLs using the destination assignments
+and transport; production keeps its own secrets and service caller grants.
+
+Preview reports `destination_config_hash` and changed variable keys. The source
+and destination input document diff remains visible separately. The resolved
+document and runtime pins publish together. Configure a read-only frontend probe
+that actually calls the API and validates its response. Private candidate callers
+route to candidate peers before cutover; retained baseline callers keep their
+previous peers afterward. A failing candidate API prevents cutover or triggers
+the existing health rollback. See [ADR-20261019120024](adr/20261019120024-destination-aware-service-graph-promotion.md).
+
+### Promote a release with a database expansion
+
+After native qualification, operators may enable
+`FAAS_PROMOTION_MIGRATIONS_ENABLED=1` alongside promotion health admission.
+Preview and submit with:
+
+```sh
+gregale projects environments preview shop --from staging --to production --sync-config --verify --migrate
+gregale projects environments promote shop --from staging --to production --sync-config --verify --migrate --yes --wait --timeout 35m
+```
+
+`--migrate` explicitly asserts that the source release's single declared
+`release_command` is backward-compatible with the destination's current code.
+Both environments must have complete pinned HTTP release graphs. Service graphs
+also require the service graph admission switch. The command reuses the approved
+source artifact with destination variables, secrets, migration credentials and
+bindings. Source migration success does not authorize destination cutover.
+
+The server first prepares dark candidates, then admits one durable release task.
+The task has one minute from admission to start and at most ten minutes to run.
+It must return an owned zero exit receipt before candidate and previous-version
+HTTP checks begin. Existing health checks gate atomic graph/config cutover and
+post-cutover success. A process restart resumes the same task; commands dispatched
+without a confirmed exit become uncertain and are never replayed automatically.
+Status includes the migration task ID, outcome and exit code. A destination input
+change invalidates dispatch or cutover; preview again after resolving the change.
+
+Migration commands can commit partial database changes even if they fail.
+Rollback restores code and configuration; it leaves the schema expansion in
+place. Destructive schema cleanup and multiple migration owners are unsupported.
+For an uncertain outcome, inspect task logs and the destination database before
+operator recovery. New migration promotions are blocked while that outcome is
+unresolved. Native qualification is documented in
+[the acceptance procedure](ops/promotion-migration-native-acceptance.md).
+
+### Recover an interrupted promotion migration
+
+Inspect the original task and destination database first. Keep private inspection
+notes and supply their SHA256; Gregale does not upload those notes or run repair
+SQL. Read the current health generation with `projects environments status`.
+
+If the expected expansion is present and compatible with both releases:
+
+```sh
+gregale projects environments recover-migration shop PROMOTION_ID --to production \
+  --action resume --task-id TASK_ID --generation GENERATION \
+  --database-state-checked --schema-compatible --evidence-sha256 EVIDENCE_SHA256 --wait
+```
+
+Recovery first requests scheduler teardown of the original VM. After its confirmed
+acknowledgement, the server rechecks the original configuration/runtime pins and
+starts a fresh health preflight. `--wait` waits for recovery acknowledgement;
+`resumed` means promotion health continues, rather than that cutover has finished.
+The original migration task remains failed or uncertain and is never replayed.
+
+If repair code/configuration is required, publish a different complete snapshot
+release without another migration, then complete a normal verified promotion into
+the same destination. Close the old incident against that repair promotion:
+
+```sh
+gregale projects environments recover-migration shop PROMOTION_ID --to production \
+  --action resolve --replacement-promotion REPAIR_PROMOTION_ID \
+  --task-id TASK_ID --generation GENERATION --database-state-checked \
+  --evidence-sha256 EVIDENCE_SHA256 --wait
+```
+
+The repair promotion must already be succeeded, verified and currently active.
+Fresh server-owned probes and runtime/configuration guards run again before
+resolution. A repair can include the supported worker using `--workers` without
+`--migrate`. The server rechecks current worker startup and consumer configuration,
+and compares deliveries by that replacement before and after the recovery request.
+Both windows need sufficient complete, healthy attempts; low traffic leaves recovery
+verifying until its deadline. The old promotion remains failed, with a separate resolved receipt.
+A matching `--request-id` retries the same decision; when omitted, the CLI derives
+a stable ID from the request. Changed attestations with the same ID conflict.
+Blocked attempts can use a new request and the current health generation.
+
+An unreachable executor or missing runtime registration cannot be acknowledged as
+stopped. Recovery waits for the scheduler/vmmd path and expires safely if teardown
+cannot be confirmed. There is no force option or automatic SQL retry. Migration
+promotion and recovery still require the native acceptance qualification.
+
+### Promote APIs and queue workers together
+
+On a qualified server, enable `FAAS_PROMOTION_WORKERS_ENABLED=1` alongside the
+promotion health gate. Promote a complete pinned release containing HTTP services
+and existing production push-queue workers:
+
+```sh
+gregale projects environments preview shop --from staging --to production --sync-config --verify --workers
+gregale projects environments promote shop --from staging --to production --sync-config --verify --workers --yes --wait
+```
+
+Each production worker keeps its queue binding, consumer policy and credentials.
+Its source artifact and non-secret variables follow the tested release. A source
+worker without a variable snapshot needs a live runtime proof matching its current
+variables and credentials. Each source and previous worker pair needs matching
+worker execution settings and stop grace.
+Verified environment promotion supports up to eight push workers, each with one
+production queue consumer. Account worker-replica quotas still apply to the
+retained, candidate and any running staging pools. All workers must pass startup
+and baseline checks;
+post-cutover delivery health is tracked independently. A healthy subset cannot
+complete the release. A qualified regression restores the entire application after
+all retained workers are ready. Existing jobs keep their original version pins.
+Multiple consumers per worker, pull/job workers and sidecars remain unsupported.
+Multiple-worker promotion additionally requires the signed `worker_set` capability
+and its native qualification receipts; production enablement remains pending.
+See [ADR-20261019120040](adr/20261019120040-multiple-worker-environment-promotion.md).
+Combined `--migrate --workers` promotions require the separately approved
+`coordinated` capability; see [coordinated promotion](ops/coordinated-promotion-native-acceptance.md).
+Migration-incident resolution requires a verified repair promotion without a
+migration, with fresh startup and delivery evidence for each replacement worker.
+
+Candidates start without receiving production queue jobs. Cutover requires
+every worker's configuration/startup proof, healthy baseline job evidence and the configured
+HTTP probes. Graph/configuration and new-job admission switch together. Existing
+jobs retain their original release through retries; retained workers remain
+available for eligible outstanding pins within the normal retention limits.
+
+After cutover, real worker delivery health and HTTP probes must agree before
+success. Low queue traffic remains unknown and does not count as healthy. Status
+includes worker readiness, job sample counts, backlog and verdict. A regression
+can restore the captured graph/configuration only after every previous worker has
+current startup proof. Changed bindings or newer production intent require
+operator action. If an explicit rollback is waiting for worker startup, retry
+the same rollback request once all retained workers are ready. Completed jobs and
+other external effects are never undone.
+
+The admission flag defaults off pending native qualification. See
+[ADR-20261019120027](adr/20261019120027-worker-aware-environment-promotion.md) and the executable
+[native promotion acceptance lane](ops/environment-promotion-native-acceptance.md).
+
+### Abort or recover an environment promotion
+
+Inspect `gregale projects environments status PROJECT PROMOTION --to ENV` for the
+health generation and available operator action. For a health-gated HTTP promotion,
+including supported production push workers:
+
+```bash
+gregale projects environments abort shop PROMOTION_ID --to production --generation 7 --wait
+# After a blocked restoration and dependency repair, inspect status again:
+gregale projects environments recover shop PROMOTION_ID --to production --generation 12 --wait
+```
+
+Before cutover, abort keeps the destination graph/configuration selected, retires
+owned unused candidates, and lets the scheduler drain their instances. After
+cutover, abort requests fresh baseline-only checks before restoring the captured
+graph/configuration and worker selection together. Two minute-spaced healthy HTTP
+rounds and, for workers, current retained-worker startup proof and healthy real
+job evidence are required. Unknown health and quiet workers cannot authorize a
+switch. Existing jobs retain their first-admission deployment pins.
+
+Each decision has a ten-minute server deadline. A blocked decision may be retried
+with `recover` after inspecting status and fixing its cause. Recovery uses the
+original baseline and artifacts; it does not extend retention or overwrite newer
+destination intent. Migration incidents use `recover-migration` instead.
+
+The CLI derives a stable request ID from the inspected generation, or accepts
+`--request-id` with 32 lowercase hexadecimal characters. Replaying the same request
+returns its durable receipt. A changed generation/action with that ID conflicts.
+A local wait timeout leaves the server decision running. The API exposes POST
+`.../promotions/{promotion}/abort` and `/recover`; Go, Node and Python SDKs include
+the same request and receipt contract. Admission remains default-off pending
+[native qualification](ops/promotion-health-native-acceptance.md).
+
+Promotion health checks now use durable due-time scheduling. Four reconciliation
+slots are shared by updated APID instances, with at most two per account. A slot
+prefers rollback and recovery while the others serve the oldest due work. Slow
+checks can no longer keep every later promotion behind the same 20-record batch.
+APID restarts retain pending work; abandoned claims become eligible after their
+one-minute lease expires. Required sample intervals, health deadlines and release
+retention remain unchanged. Existing scheduler quotas still govern every VM wake.
+
+## Promotion admission
+
+Verified environment promotions start immediately when capacity is available.
+The control plane admits up to 24 active promotions across the fleet and eight
+per account. Excess requests wait durably with `status=running` and
+`health.phase=queued`; the CLI displays the reason and wait deadline. Waiting
+lasts at most 15 minutes, with up to 128 queued requests across the fleet and 32
+per account. These limits do not increase your application's resource quotas.
+
+The status endpoint includes `health.admission.queued_at`, `wait_deadline`,
+`reason`, and, once dispatched, `started_at`. Before dispatch, the health
+checkpoint's timestamps describe waiting. Dispatch starts a fresh health window
+only after checking that the approved source, destination and configuration are
+still current and retained. Changed inputs finish as conflicted; preview and
+approve again. Expired waiting requests fail without starting workloads.
+
+A full queue returns HTTP 429 with code `project_promotion_queue_full` and
+`Retry-After: 5`. No promotion was accepted and the approval remains available.
+Retry with the same idempotency key and approval while the preview is still valid.
+Previously accepted keys continue to return their original operation.
+
+Use the existing abort command with the current generation to cancel waiting,
+including a queued migration. A local CLI wait timeout leaves the durable operation
+running; use the printed status command to resume observing it. Rollback and
+recovery continue through the existing dispatcher while new starts wait.
+Promotion health remains disabled by default pending native qualification.
+
+### Promote artifacts with production secret changes
+
+For a complete HTTP project, stage a destination-only secret rotation while
+promoting the tested artifacts:
+
+```sh
+gregale projects environments promote shop \
+  --from staging --to production --sync-config --verify --yes \
+  --release-secrets-file production.json --wait
+```
+
+`production.json` maps workload names to complete proposed secret maps, for
+example `{"api":{"TOKEN":"new-production-credential"}}`. Omitted workloads
+inherit production secrets; an empty workload map removes its serving secrets.
+Only existing application-owned persistent production secret keys are supported.
+Migrations, workers, managed credentials, sidecars, explicit grants and reload
+hooks are outside this mode.
+
+Values go only to encrypted secret staging. Preview and approval bind immutable
+version references and show secret key changes. Use the printed request ID with
+`--release-secrets-request-id ID` to replay staging within 24 hours. Candidates
+receive the proposed production versions, and rollback restores the previous
+code, configuration and secret versions. Keep old external credentials valid for
+the rollback window. Staging credentials are never copied to production.
+
+This capability requires the existing secret-release and verified-promotion
+flags plus the operator's qualified `secrets` rollout scope. Production admission
+remains unavailable until native secret-promotion qualification is reviewed; the
+workspace storage/API tests do not establish guest delivery. See
+[ADR-20261019120042](adr/20261019120042-secret-aware-environment-promotion.md).

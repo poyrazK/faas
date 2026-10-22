@@ -83,11 +83,11 @@ func TestDataAPIHealthReportSeparatesCurrentChecksAndRecentFailures(t *testing.T
 				case "pool-timeouts":
 					body = strings.ReplaceAll(body, `"timeouts_total":0`, `"timeouts_total":9`)
 				case "pool-missing":
-					body = strings.ReplaceAll(body, `,"pool":`+dataAPIHealthPoolFixture(api.DataAPIMaxPoolConnections), ``)
+					body = strings.ReplaceAll(body, `,"pool":`+dataAPIHealthPoolFixture(api.DataAPIDefaultPoolConnections), ``)
 				case "pool-invalid":
 					body = strings.ReplaceAll(body, `"waiting":0`, `"waiting":"private-response-secret"`)
 				case "pool-unknown":
-					body = strings.ReplaceAll(body, dataAPIHealthPoolFixture(api.DataAPIMaxPoolConnections), `{"state":"unknown","reason":"timeout","checked_at":"2026-10-16T10:00:00Z"}`)
+					body = strings.ReplaceAll(body, dataAPIHealthPoolFixture(api.DataAPIDefaultPoolConnections), `{"state":"unknown","reason":"timeout","checked_at":"2026-10-16T10:00:00Z"}`)
 				}
 				if scenario == "engine-exit" {
 					body = strings.ReplaceAll(strings.ReplaceAll(body, `"engine":"reachable"`, `"engine":"unreachable"`), `"sql":"unready"`, `"sql":"unknown"`)
@@ -245,7 +245,9 @@ func TestDataAPIHealthRejectsUnsafeAndInconsistentResponses(t *testing.T) {
 		strings.ReplaceAll(valid, `"ready":true`, `"ready":false`),
 		strings.ReplaceAll(valid, `"database":"reachable"`, `"database":"unknown"`),
 		strings.ReplaceAll(valid, `"active":0`, `"active":3`),
-		strings.ReplaceAll(valid, `"capacity":2`, `"capacity":1`),
+		// adr: 20261021180534 — pools take 1 to 8 connections.
+		strings.ReplaceAll(valid, `"capacity":2`, `"capacity":9`),
+		strings.ReplaceAll(valid, `"capacity":2`, `"capacity":0`),
 		strings.ReplaceAll(valid, `"queued":0`, `"queued":9`),
 		strings.ReplaceAll(valid, `"active":0,`, ``),
 		valid + strings.Repeat(" ", api.DataAPIHealthMaxBytes),

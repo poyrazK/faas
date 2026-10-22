@@ -108,6 +108,24 @@ func TestParseClientFrame(t *testing.T) {
 		{`{"type":"live.rows","subscription":"q1"}`, false},
 		{`{"type":"live.subscribe","subscription":"q1","sealed":"` + strings.Repeat("a", api.LiveQueryClientFrameMaxBytes) + `"}`, false},
 		{`not json`, false},
+		// Reads without a user token: anonymous access or a server key, and
+		// the claims realtimed puts in their place.
+		{`{"type":"live.subscribe","subscription":"q1","database":"db","rest":"products","anonymous":true}`, true},
+		{`{"type":"live.subscribe","subscription":"q1","database":"db","rest":"notes","server_key":"` + testKey + `","subject":"user-7"}`, true},
+		{`{"type":"live.renew","subscription":"q1","anonymous":true}`, true},
+		{`{"type":"live.renew","subscription":"q1","server_key":"` + testKey + `"}`, true},
+		{`{"type":"live.subscribe","subscription":"q1","database":"db","rest":"products","claims":{"gregale_access":"anonymous"},"access":"anonymous","role":"api"}`, true},
+		{`{"type":"live.subscribe","subscription":"q1","database":"db","rest":"products","anonymous":true,"token":"t"}`, false},
+		{`{"type":"live.subscribe","subscription":"q1","database":"db","rest":"products","anonymous":true,"server_key":"` + testKey + `"}`, false},
+		{`{"type":"live.subscribe","subscription":"q1","database":"db","rest":"products","anonymous":true,"claims":{"gregale_access":"anonymous"}}`, false},
+		{`{"type":"live.subscribe","subscription":"q1","sealed":"gls1.x.y","anonymous":true}`, false},
+		{`{"type":"live.subscribe","subscription":"q1","anonymous":true}`, false},
+		{`{"type":"live.subscribe","subscription":"q1","database":"db","rest":"notes","server_key":"gdsk_short"}`, false},
+		{`{"type":"live.subscribe","subscription":"q1","database":"db","rest":"notes","token":"t","subject":"user-7"}`, false},
+		{`{"type":"live.subscribe","subscription":"q1","database":"db","rest":"notes","server_key":"` + testKey + `","subject":"a\u0001b"}`, false},
+		{`{"type":"live.subscribe","subscription":"q1","database":"db","rest":"products","anonymous":true,"access":"anonymous"}`, false},
+		{`{"type":"live.subscribe","subscription":"q1","database":"db","rest":"products","claims":{"gregale_access":"admin"},"access":"admin"}`, false},
+		{`{"type":"live.unsubscribe","subscription":"q1","anonymous":true}`, false},
 	} {
 		_, err := ParseClientFrame([]byte(tc.frame))
 		if tc.ok != (err == nil) || (err != nil && !errors.Is(err, ErrProtocol)) {
@@ -205,3 +223,5 @@ func TestSnapshotCovers(t *testing.T) {
 		}
 	}
 }
+
+var testKey = "gdsk_" + strings.Repeat("A", 43)

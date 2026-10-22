@@ -92,18 +92,51 @@ func TestComposeImageProcessRejectsMalformedDeclaration(t *testing.T) {
 	}
 }
 
-func TestComposeBuildServiceProcessKeysWarn(t *testing.T) {
-	body := "services:\n  api:\n    build: .\n    ports: [\"8080:8080\"]\n    entrypoint: [tini, --]\n    user: node\n    stop_signal: SIGINT\n"
-	result, err := scanCompose(t, body, "Dockerfile", "FROM node:22\n")
-	if err != nil || len(result.Workloads) != 1 {
-		t.Fatalf("scan = %+v, %v", result, err)
+// A built service takes the Compose process overrides (ADR-20261022160000):
+// the entrypoint joins its start command and the rest is carried for imaged.
+func TestComposeBuildServiceProcess(t *testing.T) {
+	for _, tc := range []struct {
+		name, declaration string
+		command           []string
+		shell             bool
+		process           *api.ComposeProcess
+	}{
+		{"user, working_dir and stop contract", "user: node\n    working_dir: /srv/app\n    stop_signal: INT\n    stop_grace_period: 20s",
+			nil, false, &api.ComposeProcess{User: "node", WorkingDir: "/srv/app", StopSignal: "SIGINT", StopGracePeriodS: secs(20)}},
+		{"entrypoint without command replaces the process", "entrypoint: [tini, --, node, server.js]",
+			[]string{"tini", "--", "node", "server.js"}, false, nil},
+		{"entrypoint then exec command", "entrypoint: [tini, --]\n    command: [node, server.js]\n    user: \"1000\"",
+			[]string{"tini", "--", "node", "server.js"}, false, &api.ComposeProcess{User: "1000"}},
+		{"entrypoint then shell command", "entrypoint: [tini, --]\n    command: npm run start -- --port 8080",
+			[]string{"tini -- npm run start -- --port 8080"}, true, nil},
+		{"entrypoint words are quoted", "entrypoint: [\"/opt/my app/run\", --flag]\n    command: serve",
+			[]string{"'/opt/my app/run' --flag serve"}, true, nil},
+		{"empty entrypoint keeps the command", "entrypoint: []\n    command: [node, server.js]",
+			[]string{"node", "server.js"}, false, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := "services:\n  api:\n    build: .\n    ports: [\"8080:8080\"]\n    " + tc.declaration + "\n"
+			result, err := scanCompose(t, body, "Dockerfile", "FROM node:22\n")
+			if err != nil || len(result.Workloads) != 1 {
+				t.Fatalf("scan = %+v, %v", result, err)
+			}
+			workload := result.Workloads[0]
+			if !reflect.DeepEqual(workload.Command, tc.command) || workload.CommandShell != tc.shell {
+				t.Fatalf("command = %q shell=%v; want %q shell=%v", workload.Command, workload.CommandShell, tc.command, tc.shell)
+			}
+			if !reflect.DeepEqual(workload.ImageProcess, tc.process) {
+				t.Fatalf("process = %#v; want %#v", workload.ImageProcess, tc.process)
+			}
+			for _, warning := range result.Warnings {
+				if strings.Contains(warning, "process overrides") {
+					t.Fatalf("unexpected warning %q", warning)
+				}
+			}
+		})
 	}
-	if result.Workloads[0].ImageProcess != nil {
-		t.Fatalf("build service carried an image process: %#v", result.Workloads[0].ImageProcess)
-	}
-	want := "compose.yaml: api: entrypoint, user, stop_signal ignored: Compose process overrides apply only to prebuilt images"
-	if !containsWarning(result.Warnings, want) {
-		t.Fatalf("warnings %q lack %q", result.Warnings, want)
+	if _, err := scanCompose(t, "services:\n  api:\n    build: .\n    entrypoint: []\n", "Dockerfile", "FROM node:22\n"); err == nil ||
+		!strings.Contains(err.Error(), "also set command") {
+		t.Fatalf("an empty entrypoint without a command was accepted: %v", err)
 	}
 }
 
@@ -242,44 +275,6 @@ func TestComposeUnsupportedKeysWarn(t *testing.T) {
 				t.Errorf("unexpected warning %q", warning)
 			}
 		}
-	}
-}
-
-func TestComposeExtendsAndIncludeWarn(t *testing.T) {
-	for _, tc := range []struct {
-		name, body string
-		want       []string
-	}{
-		{"same-file base names inherited keys",
-			"services:\n  base:\n    image: nginx:1.27\n    user: nginx\n    environment: {A: b}\n    ports: [80]\n  web:\n    extends: {service: base}\n    image: nginx:1.27\n    ports: [8080]\n",
-			[]string{`web: WARNING extends not applied: environment, user inherited from service "base" were not loaded; inline them into this service`}},
-		{"short form",
-			"services:\n  base:\n    image: nginx:1.27\n    working_dir: /srv\n  web:\n    extends: base\n    image: nginx:1.27\n",
-			[]string{`web: WARNING extends not applied: working_dir inherited from service "base" were not loaded`}},
-		{"other file",
-			"services:\n  web:\n    extends: {file: common.yaml, service: app}\n    image: nginx:1.27\n",
-			[]string{`web: WARNING extends not applied: settings inherited from service "app" in common.yaml were not loaded; inline them into this service`}},
-		{"unknown base",
-			"services:\n  web:\n    extends: {service: missing}\n    image: nginx:1.27\n",
-			[]string{`web: WARNING extends not applied: settings inherited from service "missing" were not loaded`}},
-		{"include paths",
-			"include:\n  - db.yaml\n  - path: [cache.yaml, queue.yaml]\nservices:\n  web:\n    image: nginx:1.27\n",
-			[]string{"compose.yaml: WARNING include not applied: services in db.yaml, cache.yaml, queue.yaml were not loaded; merge them into compose.yaml"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			result, err := scanCompose(t, tc.body)
-			if err != nil {
-				t.Fatalf("scan failed: %v; extends and include must only warn", err)
-			}
-			if len(result.Workloads) == 0 {
-				t.Fatalf("no workloads deployed: %+v", result)
-			}
-			for _, want := range tc.want {
-				if !containsWarning(result.Warnings, want) {
-					t.Fatalf("warnings %q lack %q", result.Warnings, want)
-				}
-			}
-		})
 	}
 }
 

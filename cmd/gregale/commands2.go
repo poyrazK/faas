@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -20,6 +22,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/gofrs/flock"
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
@@ -208,7 +211,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--function-concurrency N] [--revision-pin-ttl DURATION] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--release-policy safe|fast|immediate] [--release-probe-paths PATH,PATH] [--pre-auth off|observe|enforce] [--pre-auth-rps N] [--pre-auth-burst N] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--size micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--function-concurrency N] [--revision-pin-ttl DURATION] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--release-policy safe|fast|immediate] [--release-probe-paths PATH,PATH] [--pre-auth off|observe|enforce] [--pre-auth-rps N] [--pre-auth-burst N] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -218,7 +221,8 @@ func cmdApp(args []string) int {
 	visibility := fs.String("visibility", "", "set public edge exposure: public|internal (Pro/Scale only for internal)")
 	ram := fs.Int("ram", 0, "update RAM (MB)")
 	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
-	profile := fs.String("profile", "", "update named resource profile: micro|small|medium|large|xlarge")
+	profile := new(string)
+	resourceSizeFlag(fs, profile, "update named resource size: micro|small|medium|large|xlarge")
 	conc := fs.Int("max-concurrency", 0, "update max concurrent requests")
 	concurrencyOverflow := fs.String("concurrency-overflow", "", "saturated concurrency behavior: queue|drop")
 	maxQueueDepth := fs.Int("max-queue-depth", 0, "maximum queued requests at warm saturation (0 = plan default)")
@@ -232,8 +236,8 @@ func cmdApp(args []string) int {
 	functionConcurrency := fs.Int("function-concurrency", 0, "requests one Node/Python function worker serves at once (0 = one; applies from the next deploy)")
 	// --min sets the per-app cold-wake floor (ux_spec §6.5).
 	// Pro/Scale only — the API rejects Hobby/Free with 403
-	// plan_min_instances_not_allowed, which surfaces here as an
-	// "Update failed" error with the API's problem code.
+	// plan_min_instances_not_allowed, which surfaces here as a
+	// "Could not update app" error with the API's problem code.
 	min := fs.Int("min", 0, "min instances kept warm (Pro/Scale only; 0 = scale to zero)")
 	// Issue #169 / #172: per-app reactive scale-up trigger targets.
 	// --autoscale-target-rps sets the per-instance RPS target
@@ -278,7 +282,7 @@ func cmdApp(args []string) int {
 	// `gregale app <slug>` with neither flag still falls through to
 	// the info-block print path. Pro/Scale only — the API rejects
 	// Free/Hobby with 403 plan_require_authn_not_allowed, which
-	// surfaces here as an "Update failed" error with the API's
+	// surfaces here as a "Could not update app" error with the API's
 	// problem code.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
 	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement; a bearer-protected public URL opens, an IP allowlist, basic auth or internal_only setting stays")
@@ -330,8 +334,8 @@ func cmdApp(args []string) int {
 	// time. Basic auth lands as basic_user + basic_pass
 	// in the JSON body (the apid side handles the seal).
 	//
-	// Plan-gate (server-side, surfaces as an
-	// "Update failed" error with the API's problem
+	// Plan-gate (server-side, surfaces as a
+	// "Could not update app" error with the API's problem
 	// code): Free PATCH 'bearer' = 402
 	// plan_public_auth_bearer_not_allowed; Free/Hobby
 	// PATCH 'basic' or 'ip_allowlist' = 402.
@@ -459,7 +463,7 @@ func cmdApp(args []string) int {
 		v := *cpuMillicores
 		req.CPUMillicores = &v
 	}
-	if explicit["profile"] {
+	if resourceSizeSet(explicit) {
 		req.ResourceProfile = profile
 	}
 	if explicit["max-concurrency"] {
@@ -970,7 +974,7 @@ func cmdApp(args []string) int {
 	printAppSettingsTarget(slug, *environment, "explicit --environment", req)
 	updated, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).UpdateApp(ctx, slug, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update app", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(updated))
@@ -1040,7 +1044,7 @@ func cmdAppsRm(args []string) int {
 		}
 	}
 	if err := client.DeleteApp(context.Background(), slug); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete app", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{
@@ -1307,7 +1311,7 @@ func materializeCommittedGitSource(prov zeroConfigProvenance, selectedSourceDir,
 func incompatibleCreateOnlyFlags(explicit map[string]bool) []string {
 	allowed := map[string]struct{}{
 		"create-only": {}, "name": {}, "template": {}, "path": {}, "worktree": {},
-		"function": {}, "app": {}, "runtime": {}, "handler": {}, "profile": {},
+		"function": {}, "app": {}, "runtime": {}, "handler": {}, "size": {}, "profile": {},
 		"vcpu": {}, "require-authn": {}, "no-require-authn": {}, "platform-tenant-required": {}, "no-platform-tenant-required": {}, "app-protocol": {},
 		"execution-mode": {}, "restart-policy": {}, "startup-deadline-s": {}, "max-retries": {},
 		"json": {},
@@ -1469,16 +1473,6 @@ type manifestScalingClient interface {
 	UpdateApp(ctx context.Context, slug string, req api.UpdateAppRequest) (api.AppResponse, error)
 }
 
-// cliScalingPolicyPatch builds a complete replacement policy for the public
-// PATCH shape. The API intentionally treats scaling_policy as a replacement,
-// so the CLI must read and preserve existing fields before changing only the
-// concurrency admission knobs.
-func cliScalingPolicyPatch(ctx context.Context, client interface {
-	GetApp(context.Context, string) (api.AppResponse, error)
-}, slug, overflow string, maxQueueWaitMS int, setOverflow, setMaxQueueWait bool) (*api.ScalingPolicy, error) {
-	return cliScalingPolicyPatchWithWake(ctx, client, slug, overflow, maxQueueWaitMS, setOverflow, setMaxQueueWait, 0, 0, false, false)
-}
-
 func cliQueueWaitMilliseconds(milliseconds int, duration time.Duration, setMilliseconds, setDuration bool) (int, bool, error) {
 	if setMilliseconds && setDuration {
 		return 0, false, fmt.Errorf("--max-queue-wait and --max-queue-wait-ms are mutually exclusive")
@@ -1494,12 +1488,6 @@ func cliQueueWaitMilliseconds(milliseconds int, duration time.Duration, setMilli
 		return 0, false, fmt.Errorf("--max-queue-wait must use whole milliseconds; got %s", duration)
 	}
 	return int(duration / time.Millisecond), true, nil
-}
-
-func cliScalingPolicyPatchWithWake(ctx context.Context, client interface {
-	GetApp(context.Context, string) (api.AppResponse, error)
-}, slug, overflow string, maxQueueWaitMS int, setOverflow, setMaxQueueWait bool, wakeMaxQueueDepth, wakeMaxQueueWaitSeconds int, setWakeDepth, setWakeWait bool) (*api.ScalingPolicy, error) {
-	return cliScalingPolicyPatchWithQueues(ctx, client, slug, overflow, maxQueueWaitMS, 0, setOverflow, setMaxQueueWait, false, wakeMaxQueueDepth, wakeMaxQueueWaitSeconds, setWakeDepth, setWakeWait)
 }
 
 func cliScalingPolicyPatchWithQueues(ctx context.Context, client interface {
@@ -1569,234 +1557,7 @@ func cliScalingPolicyPatchWithQueues(ctx context.Context, client interface {
 	return policy, nil
 }
 
-func scalingPolicyEqual(a, b *api.ScalingPolicy) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	if a.MinInstances != b.MinInstances || a.MaxInstances != b.MaxInstances ||
-		a.ScaleOutCooldownS != b.ScaleOutCooldownS || a.ScaleInCooldownS != b.ScaleInCooldownS ||
-		a.ConcurrencyOverflow != b.ConcurrencyOverflow || a.MaxQueueWaitMS != b.MaxQueueWaitMS ||
-		a.MaxQueueDepth != b.MaxQueueDepth || a.WakeMaxQueueDepth != b.WakeMaxQueueDepth ||
-		a.WakeMaxQueueWaitSeconds != b.WakeMaxQueueWaitSeconds {
-		return false
-	}
-	if a.Target == nil || b.Target == nil {
-		return a.Target == nil && b.Target == nil
-	}
-	return a.Target.Metric == b.Target.Metric && a.Target.Value == b.Target.Value
-}
-
-func serviceReplicasEqual(a, b *api.ServiceReplicas) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return a.Min == b.Min && a.Max == b.Max && a.Desired == b.Desired
-}
-
-func workerReplicasEqual(a, b *api.WorkerScaling) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return a.Min == b.Min && a.Max == b.Max && a.Metric == b.Metric && a.Name == b.Name &&
-		a.Target == b.Target && a.ObserverAppSlug == b.ObserverAppSlug
-}
-
-func lifecyclePatchNeeded(current api.AppResponse, desired api.UpdateAppRequest) bool {
-	manifest := current.Manifest
-	if desired.Profiling != nil && (manifest.Profiling == nil || *desired.Profiling != *manifest.Profiling) {
-		return true
-	}
-	if desired.ExecutionMode != nil && manifest.ExecutionMode != *desired.ExecutionMode {
-		return true
-	}
-	if desired.RestartPolicy != nil && manifest.RestartPolicy != *desired.RestartPolicy {
-		return true
-	}
-	if desired.StartupDeadlineS != nil && manifest.StartupDeadlineS != *desired.StartupDeadlineS {
-		return true
-	}
-	if desired.MaxRetries != nil && manifest.MaxRetries != *desired.MaxRetries {
-		return true
-	}
-	if desired.StopGracePeriodS != nil {
-		currentGraceS := int(manifest.StopGracePeriod / time.Second)
-		if currentGraceS != *desired.StopGracePeriodS {
-			return true
-		}
-	}
-	if desired.StopSignal != nil && manifest.StopSignal != *desired.StopSignal {
-		return true
-	}
-	if desired.RequestTimeoutS != nil && manifest.RequestTimeoutS != *desired.RequestTimeoutS {
-		return true
-	}
-	if desired.ServiceReplicas != nil && !serviceReplicasEqual(manifest.ServiceReplicas, desired.ServiceReplicas) {
-		return true
-	}
-	if desired.WorkerReplicas != nil && !workerReplicasEqual(manifest.WorkerReplicas, desired.WorkerReplicas) {
-		return true
-	}
-	return false
-}
-
-// applyManifestLifecycle reads and applies the optional lifecycle block. It
-// runs after the app exists, allowing OCI image deploys to use worker mode
-// without requiring an HTTP listener or an image-derived app.json first.
-func applyManifestLifecycle(ctx context.Context, client manifestScalingClient, slug, cwd string) error {
-	if cwd == "" {
-		return nil
-	}
-	m, ok, err := gregalemanifest.Load(cwd)
-	if err != nil {
-		return err
-	}
-	if !ok || m == nil || ((m.Lifecycle == nil || m.Lifecycle.Empty()) && m.Worker == nil && m.Profiling == nil) {
-		return nil
-	}
-	if err := m.Validate(); err != nil {
-		return err
-	}
-	desired := api.UpdateAppRequest{}
-	if m.Lifecycle != nil && !m.Lifecycle.Empty() {
-		desired = m.Lifecycle.ToAPI()
-	}
-	if m.Worker != nil {
-		workerMode := api.ExecutionModeWorker
-		desired.ExecutionMode = &workerMode
-		desired.WorkerReplicas = m.Worker.Scale.ToAPI()
-		if drainTimeout := m.Worker.DrainTimeoutSeconds(); drainTimeout > 0 {
-			desired.StopGracePeriodS = &drainTimeout
-		}
-		if m.Worker.StopSignal != "" {
-			sig := m.Worker.StopSignal
-			desired.StopSignal = &sig
-		}
-	}
-	current, err := client.GetApp(ctx, slug)
-	if err != nil {
-		return fmt.Errorf("read app before applying lifecycle policy: %w", err)
-	}
-	if !lifecyclePatchNeeded(current, desired) {
-		return nil
-	}
-	if _, err := client.UpdateApp(ctx, slug, desired); err != nil {
-		return fmt.Errorf("apply lifecycle policy: %w", err)
-	}
-	return nil
-}
-
-// applyManifestScalingPolicy reads and applies optional app defaults from the
-// manifest. The API remains authoritative for plan gates and validation.
-// It runs after the deployment has been accepted so a failed build/upload
-// cannot leave app configuration changed. The API remains authoritative for
-// plan gates and workload-class compatibility.
-func applyManifestScalingPolicy(ctx context.Context, client manifestScalingClient, slug, cwd string) error {
-	if cwd == "" {
-		return nil
-	}
-	m, ok, err := gregalemanifest.Load(cwd)
-	if err != nil {
-		return err
-	}
-	if !ok || m == nil || (m.Scaling == nil && m.RetryPolicy == nil && (m.Worker == nil || m.Worker.Scale.Metric == "")) {
-		return nil
-	}
-	if err := m.Validate(); err != nil {
-		return err
-	}
-	current, err := client.GetApp(ctx, slug)
-	if err != nil {
-		return fmt.Errorf("read app before applying scaling policy: %w", err)
-	}
-	update := api.UpdateAppRequest{}
-	changed := false
-	if m.Worker != nil && m.Worker.Scale.Metric != "" {
-		policy := &api.ScalingPolicy{
-			MinInstances: m.Worker.Scale.Min,
-			MaxInstances: m.Worker.Scale.Max,
-			Target: &api.ScalingTarget{
-				Metric: m.Worker.Scale.Metric,
-				Name:   m.Worker.Scale.Name,
-				Value:  m.Worker.Scale.Target,
-			},
-		}
-		if !scalingPolicyEqual(current.ScalingPolicy, policy) {
-			update.ScalingPolicy = policy
-			changed = true
-		}
-	} else if m.Scaling != nil {
-		desired := m.Scaling.ToAPI()
-		if !scalingPolicyEqual(current.ScalingPolicy, desired) {
-			update.ScalingPolicy = desired
-			changed = true
-		}
-	}
-	if m.RetryPolicy != nil {
-		desired := &api.RetryPolicyDTO{
-			MaxAttempts: m.RetryPolicy.MaxAttempts, BaseSeconds: m.RetryPolicy.BaseSeconds,
-			MaxSeconds: m.RetryPolicy.MaxSeconds, JitterSeconds: m.RetryPolicy.JitterSeconds,
-		}
-		if !retryPolicyDTOEqual(current.RetryPolicy, desired) {
-			update.RetryPolicy = desired
-			changed = true
-		}
-	}
-	if !changed {
-		return nil
-	}
-	if _, err := client.UpdateApp(ctx, slug, update); err != nil {
-		return fmt.Errorf("apply manifest app defaults: %w", err)
-	}
-	return nil
-}
-
-func retryPolicyDTOEqual(left, right *api.RetryPolicyDTO) bool {
-	zero := func(p *api.RetryPolicyDTO) bool {
-		return p == nil || (p.MaxAttempts == 0 && p.BaseSeconds == 0 && p.MaxSeconds == 0 && p.JitterSeconds == 0)
-	}
-	if zero(left) || zero(right) {
-		return zero(left) && zero(right)
-	}
-	return left.MaxAttempts == right.MaxAttempts && left.BaseSeconds == right.BaseSeconds &&
-		left.MaxSeconds == right.MaxSeconds && left.JitterSeconds == right.JitterSeconds
-}
-
 const manifestTriggerCleanupTimeout = 10 * time.Second
-
-type manifestCronRollbackStep struct {
-	description string
-	undo        func(context.Context) error
-}
-
-// manifestCronTransaction records the inverse of each successful desired-state
-// mutation. The deployment caller commits it only after upload succeeds; every
-// earlier failure restores the previous cron set in reverse order.
-type manifestCronTransaction struct {
-	steps []manifestCronRollbackStep
-}
-
-func (t *manifestCronTransaction) commit() {
-	if t != nil {
-		t.steps = nil
-	}
-}
-
-func (t *manifestCronTransaction) rollback(ctx context.Context) error {
-	if t == nil || len(t.steps) == 0 {
-		return nil
-	}
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), manifestTriggerCleanupTimeout)
-	defer cancel()
-	var cleanupErrs []error
-	for i := len(t.steps) - 1; i >= 0; i-- {
-		step := t.steps[i]
-		if err := step.undo(cleanupCtx); err != nil {
-			cleanupErrs = append(cleanupErrs, fmt.Errorf("%s: %w", step.description, err))
-		}
-	}
-	t.steps = nil
-	return errors.Join(cleanupErrs...)
-}
 
 func manifestCronKey(schedule, path string) string {
 	return schedule + "\x00" + path
@@ -1816,39 +1577,6 @@ func manifestCronRequest(slug string, trigger gregalemanifest.Trigger) api.Creat
 		AppID: slug, Schedule: trigger.Schedule, Path: trigger.Path,
 		Enabled: &enabled, Timezone: timezone, SkipIfRunning: &skip,
 	}
-}
-
-func cronCreateRequestFromResponse(cron api.CronResponse) api.CreateCronRequest {
-	enabled, skip := cron.Enabled, cron.SkipIfRunning
-	return api.CreateCronRequest{
-		AppID: cron.AppID, Schedule: cron.Schedule, Path: cron.Path,
-		Command: append([]string(nil), cron.Command...), CommandShell: cron.CommandShell,
-		TimeoutSeconds: cron.TimeoutSeconds, MaxOutputBytes: cron.MaxOutputBytes,
-		Enabled: &enabled, Timezone: cron.Timezone, SkipIfRunning: &skip,
-	}
-}
-
-func cronUpdateRequestFromCreate(req api.CreateCronRequest) api.UpdateCronRequest {
-	schedule, path, timezone := req.Schedule, req.Path, req.Timezone
-	return api.UpdateCronRequest{
-		Schedule: &schedule, Path: &path, Enabled: req.Enabled,
-		Timezone: &timezone, SkipIfRunning: req.SkipIfRunning,
-	}
-}
-
-func cronResponseMatchesRequest(cron api.CronResponse, req api.CreateCronRequest) bool {
-	enabled, skip := true, false
-	if req.Enabled != nil {
-		enabled = *req.Enabled
-	}
-	if req.SkipIfRunning != nil {
-		skip = *req.SkipIfRunning
-	}
-	timezone := req.Timezone
-	if timezone == "" {
-		timezone = "UTC"
-	}
-	return cron.Enabled == enabled && cron.Timezone == timezone && cron.SkipIfRunning == skip
 }
 
 // loadWorkflowManifestForDeploy performs the workflow-only preflight before
@@ -1945,6 +1673,11 @@ func validateSingleAppManifestTargets(cwd, slug string) error {
 			return fmt.Errorf("async_routes entry %d targets app %q, but this single-app deploy targets %q; fix the app name or use --project", i+1, route.App, slug)
 		}
 	}
+	for i, route := range m.Routes {
+		if route.To != slug {
+			return fmt.Errorf("routes entry %d sends traffic to app %q, but this single-app deploy targets %q; fix `to` or use --project", i+1, route.To, slug)
+		}
+	}
 	printManifestWarnings(m)
 	return nil
 }
@@ -1981,178 +1714,6 @@ func validateProjectManifestConfig(cwd string) error {
 	}
 	printManifestWarnings(m)
 	return nil
-}
-
-// deployManifestTriggers applies the manifest as desired state and commits the
-// result immediately. The deployment path uses the transaction-returning
-// helper below so a later upload/build-submission failure can restore the
-// complete previous set.
-func deployManifestTriggers(ctx context.Context, client manifestCronClient, slug, cwd string) error {
-	txn, err := deployManifestTriggersWithRollback(ctx, client, slug, cwd)
-	if err == nil {
-		txn.commit()
-	}
-	return err
-}
-
-// deployManifestTriggersWithRollback reconciles creates, mutable scheduling
-// options, and removals. Presence of a cron for slug opts that app into
-// replacement semantics; an explicit `triggers: []` clears the target app.
-// A non-empty manifest containing only other app slugs leaves this app alone.
-// The stable identity is (schedule,path), so changing either is a remove+add.
-func deployManifestTriggersWithRollback(ctx context.Context, client manifestCronClient, slug, cwd string) (*manifestCronTransaction, error) {
-	txn := &manifestCronTransaction{}
-	if cwd == "" {
-		return txn, nil
-	}
-	m, ok, err := gregalemanifest.Load(cwd)
-	if err != nil {
-		return txn, err
-	}
-	if !ok {
-		return txn, nil
-	}
-	if err := m.Validate(); err != nil {
-		return txn, err
-	}
-	txn, err = reconcileManifestCronsWithRollback(ctx, client, slug, m)
-	if err != nil {
-		return txn, err
-	}
-	if err := reconcileManifestRealtimeTriggers(ctx, client, slug, m, txn); err != nil {
-		if rollbackErr := txn.rollback(ctx); rollbackErr != nil {
-			err = errors.Join(err, fmt.Errorf("roll back manifest triggers: %w", rollbackErr))
-		}
-		return &manifestCronTransaction{}, err
-	}
-	return txn, nil
-}
-
-// reconcileManifestCronsWithRollback is deployManifestTriggersWithRollback
-// for an already loaded and validated manifest. The functions fan-out
-// (ADR-985) passes each function's crons through it.
-func reconcileManifestCronsWithRollback(ctx context.Context, client manifestCronClient, slug string, m *gregalemanifest.Manifest) (*manifestCronTransaction, error) {
-	txn := &manifestCronTransaction{}
-	manage := m.Triggers != nil && len(m.Triggers) == 0
-	var matching []gregalemanifest.Trigger
-	for _, t := range m.Triggers {
-		if t.Kind == gregalemanifest.TriggerKindCron && t.App == slug {
-			manage = true
-			matching = append(matching, t)
-		}
-	}
-	if !manage {
-		return txn, nil
-	}
-
-	existing, err := client.ListCrons(ctx, slug)
-	if err != nil {
-		return txn, fmt.Errorf("list existing crons: %w", err)
-	}
-	if acct, err := client.Whoami(ctx); err == nil {
-		if l, ok := api.LimitsFor(api.Plan(acct.Plan)); ok {
-			if len(matching) > l.CronLimitPerApp {
-				return txn, fmt.Errorf("cron quota exceeded: %d triggers in manifest, plan allows %d; raise plan or drop triggers",
-					len(matching), l.CronLimitPerApp)
-			}
-		}
-	}
-
-	desiredByKey := make(map[string]api.CreateCronRequest, len(matching))
-	desiredOrder := make([]string, 0, len(matching))
-	for _, trigger := range matching {
-		key := manifestCronKey(trigger.Schedule, trigger.Path)
-		desiredByKey[key] = manifestCronRequest(slug, trigger)
-		desiredOrder = append(desiredOrder, key)
-	}
-	existingByKey := make(map[string]api.CronResponse, len(existing))
-	for _, cron := range existing {
-		if cron.Kind == "command" {
-			continue // deployment manifests own HTTP path crons only
-		}
-		existingByKey[manifestCronKey(cron.Schedule, cron.Path)] = cron
-	}
-
-	fail := func(operation string, err error) (*manifestCronTransaction, error) {
-		rollbackErr := txn.rollback(ctx)
-		if rollbackErr != nil {
-			return txn, fmt.Errorf("%s: %w; trigger rollback incomplete: %w", operation, err, rollbackErr)
-		}
-		return txn, fmt.Errorf("%s: %w; previous trigger state restored", operation, err)
-	}
-
-	applied := 0
-	// Update same-identity rows first. These operations do not consume quota.
-	for _, key := range desiredOrder {
-		current, exists := existingByKey[key]
-		if !exists {
-			continue
-		}
-		desired := desiredByKey[key]
-		if cronResponseMatchesRequest(current, desired) {
-			continue
-		}
-		previous := cronCreateRequestFromResponse(current)
-		if _, err := client.UpdateCron(ctx, current.ID, cronUpdateRequestFromCreate(desired)); err != nil {
-			return fail("update manifest cron "+current.ID, err)
-		}
-		cronID := current.ID
-		txn.steps = append(txn.steps, manifestCronRollbackStep{
-			description: "restore trigger " + cronID,
-			undo: func(rollbackCtx context.Context) error {
-				_, err := client.UpdateCron(rollbackCtx, cronID, cronUpdateRequestFromCreate(previous))
-				return err
-			},
-		})
-		applied++
-	}
-
-	// Remove stale rows before creates so replacement at the exact cap has
-	// headroom. Each delete records enough data to recreate the prior row.
-	for _, cron := range existing {
-		if cron.Kind == "command" {
-			continue // command schedules are managed independently via `crons`
-		}
-		if _, keep := desiredByKey[manifestCronKey(cron.Schedule, cron.Path)]; keep {
-			continue
-		}
-		if err := client.DeleteCron(ctx, cron.ID); err != nil {
-			return fail("remove stale manifest cron "+cron.ID, err)
-		}
-		previous := cronCreateRequestFromResponse(cron)
-		txn.steps = append(txn.steps, manifestCronRollbackStep{
-			description: "recreate trigger " + cron.ID,
-			undo: func(rollbackCtx context.Context) error {
-				_, err := client.CreateCron(rollbackCtx, slug, previous)
-				return err
-			},
-		})
-		applied++
-	}
-
-	for i, key := range desiredOrder {
-		if _, exists := existingByKey[key]; exists {
-			continue
-		}
-		created, err := client.CreateCron(ctx, slug, desiredByKey[key])
-		if err != nil {
-			req := desiredByKey[key]
-			return fail(fmt.Sprintf("trigger %d/%d (%s %q %s) rejected after %d trigger change(s)",
-				i+1, len(desiredOrder), slug, req.Schedule, req.Path, applied), err)
-		}
-		createdID := created.ID
-		if createdID != "" {
-			txn.steps = append(txn.steps, manifestCronRollbackStep{
-				description: "delete staged trigger " + createdID,
-				undo:        func(rollbackCtx context.Context) error { return client.DeleteCron(rollbackCtx, createdID) },
-			})
-		}
-		applied++
-	}
-	if !jsonOutput && applied > 0 {
-		_, _ = fmt.Fprintf(osStdout, "  ✓ %s: %d trigger(s) applied\n", slug, applied)
-	}
-	return txn, nil
 }
 
 // deployManifestQueueBindings reconciles the optional queue_bindings block as
@@ -2288,6 +1849,21 @@ func templateFunctionConfig(name string) (runtime, handler string, ok bool) {
 // we force --runtime / --handler so the runner wires up correctly without
 // the customer having to know those flags.
 func cmdDeployTarball(args []string) int {
+	if len(args) > 0 && args[0] == "check" {
+		return cmdDeployCheck(args[1:])
+	}
+	if len(args) > 0 && args[0] == "resolve-contract" {
+		return cmdProjectMigrationRecovery(args[1:])
+	}
+	if len(args) > 0 && (args[0] == "abort" || args[0] == "recover" || args[0] == "status" || args[0] == "contract") {
+		return cmdProjectDeployControl(args[0], args[1:])
+	}
+	if len(args) > 0 && args[0] == "retry" {
+		return cmdDeployRetry(context.Background(), args[1:])
+	}
+	if len(args) > 0 && args[0] == "resume" {
+		return cmdDeployResume(context.Background(), args[1:])
+	}
 	return cmdDeployTarballToExisting(context.Background(), args, false)
 }
 
@@ -2296,6 +1872,7 @@ func cmdDeployTarball(args []string) int {
 // `gregale deploy` calls leave both fields unset and retain the signal-driven
 // behavior below.
 type deployExecution struct {
+	projectRetry     map[string]string
 	onQueued         func(api.DeploymentResponse)
 	onSubmission     func(deploySubmission) error
 	onUploadSession  func(deployUploadIdentity) error
@@ -2339,6 +1916,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if len(executions) > 0 {
 		execution = executions[0]
 	}
+	if len(execution.projectRetry) > 0 {
+		ctx = api.ContextWithProjectRetry(ctx, execution.projectRetry)
+	}
 	doctorPreflightRan = execution.sourcePreflightChecked
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
@@ -2374,7 +1954,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	runtime := fs.String("runtime", "", "function runtime (node22|python312|go124|go124-alpine|node24|python313|binary)")
 	handler := fs.String("handler", "", "function handler (e.g. handler.handler)")
 	name := fs.String("name", "", "app name (default: selected source directory, or current directory)")
-	profile := fs.String("profile", "", "named app resource profile: micro|small|medium|large|xlarge")
+	profile := new(string)
+	resourceSizeFlag(fs, profile, "named app resource size: micro|small|medium|large|xlarge")
 	vcpu := fs.Int("vcpu", 0, "assert the plan guest vCPU shape (omit to use the plan default)")
 	executionMode := fs.String("execution-mode", "", "app lifecycle mode: request|service|worker|job")
 	restartPolicy := fs.String("restart-policy", "", "restart policy: no|on-failure|always|unless-stopped")
@@ -2424,6 +2005,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// the 90-day active window; ADR-127 §1 documents the no-FK
 	// posture.
 	deployPersistExclude := fs.Bool("persist-exclude", false, "record --exclude slugs into deployment_scope_exclusions for future deploys (ADR-124 follow-up #3)")
+	workerHealthProjectDeploy := fs.Bool("worker-health", false, "require real worker delivery health before finalizing; requires --workers")
+	stabilizeProjectDeploy := fs.Bool("stabilize", false, "monitor health for ten minutes after progressive rollout succeeds")
+	progressiveProjectDeploy := fs.Bool("progressive", false, "progressively route 5%, 25%, then 100%; requires --atomic --verify --config-file")
+	workersProjectDeploy := fs.Bool("workers", false, "include one existing push-queue worker in the atomic verified project release")
+	migrateProjectDeploy := fs.Bool("migrate", false, "run one backward-compatible release command before atomic cutover; requires --atomic --verify")
+	releaseSecretsFile := fs.String("release-secrets-file", "", "rotate complete production secret snapshots with an atomic verified HTTP release")
+	releaseSecretRequestID := fs.String("release-secrets-request-id", "", "reuse the printed encrypted staging request after an uncertain response")
+	releaseConfigFile := fs.String("config-file", "", "non-secret workload env JSON to activate with code; requires --atomic --verify")
+	verifyProjectDeploy := fs.Bool("verify", false, "verify an atomic project release with configured route probes and automatically roll back regressions")
+	addProjectServices := fs.Bool("add-services", false, "reserve new HTTP services and publish them with the atomic project release")
+	safeProjectDeploy := fs.Bool("atomic", false, "build an existing HTTP project at zero traffic, then atomically publish its ready release")
 	projectDeploy := fs.Bool("project", false, "deploy all detected workloads as one project (slug defaults from --name or source)")
 	projectSlug := fs.String("project-slug", "", "kebab slug for the project (triggers one-key provision)")
 	// --environment targets a registered project environment. The server
@@ -2478,6 +2070,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	fs.Var(&queueCanaryBindings, "queue-canary-binding", "declare safe handler-completion support for a manifest push HTTP binding (repeatable; this deployment only)")
 	mcpTaskMigrationOverride := fs.Bool("mcp-task-migration-override", false, "allow this deployment to replace incompatible MCP task workers once")
 	overrideFreeze := fs.String("override-freeze", "", "release to production during a deploy freeze; the reason is audited (ADR-20261019071733)")
+	releaseAtFlag := fs.String("at", "", "build now and start the production rollout at this time; freezes are checked then")
+	releaseNotifyFlag := fs.String("release-notify", "", "Slack or email channels told when a scheduled release starts or cannot start (with --at)")
 	rollbackOn5xx := fs.Bool("rollback-on-5xx", false, "automatically roll back after repeated first-wake 5xx responses")
 	disableStartupCPUBoost := fs.Bool("disable-startup-cpu-boost", false, "disable the temporary CPU boost during VM startup")
 	// Issue #791 PR-C / ADR-090: skip the `gregale.yaml` triggers fan-out.
@@ -2490,13 +2084,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// Deployment completion is wait-by-default for compatibility with the
 	// existing deploy command; --no-wait returns once apid queues the
 	// deployment so CI and scripts can continue immediately.
-	waitDeploy := fs.Bool("wait", false, "wait for the deployment to become live (default)")
+	waitDeploy := fs.Bool("wait", false, "wait for readiness; projects also wait for rollout and configuration (default)")
 	noWaitDeploy := fs.Bool("no-wait", false, "return after the deployment is queued")
 	// --create-only reserves the app metadata without uploading a deployment.
 	// This supports service templates whose secrets must be configured before
 	// their first process starts, while reusing the normal shape/runtime path.
 	createOnly := fs.Bool("create-only", false, "create or reserve the app without uploading a deployment")
-	waitTimeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum wait (seconds or a duration such as 10m) for deployment readiness (default %d)", defaultDeployWaitTimeoutSeconds))
+	waitTimeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum wait (seconds or a duration such as 10m) for deploy completion (default %d)", defaultDeployWaitTimeoutSeconds))
 	idempotencyKey := fs.String("idempotency-key", "", "stable logical retry key for this deployment (optional)")
 	// --secret-scan toggles the pkg/secretscan pre-pack pass that
 	// drops credential-shaped lines (Stripe live keys, GitHub PATs, AWS
@@ -2533,6 +2127,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// Unlike --dry-run/--diff it does not compare remote state or call apid; it
 	// only resolves framework, listener, resource, and state defaults.
 	simplePlan := fs.Bool("plan", false, "show the simple stateless app plan without login, upload, or remote changes")
+	// --preview is the clearer spelling: `gregale plan` changes the billing plan.
+	fs.BoolVar(simplePlan, "preview", false, "alias of --plan")
 	diffJSON := fs.Bool("json", false, "emit JSON output (with --diff or --dry-run)")
 	diffStrict := fs.Bool("strict", false, "exit non-zero on schema/quota/env breaks (default with --diff)")
 	diffLenient := fs.Bool("lenient", false, "exit zero even on breaks; --diff still renders them")
@@ -2600,6 +2196,75 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if err := applyRolloutFlag(*rolloutChoice, explicit, safeDeploy, canaryPreset); err != nil {
 			return printErr("Invalid rollout policy", err)
 		}
+	}
+	if *migrateProjectDeploy && (!*safeProjectDeploy || !*verifyProjectDeploy) {
+		return printErr("Invalid migration deploy", errors.New("--migrate requires --atomic --verify --project"))
+	}
+	if *addProjectServices && (!*safeProjectDeploy || !*projectDeploy || *releaseConfigFile != "" || *releaseSecretsFile != "" || *migrateProjectDeploy || *workersProjectDeploy || *progressiveProjectDeploy) {
+		return printErr("Invalid service addition", errors.New("--add-services requires --project --atomic without configuration, secret, migration, worker or progressive changes"))
+	}
+	if *workerHealthProjectDeploy && !*workersProjectDeploy {
+		return printErr("Invalid worker health verification", errors.New("--worker-health requires --workers --atomic --verify --project"))
+	}
+	if *stabilizeProjectDeploy && !*progressiveProjectDeploy {
+		return printErr("Invalid stabilization", errors.New("--stabilize requires --progressive"))
+	}
+	if *progressiveProjectDeploy && (!*safeProjectDeploy || !*verifyProjectDeploy || (*releaseConfigFile == "" && *releaseSecretsFile == "") || *workersProjectDeploy && !*workerHealthProjectDeploy) {
+		return printErr("Invalid progressive release", errors.New("--progressive requires --project --atomic --verify --config-file and --worker-health when --workers is used"))
+	}
+	if *workersProjectDeploy && (!*safeProjectDeploy || !*verifyProjectDeploy) {
+		return printErr("Invalid worker release", errors.New("--workers requires --atomic --verify --project"))
+	}
+	var releaseConfigRequestHash string
+	var releaseSecretValues map[string]map[string]string
+	if *releaseSecretsFile != "" && (!*safeProjectDeploy || !*verifyProjectDeploy || !*projectDeploy || !*yes || *migrateProjectDeploy || *workersProjectDeploy || *dryRun || *diff || *repo != "" || *tarball != "") {
+		return printErr("Invalid atomic secrets release", errors.New("--release-secrets-file requires --project --atomic --verify --yes and local HTTP source"))
+	}
+	if *releaseSecretRequestID != "" && (*releaseSecretsFile == "" || !api.ValidDeploymentAttemptID(*releaseSecretRequestID)) {
+		return printErr("Invalid secret staging request", errors.New("a valid request ID requires --release-secrets-file"))
+	}
+	if *releaseConfigFile != "" && (!*safeProjectDeploy || !*verifyProjectDeploy) {
+		return printErr("Invalid release configuration", errors.New("--config-file requires --atomic --verify --project"))
+	}
+	if *verifyProjectDeploy && !*safeProjectDeploy {
+		return printErr("Invalid release verification", errors.New("--verify requires --atomic --project"))
+	}
+	if *safeProjectDeploy {
+		if !*projectDeploy || *image != "" || *repo != "" || *deployOnly != "" || *deployExclude != "" || *deployPersistExclude || *secretsFile != "" || len(execution.projectRetry) > 0 || *environment != "" && *environment != "production" {
+			return printErr("Invalid safe deploy", errors.New("--atomic requires --project and a complete production source deploy without secrets or exclusions"))
+		}
+		*noTriggers = true
+		*environment = "production"
+		ctx = api.ContextWithProjectSafeRelease(ctx)
+		if *addProjectServices {
+			ctx = api.ContextWithProjectServiceAdditions(ctx)
+		}
+		if *verifyProjectDeploy {
+			ctx = api.ContextWithProjectReleaseVerification(ctx)
+			if *releaseConfigFile != "" {
+				raw, err := readProjectReleaseConfig(*releaseConfigFile)
+				if err != nil {
+					return printErr("Invalid release configuration", err)
+				}
+				_, releaseConfigRequestHash, _ = api.NormalizeProjectReleaseConfig(raw)
+				ctx = api.ContextWithProjectReleaseConfig(ctx, raw)
+			}
+		}
+	}
+	if *migrateProjectDeploy {
+		ctx = api.ContextWithProjectReleaseMigration(ctx)
+	}
+	if *workersProjectDeploy {
+		ctx = api.ContextWithProjectReleaseWorkers(ctx)
+		if *workerHealthProjectDeploy {
+			ctx = api.ContextWithProjectWorkerHealth(ctx)
+		}
+	}
+	if *stabilizeProjectDeploy {
+		ctx = api.ContextWithProjectStabilization(ctx)
+	}
+	if *progressiveProjectDeploy {
+		ctx = api.ContextWithProjectProgressiveRelease(ctx)
 	}
 	selectedSourceMode, sourceModeErr := resolveDeploySourceMode(*sourceMode, explicit["source"], *worktree,
 		*image != "" || *tarball != "" || *repo != "" || *templateName != "" || *githubSnippet, *createOnly)
@@ -2725,6 +2390,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *safeDeploy && projectRequested {
 		return printErr("Invalid flags", errors.New("--safe currently supports single-app deploys only; use --canary-preset with a project deploy"))
 	}
+	releaseAt, releaseNotify, releaseAtErr := resolveDeployReleaseAt(*releaseAtFlag, *releaseNotifyFlag, explicit, *noTraffic,
+		projectRequested || *githubSnippet || *simplePlan || *dryRun || *diff || *serverDiff || *createOnly || developerSync != nil)
+	if releaseAtErr != nil {
+		return printErr("Invalid rollout policy", releaseAtErr)
+	}
+	// A scheduled release waits like a dark deployment until its time.
+	parkedDeploy := *noTraffic || releaseAt != ""
 	if *environment != "" {
 		if !api.ValidProjectEnvironmentSlug(*environment) {
 			return printErr("Invalid --environment", fmt.Errorf("must be a lowercase project environment slug; got %q", *environment))
@@ -2752,18 +2424,22 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return printErr("Invalid flags", fmt.Errorf("--secrets-file cannot be combined with --github, --diff, --dry-run, or --repo"))
 	}
 	if *simplePlan {
+		planFlag := "--plan"
+		if explicit["preview"] {
+			planFlag = "--preview"
+		}
 		if *diff || *dryRun || *serverDiff || *createOnly || *projectDeploy || *deployOnly != "" || *deployExclude != "" || *projectSlug != "" {
-			return printErr("Invalid flags", errors.New("--plan cannot be combined with deploy mutation or project preview flags"))
+			return printErr("Invalid flags", errors.New(planFlag+" cannot be combined with deploy mutation or project preview flags"))
 		}
 		if *tarball != "" || *templateName != "" || *repo != "" || *githubSnippet {
-			return printErr("Invalid flags", errors.New("--plan supports the current directory, --path, or --image; use --dry-run for archives and repositories"))
+			return printErr("Invalid flags", errors.New(planFlag+" supports the current directory, --path, or --image; use --dry-run for archives and repositories"))
 		}
 		if *secretsFile != "" {
-			return printErr("Invalid flags", errors.New("--plan cannot be combined with --secrets-file"))
+			return printErr("Invalid flags", errors.New(planFlag+" cannot be combined with --secrets-file"))
 		}
 		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "rollout", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "mcp-task-migration-override", "require-authn", "no-require-authn", "platform-tenant-required", "no-platform-tenant-required", "app-protocol"} {
 			if explicit[name] {
-				return printErr("Invalid flags", fmt.Errorf("--plan cannot be combined with --%s", name))
+				return printErr("Invalid flags", fmt.Errorf("%s cannot be combined with --%s", planFlag, name))
 			}
 		}
 	}
@@ -2783,7 +2459,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if *profile != "" {
 		if _, ok := api.ResourceProfileSpecFor(*profile); !ok {
-			return printErr("Invalid --profile", fmt.Errorf("must be one of micro, small, medium, large, xlarge; got %q", *profile))
+			return printErr("Invalid "+resourceSizeSpelling(explicit), fmt.Errorf("must be one of micro, small, medium, large, xlarge; got %q", *profile))
 		}
 	}
 	if *vcpu < 0 {
@@ -2907,7 +2583,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			// overrides here instead of silently dropping them from both
 			// the scan and apply requests.
 			"function", "app", "runtime", "handler", "dockerfile",
-			"vcpu", "profile", "require-authn", "no-require-authn",
+			"vcpu", "size", "profile", "require-authn", "no-require-authn",
 			"app-protocol", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries",
 		} {
 			if explicit[name] {
@@ -3071,7 +2747,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Invalid flags", fmt.Errorf("--create-only is not supported with --repo; use --template or --path"))
 		}
 		if *profile != "" {
-			return printErr("Invalid flags", fmt.Errorf("--profile cannot be combined with --repo"))
+			return printErr("Invalid flags", fmt.Errorf("%s cannot be combined with --repo", resourceSizeSpelling(explicit)))
 		}
 		if err := validateRepoSlug(*repo); err != nil {
 			return printErr("Invalid --repo", err)
@@ -3112,8 +2788,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			Slug: slug, Repo: *repo, Ref: *ref, SourceBranch: *sourceBranch, Reason: *reason, Tag: *tag, AppProtocol: *appProtocol,
 			DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
-			MCPTaskMigrationOverride: *mcpTaskMigrationOverride, Healthcheck: healthcheck, OverrideFreeze: *overrideFreeze,
+			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck, NoTriggers: *noTriggers, RequireAuthn: requireAuthnPtr, PlatformTenantRequired: platformTenantRequiredPtr, PublicAuth: publicAuthPtr,
+			MCPTaskMigrationOverride: *mcpTaskMigrationOverride, OverrideFreeze: *overrideFreeze,
+			ReleaseAt: releaseAt, ReleaseNotify: releaseNotify,
 		}
 		refKey, keyErr := deployIdempotencyKey(*idempotencyKey, refIntent)
 		if keyErr != nil {
@@ -3148,8 +2825,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
 			RollbackOn5xx:            rollbackOn5xxPtr,
 			DisableStartupCPUBoost:   disableStartupCPUBoostPtr, Healthcheck: healthcheck,
-			OverrideFreeze: *overrideFreeze,
-		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, *noTraffic,
+			OverrideFreeze: *overrideFreeze, ReleaseAt: releaseAt, ReleaseNotify: releaseNotify,
+		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, parkedDeploy,
 			sourceRefAppPolicy{PlatformTenantRequired: platformTenantRequiredPtr, RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr})
 		return code
 	}
@@ -3200,6 +2877,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// The values stay in memory until the app exists; they are never included
 	// in the source archive or printed by the CLI.
 	var deploySecrets []secretsPair
+	if *releaseSecretsFile != "" {
+		var err error
+		releaseSecretValues, err = readProjectReleaseSecrets(*releaseSecretsFile)
+		if err != nil {
+			return printErr("Invalid release secret file", err)
+		}
+		execution.extraSourceExcludes = append(execution.extraSourceExcludes, *releaseSecretsFile)
+	}
+
 	if *secretsFile != "" {
 		var secretErr error
 		deploySecrets, secretErr = readSecretsFile(*secretsFile)
@@ -3217,6 +2903,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return printErr("Invalid --secrets-file", err)
 			}
 		}
+		execution.extraSourceExcludes = append(execution.extraSourceExcludes, *secretsFile)
 	}
 
 	// Zero-config (issue #313): no source flag → pack the selected source
@@ -3237,6 +2924,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// resolvedShape via this variable in the same branch.
 	var resolvedShape = shapeApp
 	var gitArchivePath string
+	var gitArchiveExcludes []string
 	var gitArchiveBuildOnlyFiles map[string][]byte
 	// sourceRoot is persisted only for workspace-context deploys. An empty
 	// value means the uploaded archive root and preserves the legacy wire shape.
@@ -3447,6 +3135,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				*deployedBy = provVal.DeployedBy
 			}
 			if !*worktree {
+				archiveRoot := selectedSourceDir
+				if workspaceContextRoot != "" || *sourcePath == "" {
+					archiveRoot = provVal.Root
+				}
+				for name := range packExtraExcludeSet(archiveRoot, execution.extraSourceExcludes) {
+					gitArchiveExcludes = append(gitArchiveExcludes, name)
+				}
 				archivePath, committedSourceDir, committedCleanup, archiveErr := materializeCommittedGitSource(
 					provVal, selectedSourceDir, sourceRoot, *sourcePath, workspaceContextRoot,
 				)
@@ -3655,7 +3350,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return printErr("Could not prepare committed deploy source", buildOnlyErr)
 			}
 			gitArchiveBuildOnlyFiles = buildOnlyFiles
-			path, n, scanFindings, packErr := packGitArchive(gitArchivePath, planCapMB, secretScanMode, gitArchiveBuildOnlyFiles)
+			path, n, scanFindings, packErr := packGitArchive(gitArchivePath, planCapMB, secretScanMode, gitArchiveBuildOnlyFiles, gitArchiveExcludes...)
 			if packErr != nil {
 				return printErr("Could not pack committed HEAD", packErr)
 			}
@@ -3879,9 +3574,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	deployIntent := deployIdempotencyIntent{
 		OverrideEnv: execution.overrideEnv,
-		Slug:        slug, Shape: resolvedShape, Runtime: deployRuntime, Handler: deployHandler,
+		Slug:        slug, Shape: resolvedShape, Runtime: deployRuntime, Handler: deployHandler, HasSecrets: len(deploySecrets) > 0,
 		Image: *image, SourceSHA256: sourceSHA256, SourceRoot: sourceRoot,
-		Profile: *profile, Dockerfile: *dockerfile, RequireAuthn: requireAuthnPtr,
+		Profile: *profile, Dockerfile: *dockerfile, RequireAuthn: requireAuthnPtr, PlatformTenantRequired: platformTenantRequiredPtr, PublicAuth: publicAuthPtr,
 		AppProtocol: appProtocolIntent, ExecutionMode: *executionMode, RestartPolicy: *restartPolicy,
 		StartupDeadlineS: *startupDeadlineS, MaxRetries: *maxRetries, Reason: *reason, Tag: *tag,
 		DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
@@ -3889,6 +3584,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
 		MCPTaskMigrationOverride: *mcpTaskMigrationOverride, Healthcheck: healthcheck, NoTriggers: *noTriggers,
 		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude, OverrideFreeze: *overrideFreeze,
+		ReleaseAt: releaseAt, ReleaseNotify: releaseNotify,
 	}
 	if preparedIssueSourceMaps != nil {
 		deployIntent.IssueSourceMapsSHA256 = preparedIssueSourceMaps.Digest
@@ -3919,7 +3615,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// back to the root-app diff (issue #1976).
 		if projectRequested {
 			if *profile != "" {
-				return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --project, --only, or --project-slug"))
+				return printErr("Invalid flags", fmt.Errorf("%s applies to a single app and cannot be combined with --project, --only, or --project-slug", resourceSizeSpelling(explicit)))
 			}
 			return runProjectDeployPreviewWithMode(ctx, client, *tarball, *projectSlug,
 				*bindingRepo, *productionBranch, *deployOnly, *deployExclude, *installID,
@@ -3959,7 +3655,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Invalid flags", fmt.Errorf("--create-only cannot be combined with --only or --project-slug"))
 		}
 		if *profile != "" {
-			return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --project, --only, or --project-slug"))
+			return printErr("Invalid flags", fmt.Errorf("%s applies to a single app and cannot be combined with --project, --only, or --project-slug", resourceSizeSpelling(explicit)))
 		}
 		// Make sure the tarball resolves the same way it does for
 		// the legacy path: --template materialises, zero-config packs
@@ -3990,11 +3686,40 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				"--only and --exclude share workload(s): %s",
 				strings.Join(clash, ", ")))
 		}
+		if releaseSecretValues != nil {
+			raw, hash, err := stageProjectReleaseSecretConfig(ctx, client, *projectSlug, *releaseSecretRequestID, releaseSecretValues, *releaseConfigFile)
+			if err != nil {
+				return printErr("Release secret staging failed", err)
+			}
+			releaseConfigRequestHash = hash
+			ctx = api.ContextWithProjectReleaseConfig(ctx, raw)
+			if *progressiveProjectDeploy {
+				ctx = api.ContextWithProjectProgressiveRelease(ctx)
+			}
+			if *stabilizeProjectDeploy {
+				ctx = api.ContextWithProjectStabilization(ctx)
+			}
+		}
 		plan, err := client.ScanProjectWithBindingEnvironment(ctx, openTarball, filepath.Base(*tarball),
 			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, platformTenantRequiredPtr)
 		if err != nil {
 			return printErr("Scan failed", err)
 		}
+		if *safeProjectDeploy && (plan.SafeRelease == nil || *stabilizeProjectDeploy && (plan.SafeRelease.Verification == nil || plan.SafeRelease.Verification.Stabilization == nil || !plan.SafeRelease.Verification.Stabilization.Enabled) || *progressiveProjectDeploy && (plan.SafeRelease.Verification == nil || !plan.SafeRelease.Verification.Progressive || plan.SafeRelease.Configuration == nil) || *workerHealthProjectDeploy && (plan.SafeRelease.Verification == nil || plan.SafeRelease.Verification.WorkerHealth == nil) || *workersProjectDeploy && (plan.SafeRelease.Worker == nil || plan.SafeRelease.Worker.AppID == "" || len(plan.SafeRelease.Worker.BindingHash) != 64) || *migrateProjectDeploy && (plan.SafeRelease.ReleaseCommand == nil || plan.SafeRelease.ReleaseCommand.Compatibility != "backward-compatible" || !plan.SafeRelease.ReleaseCommand.VerifyBaseline || len(plan.SafeRelease.ReleaseCommand.CommandHash) != 64) || *verifyProjectDeploy && plan.SafeRelease.Verification == nil || (*releaseConfigFile != "" || releaseSecretValues != nil) && (plan.SafeRelease.Configuration == nil || plan.SafeRelease.Configuration.RequestHash != releaseConfigRequestHash) || releaseSecretValues != nil && (plan.SafeRelease.Configuration == nil || plan.SafeRelease.Configuration.Secrets == nil)) {
+			return printErr("Safe deploy unavailable", errors.New("server did not provide a safe release plan; no project apply was submitted"))
+		}
+		if !jsonOutput && plan.SafeRelease != nil && plan.SafeRelease.Configuration != nil && plan.SafeRelease.Configuration.TargetHash != plan.SafeRelease.Configuration.PreviousHash {
+			PrintProgress(osStdout, "Non-secret configuration will activate with code; previous configuration version %d", plan.SafeRelease.Configuration.PreviousVersion)
+		}
+		if *addProjectServices && (plan.SafeRelease == nil || !plan.SafeRelease.AddServices || len(plan.SafeRelease.Additions) == 0) {
+			return printErr("Service additions unavailable", errors.New("server did not acknowledge the service addition plan; no project apply was submitted"))
+		}
+		if !jsonOutput && *addProjectServices {
+			for _, addition := range plan.SafeRelease.Additions {
+				PrintProgress(osStdout, "New service at cutover: %s (%s)", addition.Slug, addition.RootDir)
+			}
+		}
+
 		if !plan.CanApply {
 			if jsonOutput {
 				return jsonOut(writeJSONProblem(planProblem(plan)))
@@ -4050,39 +3775,62 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		defer func() { _ = openTarball2.Close() }()
 		applyCtx := api.ContextWithOverrideFreeze(api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "project-apply")), *overrideFreeze)
+		attemptID := ""
+		if *idempotencyKey != "" {
+			sum := sha256.Sum256([]byte("project-apply\x00" + deployKey))
+			attemptID = hex.EncodeToString(sum[:16])
+		}
+		projectSession, projectLock, saveErr := newSavedProjectDeploy(client, *projectSlug, *environment, api.ApplyResponse{PlanResponse: api.PlanResponse{SafeRelease: plan.SafeRelease}}, attemptID)
+		if saveErr != nil {
+			return printErr("Could not save project submission attempt; no apply was submitted", saveErr)
+		}
+		defer func() { _ = projectLock.Close() }()
+		applyCtx = api.ContextWithDeploymentAttempt(applyCtx, projectSession.record.Project.AttemptID)
 		apply, err := client.ApplyProjectPlanWithInitialSecrets(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
 			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, approvalToken,
 			projectDeployInitialSecrets(plan.Workloads, deploySecrets), platformTenantRequiredPtr)
 		if err != nil {
-			return printErr("Apply failed", err)
+			var apiErr *APIError
+			if errors.As(err, &apiErr) && apiErr.Problem.Code == "project_submission_mismatch" {
+				projectSession.record.Project.Refused = true
+				projectSession.record.Outcome = deploySubmissionRejected
+				_ = projectSession.save()
+			}
+			return projectSubmissionFailure(projectSession, err)
 		}
-		var projectWaitTimedOut bool
-		if waitForDeploy && len(apply.Builds) > 0 {
-			apply, projectWaitTimedOut = waitForProjectApply(ctx, client, apply,
-				time.Duration(*waitTimeoutSeconds)*time.Second)
+		if apply.SubmissionAttemptID == "" {
+			if *safeProjectDeploy {
+				return projectSubmissionFailure(projectSession, errors.New("atomic apply returned no durable attempt identity; inspect the saved attempt before retrying"))
+			}
+			projectSession.record.Project.AttemptID = ""
+		} else if apply.SubmissionAttemptID != projectSession.record.Project.AttemptID {
+			return projectSubmissionFailure(projectSession, errors.New("server returned a different project submission attempt"))
 		}
-		applyStatus := summarizeProjectApply(apply)
+		if saveErr := projectSession.rememberProjectApply(apply); saveErr != nil {
+			return renderProjectDeployReceipt(plan, apply, projectSession, false, saveErr)
+		}
+		if len(execution.projectRetry) > 0 {
+			if err := validateProjectRetryAcceptance(execution.projectRetry, apply); err != nil {
+				return projectSubmissionFailure(projectSession, err)
+			}
+		}
 		if len(deploySecrets) > 0 && !jsonOutput {
 			PrintOK(osStdout, "Configured %d secret(s) before deployment across %d workload(s)", len(deploySecrets), len(plan.Workloads))
 		}
-		if jsonOutput {
-			if code := jsonOut(writeJSON(apply)); code != 0 {
-				return code
+		if *safeProjectDeploy {
+			if apply.SafeRelease == nil || apply.SafeRelease.PreviousReleaseID != plan.SafeRelease.PreviousReleaseID {
+				return projectSubmissionFailure(projectSession, errors.New("server did not preserve the safe release baseline"))
 			}
-			if applyStatus.buildsFailed > 0 {
-				reportProjectApplyFailure(osStderr, applyStatus)
-				if projectWaitTimedOut {
-					return 3
-				}
-				return 1
+			if waitForDeploy {
+				return waitForSafeProjectRelease(ctx, client, projectSession, time.Duration(*waitTimeoutSeconds)*time.Second)
 			}
-			return 0
 		}
-		code := renderProjectApplyResult(osStdout, plan, apply)
-		if projectWaitTimedOut {
-			return 3
+		var projectWaitTimedOut bool
+		if waitForDeploy && !*safeProjectDeploy && len(apply.Builds) > 0 {
+			apply, projectWaitTimedOut = waitForProjectApply(ctx, client, apply,
+				time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
-		return code
+		return renderProjectDeployReceipt(plan, apply, projectSession, projectWaitTimedOut, nil)
 	}
 
 	var workflowDefs []api.WorkflowSpec
@@ -4183,84 +3931,146 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 
 	// Issue #791 PR-C / ADR-090: gregale.yaml triggers are staged after
 	// CreateApp so the slug exists for the FK, and before the deployment
-	// request. If upload/build/submission fails, the deferred compensation
-	// reverses every create, update, and removal to restore the prior trigger
-	// set. A queued no-wait deployment commits the staged state;
-	// waited deployments commit only once they reach live. --no-triggers
+	// request. Definite rejection restores the prior configuration. Accepted
+	// or uncertain submission commits the staged state;
+	// a later wait failure or cancellation does not undo accepted intent.
+	// --no-triggers
 	// opts out of the entire fan-out.
-	var stagedManifestTriggerTxn *manifestCronTransaction
-	profileTxn, err := stageManifestProfiling(ctx, client, slug, sourceDir)
+	var sessionLock *flock.Flock
+	savedSession, sessionLock, err := newSavedDeploySession(ctx, client, slug, resolvedApp.ID, sourceDir, deployKey, prov, *safeDeploy, parkedDeploy)
 	if err != nil {
-		return printErr("Manifest profiling policy failed", err)
+		return printErr("Could not save deploy session", err)
 	}
+	defer func() { _ = sessionLock.Close() }()
+	savedSession.record.SourceSHA256 = sourceSHA256
+	savedSession.record.SimpleAppPlan = newDeployReceipt(api.DeploymentResponse{}, nil, "", "", resolvedSimplePlan).SimpleAppPlan
+	if err := savedSession.save(); err != nil {
+		return printErr("Could not save deploy metadata", err)
+	}
+	ctx = context.WithValue(ctx, deploySessionContextKey{}, savedSession)
+	ctx = api.ContextWithDeploymentAttempt(ctx, savedSession.record.AttemptID)
+	if err := savedSession.preparePolicyJournal(ctx, client, sourceDir); err != nil {
+		return savedSession.failure("Could not save deployment policy journal", "configuration", err)
+	}
+	if err := savedSession.prepareCronJournal(ctx, client, sourceDir, *noTriggers || *trafficPercent == 0); err != nil {
+		return savedSession.failure("Could not save deployment cron journal", "configuration", err)
+	}
+	ctx = api.ContextWithDeploymentSubmissionBoundary(ctx, savedSession.markSubmissionStarted)
 	defer func() {
-		if err := profileTxn.rollback(ctx); err != nil {
-			PrintWarn(osStderr, "Manifest profiling rollback incomplete: %v", err)
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), manifestTriggerCleanupTimeout)
+		defer cancel()
+		needed := savedSession.shouldCleanPolicies()
+		managed := len(savedSession.record.PolicyJournal.Intent.Desired) > 0 || savedSession.record.CronJournal != nil && savedSession.record.CronJournal.Managed
+		if err := savedSession.cleanPolicies(cleanupCtx, client); err != nil {
+			PrintWarn(osStderr, "Deployment settings cleanup remains pending; %s: %v", savedSession.resumeCommand(), err)
+		} else if needed && managed && !jsonOutput {
+			PrintProgress(osStderr, "Deployment settings cleanup complete; no deployment created")
 		}
 	}()
-	tracingTxn, err := stageManifestTracing(ctx, client, slug, sourceDir)
-	if err != nil {
-		return printErr("Manifest tracing policy failed", err)
+	if !jsonOutput {
+		PrintProgress(osStderr, "Recovery: %s", savedSession.resumeCommand())
 	}
+	if err := savedSession.stagePolicies(ctx, client); err != nil {
+		return savedSession.failure("Could not stage deployment policies", "configuration", err)
+	}
+	// Realtime manifest triggers stay client-reconciled. Like staged crons,
+	// they survive accepted or uncertain submissions and are restored only
+	// when the submission is definitely rejected or never sent.
+	realtimeTriggers := &manifestCronTransaction{}
 	defer func() {
-		if err := tracingTxn.rollback(ctx); err != nil {
-			PrintWarn(osStderr, "Manifest tracing rollback incomplete: %v", err)
-		}
-	}()
-	defer func() {
-		if stagedManifestTriggerTxn == nil || len(stagedManifestTriggerTxn.steps) == 0 {
+		changes := len(realtimeTriggers.steps)
+		if changes == 0 {
 			return
 		}
-		changes := len(stagedManifestTriggerTxn.steps)
-		if err := stagedManifestTriggerTxn.rollback(ctx); err != nil {
-			PrintWarn(osStderr, "Manifest trigger rollback incomplete: %v", err)
+		if err := realtimeTriggers.rollback(ctx); err != nil {
+			PrintWarn(osStderr, "Manifest realtime trigger rollback incomplete: %v", err)
 			return
 		}
-		PrintProgress(osStderr, "Manifest trigger rollback complete (%d change(s) reverted)", changes)
+		PrintProgress(osStderr, "Manifest realtime trigger rollback complete (%d change(s) reverted)", changes)
 	}()
-	commitManifestTriggers := func() {
-		stagedManifestTriggerTxn.commit()
-		profileTxn.committed = true
-		tracingTxn.committed = true
+
+	submissionFailed := func(title string, dep api.DeploymentResponse, submissionErr error, key string) int {
+		outcome := submissionOutcome(dep, submissionErr)
+		if outcome != deploySubmissionRejected {
+			realtimeTriggers.commit()
+		}
+		if savedSession != nil {
+			if saveErr := savedSession.submitted(dep, submissionErr); saveErr != nil {
+				submissionErr = errors.Join(submissionErr, fmt.Errorf("save deploy recovery: %w", saveErr))
+			}
+		}
+		if outcome == deploySubmissionAccepted && dep.ID != "" {
+			execution.notifyQueued(dep)
+		}
+		var code int
+		if savedSession != nil {
+			stage := "submission"
+			var phase *deployPhaseError
+			if errors.As(submissionErr, &phase) {
+				stage = phase.stage
+			}
+			code = savedSession.failure(title, stage, submissionErr)
+		} else {
+			code = printDeploySubmissionError(title, submissionErr, slug, key, "submission", dep.ID)
+		}
+		if execution.onError != nil {
+			execution.onError(submissionErr)
+		}
+		return code
 	}
 	applyManifestScaling := func() error {
-		if err := applyManifestLifecycle(ctx, client, slug, sourceDir); err != nil {
-			return err
-		}
-		return applyManifestScalingPolicy(ctx, client, slug, sourceDir)
+		return savedSession.applySettings(ctx, client)
 	}
-	if !*noTriggers {
-		var triggerErr error
-		stagedManifestTriggerTxn, triggerErr = deployManifestTriggersWithRollback(ctx, client, slug, sourceDir)
-		if triggerErr != nil {
-			return printErr("Manifest triggers fan-out failed", triggerErr)
+	if err := savedSession.stageCrons(ctx, client); err != nil {
+		return savedSession.failure("Could not stage deployment crons", "configuration", err)
+	}
+	if !*noTriggers && *trafficPercent != 0 && sourceDir != "" {
+		if m, ok, loadErr := gregalemanifest.Load(sourceDir); loadErr != nil {
+			return savedSession.failure("Could not load manifest realtime triggers", "configuration", loadErr)
+		} else if ok {
+			if err := reconcileManifestRealtimeTriggers(ctx, client, slug, m, realtimeTriggers); err != nil {
+				return savedSession.failure("Manifest realtime triggers failed", "configuration", err)
+			}
 		}
 	}
+
 	if err := deployManifestQueueBindings(ctx, client, slug, sourceDir); err != nil {
 		return printErr("Manifest queue bindings failed", err)
+	}
+
+	recordQueued := func(dep api.DeploymentResponse) int {
+		realtimeTriggers.commit()
+		saveErr := savedSession.submitted(dep, nil)
+		execution.notifyQueued(dep)
+		if saveErr != nil {
+			return savedSession.failure("Could not save accepted deployment", "submission", saveErr)
+		}
+		return 0
 	}
 
 	if *tarball != "" {
 		sourceURL, commitSHA := zeroConfigSourceProvenance(prov)
 		ann := api.DeployAnnotations{
-			Scope:                    manifestScope,
-			SourceURL:                sourceURL,
-			CommitSHA:                commitSHA,
-			Environment:              *environment,
-			Reason:                   *reason,
-			Tag:                      *tag,
-			DeployedBy:               resolveDeployedBy(*deployedBy),
-			PRNumber:                 *prNumber,
-			Workflows:                workflowDefs,
-			TrafficPercent:           optTrafficPercent(*trafficPercent),
-			Canary:                   canarySpec,
+			Scope:                  manifestScope,
+			SourceURL:              sourceURL,
+			CommitSHA:              commitSHA,
+			Environment:            *environment,
+			Reason:                 *reason,
+			Tag:                    *tag,
+			DeployedBy:             resolveDeployedBy(*deployedBy),
+			PRNumber:               *prNumber,
+			Workflows:              workflowDefs,
+			TrafficPercent:         optTrafficPercent(*trafficPercent),
+			Canary:                 canarySpec,
+			RollbackOn5xx:          rollbackOn5xxPtr,
+			DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
+			NoTriggers:               *noTriggers || *trafficPercent == 0,
+			Companions:               sidecarDefs,
 			MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
-			RollbackOn5xx:            rollbackOn5xxPtr,
-			DisableStartupCPUBoost:   disableStartupCPUBoostPtr, Healthcheck: healthcheck,
-			NoTriggers:     *noTriggers,
-			Companions:     sidecarDefs,
-			OverrideEnv:    execution.overrideEnv,
-			OverrideFreeze: *overrideFreeze,
+			OverrideEnv:              execution.overrideEnv,
+			OverrideFreeze:           *overrideFreeze,
+			ReleaseAt:                releaseAt,
+			ReleaseNotify:            releaseNotify,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -4274,11 +4084,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				execution.onSourceSync(time.Since(sourceSyncStarted), deployErr)
 			}
 			if deployErr != nil {
-				code := printDeploySubmissionError("Source submission failed", deployErr, slug, "", "submission", dep.ID)
-				if execution.onError != nil {
-					execution.onError(deployErr)
-				}
-				return code
+				return submissionFailed("Source submission failed", dep, deployErr, "")
 			}
 		} else if canUseResumableUpload(resolvedShape, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
 			uploadOptions := api.UploadDeployOptions{
@@ -4288,6 +4094,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Companions: sidecarDefs,
 				NoTriggers: ann.NoTriggers, OverrideFreeze: ann.OverrideFreeze,
+				ReleaseAt: ann.ReleaseAt, ReleaseNotify: ann.ReleaseNotify,
 			}
 			var progress resumableUploadProgress
 			if !jsonOutput {
@@ -4315,11 +4122,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				dep, uploadErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann)
 			}
 			if uploadErr != nil {
-				code := printDeploySubmissionError("Source submission failed", uploadErr, slug, deployKey, "submission", dep.ID)
-				if execution.onError != nil {
-					execution.onError(uploadErr)
-				}
-				return code
+				return submissionFailed("Source submission failed", dep, uploadErr, deployKey)
 			}
 		} else {
 			var deployErr error
@@ -4329,14 +4132,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			multipartCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "multipart"))
 			dep, deployErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann)
 			if deployErr != nil {
-				code := printDeploySubmissionError("Source submission failed", deployErr, slug, deployKey, "submission", dep.ID)
-				if execution.onError != nil {
-					execution.onError(deployErr)
-				}
-				return code
+				return submissionFailed("Source submission failed", dep, deployErr, deployKey)
 			}
 		}
-		execution.notifyQueued(dep)
+		// Submission acceptance ends client-side compensation. A wait timeout or
+		// cancellation does not cancel the remote deployment.
+		if code := recordQueued(dep); code != 0 {
+			return code
+		}
 		issueMaps, sourceMapErr := publishDeployIssueSourceMaps(ctx, client, slug, dep, sourceSHA256, sourceRoot, preparedIssueSourceMaps)
 		if sourceMapErr != nil {
 			return printDeployIssueSourceMapsError(sourceMapErr, slug, dep.ID, preparedIssueSourceMaps)
@@ -4357,33 +4160,24 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 			if !jsonWait {
 				if err := applyManifestScaling(); err != nil {
-					return printErr("Manifest scaling policy failed", err)
+					return savedSession.failure("Saved deploy settings remain pending", "configuration", err)
 				}
 				receipt := newDeployReceipt(dep, prov, appURL, sourceSHA256, resolvedSimplePlan)
 				receipt.IssueSourceMaps = issueMaps
-				code := jsonOut(writeJSON(receipt))
-				if code == 0 {
-					commitManifestTriggers()
-				}
+				code := jsonOut(writeJSON(sessionDeployReceipt(ctx, receipt)))
 				return code
 			}
 		}
 		if !waitForDeploy {
 			if err := applyManifestScaling(); err != nil {
-				return printErr("Manifest scaling policy failed", err)
+				return savedSession.failure("Saved deploy settings remain pending", "configuration", err)
 			}
-			commitManifestTriggers()
-			renderQueuedDeployment(dep, appURL, *noTraffic)
+			renderQueuedDeployment(dep, appURL, parkedDeploy)
+			renderCronActivation(ctx)
 			return 0
 		}
 		if jsonWait {
-			code := writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx, client, dep, prov, appURL, sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, *noTraffic, issueMaps, resolvedSimplePlan)
-			if code == 0 {
-				if err := applyManifestScaling(); err != nil {
-					return printErr("Manifest scaling policy failed", err)
-				}
-				commitManifestTriggers()
-			}
+			code := writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx, client, dep, prov, appURL, sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, parkedDeploy, issueMaps, resolvedSimplePlan)
 			return code
 		}
 		code := streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
@@ -4395,15 +4189,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			quiet:           streamLogsOnJSON || execution.compactProgress,
 			waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 			waitForRollout:  *safeDeploy,
-			followRollout:   !*noTraffic && followRolloutByDefault(),
-			darkDeploy:      *noTraffic,
+			followRollout:   !parkedDeploy && followRolloutByDefault(),
+			darkDeploy:      parkedDeploy,
 		})
-		if code == 0 {
-			if err := applyManifestScaling(); err != nil {
-				return printErr("Manifest scaling policy failed", err)
-			}
-			commitManifestTriggers()
-		}
 		return code
 	}
 	// Issue #977 / ADR-116: the image-deploy path uses the JSON wire
@@ -4430,6 +4218,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		DisableStartupCPUBoost:   disableStartupCPUBoostPtr,
 		MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
 		OverrideFreeze:           *overrideFreeze,
+		ReleaseAt:                releaseAt,
+		ReleaseNotify:            releaseNotify,
 		Overrides:                deployHealthcheckOverrides(healthcheck),
 		Workflows:                workflowDefs,
 		Companions:               sidecarDefs,
@@ -4441,13 +4231,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Canary:                   canarySpec,
 	})
 	if err != nil {
-		code := printDeploySubmissionError("Deploy submission failed", err, slug, deployKey, "submission", dep.ID)
-		if execution.onError != nil {
-			execution.onError(err)
-		}
+		return submissionFailed("Deploy submission failed", dep, err, deployKey)
+	}
+	if code := recordQueued(dep); code != 0 {
 		return code
 	}
-	execution.notifyQueued(dep)
 	if jsonOutput && !jsonWait && !streamLogsOnJSON {
 		// Image deploy path: no source tarball bytes (the digest
 		// rides on dep.ImageDigest), no git detection (prov is
@@ -4458,29 +4246,25 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// gateway routes on slug, so the receipt's URL has to
 		// be slug-shaped to actually resolve).
 		if err := applyManifestScaling(); err != nil {
-			return printErr("Manifest scaling policy failed", err)
+			return savedSession.failure("Saved deploy settings remain pending", "configuration", err)
 		}
-		code := jsonOut(writeJSON(newDeployReceipt(dep, nil, appURL, "", resolvedSimplePlan)))
-		if code == 0 {
-			commitManifestTriggers()
-		}
+		code := jsonOut(writeJSON(sessionDeployReceipt(ctx, newDeployReceipt(dep, nil, appURL, "", resolvedSimplePlan))))
 		return code
 	}
 	if !waitForDeploy {
 		if err := applyManifestScaling(); err != nil {
-			return printErr("Manifest scaling policy failed", err)
+			return savedSession.failure("Saved deploy settings remain pending", "configuration", err)
 		}
-		commitManifestTriggers()
-		renderQueuedDeployment(dep, appURL, *noTraffic)
+		renderQueuedDeployment(dep, appURL, parkedDeploy)
+		renderCronActivation(ctx)
 		return 0
 	}
 	if jsonWait {
-		code := writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, nil, appURL, "", slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, *noTraffic, resolvedSimplePlan)
+		code := writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, nil, appURL, "", slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, parkedDeploy, resolvedSimplePlan)
 		if code == 0 {
 			if err := applyManifestScaling(); err != nil {
-				return printErr("Manifest scaling policy failed", err)
+				return savedSession.failure("Saved deploy settings remain pending", "configuration", err)
 			}
-			commitManifestTriggers()
 		}
 		return code
 	}
@@ -4493,14 +4277,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		quiet:           streamLogsOnJSON || execution.compactProgress,
 		waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 		waitForRollout:  *safeDeploy,
-		followRollout:   !*noTraffic && followRolloutByDefault(),
-		darkDeploy:      *noTraffic,
+		followRollout:   !parkedDeploy && followRolloutByDefault(),
+		darkDeploy:      parkedDeploy,
 	})
 	if code == 0 {
 		if err := applyManifestScaling(); err != nil {
-			return printErr("Manifest scaling policy failed", err)
+			return savedSession.failure("Saved deploy settings remain pending", "configuration", err)
 		}
-		commitManifestTriggers()
 	}
 	return code
 }
@@ -4932,6 +4715,8 @@ func cmdTrafficPromote(args []string) int {
 	removalMapping := fs.String("route-mapping", "", "reviewed successor mapping JSON")
 	removalApproval := fs.String("route-owner-approval", "", "owner attestation for this exact change")
 	removalAge := fs.Duration("route-evidence-max-age", 72*time.Hour, "maximum route evidence age (at most 72h)")
+	at := fs.String("at", "", "start the release's rollout at this time instead of now")
+	releaseNotify := fs.String("release-notify", "", "Slack or email channels told when the scheduled release starts or cannot start")
 	slug, args := peelLeadingSlug(args)
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -4978,6 +4763,9 @@ func cmdTrafficPromote(args []string) int {
 	deploymentID, err := resolveDeploymentArg(ctx, client, *app, *deployment)
 	if err != nil {
 		return printErr("Traffic promote failed", err)
+	}
+	if *at != "" || *releaseNotify != "" {
+		return scheduleTrafficPromotion(ctx, client, deploymentID, *at, *releaseNotify, ifServingSet || *requireBindings || removalPolicySet)
 	}
 	var servingID string
 	var servingDeployment api.DeploymentResponse
@@ -5249,7 +5037,7 @@ func cmdDomains(args []string) int {
 		}
 		out, err := client.ListDomains(context.Background())
 		if err != nil {
-			return printErr("Request failed", err)
+			return printErr("Could not list domains", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeNDJSON(out))
@@ -5320,7 +5108,7 @@ func cmdDomains(args []string) int {
 			return printErr("Not logged in", err)
 		}
 		if err := client.DeleteDomain(context.Background(), args[1]); err != nil {
-			return printErr("Delete failed", err)
+			return printErr("Could not remove domain", err)
 		}
 		PrintOK(osStdout, "Removed")
 		return 0
@@ -5386,7 +5174,7 @@ func cmdCrons(args []string) int {
 		}
 		out, err := client.ListCrons(context.Background(), *slug)
 		if err != nil {
-			return printErr("Request failed", err)
+			return printErr("Could not list crons", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeNDJSON(out))
@@ -5557,7 +5345,7 @@ var cronIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a-
 func createCronAndRender(ctx context.Context, client *Client, slug string, req api.CreateCronRequest) int {
 	c, err := client.CreateCron(ctx, slug, req)
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create cron", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(c))
@@ -5764,7 +5552,7 @@ func cmdCronsUpdate(args []string) int {
 func updateCronAndRender(ctx context.Context, client *Client, id string, req api.UpdateCronRequest) int {
 	updated, err := client.UpdateCron(ctx, id, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update cron", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(updated))
@@ -5793,7 +5581,7 @@ func cmdKeys(args []string) int {
 		}
 		out, err := client.ListKeys(context.Background())
 		if err != nil {
-			return printErr("Request failed", err)
+			return printErr("Could not list API keys", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeNDJSON(out))
@@ -5848,7 +5636,7 @@ func cmdKeys(args []string) int {
 		}
 		k, err := client.CreateKey(context.Background(), positional[0], scopes)
 		if err != nil {
-			return printErr("Create failed", err)
+			return printErr("Could not create API key", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(k))
@@ -5865,7 +5653,7 @@ func cmdKeys(args []string) int {
 			return printErr("Not logged in", err)
 		}
 		if err := client.DeleteKey(context.Background(), args[1]); err != nil {
-			return printErr("Delete failed", err)
+			return printErr("Could not delete API key", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]any{"id": args[1], "revoked": true}))
@@ -6052,7 +5840,7 @@ func cmdUsageList(args []string) int {
 	}
 	rows, err := client.GetUsage(context.Background(), *month)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not read usage", err)
 	}
 	if jsonOutput {
 		// NDJSON matches every other per-resource list (apps, instances,
@@ -6116,7 +5904,7 @@ func cmdUsageSummary(args []string) int {
 	}
 	s, err := client.UsageSummary(context.Background(), *month)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not read usage summary", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(s))
@@ -6150,7 +5938,7 @@ func cmdInvoices(args []string) int {
 	}
 	page, err := client.ListInvoices(context.Background(), *month, *before, *limit)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list invoices", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(page))
@@ -7544,7 +7332,7 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 			if exit == 130 {
 				err = context.Canceled
 			}
-			printDeploymentWaitRecovery(err, dep, appSlug, recoveryStage, waitTimeout, opts.waitForRollout, exit)
+			printSessionWaitRecovery(ctx, err, dep, appSlug, recoveryStage, waitTimeout, opts.waitForRollout, exit)
 		}
 	}()
 	waitCtx, cancel := context.WithTimeout(ctx, waitTimeout)
@@ -7560,7 +7348,11 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 	warnWaitTimeout := func() {
 		finishWaiting()
 		if !jsonOutput {
-			warnDeploymentTimeoutForMode(appSlug, dep.ID, waitTimeout, opts.waitForRollout)
+			if session := sessionFromContext(ctx); session != nil {
+				PrintWarn(osStderr, "deployment wait timed out after %s; server continues processing; resume with: %s", waitTimeout, session.resumeCommand())
+			} else {
+				warnDeploymentTimeoutForMode(appSlug, dep.ID, waitTimeout, opts.waitForRollout)
+			}
 		}
 	}
 	warnWaitStopped := func(format string, args ...any) {
@@ -7922,10 +7714,6 @@ var (
 	buildPollInitialBackoff = 1 * time.Second
 )
 
-func pollBuildStatus(c *Client, dep api.DeploymentResponse, deadline time.Duration) (api.BuildResponse, bool) {
-	return pollBuildStatusContext(context.Background(), c, dep, deadline)
-}
-
 func pollBuildStatusContext(ctx context.Context, c *Client, dep api.DeploymentResponse, deadline time.Duration) (api.BuildResponse, bool) {
 	if dep.BuildID == "" {
 		// No build_id on the deployment row — server pre-dates
@@ -8011,21 +7799,6 @@ func terminalExitForDeploymentWithFailureContext(ctx context.Context, c *Client,
 	return code
 }
 
-// terminalExitForBuild maps a polled terminal BuildResponse to a CLI
-// exit code. Mirrors terminalExitForDeployment but reads from the
-// build row (DEPLOY-PROV-6 / ADR-089, issue #741) — the polled
-// build row lacks the rich Error string from the deployment row,
-// so on failure we render a compact "BuildStatus=failed
-// failure_class=…" block and exit 2 (same exit-code convention as
-// terminalExitForDeployment's renderDeployFailure path).
-func terminalExitForBuild(b api.BuildResponse, appSlug string) int {
-	return terminalExitForBuildContext(context.Background(), nil, b, appSlug)
-}
-
-func terminalExitForBuildContext(ctx context.Context, c *Client, b api.BuildResponse, appSlug string) int {
-	return terminalExitForBuildWithFailureContext(ctx, c, b, appSlug, nil)
-}
-
 func terminalExitForBuildWithFailureContext(ctx context.Context, c *Client, b api.BuildResponse, appSlug string, onFailure func(api.DeploymentResponse, string, string)) int {
 	if b.Status == buildStatusSucceeded {
 		dep := api.DeploymentResponse{ID: b.DeploymentID, Status: statusLive}
@@ -8077,12 +7850,14 @@ func canonicalAppURL(app api.AppResponse) string {
 
 // printDeployColdWakeSentence emits the UX §2.5 cold-wake honesty
 // line after every successful deploy. Routes through osStdout so
-// tests can capture and assert. The two-line shape is verbatim
-// from docs/faas_ux_spec.md:93-101.
+// tests can capture and assert. The three lines are verbatim from
+// docs/faas_ux_spec.md §2.5. They promise no wake time: the platform's
+// restore target excludes the app, Cloudflare, and network distance.
 func printDeployColdWakeSentence() {
 	_, _ = fmt.Fprintln(osStdout,
-		"  Your app scales to zero when idle. The first request after idle takes\n"+
-			"  ~0.3–0.8s to wake; requests after that are instant. This is normal and free.")
+		"  Your app scales to zero when idle. Gregale restores it from a snapshot;\n"+
+			"  requests after that are instant. Public request time also depends on your\n"+
+			"  app, Cloudflare, and the network distance to the serving region.")
 }
 
 // printDeployNoHTTPSentence replaces the cold-wake line for a worker or job,

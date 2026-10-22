@@ -4,7 +4,13 @@
 # Every push to main builds and signs only the daemons whose Go inputs
 # changed since the full release production runs (the base), each stamped
 # with its unit version, in two lanes: control-plane daemons, and the edge
-# (gatewayd-public, gatewayd-internal). The signed tarball is a workflow
+# (gatewayd-public, gatewayd-internal). Each of them is also built at the
+# base and at the head with a neutral version stamp and no build ID, and
+# the manifest records whether its code changed and the code digests: a
+# deploy restarts a unit only on a host that does not run that code yet
+# (ADR-1650, "Selection by code"; scripts/ci/binary_code.py). The base's
+# digests are cached per base release, so only the first run over a base
+# builds it. The signed tarball is a workflow
 # artifact. cd-controlplane.yml deploys the control-plane lane with
 # `units_run_id`, then cd-edge-units.yml the edge lane host by host, each
 # held on the SLO gate. Migrations added since the base ride along when
@@ -62,7 +68,9 @@ jobs:
   build:
     name: Build and sign changed control-plane units
     runs-on: ubuntu-22.04
-    timeout-minutes: 25
+    # The first run over a new base also builds the base's candidates
+    # (about as long as the head build); later runs restore its digests.
+    timeout-minutes: 35
     concurrency:
       group: release-units-build
       cancel-in-progress: true
@@ -71,6 +79,8 @@ jobs:
       deployable: ${{ steps.detect.outputs.deployable }}
       control_plane: ${{ steps.detect.outputs.control_plane }}
       edge: ${{ steps.detect.outputs.edge }}
+      base_sha: ${{ steps.base.outputs.sha }}
+      build_cache_hit: ${{ steps.build-cache.outputs.cache-hit }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -88,9 +98,45 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: Find the base release
+        id: base
+        env:
+          BASE_INPUT: ${{ inputs.base }}
+        run: |
+          set -euo pipefail
+          base="${BASE_INPUT:-}"
+          if [[ -z "$base" ]]; then
+            base="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' HEAD)"
+          fi
+          echo "ref=$base" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse --verify "${base}^{commit}")" >> "$GITHUB_OUTPUT"
+
+      # Release builds (linux/amd64, CGO off, -trimpath, the daemon tags)
+      # reuse nothing the light tier's caches compiled: with them, a
+      # one-daemon release spent 194 s comparing code and 72 s building on
+      # 2026-10-21. The release build cache holds the release recipe's
+      # compile results, one entry per base release, written once by the
+      # warm-build-cache job below, off the deploy path. A run over a new
+      # base starts from the newest entry.
+      - name: Restore the release build cache
+        id: build-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-unit-build-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ steps.base.outputs.sha }}
+          restore-keys: |
+            go-unit-build-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-
+
+      # Until the warm job first writes one (or after a dependency change):
+      # the light tier's cache on main, for its modules. Same paths as
+      # ci-light saves, or the entry does not match.
       - id: cache-date
+        if: steps.build-cache.outputs.cache-matched-key == ''
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
-      - name: Restore main-branch Go build cache
+      - name: Restore main-branch Go module cache
+        if: steps.build-cache.outputs.cache-matched-key == ''
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -99,22 +145,30 @@ jobs:
             ~/.cache/golangci-lint
           key: go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-lint-${{ runner.os }}-
+
+      # Code digests of the base's release binaries (affected_units.py
+      # --code-cache): the same for every unit release over one base. Each
+      # run that built more of them saves a new entry; the newest is used.
+      - name: Restore the base release's code digests
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/unit-base-code.json
+          key: unit-base-code-${{ steps.base.outputs.sha }}-${{ github.run_id }}
+          restore-keys: |
+            unit-base-code-${{ steps.base.outputs.sha }}-
 
       - name: Select changed units
         id: detect
         env:
-          BASE_INPUT: ${{ inputs.base }}
+          BASE: ${{ steps.base.outputs.ref }}
+          CODE_CACHE: ${{ runner.temp }}/unit-base-code.json
           OUT_DIR: ${{ runner.temp }}/gregale-units
         run: |
           set -euo pipefail
           mkdir -p "$OUT_DIR"
-          base="${BASE_INPUT:-}"
-          if [[ -z "$base" ]]; then
-            base="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' HEAD)"
-          fi
-          python3 scripts/ci/affected_units.py --base "$base" --head HEAD --output "$OUT_DIR/report.json"
+          python3 scripts/ci/affected_units.py --base "$BASE" --head HEAD --code --code-cache "$CODE_CACHE" \
+            --workdir "$RUNNER_TEMP" --output "$OUT_DIR/report.json"
           eligible="$(jq -r .eligible "$OUT_DIR/report.json")"
           deployable="$(jq -r '.deployable | join(",")' "$OUT_DIR/report.json")"
           {
@@ -122,17 +176,26 @@ jobs:
             echo "deployable=$deployable"
             echo "control_plane=$(jq -r '.lanes["control-plane"].eligible' "$OUT_DIR/report.json")"
             echo "edge=$(jq -r '.lanes.edge.eligible' "$OUT_DIR/report.json")"
+            echo "code_cache_new=$(jq -r '.code_selection.base_built | length > 0' "$OUT_DIR/report.json")"
           } >> "$GITHUB_OUTPUT"
           {
-            echo "## Unit release for \`${GITHUB_SHA:0:12}\` over \`$base\`"
+            echo "## Unit release for \`${GITHUB_SHA:0:12}\` over \`$BASE\`"
             echo
-            echo "| binary | lane | unit version |"
-            echo "| --- | --- | --- |"
-            jq -r '.binaries | to_entries[] | select(.value.changed) | "| \(.key) | \(.value.lane) | `\(.value.commit[0:12])` |"' "$OUT_DIR/report.json"
+            echo "| binary | lane | unit version | code since base |"
+            echo "| --- | --- | --- | --- |"
+            jq -r '.binaries | to_entries[] | select(.value.closure) | "| \(.key) | \(.value.lane) | `\(.value.commit[0:12])` | \(.value.code // "not built") |"' "$OUT_DIR/report.json"
+            echo
+            echo "A host restarts a unit only when the code it runs differs from the release's: \`changed\` units restart on a host that runs the base release; \`same\` and \`lines\` (only line numbers moved) units ride along for hosts on an earlier unit release."
+            code_error="$(jq -r '.code_selection.error // empty' "$OUT_DIR/report.json")"
+            if [[ -n "$code_error" ]]; then
+              echo "::warning::code selection failed, so hosts restart by unit version: ${code_error:0:500}" >&2
+              echo
+              echo "**Code selection failed**, so hosts restart every carried unit whose version moved: \`${code_error:0:300}\`"
+            fi
             echo
             if [[ "$eligible" == true ]]; then
               echo "Deployable as a unit release: **${deployable}**."
-              jq -r '.lanes | to_entries[] | "- \(.key) lane: \(if .value.eligible then (.value.changed | join(", ")) else "not deployable: " + (.value.reasons | join("; ")) end)"' "$OUT_DIR/report.json"
+              jq -r '.lanes | to_entries[] | "- \(.key) lane: \(if .value.eligible then "code changed: \(.value.changed | if length == 0 then "none" else join(", ") end); carried: \(.value.carried | join(", "))" else "not deployable: " + (.value.reasons | join("; ")) end)"' "$OUT_DIR/report.json"
             else
               echo "Not deployable as a unit release: $(jq -r '.reasons | join("; ")' "$OUT_DIR/report.json")."
             fi
@@ -147,6 +210,13 @@ jobs:
               jq -r '.data.migrations[] | "| \(.path | ltrimstr("migrations/")) | \(.compat // "none") | \(if .eligible then "eligible" else "full release" end) | \(.blockers | join("; ")) |"' "$OUT_DIR/report.json"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save the base release's code digests
+        if: steps.detect.outputs.code_cache_new == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/unit-base-code.json
+          key: unit-base-code-${{ steps.base.outputs.sha }}-${{ github.run_id }}
 
       - name: Build unit binaries
         if: steps.detect.outputs.eligible == 'true'
@@ -197,17 +267,152 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # Fills the release build cache for this base release, once, while the
+  # deploy lanes run: every binary a unit lane can ship and the tools a unit
+  # release carries, compiled with the release recipe
+  # (scripts/ci/warm_unit_build_cache.py). The build job only reads it, so
+  # no deploy waits on writing it.
+  warm-build-cache:
+    name: Warm the release build cache
+    needs: [build]
+    if: needs.build.outputs.build_cache_hit != 'true' && needs.build.outputs.base_sha != ''
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    # A cache it fails to write costs the next build time, not a deploy.
+    continue-on-error: true
+    concurrency:
+      group: release-units-warm-${{ needs.build.outputs.base_sha }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          filter: blob:none
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Restore the release build cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-unit-build-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ needs.build.outputs.base_sha }}
+          restore-keys: |
+            go-unit-build-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-
+
+      - name: Build every deployable binary with the release recipe
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: python3 scripts/ci/warm_unit_build_cache.py
+
+      - name: Save the release build cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-unit-build-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ needs.build.outputs.base_sha }}
+
+  # Deploy admission (docs/adr/20261020214632-automatic-unit-deploy-safety-
+  # rails.md): before anything changes, wait until production is unfrozen
+  # (no open `deploy-freeze` issue), idle (no other deploy run, the control
+  # plane's deploy lock free) and healthy (no page alert firing), and this is
+  # the newest deployable unit release. A freeze or a newer release ends the
+  # run green without deploying; main's light tier having failed on this
+  # commit, or 40 minutes of waiting, fails it. The step summary says what it
+  # waited for. Dispatching cd-controlplane or cd-edge-units directly is the
+  # repair path and skips this.
+  preflight:
+    name: Check production can take a deploy
+    needs: [build]
+    if: >-
+      needs.build.outputs.eligible == 'true' &&
+      (inputs.deploy_environment != '' || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))
+    environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}
+    runs-on: ${{ fromJSON((inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
+    timeout-minutes: 50
+    permissions:
+      contents: read
+      actions: read
+      issues: read
+    outputs:
+      go: ${{ steps.preflight.outputs.go }}
+    env:
+      CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
+      CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
+    steps:
+      # A directory of its own: a sparse checkout in the default workspace
+      # of this self-hosted runner leaves core.sparseCheckout set, and the
+      # next job's full checkout there keeps only scripts/ci.
+      - uses: actions/checkout@v7
+        with:
+          path: preflight-src
+          sparse-checkout: scripts/ci
+          sparse-checkout-cone-mode: false
+
+      - name: Set up SSH
+        env:
+          COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ env.CP_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          [[ -n "${COMPUTE_KNOWN_HOSTS:-}" ]] || {
+            echo "::error::COMPUTE_KNOWN_HOSTS is required to verify the control-plane host key" >&2
+            exit 1
+          }
+          scanned="$(ssh-keyscan -T 10 -t ed25519,ecdsa,rsa "$CP_HOST" 2>/dev/null || true)"
+          pinned=0
+          while read -r _ key_type key; do
+            [[ -n "${key:-}" ]] || continue
+            if awk -v t="$key_type" -v k="$key" '!/^#/ { for (i = 1; i < NF; i++) if ($i == t && $(i + 1) == k) found = 1 } END { exit !found }' <<<"$COMPUTE_KNOWN_HOSTS"; then
+              printf '%s %s %s\n' "$CP_HOST" "$key_type" "$key" >> ~/.ssh/known_hosts
+              pinned=1
+            fi
+          done <<<"$scanned"
+          [[ $pinned == 1 ]] || {
+            echo "::error::$CP_HOST presented no host key listed in COMPUTE_KNOWN_HOSTS" >&2
+            exit 1
+          }
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Wait until production can take the deploy
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # unit_deploy.sh preflight-state reads the control plane's deploy
+          # lock and Prometheus's active alerts over this SSH connection.
+          export UNIT_SSH_TARGET="root@${CP_HOST}" UNIT_SSH_KEY="$HOME/.ssh/deploy_key" \
+            UNIT_SSH_KNOWN_HOSTS="$HOME/.ssh/known_hosts"
+          python3 preflight-src/scripts/ci/deploy_preflight.py --wait 40m --interval 60s
+
   # Deploy order (docs/release-compatibility.md): the control-plane lane,
   # held on its SLO gate, then the edge lane host by host. Automatic deploys
   # are opt-in: set the repository variable UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT
   # (production or production-us), or dispatch with deploy_environment. The
   # environment's protection rules still apply.
+  #
+  # A unit release that carries nothing for the control plane (no daemon,
+  # migration or host role of its lane: affected_units.py's lane verdict)
+  # skips the control-plane lane, whose plan could only be "none": that took
+  # about a minute of an edge-only deploy on 2026-10-21. The edge lane's plan
+  # still checks the control plane's unit record (the N±1 base, the units it
+  # runs) before any gateway changes.
   deploy:
     name: Deploy the control-plane lane
-    needs: [build]
+    needs: [build, preflight]
     if: >-
-      needs.build.outputs.eligible == 'true' &&
-      (inputs.deploy_environment != '' || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))
+      needs.build.outputs.eligible == 'true' && needs.preflight.outputs.go == 'true' &&
+      needs.build.outputs.control_plane == 'true'
     uses: ./.github/workflows/cd-controlplane.yml
     with:
       deploy_environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}
@@ -220,8 +425,10 @@ jobs:
 
   deploy-edge:
     name: Deploy the edge lane
-    needs: [build, deploy]
-    if: needs.build.outputs.edge == 'true'
+    needs: [build, preflight, deploy]
+    if: >-
+      !cancelled() && needs.build.outputs.edge == 'true' && needs.preflight.outputs.go == 'true' &&
+      (needs.deploy.result == 'success' || needs.deploy.result == 'skipped')
     uses: ./.github/workflows/cd-edge-units.yml
     with:
       deploy_environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}
@@ -230,3 +437,25 @@ jobs:
     permissions:
       contents: read
       actions: read
+
+  # The post-deploy watch (docs/adr/20261020214632-automatic-unit-deploy-
+  # safety-rails.md): 30 minutes after the last activation, over every unit
+  # release not yet watched clean on every host; a breach rolls each host
+  # back to its known-good release and opens a deploy-freeze issue. It runs
+  # after a failed lane too: this run may own the record of earlier, still
+  # unwatched releases, and a failed lane pauses automatic deploys.
+  watch:
+    name: Watch the deployed units
+    needs: [preflight, deploy, deploy-edge]
+    if: >-
+      !cancelled() && needs.preflight.outputs.go == 'true'
+    uses: ./.github/workflows/cd-unit-watch.yml
+    with:
+      deploy_environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}
+      units_run_id: ${{ github.run_id }}
+      deploy_results: deploy=${{ needs.deploy.result }},deploy-edge=${{ needs.deploy-edge.result }}
+    secrets: inherit
+    permissions:
+      contents: read
+      actions: read
+      issues: write

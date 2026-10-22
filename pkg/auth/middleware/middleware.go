@@ -808,6 +808,10 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	if suffix == "customer-operation-signals" {
 		return method == http.MethodPost
 	}
+	// ADR-20261018210500: a customer reads its own queued Operations.
+	if suffix == "customer-operation-queue" {
+		return method == http.MethodGet
+	}
 	// ADR-20261018161833: a customer manages its own Operation schedules.
 	// apid hides these routes unless the account is allowlisted.
 	if suffix == "customer-operation-schedules" {
@@ -834,6 +838,10 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 		// ADR-1194: a customer decides approvals its operation's definition assigns to it.
 		if len(parts) == 4 && parts[1] != "" && parts[2] == "approvals" && parts[3] != "" {
 			return method == http.MethodPost
+		}
+		// ADR-20261019001500: a customer reads the form of an approval it decides.
+		if len(parts) == 5 && parts[1] != "" && parts[2] == "approvals" && parts[3] != "" && parts[4] == "form" {
+			return method == http.MethodGet
 		}
 		return false
 	}

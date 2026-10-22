@@ -1429,7 +1429,7 @@ func (d BucketDependency) EffectiveLabel() string {
 // Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root.
 // The supported top-level declarations are `schema_version`, `hosting`,
 // `function`, `release`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
-// `triggers`, `event_triggers`, `async_routes`, `companions`, `main_depends_on`,
+// `triggers`, `event_triggers`, `async_routes`, `routes`, `companions`, `main_depends_on`,
 // `exclusive_operations`, `extensions`, `workflows`, `databases`, `buckets`,
 // and the local-only `dev`
 // profile; other keys are validated strictly (yaml.Decoder.KnownFields(true))
@@ -1468,6 +1468,7 @@ type Manifest struct {
 	OperationWorkflows []OperationWorkflow           `yaml:"operation_workflows,omitempty" toml:"operation_workflows"`
 	ResolvedOperations []api.OperationDefinitionSpec `yaml:"-"`
 	AsyncRoutes        []AsyncRoute                  `yaml:"async_routes,omitempty"`
+	Routes             []PathRoute                   `yaml:"routes,omitempty"` // ADR-20261021223225; nil/empty as AsyncRoutes
 	Companions         []CompanionSpec               `yaml:"companions,omitempty"`
 	// MainDependsOn gates the primary application workload on declared
 	// long-running companions. Init companions remain implicit prerequisites.
@@ -1485,19 +1486,25 @@ type Manifest struct {
 // deliberately shell-shaped, matching a Procfile's `release:` entry and
 // preserving operators' existing quoting and expansion semantics.
 type ReleaseConfig struct {
-	Command string `yaml:"command"`
+	Command         string `yaml:"command"`
+	ContractCommand string `yaml:"contract_command,omitempty"`
 }
 
 func (c *ReleaseConfig) Validate() error {
 	if c == nil {
 		return nil
 	}
-	_, problem := (api.CreateAppTaskRequest{
-		Command:      []string{c.Command},
-		CommandShell: true,
-	}).Resolve()
-	if problem != nil {
-		return fmt.Errorf("release: %s", problem.Detail)
+	if c.Command == "" && c.ContractCommand == "" {
+		return fmt.Errorf("release: command is required")
+	}
+	for _, command := range []string{c.Command, c.ContractCommand} {
+		if command == "" {
+			continue
+		}
+		_, problem := (api.CreateAppTaskRequest{Command: []string{command}, CommandShell: true}).Resolve()
+		if problem != nil {
+			return fmt.Errorf("release: %s", problem.Detail)
+		}
 	}
 	return nil
 }
@@ -1652,6 +1659,32 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 		StopSignal:       c.StopSignal,
 		ServiceReplicas:  c.ServiceReplicas,
 	}
+}
+
+// LifecycleRequest is the app update a manifest's lifecycle and worker blocks
+// ask for. The CLI and apid's source deploys apply the same request, so a hook
+// declared in gregale.yaml reaches the app however the source arrives. ok is
+// false when the manifest declares neither block.
+func (m *Manifest) LifecycleRequest() (req api.UpdateAppRequest, ok bool) {
+	if m == nil || ((m.Lifecycle == nil || m.Lifecycle.Empty()) && m.Worker == nil) {
+		return api.UpdateAppRequest{}, false
+	}
+	if m.Lifecycle != nil && !m.Lifecycle.Empty() {
+		req = m.Lifecycle.ToAPI()
+	}
+	if m.Worker != nil {
+		workerMode := api.ExecutionModeWorker
+		req.ExecutionMode = &workerMode
+		req.WorkerReplicas = m.Worker.Scale.ToAPI()
+		if drainTimeout := m.Worker.DrainTimeoutSeconds(); drainTimeout > 0 {
+			req.StopGracePeriodS = &drainTimeout
+		}
+		if m.Worker.StopSignal != "" {
+			sig := m.Worker.StopSignal
+			req.StopSignal = &sig
+		}
+	}
+	return req, true
 }
 
 // Empty reports whether the block contains no desired lifecycle changes.
@@ -2217,6 +2250,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return fmt.Errorf("async_routes[%d]: duplicate route match for app %q", i, route.App)
 		}
 		seenAsyncMatches[route.App+"\x00"+matchKey] = struct{}{}
+	}
+	if err := validatePathRoutes(m.Routes); err != nil {
+		return err
 	}
 	if m.Lifecycle != nil {
 		if err := m.Lifecycle.Validate(); err != nil {

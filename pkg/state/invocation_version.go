@@ -228,14 +228,35 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if !ok {
 		return inv, InvocationVersion{}, ErrConflict
 	}
-	if revision != "" {
+	jobPinned := false
+	if !ingress && projectApp && scope == "production" && inv.QueueBindingID != "" && inv.Attempts > 0 && app.Manifest.ExecutionMode == api.ExecutionModeWorker && (inv.Source == InvocationQueue || inv.Source == InvocationReplay || inv.Source == InvocationSource("esm")) {
+		if pins, supported := store.(projectWorkerReleasePinStore); supported {
+			claimed := inv
+			claimed.AccountID = app.AccountID
+			version, jobPinned, err = pins.ResolveProjectWorkerJobRelease(ctx, claimed, revision, release)
+			if err != nil {
+				return inv, InvocationVersion{}, err
+			}
+		}
+	}
+	if jobPinned {
+		// Durable lineage authority has already resolved and validated the graph.
+	} else if revision != "" {
 		dep, err := resolver.ResolveRevisionPin(ctx, app.ID, scope, revision)
 		if err != nil {
 			return inv, InvocationVersion{}, err
 		}
 		version.DeploymentID = dep.ID
 	} else {
-		version.ReleaseID, version.DeploymentID, err = resolver.ResolveProjectRelease(ctx, app.ID, scope, release)
+		if ingress && release == "" && projectApp && app.Manifest.ExecutionMode != api.ExecutionModeWorker {
+			if canary, ok := store.(ProjectCanaryStore); ok {
+				version.ReleaseID, version.DeploymentID, err = canary.ResolveProjectCanary(ctx, app.ID, scope, uuid.NewString())
+			} else {
+				version.ReleaseID, version.DeploymentID, err = resolver.ResolveProjectRelease(ctx, app.ID, scope, release)
+			}
+		} else {
+			version.ReleaseID, version.DeploymentID, err = resolver.ResolveProjectRelease(ctx, app.ID, scope, release)
+		}
 		if err != nil {
 			return inv, InvocationVersion{}, err
 		}
@@ -246,6 +267,11 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if version.DeploymentID == "" {
 		if invocationStageScope(scope) && !boundQueue {
 			return inv, InvocationVersion{}, ErrNotFound
+		}
+		if projectApp && scope == "production" {
+			if version.Scope, err = projectProductionDispatchScope(ctx, store, app.ID); err != nil {
+				return inv, InvocationVersion{}, err
+			}
 		}
 		return inv, version, nil
 	}
@@ -273,6 +299,33 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 		return inv, InvocationVersion{}, err
 	}
 	return inv, version, nil
+}
+
+// projectProductionDispatchScope selects the deployment scope that serves a
+// project app's production environment when no release graph pins one.
+// Project deployments made without a named environment keep the legacy
+// default scope, and the gateway routes that lane as production
+// (ProductionRoutingDeployments). Durable work must wake the same lane:
+// a wake in scope "production" finds no deployment there at all. The
+// captured inv.DeploymentScope stays "production", so each attempt reselects
+// and a release graph published later still takes precedence.
+func projectProductionDispatchScope(ctx context.Context, store invocationAppReader, appID string) (string, error) {
+	reader, ok := store.(interface {
+		LiveDeployments(context.Context, string) ([]Deployment, error)
+	})
+	if !ok {
+		return "production", nil
+	}
+	deployments, err := reader.LiveDeployments(ctx, appID)
+	if err != nil {
+		return "", err
+	}
+	for _, deployment := range ProductionRoutingDeployments(deployments) {
+		if deployment.AppID == appID && deployment.Status == DeployLive && deployment.TrafficPercent > 0 {
+			return normalizedDeploymentScope(deployment.Scope), nil
+		}
+	}
+	return "production", nil
 }
 
 func invocationStageScope(scope string) bool {

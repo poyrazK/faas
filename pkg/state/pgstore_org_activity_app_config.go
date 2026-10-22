@@ -27,6 +27,10 @@ func (s *PgStore) UpdateAppWithActivity(ctx context.Context, id string, p Update
 	if err := scanAppInto(&before, tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where id = $1 for update`, id)); err != nil {
 		return App{}, 0, mapErr(err)
 	}
+	p, err = prepareDeploySettingsUpdateTx(ctx, tx, before, p)
+	if err != nil {
+		return App{}, 0, err
+	}
 	p, err = prepareServiceBindingPlanUpdate(before, p)
 	if err != nil {
 		return App{}, 0, err

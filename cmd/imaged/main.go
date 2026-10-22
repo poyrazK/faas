@@ -527,6 +527,10 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if releasePhaseEnabled {
 		log.Info("imaged: deployment release phase enabled")
 	}
+	// Same gate and semantics as apid's contained recipe commands
+	// (ADR-20261020150000): a contained rehearsal's release runs only when the
+	// operator has qualified and enabled contained command execution.
+	h.WithRehearsalCommandsEnabled(getenv("FAAS_REHEARSAL_COMMAND_EXECUTION") == "1")
 	// Public-beta compute nodes require a configured public-origin smoke. The
 	// verifier remains optional for single-box/offline development, but the
 	// required flag installs it even when the URL is missing so deployments

@@ -433,6 +433,10 @@ type authPublicSettings struct {
 		Enabled bool `json:"enabled"`
 		Joining bool `json:"joining"`
 	} `json:"organization_domains"`
+	ServiceAccounts struct {
+		Enabled       bool   `json:"enabled"`
+		TokenEndpoint string `json:"token_endpoint"`
+	} `json:"service_accounts"`
 	Keys struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`

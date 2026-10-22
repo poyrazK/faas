@@ -23,6 +23,7 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/projects/{slug}/environments/{environment}/diff":                        authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/config":                      authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/config/diff":                 authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/secrets":                     authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/promotion-preview":           authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/approvals/{approval}":        authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/promotions/{promotion}":      authz.OrgActionReadProject,
@@ -32,6 +33,10 @@ var routeActions = map[string]authz.OrgAction{
 	"PUT /v1/projects/{slug}/environments/{environment}/config":                      authz.OrgActionConfigureProject,
 	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/routes": authz.OrgActionConfigureProject,
 	"DELETE /v1/projects/{slug}/exclusions/{slug2}":                                  authz.OrgActionConfigureProject,
+	// ADR-1139: shared credentials need the secrets action, not configure.
+	"PUT /v1/projects/{slug}/environments/{environment}/secrets/{key}":         authz.OrgActionManageProjectSecrets,
+	"POST /v1/projects/{slug}/environments/{environment}/secrets/{key}/rotate": authz.OrgActionManageProjectSecrets,
+	"DELETE /v1/projects/{slug}/environments/{environment}/secrets/{key}":      authz.OrgActionManageProjectSecrets,
 	"POST /v1/projects":      authz.OrgActionDeployProject,
 	"POST /v1/projects/scan": authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/qualifications":                  authz.OrgActionDeployProject,
@@ -44,6 +49,12 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/projects/{slug}/environments/{environment}/approvals":                    authz.OrgActionApproveProjectEnvironment,
 	"DELETE /v1/projects/{slug}":                                                       authz.OrgActionDeleteProject,
 	"DELETE /v1/projects/{slug}/environments/{environment}":                            authz.OrgActionDeleteProject,
+}
+
+// preCreationRoutes may name a personal project that its first deploy will
+// create. They create nothing and are reviewed like collection requests.
+var preCreationRoutes = map[string]bool{
+	"POST /v1/projects/{slug}/deployment-readiness": true,
 }
 
 func Action(pattern string) (authz.OrgAction, bool) {

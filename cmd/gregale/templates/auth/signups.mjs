@@ -29,10 +29,24 @@ const refuse = code => ({ status: 403, code })
 
 // signupRefusal answers the hook for one user GoTrue is about to create:
 // null lets it, otherwise { status, code } refuses with a stable code.
+// policy is null when the app restricts nothing but organizations may
+// connect their own identity providers.
 export async function signupRefusal(pool, policy, payload) {
   const user = payload?.user
   if (!user || typeof user !== 'object') throw new HTTPError(400, 'invalid_hook_payload')
   const email = typeof user.email === 'string' && user.email.includes('@') ? user.email.toLowerCase() : null
+  // GoTrue takes whatever address a SAML identity provider asserts as
+  // confirmed. One the operator registered vouches for its people; one an
+  // organization connected itself (sql/0023) only for the domains it
+  // verified, and its people follow the app's access rules like anyone.
+  const idp = /^sso:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(String(user.app_metadata?.provider ?? ''))?.[1]
+  let operatorIdP = false
+  if (idp) {
+    const { rows: [rules] } = await pool.query('SELECT self_service, in_domain FROM gregale_auth.sso_signup_rules($1, $2)', [idp, email ? email.slice(email.lastIndexOf('@') + 1) : ''])
+    if (rules.self_service && !rules.in_domain) return refuse('sso_email_domain_not_allowed')
+    operatorIdP = !rules.self_service
+  }
+  if (!policy) return null
   // Phone numbers and anonymous users carry no address to check, so a
   // domain allowlist or restricted access refuses them.
   if (!email) return policy.allowed || policy.access !== 'open' ? refuse('signup_restricted') : null
@@ -40,8 +54,7 @@ export async function signupRefusal(pool, policy, payload) {
   if (covered(domain, policy.blocked)) return refuse('email_domain_blocked')
   if (policy.disposable && disposableDomain(domain)) return refuse('disposable_email')
   if (policy.allowed && !policy.allowed.has(domain)) return refuse('email_domain_not_allowed')
-  // An identity provider the operator registered vouches for its people.
-  if (policy.access === 'open' || String(user.app_metadata?.provider ?? '').startsWith('sso:')) return null
+  if (policy.access === 'open' || operatorIdP) return null
   const { rows: [{ allowed }] } = await pool.query(`SELECT EXISTS (SELECT 1 FROM gregale_auth.signup_access WHERE email = $1 AND approved_at IS NOT NULL)
       OR EXISTS (SELECT 1 FROM gregale_auth.invitations WHERE email = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()) AS allowed`, [email])
   if (allowed) return null

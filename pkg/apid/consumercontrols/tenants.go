@@ -228,10 +228,16 @@ func (s *Service) syncTenantOverdueOnce(ctx context.Context) error {
 		return fmt.Errorf("sync tenant overdue holds: %w", err)
 	}
 	for _, h := range placed {
+		if !s.released(h.AccountID) {
+			continue
+		}
 		s.Host.Audit(ctx, "platform_tenant.overdue_blocked", h.AccountID, map[string]any{"tenant_id": h.TenantID,
 			"export_id": h.ExportID, "due_at": h.DueAt})
 	}
 	for _, h := range lifted {
+		if !s.released(h.AccountID) {
+			continue
+		}
 		s.Host.Audit(ctx, "platform_tenant.overdue_unblocked", h.AccountID, map[string]any{"tenant_id": h.TenantID, "export_id": h.ExportID})
 	}
 	return nil

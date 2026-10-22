@@ -1,5 +1,5 @@
 // Mirrors pkg/api/limits.go; TestAuthTemplateRuntimeBounds checks this contract.
-export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, adminPageSize: 100, customClaimsBytes: 1000, signupDomains: 100, waitlistPending: 10000, signupApproveBatch: 100, impersonationDefaultMinutes: 30, impersonationMaxMinutes: 60, reauthenticationSeconds: 600, sessionMinMinutes: 15, sessionMaxMinutes: 525600, emailSubjectChars: 150, emailBodyBytes: 4000, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50, smsCountries: 50, goTrueMemoryDivisor: 3, goTrueMemoryMinMiB: 32, scimPageSize: 100, scimBodyBytes: 65536, oauthClients: 1000, anonymousRetentionMaxDays: 3650, teamMembers: 500, teamInvitations: 500, teamEmailBytes: 320, teamContextBytes: 4096, teamInvitationMinSeconds: 300, teamInvitationMaxSeconds: 1209600, teamHistoryPageSize: 100, teamCursorBytes: 1024, emailGrantSeconds: 2592000 })
+export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, adminPageSize: 100, customClaimsBytes: 1000, signupDomains: 100, waitlistPending: 10000, signupApproveBatch: 100, impersonationDefaultMinutes: 30, impersonationMaxMinutes: 60, reauthenticationSeconds: 600, sessionMinMinutes: 15, sessionMaxMinutes: 525600, emailSubjectChars: 150, emailBodyBytes: 4000, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50, smsCountries: 50, goTrueMemoryDivisor: 3, goTrueMemoryMinMiB: 32, scimPageSize: 100, scimBodyBytes: 65536, oauthClients: 1000, anonymousRetentionMaxDays: 3650, teamMembers: 500, teamInvitations: 500, teamEmailBytes: 320, teamContextBytes: 4096, teamInvitationMinSeconds: 300, teamInvitationMaxSeconds: 1209600, teamHistoryPageSize: 100, teamCursorBytes: 1024, emailGrantSeconds: 2592000, serviceAccountsPerOrg: 50, serviceAccountSecrets: 2, serviceAccountSecretMaxDays: 3650, serviceAccountTokensPerMinute: 60 })
 
 import { createECDH, createPrivateKey } from 'node:crypto'
 import { totalmem } from 'node:os'
@@ -226,7 +226,7 @@ export function runtimeConfig(env) {
   if (redirects.length > limits.redirectURLs) throw new Error('Too many AUTH_REDIRECT_URLS')
   redirects.forEach(value => redirectURL(value, 'AUTH_REDIRECT_URLS'))
   if (typeof env.AUTH_JWT_SECRET !== 'string' || env.AUTH_JWT_SECRET.length < 32) throw new Error('AUTH_JWT_SECRET must hold at least 32 characters')
-  for (const flag of ['AUTH_AUTOCONFIRM', 'AUTH_DISABLE_SIGNUP', 'AUTH_LIFECYCLE_EVENTS', 'AUTH_SSO', 'AUTH_ORG_SSO', 'AUTH_OAUTH_SERVER', 'AUTH_OAUTH_REGISTRATION', 'AUTH_IDENTITY_LINKING', 'AUTH_SELF_DELETION', 'AUTH_ORG_CLAIMS', 'AUTH_IMPERSONATION', 'AUTH_ORG_DOMAINS']) {
+  for (const flag of ['AUTH_AUTOCONFIRM', 'AUTH_DISABLE_SIGNUP', 'AUTH_LIFECYCLE_EVENTS', 'AUTH_SSO', 'AUTH_ORG_SSO', 'AUTH_OAUTH_SERVER', 'AUTH_OAUTH_REGISTRATION', 'AUTH_IDENTITY_LINKING', 'AUTH_SELF_DELETION', 'AUTH_ORG_CLAIMS', 'AUTH_IMPERSONATION', 'AUTH_ORG_DOMAINS', 'AUTH_SERVICE_ACCOUNTS']) {
     if (env[flag] !== undefined && env[flag] !== '1' && env[flag] !== '0') throw new Error(`Invalid ${flag}`)
   }
   const passthrough = {}
@@ -276,6 +276,10 @@ export function runtimeConfig(env) {
     GOTRUE_MAILER_AUTOCONFIRM: env.AUTH_AUTOCONFIRM === '1' ? 'true' : 'false',
     GOTRUE_DISABLE_SIGNUP: env.AUTH_DISABLE_SIGNUP === '1' ? 'true' : 'false',
     GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: 'true',
+    // A new password needs the current one, except in a password reset or
+    // for a user who has none yet, so a stolen access token cannot take over
+    // an account by setting one.
+    GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD: 'true',
     // Signed-in users may link and unlink sign-in methods (and anonymous
     // users keep their data by linking one).
     GOTRUE_SECURITY_MANUAL_LINKING_ENABLED: env.AUTH_IDENTITY_LINKING === '1' ? 'true' : 'false',
@@ -304,6 +308,9 @@ export function runtimeConfig(env) {
     signups: signupPolicy(env),
     // The admin key may open time-limited sessions as users (impersonation.mjs).
     impersonation: env.AUTH_IMPERSONATION === '1',
+    // Organizations' machine principals and the client-credentials grant
+    // (serviceaccounts.mjs).
+    serviceAccounts: env.AUTH_SERVICE_ACCOUNTS === '1',
     // Wallet sign-in (Sign-In With Ethereum / Solana), verified by GoTrue.
     web3: { ethereum: gotrueEnv.GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED === 'true', solana: gotrueEnv.GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED === 'true' },
     oauth: env.AUTH_OAUTH_SERVER === '1', selfDeletion: env.AUTH_SELF_DELETION === '1', orgClaims: env.AUTH_ORG_CLAIMS === '1', sessions: sessions.policy, anonymousRetentionDays: anonymousRetention === '' ? null : Number(anonymousRetention), productControlTeamEnabled: env.AUTH_PRODUCT_CONTROL_TEAM_ENABLED === '1', productControlEmailEnabled: env.AUTH_PRODUCT_CONTROL_EMAIL_ENABLED === '1' }
@@ -314,7 +321,7 @@ export function runtimeConfig(env) {
 // anyway (published key IDs, enabled providers, rules a sign-up form shows)
 // or harmless. The CLI and dashboard read settings here because app secrets
 // are write-only.
-export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, branding, captcha, lifecycleEvents, auditRetentionDays, smsCountries: countries, orgSSO, anonymousRetentionDays, selfDeletion, orgClaims, signups, impersonation, web3, sessions, orgDomains, domainJoin }) {
+export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, branding, captcha, lifecycleEvents, auditRetentionDays, smsCountries: countries, orgSSO, anonymousRetentionDays, selfDeletion, orgClaims, signups, impersonation, web3, sessions, orgDomains, domainJoin, serviceAccounts }) {
   const passkeys = g.GOTRUE_PASSKEY_ENABLED === 'true'
   const flag = (value, fallback) => value === undefined ? fallback : value === 'true'
   const required = (g.GOTRUE_PASSWORD_REQUIRED_CHARACTERS ?? '').split(':').filter(Boolean)
@@ -347,6 +354,10 @@ export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, bran
     organization_claims: orgClaims === true,
     // Support staff with the admin key may open sessions as users.
     impersonation: impersonation === true,
+    // Organizations' service accounts and where they get tokens.
+    service_accounts: serviceAccounts === true
+      ? { enabled: true, token_endpoint: `${g.API_EXTERNAL_URL}/oauth/token` }
+      : { enabled: false, token_endpoint: null },
     // Chains people may sign in with a wallet from.
     web3: { ethereum: web3?.ethereum === true, solana: web3?.solana === true },
     // Organizations verify email domains; people at them may join

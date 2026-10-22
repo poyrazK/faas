@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { EventEmitter } from 'node:events'
 import { runtimeConfig, usageConfig, monthlyCaps, limits } from '../config.mjs'
-import { createUsage, rowsFromContentRange } from '../usage.mjs'
+import { createUsage, rowsFromContentRange, accessReport } from '../usage.mjs'
 import { createServer } from '../server.mjs'
 
 const identityEndpoint = 'http://127.0.0.1:2773/oidc/token'
@@ -39,7 +39,7 @@ test('rows come from the engine Content-Range', () => {
   for (const value of [undefined, '*/0', '*/*', 'items 0-1/2', '5-1/*']) assert.equal(rowsFromContentRange(value), 0, String(value))
 })
 
-function harness({ caps = null, start = Date.UTC(2026, 9, 19, 10, 30), answer = { requests: 0, anonymous_requests: 0 } } = {}) {
+function harness({ caps = null, start = Date.UTC(2026, 9, 19, 10, 30), answer = { requests: 0, anonymous_requests: 0 }, access = null } = {}) {
   const clock = { wall: start, mono: 1000 }
   const calls = []
   let instance = 'instance-a', status = 200
@@ -49,7 +49,7 @@ function harness({ caps = null, start = Date.UTC(2026, 9, 19, 10, 30), answer = 
     if (status !== 200) return new Response('{}', { status })
     return new Response(JSON.stringify({ month_to_date: { month: new Date(clock.wall).toISOString().slice(0, 7), ...answer } }))
   }
-  const usage = createUsage({ ...usageConfig(env), caps }, { now: () => clock.wall, monotonic: () => clock.mono, fetchImpl, nonce: 'n1' })
+  const usage = createUsage({ ...usageConfig(env), caps }, { now: () => clock.wall, monotonic: () => clock.mono, fetchImpl, nonce: 'n1', access })
   const request = (fields, rows = 0, bytes = 0) => {
     const res = Object.assign(new EventEmitter(), { headersSent: true, statusCode: fields.status ?? 200, getHeader: () => (rows ? `0-${rows - 1}/*` : undefined) })
     const entry = usage.start(res)
@@ -156,4 +156,38 @@ test('a reached cap answers 429 before admission with the limit, observed value 
   assert.ok(Number(refused.headers.get('retry-after')) >= 1)
   assert.equal((await fetch(`${base}/rest/v1/products`, { headers: { Authorization: 'Bearer valid' } })).status, 200, 'signed-in users are not anonymous traffic')
   assert.equal((await fetch(`${base}/healthz`)).status !== 429, true, 'health checks are never capped')
+})
+
+test('access settings report schemas, the token issuer, the allowlist and key hashes, never keys', () => {
+  const hash = 'ab'.repeat(32)
+  const config = runtimeConfig({ ...baseEnv, ...env, DATA_API_SCHEMAS: 'api,catalog', DATA_API_PUBLIC_READ: 'api.products',
+    DATA_API_SERVER_KEY_A_SHA256: hash, DATA_API_SERVER_KEY_B_SHA256: 'cd'.repeat(32),
+    DATA_API_SERVER_KEY_B_PERMISSIONS: '{"version":1,"access":"read","relations":["api.orders"],"subjects":false}' })
+  const auth = { issuer: 'https://issuer.example', jwks_url: 'https://issuer.example/jwks', audience: 'notes' }
+  assert.deepEqual(accessReport(config), { version: 1, schemas: ['api', 'catalog'], auth, public_read: ['api.products'], server_keys: [
+    { slot: 'a', sha256: hash },
+    { slot: 'b', sha256: 'cd'.repeat(32), permissions: { access: 'read', relations: ['api.orders'], subjects: false } },
+  ] })
+  assert.deepEqual(accessReport(runtimeConfig({ ...baseEnv, ...env })), { version: 1, schemas: ['api'], auth })
+})
+
+test('access settings go out after start, after a restore and hourly', async () => {
+  const access = { version: 1, schemas: ['api'], public_read: ['api.products'] }
+  const h = harness({ access })
+  await h.usage.report()
+  assert.deepEqual(h.calls[0].access, access, 'the first report carries the settings')
+  assert.deepEqual(h.calls[0].hours, [])
+  h.request({ access: 'user' })
+  await h.usage.report()
+  assert.equal(h.calls[1].access, undefined, 'not again within the hour')
+  await h.usage.report()
+  assert.equal(h.calls.length, 2, 'nothing pending and nothing due sends nothing')
+  h.clock.wall += 61 * 60 * 1000
+  h.clock.mono += 61 * 60 * 1000
+  await h.usage.report()
+  assert.deepEqual(h.calls[2].access, access, 'hourly')
+  h.clock.wall += 30 * 60 * 1000 // restored: the wall clock jumped, the monotonic clock did not
+  await h.usage.report()
+  assert.deepEqual(h.calls[3].access, access, 'after a restore')
+  h.usage.stop()
 })

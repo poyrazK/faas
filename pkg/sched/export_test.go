@@ -36,6 +36,7 @@ type ComposedWaveFixture = composedWaveFixture
 type DiscardWriter = discardWriter
 type DrainSynth = drainSynth
 type ExecutionBackendFunc = executionBackendFunc
+type FakeDeadLetterStore = fakeDeadLetterStore
 type FakeLogStream = fakeLogStream
 type FakeNotifier = fakeNotifier
 type FakeVMM = fakeVMM
@@ -112,6 +113,8 @@ var EventsForInstance = eventsForInstance
 var EventuallyEventsForInstance = eventuallyEventsForInstance
 var ExecutionCoordinatorTestConfig = executionCoordinatorTestConfig
 var ExecutionModeForApp = executionModeForApp
+var QualificationWorkerPushDelivery = qualificationWorkerPushDelivery
+var WorkerPushDelivery = (*Engine).workerPushDelivery
 var ExerciseApplicationStandardComposedWaves = exerciseApplicationStandardComposedWaves
 var ExerciseApplicationStandardOrdinaryWarmMeasuredPromotion = exerciseApplicationStandardOrdinaryWarmMeasuredPromotion
 var ExerciseServiceRecoveryRestart = exerciseServiceRecoveryRestart
@@ -142,6 +145,11 @@ var NewExecutionCoordinatorFixture = newExecutionCoordinatorFixture
 var NewFakeNotify = newFakeNotify
 var NewFireNowHarness = newFireNowHarness
 var NewFrozenFixture = newFrozenFixture
+var NewFrozenFixtureInStore = newFrozenFixtureInStore
+
+// SetStore replaces the store the fixture's engine reads through.
+func (r *frozenFixture) SetStore(s state.Store) { r.e.store = s }
+
 var NewMockChecker = newMockChecker
 var NewNodeCapacityTable = newNodeCapacityTable
 var NewNodePresenceTracker = newNodePresenceTracker
@@ -184,6 +192,7 @@ var ScrubCIJobEnv = scrubCIJobEnv
 var SeedApp = seedApp
 var SeedDrainInvocation = seedDrainInvocation
 var SeedJobRun = seedJobRun
+var SeedScopedWorker = seedScopedWorker
 var SeedStageSnapshotPolicy = seedStageSnapshotPolicy
 var SeedTwoNodes = seedTwoNodes
 var SeedWorkerScopes = seedWorkerScopes
@@ -221,6 +230,10 @@ var XNewEngine = newEngine
 const XEventFanoutSafetyTick = eventFanoutSafetyTick
 
 func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
+
+// XRunEventRecipientSweep runs only the sweep's independent recipient stage.
+// adr: 614 — recipients are claimed in batches and unrouted claims released.
+func (l *Loop) XRunEventRecipientSweep(ctx context.Context) { l.runEventRecipientSweep(ctx) }
 
 var XNewMemCacheOverageChecker = newMemCacheOverageChecker
 var XTestWorkerScopedDemandLifecycle = testWorkerScopedDemandLifecycle
@@ -404,13 +417,19 @@ func (r *Loop) ProcessFireNowRequest(p0 context.Context, p1 state.FireNowRequest
 func (r *Loop) RecoverPrimeCandidate(p0 context.Context, p1 string, p2 time.Time) error {
 	return r.recoverPrimeCandidate(p0, p1, p2)
 }
-func (r *Loop) RunInstanceStats(p0 context.Context)     { r.runInstanceStats(p0) }
-func (r *Loop) RunPrimeRecovery(p0 context.Context)     { r.runPrimeRecovery(p0) }
-func (r *Loop) RunReaper(p0 context.Context)            { r.runReaper(p0) }
-func (r *Loop) RunRetention(p0 context.Context)         { r.runRetention(p0) }
-func (r *Loop) RunScaleUp(p0 context.Context)           { r.runScaleUp(p0) }
-func (r *Loop) RunServiceRecovery(p0 context.Context)   { r.runServiceRecovery(p0) }
-func (r *Loop) RunWorkflowRetention(p0 context.Context) { r.runWorkflowRetention(p0) }
+func (r *Loop) RunInstanceStats(p0 context.Context) { r.runInstanceStats(p0) }
+func (r *Loop) RunPrimeRecovery(p0 context.Context) { r.runPrimeRecovery(p0) }
+func (r *Loop) RunReaper(p0 context.Context)        { r.runReaper(p0) }
+func (r *Loop) RecordTriggerConsumerHealth(p0 context.Context, p1 storeLike, p2 sqlc.Trigger, p3 PollResult) {
+	r.recordTriggerConsumerHealth(p0, p1, p2, p3)
+}
+
+// Health returns the consumer health observations the fake recorded.
+func (r *fakeDeadLetterStore) Health() []state.TriggerConsumerHealthObservation { return r.health }
+func (r *Loop) RunRetention(p0 context.Context)                                 { r.runRetention(p0) }
+func (r *Loop) RunScaleUp(p0 context.Context)                                   { r.runScaleUp(p0) }
+func (r *Loop) RunServiceRecovery(p0 context.Context)                           { r.runServiceRecovery(p0) }
+func (r *Loop) RunWorkflowRetention(p0 context.Context)                         { r.runWorkflowRetention(p0) }
 func (r *Loop) RunWorkflowSchedulesTick(p0 context.Context) error {
 	return r.runWorkflowSchedulesTick(p0)
 }
@@ -631,6 +650,19 @@ func (r *warmHintBroadcaster) Subscribe(p0 int) (<-chan WarmHintEvent, func()) {
 	return r.subscribe(p0)
 }
 func (r *warmHintBroadcaster) SubscriberCount() int { return r.subscriberCount() }
+
+// CreateRuntimeWithRehearsalRun boots spec through createRuntimeWithStandards
+// with the app's rehearsal run already read, as a wake hands it over.
+// adr: 20261021090000
+func CreateRuntimeWithRehearsalRun(ctx context.Context, vmm RoutedVMM, spec AppSpec, runID string) error {
+	e := &Engine{vmm: vmm}
+	// A wake's correlation envelope names the instance, so the boot needs no
+	// instance lookup.
+	ctx = wire.WithContext(ctx, wire.CorrelationFields{WakeID: "8f0e2b4c-2f3a-4c55-9d7e-0c1f6a2b3c4d", InstanceID: "instance", NodeID: "node", AppID: spec.AppID})
+	ctx = withBootPrepared(ctx, bootPrepared{instanceID: "instance", rehearsalRunID: runID, haveRehearsal: true, haveCapture: true})
+	_, err := e.createRuntimeWithStandards(ctx, "node", "instance", string(state.StateColdBooting), spec, nil, false)
+	return err
+}
 
 // Members of workPool
 func (r *workPool) Drain()                                          { r.drain() }

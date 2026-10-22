@@ -4,16 +4,35 @@
   const node = (tag, text = '') => { const el = document.createElement(tag); el.textContent = text; return el; };
   const message = text => { $('message').textContent = text; };
   const amount = (value, currency) => { if (!Number.isSafeInteger(value)) return 'Amount exceeds browser precision; ask your product team.'; const n = BigInt(value), abs = n < 0n ? -n : n; return `${currency} ${n < 0n ? '-' : ''}${(abs / 100000n).toString()}.${(abs % 100000n).toString().padStart(5, '0').replace(/0+$/, '').padEnd(2, '0')}`; };
+  const paymentText = { draft: 'Invoice being prepared', open: 'Invoice open', paid: 'Invoice paid', void: 'Invoice voided', uncollectible: 'Invoice marked uncollectible', deleted: 'Invoice withdrawn' };
+  // An exported statement's provider invoice (ADR-20261018212918). The link is only ever the provider's own https page.
+  function invoiceNodes(invoice) {
+    const parts = [invoice.overdue ? 'Invoice overdue' : paymentText[invoice.payment_status] || 'Invoice issued; payment status not available yet'];
+    if (typeof invoice.due_at === 'string') parts.push(`due ${invoice.due_at.slice(0, 10)}`);
+    // Millicents need no knowledge of the currency's decimal places (ADR-20261019100330).
+    if (invoice.amount_remaining_millicents !== undefined && invoice.payment_status !== 'paid') parts.push(`${amount(invoice.amount_remaining_millicents, invoice.currency)} remaining`);
+    const nodes = [node('p', parts.join(' · '))];
+    let link = null;
+    try { link = new URL(invoice.hosted_invoice_url); } catch { link = null; }
+    if (link?.protocol === 'https:') { const a = node('a', invoice.payment_status === 'open' ? 'View and pay invoice' : 'View invoice'); a.href = link.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; nodes.push(a); }
+    return nodes;
+  }
   const terminal = state => ['succeeded', 'failed', 'cancelled', 'requires_reconciliation', 'expired'].includes(state);
   let app = new URL(location.href).searchParams.get('app') || '', organization = '', epoch = 0, view, receipts, timer, controller = new AbortController(), refreshing;
   const allowed = permission => view?.access?.permissions?.[permission] === true;
   const work = new Map(), inputs = new Map(), cards = new Map();
   let planControls, teamControls, guidanceControls, helpControls, notificationControls, activityControls, historyControls, historyPageSize, historyCursorMax, runControls, emailControls, activityPageSize, activityCursorMax, notificationPageSize, helpTextMax, helpPageSize, recoveryMaxBytes, refreshRequest = 0;
+  let signupControls, paymentControls;
   let billingRequest = 0, billingCursor = '', billingPeriod = '';
   let resultRequest = 0;
   function clearResult() { resultRequest++; $('result').hidden = true; $('result').replaceChildren(); }
   $('billing-period').value = new Date().toISOString().slice(0, 7);
   function clearBilling() { billingRequest++; billingCursor = ''; billingPeriod = ''; $('billing-documents').replaceChildren(); $('billing-summary').textContent = 'Choose a month to review finalized charges and credit notes.'; $('billing-more').hidden = true; }
+  // A month's plan fee (ADR-20261021154511).
+  function feeText(fee, currency) {
+    const from = typeof fee.prorated_from === 'string' ? ` prorated from ${fee.prorated_from.slice(0, 10)}` : '';
+    return `the monthly fee for plan ${fee.plan}, ${amount(fee.amount_millicents, currency)}${from}`;
+  }
   async function loadBilling(next = false, check = () => {}) {
     if (!allowed('view_billing')) throw new Error('Your role does not include billing access.');
     const generation = epoch, request = ++billingRequest, period = next ? billingPeriod : $('billing-period').value;
@@ -23,12 +42,15 @@
     catch (error) { if (request !== billingRequest || generation !== epoch) return; throw error; }
     current(generation); check(); if (request !== billingRequest) return;
     const review = data.review; billingPeriod = period; billingCursor = data.documents.next_cursor || '';
-    $('billing-summary').textContent = review.finalized ? `${period} · Finalized charges ${amount(review.finalized.amount_millicents, review.currency)}. Credit notes reduce these charges.` : `${period} · Provisional charges ${amount(review.amount_millicents, review.currency)} · ${review.unresolved} unresolved runs. ${review.closed ? 'Awaiting finalization by your product team.' : 'This month is still open.'}`;
+    const fee = review.fees?.[0] ? ` including ${feeText(review.fees[0], review.currency)}` : '';
+    $('billing-summary').textContent = review.finalized ? `${period} · Finalized charges ${amount(review.finalized.amount_millicents, review.currency)}. Credit notes reduce these charges.` : `${period} · Provisional charges ${amount(review.amount_millicents, review.currency)}${fee} · ${review.unresolved} unresolved runs. ${review.closed ? 'Awaiting finalization by your product team.' : 'This month is still open.'}`;
     $('billing-documents').replaceChildren();
     for (const doc of data.documents.documents) {
       const row = node('li', `${doc.kind === 'credit_note' ? 'Credit note' : 'Finalized statement'} · ${amount(doc.amount_millicents, doc.currency)} · ${doc.id}`);
       if (doc.reason) row.append(node('p', doc.reason));
       if (doc.snapshot) for (const line of doc.snapshot.lines) row.append(node('p', `${line.feature} · ${line.succeeded} charged successes · ${line.waived} waived · ${amount(line.amount_millicents, doc.currency)}`));
+      for (const charge of doc.snapshot?.fees || []) row.append(node('p', feeText(charge, doc.currency)));
+      if (doc.invoice) row.append(...invoiceNodes(doc.invoice));
       $('billing-documents').append(row);
     }
     if (!data.documents.documents.length) $('billing-documents').append(node('li', 'No finalized statement or credit notes for this month.'));
@@ -36,6 +58,27 @@
   }
   $('billing-form').onsubmit = event => { event.preventDefault(); const generation = epoch; return loadBilling().catch(error => { if (generation === epoch) message(error.message); }); };
   $('billing-more').onclick = () => { const generation = epoch; return loadBilling(true).catch(error => { if (generation === epoch) message(error.message); }); };
+  // Billing details live in the product team's billing provider (ADR-20261020120000); Gregale only relays them.
+  const detailFields = [['country_code', 'billing-country', 'address'], ['postal_code', 'billing-postal', 'address'], ['region', 'billing-region', 'address'], ['city', 'billing-city', 'address'],
+    ['first_line', 'billing-line1', 'address'], ['second_line', 'billing-line2', 'address'], ['name', 'billing-business', 'business'], ['tax_identifier', 'billing-tax-id', 'business']];
+  function clearBillingDetails() { $('billing-details-form').hidden = true; $('billing-details-status').textContent = ''; for (const [, id] of detailFields) $(id).value = ''; }
+  function showBillingDetails(details) { for (const [key, id, part] of detailFields) $(id).value = details?.[part]?.[key] || ''; $('billing-details-form').hidden = false; }
+  async function billingDetails(request, done) {
+    const generation = epoch;
+    try { const details = await request(); current(generation); showBillingDetails(details); $('billing-details-status').textContent = done(details); }
+    catch (error) { if (generation === epoch) $('billing-details-status').textContent = error.message; }
+  }
+  $('billing-details-load').onclick = () => billingDetails(() => api(`${base()}/billing-details`),
+    details => details.address ? 'Invoices are addressed to these details.' : 'No billing address yet. Add one so invoices can be issued to you.');
+  $('billing-details-form').onsubmit = event => {
+    event.preventDefault();
+    const value = id => $(id).value.trim();
+    const body = { address: { country_code: value('billing-country').toUpperCase(), postal_code: value('billing-postal'), region: value('billing-region'),
+      city: value('billing-city'), first_line: value('billing-line1'), second_line: value('billing-line2') } };
+    if (value('billing-business')) body.business = { name: value('billing-business'), tax_identifier: value('billing-tax-id') };
+    $('billing-details-status').textContent = 'Saving billing details…';
+    return billingDetails(() => api(`${base()}/billing-details`, { method: 'PUT', body: JSON.stringify(body) }), () => 'Billing details saved. New invoices use them.');
+  };
   $('app').value = app;
   const base = () => `/v1/product-control/customer/${encodeURIComponent(app)}`;
   const scope = feature => [view.account_id, view.app_id, view.customer.tenant_id, feature];
@@ -74,7 +117,7 @@
     const body = await (blob ? response.blob() : response.json()); current(generation); return body;
   }
   function clear() {
-    epoch++; planControls?.reset(); teamControls?.reset(); guidanceControls?.reset(); helpControls?.reset(); notificationControls?.reset(); activityControls?.reset(); historyControls?.reset(); emailControls?.reset(); clearBilling(); clearTimeout(timer); controller.abort(); controller = new AbortController();
+    epoch++; planControls?.reset(); teamControls?.reset(); guidanceControls?.reset(); helpControls?.reset(); notificationControls?.reset(); activityControls?.reset(); historyControls?.reset(); emailControls?.reset(); signupControls?.reset(); paymentControls?.reset(); clearBilling(); clearBillingDetails(); clearTimeout(timer); controller.abort(); controller = new AbortController();
     runControls?.reset(); view = undefined; receipts = undefined; organization = ''; work.clear(); inputs.clear(); cards.clear(); $('sign-in').disabled = false;
     $('workspace').hidden = true; $('login').hidden = false;
     for (const id of ['features', 'usage', 'work', 'organization']) $(id).replaceChildren();
@@ -83,12 +126,18 @@
   async function connect() {
     const generation = epoch, data = await api(`${base()}/workspaces`); current(generation);
     recoveryMaxBytes = data.receipt_max_bytes; helpTextMax = data.help_text_max_bytes; helpPageSize = data.help_page_size; notificationPageSize = data.notification_page_size; historyPageSize = data.work_history_page_size; historyCursorMax = data.work_history_cursor_max_bytes; activityPageSize = data.activity_page_size; activityCursorMax = data.activity_cursor_max_bytes;
-    if (!data.workspaces.length) throw new Error('Your account has no customer workspace for this product. Contact your product team.');
+    if (!data.workspaces.length) {
+      // A product that offers signup lets the user create their first workspace (ADR-20261022100735).
+      if (await signupControls.choose()) { current(generation); return; }
+      throw new Error('Your account has no customer workspace for this product. Contact your product team.');
+    }
+    signupControls.reset();
     receipts = new Receipts({ storage: localStorage, locks: navigator.locks, crypto, maxBytes: data.receipt_max_bytes, maxEntries: data.receipt_max_entries, replaySeconds: data.replay_seconds });
     $('organization').replaceChildren();
     for (const workspace of data.workspaces) { const option = node('option', workspace.name); option.value = workspace.organization_id; $('organization').append(option); }
-    organization = data.workspaces[0].organization_id; $('organization').value = organization;
-    await refresh(true, generation); await recover(generation); await planControls.connect(); await teamControls.connect(); await helpControls.connect(); await notificationControls.connect(); await activityControls.connect(); await emailControls.connect(); schedule(generation);
+    const wanted = [signupControls.workspace(), paymentControls.workspace()].find(id => data.workspaces.some(workspace => workspace.organization_id === id));
+    organization = wanted || data.workspaces[0].organization_id; $('organization').value = organization;
+    await refresh(true, generation); await recover(generation); await planControls.connect(); await teamControls.connect(); await helpControls.connect(); await notificationControls.connect(); await activityControls.connect(); await emailControls.connect(); await paymentControls.connect(); schedule(generation);
   }
   async function refresh(forms = false, generation = epoch) {
     const request = ++refreshRequest;
@@ -110,12 +159,13 @@
     $('login').hidden = true; $('workspace').hidden = false;
     $('plan').textContent = view.catalog.spec.plans[view.customer.plan].label;
     $('account-status').textContent = view.customer.suspended ? 'New runs are paused. Contact your product team.' : 'Your workspace is active.';
+    renderOverdueHold();
     updateFeatureTerms();
     $('features-section').hidden = !allowed('run_work'); $('work-section').hidden = !allowed('view_work');
-    $('usage-section').hidden = !allowed('view_billing'); $('billing-section').hidden = !allowed('view_billing');
+    $('usage-section').hidden = !allowed('view_billing'); $('billing-section').hidden = !allowed('view_billing'); $('billing-details-section').hidden = !allowed('manage_billing');
     planControls?.sync(); teamControls?.sync();
-    guidanceControls?.sync(); helpControls?.sync(); notificationControls?.sync(); activityControls?.sync(); historyControls?.sync(); emailControls?.sync();
-    const permissions = [['view_work', 'View work'], ['run_work', 'Run work'], ['view_billing', 'View billing'], ['manage_plan', 'Manage plan'], ['manage_team', 'Manage team']].filter(([key]) => allowed(key)).map(([, label]) => label);
+    guidanceControls?.sync(); helpControls?.sync(); notificationControls?.sync(); activityControls?.sync(); historyControls?.sync(); emailControls?.sync(); paymentControls?.sync();
+    const permissions = [['view_work', 'View work'], ['run_work', 'Run work'], ['view_billing', 'View billing'], ['manage_plan', 'Manage plan'], ['manage_team', 'Manage team'], ['manage_billing', 'Manage billing details']].filter(([key]) => allowed(key)).map(([, label]) => label);
     $('access-status').textContent = `${view.access?.role || 'Workspace role'} · ${permissions.join(' · ')}`;
     $('period').textContent = view.usage ? `${view.usage.period} · ${view.usage.currency}` : '';
     $('usage').replaceChildren();
@@ -148,14 +198,44 @@
       return value;
     } };
   }
+  // An overdue invoice pauses new runs until it is paid (ADR-20261018212918); this is separate from the product team pausing the workspace.
+  function renderOverdueHold() {
+    const hold = view.overdue_hold, status = $('overdue-status');
+    status.replaceChildren(); status.hidden = !hold;
+    if (!hold) return;
+    status.append(node('span', `New runs are paused until your invoice due ${String(hold.due_at).slice(0, 10)} is paid. Work already running continues.`));
+    let link = null;
+    try { link = new URL(hold.hosted_invoice_url); } catch { link = null; }
+    if (link?.protocol === 'https:') { const a = node('a', 'View and pay invoice'); a.href = link.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; status.append(a); }
+  }
+  // Included starts come first at no charge; later ones cost the unit price
+  // up to the monthly limit (ADR-20261021154511).
+  function includedLeft(name, grant, remaining) {
+    if (Number.isSafeInteger(view.included_remaining?.[name])) return view.included_remaining[name];
+    const included = Number.isSafeInteger(grant.included_starts) ? grant.included_starts : 0;
+    return Math.max(0, included - (grant.monthly_starts - remaining));
+  }
+  // During a free trial every start is free (ADR-20261021195901).
+  function trialUntil() {
+    const starts = Date.parse(view.customer.trial_starts_at || ''), ends = Date.parse(view.customer.trial_ends_at || ''), now = Date.now();
+    return Number.isFinite(starts) && Number.isFinite(ends) && starts <= now && now < ends ? view.customer.trial_ends_at.slice(0, 10) : '';
+  }
+  function featureTerms(name, grant, remaining) {
+    const price = `${amount(grant.unit_price_millicents, view.catalog.spec.currency)} per successful run`;
+    const starts = `${remaining} of ${grant.monthly_starts} starts remaining this month.`;
+    const trial = trialUntil();
+    if (trial) return `Free during your trial until ${trial}, then ${price} · ${starts}`;
+    if (!(grant.included_starts > 0)) return `${price} · ${starts}`;
+    return `${includedLeft(name, grant, remaining)} of ${grant.included_starts} included runs left, then ${price} · ${starts}`;
+  }
   function updateFeatureTerms() {
     const plan = view.catalog.spec.plans[view.customer.plan];
     for (const [name, card] of cards) {
       const grant = plan.features[name];
       if (!grant) { card.button.disabled = true; card.info.textContent = 'This feature is no longer included in your plan.'; continue; }
       const remaining = Number.isSafeInteger(view.remaining_starts?.[name]) ? view.remaining_starts[name] : 0;
-      card.info.textContent = `${amount(grant.unit_price_millicents, view.catalog.spec.currency)} per successful run · ${remaining} of ${grant.monthly_starts} starts remaining this month.`;
-      card.button.disabled = !allowed('run_work') || card.busy || !card.pending && (view.customer.suspended || view.bindings[name]?.available !== true || remaining === 0);
+      card.info.textContent = featureTerms(name, grant, remaining);
+      card.button.disabled = !allowed('run_work') || card.busy || !card.pending && (view.customer.suspended || Boolean(view.overdue_hold) || view.bindings[name]?.available !== true || remaining === 0);
     }
   }
   function renderFeatures() {
@@ -168,8 +248,8 @@
       let saved; try { saved = receipts.load(scope(name)); } catch (error) { message(error.message); }
       const pending = saved && !saved.operationID, input = inputForm(binding?.input_schema, inputs.get(name));
       const button = node('button', pending ? 'Check / retry saved request' : 'Run feature'); button.type = 'submit';
-      button.disabled = !pending && (view.customer.suspended || binding?.available !== true || remaining === 0);
-      const info = node('p', `${amount(grant.unit_price_millicents, view.catalog.spec.currency)} per successful run · ${remaining} of ${grant.monthly_starts} starts remaining this month.`);
+      button.disabled = !pending && (view.customer.suspended || Boolean(view.overdue_hold) || binding?.available !== true || remaining === 0);
+      const info = node('p', featureTerms(name, grant, remaining));
       const cardState = { info, button, pending, busy: false }; cards.set(name, cardState); card.append(node('h3', feature.label), info);
       if (pending) card.append(node('p', 'A saved submission needs confirmation. Enter the original details if it has not been accepted.'));
       if (binding?.available !== true) card.append(node('p', 'This feature is temporarily unavailable while its deployment is being prepared.'));
@@ -193,7 +273,9 @@
         if (observation.state === 'expired') throw new Error('The saved submission has expired. Contact your product team before starting again.');
       }
       const grant = view.catalog.spec.plans[view.customer.plan].features[name];
-      if (!window.confirm(`Run ${view.catalog.spec.features[name].label}?\n${amount(grant.unit_price_millicents, view.catalog.spec.currency)} will be recorded only if it succeeds. This consumes one monthly start even if it fails or is cancelled.`)) return;
+      const remaining = Number.isSafeInteger(view.remaining_starts?.[name]) ? view.remaining_starts[name] : 0;
+      const charge = trialUntil() ? 'It is free during your trial' : includedLeft(name, grant, remaining) > 0 ? 'It is included in your plan at no charge' : `${amount(grant.unit_price_millicents, view.catalog.spec.currency)} will be recorded only if it succeeds`;
+      if (!window.confirm(`Run ${view.catalog.spec.features[name].label}?\n${charge}. This consumes one monthly start even if it fails or is cancelled.`)) return;
       current(generation);
       // Persist before POST. A failed save must prevent submission.
       const receipt = await store.prepare(selectedScope, input, view.quotes[name]); current(generation);
@@ -306,6 +388,9 @@
     openBilling: async period => { $('billing-period').value = period; await loadBilling(); $('billing-section').scrollIntoView?.({ block: 'start' }); },
     denied: () => { clear(); message('Your workspace access changed. Sign in again to continue.'); } });
   emailControls = new GregaleProductEmail({ $, api: (path, options) => api(path, options, false, options?.method !== 'PUT'), base, view: () => view, epoch: () => epoch, current });
+  signupControls = new GregaleProductSignup({ $, raw, problem, api, base, app: () => app, epoch: () => epoch, current, amount, message, storage: localStorage, crypto, confirm: text => window.confirm(text), reconnect: () => connect() });
+  paymentControls = new GregaleProductPayment({ $, api, base, view: () => view, allowed, organization: () => organization, epoch: () => epoch, current,
+    href: () => location.href, replaceURL: url => history.replaceState(null, '', url), navigate: url => location.assign(url) });
   const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('gregale.product.session') : null;
   if (channel) channel.onmessage = event => { if (event.data?.app === app) { clear(); message('Your customer session changed in another tab. Sign in to continue.'); } };
   const updateRecoveryLink = () => {
@@ -334,8 +419,8 @@
   };
   $('refresh').onclick = () => { const generation = epoch; return refresh(true).catch(error => { if (generation === epoch) message(error.message); }); };
   $('organization').onchange = async () => {
-    const selected = $('organization').value; epoch++; planControls?.reset(); teamControls?.reset(); guidanceControls?.reset(); helpControls?.reset(); notificationControls?.reset(); activityControls?.reset(); historyControls?.reset(); runControls?.reset(); emailControls?.reset(); clearBilling(); clearTimeout(timer); controller.abort(); controller = new AbortController(); organization = selected; inputs.clear(); work.clear(); cards.clear(); view = undefined; $('result').hidden = true; $('result').textContent = '';
-    const generation = epoch; try { await refresh(true, generation); await recover(generation); await planControls.connect(); await teamControls.connect(); await helpControls.connect(); await notificationControls.connect(); await activityControls.connect(); await emailControls.connect(); schedule(generation); } catch (error) { if (generation === epoch) { clear(); message(error.message); } }
+    const selected = $('organization').value; epoch++; planControls?.reset(); teamControls?.reset(); guidanceControls?.reset(); helpControls?.reset(); notificationControls?.reset(); activityControls?.reset(); historyControls?.reset(); runControls?.reset(); emailControls?.reset(); paymentControls?.reset(); clearBilling(); clearBillingDetails(); clearTimeout(timer); controller.abort(); controller = new AbortController(); organization = selected; inputs.clear(); work.clear(); cards.clear(); view = undefined; $('result').hidden = true; $('result').textContent = '';
+    const generation = epoch; try { await refresh(true, generation); await recover(generation); await planControls.connect(); await teamControls.connect(); await helpControls.connect(); await notificationControls.connect(); await activityControls.connect(); await emailControls.connect(); await paymentControls.connect(); schedule(generation); } catch (error) { if (generation === epoch) { clear(); message(error.message); } }
   };
   $('disconnect').onclick = async () => {
     const sessionBase = base(), sessionApp = app; clear(); const generation = epoch;
