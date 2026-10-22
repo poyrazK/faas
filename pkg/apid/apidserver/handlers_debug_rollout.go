@@ -3,7 +3,9 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/rolloutevidence"
+	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -79,6 +82,49 @@ func (s *server) debugRolloutHandler(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// dashboardDebugStatusView projects the debug status onto the dashboard's
+// status card; each request links to its evidence on the same page.
+func dashboardDebugStatusView(status api.DebugStatusResponse, slug string) *dashboard.DebugStatusView {
+	view := &dashboard.DebugStatusView{
+		Verdict: status.Verdict, VerdictLabel: strings.ReplaceAll(status.Verdict, "_", " "), Headline: status.Headline,
+		Since: status.Since, Requests: status.Health.Requests, ServerErrors: status.Health.ServerErrors, P95MS: status.Health.P95MS,
+		Regressions: status.RegressionsTotal, TracingEnabled: status.TracingEnabled,
+		CLICommand: "gregale debug status " + slug,
+	}
+	link := func(item api.DebugTelemetryRequestItem) dashboard.DebugStatusRequestView {
+		values := url.Values{}
+		values.Set("since", status.Since)
+		values.Set("request_id", item.ID)
+		return dashboard.DebugStatusRequestView{
+			ReceivedAt: item.ReceivedAt,
+			Label:      fmt.Sprintf("%s %d · %d ms", requestLabel(item.Method, item.Route), item.Status, item.LatencyMS),
+			URL:        "/dashboard/apps/" + url.PathEscape(slug) + "/debug?" + values.Encode(),
+		}
+	}
+	if status.Rollout != nil {
+		view.Release = status.Rollout.Headline
+		for _, item := range status.Rollout.Examples {
+			view.Examples = append(view.Examples, link(item))
+		}
+		if status.Rollout.State != api.DebugRolloutRollingOut {
+			view.CLICommand = "gregale debug rollout " + slug
+		}
+	}
+	for _, item := range status.RecentFailures {
+		view.Failures = append(view.Failures, link(item))
+	}
+	return view
+}
+
+// requestLabel renders "METHOD /path" without repeating a method the route
+// already carries.
+func requestLabel(method, route string) string {
+	if method == "" || strings.HasPrefix(route, method+" ") {
+		return route
+	}
+	return method + " " + route
 }
 
 // debugStatusHandler — GET /v1/apps/{slug}/debug/status. One summary of the

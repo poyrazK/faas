@@ -64,3 +64,23 @@ func TestDebugStatusAndRollout_ArePlanGated(t *testing.T) {
 		apidserver.AssertProblem(t, e.Do(t, http.MethodGet, path, nil, nil), http.StatusPaymentRequired, api.CodePlanFeatureGated)
 	}
 }
+
+// The dashboard status card links each request to its evidence on the debug
+// page and points the CLI hint at the rollout explanation after a rollback.
+func TestDashboardDebugStatusView(t *testing.T) {
+	view := apidserver.DashboardDebugStatusView(api.DebugStatusResponse{
+		Verdict: api.DebugStatusRollback, Headline: "Rolled back.", Since: "24h", RegressionsTotal: 2,
+		Rollout: &api.DebugRolloutExplanation{State: api.DebugRolloutAborted, Headline: "Rolled back at 10% traffic.",
+			Examples: []api.DebugTelemetryRequestItem{{ID: "row-1", Method: "GET", Route: "GET /checkout", Status: 500, LatencyMS: 12, ReceivedAt: "t1"}}},
+		RecentFailures: []api.DebugTelemetryRequestItem{{ID: "row-2", Method: "POST", Route: "/pay", Status: 502, LatencyMS: 40, ReceivedAt: "t2"}},
+	}, "shop")
+	if view.VerdictLabel != "rolled back" || view.Release != "Rolled back at 10% traffic." || view.Regressions != 2 || view.CLICommand != "gregale debug rollout shop" {
+		t.Fatalf("view = %+v", view)
+	}
+	if len(view.Examples) != 1 || view.Examples[0].Label != "GET /checkout 500 · 12 ms" || view.Examples[0].URL != "/dashboard/apps/shop/debug?request_id=row-1&since=24h" {
+		t.Fatalf("examples = %+v", view.Examples)
+	}
+	if len(view.Failures) != 1 || view.Failures[0].Label != "POST /pay 502 · 40 ms" {
+		t.Fatalf("failures = %+v", view.Failures)
+	}
+}
