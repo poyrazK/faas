@@ -320,6 +320,9 @@ var routeExclude = map[string]bool{
 	"GET /v1/product-control/portal":                                               true,
 	"GET /v1/product-control/portal.js":                                            true,
 	"GET /v1/product-control/portal.css":                                           true,
+	"GET /v1/consumer-signup/{slug}/page":                                          true, // hosted HTML sign-up page over the public sign-up API (ADR-20261021143000)
+	"GET /v1/consumer-signup/{slug}/signup.js":                                     true,
+	"GET /v1/consumer-signup/{slug}/signup.css":                                    true,
 	"POST /v1/platform-tenant-self/product/submissions/lookup":                     true,
 	"POST /v1/product-control/customer/{slug}/session":                             true,
 	"GET /v1/product-control/customer/{slug}/account-recovery":                     true,
@@ -1820,6 +1823,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "statement_invoices.go"),    // ADR-1502, ADR-1507 statement invoice exports
 		filepath.Join(root, "pkg", "api", "billing_runs.go"),          // ADR-1503 month-end billing runs
 		filepath.Join(root, "pkg", "api", "consumer_billing.go"),      // ADR-1506 consumer billing self-service
+		filepath.Join(root, "pkg", "api", "consumer_signup.go"),       // ADR-20261021143000 consumer self-service sign-up
 		filepath.Join(root, "pkg", "api", "consumer_credits.go"),      // ADR-1306 prepaid credit and spend caps
 		filepath.Join(root, "pkg", "api", "platform_tenant_plans.go"), // ADR-1307 tenant plans
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),
