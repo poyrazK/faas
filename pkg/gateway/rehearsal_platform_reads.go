@@ -17,8 +17,22 @@ import (
 // stays pending and has no deliveries; anything the run did not capture is
 // the public API's not-found.
 func rehearsalReadRoute(path string) (rehearsalPlatformRoute, bool) {
-	if path == "/v1/events/receipt" {
+	switch path {
+	case "/v1/events/receipt":
 		return serveRehearsalEventReceipt, true
+	case "/v1/executions":
+		return serveRehearsalExecutionList, true
+	case "/v1/executions/capabilities":
+		return serveRehearsalExecutionCapabilities, true
+	case "/v1/events/receipt/replays":
+		return eventRecipientHistoryRoute("replays", "replay"), true
+	case "/v1/events/receipt/attempts":
+		return eventRecipientHistoryRoute("attempts", "attempt"), true
+	case "/v1/events/recipient-blocker":
+		return serveRehearsalRecipientBlocker, true
+	}
+	if slug, ok := strings.CutSuffix(strings.TrimPrefix(path, "/v1/apps/"), "/entities/inspect"); ok && strings.HasPrefix(path, "/v1/apps/") && slug != "" && !strings.Contains(slug, "/") {
+		return entitiesUnavailableRoute, true
 	}
 	for prefix, serve := range map[string]func(string) rehearsalPlatformRoute{
 		"/v1/invocations/":    invocationReadRoute,
@@ -26,9 +40,7 @@ func rehearsalReadRoute(path string) (rehearsalPlatformRoute, bool) {
 		"/v1/workflows/runs/": workflowRunReadRoute,
 		"/v1/executions/":     executionReadRoute,
 	} {
-		// The Runs capabilities document is not a capture; it is served as
-		// any other unmatched route.
-		if id, ok := strings.CutPrefix(path, prefix); ok && id != "" && !strings.Contains(id, "/") && path != "/v1/executions/capabilities" {
+		if id, ok := strings.CutPrefix(path, prefix); ok && id != "" && !strings.Contains(id, "/") {
 			return serve(id), true
 		}
 	}
@@ -134,9 +146,24 @@ func workflowRunReadRoute(id string) rehearsalPlatformRoute {
 // serveRehearsalEventReceipt answers GET /v1/events/receipt for an event the
 // run captured: accepted, never routed, with no recipients.
 func serveRehearsalEventReceipt(w http.ResponseWriter, r *http.Request, call rehearsalPlatformCall) {
+	guard, err := api.ParseAppEventAcceptanceGuard(r.URL.Query().Get("expected_accepted_at"))
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
 	source, id := strings.TrimSpace(r.URL.Query().Get("source")), strings.TrimSpace(r.URL.Query().Get("id"))
 	if source == "" || id == "" || len(source) > 256 || len(id) > 256 {
 		api.WriteProblem(w, api.ErrValidation("source and id are required and must be at most 256 bytes"))
+		return
+	}
+	if problem, _ := api.ParseLimit(r.URL.Query().Get("limit"), 100, api.EventReceiptPageMax, "recipients"); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	// A captured receipt has no recipients, so no page follows it
+	// (ADR-20261022191742).
+	if r.URL.Query().Get("after") != "" {
+		api.WriteProblem(w, api.ErrValidation("invalid or mismatched event receipt cursor"))
 		return
 	}
 	record, err := call.store.ScenarioCapturedEvent(r.Context(), call.policy.AccountID, call.policy.RunID, source, id)
@@ -149,6 +176,10 @@ func serveRehearsalEventReceipt(w http.ResponseWriter, r *http.Request, call reh
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
+	if guard.ExpectedAcceptedAt != nil && !record.CreatedAt.Equal(*guard.ExpectedAcceptedAt) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "event_acceptance_replaced", "Event acceptance replaced", "the retained receipt belongs to a different acceptance"))
+		return
+	}
 	writeRehearsalCaptured(w, http.StatusOK, api.EventReceiptResponse{EventID: id, EventSource: source, EventType: record.Type, SchemaVersion: record.SchemaVersion,
 		AcceptedAt: record.CreatedAt, SnapshotCaptured: true, RoutingMode: "event", RoutingSummary: map[string]int{}, Recipients: []api.EventReceiptRecipientResponse{}})
 }

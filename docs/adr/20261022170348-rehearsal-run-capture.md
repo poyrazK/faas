@@ -6,7 +6,8 @@
 - **Decision:** The run-local platform API (`api.svc.gregale`) captures standalone Run starts and cancellations, and reads back the run's own captured starts:
   - `POST /v1/executions`
   - `DELETE /v1/executions/{id}`
-  - `GET /v1/executions/{id}`
+  - `GET /v1/executions/{id}` and `GET /v1/executions`
+  - `GET /v1/executions/capabilities`, for the run account's plan
 - **Why:** An app that starts a disposable Run (ADR-171) failed inside a contained rehearsal: the route was blocked. The candidate's behaviour then differed for a reason unrelated to the change under test. Performing the Run is not an option either, because it would bill the account and could reach managed integrations.
 
 ## Decision
@@ -39,6 +40,10 @@ It answers `202` with the start in status `cancelled`, as a queued Run cancels a
 
 `GET /v1/executions/{id}` serves the run's own captured start: `queued`, or `cancelled` with `finished_at` and zero usage once the run cancelled it. As for every captured read (ADR-20261022082721), anything else is not found.
 
+`GET /v1/executions` lists only the run's own captured starts, newest first. It takes the public `limit`, `offset`, `status` and `workflow_id` with the same validation, and `next_offset` is `-1` at the end. Production Runs of the account never appear.
+
+`GET /v1/executions/capabilities` answers for the run account's plan from the same builder apid uses. It reports the control plane as enabled, because a contained start is captured rather than admitted, so admission is available exactly when the plan is entitled.
+
 ### Idempotency
 
 apid scopes an execution's `Idempotency-Key` to the method and path, and replays the first response under it whatever the new body. The capture does the same:
@@ -53,7 +58,7 @@ A key longer than the capture column's 255 bytes is kept as its SHA-256 digest.
 | Request | Why |
 |---|---|
 | `artifact_inputs` | Refused with `422`. Staging one reads a production Run's artifacts or redeems a one-time grant; a captured Run has no artifacts. |
-| Run listing, the capabilities document, the event stream, artifact grants | Not served. |
+| The event stream, artifact grants | Not served. |
 
 ## Consequences
 

@@ -183,8 +183,8 @@ func TestRehearsalPlatformAPIRunReadAndCancel(t *testing.T) {
 	if len(store.calls) != 2 {
 		t.Fatalf("a refused cancellation was captured: %+v", store.calls)
 	}
-	// Capabilities and the event stream are not captures; they reach next.
-	for _, path := range []string{"/v1/executions/capabilities", "/v1/executions/" + started.ID + "/events"} {
+	// The event stream is not served; it reaches next.
+	for _, path := range []string{"/v1/executions/" + started.ID + "/events"} {
 		if response := serveRehearsalExecution(t, store, http.MethodGet, path, "", ""); response.Code != http.StatusTeapot {
 			t.Fatalf("GET %s = %d, want next", path, response.Code)
 		}
@@ -214,5 +214,75 @@ func TestRehearsalPlatformAPIReplaysIdempotentRunStart(t *testing.T) {
 	if first.Code != http.StatusAccepted || again.Code != http.StatusAccepted || a.ID != b.ID || b.Runtime != "python312" ||
 		again.Header().Get("Idempotent-Replayed") != "true" || len(store.calls) != 1 {
 		t.Fatalf("replay: %d/%d ids %q/%q runtime %q header %q calls %d", first.Code, again.Code, a.ID, b.ID, b.Runtime, again.Header().Get("Idempotent-Replayed"), len(store.calls))
+	}
+}
+
+func TestRehearsalPlatformAPIListsCapturedRuns(t *testing.T) {
+	store := &fakeRehearsalPlatformAPIStore{run: strings.Repeat("a", 32), plan: api.PlanPro}
+	for _, body := range []string{
+		`{"runtime":"python312","source":"1","workflow_id":"nightly"}`,
+		`{"runtime":"python312","source":"2"}`,
+		`{"runtime":"node22","source":"3","workflow_id":"nightly"}`,
+	} {
+		if response := serveRehearsalExecution(t, store, http.MethodPost, "/v1/executions", body, ""); response.Code != http.StatusAccepted {
+			t.Fatalf("start = %d: %s", response.Code, response.Body)
+		}
+	}
+	if response := serveRehearsalExecution(t, store, http.MethodDelete, "/v1/executions/"+fakeCallID(1), "", ""); response.Code != http.StatusAccepted {
+		t.Fatalf("cancel = %d: %s", response.Code, response.Body)
+	}
+	for _, tc := range []struct {
+		query  string
+		want   []int
+		next   int
+		status int
+	}{
+		{query: "", want: []int{2, 1, 0}, next: -1, status: http.StatusOK},
+		{query: "?limit=2", want: []int{2, 1}, next: 2, status: http.StatusOK},
+		{query: "?limit=2&offset=2", want: []int{0}, next: -1, status: http.StatusOK},
+		{query: "?offset=9", want: []int{}, next: -1, status: http.StatusOK},
+		{query: "?status=cancelled", want: []int{1}, next: -1, status: http.StatusOK},
+		{query: "?status=queued&workflow_id=nightly", want: []int{2, 0}, next: -1, status: http.StatusOK},
+		{query: "?status=bogus", status: http.StatusBadRequest},
+		{query: "?offset=-1", status: http.StatusBadRequest},
+		{query: "?limit=500", status: http.StatusBadRequest},
+		{query: "?workflow_id=-bad", status: http.StatusBadRequest},
+	} {
+		response := serveRehearsalExecution(t, store, http.MethodGet, "/v1/executions"+tc.query, "", "")
+		if response.Code != tc.status {
+			t.Fatalf("GET %s = %d, want %d: %s", tc.query, response.Code, tc.status, response.Body)
+		}
+		if tc.status != http.StatusOK {
+			continue
+		}
+		var list api.ExecutionListResponse
+		if err := json.NewDecoder(response.Body).Decode(&list); err != nil || list.Executions == nil {
+			t.Fatalf("GET %s = %v %+v", tc.query, err, list)
+		}
+		got, want := []string{}, []string{}
+		for _, run := range list.Executions {
+			got = append(got, run.ID)
+		}
+		for _, i := range tc.want {
+			want = append(want, fakeCallID(i))
+		}
+		if strings.Join(got, ",") != strings.Join(want, ",") || list.NextOffset != tc.next {
+			t.Fatalf("GET %s = ids %q next %d, want %q next %d", tc.query, got, list.NextOffset, want, tc.next)
+		}
+	}
+}
+
+func TestRehearsalPlatformAPIServesRunCapabilitiesForThePlan(t *testing.T) {
+	for _, tc := range []struct {
+		plan      api.Plan
+		available bool
+	}{{api.PlanPro, true}, {api.PlanFree, false}} {
+		store := &fakeRehearsalPlatformAPIStore{run: strings.Repeat("a", 32), plan: tc.plan}
+		response := serveRehearsalExecution(t, store, http.MethodGet, "/v1/executions/capabilities", "", "")
+		var capabilities api.ExecutionCapabilitiesResponse
+		if err := json.NewDecoder(response.Body).Decode(&capabilities); err != nil || response.Code != http.StatusOK || capabilities.Plan != string(tc.plan) ||
+			capabilities.AdmissionAvailable != tc.available || !capabilities.ControlPlaneEnabled || (capabilities.Limits != nil) != tc.available {
+			t.Fatalf("%s capabilities = %d %+v %v", tc.plan, response.Code, capabilities, err)
+		}
 	}
 }

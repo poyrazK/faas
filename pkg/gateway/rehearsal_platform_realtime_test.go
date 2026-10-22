@@ -28,7 +28,6 @@ func TestRehearsalPlatformAPICapturesContainedRealtimePublish(t *testing.T) {
 		{name: "bad-base64", path: realtimeChannelPath + "/publish", body: `{"data_base64":"***"}`, status: http.StatusBadRequest},
 		{name: "bad-key", path: realtimeChannelPath + "/publish", body: `{"data_base64":"aGk="}`, key: "has space", status: http.StatusBadRequest},
 		{name: "unknown-endpoint", path: "/v1/apps/missing/realtime/endpoints/7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d/channels/updates/publish", body: `{"data_base64":"aGk="}`, status: http.StatusNotFound},
-		{name: "batch-passes-through", path: realtimeChannelPath + "/publish-batch", body: `{}`, status: http.StatusTeapot},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &fakeRehearsalPlatformAPIStore{run: strings.Repeat("a", 32)}

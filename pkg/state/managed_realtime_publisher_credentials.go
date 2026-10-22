@@ -120,6 +120,30 @@ func normalizeRealtimePublisherPolicy(req *RealtimePublisherCredentialRequest) e
 	}
 	return nil
 }
+
+// ValidRealtimePublisherMessage mirrors a publisher-credential publish's
+// request validation and returns the metadata it would retain, which carries
+// the event type (ADR-20261022191742).
+func ValidRealtimePublisherMessage(key string, req RealtimePublisherMessageRequest) (map[string]string, bool) {
+	if !realtimePublisherKeyValid(key) || !validRealtimeWorkerName(req.EventType, api.RealtimePublisherEventTypeMaxBytes) ||
+		req.TTLSeconds < 0 || req.TTLSeconds > api.RealtimeMessageTTLMaxSeconds {
+		return nil, false
+	}
+	data, err := base64.StdEncoding.DecodeString(req.DataBase64)
+	if err != nil || len(data) > api.RealtimePublisherPayloadMaxBytes {
+		return nil, false
+	}
+	metadata := cloneRealtimeMetadata(req.Metadata)
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	if event, exists := metadata["event_type"]; exists && event != req.EventType {
+		return nil, false
+	}
+	metadata["event_type"] = req.EventType
+	return metadata, api.ValidateRealtimeMetadata(metadata) == nil
+}
+
 func realtimePublisherKeyValid(key string) bool {
 	if len(key) < 1 || len(key) > api.RealtimePublisherIdempotencyMaxBytes {
 		return false

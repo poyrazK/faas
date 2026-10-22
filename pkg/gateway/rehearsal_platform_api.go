@@ -27,6 +27,7 @@ type RehearsalPlatformAPIStore interface {
 	state.ScenarioEventCaptureStore
 	state.ScenarioPlatformCaptureStore
 	state.ScenarioCapturedReadStore
+	state.ScenarioRealtimeGroupStore
 	state.EventSchemaStore
 }
 
@@ -85,7 +86,13 @@ func rehearsalPlatformAPIRoute(r *http.Request) (rehearsalPlatformRoute, bool) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		return rehearsalReadRoute(r.URL.Path)
+		if route, ok := rehearsalReadRoute(r.URL.Path); ok {
+			return route, true
+		}
+		if route, ok := realtimeWorkerGroupRoute(r.Method, r.URL.Path); ok {
+			return route, true
+		}
+		return realtimeGroupStatusRoute(r.URL.Path)
 	case http.MethodDelete:
 		if id, ok := strings.CutPrefix(r.URL.Path, "/v1/executions/"); ok && id != "" && !strings.Contains(id, "/") {
 			return executionCancelRoute(id), true
@@ -95,7 +102,15 @@ func rehearsalPlatformAPIRoute(r *http.Request) (rehearsalPlatformRoute, bool) {
 	default:
 		return nil, false
 	}
+	if route, ok := realtimeWorkerGroupRoute(r.Method, r.URL.Path); ok {
+		return route, true
+	}
+	if route, ok := realtimePublisherRoute(r.URL.Path); ok {
+		return route, true
+	}
 	switch r.URL.Path {
+	case "/v1/events/recipient-blockers":
+		return serveRehearsalRecipientBlockers, true
 	case "/v1/executions":
 		return serveRehearsalExecutionStart, true
 	case "/v1/events:publish":
@@ -137,6 +152,8 @@ func rehearsalPlatformAPIRoute(r *http.Request) (rehearsalPlatformRoute, bool) {
 		return queueCaptureRoute(api.ScenarioQueueKindAsyncInvoke, slug), true
 	case "inbox":
 		return queueCaptureRoute(rehearsalInboxKind, slug), true
+	case "entities/invoke", "entities/retry":
+		return entitiesUnavailableRoute, true
 	}
 	if rest, ok := strings.CutPrefix(route, "realtime/"); ok {
 		return realtimeRoute(slug, rest)

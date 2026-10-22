@@ -161,7 +161,7 @@ func (s *PgStore) scenarioPlatformTarget(ctx context.Context, tx pgx.Tx, account
 	q := sqlc.New()
 	if scenarioRealtimeKind(call.Kind) {
 		endpoint, err := uuid.Parse(call.Endpoint)
-		if err != nil || !api.ValidAppSlug(call.Address) {
+		if err != nil || call.Address != "" && !api.ValidAppSlug(call.Address) {
 			return "", ErrNotFound
 		}
 		target, err := q.ScenarioRealtimeEndpointTarget(ctx, tx, sqlc.ScenarioRealtimeEndpointTargetParams{AccountID: accountID, RunID: runID, Slug: call.Address, EndpointID: endpoint.String()})
@@ -349,7 +349,7 @@ func (m *MemStore) scenarioExecutionReferenceLocked(accountID, runID, id string)
 // scenarioRealtimeTargetLocked mirrors ScenarioRealtimeEndpointTarget.
 func (m *MemStore) scenarioRealtimeTargetLocked(member ScenarioTestMember, call ScenarioPlatformCallCapture) string {
 	id, err := uuid.Parse(call.Endpoint)
-	if err != nil || !api.ValidAppSlug(call.Address) {
+	if err != nil || call.Address != "" && !api.ValidAppSlug(call.Address) {
 		return ""
 	}
 	for key, endpoint := range m.managedRealtimeEndpoints {
@@ -359,7 +359,7 @@ func (m *MemStore) scenarioRealtimeTargetLocked(member ScenarioTestMember, call 
 		app := m.apps[endpoint.AppID]
 		owner, enrolled := m.scenarioActionPolicyLocked(endpoint.AppID)
 		inRun := enrolled && owner.Member.RunID == member.RunID && owner.Member.AccountID == member.AccountID && owner.Member.Workload != ""
-		if app.Slug != call.Address && (!inRun || owner.Member.Workload != call.Address) {
+		if call.Address != "" && app.Slug != call.Address && (!inRun || owner.Member.Workload != call.Address) {
 			return ""
 		}
 		if !inRun {

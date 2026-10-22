@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [ADR-20261022191742: Rehearsal batches, publisher publishes, receipt reads and entities](20261022191742-rehearsal-realtime-batches-publishers-receipts.md)
+- [ADR-20261022183526: Contained workers see idle consumer groups](20261022183526-rehearsal-idle-consumer-groups.md)
 - [ADR-20261022170348: Rehearsal capture of standalone Runs](20261022170348-rehearsal-run-capture.md)
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
 - [ADR-20261022140000: Break-glass controls for a compromised secret store](20261022140000-break-glass-controls.md)

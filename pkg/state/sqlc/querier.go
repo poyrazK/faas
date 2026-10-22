@@ -5664,6 +5664,10 @@ type Querier interface {
 	// a later cancellation of it compares across sibling runs
 	// (ADR-20261022170348).
 	ScenarioCapturedExecutionReference(ctx context.Context, db DBTX, arg ScenarioCapturedExecutionReferenceParams) (string, error)
+	// The run's captured Run starts, newest first, each with the instant the run
+	// first cancelled it. The cancellation target mirrors
+	// ScenarioCapturedExecutionReference.
+	ScenarioCapturedExecutions(ctx context.Context, db DBTX, arg ScenarioCapturedExecutionsParams) ([]ScenarioCapturedExecutionsRow, error)
 	ScenarioCapturedPlatformCallByID(ctx context.Context, db DBTX, arg ScenarioCapturedPlatformCallByIDParams) (ScenarioCapturedPlatformCallByIDRow, error)
 	ScenarioCapturedPlatformCalls(ctx context.Context, db DBTX, arg ScenarioCapturedPlatformCallsParams) ([]ScenarioCapturedPlatformCallsRow, error)
 	// A capture is read back only inside its own run (ADR-20261022082721).
@@ -5691,10 +5695,15 @@ type Querier interface {
 	// A member of the same run is named by its workload, so sibling runs compare;
 	// any other app must exist in the caller's account, as for a real send.
 	ScenarioQueueCaptureTarget(ctx context.Context, db DBTX, arg ScenarioQueueCaptureTargetParams) (string, error)
+	ScenarioRealtimeConsumerGroupByID(ctx context.Context, db DBTX, arg ScenarioRealtimeConsumerGroupByIDParams) (ScenarioRealtimeConsumerGroupByIDRow, error)
+	// A consumer group's configuration for a contained worker, which is answered
+	// as an idle group and never claims (ADR-20261022183526).
+	ScenarioRealtimeConsumerGroupByName(ctx context.Context, db DBTX, arg ScenarioRealtimeConsumerGroupByNameParams) (ScenarioRealtimeConsumerGroupByNameRow, error)
 	// A run member's endpoint is named by its workload and creation order, so
 	// sibling runs compare; another account app's endpoint keeps its ID. The
 	// endpoint must belong to the addressed app, as in production
-	// (ADR-20261021180000).
+	// (ADR-20261021180000). A publisher-credential publish names no app, so an
+	// empty slug resolves by the endpoint alone (ADR-20261022191742).
 	ScenarioRealtimeEndpointTarget(ctx context.Context, db DBTX, arg ScenarioRealtimeEndpointTargetParams) (string, error)
 	ScenarioRecorderAttemptOwner(ctx context.Context, db DBTX, arg ScenarioRecorderAttemptOwnerParams) (bool, error)
 	ScenarioRecorderRequestAvailable(ctx context.Context, db DBTX, arg ScenarioRecorderRequestAvailableParams) (bool, error)

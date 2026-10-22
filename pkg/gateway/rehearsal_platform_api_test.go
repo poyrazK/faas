@@ -19,8 +19,10 @@ import (
 )
 
 type fakeRehearsalPlatformAPIStore struct {
-	run      string
-	plan     api.Plan
+	run  string
+	plan api.Plan
+	// groups are keyed by slug/endpoint/channel/name and by group ID.
+	groups   map[string]state.ScenarioRealtimeGroup
 	err      error
 	captured []state.ScenarioQueueCapture
 	events   []state.ScenarioEventCapture
@@ -49,6 +51,36 @@ func (f *fakeRehearsalPlatformAPIStore) ScenarioCapturedPlatformCall(_ context.C
 		return state.ScenarioCapturedPlatformRecord{}, state.ErrNotFound
 	}
 	return record, nil
+}
+
+func (f *fakeRehearsalPlatformAPIStore) ScenarioCapturedExecutions(_ context.Context, accountID, runID string) ([]state.ScenarioCapturedExecution, error) {
+	if accountID != fakeRehearsalAccount || runID != f.run {
+		return nil, nil
+	}
+	var out []state.ScenarioCapturedExecution
+	for i := len(f.calls) - 1; i >= 0; i-- {
+		if f.calls[i].Kind == api.ScenarioPlatformKindExecution {
+			record, _ := f.capturedRecord(fakeCallID(i))
+			out = append(out, state.ScenarioCapturedExecution{ID: fakeCallID(i), Record: record})
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeRehearsalPlatformAPIStore) ScenarioRealtimeConsumerGroup(_ context.Context, accountID, runID, slug, endpointID, channel, name string) (state.ScenarioRealtimeGroup, error) {
+	group, ok := f.groups[slug+"/"+endpointID+"/"+channel+"/"+name]
+	if !ok || accountID != fakeRehearsalAccount || runID != f.run {
+		return state.ScenarioRealtimeGroup{}, state.ErrNotFound
+	}
+	return group, nil
+}
+
+func (f *fakeRehearsalPlatformAPIStore) ScenarioRealtimeWorkerGroup(_ context.Context, accountID, groupID string) (state.ScenarioRealtimeGroup, error) {
+	group, ok := f.groups[groupID]
+	if !ok || accountID != fakeRehearsalAccount {
+		return state.ScenarioRealtimeGroup{}, state.ErrNotFound
+	}
+	return group, nil
 }
 
 // capturedRecord reads back the fake's own capture, cancelled by the first
@@ -80,6 +112,9 @@ func (f *fakeRehearsalPlatformAPIStore) ScenarioCapturedEvent(_ context.Context,
 	}
 	return record, nil
 }
+
+// fakeMissingEndpoint is an endpoint the fake resolves nowhere.
+const fakeMissingEndpoint = "00000000-0000-4000-8000-000000000404"
 
 const fakeRehearsalAccount = "5b0f6f0e-8a43-4d0e-9a4f-2d8f7a1c9e01"
 
@@ -118,7 +153,7 @@ func (f *fakeRehearsalPlatformAPIStore) CaptureScenarioPlatformCall(_ context.Co
 	if f.err != nil {
 		return state.ScenarioPlatformCallResult{}, true, f.err
 	}
-	if call.Address == "missing" {
+	if call.Address == "missing" || call.Endpoint == fakeMissingEndpoint {
 		return state.ScenarioPlatformCallResult{}, true, state.ErrNotFound
 	}
 	if record, ok := f.capturedRecord(call.Address); call.Kind == api.ScenarioPlatformKindExecutionCancel && (!ok || record.Kind != api.ScenarioPlatformKindExecution) {

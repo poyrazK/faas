@@ -73,6 +73,15 @@ func TestScenarioCapturedRunStartsAndCancellations(t *testing.T) {
 				t.Fatalf("workflow run read = %+v %v", got, err)
 			}
 
+			listed, err := reads.ScenarioCapturedExecutions(ctx, account.ID, state.ActionCaptureTestRun)
+			if err != nil || len(listed) != 2 || listed[0].ID != second.ID || listed[1].ID != first.ID ||
+				listed[0].Record.CancelledAt == nil || listed[1].Record.CancelledAt != nil || listed[1].Record.Name != "python312" {
+				t.Fatalf("captured Run list = %+v %v", listed, err)
+			}
+			if other, err := reads.ScenarioCapturedExecutions(ctx, account.ID, strings.Repeat("c", 32)); err != nil || len(other) != 0 {
+				t.Fatalf("another run's Run list = %+v %v", other, err)
+			}
+
 			snapshot := sealTestActions(t, f)
 			if _, err := actioncompare.ValidateSnapshot(&snapshot); err != nil || snapshot.Status != "complete" {
 				t.Fatalf("sealed evidence = %+v %v", snapshot, err)

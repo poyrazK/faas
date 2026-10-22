@@ -59,6 +59,17 @@ func TestScenarioPlatformCaptureNamesRealtimeEndpoints(t *testing.T) {
 			if err := publish(app.Slug, uuid.NewString(), "", "aGk="); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("unknown endpoint: %v", err)
 			}
+			// A publisher-credential publish names no app; the endpoint alone
+			// resolves its target (ADR-20261022191742).
+			if err := publish("", first, "p1", "aGk="); err != nil {
+				t.Fatalf("publisher publish to a member endpoint: %v", err)
+			}
+			if err := publish("", foreign, "p2", "aGk="); err != nil {
+				t.Fatalf("publisher publish to an account app endpoint: %v", err)
+			}
+			if err := publish("", uuid.NewString(), "p3", "aGk="); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("publisher publish to an unknown endpoint: %v", err)
+			}
 			if _, _, err := capturer.CaptureScenarioPlatformCall(ctx, app.ID, state.ScenarioPlatformCallCapture{Kind: api.ScenarioPlatformKindRealtimeSignal, Address: app.Slug,
 				Endpoint: first, Name: "updates", Message: json.RawMessage(`{"data":{"typing":true}}`)}); err != nil {
 				t.Fatalf("signal: %v", err)
@@ -72,9 +83,9 @@ func TestScenarioPlatformCaptureNamesRealtimeEndpoints(t *testing.T) {
 				targets[call.Kind+" "+call.Target+" "+call.Name]++
 			}
 			want := map[string]int{
-				"realtime_publish workload:primary/endpoint#1 updates":                                                1,
+				"realtime_publish workload:primary/endpoint#1 updates":                                                2,
 				"realtime_publish workload:primary/endpoint#2 updates":                                                1,
-				"realtime_publish app:" + ordinary.Slug + "/endpoint:" + state.CanonicalMemUUID(foreign) + " updates": 1,
+				"realtime_publish app:" + ordinary.Slug + "/endpoint:" + state.CanonicalMemUUID(foreign) + " updates": 2,
 				"realtime_signal workload:primary/endpoint#1 updates":                                                 1,
 			}
 			if len(targets) != len(want) {

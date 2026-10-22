@@ -8,6 +8,8 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -193,6 +195,67 @@ func executionCancelRoute(id string) rehearsalPlatformRoute {
 		}
 		writeRehearsalCaptured(w, http.StatusAccepted, capturedExecutionResponse(id, record))
 	}
+}
+
+// serveRehearsalExecutionList serves GET /v1/executions with the run's own
+// captured starts only, newest first, with the public filters and paging.
+func serveRehearsalExecutionList(w http.ResponseWriter, r *http.Request, call rehearsalPlatformCall) {
+	query := r.URL.Query()
+	limitProblem, limit := api.ParseLimit(query.Get("limit"), 50, 200, "executions")
+	if limitProblem != nil {
+		api.WriteProblem(w, limitProblem)
+		return
+	}
+	offset := 0
+	if raw := query.Get("offset"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad offset", "offset must be a non-negative integer"))
+			return
+		}
+		offset = parsed
+	}
+	status := api.ExecutionStatus(strings.TrimSpace(query.Get("status")))
+	if status != "" && !status.Valid() {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad execution status",
+			"status must be one of queued, restoring, running, succeeded, failed, timed_out, out_of_memory, or cancelled"))
+		return
+	}
+	workflowID, hasWorkflowID := query.Get("workflow_id"), query.Has("workflow_id")
+	if hasWorkflowID {
+		if err := api.ValidateExecutionWorkflowMetadata(workflowID, ""); err != nil {
+			api.WriteProblem(w, api.ErrValidation(err.Error()))
+			return
+		}
+	}
+	captured, err := call.store.ScenarioCapturedExecutions(r.Context(), call.policy.AccountID, call.policy.RunID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list executions"))
+		return
+	}
+	var matched []api.ExecutionResponse
+	for _, start := range captured {
+		run := capturedExecutionResponse(start.ID, start.Record)
+		if (status == "" || run.Status == status) && (!hasWorkflowID || run.WorkflowID == workflowID) {
+			matched = append(matched, run)
+		}
+	}
+	page := []api.ExecutionResponse{}
+	if offset < len(matched) {
+		page = matched[offset:min(offset+limit, len(matched))]
+	}
+	nextOffset := -1
+	if offset+len(page) < len(matched) {
+		nextOffset = offset + len(page)
+	}
+	writeRehearsalCaptured(w, http.StatusOK, api.ExecutionListResponse{Executions: page, Limit: limit, Offset: offset, NextOffset: nextOffset})
+}
+
+// serveRehearsalExecutionCapabilities serves GET /v1/executions/capabilities
+// for the run account's plan. Starts are captured, never admitted, so the
+// control plane counts as enabled.
+func serveRehearsalExecutionCapabilities(w http.ResponseWriter, _ *http.Request, call rehearsalPlatformCall) {
+	writeRehearsalCaptured(w, http.StatusOK, executionprofiles.Capabilities(call.policy.Plan, true))
 }
 
 func readCapturedExecution(r *http.Request, call rehearsalPlatformCall, id string) (state.ScenarioCapturedPlatformRecord, *api.Problem) {

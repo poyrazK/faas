@@ -645,6 +645,61 @@ func (q *Queries) ScenarioCapturedExecutionReference(ctx context.Context, db DBT
 	return reference, err
 }
 
+const scenarioCapturedExecutions = `-- name: ScenarioCapturedExecutions :many
+SELECT c.id::text AS id,c.name,c.message,c.oversized,c.created_at,
+ (SELECT min(x.created_at) FROM scenario_captured_platform_calls x WHERE x.account_id=c.account_id AND x.run_id=c.run_id
+   AND x.kind='execution_cancel' AND x.target=('execution:' || p.workload_name || '/' || c.name || '#' ||
+   (SELECT count(*) FROM scenario_captured_platform_calls y WHERE y.account_id=c.account_id AND y.run_id=c.run_id AND y.app_id=c.app_id
+     AND y.kind='execution' AND y.name=c.name AND (y.created_at,y.id)<=(c.created_at,c.id))::text))::timestamptz AS cancelled_at
+FROM scenario_captured_platform_calls c JOIN scenario_test_action_policies p ON p.app_id=c.app_id
+WHERE c.account_id=$1::text::uuid AND c.run_id=$2::text AND c.kind='execution'
+ORDER BY c.created_at DESC,c.id DESC LIMIT 257
+`
+
+type ScenarioCapturedExecutionsParams struct {
+	AccountID string
+	RunID     string
+}
+
+type ScenarioCapturedExecutionsRow struct {
+	ID          string
+	Name        string
+	Message     []byte
+	Oversized   bool
+	CreatedAt   pgtype.Timestamptz
+	CancelledAt pgtype.Timestamptz
+}
+
+// The run's captured Run starts, newest first, each with the instant the run
+// first cancelled it. The cancellation target mirrors
+// ScenarioCapturedExecutionReference.
+func (q *Queries) ScenarioCapturedExecutions(ctx context.Context, db DBTX, arg ScenarioCapturedExecutionsParams) ([]ScenarioCapturedExecutionsRow, error) {
+	rows, err := db.Query(ctx, scenarioCapturedExecutions, arg.AccountID, arg.RunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ScenarioCapturedExecutionsRow{}
+	for rows.Next() {
+		var i ScenarioCapturedExecutionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Message,
+			&i.Oversized,
+			&i.CreatedAt,
+			&i.CancelledAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const scenarioCapturedPlatformCallByID = `-- name: ScenarioCapturedPlatformCallByID :one
 SELECT kind,target,name,message,oversized,created_at FROM scenario_captured_platform_calls
 WHERE id=$1::text::uuid AND account_id=$2::text::uuid AND run_id=$3::text
@@ -1029,6 +1084,120 @@ func (q *Queries) ScenarioQueueCaptureTarget(ctx context.Context, db DBTX, arg S
 	return target, err
 }
 
+const scenarioRealtimeConsumerGroupByID = `-- name: ScenarioRealtimeConsumerGroupByID :one
+SELECT g.id::text AS group_id,g.endpoint_id::text AS endpoint_id,g.channel,g.name,e.enabled AS endpoint_enabled,g.lease_seconds,g.max_attempts,
+ g.dead_letter_retention_seconds,g.ordering_metadata_key,g.dead_letter_policy,g.deadline_metadata_key,coalesce(g.trigger_id::text,'')::text AS trigger_id,
+ g.message_filter,g.created_at
+FROM managed_realtime_consumer_groups g JOIN managed_realtime_endpoints e ON e.id=g.endpoint_id
+WHERE e.account_id=$1::text::uuid AND g.id=$2::text::uuid
+`
+
+type ScenarioRealtimeConsumerGroupByIDParams struct {
+	AccountID string
+	ID        string
+}
+
+type ScenarioRealtimeConsumerGroupByIDRow struct {
+	GroupID                    string
+	EndpointID                 string
+	Channel                    string
+	Name                       string
+	EndpointEnabled            bool
+	LeaseSeconds               int32
+	MaxAttempts                int32
+	DeadLetterRetentionSeconds int32
+	OrderingMetadataKey        string
+	DeadLetterPolicy           string
+	DeadlineMetadataKey        string
+	TriggerID                  string
+	MessageFilter              []byte
+	CreatedAt                  pgtype.Timestamptz
+}
+
+func (q *Queries) ScenarioRealtimeConsumerGroupByID(ctx context.Context, db DBTX, arg ScenarioRealtimeConsumerGroupByIDParams) (ScenarioRealtimeConsumerGroupByIDRow, error) {
+	row := db.QueryRow(ctx, scenarioRealtimeConsumerGroupByID, arg.AccountID, arg.ID)
+	var i ScenarioRealtimeConsumerGroupByIDRow
+	err := row.Scan(
+		&i.GroupID,
+		&i.EndpointID,
+		&i.Channel,
+		&i.Name,
+		&i.EndpointEnabled,
+		&i.LeaseSeconds,
+		&i.MaxAttempts,
+		&i.DeadLetterRetentionSeconds,
+		&i.OrderingMetadataKey,
+		&i.DeadLetterPolicy,
+		&i.DeadlineMetadataKey,
+		&i.TriggerID,
+		&i.MessageFilter,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const scenarioRealtimeConsumerGroupByName = `-- name: ScenarioRealtimeConsumerGroupByName :one
+SELECT g.id::text AS group_id,g.endpoint_id::text AS endpoint_id,g.channel,g.name,e.enabled AS endpoint_enabled,g.lease_seconds,g.max_attempts,
+ g.dead_letter_retention_seconds,g.ordering_metadata_key,g.dead_letter_policy,g.deadline_metadata_key,coalesce(g.trigger_id::text,'')::text AS trigger_id,
+ g.message_filter,g.created_at
+FROM managed_realtime_consumer_groups g JOIN managed_realtime_endpoints e ON e.id=g.endpoint_id
+WHERE e.account_id=$1::text::uuid AND g.endpoint_id=$2::text::uuid
+ AND g.channel=$3::text AND g.name=$4::text
+`
+
+type ScenarioRealtimeConsumerGroupByNameParams struct {
+	AccountID  string
+	EndpointID string
+	Channel    string
+	Name       string
+}
+
+type ScenarioRealtimeConsumerGroupByNameRow struct {
+	GroupID                    string
+	EndpointID                 string
+	Channel                    string
+	Name                       string
+	EndpointEnabled            bool
+	LeaseSeconds               int32
+	MaxAttempts                int32
+	DeadLetterRetentionSeconds int32
+	OrderingMetadataKey        string
+	DeadLetterPolicy           string
+	DeadlineMetadataKey        string
+	TriggerID                  string
+	MessageFilter              []byte
+	CreatedAt                  pgtype.Timestamptz
+}
+
+// A consumer group's configuration for a contained worker, which is answered
+// as an idle group and never claims (ADR-20261022183526).
+func (q *Queries) ScenarioRealtimeConsumerGroupByName(ctx context.Context, db DBTX, arg ScenarioRealtimeConsumerGroupByNameParams) (ScenarioRealtimeConsumerGroupByNameRow, error) {
+	row := db.QueryRow(ctx, scenarioRealtimeConsumerGroupByName,
+		arg.AccountID,
+		arg.EndpointID,
+		arg.Channel,
+		arg.Name,
+	)
+	var i ScenarioRealtimeConsumerGroupByNameRow
+	err := row.Scan(
+		&i.GroupID,
+		&i.EndpointID,
+		&i.Channel,
+		&i.Name,
+		&i.EndpointEnabled,
+		&i.LeaseSeconds,
+		&i.MaxAttempts,
+		&i.DeadLetterRetentionSeconds,
+		&i.OrderingMetadataKey,
+		&i.DeadLetterPolicy,
+		&i.DeadlineMetadataKey,
+		&i.TriggerID,
+		&i.MessageFilter,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const scenarioRealtimeEndpointTarget = `-- name: ScenarioRealtimeEndpointTarget :one
 SELECT coalesce((SELECT CASE WHEN p.app_id IS NOT NULL THEN 'workload:' || p.workload_name || '/endpoint#' ||
    (SELECT count(*) FROM managed_realtime_endpoints x WHERE x.app_id=e.app_id AND (x.created_at,x.id)<=(e.created_at,e.id))::text
@@ -1036,7 +1205,7 @@ SELECT coalesce((SELECT CASE WHEN p.app_id IS NOT NULL THEN 'workload:' || p.wor
  FROM managed_realtime_endpoints e JOIN apps a ON a.id=e.app_id AND a.account_id=e.account_id
  LEFT JOIN scenario_test_action_policies p ON p.app_id=e.app_id AND p.account_id=e.account_id AND p.run_id=$1::text AND p.workload_name<>''
  WHERE e.id=$2::text::uuid AND e.account_id=$3::text::uuid
-  AND (a.slug=$4::text OR p.workload_name=$4::text)),'')::text AS target
+  AND ($4::text='' OR a.slug=$4::text OR p.workload_name=$4::text)),'')::text AS target
 `
 
 type ScenarioRealtimeEndpointTargetParams struct {
@@ -1049,7 +1218,8 @@ type ScenarioRealtimeEndpointTargetParams struct {
 // A run member's endpoint is named by its workload and creation order, so
 // sibling runs compare; another account app's endpoint keeps its ID. The
 // endpoint must belong to the addressed app, as in production
-// (ADR-20261021180000).
+// (ADR-20261021180000). A publisher-credential publish names no app, so an
+// empty slug resolves by the endpoint alone (ADR-20261022191742).
 func (q *Queries) ScenarioRealtimeEndpointTarget(ctx context.Context, db DBTX, arg ScenarioRealtimeEndpointTargetParams) (string, error) {
 	row := db.QueryRow(ctx, scenarioRealtimeEndpointTarget,
 		arg.RunID,

@@ -34,6 +34,12 @@ type ScenarioCapturedPlatformRecord struct {
 	CancelledAt        *time.Time
 }
 
+// ScenarioCapturedExecution is one of a run's captured Run starts.
+type ScenarioCapturedExecution struct {
+	ID     string
+	Record ScenarioCapturedPlatformRecord
+}
+
 // ScenarioCapturedEventRecord is a captured event, found by its envelope
 // identity.
 type ScenarioCapturedEventRecord struct {
@@ -48,6 +54,9 @@ type ScenarioCapturedReadStore interface {
 	ScenarioCapturedQueueMessage(ctx context.Context, accountID, runID, id string) (ScenarioCapturedQueueRecord, error)
 	ScenarioCapturedPlatformCall(ctx context.Context, accountID, runID, id string) (ScenarioCapturedPlatformRecord, error)
 	ScenarioCapturedEvent(ctx context.Context, accountID, runID, source, eventID string) (ScenarioCapturedEventRecord, error)
+	// ScenarioCapturedExecutions lists the run's captured Run starts, newest
+	// first (ADR-20261022170348).
+	ScenarioCapturedExecutions(ctx context.Context, accountID, runID string) ([]ScenarioCapturedExecution, error)
 }
 
 func scenarioCaptureReadError(err error, what string) error {
@@ -103,6 +112,22 @@ func (s *PgStore) ScenarioCapturedEvent(ctx context.Context, accountID, runID, s
 		return ScenarioCapturedEventRecord{}, scenarioCaptureReadError(err, "event")
 	}
 	return ScenarioCapturedEventRecord{Type: row.Type, SchemaVersion: row.SchemaVersion, CreatedAt: row.CreatedAt.Time}, nil
+}
+
+func (s *PgStore) ScenarioCapturedExecutions(ctx context.Context, accountID, runID string) ([]ScenarioCapturedExecution, error) {
+	if uuid.Validate(accountID) != nil {
+		return nil, nil
+	}
+	rows, err := sqlc.New().ScenarioCapturedExecutions(ctx, s.pool, sqlc.ScenarioCapturedExecutionsParams{AccountID: accountID, RunID: runID})
+	if err != nil {
+		return nil, fmt.Errorf("list captured rehearsal executions: %w", err)
+	}
+	out := make([]ScenarioCapturedExecution, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, ScenarioCapturedExecution{ID: row.ID, Record: ScenarioCapturedPlatformRecord{Kind: api.ScenarioPlatformKindExecution, Target: api.ScenarioExecutionTarget,
+			Name: row.Name, Message: row.Message, Oversized: row.Oversized, CreatedAt: row.CreatedAt.Time, CancelledAt: optionalTimestamptz(row.CancelledAt)}})
+	}
+	return out, nil
 }
 
 func (m *MemStore) ScenarioCapturedQueueMessage(ctx context.Context, accountID, runID, id string) (ScenarioCapturedQueueRecord, error) {
@@ -163,4 +188,23 @@ func (m *MemStore) scenarioExecutionCancelledAtLocked(accountID, runID, id strin
 		}
 	}
 	return nil
+}
+
+func (m *MemStore) ScenarioCapturedExecutions(ctx context.Context, accountID, runID string) ([]ScenarioCapturedExecution, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []ScenarioCapturedExecution
+	for i := len(m.scenarioPlatformCalls) - 1; i >= 0; i-- {
+		row := m.scenarioPlatformCalls[i]
+		if row.call.Kind != api.ScenarioPlatformKindExecution || !sameScenarioAccount(row.accountID, accountID) || row.runID != runID {
+			continue
+		}
+		out = append(out, ScenarioCapturedExecution{ID: row.id, Record: ScenarioCapturedPlatformRecord{Kind: row.call.Kind, Target: row.target, Name: row.call.Name,
+			Message: append(json.RawMessage(nil), row.call.Message...), Oversized: row.call.Oversized, CreatedAt: row.createdAt,
+			CancelledAt: m.scenarioExecutionCancelledAtLocked(accountID, runID, row.id)}})
+	}
+	return out, nil
 }

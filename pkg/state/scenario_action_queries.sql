@@ -242,6 +242,36 @@ WHERE c.id=sqlc.arg(id)::text::uuid AND c.account_id=sqlc.arg(account_id)::text:
 SELECT min(created_at)::timestamptz AS cancelled_at FROM scenario_captured_platform_calls
 WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text AND kind='execution_cancel' AND target=sqlc.arg(target)::text;
 
+-- name: ScenarioCapturedExecutions :many
+-- The run's captured Run starts, newest first, each with the instant the run
+-- first cancelled it. The cancellation target mirrors
+-- ScenarioCapturedExecutionReference.
+SELECT c.id::text AS id,c.name,c.message,c.oversized,c.created_at,
+ (SELECT min(x.created_at) FROM scenario_captured_platform_calls x WHERE x.account_id=c.account_id AND x.run_id=c.run_id
+   AND x.kind='execution_cancel' AND x.target=('execution:' || p.workload_name || '/' || c.name || '#' ||
+   (SELECT count(*) FROM scenario_captured_platform_calls y WHERE y.account_id=c.account_id AND y.run_id=c.run_id AND y.app_id=c.app_id
+     AND y.kind='execution' AND y.name=c.name AND (y.created_at,y.id)<=(c.created_at,c.id))::text))::timestamptz AS cancelled_at
+FROM scenario_captured_platform_calls c JOIN scenario_test_action_policies p ON p.app_id=c.app_id
+WHERE c.account_id=sqlc.arg(account_id)::text::uuid AND c.run_id=sqlc.arg(run_id)::text AND c.kind='execution'
+ORDER BY c.created_at DESC,c.id DESC LIMIT 257;
+
+-- name: ScenarioRealtimeConsumerGroupByName :one
+-- A consumer group's configuration for a contained worker, which is answered
+-- as an idle group and never claims (ADR-20261022183526).
+SELECT g.id::text AS group_id,g.endpoint_id::text AS endpoint_id,g.channel,g.name,e.enabled AS endpoint_enabled,g.lease_seconds,g.max_attempts,
+ g.dead_letter_retention_seconds,g.ordering_metadata_key,g.dead_letter_policy,g.deadline_metadata_key,coalesce(g.trigger_id::text,'')::text AS trigger_id,
+ g.message_filter,g.created_at
+FROM managed_realtime_consumer_groups g JOIN managed_realtime_endpoints e ON e.id=g.endpoint_id
+WHERE e.account_id=sqlc.arg(account_id)::text::uuid AND g.endpoint_id=sqlc.arg(endpoint_id)::text::uuid
+ AND g.channel=sqlc.arg(channel)::text AND g.name=sqlc.arg(name)::text;
+
+-- name: ScenarioRealtimeConsumerGroupByID :one
+SELECT g.id::text AS group_id,g.endpoint_id::text AS endpoint_id,g.channel,g.name,e.enabled AS endpoint_enabled,g.lease_seconds,g.max_attempts,
+ g.dead_letter_retention_seconds,g.ordering_metadata_key,g.dead_letter_policy,g.deadline_metadata_key,coalesce(g.trigger_id::text,'')::text AS trigger_id,
+ g.message_filter,g.created_at
+FROM managed_realtime_consumer_groups g JOIN managed_realtime_endpoints e ON e.id=g.endpoint_id
+WHERE e.account_id=sqlc.arg(account_id)::text::uuid AND g.id=sqlc.arg(id)::text::uuid;
+
 -- name: ScenarioExternalWorkflowRunInAccount :one
 SELECT EXISTS(SELECT 1 FROM workflow_runs wr JOIN apps a ON a.id=wr.app_id
  WHERE wr.id=sqlc.arg(id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid)::boolean AS present;
@@ -250,14 +280,15 @@ SELECT EXISTS(SELECT 1 FROM workflow_runs wr JOIN apps a ON a.id=wr.app_id
 -- A run member's endpoint is named by its workload and creation order, so
 -- sibling runs compare; another account app's endpoint keeps its ID. The
 -- endpoint must belong to the addressed app, as in production
--- (ADR-20261021180000).
+-- (ADR-20261021180000). A publisher-credential publish names no app, so an
+-- empty slug resolves by the endpoint alone (ADR-20261022191742).
 SELECT coalesce((SELECT CASE WHEN p.app_id IS NOT NULL THEN 'workload:' || p.workload_name || '/endpoint#' ||
    (SELECT count(*) FROM managed_realtime_endpoints x WHERE x.app_id=e.app_id AND (x.created_at,x.id)<=(e.created_at,e.id))::text
   ELSE 'app:' || a.slug || '/endpoint:' || e.id::text END
  FROM managed_realtime_endpoints e JOIN apps a ON a.id=e.app_id AND a.account_id=e.account_id
  LEFT JOIN scenario_test_action_policies p ON p.app_id=e.app_id AND p.account_id=e.account_id AND p.run_id=sqlc.arg(run_id)::text AND p.workload_name<>''
  WHERE e.id=sqlc.arg(endpoint_id)::text::uuid AND e.account_id=sqlc.arg(account_id)::text::uuid
-  AND (a.slug=sqlc.arg(slug)::text OR p.workload_name=sqlc.arg(slug)::text)),'')::text AS target;
+  AND (sqlc.arg(slug)::text='' OR a.slug=sqlc.arg(slug)::text OR p.workload_name=sqlc.arg(slug)::text)),'')::text AS target;
 
 -- name: InsertScenarioCapturedPlatformCall :one
 INSERT INTO scenario_captured_platform_calls(account_id,run_id,app_id,kind,target,name,idempotency_key,message,oversized)

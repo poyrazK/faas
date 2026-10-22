@@ -1397,9 +1397,31 @@ Realtime channel publishes and backend signals are captured the same way:
 never delivered. A publish answers with no subscribers; a retained publish
 gets no history sequence. A run member's endpoint is named by workload and
 creation order (`workload:chat/endpoint#1`), so preview endpoint IDs never
-compare. `publish-batch`, publisher-credential publishes and realtime reads are
-not served. See
-[ADR-20261021180000](adr/20261021180000-rehearsal-realtime-capture.md).
+compare. Batch publishes (`…/publish-batch`) are captured as one retained
+publish keyed by their batch ID. Publisher-credential publishes
+(`/v1/realtime/publishers/endpoints/{id}/channels/{channel}/publish`) are
+captured as retained publishes resolved by the endpoint alone, and answer
+`sequence: "0"`, which is never a history position. Realtime reads are not
+served. See
+[ADR-20261021180000](adr/20261021180000-rehearsal-realtime-capture.md) and
+[ADR-20261022191742](adr/20261022191742-rehearsal-realtime-batches-publishers-receipts.md).
+
+A captured event has no recipients: its replay and attempt histories are not
+found, a recipient blocker reports the recipient unavailable, and the receipt
+honours `expected_accepted_at`. Durable entity calls (`entities/invoke`,
+`entities/retry`, `entities/inspect`) are refused with `501`, since an
+entity's value comes from production entity state.
+
+A contained worker sees its realtime consumer groups as idle: captured
+publishes never reach retained history, so nothing is claimable inside the run,
+and production messages are never claimed. On the app-key and worker-credential
+routes, the group status answers with its configuration and zero counters, a
+claim waits its `wait_seconds` and answers `204`, a batch claim answers no
+claims, a settlement answers `409 realtime_group_lease_lost` (a settlement
+batch, `lease_lost` per item) and a heartbeat answers live. Unknown groups are
+not found. These calls are answered, not captured, with
+`X-Gregale-Rehearsal: idle`. See
+[ADR-20261022183526](adr/20261022183526-rehearsal-idle-consumer-groups.md).
 
 Standalone Runs are captured too. `POST /v1/executions` is checked like the
 public API, against the run account's plan, and answers `202` with a Run in
@@ -1409,13 +1431,15 @@ path order, input as canonical JSON) beside the runtime, profile, entrypoint,
 output files, resolved limits, network, workflow ID, step label and integration
 IDs. A Run start compares by that content. `GET /v1/executions/{id}` reads back
 the run's own captured starts, and `DELETE /v1/executions/{id}` cancels one as a
-queued Run cancels at once: the start then reads back `cancelled`. A
+queued Run cancels at once: the start then reads back `cancelled`.
+`GET /v1/executions` lists the run's own captured starts with the public
+filters and paging, and `GET /v1/executions/capabilities` answers for the run
+account's plan. A
 cancellation is named by its start's workload, runtime and start order
 (`execution:primary/python312#2`). Idempotency keys replay the first response
 under a key, as apid does. `artifact_inputs` are refused with `422`, because
-they read production Runs and redeem one-time grants. Listing Runs, the
-capabilities document and the event stream are not served, and a production
-Run cannot be read or cancelled. See
+they read production Runs and redeem one-time grants. The event stream is not
+served, and a production Run cannot be listed, read or cancelled. See
 [ADR-20261022170348](adr/20261022170348-rehearsal-run-capture.md).
 
 Database and object-store access require future isolated adapters. Ordinary app tasks,

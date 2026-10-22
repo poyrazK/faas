@@ -32,10 +32,14 @@ func realtimeRoute(slug, rest string) (rehearsalPlatformRoute, bool) {
 	switch {
 	case len(action) == 1 && action[0] == "publish":
 		return realtimePublishRoute(slug, endpoint, channel), true
+	case len(action) == 1 && action[0] == "publish-batch":
+		return realtimeBatchRoute(slug, endpoint, channel), true
 	case len(action) == 1 && action[0] == "signals":
 		return realtimeSignalRoute(slug, endpoint, channel, ""), true
 	case len(action) == 3 && action[0] == "activity-scopes" && action[1] != "" && action[2] == "signals":
 		return realtimeSignalRoute(slug, endpoint, channel, action[1]), true
+	case len(action) >= 3 && action[0] == "groups" && action[1] != "":
+		return realtimeGroupRoute(http.MethodPost, realtimeGroupAddress{slug: slug, endpoint: endpoint, channel: channel, name: action[1]}, action[2:])
 	}
 	return nil, false
 }
