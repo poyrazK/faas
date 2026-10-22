@@ -44,7 +44,7 @@ func (s *Service) SignupCustomer(ctx context.Context, acct state.Account, provid
 		if problem != nil {
 			return "", problem
 		}
-		id, err := p.client.CreateCustomer(ctx, conn.key, idempotencyKey, email, name, metadata)
+		id, err := p.client.CreateSignupCustomer(ctx, conn.key, idempotencyKey, email, name, metadata)
 		if errors.Is(err, stripeinvoice.ErrKeyRejected) {
 			return "", signupUnavailable("the product team's Stripe key cannot create customers")
 		}
@@ -118,7 +118,7 @@ func (s *Service) StripeSetupCheckout(ctx context.Context, acct state.Account, c
 	if problem != nil {
 		return "", problem
 	}
-	session, err := p.client.CreateSetupCheckout(ctx, conn.key, idempotencyKey, customer, currency, successURL, cancelURL)
+	session, err := p.client.CreateSignupSetupCheckout(ctx, conn.key, idempotencyKey, customer, currency, successURL, cancelURL)
 	if err != nil {
 		return "", paymentMethodProblem(err)
 	}
@@ -135,7 +135,7 @@ func (s *Service) CompleteStripeSetup(ctx context.Context, acct state.Account, c
 	if problem != nil {
 		return nil, problem
 	}
-	session, err := p.client.GetCheckoutSession(ctx, conn.key, sessionID)
+	session, err := p.client.GetSignupCheckoutSession(ctx, conn.key, sessionID)
 	if err != nil {
 		return nil, paymentMethodProblem(err)
 	}
