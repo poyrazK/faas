@@ -116996,6 +116996,7 @@ components:
 
     DebugStatusHealth:
       type: object
+      description: "The serving deployments' traffic over the window."
       required: [requests, server_errors, p95_ms]
       properties:
         requests: { type: integer, format: int64, minimum: 0 }
@@ -117004,6 +117005,7 @@ components:
 
     DebugStatusDeployment:
       type: object
+      description: "One deployment currently serving traffic."
       required: [id, traffic_percent, created_at]
       properties:
         id: { type: string, format: uuid }
