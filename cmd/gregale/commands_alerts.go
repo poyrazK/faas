@@ -615,11 +615,13 @@ func resolveAlertSecret(secret *string, fromStdin bool) error {
 func cmdAlertRm(args []string) int {
 	fs := newFlagSet("alerts rm", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
-	if err := fs.Parse(args); err != nil {
+	// rm never prompts; --yes is accepted like webhooks rm (Hunt 12 H12-37).
+	fs.Bool("yes", false, "accepted for consistency; rm does not prompt")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alerts rm --app <slug> <alert-id>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alerts rm --app <slug> <alert-id> [--yes]", "alerts")
 		return 1
 	}
 	id := fs.Arg(0)

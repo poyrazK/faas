@@ -3120,11 +3120,12 @@ Show an SLO&#39;s attainment, budget remaining and burn rate
 
 Delete one SLO
 
-`gregale slos rm --app <slug> <slo-id>`
+`gregale slos rm --app <slug> [--yes] <slo-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
+| `--yes` | accepted for consistency; rm does not prompt |  |
 
 
 ## synthetics
@@ -3193,11 +3194,12 @@ Resume a paused check
 
 Delete a check and its history
 
-`gregale synthetics rm --app <slug> <check-id>`
+`gregale synthetics rm --app <slug> [--yes] <check-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
+| `--yes` | accepted for consistency; rm does not prompt |  |
 
 
 ## alerts
@@ -3330,11 +3332,12 @@ gregale alerts update --app my-api --interactive
 
 Delete one alert rule
 
-`gregale alerts rm --app <slug> <alert-id>`
+`gregale alerts rm --app <slug> [--yes] <alert-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
+| `--yes` | accepted for consistency; rm does not prompt |  |
 
 ### alerts rotate-secret
 
@@ -5663,11 +5666,12 @@ Add a release gate
 
 Remove a release gate
 
-`gregale release-gates rm [--app <slug>] <name>`
+`gregale release-gates rm [--app <slug>] [--yes] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug (defaults to linked project app) |  |
+| `--yes` | accepted for consistency; rm does not prompt |  |
 
 
 ## canary
