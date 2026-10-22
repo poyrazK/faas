@@ -43,6 +43,11 @@ func (s *server) startDueScheduledReleases(ctx context.Context, now time.Time) {
 	if !ok {
 		return
 	}
+	// ADR 20261022140000: a break-glass pause holds due schedules; they are
+	// decided on the first pass after it is lifted.
+	if s.platformReleasePauseProblem() != nil {
+		return
+	}
 	due, err := store.DueScheduledReleases(ctx, now, api.ScheduledReleaseBatch)
 	if err != nil {
 		if ctx.Err() == nil {

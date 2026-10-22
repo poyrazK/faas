@@ -401,6 +401,10 @@ func TestRenderDoctorHuman_HasAllChecks(t *testing.T) {
 	if !strings.Contains(out, "No local findings") || !strings.Contains(out, "were skipped") {
 		t.Errorf("render missing skipped-check summary in:\n%s", out)
 	}
+	// One summary: a clean report must not also open with "Local checks:".
+	if strings.Contains(out, "Local checks:") || strings.Count(out, "findings") != 1 {
+		t.Errorf("clean report repeats its summary:\n%s", out)
+	}
 }
 
 // TestDoctorReport_HasErrorsAndHasWarnings pins the two helpers

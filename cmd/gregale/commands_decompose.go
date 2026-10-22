@@ -689,8 +689,8 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 				classSuffix = "  class=" + wl.Class
 			}
 			servicePolicySuffix := ""
-			if wl.ServiceBindingPolicy.Effective() == api.ServiceBindingPolicyDeclared {
-				servicePolicySuffix = "  service_policy=declared"
+			if policy := wl.ServiceBindingPolicy.Effective(); policy != api.ServiceBindingPolicyAccount {
+				servicePolicySuffix = "  service_policy=" + string(policy)
 			}
 			serviceTransportSuffix := ""
 			if wl.ServiceBindingTransport == api.ServiceBindingTransportHTTPS {

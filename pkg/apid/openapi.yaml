@@ -83831,9 +83831,9 @@ components:
           description: "Stable target app name used by private service discovery."
 
     ServiceBindingPolicy:
-      description: "Caller-side authorization policy for internal service requests. `account` preserves same-account reachability; `declared` permits only targets present in the caller's service bindings."
+      description: "Caller-side authorization policy for internal service requests. `account` preserves same-account reachability; `declared` permits only targets present in the caller's service bindings; `project` also permits every service in the caller's own project (ADR-20261022111119)."
       type: string
-      enum: [account, declared]
+      enum: [account, declared, project]
 
     ServiceBindingTransport:
       description: "Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."
@@ -103373,7 +103373,7 @@ components:
           description: Reviewed public HTTPS base URL derived from this app allocation and installation domain. Absent when wildcard app URLs are disabled.
         app_slug:
           type: string
-          description: "Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans and existing allocations."
+          description: "Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug, which get the project-prefixed name (ADR-20261022120205)."
         name: { type: string, example: api }
         platform_tenant_required:
           type: boolean
@@ -103415,7 +103415,7 @@ components:
           description: "Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment."
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
-          description: "Effective policy selected by Compose `x-gregale-service-policy`. New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted."
+          description: "Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted."
         service_reliability:
           $ref: '#/components/schemas/ServiceReliabilityPolicies'
           description: "Dependency-specific policy selected by Compose `x-gregale-service-reliability`."

@@ -312,7 +312,7 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if !maps.Equal(a.Manifest.ServiceReliability, serviceReliabilityForWorkload(w, serviceNames, a.Manifest.ServiceReliability)) {
 		changed = append(changed, "service_reliability")
 	}
-	if a.Manifest.EffectiveServiceBindingPolicy() != serviceBindingPolicyForExistingWorkload(w, a.Manifest.ServiceBindingPolicy) {
+	if a.Manifest.EffectiveServiceBindingPolicy() != serviceBindingPolicyForExistingWorkload(w, a.Manifest.ServiceBindingPolicy).Effective() {
 		changed = append(changed, "service_binding_policy")
 	}
 	if a.Manifest.EffectiveServiceBindingTransport() != transport.Effective() {
