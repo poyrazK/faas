@@ -283,13 +283,14 @@ Before 2026-10-09 these headers were fixed by the platform, including HSTS
 with `includeSubDomains` on custom domains. Browsers that cached that HSTS
 policy keep it until it expires (up to a year after their last visit).
 
-## Web application firewall (preview)
+## Web application firewall
 
 A `kind=waf` edge rule (Pro and above) checks matched requests against the
 OWASP Core Rule Set for SQL injection, cross-site scripting, path traversal,
 command injection, scanners, and header injection. It works the same on
-`*.gregale.dev` and on your custom domains. The rule's `mode` decides what
-happens to a detection:
+`*.gregale.dev` and on your custom domains. `observe` at paranoia level 1 is
+generally available; `warn`, `block` and paranoia level 2 are in preview.
+The rule's `mode` decides what happens to a detection:
 
 | Mode | Headers and URL | Request body |
 |---|---|---|

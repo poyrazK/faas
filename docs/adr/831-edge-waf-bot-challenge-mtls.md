@@ -1,12 +1,15 @@
 # ADR-831: Edge WAF signatures, bot challenge, and client certificates
 
-- **Status:** proposed
+- **Status:** accepted (2026-10-22, amendment 9). `kind=waf` `observe` at
+  paranoia level 1 is generally available; `warn`, `block`, paranoia
+  level 2 and `kind=challenge` remain in preview.
 - **Date:** 2026-10-09
 - **Related:** ADR-091 (edge rules), ADR-104 (throttle keying), ADR-520
   (self-hosted custom-domain TLS), ADR-829 (pre-auth observe default),
   `docs/api-hosting-roadmap.md` ("What not to do next" §1)
-- **Decision needed:** product owner, on scope, sequencing, and plan gating.
-  This ADR proposes; nothing is built until it is accepted.
+- **Decided:** product owner, 2026-10-22 (amendment 9). Until then this
+  ADR was a proposal, and steps were built as previews at the product
+  owner's request.
 
 ## Context
 
@@ -801,3 +804,35 @@ kept; outside an attack it is.
 
 The challenge stays a preview with `kind=waf` warn and block; leaving
 preview is the product owner's call recorded under amendment 6.
+
+## Amendment 9 (2026-10-22): accepted; `observe` leaves preview
+
+The product owner's decisions on amendment 6's proposals:
+
+- **Accepted.** This ADR moves from proposed to accepted. Everything in it
+  that is built stays as built; what is still preview is named below.
+- **`observe` at paranoia level 1 is generally available** (proposal 1).
+  It adds no latency, detects 98% of the CRS regression corpus, and its
+  known false positives are documented with their exclusions. Paranoia
+  level 2 stays preview: it flagged 20 of the 38 legitimate requests.
+- **`warn` and `block` stay in preview, and the gate stays p95 at most
+  2 ms** (proposals 2 and 7). Restating it as 5 ms was declined. The
+  in-path check is to be measured on an idle production compute node
+  (approved), and the results recorded here; if the 2 ms gate is missed
+  there, the engine work below is the way out of preview, not a looser
+  gate.
+- **`kind=challenge` stays in preview** with them.
+- **Coraza pre-filter** (proposal 3): reported upstream as
+  [corazawaf/coraza#1790](https://github.com/corazawaf/coraza/issues/1790),
+  with a reproducer on the public API and a patch verified against
+  Coraza's own operator tests. The cause is the trie reconstruction joining
+  a common prefix to a literal that is not adjacent to it
+  (`2(?:x|.2250)` yields `"22250"`). The pre-filter stays off until a
+  fixed release passes `TestCRSRegressionCorpusEngineEquivalence`; then it
+  takes about 19% off every in-path check.
+- **Open engineering options** toward the 2 ms gate, in order of expected
+  gain: the pre-filter once fixed (19%); dropping the three largest unix
+  command-injection rules from the in-path set (10%, 8 corpus attacks
+  missed; proposal 4); a CPU weight for gatewayd-internal in a slice of
+  its own (proposal 8); running `warn` alongside the proxied request
+  (proposal 6); memoizing regex results (proposal 5).
