@@ -228,6 +228,10 @@ func (v *JailerVMM) prepareNativeLease(ctx context.Context, lease Lease) error {
 	if err != nil {
 		return err
 	}
+	ctx, err = r.builderExportProducerContext(ctx, lease)
+	if err != nil {
+		return err
+	}
 	roots, err := v.nativeInstanceRoots(lease.Instance)
 	if err != nil {
 		return err

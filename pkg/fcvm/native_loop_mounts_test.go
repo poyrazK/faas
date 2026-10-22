@@ -24,6 +24,10 @@ type nativeLoopBackendFixture struct {
 	mounted     int
 	retireErr   error
 	configure   func() error
+	// readOnlyMounts counts export mounts; exportTree models the builder
+	// drive's contents under a read-only export mountpoint.
+	readOnlyMounts int
+	exportTree     func(string) error
 }
 
 type nativeLoopReservationFixture struct {
@@ -62,6 +66,20 @@ func (r *nativeLoopReservationFixture) Mount(point string) (uint64, error) {
 	defer b.mu.Unlock()
 	b.mounted++
 	return 123, os.MkdirAll(filepath.Join(point, "upper", "etc", "faas"), 0o755)
+}
+
+func (r *nativeLoopReservationFixture) MountReadOnly(point string) (uint64, error) {
+	b := r.backend
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.mounted++
+	b.readOnlyMounts++
+	if b.exportTree != nil {
+		if err := b.exportTree(point); err != nil {
+			return 0, err
+		}
+	}
+	return 124, nil
 }
 
 func (*nativeLoopReservationFixture) Close() error { return nil }

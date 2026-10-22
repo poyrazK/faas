@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261022090000: Native builder artifact export](20261022090000-native-builder-artifact-export.md)
 - [ADR-20261021083000: Accept nested-KVM evidence for the GitOps native journey](20261021083000-gitops-nested-kvm-acceptance-evidence.md)
 - [ADR-20261021080847: Release GitOps execution per account with a platform flag](20261021080847-gitops-execution-platform-flag.md)
 - [Safety rails for automatic per-unit deploys](20261020214632-automatic-unit-deploy-safety-rails.md)

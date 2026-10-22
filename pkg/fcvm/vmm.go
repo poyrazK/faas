@@ -3857,6 +3857,13 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 // SIGKILL'd instances don't get an artifact export — that's Builderd's path
 // (use DestroyWithExport).
 func (v *JailerVMM) Kill(ctx context.Context, l Lease) (err error) {
+	return v.kill(ctx, l, "")
+}
+
+// kill retires a VM. A non-empty exportDir copies an exited native builder's
+// artifacts during retirement, after exit is confirmed and before its drive is
+// released (ADR-20261022090000).
+func (v *JailerVMM) kill(ctx context.Context, l Lease, exportDir string) (err error) {
 	if err := v.cancelSnapshotRestoreLoad(l); err != nil {
 		return err
 	}
@@ -3867,7 +3874,7 @@ func (v *JailerVMM) Kill(ctx context.Context, l Lease) (err error) {
 		}
 	}()
 	if v.nativeRecovery != nil {
-		return v.killNative(ctx, l)
+		return v.killNative(ctx, l, exportDir)
 	}
 	v.cancelNativeSnapshot(l.Instance)
 	v.cancelStartupCPUBoostTail(l.Instance)
@@ -4184,6 +4191,11 @@ exited:
 	// 2. Artifact export (build VMs only). Loopback-mount the chroot-local
 	//    drive1.ext4 and copy out /etc/faas/build-done.json + /build/out/*.
 	//    The mount uses root privileges (vmmd is the only root component, §11).
+	if v.nativeRecovery != nil {
+		// Native export runs inside retirement, under the exited builder's
+		// enrolled producer and a journaled read-only mount.
+		return exitCode, v.kill(context.WithoutCancel(ctx), l, exportDir)
+	}
 	var exportErr error
 	if exportDir != "" {
 		if err := v.exportBuildArtifacts(l.Instance, exportDir); err != nil {
@@ -4403,7 +4415,7 @@ func (v *JailerVMM) InstancePID(instance string) (int, bool) {
 // (pkg/fcvm/vmm.go:stageWritable).
 func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr error) {
 	if v.nativeRecovery != nil {
-		return errors.New("native recovery: artifact export producer provenance is not implemented")
+		return errors.New("native recovery: builder export runs only during native retirement")
 	}
 	if err := os.MkdirAll(exportDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir export: %w", err)
@@ -4443,9 +4455,14 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr err
 		}
 	}
 	defer func() { _ = exec.Command("umount", mp).Run() }()
+	return copyBuildExport(mp, exportDir, v.exportMax())
+}
 
+// copyBuildExport copies build-done.json and /build/out/* from a mounted
+// builder drive into exportDir. Both the legacy and native exports use it.
+func copyBuildExport(mountRoot, exportDir string, maxBytes int64) error {
 	// build-done.json is the canonical manifest builderd reads.
-	if data, ok := readBuildDone(mp); ok {
+	if data, ok := readBuildDone(mountRoot); ok {
 		if err := os.WriteFile(filepath.Join(exportDir, "build-done.json"), data, 0o644); err != nil {
 			return fmt.Errorf("write build-done.json: %w", err)
 		}
@@ -4455,12 +4472,12 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr err
 	// /build/out/ holds the produced OCI tarball. Walk + copy with the size
 	// cap enforced. A build that overruns the cap is logged as infra failure
 	// via the caller's classification (no error returned — best-effort).
-	if srcOut, ok := buildOutDir(mp); ok {
+	if srcOut, ok := buildOutDir(mountRoot); ok {
 		dstOut := filepath.Join(exportDir, "build", "out")
 		if err := os.MkdirAll(dstOut, 0o755); err != nil {
 			return fmt.Errorf("mkdir out: %w", err)
 		}
-		return copyTree(srcOut, dstOut, v.exportMax())
+		return copyTree(srcOut, dstOut, maxBytes)
 	}
 	return nil
 }

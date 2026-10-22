@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func (v *JailerVMM) killNative(ctx context.Context, lease Lease) error {
+func (v *JailerVMM) killNative(ctx context.Context, lease Lease, exportDir string) error {
 	budget := v.destroyWait
 	if budget <= 0 {
 		budget = 10 * time.Minute
@@ -47,6 +47,14 @@ func (v *JailerVMM) killNative(ctx context.Context, lease Lease) error {
 	}
 	if err := helpers.requireDeviceNamespacesRemoved(ctx, record); err != nil {
 		return fmt.Errorf("vmm: native jail device namespace retirement: %w", err)
+	}
+	// The exited builder's drive is still owned here. Retain an export error,
+	// but release every resource before returning it, as the legacy path does.
+	var exportErr error
+	if exportDir != "" {
+		if err := v.exportNativeBuildArtifacts(ctx, record, exportDir); err != nil {
+			exportErr = fmt.Errorf("vmm: export build artifacts: %w", err)
+		}
 	}
 	loops := nativeLoopMountJournal{owner: v.nativeRecovery.journal, backend: v.nativeRecovery.loopMounts}
 	if err := loops.retireAll(ctx, record); err != nil {
@@ -112,7 +120,7 @@ func (v *JailerVMM) killNative(ctx context.Context, lease Lease) error {
 	v.mu.Unlock()
 	v.preBoot.forget(lease.Instance)
 	v.closeClient(lease.Instance)
-	return ctx.Err()
+	return errors.Join(exportErr, ctx.Err())
 }
 
 // Cgroup pseudo-files cannot be unlinked. Remove only directories; the kernel

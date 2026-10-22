@@ -36,10 +36,17 @@ type nativeLoopMountRecord struct {
 	Directory nativeLoopIdentity `json:"directory"`
 	MountID   uint64             `json:"mount_id"`
 	Removed   bool               `json:"removed"`
+	// ReadOnly marks a builder artifact export: a read-only, no-replay mount
+	// of an exited builder's drive (ADR-20261022090000). Staging frames omit it.
+	ReadOnly bool `json:"read_only,omitempty"`
 }
 
 func (r *nativeLoopMountRecord) UnmarshalJSON(data []byte) error {
-	fields, err := nativeJournalObjectFields(data, []string{"id", "owner", "device", "directory", "mount_id", "removed"})
+	keys := []string{"id", "owner", "device", "directory", "mount_id", "removed"}
+	fields, err := nativeJournalObjectFields(data, keys)
+	if err != nil {
+		fields, err = nativeJournalObjectFields(data, append(keys, "read_only"))
+	}
 	if err != nil {
 		return err
 	}
@@ -67,7 +74,16 @@ func (r nativeLoopMountRecord) validate(owner nativeLaunchRecord) error {
 	if err := r.Owner.validate(owner.Lease.Instance); err != nil {
 		return err
 	}
-	if !canonicalNativeHelperID(r.ID) || r.Owner.Generation != owner.Generation || r.Owner.KernelBootID != owner.KernelBootID || !sameNativePhysicalLease(r.Owner.Lease, owner.Lease) || r.Owner.Revoked || r.Owner.Authorized || r.Owner.ResourcesRemoved {
+	if !canonicalNativeHelperID(r.ID) || r.Owner.Generation != owner.Generation || r.Owner.KernelBootID != owner.KernelBootID || !sameNativePhysicalLease(r.Owner.Lease, owner.Lease) || r.Owner.ResourcesRemoved {
+		return errors.New("native loop mount: frame differs from its VM owner")
+	}
+	if r.ReadOnly {
+		// An export reads only the drive of an exited, revoked builder whose
+		// enrolled producer is the daemon incarnation that mounts it.
+		if !r.Owner.Revoked || !r.Owner.ExitConfirmed || !r.Owner.Lease.IsBuilder || r.Owner.Producer.Protocol != nativeBuilderExportProducerProtocol || r.Owner.Producer != owner.Producer {
+			return errors.New("native loop mount: export frame has no exited builder producer")
+		}
+	} else if r.Owner.Revoked || r.Owner.Authorized {
 		return errors.New("native loop mount: frame differs from its prepared VM owner")
 	}
 	if r.Device.Number < 0 || r.Device.Rdev == 0 || r.Device.Source.Inode == 0 || r.Device.Namespace.Inode == 0 || (r.Directory.Device == 0) != (r.Directory.Inode == 0) || r.MountID != 0 && r.Directory.Inode == 0 {
@@ -83,6 +99,8 @@ type nativeLoopReservation interface {
 	Device() nativeLoopDevice
 	Configure() error
 	Mount(string) (uint64, error)
+	// MountReadOnly mounts without journal replay for an artifact export.
+	MountReadOnly(string) (uint64, error)
 	Close() error
 }
 
@@ -344,6 +362,100 @@ func (j *nativeLoopMountJournal) session(ctx context.Context, expected nativeLau
 		timings.Mount, mountMeasured = time.Since(started), true
 	}
 	return errors.Join(fn(j.point(record)), ctx.Err())
+}
+
+// exportSession mounts an exited builder's canonical drive read-only for one
+// artifact export (ADR-20261022090000). Its frame is durable before the loop is
+// attached, so a daemon that dies mid-export leaves a mount that recovery
+// retires once the enrolled producer has exited. The mount is always retired
+// before this returns, whether or not reader succeeds.
+func (j *nativeLoopMountJournal) exportSession(ctx context.Context, expected nativeLaunchRecord, drive string, reader func(string) error) (err error) {
+	if j.backend == nil || reader == nil {
+		return errors.New("native loop mount: native backend and reader are required")
+	}
+	lock, err := j.owner.lock(ctx, expected.Lease.Instance)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, lock.Close()) }()
+	owner, err := j.owner.read(expected.Lease.Instance)
+	if err != nil {
+		return err
+	}
+	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || !sameNativePhysicalLease(owner.Lease, expected.Lease) ||
+		!owner.Revoked || !owner.ExitConfirmed || owner.ResourcesRemoved || !owner.Lease.IsBuilder || owner.Producer.Protocol != nativeBuilderExportProducerProtocol {
+		return errors.New("native loop mount: export requires the exited builder's enrolled producer")
+	}
+	if err := j.owner.requireRepairProducerContext(ctx, owner); err != nil {
+		return err
+	}
+	if err := j.requireRemoved(owner); err != nil {
+		return err
+	}
+	id := uuid.NewString()
+	reservation, err := j.backend.Prepare(drive, id)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if reservation != nil {
+			err = errors.Join(err, reservation.Close())
+		}
+	}()
+	record := nativeLoopMountRecord{ID: id, Owner: owner, Device: reservation.Device(), ReadOnly: true}
+	for _, path := range []string{filepath.Dir(j.root(owner.Generation)), j.root(owner.Generation), filepath.Dir(j.point(record))} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			return err
+		}
+		if err := checkNativeJournalPath(path, true); err != nil {
+			return err
+		}
+	}
+	if err := j.write(owner, record); err != nil {
+		return err
+	}
+	defer func() {
+		closeErr := reservation.Close()
+		reservation = nil
+		err = errors.Join(err, closeErr, j.removeLocked(context.WithoutCancel(ctx), owner, record))
+	}()
+	if err := os.Mkdir(j.point(record), 0o700); err != nil {
+		return err
+	}
+	record.Directory, err = nativeLoopDirectoryIdentity(j.point(record))
+	if err != nil {
+		return err
+	}
+	if err := j.write(owner, record); err != nil {
+		return err
+	}
+	parent, err := os.Open(filepath.Dir(j.point(record)))
+	if err != nil {
+		return err
+	}
+	if err := errors.Join(parent.Sync(), parent.Close()); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := reservation.Configure(); err != nil {
+		return err
+	}
+	record.MountID, err = reservation.MountReadOnly(j.point(record))
+	if err != nil {
+		return err
+	}
+	if record.MountID == 0 {
+		return errors.New("native loop mount: mount has no kernel identity")
+	}
+	if err := j.write(owner, record); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return errors.Join(reader(j.point(record)), ctx.Err())
 }
 
 func (j *nativeLoopMountJournal) removeLocked(ctx context.Context, owner nativeLaunchRecord, record nativeLoopMountRecord) error {

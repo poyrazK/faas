@@ -4538,3 +4538,7 @@ switch gates schedd qualification dispatch
 The guarded native runner also qualifies a complete run on a nested-KVM host
 such as the internal n2 node
 ([ADR-20261021083000](20261021083000-gitops-nested-kvm-acceptance-evidence.md)).
+Native builder artifact export is implemented under native process recovery
+([ADR-20261022090000](20261022090000-native-builder-artifact-export.md)):
+builders enroll a `builder-export-v1` producer, and retirement exports through a
+journaled read-only mount into a destination checked before root writes to it.

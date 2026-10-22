@@ -129,7 +129,7 @@ func (j *nativeLaunchJournal) validateDataRepairRecords(ctx context.Context, phy
 	entries, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {
 		for _, p := range physical {
-			if p.Producer != (nativeProducerIdentity{}) {
+			if p.Producer.Protocol == nativeRepairProducerProtocol {
 				return core.ErrConflict
 			}
 		}
@@ -173,7 +173,7 @@ func (j *nativeLaunchJournal) validateDataRepairRecords(ctx context.Context, phy
 		delete(byID, id)
 	}
 	for _, p := range byID {
-		if p.Producer != (nativeProducerIdentity{}) {
+		if p.Producer.Protocol == nativeRepairProducerProtocol {
 			return core.ErrConflict
 		}
 	}

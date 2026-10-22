@@ -40,8 +40,13 @@ func TestNativeLoopMountInfoRequiresExactPrivateExt4Identity(t *testing.T) {
 	point := "/private/point"
 	good := "101 2 7:3 / /private/point rw,nosuid,nodev,noexec,relatime - ext4 /dev/loop3 rw\n"
 	entry, err := parseNativeLoopMount([]byte(good), point)
-	if err != nil || entry == nil || entry.id != 101 || entry.device != unix.Mkdev(7, 3) {
+	if err != nil || entry == nil || entry.id != 101 || entry.device != unix.Mkdev(7, 3) || entry.readOnly {
 		t.Fatalf("entry=%+v err=%v", entry, err)
+	}
+	// A builder export mounts read-only (ADR-20261022090000).
+	exported, err := parseNativeLoopMount([]byte(strings.Replace(good, " rw,", " ro,", 1)), point)
+	if err != nil || exported == nil || !exported.readOnly {
+		t.Fatalf("read-only export entry=%+v err=%v", exported, err)
 	}
 	for _, bad := range []string{
 		strings.Replace(good, "nosuid,", "", 1),
@@ -52,6 +57,8 @@ func TestNativeLoopMountInfoRequiresExactPrivateExt4Identity(t *testing.T) {
 		strings.Replace(good, "101 2", "0 2", 1),
 		strings.Replace(good, "7:3", "broken", 1),
 		good + good,
+		strings.Replace(good, " rw,", " ", 1),
+		strings.Replace(good, " rw,", " rw,ro,", 1),
 		good + strings.Replace(good, "/private/point", "/private/point/nested", 1),
 	} {
 		if _, err := parseNativeLoopMount([]byte(bad), point); err == nil {

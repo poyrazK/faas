@@ -213,10 +213,16 @@ func (j *nativeLaunchJournal) prepareGeneration(ctx context.Context, lease Lease
 	}
 	record := nativeLaunchRecord{Version: 1, Generation: generation, KernelBootID: bootID, Lease: lease}
 	if producer, ok := ctx.Value(nativeProducerContextKey{}).(nativeProducerIdentity); ok {
-		frame, repair := ctx.Value(dataRepairContextKey{}).(core.RehearsalFrame)
-		parent, readErr := readDataRepairRecord(filepath.Join(j.root, "data-repair", lease.Instance+".json"))
-		if readErr != nil || !repair || !parent.Frame.Same(frame) || parent.Revoked || parent.NativeGeneration != "" {
-			return errors.New("native producer: repair enrollment has no original task frame")
+		if producer.Protocol == nativeBuilderExportProducerProtocol {
+			if !lease.IsBuilder {
+				return errors.New("native producer: builder export enrollment differs from its lease")
+			}
+		} else {
+			frame, repair := ctx.Value(dataRepairContextKey{}).(core.RehearsalFrame)
+			parent, readErr := readDataRepairRecord(filepath.Join(j.root, "data-repair", lease.Instance+".json"))
+			if readErr != nil || !repair || !parent.Frame.Same(frame) || parent.Revoked || parent.NativeGeneration != "" {
+				return errors.New("native producer: repair enrollment has no original task frame")
+			}
 		}
 		record.Version, record.Producer = 2, producer
 	}

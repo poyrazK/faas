@@ -123,11 +123,29 @@ func (r *linuxNativeLoopReservation) Mount(point string) (uint64, error) {
 	if err := unix.Mount(nativeLoopDevicePath(r.device.Number), point, "ext4", unix.MS_NODEV|unix.MS_NOSUID|unix.MS_NOEXEC, ""); err != nil {
 		return 0, err
 	}
+	return r.mounted(point, false)
+}
+
+// MountReadOnly never replays the ext4 journal: untrusted build code wrote
+// the drive, and a dirty journal must not make root write to it or block.
+// A filesystem whose features reject noload still mounts read-only.
+func (r *linuxNativeLoopReservation) MountReadOnly(point string) (uint64, error) {
+	flags := uintptr(unix.MS_RDONLY | unix.MS_NODEV | unix.MS_NOSUID | unix.MS_NOEXEC)
+	device := nativeLoopDevicePath(r.device.Number)
+	if err := unix.Mount(device, point, "ext4", flags, "noload"); err != nil {
+		if retryErr := unix.Mount(device, point, "ext4", flags, ""); retryErr != nil {
+			return 0, errors.Join(err, retryErr)
+		}
+	}
+	return r.mounted(point, true)
+}
+
+func (r *linuxNativeLoopReservation) mounted(point string, readOnly bool) (uint64, error) {
 	entry, err := readNativeLoopMount(point)
 	if err != nil {
 		return 0, err
 	}
-	if entry == nil || entry.device != r.device.Rdev {
+	if entry == nil || entry.device != r.device.Rdev || entry.readOnly != readOnly {
 		return 0, errors.New("native loop mount: mounted image has no original block identity")
 	}
 	return entry.id, nil
@@ -139,8 +157,9 @@ func matchesNativeLoop(info *unix.LoopInfo64, record nativeLoopMountRecord) bool
 }
 
 type nativeLoopMountEntry struct {
-	id     uint64
-	device uint64
+	id       uint64
+	device   uint64
+	readOnly bool
 }
 
 func readNativeLoopMount(point string) (*nativeLoopMountEntry, error) {
@@ -180,12 +199,16 @@ func parseNativeLoopMount(data []byte, point string) (*nativeLoopMountEntry, err
 		if errors.Join(err, majErr, minErr) != nil || !ok || id == 0 || sep < 6 || fields[3] != "/" || fields[sep+1] != "ext4" {
 			return nil, errors.New("native loop mount: invalid ext4 mount identity")
 		}
-		for _, option := range []string{"rw", "nodev", "nosuid", "noexec"} {
+		readOnly := slices.Contains(options, "ro")
+		if readOnly == slices.Contains(options, "rw") {
+			return nil, errors.New("native loop mount: ambiguous mount mode")
+		}
+		for _, option := range []string{"nodev", "nosuid", "noexec"} {
 			if !slices.Contains(options, option) {
 				return nil, errors.New("native loop mount: unsafe mount options")
 			}
 		}
-		return &nativeLoopMountEntry{id: id, device: unix.Mkdev(uint32(maj), uint32(min))}, nil
+		return &nativeLoopMountEntry{id: id, device: unix.Mkdev(uint32(maj), uint32(min)), readOnly: readOnly}, nil
 	}
 	return nil, errors.New("native loop mount: missing mount identity")
 }
@@ -249,7 +272,7 @@ func retireNativeLoopMount(ctx context.Context, record nativeLoopMountRecord, po
 		return errors.New("native loop mount: attachment differs from its original identity")
 	}
 	if entry != nil {
-		if record.Directory.Inode == 0 || entry.device != record.Device.Rdev || record.MountID != 0 && entry.id != record.MountID {
+		if record.Directory.Inode == 0 || entry.device != record.Device.Rdev || entry.readOnly != record.ReadOnly || record.MountID != 0 && entry.id != record.MountID {
 			return errors.New("native loop mount: mounted resource was replaced")
 		}
 		if err := unix.Unmount(point, 0); err != nil {
