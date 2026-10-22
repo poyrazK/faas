@@ -16,6 +16,14 @@ import (
 // revokes it and confirms exit, as native retirement does before export.
 func exitedBuilderJournal(t *testing.T, enroll bool) (*nativeLoopMountJournal, nativeLaunchRecord, *nativeLoopBackendFixture) {
 	t.Helper()
+	loops, owner, b := builderJournal(t, enroll)
+	return loops, retireLoopFixtureOwner(t, loops, owner), b
+}
+
+// builderJournal prepares a builder, enrolled by this test process when
+// enroll is set, without revoking it.
+func builderJournal(t *testing.T, enroll bool) (*nativeLoopMountJournal, nativeLaunchRecord, *nativeLoopBackendFixture) {
+	t.Helper()
 	j := nativeJournalFixture(filepath.Join(t.TempDir(), "journal"))
 	lease := leaseForSlot("build-0001", 3)
 	lease.IsBuilder, lease.Plan = true, api.PlanHobby
@@ -37,7 +45,7 @@ func exitedBuilderJournal(t *testing.T, enroll bool) (*nativeLoopMountJournal, n
 	if err != nil {
 		t.Fatal(err)
 	}
-	return loops, retireLoopFixtureOwner(t, loops, owner), b
+	return loops, owner, b
 }
 
 func TestNativeBuilderExportReadsOnlyAndRetiresItsMount(t *testing.T) {
@@ -98,14 +106,10 @@ func TestNativeBuilderExportRefusesUnexitedOrUnenrolledOwners(t *testing.T) {
 		t.Fatalf("an unenrolled builder exported: err=%v prepares=%d", err, b.prepares)
 	}
 
-	loops, owner, b = exitedBuilderJournal(t, true)
-	prepared := owner
-	prepared.Revoked, prepared.ExitConfirmed = false, false
-	if err := loops.exportSession(t.Context(), prepared, "/fixture.img", reader); err != nil || b.prepares != 0 {
-		// The durable record is revoked; the stale expectation must not match.
-		if b.prepares != 0 {
-			t.Fatalf("a stale owner attached a loop: %v", err)
-		}
+	// An enrolled builder whose exit is not confirmed may still be writing.
+	loops, owner, b = builderJournal(t, true)
+	if err := loops.exportSession(t.Context(), owner, "/fixture.img", reader); err == nil || b.prepares != 0 {
+		t.Fatalf("an unexited builder exported: err=%v prepares=%d", err, b.prepares)
 	}
 
 	staging, stagingOwner, sb := nativeLoopJournalFixture(t)
