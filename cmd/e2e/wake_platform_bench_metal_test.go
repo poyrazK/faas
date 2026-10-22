@@ -102,13 +102,15 @@ func TestWakePlatformBenchMetal(t *testing.T) {
 	if err := json.Unmarshal(rawDep, &depResp); err != nil {
 		t.Fatalf("decode deployment: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	// Deploy readiness is setup, not a measured segment. HDD acceptance hosts
+	// image for over 2 minutes once the per-deploy Grype scan runs.
+	ctx, cancel := context.WithTimeout(context.Background(), 9*time.Minute)
 	defer cancel()
-	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depResp.ID, 120*time.Second); err != nil {
+	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depResp.ID, 6*time.Minute); err != nil {
 		h.DumpLogs(t)
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
-	if _, err := e2etest.WaitForAppParked(ctx, t, pool, appID, 60*time.Second); err != nil {
+	if _, err := e2etest.WaitForAppParked(ctx, t, pool, appID, 2*time.Minute); err != nil {
 		t.Fatalf("not parked after deploy: %v", err)
 	}
 
