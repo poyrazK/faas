@@ -223,6 +223,7 @@ var XBaseKey = baseKey
 var XDeploymentRuntimePort = deploymentRuntimePort
 var XLayerKey = layerKey
 var XNewEngine = newEngine
+var ReadWakeRPC = readWakeRPC
 
 // XEventFanoutSafetyTick and XRunEventFanoutSweep let the event substrate
 // benchmark schedule fanout exactly as Loop.Run does (spec Appendix D V12).

@@ -2285,6 +2285,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}, log)
 		log.Info("schedd: app task dispatch enabled", "owner", owner, "max_concurrent", appTaskDispatchConcurrency)
 	}
+	crashForkMetrics := wire.NewCrashForkMetrics(ops.Registry())
+	var forkCoordinator *sched.ForkCoordinator
+	if appForksEnabled(os.Getenv("FAAS_APP_FORKS")) {
+		// ADR-732: the lease owner scopes TTL teardown to this scheduler,
+		// so it must name this process's node.
+		owner := strings.TrimSpace(ownerNodeID)
+		if owner == "" {
+			owner = "schedd"
+		}
+		forkCoordinator = sched.NewForkCoordinator(store, engine, sched.ForkCoordinatorConfig{Owner: owner, Metrics: crashForkMetrics}, log).
+			WithForkExecs(store, engine)
+		log.Info("schedd: production forks enabled", "owner", owner)
+	}
 	loopErr := make(chan error, 1)
 	loopDone := make(chan struct{})
 	go func() {
@@ -2337,6 +2350,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Error("schedd: app task coordinator exited", "err", err)
 			}
 		}()
+	}
+	if forkCoordinator != nil {
+		go forkCoordinator.Run(ctx)
+	}
+	if strings.TrimSpace(os.Getenv("FAAS_CRASH_SNAPSHOTS")) == "1" {
+		// ADR-733: captures pause a serving instance, so one coordinator
+		// runs them one at a time. vmmd seals every capture at the source,
+		// so plaintext never reaches storage (local or remote) or a node's
+		// read-through cache.
+		engine.WithSealedCrashCaptures(true)
+		go sched.NewCrashCaptureCoordinator(store, engine, 0, log).WithMetrics(crashForkMetrics).Run(ctx)
+		log.Info("schedd: crash snapshots enabled", "sealed_at_source", true)
 	}
 
 	// Issue #757 / ADR-0NN (commit #16): trigger dispatch

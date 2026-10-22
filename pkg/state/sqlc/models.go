@@ -929,6 +929,54 @@ type AppErrorRequest struct {
 	ImageDigest         string
 }
 
+type AppFork struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	DeploymentID      pgtype.UUID
+	RequestedBy       string
+	Status            string
+	TtlSeconds        int32
+	ExpiresAt         pgtype.Timestamptz
+	SnapshotID        pgtype.UUID
+	InstanceID        pgtype.UUID
+	LeaseToken        pgtype.UUID
+	LeaseOwner        pgtype.Text
+	LeaseExpiresAt    pgtype.Timestamptz
+	CancelRequestedAt pgtype.Timestamptz
+	FailureCode       pgtype.Text
+	FailureMessage    pgtype.Text
+	StartedAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	AccessTokenHash   []byte
+	CrashCaptureID    pgtype.UUID
+}
+
+type AppForkExec struct {
+	ID              pgtype.UUID
+	ForkID          pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	RequestedBy     string
+	Command         []string
+	CommandShell    bool
+	TimeoutSeconds  int32
+	MaxOutputBytes  int32
+	Status          string
+	ExitCode        pgtype.Int4
+	OutputTruncated bool
+	Stdout          []byte
+	Stderr          []byte
+	FailureCode     pgtype.Text
+	FailureMessage  pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type AppHealthCollectionState struct {
 	AppID             pgtype.UUID
 	AccountID         pgtype.UUID
@@ -2674,6 +2722,40 @@ type CorsPresetChangeLog struct {
 	PresetID  pgtype.UUID
 	Operation string
 	CreatedAt pgtype.Timestamptz
+}
+
+type CrashCapture struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	DeploymentID      pgtype.UUID
+	InstanceID        pgtype.UUID
+	Trigger           string
+	StatusCode        pgtype.Int4
+	Route             string
+	Status            string
+	StorageKey        pgtype.Text
+	VmstateStorageKey pgtype.Text
+	FcVersion         pgtype.Text
+	MemBytes          pgtype.Int8
+	FailureCode       pgtype.Text
+	FailureMessage    pgtype.Text
+	RequestedAt       pgtype.Timestamptz
+	CapturedAt        pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
+	ExpiresAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	PlaintextState    string
+	SealedKey         []byte
+	EncryptedAt       pgtype.Timestamptz
+	Reason            string
+}
+
+type CrashSnapshotSetting struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Enabled   bool
+	UpdatedAt pgtype.Timestamptz
 }
 
 type CreditLedger struct {
