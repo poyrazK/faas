@@ -63,6 +63,8 @@ import (
 
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
 
+var BuildDebugRequestCorrelation = buildDebugRequestCorrelation
+
 // Package-level types
 type AffectedPartition = affectedPartition
 type AnnotationForm = annotationForm
