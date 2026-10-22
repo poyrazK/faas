@@ -528,6 +528,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_OPERATION_SCHEDULES_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs Operation schedules (ADR-20261018161833) are available to; unset admits none and stops every schedule firing; boot fallback for the operation_schedules platform flag (ADR-1700), ignored once an operator writes platform_flag.operation_schedules |
 | `FAAS_OTEL_FLUSH_INTERVAL` | apid, gatewayd-internal, gatewayd-public, outboundd | `default` |  |  | `` |  |
 | `FAAS_OTEL_SPANS_WRITER_ENABLED` | apid, gatewayd-internal, gatewayd-public, outboundd | `default` |  |  | `` |  |
+| `FAAS_OUTBOUNDD_CONFIG` | outboundd | `default` |  |  | `` | config path fallback when --config is absent; the unit passes --config /etc/faas/outboundd.toml |
 | `FAAS_OUTBOUNDD_ROLE` | outboundd, shared | `dropin` |  |  | `` |  |
 | `FAAS_OVERLAY_INTERFACE` | vmmd | `default` |  |  | `` |  |
 | `FAAS_OVERLAY_IP` | vmmd | `default` |  |  | `` | optional local encrypted-overlay IPv4; vmmd can auto-detect it when private-network transport is enabled |
@@ -714,6 +715,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCHEDD_RECONCILE_ENFORCE` | schedd, shared | `default` |  |  | `` | ADR-191; "1" lets the instance-divergence sweep write. Default off ships the sweep report-only: it counts and logs what it would repair and touches no row |
 | `FAAS_SCHEDD_ROLE` | schedd, shared | `dropin` |  |  | `` |  |
 | `FAAS_SCHEDD_SOCKET` | gatewayd-internal | `dropin` |  |  | `` |  |
+| `FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH` | outboundd | `dropin` |  |  | `` | outbound seal-domain identity (ADR 20261022111812) via LoadCredential=faas_seal_domain_outbound in the seal_domains role's 60-faas-seal-domain-outbound.conf; outboundd also keeps the fleet identity until the domain re-seal completes; unset leaves customer credentials on the fleet identity |
+| `FAAS_SEAL_DOMAIN_OUTBOUND_RECIPIENT_PATH` | apid | `dropin` |  |  | `` | outbound seal-domain recipient (ADR 20261022111812) via LoadCredential=faas_seal_domain_outbound_recipient in the seal_domains role's apid drop-in; apid seals customer outbound credentials to it and cannot open them; unset seals to the fleet recipient alone |
+| `FAAS_SEAL_DOMAIN_OUTBOUND_WRITES` | apid | `dropin` |  |  | `` | outbound seal-domain write mode (ADR 20261022111812): empty seals to the domain and fleet recipients once the domain recipient is staged; fleet keeps the fleet recipient alone; domain seals to the domain alone and is set by the seal_domains role only after every outboundd verified the domain and the previous release left the rollback window |
 | `FAAS_SECRETS_FILE` | guest | `guest` |  |  | `` | guest-init stamps the tmpfs path only for apps opted into secret reload |
 | `FAAS_SECRETS_RELOAD_ACK_ENDPOINT` | guest | `guest` |  |  | `` | guest-init stamps the local metadata endpoint only for apps opted into secret reload; app reports a closed outcome and non-sensitive secret revision |
 | `FAAS_SECRETS_RELOAD_GENERATION` | guest | `guest` |  |  | `` | guest-init injects the active per-workload process generation when launching an opted-in app, fencing acknowledgements to that execution |

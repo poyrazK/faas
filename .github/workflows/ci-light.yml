@@ -485,6 +485,10 @@ jobs:
       # tens of MB. Only this change's additions fail.
       - name: test store embedding check
         run: go run ./scripts/ci/teststorecheck -base "$LIGHT_DIFF_BASE"
+      # Seal domains (ADR 20261022111812): new holders of private identities,
+      # new direct identity loaders and new unsealed bytea columns fail.
+      - name: seal domain scope check
+        run: go run ./scripts/ci/sealdomaincheck
       - name: migrations check (static)
         run: make migrations-check
       - name: select migration changes

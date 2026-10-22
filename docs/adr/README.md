@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261022111812: Seal domains: a sealed value opens only where it is read](20261022111812-seal-domains-per-reader.md)
 - [ADR-20261021223225: Path routes in gregale.yaml](20261021223225-manifest-routes.md) — manifest-owned kind=route (+ rewrite for strip_prefix) edge rules on the target app; rewrite to the root strips cleanly
 - [ADR-20261021215353: Early freeze — stop billing shortly after the last request](20261021215353-early-freeze.md) — schedd `frozen_tier_early_freeze_after_s` (amends ADR-1151)
 - [ADR-20261021204307: Code-first workflows](20261021204307-code-first-workflows.md) — one entry handler replays the run's journal; Node, Python and Go SDKs
