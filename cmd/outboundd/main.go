@@ -236,6 +236,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go batchWorker.Run(ctx)
 	evaluationWorker := &outbound.AIEvaluationWorker{Store: backend, Handler: handler, Log: log}
 	go evaluationWorker.Run(ctx)
+	// ADR-20261019152416: enforced GitOps candidates cannot reach the gateway,
+	// so their outbound bindings are probed here and receipted for activation.
+	qualificationWorker := &outbound.QualificationProbeWorker{Store: state.NewPgStore(pool), Handler: handler, Log: log}
+	go qualificationWorker.Run(ctx)
 	relayHandler := outbound.WithSimulationRelay(trace.HTTPHandler("outboundd-relay", handler), handler.SimulationHandler)
 	shutdownRelay, err := startRelay(ctx, cfg, pool, relayHandler, identityVerifier, outboundMetrics, log)
 	if err != nil {
