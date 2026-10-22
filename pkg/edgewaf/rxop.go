@@ -348,7 +348,7 @@ func (r rxRequirement) mayMatch(value string) bool {
 // on: ASCII punctuation or a control character, not a letter, digit or
 // space.
 func rxRareByte(c byte) bool {
-	return c < utf8.RuneSelf && c != ' ' && !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9')
+	return c < utf8.RuneSelf && c != ' ' && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9')
 }
 
 func isASCII(s string) bool {
