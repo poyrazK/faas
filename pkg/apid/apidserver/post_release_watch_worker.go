@@ -78,6 +78,7 @@ func (s *server) evaluatePostRelease(ctx context.Context, store state.PostReleas
 		gates, gateErr = gather.Verdict(ctx, s.store, gather.Request{AppID: c.AppID, ReleaseID: c.DeploymentID, BaselineID: c.PredecessorID,
 			ReleaseWindow:  gather.Window{Since: since, Until: until},
 			BaselineWindow: gather.Window{Since: baselineEnd.Add(-api.PostReleaseWatchBaseline), Until: baselineEnd},
+			PriorWindow:    gather.Window{Since: baselineEnd.Add(-api.PostReleaseWatchBaseline), Until: baselineEnd},
 			Evidence:       s.releaseGateEvidence})
 		if gateErr != nil {
 			s.log.Warn("post-release watch: some release gates could not be read; judging the rest", "app", c.AppID, "deployment", c.DeploymentID, "err", gateErr)

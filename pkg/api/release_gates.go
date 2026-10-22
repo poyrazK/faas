@@ -12,7 +12,7 @@ import (
 // ReleaseGate is one of an app's release gates (ADR-20261019071734).
 type ReleaseGate struct {
 	Name string `json:"name"`
-	// Kind is slo, new_errors or custom_metric.
+	// Kind is slo, new_errors, custom_metric, synthetic or metric_change.
 	Kind string `json:"kind"`
 	// SLO names the SLO an slo gate judges; MaxBurnRate fails the gate.
 	SLO         string `json:"slo,omitempty"`
@@ -25,8 +25,16 @@ type ReleaseGate struct {
 	Metric     string   `json:"metric,omitempty"`
 	Comparison string   `json:"comparison,omitempty"`
 	Threshold  *float64 `json:"threshold,omitempty"`
-	// MinSamples is the requests or metric values a release needs before
-	// the gate is judged.
+	// Check and MaxFailurePercent configure a synthetic gate: the synthetic
+	// check probed on the canary and the share of failed probes it allows
+	// (ADR-20261022082305).
+	Check             string `json:"check,omitempty"`
+	MaxFailurePercent *int   `json:"max_failure_percent,omitempty"`
+	// MaxChangePercent is how far a metric_change gate's metric may move in
+	// its comparison direction, in percent of its average before the rollout.
+	MaxChangePercent int `json:"max_change_percent,omitempty"`
+	// MinSamples is the requests, probes or metric values a release needs
+	// before the gate is judged.
 	MinSamples int    `json:"min_samples"`
 	CreatedBy  string `json:"created_by"`
 	CreatedAt  string `json:"created_at"`
@@ -45,6 +53,11 @@ type CreateReleaseGateRequest struct {
 	Comparison   string   `json:"comparison,omitempty"`
 	Threshold    *float64 `json:"threshold,omitempty"`
 	MinSamples   int      `json:"min_samples,omitempty"`
+	// Check, MaxFailurePercent and MaxChangePercent configure synthetic and
+	// metric_change gates.
+	Check             string `json:"check,omitempty"`
+	MaxFailurePercent *int   `json:"max_failure_percent,omitempty"`
+	MaxChangePercent  int    `json:"max_change_percent,omitempty"`
 }
 
 // ListReleaseGatesResponse lists an app's release gates.
@@ -66,6 +79,9 @@ type ReleaseGateResult struct {
 	Samples int64 `json:"samples"`
 	// BaselineBadFraction is the predecessor's bad fraction (slo gates).
 	BaselineBadFraction float64 `json:"baseline_bad_fraction,omitempty"`
+	// Baseline is the stable revision's failed-probe percentage (synthetic
+	// gates) or the metric's average before the rollout (metric_change).
+	Baseline float64 `json:"baseline,omitempty"`
 	// ErrorClasses are the new groups' error classes (new_errors gates).
 	ErrorClasses []string `json:"error_classes,omitempty"`
 	Summary      string   `json:"summary"`
@@ -76,11 +92,11 @@ func (r ReleaseGateResult) valid() bool {
 		return false
 	}
 	switch r.Kind {
-	case "slo", "new_errors", "custom_metric":
+	case "slo", "new_errors", "custom_metric", "synthetic", "metric_change":
 	default:
 		return false
 	}
-	for _, v := range []float64{r.Observed, r.Bound, r.BaselineBadFraction} {
+	for _, v := range []float64{r.Observed, r.Bound, r.BaselineBadFraction, r.Baseline} {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return false
 		}

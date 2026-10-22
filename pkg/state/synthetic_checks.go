@@ -226,6 +226,12 @@ func (m *MemStore) DeleteSyntheticCheck(_ context.Context, appID, id string) err
 	for i, c := range checks {
 		if c.ID == id {
 			m.syntheticChecks[appID] = append(checks[:i:i], checks[i+1:]...)
+			// Like app_release_gates.synthetic_check_id ON DELETE CASCADE.
+			for gateID, gate := range m.releaseGates {
+				if gate.SyntheticCheckID == id {
+					delete(m.releaseGates, gateID)
+				}
+			}
 			return nil
 		}
 	}

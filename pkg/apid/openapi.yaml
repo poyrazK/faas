@@ -107287,20 +107287,23 @@ components:
         active: { type: array, items: { $ref: '#/components/schemas/ReleaseFreeze' }, description: "The freezes refusing a production release now." }
         next: { $ref: '#/components/schemas/ReleaseFreeze' }
     ReleaseGate:
-      description: "One of an app's release gates (ADR-20261019071734)."
+      description: "One of an app's release gates (ADR-20261019071734, ADR-20261022082305)."
       type: object
       required: [name, kind, min_samples, created_by, created_at]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
-        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, synthetic, metric_change] }
         slo: { type: string, description: "slo gates: the SLO judged." }
         max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: the burn rate that fails the gate." }
         max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: new error groups allowed." }
         min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: events before a group counts." }
-        metric: { type: string, description: "custom_metric gates: the custom metric." }
-        comparison: { type: string, enum: [below, above], description: "custom_metric gates: which side of the threshold fails." }
+        metric: { type: string, description: "custom_metric and metric_change gates: the custom metric." }
+        comparison: { type: string, enum: [below, above], description: "custom_metric gates: which side of the threshold fails; metric_change gates: which direction of change fails." }
         threshold: { type: number, description: "custom_metric gates: the bound on the metric's average." }
-        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Requests or metric values a release needs before the gate is judged." }
+        check: { type: string, description: "synthetic gates: the synthetic check probed on the canary and its stable revision." }
+        max_failure_percent: { type: integer, minimum: 0, maximum: 100, description: "synthetic gates: the share of the candidate's probes that may fail." }
+        max_change_percent: { type: integer, minimum: 1, maximum: 1000, description: "metric_change gates: how far the metric may move from its average before the rollout, in percent." }
+        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Requests, probes or metric values a release needs before the gate is judged." }
         created_by: { type: string }
         created_at: { type: string, format: date-time }
     CreateReleaseGateRequest:
@@ -107309,15 +107312,18 @@ components:
       required: [name, kind]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
-        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, synthetic, metric_change] }
         slo: { type: string, description: "slo gates: the name of one of the app's SLOs." }
         max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: default 10." }
         max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: default 0." }
         min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: default 3." }
-        metric: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$', description: "custom_metric gates: the custom metric's name." }
-        comparison: { type: string, enum: [below, above], description: "custom_metric gates: fail when the average is below or above the threshold." }
+        metric: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$', description: "custom_metric and metric_change gates: the custom metric's name." }
+        comparison: { type: string, enum: [below, above], description: "custom_metric gates: fail when the average is below or above the threshold. metric_change gates: fail when the average fell (below) or rose (above) too far." }
         threshold: { type: number, description: "custom_metric gates: the bound." }
-        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Default 20." }
+        check: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$', description: "synthetic gates: the name of one of the app's synthetic checks." }
+        max_failure_percent: { type: integer, minimum: 0, maximum: 100, description: "synthetic gates: default 10." }
+        max_change_percent: { type: integer, minimum: 1, maximum: 1000, description: "metric_change gates: the change, in percent of the average before the rollout, that fails the gate." }
+        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Default 20; 6 probes for synthetic gates." }
     ListReleaseGatesResponse:
       description: "An app's release gates, by name."
       type: object
@@ -107519,12 +107525,13 @@ components:
       required: [name, kind, passed, summary, observed, bound, samples]
       properties:
         name: { type: string }
-        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, synthetic, metric_change] }
         passed: { type: boolean }
-        observed: { type: number, description: "The burn rate, new error groups, or metric average." }
+        observed: { type: number, description: "The burn rate, new error groups, metric average, failed-probe percentage, or signed change in percent." }
         bound: { type: number, description: "The value that fails the gate." }
-        samples: { type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, or metric values." }
+        samples: { type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, probes, or metric values." }
         baseline_bad_fraction: { type: number, description: "slo gates: the predecessor's bad fraction." }
+        baseline: { type: number, description: "synthetic gates: the stable revision's failed-probe percentage; metric_change gates: the metric's average before the rollout." }
         error_classes: { type: array, maxItems: 5, items: { type: string }, description: "new_errors gates: the new groups' error classes." }
         summary: { type: string, description: "What the gate measured, in one line." }
     ConfigRollbackRequest:

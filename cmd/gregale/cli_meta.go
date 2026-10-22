@@ -1873,11 +1873,13 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "release-gates",
 		DocSlug: "release-gates",
-		Short:   "Stop rollouts on SLO, error or metric regressions and roll back",
+		Short:   "Stop rollouts on SLO, error, metric or check regressions",
 		Examples: []string{
 			"gregale release-gates add --app my-api --name checkout-slo --slo checkout --max-burn-rate 10",
 			"gregale release-gates add --app my-api --name no-new-errors --new-errors --min-events 3",
 			"gregale release-gates add --app my-api --name orders --metric orders_per_minute --below 5",
+			"gregale release-gates add --app my-api --name orders-drop --metric orders_per_minute --max-drop 30",
+			"gregale release-gates add --app my-api --name checkout-probe --check checkout",
 			"gregale release-gates list --app my-api",
 		},
 		Subcommands: []cliSub{
@@ -1892,10 +1894,14 @@ var cliCommands = []cliCommand{
 				{Name: "new-errors", Short: "fail when the release introduces new error groups", Bool: true},
 				{Name: "max-new-groups", Short: "new error groups allowed (default 0)", Value: "N"},
 				{Name: "min-events", Short: "events before a new error group counts (default 3)", Value: "N"},
-				{Name: "metric", Short: "fail when this custom metric crosses a bound", Value: "NAME"},
+				{Name: "metric", Short: "fail when this custom metric crosses a bound or moves too far", Value: "NAME"},
 				{Name: "below", Short: "fail when the metric averages below this", Value: "VALUE"},
 				{Name: "above", Short: "fail when the metric averages above this", Value: "VALUE"},
-				{Name: "min-samples", Short: "requests or metric values before the gate is judged (default 20)", Value: "N"},
+				{Name: "max-rise", Short: "fail when the metric rises more than this percent from before the rollout", Value: "PCT"},
+				{Name: "max-drop", Short: "fail when the metric drops more than this percent from before the rollout", Value: "PCT"},
+				{Name: "check", Short: "probe the canary and its stable revision with this synthetic check", Value: "NAME"},
+				{Name: "max-failure-percent", Short: "failed probes allowed, in percent (default 10)", Value: "PCT"},
+				{Name: "min-samples", Short: "requests, probes or metric values before the gate is judged (default 20; 6 probes for --check)", Value: "N"},
 			}},
 			{Name: "rm", Short: "Remove a release gate", Aliases: []string{"delete"}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},

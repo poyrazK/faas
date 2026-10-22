@@ -23,6 +23,10 @@ func (a *canaryStoreAdapter) ReleaseGateVerdict(ctx context.Context, row canary.
 		since = now.Add(-5 * time.Minute)
 	}
 	window := gather.Window{Since: since, Until: now}
+	// ADR-20261022082305: metric_change gates compare with the same length
+	// of time before the rollout; synthetic gates read both revisions'
+	// probes.
+	prior := gather.Window{Since: since.Add(-now.Sub(since)), Until: since}
 	return gather.Verdict(ctx, a.store, gather.Request{AppID: row.AppID, ReleaseID: row.ID, BaselineID: stableDeploymentID,
-		ReleaseWindow: window, BaselineWindow: window})
+		ReleaseWindow: window, BaselineWindow: window, PriorWindow: prior, Canary: true})
 }

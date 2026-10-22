@@ -180,7 +180,8 @@ and the databases it can migrate.
 
 Gregale already stops a release whose 5xx rate, latency, crashes or memory
 regress. Release gates add the signals only your app knows about
-([ADR-20261019071734](adr/20261019071734-release-gates-on-customer-signals.md)):
+([ADR-20261019071734](adr/20261019071734-release-gates-on-customer-signals.md),
+[ADR-20261022082305](adr/20261022082305-synthetic-and-relative-release-gates.md)):
 
 ```bash
 # Abort or roll back when the release burns the checkout SLO 10x too fast.
@@ -189,6 +190,11 @@ gregale release-gates add --name checkout-slo --slo checkout --max-burn-rate 10
 gregale release-gates add --name no-new-errors --new-errors --min-events 3
 # ...when orders per minute average below 5.
 gregale release-gates add --name orders --metric orders_per_minute --below 5
+# ...when orders per minute drop more than 30% from before the rollout.
+gregale release-gates add --name orders-drop --metric orders_per_minute --max-drop 30
+# ...when the canary fails the "checkout" synthetic check more than the
+# release it replaces (and more than 10% of the time).
+gregale release-gates add --name checkout-probe --check checkout
 
 gregale release-gates list
 gregale release-gates rm orders
@@ -210,9 +216,25 @@ How each gate judges:
 - **`custom_metric` gates** bound the metric's average. Custom metrics are
   reported per app, not per revision, so these gates are most useful after
   the release takes all the traffic.
+- **`metric_change` gates** (`--max-rise` or `--max-drop`) compare the
+  metric's average with its average over the same length of time before the
+  rollout started. Use them when a fixed bound would have to be guessed:
+  "orders must not drop by 30%" holds across seasons. A metric that averaged
+  zero before the rollout is not judged.
+- **`synthetic` gates** (`--check`) send one of the app's
+  [synthetic checks](synthetic-checks.md) to the canary and to the stable revision
+  once a minute, pinned to each revision. A probe passes when the response
+  has the check's expected status, or any 2xx when it names none. The gate
+  fails when the canary fails more than `--max-failure-percent` (default 10)
+  of its probes and more than the stable revision does, so an outage of a
+  shared dependency does not abort a good release. Probes that get no answer
+  are not counted. Synthetic gates run during canaries only: a release
+  without a canary keeps its scheduled synthetic checks. Disabling the check
+  pauses the gate; deleting it deletes the gate.
 
-A gate that has too few requests or values (`--min-samples`, default 20) is
-not judged. A gate never holds a rollout on missing evidence.
+A gate that has too few requests, probes or values is not judged
+(`--min-samples`: default 20, or 6 probes for synthetic gates). A gate never
+holds a rollout on missing evidence.
 
 ## What changed between releases
 

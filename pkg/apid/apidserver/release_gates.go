@@ -1,4 +1,5 @@
 // adr: 20261019071734 — release gates on customer signals.
+// adr: 20261022082305 — synthetic and metric_change gates.
 package apidserver
 
 import (
@@ -21,33 +22,83 @@ func (s *server) releaseGateStores(w http.ResponseWriter) (state.ReleaseGateStor
 	return gates, slos, true
 }
 
-// releaseGateView renders a gate with its SLO's name.
-func releaseGateView(g state.ReleaseGate, sloNames map[string]string) api.ReleaseGate {
+// releaseGateView renders a gate with its SLO's or synthetic check's name.
+func releaseGateView(g state.ReleaseGate, names map[string]string) api.ReleaseGate {
 	out := api.ReleaseGate{Name: g.Name, Kind: g.Kind, MinSamples: g.MinSamples, CreatedBy: g.CreatedBy,
 		CreatedAt: g.CreatedAt.UTC().Format(time.RFC3339)}
 	switch g.Kind {
 	case state.ReleaseGateSLO:
-		out.SLO, out.MaxBurnRate = sloNames[g.SLOID], g.MaxBurnRate
+		out.SLO, out.MaxBurnRate = names[g.SLOID], g.MaxBurnRate
 	case state.ReleaseGateNewErrors:
 		maxGroups := g.MaxNewGroups
 		out.MaxNewGroups, out.MinEvents = &maxGroups, g.MinEvents
 	case state.ReleaseGateCustomMetric:
 		threshold := g.Threshold
 		out.Metric, out.Comparison, out.Threshold = g.MetricName, g.Comparison, &threshold
+	case state.ReleaseGateSynthetic:
+		maxFailure := g.MaxFailurePercent
+		out.Check, out.MaxFailurePercent = names[g.SyntheticCheckID], &maxFailure
+	case state.ReleaseGateMetricChange:
+		out.Metric, out.Comparison, out.MaxChangePercent = g.MetricName, g.Comparison, g.MaxChangePercent
 	}
 	return out
 }
 
+// appSLONames maps the app's SLO and synthetic check IDs to their names;
+// the IDs are UUIDs, so the two never collide.
 func (s *server) appSLONames(r *http.Request, slos state.SLOStore, appID string) map[string]string {
 	names := map[string]string{}
-	list, err := slos.ListSLOs(r.Context(), appID)
-	if err != nil {
-		return names
+	if list, err := slos.ListSLOs(r.Context(), appID); err == nil {
+		for _, slo := range list {
+			names[slo.ID] = slo.Name
+		}
 	}
-	for _, slo := range list {
-		names[slo.ID] = slo.Name
+	if checks, ok := s.store.(state.SyntheticCheckStore); ok {
+		if list, err := checks.ListSyntheticChecks(r.Context(), appID); err == nil {
+			for _, c := range list {
+				names[c.ID] = c.Name
+			}
+		}
 	}
 	return names
+}
+
+// resolveReleaseGateTarget fills a gate's SLO or synthetic check from the
+// names in the request.
+func (s *server) resolveReleaseGateTarget(r *http.Request, gate *state.ReleaseGate, spec releasegate.Spec, slos state.SLOStore) *api.Problem {
+	switch spec.Kind {
+	case releasegate.KindSLO:
+		list, err := slos.ListSLOs(r.Context(), gate.AppID)
+		if err != nil {
+			return api.ErrCapacity("could not read the app's SLOs")
+		}
+		for _, slo := range list {
+			if slo.Name == spec.SLOName {
+				gate.SLOID = slo.ID
+			}
+		}
+		if gate.SLOID == "" {
+			return api.ErrValidation("the app has no SLO named " + spec.SLOName + "; list SLOs with `gregale slo list`")
+		}
+	case releasegate.KindSynthetic:
+		checks, ok := s.store.(state.SyntheticCheckStore)
+		if !ok {
+			return api.ErrCapacity("synthetic checks are unavailable")
+		}
+		list, err := checks.ListSyntheticChecks(r.Context(), gate.AppID)
+		if err != nil {
+			return api.ErrCapacity("could not read the app's synthetic checks")
+		}
+		for _, c := range list {
+			if c.Name == spec.CheckName {
+				gate.SyntheticCheckID = c.ID
+			}
+		}
+		if gate.SyntheticCheckID == "" {
+			return api.ErrValidation("the app has no synthetic check named " + spec.CheckName + "; list checks with `gregale synthetics list`")
+		}
+	}
+	return nil
 }
 
 // listReleaseGates serves GET /v1/apps/{slug}/release-gates.
@@ -96,18 +147,11 @@ func (s *server) createReleaseGate(w http.ResponseWriter, r *http.Request, acct 
 	gate := state.ReleaseGate{AccountID: acct.ID, AppID: app.ID, Name: spec.Name, Kind: spec.Kind,
 		MaxBurnRate: spec.MaxBurnRate, MaxNewGroups: spec.MaxNewGroups, MinEvents: spec.MinEvents,
 		MetricName: spec.MetricName, Comparison: spec.Comparison, Threshold: spec.Threshold,
-		MinSamples: spec.MinSamples, CreatedBy: configActor(r, acct)}
-	names := s.appSLONames(r, slos, app.ID)
-	if spec.Kind == releasegate.KindSLO {
-		for id, name := range names {
-			if name == spec.SLOName {
-				gate.SLOID = id
-			}
-		}
-		if gate.SLOID == "" {
-			api.WriteProblem(w, api.ErrValidation("the app has no SLO named "+spec.SLOName+"; list SLOs with `gregale slo list`"))
-			return
-		}
+		MinSamples: spec.MinSamples, CreatedBy: configActor(r, acct), MaxFailurePercent: spec.MaxFailurePercent,
+		MaxChangePercent: spec.MaxChangePercent}
+	if p := s.resolveReleaseGateTarget(r, &gate, spec, slos); p != nil {
+		api.WriteProblem(w, p)
+		return
 	}
 	created, err := gates.CreateReleaseGate(r.Context(), gate, api.ReleaseGatesPerAppMax, time.Now().UTC())
 	switch {
@@ -125,7 +169,7 @@ func (s *server) createReleaseGate(w http.ResponseWriter, r *http.Request, acct 
 	s.audit.Emit(r.Context(), "release_gate.created", &acct.ID, map[string]any{
 		"app": app.ID, "gate": created.Name, "kind": created.Kind, "actor": created.CreatedBy,
 	})
-	writeJSON(w, http.StatusCreated, releaseGateView(created, names))
+	writeJSON(w, http.StatusCreated, releaseGateView(created, s.appSLONames(r, slos, app.ID)))
 }
 
 // deleteReleaseGate serves DELETE /v1/apps/{slug}/release-gates/{name}.

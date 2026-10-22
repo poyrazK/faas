@@ -1,5 +1,6 @@
-// Package releasegate judges an app's release gates (ADR-20261019071734):
-// SLO burn, new error groups and custom metric bounds. It is pure, so meterd's
+// Package releasegate judges an app's release gates (ADR-20261019071734,
+// ADR-20261022082305): SLO burn, new error groups, custom metric bounds,
+// synthetic check probes and metric changes. It is pure, so meterd's
 // canary circuit breaker and apid's post-release watch judge gates the same
 // way from evidence they collect themselves.
 package releasegate
@@ -18,6 +19,8 @@ const (
 	KindSLO          = "slo"
 	KindNewErrors    = "new_errors"
 	KindCustomMetric = "custom_metric"
+	KindSynthetic    = "synthetic"
+	KindMetricChange = "metric_change"
 )
 
 // Gate is one release gate with the parameters its kind uses.
@@ -36,9 +39,30 @@ type Gate struct {
 	MetricName string
 	Comparison string
 	Threshold  float64
-	// MinSamples is the requests (SLO) or metric values (custom metric) the
-	// release needs before the gate is judged.
+	// Synthetic gates: the check's name and the share of failed probes
+	// allowed.
+	CheckName         string
+	MaxFailurePercent int
+	// Metric change gates (MetricName and Comparison too): how far the
+	// metric may move, in percent of its average before the rollout.
+	MaxChangePercent int
+	// MinSamples is the requests (SLO), probes (synthetic) or metric values
+	// (custom metric, metric change) the release needs before the gate is
+	// judged.
 	MinSamples int
+}
+
+// ProbeCounts is one revision's synthetic probes over a window.
+type ProbeCounts struct {
+	Requests int64
+	Failures int64
+}
+
+func (p ProbeCounts) failurePercent() float64 {
+	if p.Requests == 0 {
+		return 0
+	}
+	return float64(p.Failures) * 100 / float64(p.Requests)
 }
 
 // SLISample is one side's requests over a window.
@@ -68,13 +92,19 @@ type MetricWindow struct {
 	Average float64
 }
 
-// Evidence is what one gate measured for the release and, for SLO gates,
-// the baseline. Unavailable means the evidence could not be read.
+// Evidence is what one gate measured for the release and its baseline.
+// Unavailable means the evidence could not be read.
 type Evidence struct {
-	Release     SLISample
-	Baseline    SLISample
-	NewGroups   []ErrorGroup
-	Metric      MetricWindow
+	Release   SLISample
+	Baseline  SLISample
+	NewGroups []ErrorGroup
+	Metric    MetricWindow
+	// Probes and BaselineProbes are the candidate's and the stable
+	// revision's synthetic probes (synthetic gates).
+	Probes         ProbeCounts
+	BaselineProbes ProbeCounts
+	// PriorMetric is the metric before the rollout started (metric change).
+	PriorMetric MetricWindow
 	Unavailable bool
 }
 
@@ -174,11 +204,64 @@ func judgeOne(g Gate, ev Evidence) (api.ReleaseGateResult, bool) {
 			return r, false
 		}
 		r.Summary = fmt.Sprintf("%s averaged %g over %d values (fails %s %g)", g.MetricName, round(ev.Metric.Average), ev.Metric.Samples, g.Comparison, g.Threshold)
+	case KindSynthetic:
+		return judgeSynthetic(g, ev, r)
+	case KindMetricChange:
+		return judgeMetricChange(g, ev, r)
 	default:
 		return r, false
 	}
 	return r, true
 }
+
+// judgeSynthetic fails a candidate that failed more of its probes than the
+// gate allows and more than the stable revision did.
+func judgeSynthetic(g Gate, ev Evidence, r api.ReleaseGateResult) (api.ReleaseGateResult, bool) {
+	if ev.Probes.Requests < int64(max(g.MinSamples, 1)) || g.MaxFailurePercent < 0 || g.MaxFailurePercent > 100 {
+		return r, false
+	}
+	failed, baseline := ev.Probes.failurePercent(), ev.BaselineProbes.failurePercent()
+	r.Observed, r.Bound, r.Samples, r.Baseline = round(failed), float64(g.MaxFailurePercent), ev.Probes.Requests, round(baseline)
+	r.Passed = failed <= float64(g.MaxFailurePercent) || failed <= baseline
+	stable := "no probes of the stable revision"
+	if ev.BaselineProbes.Requests > 0 {
+		stable = fmt.Sprintf("%.0f%% on the stable revision", baseline)
+	}
+	r.Summary = fmt.Sprintf("%s failed %d of %d probes (%.0f%%, max %d%%) vs %s", g.CheckName, ev.Probes.Failures,
+		ev.Probes.Requests, failed, g.MaxFailurePercent, stable)
+	return r, true
+}
+
+// judgeMetricChange fails a metric that moved in the gate's direction by
+// more than the gate allows, relative to its average before the rollout.
+func judgeMetricChange(g Gate, ev Evidence, r api.ReleaseGateResult) (api.ReleaseGateResult, bool) {
+	minSamples := int64(max(g.MinSamples, 1))
+	if ev.Metric.Samples < minSamples || ev.PriorMetric.Samples < minSamples || ev.PriorMetric.Average == 0 ||
+		!finite(ev.Metric.Average) || !finite(ev.PriorMetric.Average) || g.MaxChangePercent < 1 {
+		return r, false
+	}
+	change := (ev.Metric.Average - ev.PriorMetric.Average) / math.Abs(ev.PriorMetric.Average) * 100
+	r.Observed, r.Samples, r.Baseline = round(change), ev.Metric.Samples, round(ev.PriorMetric.Average)
+	switch g.Comparison {
+	case "above":
+		r.Bound = float64(g.MaxChangePercent)
+		r.Passed = change <= r.Bound
+	case "below":
+		r.Bound = -float64(g.MaxChangePercent)
+		r.Passed = change >= r.Bound
+	default:
+		return r, false
+	}
+	direction := "rose"
+	if change < 0 {
+		direction = "fell"
+	}
+	r.Summary = fmt.Sprintf("%s %s %.0f%% (%g vs %g before the rollout; fails %s %+g%%)", g.MetricName, direction,
+		math.Abs(change), round(ev.Metric.Average), round(ev.PriorMetric.Average), g.Comparison, r.Bound)
+	return r, true
+}
+
+func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 
 // round keeps decisions readable and JSON-stable.
 func round(v float64) float64 {

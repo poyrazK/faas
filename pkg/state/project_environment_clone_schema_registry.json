@@ -1412,12 +1412,15 @@
       "id",
       "kind",
       "max_burn_rate",
+      "max_change_percent",
+      "max_failure_percent",
       "max_new_groups",
       "metric_name",
       "min_events",
       "min_samples",
       "name",
       "slo_id",
+      "synthetic_check_id",
       "threshold"
     ],
     "kind": "configuration"
@@ -14741,6 +14744,18 @@
       "weekly_days",
       "weekly_duration_minutes",
       "weekly_start_minute"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "release_gate_probe_results",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "failures",
+      "gate_id",
+      "requests",
+      "window_start"
     ],
     "kind": "operational"
   },

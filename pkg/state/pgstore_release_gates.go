@@ -23,6 +23,8 @@ func releaseGateFromRow(r sqlc.AppReleaseGate) ReleaseGate {
 		MaxBurnRate: int(r.MaxBurnRate.Int32), MaxNewGroups: int(r.MaxNewGroups.Int32), MinEvents: int(r.MinEvents.Int32),
 		MetricName: r.MetricName.String, Comparison: r.Comparison.String, Threshold: r.Threshold.Float64,
 		MinSamples: int(r.MinSamples), CreatedBy: r.CreatedBy, CreatedAt: r.CreatedAt.Time.UTC(),
+		SyntheticCheckID: pgUUIDStringNullable(r.SyntheticCheckID), MaxFailurePercent: int(r.MaxFailurePercent.Int32),
+		MaxChangePercent: int(r.MaxChangePercent.Int32),
 	}
 }
 
@@ -33,9 +35,14 @@ func (s *PgStore) CreateReleaseGate(ctx context.Context, g ReleaseGate, maxGates
 	slo := g.Kind == ReleaseGateSLO
 	newErrors := g.Kind == ReleaseGateNewErrors
 	metric := g.Kind == ReleaseGateCustomMetric
-	sloID := pgtype.UUID{}
+	synthetic := g.Kind == ReleaseGateSynthetic
+	change := g.Kind == ReleaseGateMetricChange
+	sloID, checkID := pgtype.UUID{}, pgtype.UUID{}
 	if slo {
 		sloID = mustPgUUID(g.SLOID)
+	}
+	if synthetic {
+		checkID = mustPgUUID(g.SyntheticCheckID)
 	}
 	row, err := sqlc.New().CreateAppReleaseGateWithinLimit(ctx, s.pool, sqlc.CreateAppReleaseGateWithinLimitParams{
 		ID: mustPgUUID(g.ID), AccountID: mustPgUUID(g.AccountID), AppID: mustPgUUID(g.AppID), Name: g.Name, Kind: g.Kind,
@@ -44,6 +51,8 @@ func (s *PgStore) CreateReleaseGate(ctx context.Context, g ReleaseGate, maxGates
 		MetricName: optionalPgText(g.MetricName), Comparison: optionalPgText(g.Comparison),
 		Threshold: pgtype.Float8{Float64: g.Threshold, Valid: metric}, MinSamples: int32(g.MinSamples),
 		CreatedBy: g.CreatedBy, Now: pgTimestamptzUTC(now), MaxGates: int64(maxGates),
+		SyntheticCheckID: checkID, MaxFailurePercent: optionalPgInt4(g.MaxFailurePercent, synthetic),
+		MaxChangePercent: optionalPgInt4(g.MaxChangePercent, change),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ReleaseGate{}, ErrReleaseGateLimit
@@ -124,4 +133,51 @@ func (s *PgStore) ReleaseGateCustomMetricWindow(ctx context.Context, appID, name
 		return 0, 0, mapErr(err)
 	}
 	return row.Samples, row.Average, nil
+}
+
+var _ ReleaseGateProbeStore = (*PgStore)(nil)
+
+func (s *PgStore) ListSyntheticGateProbeTargets(ctx context.Context, limit int) ([]SyntheticGateProbeTarget, error) {
+	rows, err := sqlc.New().ListSyntheticGateProbeTargets(ctx, s.pool, int32(limit))
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make([]SyntheticGateProbeTarget, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, SyntheticGateProbeTarget{AppID: r.AppID, AccountID: r.AccountID, Slug: r.Slug,
+			CandidateID: r.CandidateID, StableID: r.StableID, GateID: r.GateID, Method: r.Method, Path: r.Path,
+			ExpectedStatus: int(r.ExpectedStatus.Int32), TimeoutMS: int(r.TimeoutMs)})
+	}
+	return out, nil
+}
+
+func (s *PgStore) RecordReleaseGateProbeResults(ctx context.Context, results []ReleaseGateProbeResult) error {
+	q := sqlc.New()
+	for _, r := range results {
+		if r.Requests < 1 || r.Failures < 0 || r.Failures > r.Requests {
+			return ErrInvalidArgument
+		}
+		if err := q.RecordReleaseGateProbeResult(ctx, s.pool, sqlc.RecordReleaseGateProbeResultParams{
+			GateID: mustPgUUID(r.GateID), AppID: mustPgUUID(r.AppID), DeploymentID: mustPgUUID(r.DeploymentID),
+			WindowStart: pgTimestamptzUTC(r.WindowStart.Truncate(time.Minute)), Requests: int32(min(r.Requests, releaseGateProbeCap)),
+			Failures: int32(min(r.Failures, releaseGateProbeCap)),
+		}); err != nil {
+			return mapErr(err)
+		}
+	}
+	return nil
+}
+
+func (s *PgStore) ReleaseGateProbeTotals(ctx context.Context, gateID, deploymentID string, since, until time.Time) (int64, int64, error) {
+	row, err := sqlc.New().ReleaseGateProbeTotals(ctx, s.pool, sqlc.ReleaseGateProbeTotalsParams{
+		GateID: mustPgUUID(gateID), DeploymentID: mustPgUUID(deploymentID), Since: pgTimestamptzUTC(since), Until: pgTimestamptzUTC(until),
+	})
+	if err != nil {
+		return 0, 0, mapErr(err)
+	}
+	return row.Requests, row.Failures, nil
+}
+
+func (s *PgStore) PruneReleaseGateProbeResults(ctx context.Context, before time.Time) error {
+	return mapErr(sqlc.New().PruneReleaseGateProbeResults(ctx, s.pool, pgTimestamptzUTC(before)))
 }

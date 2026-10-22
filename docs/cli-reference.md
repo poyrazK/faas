@@ -31,7 +31,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`approvals`](#approvals) | Make production releases wait in their canary for approval |
 | [`scheduled-releases`](#scheduled-releases) | Build production releases now and start them at a set time |
 | [`freeze`](#freeze) | Pause production releases for a window, weekly, or after rollbacks |
-| [`release-gates`](#release-gates) | Stop rollouts on SLO, error or metric regressions and roll back |
+| [`release-gates`](#release-gates) | Stop rollouts on SLO, error, metric or check regressions |
 | [`canary`](#canary) | Advance canary stages, check their gates, or simulate a preset |
 | [`build`](#build) | Inspect builds, their provenance and SBOMs |
 | [`connect`](#connect) | Connect your GitHub account or start the repository wizard |
@@ -5774,7 +5774,7 @@ Show whether production releases of an app are frozen now
 
 ## release-gates
 
-Stop rollouts on SLO, error or metric regressions and roll back
+Stop rollouts on SLO, error, metric or check regressions
 
 `gregale release-gates [<subcommand>]`
 
@@ -5784,6 +5784,8 @@ Examples:
 gregale release-gates add --app my-api --name checkout-slo --slo checkout --max-burn-rate 10
 gregale release-gates add --app my-api --name no-new-errors --new-errors --min-events 3
 gregale release-gates add --app my-api --name orders --metric orders_per_minute --below 5
+gregale release-gates add --app my-api --name orders-drop --metric orders_per_minute --max-drop 30
+gregale release-gates add --app my-api --name checkout-probe --check checkout
 gregale release-gates list --app my-api
 ```
 
@@ -5801,7 +5803,7 @@ List an app&#39;s release gates
 
 Add a release gate
 
-`gregale release-gates add [--app <slug>] --name <NAME> [--slo <NAME>] [--max-burn-rate <N>] [--new-errors] [--max-new-groups <N>] [--min-events <N>] [--metric <NAME>] [--below <VALUE>] [--above <VALUE>] [--min-samples <N>]`
+`gregale release-gates add [--app <slug>] --name <NAME> [--slo <NAME>] [--max-burn-rate <N>] [--new-errors] [--max-new-groups <N>] [--min-events <N>] [--metric <NAME>] [--below <VALUE>] [--above <VALUE>] [--max-rise <PCT>] [--max-drop <PCT>] [--check <NAME>] [--max-failure-percent <PCT>] [--min-samples <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5812,10 +5814,14 @@ Add a release gate
 | `--new-errors` | fail when the release introduces new error groups |  |
 | `--max-new-groups <N>` | new error groups allowed (default 0) |  |
 | `--min-events <N>` | events before a new error group counts (default 3) |  |
-| `--metric <NAME>` | fail when this custom metric crosses a bound |  |
+| `--metric <NAME>` | fail when this custom metric crosses a bound or moves too far |  |
 | `--below <VALUE>` | fail when the metric averages below this |  |
 | `--above <VALUE>` | fail when the metric averages above this |  |
-| `--min-samples <N>` | requests or metric values before the gate is judged (default 20) |  |
+| `--max-rise <PCT>` | fail when the metric rises more than this percent from before the rollout |  |
+| `--max-drop <PCT>` | fail when the metric drops more than this percent from before the rollout |  |
+| `--check <NAME>` | probe the canary and its stable revision with this synthetic check |  |
+| `--max-failure-percent <PCT>` | failed probes allowed, in percent (default 10) |  |
+| `--min-samples <N>` | requests, probes or metric values before the gate is judged (default 20; 6 probes for --check) |  |
 
 ### release-gates rm
 

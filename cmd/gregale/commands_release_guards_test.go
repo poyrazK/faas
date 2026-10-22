@@ -53,42 +53,68 @@ func TestFreezeRequestFromFlags(t *testing.T) {
 }
 
 func TestReleaseGateRequest(t *testing.T) {
+	unset := func(f main.ReleaseGateFlags) main.ReleaseGateFlags {
+		if f.MaxGroups == 0 && !f.NewErrors {
+			f.MaxGroups = -1
+		}
+		if f.MaxFailurePercent == 0 && f.Check == "" {
+			f.MaxFailurePercent = -1
+		}
+		f.Name = "g"
+		return f
+	}
 	for _, tc := range []struct {
-		name      string
-		slo       string
-		maxBurn   int
-		newErrors bool
-		maxGroups int
-		minEvents int
-		metric    string
-		below     string
-		above     string
-		wantKind  string
-		wantErr   bool
+		name     string
+		flags    main.ReleaseGateFlags
+		wantKind string
+		wantErr  bool
 	}{
-		{name: "slo", slo: "checkout", maxBurn: 10, maxGroups: -1, wantKind: "slo"},
-		{name: "new errors", newErrors: true, maxGroups: 1, minEvents: 5, wantKind: "new_errors"},
-		{name: "metric below", metric: "orders", below: "5", maxGroups: -1, wantKind: "custom_metric"},
-		{name: "two kinds", slo: "checkout", newErrors: true, maxGroups: -1, wantErr: true},
-		{name: "no kind", maxGroups: -1, wantErr: true},
-		{name: "metric with both bounds", metric: "orders", below: "1", above: "9", maxGroups: -1, wantErr: true},
-		{name: "metric bound not a number", metric: "orders", below: "many", maxGroups: -1, wantErr: true},
-		{name: "burn rate on new errors", newErrors: true, maxBurn: 5, maxGroups: -1, wantErr: true},
-		{name: "min events on slo", slo: "checkout", minEvents: 3, maxGroups: -1, wantErr: true},
+		{name: "slo", flags: main.ReleaseGateFlags{SLO: "checkout", MaxBurn: 10}, wantKind: "slo"},
+		{name: "new errors", flags: main.ReleaseGateFlags{NewErrors: true, MaxGroups: 1, MinEvents: 5}, wantKind: "new_errors"},
+		{name: "metric below", flags: main.ReleaseGateFlags{Metric: "orders", Below: "5"}, wantKind: "custom_metric"},
+		// adr: 20261022082305 — metric changes and synthetic checks.
+		{name: "metric drop", flags: main.ReleaseGateFlags{Metric: "orders", MaxDrop: 30}, wantKind: "metric_change"},
+		{name: "metric rise", flags: main.ReleaseGateFlags{Metric: "latency_ms", MaxRise: 50}, wantKind: "metric_change"},
+		{name: "synthetic", flags: main.ReleaseGateFlags{Check: "checkout", MaxFailurePercent: 20}, wantKind: "synthetic"},
+		{name: "two kinds", flags: main.ReleaseGateFlags{SLO: "checkout", NewErrors: true, MaxGroups: -1}, wantErr: true},
+		{name: "no kind", wantErr: true},
+		{name: "metric with both bounds", flags: main.ReleaseGateFlags{Metric: "orders", Below: "1", Above: "9"}, wantErr: true},
+		{name: "metric bound and change", flags: main.ReleaseGateFlags{Metric: "orders", Below: "1", MaxDrop: 9}, wantErr: true},
+		{name: "metric bound not a number", flags: main.ReleaseGateFlags{Metric: "orders", Below: "many"}, wantErr: true},
+		{name: "burn rate on new errors", flags: main.ReleaseGateFlags{NewErrors: true, MaxBurn: 5, MaxGroups: -1}, wantErr: true},
+		{name: "min events on slo", flags: main.ReleaseGateFlags{SLO: "checkout", MinEvents: 3}, wantErr: true},
+		{name: "change without metric", flags: main.ReleaseGateFlags{Check: "checkout", MaxRise: 5}, wantErr: true},
+		{name: "failure percent on slo", flags: main.ReleaseGateFlags{SLO: "checkout", MaxFailurePercent: 5}, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req, err := main.ReleaseGateRequest("g", tc.slo, tc.maxBurn, tc.newErrors, tc.maxGroups, tc.minEvents, tc.metric, tc.below, tc.above, 0)
+			req, err := main.ReleaseGateRequest(unset(tc.flags))
 			if tc.wantErr != (err != nil) {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}
 			if !tc.wantErr && req.Kind != tc.wantKind {
 				t.Fatalf("kind = %q, want %q", req.Kind, tc.wantKind)
 			}
-			if tc.name == "new errors" && (req.MaxNewGroups == nil || *req.MaxNewGroups != 1 || req.MinEvents != 5) {
-				t.Fatalf("request = %+v", req)
-			}
-			if tc.name == "metric below" && (req.Comparison != "below" || req.Threshold == nil || *req.Threshold != 5) {
-				t.Fatalf("request = %+v", req)
+			switch tc.name {
+			case "new errors":
+				if req.MaxNewGroups == nil || *req.MaxNewGroups != 1 || req.MinEvents != 5 {
+					t.Fatalf("request = %+v", req)
+				}
+			case "metric below":
+				if req.Comparison != "below" || req.Threshold == nil || *req.Threshold != 5 {
+					t.Fatalf("request = %+v", req)
+				}
+			case "metric drop":
+				if req.Comparison != "below" || req.MaxChangePercent != 30 || req.Threshold != nil {
+					t.Fatalf("request = %+v", req)
+				}
+			case "metric rise":
+				if req.Comparison != "above" || req.MaxChangePercent != 50 {
+					t.Fatalf("request = %+v", req)
+				}
+			case "synthetic":
+				if req.Check != "checkout" || req.MaxFailurePercent == nil || *req.MaxFailurePercent != 20 {
+					t.Fatalf("request = %+v", req)
+				}
 			}
 		})
 	}

@@ -14,6 +14,9 @@ const (
 	ReleaseGateSLO          = "slo"
 	ReleaseGateNewErrors    = "new_errors"
 	ReleaseGateCustomMetric = "custom_metric"
+	// Synthetic and metric_change gates (ADR-20261022082305).
+	ReleaseGateSynthetic    = "synthetic"
+	ReleaseGateMetricChange = "metric_change"
 )
 
 // ErrReleaseGateLimit means the app already has the maximum number of gates.
@@ -36,6 +39,11 @@ type ReleaseGate struct {
 	MinSamples   int
 	CreatedBy    string
 	CreatedAt    time.Time
+	// SyntheticCheckID and MaxFailurePercent configure a synthetic gate;
+	// MaxChangePercent a metric_change gate (ADR-20261022082305).
+	SyntheticCheckID  string
+	MaxFailurePercent int
+	MaxChangePercent  int
 }
 
 // ReleaseGateSLOTarget is the part of an SLO a gate judges by.

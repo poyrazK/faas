@@ -3304,6 +3304,12 @@ type Querier interface {
 	ListSnapshotDeploymentIDs(ctx context.Context, db DBTX) ([]string, error)
 	ListSyntheticCheckRuns(ctx context.Context, db DBTX, arg ListSyntheticCheckRunsParams) ([]SyntheticCheckRun, error)
 	ListSyntheticChecks(ctx context.Context, db DBTX, appID pgtype.UUID) ([]SyntheticCheck, error)
+	// ADR-20261022082305: synthetic gates probe canaries.
+	// Each synthetic gate (with an enabled check) of a request app whose
+	// default-scope canary is rolling out beside a serving predecessor. An app
+	// with several serving predecessors returns several rows per gate and is
+	// skipped by the caller.
+	ListSyntheticGateProbeTargets(ctx context.Context, db DBTX, batchLimit int32) ([]ListSyntheticGateProbeTargetsRow, error)
 	ListTCPListenerTLSObservations(ctx context.Context, db DBTX, listenerID pgtype.UUID) ([]AppTcpListenerTlsObservation, error)
 	// Tenant schedule candidates are one row per active tenant/app binding. The
 	// composite cursor prevents large tenants from being starved by the page cap.
@@ -4516,6 +4522,7 @@ type Querier interface {
 	PruneProjectBindingVerificationRuns(ctx context.Context, db DBTX, projectID pgtype.UUID) error
 	PruneProjectMigrations(ctx context.Context, db DBTX, arg PruneProjectMigrationsParams) error
 	PruneReadinessNotifications(ctx context.Context, db DBTX, arg PruneReadinessNotificationsParams) error
+	PruneReleaseGateProbeResults(ctx context.Context, db DBTX, before pgtype.Timestamptz) error
 	PruneRouteCheckHistory(ctx context.Context, db DBTX, arg PruneRouteCheckHistoryParams) error
 	PruneRouteHealthHistory(ctx context.Context, db DBTX, arg PruneRouteHealthHistoryParams) error
 	PruneRouteMonitorIncidents(ctx context.Context, db DBTX, arg PruneRouteMonitorIncidentsParams) error
@@ -5162,6 +5169,8 @@ type Querier interface {
 	RecordProjectEnvironmentClonePostgresVerificationAttemptMatch(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresVerificationAttemptMatchParams) (ProjectEnvironmentClonePostgresVerificationAttempt, error)
 	RecordProjectEnvironmentClonePostgresVerificationClosure(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresVerificationClosureParams) (ProjectEnvironmentClonePostgresVerification, error)
 	RecordProjectEnvironmentClonePostgresVerificationMatch(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresVerificationMatchParams) (ProjectEnvironmentClonePostgresVerification, error)
+	// Adds one round's probe counts for a gate and revision.
+	RecordReleaseGateProbeResult(ctx context.Context, db DBTX, arg RecordReleaseGateProbeResultParams) error
 	// The request-ID journal is independent from sampled request telemetry. Only
 	// insert when the app is still owned by the authenticated account. The
 	// caller-generated record UUID makes an RPC retry idempotent without
@@ -5231,6 +5240,7 @@ type Querier interface {
 	// events, largest first. Error classes are a closed set; routes and
 	// messages are not returned.
 	ReleaseGateNewErrorGroups(ctx context.Context, db DBTX, arg ReleaseGateNewErrorGroupsParams) ([]ReleaseGateNewErrorGroupsRow, error)
+	ReleaseGateProbeTotals(ctx context.Context, db DBTX, arg ReleaseGateProbeTotalsParams) (ReleaseGateProbeTotalsRow, error)
 	ReleaseManagedPostgresCutover(ctx context.Context, db DBTX, arg ReleaseManagedPostgresCutoverParams) (int64, error)
 	ReleaseManagedPostgresDrainHostPorts(ctx context.Context, db DBTX, arg ReleaseManagedPostgresDrainHostPortsParams) error
 	ReleaseManagedPostgresLifecycleLease(ctx context.Context, db DBTX, arg ReleaseManagedPostgresLifecycleLeaseParams) (int64, error)

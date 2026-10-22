@@ -228,6 +228,7 @@ type ProjectEnvironmentInspection = projectEnvironmentInspection
 type ProjectEnvironmentPromotionWaitReceipt = projectEnvironmentPromotionWaitReceipt
 type QueueCanaryConsentKey = queueCanaryConsentKey
 type QueueStatusReport = queueStatusReport
+type ReleaseGateFlags = releaseGateFlags
 type ResumableUploadState = resumableUploadState
 type RolloutHeldNotice = rolloutHeldNotice
 type RouteHealthCorrelationReport = routeHealthCorrelationReport

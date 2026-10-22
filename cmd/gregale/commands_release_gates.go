@@ -1,6 +1,7 @@
 package main
 
 // ADR-20261019071734: release gates on customer signals.
+// ADR-20261022082305: synthetic and metric_change gates.
 
 import (
 	"context"
@@ -100,6 +101,18 @@ func releaseGateRule(g api.ReleaseGate) string {
 			threshold = *g.Threshold
 		}
 		return fmt.Sprintf("%s averages %s %s", g.Metric, g.Comparison, strconv.FormatFloat(threshold, 'g', -1, 64))
+	case "synthetic":
+		maxFailure := 0
+		if g.MaxFailurePercent != nil {
+			maxFailure = *g.MaxFailurePercent
+		}
+		return fmt.Sprintf("canary probes of check %s fail more than %d%% of the time, and more than on the stable revision", g.Check, maxFailure)
+	case "metric_change":
+		direction := "rises"
+		if g.Comparison == "below" {
+			direction = "drops"
+		}
+		return fmt.Sprintf("%s %s more than %d%% from before the rollout", g.Metric, direction, g.MaxChangePercent)
 	}
 	return g.Kind
 }
@@ -113,19 +126,25 @@ func releaseGatesAdd(args []string) int {
 	newErrors := fs.Bool("new-errors", false, "fail when the release introduces new error groups")
 	maxGroups := fs.Int("max-new-groups", -1, "new error groups allowed (default 0)")
 	minEvents := fs.Int("min-events", 0, "events before a new error group counts (default 3)")
-	metric := fs.String("metric", "", "fail when this custom metric crosses a bound")
+	metric := fs.String("metric", "", "fail when this custom metric crosses a bound or moves too far")
 	below := fs.String("below", "", "custom metric average that fails the gate when the average is lower")
 	above := fs.String("above", "", "custom metric average that fails the gate when the average is higher")
-	minSamples := fs.Int("min-samples", 0, "requests or metric values before the gate is judged (default 20)")
+	maxRise := fs.Int("max-rise", 0, "fail when the metric rises more than this percent from before the rollout")
+	maxDrop := fs.Int("max-drop", 0, "fail when the metric drops more than this percent from before the rollout")
+	check := fs.String("check", "", "probe the canary with this synthetic check")
+	maxFailure := fs.Int("max-failure-percent", -1, "failed probes allowed, in percent (default 10)")
+	minSamples := fs.Int("min-samples", 0, "requests, probes or metric values before the gate is judged")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	usage := "usage: gregale release-gates add --name NAME (--slo NAME [--max-burn-rate N] | --new-errors [--max-new-groups N] [--min-events N] | --metric NAME (--below V | --above V)) [--min-samples N] [--app <slug>]"
+	usage := "usage: gregale release-gates add --name NAME (--slo NAME [--max-burn-rate N] | --new-errors [--max-new-groups N] [--min-events N] | --metric NAME (--below V | --above V | --max-rise PCT | --max-drop PCT) | --check NAME [--max-failure-percent PCT]) [--min-samples N] [--app <slug>]"
 	if rejectUnexpectedFlagArgs(fs) || *name == "" {
 		PrintUsage(os.Stderr, usage, "release-gates")
 		return 1
 	}
-	req, err := releaseGateRequest(*name, *slo, *maxBurn, *newErrors, *maxGroups, *minEvents, *metric, *below, *above, *minSamples)
+	req, err := releaseGateRequest(releaseGateFlags{Name: *name, SLO: *slo, MaxBurn: *maxBurn, NewErrors: *newErrors,
+		MaxGroups: *maxGroups, MinEvents: *minEvents, Metric: *metric, Below: *below, Above: *above, MaxRise: *maxRise,
+		MaxDrop: *maxDrop, Check: *check, MaxFailurePercent: *maxFailure, MinSamples: *minSamples})
 	if err != nil {
 		return printErr("Invalid release gate", err)
 	}
@@ -148,50 +167,100 @@ func releaseGatesAdd(args []string) int {
 	return 0
 }
 
+// releaseGateFlags are `release-gates add`'s flags. MaxGroups and
+// MaxFailurePercent are -1 when unset.
+type releaseGateFlags struct {
+	Name, SLO            string
+	MaxBurn              int
+	NewErrors            bool
+	MaxGroups, MinEvents int
+	Metric, Below, Above string
+	MaxRise, MaxDrop     int
+	Check                string
+	MaxFailurePercent    int
+	MinSamples           int
+}
+
 // releaseGateRequest builds a create request from exactly one gate kind's flags.
-func releaseGateRequest(name, slo string, maxBurn int, newErrors bool, maxGroups, minEvents int, metric, below, above string, minSamples int) (api.CreateReleaseGateRequest, error) {
-	req := api.CreateReleaseGateRequest{Name: name, MinSamples: minSamples}
+func releaseGateRequest(f releaseGateFlags) (api.CreateReleaseGateRequest, error) {
+	req := api.CreateReleaseGateRequest{Name: f.Name, MinSamples: f.MinSamples}
 	kinds := 0
-	if slo != "" {
+	if f.SLO != "" {
 		kinds++
-		req.Kind, req.SLO, req.MaxBurnRate = "slo", slo, maxBurn
+		req.Kind, req.SLO, req.MaxBurnRate = "slo", f.SLO, f.MaxBurn
 	}
-	if newErrors {
+	if f.NewErrors {
 		kinds++
-		req.Kind, req.MinEvents = "new_errors", minEvents
-		if maxGroups >= 0 {
+		req.Kind, req.MinEvents = "new_errors", f.MinEvents
+		if f.MaxGroups >= 0 {
+			maxGroups := f.MaxGroups
 			req.MaxNewGroups = &maxGroups
 		}
 	}
-	if metric != "" {
+	if f.Metric != "" {
 		kinds++
-		req.Kind, req.Metric = "custom_metric", metric
-		if (below == "") == (above == "") {
-			return req, errors.New("--metric needs exactly one of --below or --above")
+		if err := metricGateRequest(&req, f); err != nil {
+			return req, err
 		}
-		raw, comparison := below, "below"
-		if above != "" {
-			raw, comparison = above, "above"
+	}
+	if f.Check != "" {
+		kinds++
+		req.Kind, req.Check = "synthetic", f.Check
+		if f.MaxFailurePercent >= 0 {
+			maxFailure := f.MaxFailurePercent
+			req.MaxFailurePercent = &maxFailure
 		}
-		v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
-		if err != nil {
-			return req, fmt.Errorf("--%s must be a number", comparison)
-		}
-		req.Comparison, req.Threshold = comparison, &v
 	}
 	if kinds != 1 {
-		return req, errors.New("choose exactly one of --slo, --new-errors or --metric")
+		return req, errors.New("choose exactly one of --slo, --new-errors, --metric or --check")
 	}
-	if req.Kind != "slo" && maxBurn != 0 {
+	if req.Kind != "slo" && f.MaxBurn != 0 {
 		return req, errors.New("--max-burn-rate applies to --slo")
 	}
-	if req.Kind != "new_errors" && (maxGroups >= 0 || minEvents != 0) {
+	if req.Kind != "new_errors" && (f.MaxGroups >= 0 || f.MinEvents != 0) {
 		return req, errors.New("--max-new-groups and --min-events apply to --new-errors")
 	}
-	if req.Kind != "custom_metric" && (below != "" || above != "") {
-		return req, errors.New("--below and --above apply to --metric")
+	if f.Metric == "" && (f.Below != "" || f.Above != "" || f.MaxRise != 0 || f.MaxDrop != 0) {
+		return req, errors.New("--below, --above, --max-rise and --max-drop apply to --metric")
+	}
+	if req.Kind != "synthetic" && f.MaxFailurePercent >= 0 {
+		return req, errors.New("--max-failure-percent applies to --check")
 	}
 	return req, nil
+}
+
+// metricGateRequest fills a custom_metric gate (--below or --above) or a
+// metric_change gate (--max-rise or --max-drop).
+func metricGateRequest(req *api.CreateReleaseGateRequest, f releaseGateFlags) error {
+	req.Metric = f.Metric
+	set := 0
+	for _, v := range []bool{f.Below != "", f.Above != "", f.MaxRise != 0, f.MaxDrop != 0} {
+		if v {
+			set++
+		}
+	}
+	if set != 1 {
+		return errors.New("--metric needs exactly one of --below, --above, --max-rise or --max-drop")
+	}
+	switch {
+	case f.MaxRise != 0:
+		req.Kind, req.Comparison, req.MaxChangePercent = "metric_change", "above", f.MaxRise
+		return nil
+	case f.MaxDrop != 0:
+		req.Kind, req.Comparison, req.MaxChangePercent = "metric_change", "below", f.MaxDrop
+		return nil
+	}
+	req.Kind = "custom_metric"
+	raw, comparison := f.Below, "below"
+	if f.Above != "" {
+		raw, comparison = f.Above, "above"
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil {
+		return fmt.Errorf("--%s must be a number", comparison)
+	}
+	req.Comparison, req.Threshold = comparison, &v
+	return nil
 }
 
 func releaseGatesRemove(args []string) int {

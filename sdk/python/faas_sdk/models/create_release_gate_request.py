@@ -34,13 +34,20 @@ class CreateReleaseGateRequest:
     min_events: int | Unset = UNSET
     """new_errors gates: default 3."""
     metric: str | Unset = UNSET
-    """custom_metric gates: the custom metric's name."""
+    """custom_metric and metric_change gates: the custom metric's name."""
     comparison: CreateReleaseGateRequestComparison | Unset = UNSET
-    """custom_metric gates: fail when the average is below or above the threshold."""
+    """custom_metric gates: fail when the average is below or above the threshold. metric_change gates: fail when
+    the average fell (below) or rose (above) too far."""
     threshold: float | Unset = UNSET
     """custom_metric gates: the bound."""
+    check: str | Unset = UNSET
+    """synthetic gates: the name of one of the app's synthetic checks."""
+    max_failure_percent: int | Unset = UNSET
+    """synthetic gates: default 10."""
+    max_change_percent: int | Unset = UNSET
+    """metric_change gates: the change, in percent of the average before the rollout, that fails the gate."""
     min_samples: int | Unset = UNSET
-    """Default 20."""
+    """Default 20; 6 probes for synthetic gates."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,6 +70,12 @@ class CreateReleaseGateRequest:
             comparison = self.comparison
 
         threshold = self.threshold
+
+        check = self.check
+
+        max_failure_percent = self.max_failure_percent
+
+        max_change_percent = self.max_change_percent
 
         min_samples = self.min_samples
 
@@ -88,6 +101,12 @@ class CreateReleaseGateRequest:
             field_dict["comparison"] = comparison
         if threshold is not UNSET:
             field_dict["threshold"] = threshold
+        if check is not UNSET:
+            field_dict["check"] = check
+        if max_failure_percent is not UNSET:
+            field_dict["max_failure_percent"] = max_failure_percent
+        if max_change_percent is not UNSET:
+            field_dict["max_change_percent"] = max_change_percent
         if min_samples is not UNSET:
             field_dict["min_samples"] = min_samples
 
@@ -119,6 +138,12 @@ class CreateReleaseGateRequest:
 
         threshold = d.pop("threshold", UNSET)
 
+        check = d.pop("check", UNSET)
+
+        max_failure_percent = d.pop("max_failure_percent", UNSET)
+
+        max_change_percent = d.pop("max_change_percent", UNSET)
+
         min_samples = d.pop("min_samples", UNSET)
 
         create_release_gate_request = cls(
@@ -131,6 +156,9 @@ class CreateReleaseGateRequest:
             metric=metric,
             comparison=comparison,
             threshold=threshold,
+            check=check,
+            max_failure_percent=max_failure_percent,
+            max_change_percent=max_change_percent,
             min_samples=min_samples,
         )
 

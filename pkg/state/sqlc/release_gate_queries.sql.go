@@ -44,34 +44,39 @@ const createAppReleaseGateWithinLimit = `-- name: CreateAppReleaseGateWithinLimi
 
 INSERT INTO app_release_gates (
   id, account_id, app_id, name, kind, slo_id, max_burn_rate, max_new_groups, min_events,
-  metric_name, comparison, threshold, min_samples, created_by, created_at
+  metric_name, comparison, threshold, min_samples, created_by, created_at,
+  synthetic_check_id, max_failure_percent, max_change_percent
 )
 SELECT $1::uuid, $2::uuid, $3::uuid, $4::text,
   $5::text, $6::uuid, $7::integer,
   $8::integer, $9::integer, $10::text,
   $11::text, $12::double precision, $13::integer,
-  $14::text, $15::timestamptz
-WHERE (SELECT count(*) FROM app_release_gates g WHERE g.app_id = $3::uuid) < $16::bigint
-RETURNING id, account_id, app_id, name, kind, slo_id, max_burn_rate, max_new_groups, min_events, metric_name, comparison, threshold, min_samples, created_by, created_at
+  $14::text, $15::timestamptz,
+  $16::uuid, $17::integer, $18::integer
+WHERE (SELECT count(*) FROM app_release_gates g WHERE g.app_id = $3::uuid) < $19::bigint
+RETURNING id, account_id, app_id, name, kind, slo_id, max_burn_rate, max_new_groups, min_events, metric_name, comparison, threshold, min_samples, created_by, created_at, synthetic_check_id, max_failure_percent, max_change_percent
 `
 
 type CreateAppReleaseGateWithinLimitParams struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	AppID        pgtype.UUID
-	Name         string
-	Kind         string
-	SloID        pgtype.UUID
-	MaxBurnRate  pgtype.Int4
-	MaxNewGroups pgtype.Int4
-	MinEvents    pgtype.Int4
-	MetricName   pgtype.Text
-	Comparison   pgtype.Text
-	Threshold    pgtype.Float8
-	MinSamples   int32
-	CreatedBy    string
-	Now          pgtype.Timestamptz
-	MaxGates     int64
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	Name              string
+	Kind              string
+	SloID             pgtype.UUID
+	MaxBurnRate       pgtype.Int4
+	MaxNewGroups      pgtype.Int4
+	MinEvents         pgtype.Int4
+	MetricName        pgtype.Text
+	Comparison        pgtype.Text
+	Threshold         pgtype.Float8
+	MinSamples        int32
+	CreatedBy         string
+	Now               pgtype.Timestamptz
+	SyntheticCheckID  pgtype.UUID
+	MaxFailurePercent pgtype.Int4
+	MaxChangePercent  pgtype.Int4
+	MaxGates          int64
 }
 
 // ADR-20261019071734: release gates on customer signals.
@@ -93,6 +98,9 @@ func (q *Queries) CreateAppReleaseGateWithinLimit(ctx context.Context, db DBTX, 
 		arg.MinSamples,
 		arg.CreatedBy,
 		arg.Now,
+		arg.SyntheticCheckID,
+		arg.MaxFailurePercent,
+		arg.MaxChangePercent,
 		arg.MaxGates,
 	)
 	var i AppReleaseGate
@@ -112,6 +120,9 @@ func (q *Queries) CreateAppReleaseGateWithinLimit(ctx context.Context, db DBTX, 
 		&i.MinSamples,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.SyntheticCheckID,
+		&i.MaxFailurePercent,
+		&i.MaxChangePercent,
 	)
 	return i, err
 }
@@ -119,7 +130,7 @@ func (q *Queries) CreateAppReleaseGateWithinLimit(ctx context.Context, db DBTX, 
 const deleteAppReleaseGate = `-- name: DeleteAppReleaseGate :one
 DELETE FROM app_release_gates
  WHERE app_id = $1::uuid AND name = $2::text
-RETURNING id, account_id, app_id, name, kind, slo_id, max_burn_rate, max_new_groups, min_events, metric_name, comparison, threshold, min_samples, created_by, created_at
+RETURNING id, account_id, app_id, name, kind, slo_id, max_burn_rate, max_new_groups, min_events, metric_name, comparison, threshold, min_samples, created_by, created_at, synthetic_check_id, max_failure_percent, max_change_percent
 `
 
 type DeleteAppReleaseGateParams struct {
@@ -146,12 +157,15 @@ func (q *Queries) DeleteAppReleaseGate(ctx context.Context, db DBTX, arg DeleteA
 		&i.MinSamples,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.SyntheticCheckID,
+		&i.MaxFailurePercent,
+		&i.MaxChangePercent,
 	)
 	return i, err
 }
 
 const listAppReleaseGates = `-- name: ListAppReleaseGates :many
-SELECT id, account_id, app_id, name, kind, slo_id, max_burn_rate, max_new_groups, min_events, metric_name, comparison, threshold, min_samples, created_by, created_at FROM app_release_gates WHERE app_id = $1::uuid ORDER BY name
+SELECT id, account_id, app_id, name, kind, slo_id, max_burn_rate, max_new_groups, min_events, metric_name, comparison, threshold, min_samples, created_by, created_at, synthetic_check_id, max_failure_percent, max_change_percent FROM app_release_gates WHERE app_id = $1::uuid ORDER BY name
 `
 
 func (q *Queries) ListAppReleaseGates(ctx context.Context, db DBTX, appID pgtype.UUID) ([]AppReleaseGate, error) {
@@ -179,6 +193,9 @@ func (q *Queries) ListAppReleaseGates(ctx context.Context, db DBTX, appID pgtype
 			&i.MinSamples,
 			&i.CreatedBy,
 			&i.CreatedAt,
+			&i.SyntheticCheckID,
+			&i.MaxFailurePercent,
+			&i.MaxChangePercent,
 		); err != nil {
 			return nil, err
 		}
@@ -188,6 +205,114 @@ func (q *Queries) ListAppReleaseGates(ctx context.Context, db DBTX, appID pgtype
 		return nil, err
 	}
 	return items, nil
+}
+
+const listSyntheticGateProbeTargets = `-- name: ListSyntheticGateProbeTargets :many
+
+SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS slug,
+ d.id::text AS candidate_id, s.id::text AS stable_id, g.id::text AS gate_id,
+ c.method::text AS method, c.path::text AS path, c.expected_status, c.timeout_ms::integer AS timeout_ms
+FROM app_release_gates g
+JOIN synthetic_checks c ON c.id = g.synthetic_check_id AND c.app_id = g.app_id AND c.enabled
+JOIN apps a ON a.id = g.app_id
+JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
+ AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps
+ AND coalesce(nullif(d.scope, ''), 'default') = 'default'
+JOIN deployments s ON s.app_id = a.id AND s.id <> d.id AND s.status = 'live' AND s.deleted_at IS NULL
+ AND s.traffic_percent > 0 AND coalesce(nullif(s.scope, ''), 'default') = 'default'
+WHERE g.kind = 'synthetic' AND a.status <> 'deleted' AND a.preview_of_slug IS NULL
+ORDER BY a.id, d.id, s.id, g.id
+LIMIT $1::int
+`
+
+type ListSyntheticGateProbeTargetsRow struct {
+	AppID          string
+	AccountID      string
+	Slug           string
+	CandidateID    string
+	StableID       string
+	GateID         string
+	Method         string
+	Path           string
+	ExpectedStatus pgtype.Int4
+	TimeoutMs      int32
+}
+
+// ADR-20261022082305: synthetic gates probe canaries.
+// Each synthetic gate (with an enabled check) of a request app whose
+// default-scope canary is rolling out beside a serving predecessor. An app
+// with several serving predecessors returns several rows per gate and is
+// skipped by the caller.
+func (q *Queries) ListSyntheticGateProbeTargets(ctx context.Context, db DBTX, batchLimit int32) ([]ListSyntheticGateProbeTargetsRow, error) {
+	rows, err := db.Query(ctx, listSyntheticGateProbeTargets, batchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSyntheticGateProbeTargetsRow{}
+	for rows.Next() {
+		var i ListSyntheticGateProbeTargetsRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.AccountID,
+			&i.Slug,
+			&i.CandidateID,
+			&i.StableID,
+			&i.GateID,
+			&i.Method,
+			&i.Path,
+			&i.ExpectedStatus,
+			&i.TimeoutMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pruneReleaseGateProbeResults = `-- name: PruneReleaseGateProbeResults :exec
+DELETE FROM release_gate_probe_results WHERE window_start < $1::timestamptz
+`
+
+func (q *Queries) PruneReleaseGateProbeResults(ctx context.Context, db DBTX, before pgtype.Timestamptz) error {
+	_, err := db.Exec(ctx, pruneReleaseGateProbeResults, before)
+	return err
+}
+
+const recordReleaseGateProbeResult = `-- name: RecordReleaseGateProbeResult :exec
+INSERT INTO release_gate_probe_results (gate_id, app_id, deployment_id, window_start, requests, failures)
+VALUES ($1::uuid, $2::uuid, $3::uuid,
+  $4::timestamptz, $5::integer, $6::integer)
+ON CONFLICT (gate_id, deployment_id, window_start) DO UPDATE SET
+  requests = least(release_gate_probe_results.requests + EXCLUDED.requests, 10000),
+  failures = least(release_gate_probe_results.failures + EXCLUDED.failures,
+    least(release_gate_probe_results.requests + EXCLUDED.requests, 10000))
+`
+
+type RecordReleaseGateProbeResultParams struct {
+	GateID       pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	WindowStart  pgtype.Timestamptz
+	Requests     int32
+	Failures     int32
+}
+
+// Adds one round's probe counts for a gate and revision.
+func (q *Queries) RecordReleaseGateProbeResult(ctx context.Context, db DBTX, arg RecordReleaseGateProbeResultParams) error {
+	_, err := db.Exec(ctx, recordReleaseGateProbeResult,
+		arg.GateID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.WindowStart,
+		arg.Requests,
+		arg.Failures,
+	)
+	return err
 }
 
 const releaseGateCustomMetricWindow = `-- name: ReleaseGateCustomMetricWindow :one
@@ -306,4 +431,37 @@ func (q *Queries) ReleaseGateNewErrorGroups(ctx context.Context, db DBTX, arg Re
 		return nil, err
 	}
 	return items, nil
+}
+
+const releaseGateProbeTotals = `-- name: ReleaseGateProbeTotals :one
+SELECT coalesce(sum(requests), 0)::bigint AS requests, coalesce(sum(failures), 0)::bigint AS failures
+  FROM release_gate_probe_results
+ WHERE gate_id = $1::uuid
+   AND deployment_id = $2::uuid
+   AND window_start >= $3::timestamptz
+   AND window_start < $4::timestamptz
+`
+
+type ReleaseGateProbeTotalsParams struct {
+	GateID       pgtype.UUID
+	DeploymentID pgtype.UUID
+	Since        pgtype.Timestamptz
+	Until        pgtype.Timestamptz
+}
+
+type ReleaseGateProbeTotalsRow struct {
+	Requests int64
+	Failures int64
+}
+
+func (q *Queries) ReleaseGateProbeTotals(ctx context.Context, db DBTX, arg ReleaseGateProbeTotalsParams) (ReleaseGateProbeTotalsRow, error) {
+	row := db.QueryRow(ctx, releaseGateProbeTotals,
+		arg.GateID,
+		arg.DeploymentID,
+		arg.Since,
+		arg.Until,
+	)
+	var i ReleaseGateProbeTotalsRow
+	err := row.Scan(&i.Requests, &i.Failures)
+	return i, err
 }

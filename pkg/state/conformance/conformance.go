@@ -67,6 +67,7 @@ func Run(t *testing.T, open Open) {
 		{"post_release_watch_candidates_follow_the_newest_release", testPostReleaseWatchCandidates},
 		{"release_freezes_limit_list_and_lift", testReleaseFreezes},
 		{"release_gates_round_trip_and_follow_their_slo", testReleaseGates},
+		{"release_gate_probes_count_per_gate_revision_and_minute", testReleaseGateProbes},
 		{"release_approvals_policy_and_one_decision_per_person", testReleaseApprovals},
 		{"release_approval_events_once_due_and_retried", testReleaseApprovalEvents},
 		{"scheduled_releases_one_pending_and_start_in_the_traffic_change", testScheduledReleases},
