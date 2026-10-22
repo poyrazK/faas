@@ -153,6 +153,9 @@ type Workload struct {
 	// PlatformTenantRequired is an explicit ingress policy declaration.
 	// Nil preserves an existing app's policy during reconciliation.
 	PlatformTenantRequired *bool
+	// Unpublished marks a Compose service without `ports:`. Docker publishes
+	// nothing for it, so a new app for it is internal (ADR-20261022131852).
+	Unpublished bool
 	// InternalPorts are internal-only TCP listeners from compose expose:
 	// (ADR-576). Nil means the source declares none, so reconcile keeps the
 	// app's existing internal listeners; non-nil replaces them.

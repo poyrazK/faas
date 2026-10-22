@@ -93,6 +93,57 @@ func (s *PgStore) ClaimDuePublishedEventRecipient(ctx context.Context, now time.
 	if err != nil {
 		return nil, fmt.Errorf("claim event recipient: %w", err)
 	}
+	return eventRecipientWorkFromClaim(row)
+}
+
+// PublishedEventRecipientBatchClaimStore claims up to limit recipients in one
+// scan, in the order that many single claims would take them. A consumer
+// with delivery controls contributes one recipient per batch. Release returns
+// claims the caller did not process, without spending their attempts.
+type PublishedEventRecipientBatchClaimStore interface {
+	ClaimDuePublishedEventRecipients(ctx context.Context, now time.Time, limit int, includeWorkflows bool) ([]*PublishedEventRecipientWork, error)
+	ReleasePublishedEventRecipientClaim(context.Context, *PublishedEventRecipientWork) error
+}
+
+func (s *PgStore) ClaimDuePublishedEventRecipients(ctx context.Context, now time.Time, limit int, includeWorkflows bool) ([]*PublishedEventRecipientWork, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := sqlc.New().EventRecipientClaimBatch(ctx, s.pool, sqlc.EventRecipientClaimBatchParams{
+		NowAt: pgtypeFromTime(now), IncludeWorkflows: includeWorkflows, BatchLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("claim event recipients: %w", err)
+	}
+	works := make([]*PublishedEventRecipientWork, 0, len(rows))
+	for _, row := range rows {
+		work, err := eventRecipientWorkFromClaim(sqlc.EventRecipientClaimRow(row))
+		if err != nil {
+			return nil, err
+		}
+		works = append(works, work)
+	}
+	return works, nil
+}
+
+func (s *PgStore) ReleasePublishedEventRecipientClaim(ctx context.Context, work *PublishedEventRecipientWork) error {
+	if work == nil {
+		return ErrConflict
+	}
+	n, err := sqlc.New().EventRecipientReleaseClaim(ctx, s.pool, sqlc.EventRecipientReleaseClaimParams{
+		OutboxID: work.OutboxID, SubscriptionID: work.Recipient.ID,
+		ClaimToken: mustPgUUID(work.ClaimToken), Generation: work.Generation,
+	})
+	if err != nil {
+		return fmt.Errorf("release event recipient claim: %w", err)
+	}
+	if n == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func eventRecipientWorkFromClaim(row sqlc.EventRecipientClaimRow) (*PublishedEventRecipientWork, error) {
 	work := &PublishedEventRecipientWork{
 		AcceptedAt: timeFromPgtype(row.AcceptedAt), OutboxID: row.OutboxID, Payload: row.Payload, State: "processing",
 		ClaimToken: uuidFromPgtype(row.ClaimToken).String(), Generation: row.Generation,
@@ -249,10 +300,91 @@ func (m *MemStore) InitializePublishedEventRecipients(_ context.Context, claimed
 func (m *MemStore) ClaimDuePublishedEventRecipient(_ context.Context, now time.Time, includeWorkflows ...bool) (*PublishedEventRecipientWork, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	chosen := m.dueEventRecipientLocked(now, len(includeWorkflows) == 0 || includeWorkflows[0], nil)
+	if chosen == nil {
+		return nil, ErrNotFound
+	}
+	return m.claimEventRecipientLocked(chosen, now), nil
+}
+
+func (m *MemStore) ClaimDuePublishedEventRecipients(_ context.Context, now time.Time, limit int, includeWorkflows bool) ([]*PublishedEventRecipientWork, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	taken := map[*PublishedEventRecipientWork]bool{}
+	controlled := map[string]bool{}
+	var works []*PublishedEventRecipientWork
+	for len(works) < limit {
+		// A claim changes only fairness, so each pick sees the eligibility
+		// the SQL batch judges once.
+		chosen := m.dueEventRecipientLocked(now, includeWorkflows, func(work *PublishedEventRecipientWork) bool {
+			return taken[work] || controlled[canonicalMemUUID(work.Recipient.ID)]
+		})
+		if chosen == nil {
+			break
+		}
+		taken[chosen] = true
+		if m.eventSubscriptionControlledLocked(chosen.Recipient.AccountID, chosen.Recipient.AppID, chosen.Recipient.ID) {
+			controlled[canonicalMemUUID(chosen.Recipient.ID)] = true
+		}
+		works = append(works, m.claimEventRecipientLocked(chosen, now))
+	}
+	return works, nil
+}
+
+func (m *MemStore) ReleasePublishedEventRecipientClaim(_ context.Context, claimed *PublishedEventRecipientWork) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if claimed == nil {
+		return ErrConflict
+	}
+	receipt := m.routingReceiptLocked(claimed.OutboxID)
+	if receipt == nil {
+		return ErrConflict
+	}
+	work := receipt.routingRecipients[claimed.Recipient.ID]
+	if work == nil || work.State != "processing" || work.ClaimToken != claimed.ClaimToken || work.Generation != claimed.Generation {
+		return ErrConflict
+	}
+	work.State = PublishedEventRecipientPending
+	work.ClaimToken = ""
+	work.LeaseUntil = time.Time{}
+	work.Attempts--
+	work.TotalAttempts--
+	return nil
+}
+
+// eventSubscriptionControlledLocked reports whether a consumer has delivery
+// controls or a circuit breaker that its admission gate evaluates.
+func (m *MemStore) eventSubscriptionControlledLocked(account, app, sub string) bool {
+	id := canonicalMemUUID(sub)
+	if c := m.eventSubscriptionControls[id]; c != nil && sameMemUUID(c.AccountID, account) && sameMemUUID(c.AppID, app) {
+		return true
+	}
+	r := m.eventCircuitBreakers[id]
+	return r != nil && sameMemUUID(r.AccountID, account) && sameMemUUID(r.AppID, app)
+}
+
+func (m *MemStore) claimEventRecipientLocked(chosen *PublishedEventRecipientWork, now time.Time) *PublishedEventRecipientWork {
+	m.recordEventFairClaimLocked(canonicalMemUUID(chosen.Recipient.AccountID), chosen.Recipient.ID)
+	chosen.State = "processing"
+	chosen.ClaimToken = uuid.NewString()
+	chosen.LeaseUntil = now.Add(PublishedEventLease)
+	chosen.Attempts++
+	chosen.TotalAttempts++
+	chosen.PreviousProgress = m.routingReceiptLocked(chosen.OutboxID).RecipientProgress[chosen.Recipient.ID]
+	return cloneEventRecipientWork(chosen)
+}
+
+// dueEventRecipientLocked picks the recipient a claim at now would take,
+// ignoring those skip rejects.
+func (m *MemStore) dueEventRecipientLocked(now time.Time, includeWorkflows bool, skip func(*PublishedEventRecipientWork) bool) *PublishedEventRecipientWork {
 	var chosen *PublishedEventRecipientWork
 	for _, receipt := range m.eventFanout {
 		for _, work := range receipt.routingRecipients {
-			if len(includeWorkflows) != 0 && !includeWorkflows[0] && len(work.Recipient.Workflow) != 0 {
+			if !includeWorkflows && len(work.Recipient.Workflow) != 0 {
+				continue
+			}
+			if skip != nil && skip(work) {
 				continue
 			}
 			if (work.State != PublishedEventRecipientPending || work.AvailableAt.After(now) && !EventSchemaVersionMismatch(work.Recipient, receipt.Payload) && !EventDeliveryExpired(work.Recipient, receipt.CreatedAt, receipt.RecipientProgress[work.Recipient.ID], now)) &&
@@ -286,17 +418,7 @@ func (m *MemStore) ClaimDuePublishedEventRecipient(_ context.Context, now time.T
 			}
 		}
 	}
-	if chosen == nil {
-		return nil, ErrNotFound
-	}
-	m.recordEventFairClaimLocked(canonicalMemUUID(chosen.Recipient.AccountID), chosen.Recipient.ID)
-	chosen.State = "processing"
-	chosen.ClaimToken = uuid.NewString()
-	chosen.LeaseUntil = now.Add(PublishedEventLease)
-	chosen.Attempts++
-	chosen.TotalAttempts++
-	chosen.PreviousProgress = m.routingReceiptLocked(chosen.OutboxID).RecipientProgress[chosen.Recipient.ID]
-	return cloneEventRecipientWork(chosen), nil
+	return chosen
 }
 
 func (m *MemStore) FinishPublishedEventRecipient(_ context.Context, claimed *PublishedEventRecipientWork, progress PublishedEventRecipientProgress, next time.Time) error {
