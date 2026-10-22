@@ -191,8 +191,8 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  if ($tokens.Count -lt 2) {")
 	_, _ = fmt.Fprintln(w, "    if ('--non-interactive' -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new('--non-interactive', '--non-interactive', 'ParameterName', 'Disable prompts and browser launches') }")
 	for _, c := range customerCliCommands() {
-		_, _ = fmt.Fprintf(w, "    if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterName', %q) }\n",
-			c.Name, c.Name, c.Name, escapePS(c.Short))
+		_, _ = fmt.Fprintf(w, "    if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterName', %s) }\n",
+			c.Name, c.Name, c.Name, psLiteral(c.Short))
 	}
 	_, _ = fmt.Fprintln(w, "    return")
 	_, _ = fmt.Fprintln(w, "  }")
@@ -320,8 +320,8 @@ func renderPowershellCommand(w io.Writer, c cliCommand) {
 		_, _ = fmt.Fprintf(w, "    if ($tokens.Count -eq %d) {\n", subcommandWord)
 		for _, s := range c.Subcommands {
 			for _, spelling := range s.completionSpellings() {
-				_, _ = fmt.Fprintf(w, "      if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterName', %q) }\n",
-					spelling, spelling, spelling, escapePS(s.Short))
+				_, _ = fmt.Fprintf(w, "      if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterName', %s) }\n",
+					spelling, spelling, spelling, psLiteral(s.Short))
 			}
 		}
 		for _, f := range c.Flags {
@@ -353,8 +353,8 @@ func renderPowershellCommand(w io.Writer, c cliCommand) {
 		_, _ = fmt.Fprintf(w, "    if ($tokens.Count -eq %d -and %s) {\n", childWord, powershellCompletionSubcommandMatch(subcommandWord, parent))
 		for _, child := range parent.Subcommands {
 			for _, spelling := range child.completionSpellings() {
-				_, _ = fmt.Fprintf(w, "      if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterName', %q) }\n",
-					spelling, spelling, spelling, escapePS(child.Short))
+				_, _ = fmt.Fprintf(w, "      if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterName', %s) }\n",
+					spelling, spelling, spelling, psLiteral(child.Short))
 			}
 		}
 		_, _ = fmt.Fprintln(w, "      return")
@@ -418,15 +418,15 @@ func renderPowershellFlag(w io.Writer, f cliFlag) {
 			_, _ = fmt.Fprintln(w, "        return")
 			_, _ = fmt.Fprintln(w, "      }")
 		}
-		_, _ = fmt.Fprintf(w, "      if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterName', %q) }\n",
-			spelling, spelling, spelling, escapePS(f.Short))
+		_, _ = fmt.Fprintf(w, "      if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterName', %s) }\n",
+			spelling, spelling, spelling, psLiteral(f.Short))
 	}
 }
 
 func powershellStringArray(values []string) string {
 	quoted := make([]string, 0, len(values))
 	for _, value := range values {
-		quoted = append(quoted, "'"+escapePS(value)+"'")
+		quoted = append(quoted, psLiteral(value))
 	}
 	return strings.Join(quoted, ", ")
 }
@@ -439,8 +439,15 @@ func renderPowershellFooter(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "}")
 }
 
-// escapePS doubles single-quotes for PowerShell single-quoted strings.
-// PowerShell uses the same escape as bash for single quotes (”).
+// psLiteral renders s as a PowerShell single-quoted string, which expands
+// nothing: help text may hold double quotes or $ that a double-quoted string
+// would end or expand.
+func psLiteral(s string) string {
+	return "'" + escapePS(s) + "'"
+}
+
+// escapePS doubles single quotes for PowerShell single-quoted strings,
+// including the typographic ones PowerShell also treats as quotes.
 func escapePS(s string) string {
-	return strings.ReplaceAll(s, "'", "''")
+	return strings.NewReplacer("'", "''", "‘", "‘‘", "’", "’’", "‚", "‚‚", "‛", "‛‛").Replace(s)
 }
