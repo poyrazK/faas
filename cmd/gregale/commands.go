@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -345,11 +346,25 @@ func cmdApps() int {
 	// form. The "since YYYY-MM-DD" suffix renders only when
 	// auth_default_flipped_at is non-null — pre-flip apps
 	// that have been grand-fathered by migration 00156.
-	_, _ = fmt.Fprintf(osStdout, "%-24s %-10s %-22s %-32s %s\n", "SLUG", "STATUS", "DEPLOYMENT", "URL", "AUTH")
+	// Columns size to their widest cell: a fixed 10-column STATUS ran a
+	// parked app's status into its deployment ("evicted_cold live", Hunt 12
+	// H12-54).
+	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "SLUG\tSTATUS\tDEPLOYMENT\tURL\tAUTH")
 	for _, a := range apps {
-		_, _ = fmt.Fprintf(osStdout, "%-24s %-10s %-22s %-32s %s\n", a.Slug, a.Status, formatAppDeploymentAvailability(a), canonicalAppURL(a), formatAppAuth(a))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", a.Slug, formatAppListStatus(a.Status), formatAppDeploymentAvailability(a), canonicalAppURL(a), formatAppAuth(a))
 	}
+	_ = tw.Flush()
 	return 0
+}
+
+// formatAppListStatus names a parked app "parked", as ps, inspect and the
+// docs do; evicted_cold is the stored status and stays in --json.
+func formatAppListStatus(status string) string {
+	if status == "evicted_cold" {
+		return "parked"
+	}
+	return status
 }
 
 func formatAppDeploymentAvailability(a api.AppResponse) string {

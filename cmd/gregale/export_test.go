@@ -702,6 +702,7 @@ var CmdAppScalePlan = cmdAppScalePlan
 var CmdAppSecurity = cmdAppSecurity
 var CmdAppStaticEgressIP = cmdAppStaticEgressIP
 var CmdAppStaticEgressIPClear = cmdAppStaticEgressIPClear
+var CmdApps = cmdApps
 var CmdAppsRm = cmdAppsRm
 var CmdAppsRoutes = cmdAppsRoutes
 var CmdAppsTCP = cmdAppsTCP
