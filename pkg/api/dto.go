@@ -6571,6 +6571,10 @@ type PreAuthPolicyObservation struct {
 // All percentage fields are clamped to [0, 100]; all latency
 // fields are milliseconds ≥ 0. NaN/Inf come back as zero — see
 // the server handler for the guard order.
+// FleetWakeP95MinSamples is the fewest wakes a fleet wake p95 is quoted
+// from; the public status page's wake query uses the same floor.
+const FleetWakeP95MinSamples = 20
+
 type AppMetricsResponse struct {
 	AppID  string `json:"app_id"`
 	Range  string `json:"range"`  // echoed window, e.g. "5m"
@@ -6601,6 +6605,11 @@ type AppMetricsResponse struct {
 	// as such in the UI; here it's named plainly because the
 	// dashboard copy does the labelling.
 	WakeP95MS float64 `json:"wake_p95_ms"`
+	// WakeSamples is the number of fleet wakes WakeP95MS was computed from.
+	// Below FleetWakeP95MinSamples the p95 is not meaningful (one slow wake
+	// in four made it 18 s) and clients show it as unavailable, as the
+	// status page does (Hunt 12 H12-40). Nil when the count is unknown.
+	WakeSamples *int64 `json:"wake_samples,omitempty"`
 	// QueueDepth (issue #1233 / ADR-123) is the current waiters
 	// in the per-app wake gate queue, sourced from
 	// gateway_queue_depth{app}. Bounded by per-plan MaxQueueDepth

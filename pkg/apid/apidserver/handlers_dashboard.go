@@ -1144,6 +1144,7 @@ func (s *server) fetchDashboardMetrics(ctx context.Context, log *slog.Logger, ap
 		ColdStartPct: resp.ColdStartPct,
 		WakeP95MS:    resp.WakeP95MS,
 	}
+	view.WakeP95Unavailable = resp.WakeSamples != nil && *resp.WakeSamples < api.FleetWakeP95MinSamples
 	if resp.CacheHitRatePct != nil {
 		view.CacheHitRatePct = *resp.CacheHitRatePct
 		view.CacheHitRateAvailable = true
