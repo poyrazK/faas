@@ -56,6 +56,10 @@ type ProductPlan struct {
 	// holds the plan (ADR-20261021154511). Omitted when zero, so existing
 	// catalog revisions hash as before.
 	MonthlyFeeMillicents int64 `json:"monthly_fee_millicents,omitempty"`
+	// TrialDays is the free trial a customer starts when first assigned to
+	// the plan without an earlier trial (ADR-20261021195901); omitted when
+	// zero.
+	TrialDays int64 `json:"trial_days,omitempty"`
 }
 
 type ProductFeatureGrant struct {
@@ -93,7 +97,26 @@ type ProductCustomer struct {
 	Revision           string `json:"revision"`
 	Plan               string `json:"plan"`
 	Suspended          bool   `json:"suspended"`
+	// TrialStartsAt and TrialEndsAt are the customer's one free trial in the
+	// app, [starts, ends) (ADR-20261021195901). The store sets them; an
+	// assignment request cannot. Omitted without a trial, so earlier
+	// previews hash as before.
+	TrialStartsAt *time.Time `json:"trial_starts_at,omitempty"`
+	TrialEndsAt   *time.Time `json:"trial_ends_at,omitempty"`
 }
+
+// InTrial reports whether at falls in the customer's trial.
+func (c ProductCustomer) InTrial(at time.Time) bool {
+	return c.TrialStartsAt != nil && c.TrialEndsAt != nil && !at.Before(*c.TrialStartsAt) && at.Before(*c.TrialEndsAt)
+}
+
+// ProductTrialRequest moves a running trial's end (ADR-20261021195901).
+type ProductTrialRequest struct {
+	EndsAt time.Time `json:"ends_at"`
+}
+
+// CodeProductTrialUnavailable refuses changing a trial that is not running.
+const CodeProductTrialUnavailable = "product_trial_unavailable"
 
 type ProductCustomersResponse struct {
 	Customers  []ProductCustomer `json:"customers"`
@@ -114,6 +137,9 @@ type ProductUsage struct {
 	Currency    string             `json:"currency"`
 	Lines       []ProductUsageLine `json:"lines"`
 	Provisional bool               `json:"provisional"`
+	// TrialStarts counts each feature's starts during the customer's trial
+	// in the period, which use no included starts (ADR-20261021195901).
+	TrialStarts map[string]int64 `json:"trial_starts,omitempty"`
 }
 
 type ProductPortal struct {
@@ -131,6 +157,10 @@ type ProductPortal struct {
 	// OverdueHold explains why new starts are refused while an exported
 	// invoice is overdue (ADR-20261018212918); separate from Suspended.
 	OverdueHold *ProductCustomerOverdueHold `json:"overdue_hold,omitempty"`
+	// IncludedRemaining is each grant's included starts left this month,
+	// which starts during the trial do not use (ADR-20261021154511,
+	// ADR-20261021195901).
+	IncludedRemaining map[string]int64 `json:"included_remaining,omitempty"`
 }
 
 // ProductOperationReceipt is immutable admission evidence persisted inside an
@@ -162,6 +192,12 @@ type ProductAdmissionEvidence struct {
 	// (ADR-20261021154511); the run was included when StartsBefore was
 	// below it.
 	IncludedStarts int64 `json:"included_starts,omitempty"`
+	// Trial marks a start admitted free during the customer's trial
+	// (ADR-20261021195901).
+	Trial bool `json:"trial,omitempty"`
+	// PaidStartsBefore is the month's starts outside the trial before this
+	// one, which decide included pricing when the customer has a trial.
+	PaidStartsBefore *int64 `json:"paid_starts_before,omitempty"`
 }
 
 type ProductReceiptEvidence struct {

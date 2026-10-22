@@ -261,6 +261,21 @@ test('included starts show the included runs left and confirm a free start befor
   await waitFor(() => b.get('features').children[0].children[1].textContent.startsWith('0 of 3 included runs left'));
   await b.submit(2); assert.match(b.confirms.at(-1), /EUR 0.20 will be recorded only if it succeeds/);
 });
+// ADR-20261021195901: during a free trial every start is free and the portal says until when.
+test('a running trial shows free runs until it ends and confirms a free start', async () => {
+  const ends = new Date(Date.now() + 5 * 86400000).toISOString();
+  const b = browser(async path => {
+    if (path.endsWith('/start')) return { ok: true, status: 202, json: async () => ({ id: ids.op }) };
+    if (path.endsWith('/product')) {
+      const value = fixture(); value.customer.trial_starts_at = new Date(Date.now() - 86400000).toISOString(); value.customer.trial_ends_at = ends;
+      value.catalog.spec.plans.starter.features.export = { included_starts: 3, monthly_starts: 10, unit_price_millicents: 20000 }; value.included_remaining = { export: 3 };
+      return { ok: true, status: 200, json: async () => value };
+    }
+  });
+  await b.signIn();
+  assert.equal(b.get('features').children[0].children[1].textContent, `Free during your trial until ${ends.slice(0, 10)}, then EUR 0.20 per successful run · 10 of 10 starts remaining this month.`);
+  await b.submit(1); assert.match(b.confirms[0], /free during your trial/);
+});
 test('reload discovers a lost acknowledgement without sending any work', async () => {
   const storage = new Map(), first = browser(async path => { if (path.endsWith('/start')) throw new Error('lost'); }, storage);
   await first.signIn(); await first.submit(8);

@@ -1838,6 +1838,22 @@ JOIN instances i ON i.id=proof.instance_id AND i.wake_id=proof.wake_id AND i.nod
 JOIN apps a ON a.id=i.app_id
 WHERE i.id=sqlc.arg(instance_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted';
 
+-- name: SetObservedAppWorkloadClass :execrows
+-- ADR-051: the workload class a cold boot observed. The caller holds the app
+-- row exclusively.
+UPDATE apps SET workload_class=sqlc.arg(workload_class)::text
+WHERE id=sqlc.arg(app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND status<>'deleted';
+
+-- name: RestampRuntimeInstanceConfigProof :execrows
+-- ADR-051 amendment (2026-10-22): moves a booted instance's proof from the
+-- fingerprint it was published with to the one its own observed workload
+-- class gives. Only the current wake's proof, and only from that fingerprint.
+UPDATE runtime_instance_config_proofs proof SET config_fingerprint=sqlc.arg(config_fingerprint)::text
+FROM instances i
+WHERE proof.instance_id=sqlc.arg(instance_id)::uuid AND i.id=proof.instance_id AND i.wake_id=proof.wake_id
+    AND i.node_id=proof.node_id AND i.deployment_id=proof.deployment_id
+    AND proof.config_fingerprint=sqlc.arg(previous_fingerprint)::text;
+
 -- name: UpdateInstanceStateIf :execrows
 UPDATE instances SET state=sqlc.arg(next_state)::text,
     parked_at=CASE WHEN sqlc.arg(next_state)::text='parked' THEN now() ELSE parked_at END,

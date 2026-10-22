@@ -4319,13 +4319,17 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// path runs the same scan-hint class the original cold boot
 	// committed). On cold-boot timeouts the report is empty and we
 	// keep the scan-hint class (no row mutation). Best-effort:
-	// SetAppWorkloadClass failure doesn't block the RUNNING
-	// transition — the class is metadata, not the boot path.
+	// a failed write doesn't block the RUNNING transition — the
+	// class is metadata, not the boot path. The class is part of
+	// the runtime configuration this boot's proof covers, so the
+	// same write moves the proof to the class it observed (ADR-051
+	// amendment 2026-10-22); otherwise the instance could never
+	// freeze, thaw or be promoted from the warm pool.
 	if out.Characterization.ObservedClass != "" {
 		observedClass := state.WorkloadClass(out.Characterization.ObservedClass)
 		if shouldPersistObservedClass(bootInput.appType, bootInput.spec.ExecutionMode, observedClass) {
-			if _, err := e.store.SetAppWorkloadClass(ctx, bootInput.appID, observedClass, "observed"); err != nil {
-				e.log.Warn("wake: SetAppWorkloadClass", "app", bootInput.appID, "err", err)
+			if _, err := e.store.RecordObservedWorkloadClass(ctx, bootInput.accountID, bootInput.appID, bootInput.insID, observedClass); err != nil {
+				e.log.Warn("wake: record observed workload class", "app", bootInput.appID, "err", err)
 			}
 		} else {
 			e.log.Warn("wake: ignoring incompatible characterization",
