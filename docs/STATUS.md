@@ -2079,6 +2079,13 @@ because guest-init wrapped its vsock listener with `net.FileListener`, which
 does not support AF_VSOCK; the SDK trigger failed after the rebase because
 main's outbound relay took host vsock port 1032, so the crash capture
 receiver moved to 1033.
+Re-verified 2026-10-22 after merging main (f433f78ef0), built from source on
+the test node with Go 1.26.9: `TestForkMetal` (all seven subtests, exec
+included), `TestCrashSnapshotMetal`, `TestLiveForkMetal`,
+`TestCrashSnapshotSDKMetal`, the PgStore fork/capture/exec tests and the
+crashcrypt, netns, fcvm, gateway, imaged, sched and guest-init unit tests
+pass, with no new leaks. The staged base-minimal (digest-pinned) scans with
+zero findings at any severity.
 
 Image runtime recovery update (2026-10-07): required primary image command
 checks now continue throughout serving VM lifetimes. Repeated fresh failures
