@@ -55,6 +55,9 @@ account during the preview; contact support to have it turned on for yours.
 - **Visibility.** Usage and cost by app, model and end user, budget alerts at
   80% and 100%, an opt-in request log, opt-in capture of request and response
   bodies, and replay of a captured call against other models.
+- **Dashboard.** See each integration's cost by model, app, tag and end user,
+  its latency, error rate, quality and drift alerts, and every agent trace
+  as a timeline of its calls, at `/dashboard/ai`.
 - **Quality signals.** Every call returns its ID in `X-Gregale-AI-Call` and is
   marked when its answer stopped at the token limit, was refused or filtered,
   was empty, or broke the JSON it was asked for. Apps rate calls by ID, a judge
@@ -192,6 +195,18 @@ gregale ai evaluate <route-id> --position 2 --judge <id> --judge-model gpt-5 --c
 This replays up to 50 of your latest captured calls (turn on
 `--request-log-content` for the route's first integration) and starts the
 canary only if the new model does not do worse.
+
+### In the dashboard
+
+`/dashboard/ai` lists your AI integrations with today's calls, cost, error
+rate and quality. Open one to see a UTC day by model and app, the most
+expensive tags and end users, latency and errors by model, drift alerts and
+recent traces. Its **Traces** page lists agent tasks, newest first; open one
+to see its calls on a timeline with their models, tokens, cost, requested
+tools, quality flags, ratings and scores.
+
+Latency and the trace timeline come from the request log, so turn it on with
+`gregale ai policy <id> --request-log on`.
 
 ## Limits and errors
 

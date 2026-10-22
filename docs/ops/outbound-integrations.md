@@ -1008,6 +1008,24 @@ resets, so start a new one.
 - With trace limits set, a call of a new trace past the day's 100,000 is
   refused with `trace_untracked`, since it could not be limited.
 
+## AI gateway dashboard
+
+The dashboard's AI pages read what the API serves (ADR 20261022145950). The
+same gate applies: the platform flag, the account's rollout and the plan;
+a gated account sees why.
+
+| Page | Shows |
+| --- | --- |
+| `/dashboard/ai` | Each AI integration with today's calls, error rate, cost, quality flags and mean score. |
+| `/dashboard/ai/{integration}` | One UTC day (last 90): cost and quality by model and by caller, the 20 most expensive tags and end users (last 31 days), latency and errors by model, the latest drift alerts and traces. |
+| `/dashboard/ai/{integration}/traces` | Traces newest first, filtered by the first call's app or end user, 50 per page. |
+| `/dashboard/ai/{integration}/traces/{trace}` | One trace's logged calls as a timeline, with each call's model, tokens, cost, time to first byte, requested tools, quality flags, rating and score. |
+
+Latency and error rate by model come from the latest 5,000 logged calls of
+the last 24 hours, read through the request log's (integration, time)
+index: the p50 and p95 time to first byte and duration. Without the request
+log the page says so.
+
 ## AI quality signals
 
 The gateway reports the quality of AI answers it can see without reading them
