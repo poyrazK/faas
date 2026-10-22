@@ -8049,7 +8049,7 @@ Wait for an exact or latest workflow run to succeed; failure or timeout exits no
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app for latest (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 | `--timeout <DURATION>` | maximum wait (default 5m; positive) |  |
 | `--poll-interval <DURATION>` | read interval (default 2s; 1s to 1h) |  |
 
@@ -8071,7 +8071,7 @@ Show details of a workflow run
 | `--check` | exit 0 only for a succeeded, non-cancelled run (explicit read only) |  |
 | `--interactive` | choose a run for inspection |  |
 | `--app <slug>` | app for latest or interactive selection (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 
 Examples:
 
@@ -8092,7 +8092,7 @@ Inspect queue reasons and preview recovery without changing the run
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug for latest (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 
 Examples:
 
@@ -8112,7 +8112,7 @@ List steps for an exact or latest workflow run
 |---|---|---|
 | `--failed-only` | show only failed steps with inspection commands |  |
 | `--app <SLUG>` | app slug for latest (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 
 Examples:
 
@@ -8131,7 +8131,7 @@ List retry attempts and managed effect delivery status for a workflow step
 |---|---|---|
 | `--failed-only` | show only failed attempts |  |
 | `--app <SLUG>` | app for latest (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 
 Examples:
 
@@ -8191,7 +8191,7 @@ List continuation history for an exact or latest workflow run
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app for latest (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 
 Examples:
 

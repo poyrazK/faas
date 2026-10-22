@@ -2360,3 +2360,4 @@ var PrintEdgeRuleEvents = printEdgeRuleEvents
 var ResolveArchiveInstance = resolveArchiveInstance
 var RequestLatencyMS = requestLatencyMS
 var SafeDeployWaitTimeoutSeconds = safeDeployWaitTimeoutSeconds
+var InferLatestWorkflowName = inferLatestWorkflowName
