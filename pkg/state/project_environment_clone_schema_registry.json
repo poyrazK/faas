@@ -8912,6 +8912,20 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_live_logins",
+    "columns": [
+      "account_id",
+      "awake",
+      "created_at",
+      "database_id",
+      "provider_identity_id",
+      "recipient",
+      "sealed_login",
+      "slot"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_resizes",
     "columns": [
       "account_id",
@@ -15542,6 +15556,57 @@
     "kind": "configuration"
   },
   {
+    "table": "scenario_captured_events",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "data",
+      "event_id",
+      "id",
+      "oversized",
+      "run_id",
+      "schema_version",
+      "source",
+      "type"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_captured_platform_calls",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "idempotency_key",
+      "kind",
+      "message",
+      "name",
+      "oversized",
+      "run_id",
+      "target"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_captured_queue_messages",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "kind",
+      "message",
+      "oversized",
+      "queue_name",
+      "run_id",
+      "schedule",
+      "target"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "scenario_cold_preparations",
     "columns": [
       "account_id",
@@ -16912,6 +16977,80 @@
       "recipient_id",
       "status",
       "workflow_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_release_approval_policies",
+    "columns": [
+      "account_id",
+      "after_stage",
+      "allow_self_approval",
+      "app_id",
+      "approvers",
+      "created_at",
+      "notify_channel_ids",
+      "required_approvals",
+      "timeout_minutes",
+      "updated_at",
+      "updated_by"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "deployment_release_approvals",
+    "columns": [
+      "account_id",
+      "app_id",
+      "approver",
+      "approver_account_id",
+      "approver_role",
+      "comment",
+      "created_at",
+      "decision",
+      "deployment_id",
+      "id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "release_approval_events",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempts",
+      "channel_ids",
+      "created_at",
+      "delivered_at",
+      "deployment_id",
+      "event",
+      "id",
+      "last_error",
+      "next_attempt_at",
+      "payload",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scheduled_releases",
+    "columns": [
+      "account_id",
+      "app_id",
+      "canary",
+      "created_at",
+      "deployment_id",
+      "id",
+      "notify_channel_ids",
+      "outcome_code",
+      "outcome_detail",
+      "override_freeze",
+      "override_freeze_ids",
+      "release_at",
+      "scheduled_by",
+      "started_at",
+      "state",
+      "updated_at"
     ],
     "kind": "operational"
   }

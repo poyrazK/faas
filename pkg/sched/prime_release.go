@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -30,9 +29,7 @@ func (e *Engine) releaseAllowsPrime(ctx context.Context, dep state.Deployment) (
 	if scope == "" {
 		scope = "default"
 	}
-	return task.Status == state.AppTaskSucceeded && task.Kind == state.AppTaskKindRelease &&
-		task.AppID == dep.AppID && task.DeploymentID == dep.ID &&
+	return task.Status == state.AppTaskSucceeded &&
 		task.ArtifactKey == dep.RootfsKey && task.ImageDigest == dep.ImageDigest &&
-		task.DeploymentScope == scope && task.CommandShell == dep.ReleaseCommandShell &&
-		slices.Equal(task.Command, dep.ReleaseCommand), nil
+		task.DeploymentScope == scope && state.ReleaseTaskRunsDeploymentRelease(task, dep), nil
 }

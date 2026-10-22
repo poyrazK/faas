@@ -3,6 +3,7 @@ package livequeries_test
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,6 +24,28 @@ import (
 type databases struct {
 	db  managedpostgres.Database
 	hub string
+	// issuer, when set, is the provider's live-login issuer.
+	issuer   func(slot string) (managedpostgres.LiveLogin, error)
+	revoke   error
+	revoked  []string
+	issuedTo []string
+}
+
+func (d *databases) IssueLiveLogin(_ context.Context, _ managedpostgres.Database, slot string) (managedpostgres.LiveLogin, bool, error) {
+	if d.issuer == nil {
+		return managedpostgres.LiveLogin{}, false, nil
+	}
+	d.issuedTo = append(d.issuedTo, slot)
+	m, err := d.issuer(slot)
+	return m, err == nil, err
+}
+
+func (d *databases) RevokeLiveLogin(_ context.Context, _ managedpostgres.Database, slot string) error {
+	if d.revoke != nil {
+		return d.revoke
+	}
+	d.revoked = append(d.revoked, slot)
+	return nil
 }
 
 func (d *databases) Get(_ context.Context, accountID, id string) (managedpostgres.Database, error) {
@@ -38,15 +61,21 @@ func (d *databases) LiveHub(managedpostgres.Database) (string, error) { return d
 type keys struct {
 	sealed map[string]livekeys.NewKey
 	list   []livekeys.Key // newest first
+	login  *livekeys.Login
 }
 
-func (k *keys) Enable(_ context.Context, _, _ string, key livekeys.NewKey) error {
+func (k *keys) Enable(ctx context.Context, _, _ string, key livekeys.NewKey, issue func(context.Context) (*livekeys.Login, error)) error {
 	for _, x := range k.list {
 		if x.RetiresAt.IsZero() {
 			return livekeys.ErrEnabled
 		}
 	}
+	login, err := issue(ctx)
+	if err != nil {
+		return err
+	}
 	k.add(key)
+	k.login = login
 	return nil
 }
 
@@ -64,9 +93,14 @@ func (k *keys) Rotate(_ context.Context, _, _ string, key livekeys.NewKey, overl
 	return nil
 }
 
-func (k *keys) Disable(context.Context, string, string) (bool, error) {
+func (k *keys) Disable(ctx context.Context, _, _ string, revoke func(context.Context, livekeys.Login) error) (bool, error) {
+	if k.login != nil {
+		if err := revoke(ctx, *k.login); err != nil {
+			return false, err
+		}
+	}
 	removed := len(k.list) > 0
-	k.list = nil
+	k.list, k.login = nil, nil
 	return removed, nil
 }
 
@@ -241,5 +275,57 @@ func TestLiveQueriesRefusals(t *testing.T) {
 	h := newHarness(t)
 	if r := h.do(t, "GET", path, "", nilService.Get); r.code != "live_queries_unavailable" {
 		t.Fatalf("unconfigured get = %+v", r)
+	}
+}
+
+// adr: 20261016151947 — where the provider issues one, enabling stores the
+// database's live login sealed to livequeryd: its connection string, which
+// apid cannot read back, and the slot named for the database. A login that
+// cannot be issued leaves live queries off, and disabling revokes the login
+// and its slot first, keeping everything when that fails.
+func TestLiveQueriesLogins(t *testing.T) {
+	h := newHarness(t)
+	h.svc.Log = slog.New(slog.DiscardHandler)
+	material := managedpostgres.CredentialMaterial{ProviderIdentityID: "gregale_live_ab", Username: "gregale_live_ab", Password: "pw",
+		Database: "neondb", TLSMode: "require", Endpoints: []managedpostgres.Endpoint{{Role: managedpostgres.EndpointDirect, Host: "ep-1.neon.tech", Port: 5432}}}
+	h.db.issuer = func(string) (managedpostgres.LiveLogin, error) {
+		return managedpostgres.LiveLogin{}, managedpostgres.ErrUnavailable
+	}
+	if got := h.do(t, http.MethodPost, "/", "", h.svc.Enable); got.status < 400 || len(h.keys.list) != 0 {
+		t.Fatalf("enable with a failing provider = %d, keys %v; want an error and live queries off", got.status, h.keys.list)
+	}
+	h.db.issuer = func(string) (managedpostgres.LiveLogin, error) {
+		return managedpostgres.LiveLogin{CredentialMaterial: material, Awake: "neon:proj-1/ep-1"}, nil
+	}
+	if got := h.do(t, http.MethodPost, "/", "", h.svc.Enable); got.status != http.StatusCreated {
+		t.Fatalf("enable = %d %s", got.status, got.code)
+	}
+	login := h.keys.login
+	if login == nil || login.Slot != "gregale_live_db_1" || login.Identity != "gregale_live_ab" || login.Recipient != h.identity.Recipient().String() ||
+		login.Awake != "neon:proj-1/ep-1" {
+		t.Fatalf("stored login %+v", login)
+	}
+	namespace, plain, err := secretbox.OpenBytes(h.identity, login.Sealed)
+	if err != nil || namespace != livekeys.LoginSealNamespace || !strings.HasPrefix(string(plain), "postgresql://gregale_live_ab:pw@ep-1.neon.tech:5432/neondb") {
+		t.Fatalf("sealed login opens to %q in %q: %v", plain, namespace, err)
+	}
+
+	h.db.revoke = managedpostgres.ErrUnavailable
+	if got := h.do(t, http.MethodDelete, "/", "", h.svc.Disable); got.status < 400 || h.keys.login == nil || len(h.keys.list) == 0 {
+		t.Fatalf("disable with a failing revoke = %d; want an error and live queries kept", got.status)
+	}
+	h.db.revoke = nil
+	if got := h.do(t, http.MethodDelete, "/", "", h.svc.Disable); got.status != http.StatusNoContent {
+		t.Fatalf("disable = %d %s", got.status, got.code)
+	}
+	if len(h.db.revoked) != 1 || h.db.revoked[0] != "gregale_live_db_1" || h.keys.login != nil {
+		t.Fatalf("revoked slots %v, login left %+v", h.db.revoked, h.keys.login)
+	}
+
+	// A provider that issues no logins: live queries still turn on, without a
+	// login, and an operator lists the database for livequeryd.
+	h.db.issuer = nil
+	if got := h.do(t, http.MethodPost, "/", "", h.svc.Enable); got.status != http.StatusCreated || h.keys.login != nil {
+		t.Fatalf("enable without login issuance = %d, login %+v", got.status, h.keys.login)
 	}
 }

@@ -1,6 +1,17 @@
 # Architecture Decision Records
 
 - [Product Control free trials](20261021195901-product-control-free-trials.md)
+- [ADR-20261021210000: Enrolled apps receive no account events](20261021210000-rehearsal-event-fanout-exclusion.md)
+- [ADR-20261021180000: Rehearsal capture of realtime publishes and signals](20261021180000-rehearsal-realtime-capture.md)
+- [ADR-20261021150000: Rehearsal capture of workflow starts and events](20261021150000-rehearsal-workflow-capture.md)
+- [ADR-20261021120000: Rehearsal capture of public-API event publishes](20261021120000-rehearsal-public-api-event-capture.md)
+- [ADR-20261021090000: Rehearsal queue capture](20261021090000-rehearsal-queue-capture.md)
+- [ADR-20261020200000: Rehearsal crons fire from the recipe, not the clock](20261020200000-rehearsal-crons-fire-from-the-recipe.md)
+- [ADR-20261020180000: Rehearsal PostgreSQL schema inventory](20261020180000-rehearsal-postgres-schema-inventory.md)
+- [ADR-20261020150000: Contained rehearsals run the candidate's release command](20261020150000-rehearsal-contained-release-commands.md)
+- [ADR-20261020090000: Rehearsal event capture](20261020090000-rehearsal-event-capture.md)
+- [ADR-20261019180000: Rehearsal side effects stay inside the run](20261019180000-rehearsal-side-effects-stay-inside-the-run.md)
+- [ADR-20261019120000: Rehearsal runtime hooks stay off ordinary hot paths](20261019120000-rehearsal-runtime-hot-path-isolation.md)
 - [Product Control plan fees, included starts and overage](20261021154511-product-control-plan-fees-and-overage.md)
 - [Data API file storage](20261021101510-data-api-file-storage.md)
 - [Keep the edge lane off the store type: edge store](20261021092138-edge-store-blast-radius.md)

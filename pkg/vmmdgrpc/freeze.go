@@ -39,7 +39,8 @@ type frozenReporter interface {
 }
 
 // FreezeInstance pauses an idle instance in place for the frozen tier
-// (ADR-1151). Pooled forward sessions to the paused guest are dropped.
+// (ADR-1151). Pooled forward sessions to the paused guest are dropped, and
+// its stream bridge closes until the thaw starts it again.
 func (s *Server) FreezeInstance(ctx context.Context, req *vmmdpb.FreezeInstanceRequest) (*vmmdpb.FreezeInstanceResponse, error) {
 	const op = "FreezeInstance"
 	start := time.Now()
@@ -61,7 +62,7 @@ func (s *Server) FreezeInstance(ctx context.Context, req *vmmdpb.FreezeInstanceR
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
-	s.forgetForwarding(ctx, req.GetInstance())
+	s.suspendForwarding(ctx, req.GetInstance())
 	return &vmmdpb.FreezeInstanceResponse{
 		Instance:            req.GetInstance(),
 		PauseMicros:         rep.Pause.Microseconds(),
@@ -96,9 +97,14 @@ func (s *Server) ThawInstance(ctx context.Context, req *vmmdpb.ThawInstanceReque
 			return nil, grpcerr.ToStatus(p)
 		}
 	}
+	// The bridge process starts while the guest resumes, as a restore's does
+	// (wakeWithBridgePrewarm): otherwise the first request after the thaw
+	// spawns it on its own path. A failed thaw drops it again.
+	s.resumeStreamBridges(ctx, req.GetInstance())
 	err := t.ThawWith(ctx, req.GetInstance(), fcvm.ThawOptions{RunResumeHook: req.GetRunAfterRestore()})
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
+		s.forgetForwarding(ctx, req.GetInstance())
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	return &vmmdpb.ThawInstanceResponse{
@@ -106,6 +112,15 @@ func (s *Server) ThawInstance(ctx context.Context, req *vmmdpb.ThawInstanceReque
 		ImageHealthcheckVerified: req.GetImageHealthcheckRequired(),
 		AfterRestoreRan:          req.GetRunAfterRestore(),
 	}, nil
+}
+
+// resumeStreamBridges starts a thawing instance's bridges again when the
+// persistent v2 bridge is in use; the rollback switches keep the old path.
+func (s *Server) resumeStreamBridges(ctx context.Context, instance string) {
+	if s.streamBridges == nil || currentStreamBridgeVersion() != "v2" || !persistentStreamBridgeEnabled() {
+		return
+	}
+	s.streamBridges.resume(ctx, instance)
 }
 
 // prepareGuest runs before a forward dials its guest; the caller has marked
