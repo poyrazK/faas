@@ -1,5 +1,5 @@
 // adr: 20261022155812 — a pull worker leases only its own reviewed smoke.
-package pgintegration
+package pgintegration_test
 
 import (
 	"encoding/json"
@@ -140,8 +140,13 @@ func TestEnvironmentQualificationPullSmokeLeasesOnlyTheCandidatesReviewedMessage
 		}
 
 		leases, err := pulls.LeaseEnvironmentQualificationPullSmoke(t.Context(), caller, 30*time.Second)
-		if err != nil || len(leases) != 1 || leases[0].MessageID != messageID || string(leases[0].Payload) != `{"id":"smoke"}` || leases[0].Attempt != 1 {
+		if err != nil || len(leases) != 1 || leases[0].MessageID != messageID || leases[0].Attempt != 1 {
 			t.Fatalf("lease = %+v %v", leases, err)
+		}
+		// PostgreSQL returns jsonb in its own spacing; the value is what is reviewed.
+		var payload map[string]string
+		if err := json.Unmarshal(leases[0].Payload, &payload); err != nil || len(payload) != 1 || payload["id"] != "smoke" {
+			t.Fatalf("leased payload = %s %v", leases[0].Payload, err)
 		}
 		receipt := leases[0].Receipt
 		if again, err := pulls.LeaseEnvironmentQualificationPullSmoke(t.Context(), caller, 30*time.Second); err != nil || len(again) != 0 {
