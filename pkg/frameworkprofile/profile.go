@@ -57,8 +57,13 @@ type Profile struct {
 	// ConfigFile identifies the optional source manifest that supplied an
 	// explicit hosting override. It is metadata only; the values above remain
 	// the effective contract used by the builder and runtime.
-	ConfigFile string    `json:"config_file,omitempty"`
-	Warnings   []Warning `json:"warnings,omitempty"`
+	ConfigFile string `json:"config_file,omitempty"`
+	// StartFromConfig reports that StartCommand is gregale.yaml's explicit
+	// hosting.start. It replaces the built image's command, which a Railpack
+	// build with no detected start inherits from the runtime base (python3 on
+	// the Python runner) (Hunt 12 H12-29).
+	StartFromConfig bool      `json:"start_from_config,omitempty"`
+	Warnings        []Warning `json:"warnings,omitempty"`
 	// ImageCommand is the accepted Compose CMD contract. Its presence freezes
 	// image semantics even when Cmd is nil (inherit) or the app changes class.
 	ImageCommand     *ImageCommand     `json:"image_command,omitempty"`
@@ -173,6 +178,7 @@ func Analyze(fsys fs.FS) (Profile, error) {
 func applyHostingConfig(profile *Profile, cfg hostingconfig.Config) {
 	if start := strings.TrimSpace(cfg.Start); start != "" {
 		profile.StartCommand = start
+		profile.StartFromConfig = true
 	}
 	if cfg.Port != 0 {
 		profile.Port = cfg.Port

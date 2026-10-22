@@ -229,3 +229,53 @@ func TestAnalyzeWarnsForDevelopmentNodeCommand(t *testing.T) {
 	}
 	t.Fatalf("warnings = %+v, want development_start_command", got.Warnings)
 }
+
+// Only gregale.yaml's hosting.start marks the start command explicit; an
+// inferred command must not replace the built image's launcher (Hunt 12
+// H12-29).
+func TestAnalyzeMarksHostingStartExplicit(t *testing.T) {
+	tests := []struct {
+		name     string
+		files    fstest.MapFS
+		wantCmd  string
+		explicit bool
+	}{
+		{
+			name: "hosting.start",
+			files: fstest.MapFS{
+				"requirements.txt": {Data: []byte("flask\n")},
+				"worker.py":        {Data: []byte("print('x')\n")},
+				"gregale.yaml":     {Data: []byte("hosting:\n  start: python worker.py\n")},
+			},
+			wantCmd: "python worker.py", explicit: true,
+		},
+		{
+			name: "hosting block without start",
+			files: fstest.MapFS{
+				"requirements.txt": {Data: []byte("flask\n")},
+				"app.py":           {Data: []byte("from flask import Flask\napp = Flask(__name__)\n")},
+				"gregale.yaml":     {Data: []byte("hosting:\n  port: 9000\n")},
+			},
+			explicit: false,
+		},
+		{
+			name: "no manifest",
+			files: fstest.MapFS{
+				"requirements.txt": {Data: []byte("flask\n")},
+				"app.py":           {Data: []byte("from flask import Flask\napp = Flask(__name__)\n")},
+			},
+			explicit: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			profile, err := Analyze(tt.files)
+			if err != nil {
+				t.Fatalf("Analyze: %v", err)
+			}
+			if profile.StartFromConfig != tt.explicit || (tt.wantCmd != "" && profile.StartCommand != tt.wantCmd) {
+				t.Fatalf("start = %q explicit=%v; want %q explicit=%v", profile.StartCommand, profile.StartFromConfig, tt.wantCmd, tt.explicit)
+			}
+		})
+	}
+}
