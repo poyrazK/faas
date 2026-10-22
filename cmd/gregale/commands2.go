@@ -5832,10 +5832,16 @@ func cmdUsageList(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "No usage recorded for %s.\n", *month)
 		return 0
 	}
+	// Largest consumers first, then a total: the rows came in app-id order,
+	// so 200+ lines (most of them deleted apps) had to be summed by eye
+	// (Hunt 12 H12-2).
+	sortUsageRows(rows)
 	// The included allowance is account-wide, so it is printed once rather
 	// than repeated on every app row (production-us hunt #4).
 	_, _ = fmt.Fprintf(osStdout, "App — requests · GB-hours · egress\n")
+	var totalMBSeconds int64
 	for _, u := range rows {
+		totalMBSeconds += u.MBSeconds
 		// ADR-046: tx_bytes (HTTP response bytes, gateway-side) and
 		// net_tx_bytes (root-side vethHost interface bytes, includes
 		// framing) are informational, NOT billed. Surfaced as a
@@ -5853,8 +5859,23 @@ func cmdUsageList(args []string) int {
 		}
 		_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f\n", appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6)
 	}
+	_, _ = fmt.Fprintf(osStdout, "Total: %.3f GB-hours across %d apps\n", float64(totalMBSeconds)/3.6e6, len(rows))
 	_, _ = fmt.Fprintf(osStdout, "Plan allowance: included %d GB-h this month, shared by every app\n", rows[0].IncludedGBHours)
 	return 0
+}
+
+// sortUsageRows orders usage rows by GB-hours, then requests, descending,
+// with the app id as a stable tiebreak.
+func sortUsageRows(rows []api.UsageResponse) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].MBSeconds != rows[j].MBSeconds {
+			return rows[i].MBSeconds > rows[j].MBSeconds
+		}
+		if rows[i].Requests != rows[j].Requests {
+			return rows[i].Requests > rows[j].Requests
+		}
+		return rows[i].AppID < rows[j].AppID
+	})
 }
 
 // cmdUsageSummary: GET /v1/usage/summary?month=YYYY-MM. Account-wide
