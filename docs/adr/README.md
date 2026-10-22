@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261022082721: Rehearsal reads of captured work, inbox and async invoke](20261022082721-rehearsal-captured-reads-inbox-async-invoke.md)
 - [ADR-20261021210000: Enrolled apps receive no account events](20261021210000-rehearsal-event-fanout-exclusion.md)
 - [ADR-20261021180000: Rehearsal capture of realtime publishes and signals](20261021180000-rehearsal-realtime-capture.md)
 - [ADR-20261021150000: Rehearsal capture of workflow starts and events](20261021150000-rehearsal-workflow-capture.md)

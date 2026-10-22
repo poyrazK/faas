@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -89,6 +90,7 @@ type memScenarioCapturedEvent struct {
 	id, accountID, runID, appID string
 	event                       ScenarioEventCapture
 	oversized                   bool
+	createdAt                   time.Time
 }
 
 func sameScenarioAccount(a, b string) bool {
@@ -199,7 +201,7 @@ func (m *MemStore) CaptureScenarioEvent(ctx context.Context, appID, installedRun
 		return true, nil
 	}
 	row := memScenarioCapturedEvent{id: uuid.NewString(), accountID: member.AccountID, runID: member.RunID, appID: member.AppID, event: event,
-		oversized: oversized}
+		oversized: oversized, createdAt: time.Now().UTC()}
 	row.event.Data = append(json.RawMessage(nil), event.Data...)
 	if row.oversized {
 		row.event.Data = nil

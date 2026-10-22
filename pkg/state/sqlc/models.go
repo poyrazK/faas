@@ -13417,17 +13417,18 @@ type ScenarioCapturedPlatformCall struct {
 }
 
 type ScenarioCapturedQueueMessage struct {
-	ID        pgtype.UUID
-	AccountID pgtype.UUID
-	RunID     string
-	AppID     pgtype.UUID
-	Kind      string
-	Target    string
-	QueueName string
-	Schedule  string
-	Message   []byte
-	Oversized bool
-	CreatedAt pgtype.Timestamptz
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	RunID       string
+	AppID       pgtype.UUID
+	Kind        string
+	Target      string
+	QueueName   string
+	Schedule    string
+	Message     []byte
+	Oversized   bool
+	CreatedAt   pgtype.Timestamptz
+	ScheduledAt pgtype.Timestamptz
 }
 
 type ScenarioColdPreparation struct {

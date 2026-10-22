@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -52,6 +53,7 @@ var ErrScenarioIdempotencyConflict = fmt.Errorf("%w: rehearsal idempotency key r
 type memScenarioCapturedPlatformCall struct {
 	id, accountID, runID, appID, target string
 	call                                ScenarioPlatformCallCapture
+	createdAt                           time.Time
 }
 
 func scenarioRealtimeKind(kind string) bool {
@@ -239,7 +241,8 @@ func (m *MemStore) CaptureScenarioPlatformCall(ctx context.Context, appID string
 	if captured > api.MaxScenarioCapturedPlatformCalls {
 		return ScenarioPlatformCallResult{ID: uuid.NewString()}, true, nil
 	}
-	row := memScenarioCapturedPlatformCall{id: uuid.NewString(), accountID: member.AccountID, runID: member.RunID, appID: member.AppID, target: target, call: call}
+	row := memScenarioCapturedPlatformCall{id: uuid.NewString(), accountID: member.AccountID, runID: member.RunID, appID: member.AppID, target: target, call: call,
+		createdAt: time.Now().UTC()}
 	row.call.Message = append(json.RawMessage(nil), call.Message...)
 	if call.Oversized {
 		row.call.Message = nil
