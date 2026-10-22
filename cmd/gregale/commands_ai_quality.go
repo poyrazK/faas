@@ -137,7 +137,7 @@ func applyQualityPolicy(req *api.PutOutboundAIPolicyRequest, percent, judge, mod
 			evaluation = &api.OutboundAIOnlineEvaluation{}
 		}
 		if percent != "" {
-			value, err := strconv.Atoi(percent)
+			value, err := strconv.ParseInt(percent, 10, 32)
 			if err != nil || value < 1 || value > 100 {
 				return fmt.Errorf("--online-eval-percent %q must be 1 to 100, or none", percent)
 			}
