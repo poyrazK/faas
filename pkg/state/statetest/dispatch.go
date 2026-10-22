@@ -168,6 +168,7 @@ var memDispatched = map[string]bool{
 	"UpsertRouteInsight":                                      true,
 	"RouteAwakeRouteMinutes":                                  true,
 	"RouteAwakeSourceMinutes":                                 true,
+	"RouteAwakeWorkMinutes":                                   true,
 	"RuntimeAppValuesForDeployment":                           true,
 	"RuntimeScalingStateForDeployment":                        true,
 	"SafeReleaseWorkerLeaseHealth":                            true,
@@ -1258,6 +1259,15 @@ func (s *Mem) RouteAwakeSourceMinutes(p0 context.Context, p1 sqlc.RouteAwakeSour
 		return o.RouteAwakeSourceMinutes(p0, p1)
 	}
 	return s.MemStore.RouteAwakeSourceMinutes(p0, p1)
+}
+
+func (s *Mem) RouteAwakeWorkMinutes(p0 context.Context, p1 sqlc.RouteAwakeWorkMinutesParams) ([]sqlc.RouteAwakeWorkMinutesRow, error) {
+	if o, ok := s.over.(interface {
+		RouteAwakeWorkMinutes(context.Context, sqlc.RouteAwakeWorkMinutesParams) ([]sqlc.RouteAwakeWorkMinutesRow, error)
+	}); ok {
+		return o.RouteAwakeWorkMinutes(p0, p1)
+	}
+	return s.MemStore.RouteAwakeWorkMinutes(p0, p1)
 }
 
 func (s *Mem) RuntimeAppValuesForDeployment(p0 context.Context, p1 string, p2 string, p3 string) (state.RuntimeAppValuesSnapshot, error) {

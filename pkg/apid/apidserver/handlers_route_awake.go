@@ -45,8 +45,8 @@ func (s *server) getRouteAwake(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	out := routeawake.Analyze(routeawake.Inputs{
 		App: app.Slug, From: window.From, Until: window.Until,
-		IdleTimeoutS: limits.EffectiveIdleTimeoutS(string(app.Type), app.IdleTimeoutS), RAMMB: app.RAMMB,
-		Awake: data.Awake, Routes: data.Routes, Sources: data.Sources,
+		IdleTimeoutS: limits.EffectiveIdleTimeoutS(string(app.Type), app.IdleTimeoutS), TailTimeoutS: limits.WaitUntilTimeoutS(),
+		RAMMB: app.RAMMB, Awake: data.Awake, Routes: data.Routes, Sources: data.Sources,
 	})
 	out.Slug, out.WindowClamped, out.MinInstances = app.Slug, window.WindowClamped, app.MinInstances
 	out.From, out.Until = window.From.Format(time.RFC3339Nano), window.Until.Format(time.RFC3339Nano)
