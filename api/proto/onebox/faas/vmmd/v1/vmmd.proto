@@ -1693,7 +1693,13 @@ message PingResponse {
   bool supports_secret_aliases = 3;
   bool supports_image_healthcheck = 4;
   bool supports_image_healthcheck_monitoring = 5;
+  // base_generations reports, for each runtime base this vmmd is configured
+  // with, whether it can adopt the configured generation
+  // (ADR-20261022184531). schedd marks a node degraded while one cannot.
+  // An older vmmd sends none, which schedd reads as no evidence.
+  repeated BaseGenerationReadiness base_generations = 6;
 }
+
 
 // ForwardHTTPRequest and ForwardHTTPResponse were removed in PR-D
 // (ADR-047). The legacy unary RPC was the original issue #98 /
@@ -3150,4 +3156,19 @@ message InflightRequestTraceRequest {
 // traceparent, or nothing.
 message InflightRequestTraceResponse {
   string traceparent = 1;
+}
+
+// BaseGenerationReadiness is one configured runtime base and whether this
+// node can boot it.
+message BaseGenerationReadiness {
+  string base_key = 1;
+  // generation is the configured immutable reference (an OCI digest).
+  string generation = 2;
+  // adoptable is false only when vmmd proved it cannot adopt generation:
+  // its cache does not hold it and the canonical scan sidecar names
+  // another generation. A sidecar vmmd could not read reports adoptable;
+  // the wake path still refuses on its own evidence.
+  bool adoptable = 3;
+  // reason explains a false adoptable; empty otherwise.
+  string reason = 4;
 }

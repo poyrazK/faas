@@ -6108,6 +6108,13 @@ const (
 	// runs under the WakeQueueTTLSeconds hold, so failover never extends it.
 	WakeFailoverMinRemainingMs = 2000
 
+	// BaseGenerationReadinessCheckIntervalSeconds is how old vmmd's verdict
+	// on adopting its configured base generations may get before the next
+	// Ping starts a fresh check; the timeout bounds that background check
+	// (ADR-20261022184531). Ping itself never waits for it.
+	BaseGenerationReadinessCheckIntervalSeconds = 30
+	BaseGenerationReadinessCheckTimeoutSeconds  = 10
+
 	// GatewayWakeAdmissionParallelism bounds concurrent cold-wake
 	// admissions in one gateway process. The gateway still coalesces
 	// requests per app; this cap protects the control plane when many

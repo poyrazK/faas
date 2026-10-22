@@ -1077,6 +1077,8 @@ type Manager struct {
 	// across registry I/O.
 	baseGenerations  map[string]string
 	baseGenerationMu sync.Mutex
+	// baseReadiness caches the verdict Ping reports (ADR-20261022184531).
+	baseReadiness baseGenerationReadinessCache
 	// imageScanMetrics is the per-daemon OpsMetrics the scan sidecar
 	// findings get fed into (issue #299). Wired via SetImageScanMetrics,
 	// mirroring SetHostIdentity above (nil-safe). The counter is
