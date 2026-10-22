@@ -168,7 +168,6 @@ EditPublicStatusEventTitle
 EditPublicStatusUpdateMessage
 ExpireOrgInvitations
 ExpireUploadSession
-FailBuild
 FailRunningInstanceOnDeadNode
 FailSourceDeployment
 FinalizeServiceRollout

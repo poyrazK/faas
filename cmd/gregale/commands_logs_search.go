@@ -22,7 +22,7 @@ const (
 // logSearchFlags are the ledger filters `gregale logs search` and
 // `gregale logs facets` share (ADR-20261018083536).
 type logSearchFlags struct {
-	app, query, since, until, source, level, route, status, deployment, request, trace *string
+	app, query, since, until, source, level, route, status, deployment, request, trace, saved *string
 }
 
 func newLogSearchFlags(fs *flag.FlagSet) logSearchFlags {
@@ -38,6 +38,7 @@ func newLogSearchFlags(fs *flag.FlagSet) logSearchFlags {
 		deployment: fs.String("deployment", "", "deployment id"),
 		request:    fs.String("request", "", "request id or trace id"),
 		trace:      fs.String("trace", "", "W3C trace id"),
+		saved:      fs.String("saved", "", "apply a saved search's filters (gregale logs saved); other flags override them"),
 	}
 }
 
@@ -45,11 +46,20 @@ func (f logSearchFlags) values() url.Values {
 	q := url.Values{}
 	for key, v := range map[string]*string{
 		"q": f.query, "since": f.since, "until": f.until, "source": f.source, "level": f.level, "route": f.route,
-		"status": f.status, "deployment_id": f.deployment, "request_id": f.request, "trace_id": f.trace,
+		"status": f.status, "deployment_id": f.deployment, "request_id": f.request, "trace_id": f.trace, "saved": f.saved,
 	} {
 		if s := strings.TrimSpace(*v); s != "" {
 			q.Set(key, s)
 		}
+	}
+	return q
+}
+
+// storedValues are the filters a saved search keeps: no window, no saved name.
+func (f logSearchFlags) storedValues() url.Values {
+	q := f.values()
+	for _, key := range []string{"since", "until", "saved"} {
+		q.Del(key)
 	}
 	return q
 }
@@ -96,7 +106,7 @@ func parseLogSearchArgs(fs *flag.FlagSet, f logSearchFlags, args []string, usage
 
 // cmdLogsSearch implements `gregale logs search [<slug>]`.
 func cmdLogsSearch(args []string) int {
-	const usage = "usage: gregale logs search [<slug>] [--q TEXT] [--since 1h] [--until RFC3339] [--source S] [--level error,warn] [--route R] [--status 5xx] [--deployment ID] [--request ID] [--trace ID] [--limit N] [--cursor C]"
+	const usage = "usage: gregale logs search [<slug>] [--q TEXT] [--since 1h] [--until RFC3339] [--source S] [--level error,warn] [--route R] [--status 5xx] [--deployment ID] [--request ID] [--trace ID] [--saved NAME] [--limit N] [--cursor C]"
 	fs := newFlagSet("logs search", flag.ContinueOnError)
 	f := newLogSearchFlags(fs)
 	limit := fs.Int("limit", 100, "events per page (1..200)")
@@ -123,7 +133,7 @@ func cmdLogsSearch(args []string) int {
 
 // cmdLogsFacets implements `gregale logs facets [<slug>]`.
 func cmdLogsFacets(args []string) int {
-	const usage = "usage: gregale logs facets [<slug>] [--q TEXT] [--since 1h] [--until RFC3339] [--source S] [--level error,warn] [--route R] [--status 5xx] [--deployment ID] [--request ID] [--trace ID]"
+	const usage = "usage: gregale logs facets [<slug>] [--q TEXT] [--since 1h] [--until RFC3339] [--source S] [--level error,warn] [--route R] [--status 5xx] [--deployment ID] [--request ID] [--trace ID] [--saved NAME]"
 	fs := newFlagSet("logs facets", flag.ContinueOnError)
 	f := newLogSearchFlags(fs)
 	slug, ok := parseLogSearchArgs(fs, f, args, usage)

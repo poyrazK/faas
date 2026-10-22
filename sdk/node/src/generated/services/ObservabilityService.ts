@@ -8,6 +8,9 @@ import type { AppLogDrainResponse } from '../models/AppLogDrainResponse.js';
 import type { CreateAppLogDrainRequest } from '../models/CreateAppLogDrainRequest.js';
 import type { LogEventFacetsResponse } from '../models/LogEventFacetsResponse.js';
 import type { LogEventsResponse } from '../models/LogEventsResponse.js';
+import type { LogSavedSearch } from '../models/LogSavedSearch.js';
+import type { LogSavedSearchesResponse } from '../models/LogSavedSearchesResponse.js';
+import type { LogSavedSearchRequest } from '../models/LogSavedSearchRequest.js';
 import type { Problem } from '../models/Problem.js';
 import type { ServiceMapResponse } from '../models/ServiceMapResponse.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
@@ -47,6 +50,7 @@ export class ObservabilityService {
     requestId,
     traceId,
     q,
+    saved,
     limit = 100,
     cursor,
   }: {
@@ -95,6 +99,10 @@ export class ObservabilityService {
      */
     q?: string,
     /**
+     * Name of one of the app's saved log searches. Its filters apply unless the request sets the same parameter.
+     */
+    saved?: string,
+    /**
      * Page size.
      */
     limit?: number,
@@ -120,6 +128,7 @@ export class ObservabilityService {
         'request_id': requestId,
         'trace_id': traceId,
         'q': q,
+        'saved': saved,
         'limit': limit,
         'cursor': cursor,
       },
@@ -148,6 +157,7 @@ export class ObservabilityService {
     requestId,
     traceId,
     q,
+    saved,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -193,6 +203,10 @@ export class ObservabilityService {
      * Case-insensitive literal substring of the message, 2 to 256 characters. Text searches cover at most 24 hours.
      */
     q?: string,
+    /**
+     * Name of one of the app's saved log searches. Its filters apply unless the request sets the same parameter.
+     */
+    saved?: string,
   }): CancelablePromise<LogEventFacetsResponse | Problem> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -211,6 +225,97 @@ export class ObservabilityService {
         'request_id': requestId,
         'trace_id': traceId,
         'q': q,
+        'saved': saved,
+      },
+    });
+  }
+  /**
+   * List an app's saved log searches.
+   * ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+   * Returns the app's saved searches by name. Each holds filters only;
+   * a search, the dashboard or an alert brings its own window.
+   *
+   * @returns LogSavedSearchesResponse The app's saved searches.
+   * @returns Problem Unknown app, or the preview is disabled.
+   * @throws ApiError
+   */
+  public static listAppLogSavedSearches({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<LogSavedSearchesResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/log-searches',
+      path: {
+        'slug': slug,
+      },
+    });
+  }
+  /**
+   * Create a saved log search or replace its filters.
+   * Stores the query canonically: only source, level, status, route,
+   * deployment_id, request_id, trace_id and q, one value each. An app
+   * keeps at most 25 saved searches; replacing one never counts.
+   *
+   * @returns LogSavedSearch The stored saved search.
+   * @returns Problem Invalid name or filters, the per-app limit (log_saved_search_quota_exceeded), or the preview is disabled.
+   * @throws ApiError
+   */
+  public static putAppLogSavedSearch({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Saved log search name, 1 to 63 lowercase letters, digits and dashes.
+     */
+    name: string,
+    requestBody: LogSavedSearchRequest,
+  }): CancelablePromise<LogSavedSearch | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/log-searches/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Delete a saved log search.
+   * Deletes the app's saved search by name.
+   * @returns Problem No such saved search (log_saved_search_not_found), or the preview is disabled.
+   * @throws ApiError
+   */
+  public static deleteAppLogSavedSearch({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Saved log search name, 1 to 63 lowercase letters, digits and dashes.
+     */
+    name: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/log-searches/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
       },
     });
   }

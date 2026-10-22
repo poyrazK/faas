@@ -8519,6 +8519,19 @@
     "kind": "operational"
   },
   {
+    "table": "log_saved_searches",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "name",
+      "query",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "login_tokens",
     "columns": [
       "account_id",

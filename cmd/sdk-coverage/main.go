@@ -755,6 +755,11 @@ var methodRouteMap = map[string]string{
 	// ADR-20261018083536: hyphenated log-events segment; search reads as a verb.
 	"GET /v1/apps/{slug}/log-events":        "SearchAppLogEvents",
 	"GET /v1/apps/{slug}/log-events/facets": "GetAppLogEventFacets",
+
+	// ADR-20261018083536 slice D saved log searches.
+	"GET /v1/apps/{slug}/log-searches":           "ListAppLogSavedSearches",
+	"PUT /v1/apps/{slug}/log-searches/{name}":    "PutAppLogSavedSearch",
+	"DELETE /v1/apps/{slug}/log-searches/{name}": "DeleteAppLogSavedSearch",
 	// ADR-745: hyphenated custom-metrics segment.
 	"GET /v1/apps/{slug}/custom-metrics/{name}/series": "GetCustomMetricSeries",
 	// ADR-1131: the hyphenated path segment has no derivable Go identifier.

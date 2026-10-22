@@ -20431,6 +20431,7 @@ paths:
         - $ref: '#/components/parameters/LogSearchRequest'
         - $ref: '#/components/parameters/LogSearchTrace'
         - $ref: '#/components/parameters/LogSearchText'
+        - $ref: '#/components/parameters/LogSearchSaved'
         - name: limit
           in: query
           description: Page size.
@@ -20473,6 +20474,7 @@ paths:
         - $ref: '#/components/parameters/LogSearchRequest'
         - $ref: '#/components/parameters/LogSearchTrace'
         - $ref: '#/components/parameters/LogSearchText'
+        - $ref: '#/components/parameters/LogSearchSaved'
       responses:
         '200':
           description: Facet counts for the window.
@@ -20481,6 +20483,69 @@ paths:
               schema: { $ref: '#/components/schemas/LogEventFacetsResponse' }
         default:
           description: Invalid filters, a window over 7 days, a timeout, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/log-searches:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [observability]
+      operationId: listAppLogSavedSearches
+      summary: List an app's saved log searches.
+      description: |
+        ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+        Returns the app's saved searches by name. Each holds filters only;
+        a search, the dashboard or an alert brings its own window.
+      responses:
+        '200':
+          description: The app's saved searches.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogSavedSearchesResponse' }
+        default:
+          description: Unknown app, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/log-searches/{name}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/LogSavedSearchName'
+    put:
+      tags: [observability]
+      operationId: putAppLogSavedSearch
+      summary: Create a saved log search or replace its filters.
+      description: |
+        Stores the query canonically: only source, level, status, route,
+        deployment_id, request_id, trace_id and q, one value each. An app
+        keeps at most 25 saved searches; replacing one never counts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LogSavedSearchRequest' }
+      responses:
+        '200':
+          description: The stored saved search.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogSavedSearch' }
+        default:
+          description: Invalid name or filters, the per-app limit (log_saved_search_quota_exceeded), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [observability]
+      operationId: deleteAppLogSavedSearch
+      summary: Delete a saved log search.
+      description: Deletes the app's saved search by name.
+      responses:
+        '204':
+          description: Deleted.
+        default:
+          description: No such saved search (log_saved_search_not_found), or the preview is disabled.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -64808,6 +64873,17 @@ components:
       in: query
       description: Case-insensitive literal substring of the message, 2 to 256 characters. Text searches cover at most 24 hours.
       schema: { type: string, minLength: 2, maxLength: 256 }
+    LogSearchSaved:
+      name: saved
+      in: query
+      description: Name of one of the app's saved log searches. Its filters apply unless the request sets the same parameter.
+      schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+    LogSavedSearchName:
+      name: name
+      in: path
+      required: true
+      description: Saved log search name, 1 to 63 lowercase letters, digits and dashes.
+      schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
     QueueLeaseQueue:
       name: queue
       in: path
@@ -110800,6 +110876,29 @@ components:
           type: array
           items: { $ref: '#/components/schemas/LogFacetCount' }
         routes_truncated: { type: boolean, description: More routes matched than the ten returned. }
+    LogSavedSearch:
+      type: object
+      description: One app's named log search filters (ADR-20261018083536).
+      required: [name, query, created_at, updated_at]
+      properties:
+        name: { type: string, description: 'Unique within the app.' }
+        query: { type: string, description: 'Canonical URL query string of filters, e.g. level=error&q=timeout.' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    LogSavedSearchRequest:
+      type: object
+      description: Body of a saved log search create or replace.
+      required: [query]
+      properties:
+        query: { type: string, maxLength: 2048, description: 'URL query string of filters: source, level, status, route, deployment_id, request_id, trace_id, q.' }
+    LogSavedSearchesResponse:
+      type: object
+      description: An app's saved log searches by name.
+      required: [searches]
+      properties:
+        searches:
+          type: array
+          items: { $ref: '#/components/schemas/LogSavedSearch' }
     LogQueryEvent:
       type: object
       description: "Safe source-neutral log query event; trace lookup returns the HTTP access-log projection."

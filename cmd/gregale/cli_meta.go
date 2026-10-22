@@ -4623,7 +4623,7 @@ var cliCommands = []cliCommand{
 			{Name: "date", Short: "UTC day for --archive: today, yesterday, or YYYY-MM-DD", Value: "DAY"},
 		},
 		Subcommands: []cliSub{
-			{Name: "search", Short: "Search the app's log events by text, level, route, status, release, request or trace (ADR-20261018083536)", Positionals: []string{"[<slug>]"}, Examples: []string{
+			{Name: "search", Short: "Search the app's log events by text, level, route, status, release, request or trace", Positionals: []string{"[<slug>]"}, Examples: []string{
 				"gregale logs search my-api --level error --since 6h",
 				"gregale logs search my-api --q timeout --status 5xx --since 2h --json",
 			}, Flags: []cliFlag{
@@ -4639,6 +4639,7 @@ var cliCommands = []cliCommand{
 				{Name: "request", Short: "request id or trace id", Value: "ID"},
 				{Name: "trace", Short: "W3C trace id", Value: "TRACE_ID"},
 				{Name: "limit", Short: "events per page (1..200)", Value: "N"},
+				{Name: "saved", Short: "apply a saved search's filters; other flags override them", Value: "NAME"},
 				{Name: "cursor", Short: "next_cursor from the previous page", Value: "CURSOR"},
 			}},
 			{Name: "facets", Short: "Count matching log events by source, level, status class and route", Positionals: []string{"[<slug>]"}, Examples: []string{
@@ -4656,6 +4657,27 @@ var cliCommands = []cliCommand{
 				{Name: "deployment", Short: "deployment id", Value: "ID"},
 				{Name: "request", Short: "request id or trace id", Value: "ID"},
 				{Name: "trace", Short: "W3C trace id", Value: "TRACE_ID"},
+				{Name: "saved", Short: "apply a saved search's filters; other flags override them", Value: "NAME"},
+			}},
+			{Name: "saved", Short: "List, save or delete the app's server-side saved log searches", Positionals: []string{"[<slug>]"}, Examples: []string{
+				"gregale logs saved my-api",
+				"gregale logs saved save checkout-5xx my-api --route /checkout --status 5xx",
+				"gregale logs saved delete checkout-5xx my-api",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (same as the <slug> positional; defaults to linked context)", Value: "SLUG"},
+			}, Subcommands: []cliSub{
+				{Name: "list", Short: "List the app's saved searches and their filters", Positionals: []string{"[<slug>]"}, Examples: []string{"gregale logs saved list my-api"}},
+				{Name: "save", Short: "Create a saved search or replace its filters (windows are not stored)", Positionals: []string{"<name>", "[<slug>]"}, Examples: []string{"gregale logs saved save db-errors my-api --source runtime --level error --q database"}, Flags: []cliFlag{
+					{Name: "q", Short: "case-insensitive text the message contains (2..256 characters)", Value: "TEXT"},
+					{Name: "source", Short: "ledger source", Value: "SOURCE", ClosedSet: []string{"runtime", "build", "deploy", "http", "network", "dns"}},
+					{Name: "level", Short: "comma list of levels (trace, debug, info, warn, error, fatal)", Value: "LEVELS"},
+					{Name: "route", Short: "exact route template, e.g. /checkout/{id}", Value: "ROUTE"},
+					{Name: "status", Short: "HTTP status or class", Value: "502|5xx"},
+					{Name: "deployment", Short: "deployment id", Value: "ID"},
+					{Name: "request", Short: "request id or trace id", Value: "ID"},
+					{Name: "trace", Short: "W3C trace id", Value: "TRACE_ID"},
+				}},
+				{Name: "delete", Short: "Delete a saved search", Positionals: []string{"<name>", "[<slug>]"}, Examples: []string{"gregale logs saved delete db-errors my-api"}},
 			}},
 			{Name: "defaults", Short: "Show or manage the project-local preferred log view", Examples: []string{"gregale logs defaults", "gregale logs defaults --help"}, Subcommands: []cliSub{
 				{Name: "set", Short: "Save one existing log view name locally", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "preview the preference path and selected filters without saving"}}, Examples: []string{"gregale logs defaults set errors --dry-run"}},

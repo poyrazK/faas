@@ -45,6 +45,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/apid/apptaskattach"
 	"github.com/onebox-faas/faas/pkg/apid/imagerun"
+	"github.com/onebox-faas/faas/pkg/apid/logsearch"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
 	"github.com/onebox-faas/faas/pkg/apid/object"
@@ -1609,6 +1610,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.devBridgeEnabled = deps.getenv("FAAS_DEV_BRIDGE_ENABLED") == "1"
 	srv.serviceMap.Enabled = deps.getenv("FAAS_SERVICE_MAP_ENABLED") == "1"
 	srv.logSearch.Enabled = deps.getenv("FAAS_LOG_SEARCH_ENABLED") == "1"
+	if srv.logSearch.Enabled {
+		// ADR-20261018083536 slice C: build and deploy events into the ledger.
+		go logsearch.NewProjector(srv.store, time.Now, ops.Registry(), log).Run(ctx)
+	}
 	srv.changeTimelineEnabled = deps.getenv("FAAS_CHANGE_TIMELINE_ENABLED") == "1"
 	srv.anomalyAlertsEnabled = deps.getenv("FAAS_ANOMALY_ALERTS_ENABLED") == "1"
 	srv.seedEnvPlatformFlags(deps.getenv) // ADR-1700 boot fallbacks for the gates above

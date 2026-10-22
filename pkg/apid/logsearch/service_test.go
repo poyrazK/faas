@@ -128,8 +128,9 @@ func (h fakeHost) LoadApp(w http.ResponseWriter, _ *http.Request, _ state.Accoun
 	}
 	return h.app, true
 }
-func (h fakeHost) LogEvents() state.LogEventStore { return h.store }
-func (h fakeHost) Logger() *slog.Logger           { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+func (h fakeHost) LogEvents() state.LogEventStore           { return h.store }
+func (h fakeHost) SavedSearches() state.LogSavedSearchStore { return h.store }
+func (h fakeHost) Logger() *slog.Logger                     { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 func newService(t *testing.T, enabled bool) (*Service, state.Account) {
 	t.Helper()

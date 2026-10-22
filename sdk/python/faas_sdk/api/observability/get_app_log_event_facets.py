@@ -26,6 +26,7 @@ def _get_kwargs(
     request_id: str | Unset = UNSET,
     trace_id: str | Unset = UNSET,
     q: str | Unset = UNSET,
+    saved: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -59,6 +60,8 @@ def _get_kwargs(
     params["trace_id"] = trace_id
 
     params["q"] = q
+
+    params["saved"] = saved
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -111,6 +114,7 @@ def sync_detailed(
     request_id: str | Unset = UNSET,
     trace_id: str | Unset = UNSET,
     q: str | Unset = UNSET,
+    saved: str | Unset = UNSET,
 ) -> Response[LogEventFacetsResponse | Problem]:
     """Count an app's log events by facet.
 
@@ -131,6 +135,7 @@ def sync_detailed(
         request_id (str | Unset):
         trace_id (str | Unset):
         q (str | Unset):
+        saved (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -152,6 +157,7 @@ def sync_detailed(
         request_id=request_id,
         trace_id=trace_id,
         q=q,
+        saved=saved,
     )
 
     response = client.get_httpx_client().request(
@@ -175,6 +181,7 @@ def sync(
     request_id: str | Unset = UNSET,
     trace_id: str | Unset = UNSET,
     q: str | Unset = UNSET,
+    saved: str | Unset = UNSET,
 ) -> LogEventFacetsResponse | Problem | None:
     """Count an app's log events by facet.
 
@@ -195,6 +202,7 @@ def sync(
         request_id (str | Unset):
         trace_id (str | Unset):
         q (str | Unset):
+        saved (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -217,6 +225,7 @@ def sync(
         request_id=request_id,
         trace_id=trace_id,
         q=q,
+        saved=saved,
     ).parsed
 
 
@@ -234,6 +243,7 @@ async def asyncio_detailed(
     request_id: str | Unset = UNSET,
     trace_id: str | Unset = UNSET,
     q: str | Unset = UNSET,
+    saved: str | Unset = UNSET,
 ) -> Response[LogEventFacetsResponse | Problem]:
     """Count an app's log events by facet.
 
@@ -254,6 +264,7 @@ async def asyncio_detailed(
         request_id (str | Unset):
         trace_id (str | Unset):
         q (str | Unset):
+        saved (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -275,6 +286,7 @@ async def asyncio_detailed(
         request_id=request_id,
         trace_id=trace_id,
         q=q,
+        saved=saved,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -296,6 +308,7 @@ async def asyncio(
     request_id: str | Unset = UNSET,
     trace_id: str | Unset = UNSET,
     q: str | Unset = UNSET,
+    saved: str | Unset = UNSET,
 ) -> LogEventFacetsResponse | Problem | None:
     """Count an app's log events by facet.
 
@@ -316,6 +329,7 @@ async def asyncio(
         request_id (str | Unset):
         trace_id (str | Unset):
         q (str | Unset):
+        saved (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -339,5 +353,6 @@ async def asyncio(
             request_id=request_id,
             trace_id=trace_id,
             q=q,
+            saved=saved,
         )
     ).parsed

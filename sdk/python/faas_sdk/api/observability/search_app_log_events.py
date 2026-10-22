@@ -26,6 +26,7 @@ def _get_kwargs(
     request_id: str | Unset = UNSET,
     trace_id: str | Unset = UNSET,
     q: str | Unset = UNSET,
+    saved: str | Unset = UNSET,
     limit: int | Unset = 100,
     cursor: str | Unset = UNSET,
 ) -> dict[str, Any]:
@@ -61,6 +62,8 @@ def _get_kwargs(
     params["trace_id"] = trace_id
 
     params["q"] = q
+
+    params["saved"] = saved
 
     params["limit"] = limit
 
@@ -115,6 +118,7 @@ def sync_detailed(
     request_id: str | Unset = UNSET,
     trace_id: str | Unset = UNSET,
     q: str | Unset = UNSET,
+    saved: str | Unset = UNSET,
     limit: int | Unset = 100,
     cursor: str | Unset = UNSET,
 ) -> Response[LogEventsResponse | Problem]:
@@ -143,6 +147,7 @@ def sync_detailed(
         request_id (str | Unset):
         trace_id (str | Unset):
         q (str | Unset):
+        saved (str | Unset):
         limit (int | Unset):  Default: 100.
         cursor (str | Unset):
 
@@ -166,6 +171,7 @@ def sync_detailed(
         request_id=request_id,
         trace_id=trace_id,
         q=q,
+        saved=saved,
         limit=limit,
         cursor=cursor,
     )
@@ -191,6 +197,7 @@ def sync(
     request_id: str | Unset = UNSET,
     trace_id: str | Unset = UNSET,
     q: str | Unset = UNSET,
+    saved: str | Unset = UNSET,
     limit: int | Unset = 100,
     cursor: str | Unset = UNSET,
 ) -> LogEventsResponse | Problem | None:
@@ -219,6 +226,7 @@ def sync(
         request_id (str | Unset):
         trace_id (str | Unset):
         q (str | Unset):
+        saved (str | Unset):
         limit (int | Unset):  Default: 100.
         cursor (str | Unset):
 
@@ -243,6 +251,7 @@ def sync(
         request_id=request_id,
         trace_id=trace_id,
         q=q,
+        saved=saved,
         limit=limit,
         cursor=cursor,
     ).parsed
@@ -262,6 +271,7 @@ async def asyncio_detailed(
     request_id: str | Unset = UNSET,
     trace_id: str | Unset = UNSET,
     q: str | Unset = UNSET,
+    saved: str | Unset = UNSET,
     limit: int | Unset = 100,
     cursor: str | Unset = UNSET,
 ) -> Response[LogEventsResponse | Problem]:
@@ -290,6 +300,7 @@ async def asyncio_detailed(
         request_id (str | Unset):
         trace_id (str | Unset):
         q (str | Unset):
+        saved (str | Unset):
         limit (int | Unset):  Default: 100.
         cursor (str | Unset):
 
@@ -313,6 +324,7 @@ async def asyncio_detailed(
         request_id=request_id,
         trace_id=trace_id,
         q=q,
+        saved=saved,
         limit=limit,
         cursor=cursor,
     )
@@ -336,6 +348,7 @@ async def asyncio(
     request_id: str | Unset = UNSET,
     trace_id: str | Unset = UNSET,
     q: str | Unset = UNSET,
+    saved: str | Unset = UNSET,
     limit: int | Unset = 100,
     cursor: str | Unset = UNSET,
 ) -> LogEventsResponse | Problem | None:
@@ -364,6 +377,7 @@ async def asyncio(
         request_id (str | Unset):
         trace_id (str | Unset):
         q (str | Unset):
+        saved (str | Unset):
         limit (int | Unset):  Default: 100.
         cursor (str | Unset):
 
@@ -389,6 +403,7 @@ async def asyncio(
             request_id=request_id,
             trace_id=trace_id,
             q=q,
+            saved=saved,
             limit=limit,
             cursor=cursor,
         )

@@ -20,4 +20,6 @@ func (h logSearchHost) LoadApp(w http.ResponseWriter, r *http.Request, acct stat
 
 func (h logSearchHost) LogEvents() state.LogEventStore { return h.s.store }
 
+func (h logSearchHost) SavedSearches() state.LogSavedSearchStore { return h.s.store }
+
 func (h logSearchHost) Logger() *slog.Logger { return h.s.log }

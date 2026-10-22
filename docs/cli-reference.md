@@ -13728,9 +13728,9 @@ gregale logs my-api --view runtime-errors
 
 ### logs search
 
-Search the app&#39;s log events by text, level, route, status, release, request or trace (ADR-20261018083536)
+Search the app&#39;s log events by text, level, route, status, release, request or trace
 
-`gregale logs search [--app <SLUG>] [--q <TEXT>] [--since <15m|6h|3d|RFC3339>] [--until <RFC3339>] [--source <SOURCE>] [--level <LEVELS>] [--route <ROUTE>] [--status <502|5xx>] [--deployment <ID>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--cursor <CURSOR>] [<slug>]`
+`gregale logs search [--app <SLUG>] [--q <TEXT>] [--since <15m|6h|3d|RFC3339>] [--until <RFC3339>] [--source <SOURCE>] [--level <LEVELS>] [--route <ROUTE>] [--status <502|5xx>] [--deployment <ID>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--saved <NAME>] [--cursor <CURSOR>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -13746,6 +13746,7 @@ Search the app&#39;s log events by text, level, route, status, release, request 
 | `--request <ID>` | request id or trace id |  |
 | `--trace <TRACE_ID>` | W3C trace id |  |
 | `--limit <N>` | events per page (1..200) |  |
+| `--saved <NAME>` | apply a saved search&#39;s filters; other flags override them |  |
 | `--cursor <CURSOR>` | next_cursor from the previous page |  |
 
 Examples:
@@ -13759,7 +13760,7 @@ gregale logs search my-api --q timeout --status 5xx --since 2h --json
 
 Count matching log events by source, level, status class and route
 
-`gregale logs facets [--app <SLUG>] [--q <TEXT>] [--since <15m|6h|3d|RFC3339>] [--until <RFC3339>] [--source <SOURCE>] [--level <LEVELS>] [--route <ROUTE>] [--status <502|5xx>] [--deployment <ID>] [--request <ID>] [--trace <TRACE_ID>] [<slug>]`
+`gregale logs facets [--app <SLUG>] [--q <TEXT>] [--since <15m|6h|3d|RFC3339>] [--until <RFC3339>] [--source <SOURCE>] [--level <LEVELS>] [--route <ROUTE>] [--status <502|5xx>] [--deployment <ID>] [--request <ID>] [--trace <TRACE_ID>] [--saved <NAME>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -13774,12 +13775,78 @@ Count matching log events by source, level, status class and route
 | `--deployment <ID>` | deployment id |  |
 | `--request <ID>` | request id or trace id |  |
 | `--trace <TRACE_ID>` | W3C trace id |  |
+| `--saved <NAME>` | apply a saved search&#39;s filters; other flags override them |  |
 
 Examples:
 
 ```sh
 gregale logs facets my-api --since 24h
 gregale logs facets my-api --source http --status 5xx --since 7d
+```
+
+### logs saved
+
+List, save or delete the app&#39;s server-side saved log searches
+
+`gregale logs saved <list|save|delete> [--app <SLUG>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
+
+Examples:
+
+```sh
+gregale logs saved my-api
+gregale logs saved save checkout-5xx my-api --route /checkout --status 5xx
+gregale logs saved delete checkout-5xx my-api
+```
+
+#### logs saved list
+
+List the app&#39;s saved searches and their filters
+
+`gregale logs saved list [<slug>]`
+
+Examples:
+
+```sh
+gregale logs saved list my-api
+```
+
+#### logs saved save
+
+Create a saved search or replace its filters (windows are not stored)
+
+`gregale logs saved save [--q <TEXT>] [--source <SOURCE>] [--level <LEVELS>] [--route <ROUTE>] [--status <502|5xx>] [--deployment <ID>] [--request <ID>] [--trace <TRACE_ID>] <name> [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--q <TEXT>` | case-insensitive text the message contains (2..256 characters) |  |
+| `--source <SOURCE>` | ledger source | one of `runtime` · `build` · `deploy` · `http` · `network` · `dns` |
+| `--level <LEVELS>` | comma list of levels (trace, debug, info, warn, error, fatal) |  |
+| `--route <ROUTE>` | exact route template, e.g. /checkout/{id} |  |
+| `--status <502|5xx>` | HTTP status or class |  |
+| `--deployment <ID>` | deployment id |  |
+| `--request <ID>` | request id or trace id |  |
+| `--trace <TRACE_ID>` | W3C trace id |  |
+
+Examples:
+
+```sh
+gregale logs saved save db-errors my-api --source runtime --level error --q database
+```
+
+#### logs saved delete
+
+Delete a saved search
+
+`gregale logs saved delete <name> [<slug>]`
+
+Examples:
+
+```sh
+gregale logs saved delete db-errors my-api
 ```
 
 ### logs defaults

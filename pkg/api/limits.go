@@ -13114,6 +13114,8 @@ const (
 	LogSearchQueryMaxChars    = 256
 	LogSearchFacetRoutes      = 10
 	LogSearchStatementTimeout = 5 * time.Second
+	// LogSavedSearchesPerApp caps an app's saved searches (slice D).
+	LogSavedSearchesPerApp = 25
 )
 
 // Runtime log projection into the ledger (ADR-20261018083536 slice B). vmmd
@@ -13130,6 +13132,19 @@ const (
 	RuntimeLogEventsFlushInterval    = time.Second
 	RuntimeLogEventsForwardTimeout   = 5 * time.Second
 	RuntimeLogEventsUnavailablePause = time.Minute
+)
+
+// Build and deploy projection into the ledger (ADR-20261018083536 slice C).
+// apid tails deployment_audit and finished builds every interval, trailing
+// commit order by CommitLag so a slower transaction never lands behind the
+// cursor; a restarted apid starts StartupLookback back. Each tick reads at
+// most TickRowsMax rows per source.
+const (
+	LogProjectionInterval        = 10 * time.Second
+	LogProjectionCommitLag       = 10 * time.Second
+	LogProjectionStartupLookback = 15 * time.Minute
+	LogProjectionTickRowsMax     = 2000
+	LogProjectionBuildErrorBytes = 1024
 )
 
 // Anomaly alert bounds (ADR-744). A baseline rule compares a request metric

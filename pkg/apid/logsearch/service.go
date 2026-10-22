@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -28,6 +27,7 @@ type Host interface {
 	// itself when it cannot.
 	LoadApp(w http.ResponseWriter, r *http.Request, acct state.Account, slug string) (state.App, bool)
 	LogEvents() state.LogEventStore
+	SavedSearches() state.LogSavedSearchStore
 	Logger() *slog.Logger
 }
 
@@ -90,7 +90,11 @@ func (s *Service) prepare(w http.ResponseWriter, r *http.Request, acct state.Acc
 	if !ok {
 		return state.App{}, state.LogEventFilter{}, false
 	}
-	filter, prob := ParseFilter(r.URL.Query(), s.now(), retention(acct.Plan), facets)
+	query, ok := s.withSaved(w, r, acct, app)
+	if !ok {
+		return state.App{}, state.LogEventFilter{}, false
+	}
+	filter, prob := ParseFilter(query, s.now(), retention(acct.Plan), facets)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return state.App{}, state.LogEventFilter{}, false
@@ -124,11 +128,6 @@ func retention(plan api.Plan) time.Duration {
 	return time.Duration(days) * 24 * time.Hour
 }
 
-// ledgerSources is log_events_source_check's vocabulary.
-var ledgerSources = map[string]bool{"runtime": true, "build": true, "deploy": true, "http": true, "network": true, "dns": true}
-
-var ledgerLevels = map[string]bool{"trace": true, "debug": true, "info": true, "warn": true, "error": true, "fatal": true}
-
 // ParseFilter turns query parameters into a validated ledger filter. Since
 // is clamped to the plan's retention; text search and facets enforce their
 // window bounds. The CLI dry run and the dashboard share it.
@@ -149,43 +148,13 @@ func ParseFilter(q map[string][]string, now time.Time, keep time.Duration, facet
 			return state.LogEventFilter{}, invalid("the window ends before the plan's log retention begins")
 		}
 	}
-	f := state.LogEventFilter{Since: since, Until: until, Timeout: api.LogSearchStatementTimeout,
-		Route: get("route"), RequestID: get("request_id"), TraceID: get("trace_id"), DeploymentID: get("deployment_id")}
-	if raw := get("source"); raw != "" {
-		if !ledgerSources[raw] {
-			return state.LogEventFilter{}, invalid("source must be one of runtime, build, deploy, http, network, dns")
-		}
-		f.Source = state.LogEventSource(raw)
+	f, err := state.ParseLogEventQuery(get)
+	if err != nil {
+		return state.LogEventFilter{}, invalid(err.Error())
 	}
-	if raw := get("level"); raw != "" {
-		for _, level := range strings.Split(raw, ",") {
-			level = strings.ToLower(strings.TrimSpace(level))
-			if !ledgerLevels[level] {
-				return state.LogEventFilter{}, invalid("level must be a comma list of trace, debug, info, warn, error, fatal")
-			}
-			f.Levels = append(f.Levels, level)
-		}
-	}
-	if raw := get("status"); raw != "" {
-		if prob := parseStatus(raw, &f); prob != nil {
-			return state.LogEventFilter{}, prob
-		}
-	}
-	if f.DeploymentID != "" {
-		if _, err := uuid.Parse(f.DeploymentID); err != nil {
-			return state.LogEventFilter{}, invalid("deployment_id must be a UUID")
-		}
-	}
-	if len(f.TraceID) > 128 {
-		return state.LogEventFilter{}, invalid("trace_id must be at most 128 characters")
-	}
-	if f.Query = get("q"); f.Query != "" {
-		if n := utf8.RuneCountInString(f.Query); n < api.LogSearchQueryMinChars || n > api.LogSearchQueryMaxChars {
-			return state.LogEventFilter{}, invalid(fmt.Sprintf("q must be %d..%d characters", api.LogSearchQueryMinChars, api.LogSearchQueryMaxChars))
-		}
-		if span := until.Sub(since); span > api.LogSearchTextMaxWindow {
-			return state.LogEventFilter{}, api.ErrLogSearchWindow("text searches", api.LogSearchTextMaxWindow, span)
-		}
+	f.Since, f.Until, f.Timeout = since, until, api.LogSearchStatementTimeout
+	if span := until.Sub(since); f.Query != "" && span > api.LogSearchTextMaxWindow {
+		return state.LogEventFilter{}, api.ErrLogSearchWindow("text searches", api.LogSearchTextMaxWindow, span)
 	}
 	if facets {
 		if span := until.Sub(since); span > api.LogSearchFacetMaxWindow {
@@ -254,24 +223,6 @@ func lookback(raw string) (time.Duration, bool) {
 		return 0, false
 	}
 	return d, true
-}
-
-// parseStatus accepts an exact code (502) or a class (5xx).
-func parseStatus(raw string, f *state.LogEventFilter) *api.Problem {
-	if class, ok := strings.CutSuffix(strings.ToLower(raw), "xx"); ok {
-		n, err := strconv.Atoi(class)
-		if err != nil || n < 1 || n > 5 {
-			return invalid("status class must be 1xx..5xx")
-		}
-		f.StatusClass = n
-		return nil
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n < 100 || n > 599 {
-		return invalid("status must be 100..599 or a class such as 5xx")
-	}
-	f.Status = n
-	return nil
 }
 
 func invalid(detail string) *api.Problem {

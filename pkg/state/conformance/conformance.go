@@ -216,6 +216,8 @@ func Run(t *testing.T, open Open) {
 		{"snapshot_delete_intent_is_durable", testSnapshotDeleteIntent},
 		{"log_event_insert_is_idempotent_and_queries_are_tenant_scoped", testLogEventInsertAndList},
 		{"log_event_search_filters_and_facets", testLogEventSearchAndFacets},
+		{"log_event_projection_sources", testLogProjectionSources},
+		{"log_saved_searches", testLogSavedSearches},
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
 		{"scenario_test_namespace_is_scoped_and_reaped", testScenarioTestNamespace},

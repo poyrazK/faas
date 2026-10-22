@@ -80,10 +80,49 @@ system event per minute with the dropped count.
 into the ledger as `build` and `deploy` events from the component that already
 writes them, through apid.
 
+- As built, apid projects instead of each writer: `deployment_audit`
+  (written by apid, meterd, imaged and schedd) and `builds` already live in
+  apid's database, so a projector goroutine in apid tails both and stays the
+  ledger's only writer without a new transport. It runs while
+  `FAAS_LOG_SEARCH_ENABLED=1`.
+- Every 10 s it reads rows after a `(time, id)` cursor and committed before
+  now minus 10 s, so a slower transaction never commits behind the cursor.
+  Each tick reads up to 2000 rows per source. A restarted apid starts 15
+  minutes back; an outage longer than that leaves a gap the change timeline
+  and deployment logs still cover. Inserts are idempotent on
+  `source_event_id` (`audit:<id>`, `build:<build id>`), so replicas, restarts
+  and retried ticks never duplicate. A failed insert keeps the cursor and the
+  next tick retries.
+- `deploy` events: one per audit row. Level `error` for rolled back and
+  rollout aborted; `warn` for health probe failed, scan regressed, alert rule
+  fired, rollout held and MCP task held; `info` otherwise. The message names
+  the kind and, for the payloads ADR-122 documents, the traffic split, probe
+  or rollback trigger.
+- `build` events: one per finished build, not per build line. Failed builds
+  are `error` with the failure class, duration and the deployment's recorded
+  error (first 1 KiB); cancelled builds `warn`; successes `info`. Every build
+  line in the ledger would grow the control-plane database with traffic, and
+  `gregale logs --build` already serves the full output.
+- Finished builds had no time index, so `builds_finished_at_idx`
+  (`finished_at, id` where finished) is added concurrently.
+  `apid_log_projection_events_total{source,outcome}` counts inserts and
+  failures.
+
 **D. Saved searches and log alerts.** Account-scoped saved searches store a
 filter set server-side (the CLI's local views keep working). An alert metric
 counts a saved search's matches over the rule window, evaluated with the
 facet query's bounds.
+
+- As built, saved searches are app-scoped, since every search is:
+  `log_saved_searches` (account, app, name, query), unique by app and name,
+  deleted with the app, at most 25 per app. The query is a canonical URL
+  query string of filters only (`source`, `level`, `status`, `route`,
+  `deployment_id`, `request_id`, `trace_id`, `q`), validated by the same
+  parser the search uses, so a saved search never carries a window.
+- `GET /v1/apps/{slug}/log-searches`, `PUT` and `DELETE
+  /v1/apps/{slug}/log-searches/{name}`; `?saved=NAME` on the search and
+  facet routes applies the saved filters under any filter the request sets
+  itself. CLI: `gregale logs saved [list|save|delete]` and `--saved`.
 
 ## Limits
 

@@ -2479,6 +2479,9 @@ from .log_query_event import LogQueryEvent
 from .log_query_event_level import LogQueryEventLevel
 from .log_query_event_source import LogQueryEventSource
 from .log_query_event_stream import LogQueryEventStream
+from .log_saved_search import LogSavedSearch
+from .log_saved_search_request import LogSavedSearchRequest
+from .log_saved_searches_response import LogSavedSearchesResponse
 from .magic_link_signup_request import MagicLinkSignupRequest
 from .managed_execution_workflow_artifact_input import ManagedExecutionWorkflowArtifactInput
 from .managed_execution_workflow_response import ManagedExecutionWorkflowResponse
@@ -8395,6 +8398,9 @@ __all__ = (
     "LogQueryEventLevel",
     "LogQueryEventSource",
     "LogQueryEventStream",
+    "LogSavedSearch",
+    "LogSavedSearchesResponse",
+    "LogSavedSearchRequest",
     "MagicLinkSignupRequest",
     "ManagedExecutionWorkflowArtifactInput",
     "ManagedExecutionWorkflowResponse",

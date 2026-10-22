@@ -2,10 +2,10 @@
 
 `gregale logs` is the fastest way to watch what an app is doing now. Log
 search answers the other question: what happened, where, and how often.
-It searches the app's log ledger (HTTP requests and runtime warnings and
-errors today; builds and deploys as they are added) across your plan's log
-retention, filters by text, level, route, status, release, request and
-trace, and counts the matches.
+It searches the app's log ledger (HTTP requests, runtime warnings and
+errors, builds and deploys) across your plan's log retention, filters by
+text, level, route, status, release, request and trace, and counts the
+matches.
 
 Log search is an internal preview (ADR-20261018083536). It is available on
 every plan once enabled for your deployment.
@@ -56,6 +56,45 @@ Indexing is bounded so a noisy app cannot flood its own search:
 - Email addresses, card numbers and credential headers (authorization,
   cookies, API keys) are redacted before a line is stored; the event's
   fields name what was redacted.
+
+## Builds and deploys
+
+Every finished build and every deploy step is a `build` or `deploy` event,
+within about 20 seconds of happening:
+
+```sh
+gregale logs search my-api --source build --level error --since 7d
+gregale logs search my-api --source deploy --since 24h
+```
+
+- A failed build is an `error` with its failure class, how long it ran and
+  the first 1 KiB of its error; a cancelled build is a `warn`. The full build
+  output stays in `gregale logs --build`.
+- A rollback or aborted rollout is an `error`; a failed health probe, a
+  security scan regression, a fired alert or a held rollout is a `warn`;
+  creating a deployment, shifting traffic and the other steps are `info`.
+
+## Saved searches
+
+Save a set of filters under a name to reuse it from the CLI, the API and
+your teammates' machines:
+
+```sh
+gregale logs saved save checkout-5xx my-api --route /checkout --status 5xx
+gregale logs search my-api --saved checkout-5xx --since 6h
+gregale logs facets my-api --saved checkout-5xx --since 7d --status 502
+gregale logs saved my-api
+gregale logs saved delete checkout-5xx my-api
+```
+
+- A saved search keeps filters only (`--q`, `--source`, `--level`,
+  `--route`, `--status`, `--deployment`, `--request`, `--trace`), never a
+  window: each search brings its own `--since`.
+- A flag you pass beside `--saved` replaces the saved value for that filter.
+- Saving an existing name replaces its filters. An app keeps up to 25 saved
+  searches.
+- `gregale logs views` are still local to your machine; saved searches live
+  on the server.
 
 ## Count
 
