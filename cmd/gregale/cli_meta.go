@@ -167,6 +167,9 @@ func (c cliCommand) completionSubcommandWord() int {
 type cliSub struct {
 	Name  string
 	Short string
+	// Notes carry detail a one-line Short cannot hold. Help, the man page
+	// and the Markdown reference print them after the examples.
+	Notes []string
 	// Common keeps this verb visible in a parent's compact help.
 	Common bool
 	// Aliases are accepted spellings for this subcommand. They are used
@@ -193,6 +196,12 @@ type cliSub struct {
 	// FlagsAfterPositionals marks leaf commands that take a positional
 	// argument before parsing their flags, such as `tcp <slug> tls NAME --tls-mode`.
 	FlagsAfterPositionals bool
+}
+
+// withNotes attaches help notes to a subcommand built by a helper.
+func withNotes(sub cliSub, notes ...string) cliSub {
+	sub.Notes = append(sub.Notes, notes...)
+	return sub
 }
 
 type cliCompletionRole uint8
@@ -522,16 +531,16 @@ var cliCommands = []cliCommand{
 			{Name: "list", Short: "List owned internal sites"},
 			{Name: "status", Short: "Inspect intent, publication, and pending retries", Flags: []cliFlag{{Name: "site", Value: "ID"}}},
 			{Name: "serve", Short: "Preview a validated build on loopback (independent internal opt-in)", Flags: []cliFlag{{Name: "path", Value: "DIR"}, {Name: "port", Value: "PORT"}, {Name: "spa", Bool: true}}},
-			{Name: "plan", Short: "Compare a local build and prospective quotas without uploading (internal opt-in)", Flags: []cliFlag{{Name: "site", Req: true, Value: "UUID"}, {Name: "path", Value: "DIR"}, {Name: "spa", Bool: true}}},
+			{Name: "plan", Short: "Compare a local build with prospective quotas without uploading", Notes: []string{"Internal opt-in."}, Flags: []cliFlag{{Name: "site", Req: true, Value: "UUID"}, {Name: "path", Value: "DIR"}, {Name: "spa", Bool: true}}},
 			{Name: "deploy", Short: "Publish a prebuilt static directory", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "path", Value: "DIR"}, {Name: "spa", Bool: true}, {Name: "source-repository", Value: "LABEL"}, {Name: "source-commit", Value: "SHA"}, {Name: "source-branch", Value: "BRANCH"}, {Name: "description", Value: "TEXT"}, {Name: "no-promote", Bool: true}, {Name: "plan", Value: "FILE", Short: "reviewed saved plan; requires --no-promote and independent opt-in"}, {Name: "resume-release", Value: "UUID", Short: "recover an exact retained release; requires --plan and independent opt-in"}, {Name: "wait", Bool: true}, {Name: "wait-timeout", Value: "DURATION"}}},
 			{Name: "tokens", Short: "Create, list or revoke one-site CI credentials (internal opt-in)", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "credential", Value: "ID"}, {Name: "label", Value: "LABEL"}, {Name: "out", Value: "PRIVATE_FILE"}, {Name: "ttl", Value: "DURATION"}, {Name: "operations", Value: "stage,preview"}}},
-			{Name: "cleanup", Short: "Preview eligible/protected releases and catalog reservations without retiring anything", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "pending-age", Value: "DURATION"}, {Name: "staged-age", Value: "DURATION"}}},
+			{Name: "cleanup", Short: "Preview the releases and reservations a cleanup would retire", Notes: []string{"Shows eligible and protected releases and catalog reservations; retires nothing."}, Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "pending-age", Value: "DURATION"}, {Name: "staged-age", Value: "DURATION"}}},
 			{Name: "retention", Short: "Show or set the default-off per-site cleanup policy", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "pending-age", Value: "DURATION"}, {Name: "staged-age", Value: "DURATION"}, {Name: "enabled", Bool: true}, {Name: "expected-revision", Value: "N"}}},
 			{Name: "runs", Short: "List recorded CI runs and stored release/preview evidence", Flags: []cliFlag{{Name: "site", Req: true, Value: "UUID"}, {Name: "before", Value: "CURSOR"}}},
 			{Name: "ci-setup", Short: "Export a reviewable GitHub workflow from an existing site trust", Flags: []cliFlag{{Name: "config", Req: true, Value: "FILE"}, {Name: "out", Req: true, Value: "FILE"}}},
 			{Name: "cancel", Short: "Permanently cancel one CI run", Flags: []cliFlag{{Name: "site", Value: "UUID", Short: "owned site UUID", Req: true}, {Name: "run-id", Value: "UUID", Short: "exact CI run UUID", Req: true}}},
 			{Name: "capacity", Short: "Show a site's preview capacity", Flags: []cliFlag{{Name: "site", Value: "UUID", Short: "owned site UUID", Req: true}}},
-			{Name: "ci-preflight", Short: "Compare a saved workflow and local preparation Action without uploading them", Flags: []cliFlag{{Name: "config", Req: true, Value: "FILE"}, {Name: "repo-root", Req: true, Value: "DIR"}}},
+			{Name: "ci-preflight", Short: "Compare a saved workflow with the local preparation Action", Notes: []string{"Nothing is uploaded."}, Flags: []cliFlag{{Name: "config", Req: true, Value: "FILE"}, {Name: "repo-root", Req: true, Value: "DIR"}}},
 			{Name: "diagnose", Short: "Explain stored deployment evidence without mutations or health probes", Flags: []cliFlag{{Name: "site", Req: true, Value: "UUID"}, {Name: "run-id", Value: "UUID"}, {Name: "path", Value: "DIR"}, {Name: "spa", Bool: true}, {Name: "oidc-trust", Value: "UUID"}}},
 			{Name: "ci", Short: "Resume a stable prebuilt-to-preview CI intent without promoting", Flags: []cliFlag{{Name: "oidc-trust", Value: "UUID", Short: "explicit GitHub site trust; requires independent OIDC opt-in"}, {Name: "site", Value: "ID"}, {Name: "run-id", Value: "UUID"}, {Name: "path", Value: "DIR"}, {Name: "spa", Bool: true}, {Name: "preview-ttl", Value: "DURATION"}, {Name: "wait-timeout", Value: "DURATION"}, {Name: "source-repository", Value: "LABEL"}, {Name: "source-commit", Value: "SHA"}, {Name: "source-branch", Value: "BRANCH"}, {Name: "description", Value: "TEXT"}}},
 			{Name: "history", Short: "Inspect retained accepted-promotion history (internal opt-in)", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "before-revision", Value: "N"}}},
@@ -572,17 +581,17 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "restore", Short: "Cancel a pending deletion"},
 			{Name: "status", Short: "Show account status"},
-			{Name: "dpa", Short: "Print the Data Processing Agreement template (placeholders are filled when the agreement is signed)", Flags: []cliFlag{
+			{Name: "dpa", Short: "Print the Data Processing Agreement template", Notes: []string{"Placeholders are filled when the agreement is signed."}, Flags: []cliFlag{
 				{Name: "o", ShortName: "o", Short: "write the DPA template to a file", Value: "PATH"},
 			}},
 			{Name: "slo", Short: "Account-wide SLO panel"},
-			{Name: "billing-connection", Short: "Connect, show, or disconnect a Stripe, Paddle or Lago key for statement invoice exports; connect reads the key from stdin", Positionals: []string{"{connect|status|disconnect}", "{stripe|paddle|lago}"}, Flags: []cliFlag{
+			{Name: "billing-connection", Short: "Connect, show or disconnect a billing key for invoice exports", Notes: []string{"Supports Stripe, Paddle and Lago; connect reads the key from stdin."}, Positionals: []string{"{connect|status|disconnect}", "{stripe|paddle|lago}"}, Flags: []cliFlag{
 				{Name: "api-url", Short: "Lago API URL for the EU region or a self-hosted Lago (connect; default https://api.getlago.com)", Value: "URL"},
 				{Name: "collection", Short: "what the provider does with exported invoices: none leaves drafts, send emails them (Stripe, Paddle), charge charges the saved payment method (Stripe, Lago) (connect; default none)", Value: "MODE", ClosedSet: []string{"none", "send", "charge"}},
 				{Name: "days-until-due", Short: "days until a sent invoice is due (connect --collection send; default 30)", Value: "N"},
 				{Name: "automatic-tax", Short: "have Stripe Tax calculate tax on exported invoices; needs Stripe Tax and customer addresses (connect; Stripe only)"},
 			}, Examples: []string{"gregale account billing-connection connect paddle < paddle-key.txt", "gregale account billing-connection connect lago --api-url https://api.eu.getlago.com < lago-key.txt", "gregale account billing-connection connect stripe --collection charge < stripe-key.txt"}},
-			{Name: "billing-run", Short: "Bill an ended month for every API customer: draft, check, finalize and optionally export each statement", Subcommands: []cliSub{
+			{Name: "billing-run", Short: "Bill an ended month for every API customer", Notes: []string{"Drafts, checks and finalizes each statement, and optionally exports it."}, Subcommands: []cliSub{
 				{Name: "start", Short: "Start a run for one ended UTC month", Flags: []cliFlag{
 					{Name: "month", Short: "UTC calendar month to bill (default: last month)", Value: "YYYY-MM"},
 					{Name: "sources", Short: "comma-separated app_consumers,platform_tenants,product_customers (default: app_consumers,platform_tenants)", Value: "LIST"},
@@ -605,7 +614,7 @@ var cliCommands = []cliCommand{
 				}, Examples: []string{"gregale account billing-run schedule-set --export stripe --delay-hours 6"}},
 				{Name: "schedule-delete", Short: "Stop scheduled runs; a started run continues"},
 			}},
-			{Name: "invoices", Short: "List invoices exported from usage statements and whether they were paid", Flags: []cliFlag{
+			{Name: "invoices", Short: "List exported invoices and whether they were paid", Notes: []string{"Invoices come from usage statements."}, Flags: []cliFlag{
 				{Name: "status", Short: "unpaid, overdue, or one payment status: draft, open, paid, void, uncollectible, deleted", Value: "STATUS"},
 			}, Examples: []string{"gregale account invoices --status overdue"}},
 		},
@@ -763,7 +772,7 @@ var cliCommands = []cliCommand{
 				}, Examples: []string{"gregale bindings release-policy set public-api --scope production --require-verification --max-age 10m --expected-revision 0"}},
 			}},
 			{Name: "service", Short: "Configure standalone service bindings", Subcommands: []cliSub{
-				{Name: "explain", Short: "Explain service authorization, optionally for an exact deployment; exits 0 allowed, 1 denied, 2 indeterminate/error", Positionals: []string{"<caller>", "<target>"}, Flags: []cliFlag{{Name: "deployment", Value: "ID", Short: "exact caller deployment UUID; use server routing and effective policy"}, {Name: "scope", Value: "ENV", Short: "assert deployment environment; requires --deployment"}, {Name: "method", Value: "METHOD", Short: "HTTP method (default GET)"}, {Name: "path", Value: "PATH", Short: "origin-form request path (default /)"}}},
+				{Name: "explain", Short: "Explain service authorization, optionally for one deployment", Notes: []string{"Exits 0 when allowed, 1 when denied, and 2 when indeterminate or on error."}, Positionals: []string{"<caller>", "<target>"}, Flags: []cliFlag{{Name: "deployment", Value: "ID", Short: "exact caller deployment UUID; use server routing and effective policy"}, {Name: "scope", Value: "ENV", Short: "assert deployment environment; requires --deployment"}, {Name: "method", Value: "METHOD", Short: "HTTP method (default GET)"}, {Name: "path", Value: "PATH", Short: "origin-form request path (default /)"}}},
 				{Name: "export", Short: "Export live service settings as a reusable policy", Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "out", Value: "PATH", Short: "write to a new private file (default stdout)"}}},
 				{Name: "check", Short: "Compare live settings with a policy; exits 0 match, 1 drift, 2 error", Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "file", Value: "PATH", Req: true, Short: "JSON service binding settings policy"}}},
 				{Name: "configure", Short: "Patch service targets, permissions, reliability and URL transport", Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "plan-out", Value: "PATH", Short: "save a reviewed plan without changes; destination must be new"}, {Name: "file", Value: "PATH", Req: true, Short: "JSON service binding settings patch"}, {Name: "dry-run", Bool: true, Short: "show current and proposed binding settings without changes"}}, Examples: []string{"gregale bindings service configure public-api --file policy.json --dry-run"}},
@@ -813,7 +822,7 @@ var cliCommands = []cliCommand{
 
 			{
 				Name:        "verify",
-				Short:       "Check a private service route or test a managed PostgreSQL or object-storage binding",
+				Short:       "Check a private route or test a PostgreSQL or storage binding",
 				Positionals: []string{"<app>", "[<service>]"},
 				Flags: []cliFlag{
 					{Name: "all", Short: "verify services, PostgreSQL, storage, outbound and eligible queues (publication opt-in)"},
@@ -836,7 +845,7 @@ var cliCommands = []cliCommand{
 			},
 			{
 				Name:        "smoke",
-				Short:       "Invoke a path on one exact live target deployment over the private HTTPS binding",
+				Short:       "Invoke a path on one live deployment over the private binding",
 				Positionals: []string{"<app>", "<service>"},
 				Flags: []cliFlag{
 					{Name: "target-deployment", Short: "exact live target deployment UUID to invoke (or use --deployment)", Value: "ID"},
@@ -869,7 +878,7 @@ var cliCommands = []cliCommand{
 				{Name: "idempotency-key", Short: "stable provider retry key", Value: "key"},
 			}},
 			{Name: "consume-credits", Short: "Consume credits against an invoice", Positionals: []string{"<invoice-id>"}, Flags: []cliFlag{{Name: "idempotency-key", Short: "stable retry key", Value: "K"}}},
-			{Name: "abuse-hold", Short: "Place or release an account abuse hold (place|release)", Flags: []cliFlag{
+			{Name: "abuse-hold", Short: "Place or release an account abuse hold", Flags: []cliFlag{
 				{Name: "note", Short: "audit note", Req: true, Value: "text"},
 			}},
 			{Name: "egress-flows", Short: "Search the egress flow log (which tenant connected where)", Flags: []cliFlag{
@@ -912,7 +921,7 @@ var cliCommands = []cliCommand{
 			"gregale ai tokens create --app my-api --name laptop --expires-in-hours 24",
 		},
 		Subcommands: []cliSub{
-			{Name: "policy", Short: "Set the AI provider and token or cost limits (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+			{Name: "policy", Short: "Set the AI provider and token or cost limits", Notes: []string{"Flags you omit keep their values."}, Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "provider", Short: "AI provider", Value: "PROVIDER", ClosedSet: []string{"openai", "anthropic", "gemini", "azure_openai", "bedrock", "vertex", "off"}},
 				{Name: "daily-tokens", Short: "UTC-day input+output token limit, or none", Value: "N"},
 				{Name: "daily-cost", Short: "UTC-day cost limit in USD, or none", Value: "USD"},
@@ -925,7 +934,7 @@ var cliCommands = []cliCommand{
 				{Name: "allow-unmetered", Short: "let through calls the gateway cannot meter (realtime client secrets, vector stores, fine-tuning), outside the caps", Value: "on|off", ClosedSet: []string{"on", "off"}},
 				{Name: "prompt-cache", Short: "add prompt-cache breakpoints to Claude requests that carry none: after a repeated system prompt or tools, and after a continuing conversation", Value: "on|off", ClosedSet: []string{"on", "off"}},
 			}},
-			{Name: "content-policy", Short: "Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms, in requests and responses (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+			{Name: "content-policy", Short: "Show or set content guardrails for requests and responses", Notes: []string{"Redacts or blocks e-mail, cards, IBANs and secrets, and blocks terms. Flags you omit keep their values."}, Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "email", Short: "e-mail addresses", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
 				{Name: "payment-card", Short: "payment card numbers", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
 				{Name: "iban", Short: "IBANs", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
@@ -945,7 +954,7 @@ var cliCommands = []cliCommand{
 				{Name: "response-terms", Short: "block responses containing a blocked term", Value: "off|block", ClosedSet: []string{"off", "block"}},
 				{Name: "response-moderation", Short: "check responses with the moderation check", Value: "ACTION", ClosedSet: []string{"off", "flag", "block"}},
 			}},
-			{Name: "tags", Short: "Show one UTC day's AI usage by X-Gregale-AI-Tags tag, with each tag's limit, or export a day range: tags export <integration-id>", Positionals: []string{"[export]", "<integration-id>"}, Flags: []cliFlag{
+			{Name: "tags", Short: "Show one UTC day's AI usage by tag, or export a day range", Notes: []string{"Tags come from the X-Gregale-AI-Tags header, each with its limit. Export with: tags export <integration-id>."}, Positionals: []string{"[export]", "<integration-id>"}, Flags: []cliFlag{
 				{Name: "date", Short: "UTC day within the last 31 days (default today)", Value: "YYYY-MM-DD"},
 				{Name: "key", Short: "show or export only this tag key's tags", Value: "KEY"},
 				{Name: "limit", Short: "tags to show, 1 to 1000", Value: "N"},
@@ -962,23 +971,23 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "bound app slug", Req: true, Value: "slug"},
 				{Name: "daily-tokens", Short: "token limit, or none", Req: true, Value: "N"},
 			}},
-			{Name: "guardrails", Short: "Set one app's per-minute limits, model allow-list and output-token ceiling (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+			{Name: "guardrails", Short: "Set an app's per-minute limits, model allow-list and output cap", Notes: []string{"Flags you omit keep their values."}, Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "bound app slug", Req: true, Value: "slug"},
 				{Name: "rpm", Short: "admitted calls per UTC minute, or none", Value: "N"},
 				{Name: "tpm", Short: "tokens per UTC minute, or none", Value: "N"},
 				{Name: "models", Short: "comma-separated models or prefixes ending in *, or none", Value: "LIST"},
 				{Name: "max-output-tokens", Short: "per-request output-token ceiling, or none", Value: "N"},
 			}},
-			{Name: "prices", Short: "Show the price list, or replace it with: prices set <integration-id> --price ...", Positionals: []string{"[set]", "<integration-id>"}, Flags: []cliFlag{
+			{Name: "prices", Short: "Show the price list, or replace it with prices set", Notes: []string{"Replace with: prices set <integration-id> --price ..."}, Positionals: []string{"[set]", "<integration-id>"}, Flags: []cliFlag{
 				{Name: "price", Short: "model=PREFIX,input=USD,output=USD[,cached=USD][,cache-write=USD][,input-image=USD][,output-image=USD] per million tokens, [,image=USD] per image, [,audio-minute=USD] per minute, [,characters=USD] per million characters, [,video-second=USD] per second of video, with model=<model>@<resolution> for one resolution, [,web-search=USD] [,file-search=USD] per use, [,code-session-gb=USD] per GB container session, [,input-audio=USD][,cached-audio=USD][,output-audio=USD] per million audio tokens (repeat; none clears)", Value: "SPEC"},
 			}},
-			{Name: "catalog", Short: "Show the built-in prices that apply to models missing from a price list", Positionals: []string{"<provider>"}, Flags: []cliFlag{
+			{Name: "catalog", Short: "Show built-in prices for models missing from a price list", Positionals: []string{"<provider>"}, Flags: []cliFlag{
 				{Name: "model", Short: "show only the entry that prices this model", Value: "NAME"},
 			}},
 			{Name: "usage", Short: "Show one UTC day of token usage and cost by caller and model", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "date", Short: "UTC day within the last 90 days", Value: "YYYY-MM-DD"},
 			}},
-			{Name: "users", Short: "Show one UTC day of usage by end user (X-Gregale-AI-User), most expensive first, or export a day range", Positionals: []string{"[export]", "<integration-id>"}, Flags: []cliFlag{
+			{Name: "users", Short: "Show one UTC day of usage by end user, or export a day range", Notes: []string{"End users come from the X-Gregale-AI-User header, most expensive first."}, Positionals: []string{"[export]", "<integration-id>"}, Flags: []cliFlag{
 				{Name: "date", Short: "UTC day within the last 31 days", Value: "YYYY-MM-DD"},
 				{Name: "user", Short: "show only this end user", Value: "ID"},
 				{Name: "limit", Short: "end users to show, 1 to 1000", Value: "N"},
@@ -986,7 +995,7 @@ var cliCommands = []cliCommand{
 				{Name: "to", Short: "export: last UTC day (default today)", Value: "YYYY-MM-DD"},
 				{Name: "format", Short: "export format", Value: "csv|ndjson", ClosedSet: []string{"csv", "ndjson"}},
 			}},
-			{Name: "routes", Short: "List, create, update (set) or delete (rm) AI routes, run a model canary on one, or show its targets' recent stats", Positionals: []string{"<list|create|set|rm|canary|stats>", "[<route-id>]", "[status|promote|stop]"}, Flags: []cliFlag{
+			{Name: "routes", Short: "Manage AI routes, run a model canary, or show target stats", Notes: []string{"List, create, update (set) or delete (rm) routes."}, Positionals: []string{"<list|create|set|rm|canary|stats>", "[<route-id>]", "[status|promote|stop]"}, Flags: []cliFlag{
 				{Name: "name", Short: "route name for create", Value: "NAME"},
 				{Name: "format", Short: "route format for create: native or openai (translates OpenAI chat completions)", Value: "FORMAT", ClosedSet: []string{"native", "openai"}},
 				{Name: "target", Short: "<integration-id>[:<model>] in fallback order (repeat)", Value: "TARGET"},
@@ -1007,12 +1016,12 @@ var cliCommands = []cliCommand{
 			{Name: "alerts", Short: "List budget alerts recorded at 80% and 100%", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "limit", Short: "alerts to show, 1 to 100", Value: "N"},
 			}},
-			{Name: "replay", Short: "Resend a captured call to other integrations or models and compare status, tokens, cost, latency and output, or show a replay", Positionals: []string{"[show]", "<integration-id|replay-id>", "[<request-id>]"}, Flags: []cliFlag{
+			{Name: "replay", Short: "Resend a captured call to other models and compare the results", Notes: []string{"Compares status, tokens, cost, latency and output across integrations or models, or shows a replay."}, Positionals: []string{"[show]", "<integration-id|replay-id>", "[<request-id>]"}, Flags: []cliFlag{
 				{Name: "target", Short: "<integration-id>[:<model>] to replay on (repeat, at most 5)", Value: "TARGET"},
 				{Name: "no-wait", Short: "print the replay without waiting for results", Bool: true},
 				{Name: "timeout", Short: "how long to wait for results (default 3m)", Value: "duration"},
 			}},
-			{Name: "evaluate", Short: "Judge a route target against the route's first target on recent captured calls, optionally starting a canary when it passes, or list and show evaluations", Positionals: []string{"[list|show]", "<route-id|evaluation-id>"}, Flags: []cliFlag{
+			{Name: "evaluate", Short: "Judge a route target against its first target on captured calls", Notes: []string{"Optionally starts a canary when the target passes; also lists and shows evaluations."}, Positionals: []string{"[list|show]", "<route-id|evaluation-id>"}, Flags: []cliFlag{
 				{Name: "position", Short: "the route target (2 to 5) to evaluate", Value: "N"},
 				{Name: "judge", Short: "the AI integration whose model judges the answers", Value: "INTEGRATION"},
 				{Name: "judge-model", Short: "the judge model", Value: "MODEL"},
@@ -1022,13 +1031,13 @@ var cliCommands = []cliCommand{
 				{Name: "no-wait", Short: "print the evaluation without waiting for its verdict", Bool: true},
 				{Name: "timeout", Short: "how long to wait for the verdict (default 30m)", Value: "duration"},
 			}},
-			{Name: "tokens", Short: "List, create or revoke access tokens that let local development, CI or notebooks call the AI gateway as an app", Positionals: []string{"<list|create|revoke>", "[<token-id>]"}, Flags: []cliFlag{
+			{Name: "tokens", Short: "Manage tokens that let dev, CI or notebooks call the AI gateway", Notes: []string{"List, create or revoke tokens; a token acts as the app."}, Positionals: []string{"<list|create|revoke>", "[<token-id>]"}, Flags: []cliFlag{
 				{Name: "app", Short: "the app the token acts as", Value: "SLUG"},
 				{Name: "name", Short: "token name for create", Value: "NAME"},
 				{Name: "expires-in-hours", Short: "token lifetime for create, 1 to 2160 (default 168)", Value: "N"},
 				{Name: "integration", Short: "limit the token to this AI integration (repeat)", Value: "INTEGRATION"},
 			}},
-			{Name: "logs", Short: "Page the opt-in AI request log, newest first, or show one call's captured bodies", Positionals: []string{"[show]", "<integration-id>", "[<request-id>]"}, Flags: []cliFlag{
+			{Name: "logs", Short: "Page the opt-in AI request log, or show one call's bodies", Notes: []string{"Newest first."}, Positionals: []string{"[show]", "<integration-id>", "[<request-id>]"}, Flags: []cliFlag{
 				{Name: "limit", Short: "calls to show, 1 to 200", Value: "N"},
 				{Name: "before", Short: "show calls before this RFC 3339 time", Value: "TIME"},
 			}},
@@ -1111,7 +1120,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "alerts",
 		Short:   "Manage an app's alert rules",
 		Subcommands: []cliSub{
-			{Name: "actions", Short: "Read or wait for automatic rollback status, deployment evidence and service handoffs", Examples: []string{"gregale alerts actions --app my-api --interactive"}, Flags: []cliFlag{
+			{Name: "actions", Short: "Read or wait for automatic rollback status and evidence", Notes: []string{"Includes deployment evidence and service handoffs."}, Examples: []string{"gregale alerts actions --app my-api --interactive"}, Flags: []cliFlag{
 				{Name: "interactive", Short: "choose an action, inspect details, and optionally follow it", Bool: true},
 				{Name: "app", Short: "app slug (linked app or picker in interactive mode)", Value: "slug"},
 				{Name: "fire", Short: "one production alert delivery UUID", Value: "UUID"},
@@ -1301,14 +1310,14 @@ var cliCommands = []cliCommand{
 				{Name: "data", Short: "JSON event data (inline | @file | -)", Req: true, Value: "J|@file|-"},
 				{Name: "time", Short: "event time (RFC3339; defaults to server time)", Value: "RFC3339"},
 			}},
-			{Name: "replay-preview", Short: "Preview retained events for one current subscription without creating deliveries", Positionals: []string{"<app>"}, Flags: []cliFlag{
+			{Name: "replay-preview", Short: "Preview retained events for one subscription without delivering", Positionals: []string{"<app>"}, Flags: []cliFlag{
 				{Name: "subscription-id", Short: "target ordinary application subscription UUID", Req: true, Value: "UUID"},
 				{Name: "from", Short: "inclusive acceptance timestamp", Req: true, Value: "RFC3339"},
 				{Name: "until", Short: "exclusive acceptance timestamp", Req: true, Value: "RFC3339"},
 				{Name: "after", Short: "opaque continuation cursor; keep target and range unchanged", Value: "CURSOR"},
 				{Name: "limit", Short: "envelopes examined per page (1..100; default 50)", Value: "N"},
 			}},
-			{Name: "workflow-replay-preview", Short: "Preview captured workflow event recipients and admission status without starting runs", Positionals: []string{"<app>"}, Flags: []cliFlag{
+			{Name: "workflow-replay-preview", Short: "Preview workflow event recipients without starting runs", Notes: []string{"Shows captured recipients and admission status."}, Positionals: []string{"<app>"}, Flags: []cliFlag{
 				{Name: "workflow-name", Short: "workflow name from captured event recipient snapshots", Req: true, Value: "NAME"},
 				{Name: "from", Short: "inclusive acceptance timestamp", Req: true, Value: "RFC3339"},
 				{Name: "until", Short: "exclusive acceptance timestamp", Req: true, Value: "RFC3339"},
@@ -1342,11 +1351,11 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "receipt application filter; storage remains account-wide", Value: "APP"},
 				{Name: "window", Short: "expiry lookahead (1s..720h; default 24h)", Value: "DURATION"},
 				{Name: "limit", Short: "maximum sampled receipts (1..100)", Value: "N"}}},
-			{Name: "publish-app-verify", Short: "Compare an original publish file with retained content without publishing", Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "expected-accepted-at", Value: "RFC3339", Short: "Pin the exact accepted_at from the saved receipt"}, {Name: "file", Value: "PATH", Short: "Original publish JSON with key, type and data"}}, Examples: []string{"gregale events publish-app-verify my-app --file event.json --json"}},
-			{Name: "publish-app-status", Short: "Reconcile retained publication and consumer evidence without submitting an event", Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "expected-accepted-at", Value: "RFC3339", Short: "Pin the exact accepted_at from the saved receipt"}, {Name: "key", Value: "KEY", Short: "Original exact application producer key"}, {Name: "after", Value: "CURSOR", Short: "Continue the recipient evidence page"}, {Name: "limit", Value: "N", Short: "Recipients per page (1..200; default 100)"}}, Examples: []string{"gregale events publish-app-status my-app --key order-123-created --json"}},
+			{Name: "publish-app-verify", Short: "Compare a publish file with retained content without publishing", Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "expected-accepted-at", Value: "RFC3339", Short: "Pin the exact accepted_at from the saved receipt"}, {Name: "file", Value: "PATH", Short: "Original publish JSON with key, type and data"}}, Examples: []string{"gregale events publish-app-verify my-app --file event.json --json"}},
+			{Name: "publish-app-status", Short: "Reconcile retained publication and consumer evidence", Notes: []string{"Does not submit an event."}, Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "expected-accepted-at", Value: "RFC3339", Short: "Pin the exact accepted_at from the saved receipt"}, {Name: "key", Value: "KEY", Short: "Original exact application producer key"}, {Name: "after", Value: "CURSOR", Short: "Continue the recipient evidence page"}, {Name: "limit", Value: "N", Short: "Recipients per page (1..200; default 100)"}}, Examples: []string{"gregale events publish-app-status my-app --key order-123-created --json"}},
 			{Name: "publish-app", Short: "Publish an event using a durable application-scoped producer key", Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "JSON event with a stable key, type and data"}}, Examples: []string{"gregale events publish-app my-app --file event.json --json"}},
 			{Name: "publish-batch", Short: "Publish a bounded JSONL batch with per-event results", Flags: []cliFlag{{Name: "file", Short: "JSONL file or - for stdin; stable ids required", Value: "FILE", Req: true}}},
-			{Name: "publish", Short: "Publish one event (SOURCE TYPE can be positional; ID is generated by default)", Flags: []cliFlag{
+			{Name: "publish", Short: "Publish one event", Notes: []string{"SOURCE and TYPE can be positional; the ID is generated by default."}, Flags: []cliFlag{
 				{Name: "id", Short: "stable event id (generated when omitted)", Value: "ID"},
 				{Name: "source", Short: "event source (or first positional argument)", Value: "SOURCE"},
 				{Name: "type", Short: "event type (or second positional argument)", Value: "TYPE"},
@@ -1398,14 +1407,14 @@ var cliCommands = []cliCommand{
 			{Name: "delivery-health-alerts", Short: "Inspect, replay, or acknowledge a local delivery health alert queue", Flags: []cliFlag{{Name: "checkpoint", Value: "PATH", Short: "delivery health checkpoint"}, {Name: "replay", Short: "replay pending JSON lines"}, {Name: "ack-alerts", Value: "PATH", Short: "exact acknowledgements JSON"}}},
 			{Name: "delivery-retry", Short: "Retry a deferred delivery using its current secret token", Positionals: []string{"<app>", "<invocation-id>"}, Flags: []cliFlag{{Name: "request-file", Value: "PATH", Short: "protected JSON file containing token and non-sensitive reason"}}},
 			{Name: "delivery-dead-letter", Short: "Dead-letter a deferred delivery using its current secret token", Positionals: []string{"<app>", "<invocation-id>"}, Flags: []cliFlag{{Name: "request-file", Value: "PATH", Short: "protected JSON file containing token and non-sensitive reason"}}},
-			{Name: "deadline-alert-investigate", Short: "Inspect current deadline identities and optional blockers for a saved Go alert", Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "alert-file", Value: "PATH", Short: "single Go/CLI lifecycle alert JSON object (maximum 64 KiB)"}, {Name: "limit", Value: "N", Short: "current recipients per page (default 50; 1..100, or 1..50 with explain)"}, {Name: "cursor", Value: "CURSOR", Short: "opaque next_cursor for the same app, alert selection and limit"}, {Name: "explain", Short: "read acceptance-guarded blocker explanations for this page"}}},
+			{Name: "deadline-alert-investigate", Short: "Inspect deadline identities and blockers for a saved Go alert", Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "alert-file", Value: "PATH", Short: "single Go/CLI lifecycle alert JSON object (maximum 64 KiB)"}, {Name: "limit", Value: "N", Short: "current recipients per page (default 50; 1..100, or 1..50 with explain)"}, {Name: "cursor", Value: "CURSOR", Short: "opaque next_cursor for the same app, alert selection and limit"}, {Name: "explain", Short: "read acceptance-guarded blocker explanations for this page"}}},
 			{Name: "subscription-delivery-health", Short: "Inspect routing, executions, retry jobs, and pending blockers", Positionals: []string{"<app>", "<subscription-id>"}, Flags: []cliFlag{{Name: "deadline-expired-ratio-threshold", Value: "PERCENT", Short: "expired percentage warning, 0.01..100 (two decimal places); zero disables"}, {Name: "deadline-expired-ratio-recovery", Value: "PERCENT", Short: "inclusive percentage below warning; default warning minus 0.01 percentage points"}, {Name: "deadline-expired-ratio-min-recipients", Value: "N", Short: "required minimum pending recipients with deadlines, 1..9007199254740991"}, {Name: "deadline-window", Value: "DURATION", Short: "upcoming horizon, whole milliseconds 100ms-24h; required for deadline alerts"}, {Name: "deadline-upcoming-threshold", Value: "N", Short: "upcoming deadline count warning; zero disables"}, {Name: "deadline-expired-threshold", Value: "N", Short: "all expired deadline count warning; zero disables"}, {Name: "deadline-upcoming-recovery", Value: "N", Short: "inclusive recovery count below upcoming warning; default warning minus one"}, {Name: "deadline-expired-recovery", Value: "N", Short: "inclusive recovery count below expired warning; default warning minus one"}, {Name: "deadline-upcoming-reason", Value: "REASON=N", Short: "repeatable upcoming reason count warning"}, {Name: "deadline-expired-reason", Value: "REASON=N", Short: "repeatable expired reason count warning"}, {Name: "deadline-upcoming-reason-recovery", Value: "REASON=N", Short: "repeatable inclusive recovery count for enabled upcoming reason"}, {Name: "deadline-expired-reason-recovery", Value: "REASON=N", Short: "repeatable inclusive recovery count for enabled expired reason"}, {Name: "deadline-sustain", Value: "DURATION", Short: "deadline warning confirmation, 100ms-24h; default 1m"}, {Name: "deadline-recovery-sustain", Value: "DURATION", Short: "deadline recovery confirmation, 100ms-24h; default 1m"}, {Name: "renewal-rejection-threshold", Value: "FRACTION", Short: "recorded renewal rejection fraction threshold (0..1)"}, {Name: "lease-expiry-rate-threshold", Value: "RATE", Short: "recorded lease expiry transitions per second"}, {Name: "renewal-min-samples", Value: "N", Short: "minimum recorded renewal attempts (default 10)"}, {Name: "processing-window-sustain", Value: "DURATION", Short: "breach and recovery confirmation duration (at least 1m)"}, {Name: "processing-metrics-recording-since", Value: "RFC3339", Short: "manual recording coverage override; default uses verified server inventory"}, {Name: "processing-oldest-threshold", Value: "DURATION", Short: "oldest active processing attempt age; confirms for 30s"}, {Name: "processing-lease-risk-threshold", Value: "DURATION", Short: "sustained nonzero leases in their final third (capped at 30s)"}, {Name: "processing-expired-threshold", Value: "DURATION", Short: "sustained expired processing leases"}, {Name: "lineage-stalled-threshold", Value: "N", Short: "stalled pending retry-job count threshold"}, {Name: "lineage-retention-risk-threshold", Value: "N", Short: "active retry-job retention-risk count threshold"}, {Name: "lineage-paused-threshold", Value: "DURATION", Short: "sustained nonzero paused retry-job backlog"}, {Name: "receipt-budget-full-threshold", Value: "DURATION", Short: "sustained full capacity-command receipt budget"}, {Name: "receipt-budget-remaining-threshold", Value: "N", Short: "warn below N remaining receipt slots (1..128; zero disables)"}, {Name: "receipt-budget-low-sustain", Value: "DURATION", Short: "confirm low remaining slots (default 30s when enabled)"}, {Name: "receipt-budget-recovery-threshold", Value: "N", Short: "opt-in recovery at N remaining slots; N must be at least the warning threshold"}, {Name: "receipt-budget-recovery-sustain", Value: "DURATION", Short: "fresh recovery confirmation (default 30s when recovery enabled)"}, {Name: "window", Short: "5m|15m|1h|6h|24h", Value: "WINDOW"}, {Name: "watch", Short: "watch configured local health thresholds"}, {Name: "alerts-json", Short: "lifecycle alert JSON lines on stderr"}, {Name: "confirmation-progress", Short: "live delivery-health confirmation details on text stdout; omit with --json"}, {Name: "interval", Value: "DURATION", Short: "poll interval (100ms-1m)"}, {Name: "timeout", Value: "DURATION", Short: "watch deadline (up to 24h)"}, {Name: "max-age", Value: "DURATION", Short: "maximum sample age"}, {Name: "oldest-pending-threshold", Value: "DURATION", Short: "pending acceptance age threshold"}, {Name: "retrying-threshold", Value: "N", Short: "retained retrying execution threshold"}, {Name: "dead-letters-threshold", Value: "N", Short: "retained dead-letter execution threshold"}, {Name: "pause-threshold", Value: "DURATION", Short: "subscription pause duration threshold"}, {Name: "circuit-threshold", Value: "DURATION", Short: "locally sampled circuit restriction duration"}, {Name: "capacity-threshold", Value: "DURATION", Short: "locally sampled capacity wait duration"}, {Name: "waiting-reason-count", Value: "REASON=N", Short: "repeatable pending reason count threshold"}, {Name: "waiting-reason-duration", Value: "REASON=DURATION", Short: "repeatable sustained nonzero reason threshold"}, {Name: "checkpoint", Value: "PATH", Short: "persist delivery health watch state"}, {Name: "resume", Short: "resume checkpoint with fresh evidence"}, {Name: "ack-inbox", Value: "PATH", Short: "live acknowledgement JSON batch; requires checkpoint"}, {Name: "slo-routing-latency", Value: "DURATION", Short: "recorded routing p95 target"}, {Name: "slo-completion-latency", Value: "DURATION", Short: "successful completion p95 target"}, {Name: "slo-retry-rate", Value: "N", Short: "routing retries/second target"}, {Name: "slo-dead-letter-rate", Value: "N", Short: "dead letters/second target"}, {Name: "slo-routing-failure-budget", Value: "PERCENT", Short: "terminal routing failure budget"}, {Name: "slo-min-samples", Value: "N", Short: "minimum window samples"}, {Name: "slo-sustain", Value: "DURATION", Short: "sustained fresh breach duration"}}},
 			{Name: "subscription-health", Short: "Inspect consumer backlog, routing rates, latency, and pause duration", Positionals: []string{"<app>", "<subscription-id>"}, Flags: []cliFlag{{Name: "window", Short: "5m|15m|1h|6h|24h", Value: "WINDOW"}}},
 			{Name: "subscription-status", Short: "Inspect delivery pause, pacing, and oldest waiting event", Positionals: []string{"<app>", "<subscription-id>"}},
 			{Name: "subscription-capacity", Short: "Set a lower live-delivery limit for one subscription", Positionals: []string{"<app>", "<subscription-id>"}, Flags: []cliFlag{{Name: "command-id", Value: "UUID", Short: "retain original outcome; reuse unchanged on uncertain response"}, {Name: "expected-max-pending", Value: "N", Short: "reviewed saved setting; use with expected-plan-max-pending"}, {Name: "expected-plan-max-pending", Value: "N", Short: "reviewed plan ceiling; use with expected-max-pending"}, {Name: "max-pending", Value: "N", Short: "pending plus dispatching ceiling; 0 restores plan default"}, {Name: "yes", Short: "confirm changing subscription capacity"}}},
 			{Name: "subscription-capacity-commands", Short: "List a page of retained original capacity-command receipts", Positionals: []string{"<app>", "<subscription-id>"}, Flags: []cliFlag{{Name: "outcome", Value: "FILTER", Short: "any (default), applied or unchanged"}, {Name: "limit", Value: "N", Short: "receipts per page (default 25; maximum 100)"}, {Name: "after", Value: "CURSOR", Short: "next_after for the same app, subscription and outcome filter"}, {Name: "timeout", Value: "DURATION", Short: "total read deadline (default 5s; maximum 1m)"}}},
-			{Name: "subscription-capacity-command", Short: "Read retained original capacity-command evidence without applying a change", Positionals: []string{"<app>", "<subscription-id>", "<command-id>"}, Flags: []cliFlag{{Name: "timeout", Value: "DURATION", Short: "total read deadline (default 5s; maximum 1m)"}}},
-			{Name: "subscription-capacity-preview", Short: "Preview delivery capacity and command receipt budget without changing controls", Positionals: []string{"<app>", "<subscription-id>"}, Flags: []cliFlag{{Name: "max-pending", Value: "N", Short: "proposed live ceiling; 0 restores plan default"}, {Name: "timeout", Value: "DURATION", Short: "total read deadline (default 5s)"}, {Name: "max-age", Value: "DURATION", Short: "maximum pressure snapshot age (default 30s)"}}},
+			{Name: "subscription-capacity-command", Short: "Read retained capacity-command evidence without changing anything", Positionals: []string{"<app>", "<subscription-id>", "<command-id>"}, Flags: []cliFlag{{Name: "timeout", Value: "DURATION", Short: "total read deadline (default 5s; maximum 1m)"}}},
+			{Name: "subscription-capacity-preview", Short: "Preview delivery capacity and command receipt budget", Notes: []string{"Does not change controls."}, Positionals: []string{"<app>", "<subscription-id>"}, Flags: []cliFlag{{Name: "max-pending", Value: "N", Short: "proposed live ceiling; 0 restores plan default"}, {Name: "timeout", Value: "DURATION", Short: "total read deadline (default 5s)"}, {Name: "max-age", Value: "DURATION", Short: "maximum pressure snapshot age (default 30s)"}}},
 			{Name: "recovery-preview", Short: "Preview a bounded selection of failed event consumers", Positionals: []string{"<app>"}, Flags: []cliFlag{
 				{Name: "mode", Short: "routing (default) or execution recovery; parent-job defaults to execution", Value: "MODE"},
 				{Name: "parent-job", Short: "select saved failures from one terminal execution recovery", Value: "UUID"},
@@ -1437,7 +1446,7 @@ var cliCommands = []cliCommand{
 			{Name: "recovery-preflight", Short: "Assess frozen recovery eligibility and optimistic timing", Positionals: []string{"<job-id>"}},
 			{Name: "recovery-notifications", Short: "Inspect recovery notification capture and receiver acknowledgements", Positionals: []string{"<job-id>"}},
 			{Name: "notification-retry-reconcile", Short: "Read saved plan decisions and original-generation delivery outcomes", Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "Prepared retry plan JSON"}, {Name: "wait", Bool: true, Short: "Wait while all unresolved outcomes are pending"}, {Name: "timeout", Value: "DURATION", Short: "Overall wait deadline (default 5m); requires --wait"}}, Examples: []string{"gregale events notification-retry-reconcile --file plan.json --wait --timeout 5m"}},
-			{Name: "notification-retry-plan", Short: "Preview explicit notification retries across up to ten app jobs and save a plan", Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "Selection JSON with app_id and stable per-job requests"}, {Name: "output", Value: "NEW_PATH", Short: "Create a new private plan file; never overwrite"}}},
+			{Name: "notification-retry-plan", Short: "Preview notification retries across app jobs and save a plan", Notes: []string{"Covers up to ten app jobs."}, Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "Selection JSON with app_id and stable per-job requests"}, {Name: "output", Value: "NEW_PATH", Short: "Create a new private plan file; never overwrite"}}},
 			{Name: "notification-retry-apply", Short: "Apply a prepared plan and emit a JSON decision receipt", Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "Prepared plan; preserve request IDs when resuming"}}},
 			{Name: "notification-retry-backlog", Short: "Inspect notification retry requests across retained app recovery jobs", Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "status", Value: "STATUS,...", Short: "Request statuses (default failed,pending,inconclusive)"}, {Name: "page-size", Value: "N", Short: "Jobs inspected per page (1..10; default 5)"}, {Name: "cursor", Value: "CURSOR", Short: "Continue to the next job page"}}, Examples: []string{"gregale events notification-retry-backlog my-app --status failed,pending,inconclusive --json"}},
 			{Name: "recovery-notification-retry-history", Short: "Inspect saved retry decisions and current delivery status", Positionals: []string{"<job-id>"}, Flags: []cliFlag{{Name: "status", Value: "STATUS,...", Short: "Filter list by succeeded, failed, pending, or inconclusive; incompatible with --request-id"}, {Name: "request-id", Value: "UUID", Short: "Show one saved retry request in detail"}, {Name: "wait", Bool: true, Short: "Wait for the requested retry generations; requires --request-id"}, {Name: "timeout", Value: "DURATION", Short: "Maximum wait duration (default 5m); requires --wait"}}, Examples: []string{"gregale events recovery-notification-retry-history JOB_ID --status failed,inconclusive --json", "gregale events recovery-notification-retry-history JOB_ID --request-id REQUEST_ID --wait --timeout 5m --json"}},
@@ -1505,12 +1514,12 @@ var cliCommands = []cliCommand{
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
 				{Name: "limit", Short: "max history rows (1..200)", Value: "N"},
 			}},
-			{Name: "replay", Short: "Retry one terminal pre-invocation recipient failure using its event identity and subscription ID from events deliveries", Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "expected-accepted-at", Value: "RFC3339", Short: "guard original acceptance in replay transaction"}, {Name: "expected-generation", Value: "N", Short: "guard routing generation; requires expected-accepted-at"}, {Name: "allow-expired", Bool: true, Short: "explicitly bypass captured delivery age"},
+			{Name: "replay", Short: "Retry one terminal pre-invocation recipient failure", Notes: []string{"Uses the event identity and subscription ID from events deliveries."}, Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "expected-accepted-at", Value: "RFC3339", Short: "guard original acceptance in replay transaction"}, {Name: "expected-generation", Value: "N", Short: "guard routing generation; requires expected-accepted-at"}, {Name: "allow-expired", Bool: true, Short: "explicitly bypass captured delivery age"},
 				{Name: "event-id", Short: "published event id", Req: true, Value: "ID"},
 				{Name: "event-source", Short: "published event source", Req: true, Value: "SOURCE"},
 				{Name: "subscription-id", Short: "failed subscription id", Req: true, Value: "ID"},
 			}},
-			{Name: "replay-retryable", Short: "Retry a bounded batch of terminal failures classified as retryable; pass --event-source and --event-id together to filter", Positionals: []string{"<app>"}, Flags: []cliFlag{
+			{Name: "replay-retryable", Short: "Retry a bounded batch of retryable terminal failures", Notes: []string{"Pass --event-source and --event-id together to filter."}, Positionals: []string{"<app>"}, Flags: []cliFlag{
 				{Name: "event-source", Short: "limit replay to one published event source", Value: "SOURCE"},
 				{Name: "event-id", Short: "limit replay to one published event", Value: "ID"},
 				{Name: "limit", Short: "max recipients to requeue (1..100)", Value: "N"},
@@ -1555,7 +1564,7 @@ var cliCommands = []cliCommand{
 		Examples: []string{"gregale apps", "gregale apps --json", "gregale apps rm my-api --dry-run", "gregale apps rm my-api --yes"},
 		Subcommands: []cliSub{
 			{Name: "ls", Short: "Alias for the default list action"},
-			{Name: "rm", Aliases: []string{"delete"}, Short: "Delete an app (alias: delete); restore it within the deletion grace window", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+			{Name: "rm", Aliases: []string{"delete"}, Short: "Delete an app; restore it within the deletion grace window", Notes: []string{"Also accepted as delete."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "dry-run", Short: "preview deletion without changing resources", Bool: true},
 				{Name: "yes", Short: "confirm deletion without prompting; required in non-interactive and JSON mode", Bool: true},
 				{Name: "quiet", Short: "confirm deletion without prompting (alias of --yes)", Bool: true},
@@ -1648,7 +1657,7 @@ var cliCommands = []cliCommand{
 			{Name: "cp", Short: "Copy a path out of a fresh VM of the live deployment", Positionals: []string{"<remote-path>", "<local-path|->"}, Flags: []cliFlag{
 				{Name: "wait-timeout", Short: "maximum time to wait for the task VM to start", Value: "D"},
 			}},
-			{Name: "port-forward", Short: "Forward a local port to HOST:PORT reached from inside the app's network", Positionals: []string{"[LOCAL_PORT:]HOST:PORT"}, Flags: []cliFlag{
+			{Name: "port-forward", Short: "Forward a local port to a host and port inside the app's network", Positionals: []string{"[LOCAL_PORT:]HOST:PORT"}, Flags: []cliFlag{
 				{Name: "address", Short: "local address to listen on (default 127.0.0.1)", Value: "A"},
 				{Name: "wait-timeout", Short: "maximum time to wait for the task VM to start", Value: "D"},
 			}},
@@ -1960,7 +1969,7 @@ var cliCommands = []cliCommand{
 			// (PR-3 wires the server side). The CLI stays out of the
 			// OAuth dance — the cookie-session dashboard is the
 			// install-token trust root.
-			{Name: "repo", Short: "Open the dashboard wizard to bind <owner>/<name> to a Gregale app", Examples: []string{"gregale connect repo acme/my-api"}, Positionals: []string{"<owner>/<name>"}},
+			{Name: "repo", Short: "Open the dashboard wizard to bind a repository to an app", Examples: []string{"gregale connect repo acme/my-api"}, Positionals: []string{"<owner>/<name>"}},
 		},
 	},
 	{
@@ -1968,10 +1977,10 @@ var cliCommands = []cliCommand{
 		DocSlug: "github",
 		Short:   "Bind an app to a GitHub repository and check its connection",
 		Subcommands: []cliSub{
-			{Name: "status", Short: "Show the GitHub connection health for <slug>", Examples: []string{"gregale github status my-api"}, Positionals: []string{"<slug>"}},
+			{Name: "status", Short: "Show an app's GitHub connection health", Examples: []string{"gregale github status my-api"}, Positionals: []string{"<slug>"}},
 			{Name: "sync", Short: "Reconcile repository access with GitHub", Examples: []string{"gregale github sync my-api"}, Positionals: []string{"<slug>"}},
-			{Name: "repos", Short: "List repositories visible to the connected GitHub installation for <slug>", Examples: []string{"gregale github repos my-api"}, Positionals: []string{"<slug>"}},
-			{Name: "bind", Short: "Bind <slug> to a visible GitHub repository", Examples: []string{"gregale github bind my-api --repo acme/my-api --branch main"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
+			{Name: "repos", Short: "List repositories the connected GitHub installation can see", Examples: []string{"gregale github repos my-api"}, Positionals: []string{"<slug>"}},
+			{Name: "bind", Short: "Bind an app to a visible GitHub repository", Examples: []string{"gregale github bind my-api --repo acme/my-api --branch main"}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "installation-id", Short: "GitHub App installation id (auto-resolved when omitted)", Value: "ID"},
 				{Name: "repo", Short: "GitHub repository OWNER/NAME", Value: "OWNER/NAME", Req: true},
 				{Name: "branch", Short: "production branch", Value: "BRANCH"},
@@ -2006,13 +2015,13 @@ var cliCommands = []cliCommand{
 		DocSlug: "cors",
 		Short:   "Configure CORS for an app",
 		Subcommands: []cliSub{
-			{Name: "allow", Short: "Attach a CORS rule to <slug>", Positionals: []string{"<slug>", "<origin>", "[<origin>...]"}, Flags: []cliFlag{
+			{Name: "allow", Short: "Attach a CORS rule to an app", Positionals: []string{"<slug>", "<origin>", "[<origin>...]"}, Flags: []cliFlag{
 				{Name: "method", Short: "allowed method (repeat)", Value: "VERB"},
 				{Name: "credentials", Short: "enable Access-Control-Allow-Credentials"},
 				{Name: "max-age", Short: "Access-Control-Max-Age in seconds (default 600)", Value: "N"},
 				{Name: "host", Short: "match host (default: the app's first verified custom domain)", Value: "HOST"},
 			}, Examples: []string{"gregale cors allow my-api https://app.example.com --method GET --method POST"}},
-			{Name: "ls", Short: "List CORS rules bound to <slug> (defaults to linked context)", Positionals: []string{"[<slug>]"}},
+			{Name: "ls", Short: "List an app's CORS rules", Notes: []string{"The app defaults to the linked one."}, Positionals: []string{"[<slug>]"}},
 			{Name: "rm", Short: "Delete a CORS rule by id", Positionals: []string{"[<slug>]", "<rule-id>"}},
 			{Name: "show", Short: "Show per-app default CORS + active rules (defaults to linked context)", Positionals: []string{"[<slug>]"}},
 		},
@@ -2022,7 +2031,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "crons",
 		Short:   "Manage scheduled HTTP requests and deployment commands",
 		Subcommands: []cliSub{
-			{Name: "next", Short: "Show upcoming expression times across app tasks, with state and policy caveats", Examples: []string{"gregale crons next --app my-api", "gregale crons next --app my-api --json"}, Flags: []cliFlag{{Name: "app", Short: "app slug (linked app or picker by default)", Value: "SLUG"}}},
+			{Name: "next", Short: "Show upcoming expression times across app tasks", Notes: []string{"Includes state and policy caveats."}, Examples: []string{"gregale crons next --app my-api", "gregale crons next --app my-api --json"}, Flags: []cliFlag{{Name: "app", Short: "app slug (linked app or picker by default)", Value: "SLUG"}}},
 			{Name: "list", Short: "List cron rules", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}}},
 			{Name: "add", Short: "Schedule a POST to an app path, or a deployment command", Examples: []string{"gregale crons add --app my-api --interactive"}, Flags: []cliFlag{
 				{Name: "interactive", Short: "choose an HTTP path, schedule, and timezone, preview run times, and confirm creation", Bool: true},
@@ -2170,7 +2179,7 @@ var cliCommands = []cliCommand{
 		Short:    "Manage jobs that run to completion",
 		Examples: []string{"gregale jobs", "gregale jobs overview nightly-report", "gregale jobs --help"},
 		Subcommands: []cliSub{
-			{Name: "resume", Short: "Recover a saved Job run: observe, read failure logs, or collect results", Flags: resumeRecordedRunCLIFlags("job"), Examples: []string{"gregale jobs resume --list", "gregale jobs resume --job nightly-report --overview", "gregale jobs resume --job nightly-report --logs", "gregale jobs resume --job nightly-report --results", "gregale jobs resume --run RUN_ID"}},
+			{Name: "resume", Short: "Recover a saved Job run: observe, read failures or collect results", Flags: resumeRecordedRunCLIFlags("job"), Examples: []string{"gregale jobs resume --list", "gregale jobs resume --job nightly-report --overview", "gregale jobs resume --job nightly-report --logs", "gregale jobs resume --job nightly-report --results", "gregale jobs resume --run RUN_ID"}},
 			{Name: "list", Short: "List jobs in this account", Flags: []cliFlag{
 				{Name: "limit", Short: "page size (1..200, default 50)", Value: "N"},
 				{Name: "offset", Short: "starting offset (>= 0)", Value: "N"},
@@ -2247,8 +2256,8 @@ var cliCommands = []cliCommand{
 				{Name: "offset", Short: "starting offset (>= 0)", Value: "N"},
 				{Name: "all", Short: "walk every page using --limit and --offset"},
 			}},
-			{Name: "overview", Short: "Summarize Job readiness, latest run, and next commands (saved Job by default)", Positionals: []string{"[<name>]"}, Flags: []cliFlag{{Name: "check", Bool: true, Short: "exit 0 only for an active Job, ready image, and succeeded latest run"}}, Examples: []string{"gregale jobs overview", "gregale jobs overview --check", "gregale jobs overview nightly-report --json"}},
-			{Name: "status", Short: "Read one exact or latest Job run summary (saved Job and latest by default)", Positionals: []string{"[<name>]", "[<run-id|latest>]"}, Flags: []cliFlag{{Name: "check", Bool: true, Short: "exit 0 only when the recorded run status is succeeded"}}, Examples: []string{"gregale jobs status", "gregale jobs status nightly-report", "gregale jobs status nightly-report RUN_ID --check", "gregale jobs status nightly-report latest", "gregale --json jobs status nightly-report RUN_ID"}},
+			{Name: "overview", Short: "Summarize Job readiness, latest run and next commands", Notes: []string{"Uses the saved Job by default."}, Positionals: []string{"[<name>]"}, Flags: []cliFlag{{Name: "check", Bool: true, Short: "exit 0 only for an active Job, ready image, and succeeded latest run"}}, Examples: []string{"gregale jobs overview", "gregale jobs overview --check", "gregale jobs overview nightly-report --json"}},
+			{Name: "status", Short: "Read one exact or latest Job run summary", Notes: []string{"Uses the saved Job and its latest run by default."}, Positionals: []string{"[<name>]", "[<run-id|latest>]"}, Flags: []cliFlag{{Name: "check", Bool: true, Short: "exit 0 only when the recorded run status is succeeded"}}, Examples: []string{"gregale jobs status", "gregale jobs status nightly-report", "gregale jobs status nightly-report RUN_ID --check", "gregale jobs status nightly-report latest", "gregale --json jobs status nightly-report RUN_ID"}},
 			{Name: "occurrences", Short: "Inspect recurring schedule decisions", Positionals: []string{"[<name>]"}, Examples: []string{"gregale jobs occurrences --interactive"}, Flags: []cliFlag{
 				{Name: "interactive", Bool: true, Short: "choose a Job and browse scheduled occurrence decisions"},
 				{Name: "before", Short: "alias for --cursor", Value: "ID"},
@@ -2283,7 +2292,7 @@ var cliCommands = []cliCommand{
 				{Name: "show", Short: "Show saved Job settings, their path, and local recovery readiness"},
 				{Name: "clear", Short: "Remove saved Job defaults", Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "show settings and inheritance effects without removing the file"}}, Examples: []string{"gregale jobs defaults clear --dry-run"}},
 			}},
-			{Name: "results", Short: "Wait for success and collect outputs, verifying matching existing files", Positionals: []string{"[<name>]", "[<run-id|latest>]"}, Examples: []string{"gregale jobs results nightly-report", "gregale jobs results nightly-report latest --out-dir ./results", "gregale jobs results nightly-report latest --out-dir ./results --dry-run"}, Flags: []cliFlag{
+			{Name: "results", Short: "Wait for success and collect outputs", Notes: []string{"Output files that already exist are verified, not replaced."}, Positionals: []string{"[<name>]", "[<run-id|latest>]"}, Examples: []string{"gregale jobs results nightly-report", "gregale jobs results nightly-report latest --out-dir ./results", "gregale jobs results nightly-report latest --out-dir ./results --dry-run"}, Flags: []cliFlag{
 				{Name: "out-dir", Value: "DIR", Short: "local destination (default ./results/JOB/RUN_ID)"},
 				{Name: "all-artifacts", Bool: true, Short: "ignore saved artifact filters for this invocation"},
 				{Name: "dry-run", Bool: true, Short: "preview current artifacts without waiting or writing files"},
@@ -2294,8 +2303,8 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "tasks", Short: "List tasks (saved Job and latest run by default)", Positionals: []string{"[<name>]", "[<run-id|latest>]"}, Flags: []cliFlag{{Name: "all", Bool: true, Short: "read all task pages from the starting offset"}, {Name: "limit", Value: "N", Short: "task page size (1..200)"}, {Name: "offset", Value: "N", Short: "starting task offset (non-negative)"}, {Name: "unsuccessful-only", Bool: true, Short: "scan all task pages for failed, timeout, oom, and cancelled tasks"}, {Name: "failed-only", Bool: true, Short: "scan all task pages and show failed, timeout, and oom tasks"}, {Name: "artifacts-only", Bool: true, Short: "scan task pages for valid manifests containing artifacts"}, {Name: "include", Value: "GLOB", Short: "repeatable artifact-name glob; requires --artifacts-only; quote patterns"}, {Name: "exclude", Value: "GLOB", Short: "repeatable artifact-name glob to omit; requires --artifacts-only; exclusions take precedence"}, {Name: "interactive", Bool: true, Short: "choose a run, browse task pages, and filter unsuccessful tasks"}}, Examples: []string{"gregale jobs tasks --unsuccessful-only", "gregale jobs tasks", "gregale jobs tasks --failed-only", "gregale jobs tasks --artifacts-only", "gregale jobs tasks nightly-report latest --all", "gregale jobs tasks nightly-report latest --failed-only", "gregale jobs tasks nightly-report latest", "gregale jobs tasks --interactive"}},
 			{Name: "attempts", Short: "List retained attempts for one task in an exact or latest run", Positionals: []string{"[<name>]", "[<run-id|latest>]", "[<task-index>]"}, Flags: []cliFlag{{Name: "task", Value: "N", Short: "task index; omitted Job uses local defaults, omitted run uses latest"}, {Name: "unsuccessful-only", Bool: true, Short: "filter fetched history to failed, timeout, oom, and cancelled attempts"}, {Name: "failed-only", Bool: true, Short: "filter fetched history to failed, timeout, and oom attempts"}, {Name: "all", Bool: true, Short: "read all retained attempt pages from the starting offset"}, {Name: "limit", Value: "N", Short: "history page size (1..200; server default 50)"}, {Name: "offset", Value: "N", Short: "starting history offset (non-negative)"}, {Name: "interactive", Bool: true, Short: "choose a task and inspect retained attempts and output"}}, Examples: []string{"gregale jobs attempts --task 2 --unsuccessful-only --all", "gregale jobs attempts --task 2 --failed-only --all", "gregale jobs attempts nightly-report latest 0 --all --failed-only", "gregale jobs attempts nightly-report latest 0 --all", "gregale jobs attempts nightly-report latest 0", "gregale jobs attempts --interactive"}},
-			{Name: "retry", Short: "Retry one failed task; --task uses the saved Job and newest run", Positionals: []string{"[<name>]", "[<run-id>]", "[<task-index>]"}, Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "read task state and preview retry without starting another attempt"}, {Name: "results", Bool: true, Short: "wait for success and collect outputs into ./results/JOB/RUN_ID, verifying existing files"}, {Name: "include", Value: "GLOB", Short: "artifact-name glob; requires --results"}, {Name: "exclude", Value: "GLOB", Short: "artifact-name glob to omit; requires --results"}, {Name: "all-artifacts", Bool: true, Short: "ignore saved artifact filters; requires --results"}, {Name: "task", Value: "N", Short: "task index; omitted Job uses local defaults, omitted run uses latest"}, {Name: "wait", Bool: true, Short: "wait for the whole run after one task retry"}, {Name: "wait-timeout", Value: "DURATION", Short: "wait deadline after retry acceptance (default 10m; requires --wait or --results)"}, {Name: "poll-interval", Value: "DURATION", Short: "wait read interval (default 2s; 1s to 1h; requires --wait or --results)"}, {Name: "interactive", Bool: true, Short: "choose a failed task, review eligibility, and confirm one retry"}}, Examples: []string{"gregale jobs retry --task 2 --dry-run", "gregale jobs retry --task 2 --results", "gregale jobs retry --task 2", "gregale jobs retry nightly-report latest --task 2 --wait", "gregale jobs retry nightly-report RUN_ID 0 --wait", "gregale jobs retry --interactive"}},
-			{Name: "replay-failed", Short: "Replay unsuccessful tasks; omitted Job uses local defaults, omitted run uses latest", Positionals: []string{"[<name>]", "[<run-id|latest>]"}, Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "read source tasks and preview replay without starting a new run"}, {Name: "results", Bool: true, Short: "wait for recovery success and collect outputs into ./results/JOB/NEW_RUN_ID, verifying existing files"}, {Name: "include", Value: "GLOB", Short: "artifact-name glob; requires --results"}, {Name: "exclude", Value: "GLOB", Short: "artifact-name glob to omit; requires --results"}, {Name: "all-artifacts", Bool: true, Short: "ignore saved artifact filters; requires --results"}, {Name: "wait", Bool: true, Short: "wait for the new recovery run"}, {Name: "wait-timeout", Value: "DURATION", Short: "wait deadline after replay acceptance (default 10m; requires --wait or --results)"}, {Name: "poll-interval", Value: "DURATION", Short: "wait read interval (default 2s; 1s to 1h; requires --wait or --results)"}, {Name: "interactive", Bool: true, Short: "choose a source run, review unsuccessful tasks, and confirm replay"}}, Examples: []string{"gregale jobs replay-failed nightly-report latest --dry-run", "gregale jobs replay-failed --results", "gregale jobs replay-failed", "gregale jobs replay-failed nightly-report latest --wait", "gregale jobs replay-failed nightly-report RUN_ID --wait", "gregale jobs replay-failed --interactive"}},
+			{Name: "retry", Short: "Retry one failed task", Notes: []string{"With --task, uses the saved Job and its newest run."}, Positionals: []string{"[<name>]", "[<run-id>]", "[<task-index>]"}, Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "read task state and preview retry without starting another attempt"}, {Name: "results", Bool: true, Short: "wait for success and collect outputs into ./results/JOB/RUN_ID, verifying existing files"}, {Name: "include", Value: "GLOB", Short: "artifact-name glob; requires --results"}, {Name: "exclude", Value: "GLOB", Short: "artifact-name glob to omit; requires --results"}, {Name: "all-artifacts", Bool: true, Short: "ignore saved artifact filters; requires --results"}, {Name: "task", Value: "N", Short: "task index; omitted Job uses local defaults, omitted run uses latest"}, {Name: "wait", Bool: true, Short: "wait for the whole run after one task retry"}, {Name: "wait-timeout", Value: "DURATION", Short: "wait deadline after retry acceptance (default 10m; requires --wait or --results)"}, {Name: "poll-interval", Value: "DURATION", Short: "wait read interval (default 2s; 1s to 1h; requires --wait or --results)"}, {Name: "interactive", Bool: true, Short: "choose a failed task, review eligibility, and confirm one retry"}}, Examples: []string{"gregale jobs retry --task 2 --dry-run", "gregale jobs retry --task 2 --results", "gregale jobs retry --task 2", "gregale jobs retry nightly-report latest --task 2 --wait", "gregale jobs retry nightly-report RUN_ID 0 --wait", "gregale jobs retry --interactive"}},
+			{Name: "replay-failed", Short: "Replay unsuccessful tasks of a Job run", Notes: []string{"An omitted Job uses local defaults; an omitted run uses the latest."}, Positionals: []string{"[<name>]", "[<run-id|latest>]"}, Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "read source tasks and preview replay without starting a new run"}, {Name: "results", Bool: true, Short: "wait for recovery success and collect outputs into ./results/JOB/NEW_RUN_ID, verifying existing files"}, {Name: "include", Value: "GLOB", Short: "artifact-name glob; requires --results"}, {Name: "exclude", Value: "GLOB", Short: "artifact-name glob to omit; requires --results"}, {Name: "all-artifacts", Bool: true, Short: "ignore saved artifact filters; requires --results"}, {Name: "wait", Bool: true, Short: "wait for the new recovery run"}, {Name: "wait-timeout", Value: "DURATION", Short: "wait deadline after replay acceptance (default 10m; requires --wait or --results)"}, {Name: "poll-interval", Value: "DURATION", Short: "wait read interval (default 2s; 1s to 1h; requires --wait or --results)"}, {Name: "interactive", Bool: true, Short: "choose a source run, review unsuccessful tasks, and confirm replay"}}, Examples: []string{"gregale jobs replay-failed nightly-report latest --dry-run", "gregale jobs replay-failed --results", "gregale jobs replay-failed", "gregale jobs replay-failed nightly-report latest --wait", "gregale jobs replay-failed nightly-report RUN_ID --wait", "gregale jobs replay-failed --interactive"}},
 			{Name: "artifact-url", Short: "Verify a managed result and get a signed URL", Positionals: []string{"[<name>]", "[<run-id|latest>]", "[<task-index>]", "[<artifact-name>]"}, Flags: []cliFlag{{Name: "interactive", Bool: true, Short: "choose a task and managed output artifact"}}, Examples: []string{"gregale jobs artifact-url nightly-report latest 0 report.csv", "gregale jobs artifact-url --interactive", "gregale jobs artifact-url <name> <run-id> <task-index> <artifact-name>"}},
 			{Name: "artifact-download", Short: "Download and verify current managed artifacts", Positionals: []string{"[<name>]", "[<run-id|latest>]", "[<task-index>]", "[<artifact-name>]"}, Flags: []cliFlag{{Name: "task", Value: "N", Short: "single-artifact task index; omitted Job uses local defaults, omitted run uses latest"}, {Name: "out", Value: "PATH", Short: "new destination file; required for a single artifact"}, {Name: "all", Bool: true, Short: "download all current managed artifacts"}, {Name: "all-tasks", Bool: true, Short: "download current managed artifacts across all task pages into task directories"}, {Name: "include", Value: "GLOB", Short: "repeatable artifact-name glob for bulk modes; quote patterns"}, {Name: "exclude", Value: "GLOB", Short: "repeatable artifact-name glob to omit in bulk modes; exclusions take precedence"}, {Name: "dry-run", Bool: true, Short: "preview bulk destinations, bytes, and conflicts; requires --all or --all-tasks"}, {Name: "resume", Bool: true, Short: "verify and skip matching files; requires bulk mode and an explicit run UUID"}, {Name: "out-dir", Value: "DIR", Short: "destination directory, created when missing; required in bulk mode"}}, Examples: []string{"gregale jobs artifact-download --task 2 report.csv --out report.csv", "gregale jobs artifact-download nightly-report latest 0 report.csv --out report.csv"}},
 			{Name: "artifacts", Short: "List recorded task artifacts and managed download commands", Flags: []cliFlag{{Name: "task", Value: "N", Short: "task index; omitted Job uses local defaults, omitted run uses latest"}, {Name: "attempt", Short: "retained attempt number (metadata only)", Value: "N"}, {Name: "include", Value: "GLOB", Short: "repeatable artifact-name glob; quote patterns"}, {Name: "exclude", Value: "GLOB", Short: "repeatable artifact-name glob to omit; exclusions take precedence"}}, Positionals: []string{"[<name>]", "[<run-id|latest>]", "[<task-index>]"}, Examples: []string{"gregale jobs artifacts --task 2", "gregale jobs artifacts --task 2 --attempt 1", "gregale jobs artifacts nightly-report latest 0"}},
@@ -2369,7 +2378,7 @@ var cliCommands = []cliCommand{
 				{Name: "created-after", Value: "RFC3339", Short: "inclusive start; excludes --since"},
 				{Name: "created-before", Value: "RFC3339", Short: "inclusive end"},
 			}},
-			{Name: "recover", Short: "Resume explicitly selected failed runs with per-run generation checks and outcomes", Flags: []cliFlag{{Name: "plan-out", Short: "save reviewed selection to a new plan file without resuming", Value: "PATH"}, {Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "run", Short: "run UUID and original expected resume count; repeatable, at most 25", Req: true, Value: "UUID:COUNT"}, {Name: "idempotency-key", Short: "stable batch key; reuse for interrupted retries", Req: true, Value: "KEY"}}},
+			{Name: "recover", Short: "Resume selected failed runs with per-run generation checks", Notes: []string{"Reports each run's outcome."}, Flags: []cliFlag{{Name: "plan-out", Short: "save reviewed selection to a new plan file without resuming", Value: "PATH"}, {Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "run", Short: "run UUID and original expected resume count; repeatable, at most 25", Req: true, Value: "UUID:COUNT"}, {Name: "idempotency-key", Short: "stable batch key; reuse for interrupted retries", Req: true, Value: "KEY"}}},
 			{Name: "event-recovery-plan", Short: "Save selected retained automation routing actions for review", Flags: []cliFlag{{Name: "app", Req: true, Value: "SLUG", Short: "app slug"}, {Name: "name", Req: true, Value: "NAME", Short: "automation name"}, {Name: "source", Req: true, Value: "SOURCE", Short: "event source"}, {Name: "event", Req: true, Value: "ID", Short: "selected event ID; repeatable, at most 25"}, {Name: "idempotency-key", Req: true, Value: "KEY", Short: "stable batch key"}, {Name: "out", Req: true, Value: "PATH", Short: "new event plan file"}}},
 			{Name: "recovery-health", Short: "Inspect recovery execution attention and explicit action hints", Flags: []cliFlag{{Name: "app", Req: true, Value: "SLUG", Short: "app slug"}}},
 
@@ -2402,13 +2411,13 @@ var cliCommands = []cliCommand{
 			{Name: "failure-recovery-reviews", Short: "List retained durable first recovery reviews", Flags: []cliFlag{{Name: "app", Req: true, Value: "SLUG", Short: "app slug"}, {Name: "after", Value: "UUID", Short: "next page cursor"}, {Name: "limit", Value: "N", Short: "page size"}}},
 			{Name: "failure-recovery-review", Short: "Prepare, inspect, submit or cancel a durable first recovery review", Flags: []cliFlag{{Name: "app", Req: true, Value: "SLUG", Short: "app slug"}, {Name: "failure", Value: "UUID", Short: "captured initial failure"}, {Name: "expected-policy-version", Value: "N", Short: "saved policy version"}, {Name: "review", Value: "UUID", Short: "durable review"}, {Name: "decision", Value: "DECISION", Short: "submit or cancel"}, {Name: "reason", Value: "TEXT", Short: "operator reason"}}},
 			{Name: "failure-recovery-plan", Short: "Preview an initial failure and save a reviewed first recovery plan", Flags: []cliFlag{{Name: "app", Req: true, Value: "SLUG", Short: "app slug"}, {Name: "failure", Req: true, Value: "UUID", Short: "captured initial failure"}, {Name: "policy", Value: "PATH", Short: "candidate policy dry run"}, {Name: "plan-out", Value: "PATH", Short: "new reviewed recovery plan"}, {Name: "key", Value: "KEY", Short: "stable recovery key"}}},
-			{Name: "recovery-retry-plan", Short: "Review saved workflow recovery failures and save an explicit retry plan", Flags: []cliFlag{{Name: "app", Req: true, Value: "SLUG", Short: "app slug"}, {Name: "job", Req: true, Value: "UUID", Short: "parent recovery job"}, {Name: "position", Value: "N", Short: "reviewed parent item position (repeatable)"}, {Name: "plan-out", Value: "PATH", Short: "new reviewed retry plan file"}, {Name: "key", Value: "KEY", Short: "stable idempotency key for the retry plan"}}},
+			{Name: "recovery-retry-plan", Short: "Review recovery failures and save an explicit retry plan", Flags: []cliFlag{{Name: "app", Req: true, Value: "SLUG", Short: "app slug"}, {Name: "job", Req: true, Value: "UUID", Short: "parent recovery job"}, {Name: "position", Value: "N", Short: "reviewed parent item position (repeatable)"}, {Name: "plan-out", Value: "PATH", Short: "new reviewed retry plan file"}, {Name: "key", Value: "KEY", Short: "stable idempotency key for the retry plan"}}},
 			{Name: "recovery-start", Short: "Submit a reviewed automation run plan as a durable server job", Flags: []cliFlag{{Name: "plan", Req: true, Value: "PATH", Short: "reviewed run plan"}, {Name: "rate", Value: "N", Short: "maximum recoveries per second (1..100)"}, {Name: "execution-deadline", Value: "DURATION", Short: "advisory execution deadline (zero disables)"}, {Name: "execution-stall", Value: "DURATION", Short: "no-progress warning threshold (default 15m)"}, {Name: "reason", Value: "TEXT", Short: "optional operator reason"}}},
 			{Name: "event-recovery-start", Short: "Submit a reviewed automation event plan as a durable server job", Flags: []cliFlag{{Name: "plan", Req: true, Value: "PATH", Short: "reviewed event plan"}, {Name: "rate", Value: "N", Short: "maximum recoveries per second (1..100)"}, {Name: "reason", Value: "TEXT", Short: "optional operator reason"}}},
 			{Name: "event-recover", Short: "Execute a reviewed event plan with fresh receipt checks and a journal", Flags: []cliFlag{{Name: "plan", Req: true, Value: "PATH", Short: "reviewed event plan"}, {Name: "journal", Req: true, Value: "PATH", Short: "new execution journal"}}},
 			{Name: "recovery-plan", Short: "Execute a saved recovery plan with a durable per-attempt journal", Flags: []cliFlag{{Name: "plan", Short: "reviewed recovery plan file", Req: true, Value: "PATH"}, {Name: "journal", Short: "new journal file for this execution", Req: true, Value: "PATH"}}},
-			{Name: "recovery-preview", Short: "Inspect failed run recovery, retained events and schedule catch-up without writes", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "from", Short: "RFC3339 event acceptance and schedule preview start", Req: true, Value: "TIME"}, {Name: "until", Short: "RFC3339 end/evaluation time (default now)", Value: "TIME"}, {Name: "limit", Short: "runs per status and event scan page (1..25, default 10)", Value: "N"}, {Name: "run-offset", Short: "offset in each failed/dead run page", Value: "N"}, {Name: "event-after", Short: "retained event preview cursor", Value: "CURSOR"}}},
-			{Name: "failure-policy", Short: "Inspect failure pause status, history and resume preview or configure monitoring", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "enabled", Short: "enable or disable monitoring; required when configuring", Value: "BOOL"}, {Name: "expected-version", Short: "current failure policy version; required when configuring", Value: "N"}, {Name: "failure-threshold", Short: "terminal failures needed to pause (1..10000, default 3)", Value: "N"}, {Name: "min-completed-runs", Short: "minimum completed outcomes (1..10000, default 5)", Value: "N"}, {Name: "window-seconds", Short: "observation window (60..86400, default 300)", Value: "N"}}},
+			{Name: "recovery-preview", Short: "Inspect failed-run recovery and schedule catch-up without writes", Notes: []string{"Includes retained events."}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "from", Short: "RFC3339 event acceptance and schedule preview start", Req: true, Value: "TIME"}, {Name: "until", Short: "RFC3339 end/evaluation time (default now)", Value: "TIME"}, {Name: "limit", Short: "runs per status and event scan page (1..25, default 10)", Value: "N"}, {Name: "run-offset", Short: "offset in each failed/dead run page", Value: "N"}, {Name: "event-after", Short: "retained event preview cursor", Value: "CURSOR"}}},
+			{Name: "failure-policy", Short: "Inspect failure pauses and history, or configure monitoring", Notes: []string{"Also previews a resume."}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "enabled", Short: "enable or disable monitoring; required when configuring", Value: "BOOL"}, {Name: "expected-version", Short: "current failure policy version; required when configuring", Value: "N"}, {Name: "failure-threshold", Short: "terminal failures needed to pause (1..10000, default 3)", Value: "N"}, {Name: "min-completed-runs", Short: "minimum completed outcomes (1..10000, default 5)", Value: "N"}, {Name: "window-seconds", Short: "observation window (60..86400, default 300)", Value: "N"}}},
 			{Name: "failure-resume", Short: "Preview retained work and explicitly clear a failure pause", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "expected-generation", Short: "current failure pause generation", Req: true, Value: "N"}}},
 			{Name: "pause", Short: "Stop future scheduled and event-triggered admissions", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current automation version", Req: true, Value: "N"}}},
 			{Name: "resume", Short: "Resume automatic scheduled and event-triggered admissions", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current automation version", Req: true, Value: "N"}}},
@@ -2419,7 +2428,7 @@ var cliCommands = []cliCommand{
 			{Name: "restore", Short: "Restore a published revision as a draft", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "revision", Short: "published revision number to restore", Req: true, Value: "N"}, {Name: "expected-version", Short: "current version; use 0 if deleted", Req: true, Value: "N"}}},
 			{Name: "delete", Short: "Delete an automation using its current version", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current automation version", Req: true, Value: "N"}, {Name: "yes", Short: "required explicit confirmation of automation deletion", Req: true, Bool: true}, {Name: "restore-manifest", Short: "allow the current YAML definition to own this automation again"}}},
 			{Name: "validate", Short: "Validate an automation definition without saving it", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "file", Short: "YAML or JSON definition file", Req: true, Value: "PATH"}}},
-			{Name: "simulate", Short: "Trace an automation using sample input and mocked outputs, without running steps", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "file", Short: "YAML or JSON definition file", Req: true, Value: "PATH"}, {Name: "input-file", Short: "sample workflow input JSON file", Value: "PATH"}, {Name: "mock-outputs-file", Short: "JSON object of action outputs keyed by step name", Value: "PATH"}, {Name: "mock-item-outputs-file", Short: "JSON object of for_each output arrays keyed by step name", Value: "PATH"}, {Name: "mock-attempts-file", Short: "JSON object of ordered attempt outcomes keyed by step name", Value: "PATH"}, {Name: "mock-item-attempts-file", Short: "JSON object mapping loops and zero-based item indexes to attempt outcomes", Value: "PATH"}, {Name: "require-complete", Short: "fail if mocks leave steps unresolved"}}},
+			{Name: "simulate", Short: "Trace an automation with sample input and mocked outputs", Notes: []string{"Does not run steps."}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "file", Short: "YAML or JSON definition file", Req: true, Value: "PATH"}, {Name: "input-file", Short: "sample workflow input JSON file", Value: "PATH"}, {Name: "mock-outputs-file", Short: "JSON object of action outputs keyed by step name", Value: "PATH"}, {Name: "mock-item-outputs-file", Short: "JSON object of for_each output arrays keyed by step name", Value: "PATH"}, {Name: "mock-attempts-file", Short: "JSON object of ordered attempt outcomes keyed by step name", Value: "PATH"}, {Name: "mock-item-attempts-file", Short: "JSON object mapping loops and zero-based item indexes to attempt outcomes", Value: "PATH"}, {Name: "require-complete", Short: "fail if mocks leave steps unresolved"}}},
 			{Name: "apply", Short: "Save an automation definition as a draft", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "file", Short: "YAML or JSON definition file", Req: true, Value: "PATH"}, {Name: "expected-version", Short: "current version; use 0 for a new draft", Req: true, Value: "N"}}},
 			{Name: "publish-policy", Short: "Inspect or set required server publishing checks", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "mode", Short: "set publishing requirement (admin scope)", Value: "MODE", ClosedSet: []string{"optional", "scenarios", "coverage"}}, {Name: "expected-version", Short: "current policy version (required when setting mode)", Value: "N"}}},
 			{Name: "publish", Short: "Publish the current automation draft", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "automation name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current version of the draft", Req: true, Value: "N"}, {Name: "take-over-manifest", Short: "explicitly take over YAML ownership"}, {Name: "scenarios", Short: "check scenarios against the saved draft before publishing", Value: "PATH"}, {Name: "require-coverage", Short: "require coverage before publishing (requires --scenarios)"}}},
@@ -2432,7 +2441,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "defaults", Short: "Show or manage project-local workflow recovery selectors", Examples: []string{"gregale workflows defaults", "gregale workflows defaults --help"}, Subcommands: []cliSub{
 				{Name: "set", Short: "Save a preferred workflow name and recorded app locally", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true, Short: "recorded app slug for recovery; target existence is not checked"}, {Name: "dry-run", Bool: true, Short: "preview destination, before/after selectors, and proposed recovery readiness without saving"}}, Examples: []string{"gregale workflows defaults set order-processing --app payments-api", "gregale workflows defaults set order-processing --app payments-api --dry-run"}},
-				{Name: "show", Short: "Show saved workflow/app selectors, preference path, and local recovery readiness"},
+				{Name: "show", Short: "Show saved workflow and app selectors and recovery readiness", Notes: []string{"Includes the preference file path."}},
 				{Name: "update", Short: "Change saved workflow selectors while preserving omitted settings", Positionals: []string{"[<name>]"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "replace the saved recorded app selector"}, {Name: "dry-run", Bool: true, Short: "preview updated selectors and local recovery readiness without saving"}}, Examples: []string{"gregale workflows defaults update --app billing-api --dry-run", "gregale workflows defaults update nightly-report --dry-run"}},
 				{Name: "clear", Short: "Clear workflow recovery preferences without deleting run records", Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "preview saved selectors and removal effects without deleting files"}}, Examples: []string{"gregale workflows defaults clear --dry-run"}},
 			}},
@@ -2462,17 +2471,17 @@ var cliCommands = []cliCommand{
 				{Name: "cursor", Short: "next cursor from the previous page", Value: "UUID"},
 				{Name: "limit", Short: "maximum occurrences (1-200)", Value: "N"},
 			}, Subcommands: []cliSub{
-				{Name: "replay-preview", Short: "Check selected skipped occurrences against current definitions, overlap, and quota", Examples: []string{"gregale workflows schedule-history replay-preview --app billing --occurrence-id <uuid>"}, Flags: []cliFlag{
+				{Name: "replay-preview", Short: "Check skipped occurrences against definitions, overlap and quota", Examples: []string{"gregale workflows schedule-history replay-preview --app billing --occurrence-id <uuid>"}, Flags: []cliFlag{
 					{Name: "app", Short: "app slug", Req: true, Value: "SLUG"},
 					{Name: "occurrence-id", Short: "skipped occurrence UUID (repeat up to 20 times)", Req: true, Value: "UUID"},
 				}},
-				{Name: "replay", Short: "Replay eligible skipped occurrences using the current workflow and normal quota", Examples: []string{"gregale workflows schedule-history replay --app billing --occurrence-id <uuid>"}, Flags: []cliFlag{
+				{Name: "replay", Short: "Replay eligible skipped occurrences with the current workflow", Notes: []string{"Normal quota applies."}, Examples: []string{"gregale workflows schedule-history replay --app billing --occurrence-id <uuid>"}, Flags: []cliFlag{
 					{Name: "app", Short: "app slug", Req: true, Value: "SLUG"},
 					{Name: "occurrence-id", Short: "skipped occurrence UUID (repeat up to 20 times)", Req: true, Value: "UUID"},
 				}},
 			}},
 			{Name: "run", Short: "Trigger a new workflow run", Positionals: []string{"<workflow-name>"}, Examples: []string{"gregale workflows run nightly-report --input-file input.json --wait", "gregale workflows run nightly-report --input-file input.json", "gregale workflows run nightly-report --input-file -"}, Flags: []cliFlag{{Name: "wait", Short: "follow the accepted run to success without resubmitting", Bool: true}, {Name: "timeout", Short: "wait deadline after acceptance (default 5m; requires --wait)", Value: "DURATION"}, {Name: "poll-interval", Short: "wait read interval (default 2s; 1s to 1h; requires --wait)", Value: "DURATION"}, {Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"}, {Name: "input", Short: "JSON input payload (default {}; excludes --input-file)", Value: "JSON"}, {Name: "input-file", Short: "read one JSON value from a file, or - for stdin; maximum 1 MiB; excludes --input", Value: "PATH|-"}, {Name: "idempotency-key", Short: "stable key for retrying an uncertain run start", Value: "KEY"}}},
-			{Name: "wait", Short: "Wait for an exact or latest workflow run to succeed; failure or timeout exits nonzero", Positionals: []string{"<run_id|latest>"}, Examples: []string{"gregale workflows wait RUN_ID --timeout 5m", "gregale workflows wait latest --workflow-name billing --timeout 5m"}, Flags: []cliFlag{
+			{Name: "wait", Short: "Wait for an exact or latest workflow run to succeed", Notes: []string{"Exits nonzero on failure or timeout."}, Positionals: []string{"<run_id|latest>"}, Examples: []string{"gregale workflows wait RUN_ID --timeout 5m", "gregale workflows wait latest --workflow-name billing --timeout 5m"}, Flags: []cliFlag{
 				{Name: "app", Value: "SLUG", Short: "app for latest (defaults to linked project app)"},
 				{Name: "workflow-name", Value: "NAME", Short: "exact workflow name required for latest"},
 				{Name: "timeout", Short: "maximum wait (default 5m; positive)", Value: "DURATION"},
@@ -2481,7 +2490,7 @@ var cliCommands = []cliCommand{
 			{Name: "status", Short: "Show details of a workflow run", Positionals: []string{"[<run_id|latest>]"}, Examples: []string{"gregale workflows status RUN_ID --check", "gregale workflows status latest --workflow-name nightly-report", "gregale workflows status --interactive", "gregale workflows status --app billing --interactive", "gregale workflows status <run_id>"}, Flags: []cliFlag{{Name: "check", Bool: true, Short: "exit 0 only for a succeeded, non-cancelled run (explicit read only)"}, {Name: "interactive", Bool: true, Short: "choose a run for inspection"}, {Name: "app", Value: "slug", Short: "app for latest or interactive selection (defaults to linked project app)"}, {Name: "workflow-name", Short: "exact workflow name required for latest", Value: "NAME"}}},
 			{Name: "diagnose", Short: "Inspect queue reasons and preview recovery without changing the run", Positionals: []string{"<run_id|latest>"}, Examples: []string{"gregale workflows diagnose latest --workflow-name nightly-report", "gregale workflows diagnose <run_id>", "gregale --json workflows diagnose <run_id>"}, Flags: []cliFlag{{Name: "app", Short: "app slug for latest (defaults to linked project app)", Value: "SLUG"}, {Name: "workflow-name", Short: "exact workflow name required for latest", Value: "NAME"}}},
 			{Name: "steps", Short: "List steps for an exact or latest workflow run", Positionals: []string{"<run_id|latest>"}, Examples: []string{"gregale workflows steps latest --workflow-name billing --failed-only", "gregale workflows steps latest --workflow-name nightly-report"}, Flags: []cliFlag{{Name: "failed-only", Bool: true, Short: "show only failed steps with inspection commands"}, {Name: "app", Short: "app slug for latest (defaults to linked project app)", Value: "SLUG"}, {Name: "workflow-name", Short: "exact workflow name required for latest", Value: "NAME"}}},
-			{Name: "attempts", Short: "List retry attempts and managed effect delivery status for a workflow step", Positionals: []string{"<run_id|latest>", "<step_name>"}, Examples: []string{"gregale workflows attempts latest charge-card --workflow-name billing --failed-only", "gregale workflows attempts latest charge-card --workflow-name billing"}, Flags: []cliFlag{{Name: "failed-only", Bool: true, Short: "show only failed attempts"}, {Name: "app", Value: "SLUG", Short: "app for latest (defaults to linked project app)"}, {Name: "workflow-name", Value: "NAME", Short: "exact workflow name required for latest"}}},
+			{Name: "attempts", Short: "List a step's retry attempts and managed effect delivery", Positionals: []string{"<run_id|latest>", "<step_name>"}, Examples: []string{"gregale workflows attempts latest charge-card --workflow-name billing --failed-only", "gregale workflows attempts latest charge-card --workflow-name billing"}, Flags: []cliFlag{{Name: "failed-only", Bool: true, Short: "show only failed attempts"}, {Name: "app", Value: "SLUG", Short: "app for latest (defaults to linked project app)"}, {Name: "workflow-name", Value: "NAME", Short: "exact workflow name required for latest"}}},
 			{Name: "retry", Short: "Retry one safely resumable failed HTTP step", Positionals: []string{"[<run_id>]", "[<step_name>]"}, Examples: []string{"gregale workflows retry --app billing --interactive", "gregale workflows retry <run_id> <step_name>", "gregale workflows retry RUN_ID STEP_NAME --wait"}, Flags: append(workflowInteractiveFlags(), cliFlag{Name: "wait", Short: "follow the retried run to success (explicit run and step only)", Bool: true}, cliFlag{Name: "timeout", Short: "wait deadline after retry acceptance (default 5m; requires --wait)", Value: "DURATION"}, cliFlag{Name: "poll-interval", Short: "wait read interval (default 2s; 1s to 1h; requires --wait)", Value: "DURATION"})},
 			{Name: "resume", Short: "Resume eligible failed actions in a workflow run", Positionals: []string{"<run_id>"}, Examples: []string{"gregale workflows resume RUN_ID --expected-resume-count 1 --wait"}, Flags: []cliFlag{{Name: "wait", Short: "follow the resumed run to success without another resume request", Bool: true}, {Name: "timeout", Short: "wait deadline after resume acceptance (default 5m; requires --wait)", Value: "DURATION"}, {Name: "poll-interval", Short: "wait read interval (default 2s; 1s to 1h; requires --wait)", Value: "DURATION"}, {Name: "expected-resume-count", Short: "current resume_count shown by workflows status", Req: true, Value: "N"}, {Name: "idempotency-key", Short: "stable key for retrying the same resume request", Value: "KEY"}}},
 			{Name: "resumes", Short: "List continuation history for an exact or latest workflow run", Positionals: []string{"<run_id|latest>"}, Examples: []string{"gregale workflows resumes latest --workflow-name billing"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app for latest (defaults to linked project app)"}, {Name: "workflow-name", Value: "NAME", Short: "exact workflow name required for latest"}}},
@@ -2619,7 +2628,7 @@ var cliCommands = []cliCommand{
 			{Name: "retry-hold", Positionals: []string{"<ID|vN>"}, Short: "Schedule an MCP promotion hold retry with all activation checks", Examples: []string{"gregale deployment retry-hold v42 --app my-api"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
 			{Name: "runtime", Positionals: []string{"<ID|vN>"}, Short: "Inspect runtime identity or preview a published runtime change", Examples: []string{"gregale deployment runtime v42 --app my-function", "gregale deployment runtime v42 --app my-function --target RELEASE_ID --json"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug for a vN revision"}, {Name: "target", Value: "RELEASE_ID", Short: "published runtime release to preview without applying"}}},
 			{Name: "advance", Positionals: []string{"<ID|vN>"}, Short: "Advance a canary by one stage with route enforcement", Examples: []string{"gregale deployment advance DEPLOYMENT_UUID --expected-step 1", "gregale deployment advance v42 --app my-api --expected-step 1"}, Flags: []cliFlag{{Name: "expected-step", Value: "N", Short: "observed current canary step (see deployment summary)", Req: true}, {Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
-			{Name: "diff", Short: "Show what changed between a release and the one before it: code, config keys, packages, runtime settings and the release command", Examples: []string{"gregale deployment diff v42 --app my-api", "gregale deployment diff v42 --against v38 --app my-api"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
+			{Name: "diff", Short: "Show what changed since the previous release", Notes: []string{"Covers code, config keys, packages, runtime settings and the release command."}, Examples: []string{"gregale deployment diff v42 --app my-api", "gregale deployment diff v42 --against v38 --app my-api"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "against", Value: "ID|vN", Short: "release to compare with (default: the release that served before it)"},
 				{Name: "app", Value: "SLUG", Short: "app slug, to resolve vN revisions"},
 			}},
@@ -2690,7 +2699,7 @@ var cliCommands = []cliCommand{
 			// (default = the failing stage on the row, fetched
 			// via the existing GET /v1/deployments/{id}/stages
 			// read surface).
-			{Name: "retry", Short: "Retry a failed deployment from a specific stage (--from=<stage>)", Positionals: []string{"<id>"}, Flags: []cliFlag{
+			{Name: "retry", Short: "Retry a failed deployment from a specific stage", Notes: []string{"Choose the stage with --from."}, Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "from", Short: "retry from this stage (defaults to the failing stage)", Value: "STAGE", ClosedSet: stageNamesForCLIValues()},
 			}},
 		},
@@ -2708,7 +2717,7 @@ var cliCommands = []cliCommand{
 			"Source defaults to committed HEAD when origin exists; otherwise local files. Use --source=worktree to include local changes.",
 			resourceProfileHelpNote,
 		},
-		Subcommands: []cliSub{deploymentCheckCommand(), {Name: "resolve-contract", Short: "Record operator checks and a verified roll-forward release after failed cleanup", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "replacement-attempt", Short: "verified corrected deployment attempt", Value: "ID"}, {Name: "task-id", Short: "inspected original cleanup task", Value: "ID"}, {Name: "generation", Short: "inspected cleanup generation", Value: "N"}, {Name: "request-id", Short: "reuse after a lost recovery response", Value: "ID"}, {Name: "evidence-hash", Short: "SHA256 of private SQL/execution evidence", Value: "SHA256"}, {Name: "database-state-checked", Short: "attest database inspection/repair", Bool: true}, {Name: "execution-quiescent", Short: "attest original cleanup execution has stopped", Bool: true}}}, {Name: "contract", Short: "Run planned schema cleanup after retained versions and work drain", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "request-id", Short: "reuse this contract identity after an ambiguous response", Value: "ID"}, {Name: "generation", Short: "require this inspected checkpoint generation", Value: "N"}}}, {Name: "status", Short: "Inspect an atomic project attempt and available recovery actions", Positionals: []string{"ATTEMPT_ID"}}, {Name: "abort", Short: "Stop a progressive rollout and request guarded baseline restoration", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "request-id", Short: "reuse this control identity after an ambiguous response", Value: "ID"}, {Name: "generation", Short: "require this inspected checkpoint generation", Value: "N"}}}, {Name: "recover", Short: "Retry baseline health verification for a blocked progressive deploy", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "request-id", Short: "reuse this control identity after an ambiguous response", Value: "ID"}, {Name: "generation", Short: "require this inspected checkpoint generation", Value: "N"}}}, {Name: "retry", Short: "Rebuild confirmed failed workloads from a saved project deploy", Positionals: []string{"SESSION_ID"}, Examples: []string{"gregale deploy retry SESSION_ID --path . --source=worktree --yes", "gregale deploy retry SESSION_ID --tarball source.tar.gz --yes"}, Flags: []cliFlag{
+		Subcommands: []cliSub{deploymentCheckCommand(), {Name: "resolve-contract", Short: "Record checks and a verified roll-forward after failed cleanup", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "replacement-attempt", Short: "verified corrected deployment attempt", Value: "ID"}, {Name: "task-id", Short: "inspected original cleanup task", Value: "ID"}, {Name: "generation", Short: "inspected cleanup generation", Value: "N"}, {Name: "request-id", Short: "reuse after a lost recovery response", Value: "ID"}, {Name: "evidence-hash", Short: "SHA256 of private SQL/execution evidence", Value: "SHA256"}, {Name: "database-state-checked", Short: "attest database inspection/repair", Bool: true}, {Name: "execution-quiescent", Short: "attest original cleanup execution has stopped", Bool: true}}}, {Name: "contract", Short: "Run planned schema cleanup after retained versions and work drain", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "request-id", Short: "reuse this contract identity after an ambiguous response", Value: "ID"}, {Name: "generation", Short: "require this inspected checkpoint generation", Value: "N"}}}, {Name: "status", Short: "Inspect an atomic project attempt and available recovery actions", Positionals: []string{"ATTEMPT_ID"}}, {Name: "abort", Short: "Stop a progressive rollout and request guarded baseline restoration", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "request-id", Short: "reuse this control identity after an ambiguous response", Value: "ID"}, {Name: "generation", Short: "require this inspected checkpoint generation", Value: "N"}}}, {Name: "recover", Short: "Retry baseline health verification for a blocked progressive deploy", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "request-id", Short: "reuse this control identity after an ambiguous response", Value: "ID"}, {Name: "generation", Short: "require this inspected checkpoint generation", Value: "N"}}}, {Name: "retry", Short: "Rebuild confirmed failed workloads from a saved project deploy", Positionals: []string{"SESSION_ID"}, Examples: []string{"gregale deploy retry SESSION_ID --path . --source=worktree --yes", "gregale deploy retry SESSION_ID --tarball source.tar.gz --yes"}, Flags: []cliFlag{
 			{Name: "tarball", Short: "source archive to rebuild", Value: "PATH"},
 			{Name: "path", Short: "source directory to rebuild (default: current directory)", Value: "DIR"},
 			{Name: "source", Short: "local source policy (default: auto)", Value: "auto|head|worktree", ClosedSet: []string{"auto", "head", "worktree"}},
@@ -2859,7 +2868,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "domains",
 		Short:   "Manage custom domains",
 		Subcommands: []cliSub{
-			{Name: "setup", Short: "Guide DNS setup, wait for verification and TLS, and offer a default-domain change", Positionals: []string{"<domain>"}, Examples: []string{"gregale domains setup api.example.com --app my-api"}, Flags: []cliFlag{
+			{Name: "setup", Short: "Guide DNS setup and wait for verification and TLS", Notes: []string{"Offers a default-domain change at the end."}, Positionals: []string{"<domain>"}, Examples: []string{"gregale domains setup api.example.com --app my-api"}, Flags: []cliFlag{
 				{Name: "app", Short: "app to attach to", Value: "SLUG", Req: true},
 				{Name: "environment", Short: "project environment to route to", Value: "SLUG"},
 				{Name: "timeout", Short: "verification wait deadline (default 10m, maximum 1h)", Value: "DURATION"},
@@ -2873,10 +2882,10 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: subRm, Short: "Remove a custom domain binding", Positionals: []string{"<domain>"}},
 			{Name: subDomainsSetDefault, Short: "Set a verified domain as the app default", Positionals: []string{"<domain>"}},
-			{Name: subDomainsVerify, Short: "Check DNS and certificate verification status; exits nonzero while pending", Positionals: []string{"<domain>"}},
+			{Name: subDomainsVerify, Short: "Check DNS and certificate verification status", Notes: []string{"Exits nonzero while pending."}, Positionals: []string{"<domain>"}},
 			{Name: subDomainsShow, Short: "Show a domain's cert details", Positionals: []string{"<domain>"}},
 			{Name: subDomainsStatus, Short: "Show durable TLS status for all domains"},
-			{Name: subDomainsDoctor, Short: "5-check readiness report; exits nonzero when unhealthy, including in JSON mode", Positionals: []string{"<domain>"}},
+			{Name: subDomainsDoctor, Short: "Run a 5-check domain readiness report", Notes: []string{"Exits nonzero when unhealthy, including in JSON mode."}, Positionals: []string{"<domain>"}},
 		},
 	},
 	{
@@ -2929,11 +2938,11 @@ var cliCommands = []cliCommand{
 				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
 				{Name: "limit", Short: "number of recent syncs to show", Value: "N"},
 			}},
-			{Name: "info", Short: "show the developer environment URL, app slug, lease, and database without renewing it", Flags: []cliFlag{
+			{Name: "info", Short: "Show the developer environment's URL, app, lease and database", Notes: []string{"Does not renew the lease."}, Flags: []cliFlag{
 				{Name: "path", Short: "source directory", Value: "DIR"},
 				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
 			}},
-			{Name: "trigger", Short: "invoke the developer app, fire a declared cron route, or schedule a delayed task", Examples: []string{
+			{Name: "trigger", Short: "Invoke the developer app, fire a cron route or schedule a task", Examples: []string{
 				"gregale dev trigger invoke --method POST --path /orders --payload @order.json",
 				"gregale dev trigger cron /jobs/nightly",
 				"gregale dev trigger delayed-task --delay 5m --path /reminders",
@@ -2941,9 +2950,9 @@ var cliCommands = []cliCommand{
 				{Name: "path", Short: "source directory (before the verb)", Value: "DIR"},
 				{Name: "name", Short: "developer-session project name (before the verb)", Value: "PROJECT"},
 			}, Subcommands: []cliSub{
-				{Name: "invoke", Short: "run `gregale invoke` against the developer app"},
+				{Name: "invoke", Short: "Invoke the developer app"},
 				{Name: "cron", Short: "POST to a cron route declared for this app in gregale.yaml", Positionals: []string{"[ROUTE]"}},
-				{Name: "delayed-task", Short: "run `gregale delayed-task add` against the developer app"},
+				{Name: "delayed-task", Short: "Schedule a delayed task on the developer app"},
 			}},
 			{Name: "setup", Short: "preflight a project and prepare the first developer environment", Flags: []cliFlag{
 				{Name: "path", Short: "source directory", Value: "DIR"},
@@ -2997,7 +3006,7 @@ var cliCommands = []cliCommand{
 			{Name: "source", Short: "application source directory, relative to the manifest (default: the workload holding --from, else .)", Value: "DIR"},
 			{Name: "scenario", Short: "scenario name", Value: "NAME"},
 			{Name: "output", Short: "new manifest path", Value: "PATH"},
-		}}, {Name: "recovery-trend", Short: "Render offline recovery performance trends from ordered campaign reports", Flags: []cliFlag{
+		}}, {Name: "recovery-trend", Short: "Render recovery performance trends from campaign reports", Notes: []string{"Works offline on ordered reports."}, Flags: []cliFlag{
 			{Name: "manifest", Short: "campaign scenario manifest", Value: "PATH"},
 			{Name: "scenario", Short: "campaign scenario name", Value: "NAME", Req: true},
 			{Name: "config", Short: "ordered reports and recovery tolerances YAML", Value: "PATH", Req: true},
@@ -3007,7 +3016,7 @@ var cliCommands = []cliCommand{
 			{Name: "scenario", Short: "campaign scenario name", Value: "NAME", Req: true},
 			{Name: "config", Short: "ordered report inputs and tolerances YAML", Value: "PATH", Req: true},
 			{Name: "html", Short: "standalone HTML trend output", Value: "PATH", Req: true},
-		}}, {Name: "replay", Short: "Replay a real-VM failure or passing recovery/duration configuration or sweep run from a saved report", Examples: []string{"gregale test replay --from failed.json --run-id RUN_ID --manifest gregale-test.yaml --validate", "gregale test replay --from failed.json --run-id RUN_ID --manifest gregale-test.yaml --report replay.json"}, Flags: []cliFlag{
+		}}, {Name: "replay", Short: "Replay a failure, configuration or sweep run from a saved report", Notes: []string{"Covers real-VM failures and passing recovery or duration configurations."}, Examples: []string{"gregale test replay --from failed.json --run-id RUN_ID --manifest gregale-test.yaml --validate", "gregale test replay --from failed.json --run-id RUN_ID --manifest gregale-test.yaml --report replay.json"}, Flags: []cliFlag{
 			{Name: "from", Short: "saved JSON report containing the failed run", Value: "PATH", Req: true},
 			{Name: "run-id", Short: "replayable isolated run ID", Value: "ID", Req: true},
 			{Name: "manifest", Short: "original scenario manifest", Value: "PATH"},
@@ -3015,7 +3024,7 @@ var cliCommands = []cliCommand{
 			{Name: "report", Short: "write replay JSON report", Value: "PATH"},
 			{Name: "junit", Short: "write replay JUnit report", Value: "PATH"},
 			{Name: "html", Short: "write replay HTML report", Value: "PATH"},
-		}}, {Name: "minimize", Short: "Minimize faults, outage durations, stability observations, or recovery deadlines", Examples: []string{"gregale test minimize --from failed.json --run-id RUN_ID --assertion load/recovery --mode duration --duration-resolution 100ms --max-runs 20 --max-workload-minutes 180 --report duration.json", "gregale test minimize --from failed.json --run-id RUN_ID --assertion load/recovery --max-runs 10 --max-workload-minutes 180 --validate", "gregale test minimize --from failed.json --run-id RUN_ID --assertion load/recovery/checkout --max-runs 10 --max-workload-minutes 180 --report minimized.json --html minimized.html", "gregale test minimize --from failed.json --run-id RUN_ID --assertion load/recovery --mode stability --stability-resolution 100ms --max-runs 20 --max-workload-minutes 180 --report stability.json", "gregale test minimize --from failed.json --run-id RUN_ID --assertion load/recovery --mode recovery --max-recovery-within 10s --recovery-resolution 100ms --max-runs 20 --max-workload-minutes 180 --report deadline.json"}, Flags: []cliFlag{
+		}}, {Name: "minimize", Short: "Minimize faults, outages, stability checks or recovery deadlines", Examples: []string{"gregale test minimize --from failed.json --run-id RUN_ID --assertion load/recovery --mode duration --duration-resolution 100ms --max-runs 20 --max-workload-minutes 180 --report duration.json", "gregale test minimize --from failed.json --run-id RUN_ID --assertion load/recovery --max-runs 10 --max-workload-minutes 180 --validate", "gregale test minimize --from failed.json --run-id RUN_ID --assertion load/recovery/checkout --max-runs 10 --max-workload-minutes 180 --report minimized.json --html minimized.html", "gregale test minimize --from failed.json --run-id RUN_ID --assertion load/recovery --mode stability --stability-resolution 100ms --max-runs 20 --max-workload-minutes 180 --report stability.json", "gregale test minimize --from failed.json --run-id RUN_ID --assertion load/recovery --mode recovery --max-recovery-within 10s --recovery-resolution 100ms --max-runs 20 --max-workload-minutes 180 --report deadline.json"}, Flags: []cliFlag{
 			{Name: "from", Short: "saved JSON report containing the original failure", Value: "PATH", Req: true},
 			{Name: "run-id", Short: "original replayable isolated run ID", Value: "ID", Req: true},
 			{Name: "assertion", Short: "recovery assertion: STEP/PHASE or STEP/PHASE/REQUEST", Value: "TARGET", Req: true},
@@ -3041,7 +3050,7 @@ var cliCommands = []cliCommand{
 			{Name: "html", Short: "write a standalone HTML comparison report", Value: "PATH"},
 			{Name: "markdown", Short: "write a Markdown comparison summary", Value: "PATH"},
 			{Name: "github-summary", Short: "append a Markdown summary to GITHUB_STEP_SUMMARY"},
-		}}, {Name: "ci", Short: "Set up GitHub Actions for scenario tests", Subcommands: []cliSub{{Name: "init", Short: "Generate GitHub Actions for local, simulated, or real-VM scenario tests", Examples: []string{"gregale test ci init --manifest gregale-test.yaml --suite smoke", "gregale test ci init --manifest gregale-test.yaml --suite smoke --baseline-max-age-days 14", "gregale test ci init --manifest tests/scenario-acceptance/gregale-test.yaml --suite real-vm --engine real-vm --profiles warm,cold,restored --max-workload-minutes 135"}, Flags: []cliFlag{
+		}}, {Name: "ci", Short: "Set up GitHub Actions for scenario tests", Subcommands: []cliSub{{Name: "init", Short: "Generate GitHub Actions for scenario tests", Notes: []string{"Supports local, simulated and real-VM tests."}, Examples: []string{"gregale test ci init --manifest gregale-test.yaml --suite smoke", "gregale test ci init --manifest gregale-test.yaml --suite smoke --baseline-max-age-days 14", "gregale test ci init --manifest tests/scenario-acceptance/gregale-test.yaml --suite real-vm --engine real-vm --profiles warm,cold,restored --max-workload-minutes 135"}, Flags: []cliFlag{
 			{Name: "manifest", Short: "scenario manifest path", Value: "PATH"},
 			{Name: "suite", Short: "suite from the manifest (inferred when exactly one exists)", Value: "NAME"},
 			{Name: "engine", Short: "override suite engine for CI", Value: "ENGINE", ClosedSet: []string{"local", "simulated", "real-vm"}},
@@ -3054,7 +3063,7 @@ var cliCommands = []cliCommand{
 			{Name: "baseline-max-age-days", Short: "maximum baseline artifact age (default 30; 0 disables age check)", Value: "N"},
 			{Name: "workflow", Short: "new GitHub Actions workflow path", Value: "PATH"},
 			{Name: "budget", Short: "comparison budget path for local and simulated workflows", Value: "PATH"},
-		}}}}, {Name: "import", Short: "Create draft native requests from a local Postman Collection v2.1 export", Examples: []string{"gregale test import --from collection.json --project my-api", "gregale test import --from collection.json --project my-api --requests-only --status 202"}, Flags: []cliFlag{
+		}}}}, {Name: "import", Short: "Create draft requests from a Postman Collection v2.1 export", Examples: []string{"gregale test import --from collection.json --project my-api", "gregale test import --from collection.json --project my-api --requests-only --status 202"}, Flags: []cliFlag{
 			{Name: "from", Short: "local Postman Collection v2.1 JSON export", Value: "PATH", Req: true},
 			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
 			{Name: "source", Short: "command working directory", Value: "DIR"},
@@ -3148,7 +3157,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "parent app slug", Value: "slug"},
 			}},
 			{Name: "show", Short: "Inspect a preview and its latest deployment", Examples: []string{"gregale preview show pr-42-my-api"}, Positionals: []string{"<preview-slug>"}},
-			{Name: "report", Short: "Review deployment route changes, gateway rule drift, and available test/traffic evidence", Positionals: []string{"<preview-slug>"}, Examples: []string{"gregale preview report pr-42-my-api", "gregale preview report pr-42-my-api --format markdown --fail-on-breaking", "gregale preview report pr-42-my-api --test-report results.json --json", "gregale preview report pr-42-my-api --source-impact impact.json --test-report results.json --format markdown", "gregale preview report pr-42-my-api --fail-on-request-breaking --format markdown", "gregale preview report pr-42-my-api --fail-on-policy-drift --format markdown"}, Flags: []cliFlag{
+			{Name: "report", Short: "Review route changes, gateway rule drift and test evidence", Notes: []string{"Includes available test and traffic evidence."}, Positionals: []string{"<preview-slug>"}, Examples: []string{"gregale preview report pr-42-my-api", "gregale preview report pr-42-my-api --format markdown --fail-on-breaking", "gregale preview report pr-42-my-api --test-report results.json --json", "gregale preview report pr-42-my-api --source-impact impact.json --test-report results.json --format markdown", "gregale preview report pr-42-my-api --fail-on-request-breaking --format markdown", "gregale preview report pr-42-my-api --fail-on-policy-drift --format markdown"}, Flags: []cliFlag{
 				{Name: "format", Short: "report format: text or markdown (or use --json)", Value: "FORMAT"},
 				{Name: "since", Short: "traffic lookback duration (default 24h)", Value: "DURATION"},
 				{Name: "customer-details", Short: "include observed consumer and tenant IDs in the report"},
@@ -3195,7 +3204,7 @@ var cliCommands = []cliCommand{
 				{Name: "since", Short: "post-release observation window (duration or RFC3339 timestamp; default 14d)", Value: "DURATION"},
 				{Name: "format", Short: "text, Markdown, or CSV output (default text; --json emits machine-readable JSON)", Value: "FORMAT", ClosedSet: []string{"text", "markdown", "csv"}},
 				{Name: "out", Short: "write the full machine-readable tracker to a new JSON file", Value: "PATH"},
-			}}, {Name: "progress", Short: "Measure sustained old-route traffic and customer migration progress across saved tracker windows", Examples: []string{"gregale preview customers progress --snapshot migration-week-1.json --snapshot migration-week-2.json --grace-period 30d --format markdown"}, Flags: []cliFlag{
+			}}, {Name: "progress", Short: "Measure old-route traffic and customer migration progress", Notes: []string{"Across saved tracker windows."}, Examples: []string{"gregale preview customers progress --snapshot migration-week-1.json --snapshot migration-week-2.json --grace-period 30d --format markdown"}, Flags: []cliFlag{
 				{Name: "snapshot", Short: "saved route customer tracker JSON; repeat for each observation window", Value: "PATH", Req: true, Repeatable: true},
 				{Name: "grace-period", Short: "minimum continuous zero-traffic period before owner review (default 30d)", Value: "DURATION"},
 				{Name: "min-windows", Short: "minimum distinct complete observation windows (default 2)", Value: "COUNT"},
@@ -3204,7 +3213,7 @@ var cliCommands = []cliCommand{
 				{Name: "out", Short: "write the full machine-readable progress report to a new JSON file", Value: "PATH"},
 				{Name: "fail-on-incomplete", Short: "exit 1 when evidence is incomplete"},
 				{Name: "fail-on-not-ready", Short: "exit 1 unless every route is ready for owner review"},
-			}}, {Name: "migration", Short: "Join contract compatibility with customer cutover evidence", Subcommands: []cliSub{{Name: "review", Short: "Review contract compatibility and customer-by-customer route migration progress", Examples: []string{"gregale preview customers migration review --contract-review migration-review.json --snapshot migration-week-1.json --snapshot migration-week-2.json --grace-period 30d --format markdown", "gregale preview customers migration review --contract-review migration-review.json --snapshot migration-week-1.json --snapshot migration-week-2.json --format csv"}, Flags: []cliFlag{
+			}}, {Name: "migration", Short: "Join contract compatibility with customer cutover evidence", Subcommands: []cliSub{{Name: "review", Short: "Review contract compatibility and per-customer migration", Examples: []string{"gregale preview customers migration review --contract-review migration-review.json --snapshot migration-week-1.json --snapshot migration-week-2.json --grace-period 30d --format markdown", "gregale preview customers migration review --contract-review migration-review.json --snapshot migration-week-1.json --snapshot migration-week-2.json --format csv"}, Flags: []cliFlag{
 				{Name: "contract-review", Short: "version 1 JSON from gregale routes migration review", Value: "PATH", Req: true},
 				{Name: "snapshot", Short: "saved route customer tracker JSON; repeat for each observation window", Value: "PATH", Req: true, Repeatable: true},
 				{Name: "grace-period", Short: "minimum continuous zero-traffic period before owner review (default 30d)", Value: "DURATION"},
@@ -3353,7 +3362,7 @@ var cliCommands = []cliCommand{
 			{Name: "statement-handoff", Short: "Record your invoice reference for a finalized revision", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}, Flags: []cliFlag{
 				{Name: "invoice-id", Short: "your billing system's invoice reference", Value: "ID", Req: true},
 			}},
-			{Name: "statement-export", Short: "Create an invoice in Stripe, Paddle or Lago for a finalized revision and record its handoff", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}, Flags: []cliFlag{
+			{Name: "statement-export", Short: "Invoice a finalized revision in Stripe, Paddle or Lago", Notes: []string{"Records the invoice as the revision's handoff."}, Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}, Flags: []cliFlag{
 				{Name: "customer", Short: "provider customer: Stripe cus_…, Paddle ctm_… or Lago external ID (default: the consumer's external_ref when it is one)", Value: "ID"},
 				{Name: "provider", Short: "billing provider (default stripe)", Value: "PROVIDER", ClosedSet: []string{"stripe", "paddle", "lago"}},
 			}},
@@ -3385,22 +3394,22 @@ var cliCommands = []cliCommand{
 			}, Examples: []string{"gregale consumers credit-grant my-api CONSUMER_ID --currency EUR --amount-millicents 5000000 --note \"Starter pack\""}},
 			{Name: "credit-void", Short: "Void what is left of a credit grant", Positionals: []string{"<slug>", "<consumer-id>", "<credit-id>"}},
 			{Name: "spend-cap", Short: "Show a consumer's monthly spend cap and whether it is reached", Positionals: []string{"<slug>", "<consumer-id>"}},
-			{Name: "spend-cap-set", Short: "Refuse a consumer's requests once the month's amount due after credit passes a cap", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
+			{Name: "spend-cap-set", Short: "Refuse a consumer's requests once their monthly amount passes a cap", Notes: []string{"The amount is what is due after credit."}, Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "currency", Short: "ISO-4217 currency of the cap, e.g. EUR", Value: "CODE", Req: true},
 				{Name: "monthly-cap-millicents", Short: "cap in millicents; 0 allows prepaid usage only", Value: "N", Req: true},
 			}, Examples: []string{"gregale consumers spend-cap-set my-api CONSUMER_ID --currency EUR --monthly-cap-millicents 0"}},
 			{Name: "spend-cap-delete", Short: "Remove a consumer's spend cap", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "trial", Short: "Show a consumer's free trial", Positionals: []string{"<slug>", "<consumer-id>"}},
-			{Name: "trial-set", Short: "Start a consumer's one free trial at the next minute, or move the end of a running one", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
+			{Name: "trial-set", Short: "Start a consumer's free trial, or move the end of a running one", Notes: []string{"A trial starts at the next minute; each consumer gets one."}, Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "days", Short: "trial length from its start", Value: "N"},
 				{Name: "ends-at", Short: "trial end (UTC minute, not in the past)", Value: "RFC3339"},
 			}, Examples: []string{"gregale consumers trial-set my-api CONSUMER_ID --days 14"}},
 			{Name: "trial-end", Short: "End a consumer's running trial at the next minute", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "billing-policy", Short: "Show the app's overdue-invoice rule", Positionals: []string{"<slug>"}},
-			{Name: "billing-policy-set", Short: "Refuse consumers whose exported invoice is unpaid some days after its due date", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+			{Name: "billing-policy-set", Short: "Refuse consumers with invoices overdue by some days", Notes: []string{"Counts days after the exported invoice's due date."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "block-overdue-after-days", Short: "days past the due date before the gateway answers 402 (0 blocks at once)", Value: "N", Req: true},
 			}, Examples: []string{"gregale consumers billing-policy-set my-api --block-overdue-after-days 14"}},
-			{Name: "billing-policy-delete", Short: "Stop blocking consumers for overdue invoices; holds lift within minutes", Positionals: []string{"<slug>"}},
+			{Name: "billing-policy-delete", Short: "Stop blocking consumers for overdue invoices", Notes: []string{"Holds lift within minutes."}, Positionals: []string{"<slug>"}},
 			{Name: "overdue-holds", Short: "List consumers the gateway refuses because of an overdue invoice", Positionals: []string{"<slug>"}},
 		},
 	},
@@ -3493,7 +3502,7 @@ var cliCommands = []cliCommand{
 				platformTenantIDFlag, platformTenantStatementIDFlag,
 				{Name: "invoice-id", Short: "your billing system's invoice reference", Value: "ID", Req: true},
 			}},
-			{Name: "statement-export", Short: "Create an invoice in Stripe, Paddle or Lago for a finalized revision and record its handoff", Flags: []cliFlag{
+			{Name: "statement-export", Short: "Invoice a finalized revision in Stripe, Paddle or Lago", Notes: []string{"Records the invoice as the revision's handoff."}, Flags: []cliFlag{
 				platformTenantIDFlag, platformTenantStatementIDFlag,
 				{Name: "customer", Short: "provider customer: Stripe cus_…, Paddle ctm_… or Lago external ID (default: the tenant's external_ref when it is one)", Value: "ID"},
 				{Name: "provider", Short: "billing provider (default stripe)", Value: "PROVIDER", ClosedSet: []string{"stripe", "paddle", "lago"}},
@@ -3514,7 +3523,7 @@ var cliCommands = []cliCommand{
 				{Name: "prorate-monthly-fees", Short: "scale the fee and minimum in a tenant's first month to the share of it left after the tenant was created"},
 				{Name: "tier-mode", Short: "how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches)", Value: "MODE", ClosedSet: []string{"graduated", "volume"}},
 			}, Examples: []string{"gregale platform-tenants plan-create --name growth --currency EUR --price-millicents 20 --weight \"POST /generate=5\" --max-requests-per-minute 600 --max-requests-per-day 100000"}},
-			{Name: "plan-update", Short: "Change a tenant plan; flags not given keep their value, and tenants get it when the plan is assigned again", Flags: []cliFlag{
+			{Name: "plan-update", Short: "Change a tenant plan; omitted flags keep their value", Notes: []string{"Tenants get the change when the plan is assigned again."}, Flags: []cliFlag{
 				{Name: "plan", Short: "plan to change", Value: "NAME", Req: true},
 				{Name: "name", Short: "new plan name", Value: "NAME"},
 				{Name: "currency", Short: "ISO-4217 currency", Value: "CODE"},
@@ -3530,20 +3539,20 @@ var cliCommands = []cliCommand{
 				{Name: "prorate-monthly-fees", Short: "scale the fee and minimum in a tenant's first month to the share of it left after the tenant was created"},
 				{Name: "tier-mode", Short: "how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches)", Value: "MODE", ClosedSet: []string{"graduated", "volume"}},
 			}},
-			{Name: "set-plan", Short: "Move a tenant onto a plan: its rate card from the next minute, free cards for its other priced units, and its request budget at once", Flags: []cliFlag{
+			{Name: "set-plan", Short: "Move a tenant onto a plan", Notes: []string{"Its rate card applies from the next minute, with free cards for its other priced units and its request budget at once."}, Flags: []cliFlag{
 				platformTenantIDFlag,
 				{Name: "plan", Short: "tenant plan name", Value: "NAME", Req: true},
 			}},
 			{Name: "plan-history", Short: "List a tenant's plan assignments, newest first", Flags: []cliFlag{platformTenantIDFlag}},
 			{Name: "trial", Short: "Show a tenant's free trial", Flags: []cliFlag{platformTenantIDFlag}},
-			{Name: "trial-set", Short: "Start a tenant's one free trial at the next minute, or move the end of a running one", Flags: []cliFlag{
+			{Name: "trial-set", Short: "Start a tenant's free trial, or move the end of a running one", Notes: []string{"A trial starts at the next minute; each tenant gets one."}, Flags: []cliFlag{
 				platformTenantIDFlag,
 				{Name: "days", Short: "trial length from its start", Value: "N"},
 				{Name: "ends-at", Short: "trial end (UTC minute, not in the past)", Value: "RFC3339"},
 			}, Examples: []string{"gregale platform-tenants trial-set --id TENANT_ID --days 30"}},
 			{Name: "trial-end", Short: "End a tenant's running trial at the next minute", Flags: []cliFlag{platformTenantIDFlag}},
 			{Name: "billing-policy", Short: "Show the account's overdue-invoice rule for tenants"},
-			{Name: "billing-policy-set", Short: "Refuse tenants whose exported invoice is unpaid some days after its due date", Flags: []cliFlag{
+			{Name: "billing-policy-set", Short: "Refuse tenants with invoices overdue by some days", Notes: []string{"Counts days after the exported invoice's due date."}, Flags: []cliFlag{
 				{Name: "block-overdue-after-days", Short: "days past the due date before the gateway answers 402 (0 blocks at once)", Value: "N", Req: true},
 			}, Examples: []string{"gregale platform-tenants billing-policy-set --block-overdue-after-days 14"}},
 			{Name: "billing-policy-delete", Short: "Stop blocking tenants for overdue invoices; holds lift within minutes"},
@@ -3561,7 +3570,7 @@ var cliCommands = []cliCommand{
 				{Name: "credit-id", Short: "credit grant UUID", Value: "UUID", Req: true},
 			}},
 			{Name: "spend-cap", Short: "Show a tenant's monthly spend cap and whether it is reached", Flags: []cliFlag{platformTenantIDFlag}},
-			{Name: "spend-cap-set", Short: "Refuse a tenant's requests once the month's usage after credit passes a cap", Flags: []cliFlag{
+			{Name: "spend-cap-set", Short: "Refuse a tenant's requests once their monthly usage passes a cap", Notes: []string{"Usage is counted after credit."}, Flags: []cliFlag{
 				platformTenantIDFlag,
 				{Name: "currency", Short: "ISO-4217 currency of the cap, e.g. EUR", Value: "CODE", Req: true},
 				{Name: "monthly-cap-millicents", Short: "cap in millicents; 0 allows prepaid usage only", Value: "N", Req: true},
@@ -3604,11 +3613,11 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "filter to a single app slug", Value: "slug"},
 				{Name: "kind", Short: "filter to a single kind", ClosedSet: edgeRuleKindVocab},
 			}},
-			{Name: "summary", Short: "Show what the edge rejected for an app: pre-auth blocks, validation failures, and gate rejections by status", Flags: []cliFlag{
+			{Name: "summary", Short: "Show what the edge rejected for an app", Notes: []string{"Includes pre-auth blocks, validation failures and gate rejections by status."}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Value: "slug", Req: true},
 				{Name: "range", Short: "time window (default 1h)", Value: "WINDOW", ClosedSet: appmetrics.Ranges()},
 			}},
-			{Name: "trace", Short: "Simulate composed edge-rule outcomes and budget, throttle, retry, circuit-breaker, and async-route policy; --config loads reusable JSON scenarios (see edge-rule-trace docs)", Flags: []cliFlag{
+			{Name: "trace", Short: "Simulate composed edge-rule outcomes and request policies", Notes: []string{"Covers budget, throttle, retry, circuit-breaker and async-route policy. --config loads reusable JSON scenarios; see the edge-rule-trace docs."}, Flags: []cliFlag{
 				{Name: "config", Short: "load a versioned JSON scenario (headers array; body or body_base64); - reads stdin and is exclusive with request flags", Value: "file|-"},
 				{Name: "app", Short: "app slug (required unless --config is used)", Value: "slug"},
 				{Name: "url", Short: "absolute HTTP(S) request URL (required unless --config is used)", Value: "URL"},
@@ -3851,12 +3860,12 @@ var cliCommands = []cliCommand{
 				{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)", Bool: true},
 				{Name: "app", Short: "require the rule to belong to this app", Value: "slug"},
 			}},
-			{Name: "history", Short: "List recorded versions of an app's edge-rule set (--version N shows its rules)", Flags: []cliFlag{
+			{Name: "history", Short: "List recorded versions of an app's edge rules", Notes: []string{"--version N shows that version's rules."}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "version", Short: "show the rules recorded in this version", Value: "N"},
 			}},
 			{Name: "recipes", Short: "List protection recipes: ready-made rules that start in log mode"},
-			{Name: "recipe", Short: "Add a protection recipe's rule to an app, in log mode unless --enforce", Positionals: []string{"<recipe>"}, Examples: []string{
+			{Name: "recipe", Short: "Add a protection recipe's rule to an app in log mode", Notes: []string{"Use --enforce to enforce it immediately."}, Positionals: []string{"<recipe>"}, Examples: []string{
 				"gregale edge-rules recipe block-unverified-bots --app my-api",
 				"gregale edge-rules recipe allow-ips-only --app my-api --set cidrs=203.0.113.7,198.51.100.0/24",
 			}, Flags: []cliFlag{
@@ -3869,21 +3878,21 @@ var cliCommands = []cliCommand{
 				{Name: "alert-webhook-secret", Short: "spike alert webhook signing secret (prefer --alert-webhook-secret-stdin)", Value: "VALUE"},
 				{Name: "alert-threshold", Short: "spike alert threshold in matches per hour (default 100)", Value: "N"},
 			}},
-			{Name: "suggest", Short: "Protection recipes suggested from the app's recent traffic, with the command to add each", Examples: []string{
+			{Name: "suggest", Short: "Suggest protection recipes from the app's recent traffic", Notes: []string{"Prints the command to add each."}, Examples: []string{
 				"gregale edge-rules suggest --app my-api",
 			}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project context)", Value: "slug"},
 			}},
-			{Name: "stats", Short: "Per-rule match counts (matched for enforced rules, logged for log-mode rules)", Flags: []cliFlag{
+			{Name: "stats", Short: "Show match counts per rule", Notes: []string{"Enforced rules count matches; log-mode rules count logged requests."}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "window", Short: "window", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},
 			}},
-			{Name: "review", Short: "Log-mode rules ready to enforce, still collecting, or quiet for 7 days, with the command for each", Examples: []string{
+			{Name: "review", Short: "Show which log-mode rules are ready to enforce", Notes: []string{"Also lists rules still collecting or quiet for 7 days, with the command for each."}, Examples: []string{
 				"gregale edge-rules review --app my-api",
 			}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project context)", Value: "slug"},
 			}},
-			{Name: "events", Short: "Sampled requests rules matched and kind=waf detections, newest first (up to 10 of each per rule per minute; kept 7 days)", Examples: []string{
+			{Name: "events", Short: "Show sampled requests that rules matched, newest first", Notes: []string{"Includes kind=waf detections; up to 10 of each per rule per minute, kept 7 days."}, Examples: []string{
 				"gregale edge-rules events --app my-api --outcome logged --since 7d",
 				"gregale edge-rules events --app my-api --outcome blocked",
 			}, Flags: []cliFlag{
@@ -3894,7 +3903,7 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "events per page (1..200)", Value: "N"},
 				{Name: "cursor", Short: "continue from a previous page's next cursor", Value: "CURSOR"},
 			}},
-			{Name: "rollback", Short: "Restore an app's edge rules to a recorded version (recorded as a new version)", Examples: []string{
+			{Name: "rollback", Short: "Restore an app's edge rules to a recorded version", Notes: []string{"The restore is recorded as a new version."}, Examples: []string{
 				"gregale edge-rules rollback --app my-api --to 12",
 			}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
@@ -3918,12 +3927,12 @@ var cliCommands = []cliCommand{
 		Short:   "Manage an app's OpenAPI docs and check for breaking changes",
 		Subcommands: []cliSub{
 			{Name: "diff", Short: "Diff two openapi.yaml files; exit 2 on any BREAKING row", Positionals: []string{"<baseline.yaml>", "<proposed.yaml>"}},
-			{Name: "get", Short: "Fetch an app OpenAPI document (manual_import|auto; slug defaults to linked context)", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
+			{Name: "get", Short: "Fetch an app's OpenAPI document", Notes: []string{"The source is manual_import or auto; the app defaults to the linked one."}, Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
 				{Name: "source", Short: "document source", Value: "manual_import|auto", ClosedSet: []string{"manual_import", "auto"}},
 			}},
 			{Name: "import", Short: "Import an app OpenAPI document from a JSON file or stdin", Positionals: []string{"<slug>", "<file|->"}},
-			{Name: "dry-run", Short: "Preview uncovered routes without importing the document (slug defaults to linked context)", Positionals: []string{"[<slug>]", "<file|->"}},
-			{Name: "preview", Short: "Preview routes, edge policies, and the read-only OpenAPI contract diff (slug defaults to linked context)", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
+			{Name: "dry-run", Short: "Preview uncovered routes without importing the document", Notes: []string{"The app defaults to the linked one."}, Positionals: []string{"[<slug>]", "<file|->"}},
+			{Name: "preview", Short: "Preview routes, edge policies and the OpenAPI contract diff", Notes: []string{"Read-only; the app defaults to the linked one."}, Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
 				{Name: "scope", Short: "deployment scope to compare (defaults to linked environment, otherwise prod)", Value: "scope"},
 				{Name: "fail-on-unavailable", Short: "fail when the contract-diff backend is unavailable"},
 			}},
@@ -3938,19 +3947,19 @@ var cliCommands = []cliCommand{
 	{
 		Name: "routes", DocSlug: "cli", Short: "Analyze route changes, migrations, lifecycle and production policies",
 		Positionals: []string{"[<slug>]"},
-		Subcommands: []cliSub{{Name: "status", Positionals: []string{"<slug>"}, Short: "Show every route with its contract, traffic, canary health, production budget, rollback mode and gaps", Examples: []string{"gregale routes status my-api", "gregale routes status my-api --since 24h --json"}, Flags: []cliFlag{
+		Subcommands: []cliSub{{Name: "status", Positionals: []string{"<slug>"}, Short: "Show each route's contract, traffic, health, budget and gaps", Notes: []string{"Also shows canary health and rollback mode."}, Examples: []string{"gregale routes status my-api", "gregale routes status my-api --since 24h --json"}, Flags: []cliFlag{
 			{Name: "deployment", Value: "ID", Short: "serving deployment UUID or vN (default: the app's serving deployment)"},
 			{Name: "since", Value: "DURATION", Short: "observed usage window (default 168h; also accepts 7d or RFC3339)"},
-		}}, {Name: "advise", Positionals: []string{"<slug>"}, Short: "Suggest cache, async and throttle edge rules from observed traffic, with what-if estimates", Examples: []string{"gregale routes advise my-api", "gregale routes advise my-api --cache-max-age 300", "gregale routes advise my-api --apply 3f9a1c2b7d4e"}, Flags: []cliFlag{
+		}}, {Name: "advise", Positionals: []string{"<slug>"}, Short: "Suggest cache, async and throttle rules from observed traffic", Notes: []string{"Includes what-if estimates."}, Examples: []string{"gregale routes advise my-api", "gregale routes advise my-api --cache-max-age 300", "gregale routes advise my-api --apply 3f9a1c2b7d4e"}, Flags: []cliFlag{
 			{Name: "since", Value: "DURATION", Short: "traffic window to analyze (default 7d; clamped to telemetry retention)"},
 			{Name: "until", Value: "RFC3339", Short: "end of the window (default now)"},
 			{Name: "cache-max-age", Value: "SECONDS", Short: "what-if cache lifetime for cache suggestions (default 60)"},
 			{Name: "apply", Value: "ID", Short: "create the edge rules of this suggestion (disabled for review)"},
 			{Name: "enable", Short: "with --apply, create the rules enabled"},
-		}}, {Name: "awake", Positionals: []string{"<slug>"}, Short: "Show which routes keep a scale-to-zero app awake, what each costs in awake time, and how to let it park", Examples: []string{"gregale routes awake my-api", "gregale routes awake my-api --since 24h --json"}, Flags: []cliFlag{
+		}}, {Name: "awake", Positionals: []string{"<slug>"}, Short: "Show which routes keep a scale-to-zero app awake and their cost", Notes: []string{"Explains how to let the app park."}, Examples: []string{"gregale routes awake my-api", "gregale routes awake my-api --since 24h --json"}, Flags: []cliFlag{
 			{Name: "since", Value: "DURATION", Short: "window to analyze (default 7d; clamped to telemetry retention)"},
 			{Name: "until", Value: "RFC3339", Short: "end of the window (default now)"},
-		}}, {Name: "insights", Positionals: []string{"<slug>"}, Short: "List findings about routes that keep the app awake or are safe to cache, with a fix for each, evaluated every six hours", Examples: []string{"gregale routes insights my-api", "gregale routes insights my-api --json", "gregale routes insights my-api --fix 6c1e0b9a-3f7d-4a51-9c2e-8d4b5f0a1e27"}, Flags: []cliFlag{{Name: "fix", Value: "INSIGHT_ID", Short: "apply the fix the insight lists now"}}}, {Name: "priority", Positionals: []string{"<slug>"}, Short: "Show or set which routes are served first, and turned away last, when every instance is busy", Examples: []string{"gregale routes priority my-api", "gregale routes priority my-api --critical \"POST /checkout\" --bulk \"/exports/*\"", "gregale routes priority my-api --reset"}, Flags: []cliFlag{
+		}}, {Name: "insights", Positionals: []string{"<slug>"}, Short: "List routes that keep the app awake or are safe to cache", Notes: []string{"Each finding has a fix; findings are evaluated every six hours."}, Examples: []string{"gregale routes insights my-api", "gregale routes insights my-api --json", "gregale routes insights my-api --fix 6c1e0b9a-3f7d-4a51-9c2e-8d4b5f0a1e27"}, Flags: []cliFlag{{Name: "fix", Value: "INSIGHT_ID", Short: "apply the fix the insight lists now"}}}, {Name: "priority", Positionals: []string{"<slug>"}, Short: "Show or set which routes are served first when instances are busy", Notes: []string{"Priority routes are also turned away last."}, Examples: []string{"gregale routes priority my-api", "gregale routes priority my-api --critical \"POST /checkout\" --bulk \"/exports/*\"", "gregale routes priority my-api --reset"}, Flags: []cliFlag{
 			{Name: "critical", Value: "[METHOD] PATH", Short: "route served first when the app is saturated (repeatable)"},
 			{Name: "bulk", Value: "[METHOD] PATH", Short: "route served last and turned away first (repeatable)"},
 			{Name: "clear", Short: "save no priorities, not even the route-health default"},
@@ -3960,12 +3969,12 @@ var cliCommands = []cliCommand{
 				{Name: "requirements", Short: "version 2 requirements YAML or JSON file", Value: "PATH", Req: true},
 				{Name: "expected-revision", Short: "current saved revision; use 0 for the first save", Value: "N", Req: true},
 			}},
-			{Name: "get", Positionals: []string{"<slug>"}, Short: "Read current route intent and optionally export requirements for planning", Flags: []cliFlag{
+			{Name: "get", Positionals: []string{"<slug>"}, Short: "Read current route intent and optionally export requirements", Flags: []cliFlag{
 				{Name: "out", Short: "export normalized requirements JSON to a new file", Value: "PATH"},
 			}},
 		}}, {Name: "monitor", Short: "Monitor absolute route budgets after production promotion", Subcommands: []cliSub{
 			{Name: "get", Positionals: []string{"<slug>"}, Short: "Read production route budgets and revision"},
-			{Name: "preview", Positionals: []string{"<slug>"}, Short: "Evaluate proposed budgets against recent production traffic without saving them", Examples: []string{"gregale routes monitor preview my-api --routes production-routes.json --customer-group-by tenant"}, Flags: []cliFlag{
+			{Name: "preview", Positionals: []string{"<slug>"}, Short: "Evaluate proposed budgets against recent production traffic", Notes: []string{"Nothing is saved."}, Examples: []string{"gregale routes monitor preview my-api --routes production-routes.json --customer-group-by tenant"}, Flags: []cliFlag{
 				{Name: "routes", Value: "PATH", Short: "JSON array of proposed exact route budgets", Req: true},
 				{Name: "customer-group-by", Value: "DIMENSION", Short: "optionally evaluate budgets per tenant or consumer", ClosedSet: []string{"tenant", "consumer"}},
 				{Name: "customer-details", Short: "include observed tenant or consumer IDs (when enabled)"},
@@ -3982,7 +3991,7 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Value: "N", Short: "page size (default 5; maximum 10)"},
 				{Name: "before", Value: "ID", Short: "page before a retained incident UUID"},
 			}},
-			{Name: "explain", Positionals: []string{"<slug>"}, Short: "Inspect a saved incident and optionally correlate affected customers and changed route owners", Examples: []string{"gregale routes monitor explain api --incident INCIDENT_UUID --source-impact auto"}, Flags: []cliFlag{
+			{Name: "explain", Positionals: []string{"<slug>"}, Short: "Inspect a saved incident, optionally with affected customers", Notes: []string{"Can also correlate changed route owners."}, Examples: []string{"gregale routes monitor explain api --incident INCIDENT_UUID --source-impact auto"}, Flags: []cliFlag{
 				{Name: "incident", Value: "ID", Short: "saved incident UUID", Req: true},
 				{Name: "out", Value: "PATH", Short: "save incident evidence JSON to a new file"},
 				{Name: "source-impact", Value: "PATH|auto", Short: "correlate source, aggregate customer impact, and candidate-commit CODEOWNERS from the matching local repository"},
@@ -4010,7 +4019,7 @@ var cliCommands = []cliCommand{
 			{Name: "deployment", Value: "UUID", Short: "baseline deployment ID", Req: true}, {Name: "since", Value: "WINDOW", Short: "retained telemetry window (default 14d)"}, {Name: "within", Value: "DURATION", Short: "upcoming sunset horizon (default 720h)"}, {Name: "mapping", Value: "PATH", Short: "explicit successor mapping JSON"}, {Name: "out", Value: "PATH", Short: "save report JSON to a new file"}, {Name: "fail-on-overdue", Short: "fail on elapsed sunset dates"}, {Name: "fail-on-incomplete", Short: "fail on missing metadata or incomplete evidence"},
 		}, Subcommands: []cliSub{{Name: "diff", Short: "Compare retained sunset evidence and caller regressions", Flags: []cliFlag{
 			{Name: "before", Value: "PATH", Short: "previous saved report", Req: true}, {Name: "after", Value: "PATH", Short: "new saved report", Req: true}, {Name: "out", Value: "PATH", Short: "save diff JSON to a new file"}, {Name: "max-staleness", Value: "DURATION", Short: "maximum report age (default 24h)"}, {Name: "fail-on-regression", Short: "fail on observed regressions"}, {Name: "fail-on-incomplete", Short: "fail on stale, changed or incomplete evidence"},
-		}}}}, {Name: "migration", Short: "Suggest successors, review contracts and assess customer cutover readiness", Subcommands: []cliSub{
+		}}}}, {Name: "migration", Short: "Suggest successors, review contracts and assess cutover readiness", Subcommands: []cliSub{
 			{Name: "policy", Short: "Read or set the app server policy for production route removal", Flags: []cliFlag{
 				{Name: "app", Value: "APP", Req: true, Short: "production app slug"},
 				{Name: "mode", Value: "MODE", ClosedSet: []string{"report", "enforce"}, Short: "omit to read; set report or enforce to write"},
@@ -4058,7 +4067,7 @@ var cliCommands = []cliCommand{
 				{Name: "max-evidence-age", Short: "maximum evidence age (default and maximum 72h)", Value: "DURATION"},
 				{Name: "out", Short: "save the owner attestation to a new file", Value: "PATH", Req: true},
 			}},
-			{Name: "readiness", Short: "Refresh mapped contracts and join customer windows into an owner approval checkpoint", Examples: []string{"gregale routes migration readiness --mapping route-successors.json --from-deployment checkout=OLD_DEPLOYMENT --to-deployment checkout=NEW_DEPLOYMENT --snapshot migration-week-1.json --snapshot migration-week-2.json --format markdown --out readiness.json"}, Flags: []cliFlag{
+			{Name: "readiness", Short: "Refresh mapped contracts and build an owner approval checkpoint", Notes: []string{"Joins customer windows into the checkpoint."}, Examples: []string{"gregale routes migration readiness --mapping route-successors.json --from-deployment checkout=OLD_DEPLOYMENT --to-deployment checkout=NEW_DEPLOYMENT --snapshot migration-week-1.json --snapshot migration-week-2.json --format markdown --out readiness.json"}, Flags: []cliFlag{
 				{Name: "mapping", Short: "version 1 explicit mapping reviewed with the route owner", Value: "PATH", Req: true},
 				{Name: "from-deployment", Short: "baseline deployment as APP=ID; repeat for each app", Value: "APP=ID", Req: true, Repeatable: true},
 				{Name: "to-deployment", Short: "successor deployment as APP=ID; repeat for each app", Value: "APP=ID", Repeatable: true},
@@ -4083,7 +4092,7 @@ var cliCommands = []cliCommand{
 				{Name: "out", Short: "save a draft version 1 mapping to a new file for owner review", Value: "PATH"},
 				{Name: "report-out", Short: "save explanations and captured evidence to a new JSON file", Value: "PATH"},
 			}},
-			{Name: "review", Short: "Compare method, path parameters, request, response and security contracts", Examples: []string{"gregale routes migration review --mapping route-successors.json --from-deployment checkout=OLD_DEPLOYMENT --to-deployment checkout=NEW_DEPLOYMENT --format markdown --out migration-review.json"}, Flags: []cliFlag{
+			{Name: "review", Short: "Compare method, path, request, response and security contracts", Examples: []string{"gregale routes migration review --mapping route-successors.json --from-deployment checkout=OLD_DEPLOYMENT --to-deployment checkout=NEW_DEPLOYMENT --format markdown --out migration-review.json"}, Flags: []cliFlag{
 				{Name: "mapping", Short: "version 1 explicit old-to-successor route mapping JSON", Value: "PATH", Req: true},
 				{Name: "from-deployment", Short: "immutable baseline deployment as APP=ID; repeat for each app", Value: "APP=ID", Req: true, Repeatable: true},
 				{Name: "to-deployment", Short: "immutable successor deployment as APP=ID; repeat for each app", Value: "APP=ID", Req: true, Repeatable: true},
@@ -4092,7 +4101,7 @@ var cliCommands = []cliCommand{
 				{Name: "fail-on-breaking", Short: "exit nonzero when any successor has a declared breaking change"},
 				{Name: "fail-on-incomplete", Short: "exit nonzero when any route lacks complete contract evidence"},
 			}},
-		}}, {Name: "health", Short: "Compare critical route errors and optional p95 latency to gate canary progression", Subcommands: []cliSub{
+		}}, {Name: "health", Short: "Compare critical route errors to gate canary progression", Notes: []string{"Can compare p95 latency too."}, Subcommands: []cliSub{
 			{Name: "get", Positionals: []string{"<slug>"}, Short: "Read selected routes, mode and revision"},
 			{Name: "profile-history", Positionals: []string{"<slug>"}, Short: "Read retained CPU profile assessments for canary stages", Flags: []cliFlag{
 				{Name: "deployment", Value: "ID", Short: "canary deployment UUID", Req: true},
@@ -4105,7 +4114,7 @@ var cliCommands = []cliCommand{
 				{Name: "on-regression", Value: "ACTION", Short: "hold (default) or automatically abort on confirmed route 5xx regression", ClosedSet: []string{"hold", "abort"}},
 				{Name: "expected-revision", Value: "N", Short: "current revision; 0 initially", Req: true},
 			}},
-			{Name: "suggest", Positionals: []string{"<slug>"}, Short: "Rank observed routes by customer reach and traffic; emit reviewable canary selectors", Flags: []cliFlag{
+			{Name: "suggest", Positionals: []string{"<slug>"}, Short: "Rank routes by customer reach and traffic for canary selectors", Notes: []string{"Emits reviewable canary selectors."}, Flags: []cliFlag{
 				{Name: "deployment", Value: "ID", Short: "immutable baseline deployment UUID; must match --preview-report when supplied", Req: true},
 				{Name: "since", Value: "WINDOW", Short: "observed usage window (default 168h; accepts 7d or RFC3339)"},
 				{Name: "customer-group-by", Value: "DIMENSION", Short: "rank by distinct tenant (default) or consumer count", ClosedSet: []string{"tenant", "consumer"}},
@@ -4113,12 +4122,12 @@ var cliCommands = []cliCommand{
 				{Name: "preview-report", Value: "PATH", Short: "restrict suggestions to source-affected routes in a bound preview report for this app and deployment"},
 				{Name: "out", Value: "PATH", Short: "save a JSON selector array ready for routes health set"},
 			}},
-			{Name: "review", Positionals: []string{"<slug>"}, Short: "Join source-affected routes to configured canary coverage and candidate health evidence", Flags: []cliFlag{
+			{Name: "review", Positionals: []string{"<slug>"}, Short: "Join source-affected routes to canary coverage and health evidence", Flags: []cliFlag{
 				{Name: "deployment", Value: "ID", Short: "candidate deployment UUID currently receiving canary traffic", Req: true},
 				{Name: "preview-report", Value: "PATH", Short: "bound preview report containing source-affected routes", Req: true},
 				{Name: "fail-on-incomplete", Short: "exit nonzero unless source impact is complete and all affected route health is ready"},
 			}},
-			{Name: "review-release", Short: "Gate every app in an aggregate preview review on source-affected canary route health", Examples: []string{"gregale routes health review-release --release-report release-review.json --fail-on-incomplete --json"}, Flags: []cliFlag{
+			{Name: "review-release", Short: "Gate an aggregate preview review on canary route health", Notes: []string{"Checks every app's source-affected routes."}, Examples: []string{"gregale routes health review-release --release-report release-review.json --fail-on-incomplete --json"}, Flags: []cliFlag{
 				{Name: "release-report", Value: "PATH", Short: "aggregate JSON report from gregale preview review", Req: true},
 				{Name: "fail-on-incomplete", Short: "exit nonzero unless every app has complete, healthy affected-route coverage"},
 			}},
@@ -4165,13 +4174,13 @@ var cliCommands = []cliCommand{
 			{Name: "timeout", Short: "maximum wait duration (default 2m; at most 10m)", Value: "DURATION"},
 			{Name: "out", Short: "export the result to a new JSON file", Value: "PATH"},
 			{Name: "fail-on-requirements", Short: "require completed, current and satisfied evidence"},
-		}}, {Name: "check", Positionals: []string{"<slug>"}, Short: "Check saved requirements against a captured deployment and current app policy", Examples: []string{"gregale routes check my-api --deployment DEPLOYMENT_ID --expected-revision 1 --fail-on-requirements --json"}, Flags: []cliFlag{
+		}}, {Name: "check", Positionals: []string{"<slug>"}, Short: "Check saved requirements against a deployment and app policy", Examples: []string{"gregale routes check my-api --deployment DEPLOYMENT_ID --expected-revision 1 --fail-on-requirements --json"}, Flags: []cliFlag{
 			{Name: "deployment", Short: "app-owned captured deployment UUID", Value: "ID", Req: true},
 			{Name: "expected-revision", Short: "fail if the saved revision differs", Value: "N"},
 			{Name: "format", Short: "human or markdown", Value: "FORMAT"},
 			{Name: "out", Short: "save the JSON check to a new file", Value: "PATH"},
 			{Name: "fail-on-requirements", Short: "exit 1 for violations or incomplete inventory evidence"},
-		}}, {Name: "plan", Positionals: []string{"<slug>"}, Short: "Plan throttle and budget patches with concrete or captured-family coverage", Examples: []string{
+		}}, {Name: "plan", Positionals: []string{"<slug>"}, Short: "Plan throttle and budget patches with route coverage", Notes: []string{"Uses concrete or captured-family coverage."}, Examples: []string{
 			"gregale routes plan my-api --requirements gregale-routes.yaml --out route-plan.json",
 			"gregale routes plan my-api --saved --deployment DEPLOYMENT_ID --expected-revision 1 --out repair.json",
 			"gregale routes plan pr-42-api --requirements gregale-routes.yaml --throttle-burst 20 --fail-on-unresolved --json",
@@ -4184,13 +4193,13 @@ var cliCommands = []cliCommand{
 			{Name: "deployment", Short: "captured deployment UUID required for version 2 groups", Value: "ID"},
 			{Name: "consolidate-budgets", Short: "combine compatible budgets within declared group prefixes, including uncaptured paths"},
 			{Name: "fail-on-unresolved", Short: "exit 1 when requirements remain unresolved after proposed changes"},
-		}}, {Name: "apply", Positionals: []string{"<slug>"}, Short: "Atomically apply a reviewed server plan and recover its durable receipt", Examples: []string{
+		}}, {Name: "apply", Positionals: []string{"<slug>"}, Short: "Apply a reviewed server plan atomically and recover its receipt", Examples: []string{
 			"gregale routes apply my-api --plan route-plan.json --confirm",
 		}, Flags: []cliFlag{
 			{Name: "plan", Short: "reviewed version 2 or 3 server plan JSON file", Value: "PATH", Req: true},
 			{Name: "confirm", Short: "confirm application of every reviewed change", Req: true, Bool: true},
 			{Name: "idempotency-key", Short: "stable retry key, defaults to plan SHA-256", Value: "KEY"},
-		}}, {Name: "impact", Positionals: []string{"[<slug>]"}, Short: "Explain FastAPI, Go HTTP, Express, or Hono route impact between Git revisions", Examples: []string{
+		}}, {Name: "impact", Positionals: []string{"[<slug>]"}, Short: "Explain route impact between Git revisions", Notes: []string{"Supports FastAPI, Go HTTP, Express and Hono."}, Examples: []string{
 			"gregale routes impact my-api --base origin/main --path . --entrypoint main:app",
 			"gregale routes impact --base HEAD~1 --head HEAD --format markdown",
 			"gregale routes impact --base origin/main --framework go-nethttp --path services/api --json",
@@ -4206,8 +4215,8 @@ var cliCommands = []cliCommand{
 			{Name: "out", Short: "save JSON report to a new owner-readable file", Value: "PATH"},
 			{Name: "fail-on-impact", Short: "exit 1 when routes were added, removed, or may be affected"},
 			{Name: "fail-on-incomplete", Short: "exit 1 when static analysis is incomplete"},
-		}}, {Name: "contract", Short: "Check statically discovered source routes against a local OpenAPI contract", Subcommands: []cliSub{{
-			Name: "check", Positionals: []string{"[<slug>]"}, Short: "Find source-only and contract-only routes with conservative parameter matching",
+		}}, {Name: "contract", Short: "Check source routes against a local OpenAPI contract", Notes: []string{"Routes are discovered statically."}, Subcommands: []cliSub{{
+			Name: "check", Positionals: []string{"[<slug>]"}, Short: "Find source-only and contract-only routes", Notes: []string{"Path parameters are matched conservatively."},
 			Examples: []string{
 				"gregale routes contract check my-api --openapi openapi.yaml --base origin/main --fail-on-drift --json",
 				"gregale routes contract check --openapi openapi.yaml --base HEAD --path services/api --framework go-nethttp --format markdown",
@@ -4240,7 +4249,7 @@ var cliCommands = []cliCommand{
 				{Name: "wait", Short: "wait for a full clone operation to finish (requires --full)"},
 				{Name: "timeout", Value: "SECONDS", Short: "maximum local wait time; the durable server operation continues after timeout"},
 			}},
-			{Name: "clone-status", Short: "Read durable clone progress before or after the target exists; timeout exits 3 with a resume command, failed or compensated operations exit 1", Positionals: []string{"<operation-id>"}, Examples: []string{"gregale env clone-status <operation-id> --project shop --wait"}, Flags: []cliFlag{
+			{Name: "clone-status", Short: "Read clone progress before or after the target exists", Notes: []string{"A timeout exits 3 with a resume command; failed or compensated operations exit 1."}, Positionals: []string{"<operation-id>"}, Examples: []string{"gregale env clone-status <operation-id> --project shop --wait"}, Flags: []cliFlag{
 				{Name: "project", Value: "SLUG", Short: "project slug (defaults to linked project)"},
 				{Name: "wait", Short: "wait for the same durable clone operation to finish"},
 				{Name: "timeout", Value: "SECONDS", Short: "maximum local wait time"},
@@ -4250,7 +4259,7 @@ var cliCommands = []cliCommand{
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "o", ShortName: "o", Short: "output file (default .env)", Value: "PATH"},
 			}},
-			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)", Examples: []string{"gregale env push --app my-api --dry-run", "printf 'LOG_LEVEL=info\\n' | gregale env push --app my-api --from-stdin", "gregale env push --app my-api --restart"}, Flags: []cliFlag{
+			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets", Notes: []string{"Use --restart to apply them now."}, Examples: []string{"gregale env push --app my-api --dry-run", "printf 'LOG_LEVEL=info\\n' | gregale env push --app my-api --from-stdin", "gregale env push --app my-api --restart"}, Flags: []cliFlag{
 				{Name: "wait-for-ack", Short: "wait for application acknowledgements for uploaded keys", Bool: true},
 				{Name: "timeout", Short: "restart and acknowledgement wait limit after uploading (default 2m; requires --wait-for-ack)", Value: "DURATION"},
 				{Name: "dry-run", Short: "preview key changes, scan findings, and quota without uploading or restarting", Bool: true},
@@ -4270,7 +4279,7 @@ var cliCommands = []cliCommand{
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "limit", Short: "revisions to show (1-100, default 20)", Value: "N"},
 			}},
-			{Name: "rollback", Short: "Restore a scope's variables to a config revision as one guarded change; secrets that differ are listed, not restored", Positionals: []string{"<revision>"}, Examples: []string{"gregale env rollback 12 --app my-api", "gregale env rollback 12 --app my-api --yes"}, Flags: []cliFlag{
+			{Name: "rollback", Short: "Restore a scope's variables to a config revision", Notes: []string{"Applied as one guarded change; differing secrets are listed, not restored."}, Positionals: []string{"<revision>"}, Examples: []string{"gregale env rollback 12 --app my-api", "gregale env rollback 12 --app my-api --yes"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"},
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "yes", Short: "skip the typed confirmation", Bool: true},
@@ -4452,7 +4461,7 @@ var cliCommands = []cliCommand{
 				{Name: "upsert", Short: "Create or revise a policy from JSON", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "file", Value: "POLICY.json", Short: "policy JSON file", Req: true}}},
 				{Name: "retire", Short: "Retire an idle policy and preserve ownership history", Positionals: []string{"<name>"}},
 			}},
-			{Name: "bind-trigger", Short: "Route an account-owned cron, inbound webhook, broker trigger, or Job schedule through a policy", Positionals: []string{"<cron|inbound_webhook|broker|job_schedule>", "<trigger-id>"}, Flags: []cliFlag{
+			{Name: "bind-trigger", Short: "Route an account trigger or Job schedule through a policy", Notes: []string{"Accepts an account-owned cron, inbound webhook, broker trigger or Job schedule."}, Positionals: []string{"<cron|inbound_webhook|broker|job_schedule>", "<trigger-id>"}, Flags: []cliFlag{
 				{Name: "policy", Value: "NAME", Short: "managed operation policy", Req: true},
 				{Name: "key", Value: "JSON", Short: "JSON scalar business coordination key", Req: true},
 				{Name: "tenant", Value: "ID", Short: "account-authorized platform customer tenant"},
@@ -4492,8 +4501,8 @@ var cliCommands = []cliCommand{
 			debugRequestsCLISubcommand(),
 			{Name: "profiles", Short: "Sampled CPU functions and deployment comparison", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "deployment-id", Value: "UUID", Short: "candidate deployment"}, {Name: "runtime", Value: "NAME", Short: "runtime name"}, {Name: "start", Value: "RFC3339", Short: "capture start"}, {Name: "end", Value: "RFC3339", Short: "capture end"}, {Name: "baseline-id", Value: "UUID", Short: "baseline deployment"}, {Name: "baseline-start", Value: "RFC3339", Short: "baseline capture start"}, {Name: "baseline-end", Value: "RFC3339", Short: "baseline capture end"}}},
 			{Name: "dependencies", Short: "Show observed dependency latency and regressions", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "since", Short: "lookback window", Value: "DURATION"}}},
-			{Name: "coverage", Short: "Observed debugger signal coverage (coverage <slug> [--since D])", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "since", Short: "lookback window", Value: "DURATION"}}},
-			{Name: "running", Short: "Explain why an app is still running, with request evidence when available (running <slug> [--since D] [--limit N])", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "since", Short: "lookback window", Value: "DURATION"}, {Name: "limit", Short: "maximum recent observations (1..100; default 20)", Value: "N"}}},
+			{Name: "coverage", Short: "Show observed debugger signal coverage", Notes: []string{"Usage: coverage <slug> [--since D]."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "since", Short: "lookback window", Value: "DURATION"}}},
+			{Name: "running", Short: "Explain why an app is still running", Notes: []string{"Includes request evidence when available. Usage: running <slug> [--since D] [--limit N]."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "since", Short: "lookback window", Value: "DURATION"}, {Name: "limit", Short: "maximum recent observations (1..100; default 20)", Value: "N"}}},
 			{Name: "regressions", Short: "List, watch, triage, or roll back regressions", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{{Name: "since", Short: "lookback window", Value: "DURATION"}, {Name: "all", Short: "include every app in the account"}}, Subcommands: []cliSub{
 				{Name: "watch", Short: "Watch regression changes (live stream by default)", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{{Name: "since", Short: "lookback window", Value: "DURATION"}, {Name: "interval", Short: "poll interval (250ms..1h)", Value: "DURATION"}, {Name: "all", Short: "watch every app in the account"}, {Name: "poll", Short: "poll instead of using the live event stream"}, {Name: "once", Short: "poll once and exit"}}},
 				{Name: "ack", Short: "Acknowledge a regression", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "deployment-id", Short: "regression deployment UUID", Value: "UUID", Req: true}, {Name: "route", Short: "regression route", Value: "PATH", Req: true}}},
@@ -4608,7 +4617,7 @@ var cliCommands = []cliCommand{
 			{Name: "save", Short: "Save current linked targets as a named local preset", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "replace", Bool: true, Short: "explicitly replace an existing preset"}}},
 			{Name: "use", Short: "Validate and apply a preset for the currently linked project", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "validate and preview without saving linked defaults"}}},
 			{Name: "presets", Short: "List or manage local target presets", Examples: []string{"gregale context presets", "gregale context presets list", "gregale context presets --help"}, Subcommands: []cliSub{
-				{Name: "copy", Short: "Copy a local preset as a starting point without changing active context", Positionals: []string{"<source-name>", "<new-name>"}, Examples: []string{"gregale context presets copy staging staging-eu"}},
+				{Name: "copy", Short: "Copy a local preset without changing the active context", Positionals: []string{"<source-name>", "<new-name>"}, Examples: []string{"gregale context presets copy staging staging-eu"}},
 				{Name: "rename", Short: "Rename a local preset while preserving its targets and active context", Positionals: []string{"<old-name>", "<new-name>"}, Examples: []string{"gregale context presets rename staging staging-eu"}},
 				{Name: "update", Short: "Change selected preset targets without changing active context", Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "app", Value: "SLUG", Short: "validate and replace only the preset app"},
@@ -4677,15 +4686,15 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "defaults", Short: "Show or manage the project-local preferred log view", Examples: []string{"gregale logs defaults", "gregale logs defaults --help"}, Subcommands: []cliSub{
 				{Name: "set", Short: "Save one existing log view name locally", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "preview the preference path and selected filters without saving"}}, Examples: []string{"gregale logs defaults set errors --dry-run"}},
-				{Name: "show", Short: "Show the preferred view, current filters, reference health, and preview command", Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "target the preview command at an explicit, unverified app"}}, Examples: []string{"gregale logs defaults show --app payments-api"}},
+				{Name: "show", Short: "Show the preferred view, filters, reference health and preview", Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "target the preview command at an explicit, unverified app"}}, Examples: []string{"gregale logs defaults show --app payments-api"}},
 				{Name: "clear", Short: "Clear the local preference without changing saved views", Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "preview the preference removal without deleting files"}}, Examples: []string{"gregale logs defaults clear --dry-run"}},
 			}},
 			{Name: "views", Short: "List or manage reusable local log filters", Flags: []cliFlag{{Name: "name", Value: "TEXT", Short: "list view names containing literal, case-sensitive text"}, {Name: "source", Value: "SOURCE", ClosedSet: []string{"runtime", "http"}, Short: "list only saved views of this log source"}, {Name: "details", Bool: true, Short: "include saved filters and query/preview commands in JSON entries"}, {Name: "app", Value: "SLUG", Short: "target generated commands at an explicit, unverified app"}}, Examples: []string{"gregale logs views", "gregale logs views --source http", "gregale logs views --name errors", "gregale --json logs views --details", "gregale logs views list", "gregale logs views --help"}, Subcommands: []cliSub{
-				{Name: "copy", Short: "Copy saved filters as a starting point while preserving the source view", Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "preview filters and destination without writing"}}, Positionals: []string{"<source-name>", "<new-name>"}, Examples: []string{"gregale logs views copy errors checkout-errors"}},
+				{Name: "copy", Short: "Copy saved filters as a starting point; the source is kept", Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "preview filters and destination without writing"}}, Positionals: []string{"<source-name>", "<new-name>"}, Examples: []string{"gregale logs views copy errors checkout-errors"}},
 				{Name: "list", Short: "List saved log views and copyable query previews", Flags: []cliFlag{{Name: "name", Value: "TEXT", Short: "list view names containing literal, case-sensitive text"}, {Name: "source", Value: "SOURCE", ClosedSet: []string{"runtime", "http"}, Short: "list only saved views of this log source; HTTP includes latest-error views"}, {Name: "details", Bool: true, Short: "include saved filters and query/preview commands in JSON entries"}, {Name: "app", Value: "SLUG", Short: "target generated commands at an explicit, unverified app"}}, Examples: []string{"gregale logs views list", "gregale --json logs views list --details"}},
 				{Name: "show", Short: "Show saved filters and copyable query previews", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "target generated commands at an explicit, unverified app"}, {Name: "details", Bool: true, Short: "include saved filters and query/preview commands in JSON output"}}, Examples: []string{"gregale logs views show errors --app my-api", "gregale --json logs views show errors --app my-api --details"}},
-				{Name: "rename", Short: "Rename a saved view without changing filters or overwriting another view", Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "preview filters, destination, and preferred-view impact without writing"}}, Positionals: []string{"<old-name>", "<new-name>"}},
-				{Name: "update", Short: "Change selected filters while preserving view type and omitted settings", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "rename", Short: "Rename a saved view without changing filters", Notes: []string{"Never overwrites another view."}, Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "preview filters, destination, and preferred-view impact without writing"}}, Positionals: []string{"<old-name>", "<new-name>"}},
+				{Name: "update", Short: "Change selected filters; omitted settings are kept", Notes: []string{"The view type is preserved."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "dry-run", Bool: true, Short: "validate proposed filters and show their run command without saving"},
 					{Name: "since", Value: "DURATION", Short: "replace relative window"},
 					{Name: "route", Value: "PATH", Short: "replace HTTP route"},
@@ -4744,9 +4753,9 @@ var cliCommands = []cliCommand{
 		Short:   "Set up and manage multi-factor authentication",
 		Subcommands: []cliSub{
 			{Name: "enroll", Short: "Begin TOTP enrolment", Flags: []cliFlag{{Name: "qr-out", Short: "write the QR PNG to this path", Value: "PATH"}}},
-			{Name: "confirm", Short: "Confirm an enrolment code (positional code or --code)", Positionals: []string{"[<6-digit-code>]"}, Flags: []cliFlag{{Name: "code", Short: "6-digit TOTP (alternative to positional code)", Value: "CODE"}}},
-			{Name: "verify", Short: "Verify a TOTP code (step-up; positional code or --code)", Positionals: []string{"[<6-digit-code>]"}, Flags: []cliFlag{{Name: "code", Short: "6-digit TOTP (alternative to positional code)", Value: "CODE"}}},
-			{Name: "recover", Short: "Use a recovery code (positional code or --code)", Positionals: []string{"[<recovery-code>]"}, Flags: []cliFlag{{Name: "code", Short: "recovery code (alternative to positional code)", Value: "CODE"}}},
+			{Name: "confirm", Short: "Confirm an enrolment code", Notes: []string{"Pass the code as an argument or with --code."}, Positionals: []string{"[<6-digit-code>]"}, Flags: []cliFlag{{Name: "code", Short: "6-digit TOTP (alternative to positional code)", Value: "CODE"}}},
+			{Name: "verify", Short: "Verify a TOTP code for step-up", Notes: []string{"Pass the code as an argument or with --code."}, Positionals: []string{"[<6-digit-code>]"}, Flags: []cliFlag{{Name: "code", Short: "6-digit TOTP (alternative to positional code)", Value: "CODE"}}},
+			{Name: "recover", Short: "Use a recovery code", Notes: []string{"Pass the code as an argument or with --code."}, Positionals: []string{"[<recovery-code>]"}, Flags: []cliFlag{{Name: "code", Short: "recovery code (alternative to positional code)", Value: "CODE"}}},
 			{Name: "disable", Short: "Disable MFA", Flags: []cliFlag{{Name: "password", Short: "account password (prompts when omitted)", Value: "PASSWORD"}, {Name: "recovery-code", Short: "single-use recovery code (alternative to password)", Value: "CODE"}}},
 		},
 	},
@@ -4755,7 +4764,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "open",
 		Short:   "Open an app's URL in your browser",
 		Subcommands: []cliSub{
-			{Name: "docs", Short: "Open a CLI docs page (open docs [<slug>])"},
+			{Name: "docs", Short: "Open a CLI docs page", Notes: []string{"Usage: open docs [<slug>]."}},
 		},
 		Flags:       []cliFlag{{Name: "app", Short: appSlugFlagUsage, Value: "SLUG"}, {Name: "dashboard", Short: "open the dashboard page instead of the live URL", Bool: true}},
 		Positionals: []string{"[<slug>]"},
@@ -4989,12 +4998,12 @@ var cliCommands = []cliCommand{
 			{Name: "users", Short: "Find, sign out, ban and delete the application's users", Subcommands: []cliSub{
 				{Name: "list", Short: "List users, newest first", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "search", Value: "TEXT", Short: "part of an email address or name"}, {Name: "page", Value: "N", Short: "page to show"}, {Name: "limit", Value: "N", Short: "entries per page (1-100)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 				{Name: "get", Short: "Show a user with their organizations and active sessions", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
-				{Name: "claims", Short: "Show, set or remove a user's custom claims, which tokens carry as app_metadata", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{
+				{Name: "claims", Short: "Show, set or remove a user's custom claims", Notes: []string{"Tokens carry them as app_metadata."}, Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{
 					{Name: "set", Value: "NAME=VALUE", Short: "set a claim (repeatable); JSON values such as 5, true or {\"a\":1} keep their type"},
 					{Name: "unset", Value: "NAME", Short: "remove a claim (repeatable)"},
 					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
 				}},
-				{Name: "impersonate", Short: "Open a time-limited session as the user, for support (needs --impersonation on)", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{
+				{Name: "impersonate", Short: "Open a time-limited support session as the user", Notes: []string{"Requires --impersonation on."}, Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{
 					{Name: "reason", Value: "TEXT", Req: true, Short: "why, such as a support ticket; recorded with the admin key that opened it"},
 					{Name: "minutes", Value: "N", Short: "how long the session lasts, 5 to 60 (default 30)"},
 					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
@@ -5019,18 +5028,18 @@ var cliCommands = []cliCommand{
 				{Name: "list", Short: "List them newest first, with the key and reason", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "user", Value: "USER", Short: "only this user's (ID or email)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 				{Name: "end", Short: "End one before its time", Positionals: []string{"<name>", "<id>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 			}, Examples: []string{"gregale auth users impersonate shop-auth ada@example.com --reason 'Ticket 4821'", "gregale auth impersonations list shop-auth --user ada@example.com"}},
-			{Name: "orgs", Short: "List the application's organizations with their members and invitations", Subcommands: []cliSub{
+			{Name: "orgs", Short: "List the application's organizations, members and invitations", Subcommands: []cliSub{
 				{Name: "list", Short: "List organizations, newest first", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "search", Value: "TEXT", Short: "part of a slug or name"}, {Name: "page", Value: "N", Short: "page to show"}, {Name: "limit", Value: "N", Short: "entries per page (1-100)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
-				{Name: "get", Short: "Show an organization's members, whether each has a second factor, pending invitations and email domains", Positionals: []string{"<name>", "<org>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
-				{Name: "audit", Short: "Show an organization's audit log: membership, invitation, domain and SSO changes and members' sign-ins", Positionals: []string{"<name>", "<org>"}, Flags: []cliFlag{{Name: "cursor", Value: "NEXT", Short: "where the next page starts, from the previous page's More line"}, {Name: "limit", Value: "N", Short: "entries per page (1-100)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
-				{Name: "set", Short: "Require a second factor for an organization's permissions, or stop requiring one", Positionals: []string{"<name>", "<org>"}, Flags: []cliFlag{{Name: "require-mfa", Value: "on|off", Req: true, Short: "on: the organization's permissions hold only in sessions verified with a second factor"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "get", Short: "Show an organization's members, invitations and email domains", Notes: []string{"Shows whether each member has a second factor."}, Positionals: []string{"<name>", "<org>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "audit", Short: "Show an organization's audit log", Notes: []string{"Covers membership, invitation, domain and SSO changes and members' sign-ins."}, Positionals: []string{"<name>", "<org>"}, Flags: []cliFlag{{Name: "cursor", Value: "NEXT", Short: "where the next page starts, from the previous page's More line"}, {Name: "limit", Value: "N", Short: "entries per page (1-100)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "set", Short: "Require a second factor for an organization, or stop requiring it", Positionals: []string{"<name>", "<org>"}, Flags: []cliFlag{{Name: "require-mfa", Value: "on|off", Req: true, Short: "on: the organization's permissions hold only in sessions verified with a second factor"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 			}, Examples: []string{"gregale auth orgs get shop-auth acme", "gregale auth orgs set shop-auth acme --require-mfa on"}},
 			{Name: "emails", Short: "Change the wording of the emails the Auth app sends", Subcommands: []cliSub{
 				{Name: "list", Short: "List the email types and whether each uses your wording", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 				{Name: "show", Short: "Show an email's subject, body and placeholders", Positionals: []string{"<name>", "<type>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 				{Name: "set", Short: "Change an email's subject, body or both", Positionals: []string{"<name>", "<type>"}, Flags: []cliFlag{{Name: "subject", Value: "TEXT", Short: "the subject line; placeholders such as {{app}} are filled in"}, {Name: "body", Value: "TEXT", Short: "the body text; separate paragraphs with a blank line"}, {Name: "body-file", Value: "FILE", Short: "read the body text from this file"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 				{Name: "reset", Short: "Return an email to the default wording", Positionals: []string{"<name>", "<type>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
-				{Name: "preview", Short: "Render an email with example values, optionally a draft, and send it to yourself", Positionals: []string{"<name>", "<type>"}, Flags: []cliFlag{
+				{Name: "preview", Short: "Render an email with example values and send it to yourself", Notes: []string{"Can render a draft."}, Positionals: []string{"<name>", "<type>"}, Flags: []cliFlag{
 					{Name: "subject", Value: "TEXT", Short: "the subject line; placeholders such as {{app}} are filled in"}, {Name: "body", Value: "TEXT", Short: "the body text; separate paragraphs with a blank line"}, {Name: "body-file", Value: "FILE", Short: "read the body text from this file"}, {Name: "send-to", Value: "EMAIL", Short: "also send the preview to this address through your email provider"}, {Name: "html", Value: "FILE", Short: "write the preview's HTML version to this file"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
 				}},
 			}, Examples: []string{"gregale auth emails set shop-auth signup --subject 'Welcome to {{app}}' --body-file signup.txt", "gregale auth emails preview shop-auth signup --send-to me@example.com"}},
@@ -5047,7 +5056,7 @@ var cliCommands = []cliCommand{
 			}, Examples: []string{"printf '%s' \"$ADMIN_KEY\" | gregale auth activity shop-auth --search login --admin-key-stdin"}},
 			{Name: "sso", Short: "Register SAML identity providers for organization single sign-on", Subcommands: []cliSub{
 				{Name: "list", Short: "List identity providers and the organizations their users join", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
-				{Name: "add", Short: "Register an identity provider for email domains, optionally joining its users to an organization", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "add", Short: "Register an identity provider for email domains", Notes: []string{"Can join its users to an organization."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "metadata-url", Value: "URL", Short: "the identity provider's HTTPS SAML metadata URL"},
 					{Name: "metadata-file", Value: "FILE", Short: "a file holding the identity provider's SAML metadata XML"},
 					{Name: "domains", Value: "DOMAINS", Req: true, Short: "comma-separated email domains whose users sign in through this provider"},
@@ -5064,12 +5073,12 @@ var cliCommands = []cliCommand{
 					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
 				}},
 				{Name: "remove", Short: "Remove an identity provider; its users keep their memberships", Positionals: []string{"<name>", "<provider-id>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
-				{Name: "scim-token", Short: "Create the token an identity provider uses to provision people through SCIM, or revoke it", Positionals: []string{"<name>", "<provider-id>"}, Flags: []cliFlag{
+				{Name: "scim-token", Short: "Create or revoke an identity provider's SCIM token", Notes: []string{"The provider uses it to provision people."}, Positionals: []string{"<name>", "<provider-id>"}, Flags: []cliFlag{
 					{Name: "revoke", Short: "revoke the token instead of creating one"},
 					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
 				}},
 			}},
-			{Name: "oauth-clients", Short: "Register the apps and MCP clients that may use the Auth app as their OAuth 2.1 server", Subcommands: []cliSub{
+			{Name: "oauth-clients", Short: "Register apps and MCP clients that use Auth as their OAuth server", Notes: []string{"The Auth app acts as an OAuth 2.1 server."}, Subcommands: []cliSub{
 				{Name: "list", Short: "List OAuth clients, owner-registered and self-registered", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 				{Name: "add", Short: "Register a client; a confidential client's secret is shown once", Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "name", Value: "NAME", Short: "the client's name, shown on the consent page"},
@@ -5089,7 +5098,7 @@ var cliCommands = []cliCommand{
 				{Name: "remove", Short: "Remove a client; it can no longer get tokens", Positionals: []string{"<name>", "<client-id>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 				{Name: "rotate-secret", Short: "Replace a confidential client's secret; the new one is shown once", Positionals: []string{"<name>", "<client-id>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 			}},
-			{Name: "service-accounts", Short: "Manage organizations' service accounts, which get tokens with the client-credentials grant", Subcommands: []cliSub{
+			{Name: "service-accounts", Short: "Manage organizations' service accounts", Notes: []string{"They get tokens with the client-credentials grant."}, Subcommands: []cliSub{
 				{Name: "list", Short: "List service accounts with their live secrets' last characters", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "org", Value: "ORG", Short: "only this organization's (ID or slug)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 				{Name: "add", Short: "Add a service account to an organization; its secret is shown once", Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "org", Value: "ORG", Req: true, Short: "the organization (ID or slug)"},
@@ -5147,7 +5156,7 @@ var cliCommands = []cliCommand{
 					{Name: "timeout", Value: "DURATION", Short: "check deadline (default 2m, maximum 1h)"},
 				}},
 			}},
-			{Name: "verify", Short: "Verify named data integrity assertions and project authorization locally", Subcommands: []cliSub{{Name: "release", Short: "Run local Data API release checks and consolidate reports", Flags: []cliFlag{{Name: "config", Value: "FILE", Req: true, Short: "version 1 release-check configuration"}}}, {Name: "coverage", Short: "Check customer-declared verification coverage offline", Flags: []cliFlag{
+			{Name: "verify", Short: "Verify data integrity assertions and project authorization", Notes: []string{"Runs locally."}, Subcommands: []cliSub{{Name: "release", Short: "Run local Data API release checks and consolidate reports", Flags: []cliFlag{{Name: "config", Value: "FILE", Req: true, Short: "version 1 release-check configuration"}}}, {Name: "coverage", Short: "Check customer-declared verification coverage offline", Flags: []cliFlag{
 				{Name: "schema", Value: "FILE", Req: true, Short: "current saved schema contract"},
 				{Name: "policy", Value: "FILE", Req: true, Short: "explicit relation requirements and named check mappings"},
 				{Name: "verification", Value: "FILE", Short: "data-api verify JSON report"},
@@ -5192,7 +5201,7 @@ var cliCommands = []cliCommand{
 					{Name: "dependencies", Value: "FILE", Short: "customer-declared consumer dependencies"},
 					{Name: "coverage-policy", Value: "FILE", Short: "explicit verification mappings to review"},
 				}},
-				{Name: "preview", Short: "Rebuild a disposable database and report API, types, client and replay checks", Flags: []cliFlag{
+				{Name: "preview", Short: "Rebuild a disposable database and report migration checks", Notes: []string{"Reports API, types, client and replay checks."}, Flags: []cliFlag{
 					{Name: "directory", Value: "DIR", Short: "Data API project directory (default .)"},
 					{Name: "from-version", Value: "N", Short: "upgrade from an existing numbered migration version"},
 					{Name: "fixture", Value: "FILE", Short: "SQL data fixture for the older schema (default: configured seed)"},
@@ -5259,7 +5268,7 @@ var cliCommands = []cliCommand{
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 				{Name: "timeout", Value: "DURATION", Short: "deployment and release wait (default 15m)"},
 			}},
-			{Name: "configure", Short: "Change public access, aggregates, usage reporting or caps and fresh-restart the runtime", Positionals: []string{"<name>"}, Flags: []cliFlag{
+			{Name: "configure", Short: "Change access, aggregates, usage reporting or caps", Notes: []string{"Restarts the runtime fresh."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "public-read", Value: "SCHEMA.RELATION[,...]", Short: "relations readable without a token"},
 				{Name: "no-public-read", Short: "disable anonymous reads"},
 				{Name: "public-rpc", Value: "SCHEMA.FUNCTION[,...]", Short: "approved STABLE or IMMUTABLE functions callable without a token by GET"},
@@ -5274,12 +5283,12 @@ var cliCommands = []cliCommand{
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 				{Name: "no-restart", Short: "store settings without a fresh restart"},
 			}},
-			{Name: "usage", Short: "Show reported requests, rows and bytes per hour or day, and month-to-date totals", Positionals: []string{"<name>"}, Flags: []cliFlag{
+			{Name: "usage", Short: "Show reported requests, rows and bytes with month-to-date totals", Notes: []string{"Per hour or per day."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "since", Value: "DURATION", Short: "lookback such as 24h, 7d or 30d (default 7d, max 90d)"},
 				{Name: "granularity", Value: "hour|day", Short: "bucket size (hour covers at most 48h)", ClosedSet: []string{"hour", "day"}},
 			}, Examples: []string{"gregale data-api usage shop-data --since 30d"}},
 			{Name: "storage", Short: "File storage governed by RLS on storage_objects", Subcommands: []cliSub{
-				{Name: "sql", Short: "Print the storage_objects migration (table, RLS, guard trigger, example policies)", Flags: []cliFlag{
+				{Name: "sql", Short: "Print the storage_objects migration", Notes: []string{"Includes the table, RLS, guard trigger and example policies."}, Flags: []cliFlag{
 					{Name: "schema", Value: "SCHEMA", Short: "the Data API's first exposed schema (default api)"},
 				}, Examples: []string{"gregale data-api storage sql > migrations/0005_storage.sql"}},
 				{Name: "enable", Short: "Bind a bucket read-write and turn storage on", Positionals: []string{"<name>"}, Flags: []cliFlag{
@@ -5298,7 +5307,7 @@ var cliCommands = []cliCommand{
 				}},
 			}},
 			{Name: "live", Short: "Live reads: results that stay current over a realtime connection", Subcommands: []cliSub{
-				{Name: "enable", Short: "Enable live queries on the database, usage reporting and a live-only realtime endpoint", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "enable", Short: "Enable live queries, usage reporting and a live-only endpoint", Notes: []string{"Creates a live-only realtime endpoint."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "scope", Value: "SCOPE", Short: "environment scope of the Data API's database binding"},
 					{Name: "no-restart", Short: "store settings without a fresh restart"},
 				}, Examples: []string{"gregale data-api live enable shop-data"}},
@@ -5323,7 +5332,7 @@ var cliCommands = []cliCommand{
 					{Name: "no-restart", Short: "remove the hash without a fresh restart"},
 				}},
 			}},
-			{Name: "types", Short: "Generate TypeScript types or Python/Go clients from the database contract", Positionals: []string{"[<name>]"}, Flags: []cliFlag{
+			{Name: "types", Short: "Generate TypeScript types or Python/Go clients from the contract", Positionals: []string{"[<name>]"}, Flags: []cliFlag{
 				{Name: "output", Value: "FILE", Short: "generated TypeScript, Python, Go or snapshot output"},
 				{Name: "check", Short: "fail if the output file is stale"},
 				{Name: "snapshot", Short: "export a JSON baseline for data-api diff"},
@@ -5467,7 +5476,7 @@ var cliCommands = []cliCommand{
 				}},
 				{Name: "get", Short: "Show one binding", Positionals: []string{"<id>"}},
 				{Name: "delete", Short: "Delete a binding", Positionals: []string{"<id>"}},
-				{Name: "rotate", Short: "Rotate a binding and optionally wait for the previous credential to retire", Positionals: []string{"<id>"}, Flags: []cliFlag{
+				{Name: "rotate", Short: "Rotate a binding, optionally waiting for the old credential", Notes: []string{"Waits until the previous credential retires."}, Positionals: []string{"<id>"}, Flags: []cliFlag{
 					{Name: "wait", Short: "wait for the previous credential to retire"},
 					{Name: "wait-timeout", Short: "maximum time to wait for rotation (default 5m)", Value: "DURATION"},
 					{Name: "poll-interval", Short: "status polling interval while waiting (default 1s)", Value: "DURATION"},
@@ -5560,11 +5569,11 @@ var cliCommands = []cliCommand{
 				{Name: "before", Short: "pagination cursor", Value: "ID"},
 			}},
 			{Name: "inspect", Short: "Inspect one dead-letter event", Positionals: []string{"<app>", "<event-id>"}},
-			{Name: "replay", Short: "Replay one event or --all", Positionals: []string{"<app>", "[<event-id>]"}, Flags: []cliFlag{
+			{Name: "replay", Short: "Replay one event, or all of them", Notes: []string{"Use --all for every event."}, Positionals: []string{"<app>", "[<event-id>]"}, Flags: []cliFlag{
 				{Name: "all", Short: "replay pending events"},
 				{Name: "limit", Short: "maximum events (1..200)", Value: "N"},
 			}},
-			{Name: "purge", Short: "Purge one event or --all", Positionals: []string{"<app>", "[<event-id>]"}, Flags: []cliFlag{
+			{Name: "purge", Short: "Purge one event, or all of them", Notes: []string{"Use --all for every event."}, Positionals: []string{"<app>", "[<event-id>]"}, Flags: []cliFlag{
 				{Name: "all", Short: "purge all events (asks for typed confirmation)"},
 				{Name: "yes", Short: "skip the --all confirmation (for scripts)", Bool: true},
 				{Name: "limit", Short: "page size (1..200)", Value: "N"},
@@ -5604,7 +5613,7 @@ var cliCommands = []cliCommand{
 		Short:   "Manage realtime endpoints, policies, connections, channels, and auth",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed realtime endpoints", Positionals: []string{"<app>"}},
-			{Name: "usage", Short: "Show open connections against the plan's fair-use limit and recent hourly usage", Flags: []cliFlag{
+			{Name: "usage", Short: "Show open connections against the fair-use limit and usage", Notes: []string{"Includes recent hourly usage."}, Flags: []cliFlag{
 				{Name: "hours", Short: "UTC hours of usage to show (1-744, default 24)", Value: "N"},
 			}},
 			{Name: "get", Short: "Show one endpoint and safe auth-rotation status", Positionals: []string{"<app>", "<endpoint-id>"}},
@@ -5779,7 +5788,7 @@ var cliCommands = []cliCommand{
 			{Name: "poll-interval", Short: "poll interval (default 2s)", Value: "duration"},
 			{Name: "json", Short: "machine-readable output"},
 		},
-		Subcommands: []cliSub{{Name: "status", Short: "Read an exact rollback operation; waiting never submits another rollback", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+		Subcommands: []cliSub{{Name: "status", Short: "Read an exact rollback operation", Notes: []string{"Waiting never submits another rollback."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 			{Name: "operation", Short: "accepted rollback operation UUID", Value: "UUID", Req: true},
 			{Name: "wait", Short: "wait for completion with a committed audit receipt"},
 			{Name: "timeout", Short: "wait deadline (default 10m)", Value: "duration"},
@@ -5799,7 +5808,7 @@ var cliCommands = []cliCommand{
 		Short:    "Recover a stuck rollout by hand (operator escape hatch)",
 		Audience: cliAudienceOperator,
 		Subcommands: []cliSub{
-			{Name: "recover", Short: "Manually advance / promote / abort a stuck rollout (operator escape hatch)"},
+			{Name: "recover", Short: "Advance, promote or abort a stuck rollout manually", Notes: []string{"Operator escape hatch."}},
 			{Name: "status", Short: "Inspect an exact rollout and optionally wait for handoff completion", Flags: []cliFlag{{Name: "deployment", Value: "ID|vN", Req: true, Short: "exact deployment"}, {Name: "wait", Short: "wait for completion"}, {Name: "timeout", Value: "duration", Short: "wait deadline (default 10m)"}, {Name: "poll-interval", Value: "duration", Short: "poll interval (default 2s)"}}},
 		},
 		Positionals: []string{"<slug>"},
@@ -5817,19 +5826,19 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List projects in this account"},
 			{Name: "info", Short: "Show a project and its workloads", Positionals: []string{"<slug>"}},
-			{Name: "environments", Aliases: []string{"envs"}, Short: "Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config [set]|routes set|queues get|queues set|diff|preview|promote|status|rollback|abort|recover); qualify binds probes to release, config, and secret revisions", Subcommands: []cliSub{
+			{Name: "environments", Aliases: []string{"envs"}, Short: "Manage project environments, releases and promotions", Notes: []string{"Qualify binds probes to release, config and secret revisions."}, Subcommands: []cliSub{
 				{Name: "list", Aliases: []string{"ls"}, Short: "List environments"},
 				{Name: "create", Short: "Create or clone an environment"},
 				{Name: "protect", Short: "Protect an environment"},
 				{Name: "unprotect", Short: "Remove environment protection"},
 				{Name: "inspect", Short: "Inspect the active graph and environment deployments"},
-				{Name: "release-sets", Short: "List release graphs; qualify activation, rollback and deactivation with binding checks", Subcommands: []cliSub{
-					{Name: "stage", Short: "Lease billable capacity for exact candidate services without switching routes", Positionals: []string{"<project>", "<environment>"}, Flags: []cliFlag{{Name: "file", Value: "FILE", Req: true, Short: "prepared forward or rollback manifest JSON"}, {Name: "ttl-seconds", Value: "N", Short: "lease duration, 1–1800 seconds; repeating does not extend"}}},
+				{Name: "release-sets", Short: "List release graphs and qualify changes with binding checks", Notes: []string{"Covers activation, rollback and deactivation."}, Subcommands: []cliSub{
+					{Name: "stage", Short: "Lease capacity for exact candidate services without switching", Notes: []string{"The capacity is billable; routes are not switched."}, Positionals: []string{"<project>", "<environment>"}, Flags: []cliFlag{{Name: "file", Value: "FILE", Req: true, Short: "prepared forward or rollback manifest JSON"}, {Name: "ttl-seconds", Value: "N", Short: "lease duration, 1–1800 seconds; repeating does not extend"}}},
 					{Name: "stage-status", Short: "Observe staging readiness, blockers and expiry", Positionals: []string{"<project>", "<environment>"}, Flags: []cliFlag{{Name: "stage", Value: "UUID", Req: true, Short: "stage identity"}}},
 					{Name: "cancel-stage", Short: "Cancel temporary candidate capacity", Positionals: []string{"<project>", "<environment>"}, Flags: []cliFlag{{Name: "stage", Value: "UUID", Req: true, Short: "stage identity"}}},
-					{Name: "prepare-rollback", Short: "Select retained historical graph and freeze current routing and policies", Positionals: []string{"<project>", "<environment>"}, Flags: []cliFlag{{Name: "file", Value: "FILE", Req: true, Short: "historical release ID and retention TTL JSON"}}},
-					{Name: "rollback", Short: "Atomically recover a qualified historical graph and record recovery lineage", Positionals: []string{"<project>", "<environment>"}, Flags: []cliFlag{{Name: "file", Value: "FILE", Req: true, Short: "prepared recovery manifest JSON"}}},
-					{Name: "prepare", Short: "Freeze candidate graph, current routing and enforced policies; emit a JSON manifest", Positionals: []string{"<project>", "<environment>"}, Flags: []cliFlag{{Name: "file", Value: "FILE", Req: true, Short: "release selection or prepared manifest JSON"}}},
+					{Name: "prepare-rollback", Short: "Select a retained graph and freeze current routing and policies", Positionals: []string{"<project>", "<environment>"}, Flags: []cliFlag{{Name: "file", Value: "FILE", Req: true, Short: "historical release ID and retention TTL JSON"}}},
+					{Name: "rollback", Short: "Recover a qualified historical graph atomically", Notes: []string{"Records the recovery lineage."}, Positionals: []string{"<project>", "<environment>"}, Flags: []cliFlag{{Name: "file", Value: "FILE", Req: true, Short: "prepared recovery manifest JSON"}}},
+					{Name: "prepare", Short: "Freeze the candidate graph, routing and policies as a manifest", Notes: []string{"Emits a JSON manifest of the enforced policies."}, Positionals: []string{"<project>", "<environment>"}, Flags: []cliFlag{{Name: "file", Value: "FILE", Req: true, Short: "release selection or prepared manifest JSON"}}},
 					{Name: "verification-runs", Short: "Inspect, resume or cancel durable graph qualification", Subcommands: []cliSub{
 						{Name: "list", Short: "List retained graph receipt roots", Positionals: []string{"<project>", "<environment>"}, Flags: []cliFlag{{Name: "limit", Value: "N", Short: "page size (default 20; range 1–100)"}, {Name: "cursor", Value: "CURSOR", Short: "next page cursor; reuse filters"}, {Name: "deployment", Value: "UUID", Short: "exact deployment filter"}, {Name: "status", Value: "STATUS", Short: "stored state or observed expiry"}}},
 						{Name: "diagnostics", Short: "Explain blockers, public changes and recovery actions", Positionals: []string{"<project>", "<environment>", "<run-id>"}},
@@ -5839,11 +5848,11 @@ var cliCommands = []cliCommand{
 					}},
 					{Name: "verify", Short: "Qualify the prepared graph without changing routes", Positionals: []string{"<project>", "<environment>"}, Flags: []cliFlag{{Name: "durable", Short: "persist graph and member receipts for recovery"}, {Name: "run-id", Value: "UUID", Short: "caller-selected creation recovery identity"}, {Name: "progress", Value: "MODE", Short: "durable stderr progress: auto, plain, ndjson or off"}, {Name: "status-read-retries", Value: "N", Short: "transient durable status GET retries (default 3; range 0–8)"}, {Name: "concurrency", Value: "N", Short: "shared graph probe limit (default 2; range 1–8)"}, {Name: "file", Value: "FILE", Req: true, Short: "release selection or prepared manifest JSON"}, {Name: "dry-run", Short: "preview every member without tasks"}, {Name: "queue-publish", Short: "consent to planned safe queue messages"}, {Name: "object-storage-write", Short: "consent to planned disposable object canaries"}, {Name: "wait-timeout", Value: "DURATION", Short: "graph qualification time budget"}, {Name: "poll-interval", Value: "DURATION", Short: "probe polling interval"}}},
 					{Name: "activate", Short: "Atomically activate after checking every member and service recipient", Positionals: []string{"<project>", "<environment>"}, Flags: []cliFlag{{Name: "file", Value: "FILE", Req: true, Short: "release selection or prepared manifest JSON"}}},
-					{Name: "prepare-deactivation", Short: "Freeze the active graph and every 100% fallback; emit a qualification manifest", Positionals: []string{"<project>", "<environment>"}},
+					{Name: "prepare-deactivation", Short: "Freeze the active graph and its fallbacks as a manifest", Notes: []string{"Includes every 100% fallback; emits a qualification manifest."}, Positionals: []string{"<project>", "<environment>"}},
 					{Name: "deactivate", Short: "Atomically return to qualified fallback routes and record deactivation", Positionals: []string{"<project>", "<environment>"}, Flags: []cliFlag{{Name: "file", Value: "FILE", Req: true, Short: "prepared deactivation manifest JSON"}}},
 				}, Flags: []cliFlag{{Name: "before", Value: "CURSOR", Short: "alias for --cursor"}, {Name: "cursor", Value: "CURSOR", Short: "opaque continuation cursor"}, {Name: "all", Short: "walk every page"}, {Name: "limit", Value: "N", Short: "page size"}}},
 				{Name: "releases", Aliases: []string{"release"}, Short: "List live workload deployments"},
-				{Name: "qualify", Short: "Run health and smoke GET probes against exact active release-set deployments", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{
+				{Name: "qualify", Short: "Run health and smoke probes against the active release set", Notes: []string{"Probes are GET requests to exact release-set deployments."}, Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{
 					{Name: "profile", Short: "YAML probe profile defining every release-set workload", Value: "FILE", Req: true},
 				}},
 				{Name: "preflight", Short: "Qualify the source release and check promotion readiness for CI", Positionals: []string{"<project-slug>"}, Flags: []cliFlag{
@@ -5857,16 +5866,16 @@ var cliCommands = []cliCommand{
 					{Name: "set", Short: "Update environment configuration with optimistic hash checking", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "file", Short: "JSON configuration file (choose --file or --stdin)", Value: "PATH"}, {Name: "stdin", Short: "read JSON configuration from stdin"}, {Name: "dry-run", Short: "preview the change without writing it"}, {Name: "if-hash", Short: "apply only if the current config hash matches", Value: "HASH"}, {Name: "yes", Short: "confirm the configuration update"}}},
 					{Name: "apply", Short: "Alias for config set", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "file", Short: "JSON configuration file (choose --file or --stdin)", Value: "PATH"}, {Name: "stdin", Short: "read JSON configuration from stdin"}, {Name: "dry-run", Short: "preview the change without writing it"}, {Name: "if-hash", Short: "apply only if the current config hash matches", Value: "HASH"}, {Name: "yes", Short: "confirm the configuration update"}}},
 				}},
-				{Name: "secrets", Short: "List or change secrets shared by every service of the environment (values are write-only)", Positionals: []string{"<project-slug>", "<environment-slug>"}, Examples: []string{"gregale projects environments secrets shop production", "printf 'DATABASE_PASSWORD=%s\\n' \"$PW\" | gregale projects environments secrets set shop production --from-stdin"}, Subcommands: []cliSub{
-					{Name: "set", Short: "Set shared secrets; services receive them at their next boot unless they set the key themselves", Positionals: []string{"<project-slug>", "<environment-slug>", "[KEY=VALUE...]"}, Flags: []cliFlag{{Name: "from-stdin", Short: "read KEY=VALUE pairs from stdin (one per line)"}, {Name: "file", Short: "read KEY=VALUE pairs from a private file", Value: "PATH"}}},
+				{Name: "secrets", Short: "List or change secrets shared by an environment's services", Notes: []string{"Values are write-only."}, Positionals: []string{"<project-slug>", "<environment-slug>"}, Examples: []string{"gregale projects environments secrets shop production", "printf 'DATABASE_PASSWORD=%s\\n' \"$PW\" | gregale projects environments secrets set shop production --from-stdin"}, Subcommands: []cliSub{
+					{Name: "set", Short: "Set secrets shared by every service of an environment", Notes: []string{"Services receive them at their next boot unless they set the key themselves."}, Positionals: []string{"<project-slug>", "<environment-slug>", "[KEY=VALUE...]"}, Flags: []cliFlag{{Name: "from-stdin", Short: "read KEY=VALUE pairs from stdin (one per line)"}, {Name: "file", Short: "read KEY=VALUE pairs from a private file", Value: "PATH"}}},
 					{Name: "rotate", Short: "Replace the values of existing shared secrets", Positionals: []string{"<project-slug>", "<environment-slug>", "[KEY=VALUE...]"}, Flags: []cliFlag{{Name: "from-stdin", Short: "read KEY=VALUE pairs from stdin (one per line)"}, {Name: "file", Short: "read KEY=VALUE pairs from a private file", Value: "PATH"}}},
 					{Name: "unset", Short: "Remove shared secrets", Positionals: []string{"<project-slug>", "<environment-slug>", "<KEY...>"}},
 				}},
 				{Name: "routes", Short: "Manage environment routes"},
 				{Name: "policies", Short: "Manage environment policies"},
-				{Name: "queues", Short: "Read or replace a stage workload's complete desired queue collection; consumer activation is unavailable. Set input contains expected_revision and bindings; [] removes all definitions", Positionals: []string{"<get|set>", "<project>", "<stage>", "<workload>"}, Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "set reads this JSON file (choose --file or --stdin)"}, {Name: "stdin", Short: "set reads JSON from stdin"}}, Examples: []string{"gregale projects environments queues get shop staging shop-worker", "gregale projects environments queues set shop staging shop-worker --file queues.json"}, Subcommands: []cliSub{
+				{Name: "queues", Short: "Read or replace a stage workload's queue definitions", Notes: []string{"Consumer activation is unavailable. Set takes JSON with expected_revision and bindings; [] removes all definitions."}, Positionals: []string{"<get|set>", "<project>", "<stage>", "<workload>"}, Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "set reads this JSON file (choose --file or --stdin)"}, {Name: "stdin", Short: "set reads JSON from stdin"}}, Examples: []string{"gregale projects environments queues get shop staging shop-worker", "gregale projects environments queues set shop staging shop-worker --file queues.json"}, Subcommands: []cliSub{
 					{Name: "get", Short: "Read queue definitions and their workload revision as JSON", Positionals: []string{"<project>", "<stage>", "<workload>"}, Examples: []string{"gregale projects environments queues get shop staging shop-worker"}},
-					{Name: "set", Short: "Replace queue definitions from JSON containing expected_revision and bindings; [] removes all stage bindings", Positionals: []string{"<project>", "<stage>", "<workload>"}, Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "JSON queue configuration file (choose --file or --stdin)"}, {Name: "stdin", Short: "read JSON queue configuration from stdin"}}, Examples: []string{"gregale projects environments queues set shop staging shop-worker --file queues.json"}},
+					{Name: "set", Short: "Replace queue definitions from JSON", Notes: []string{"The JSON contains expected_revision and bindings; [] removes all stage bindings."}, Positionals: []string{"<project>", "<stage>", "<workload>"}, Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "JSON queue configuration file (choose --file or --stdin)"}, {Name: "stdin", Short: "read JSON queue configuration from stdin"}}, Examples: []string{"gregale projects environments queues set shop staging shop-worker --file queues.json"}},
 				}},
 				{Name: "gitops", Short: "Review Git definitions, adopt owned fields, and inspect reconciliation", Subcommands: []cliSub{
 					{Name: "status", Positionals: []string{"<project>", "<environment>"}, Short: "Inspect the source and recent reconciliation attempts"},
@@ -5888,8 +5897,8 @@ var cliCommands = []cliCommand{
 					{Name: "promotion-plan", Positionals: []string{"<project>", "<environment>"}, Short: "Preview reviewed image promotion and export a target manifest proposal", Flags: []cliFlag{{Name: "from", Value: "ENV", Short: "Source environment with a proven serving release", Req: true}, {Name: "target-commit", Value: "SHA", Short: "Immutable commit containing the target manifest", Req: true}, {Name: "format", Value: "FORMAT", Short: "json (default), markdown, patch or manifest"}, {Name: "expected-plan-hash", Value: "HASH", Short: "Reviewed observation hash; required for patch or manifest export"}, {Name: "manifest", Value: "PATH", Short: "Local target YAML/JSON file; required only for manifest export"}, {Name: "fail-on-blocked", Short: "Exit 2 after printing a blocked plan", Bool: true}}, Examples: []string{"gregale projects environments gitops promotion-plan shop production --from staging --target-commit COMMIT_SHA"}},
 					{Name: "promotion-pr", Positionals: []string{"<project>", "<environment>"}, Short: "Open a draft promotion PR or MR from a freshly checked reviewed plan", Flags: []cliFlag{{Name: "from", Value: "ENV", Short: "Source environment with a proven serving release", Req: true}, {Name: "target-commit", Value: "SHA", Short: "Reviewed current target branch commit", Req: true}, {Name: "expected-plan-hash", Value: "HASH", Short: "Reviewed promotion observation hash", Req: true}, {Name: "yes", Short: "Create the draft proposal; default is a read-only preview", Bool: true}, {Name: "json", Short: "Emit the proposal receipt as JSON", Bool: true}}, Examples: []string{"gregale projects environments gitops promotion-pr shop production --from staging --target-commit COMMIT_SHA --expected-plan-hash PLAN_HASH --yes"}},
 					{Name: "releases", Positionals: []string{"<project>", "<environment>"}, Short: "List retained GitOps serving releases and current rollback eligibility", Flags: []cliFlag{{Name: "target-commit", Value: "SHA", Short: "Immutable commit containing the target manifest", Req: true}, {Name: "before", Value: "UUID", Short: "Next page cursor from the previous listing"}, {Name: "json", Short: "Emit the read-only recovery catalog as JSON", Bool: true}}, Examples: []string{"gregale projects environments gitops releases shop production --target-commit COMMIT_SHA"}},
-					{Name: "rollback-plan", Positionals: []string{"<project>", "<environment>"}, Short: "Preview code rollback from a retained serving release and export a Git proposal", Flags: []cliFlag{{Name: "to-release", Value: "UUID", Short: "Retained GitOps serving release in this environment", Req: true}, {Name: "target-commit", Value: "SHA", Short: "Immutable commit containing the target manifest", Req: true}, {Name: "format", Value: "FORMAT", Short: "json (default), markdown, patch or manifest"}, {Name: "expected-plan-hash", Value: "HASH", Short: "Reviewed observation hash; required for patch or manifest export"}, {Name: "manifest", Value: "PATH", Short: "Local target YAML/JSON file; required only for manifest export"}, {Name: "fail-on-blocked", Short: "Exit 2 after printing a blocked plan", Bool: true}}, Examples: []string{"gregale projects environments gitops rollback-plan shop production --to-release RELEASE_UUID --target-commit COMMIT_SHA"}},
-					{Name: "rollback-pr", Positionals: []string{"<project>", "<environment>"}, Short: "Open a draft recovery PR or MR for an explicitly selected served release", Flags: []cliFlag{{Name: "to-release", Value: "UUID", Short: "Explicit retained serving release in this environment", Req: true}, {Name: "target-commit", Value: "SHA", Short: "Reviewed current target branch commit", Req: true}, {Name: "expected-plan-hash", Value: "HASH", Short: "Reviewed rollback observation hash", Req: true}, {Name: "yes", Short: "Create the draft recovery proposal; default is a read-only preview", Bool: true}, {Name: "json", Short: "Emit the recovery proposal receipt as JSON", Bool: true}}, Examples: []string{"gregale projects environments gitops rollback-pr shop production --to-release RELEASE_UUID --target-commit COMMIT_SHA --expected-plan-hash PLAN_HASH --yes"}},
+					{Name: "rollback-plan", Positionals: []string{"<project>", "<environment>"}, Short: "Preview a code rollback and export it as a Git proposal", Notes: []string{"Rolls back to a retained serving release."}, Flags: []cliFlag{{Name: "to-release", Value: "UUID", Short: "Retained GitOps serving release in this environment", Req: true}, {Name: "target-commit", Value: "SHA", Short: "Immutable commit containing the target manifest", Req: true}, {Name: "format", Value: "FORMAT", Short: "json (default), markdown, patch or manifest"}, {Name: "expected-plan-hash", Value: "HASH", Short: "Reviewed observation hash; required for patch or manifest export"}, {Name: "manifest", Value: "PATH", Short: "Local target YAML/JSON file; required only for manifest export"}, {Name: "fail-on-blocked", Short: "Exit 2 after printing a blocked plan", Bool: true}}, Examples: []string{"gregale projects environments gitops rollback-plan shop production --to-release RELEASE_UUID --target-commit COMMIT_SHA"}},
+					{Name: "rollback-pr", Positionals: []string{"<project>", "<environment>"}, Short: "Open a draft recovery PR or MR for a selected served release", Flags: []cliFlag{{Name: "to-release", Value: "UUID", Short: "Explicit retained serving release in this environment", Req: true}, {Name: "target-commit", Value: "SHA", Short: "Reviewed current target branch commit", Req: true}, {Name: "expected-plan-hash", Value: "HASH", Short: "Reviewed rollback observation hash", Req: true}, {Name: "yes", Short: "Create the draft recovery proposal; default is a read-only preview", Bool: true}, {Name: "json", Short: "Emit the recovery proposal receipt as JSON", Bool: true}}, Examples: []string{"gregale projects environments gitops rollback-pr shop production --to-release RELEASE_UUID --target-commit COMMIT_SHA --expected-plan-hash PLAN_HASH --yes"}},
 					{Name: "approve", Positionals: []string{"<project>", "<environment>"}, Short: "Approve the digest and generation in a reviewed receipt", Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "Saved revision review JSON"}, {Name: "yes", Short: "Confirm approval of the reviewed bytes"}}},
 					{Name: "adoption-preview", Positionals: []string{"<project>", "<environment>"}, Short: "Inspect ownership transfer without changing values"},
 					{Name: "adopt", Positionals: []string{"<project>", "<environment>"}, Short: "Transfer ownership from a reviewed adoption plan", Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "Saved adoption plan JSON"}, {Name: "yes", Short: "Confirm the reviewed ownership transfer"}}},
@@ -5922,7 +5931,7 @@ var cliCommands = []cliCommand{
 				}},
 				{Name: "status", Short: "Inspect a promotion"},
 				{Name: "rollback", Short: "Roll back a promotion"},
-				{Name: "abort", Short: "Abort a running promotion; after cutover qualify the baseline before restoration", Positionals: []string{"<project-slug>", "<promotion-id>"}, Flags: promotionControlCLIFlags()},
+				{Name: "abort", Short: "Abort a running promotion", Notes: []string{"After cutover, qualify the baseline before restoration."}, Positionals: []string{"<project-slug>", "<promotion-id>"}, Flags: promotionControlCLIFlags()},
 				{Name: "recover", Short: "Retry a blocked restoration without rebuilding or extending retention", Positionals: []string{"<project-slug>", "<promotion-id>"}, Flags: promotionControlCLIFlags()},
 				{Name: "recover-migration", Short: "Resume or resolve a promotion stopped by its migration task", Positionals: []string{"<project-slug>", "<promotion-id>"}, Flags: []cliFlag{
 					{Name: "to", Value: "ENV", Short: "destination environment", Req: true},
@@ -5986,19 +5995,19 @@ var cliCommands = []cliCommand{
 		Short:   "Set, rotate and audit encrypted secrets for apps and environments",
 		Subcommands: []cliSub{
 			{Name: "requirements", Short: "Manage local required secret names without reading or changing values", Subcommands: []cliSub{
-				{Name: "check", Short: "Compare saved required names with a dotenv example offline; exit 1 on differences or missing declaration", Flags: []cliFlag{{Name: "from-env-file", Value: "PATH", Short: "dotenv example (default: .env.example at the requirements project root); compare names only"}}, Examples: []string{"gregale secrets requirements check", "gregale secrets requirements check --from-env-file config/example.env"}},
+				{Name: "check", Short: "Compare required names with a dotenv example offline", Notes: []string{"Exits 1 on differences or a missing declaration."}, Flags: []cliFlag{{Name: "from-env-file", Value: "PATH", Short: "dotenv example (default: .env.example at the requirements project root); compare names only"}}, Examples: []string{"gregale secrets requirements check", "gregale secrets requirements check --from-env-file config/example.env"}},
 				{Name: "set", Short: "Replace the project declaration with validated, deduplicated names", Positionals: []string{"[<KEY>...]"}, Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "preview current/proposed names and differences without writing"}, {Name: "from-env-file", Value: "PATH", Short: "import key names from a local dotenv file; excludes positional names, never stores values"}}, Examples: []string{"gregale secrets requirements set DATABASE_URL API_KEY --dry-run", "gregale secrets requirements set --from-env-file .env.example --dry-run"}},
-				{Name: "add", Short: "Append required names while preserving existing names and skipping duplicates", Positionals: []string{"[<KEY>...]"}, Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "preview added names without writing"}, {Name: "from-env-file", Value: "PATH", Short: "merge key names from a local dotenv file; excludes positional names, never stores values"}}, Examples: []string{"gregale secrets requirements add REDIS_URL --dry-run", "gregale secrets requirements add --from-env-file .env.example --dry-run"}},
+				{Name: "add", Short: "Append required names, skipping duplicates", Positionals: []string{"[<KEY>...]"}, Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "preview added names without writing"}, {Name: "from-env-file", Value: "PATH", Short: "merge key names from a local dotenv file; excludes positional names, never stores values"}}, Examples: []string{"gregale secrets requirements add REDIS_URL --dry-run", "gregale secrets requirements add --from-env-file .env.example --dry-run"}},
 				{Name: "remove", Short: "Remove declared names; unknown names fail without changes", Positionals: []string{"<KEY>..."}, Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "preview removed names and explicit-empty outcome without writing"}}, Examples: []string{"gregale secrets requirements remove OLD_API_KEY --dry-run"}},
 				{Name: "show", Short: "Show required names, declaration status, and source path"},
-				{Name: "clear", Short: "Remove the local declaration; missing requirements mean unknown completeness"},
+				{Name: "clear", Short: "Remove the local declaration of required names", Notes: []string{"Without one, completeness is unknown."}},
 			}},
 			{Name: "defaults", Short: "Show or manage local saved secret comparison scopes", Examples: []string{"gregale secrets defaults", "gregale secrets defaults --help"}, Subcommands: []cliSub{
 				{Name: "set", Short: "Replace saved comparison scope names", Flags: []cliFlag{{Name: "environments", Value: "SCOPE,...", Short: "comma-separated scope names; 1–10 distinct names"}}},
 				{Name: "show", Short: "Show saved scopes and their source file"},
 				{Name: "clear", Short: "Remove only the local comparison defaults"},
 			}},
-			{Name: "check", Short: "Check required scoped secrets and current delivery evidence without reading values", Examples: []string{"gregale secrets check", "gregale secrets check --app my-api --required DATABASE_URL", "gregale secrets check --required-file .gregale/required-secrets.json"}, Flags: []cliFlag{
+			{Name: "check", Short: "Check required secrets and delivery evidence without values", Examples: []string{"gregale secrets check", "gregale secrets check --app my-api --required DATABASE_URL", "gregale secrets check --required-file .gregale/required-secrets.json"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked app)", Value: "slug"},
 				{Name: "scope", Short: "single environment scope (defaults to linked environment)", Value: "SCOPE"},
 				{Name: "required", Short: "required secret key name (repeatable)", Value: "KEY", Repeatable: true},
@@ -6009,7 +6018,7 @@ var cliCommands = []cliCommand{
 			{Name: "refs", Short: "Manage destination-to-source names in a registered environment", Subcommands: []cliSub{
 				{Name: "list", Short: "List reference names and shared environment-key quota", Examples: []string{"gregale secrets refs list --app my-api --environment production"}, Flags: secretReferenceCLIFlags()},
 				{Name: "set", Short: "Select an existing scoped secret; respects Git field ownership", Examples: []string{"gregale secrets refs set --app my-api --environment production DATABASE_URL=secret:DATABASE_PRIMARY"}, Positionals: []string{"<KEY=secret:NAME>"}, Flags: secretReferenceCLIFlags()},
-				{Name: "unset", Short: "Suppress a primary workload secret destination and preserve the sealed source", Examples: []string{"gregale secrets refs unset --app my-api --environment production DATABASE_URL"}, Positionals: []string{"<KEY>"}, Flags: secretReferenceCLIFlags()},
+				{Name: "unset", Short: "Suppress a secret destination and keep the sealed source", Notes: []string{"Applies to a primary workload destination."}, Examples: []string{"gregale secrets refs unset --app my-api --environment production DATABASE_URL"}, Positionals: []string{"<KEY>"}, Flags: secretReferenceCLIFlags()},
 			}},
 			{Name: "list", Short: "List sealed secrets", Examples: []string{"gregale secrets list --app my-api", "gregale secrets list --app my-api --scope __all__", "gregale secrets list --app my-api --class ephemeral", "gregale secrets list --app my-api --older-than 90d"}, Flags: []cliFlag{
 				{Name: "key", Short: "include an exact secret key name (repeatable)", Value: "KEY", Repeatable: true},
@@ -6051,7 +6060,7 @@ var cliCommands = []cliCommand{
 				{Name: "class", Short: "filter this page by snapshot-retention class", Value: "CLASS", ClosedSet: []string{api.SecretClassPersistent, api.SecretClassEphemeral}},
 				{Name: "older-than", Short: "filter this page to secrets not updated within a duration; unknown timestamps are excluded", Value: "DURATION"},
 			}},
-			{Name: "audit", Short: "Audit secret update age and report unknown timestamps without exposing values", Examples: []string{"gregale secrets audit --older-than 90d", "gregale secrets audit --older-than 90d --fail-on-stale --json"}, Flags: []cliFlag{
+			{Name: "audit", Short: "Audit secret update age without exposing values", Notes: []string{"Reports unknown timestamps too."}, Examples: []string{"gregale secrets audit --older-than 90d", "gregale secrets audit --older-than 90d --fail-on-stale --json"}, Flags: []cliFlag{
 				{Name: "older-than", Short: "required threshold based on when Gregale last updated the value, not provider rotation time (for example 90d or 2160h)", Value: "DURATION", Req: true},
 				{Name: "fail-on-stale", Short: "exit non-zero when any secret exceeds the age threshold"},
 			}},
@@ -6389,7 +6398,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "webhooks",
 		Short:   "Manage release webhooks for apps and your account",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List an app's webhooks (slug defaults to linked context)", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{{Name: "app", Short: "app slug (alternative to the positional)", Value: "slug"}}},
+			{Name: "list", Short: "List an app's webhooks", Notes: []string{"The app defaults to the linked one."}, Positionals: []string{"[<slug>]"}, Flags: []cliFlag{{Name: "app", Short: "app slug (alternative to the positional)", Value: "slug"}}},
 			{Name: "add", Short: "Add a webhook", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "target-url", Short: "http(s) target URL (https recommended: deliveries are signed, not encrypted)", Req: true, Value: "URL"}, {Name: "event", Short: "event to deliver (repeat)", Value: "EVENT"}, {Name: "retry-policy", Short: "default|aggressive|none", Value: "POLICY"}, {Name: "delivery-format", Short: "json|cloudevents", Value: "FORMAT"}}},
 			{Name: "info", Short: "Show one webhook", Positionals: []string{"<webhook-id>"}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}}},
 			{Name: "update", Short: "Update one webhook", Positionals: []string{"<id>"}, Flags: []cliFlag{
