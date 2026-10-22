@@ -15646,6 +15646,7 @@
       "queue_name",
       "run_id",
       "schedule",
+      "scheduled_at",
       "target"
     ],
     "kind": "operational"
