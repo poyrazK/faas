@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Native runtime snapshot capture for park and warm](20261022184951-native-runtime-snapshot-capture.md)
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
 - [Compose process overrides on source-built services](20261022160000-compose-process-on-built-services.md)
 - [ADR-20261022140000: Break-glass controls for a compromised secret store](20261022140000-break-glass-controls.md)
