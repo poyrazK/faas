@@ -3020,6 +3020,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			})
 		}
 	}
+	// A plain `gregale deploy` of a repository whose root is no single app
+	// but a Compose project or several service roots deploys the project.
+	// Nothing is created before the project plan is reviewed (or --yes).
+	if !projectRequested && !existingApp && len(executions) == 0 && developerSync == nil &&
+		!deployFunction && !deployApp && deployRuntime == "" && deployHandler == "" &&
+		*image == "" && *tarball == "" && *templateName == "" && *repo == "" && sourceDir != "" {
+		if reason := multiServiceSource(sourceDir); reason != "" {
+			if !jsonOutput {
+				PrintProgress(osStderr, "%s; deploying it as one project (use --app or --function to deploy a single app)", reason)
+			}
+			return cmdDeployTarballToExisting(ctx, append([]string{"--project"}, args...), false)
+		}
+	}
 	// --project is an explicit, safe opt-in to project apply. Keep the
 	// existing single-app slug rules for --name and --path, while making
 	// tarball/template invocations intuitive by using their basename when
