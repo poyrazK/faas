@@ -865,6 +865,12 @@ var methodRouteMap = map[string]string{
 	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/outcomes":         "ProjectFlagOutcomes",
 	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote": "PromoteProjectFlagRollout",
 	"GET /v1/runtime/flags":                                                           "RuntimeFlags",
+	"GET /v1/previews":                                                                "ListPreviews",
+	"PUT /v1/previews/{key}":                                                          "JoinPreview",
+	"DELETE /v1/previews/{key}":                                                       "LeavePreview",
+	"GET /v1/orgs/{slug}/previews":                                                    "ListOrgPreviews",
+	"PUT /v1/orgs/{slug}/previews/{key}":                                              "JoinOrgPreview",
+	"DELETE /v1/orgs/{slug}/previews/{key}":                                           "LeaveOrgPreview",
 
 	"GET /v1/apps/{slug}/work-policies":                        "ListAppWorkPolicies",
 	"PUT /v1/apps/{slug}/work-policies/{name}":                 "UpsertAppWorkPolicy",

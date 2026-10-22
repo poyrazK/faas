@@ -205,6 +205,45 @@ type Endpoint struct {
 	// (ADR-20261016151947): those of databases bound to the endpoint's app. A seal
 	// whose key is not listed is refused before it reaches a hub.
 	LiveRoutes []LiveRoute
+
+	// Previews are apid's decisions of the realtime preview platform flags
+	// for this endpoint's account. Nil means apid sent none, so the daemon's
+	// preview switches alone decide.
+	Previews *EndpointPreviews
+}
+
+// EndpointPreviews are per-account preview decisions (ADR 20261021080640).
+// The daemon's switch stays a node capability: a preview is on for an
+// endpoint only when the switch is on and, if apid decided, apid allows it.
+type EndpointPreviews struct {
+	Resume    bool `json:"resume,omitempty"`
+	Tickets   bool `json:"tickets,omitempty"`
+	Access    bool `json:"access,omitempty"`
+	Occupancy bool `json:"occupancy,omitempty"`
+}
+
+func (e Endpoint) resumeOn(cfg Config) bool {
+	return cfg.ResumePreview && (e.Previews == nil || e.Previews.Resume)
+}
+
+func (e Endpoint) ticketsOn(cfg Config) bool {
+	return cfg.TicketPreview && (e.Previews == nil || e.Previews.Tickets)
+}
+
+func (e Endpoint) accessOn(cfg Config) bool {
+	return cfg.AccessPreview && (e.Previews == nil || e.Previews.Access)
+}
+
+func (e Endpoint) occupancyOn(cfg Config) bool {
+	return cfg.OccupancyPreview && (e.Previews == nil || e.Previews.Occupancy)
+}
+
+func clonePreviews(p *EndpointPreviews) *EndpointPreviews {
+	if p == nil {
+		return nil
+	}
+	out := *p
+	return &out
 }
 
 // Hooks receives connection lifecycle events. Connect is synchronous with
@@ -902,12 +941,12 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	usesTicket := isTicket(ticketToken)
 	liveOnly := false
-	if usesTicket && (!wantsResume || !m.cfg.TicketPreview || m.cfg.TicketReader == nil) {
+	if usesTicket && (!wantsResume || !endpoint.ticketsOn(m.cfg) || m.cfg.TicketReader == nil) {
 		http.Error(w, "ticket unavailable", http.StatusUnauthorized)
 		return
 	}
 	if wantsResume {
-		if !m.cfg.ResumePreview || m.cfg.HistoryReader == nil {
+		if !endpoint.resumeOn(m.cfg) || m.cfg.HistoryReader == nil {
 			http.Error(w, "realtime resume unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -980,7 +1019,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			if m.cfg.AccessPreview {
+			if endpoint.accessOn(m.cfg) {
 				issuedAt, err = verifiedTokenIssuedAt(token)
 				if err != nil {
 					m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
@@ -1010,7 +1049,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "realtime resume requires a stable principal", http.StatusUnauthorized)
 		return
 	}
-	if !usesTicket && m.cfg.AccessPreview && endpoint.ClientAuth.Mode == AuthModeOIDCJWT {
+	if !usesTicket && endpoint.accessOn(m.cfg) && endpoint.ClientAuth.Mode == AuthModeOIDCJWT {
 		if m.cfg.AccessReader == nil {
 			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
 			m.rejectedConnections.Add(1)
