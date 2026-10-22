@@ -5353,6 +5353,48 @@
     "kind": "operational"
   },
   {
+    "table": "environment_qualification_object_storage_receipts",
+    "columns": [
+      "attempt",
+      "credential_id",
+      "deliveries",
+      "mode",
+      "permission",
+      "prefix",
+      "recorded_at",
+      "request_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_outbound_receipts",
+    "columns": [
+      "attempt",
+      "integration_id",
+      "method",
+      "path",
+      "recorded_at",
+      "request_id",
+      "revision",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_postgres_receipts",
+    "columns": [
+      "access",
+      "attempt",
+      "binding_id",
+      "credential_generation",
+      "delivery_version",
+      "environment_key",
+      "recorded_at",
+      "request_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_qualification_service_receipts",
     "columns": [
       "attempt",

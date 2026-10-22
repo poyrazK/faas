@@ -234,19 +234,23 @@ func TestEnvironmentQualificationRecordsOnlyCompleteRestoredHTTPSExchange(t *tes
 		name                              string
 		status                            int
 		tls, restored, cancel, writeError bool
+		httpCaller                        bool
 		want                              int
 	}{
 		{name: "restored HTTPS", status: 204, tls: true, restored: true, want: 1},
 		{name: "failed handler", status: 503, tls: true, restored: true},
 		{name: "redirect", status: 302, tls: true, restored: true},
-		{name: "plain HTTP", status: 204, restored: true},
+		{name: "plain HTTP from an HTTPS caller", status: 204, restored: true},
+		// ADR-20261019200059: an HTTP caller's exchange is evidence too.
+		{name: "restored HTTP caller", status: 204, restored: true, httpCaller: true, want: 1},
+		{name: "HTTP caller capture producer", status: 204, httpCaller: true},
 		{name: "capture producer", status: 204, tls: true},
 		{name: "cancelled stream", status: 204, tls: true, restored: true, cancel: true},
 		{name: "short write", status: 200, tls: true, restored: true, writeError: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			base, graph := privateServiceFixture()
-			base.route.RequireHTTPS = true
+			base.route.RequireHTTPS = !test.httpCaller
 			if test.restored {
 				base.route.Caller.CaptureInstanceID = uuid.NewString()
 				base.route.Target.CaptureInstanceID = uuid.NewString()

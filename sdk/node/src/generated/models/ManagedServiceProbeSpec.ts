@@ -2,8 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 /**
- * Server-selected frozen context for a managed HTTPS route probe. Contains no credentials or application request. Changing context or policy invalidates the receipt.
+ * Server-selected frozen context for a managed service route probe. Contains no credentials or application request. Changing context or policy invalidates the receipt.
  */
 export type ManagedServiceProbeSpec = {
   /**
@@ -24,5 +25,9 @@ export type ManagedServiceProbeSpec = {
   target_deployment_id: string;
   release_id: string;
   context_revision: string;
+  /**
+   * Caller transport the probe verifies (ADR-20261019200059). Absent means the original HTTPS probe; `http` probes the caller's plaintext `.svc.gregale` URL.
+   */
+  transport?: ServiceBindingTransport;
 };
 

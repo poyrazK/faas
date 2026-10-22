@@ -255,6 +255,10 @@
     # a builder microVM boots and then has no egress, dying at guest-init's DNS
     # preflight — which reads like a broken build, not a missing bridge.
     - role: nftables
+      vars:
+        # Native suites run VMMD's native VMM, whose public forwarding needs
+        # nftables 1.1.3+ and loose rp_filter on the tenant bridge (ADR-1749).
+        faas_public_forward_host: true
     - role: canary_artifact_retention
     - role: native_acceptance_host
       vars:

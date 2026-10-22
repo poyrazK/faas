@@ -76941,7 +76941,7 @@ components:
         verification_reason: { type: string, description: 'Empty for a supported managed contract; otherwise managed_service_verification_unsupported.' }
     ManagedServiceProbeSpec:
       type: object
-      description: Server-selected frozen context for a managed HTTPS route probe. Contains no credentials or application request. Changing context or policy invalidates the receipt.
+      description: Server-selected frozen context for a managed service route probe. Contains no credentials or application request. Changing context or policy invalidates the receipt.
       required: [version, caller_deployment_id, scope, service, binding, target_app_id, target_deployment_id, release_id, context_revision]
       properties:
         version: { type: integer, description: 'Managed probe contract version; currently 1.' }
@@ -76953,6 +76953,9 @@ components:
         target_deployment_id: { type: string, format: uuid }
         release_id: { type: string, format: uuid }
         context_revision: { type: string, pattern: '^[a-f0-9]{64}$' }
+        transport:
+          $ref: '#/components/schemas/ServiceBindingTransport'
+          description: "Caller transport the probe verifies (ADR-20261019200059). Absent means the original HTTPS probe; `http` probes the caller's plaintext `.svc.gregale` URL."
     AppBindingInventory:
       type: object
       description: Best-effort app binding metadata with explicit completeness and sanitized section issues.

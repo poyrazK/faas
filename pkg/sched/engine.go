@@ -3737,6 +3737,12 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		release()
 		return WakeResult{}, err
 	}
+	pushDelivery, err := e.workerPushDelivery(ctx, app)
+	if err != nil {
+		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_queue_bindings_unavailable")
+		release()
+		return WakeResult{}, fmt.Errorf("sched: wake: %w", err)
+	}
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
@@ -3746,6 +3752,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
 		DisableStartupCPUBoost: dep.DisableStartupCPUBoost,
 		ExecutionMode:          executionModeForApp(app),
+		WorkerPushDelivery:     pushDelivery,
 		Plan:                   acct.Plan, AccountID: acct.ID,
 		AppID: appID, DeploymentID: dep.ID,
 		SealedEnv:     sealedEnv.Entries,
@@ -4609,6 +4616,12 @@ func shouldPersistObservedClass(appType state.AppType, executionMode string, obs
 		case state.WorkloadClassWorker, state.WorkloadClassJob:
 			return false
 		}
+	}
+	// vmmd lets a push-bound worker boot with its private delivery listener
+	// bound. That listener is not a public server, so the worker keeps its
+	// declared class rather than gaining HTTP routing.
+	if executionMode == api.ExecutionModeWorker && observed == state.WorkloadClassHTTP {
+		return false
 	}
 	if appType != state.AppTypeFunction {
 		return true
@@ -5702,6 +5715,10 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, err
 	}
+	pushDelivery, err := e.workerPushDelivery(ctx, app)
+	if err != nil {
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: %w", err)
+	}
 	return AppSpec{
 		migrationRuntime: migrationInputs,
 		BaseKey:          pinnedBase,
@@ -5715,6 +5732,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
 		DisableStartupCPUBoost: dep.DisableStartupCPUBoost,
 		ExecutionMode:          executionModeForApp(app),
+		WorkerPushDelivery:     pushDelivery,
 		Plan:                   acct.Plan,
 		AccountID:              acct.ID,
 		AppID:                  app.ID,
