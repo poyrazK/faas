@@ -44,8 +44,9 @@ is for a prebuilt image.
 
 - Built Compose services get the readiness gate and recovery their file
   describes. A failing check now blocks promotion instead of being ignored.
-- A stage retry builds a new deployment without the failed one's inferred
-  profile, so it runs without the override; a fresh deploy freezes it again.
+- A stage retry copies the failed deployment's inferred profile, so it keeps
+  the frozen override along with the Dockerfile path and build options.
+  (An earlier revision of this record said retries lost it; they do not.)
 - An older scheduler reads the verdict only for image deployments, so during
   rollout a built service's check reaches the guest but is not enforced, which
   is today's behavior.
