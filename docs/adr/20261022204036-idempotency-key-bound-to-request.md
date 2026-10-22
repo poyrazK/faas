@@ -1,0 +1,43 @@
+# ADR-20261022204036: An Idempotency-Key is bound to its request
+
+- **Status:** Proposed
+- **Date:** 2026-10-22
+- **Amends:** spec §4.2 ("`Idempotency-Key` header on all POSTs, stored 24 h"): a stored key now answers only the request it was first used for.
+- **Context:** Hunt 12 finding H12-26 (production-us): `gregale send` with the same `--idempotency-key` and a new payload returned the first message as queued, and the new message was never sent. apid's middleware scopes a key to the account, the caller, the method and the path, but never to the body, so any request that reuses a key gets the stored response back.
+- **Decision:**
+  - **Fingerprint.** Before it reserves a key, apid computes a fingerprint of the request (`httpkit.IdempotencyFingerprint`). It is an HMAC-SHA256 over the method, the path, the sorted query, the `Content-Type` media type, the `If-Match`, `If-None-Match` and `If-Workload-Revision` headers, and the canonical body. A JSON body (JSON media type, or none) is re-encoded with sorted keys; number spellings are kept as sent. A multipart body is encoded part by part, without its random boundary. Any other body is compared byte for byte. Other headers are transport detail and are left out.
+  - **Keyed, not a bare hash.** Some bodies carry secret values (`gregale secrets set`, project apply secrets). A bare SHA-256 stored in the database could be brute-forced back to a low-entropy value. The MAC key is the host HMAC key (`/etc/faas/secrets/host.hmac.key`, ADR-117), which already protects the hashes of sealed values. Every apid replica of an installation must use the same key, or a retry that reaches another replica would get a 422. Today there is one control-plane node, and the failover runbook copies the key to its replacement.
+  - **Storage.** The fingerprint goes in `idempotency_keys.request_digest`, an existing nullable `bytea` column. Its CHECK requires 32 bytes. Migration `20261007140000001` added the column for managed realtime publish receipts, so this change needs no migration. `ReserveIdempotentRequest` (sqlc) writes the fingerprint with the in-flight reservation, and `PutIdempotent` keeps it when the request completes.
+  - **Different request: 422.** For its 24 h replay window, a key is bound to its first fingerprint. A request that sends the key with a different fingerprint gets `422 idempotency_key_reused`, whether the first request is in flight, abandoned or complete. Nothing runs and nothing is stored, so a retry of the original request still replays. A request with a different fingerprint cannot take over an abandoned reservation either. This follows the IETF Idempotency-Key draft: 422 for a key reused with another payload, 409 for a concurrent use.
+  - **Unbound keys behave as today.** A stored key without a fingerprint never conflicts. Such rows come from releases before this change, from apid running without a host key (tests only, since production apid refuses to start without one), and from requests whose body exceeds `IdempotencyFingerprintMaxBodyBytes` (1 MiB, the default JSON body cap). Source uploads are not buffered in memory to be hashed.
+  - **Routes keyed by intent stay unbound.** These routes keep unbound keys:
+    - deployment creation (`idempotentDeploy`: deployments, dev-source, source-ref and source-tarball);
+    - project applies (`idempotentIntent`): `POST /v1/projects` and `/v1/projects/safe-deploy` without an attempt header, `POST /v1/orgs/{organization}/projects` and `/projects/{slug}/deploy`.
+
+    The CLI derives these keys from the deploy intent, which is the source digest plus the flags (`cmd/gregale/deploy_idempotency.go`). The body also carries per-run material, such as the current commit as provenance and, for projects, a fresh plan token. If these keys were bound, re-running the same deploy, or redeploying a reverted tree within 24 h, would return 422. Project submissions that carry an attempt header already have their own fingerprint of the request's meaning.
+  - **The dashboard's job replay drops its form body.** It sends the API request with no body (the route reads none), so the key `dashboard-job-replay-<run>` gets the same fingerprint from any page.
+  - **Transport re-sends stay replays.** Go's `net/http` re-sends a request that carries an `Idempotency-Key` after an early connection failure. It rebuilds the body byte for byte through `GetBody`, so the re-sent request has the same fingerprint and gets the in-flight 409 or the replay, never a 422.
+- **Release compatibility** (docs/release-compatibility.md):
+  - No schema change.
+  - **New apid beside the previous release.** The previous release ignores `request_digest` and replays as today. When it takes over an expired or abandoned row, its reservation sets `request_digest = NULL`, so a row it completes is unbound and the new release replays it. A fresh column would not get this: the previous release would leave it untouched, and the new release would refuse retries of the request that row now holds. `ReclaimIdempotent`, which keeps the digest, runs only on deploy routes, and their keys are unbound.
+  - **Rollback.** The fingerprints stay in place, and the previous release ignores them.
+  - **Realtime reaper.** The managed realtime publish reaper deletes expired rows `WHERE request_digest IS NOT NULL`. It now also deletes expired general keys, which nothing reads after 24 h. Its partial index on `created_at` grows to cover them.
+- **Consequences:**
+  - A client that reuses a key for a new request gets a 422 instead of a silent replay. The H12-26 send now fails loudly, and the CLI prints the RFC 9457 problem.
+  - Clients that resend an unchanged request see no difference. This includes JSON re-serialised with another key order and multipart sent with a new boundary.
+  - Some CLI keys cover only part of the request: `addResourceIdempotencyKey` covers the name and scope but not, for example, the region. Re-running such a command with different flags within 24 h now gets a 422. It used to replay the earlier create, which ignored the new flags.
+  - Each keyed request with a body up to 1 MiB is read into memory before its handler runs (those handlers decode it in memory anyway), and each costs one HMAC.
+  - Rotating `host.hmac.key` makes retries of requests sent before the rotation return 422 for up to 24 h. Rotation is already disruptive for ADR-117 value hashes.
+  - apid logs `idempotency key reused with a different request` (account, method, route pattern) at Info level for each refusal.
+- **Rejected alternatives:**
+  - **A new `request_fingerprint` column.** The previous release would not clear it when it takes over a row (see release compatibility).
+  - **Unkeyed SHA-256.** A low-entropy secret value in the body could be brute-forced from it.
+  - **Raw body bytes only.** Multipart uploads get a random boundary on every run, so CLI retries would not match.
+  - **Binding every route, deploys included.** This breaks deploy keys derived from content (see above).
+  - **Hashing large bodies as they stream.** apid must know the fingerprint before the handler runs, to choose between a replay and a refusal. Hashing a 250 MB upload first means buffering or spooling it.
+  - **Log mismatches and keep replaying.** This leaves H12-26 open. It remains an option for the first release (see the open questions).
+- **Open questions:**
+  1. Should the first release enforce the 422 (as implemented), or only log mismatches for a while?
+  2. Should `addResourceIdempotencyKey` cover every field of its request, so that re-running `gregale add` with other flags no longer gets a 422?
+  3. Should deploy keys later be bound to a fingerprint that leaves out provenance fields (commit, plan token)?
+  4. A multi-node control plane must give every apid the same `host.hmac.key`. Is that already the plan, or should the fingerprint use a key of its own?

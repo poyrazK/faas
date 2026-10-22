@@ -20693,15 +20693,27 @@ func (m *MemStore) GetIdempotent(_ context.Context, accountID, key string) (int,
 }
 
 // ReserveIdempotent mirrors PgStore.ReserveIdempotent.
-func (m *MemStore) ReserveIdempotent(_ context.Context, accountID, key string, abandonAfter time.Duration) (IdempotencyReservation, error) {
+func (m *MemStore) ReserveIdempotent(ctx context.Context, accountID, key string, abandonAfter time.Duration) (IdempotencyReservation, error) {
+	return m.ReserveIdempotentRequest(ctx, accountID, key, nil, abandonAfter)
+}
+
+// ReserveIdempotentRequest mirrors PgStore.ReserveIdempotentRequest.
+func (m *MemStore) ReserveIdempotentRequest(_ context.Context, accountID, key string, fingerprint []byte, abandonAfter time.Duration) (IdempotencyReservation, error) {
+	if fingerprint != nil && len(fingerprint) != sha256.Size {
+		return IdempotencyReservation{}, errors.New("state: idempotency request fingerprint must be SHA-256")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	id := accountID + "\x00" + key
 	e, ok := m.idem[id]
 	age := time.Since(e.created)
-	if !ok || age > 24*time.Hour || (e.status == 0 && age >= abandonAfter) {
-		m.idem[id] = idemEntry{created: time.Now()}
+	conflict := fingerprint != nil && e.requestDigest != nil && !bytes.Equal(e.requestDigest, fingerprint)
+	if !ok || age > 24*time.Hour || (e.status == 0 && age >= abandonAfter && !conflict) {
+		m.idem[id] = idemEntry{created: time.Now(), requestDigest: append([]byte(nil), fingerprint...)}
 		return IdempotencyReservation{Reserved: true}, nil
+	}
+	if conflict {
+		return IdempotencyReservation{Conflict: true}, nil
 	}
 	if e.status == 0 {
 		return IdempotencyReservation{InFlight: true}, nil

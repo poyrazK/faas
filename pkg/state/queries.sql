@@ -24272,3 +24272,25 @@ SELECT served_at FROM environment_recovery_serving_history WHERE graph_id=sqlc.a
 -- name: EnvironmentRecoveryReleaseFirstServing :one
 SELECT min(h.served_at)::timestamptz AS served_at FROM environment_recovery_serving_history h
 WHERE h.source_id=sqlc.arg(source_id)::uuid AND h.release_set_id=sqlc.arg(release_id)::uuid;
+
+-- name: ReserveIdempotentRequest :one
+-- Claims an Idempotency-Key bound to its request fingerprint
+-- (ADR-20261022204036). A new key, a key past its 24 h replay window, or an
+-- in-flight reservation older than abandon_after_seconds is reserved. An
+-- abandoned reservation bound to another fingerprint is not taken over: the
+-- key stays bound to its first request for the whole window.
+INSERT INTO idempotency_keys (key, account_id, response_status, response_body, request_digest)
+VALUES (sqlc.arg(key)::text, sqlc.arg(account_id)::text::uuid, 0, ''::bytea, sqlc.narg(request_digest)::bytea)
+ON CONFLICT (account_id, key) DO UPDATE
+   SET response_status = 0, response_body = ''::bytea, request_digest = excluded.request_digest, created_at = now()
+ WHERE idempotency_keys.created_at <= now() - interval '24 hours'
+    OR (idempotency_keys.response_status = 0
+        AND idempotency_keys.created_at <= now() - make_interval(secs => sqlc.arg(abandon_after_seconds)::double precision)
+        AND (idempotency_keys.request_digest IS NULL OR excluded.request_digest IS NULL
+             OR idempotency_keys.request_digest = excluded.request_digest))
+RETURNING true::boolean AS reserved;
+
+-- name: IdempotencyReceipt :one
+SELECT response_status, response_body, request_digest
+FROM idempotency_keys
+WHERE account_id = sqlc.arg(account_id)::text::uuid AND key = sqlc.arg(key)::text;

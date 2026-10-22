@@ -674,6 +674,10 @@ const (
 	CodeRealtimeEntityVersionConflict  = "realtime_entity_version_conflict"
 	CodeRealtimeSequenceConflict       = "realtime_sequence_conflict"
 	CodeConflict                       = "conflict"
+	// CodeIdempotencyKeyReused (422, ADR-20261022204036): the request's
+	// Idempotency-Key was used within its 24 h replay window for a different
+	// request. Nothing ran, and the first request's result is kept.
+	CodeIdempotencyKeyReused = "idempotency_key_reused"
 
 	// ADR-961: an edge-rule mutation's If-Match named a rule-set version
 	// that is no longer the app's latest.
@@ -2696,6 +2700,15 @@ func ErrCapacity(detail string) *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeCapacity,
 		"Briefly at capacity", detail).
 		WithDocs("https://gregale.dev/status")
+}
+
+// ErrIdempotencyKeyReused reports an Idempotency-Key sent with a request
+// other than the one it was first used for (ADR-20261022204036).
+func ErrIdempotencyKeyReused() *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeIdempotencyKeyReused,
+		"Idempotency-Key reused",
+		"this Idempotency-Key was used for a different request in the last 24 hours, whose result is kept; send a new key for a new request, or resend the original request unchanged to get its result").
+		WithDocs(docsBase + "/errors")
 }
 
 func ErrSafeReleaseUnavailable() *Problem {

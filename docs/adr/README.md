@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261022204036: An Idempotency-Key is bound to its request](20261022204036-idempotency-key-bound-to-request.md) — another request with a used key gets `422 idempotency_key_reused`, not a replay (Proposed)
 - [Compose build secrets for Dockerfile builds](20261022185329-compose-build-secrets.md)
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
 - [Compose process overrides on source-built services](20261022160000-compose-process-on-built-services.md)
