@@ -12422,7 +12422,8 @@ func (s *PgStore) StartDeferredBuild(ctx context.Context, deploymentID string) (
 		           started_at, finished_at, enqueued_at,
 		           cancelled_at, cancelled_by_deployment_cascade,
 		           coalesce(cache_status,''), coalesce(cache_key_sha256,'')`, deploymentID))
-	if errors.Is(err, pgx.ErrNoRows) {
+	// scanBuild maps pgx.ErrNoRows to ErrNotFound: nothing left to start.
+	if errors.Is(err, ErrNotFound) {
 		return Build{}, false, nil
 	}
 	if err != nil {
