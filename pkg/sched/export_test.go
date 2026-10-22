@@ -145,6 +145,11 @@ var NewExecutionCoordinatorFixture = newExecutionCoordinatorFixture
 var NewFakeNotify = newFakeNotify
 var NewFireNowHarness = newFireNowHarness
 var NewFrozenFixture = newFrozenFixture
+var NewFrozenFixtureInStore = newFrozenFixtureInStore
+
+// SetStore replaces the store the fixture's engine reads through.
+func (r *frozenFixture) SetStore(s state.Store) { r.e.store = s }
+
 var NewMockChecker = newMockChecker
 var NewNodeCapacityTable = newNodeCapacityTable
 var NewNodePresenceTracker = newNodePresenceTracker

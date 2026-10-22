@@ -1,5 +1,5 @@
 # Gregale FaaS — build & ops entrypoints (spec §Commands).
-# Go 1.26 with the patched 1.26.9 toolchain, pinned in go.mod and CI. One binary per cmd/ dir.
+# Go 1.26 with the patched 1.26.10 toolchain, pinned in go.mod and CI. One binary per cmd/ dir.
 
 GO      ?= go
 GOOS    ?= $(shell $(GO) env GOOS)

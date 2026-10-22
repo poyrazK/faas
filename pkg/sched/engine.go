@@ -1804,6 +1804,11 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 		release()
 		return result, nil
 	}
+	// A selection taken from a thaw ticket serves only the fast path; the
+	// rest of the wake resolves production from fresh reads.
+	if selected, ok := wakeEnvironmentFrom(ctx); ok && selected.fromTicket {
+		ctx = withoutWakeEnvironment(ctx)
+	}
 	// One app read serves the standards check, the fast path's tenant and,
 	// through the context, admission. It does not depend on the running
 	// instance lookup, so the two run at once; their errors are checked in
@@ -2331,29 +2336,32 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 	// synthetic default-local row has no NodeID constraint). Empty
 	// app.NodeID is the legacy non-shared case (an app never pinned
 	// to a node); the engine's chooser places it on the local box.
-	app, err := e.store.AppByID(ctx, appID)
-	if err != nil && !errors.Is(err, state.ErrNotFound) {
-		return CoordOutcome{}, fmt.Errorf("sched: EnsureWake: load app %q: %w", appID, err)
-	}
-	if err == nil && !e.ownsApp(app) {
-		return CoordOutcome{}, fmt.Errorf(
-			"sched: EnsureWake: app %q owned by node %q, this schedd owns %q — refusing (run on the owning box)",
-			appID, app.NodeID, e.ownerNodeID,
-		)
-	}
-	var loadedApp *state.App
-	if err == nil {
-		if checkErr := e.checkApplicationStandardAdmission(ctx, app); checkErr != nil {
-			return CoordOutcome{}, checkErr
+	selected, loadedApp, ok := e.ticketedWakeEnvironment(ctx, appID, deploymentID)
+	if !ok {
+		app, err := e.store.AppByID(ctx, appID)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return CoordOutcome{}, fmt.Errorf("sched: EnsureWake: load app %q: %w", appID, err)
 		}
-		loadedApp = &app
-	}
-	selected, err := e.resolveWakeEnvironmentForDeployment(ctx, appID, loadedApp, deploymentID)
-	if err != nil {
-		return CoordOutcome{}, err
-	}
-	if err := e.checkFinancialBudgetAdmission(ctx, selected.app, selected.deployment.ID); err != nil {
-		return CoordOutcome{}, err
+		if err == nil && !e.ownsApp(app) {
+			return CoordOutcome{}, fmt.Errorf(
+				"sched: EnsureWake: app %q owned by node %q, this schedd owns %q — refusing (run on the owning box)",
+				appID, app.NodeID, e.ownerNodeID,
+			)
+		}
+		if err == nil {
+			if checkErr := e.checkApplicationStandardAdmission(ctx, app); checkErr != nil {
+				return CoordOutcome{}, checkErr
+			}
+			loadedApp = &app
+		}
+		selected, err = e.resolveWakeEnvironmentForDeployment(ctx, appID, loadedApp, deploymentID)
+		if err != nil {
+			return CoordOutcome{}, err
+		}
+		if err := e.checkFinancialBudgetAdmission(ctx, selected.app, selected.deployment.ID); err != nil {
+			return CoordOutcome{}, err
+		}
+		selected.admissionChecked = true
 	}
 	ctx = withWakeEnvironment(ctx, selected)
 	coordinatorKey := selected.coordinatorKey()
