@@ -14,9 +14,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// productSignupStripe is a Stripe account that creates customers and setup-mode
+// signupStripe is a Stripe account that creates customers and setup-mode
 // Checkout Sessions and keeps each customer's default invoice card.
-type productSignupStripe struct {
+type signupStripe struct {
 	mu        sync.Mutex
 	keys      []string
 	emails    []string
@@ -25,7 +25,7 @@ type productSignupStripe struct {
 	checkouts []string
 }
 
-func (f *productSignupStripe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (f *signupStripe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer rk_test_") {
@@ -82,7 +82,7 @@ func TestProductSignupStripeCustomerAndCard(t *testing.T) {
 	withBillingKeys(t)
 	e := apidserver.Setup(t, api.PlanPro)
 	acct := *e.Acct()
-	stripe := &productSignupStripe{defaults: map[string]string{}, sessions: map[string]string{
+	stripe := &signupStripe{defaults: map[string]string{}, sessions: map[string]string{
 		"cs_test_done":    `{"id":"cs_test_done","mode":"setup","status":"complete","customer":"cus_signup","setup_intent":{"status":"succeeded","payment_method":"pm_card"}}`,
 		"cs_test_open":    `{"id":"cs_test_open","mode":"setup","status":"open","customer":"cus_signup","setup_intent":{"status":"requires_payment_method","payment_method":""}}`,
 		"cs_test_foreign": `{"id":"cs_test_foreign","mode":"setup","status":"complete","customer":"cus_other","setup_intent":{"status":"succeeded","payment_method":"pm_other"}}`,

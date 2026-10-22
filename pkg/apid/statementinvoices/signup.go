@@ -44,7 +44,7 @@ func (s *Service) SignupCustomer(ctx context.Context, acct state.Account, provid
 		if problem != nil {
 			return "", problem
 		}
-		id, err := p.client.CreateCustomer(ctx, conn.key, idempotencyKey, stripeinvoice.CustomerParams{Email: email, Name: name, Metadata: metadata})
+		id, err := p.client.CreateCustomer(ctx, conn.key, idempotencyKey, email, name, metadata)
 		if errors.Is(err, stripeinvoice.ErrKeyRejected) {
 			return "", signupUnavailable("the product team's Stripe key cannot create customers")
 		}
@@ -118,8 +118,8 @@ func (s *Service) StripeSetupCheckout(ctx context.Context, acct state.Account, c
 	if problem != nil {
 		return "", problem
 	}
-	session, err := p.client.CreateSetupCheckout(ctx, conn.key, idempotencyKey, stripeinvoice.SetupCheckoutParams{
-		Customer: customer, Currency: currency, SuccessURL: successURL, CancelURL: cancelURL})
+	session, err := p.client.CreateSetupCheckout(ctx, conn.key, idempotencyKey, stripeinvoice.SetupCheckoutParams{Customer: customer,
+		Currency: currency, SuccessURL: successURL, CancelURL: cancelURL})
 	if err != nil {
 		return "", paymentMethodProblem(err)
 	}
@@ -140,10 +140,11 @@ func (s *Service) CompleteStripeSetup(ctx context.Context, acct state.Account, c
 	if err != nil {
 		return nil, paymentMethodProblem(err)
 	}
-	if session.Mode != "setup" || session.Customer != customer || !session.Complete() {
+	if session.Mode != "setup" || session.Customer != customer || session.Status != "complete" || session.SetupIntent == nil ||
+		session.SetupIntent.Status != "succeeded" || session.SetupIntent.PaymentMethod == "" {
 		return nil, paymentMethodUnavailable("this Checkout did not save a card for your workspace; start again")
 	}
-	if err := p.client.SetDefaultPaymentMethod(ctx, conn.key, customer, session.PaymentMethod); err != nil {
+	if err := p.client.SetDefaultPaymentMethod(ctx, conn.key, customer, session.SetupIntent.PaymentMethod); err != nil {
 		return nil, paymentMethodProblem(err)
 	}
 	return s.StripePaymentMethod(ctx, acct, customer)
