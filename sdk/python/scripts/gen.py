@@ -293,6 +293,7 @@ WRAPPER_MODULES = (
     "business_effects.py",
     "business_compensation.py",
     "workflow_reconciliation.py",
+    "workflows.py",
 )
 PROJECT_FILES = ("pyproject.toml", "README.md")
 

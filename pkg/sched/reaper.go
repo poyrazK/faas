@@ -205,6 +205,46 @@ func idleReference(in InstanceInfo) time.Time {
 	return in.Started
 }
 
+// ReapEarlyFreeze selects quiet RUNNING request instances to freeze before
+// their idle timeout (ADR-20261021215353): nothing in flight, no open
+// connection or tail task, and a last request at least quiet ago but less
+// than the idle timeout ago (ReapIdle owns the rest). Floors and scale-in
+// cooldowns keep an app's instances running. The engine applies the pause
+// rule: only between_requests workloads freeze early.
+func ReapEarlyFreeze(now time.Time, instances []InstanceInfo, quiet time.Duration) []string {
+	if quiet <= 0 {
+		return nil
+	}
+	var ids []string
+	for _, in := range instances {
+		if in.State != state.StateRunning || in.PolicyUnavailable || in.MinInstances > 0 || in.WorkloadClass == state.WorkloadClassWorker {
+			continue
+		}
+		switch state.InstanceMode(in.Mode) {
+		case state.InstanceModeMirror, state.InstanceModeWorker, state.InstanceModeService, state.InstanceModeJob:
+			continue
+		}
+		if in.InflightRequests > 0 || in.OpenConns > 0 || in.TailCount > 0 {
+			continue
+		}
+		if anchor := scaleInCooldownAnchor(in); anchor != nil && in.ScaleInCooldownS > 0 && now.Sub(*anchor) < time.Duration(in.ScaleInCooldownS)*time.Second {
+			continue
+		}
+		last := idleReference(in)
+		if last.IsZero() {
+			continue
+		}
+		idle := now.Sub(last)
+		timeout := time.Duration(EffectiveIdleTimeoutS(in.Plan, in.AppType, in.IdleTimeoutS)) * time.Second
+		if idle < quiet || idle >= timeout {
+			continue
+		}
+		ids = append(ids, in.Instance)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // scaleInCooldownAnchor returns the latest capacity-changing event. A
 // scale-out must start the same stabilization window as a prior scale-in;
 // otherwise the aggressive reaper can undo a successful admit on its next

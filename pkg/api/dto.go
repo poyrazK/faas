@@ -8670,7 +8670,16 @@ func ApplyEdgeRuleRewritePath(requestPath, from, to string) (rewrittenPath strin
 	if !strings.HasPrefix(requestPath, from) {
 		return requestPath, false
 	}
-	return NormalizeEdgeRuleRewriteTarget(to) + requestPath[len(from):], true
+	rest := requestPath[len(from):]
+	if target := NormalizeEdgeRuleRewriteTarget(to); target != "/" {
+		return target + rest, true
+	}
+	// Stripping a prefix to the root (ADR-20261021223225): /api/items with
+	// From=/api becomes /items, and /api itself becomes /, never //items.
+	if !strings.HasPrefix(rest, "/") {
+		rest = "/" + rest
+	}
+	return rest, true
 }
 
 // NormalizeEdgeRuleRewriteTarget canonicalizes a configured rewrite prefix to
