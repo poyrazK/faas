@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -36,9 +37,12 @@ func (c *Client) CreateCustomer(ctx context.Context, key, idempotencyKey string,
 }
 
 // SetupCheckoutParams describe a setup-mode Checkout Session that saves a
-// card for Customer without charging it.
+// card for Customer without charging it. SuccessURL may contain
+// {CHECKOUT_SESSION_ID}; a zero ExpiresAt keeps Stripe's default expiry and
+// an empty Currency lets Stripe pick one.
 type SetupCheckoutParams struct {
 	Customer          string
+	Currency          string
 	SuccessURL        string
 	CancelURL         string
 	ExpiresAt         time.Time
@@ -51,6 +55,7 @@ type SetupCheckoutParams struct {
 type CheckoutSession struct {
 	ID                string
 	URL               string
+	Mode              string
 	Status            string
 	Customer          string
 	Livemode          bool
@@ -69,6 +74,7 @@ func (s CheckoutSession) Complete() bool {
 type checkoutSessionJSON struct {
 	ID          string          `json:"id"`
 	URL         string          `json:"url"`
+	Mode        string          `json:"mode"`
 	Status      string          `json:"status"`
 	Customer    string          `json:"customer"`
 	Livemode    bool            `json:"livemode"`
@@ -76,7 +82,7 @@ type checkoutSessionJSON struct {
 }
 
 func (j checkoutSessionJSON) session() CheckoutSession {
-	out := CheckoutSession{ID: j.ID, URL: j.URL, Status: j.Status, Customer: j.Customer, Livemode: j.Livemode}
+	out := CheckoutSession{ID: j.ID, URL: j.URL, Mode: j.Mode, Status: j.Status, Customer: j.Customer, Livemode: j.Livemode}
 	var intent struct {
 		Status        string `json:"status"`
 		PaymentMethod string `json:"payment_method"`
@@ -93,9 +99,14 @@ func (c *Client) CreateSetupCheckout(ctx context.Context, key, idempotencyKey st
 	form.Set("mode", "setup")
 	form.Set("customer", p.Customer)
 	form.Set("payment_method_types[0]", "card")
+	if p.Currency != "" {
+		form.Set("currency", strings.ToLower(p.Currency))
+	}
 	form.Set("success_url", p.SuccessURL)
 	form.Set("cancel_url", p.CancelURL)
-	form.Set("expires_at", strconv.FormatInt(p.ExpiresAt.Unix(), 10))
+	if !p.ExpiresAt.IsZero() {
+		form.Set("expires_at", strconv.FormatInt(p.ExpiresAt.Unix(), 10))
+	}
 	if p.ClientReferenceID != "" {
 		form.Set("client_reference_id", p.ClientReferenceID)
 	}
