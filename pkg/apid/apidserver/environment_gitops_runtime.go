@@ -181,6 +181,9 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 		if err := b.queueWorkloadQualification(ctx, lease, plan); err != nil {
 			return false, err
 		}
+		if err := b.verifyCandidateCredentials(ctx, graph.ID); err != nil {
+			return false, err
+		}
 		if activator, ok := b.intent.(state.EnvironmentGitOpsGraphActivationStore); ok {
 			_, activated, err := activator.ActivateEnvironmentGitOpsWorkloadGraph(ctx, lease, plan)
 			if err != nil {

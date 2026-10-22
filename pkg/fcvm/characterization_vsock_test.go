@@ -201,7 +201,7 @@ func TestNormalizeCharacterizationReportDerivesAuthoritativeClass(t *testing.T) 
 			if report.ObservedClass != tt.wantClass {
 				t.Fatalf("class = %q, want %q", report.ObservedClass, tt.wantClass)
 			}
-			terminal, bootErr := characterizationBootOutcome(report, tt.executionMode)
+			terminal, bootErr := characterizationBootOutcome(report, tt.executionMode, false)
 			if terminal != tt.bootReady || (bootErr != nil) != tt.bootFailed {
 				t.Fatalf("boot outcome = (terminal=%v, err=%v), want (terminal=%v, failed=%v)", terminal, bootErr, tt.bootReady, tt.bootFailed)
 			}
