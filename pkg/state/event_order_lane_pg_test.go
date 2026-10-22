@@ -87,12 +87,12 @@ func TestPgEventOrderLaneLookupMatchesAccountScan(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	now := time.Now().UTC()
 	// Adopted: a-1 settles its first delivery and retries another; a-2 and b-1
 	// stay pending behind it or beside it.
 	for _, event := range [][2]string{{"a-1", `{"order_id":"a"}`}, {"a-2", `{"order_id":"a"}`}, {"b-1", `{"order_id":"b"}`}, {"no-key", `{}`}} {
 		publish(event[0], event[1])
 	}
+	now := time.Now().UTC()
 	adoptLaneTestReceipts(t, store, now)
 	first, err := store.ClaimDuePublishedEventRecipient(ctx, now)
 	if err != nil {

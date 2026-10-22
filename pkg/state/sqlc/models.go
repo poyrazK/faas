@@ -4767,6 +4767,7 @@ type EventFanoutRecipient struct {
 	BackfillJobID               pgtype.UUID
 	ReceiptPosition             pgtype.Int8
 	DeliveryDeadlineAt          pgtype.Timestamptz
+	OrderLane                   pgtype.Int8
 }
 
 type EventRecoveryExecutionResult struct {

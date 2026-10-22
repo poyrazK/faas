@@ -567,7 +567,7 @@ WITH candidate AS (
         attempts = r.attempts + 1, total_attempts = r.total_attempts + 1
     FROM candidate c
     WHERE r.outbox_id = c.outbox_id AND r.subscription_id = c.subscription_id
-    RETURNING r.outbox_id, r.subscription_id, r.app_id, r.recipient, r.state, r.generation, r.attempts, r.total_attempts, r.available_at, r.claim_token, r.lease_until, r.capacity_deferrals, r.generation_capacity_deferrals, r.backfill_job_id, r.receipt_position, r.delivery_deadline_at
+    RETURNING r.outbox_id, r.subscription_id, r.app_id, r.recipient, r.state, r.generation, r.attempts, r.total_attempts, r.available_at, r.claim_token, r.lease_until, r.capacity_deferrals, r.generation_capacity_deferrals, r.backfill_job_id, r.receipt_position, r.delivery_deadline_at, r.order_lane
 ), replay_item AS (
     UPDATE event_replay_job_items i SET state='processing', attempts=c.total_attempts, updated_at=clock_timestamp()
     FROM claimed c WHERE c.backfill_job_id=i.job_id AND c.outbox_id=i.outbox_id
@@ -1323,7 +1323,7 @@ func (q *Queries) EventRoutingLockReceipt(ctx context.Context, db DBTX, id int64
 }
 
 const eventRoutingLockRecipient = `-- name: EventRoutingLockRecipient :one
-SELECT outbox_id, subscription_id, app_id, recipient, state, generation, attempts, total_attempts, available_at, claim_token, lease_until, capacity_deferrals, generation_capacity_deferrals, backfill_job_id, receipt_position, delivery_deadline_at FROM event_fanout_recipients
+SELECT outbox_id, subscription_id, app_id, recipient, state, generation, attempts, total_attempts, available_at, claim_token, lease_until, capacity_deferrals, generation_capacity_deferrals, backfill_job_id, receipt_position, delivery_deadline_at, order_lane FROM event_fanout_recipients
 WHERE outbox_id=$1::bigint AND subscription_id=$2::text FOR UPDATE
 `
 
@@ -1352,6 +1352,7 @@ func (q *Queries) EventRoutingLockRecipient(ctx context.Context, db DBTX, arg Ev
 		&i.BackfillJobID,
 		&i.ReceiptPosition,
 		&i.DeliveryDeadlineAt,
+		&i.OrderLane,
 	)
 	return i, err
 }
