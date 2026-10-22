@@ -1,0 +1,17 @@
+---
+- name: seal_domains — daemon-reload
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen:
+    - restart faas-outboundd for seal domains
+    - restart faas-apid for seal domains
+
+- name: seal_domains — try-restart faas-outboundd
+  ansible.builtin.command: systemctl try-restart faas-outboundd.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-outboundd for seal domains
+
+- name: seal_domains — try-restart faas-apid
+  ansible.builtin.command: systemctl try-restart faas-apid.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-apid for seal domains

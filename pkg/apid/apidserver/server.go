@@ -177,6 +177,12 @@ type server struct {
 	liveQueries     *livequeries.Service // ADR-20261016151947 live queries per managed database
 	// dataAPIUsage stores ADR-20261019102108 Data API usage; nil without Postgres.
 	dataAPIUsage *usagestore.Store
+	// candidatePostgresVerifier checks one enforced candidate's sealed
+	// PostgreSQL credential (ADR-20261019072523); nil uses the host identities.
+	candidatePostgresVerifier func(context.Context, state.EnvironmentQualificationPostgresCheck) error
+	// candidateObjectStorageVerifier checks one candidate's sealed S3 delivery
+	// (ADR-20261019121546); nil uses the host identities and bucket canary.
+	candidateObjectStorageVerifier func(context.Context, state.EnvironmentQualificationObjectStorageCheck) error
 	// liveRollout is who sees live queries (FAAS_LIVE_QUERIES_ACCOUNTS);
 	// nobody until configured.
 	liveRollout                   livequeries.Rollout

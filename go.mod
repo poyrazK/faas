@@ -3,7 +3,7 @@ module github.com/onebox-faas/faas
 go 1.26.0
 
 // Select the patched compiler independently of the language target.
-toolchain go1.26.9
+toolchain go1.26.10
 
 // Pinned to match the version CI runs (.github/workflows/ci.yml:
 // golangci-lint-action@v9 with version: v2.14.0). Update both together.

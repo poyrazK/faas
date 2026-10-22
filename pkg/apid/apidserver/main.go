@@ -1969,6 +1969,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		log.Warn("FAAS_FLEET_AGE_RECIPIENT_PATH unset — secrets PUT will return 503")
 	}
+	if err := loadSealDomains(deps.getenv, log); err != nil {
+		return err
+	}
 
 	// MFA (IAM-2, issue #186): load the host age identity so
 	// /v1/account/mfa/confirm and /verify can unseal the TOTP
