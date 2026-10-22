@@ -108,6 +108,21 @@ func TestServiceAuthorizationExplanation(t *testing.T) {
 			c.ServiceBindingPolicy = api.ServiceBindingPolicyDeclared
 			c.ServiceBindings = []api.AppServiceBinding{{Service: "billing"}}
 		}},
+		{"project sibling", "GET", "/invoices", "allowed", "same_project", func(c, t *api.AppResponse) {
+			c.ServiceBindingPolicy, c.ProjectID, t.ProjectID = api.ServiceBindingPolicyProject, "shop", "shop"
+		}},
+		{"project outsider", "GET", "/invoices", "denied", "target_not_declared", func(c, t *api.AppResponse) {
+			c.ServiceBindingPolicy, c.ProjectID, t.ProjectID = api.ServiceBindingPolicyProject, "shop", "search"
+		}},
+		{"project outsider declared", "GET", "/invoices", "allowed", "target_declared", func(c, t *api.AppResponse) {
+			c.ServiceBindingPolicy, c.ProjectID = api.ServiceBindingPolicyProject, "shop"
+			c.ServiceBindings = []api.AppServiceBinding{{Service: "billing"}}
+		}},
+		{"project sibling still needs target consent", "GET", "/invoices", "denied", "caller_not_listed", func(c, t *api.AppResponse) {
+			c.ServiceBindingPolicy, c.ProjectID, t.ProjectID = api.ServiceBindingPolicyProject, "shop", "shop"
+			names := []string{"worker"}
+			t.AllowedServiceCallers = &names
+		}},
 		{"empty callers", "GET", "/invoices", "denied", "caller_not_listed", func(c, t *api.AppResponse) { var names []string; t.AllowedServiceCallers = &names }},
 		{"caller listed", "GET", "/invoices", "allowed", "caller_listed", func(c, t *api.AppResponse) { names := []string{"frontend"}; t.AllowedServiceCallers = &names }},
 		{"caller whitespace matches gateway", "GET", "/invoices", "denied", "caller_not_listed", func(c, t *api.AppResponse) { names := []string{" frontend "}; t.AllowedServiceCallers = &names }},
