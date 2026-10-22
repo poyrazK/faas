@@ -457,6 +457,8 @@ func projectsCLICompletionPositions() []cliCompletionPosition {
 var (
 	// orgSlugFlag is the --org flag every org-scoped verb requires.
 	orgSlugFlag = cliFlag{Name: "org", Short: "organization slug", Value: "SLUG", Req: true}
+	// previewsOrgFlag acts for an organization instead of the account.
+	previewsOrgFlag = cliFlag{Name: "org", Short: "act for this organization (owner or admin to join or leave)", Value: "SLUG"}
 	// orgMemberRoles are the roles a member can be invited to or given.
 	orgMemberRoles = []string{"admin", "developer", "viewer", "billing"}
 	// issueAppFlags is the --app flag every issues verb requires.
@@ -3195,6 +3197,21 @@ var cliCommands = []cliCommand{
 				{Name: "timeout", Short: "maximum wait (seconds, or a duration such as 10m)", Value: "SECONDS|DURATION"},
 			}},
 			{Name: "destroy", Short: "Tear down a preview app", Examples: []string{"gregale preview destroy pr-42-my-api"}, Positionals: []string{"<preview-slug>"}},
+		},
+	},
+	{
+		Name:    "previews",
+		DocSlug: "previews",
+		Short:   "Join or leave platform previews (previews list|join|leave)",
+		HelpNotes: []string{
+			"Joining releases an early platform feature to your account; a preview never adds a plan entitlement.",
+			"With --org, an owner or admin joins for the whole organization: members get it while acting for the company.",
+		},
+		Subcommands: []cliSub{
+			{Name: "list", Aliases: []string{"ls"}, Short: "List previews you can join or already joined", Common: true, Flags: []cliFlag{previewsOrgFlag}},
+			{Name: "join", Short: "Join a preview", Common: true, Positionals: []string{"<key>"}, Flags: []cliFlag{previewsOrgFlag},
+				Examples: []string{"gregale previews join change_timeline", "gregale previews join change_timeline --org acme"}},
+			{Name: "leave", Short: "Leave a preview", Positionals: []string{"<key>"}, Flags: []cliFlag{previewsOrgFlag}},
 		},
 	},
 	{

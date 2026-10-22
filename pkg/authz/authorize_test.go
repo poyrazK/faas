@@ -224,6 +224,11 @@ var roleMatrixCells = []struct {
 	{OrgActionDeleteApp, state.OrgRoleDeveloper, false},
 	{OrgActionDeleteApp, state.OrgRoleViewer, false},
 	{OrgActionDeleteApp, state.OrgRoleBilling, false},
+	{OrgActionManagePreviews, state.OrgRoleOwner, true},
+	{OrgActionManagePreviews, state.OrgRoleAdmin, true},
+	{OrgActionManagePreviews, state.OrgRoleDeveloper, false},
+	{OrgActionManagePreviews, state.OrgRoleViewer, false},
+	{OrgActionManagePreviews, state.OrgRoleBilling, false},
 	{OrgActionSetApplicationStandardLocalIntent, state.OrgRoleOwner, true},
 	{OrgActionSetApplicationStandardLocalIntent, state.OrgRoleAdmin, true},
 	{OrgActionSetApplicationStandardLocalIntent, state.OrgRoleDeveloper, true},
@@ -617,6 +622,7 @@ func TestAllOrgActions_Complete(t *testing.T) {
 		OrgActionManageApplicationStandards:        true,
 		OrgActionApproveApplicationStandards:       true,
 		OrgActionSetApplicationStandardLocalIntent: true,
+		OrgActionManagePreviews:                    true,
 	}
 	got := map[OrgAction]bool{}
 	for _, a := range AllOrgActions {
