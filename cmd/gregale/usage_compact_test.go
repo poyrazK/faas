@@ -116,10 +116,12 @@ func longUsageLiterals(t *testing.T) []string {
 func TestUnmanifestedVerbHelpPrintsParserFlags(t *testing.T) {
 	oldOut, oldErr := *main.OsStdout, *main.OsStderr
 	t.Cleanup(func() { *main.OsStdout, *main.OsStderr = oldOut, oldErr })
+	// drain_status is an undocumented compatibility spelling the dispatcher
+	// accepts; the help manifest lists only drain-status. If it gains an
+	// alias, pick another spelling the manifest does not describe.
 	for _, args := range [][]string{
-		{"realtime", "send-principal", "--help"},
-		{"realtime", "send-principal", "app", "endpoint", "-h"},
-		{"projects", "environments", "recover-migration", "--help"},
+		{"realtime", "drain_status", "--help"},
+		{"realtime", "drain_status", "app", "endpoint", "-h"},
 	} {
 		var out, errOut bytes.Buffer
 		*main.OsStdout, *main.OsStderr = &out, &errOut
@@ -129,14 +131,14 @@ func TestUnmanifestedVerbHelpPrintsParserFlags(t *testing.T) {
 		if errOut.Len() != 0 {
 			t.Errorf("%v wrote to stderr: %q", args, errOut.String())
 		}
-		if !strings.Contains(out.String(), "Flags for gregale "+args[0]) || !strings.Contains(out.String(), "\n  --") {
+		if !strings.Contains(out.String(), "Flags for gregale realtime drain_status") || !strings.Contains(out.String(), "\n  --wait") {
 			t.Errorf("%v help lacks the parser's flags:\n%s", args, out.String())
 		}
 	}
 	// Without --help the same verb still fails with its usage.
 	var out, errOut bytes.Buffer
 	*main.OsStdout, *main.OsStderr = &out, &errOut
-	if code := main.Run([]string{"realtime", "send-principal"}); code != 1 || !strings.Contains(errOut.String(), "usage: gregale realtime send-principal") {
+	if code := main.Run([]string{"realtime", "drain_status"}); code != 1 || !strings.Contains(errOut.String(), "usage: gregale realtime drain-status") {
 		t.Errorf("missing arguments: exit %d stderr %q", code, errOut.String())
 	}
 }
