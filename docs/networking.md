@@ -246,14 +246,15 @@ bindings <app>` reports the effective transport.
 
 The same declared edges are exposed as service bindings by the app API and by
 `gregale bindings public-api`, alongside database, object-storage, queue,
-and outbound integration bindings. New project workloads use the `declared` caller policy: the gateway
-returns 403 for calls to services not listed in `depends_on`. Existing apps
-retain their persisted policy on reapply. To let a workload call every service
-in its own project without listing each one, set
-`x-gregale-service-policy: project` on the caller
-([ADR-20261022111119](adr/20261022111119-project-service-binding-policy.md)).
-Calls to services outside the project still need `depends_on`, and a target's
-`x-gregale-allow-callers` list still applies. An undeclared sibling has no
+and outbound integration bindings. New project workloads use the `project`
+caller policy
+([ADR-20261022111119](adr/20261022111119-project-service-binding-policy.md)):
+they may call every service in their own project without listing it, while
+calls to services outside the project need `depends_on` and get 403 without
+it. A target's `x-gregale-allow-callers` list still applies. Existing apps
+retain their persisted policy on reapply; set `x-gregale-service-policy:
+project` to move one over, or `declared` to require `depends_on` for every
+call. An undeclared sibling has no
 injected URL or `.internal` alias; call it at
 `http://<app-slug>.svc.gregale:10081`. For an intentional same-account escape
 hatch, set `x-gregale-service-policy: account` on the caller. Under the
