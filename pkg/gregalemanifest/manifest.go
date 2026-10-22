@@ -1661,6 +1661,32 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 	}
 }
 
+// LifecycleRequest is the app update a manifest's lifecycle and worker blocks
+// ask for. The CLI and apid's source deploys apply the same request, so a hook
+// declared in gregale.yaml reaches the app however the source arrives. ok is
+// false when the manifest declares neither block.
+func (m *Manifest) LifecycleRequest() (req api.UpdateAppRequest, ok bool) {
+	if m == nil || ((m.Lifecycle == nil || m.Lifecycle.Empty()) && m.Worker == nil) {
+		return api.UpdateAppRequest{}, false
+	}
+	if m.Lifecycle != nil && !m.Lifecycle.Empty() {
+		req = m.Lifecycle.ToAPI()
+	}
+	if m.Worker != nil {
+		workerMode := api.ExecutionModeWorker
+		req.ExecutionMode = &workerMode
+		req.WorkerReplicas = m.Worker.Scale.ToAPI()
+		if drainTimeout := m.Worker.DrainTimeoutSeconds(); drainTimeout > 0 {
+			req.StopGracePeriodS = &drainTimeout
+		}
+		if m.Worker.StopSignal != "" {
+			sig := m.Worker.StopSignal
+			req.StopSignal = &sig
+		}
+	}
+	return req, true
+}
+
 // Empty reports whether the block contains no desired lifecycle changes.
 func (c *LifecycleConfig) Empty() bool {
 	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil && c.Pause == nil && c.Profiling == nil && c.Tracing == nil &&

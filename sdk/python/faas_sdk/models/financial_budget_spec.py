@@ -38,7 +38,8 @@ class FinancialBudgetSpec:
     """New writes require USD; EUR is retained only for historical policy responses."""
     meters: list[FinancialBudgetSpecMetersItem]
     """Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job
-    strict covers compute only."""
+    strict covers compute only. object_storage (ADR-20261020160000) is priced from the live object-storage estimate
+    and only monitored account budgets may select it."""
     basis: FinancialBudgetSpecBasis
     """Net usage after the shared account allowance or gross usage before it; strict resource scopes require gross
     usage."""

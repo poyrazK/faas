@@ -171,7 +171,10 @@ func (r *customerHTTPRelay) forward(w http.ResponseWriter, request *http.Request
 		return
 	}
 	id, action := parts[3], parts[4]
-	allowed := request.Method == http.MethodGet && action == "control" || request.Method == http.MethodPost && (action == "progress" || action == "artifact-uploads" || action == "artifact-upload-receipts")
+	// "children" (ADR-20261018183000): a fanout parent starts its child with
+	// this attempt's proof.
+	allowed := request.Method == http.MethodGet && (action == "control" || action == "children") ||
+		request.Method == http.MethodPost && (action == "progress" || action == "artifact-uploads" || action == "artifact-upload-receipts" || action == "children")
 	if !r.f.ownsOperation(request.Context(), id) || !allowed {
 		http.NotFound(w, request)
 		return

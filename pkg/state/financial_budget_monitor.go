@@ -36,6 +36,7 @@ func validFinancialBudgetEvaluation(e financial.BudgetEvaluation) bool {
 		!e.EvaluatedAt.Before(start) && e.EvaluatedAt.Before(e.PeriodEnd) &&
 		!e.AsOf.Before(start) && !e.AsOf.After(e.EvaluatedAt) &&
 		e.EvidenceThroughID >= 0 && (e.KnownMillicents == nil || *e.KnownMillicents >= 0) &&
+		(e.ProjectedMillicents == nil || *e.ProjectedMillicents >= 0 && e.KnownMillicents != nil) &&
 		(e.KnownMillicents != nil || (!e.Fresh && !e.CoverageComplete))
 }
 
@@ -57,11 +58,36 @@ func financialBudgetAlerts(p FinancialBudget, e financial.BudgetEvaluation) []Fi
 	return out
 }
 
+// FinancialBudgetProjectionStore delivers projected-overrun alerts to the
+// account email (ADR-20261019193500), fenced like threshold alerts.
+// RecordFinancialBudgetEvaluation records them; FinancialBudgetRuntime
+// reports the month's projection.
+type FinancialBudgetProjectionStore interface {
+	ClaimFinancialBudgetProjection(context.Context, time.Time) (FinancialBudgetAlertDelivery, error)
+	SettleFinancialBudgetProjection(context.Context, string, string, time.Time, bool) error
+}
+
+// financialBudgetProjectionAlert raises one alert per policy revision and UTC
+// month when complete, fresh evidence projects the limit to be reached while
+// known usage is still below it.
+func financialBudgetProjectionAlert(p FinancialBudget, e financial.BudgetEvaluation) (FinancialBudgetAlertDelivery, bool) {
+	limit := p.Spec.LimitMillicents
+	if e.KnownMillicents == nil || e.ProjectedMillicents == nil || !e.Fresh || !e.CoverageComplete || limit <= 0 || *e.KnownMillicents >= limit || *e.ProjectedMillicents < limit {
+		return FinancialBudgetAlertDelivery{}, false
+	}
+	key := fmt.Sprintf("financial-budget-projection\n%s\n%s\n%d\n%s", p.AccountID, p.ID, p.Revision, e.PeriodStart.UTC().Format("2006-01"))
+	return FinancialBudgetAlertDelivery{AccountID: p.AccountID, PolicyID: p.ID, Spec: cloneFinancialBudgetSpec(p.Spec), BudgetAlert: financial.BudgetAlert{ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte(key)).String(), Kind: financial.BudgetAlertProjection, PolicyRevision: p.Revision, ThresholdMillicents: limit, Evaluation: cloneFinancialBudgetEvaluation(e), State: "pending", NextAttemptAt: e.EvaluatedAt.UTC()}}, true
+}
+
 func cloneFinancialBudgetEvaluation(e financial.BudgetEvaluation) financial.BudgetEvaluation {
 	e.Reasons = append([]string{}, e.Reasons...)
 	if e.KnownMillicents != nil {
 		amount := *e.KnownMillicents
 		e.KnownMillicents = &amount
+	}
+	if e.ProjectedMillicents != nil {
+		amount := *e.ProjectedMillicents
+		e.ProjectedMillicents = &amount
 	}
 	return e
 }

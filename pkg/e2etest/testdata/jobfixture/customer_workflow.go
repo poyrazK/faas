@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -85,7 +86,7 @@ func (f workflowFixtureServer) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		_, _ = w.Write([]byte(`{"ok":true}`))
 		return
 	}
-	if r.Method != http.MethodPost || (r.URL.Path != "/collect" && r.URL.Path != "/transform" && r.URL.Path != "/finish") {
+	if r.Method != http.MethodPost || (r.URL.Path != "/collect" && r.URL.Path != "/transform" && r.URL.Path != "/finish" && r.URL.Path != "/fan") {
 		http.NotFound(w, r)
 		return
 	}
@@ -160,6 +161,11 @@ func (f workflowFixtureServer) run(ctx context.Context, id string, proof api.Ope
 	defer cancel()
 	if _, err := f.fixtureEvent(ctx, id, proof, "entered"); err != nil {
 		return nil, err
+	}
+	if proof.StepName == "fan" {
+		if err := f.fanout(ctx, id, proof); err != nil {
+			return nil, err
+		}
 	}
 	if proof.StepName != "finish" {
 		return workflowFixtureInput{Mode: input.Mode, Rows: 1}, nil
@@ -279,4 +285,62 @@ func (f workflowFixtureServer) fixtureEvent(ctx context.Context, id string, proo
 func isHTTPInvocationID(value string) bool {
 	_, err := uuid.Parse(value)
 	return value != "" && err == nil
+}
+
+// workflowFixtureChildKeys name the children a fan step starts.
+var workflowFixtureChildKeys = []string{"child-a", "child-b"}
+
+// fanout starts every child with this step's proof, then starts the first
+// again to prove the key replays the same child (ADR-20261018183000). A
+// retried step replays its earlier starts. Child routes are gated and outside
+// the SDK, so the fixture sends the workflow proof headers itself.
+func (f workflowFixtureServer) fanout(ctx context.Context, id string, proof api.OperationWorkflowRuntimeProof) error {
+	var first api.OperationChildStartResponse
+	for i, key := range workflowFixtureChildKeys {
+		started, err := f.startChild(ctx, id, proof, key)
+		if err != nil {
+			return err
+		}
+		if i == 0 {
+			first = started
+		}
+	}
+	replay, err := f.startChild(ctx, id, proof, workflowFixtureChildKeys[0])
+	if err != nil {
+		return err
+	}
+	if !replay.Replayed || replay.Operation.ID != first.Operation.ID {
+		return fmt.Errorf("child start did not replay by key")
+	}
+	return nil
+}
+
+func (f workflowFixtureServer) startChild(ctx context.Context, id string, proof api.OperationWorkflowRuntimeProof, key string) (api.OperationChildStartResponse, error) {
+	var out api.OperationChildStartResponse
+	client, err := f.client(ctx)
+	if err != nil {
+		return out, err
+	}
+	body, _ := json.Marshal(api.OperationChildRequest{Operation: "export", Key: key, Input: json.RawMessage(`{"mode":"complete"}`)})
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.BaseURL()+"/v1/runtime/workflow-operations/"+id+"/children", bytes.NewReader(body))
+	if err != nil {
+		return out, err
+	}
+	request.Header.Set("Authorization", "Bearer "+client.Token())
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(api.OperationExecutionKindHeader, "workflow")
+	request.Header.Set(api.OperationWorkflowRunHeader, proof.RunID)
+	request.Header.Set(api.OperationWorkflowStepHeader, proof.StepName)
+	request.Header.Set(api.OperationWorkflowCapabilityHeader, proof.Capability)
+	request.Header.Set(api.OperationGenerationHeader, strconv.Itoa(proof.Generation))
+	request.Header.Set(api.OperationAttemptHeader, strconv.Itoa(proof.Attempt))
+	response, err := client.HTTPClient().Do(request)
+	if err != nil {
+		return out, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusCreated && response.StatusCode != http.StatusOK {
+		return out, fmt.Errorf("child start answered %d", response.StatusCode)
+	}
+	return out, json.NewDecoder(response.Body).Decode(&out)
 }

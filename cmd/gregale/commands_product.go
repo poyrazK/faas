@@ -32,6 +32,10 @@ type productCommand struct {
 	amountMillicents                                                                         int64
 	after                                                                                    int
 	suspended, self                                                                          bool
+	// trialEndsAt and endTrial move or end a customer's trial
+	// (ADR-20261021195901).
+	trialEndsAt string
+	endTrial    bool
 }
 
 func parseProductCommand(args []string) (productCommand, error) {
@@ -124,6 +128,10 @@ func parseProductCommand(args []string) (productCommand, error) {
 		fs.StringVar(&c.authOrg, "auth-org", "", "Application Auth organization UUID (empty unlinks login)")
 		fs.StringVar(&c.revision, "revision", "", "catalog revision (default current)")
 		fs.BoolVar(&c.suspended, "suspended", false, "pause new feature starts")
+	case "customers trial":
+		fs.StringVar(&c.tenant, "tenant", "", "customer platform tenant UUID")
+		fs.StringVar(&c.trialEndsAt, "ends-at", "", "new end of the running trial (RFC 3339, from the next minute)")
+		fs.BoolVar(&c.endTrial, "end", false, "end the running trial at the next UTC minute")
 	case "statements list", "statements review", "statements receipts", "statements finalize", "statements waive", "statements credit", "statements handoff", "statements handoff-status", "statements export", "statements export-status":
 		productBillingFlags(fs, &c)
 	case "billing overdue-policy inspect", "billing overdue-policy clear":
@@ -203,6 +211,14 @@ func parseProductCommand(args []string) (productCommand, error) {
 	}
 	if c.verb == "customers assign" && (c.tenant == "" || c.plan == "") {
 		return c, errors.New("--tenant and --plan are required")
+	}
+	if c.verb == "customers trial" {
+		if id, err := uuid.Parse(c.tenant); err != nil || id == uuid.Nil || id.String() != c.tenant {
+			return c, errors.New("--tenant requires a canonical customer UUID")
+		}
+		if _, err := time.Parse(time.RFC3339, c.trialEndsAt); (err != nil) == !c.endTrial {
+			return c, errors.New("use exactly one of --ends-at RFC3339 or --end")
+		}
 	}
 	if c.verb == "customers onboard" || c.verb == "customers workspaces" || c.verb == "customers onboarding" {
 		if err := validateProductOnboardingCommand(c); err != nil {
@@ -394,6 +410,12 @@ func runProductCommand(ctx context.Context, client *Client, c productCommand) (a
 		return page, err
 	case "customers assign":
 		return client.SetProductCustomer(ctx, c.app, api.ProductCustomer{TenantID: c.tenant, Plan: c.plan, Revision: c.revision, Suspended: c.suspended, AuthOrganizationID: c.authOrg})
+	case "customers trial":
+		if c.endTrial {
+			return client.EndProductCustomerTrial(ctx, c.app, c.tenant)
+		}
+		ends, _ := time.Parse(time.RFC3339, c.trialEndsAt)
+		return client.SetProductCustomerTrialEnd(ctx, c.app, c.tenant, ends)
 	case "customers onboard", "customers workspaces", "customers onboarding":
 		return runProductOnboardingCommand(ctx, client, c)
 	case "statements list", "statements review", "statements receipts", "statements finalize", "statements waive", "statements credit", "statements handoff", "statements handoff-status", "statements export", "statements export-status":
@@ -431,11 +453,16 @@ func runProductCommand(ctx context.Context, client *Client, c productCommand) (a
 				used += line.Starts
 			}
 		}
-		// The next start is free while included starts remain
-		// (ADR-20261021154511).
-		return map[string]any{"quote": view.Quotes[c.feature], "feature": c.feature, "plan": view.Customer.Plan, "currency": view.Catalog.Spec.Currency, "unit_price_millicents": grant.UnitPriceMillicents,
+		// The next start is free during the trial and while included starts
+		// remain; trial starts use none (ADR-20261021154511, ADR-20261021195901).
+		next, _, _ := productcontrol.StartPrice(grant, view.Customer, used-view.Usage.TrialStarts[c.feature], time.Now())
+		out := map[string]any{"quote": view.Quotes[c.feature], "feature": c.feature, "plan": view.Customer.Plan, "currency": view.Catalog.Spec.Currency, "unit_price_millicents": grant.UnitPriceMillicents,
 			"monthly_starts": grant.MonthlyStarts, "remaining_starts": max(0, grant.MonthlyStarts-used), "included_starts": grant.IncludedStarts,
-			"next_start_price_millicents": grant.StartPriceMillicents(used), "period": view.Usage.Period, "revision": view.Catalog.Revision}, nil
+			"next_start_price_millicents": next, "period": view.Usage.Period, "revision": view.Catalog.Revision}
+		if view.Customer.TrialEndsAt != nil {
+			out["trial_ends_at"] = view.Customer.TrialEndsAt
+		}
+		return out, nil
 	case "start":
 		return startProductFeature(ctx, client, c)
 	case "explain":

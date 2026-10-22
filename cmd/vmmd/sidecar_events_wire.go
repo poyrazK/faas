@@ -81,3 +81,13 @@ func (r *FrameworkReadyReceiver) WithEventPublisher(publisher GuestEventPublishe
 	r.eventPublisher = publisher
 	return r
 }
+
+// WithEventCapturer attaches the rehearsal capture seam for contained guests
+// (ADR-20261020090000). A nil callback drops their events, as before.
+func (r *FrameworkReadyReceiver) WithEventCapturer(capturer GuestEventCapturer) *FrameworkReadyReceiver {
+	if r == nil {
+		return r
+	}
+	r.eventCapturer = capturer
+	return r
+}

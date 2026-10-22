@@ -20,6 +20,7 @@
 //	-no-healthz    omit /healthz so TCP readiness is the only boot contract
 //	-durable-counter serve the pure durable entity counter protocol
 //	-echo-session  interactive app-task fixture: report tty and size, echo lines
+//	-queue-consumer pull-queue worker: fetch a gregale:queues token, never listen
 package main
 
 import (
@@ -76,6 +77,7 @@ func main() {
 	durableCounter := flag.Bool("durable-counter", false, "serve pure durable entity transitions")
 	echoSession := flag.Bool("echo-session", false, "run the interactive app-task fixture instead of serving")
 	identityProbe := flag.Bool("identity-probe", false, "serve /identity, which fetches a workload identity token from guest-init")
+	queueConsumer := flag.Bool("queue-consumer", false, "run as a pull-queue worker: fetch a gregale:queues token, never listen")
 	failAPI := flag.Bool("fail-api", false, "answer /api with 500 while / and /healthz stay healthy (bad release)")
 	failLivez := flag.Bool("fail-livez", false, "answer /livez with 500 while /healthz stays healthy (crash loop)")
 	failRootAfter := flag.Int64("fail-root-after-requests", 0, "answer / with 500 after this many / requests, so a release passes its post-readiness smoke and fails later (0 disables)")
@@ -95,6 +97,10 @@ func main() {
 	}
 	if *echoSession {
 		runEchoSession()
+		return
+	}
+	if *queueConsumer {
+		runQueueConsumer()
 		return
 	}
 	if *addr == "" {

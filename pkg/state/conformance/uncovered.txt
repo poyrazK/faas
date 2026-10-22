@@ -84,8 +84,6 @@ CountDeveloperApps
 CountEdgeRulesByKindForApp
 CountEdgeRulesForApp
 CountFailedCertIssuancesSince
-CountFailedDeploymentsSince
-CountFailedInvocationsSince
 CountGdprRequestsSince
 CountInstanceInvocationsInMinute
 CountNewErrorFingerprintsSince
@@ -100,7 +98,6 @@ CountWakeBootStarted24h
 CreateAPIKeyWithExpiry
 CreateAccountWithPersonalOrg
 CreateAlertRuleIfUnderQuota
-CreateAppLogDrain
 CreateAppLogDrainIfUnderQuota
 CreateAppWebhookIfUnderQuota
 CreateBuildProvenance
@@ -323,7 +320,6 @@ ListEdgeRulesForAccount
 ListEdgeRulesForApp
 ListEgressCircuitCandidates
 ListEnabledAlertRules
-ListEnabledAppLogDrains
 ListEventsBySidecar
 ListEventsByTraceID
 ListEventsByWakeID

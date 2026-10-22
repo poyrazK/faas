@@ -25,7 +25,7 @@ var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"service_binding_transport":            {Path: "gregale bindings service configure <app> --file"},
 	"ram_mb":                               {Path: "gregale app <slug> --ram", AppFlags: []string{"ram"}},
 	"cpu_millicores":                       {Path: "gregale app <slug> --cpu-millicores", AppFlags: []string{"cpu-millicores"}},
-	"resource_profile":                     {Path: "gregale app <slug> --profile", AppFlags: []string{"profile"}},
+	"resource_profile":                     {Path: "gregale app <slug> --size", AppFlags: []string{"size"}},
 	"idle_timeout_s":                       {Path: "gregale app <slug> --idle", AppFlags: []string{"idle"}},
 	"max_concurrency":                      {Path: "gregale app <slug> --max-concurrency", AppFlags: []string{"max-concurrency"}},
 	"execution_mode":                       {Path: "gregale.yaml lifecycle.execution_mode"},

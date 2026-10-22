@@ -37,6 +37,13 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 		_, _ = fmt.Fprintln(w)
 		_, _ = fmt.Fprintf(w, "## %s\n\n", c.Name)
 		_, _ = fmt.Fprintf(w, "%s\n\n", mdText(c.Short))
+		if related := cliSeeAlso(c.Name, cmds); len(related) > 0 {
+			links := make([]string, 0, len(related))
+			for _, command := range related {
+				links = append(links, fmt.Sprintf("[`%s`](#%s)", command.Name, command.Name))
+			}
+			_, _ = fmt.Fprintf(w, "See also: %s.\n\n", strings.Join(links, ", "))
+		}
 		synopsisSuffix := "\n\n"
 		if i == len(cmds)-1 {
 			synopsisSuffix = "\n"

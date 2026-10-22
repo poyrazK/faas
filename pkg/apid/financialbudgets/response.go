@@ -45,6 +45,14 @@ func Response(ctx context.Context, store state.Store, p state.FinancialBudget, n
 		if financial.StrictJobCompute(p.Spec) {
 			out.Reasons[0] = "strict_job_gross_compute"
 		}
+		if financial.StrictProjectCompute(p.Spec) {
+			out.Reasons[0] = "strict_project_gross_compute"
+			out.Reasons = append(out.Reasons, "project_apps_only_jobs_excluded")
+		}
+		if financial.StrictEnvironmentCompute(p.Spec) {
+			out.Reasons[0] = "strict_environment_gross_compute"
+			out.Reasons = append(out.Reasons, "environment_deployments_only_floors_jobs_excluded")
+		}
 		if !balance.Initialized {
 			out.Reasons = append(out.Reasons, "awaiting_period_initialization")
 		}
