@@ -23,6 +23,10 @@ type wakeEnvironment struct {
 	// fresh reads (ADR-1740 amendment 2026-10-22). Only the guarded thaw may
 	// decide from it; every other step reads afresh.
 	fromTicket bool
+	// admissionChecked records that EnsureWake ran the application-standards
+	// and financial-budget checks for this selection's deployment. The fast
+	// path runs them itself for a wake that carries no such selection.
+	admissionChecked bool
 }
 
 // reusableFor reports whether admission may reuse this selection's app,

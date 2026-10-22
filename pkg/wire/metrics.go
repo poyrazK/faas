@@ -2244,7 +2244,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	frozenFastPathSkipped := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_frozen_fast_path_skipped_total",
-		Help: "Wakes of an app with a frozen VM that did not take the frozen fast path (ADR-1740), by reason: deployment (the wake named one), scope, selection (the coordinated wake selected another deployment or environment), no_ticket, capacity.",
+		Help: "Wakes of an app with a frozen VM that did not take the frozen fast path (ADR-1740), by reason: deployment (the wake named one), scope, selection (the coordinated wake selected another deployment or environment), no_ticket, admission (the budget or application-standards check refused; the ordinary path reports it), capacity.",
 	}, []string{"reason"})
 	for _, reason := range FrozenFastPathSkipReasons {
 		frozenFastPathSkipped.WithLabelValues(reason)
@@ -6219,7 +6219,7 @@ var (
 	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity", "fast", "fast_refused"}
 	// FrozenFastPathSkipReasons and FrozenThawTicketOutcomes are the closed
 	// label sets of the ADR-1740 fast path's series.
-	FrozenFastPathSkipReasons = []string{"deployment", "scope", "selection", "no_ticket", "capacity"}
+	FrozenFastPathSkipReasons = []string{"deployment", "scope", "selection", "no_ticket", "admission", "capacity"}
 	FrozenThawTicketOutcomes  = []string{"issued", "error", "mode", "not_selected", "operator_cold_boot",
 		"app_inactive", "managed_standards", "account", "organization", "shape", "config"}
 	// OwnerCacheOutcomes are schedd_owner_cache_total's closed label set

@@ -2361,6 +2361,7 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 		if err := e.checkFinancialBudgetAdmission(ctx, selected.app, selected.deployment.ID); err != nil {
 			return CoordOutcome{}, err
 		}
+		selected.admissionChecked = true
 	}
 	ctx = withWakeEnvironment(ctx, selected)
 	coordinatorKey := selected.coordinatorKey()

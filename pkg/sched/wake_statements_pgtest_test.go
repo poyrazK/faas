@@ -34,6 +34,11 @@ type statementTracer struct {
 	// pids is the backend that ran each statement, which tells one
 	// transaction's statements from concurrent ones.
 	pids []uint32
+	// latency, when set, delays each armed statement as a network round
+	// trip to the control plane would. Local statements take well under a
+	// millisecond, so without it concurrent ones may not overlap in time
+	// and the count of sequential round trips depends on scheduling.
+	latency time.Duration
 }
 
 type statementIndexKey struct{}
@@ -43,11 +48,13 @@ func (s *statementTracer) TraceQueryStart(ctx context.Context, conn *pgx.Conn, d
 		return ctx
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.names = append(s.names, statementName(data.SQL))
 	s.intervals = append(s.intervals, [2]time.Time{time.Now()})
 	s.pids = append(s.pids, conn.PgConn().PID())
-	return context.WithValue(ctx, statementIndexKey{}, len(s.intervals)-1)
+	index, latency := len(s.intervals)-1, s.latency
+	s.mu.Unlock()
+	time.Sleep(latency)
+	return context.WithValue(ctx, statementIndexKey{}, index)
 }
 
 func (s *statementTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryEndData) {
@@ -347,18 +354,19 @@ func TestPostgresTicketedThawStatements(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		wake func(ctx context.Context, e *Engine, appID string) (string, error)
-		// onlyThaw: the thaw is the only statement before the answer.
-		onlyThaw bool
 		// maxRoundTrips bounds the sequential round trips before the answer.
 		maxRoundTrips int
 	}{
-		{name: "wake", onlyThaw: true, maxRoundTrips: 1, wake: func(ctx context.Context, e *Engine, appID string) (string, error) {
+		// The scheduler's Wake RPC checks the budget and the standards rule
+		// before the resume, at once, then thaws.
+		{name: "wake", maxRoundTrips: 2, wake: func(ctx context.Context, e *Engine, appID string) (string, error) {
 			result, err := e.Wake(ctx, appID, "", "", "")
 			return result.InstanceID, err
 		}},
 		// EnsureWake takes its selection from the ticket (ADR-1740 amendment
-		// 2026-10-22): the app read and the budget check at once, then the
-		// thaw. It read ten rows one after another before.
+		// 2026-10-22): the app read, the budget check and the standards
+		// rule at once, then the thaw. It read ten rows one after another
+		// before.
 		{name: "coordinated wake", maxRoundTrips: 2, wake: func(ctx context.Context, e *Engine, appID string) (string, error) {
 			out, err := e.EnsureWake(ctx, appID, TriggerGateway)
 			if err != nil || out.Instance == nil {
@@ -369,6 +377,7 @@ func TestPostgresTicketedThawStatements(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pf := seedPostgresFrozen(t)
+			pf.tracer.latency = 5 * time.Millisecond
 			ctx := t.Context()
 			pf.e.EnableFrozenFastPath()
 			pf.e.issueThawTicket(ctx, pf.ins, frozenChargeMB(pf.ins.RAMMB, 150))
@@ -412,8 +421,8 @@ func TestPostgresTicketedThawStatements(t *testing.T) {
 			// The ticket carries the workload-retirement gate's verdict
 			// (ADR-1741): the thaw is one statement guarded by the app's
 			// runtime generation.
-			if got["ThawFrozenInstance"] != 1 || tc.onlyThaw && len(got) != 1 {
-				t.Fatalf("statements before the answer = %v, want ThawFrozenInstance once (and nothing else without a selection)", got)
+			if got["ThawFrozenInstance"] != 1 {
+				t.Fatalf("statements before the answer = %v, want ThawFrozenInstance once", got)
 			}
 			for _, name := range ordinary {
 				if got[name] != 0 {
