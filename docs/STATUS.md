@@ -1767,6 +1767,13 @@ remain open; production admission is disabled.
   deployment, merged onto the built image's HEALTHCHECK and enforced by the
   ADR-683/684 readiness gate and recovery. Unit and conformance tests pass; no
   native run.
+- **Compose build secrets.**
+  [ADR-20261022185329](adr/20261022185329-compose-build-secrets.md)
+  (2026-10-22): `build.secrets` naming `environment:` secrets mount the app's
+  secrets into Dockerfile builds. builderd passes only ciphertext; vmmd, the
+  `runtime` domain's reader, opens it into the builder VM; guest-init hands it
+  to buildctl and deletes it. Builds with secrets skip warm builders. Unit tests
+  pass; a native private-dependency build has not run.
 - **Compose process overrides on built services.**
   [ADR-20261022160000](adr/20261022160000-compose-process-on-built-services.md)
   (2026-10-22): a built service's `entrypoint` joins its start command, and

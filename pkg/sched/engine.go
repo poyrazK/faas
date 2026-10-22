@@ -1912,6 +1912,7 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	if !appFromCache {
 		ctx = withWakeApp(ctx, app)
 	}
+	ctx = withWakeStarted(ctx, wakeStarted)
 	// Wake preserves the legacy contract: a ledger refusal surfaces
 	// as *api.Problem{Code: CodePlanLimitConcur}. The ledger's
 	// capacity refusal happens INSIDE admitAndDispatch; we forward
@@ -2958,6 +2959,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 
 	// ── Phase 2: admit window, under appMu ──────────────────
 	release := e.lockApp(appID)
+	locked := time.Now()
 	var (
 		app    state.App
 		acct   state.Account
@@ -3474,6 +3476,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// ADR-1741: the admission insert binds the snapshot-recovery lineage in
 	// its own transaction; a store that cannot is bound separately below.
 	recovery := &state.SnapshotRecoveryAdmission{SnapshotID: snap.ID}
+	admitStarted := time.Now()
 	ins, placement, releaseRestorePressure, err = e.createWithNodePlacement(withPlacementPrefetch(ctx, placementAhead), placementRequest, haveSnap && snap.StorageKey != "", func(admitCtx context.Context, p Placement) (state.Instance, error) {
 		return e.store.CreateInstanceWithMode(state.WithSnapshotRecoveryAdmission(admitCtx, recovery), appID, dep.ID, string(initState), app.RAMMB, p.NodeID, wakeID, mode)
 	})
@@ -3494,6 +3497,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		}
 		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", applicationStandardRuntimeProblem(err))
 	}
+	admitted := time.Now()
 	if !recovery.Bound() {
 		if err := e.bindSnapshotRecovery(ctx, ins, snap.ID); err != nil {
 			_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
@@ -3847,6 +3851,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// stays consistent.
 	startedAt := time.Now().UTC()
 	bootInput := bootInput{
+		preRPC:    events.NewPreRPCTimings(wakeStartedFrom(ctx), wakeStarted, locked, admitStarted, admitted, startedAt),
 		insID:     ins.ID,
 		appID:     appID,
 		appType:   app.Type,
@@ -4045,6 +4050,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			QueuedCount:        bootInput.queuedCount,
 			ConcurrencyAtAdmit: bootInput.concurrencyAtAdmit,
 			AtCapacity:         bootInput.atCapacity, // PR-A — see bootInput.atCapacity doc
+			PreRPC:             bootInput.preRPC,
 		})
 	}
 	// ADR-097 (P1B): capture the schedd-side wake-phase boundaries.
@@ -4434,6 +4440,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 				exemplar,
 			)
 		}
+		e.observePreRPCPhases(bootInput.appID, exemplar, bootInput.preRPC)
 	}
 
 	// issue #517 / PR-C / ADR-064 — emit wake.boot_completed. The
@@ -4579,6 +4586,10 @@ type bootInput struct {
 	// §6.1 anchor uses instances.started_at separately, so this
 	// drift is bounded by 1 row read.
 	startedAt time.Time
+	// preRPC splits schedd's work from the wake's start to startedAt; it
+	// rides wake.boot_started and the pre-RPC phases of
+	// schedd_wake_rpc_duration_seconds.
+	preRPC events.PreRPCTimings
 
 	// ADR-123: trigger / queued_count / concurrency_at_admit
 	// snapshot at admit time. Captured at bootInput construction

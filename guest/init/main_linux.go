@@ -1237,6 +1237,14 @@ func runBuildOnce(m api.BuildManifest) error {
 		}
 	}
 
+	secretEnv, secretErr := buildSecretEnv(m)
+	if secretErr != nil {
+		if restoreRailpackConfig != nil {
+			_ = restoreRailpackConfig()
+		}
+		return finish(secretErr, "")
+	}
+
 	// 3. Pick the build command.
 	argv := buildArgv(m)
 
@@ -1266,13 +1274,13 @@ func runBuildOnce(m api.BuildManifest) error {
 	// contract through the patched buildctl client. Five minutes is still a
 	// bounded liveness check and the build wall-clock timeout remains the outer
 	// safety limit.
-	cmd.Env = builderEnv(
+	cmd.Env = append(builderEnv(
 		"USER=root",
 		"HOME=/root",
 		"TMPDIR=/tmp",
 		"BUILDKIT_HOST=unix:///run/buildkit/buildkitd.sock",
 		"BUILDKIT_SESSION_HEALTH_TIMEOUT_MS=300000",
-	)
+	), secretEnv...)
 	var buf bytes.Buffer
 	cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
@@ -1788,6 +1796,13 @@ func buildArgv(m api.BuildManifest) []string {
 		for _, key := range m.DockerfileBuild.ArgNames() {
 			if _, reviewed := m.PublicBuildURLs[key]; !reviewed {
 				argv = append(argv, "--opt", "build-arg:"+key+"="+m.DockerfileBuild.Args[key])
+			}
+		}
+		// Build secrets (ADR-20261022185329): buildctl reads each value from
+		// its own environment, set by runBuildOnce; argv carries names only.
+		if m.DockerfileBuild != nil {
+			for i, secret := range m.DockerfileBuild.Secrets {
+				argv = append(argv, "--secret", "id="+secret.ID+",env="+buildSecretEnvName(i))
 			}
 		}
 		for _, key := range publicBuildURLKeys(m.PublicBuildURLs) {
