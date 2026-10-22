@@ -65,9 +65,10 @@ whose plan prices are pinned to an older revision.
 | `billing:read` — View billing | Usage totals, statements and credit notes |
 | `plans:manage` — Manage plan | Compare and confirm offered workspace plan changes; read their receipts/history |
 | `team:manage` — Manage team | Read the workspace team and reviewed team history; invite, revoke, change or remove explicitly delegated roles |
+| `billing:manage` — Manage billing details | Read and change the billing address and business the workspace is invoiced at, kept in your Paddle |
 
-With no explicit policy, owners and admins have work and billing permissions and members can
-only view work. **This narrows the earlier internal behavior where all members
+With no explicit policy, owners and admins have work and billing permissions, owners can
+also manage billing details, and members can only view work. **This narrows the earlier internal behavior where all members
 could run paid features and read billing.** Review role access before enabling
 an existing internal deployment. Custom roles are denied until granted. An
 explicit policy replaces the complete map, including owner/admin grants;
@@ -276,8 +277,10 @@ reviews feature inclusion, per-success prices, monthly allowances, used starts
 and remaining starts, then explicitly confirms. Changes apply immediately to
 future starts. Already accepted runs keep their admitted price. Consumed starts
 carry across plans and catalog revisions within the UTC month; a downgrade below
-that count leaves zero starts available. There is no subscription fee, proration,
-payment collection or scheduled downgrade in this release.
+that count leaves zero starts available. A plan's monthly fee follows the
+[monthly fee](#monthly-plan-fees) rule: the month owes the highest fee among the
+plans held in it, so a downgrade lowers the fee from the next month, and the
+review says so. There is no scheduled downgrade.
 
 A review binds the current assignment, both sets of terms, latest catalog head,
 UTC month and relevant consumed starts. Confirmation rechecks these with current
@@ -581,7 +584,8 @@ Use **Preview plan change** to compare prices, access and monthly caps, then
 confirm. Existing Auth organization links are preserved automatically. First
 assignments can supply an organization UUID. Terms change immediately for future
 admissions; starts already used do not reset and accepted runs keep their original
-terms. No subscription proration occurs. An intervening assignment, identity,
+terms. The review shows the plans' monthly fees; the month owes the higher one
+(see [monthly plan fees](#monthly-plan-fees)). An intervening assignment, identity,
 catalog or UTC-month change requires a new preview. Confirmation IDs and
 before/after receipts are durable: retry the same confirmation after a lost
 response; an older retry cannot reapply itself over a newer change. Expired or
@@ -650,6 +654,114 @@ For an intentionally fixed binding, use `init --definition DEFINITION_UUID`.
 Fixed bindings keep the original contract; publish and explicitly assign a new
 catalog before retiring their code. Catalog references alone do not extend
 deployment retention.
+
+### Included starts and overage
+
+A grant can include starts at no charge before its unit price applies
+([ADR-20261021154511](../adr/20261021154511-product-control-plan-fees-and-overage.md)):
+
+```json
+"export": {"included_starts": 100, "unit_price_millicents": 20000, "monthly_starts": 1000}
+```
+
+- **Pricing.** The first 100 starts of the UTC month cost nothing. Starts 101 to
+  1,000 cost €0.20 per verified success. The 1,001st start is refused, as any
+  start beyond `monthly_starts` is. `included_starts` ranges from 0 (the
+  default, today's pricing) to `monthly_starts`.
+- **What counts.** Every admitted start counts, whether it succeeds, fails or is
+  cancelled, across plans and catalog revisions in the month. A customer who
+  moves to a plan with more included starts keeps the starts already used.
+- **Price at admission.** Each run records its own price: 0 for an included start,
+  the unit price otherwise. Statements show included runs as their own line at
+  price 0, which invoices describe as "… included at no charge". A statement that
+  charges nothing is not exported.
+- **Confirmation.** The portal shows the included runs left, then the price. Its
+  quote binds the next start's price, so if another start uses the last included
+  one first, the confirmation fails with 409 `product_quote_changed` and shows
+  the new price. `gregale product quote` returns `included_starts` and
+  `next_start_price_millicents`.
+- **Release gate.** Publishing a catalog with included starts needs the
+  operator's `product_control_plan_pricing_enabled` runtime setting. Without it
+  the publication is refused with 409 `product_plan_pricing_unavailable`. Enable
+  the setting only once every apid replica runs this release, because an earlier
+  apid would charge included starts at the full price. Guided setup edits starts
+  and prices and keeps included starts set through the API.
+
+### Monthly plan fees
+
+A plan can charge a monthly fee besides its run prices
+([ADR-20261021154511](../adr/20261021154511-product-control-plan-fees-and-overage.md)):
+
+```json
+"pro": {"label": "Pro", "monthly_fee_millicents": 2900000, "features": {"export": {"included_starts": 100, "unit_price_millicents": 20000, "monthly_starts": 1000}}}
+```
+
+- **Which fee.** Each UTC month owes, once, the highest monthly fee among the
+  plans (catalog revision and plan) the customer held in it. A customer who
+  upgrades on the 20th owes the higher fee for the month. One who downgrades owes
+  the lower fee from the next month, and the plan-change reviews say so.
+- **First month.** In the month of a customer's first assignment, the fee is
+  prorated by the minute from the assignment to the month's end, rounded half up
+  to the millicent. Included starts are not prorated; cap a late joiner with
+  `monthly_starts`.
+- **Suspension** does not stop the fee. To stop charging, move the customer to a
+  plan without one.
+- **Plan history.** Every assignment change (owner assignment, reviewed owner
+  change, self-service change, onboarding) is recorded with its time. A month's
+  plans are the one in force when it starts and those assigned during it.
+- **Statements.** The review's `fees` names the plan, revision, monthly fee, the
+  amount and `prorated_from`, and `amount_millicents` includes it. A customer
+  whose month owes a fee gets a statement without runs, and billing runs bill
+  such customers too. The invoice item reads "Monthly fee for plan pro", with
+  ", prorated from 2026-10-21" when partial.
+- **Credits.** Credit notes still credit runs only. Refund a fee in your billing
+  provider.
+- **Release gate.** Plan fees need the same `product_control_plan_pricing_enabled`
+  setting as included starts, because an earlier apid would finalize statements
+  without them.
+### Free trials
+
+A plan can offer a free trial
+([ADR-20261021195901](../adr/20261021195901-product-control-free-trials.md)):
+
+```json
+"pro": {"label": "Pro", "monthly_fee_millicents": 2900000, "trial_days": 14, "features": {"export": {"included_starts": 100, "unit_price_millicents": 20000, "monthly_starts": 1000}}}
+```
+
+- **Starting.** A customer's first assignment to a plan with `trial_days` starts
+  their trial, if they never had one in the app, by any assignment path: owner
+  assignment, reviewed change, self-service change or onboarding. It lasts the
+  plan's days from the assignment. A customer gets one trial per app. Changing
+  plans keeps its end, and a customer whose trial has ended starts no other.
+- **Runs.** Starts during the trial cost nothing and are marked `trial` in their
+  admission evidence. They count toward `monthly_starts`, which still limits the
+  trial, but not toward `included_starts`, so the plan's included starts are
+  counted afresh when the trial ends. Usage shows `trial_starts` per feature. A
+  confirmation made during the trial goes stale (409 `product_quote_changed`) once
+  the start price it bound changes.
+- **Fees.** A month's fee covers only its minutes outside the trial, from the
+  customer's first assignment. It is the highest fee among the plans held in those
+  minutes, prorated by their share of the month. A month wholly inside the trial
+  owes nothing. The review's fee names the trial it excludes, and the invoice item
+  reads "…, excluding the free trial from 2026-11-01 to 2026-11-04".
+- **Owner control.** `PUT /v1/apps/{slug}/product/customers/{tenant}/trial` with
+  `{"ends_at": "…"}` moves a running trial's end, no earlier than the next UTC
+  minute and no more than 90 days after it started. `DELETE` ends it at the next
+  minute. A customer without a running trial is refused with 409
+  `product_trial_unavailable`. Changes are audited as
+  `product.customer.trial_changed`.
+
+  ```sh
+  gregale product customers trial --app exports --tenant TENANT_UUID --ends-at 2026-11-30T00:00:00Z
+  gregale product customers trial --app exports --tenant TENANT_UUID --end
+  ```
+- **Where it shows.** Customers and `gregale product quote` show `trial_starts_at`
+  and `trial_ends_at`. The portal says runs are free until the trial ends, and its
+  plan comparison names a plan's trial. The owner's plan review shows the trial a
+  change keeps or starts.
+- **Release gate.** `trial_days` and the trial routes need the
+  `product_control_plan_pricing_enabled` setting, because an earlier apid would
+  charge the trial's runs and fee.
 
 ## Deployment bindings
 
@@ -1319,6 +1431,191 @@ provider's idempotency. External rounding remains the invoicer's responsibility.
 Do not export existing request rate-card statements as a second charge for the
 same product work; these ledgers are independent and are never automatically added.
 
+### Export a statement to your own billing provider
+
+Instead of a manual handoff, a finalized statement can be invoiced in the
+account's own Stripe, Paddle or Lago
+([ADR-20261018212918](../adr/20261018212918-product-control-payment-collection.md)).
+Connect the provider once with `PUT /v1/account/billing-connections/{provider}`;
+its collection mode and Stripe automatic tax apply as for other statement exports
+([ADR-1311](../adr/1311-statement-invoice-collection.md),
+[ADR-1313](../adr/1313-stripe-automatic-tax-on-exports.md)).
+
+```sh
+gregale product statements export --app exports --tenant TENANT_UUID --period 2026-09 \
+  --document STATEMENT_UUID --provider paddle [--customer ctm_01...]
+gregale product statements export-status --app exports --tenant TENANT_UUID --period 2026-09 \
+  --document STATEMENT_UUID --json
+```
+
+The owner API is `POST /v1/apps/{slug}/product/billing/documents/{document}/invoice?period=YYYY-MM`
+with `{"tenant_id","provider","customer"}` and the matching `GET` with `tenant_id`.
+
+- The customer defaults to the tenant's external reference when it is one of
+  the provider's customer IDs (`cus_…`, `ctm_…` or a Lago external customer ID);
+  otherwise pass `--customer`.
+- Each invoice line is one feature and plan at one admitted price: charged
+  successes times that price, rounded to the cent with a rounding item where
+  needed. Failed, cancelled, waived and unresolved runs are never invoiced.
+- The provider invoice ID becomes the statement's handoff. A statement is
+  either handed off by hand or exported, never both: a manual handoff blocks
+  export, and once an export starts a manual handoff returns 409
+  `product_billing_exported`, through the API and the console.
+- A retry with the same provider resumes the same invoice; another provider
+  conflicts. The export row exists before any provider call, so a lost
+  response never creates a second invoice.
+- Credit notes are not exported. Record them with `statements handoff` after
+  issuing the credit in the provider. Paddle and Lago reject negative documents.
+- `export-status` and `GET /v1/account/statement-invoices` show the provider's
+  payment status, amount remaining, due date and hosted invoice link, synced by
+  the existing payment-status worker
+  ([ADR-1504](../adr/1504-statement-invoice-payment-status.md)).
+
+Gregale still does not collect money, calculate tax or act as merchant of record;
+the owner's provider does. Stripe and Lago can collect when the connection's
+collection mode asks them to. Paddle exports stay drafts unless the Paddle
+connection uses collection `send`
+([ADR-20261019100333](../adr/20261019100333-paddle-send-collection.md)), which
+bills them once the customer has a billing address.
+
+#### Customer billing details
+
+A Paddle customer can be billed only with an address; without one, a `send`
+export fails with 422 "Paddle customer has no address" and keeps the draft
+([ADR-20261020120000](../adr/20261020120000-product-control-customer-billing-details.md)).
+Connect Paddle with `gregale account billing-connection connect paddle --collection send`
+and let customers enter their own details: the portal's **Billing details**
+section, for roles with `billing:manage` (the workspace owner by default), reads
+and saves the workspace's address (country, postal code, region, city, two lines)
+and, optionally, its business name and tax identifier. The routes are
+`GET`/`PUT /v1/product-control/customer/{slug}/billing-details`.
+
+- **Kept in Paddle only.** The details are written to the Paddle customer named by
+  the customer's platform tenant external reference (`ctm_…`). Gregale stores none
+  of them; the audit event `product.customer.billing_details_updated` names the
+  changed parts (`address`, `business`) and never their values.
+- **Unavailable** (409 `product_billing_details_unavailable`) when the account has
+  no Paddle connection, the tenant's external reference is not a Paddle customer ID,
+  or the Paddle key cannot manage customer addresses.
+- **Billing.** With collection `send`, the next export, or a retry of one that
+  failed for lack of an address, bills the transaction with the customer's newest
+  active address and business, the ones the portal edits, so Paddle issues the
+  invoice with the connection's payment terms. Paddle orders them only by ID, so
+  "newest" means created last, not edited last. A billed invoice cannot be changed in Paddle, so finalize statements only
+  after review.
+- Leaving the business name empty keeps the current business.
+
+#### Payment status on statements
+
+Each statement in `GET /v1/apps/{slug}/product/billing/documents` (and so
+`statements list --json`) carries an `invoice` object once its export starts:
+`provider`, `invoice_id`, `dashboard_url`, `export_status`, `payment_status`,
+`overdue`, `currency`, `amount_minor`, `amount_remaining_minor`, `due_at`,
+`paid_at` and `hosted_invoice_url`. Amounts are in the currency's minor unit
+(cents). `overdue` has the ADR-1504 meaning: open, past `due_at`, with an amount
+remaining. Credit notes and statements handed off by hand have no `invoice`.
+
+The owner console shows each exported statement's invoice in place of the
+handoff form, for example
+`Invoiced in Stripe as in_… · overdue · due 2026-11-01 · EUR 12.50 remaining`,
+with links to the provider dashboard and the customer's hosted invoice. An
+export that has not finished says so; rerun `statements export` with the same
+provider to resume the same invoice.
+
+Customers see a reduced `invoice` on completed exports only, through
+`statements list --self`, `GET /v1/platform-tenant-self/product/billing` and the
+portal's **Statements and credits** section: payment status, overdue, amounts,
+dates and the hosted invoice link. They never see the provider, invoice ID,
+provider customer ID, dashboard link or an unfinished export. The hosted link is
+kept only when the provider returned a plain `https` URL without credentials;
+the portal labels it **View and pay invoice** while the invoice is open. Gregale
+never renders a payment form.
+
+#### Overdue holds
+
+An app can refuse new starts from customers who have not paid an exported
+statement, mirroring API monetization's consumer holds
+([ADR-1315](../adr/1315-block-consumers-with-overdue-invoices.md)). The policy is
+off until the owner sets it, and it lives outside the immutable catalog.
+
+```sh
+gregale product billing overdue-policy set --app exports --block-overdue-after-days 14
+gregale product billing overdue-policy inspect --app exports --json
+gregale product billing overdue-policy clear --app exports
+```
+
+The owner API is `GET/PUT/DELETE /v1/apps/{slug}/product/billing/overdue-policy`
+with `{"block_overdue_after_days": 0..365}` (`0` holds as soon as an invoice is
+past due) and `GET /v1/apps/{slug}/product/billing/overdue-holds`.
+
+- **What counts.** A Product Control statement exported to Stripe, Paddle or Lago
+  whose payment status is `open` or `uncollectible`, with an amount remaining and
+  a due date at least the policy's days ago. Drafts have no due date and never
+  count; neither do paid, void or deleted invoices. Credit notes are not exported.
+- **Holds.** Every 5 minutes each apid replica tries to recompute one hold per
+  customer, naming its oldest qualifying statement; an advisory lock lets one
+  replica do it at a time. Placing and lifting are audited as
+  `product.customer.overdue_blocked` and `product.customer.overdue_unblocked`;
+  policy changes as `product.billing.overdue_policy_updated` and
+  `product.billing.overdue_policy_deleted`. A held invoice's payment status is
+  read at least every 15 minutes (ADR-1504).
+- **Enforcement.** Operations admission refuses a held customer's new start with
+  402 `product_invoice_overdue`, naming the invoice's due date and the provider's
+  hosted page. No start is consumed. A retry of work that was never admitted is
+  checked again; work already admitted keeps running and settling, and usage,
+  results and billing stay readable.
+- **Release.** A hold stops applying as soon as its invoice syncs as paid, void or
+  deleted, and the next recomputation removes it. Clearing the policy lifts every
+  hold at once. A customer with another overdue statement stays held by that one.
+- **Separate from suspension.** A hold is not the owner's `suspended` flag. Both
+  are shown separately, and lifting one never lifts the other.
+- **Where it shows.** The owner console lists the policy and held customers, and a
+  held customer's page shows a **Payment hold** row. Change the policy with the
+  CLI or API; the console does not edit it. The customer portal explains the
+  hold with the due date and a **View and pay invoice** link, disables new runs,
+  and its usage guidance marks features `invoice_overdue`.
+- **Rollback.** With `FAAS_PRODUCT_CONTROL_ENABLED` off, holds are not
+  recomputed or enforced, because no new Product Control starts are admitted.
+
+### Bill every customer in a billing run
+
+Instead of reviewing, finalizing and exporting each customer by hand, an
+account's month-end billing run
+([ADR-1503](../adr/1503-month-end-billing-runs.md)) can do it for every Product
+Control customer with the `product_customers` source:
+
+```sh
+gregale account billing-run start --month 2026-09 --sources product_customers --export stripe --wait
+gregale account billing-run show RUN_ID --outcome held
+gregale account billing-run schedule-set --sources app_consumers,platform_tenants,product_customers --export stripe
+```
+
+The source is accepted only while Product Control is enabled. It is never added
+by default, so existing runs and schedules keep billing what they did.
+
+- **Customers.** One item per app and assigned customer with receipts in the
+  month, for apps with a published catalog. A tenant that is a customer of two
+  apps gets two items. Items report `source_kind: product_control`, the app in
+  `app_id`, the customer in `platform_tenant_id` and the statement document in
+  `statement_id`.
+- **Steps.** The run reviews the month. It holds the customer when the month is
+  open (`product_billing_period_open`) or has runs with no recorded outcome
+  (`product_billing_unresolved`); waive or reconcile them, then start another run
+  for the month. Otherwise it finalizes with the review's hash (`--no-finalize`
+  only reviews, reported as `drafted`) and, with `--export`, exports the
+  statement like `statements export`. If the receipts change between the review
+  and finalizing, the item is retried.
+- **Already billed.** A statement that was already exported, or whose run is
+  re-done after the month was finalized, is `up_to_date`. A statement handed off
+  by hand is `skipped`. A zero total is never exported.
+- **Audit.** Finalizing and exporting emit the same `product.billing.finalized`
+  and `product.billing.invoice_exported` events as the endpoints.
+- **Rollback.** With Product Control disabled, pending Product Control items are
+  `held`; start another run for the month after enabling it. A previous apid
+  release ignores Product Control items. If one completes a run during a rolling
+  deploy before its Product Control items are billed, start another run for the
+  month.
+
 The customer portal's **Statements and credits** section reads a selected month
 and explicitly pages through finalized documents. It shows provisional charges
 when the month has not closed or been finalized, and separates finalized charges
@@ -1332,6 +1629,15 @@ reasons and 255-byte external references. Finalized data survives flag rollback;
 existing admitted operations continue recording terminal proof while the flag
 is off. See [ADR-1704](../adr/1704-product-control-billing-lifecycle.md).
 
+Billing records outlive their app
+([ADR-20261020090607](../adr/20261020090607-product-control-billing-records-survive-app-purge.md)).
+When an app is purged 7 days after `gregale apps rm`, its receipts, waivers,
+statements, credit notes, invoice handoffs and catalog revisions are kept; its
+catalog head, customer assignments and other configuration are removed. Kept
+records are no longer served through the app's routes, and a new app that
+reuses the slug never sees them. They are erased with the account's final
+deletion. Restore an app within the 7 days to keep using its billing routes.
+
 ## Internal API
 
 All reads/work mutations are authenticated. The gated login and refresh endpoints
@@ -1343,12 +1649,14 @@ MFA and verified-email policy. Tenant identity always comes from the credential.
 | --- | --- |
 | `GET /v1/apps/{slug}/product/billing/review` | Live or frozen review; tenant_id and period selectors |
 | `GET /v1/apps/{slug}/product/billing/receipts` | Retained commercial evidence with cursor |
-| `GET /v1/apps/{slug}/product/billing/documents` | Finalized statements and credit notes with cursor |
+| `GET /v1/apps/{slug}/product/billing/documents` | Finalized statements and credit notes with cursor, each exported statement with its invoice and payment status |
 | `POST /v1/apps/{slug}/product/billing/statements/finalize` | Confirm a reviewed, resolved, closed month |
 | `POST /v1/apps/{slug}/product/billing/receipts/{operation}/waive` | Permanently waive an unresolved charge |
 | `POST /v1/apps/{slug}/product/billing/credits` | Idempotent credit note for a finalized receipt |
 | `GET/POST /v1/apps/{slug}/product/billing/documents/{document}/handoff` | Recover or record the immutable invoice reference |
-| `GET /v1/platform-tenant-self/product/billing` | Authenticated tenant's selected month and documents |
+| `GET/PUT/DELETE /v1/apps/{slug}/product/billing/overdue-policy` | Read, set `{block_overdue_after_days}` or clear the overdue policy; clearing lifts every hold |
+| `GET /v1/apps/{slug}/product/billing/overdue-holds` | Customers whose new starts are refused for an overdue invoice |
+| `GET /v1/platform-tenant-self/product/billing` | Authenticated tenant's selected month and documents, with completed invoices' payment status and hosted link |
 | `GET /v1/product-control/customer/{slug}/billing` | Cookie-authenticated workspace billing |
 | `GET /v1/apps/{slug}/product` | Current catalog; optional `revision` |
 | `PUT /v1/apps/{slug}/product` | Publish catalog spec |
@@ -1501,6 +1809,45 @@ private commercial projections, scoped receipts, owner policy CAS, Origin/CSRF
 and the default-off routes. Browser contracts cover explicit comparisons,
 storage failure, cross-tab references, response loss, read-only reload recovery,
 history and logout/permission fencing. These checks do not qualify a real host.
+
+### Provider qualification
+
+The payment tests above use recorded fakes of Stripe, Paddle and Lago.
+`make product-control-provider-qualification` runs the owner flow
+(ADR-20261018212918) against each provider's real API through apid's routes and
+clients, for every provider whose test credentials are set; with none set it
+skips. Each provider gets a fresh customer and one finalized EUR 12.50 statement:
+
+1. The billing connection accepts the test key (`send` collection, 14 days, for
+   Stripe and Paddle; Lago without collection).
+2. Paddle only: the export without an address is refused with 422 and keeps the
+   draft. Billing details are written, read back field for field, skipped when
+   unchanged and updated with a cleared line. A second address created in Paddle
+   becomes the newest active one (ADR-20261020120000 amendment 1).
+3. The export completes, and repeating it returns the same invoice. Paddle's
+   transaction is `billed` with the newest address and the business.
+4. The payment sync reads it as open with EUR 12.50 remaining, a due date and,
+   for Stripe and Paddle, an https page to pay it. The owner's statement shows
+   the same.
+5. An overdue policy of 0 days holds the customer once the payment sync and hold
+   workers run past the provider's real due date. Their clocks are moved; the
+   provider is not.
+6. The invoice is settled in the provider: paid out of band in Stripe, cancelled
+   in Paddle (a sandbox invoice is paid only through checkout) and marked paid in
+   Lago. The sync reads `paid` or `void`, and the hold lifts.
+
+| Variable | Value |
+| --- | --- |
+| `FAAS_QUALIFY_STRIPE_TEST_KEY` | A Stripe test-mode secret or restricted key (`sk_test_…`, `rk_test_…`) |
+| `FAAS_QUALIFY_PADDLE_SANDBOX_KEY` | A Paddle sandbox API key (`pdl_sdbx_apikey_…`) with customer, address, business and transaction access |
+| `FAAS_QUALIFY_LAGO_KEY`, `FAAS_QUALIFY_LAGO_URL`, `FAAS_QUALIFY_LAGO_TEST_ORG=1` | Lago has no test mode: the key and public API URL of a Lago organization kept for tests, and the acknowledgement that it is one |
+| `FAAS_QUALIFY_EVIDENCE_DIR` | Optional: writes `product-control-<provider>.json` with the customer, invoice, links, due date and passed checks, never a key |
+
+Live keys are refused. Paddle gives a transaction a payment page only when the
+sandbox has a default payment link (Checkout settings); without one, step 4
+fails, as customers could not pay. Lago's URL goes through apid's egress guard,
+so a Lago on a private address is refused. Every run leaves its customer and its
+paid or cancelled invoice in the provider.
 
 
 ### Unsubscribing from notification email

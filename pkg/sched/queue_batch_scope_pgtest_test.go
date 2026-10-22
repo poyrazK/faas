@@ -1,5 +1,5 @@
 // adr: 568 — environment intent and runtime ownership contracts.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -61,13 +62,13 @@ func TestQueueBatchDispatchPreservesCapturedScopes(t *testing.T) {
 	seen := map[string]string{}
 	var seenMu sync.Mutex
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var envelope triggerDispatchRequest
+		var envelope sched.TriggerDispatchRequest
 		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
 			t.Errorf("batch decode: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		results := make([]triggerDispatchResult, 0, len(envelope.Records))
+		results := make([]sched.TriggerDispatchResult, 0, len(envelope.Records))
 		for _, record := range envelope.Records {
 			want, ok := rows[record.InvocationID]
 			if !ok || record.InvocationID != record.ItemIdentifier || record.InvocationAttempt != 1 {
@@ -82,7 +83,7 @@ func TestQueueBatchDispatchPreservesCapturedScopes(t *testing.T) {
 			}
 			inv, err := state.AdmitPlatformTenantInvocation(r.Context(), store, envelope.AppID,
 				state.Invocation{ID: record.InvocationID, AppID: envelope.AppID, Attempts: record.InvocationAttempt,
-					Source: state.InvocationSource(envelope.Source), Headers: marshalJSON(record.Headers), Payload: payload})
+					Source: state.InvocationSource(envelope.Source), Headers: sched.MarshalJSON(record.Headers), Payload: payload})
 			if err != nil {
 				t.Errorf("durable batch admission: %v", err)
 				w.WriteHeader(http.StatusBadRequest)
@@ -97,20 +98,20 @@ func TestQueueBatchDispatchPreservesCapturedScopes(t *testing.T) {
 			seenMu.Lock()
 			seen[inv.ID] = version.Scope
 			seenMu.Unlock()
-			results = append(results, triggerDispatchResult{ItemIdentifier: record.ItemIdentifier, Status: "succeeded"})
+			results = append(results, sched.TriggerDispatchResult{ItemIdentifier: record.ItemIdentifier, Status: "succeeded"})
 		}
-		_ = json.NewEncoder(w).Encode(triggerDispatchResponse{Results: results})
+		_ = json.NewEncoder(w).Encode(sched.TriggerDispatchResponse{Results: results})
 	}))
 	defer gateway.Close()
-	loop := makeLoopForDLQ()
-	loop.pool = pool
+	loop := sched.MakeLoopForDLQ()
+	(*loop.Pool()) = pool
 	t.Cleanup(func() {
-		for _, poller := range loop.triggerPollers {
+		for _, poller := range *loop.TriggerPollers() {
 			_ = poller.Close()
 		}
 	})
-	loop.gatewayHTTPClient, loop.gatewayBaseURL = gateway.Client(), gateway.URL
-	if err := loop.dispatchOneTrigger(ctx, trigger, store, func(string) api.Plan { return api.PlanPro }); err != nil {
+	(*loop.GatewayHTTPClient()), (*loop.GatewayBaseURL()) = gateway.Client(), gateway.URL
+	if err := loop.DispatchOneTrigger(ctx, trigger, store, func(string) api.Plan { return api.PlanPro }); err != nil {
 		t.Fatal(err)
 	}
 	seenMu.Lock()

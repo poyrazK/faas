@@ -78,6 +78,15 @@ func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile
 	if a.MCPTaskMigrationOverride {
 		_ = w.WriteField("mcp_task_migration_override", "true")
 	}
+	if a.OverrideFreeze != "" {
+		_ = w.WriteField("override_freeze", a.OverrideFreeze)
+	}
+	if a.ReleaseAt != "" {
+		_ = w.WriteField("release_at", a.ReleaseAt)
+	}
+	for _, channel := range a.ReleaseNotify {
+		_ = w.WriteField("release_notify", channel)
+	}
 	if a.Healthcheck != nil {
 		if raw, err := json.Marshal(a.Healthcheck); err == nil {
 			_ = w.WriteField("healthcheck", string(raw))
@@ -166,6 +175,11 @@ type DeployAnnotations struct {
 	RollbackOn5xx            *bool
 	DisableStartupCPUBoost   *bool
 	Healthcheck              *DeploymentHealthcheck
+	// OverrideFreeze is CreateDeploymentRequest.OverrideFreeze.
+	OverrideFreeze string
+	// ReleaseAt and ReleaseNotify are CreateDeploymentRequest's.
+	ReleaseAt     string
+	ReleaseNotify []string
 	// OverrideEnv applies non-secret environment values to this deployment
 	// revision only on multipart source/developer-source transports. The
 	// source-ref JSON request has a separate, explicit shape. Use the sealed

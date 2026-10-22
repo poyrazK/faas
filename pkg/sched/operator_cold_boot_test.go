@@ -34,6 +34,19 @@ func (s *coldBootPersistenceStore) ExecuteOperatorColdBoot(ctx context.Context, 
 	return r, err
 }
 
+// CreateInstanceWithMode lands the operator cold boot between the wake's
+// snapshot selection and its binding, which the admission insert makes
+// (ADR-1741): invalidateAtBind fires on the first restore admission.
+func (s *coldBootPersistenceStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentID, current string, ramMB int, nodeID, wakeID, mode string) (state.Instance, error) {
+	if s.invalidateAtBind && current == string(state.StateWaking) {
+		s.invalidateAtBind = false
+		if _, err := s.MemStore.InvalidateSnapshotRecovery(ctx, deploymentID); err != nil {
+			return state.Instance{}, err
+		}
+	}
+	return s.MemStore.CreateInstanceWithMode(ctx, appID, deploymentID, current, ramMB, nodeID, wakeID, mode)
+}
+
 func (s *coldBootPersistenceStore) BindInstanceSnapshotRecovery(ctx context.Context, id, wake, snapshot string) error {
 	if s.invalidateAtBind && snapshot != "" {
 		s.invalidateAtBind = false

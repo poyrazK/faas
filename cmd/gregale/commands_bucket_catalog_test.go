@@ -1,5 +1,5 @@
 // adr: 151
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -31,9 +32,11 @@ func (f *fakeBucketCatalog) DeleteObjectBucket(_ context.Context, app, bucket st
 func captureBucketCLI(t *testing.T, json bool) (*bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	previousOut, previousErr, previousJSON := osStdout, osStderr, jsonOutput
-	osStdout, osStderr, jsonOutput = &stdout, &stderr, json
-	t.Cleanup(func() { osStdout, osStderr, jsonOutput = previousOut, previousErr, previousJSON })
+	previousOut, previousErr, previousJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &stdout, &stderr, json
+	t.Cleanup(func() {
+		(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = previousOut, previousErr, previousJSON
+	})
 	return &stdout, &stderr
 }
 
@@ -45,7 +48,7 @@ func TestBucketListShowsIDs(t *testing.T) {
 		{ID: "c25a9f1d-f9a6-4b06-b60f-bbc8018bb2df", Name: "uploads", Scope: "default", Region: "us-east-1", State: "ready"},
 		{ID: "b5446ca5-a8d0-4896-91fe-91e0ca6520bd", Name: "assets", Scope: "default", Region: "us-east-1", State: "ready", Public: true, ServeAt: "/assets"},
 	}}}
-	if code := runBucketList(context.Background(), client, "my-api"); code != 0 {
+	if code := main.RunBucketList(context.Background(), client, "my-api"); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	out := stdout.String()
@@ -61,7 +64,7 @@ func TestBucketListShowsIDs(t *testing.T) {
 
 func TestBucketListEmptyAndDisabled(t *testing.T) {
 	stdout, _ := captureBucketCLI(t, false)
-	if code := runBucketList(context.Background(), &fakeBucketCatalog{}, "my-api"); code != 0 {
+	if code := main.RunBucketList(context.Background(), &fakeBucketCatalog{}, "my-api"); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	if out := stdout.String(); !strings.Contains(out, "No object-storage buckets for my-api.") || !strings.Contains(out, "not enabled on this installation") {
@@ -72,7 +75,7 @@ func TestBucketListEmptyAndDisabled(t *testing.T) {
 func TestBucketListJSON(t *testing.T) {
 	stdout, _ := captureBucketCLI(t, true)
 	client := &fakeBucketCatalog{list: api.ObjectBucketList{Enabled: true, Items: []api.ObjectBucket{{ID: "c25a9f1d-f9a6-4b06-b60f-bbc8018bb2df", Name: "uploads"}}}}
-	if code := runBucketList(context.Background(), client, "my-api"); code != 0 {
+	if code := main.RunBucketList(context.Background(), client, "my-api"); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	if !strings.Contains(stdout.String(), `"id": "c25a9f1d-f9a6-4b06-b60f-bbc8018bb2df"`) {
@@ -83,7 +86,7 @@ func TestBucketListJSON(t *testing.T) {
 func TestBucketDeleteCallsAPI(t *testing.T) {
 	stdout, _ := captureBucketCLI(t, false)
 	client := &fakeBucketCatalog{}
-	if code := runBucketDelete(context.Background(), client, "my-api", "c25a9f1d-f9a6-4b06-b60f-bbc8018bb2df"); code != 0 {
+	if code := main.RunBucketDelete(context.Background(), client, "my-api", "c25a9f1d-f9a6-4b06-b60f-bbc8018bb2df"); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	if client.deletedApp != "my-api" || client.deletedID != "c25a9f1d-f9a6-4b06-b60f-bbc8018bb2df" {
@@ -97,7 +100,7 @@ func TestBucketDeleteCallsAPI(t *testing.T) {
 func TestBucketDeleteReportsAPIError(t *testing.T) {
 	captureBucketCLI(t, false)
 	client := &fakeBucketCatalog{deleteErr: errors.New("bucket_not_empty")}
-	if code := runBucketDelete(context.Background(), client, "my-api", "c25a9f1d-f9a6-4b06-b60f-bbc8018bb2df"); code == 0 {
+	if code := main.RunBucketDelete(context.Background(), client, "my-api", "c25a9f1d-f9a6-4b06-b60f-bbc8018bb2df"); code == 0 {
 		t.Fatal("delete error exited 0")
 	}
 }
@@ -106,7 +109,7 @@ func TestBucketDeleteRejectsBadArgumentsBeforeRequest(t *testing.T) {
 	_, stderr := captureBucketCLI(t, false)
 	for _, args := range [][]string{{"my-api"}, {"my-api", "not-a-uuid", "--yes"}, {"Bad_Slug", "c25a9f1d-f9a6-4b06-b60f-bbc8018bb2df", "--yes"}} {
 		stderr.Reset()
-		if code := cmdBucketDelete(args); code == 0 {
+		if code := main.CmdBucketDelete(args); code == 0 {
 			t.Fatalf("cmdBucketDelete(%q) exited 0", args)
 		}
 		if !strings.Contains(stderr.String(), "gregale bucket delete <app> <bucket-id>") {
@@ -119,7 +122,7 @@ func TestBucketDeleteRejectsBadArgumentsBeforeRequest(t *testing.T) {
 // unknown subcommand used to print `bucket reconcile` usage.
 func TestBucketUnknownSubcommandIsNamed(t *testing.T) {
 	_, stderr := captureBucketCLI(t, false)
-	if code := cmdBucket([]string{"versions list my-api c25a9f1d-f9a6-4b06-b60f-bbc8018bb2df"}); code == 0 {
+	if code := main.CmdBucket([]string{"versions list my-api c25a9f1d-f9a6-4b06-b60f-bbc8018bb2df"}); code == 0 {
 		t.Fatal("unknown subcommand exited 0")
 	}
 	if got := stderr.String(); !strings.Contains(got, "unknown bucket subcommand") || strings.Contains(got, "reconcile") {

@@ -761,37 +761,47 @@ func (r hostRuntime) Restart(ctx context.Context, manifest releasebundle.Manifes
 		return err
 	}
 	for _, service := range serviceOrder {
-		// Fault candidate code pages in while the predecessor still serves.
-		// Socket activation queues arrivals during restart, but cold binary
-		// reads must not consume the customer response deadline.
-		if err := r.preloadDaemon(ctx, service); err != nil {
-			return err
-		}
-		if err := r.ensureRunFaasOwnership(ctx); err != nil {
-			return err
-		}
-		// A reload hands off to a second generation, which keeps the old
-		// one's long requests and streams (ADR-1580); otherwise restart.
-		handedOff, reason, err := r.reloadByHandoff(ctx, service)
-		if err != nil {
-			return err
-		}
-		if !handedOff {
-			if reason != "" {
-				fmt.Fprintf(os.Stderr, "deployctl: restarting %s instead of handing off: %s\n", service, reason)
-			}
-			if err := runCommand(ctx, "systemctl", "reset-failed", "faas-"+service+".service"); err != nil {
-				return err
-			}
-			if err := runCommand(ctx, "systemctl", "restart", "faas-"+service+".service"); err != nil {
-				return err
-			}
-		}
-		if err := r.waitReady(ctx, service); err != nil {
+		if err := r.restartOne(ctx, service, true); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// restartOne restarts one daemon and waits until it is ready: a hand-off
+// reload when allowed and nothing it read at start changed, a restart
+// otherwise.
+func (r hostRuntime) restartOne(ctx context.Context, service string, allowHandoff bool) error {
+	// Fault candidate code pages in while the predecessor still serves.
+	// Socket activation queues arrivals during restart, but cold binary
+	// reads must not consume the customer response deadline.
+	if err := r.preloadDaemon(ctx, service); err != nil {
+		return err
+	}
+	if err := r.ensureRunFaasOwnership(ctx); err != nil {
+		return err
+	}
+	// A reload hands off to a second generation, which keeps the old
+	// one's long requests and streams (ADR-1736); otherwise restart.
+	handedOff, reason := false, "a start input changed"
+	if allowHandoff {
+		var err error
+		if handedOff, reason, err = r.reloadByHandoff(ctx, service); err != nil {
+			return err
+		}
+	}
+	if !handedOff {
+		if reason != "" {
+			fmt.Fprintf(os.Stderr, "deployctl: restarting %s instead of handing off: %s\n", service, reason)
+		}
+		if err := runCommand(ctx, "systemctl", "reset-failed", "faas-"+service+".service"); err != nil {
+			return err
+		}
+		if err := runCommand(ctx, "systemctl", "restart", "faas-"+service+".service"); err != nil {
+			return err
+		}
+	}
+	return r.waitReady(ctx, service)
 }
 
 // ensureRunFaasOwnership pins /run/faas to root:faas 0775 before each
@@ -1011,7 +1021,7 @@ func installAtomic(source, destination string, mode fs.FileMode) error {
 	}
 	// An unchanged unit keeps its mtime: a reload by hand-off is allowed
 	// only while every file the unit read at start is older than the start
-	// (ADR-1580).
+	// (ADR-1736).
 	if current, err := os.ReadFile(destination); err == nil && bytes.Equal(current, body) {
 		if info, err := os.Stat(destination); err == nil && info.Mode().Perm() == mode.Perm() {
 			return nil

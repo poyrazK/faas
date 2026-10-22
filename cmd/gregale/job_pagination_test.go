@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -22,7 +23,7 @@ func TestJobPaginationTraversalGuards(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			calls := 0
-			rows, next, err := collectOffsetPages(ctx, 5, true, func(_ context.Context, offset int) ([]int, int, error) {
+			rows, next, err := main.CollectOffsetPages(ctx, 5, true, func(_ context.Context, offset int) ([]int, int, error) {
 				calls++
 				if mode == "failure" && calls == 2 {
 					return nil, -1, errors.New("failed page")
@@ -38,14 +39,14 @@ func TestJobPaginationTraversalGuards(t *testing.T) {
 				case "invalid":
 					return []int{calls}, -2, nil
 				case "last-page":
-					if calls == maxCLIListPages {
+					if calls == main.MaxCLIListPages {
 						return []int{calls}, -1, nil
 					}
 				}
 				return []int{calls}, offset + 1, nil
 			})
 			if mode == "last-page" {
-				if err != nil || next != -1 || len(rows) != maxCLIListPages {
+				if err != nil || next != -1 || len(rows) != main.MaxCLIListPages {
 					t.Fatalf("rows=%d next=%d err=%v", len(rows), next, err)
 				}
 				return
@@ -53,7 +54,7 @@ func TestJobPaginationTraversalGuards(t *testing.T) {
 			if err == nil || rows != nil || next != -1 {
 				t.Fatalf("partial results: rows=%v next=%d err=%v", rows, next, err)
 			}
-			if mode == "bound" && calls != maxCLIListPages {
+			if mode == "bound" && calls != main.MaxCLIListPages {
 				t.Fatalf("calls=%d", calls)
 			}
 			if mode == "cancel" && !errors.Is(err, context.Canceled) {
@@ -68,7 +69,7 @@ func TestJobPaginationCommandContract(t *testing.T) {
 		for _, machine := range []bool{false, true} {
 			for _, mode := range []string{"page", "all", "empty", "empty-page", "error", "repeat", "backward", "invalid"} {
 				t.Run(fmt.Sprintf("%s/json=%t/%s", kind, machine, mode), func(t *testing.T) {
-					setupCLIRegression(t)
+					main.SetupCLIRegression(t)
 					var offsets []int
 					path := "/v1/jobs"
 					if kind == "runs" {
@@ -120,7 +121,7 @@ func TestJobPaginationCommandContract(t *testing.T) {
 					}))
 					defer server.Close()
 					t.Setenv("FAAS_API", server.URL)
-					t.Setenv("FAAS_TOKEN", testAPIKey('a'))
+					t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
 					command := []string{"jobs", kind}
 					if kind == "runs" {
 						command = append(command, "nightly")
@@ -133,7 +134,7 @@ func TestJobPaginationCommandContract(t *testing.T) {
 					if machine {
 						command = append(command, "--json")
 					}
-					code, out, errOut := capturePreviewRun(t, command)
+					code, out, errOut := main.CapturePreviewRun(t, command)
 					expectedOffsets := []int{5}
 					if mode == "all" || mode == "error" {
 						expectedOffsets = append(expectedOffsets, 7)
@@ -150,7 +151,7 @@ func TestJobPaginationCommandContract(t *testing.T) {
 							t.Fatalf("exit=%d stdout=%s stderr=%s", code, out, errOut)
 						}
 						if machine {
-							assertOneProblem(t, errOut)
+							main.AssertOneProblem(t, errOut)
 						}
 						return
 					}
@@ -216,7 +217,7 @@ func TestJobPaginationLimitsAndHelp(t *testing.T) {
 	for _, kind := range []string{"list", "runs"} {
 		for _, limit := range []int{-1, 0, 1, 200, 201} {
 			t.Run(fmt.Sprintf("%s/%d", kind, limit), func(t *testing.T) {
-				setupCLIRegression(t)
+				main.SetupCLIRegression(t)
 				calls := 0
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					calls++
@@ -231,26 +232,26 @@ func TestJobPaginationLimitsAndHelp(t *testing.T) {
 				}))
 				defer server.Close()
 				t.Setenv("FAAS_API", server.URL)
-				t.Setenv("FAAS_TOKEN", testAPIKey('a'))
+				t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
 				args := []string{"jobs", kind}
 				if kind == "runs" {
 					args = append(args, "nightly")
 				}
 				args = append(args, "--limit", fmt.Sprint(limit), "--all", "--json")
-				code, out, errOut := capturePreviewRun(t, args)
+				code, out, errOut := main.CapturePreviewRun(t, args)
 				if limit < 1 || limit > 200 {
 					if code != 1 || calls != 0 || out != "" {
 						t.Fatalf("exit=%d calls=%d stdout=%s", code, calls, out)
 					}
-					assertOneProblem(t, errOut)
+					main.AssertOneProblem(t, errOut)
 				} else if code != 0 || calls != 1 || errOut != "" {
 					t.Fatalf("exit=%d calls=%d stderr=%s", code, calls, errOut)
 				}
 			})
 		}
 		t.Run(kind+"help", func(t *testing.T) {
-			setupCLIRegression(t)
-			code, out, errOut := capturePreviewRun(t, []string{"jobs", kind, "--help"})
+			main.SetupCLIRegression(t)
+			code, out, errOut := main.CapturePreviewRun(t, []string{"jobs", kind, "--help"})
 			if code != 0 || errOut != "" {
 				t.Fatalf("exit=%d stderr=%s", code, errOut)
 			}
@@ -261,17 +262,17 @@ func TestJobPaginationLimitsAndHelp(t *testing.T) {
 			}
 		})
 		t.Run(kind+"negative-offset", func(t *testing.T) {
-			setupCLIRegression(t)
+			main.SetupCLIRegression(t)
 			args := []string{"jobs", kind}
 			if kind == "runs" {
 				args = append(args, "nightly")
 			}
 			args = append(args, "--offset=-1", "--json")
-			code, out, errOut := capturePreviewRun(t, args)
+			code, out, errOut := main.CapturePreviewRun(t, args)
 			if code != 1 || out != "" {
 				t.Fatalf("exit=%d stdout=%s", code, out)
 			}
-			assertOneProblem(t, errOut)
+			main.AssertOneProblem(t, errOut)
 		})
 	}
 }

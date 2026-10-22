@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 	"time"
@@ -21,15 +22,15 @@ func TestValidateRollbackFlagsNamesTheBrokenRule(t *testing.T) {
 		{name: "plain rollback", timeout: tm, interval: iv},
 		{name: "explicit target", to: "v6", timeout: tm, interval: iv},
 		{name: "checked rollback", checked: true, to: "v6", current: "v8", why: "bad release", wait: true, timeout: tm, interval: iv},
-		{name: "reason and wait without checked form", why: "x", wait: true, timeout: tm, interval: iv, want: "--reason and --wait only apply to a checked rollback"},
-		{name: "wait alone", wait: true, timeout: tm, interval: iv, want: "--wait only applies to a checked rollback"},
+		{name: "reason without checked form", why: "x", wait: true, timeout: tm, interval: iv, want: "--reason only applies to a checked rollback"},
+		{name: "plain rollback waits", wait: true, timeout: tm, interval: iv},
 		{name: "empty expected-current", checked: true, to: "v6", timeout: tm, interval: iv, want: "--expected-current requires a deployment id"},
 		{name: "checked without target", checked: true, current: "v8", timeout: tm, interval: iv, want: "also needs --to"},
 		{name: "zero timeout", checked: true, to: "v6", current: "v8", interval: iv, want: "--timeout must be positive"},
 		{name: "zero poll interval", checked: true, to: "v6", current: "v8", timeout: tm, want: "--poll-interval must be positive"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateRollbackFlags(tc.checked, tc.to, tc.current, tc.why, tc.wait, tc.timeout, tc.interval)
+			err := main.ValidateRollbackFlags(tc.checked, tc.to, tc.current, tc.why, tc.wait, tc.timeout, tc.interval)
 			if tc.want == "" {
 				if err != nil {
 					t.Fatalf("err = %v, want nil", err)

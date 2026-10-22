@@ -73,7 +73,7 @@ func (s *Service) GetObjectStorageUsage(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	now := time.Now().UTC()
-	snapshot, err := st.ObjectUsage(r.Context(), acct.ID, now)
+	snapshot, err := st.ObjectUsage(r.Context(), acct.ResourceOwnerID(), now)
 	if err != nil {
 		BucketProblem(w, err)
 		return
@@ -227,10 +227,16 @@ func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
 	if s.Host.Ops() != nil {
 		s.Host.Ops().Registry().MustRegister(counter)
 	}
-	var finalizedPeriod time.Time
+	var finalizedPeriod, estimatedAt time.Time
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
+		if now := time.Now().UTC(); now.Sub(estimatedAt) >= api.FinancialObjectStorageEstimateInterval {
+			if err := s.RecordObjectStorageEstimates(ctx, now); err != nil && ctx.Err() == nil {
+				s.Host.Logger().Warn("object storage budget estimates failed", "err", err)
+			}
+			estimatedAt = now
+		}
 		if s.Host.ObjectStorage() != nil {
 			st, ok := s.Host.Store().(state.ObjectStorageAccountingStore)
 			if ok {
@@ -286,5 +292,5 @@ func (s *Service) finalizeObjectStorageBilling(ctx context.Context, pricing api.
 	if candidate, ok := s.Host.BillingProvider().(billing.ObjectStorageLineItemSink); ok {
 		sink = candidate
 	}
-	return billing.FinalizeObjectStoragePeriods(ctx, runner, runner, pricing, periodStart, now, sink)
+	return billing.FinalizeObjectStoragePeriods(ctx, storageBillingAccounts{store: runner}, runner, pricing, periodStart, now, sink)
 }

@@ -43,6 +43,7 @@ func (a *canaryStoreAdapter) ListCanaryInFlight(ctx context.Context) ([]canary.C
 			CanaryPreset:      d.CanaryPreset,
 			CanaryStep:        d.CanaryStep,
 			CanaryTotalSteps:  d.CanaryTotalSteps,
+			TrafficPercent:    d.TrafficPercent,
 			CanaryStepStarted: canaryPtrTime(d.CanaryStepStartedAt),
 			RolloutStarted:    canaryPtrTime(d.RolloutStartedAt),
 			RolloutState:      d.RolloutState,

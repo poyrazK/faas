@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"errors"
@@ -7,14 +7,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type productSetupTestStore interface {
-	productContractStore
-	ProductSetupStore
+	state.ProductContractStore
+	state.ProductSetupStore
 }
 
-func TestProductControlSetupMemory(t *testing.T) { productSetupContract(t, NewMemStore()) }
+func TestProductControlSetupMemory(t *testing.T) { productSetupContract(t, state.NewMemStore()) }
 
 func productSetupContract(t *testing.T, s productSetupTestStore) {
 	t.Helper()
@@ -23,7 +24,7 @@ func productSetupContract(t *testing.T, s productSetupTestStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := s.CreateApp(ctx, App{AccountID: acct.ID, Slug: "setup-" + uuid.NewString()[:8]})
+	app, err := s.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "setup-" + uuid.NewString()[:8]})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +53,7 @@ func productSetupContract(t *testing.T, s productSetupTestStore) {
 	results := make(chan result, 2)
 	for _, price := range []int64{20000, 10000} {
 		wg.Go(func() {
-			next := cloneProductBilling(spec)
+			next := state.CloneProductBilling(spec)
 			plan := next.Plans["starter"]
 			grant := plan.Features["export"]
 			grant.UnitPriceMillicents = price
@@ -70,7 +71,7 @@ func productSetupContract(t *testing.T, s productSetupTestStore) {
 		if r.err == nil {
 			success++
 			winner = r
-		} else if errors.Is(r.err, ErrProductCatalogStale) {
+		} else if errors.Is(r.err, state.ErrProductCatalogStale) {
 			stale++
 		} else {
 			t.Fatal(r.err)
@@ -82,7 +83,7 @@ func productSetupContract(t *testing.T, s productSetupTestStore) {
 	if got, err := s.PublishProductCatalog(ctx, acct.ID, app.ID, winner.spec, first.Revision); err != nil || got.Revision != winner.catalog.Revision {
 		t.Fatalf("retained current publication: %+v %v", got, err)
 	}
-	later := cloneProductBilling(spec)
+	later := state.CloneProductBilling(spec)
 	plan := later.Plans["starter"]
 	grant := plan.Features["export"]
 	grant.UnitPriceMillicents = 30000
@@ -92,7 +93,7 @@ func productSetupContract(t *testing.T, s productSetupTestStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.PublishProductCatalog(ctx, acct.ID, app.ID, winner.spec, first.Revision); !errors.Is(err, ErrProductCatalogStale) {
+	if _, err := s.PublishProductCatalog(ctx, acct.ID, app.ID, winner.spec, first.Revision); !errors.Is(err, state.ErrProductCatalogStale) {
 		t.Fatalf("old retry overwrote later head: %v", err)
 	}
 	got, err := s.GetProductCatalog(ctx, acct.ID, app.ID, "")
@@ -104,13 +105,13 @@ func productSetupContract(t *testing.T, s productSetupTestStore) {
 		t.Fatalf("setup migrated customer identity or terms: %+v %v", customer, err)
 	}
 	later.Currency = "USD"
-	if _, err := s.PublishProductCatalog(ctx, acct.ID, app.ID, later, head.Revision); !errors.Is(err, ErrConflict) {
+	if _, err := s.PublishProductCatalog(ctx, acct.ID, app.ID, later, head.Revision); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("currency changed: %v", err)
 	}
-	if _, err := s.PublishProductCatalog(ctx, uuid.NewString(), app.ID, spec, head.Revision); !errors.Is(err, ErrNotFound) {
+	if _, err := s.PublishProductCatalog(ctx, uuid.NewString(), app.ID, spec, head.Revision); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("foreign publication: %v", err)
 	}
-	if _, err := s.PublishProductCatalog(ctx, acct.ID, app.ID, spec, "bad"); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := s.PublishProductCatalog(ctx, acct.ID, app.ID, spec, "bad"); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("invalid preview: %v", err)
 	}
 }

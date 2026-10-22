@@ -1,6 +1,6 @@
 // adr: 1320
 
-package state
+package state_test
 
 import (
 	"errors"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func planCeilingPolicy() api.ObjectStoragePolicy {
@@ -16,11 +17,11 @@ func planCeilingPolicy() api.ObjectStoragePolicy {
 
 // planCeilingSnapshot is a fresh provider-accounted snapshot of one ready
 // bucket holding storedBytes, with requests and egress reported this month.
-func planCeilingSnapshot(now time.Time, storedBytes, requests, egress int64, plan api.ObjectStoragePlanLimits) ObjectUsageSnapshot {
-	bucket := ObjectBucket{ID: "bucket", BackendID: "backend", BackendFingerprint: "fp", State: "ready", CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour)}
-	return ObjectUsageSnapshot{
-		Buckets:    []ObjectBucketUsage{{Bucket: bucket, ObservedBytes: storedBytes, ObservedKeys: 1, ObservedAt: now.Add(-time.Minute)}},
-		Reports:    []api.ObjectStorageUsageReport{{BackendID: "backend", BackendFingerprint: "fp", PeriodStart: ObjectStoragePeriod(now), ObservedAt: now.Add(-time.Minute), RequestCount: requests, EgressBytes: egress}},
+func planCeilingSnapshot(now time.Time, storedBytes, requests, egress int64, plan api.ObjectStoragePlanLimits) state.ObjectUsageSnapshot {
+	bucket := state.ObjectBucket{ID: "bucket", BackendID: "backend", BackendFingerprint: "fp", State: "ready", CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour)}
+	return state.ObjectUsageSnapshot{
+		Buckets:    []state.ObjectBucketUsage{{Bucket: bucket, ObservedBytes: storedBytes, ObservedKeys: 1, ObservedAt: now.Add(-time.Minute)}},
+		Reports:    []api.ObjectStorageUsageReport{{BackendID: "backend", BackendFingerprint: "fp", PeriodStart: state.ObjectStoragePeriod(now), ObservedAt: now.Add(-time.Minute), RequestCount: requests, EgressBytes: egress}},
 		PlanLimits: plan,
 	}
 }
@@ -33,7 +34,7 @@ func wantObjectLimit(t *testing.T, err error, kind string, limit int64) {
 		}
 		return
 	}
-	var le *ObjectStorageLimitError
+	var le *state.ObjectStorageLimitError
 	if !errors.As(err, &le) || le.Kind != kind || le.Limit != limit {
 		t.Fatalf("err = %v, want %s limit %d", err, kind, limit)
 	}
@@ -59,7 +60,7 @@ func TestObjectAdmissionEnforcesPlanCeilings(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := planCeilingSnapshot(now, tc.stored, tc.requests, tc.egress, tc.plan)
-			_, _, err := checkObjectAdmission(s, "bucket", tc.put, 0, false, true, planCeilingPolicy(), now)
+			_, _, err := state.CheckObjectAdmission(s, "bucket", tc.put, 0, false, true, planCeilingPolicy(), now)
 			wantObjectLimit(t, err, tc.kind, tc.limit)
 		})
 	}
@@ -90,9 +91,9 @@ func TestGatewayChecksEnforcePlanCeilings(t *testing.T) {
 			s := planCeilingSnapshot(now, 1, 0, 0, tc.plan)
 			s.Buckets[0].GatewayMetricsKnown = true
 			s.Buckets[0].RequestCount, s.Buckets[0].EgressBytes = tc.requests, tc.egress
-			err := checkGatewayRequest(s, "bucket", now, p)
+			err := state.CheckGatewayRequest(s, "bucket", now, p)
 			if err == nil {
-				err = checkGatewayEgress(s, "bucket", tc.reserve, now, p)
+				err = state.CheckGatewayEgress(s, "bucket", tc.reserve, now, p)
 			}
 			wantObjectLimit(t, err, tc.kind, tc.limit)
 		})

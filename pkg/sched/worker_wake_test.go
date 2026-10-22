@@ -1,5 +1,5 @@
 // adr: 079 — a parked worker has a customer path back to running.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -8,22 +8,23 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWakeWorkerAppReactivatesParkedWorker(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 256, 4)
-	configureExecutionMode(t, store, app, dep, api.ExecutionModeWorker, state.DeployLive)
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 256, 4)
+	sched.ConfigureExecutionMode(t, store, app, dep, api.ExecutionModeWorker, state.DeployLive)
 	parked := state.AppEvictedCold
 	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
 		t.Fatal(err)
 	}
-	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	engine := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 	wakeID := uuid.NewString()
 
-	handled, err := engine.WakeWorkerApp(withRequestedWakeID(ctx, wakeID), app.ID)
+	handled, err := engine.WakeWorkerApp(sched.WithRequestedWakeID(ctx, wakeID), app.ID)
 	if !handled || err != nil {
 		t.Fatalf("WakeWorkerApp = %v, %v; want handled", handled, err)
 	}
@@ -46,8 +47,8 @@ func TestWakeWorkerAppReactivatesParkedWorker(t *testing.T) {
 
 func TestWakeWorkerAppLeavesRequestAppsToEnsureWake(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanPro, 256, 4)
-	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	_, app, _ := sched.SeedApp(t, store, api.PlanPro, 256, 4)
+	engine := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 	if handled, err := engine.WakeWorkerApp(context.Background(), app.ID); handled || err != nil {
 		t.Fatalf("request app handled=%v err=%v; want EnsureWake path", handled, err)
 	}
@@ -69,24 +70,24 @@ func TestEnsureWakeNamesTheMissingRequestListener(t *testing.T) {
 			}
 		}},
 		{"worker execution mode", func(t *testing.T, store *state.MemStore, app state.App, dep state.Deployment) {
-			configureExecutionMode(t, store, app, dep, api.ExecutionModeWorker, state.DeployLive)
+			sched.ConfigureExecutionMode(t, store, app, dep, api.ExecutionModeWorker, state.DeployLive)
 		}},
 		{"job execution mode", func(t *testing.T, store *state.MemStore, app state.App, dep state.Deployment) {
-			configureExecutionMode(t, store, app, dep, api.ExecutionModeJob, state.DeployLive)
+			sched.ConfigureExecutionMode(t, store, app, dep, api.ExecutionModeJob, state.DeployLive)
 		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			store := state.NewMemStore()
-			_, app, dep := seedApp(t, store, api.PlanPro, 256, 4)
+			_, app, dep := sched.SeedApp(t, store, api.PlanPro, 256, 4)
 			tc.setup(t, store, app, dep)
-			engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+			engine := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 
-			out, err := engine.EnsureWake(context.Background(), app.ID, TriggerGateway)
-			if !errors.Is(err, ErrNoRequestListener) || !errors.Is(out.Err, ErrNoRequestListener) {
+			out, err := engine.EnsureWake(context.Background(), app.ID, sched.TriggerGateway)
+			if !errors.Is(err, sched.ErrNoRequestListener) || !errors.Is(out.Err, sched.ErrNoRequestListener) {
 				t.Fatalf("EnsureWake = %v (out.Err %v); want ErrNoRequestListener", err, out.Err)
 			}
-			if !errors.Is(err, ErrAtCapacity) {
+			if !errors.Is(err, sched.ErrAtCapacity) {
 				t.Fatalf("EnsureWake = %v; want it to stay an at-capacity refusal", err)
 			}
 			instances, err := store.ListInstancesForApp(context.Background(), app.ID)

@@ -49,16 +49,18 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/fcvm/netstats"
 	"github.com/onebox-faas/faas/pkg/frameworkready"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/mcpprotocol"
 	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/role"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/snapshothipd"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
@@ -93,7 +95,7 @@ func configuredRuntimeBaseGenerations(envLookup func(string) string) (map[string
 		if err != nil {
 			return nil, fmt.Errorf("vmmd: resolve runtime base generation %q: %w", row.runtime, err)
 		}
-		out[sched.BaseKeyForArch(row.runtime, runtime.GOARCH)] = ref
+		out[storagekey.BaseForArch(row.runtime, runtime.GOARCH)] = ref
 	}
 	return out, nil
 }
@@ -268,7 +270,7 @@ func loadNodeSigningKey(pathOverride string) (*ecdsa.PrivateKey, string, error) 
 		return nil, "", fmt.Errorf("vmmd: node key %q curve %s, want P-256",
 			path, priv.Curve.Params().Name)
 	}
-	keyID, err := sched.KeyIDForPublicKey(&priv.PublicKey)
+	keyID, err := nodereport.KeyID(&priv.PublicKey)
 	if err != nil {
 		return nil, "", fmt.Errorf("vmmd: compute key_id for %q: %w", path, err)
 	}
@@ -534,6 +536,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// replaces a valid provider-specific boot policy (for example ens4 on
 	// GCP), cutting every guest off from DNS and the public internet.
 	hostPolicy := runtimeHostPolicy(cfg.ComputeNode, parsedBridge, len(serviceProxyCAPEM) > 0)
+	hostPolicy.PublicForwarding = cfg.NativeProcessRecovery
 	netns.SwapActiveHostPolicy(hostPolicy)
 	log.Info("vmmd: runtime host policy configured",
 		"public_iface", hostPolicy.PublicIface,
@@ -651,7 +654,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// StorageBackend key for the kernel artifact from the detected
 	// FC version. Operators may pin a specific key via vmmd.toml
 	// (cfg.KernelKey); when unset we fall back to the version-keyed
-	// form sched.KernelKey(fcVersion). The deprecated cfg.KernelPath
+	// form storagekey.Kernel(fcVersion). The deprecated cfg.KernelPath
 	// still flows into the log line so an operator can spot drift
 	// between the two during the migration window.
 	//
@@ -661,7 +664,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// be marked stale and every wake will cold-boot, which is the
 	// correct cold-boot-always-works behaviour (ADR-005).
 	if cfg.KernelKey == "" && fcVersion != "" {
-		cfg.KernelKey = sched.KernelKey(fcVersion)
+		cfg.KernelKey = storagekey.Kernel(fcVersion)
 	}
 
 	// Host-key lifecycle (ADR-020 / spec §11 G2). Without this, the
@@ -762,6 +765,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return err
 		}
 		recordServiceAddressReadiness(ctx, store, nodeID, cfg.ComputeNode.ServiceTCPEnabled, log)
+	}
+	identityNodeID, err := physicalNodeID(ctx, store, nodeID)
+	if err != nil {
+		return err
 	}
 
 	cbm := fcvm.NewColdBootMetrics()
@@ -956,7 +963,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log,
 		cbm,
 	).WithFrameworkReady(frm).
-		WithRuntimeAdmissionNodeID(nodeID).
+		WithRuntimeAdmissionNodeID(identityNodeID).
 		WithCaptureRunner(wire.ExecRunner{}).
 		WithPrivateNetworkTransport(privateNetworkTransport).
 		WithDiskMetrics(dsm).
@@ -973,11 +980,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
 	if store != nil {
-		policies, ok := store.(state.ScenarioNetworkPolicyStore)
-		if !ok {
-			return errors.New("vmmd: rehearsal network policy storage is unavailable")
+		if rehearsalContainmentEnabled(os.Getenv) {
+			policies, ok := store.(state.ScenarioNetworkPolicyStore)
+			if !ok {
+				return errors.New("vmmd: rehearsal network policy storage is unavailable")
+			}
+			mgr.WithRehearsalNetworkPolicies(policies)
 		}
-		mgr.WithRehearsalNetworkPolicies(policies)
+		// Revoke unconditionally: identities left by an earlier enabled
+		// incarnation must not survive a restart with containment disabled.
 		if fencer, ok := store.(interface {
 			RevokeScenarioCommandNetworksForNode(context.Context, string) error
 		}); ok {
@@ -1029,14 +1040,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			"interval", nativeArtifactRetirementRecoveryInterval.String())
 	}
 	// ADR-471: install durable failure delivery before accepting Wake RPCs.
-	failureNodeID := nodeID
-	if deps.scheddTarget != "" && failureNodeID == "" && store != nil {
-		localNode, lookupErr := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
-		if lookupErr != nil {
-			return fmt.Errorf("vmmd: resolve local failure-report node: %w", lookupErr)
-		}
-		failureNodeID = localNode.ID
-	}
+	failureNodeID := identityNodeID
 	// The native qualification journal and RPC envelope must agree on the
 	// physical node that owns an attempt. A named node uses its registered
 	// identity; the single-box path uses the already-resolved default-local
@@ -1064,6 +1068,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer func() { _ = failureReports.Close() }()
 	}
 	mgr.WithAppAdmissionGuard(managedPostgresAdmissionGuard(store))
+	if err := wireFinancialCompute(ctx, mgr, store, cfg.NativeProcessRecovery); err != nil {
+		return err
+	}
 	mgr.WithManagedPostgresDrainNodeID(nodeID)
 	// ADR-472: preserve restart-survivor identities before a prepared pool
 	// or any Wake RPC can consume the new allocator's initially free slots.
@@ -1164,6 +1171,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Activity: activityTracker,
 		Metrics:  fcvm.NewFreezeMetrics(ops.Registry(), mgr),
 	})
+	if functionlifetime.NativeQualificationBuild {
+		mgr.WithFunctionExecutionActivity(activityTracker)
+	}
 	// issue #299: wire the artifact backend the Manager uses to
 	// read Grype scan sidecars at boot time. Mirrors the VMM's
 	// own WithStorage wiring at line 223 above; the VMM uses
@@ -1353,6 +1363,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	defer closeTraceReceiver()
 	guestReceiverHealth := newGuestVsockReceiverHealth(ops.Registry())
 	jailer.WithGuestVsockTransportObserver(guestReceiverHealth.Observe)
+	if functionlifetime.NativeQualificationBuild {
+		if err := mgr.RegisterFunctionExecutionReceiver(jailer); err != nil {
+			return err
+		}
+		go mgr.RunFunctionExecutionWatchdog(ctx)
+	}
 	recv, err := StartFrameworkReadyReceiver(ctx, log, mgr, jailer)
 	if err != nil {
 		log.Warn("vmmd: framework_ready receiver unavailable", "err", err, "goos", runtime.GOOS)
@@ -1376,35 +1392,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if store == nil || pool == nil {
 				return errors.New("event publish persistence is not configured")
 			}
-			_, accountID, identityErr := mgr.InstanceExternalActionIdentity(publishCtx, instance)
+			appID, accountID, identityErr := mgr.InstanceExternalActionIdentity(publishCtx, instance)
 			if identityErr != nil {
 				return identityErr
 			}
-			var req api.PublishEventRequest
-			if err := json.Unmarshal(body, &req); err != nil {
-				return fmt.Errorf("decode in-guest event publish: %w", err)
-			}
-			occurredAt := time.Time{}
-			if req.Time != nil {
-				occurredAt = *req.Time
-			}
-			envelope, err := (events.Envelope{
-				ID: req.ID, Source: req.Source, Type: req.Type,
-				Time: occurredAt, DataContentType: req.DataContentType,
-				Data: req.Data, AccountID: req.AccountID, SchemaVersion: req.SchemaVersion,
-			}).Normalize(accountID, time.Now().UTC())
+			envelope, err := normalizeGuestEvent(publishCtx, store, accountID, body, time.Now().UTC())
 			if err != nil {
-				return fmt.Errorf("validate in-guest event publish: %w", err)
+				return err
 			}
-			if strings.HasPrefix(envelope.Source, "gregale.") {
-				return errors.New("gregale.* event sources are reserved for platform events")
-			}
-			registry, ok := store.(state.EventSchemaStore)
-			if !ok {
-				return errors.New("event schema registry is unavailable")
-			}
-			if err := state.ValidatePublishedEventSchema(publishCtx, registry, accountID, envelope.Source, envelope.Type, envelope.SchemaVersion, envelope.Data); err != nil {
-				return fmt.Errorf("validate in-guest event schema: %w", err)
+			// A capture-only rehearsal keeps its ordinary network, but its
+			// events still belong to its run (ADR-20261020090000).
+			if captured, err := captureGuestEvent(publishCtx, store, appID, "", accountID, envelope); captured || err != nil {
+				return err
 			}
 			payload, err := json.Marshal(envelope)
 			if err != nil {
@@ -1419,6 +1418,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Warn("vmmd: in-guest event publish wake failed", "event_id", envelope.ID, "err", err)
 			}
 			return nil
+		})
+		recv.WithEventCapturer(func(captureCtx context.Context, _ string, appID, accountID, runID string, body []byte) error {
+			if store == nil {
+				return errors.New("rehearsal event capture persistence is not configured")
+			}
+			envelope, err := normalizeGuestEvent(captureCtx, store, accountID, body, time.Now().UTC())
+			if err != nil {
+				return err
+			}
+			captured, err := captureGuestEvent(captureCtx, store, appID, runID, accountID, envelope)
+			if err == nil && !captured {
+				err = fcvm.ErrRehearsalExternalActionDenied
+			}
+			return err
 		})
 		// PR-C §3,§4 (issue #463 / ADR-069 / ADR-071):
 		// wire the sidecar events emitter onto the
@@ -1620,6 +1633,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	vmmdProbe, grpcBound := BuildReadinessProbe()
 	vmmdProbe.RegisterSignal(guestReceiverHealth.Signal(guestReceiverEvents), nil)
 	vmmdProbe.RegisterSignal(guestReceiverHealth.Signal(guestReceiverIdentity), nil)
+	if functionlifetime.NativeQualificationBuild {
+		vmmdProbe.RegisterSignal(guestReceiverHealth.Signal(guestReceiverFunction), nil)
+	}
 	vmmdProbe.SetReadyObserver(func(ready bool, reason string) {
 		ops.MarkReady("vmmd", ready, reason)
 	})
@@ -1650,7 +1666,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	)...)
 	impl := vmmdgrpc.NewWithCPUAndNetAndActivity(signalAdapter{mgr}, ops, fcVersion, log, cpuCache, netCache, activityTracker).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
-		WithNodeID(nodeID).
+		// The physical node identity: runtime admission and promotion grants,
+		// wake.boot_observed events and migration ownership all compare it
+		// with rows that a single box records on default-local.
+		WithNodeID(identityNodeID).
 		WithQualificationNodeID(qualificationNodeID).
 		WithExecutionIdentitySigner(identitySigner).
 		WithDivergedInstances(divergedInstances)

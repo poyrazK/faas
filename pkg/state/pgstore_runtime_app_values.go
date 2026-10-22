@@ -36,6 +36,9 @@ func runtimeAppValuesDB(ctx context.Context, db sqlc.DBTX, accountID, appID, dep
 	if err := json.Unmarshal(row.ReloadSignals, &result.SecretGrants.SidecarReloadSignals); err != nil {
 		return RuntimeAppValuesSnapshot{}, ErrConflict
 	}
+	if result.Inherited, err = decodeInheritedProjectEnv(owner, row.ProjectConfig); err != nil {
+		return RuntimeAppValuesSnapshot{}, err
+	}
 	var secrets []runtimeAppSealedSecretRow
 	if err := json.Unmarshal(row.Secrets, &secrets); err != nil {
 		return RuntimeAppValuesSnapshot{}, ErrConflict
@@ -47,6 +50,20 @@ func runtimeAppValuesDB(ctx context.Context, db sqlc.DBTX, accountID, appID, dep
 			ManagedPostgresBindingID: value.ManagedPostgresBindingID, ManagedPostgresAccess: value.ManagedPostgresAccess, ManagedCredentialRef: value.ManagedCredentialRef,
 			ManagedCredentialGeneration: value.ManagedCredentialGeneration, ManagedObjectStorageCredentialID: value.ManagedObjectStorageCredentialID,
 		})
+	}
+	if len(row.ReleaseSecrets) > 0 {
+		var secrets []releaseSecretVersion
+		if json.Unmarshal(row.ReleaseSecrets, &secrets) != nil {
+			return RuntimeAppValuesSnapshot{}, ErrConflict
+		}
+		if err := applyReleaseSecretSnapshot(&result, secrets); err != nil {
+			return RuntimeAppValuesSnapshot{}, err
+		}
+	}
+	// ADR-1139: read after the app's own secrets are final, so the keys the
+	// app sets itself leave the inherited set.
+	if result.InheritedSecrets, err = decodeInheritedProjectSecrets(result, pgUUIDString(row.ProjectID), row.ProjectSecrets); err != nil {
+		return RuntimeAppValuesSnapshot{}, err
 	}
 	var settings ProjectEnvironmentWorkloadSettings
 	var artifact projectCloneArtifact

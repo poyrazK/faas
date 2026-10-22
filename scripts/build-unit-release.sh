@@ -4,13 +4,20 @@
 # affected_units.py report: every binary of an eligible lane (control-plane,
 # edge), built with build-release-batch's flags and stamped with its unit
 # version, plus units-manifest.json describing them, and the deployctl the
-# deploy hosts run (tools/deployctl). When the range added lane-eligible
-# migrations (the report's data step), it also carries the migrate tool
-# built at the head commit (tools/migrate), which the control-plane lane
-# runs before it restarts anything
+# deploy hosts run (tools/deployctl). A report made with --code gives each
+# unit its code status and the code digests at head and base, which the
+# manifest carries so the deploy plan restarts only units whose code the
+# host does not run yet ("Selection by code"). When the range added
+# lane-eligible migrations (the report's data step), it also carries the
+# migrate tool built at the head commit (tools/migrate), which the
+# control-plane lane runs before it restarts anything
 # (docs/adr/20261018084150-unit-lane-expand-migrations.md), and the
-# manifest records every migration's verdict. release-units.yml signs the
-# tarball.
+# manifest records every migration's verdict. When the range changed a
+# control-plane host role, it carries the gregalectl built at the head
+# commit (tools/gregalectl), whose converge-control-plane --roles the
+# control-plane lane runs first, and the manifest records the step
+# (docs/adr/20261018133100-host-configuration-lane.md). release-units.yml
+# signs the tarball.
 #
 #   REPORT=report.json OUT_DIR=out scripts/build-unit-release.sh
 #
@@ -68,6 +75,14 @@ if [[ "$(jq -r '.data.version // empty' "$report")" =~ ^data-[0-9a-f]{40}$ ]]; t
     -o "$work/tools/migrate" ./cmd/migrate)
 fi
 
+if [[ "$(jq -r '.host_config.version // empty' "$report")" =~ ^host-[0-9a-f]{40}$ ]]; then
+  # The ADR-580 converge command at the release commit, matching its roles.
+  echo "building gregalectl (host config: $(jq -r '.host_config.roles | join(" ")' "$report"))"
+  (cd "$repo_root" && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 "${GO:-go}" build -trimpath -buildvcs=false \
+    -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${head_sha}" \
+    -o "$work/tools/gregalectl" ./cmd/gregalectl)
+fi
+
 python3 - "$report" "$lanes" "$work" <<'PY'
 import hashlib
 import json
@@ -93,6 +108,11 @@ for name in report["deployable"]:
         "size": os.path.getsize(path),
         "services": lanes[name]["services"],
     }
+    # Selection by code: the status against base and the digests the plan
+    # compares with what each host runs (scripts/ci/binary_code.py).
+    for key in ("code", "code_digest", "base_code_digest"):
+        if entry.get(key):
+            units[name][key] = entry[key]
 tools = {}
 for name in sorted(os.listdir(os.path.join(work, "tools"))):
     path = os.path.join(work, "tools", name)
@@ -107,14 +127,20 @@ manifest = {
     "target": "linux/amd64",
     "units": units,
     "tools": tools,
-    "lanes": {lane: {"eligible": v["eligible"], "units": v["changed"] if v["eligible"] else []}
+    "lanes": {lane: {"eligible": v["eligible"], "units": v["carried"] if v["eligible"] else [],
+                     "code_changed": v["changed"] if v["eligible"] else []}
               for lane, v in report["lanes"].items()},
     "pending": report["pending"],
     "flags": report["flags"],
 }
+if report.get("code_selection"):
+    manifest["code_selection"] = {key: report["code_selection"][key] for key in ("neutral_version", "go")}
 data = report.get("data") or {}
 if data.get("version"):
     manifest["data"] = {key: data[key] for key in ("eligible", "version", "commit", "migrations", "blockers")}
+host_config = report.get("host_config") or {}
+if host_config.get("version"):
+    manifest["host_config"] = {key: host_config[key] for key in ("group", "roles", "all", "commit", "version")}
 with open(os.path.join(work, "units-manifest.json"), "w", encoding="utf-8") as fh:
     json.dump(manifest, fh, indent=2, sort_keys=True)
     fh.write("\n")

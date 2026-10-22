@@ -17,7 +17,7 @@
 //     so the chain returns 1 with the expected "Not logged in" error)
 //   - cwd is NOT mutated by the chain (the plan-agent risk #1)
 //   - help output carries the docs URL
-package main
+package main_test
 
 import (
 	"bytes"
@@ -28,6 +28,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
@@ -160,9 +161,9 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			dest := filepath.Join(t.TempDir(), c.name)
-			stdout, _, restore := swapIO(t)
+			stdout, _, restore := main.SwapIO(t)
 			defer restore()
-			code := runCmdInit(c.name, dest, false, "", osStdout, os.Stderr)
+			code := main.RunCmdInit(c.name, dest, false, "", (*main.OsStdout), os.Stderr)
 			if code != 0 {
 				t.Fatalf("runCmdInit(%q, ...) = %d, want 0; stdout=%q", c.name, code, stdout.String())
 			}
@@ -181,7 +182,7 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 					t.Errorf("README missing %q; full README:\n%s", want, readme)
 				}
 			}
-			if !strings.Contains(stdout.String(), docsURLForTemplate(c.name)) {
+			if !strings.Contains(stdout.String(), main.DocsURLForTemplate(c.name)) {
 				t.Errorf("stdout missing docs URL; got: %q", stdout.String())
 			}
 		})
@@ -192,9 +193,9 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 // with the manifest reconciler and the documented send/status path.
 func TestCmdInit_QueueWorkerQuickstartContract(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "orders-worker")
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	if code := runCmdInit("queue-worker", dest, false, "", osStdout, os.Stderr); code != 0 {
+	if code := main.RunCmdInit("queue-worker", dest, false, "", (*main.OsStdout), os.Stderr); code != 0 {
 		t.Fatalf("runCmdInit(queue-worker) = %d; stdout=%q", code, stdout.String())
 	}
 
@@ -250,9 +251,9 @@ func TestCmdInit_QueueWorkerQuickstartContract(t *testing.T) {
 // local contract catches a broken starter before a user reaches those steps.
 func TestCmdInit_EventWorkerQuickstartContract(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "invoice-worker")
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	if code := runCmdInit("event-worker", dest, false, "", osStdout, os.Stderr); code != 0 {
+	if code := main.RunCmdInit("event-worker", dest, false, "", (*main.OsStdout), os.Stderr); code != 0 {
 		t.Fatalf("runCmdInit(event-worker) = %d; stdout=%q", code, stdout.String())
 	}
 
@@ -312,9 +313,9 @@ func TestCmdInit_EventWorkerQuickstartContract(t *testing.T) {
 // Doesn't touch the disk — just asserts the validation error.
 func TestCmdInit_UnknownTemplate(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "out")
-	_, readStderr, restore := swapIO(t)
+	_, readStderr, restore := main.SwapIO(t)
 	defer restore()
-	code := runCmdInit("not-a-real-template", dest, false, "", osStdout, os.Stderr)
+	code := main.RunCmdInit("not-a-real-template", dest, false, "", (*main.OsStdout), os.Stderr)
 	if code != 1 {
 		t.Errorf("runCmdInit(unknown) = %d, want 1", code)
 	}
@@ -343,9 +344,9 @@ func TestCmdInit_NonEmptyDestination(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dest, "existing.txt"), []byte("untouchable"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	_, _, restore := swapIO(t)
+	_, _, restore := main.SwapIO(t)
 	defer restore()
-	code := runCmdInit("s3-uploader", dest, false, "", osStdout, os.Stderr)
+	code := main.RunCmdInit("s3-uploader", dest, false, "", (*main.OsStdout), os.Stderr)
 	if code != 1 {
 		t.Errorf("runCmdInit(non-empty dest) = %d, want 1", code)
 	}
@@ -364,9 +365,9 @@ func TestCmdInit_NonEmptyDestination(t *testing.T) {
 // on a fresh checkout.
 func TestCmdInit_CreatesMissingPath(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "nested", "uploader")
-	_, _, restore := swapIO(t)
+	_, _, restore := main.SwapIO(t)
 	defer restore()
-	code := runCmdInit("s3-uploader", dest, false, "", osStdout, os.Stderr)
+	code := main.RunCmdInit("s3-uploader", dest, false, "", (*main.OsStdout), os.Stderr)
 	if code != 0 {
 		t.Errorf("runCmdInit(missing path) = %d, want 0", code)
 	}
@@ -390,12 +391,12 @@ func TestCmdInit_CwdUnchangedByDeployChain(t *testing.T) {
 		t.Fatalf("getwd: %v", err)
 	}
 	dest := filepath.Join(t.TempDir(), "uploader")
-	_, _, restore := swapIO(t)
+	_, _, restore := main.SwapIO(t)
 	defer restore()
 	// No FAAS_TOKEN; cmdDeployTarball will hit "Not logged in" and
 	// return non-zero. We're testing the cwd invariant, not the
 	// deploy outcome.
-	code := runCmdInit("s3-uploader", dest, true, "uploader-test", osStdout, os.Stderr)
+	code := main.RunCmdInit("s3-uploader", dest, true, "uploader-test", (*main.OsStdout), os.Stderr)
 	after, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd after: %v", err)
@@ -437,7 +438,7 @@ func TestCmdInit_NextStepsFor(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.tpl, func(t *testing.T) {
-			steps := nextStepsFor(c.tpl)
+			steps := main.NextStepsFor(c.tpl)
 			joined := strings.Join(steps, "\n")
 			for _, w := range c.want {
 				if !strings.Contains(joined, w) {
@@ -454,7 +455,7 @@ func TestReadSecretsFile_ParsesAndValidatesWithoutEchoingValues(t *testing.T) {
 	if err := os.WriteFile(path, []byte("# comment\nDATABASE_URL=postgres://user:pass@host/db?sslmode=require\nAPI_KEY="+sensitive+"\n"), 0o600); err != nil {
 		t.Fatalf("write secrets file: %v", err)
 	}
-	pairs, err := readSecretsFile(path)
+	pairs, err := main.ReadSecretsFile(path)
 	if err != nil {
 		t.Fatalf("readSecretsFile() error = %v", err)
 	}
@@ -467,7 +468,7 @@ func TestReadSecretsFile_ParsesAndValidatesWithoutEchoingValues(t *testing.T) {
 		t.Fatalf("write duplicate secrets file: %v", err)
 	}
 	badErr := func() error {
-		_, err := readSecretsFile(badPath)
+		_, err := main.ReadSecretsFile(badPath)
 		return err
 	}()
 	if badErr == nil || !strings.Contains(badErr.Error(), "duplicate secret key DATABASE_URL") || strings.Contains(badErr.Error(), "two") {
@@ -478,28 +479,28 @@ func TestReadSecretsFile_ParsesAndValidatesWithoutEchoingValues(t *testing.T) {
 func TestValidateTemplateSecrets(t *testing.T) {
 	tests := []struct {
 		tpl   string
-		pairs []secretsPair
+		pairs []main.SecretsPair
 		want  string
 		noErr bool
 	}{
 		{tpl: "object-storage-node", want: "missing required secret(s): STORAGE_APP_TOKEN"},
 		{tpl: "object-storage-python", want: "missing required secret(s): STORAGE_APP_TOKEN"},
-		{tpl: "object-storage-python", pairs: []secretsPair{{Key: "STORAGE_APP_TOKEN", Value: strings.Repeat("a", 48)}}, noErr: true},
-		{tpl: "object-storage-node", pairs: []secretsPair{{Key: "STORAGE_APP_TOKEN", Value: strings.Repeat("a", 48)}}, noErr: true},
+		{tpl: "object-storage-python", pairs: []main.SecretsPair{{Key: "STORAGE_APP_TOKEN", Value: strings.Repeat("a", 48)}}, noErr: true},
+		{tpl: "object-storage-node", pairs: []main.SecretsPair{{Key: "STORAGE_APP_TOKEN", Value: strings.Repeat("a", 48)}}, noErr: true},
 		{tpl: "customer-platform", want: "missing required secret(s): DATABASE_URL"},
-		{tpl: "customer-platform", pairs: []secretsPair{{Key: "DATABASE_URL", Value: "postgres://host/db?sslmode=require"}}, noErr: true},
-		{tpl: "s3-uploader", pairs: []secretsPair{{Key: "S3_BUCKET", Value: "bucket"}}, want: "S3_REGION"},
-		{tpl: "secret-reload-node", pairs: []secretsPair{{Key: "DATABASE_URL"}}, want: "missing required secret(s): DATABASE_URL"},
-		{tpl: "secret-reload-node", pairs: []secretsPair{{Key: "DATABASE_URL", Value: "postgres://host/db?sslmode=require"}}, noErr: true},
-		{tpl: "s3-uploader", pairs: []secretsPair{{Key: "S3_BUCKET", Value: "bucket"}, {Key: "S3_REGION", Value: "region"}, {Key: "S3_ACCESS_KEY_ID", Value: "access"}, {Key: "S3_SECRET_ACCESS_KEY", Value: "secret"}}, noErr: true},
-		{tpl: "ai-chat", pairs: []secretsPair{{Key: "OPENAI_API_KEY"}, {Key: "ANTHROPIC_API_KEY"}}, want: "exactly one"},
-		{tpl: "ai-chat", pairs: []secretsPair{{Key: "GREGALE_AI_INTEGRATION_ID", Value: "6f0e"}, {Key: "GREGALE_AI_PROVIDER", Value: "anthropic"}}, noErr: true},
-		{tpl: "ai-chat", pairs: []secretsPair{{Key: "GREGALE_AI_INTEGRATION_ID", Value: "6f0e"}, {Key: "GREGALE_AI_PROVIDER", Value: "gemini"}}, want: "GREGALE_AI_PROVIDER"},
-		{tpl: "ai-chat", pairs: []secretsPair{{Key: "GREGALE_AI_INTEGRATION_ID", Value: "6f0e"}, {Key: "GREGALE_AI_PROVIDER", Value: "openai"}, {Key: "OPENAI_API_KEY", Value: "sk"}}, want: "must not also set"},
+		{tpl: "customer-platform", pairs: []main.SecretsPair{{Key: "DATABASE_URL", Value: "postgres://host/db?sslmode=require"}}, noErr: true},
+		{tpl: "s3-uploader", pairs: []main.SecretsPair{{Key: "S3_BUCKET", Value: "bucket"}}, want: "S3_REGION"},
+		{tpl: "secret-reload-node", pairs: []main.SecretsPair{{Key: "DATABASE_URL"}}, want: "missing required secret(s): DATABASE_URL"},
+		{tpl: "secret-reload-node", pairs: []main.SecretsPair{{Key: "DATABASE_URL", Value: "postgres://host/db?sslmode=require"}}, noErr: true},
+		{tpl: "s3-uploader", pairs: []main.SecretsPair{{Key: "S3_BUCKET", Value: "bucket"}, {Key: "S3_REGION", Value: "region"}, {Key: "S3_ACCESS_KEY_ID", Value: "access"}, {Key: "S3_SECRET_ACCESS_KEY", Value: "secret"}}, noErr: true},
+		{tpl: "ai-chat", pairs: []main.SecretsPair{{Key: "OPENAI_API_KEY"}, {Key: "ANTHROPIC_API_KEY"}}, want: "exactly one"},
+		{tpl: "ai-chat", pairs: []main.SecretsPair{{Key: "GREGALE_AI_INTEGRATION_ID", Value: "6f0e"}, {Key: "GREGALE_AI_PROVIDER", Value: "anthropic"}}, noErr: true},
+		{tpl: "ai-chat", pairs: []main.SecretsPair{{Key: "GREGALE_AI_INTEGRATION_ID", Value: "6f0e"}, {Key: "GREGALE_AI_PROVIDER", Value: "gemini"}}, want: "GREGALE_AI_PROVIDER"},
+		{tpl: "ai-chat", pairs: []main.SecretsPair{{Key: "GREGALE_AI_INTEGRATION_ID", Value: "6f0e"}, {Key: "GREGALE_AI_PROVIDER", Value: "openai"}, {Key: "OPENAI_API_KEY", Value: "sk"}}, want: "must not also set"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.tpl+tc.want, func(t *testing.T) {
-			err := validateTemplateSecrets(tc.tpl, tc.pairs)
+			err := main.ValidateTemplateSecrets(tc.tpl, tc.pairs)
 			if tc.noErr {
 				if err != nil {
 					t.Fatalf("validateTemplateSecrets() error = %v", err)
@@ -519,9 +520,9 @@ func TestValidateTemplateSecrets(t *testing.T) {
 // "missing --template" / "missing --path" branches go through our
 // PrintUsage wrapper.
 func TestCmdInit_HelpFlagShowsDocs(t *testing.T) {
-	_, readStderr, restore := swapIO(t)
+	_, readStderr, restore := main.SwapIO(t)
 	defer restore()
-	code := cmdInit([]string{"--template=s3-uploader"}) // missing --path
+	code := main.CmdInit([]string{"--template=s3-uploader"}) // missing --path
 	if code != 1 {
 		t.Errorf("cmdInit(missing --path) = %d, want 1", code)
 	}
@@ -529,7 +530,7 @@ func TestCmdInit_HelpFlagShowsDocs(t *testing.T) {
 	if !strings.Contains(got, "--template") || !strings.Contains(got, "--path") {
 		t.Errorf("usage missing flags; got: %q", got)
 	}
-	if !strings.Contains(got, docsSiteURL) {
+	if !strings.Contains(got, main.DocsSiteURL) {
 		t.Errorf("usage missing docs URL; got: %q", got)
 	}
 }
@@ -537,9 +538,9 @@ func TestCmdInit_HelpFlagShowsDocs(t *testing.T) {
 // TestCmdInit_RejectsPositional: any positional after flags is rejected.
 // Defensive — `gregale init foo bar` should not silently pass.
 func TestCmdInit_RejectsPositional(t *testing.T) {
-	_, _, restore := swapIO(t)
+	_, _, restore := main.SwapIO(t)
 	defer restore()
-	code := cmdInit([]string{"--template=s3-uploader", "--path=/tmp/x", "extra-positional"})
+	code := main.CmdInit([]string{"--template=s3-uploader", "--path=/tmp/x", "extra-positional"})
 	if code != 1 {
 		t.Errorf("cmdInit(positional) = %d, want 1", code)
 	}
@@ -550,13 +551,13 @@ func TestCmdInit_RejectsPositional(t *testing.T) {
 // populated path (rejection).
 func TestCheckDestEmpty(t *testing.T) {
 	t.Run("missing path is fine", func(t *testing.T) {
-		err := checkDestEmpty(filepath.Join(t.TempDir(), "does-not-exist"))
+		err := main.CheckDestEmpty(filepath.Join(t.TempDir(), "does-not-exist"))
 		if err != nil {
 			t.Errorf("missing path: got %v, want nil", err)
 		}
 	})
 	t.Run("empty path is fine", func(t *testing.T) {
-		err := checkDestEmpty(t.TempDir())
+		err := main.CheckDestEmpty(t.TempDir())
 		if err != nil {
 			t.Errorf("empty path: got %v, want nil", err)
 		}
@@ -566,7 +567,7 @@ func TestCheckDestEmpty(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(d, "x"), []byte("y"), 0o644); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
-		err := checkDestEmpty(d)
+		err := main.CheckDestEmpty(d)
 		if err == nil {
 			t.Errorf("populated path: got nil, want error")
 		} else if !strings.Contains(err.Error(), "not empty") {
@@ -583,7 +584,7 @@ func TestCheckDestEmpty(t *testing.T) {
 // a CategoryOrder entry — this test fails if any of the three drift.
 func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 	var buf bytes.Buffer
-	if code := runCmdInitList(&buf); code != 0 {
+	if code := main.RunCmdInitList(&buf); code != 0 {
 		t.Fatalf("runCmdInitList = %d, want 0", code)
 	}
 	out := buf.String()
@@ -624,7 +625,7 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 		}
 	}
 	// Trailing docs link so the customer lands on the canonical page.
-	if !strings.Contains(out, cliDocsURL) {
+	if !strings.Contains(out, main.CliDocsURL) {
 		t.Errorf("--list missing docs URL; output:\n%s", out)
 	}
 }
@@ -635,10 +636,10 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 // --template and --path are unset.
 func TestCmdInit_ListShortCircuits(t *testing.T) {
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
-	if code := cmdInit([]string{"--list"}); code != 0 {
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
+	if code := main.CmdInit([]string{"--list"}); code != 0 {
 		t.Errorf("cmdInit --list = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "hello") {
@@ -698,23 +699,23 @@ func TestRequestHandlingTemplatesDoNotEchoOrLogRequestSecrets(t *testing.T) {
 
 func TestTemplateDocsMatchTemplatePurpose(t *testing.T) {
 	wants := map[string]string{
-		"function-node":      functionsDocsURL,
-		"hello-node":         deployFromSourceDocsURL,
-		"cron-example":       eventDrivenDocsURL,
-		"s3-uploader":        storageDocsURL,
-		"secret-reload-node": secretsDocsURL,
-		"customer-platform":  deployFromSourceDocsURL,
+		"function-node":      main.FunctionsDocsURL,
+		"hello-node":         main.DeployFromSourceDocsURL,
+		"cron-example":       main.EventDrivenDocsURL,
+		"s3-uploader":        main.StorageDocsURL,
+		"secret-reload-node": main.SecretsDocsURL,
+		"customer-platform":  main.DeployFromSourceDocsURL,
 	}
 	// Unlisted templates (operator previews, dark launches such as auth) have
 	// no customer guide to point at.
 	for _, name := range templates.ListedNames() {
-		got := docsURLForTemplate(name)
-		if got == "" || got == cliDocsURL {
+		got := main.DocsURLForTemplate(name)
+		if got == "" || got == main.CliDocsURL {
 			t.Errorf("docsURLForTemplate(%q) = %q, want a template-specific guide", name, got)
 		}
 	}
 	for name, want := range wants {
-		if got := docsURLForTemplate(name); got != want {
+		if got := main.DocsURLForTemplate(name); got != want {
 			t.Errorf("docsURLForTemplate(%q) = %q, want %q", name, got, want)
 		}
 	}
@@ -735,14 +736,14 @@ func TestCmdInit_PreservesStdoutBytes(t *testing.T) {
 	// untouched by this test (set to a throwaway buf so we can detect
 	// if the implementation accidentally writes there).
 	throwaway := &bytes.Buffer{}
-	oldOut := osStdout
-	osStdout = throwaway
-	defer func() { osStdout = oldOut }()
-	code := runCmdInit("s3-uploader", dest, false, "", &captured, os.Stderr)
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = throwaway
+	defer func() { (*main.OsStdout) = oldOut }()
+	code := main.RunCmdInit("s3-uploader", dest, false, "", &captured, os.Stderr)
 	if code != 0 {
 		t.Fatalf("runCmdInit = %d, want 0; captured=%q", code, captured.String())
 	}
-	if !strings.Contains(captured.String(), storageDocsURL) {
+	if !strings.Contains(captured.String(), main.StorageDocsURL) {
 		t.Errorf("explicit stdout buffer missing docs URL; got: %q", captured.String())
 	}
 	if throwaway.Len() != 0 {
@@ -764,8 +765,8 @@ func (a *templateSecretsApps) GetApp(context.Context, string) (api.AppResponse, 
 // template that cannot start without secrets is refused before the build
 // instead of failing after it (7.6 minutes for ai-chat on production-us).
 func TestRequireTemplateSecretsBeforeFirstStart(t *testing.T) {
-	notFound := &APIError{Problem: api.Problem{Status: http.StatusNotFound}}
-	unavailable := &APIError{Problem: api.Problem{Status: http.StatusServiceUnavailable}}
+	notFound := &main.APIError{Problem: api.Problem{Status: http.StatusNotFound}}
+	unavailable := &main.APIError{Problem: api.Problem{Status: http.StatusServiceUnavailable}}
 	cases := []struct {
 		name        string
 		tpl         string
@@ -787,7 +788,7 @@ func TestRequireTemplateSecretsBeforeFirstStart(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			apps := &templateSecretsApps{err: tc.lookupErr}
-			err := requireTemplateSecretsBeforeFirstStart(context.Background(), apps, tc.tpl, tc.secretsFile, tc.createOnly, "demo")
+			err := main.RequireTemplateSecretsBeforeFirstStart(context.Background(), apps, tc.tpl, tc.secretsFile, tc.createOnly, "demo")
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, want error %v", err, tc.wantErr)
 			}

@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,11 +12,11 @@ import (
 // bufio's "token too long" (H10-66).
 func TestReadSecretsFileNamesTheLineCap(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "secrets.env")
-	line := "BIG=" + strings.Repeat("x", keyValueLineMaxBytes+10) + "\n"
+	line := "BIG=" + strings.Repeat("x", main.KeyValueLineMaxBytes+10) + "\n"
 	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := readSecretsFile(path)
+	_, err := main.ReadSecretsFile(path)
 	if err == nil {
 		t.Fatal("readSecretsFile accepted an over-long line")
 	}

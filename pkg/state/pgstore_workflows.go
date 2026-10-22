@@ -441,18 +441,23 @@ func (s *PgStore) ClaimNextPendingRun(ctx context.Context) (*WorkflowRun, error)
 func (s *PgStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, error) {
 	ctx, cancel := context.WithTimeout(ctx, api.WorkflowDispatchClaimTimeout)
 	defer cancel()
+	q := sqlc.New()
+	limits := sqlc.NextFairDueWorkflowRunParams{
+		StaleMs:  int64(WorkflowRunStaleAfter / time.Millisecond),
+		AppLimit: api.WorkflowDispatchMaxPerApp, TenantLimit: api.WorkflowDispatchMaxPerTenant,
+	}
+	// Nothing due: skip the transaction and the fleet-wide fairness lock. A
+	// failed check falls through to the full claim.
+	if due, err := q.WorkflowRunDueExists(ctx, s.pool, limits.StaleMs); err == nil && !due {
+		return nil, ErrNotFound
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("pgstore: begin workflow claim: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	q := sqlc.New()
 	if err := q.LockWorkflowDispatchFairness(ctx, tx); err != nil {
 		return nil, fmt.Errorf("pgstore: lock workflow dispatch: %w", err)
-	}
-	limits := sqlc.NextFairDueWorkflowRunParams{
-		StaleMs:  int64(WorkflowRunStaleAfter / time.Millisecond),
-		AppLimit: api.WorkflowDispatchMaxPerApp, TenantLimit: api.WorkflowDispatchMaxPerTenant,
 	}
 	candidate, err := q.NextFairDueWorkflowRun(ctx, tx, limits)
 	if errors.Is(err, pgx.ErrNoRows) {

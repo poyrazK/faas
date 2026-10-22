@@ -60,7 +60,7 @@ func UnitApid() daemonunit.Unit {
 
 		Type: "notify",
 		// `systemctl reload` hands off to a second generation that serves
-		// new connections while this one finishes its own (ADR-1580).
+		// new connections while this one finishes its own (ADR-1736).
 		NotifyAccess: "main",
 		ExecReload:   handoffReload,
 		OOMPolicy:    "continue",
@@ -73,7 +73,7 @@ func UnitApid() daemonunit.Unit {
 		// watchdog (gated on pkg/wire.Liveness).
 		WatchdogSec: "90s",
 
-		// A reload runs two apid generations in this cgroup (ADR-1580); the
+		// A reload runs two apid generations in this cgroup (ADR-1736); the
 		// cap fits a spiking successor beside a draining predecessor, and
 		// GOMEMLIMIT keeps each process near half (ADR 20261018132058).
 		Slice:     "faas-cp.slice",
@@ -142,6 +142,7 @@ func UnitApid() daemonunit.Unit {
 			{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},
 			{Name: "faas_host_age_identity_previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
 			{Name: "faas_fleet_age_identity", Path: "/etc/faas/secrets/fleet.age"},
+			{Name: "faas_fleet_age_identity_previous", Path: "/etc/faas/secrets/fleet.age.previous", Optional: true},
 			{Name: "faas_fleet_age_recipient", Path: "/etc/faas/secrets/fleet.age.pub"},
 			{Name: "faas_host_age_recipient", Path: "/etc/faas/secrets/host.age.pub"},
 			{Name: "faas_host_hmac_key", Path: "/etc/faas/secrets/host.hmac.key"},

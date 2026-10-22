@@ -51,6 +51,7 @@ type Service struct {
 	Preview          *operations.PreviewAdmission
 	WorkloadVerifier *workloadidentity.Verifier
 	ArtifactStorage  storage.StorageBackend
+	Metrics          *Metrics // ADR-20261016123221; nil counts nothing
 
 	artifactBudget operationArtifactBudget
 	streamHub      *operationStreamHub

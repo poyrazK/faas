@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/accountexport"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -225,6 +226,11 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via s
 		}
 		outboxed, err := s.markDeletionPendingWithMail(ctx, acct.ID)
 		if err != nil {
+			if errors.Is(err, state.ErrOrgAppOwnershipPending) {
+				return acct, api.NewProblem(http.StatusConflict, api.CodeConflict,
+					"Company app ownership migration required",
+					"company applications still depend on this account; contact support to complete their ownership transfer before deleting your account")
+			}
 			if errors.Is(err, state.ErrNotFound) {
 				return acct, accountDeletionBlocked()
 			}
@@ -370,32 +376,24 @@ func (s *server) cancelDeletion(ctx context.Context, acct state.Account, via str
 }
 
 // sharedOrgOwnershipBlocksDeletion refuses a self-service deletion while
-// the account owns a shared organization other people still belong to.
-// Memberships cascade with the account, so the purge left that org with
-// members and no owner — and only an owner can transfer ownership, delete
-// the org, or manage it — until an operator stepped in.
+// the account owns a shared organization that has not been deleted.
+// Memberships cascade with the account, so an active org would lose its owner.
 func (s *server) sharedOrgOwnershipBlocksDeletion(ctx context.Context, accountID string) *api.Problem {
 	orgs, err := s.store.ListOrgsForAccount(ctx, accountID)
 	if err != nil {
 		return api.ErrCapacity("could not check organization ownership")
 	}
 	for _, org := range orgs {
-		if org.Personal {
+		if org.Personal || org.DeletedPending {
 			continue
 		}
 		mem, err := s.store.OrgMemberByAccount(ctx, org.ID, accountID)
 		if err != nil || mem.RemovedAt != nil || mem.Role != state.OrgRoleOwner {
 			continue
 		}
-		members, err := s.store.CountActiveOrgMembers(ctx, org.ID)
-		if err != nil {
-			return api.ErrCapacity("could not check organization membership")
-		}
-		if members > 1 {
-			return api.NewProblem(http.StatusConflict, api.CodeConflict,
-				"Account owns a shared organization",
-				fmt.Sprintf("transfer ownership of %q or delete it before deleting your account", org.Slug))
-		}
+		return api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Account owns a shared organization",
+			fmt.Sprintf("transfer ownership of %q or delete it before deleting your account", org.Slug))
 	}
 	return nil
 }
@@ -573,10 +571,22 @@ func cleanupAccountExportSpool(s *server, spool *os.File) {
 }
 
 func writeAccountExportJSON(ctx context.Context, s *server, acct state.Account, includeSecrets bool, dst io.Writer) error {
+	ctx, personal := accountexport.WithScope(ctx, s.store, acct.ID)
 	apps, err := s.store.ListApps(ctx, acct.ID)
 	if err != nil {
 		return fmt.Errorf("list apps: %w", err)
 	}
+	eligibleApps := make([]state.App, 0, len(apps))
+	for _, app := range apps {
+		allowed, err := personal.AppRow(ctx, app)
+		if err != nil {
+			return err
+		}
+		if allowed {
+			eligibleApps = append(eligibleApps, app)
+		}
+	}
+	apps = eligibleApps
 	orgs, err := s.store.ListOrgsForAccount(ctx, acct.ID)
 	if err != nil {
 		return fmt.Errorf("list organizations: %w", err)
@@ -632,12 +642,22 @@ func writeAccountExportJSON(ctx context.Context, s *server, acct state.Account, 
 			if err != nil {
 				return fmt.Errorf("list deployments: %w", err)
 			}
-			shaped, err := buildDeploymentsForExport(rows)
+			eligible := make([]state.Deployment, 0, len(rows))
+			for _, row := range rows {
+				allowed, err := personal.App(ctx, row.AppID)
+				if err != nil {
+					return err
+				}
+				if allowed {
+					eligible = append(eligible, row)
+				}
+			}
+			shaped, err := buildDeploymentsForExport(eligible)
 			if err != nil {
 				return err
 			}
 			for i, deployment := range shaped {
-				depByID[rows[i].ID] = rows[i].AppID
+				depByID[eligible[i].ID] = eligible[i].AppID
 				if err := emit(deployment); err != nil {
 					return err
 				}
@@ -810,7 +830,7 @@ type eventExportPager struct {
 	exhausted bool
 }
 
-func (p *eventExportPager) next(ctx context.Context) (auditExportItem, bool, error) {
+func (p *eventExportPager) nextUnfiltered(ctx context.Context) (auditExportItem, bool, error) {
 	if p.pos >= len(p.rows) {
 		if p.exhausted {
 			return auditExportItem{}, false, nil
@@ -833,6 +853,23 @@ func (p *eventExportPager) next(ctx context.Context) (auditExportItem, bool, err
 		Source: "event", RequestedAt: row.At.UTC().Format(time.RFC3339),
 		Kind: row.Kind, Data: row.Data,
 	}}, true, nil
+}
+
+func (p *eventExportPager) next(ctx context.Context) (auditExportItem, bool, error) {
+	scope := accountexport.For(ctx, p.store, p.accountID)
+	for {
+		item, ok, err := p.nextUnfiltered(ctx)
+		if err != nil || !ok {
+			return item, ok, err
+		}
+		allowed, err := scope.Audit(ctx, item.dto.Data)
+		if err != nil {
+			return auditExportItem{}, false, err
+		}
+		if allowed {
+			return item, true, nil
+		}
+	}
 }
 
 func writeAccountAuditTrail(ctx context.Context, store state.Store, accountID string, out *accountExportJSON) error {
@@ -937,15 +974,13 @@ func (s *server) setGraceWindow(w http.ResponseWriter, r *http.Request, acct sta
 
 // getAccountEgressAllowlistExtra returns the per-account additive
 // budget on top of the plan's apps.egress_allowlist cap (issue #679
-// / PR-B / ADR-082). The endpoint is admin-only — the override is
-// meaningless for a non-admin caller (the customer-facing validator
-// reads the field, the admin endpoint is the only place it's
-// written). The PlanCap field is unconditionally populated so the
-// dashboard can render the "Override: N / Plan cap: 16" pair
+// / PR-B / ADR-082). The PlanCap field is unconditionally populated so
+// the dashboard can render the "Override: N / Plan cap: 16" pair
 // without a second round-trip.
 //
-// Auth: admin scope (ScopesAdminOnly); middleware already
-// short-circuits non-admin callers.
+// Auth: admin scope (ScopesAdminOnly). Reading is harmless, so a
+// customer may see their own value; only setAccountEgressAllowlistExtra
+// is operator-only.
 func (s *server) getAccountEgressAllowlistExtra(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	extra, err := s.store.GetAccountEgressAllowlistExtra(r.Context(), acct.ID)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
@@ -968,7 +1003,9 @@ func (s *server) getAccountEgressAllowlistExtra(w http.ResponseWriter, r *http.R
 // comment on api.MaxAccountEgressAllowlistExtra. Extra == 0 clears
 // the override (the plan cap is authoritative again).
 //
-// Auth: admin scope (ScopesAdminOnly).
+// Auth: admin scope plus the operator allowlist (requireOperator in the
+// route table). The admin scope alone admits every customer, whose
+// dashboard session and default key both carry it.
 //
 // Audit: account.egress_allowlist_extra_set carries both old and
 // new values so the dashboard can render the toggle history. The
@@ -1060,6 +1097,9 @@ func listBuildsForAccountExport(ctx context.Context, st state.Store, accountID s
 	}
 	out := make([]api.BuildExportResponse, 0, len(rows))
 	for _, b := range rows {
+		if _, allowed := depByID[b.DeploymentID]; !allowed {
+			continue
+		}
 		out = append(out, api.BuildExportResponse{
 			ID: b.ID, DeploymentID: b.DeploymentID,
 			AppID:  depByID[b.DeploymentID],
@@ -1079,6 +1119,13 @@ func listInstancesForAccountExport(ctx context.Context, st state.Store, accountI
 	}
 	out := make([]api.InstanceResponse, 0, len(rows))
 	for _, ins := range rows {
+		allowed, scopeErr := accountexport.For(ctx, st, accountID).App(ctx, ins.AppID)
+		if scopeErr != nil {
+			return nil, scopeErr
+		}
+		if !allowed {
+			continue
+		}
 		out = append(out, api.InstanceResponse{
 			ID: ins.ID, AppID: ins.AppID, DeploymentID: ins.DeploymentID,
 			State: ins.State, HostIP: ins.HostIP, RAMMB: ins.RAMMB,
@@ -1132,6 +1179,13 @@ func listDomainsForAccountExport(ctx context.Context, st state.Store, accountID 
 	}
 	lookup, _ := st.(defaultLookup)
 	for _, d := range rows {
+		allowed, scopeErr := accountexport.For(ctx, st, accountID).App(ctx, d.AppID)
+		if scopeErr != nil {
+			return nil, scopeErr
+		}
+		if !allowed {
+			continue
+		}
 		status := d.CertStatus
 		if status == "" {
 			status = state.CustomDomainCertPending
@@ -1164,6 +1218,13 @@ func listCronsForAccountExport(ctx context.Context, st state.Store, accountID st
 	}
 	out := make([]api.CronResponse, 0, len(rows))
 	for _, c := range rows {
+		allowed, scopeErr := accountexport.For(ctx, st, accountID).App(ctx, c.AppID)
+		if scopeErr != nil {
+			return nil, scopeErr
+		}
+		if !allowed {
+			continue
+		}
 		out = append(out, api.CronResponse{
 			SchedulePolicy: c.SchedulePolicy, FailureRules: c.FailureRules,
 			ID: c.ID, AppID: c.AppID, Schedule: c.Schedule,

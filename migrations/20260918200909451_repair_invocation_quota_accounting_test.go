@@ -18,6 +18,7 @@ func TestMigrationRepairInvocationQuotaAccounting(t *testing.T) {
 	migrateUpOnce(ctx, t, pool)
 
 	accountID := seedAccount(t, ctx, pool)
+	seedPersonalOrg(t, ctx, pool, accountID) // invocation quota ownership follows the app's org (#4882)
 	appID := seedApp(t, ctx, pool, accountID)
 	if _, err := pool.Exec(ctx, `
 		insert into account_async_quota (account_id, max_inflight, current_inflight)

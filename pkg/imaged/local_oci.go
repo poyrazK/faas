@@ -19,9 +19,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sharedruntime"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 // localOCIIndex and localOCIManifest are the small parts of an OCI layout
@@ -568,7 +568,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if err != nil {
 		return fmt.Errorf("imaged: local OCI storageFor: %w", err)
 	}
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	appsKey := storagekey.AppLayer(app.Slug, dep.ID)
 	buildLayers := layersAsReaders(layers)
 	runtime := sharedRuntimeClaim(app, source)
 	if source == nil {

@@ -26,8 +26,7 @@ func (m *MemStore) ChangeManagedRealtimeAccess(_ context.Context, ep, principal,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	endpoint, ok := m.managedRealtimeEndpoints[ep]
-	if !ok || endpoint.AuthMode != "oidc_jwt" {
+	if _, ok := m.managedRealtimeEndpoints[ep]; !ok {
 		return ManagedRealtimeAccess{}, ErrNotFound
 	}
 	rows := m.managedRealtimeAccess[ep]

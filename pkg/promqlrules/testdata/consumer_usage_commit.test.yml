@@ -1,0 +1,86 @@
+# A durability abort is a new lost/withheld response, not a nonzero lifetime counter.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+- name: no failed durability commits
+  interval: 1m
+  input_series:
+  - series: gateway_usage_commit_aborts_total{job="gatewayd-internal",instance="gateway-a"}
+    values: '0x12'
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: FaasUsageCommitAborted
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasUsageCommitAborted
+    exp_alerts: []
+- name: already accumulated abort count is not a new failure
+  interval: 1m
+  input_series:
+  - series: gateway_usage_commit_aborts_total{job="gatewayd-internal",instance="gateway-a"}
+    values: 7x12
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: FaasUsageCommitAborted
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasUsageCommitAborted
+    exp_alerts: []
+- name: one new abort pages immediately and expires from the window
+  interval: 1m
+  input_series:
+  - series: gateway_usage_commit_aborts_total{job="gatewayd-internal",instance="gateway-a"}
+    values: 0 1 1 1 1 1 1 1 1
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: FaasUsageCommitAborted
+    exp_alerts:
+    - &id001
+      exp_labels:
+        severity: page
+        component: gatewayd-internal
+        family: consumer_usage_delivery
+        job: gatewayd-internal
+        instance: gateway-a
+      exp_annotations:
+        summary: 'Monetized responses withheld: usage could not be made durable'
+        description: The gateway aborted billable responses because their usage events could not be fsynced to the
+          local outbox (ADR-1505). Clients saw failed requests. Check outbox capacity and disk health; readiness
+          should already be draining the node.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md
+  - eval_time: 4m
+    alertname: FaasUsageCommitAborted
+    exp_alerts:
+    - *id001
+  - eval_time: 6m
+    alertname: FaasUsageCommitAborted
+    exp_alerts: []
+- name: counter reset alone is not an aborted response
+  interval: 1m
+  input_series:
+  - series: gateway_usage_commit_aborts_total{job="gatewayd-internal",instance="gateway-a"}
+    values: 7 7 0 0 0 0 0 0
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: FaasUsageCommitAborted
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasUsageCommitAborted
+    exp_alerts: []
+- name: new abort after a reset still pages
+  interval: 1m
+  input_series:
+  - series: gateway_usage_commit_aborts_total{job="gatewayd-internal",instance="gateway-a"}
+    values: 7 7 0 1 1 1 1 1 1
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: FaasUsageCommitAborted
+    exp_alerts: []
+  - eval_time: 3m
+    alertname: FaasUsageCommitAborted
+    exp_alerts:
+    - *id001
+  - eval_time: 8m
+    alertname: FaasUsageCommitAborted
+    exp_alerts: []

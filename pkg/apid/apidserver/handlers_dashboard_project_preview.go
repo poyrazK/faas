@@ -299,7 +299,7 @@ func (s *server) applyProjectPreview(w http.ResponseWriter, r *http.Request, log
 	// multipart part so parseScanMultipart's comma-split /
 	// lowercase / trim normalises identically to the live form.
 	exclude := r.Form["exclude"]
-	synthReq, buildErr := buildCachedSourceRequest(cachedPath, slug, exclude, approvalToken)
+	synthReq, cleanup, buildErr := migrationReplay(r, cachedPath, pt, api.ApplyCachedProjectPlanRequest{PlanToken: planToken, Exclude: exclude, ApprovalToken: approvalToken})
 	if buildErr != nil {
 		log.Error("dashboard project_preview apply: build synth req",
 			"account_id", acct.ID, "slug", slug, "err", buildErr)
@@ -307,6 +307,7 @@ func (s *server) applyProjectPreview(w http.ResponseWriter, r *http.Request, log
 			WithHint("Re-upload the source and try again; contact support if it continues."))
 		return
 	}
+	defer cleanup()
 	view := views.ProjectPreviewView{
 		ProjectSlug: slug,
 		Preview:     true,

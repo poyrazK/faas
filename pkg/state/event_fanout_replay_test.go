@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,17 +8,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreReplayFailedPublishedEventRecipientKeepsSiblingProgress(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "fanout-replay@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	accountID := canonicalMemUUID(account.ID)
-	app, err := store.CreateApp(ctx, App{ID: uuid.NewString(), AccountID: accountID, Slug: "fanout-replay"})
+	accountID := state.CanonicalMemUUID(account.ID)
+	app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "fanout-replay"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,13 +41,13 @@ func TestMemStoreReplayFailedPublishedEventRecipientKeepsSiblingProgress(t *test
 	}
 	now := time.Now().UTC()
 	if err := store.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, failedRecipient.ID,
-		PublishedEventRecipientProgress{State: PublishedEventRecipientFailed, Attempts: 3,
-			FailureCode: EventFanoutFailureCodeInvocationEnqueueFailed, Retryable: true,
+		state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientFailed, Attempts: 3,
+			FailureCode: state.EventFanoutFailureCodeInvocationEnqueueFailed, Retryable: true,
 			LastError: "temporary outage", UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, successfulRecipient.ID,
-		PublishedEventRecipientProgress{State: PublishedEventRecipientEnqueued, Attempts: 1, UpdatedAt: now}); err != nil {
+		state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientEnqueued, Attempts: 1, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
@@ -60,28 +61,28 @@ func TestMemStoreReplayFailedPublishedEventRecipientKeepsSiblingProgress(t *test
 	if err != nil {
 		t.Fatalf("claim replay: %v", err)
 	}
-	if got := replayed.RecipientProgress[failedRecipient.ID]; got.State != PublishedEventRecipientPending || got.Attempts != 3 ||
+	if got := replayed.RecipientProgress[failedRecipient.ID]; got.State != state.PublishedEventRecipientPending || got.Attempts != 3 ||
 		got.FailureCode != "" || got.Retryable || got.LastError != "" {
 		t.Fatalf("replayed recipient progress = %+v, want pending with prior attempts and cleared failure details", got)
 	}
-	if got := replayed.RecipientProgress[successfulRecipient.ID]; got.State != PublishedEventRecipientEnqueued || got.Attempts != 1 {
+	if got := replayed.RecipientProgress[successfulRecipient.ID]; got.State != state.PublishedEventRecipientEnqueued || got.Attempts != 1 {
 		t.Fatalf("successful sibling progress = %+v, want unchanged enqueued outcome", got)
 	}
 	if len(replayed.RecipientSnapshot) != 2 || replayed.RecipientSnapshot[0].ID != work.RecipientSnapshot[0].ID ||
 		replayed.RecipientSnapshot[1].ID != work.RecipientSnapshot[1].ID {
 		t.Fatalf("recipient snapshot changed during replay: before=%+v after=%+v", work.RecipientSnapshot, replayed.RecipientSnapshot)
 	}
-	if err := store.ReplayFailedPublishedEventRecipientForApp(ctx, accountID, app.ID, "orders", "evt-retry", failedRecipient.ID); !errors.Is(err, ErrNotFound) {
+	if err := store.ReplayFailedPublishedEventRecipientForApp(ctx, accountID, app.ID, "orders", "evt-retry", failedRecipient.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("second replay while recipient is pending = %v, want ErrNotFound", err)
 	}
 	if err := store.RecordPublishedEventRecipientProgress(ctx, replayed.ID, replayed.ClaimToken, failedRecipient.ID,
-		PublishedEventRecipientProgress{State: PublishedEventRecipientEnqueued, Attempts: 4, UpdatedAt: time.Now().UTC()}); err != nil {
+		state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientEnqueued, Attempts: 4, UpdatedAt: time.Now().UTC()}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.FinishPublishedEvent(ctx, replayed.ID, replayed.ClaimToken, nil); err != nil {
 		t.Fatal(err)
 	}
-	failures, err := store.ListEventFanoutFailuresForApp(ctx, app.ID, 10, EventFanoutFailureCursor{}, "", "evt-retry")
+	failures, err := store.ListEventFanoutFailuresForApp(ctx, app.ID, 10, state.EventFanoutFailureCursor{}, "", "evt-retry")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +90,7 @@ func TestMemStoreReplayFailedPublishedEventRecipientKeepsSiblingProgress(t *test
 		t.Fatalf("failures after successful replay = %+v, want none", failures)
 	}
 
-	history, err := store.ListEventFanoutAttemptsForApp(ctx, app.ID, 10, EventFanoutAttemptCursor{},
+	history, err := store.ListEventFanoutAttemptsForApp(ctx, app.ID, 10, state.EventFanoutAttemptCursor{},
 		"orders", "evt-retry", failedRecipient.ID)
 	if err != nil {
 		t.Fatalf("list replay history: %v", err)
@@ -97,27 +98,27 @@ func TestMemStoreReplayFailedPublishedEventRecipientKeepsSiblingProgress(t *test
 	if len(history) != 3 {
 		t.Fatalf("replay history = %+v, want failed attempt, replay request, and successful attempt", history)
 	}
-	if got := history[0]; got.Action != EventFanoutAttemptActionAttempt || got.State != PublishedEventRecipientEnqueued ||
+	if got := history[0]; got.Action != state.EventFanoutAttemptActionAttempt || got.State != state.PublishedEventRecipientEnqueued ||
 		got.Attempts != 4 || got.FailureCode != "" || got.LastError != "" {
 		t.Fatalf("latest history row = %+v, want successful fanout outcome", got)
 	}
-	if got := history[1]; got.Action != EventFanoutAttemptActionReplay || got.State != PublishedEventRecipientPending ||
-		got.Attempts != 3 || got.FailureCode != EventFanoutFailureCodeInvocationEnqueueFailed ||
+	if got := history[1]; got.Action != state.EventFanoutAttemptActionReplay || got.State != state.PublishedEventRecipientPending ||
+		got.Attempts != 3 || got.FailureCode != state.EventFanoutFailureCodeInvocationEnqueueFailed ||
 		!got.Retryable || got.LastError != "temporary outage" {
 		t.Fatalf("replay history row = %+v, want preserved failure snapshot", got)
 	}
-	if got := history[2]; got.Action != EventFanoutAttemptActionAttempt || got.State != PublishedEventRecipientFailed ||
-		got.Attempts != 3 || got.FailureCode != EventFanoutFailureCodeInvocationEnqueueFailed ||
+	if got := history[2]; got.Action != state.EventFanoutAttemptActionAttempt || got.State != state.PublishedEventRecipientFailed ||
+		got.Attempts != 3 || got.FailureCode != state.EventFanoutFailureCodeInvocationEnqueueFailed ||
 		!got.Retryable || got.LastError != "temporary outage" {
 		t.Fatalf("initial history row = %+v, want original failure", got)
 	}
 	page, err := store.ListEventFanoutAttemptsForApp(ctx, app.ID, 1,
-		EventFanoutAttemptCursor{ID: history[0].ID}, "orders", "evt-retry", failedRecipient.ID)
+		state.EventFanoutAttemptCursor{ID: history[0].ID}, "orders", "evt-retry", failedRecipient.ID)
 	if err != nil || len(page) != 1 || page[0].ID != history[1].ID {
 		t.Fatalf("history continuation page = %+v, %v; want replay row", page, err)
 	}
 	wrongIdentity, err := store.ListEventFanoutAttemptsForApp(ctx, app.ID, 10,
-		EventFanoutAttemptCursor{}, "shipping", "evt-retry", failedRecipient.ID)
+		state.EventFanoutAttemptCursor{}, "shipping", "evt-retry", failedRecipient.ID)
 	if err != nil || len(wrongIdentity) != 0 {
 		t.Fatalf("history for another event identity = %+v, %v; want no rows", wrongIdentity, err)
 	}
@@ -125,13 +126,13 @@ func TestMemStoreReplayFailedPublishedEventRecipientKeepsSiblingProgress(t *test
 
 func TestMemStoreListEventFanoutFailuresIncludesClassification(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "fanout-classification@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	accountID := canonicalMemUUID(account.ID)
-	app, err := store.CreateApp(ctx, App{ID: uuid.NewString(), AccountID: accountID, Slug: "fanout-classification"})
+	accountID := state.CanonicalMemUUID(account.ID)
+	app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "fanout-classification"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,8 +149,8 @@ func TestMemStoreListEventFanoutFailuresIncludesClassification(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID,
-		PublishedEventRecipientProgress{State: PublishedEventRecipientFailed, Attempts: 12,
-			FailureCode: EventFanoutFailureCodeInvocationEnqueueFailed, Retryable: true,
+		state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientFailed, Attempts: 12,
+			FailureCode: state.EventFanoutFailureCodeInvocationEnqueueFailed, Retryable: true,
 			LastError: "temporary outage", UpdatedAt: time.Now().UTC()}); err != nil {
 		t.Fatal(err)
 	}
@@ -157,28 +158,28 @@ func TestMemStoreListEventFanoutFailuresIncludesClassification(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	failures, err := store.ListEventFanoutFailuresForApp(ctx, app.ID, 10, EventFanoutFailureCursor{}, "", "evt-classification")
+	failures, err := store.ListEventFanoutFailuresForApp(ctx, app.ID, 10, state.EventFanoutFailureCursor{}, "", "evt-classification")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(failures) != 1 || failures[0].FailureCode != EventFanoutFailureCodeInvocationEnqueueFailed || !failures[0].Retryable {
+	if len(failures) != 1 || failures[0].FailureCode != state.EventFanoutFailureCodeInvocationEnqueueFailed || !failures[0].Retryable {
 		t.Fatalf("fanout failures = %+v, want invocation enqueue failure marked retryable", failures)
 	}
 }
 
 func TestMemStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "fanout-replay-batch@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	accountID := canonicalMemUUID(account.ID)
-	app, err := store.CreateApp(ctx, App{ID: uuid.NewString(), AccountID: accountID, Slug: "fanout-replay-batch"})
+	accountID := state.CanonicalMemUUID(account.ID)
+	app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "fanout-replay-batch"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherApp, err := store.CreateApp(ctx, App{ID: uuid.NewString(), AccountID: accountID, Slug: "fanout-replay-other"})
+	otherApp, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "fanout-replay-other"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,19 +213,19 @@ func TestMemStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t 
 	}
 	oldest := time.Now().UTC()
 	for _, outcome := range []struct {
-		subscription EventSubscription
+		subscription state.EventSubscription
 		updatedAt    time.Time
 		code         string
 		retryable    bool
 	}{
-		{first, oldest, EventFanoutFailureCodeInvocationEnqueueFailed, true},
-		{second, oldest.Add(time.Second), EventFanoutFailureCodeTargetLookupFailed, true},
-		{third, oldest.Add(2 * time.Second), EventFanoutFailureCodeInvocationEnqueueFailed, true},
-		{permanent, oldest.Add(3 * time.Second), EventFanoutFailureCodeTargetUnavailable, false},
-		{foreignRecipient, oldest.Add(4 * time.Second), EventFanoutFailureCodeInvocationEnqueueFailed, true},
+		{first, oldest, state.EventFanoutFailureCodeInvocationEnqueueFailed, true},
+		{second, oldest.Add(time.Second), state.EventFanoutFailureCodeTargetLookupFailed, true},
+		{third, oldest.Add(2 * time.Second), state.EventFanoutFailureCodeInvocationEnqueueFailed, true},
+		{permanent, oldest.Add(3 * time.Second), state.EventFanoutFailureCodeTargetUnavailable, false},
+		{foreignRecipient, oldest.Add(4 * time.Second), state.EventFanoutFailureCodeInvocationEnqueueFailed, true},
 	} {
 		if err := store.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, outcome.subscription.ID,
-			PublishedEventRecipientProgress{State: PublishedEventRecipientFailed, Attempts: 12,
+			state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientFailed, Attempts: 12,
 				FailureCode: outcome.code, Retryable: outcome.retryable, LastError: "route failed", UpdatedAt: outcome.updatedAt}); err != nil {
 			t.Fatalf("record failure for %s: %v", outcome.subscription.ID, err)
 		}
@@ -245,19 +246,19 @@ func TestMemStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := work.RecipientProgress[first.ID]; got.State != PublishedEventRecipientPending || got.FailureCode != "" || got.Retryable {
+	if got := work.RecipientProgress[first.ID]; got.State != state.PublishedEventRecipientPending || got.FailureCode != "" || got.Retryable {
 		t.Fatalf("oldest retryable progress = %+v, want cleared pending", got)
 	}
-	if got := work.RecipientProgress[second.ID]; got.State != PublishedEventRecipientPending || got.FailureCode != "" || got.Retryable {
+	if got := work.RecipientProgress[second.ID]; got.State != state.PublishedEventRecipientPending || got.FailureCode != "" || got.Retryable {
 		t.Fatalf("second retryable progress = %+v, want cleared pending", got)
 	}
-	if got := work.RecipientProgress[third.ID]; got.State != PublishedEventRecipientFailed || !got.Retryable {
+	if got := work.RecipientProgress[third.ID]; got.State != state.PublishedEventRecipientFailed || !got.Retryable {
 		t.Fatalf("third retryable progress = %+v, want unchanged failed", got)
 	}
-	if got := work.RecipientProgress[permanent.ID]; got.State != PublishedEventRecipientFailed || got.Retryable {
+	if got := work.RecipientProgress[permanent.ID]; got.State != state.PublishedEventRecipientFailed || got.Retryable {
 		t.Fatalf("non-retryable progress = %+v, want unchanged failed", got)
 	}
-	if got := work.RecipientProgress[foreignRecipient.ID]; got.State != PublishedEventRecipientFailed || !got.Retryable {
+	if got := work.RecipientProgress[foreignRecipient.ID]; got.State != state.PublishedEventRecipientFailed || !got.Retryable {
 		t.Fatalf("other app progress = %+v, want unchanged failed", got)
 	}
 	batch, err = store.ReplayRetryablePublishedEventRecipientsForApp(ctx, accountID, app.ID, "", "", 1)
@@ -267,10 +268,10 @@ func TestMemStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t 
 	if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
 		t.Fatal(err)
 	}
-	firstHistory, err := store.ListEventFanoutAttemptsForApp(ctx, app.ID, 10, EventFanoutAttemptCursor{},
+	firstHistory, err := store.ListEventFanoutAttemptsForApp(ctx, app.ID, 10, state.EventFanoutAttemptCursor{},
 		"orders.us", "evt-replay-batch", first.ID)
-	if err != nil || len(firstHistory) != 2 || firstHistory[0].Action != EventFanoutAttemptActionReplay ||
-		firstHistory[0].FailureCode != EventFanoutFailureCodeInvocationEnqueueFailed || firstHistory[0].LastError != "route failed" {
+	if err != nil || len(firstHistory) != 2 || firstHistory[0].Action != state.EventFanoutAttemptActionReplay ||
+		firstHistory[0].FailureCode != state.EventFanoutFailureCodeInvocationEnqueueFailed || firstHistory[0].LastError != "route failed" {
 		t.Fatalf("bulk replay history = %+v, %v; want replay snapshot and original failure", firstHistory, err)
 	}
 
@@ -282,7 +283,7 @@ func TestMemStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := work.RecipientProgress[third.ID]; got.State != PublishedEventRecipientPending || got.FailureCode != "" || got.Retryable {
+	if got := work.RecipientProgress[third.ID]; got.State != state.PublishedEventRecipientPending || got.FailureCode != "" || got.Retryable {
 		t.Fatalf("third retryable progress = %+v, want cleared pending", got)
 	}
 	if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
@@ -297,21 +298,21 @@ func TestMemStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t 
 		t.Fatalf("claim event with colliding ID: %v", err)
 	}
 	if err := store.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, second.ID,
-		PublishedEventRecipientProgress{State: PublishedEventRecipientFailed, Attempts: 1,
-			FailureCode: EventFanoutFailureCodeInvocationEnqueueFailed, Retryable: true, LastError: "route failed", UpdatedAt: time.Now().UTC()}); err != nil {
+		state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientFailed, Attempts: 1,
+			FailureCode: state.EventFanoutFailureCodeInvocationEnqueueFailed, Retryable: true, LastError: "route failed", UpdatedAt: time.Now().UTC()}); err != nil {
 		t.Fatalf("record failure for event with colliding ID: %v", err)
 	}
 	if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
 		t.Fatalf("settle event with colliding ID: %v", err)
 	}
-	failures, err := store.ListEventFanoutFailuresForApp(ctx, app.ID, 10, EventFanoutFailureCursor{}, "orders.eu", "evt-replay-batch")
+	failures, err := store.ListEventFanoutFailuresForApp(ctx, app.ID, 10, state.EventFanoutFailureCursor{}, "orders.eu", "evt-replay-batch")
 	if err != nil {
 		t.Fatalf("list source-qualified fanout failures: %v", err)
 	}
 	if len(failures) != 1 || failures[0].EventSource != "orders.eu" || failures[0].EventID != "evt-replay-batch" {
 		t.Fatalf("source-qualified fanout failures = %+v, want only orders.eu collision", failures)
 	}
-	failures, err = store.ListEventFanoutFailuresForApp(ctx, app.ID, 10, EventFanoutFailureCursor{}, "orders.us", "evt-replay-batch")
+	failures, err = store.ListEventFanoutFailuresForApp(ctx, app.ID, 10, state.EventFanoutFailureCursor{}, "orders.us", "evt-replay-batch")
 	if err != nil {
 		t.Fatalf("list first source-qualified fanout failures: %v", err)
 	}
@@ -331,13 +332,13 @@ func TestMemStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t 
 
 func TestMemStoreReplayFailedPublishedEventRecipientWaitsForReceiptToSettle(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "fanout-replay-active@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	accountID := canonicalMemUUID(account.ID)
-	app, err := store.CreateApp(ctx, App{ID: uuid.NewString(), AccountID: accountID, Slug: "fanout-replay-active"})
+	accountID := state.CanonicalMemUUID(account.ID)
+	app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "fanout-replay-active"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,13 +355,13 @@ func TestMemStoreReplayFailedPublishedEventRecipientWaitsForReceiptToSettle(t *t
 		t.Fatal(err)
 	}
 	if err := store.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID,
-		PublishedEventRecipientProgress{State: PublishedEventRecipientFailed, Attempts: 1, LastError: "target unavailable", UpdatedAt: time.Now().UTC()}); err != nil {
+		state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientFailed, Attempts: 1, LastError: "target unavailable", UpdatedAt: time.Now().UTC()}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, errors.New("sibling retry remains")); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ReplayFailedPublishedEventRecipientForApp(ctx, accountID, app.ID, "orders", "evt-active", recipient.ID); !errors.Is(err, ErrConflict) {
+	if err := store.ReplayFailedPublishedEventRecipientForApp(ctx, accountID, app.ID, "orders", "evt-active", recipient.ID); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("replay before receipt settles = %v, want ErrConflict", err)
 	}
 }

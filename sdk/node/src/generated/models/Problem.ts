@@ -5,6 +5,10 @@
 import type { BindingCheckReport } from './BindingCheckReport.js';
 import type { FieldError } from './FieldError.js';
 import type { LogExcerpt } from './LogExcerpt.js';
+import type { ReleaseApprovalStatus } from './ReleaseApprovalStatus.js';
+import type { ReleaseFreeze } from './ReleaseFreeze.js';
+import type { ReleaseRestorePoint } from './ReleaseRestorePoint.js';
+import type { RollbackCrossedRelease } from './RollbackCrossedRelease.js';
 import type { SecretFinding } from './SecretFinding.js';
 /**
  * RFC 9457 problem+json envelope. The `code` field is the stable
@@ -45,6 +49,19 @@ export type Problem = {
    */
   expected_sequence?: number;
   bindings_check?: BindingCheckReport;
+  /**
+   * rollback_crosses_release: release commands the rollback would not undo (ADR-1448).
+   */
+  crossed_releases?: Array<RollbackCrossedRelease>;
+  /**
+   * rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases (ADR-1448).
+   */
+  restore_points?: Array<ReleaseRestorePoint>;
+  /**
+   * release_frozen: the freezes refusing the release (ADR-20261019071733).
+   */
+  freezes?: Array<ReleaseFreeze>;
+  release_approval?: ReleaseApprovalStatus;
   type?: string;
   title: string;
   status: number;

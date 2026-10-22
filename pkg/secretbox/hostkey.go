@@ -311,6 +311,7 @@ func LoadFleetAndHostKeys(dir string) ([]*age.X25519Identity, error) {
 	seen := map[string]struct{}{fleet.Recipient().String(): {}}
 
 	for _, names := range [][]string{
+		{"fleet.age.previous", "faas_fleet_age_identity_previous"},
 		{"host.age", "faas_host_age_identity"},
 		{"host.age.previous", "faas_host_age_identity_previous"},
 	} {

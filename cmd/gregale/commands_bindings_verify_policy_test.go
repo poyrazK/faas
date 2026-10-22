@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/bindings"
 	"github.com/onebox-faas/faas/pkg/bindingprobe"
@@ -185,7 +186,7 @@ func (f *bindingPolicyCLIFixture) createTask(w http.ResponseWriter, r *http.Requ
 		probe.Cleanup.Status = "failed" // Fixture has cleaned up; receipt did not prove it.
 	}
 	if f.badTask == "legacy" {
-		probe = passedObjectStorageCLIReport(prefix)
+		probe = main.PassedObjectStorageCLIReport(prefix)
 	}
 	body, _ := json.Marshal(probe)
 	f.task = api.AppTaskResponse{ID: uuid.NewString(), AppID: releaseCheckAppID, DeploymentID: releaseCheckDeploymentID, DeploymentScope: "production",
@@ -223,11 +224,11 @@ func (f *bindingPolicyCLIFixture) createTask(w http.ResponseWriter, r *http.Requ
 	_ = json.NewEncoder(w).Encode(f.task)
 }
 
-func (f *bindingPolicyCLIFixture) run(args ...string) (int, bindingPolicyVerificationReport, string) {
+func (f *bindingPolicyCLIFixture) run(args ...string) (int, main.BindingPolicyVerificationReport, string) {
 	f.t.Helper()
 	command := append([]string{"bindings", "verify", "api", "--release-policy", "--json", "--poll-interval", "1ms", "--wait-timeout", "3s"}, args...)
-	code, output, stderr := captureBindingCLI(f.t, f.server.URL, command...)
-	var report bindingPolicyVerificationReport
+	code, output, stderr := main.CaptureBindingCLI(f.t, f.server.URL, command...)
+	var report main.BindingPolicyVerificationReport
 	if err := json.Unmarshal([]byte(output), &report); err != nil {
 		f.t.Fatalf("expected one JSON report: exit=%d error=%v out=%s stderr=%s", code, err, output, stderr)
 	}
@@ -355,7 +356,7 @@ func TestBindingsVerifyReleasePolicyInterruptDuringTaskRead(t *testing.T) {
 			<-r.Context().Done()
 		}
 	}
-	report, code := executeBindingPolicyVerification(ctx, api.NewClient(f.server.URL, "fp_live_test"), "api", "", false, true, time.Millisecond, time.Second)
+	report, code := main.ExecuteBindingPolicyVerification(ctx, api.NewClient(f.server.URL, "fp_live_test"), "api", "", false, true, time.Millisecond, time.Second)
 	if code != 130 || report.Passed || report.Status != "cancelled" || len(f.requests) != 1 || f.cancels != 1 || len(report.Probes) != 1 || report.Probes[0].Report.TaskID == "" {
 		t.Fatalf("interrupted read lost the admitted task: exit=%d report=%+v cancellations=%d", code, report, f.cancels)
 	}
@@ -448,7 +449,7 @@ func TestBindingsVerifyReleasePolicyTaskFailuresAndFinalGate(t *testing.T) {
 func TestBindingsVerifyReleasePolicyInvalidFlagCombinations(t *testing.T) {
 	for _, args := range [][]string{{"api", "--dry-run"}, {"api", "--all", "--release-policy"}, {"api", "--release-policy", "--object-storage", "ASSETS"}, {"api", "billing", "--release-policy"}, {"api", "--release-policy", "--postgres", "DATABASE_URL"}, {"api", "--release-policy=false", "--dry-run"}} {
 		t.Run(fmt.Sprint(args), func(t *testing.T) {
-			_, _, stderr := captureBindingCLI(t, "http://127.0.0.1:1", append([]string{"bindings", "verify"}, args...)...)
+			_, _, stderr := main.CaptureBindingCLI(t, "http://127.0.0.1:1", append([]string{"bindings", "verify"}, args...)...)
 			if !strings.Contains(stderr, "usage:") {
 				t.Fatalf("invalid combination reached API handling: %s", stderr)
 			}

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { allowedRedirect, consentView, errorMessage, fragmentParams, handoffURL, secondFactors, tokenAAL } from '../ui/app.js'
+import { allowedRedirect, consentView, deviceName, errorMessage, fragmentParams, handoffURL, joinedMessage, qrImage, secondFactors, tokenAAL, web3Message } from '../ui/app.js'
 import { createServer } from '../server.mjs'
 
 const site = 'https://shop.example.com'
@@ -27,6 +27,9 @@ test('puts the session in the fragment and reads GoTrue fragments', () => {
 test('explains known errors without echoing server text', () => {
   assert.equal(errorMessage({ error_code: 'invalid_credentials' }, 400), 'Wrong email or password.')
   assert.equal(errorMessage({ code: 'invitation_email_mismatch' }, 403), 'This invitation was sent to a different email address.')
+  // A sign-up hook's refusal arrives as GoTrue's msg; sentences there are not codes.
+  assert.equal(errorMessage({ code: 403, error_code: 'unknown', msg: 'waitlisted' }, 403), 'You are on the waitlist. We will email you when you can sign up.')
+  assert.equal(errorMessage({ code: 500, msg: 'Database error saving new user' }, 500), 'Something went wrong. Try again.')
   assert.equal(errorMessage({ msg: '<img src=x onerror=alert(1)>' }, 500), 'Something went wrong. Try again.')
   assert.equal(errorMessage(null, 429), 'Too many attempts. Wait a minute and try again.')
   assert.equal(errorMessage({ error_code: 'otp_expired' }, 403), 'That code is wrong or has expired. Request a new one.')
@@ -39,7 +42,7 @@ test('serves the hosted pages with a strict policy', async t => {
   await once(server, 'listening')
   t.after(() => server.close())
   const base = `http://127.0.0.1:${server.address().port}`
-  for (const path of ['/ui', '/ui/sign-in', '/ui/sign-up', '/ui/forgot-password', '/ui/reset-password', '/ui/invitation', '/ui/phone', '/ui/sso']) {
+  for (const path of ['/ui', '/ui/sign-in', '/ui/sign-up', '/ui/forgot-password', '/ui/reset-password', '/ui/invitation', '/ui/phone', '/ui/sso', '/ui/account']) {
     const response = await fetch(base + path)
     assert.equal(response.status, 200, path)
     assert.match(response.headers.get('content-type'), /^text\/html/)
@@ -51,7 +54,7 @@ test('serves the hosted pages with a strict policy', async t => {
   const script = await fetch(`${base}/ui/app.js`)
   assert.match(script.headers.get('content-type'), /^text\/javascript/)
   const config = await (await fetch(`${base}/ui/config.json`)).json()
-  assert.deepEqual(config, { site_url: site, redirect_urls: redirects, app: 'shop.example.com', logo_url: null, captcha: null })
+  assert.deepEqual(config, { site_url: site, redirect_urls: redirects, app: 'shop.example.com', logo_url: null, captcha: null, web3: { ethereum: false, solana: false } })
   const brand = await fetch(`${base}/ui/brand.css`)
   assert.match(brand.headers.get('content-type'), /^text\/css/)
   assert.equal(await brand.text(), '')
@@ -97,9 +100,9 @@ test('branding and CAPTCHA widen the page policy by exact origins only', async t
   t.after(() => server.close())
   const base = `http://127.0.0.1:${server.address().port}`
   const page = await fetch(`${base}/ui/sign-in`)
-  assert.equal(page.headers.get('content-security-policy'), "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; img-src 'self' https://cdn.example.com; frame-src https://challenges.cloudflare.com; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+  assert.equal(page.headers.get('content-security-policy'), "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; img-src 'self' data: https://cdn.example.com; frame-src https://challenges.cloudflare.com; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
   assert.deepEqual(await (await fetch(`${base}/ui/config.json`)).json(), { site_url: site, redirect_urls: redirects, app: 'Shop', logo_url: 'https://cdn.example.com/logo.svg',
-    captcha: { provider: 'turnstile', site_key: '1x00000000000000000000AA', script: 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit' } })
+    captcha: { provider: 'turnstile', site_key: '1x00000000000000000000AA', script: 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit' }, web3: { ethereum: false, solana: false } })
   assert.equal(await (await fetch(`${base}/ui/brand.css`)).text(), ':root { --accent: #4f46e5; }\n')
 })
 
@@ -108,6 +111,20 @@ test('a CAPTCHA token is required when the check is shown, and sent once', async
   assert.deepEqual(captchaBody({ email: 'a@example.test' }, undefined), { email: 'a@example.test' })
   assert.deepEqual(captchaBody({ email: 'a@example.test' }, 'tok'), { email: 'a@example.test', gotrue_meta_security: { captcha_token: 'tok' } })
   assert.throws(() => captchaBody({}, ''), /security check/)
+})
+
+test('the hosted pages write wallet messages the way GoTrue parses them', () => {
+  const fields = { domain: 'shop-auth.example', uri: 'https://shop-auth.example/ui/sign-in', statement: 'Sign in to Shop', nonce: 'n1', issuedAt: '2026-10-19T10:00:00.000Z' }
+  assert.equal(web3Message('ethereum', { ...fields, address: '0xabc', chainId: 1 }),
+    'shop-auth.example wants you to sign in with your Ethereum account:\n0xabc\n\nSign in to Shop\n\nURI: https://shop-auth.example/ui/sign-in\nVersion: 1\nChain ID: 1\nNonce: n1\nIssued At: 2026-10-19T10:00:00.000Z')
+  assert.equal(web3Message('solana', { ...fields, address: 'So1', statement: undefined }),
+    'shop-auth.example wants you to sign in with your Solana account:\nSo1\n\nURI: https://shop-auth.example/ui/sign-in\nVersion: 1\nNonce: n1\nIssued At: 2026-10-19T10:00:00.000Z')
+})
+
+test('an accepted invitation says when the organization needs a second factor first', () => {
+  assert.equal(joinedMessage({ role: 'member' }, 'aal1'), 'You joined as member.')
+  assert.equal(joinedMessage({ role: 'member', mfa_required: true }, 'aal2'), 'You joined as member.')
+  assert.match(joinedMessage({ role: 'admin', mfa_required: true }, 'aal1'), /^You joined as admin\. This organization requires two-step verification/)
 })
 
 test('a sign-in asks for a verified second factor until the session is aal2', () => {
@@ -135,4 +152,26 @@ test('the consent page names the client, its permissions, its resource and where
   assert.equal(consentView({ client: { name: '' } }).name, 'An application')
   assert.equal(consentView({ client: { name: 'x'.repeat(500) } }).name.length, 100)
   assert.equal(allowedRedirect('https://shop-auth.gregale.app/ui/consent?authorization_id=a', 'https://shop.example.com', ['https://shop-auth.gregale.app/ui/consent']), 'https://shop-auth.gregale.app/ui/consent?authorization_id=a')
+})
+
+test('names a session device from its user agent', () => {
+  for (const [agent, name] of [
+    ['Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36', 'Chrome on macOS'],
+    ['Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1', 'Safari on iPhone'],
+    ['Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/141.0 Mobile/15E148 Safari/604.1', 'Chrome on iPhone'],
+    ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0', 'Edge on Windows'],
+    ['Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Mobile Safari/537.36', 'Chrome on Android'],
+    ['Mozilla/5.0 (X11; Linux x86_64; rv:144.0) Gecko/20100101 Firefox/144.0', 'Firefox on Linux'],
+    ['okhttp/4.12.0', 'An app or script'],
+    ['', 'Unknown device'],
+    [null, 'Unknown device'],
+  ]) assert.equal(deviceName(agent), name, agent)
+})
+
+test('shows the SVG QR code GoTrue returns as an image URL', () => {
+  const svg = '<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg"><rect fill="#000"/></svg>'
+  const url = qrImage(svg)
+  assert.ok(url.startsWith('data:image/svg+xml;charset=utf-8,%3C%3Fxml'))
+  assert.equal(decodeURIComponent(url.slice(url.indexOf(',') + 1)), svg)
+  assert.equal(qrImage('data:image/png;base64,AAAA'), 'data:image/png;base64,AAAA')
 })

@@ -130,5 +130,13 @@ export type AppManifest = {
    * Configured revision pin window in seconds; zero disables pinning.
    */
   revision_pin_ttl_seconds?: number;
+  /**
+   * Effective default rollout for production releases (ADR-1446, ADR-1450).
+   */
+  release_policy?: 'safe' | 'fast' | 'immediate';
+  /**
+   * Paths the default rollout probe checks; absent means / (ADR-1449).
+   */
+  release_probe_paths?: Array<string>;
 };
 

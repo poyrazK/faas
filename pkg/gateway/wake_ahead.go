@@ -8,7 +8,8 @@ package gateway
 // but only for edges this gateway has measured: after a cold wake of a caller,
 // a service call from it inside the follow window is a hit for that edge, and
 // a hit only counts as a benefit when the target was parked (or warm only
-// because a wake-ahead already restored it).
+// because a wake-ahead already restored it). Until a caller has enough wakes
+// to judge, its declared dependencies stand in for the evidence (ADR-1137).
 //
 // The learner is node-local and in memory. A wake-ahead is an ordinary wake
 // through the same WakeGate and scheduler admission as a request; it only
@@ -150,18 +151,34 @@ func (l *WakeAheadLearner) ObserveCall(caller, target string, woken bool) {
 
 // Predict returns the targets to wake ahead of app, best first.
 func (l *WakeAheadLearner) Predict(app string) []string {
+	return l.PredictWithDeclared(app, nil)
+}
+
+// PredictWithDeclared is Predict with the caller's declared dependencies
+// (ADR-1137) standing in for evidence the learner does not have yet. Until
+// app has ServiceWakeAheadMinWakes wakes, its declared targets are the
+// prediction, in declaration order; from then on the measured rule alone
+// decides, so a declared dependency app rarely calls after waking stops being
+// woken.
+func (l *WakeAheadLearner) PredictWithDeclared(app string, declared []string) []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	c := l.callers[app]
-	if c == nil {
-		return nil
-	}
-	if c.open && l.now().Sub(c.windowStart) > api.ServiceWakeAheadFollowWindow && c.finishLocked() {
+	if c != nil && c.open && l.now().Sub(c.windowStart) > api.ServiceWakeAheadFollowWindow && c.finishLocked() {
 		l.publishLocked(app, c)
 		l.changed = true
 	}
-	if c.wakes < api.ServiceWakeAheadMinWakes {
-		return nil
+	if c == nil || c.wakes < api.ServiceWakeAheadMinWakes {
+		var targets []string
+		for _, target := range declared {
+			if target == "" || target == app || slices.Contains(targets, target) {
+				continue
+			}
+			if targets = append(targets, target); len(targets) == api.ServiceWakeAheadMaxTargets {
+				break
+			}
+		}
+		return targets
 	}
 	var targets []string
 	for target, e := range c.edges {
@@ -332,6 +349,10 @@ type WakeAheadConfig struct {
 	Residency func(ctx context.Context) (residentMB, ceilingMB int64, err error)
 	// Wake restores one target; production ends in EnsureWakeAheadCapacity.
 	Wake func(ctx context.Context, appID string) error
+	// Declared lists the caller's declared dependencies as target app IDs
+	// (ADR-1137), resolved and authorized as the caller's own calls would be.
+	// It may be nil: wake-ahead then follows measured edges only.
+	Declared func(ctx context.Context, appID string) ([]string, error)
 }
 
 type wakeAheadRunner struct {
@@ -339,11 +360,17 @@ type wakeAheadRunner struct {
 	now       func() time.Time
 	mu        sync.Mutex
 	enabled   map[string]wakeAheadCached
+	declared  map[string]wakeAheadDeclared
 	residency wakeAheadCached
 }
 
 type wakeAheadCached struct {
 	ok      bool
+	expires time.Time
+}
+
+type wakeAheadDeclared struct {
+	targets []string
 	expires time.Time
 }
 
@@ -356,7 +383,7 @@ func (h *Handler) SetWakeAhead(cfg WakeAheadConfig) {
 		h.wakeAhead = nil
 		return
 	}
-	h.wakeAhead = &wakeAheadRunner{cfg: cfg, now: time.Now, enabled: map[string]wakeAheadCached{}}
+	h.wakeAhead = &wakeAheadRunner{cfg: cfg, now: time.Now, enabled: map[string]wakeAheadCached{}, declared: map[string]wakeAheadDeclared{}}
 }
 
 // ObserveServiceCall feeds the learner with a forwarded service call.
@@ -400,7 +427,7 @@ func (h *Handler) runWakeAhead(parent context.Context, appID string, depth int) 
 	if !r.cached(ctx, appID) {
 		return
 	}
-	targets := r.cfg.Learner.Predict(appID)
+	targets := r.cfg.Learner.PredictWithDeclared(appID, r.declaredTargets(ctx, appID))
 	if len(targets) == 0 {
 		return
 	}
@@ -430,6 +457,33 @@ func (h *Handler) runWakeAhead(parent context.Context, appID string, depth int) 
 		}()
 	}
 	wg.Wait()
+}
+
+// declaredTargets returns appID's declared dependencies from a short-lived
+// cache. A failed read declares nothing, so wake-ahead falls back to measured
+// edges.
+func (r *wakeAheadRunner) declaredTargets(ctx context.Context, appID string) []string {
+	if r.cfg.Declared == nil {
+		return nil
+	}
+	now := r.now()
+	r.mu.Lock()
+	entry, ok := r.declared[appID]
+	r.mu.Unlock()
+	if ok && now.Before(entry.expires) {
+		return entry.targets
+	}
+	targets, err := r.cfg.Declared(ctx, appID)
+	if err != nil {
+		targets = nil
+	}
+	r.mu.Lock()
+	if len(r.declared) >= api.ServiceWakeAheadMaxApps {
+		clear(r.declared)
+	}
+	r.declared[appID] = wakeAheadDeclared{targets: targets, expires: now.Add(api.ServiceWakeAheadCacheTTL)}
+	r.mu.Unlock()
+	return targets
 }
 
 // cached answers the opt-in question for appID, or the residency guard for

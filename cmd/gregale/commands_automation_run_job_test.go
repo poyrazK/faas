@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,14 +9,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestAutomationRunRecoveryJobSubmission(t *testing.T) {
 	for _, mode := range []string{"success", "policy", "lost_reply", "scope_changed", "conflict"} {
 		t.Run(mode, func(t *testing.T) {
-			p := automationRecoveryPlan{Version: 1, App: "consumer", AppID: inspectorAppID, Name: "paid", Key: "incident-1", CreatedAt: time.Now().UTC(), Runs: []automationRecoverySelection{{ID: inspectorRunID, ExpectedResumeCount: 0}}}
-			expected := automationRunJobRequest(p, 5, "incident")
+			p := main.AutomationRecoveryPlan{Version: 1, App: "consumer", AppID: inspectorAppID, Name: "paid", Key: "incident-1", CreatedAt: time.Now().UTC(), Runs: []main.AutomationRecoverySelection{{ID: inspectorRunID, ExpectedResumeCount: 0}}}
+			expected := main.AutomationRunJobRequest(p, 5, "incident")
 			if mode == "policy" {
 				expected.WorkflowRuns.ExecutionDeadlineSeconds = 3600
 				expected.WorkflowRuns.ExecutionStallSeconds = 120
@@ -79,8 +80,8 @@ func TestAutomationRunRecoveryJobSubmission(t *testing.T) {
 			if mode == "policy" {
 				args = append(args, "--execution-deadline", "1h", "--execution-stall", "2m")
 			}
-			captureAutomationStdout(t)
-			code := cmdAutomations(args)
+			main.CaptureAutomationStdout(t)
+			code := main.CmdAutomations(args)
 			wantCode := map[string]int{"success": 0, "policy": 0, "lost_reply": 3, "scope_changed": 1, "conflict": 5}[mode]
 			if code != wantCode {
 				t.Fatalf("exit=%d", code)
@@ -89,7 +90,7 @@ func TestAutomationRunRecoveryJobSubmission(t *testing.T) {
 				t.Fatal("scope mismatch submitted")
 			}
 			if mode == "lost_reply" {
-				if code := cmdAutomations(args); code != 0 || posts != 2 {
+				if code := main.CmdAutomations(args); code != 0 || posts != 2 {
 					t.Fatalf("retry=%d posts=%d", code, posts)
 				}
 			}
@@ -97,15 +98,15 @@ func TestAutomationRunRecoveryJobSubmission(t *testing.T) {
 	}
 }
 func TestAutomationRunJobKeyPinsSelection(t *testing.T) {
-	p := automationRecoveryPlan{AppID: inspectorAppID, Name: "paid", Key: "incident"}
-	first := automationRunJobRequest(p, 1, "")
-	p.Runs = []automationRecoverySelection{{ID: inspectorRunID, ExpectedResumeCount: 1}}
-	next := automationRunJobRequest(p, 2, "retry")
+	p := main.AutomationRecoveryPlan{AppID: inspectorAppID, Name: "paid", Key: "incident"}
+	first := main.AutomationRunJobRequest(p, 1, "")
+	p.Runs = []main.AutomationRecoverySelection{{ID: inspectorRunID, ExpectedResumeCount: 1}}
+	next := main.AutomationRunJobRequest(p, 2, "retry")
 	if first.RequestID != next.RequestID {
 		t.Fatal("changed plan must conflict under original job key")
 	}
 	p.Key = "next-incident"
-	if automationRunJobRequest(p, 1, "").RequestID == first.RequestID {
+	if main.AutomationRunJobRequest(p, 1, "").RequestID == first.RequestID {
 		t.Fatal("new key reused prior job")
 	}
 }

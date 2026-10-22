@@ -88,6 +88,34 @@ const (
 	// Owners, admins, and developers may create; viewer and billing roles
 	// cannot provision infrastructure.
 	OrgActionCreateApp                         OrgAction = "org.create_app"
+	OrgActionReadApp                           OrgAction = "org.read_app"
+	OrgActionConfigureApp                      OrgAction = "org.configure_app"
+	OrgActionDeployApp                         OrgAction = "org.deploy_app"
+	OrgActionReadAppLogs                       OrgAction = "org.read_app_logs"
+	OrgActionManageAppSecrets                  OrgAction = "org.manage_app_secrets"
+	OrgActionManageAppSecurity                 OrgAction = "org.manage_app_security"
+	OrgActionDeleteApp                         OrgAction = "org.delete_app"
+	OrgActionApproveAppRelease                 OrgAction = "org.approve_app_release"
+	ReadObjectStorage                          OrgAction = "org.read_object_storage"
+	ManageObjectStorage                        OrgAction = "org.manage_object_storage"
+	BindObjectStorage                          OrgAction = "org.bind_object_storage"
+	ReadObjectStorageUsage                     OrgAction = "org.read_object_storage_usage"
+	OrgActionReadQueues                        OrgAction = "org.read_queues"
+	OrgActionConfigureQueues                   OrgAction = "org.configure_queues"
+	OrgActionOperateQueues                     OrgAction = "org.operate_queues"
+	OrgActionReplayQueues                      OrgAction = "org.replay_queues"
+	OrgActionReadQueueUsage                    OrgAction = "org.read_queue_usage"
+	OrgActionReadPostgres                      OrgAction = "org.read_postgres"
+	OrgActionManagePostgres                    OrgAction = "org.manage_postgres"
+	OrgActionBindPostgres                      OrgAction = "org.bind_postgres"
+	OrgActionReadPostgresUsage                 OrgAction = "org.read_postgres_usage"
+	OrgActionReadProject                       OrgAction = "org.read_project"
+	OrgActionConfigureProject                  OrgAction = "org.configure_project"
+	OrgActionDeployProject                     OrgAction = "org.deploy_project"
+	OrgActionManageProjectSecurity             OrgAction = "org.manage_project_security"
+	OrgActionManageProjectSecrets              OrgAction = "org.manage_project_secrets" // ADR-1139
+	OrgActionApproveProjectEnvironment         OrgAction = "org.approve_project_environment"
+	OrgActionDeleteProject                     OrgAction = "org.delete_project"
 	OrgActionViewApplicationStandards          OrgAction = "org.view_application_standards"
 	OrgActionManageApplicationStandards        OrgAction = "org.manage_application_standards"
 	OrgActionApproveApplicationStandards       OrgAction = "org.approve_application_standards"
@@ -110,6 +138,31 @@ var AllOrgActions = []OrgAction{
 	OrgActionCreateApiKey,
 	OrgActionRevokeApiKey,
 	OrgActionCreateApp,
+	OrgActionReadApp,
+	OrgActionConfigureApp,
+	OrgActionDeployApp,
+	OrgActionReadAppLogs,
+	OrgActionManageAppSecrets,
+	OrgActionManageAppSecurity,
+	OrgActionDeleteApp,
+	OrgActionApproveAppRelease,
+	ReadObjectStorage, ManageObjectStorage, BindObjectStorage, ReadObjectStorageUsage,
+	OrgActionReadQueues,
+	OrgActionConfigureQueues,
+	OrgActionOperateQueues,
+	OrgActionReplayQueues,
+	OrgActionReadQueueUsage,
+	OrgActionReadPostgres,
+	OrgActionManagePostgres,
+	OrgActionBindPostgres,
+	OrgActionReadPostgresUsage,
+	OrgActionReadProject,
+	OrgActionConfigureProject,
+	OrgActionDeployProject,
+	OrgActionManageProjectSecurity,
+	OrgActionManageProjectSecrets,
+	OrgActionApproveProjectEnvironment,
+	OrgActionDeleteProject,
 	OrgActionViewApplicationStandards,
 	OrgActionManageApplicationStandards,
 	OrgActionApproveApplicationStandards,

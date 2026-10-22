@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"archive/tar"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/tarball"
 )
 
@@ -17,36 +18,9 @@ func TestMaterializeDeployArchiveRejectsMalformedBytes(t *testing.T) {
 	if err := os.WriteFile(path, []byte("this is not a gzip stream"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := materializeDeployArchive(path); err == nil || !strings.Contains(err.Error(), "gzip") {
+	if _, _, _, err := main.MaterializeDeployArchive(path); err == nil || !strings.Contains(err.Error(), "gzip") {
 		t.Fatalf("plain-text archive error = %v, want gzip rejection", err)
 	}
-}
-
-func writeDeploySourceArchive(t *testing.T, files map[string]string) string {
-	t.Helper()
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-	for name, body := range files {
-		data := []byte(body)
-		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(data))}); err != nil {
-			t.Fatalf("write archive header %q: %v", name, err)
-		}
-		if _, err := tw.Write(data); err != nil {
-			t.Fatalf("write archive body %q: %v", name, err)
-		}
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatalf("close tar: %v", err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatalf("close gzip: %v", err)
-	}
-	path := filepath.Join(t.TempDir(), "source.tar.gz")
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
-		t.Fatalf("write archive: %v", err)
-	}
-	return path
 }
 
 func TestMaterializeDeployArchive_UsesArchiveRoot(t *testing.T) {
@@ -55,12 +29,12 @@ func TestMaterializeDeployArchive_UsesArchiveRoot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cwd, "package.json"), []byte(`{"name":"cwd"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	archive := writeDeploySourceArchive(t, map[string]string{
+	archive := main.WriteDeploySourceArchive(t, map[string]string{
 		"archive-root/package.json": `{"name":"archive"}`,
 		"archive-root/gregale.yaml": "triggers:\n  - kind: cron\n    schedule: 0 1 * * *\n",
 	})
 
-	snapshot, sourceDir, cleanup, err := materializeDeployArchive(archive)
+	snapshot, sourceDir, cleanup, err := main.MaterializeDeployArchive(archive)
 	if err != nil {
 		t.Fatalf("materialize archive: %v", err)
 	}
@@ -87,8 +61,8 @@ func TestMaterializeDeployArchive_UsesArchiveRoot(t *testing.T) {
 }
 
 func TestMaterializeDeployArchive_FlatArchiveUsesExtractionRoot(t *testing.T) {
-	archive := writeDeploySourceArchive(t, map[string]string{"package.json": "{}"})
-	snapshot, sourceDir, cleanup, err := materializeDeployArchive(archive)
+	archive := main.WriteDeploySourceArchive(t, map[string]string{"package.json": "{}"})
+	snapshot, sourceDir, cleanup, err := main.MaterializeDeployArchive(archive)
 	if err != nil {
 		t.Fatalf("materialize archive: %v", err)
 	}
@@ -137,7 +111,7 @@ func TestMaterializeDeployArchiveRootMatchesServerWithEmptyDirectories(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, sourceDir, cleanup, err := materializeDeployArchive(archive)
+	_, sourceDir, cleanup, err := main.MaterializeDeployArchive(archive)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +149,7 @@ func TestMaterializeDeployArchive_RejectsUnsafeEntries(t *testing.T) {
 			if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			_, _, _, err := materializeDeployArchive(path)
+			_, _, _, err := main.MaterializeDeployArchive(path)
 			if err == nil {
 				t.Fatal("materialize succeeded for unsafe archive")
 			}
@@ -184,8 +158,8 @@ func TestMaterializeDeployArchive_RejectsUnsafeEntries(t *testing.T) {
 }
 
 func TestMaterializeDeployArchiveRejectsEmptyArchive(t *testing.T) {
-	archive := writeDeploySourceArchive(t, nil)
-	if _, _, _, err := materializeDeployArchive(archive); err == nil || !strings.Contains(err.Error(), "empty") {
+	archive := main.WriteDeploySourceArchive(t, nil)
+	if _, _, _, err := main.MaterializeDeployArchive(archive); err == nil || !strings.Contains(err.Error(), "empty") {
 		t.Fatalf("empty archive error = %v, want empty-source rejection", err)
 	}
 }

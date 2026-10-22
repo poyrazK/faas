@@ -147,6 +147,14 @@ func (r *Report) checkBinding(item api.AppBindingInventoryItem, policy Policy) {
 	before := len(r.Blockers)
 	switch item.Type {
 	case api.BindingTypeService:
+		if api.ServiceBindingVerificationUnsupported(item) {
+			result.Status, result.Reason, r.Coverage = "unsupported", api.ManagedServiceVerificationUnsupported, "partial"
+			r.bindingBlock(item, result.Reason, "Managed service edges require reviewed environment qualification; ordinary app probe receipts cannot verify them.")
+			break
+		}
+		if spec, managed := api.ManagedServiceProbeForItem(item); managed && (item.Verification == nil || item.Verification.ManagedService == nil || *item.Verification.ManagedService != spec) {
+			r.bindingBlock(item, "service_target_unverified", "The managed service edge requires a matching frozen-context probe receipt.")
+		}
 		if item.ServiceTargetDeploymentID != "" && (item.Verification == nil || item.Verification.TargetDeploymentID != item.ServiceTargetDeploymentID) {
 			r.bindingBlock(item, "service_target_unverified", "The proposed service target requires deployment-specific probe evidence.")
 		}

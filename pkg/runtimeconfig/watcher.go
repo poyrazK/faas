@@ -14,12 +14,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -28,6 +31,8 @@ const (
 	KeyHSTS           = "hsts_enabled"
 	KeyDataPlacement  = "data_placement_enabled"
 	KeyS3             = "s3_enabled"
+	// KeyAPIMonetization releases API monetization (ADR-20261018090210).
+	KeyAPIMonetization = "api_monetization_enabled"
 )
 
 // ApplyFunc installs one durable value into a daemon's local runtime state.
@@ -35,11 +40,19 @@ const (
 // same version.
 type ApplyFunc func(ctx context.Context, key string, value json.RawMessage, version int64) error
 
+// Store is what a Watcher reads and records. It is not state.Store, so an
+// edge daemon's watcher does not bring the whole store type into its binary
+// (docs/adr/20261021092138-edge-store-blast-radius.md).
+type Store interface {
+	ListRuntimeConfigs(ctx context.Context, scope state.RuntimeConfigScope, scopeID string) ([]state.RuntimeConfig, error)
+	RecordRuntimeConfigApplyReceipt(ctx context.Context, receipt state.RuntimeConfigApplyReceipt) error
+}
+
 // Watcher consumes global runtime configuration rows for one daemon. Keys not
 // listed in Keys are ignored, which lets each daemon subscribe to the same
 // channel without accidentally applying settings it does not understand.
 type Watcher struct {
-	Store state.Store
+	Store Store
 	Pool  *pgxpool.Pool
 	Keys  map[string]struct{}
 	Apply ApplyFunc
@@ -49,14 +62,23 @@ type Watcher struct {
 	// apid control-plane subscriber.
 	Interval time.Duration
 
+	// Daemon and Instance identify this consumer in apply receipts
+	// (ADR-1700). An empty Daemon disables receipts. New fills Instance
+	// from FAAS_NODE_NAME, falling back to the hostname.
+	Daemon   string
+	Instance string
+
 	mu       sync.Mutex
 	versions map[string]int64
+	// failed is the last version whose apply failure was reported, so a
+	// value that keeps failing is recorded once rather than every repair.
+	failed map[string]int64
 }
 
 // New builds a watcher for the supplied keys. A nil logger is replaced with
 // slog.Default; a nil store/pool is accepted so test and degraded daemon
 // wiring can leave the watcher disabled without a panic.
-func New(store state.Store, pool *pgxpool.Pool, keys []string, apply ApplyFunc, log *slog.Logger) *Watcher {
+func New(store Store, pool *pgxpool.Pool, keys []string, apply ApplyFunc, log *slog.Logger) *Watcher {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -73,7 +95,38 @@ func New(store state.Store, pool *pgxpool.Pool, keys []string, apply ApplyFunc, 
 		Apply:    apply,
 		Log:      log,
 		Interval: 5 * time.Second,
+		Instance: DefaultInstance(),
 		versions: make(map[string]int64),
+		failed:   make(map[string]int64),
+	}
+}
+
+// DefaultInstance names this host in apply receipts: FAAS_NODE_NAME, else the
+// hostname.
+func DefaultInstance() string {
+	if name := strings.TrimSpace(os.Getenv("FAAS_NODE_NAME")); name != "" {
+		return name
+	}
+	if host, err := os.Hostname(); err == nil && host != "" {
+		return host
+	}
+	return "unknown"
+}
+
+// WithPlatformFlags extends a daemon's watched keys and apply function so the
+// same watcher keeps a platform-flag set current (ADR-1700). Platform-flag
+// rows go to set; every other key goes to apply, which may be nil when the
+// daemon consumes only platform flags.
+func WithPlatformFlags(keys []string, apply ApplyFunc, set *platformflags.Set) ([]string, ApplyFunc) {
+	keys = append(append([]string(nil), keys...), platformflags.ConfigKeys()...)
+	return keys, func(ctx context.Context, key string, value json.RawMessage, version int64) error {
+		if platformflags.IsConfigKey(key) {
+			return set.Apply(key, value, version)
+		}
+		if apply == nil {
+			return nil
+		}
+		return apply(ctx, key, value, version)
 	}
 }
 
@@ -172,15 +225,46 @@ func (w *Watcher) Reconcile(ctx context.Context) error {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("apply %s v%d: %w", row.Key, row.Version, err)
 			}
+			w.mu.Lock()
+			if w.failed == nil {
+				w.failed = make(map[string]int64)
+			}
+			report := w.failed[row.Key] != row.Version
+			w.failed[row.Key] = row.Version
+			w.mu.Unlock()
+			if report {
+				w.recordReceipt(ctx, row, state.RuntimeConfigReceiptFailed, err.Error())
+			}
 			continue
 		}
 		w.mu.Lock()
 		if row.Version > w.versions[row.Key] {
 			w.versions[row.Key] = row.Version
 		}
+		delete(w.failed, row.Key)
 		w.mu.Unlock()
+		w.recordReceipt(ctx, row, state.RuntimeConfigReceiptApplied, "")
 	}
 	return firstErr
+}
+
+// recordReceipt reports an apply outcome. A failed write only logs: the
+// receipt is evidence for the operator, never a condition for serving.
+func (w *Watcher) recordReceipt(ctx context.Context, row state.RuntimeConfig, status state.RuntimeConfigApplyReceiptStatus, errText string) {
+	if w.Daemon == "" || w.Store == nil {
+		return
+	}
+	instance := w.Instance
+	if instance == "" {
+		instance = DefaultInstance()
+	}
+	err := w.Store.RecordRuntimeConfigApplyReceipt(ctx, state.RuntimeConfigApplyReceipt{
+		Key: row.Key, Scope: row.Scope, ScopeID: row.ScopeID, Daemon: w.Daemon, Instance: instance,
+		Version: row.Version, Status: status, Error: errText,
+	})
+	if err != nil && w.Log != nil {
+		w.Log.Warn("runtime_config receipt write failed", "key", row.Key, "version", row.Version, "err", err)
+	}
 }
 
 // Bool decodes the JSON boolean shape used by feature flags. It is kept here

@@ -1,10 +1,11 @@
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"reflect"
 	"sync"
 	"testing"
@@ -14,38 +15,38 @@ import (
 func TestWorkflowRetryEvidenceRepair(t *testing.T) {
 	for _, scenario := range []string{"success", "failed", "cancelled", "running", "superseded", "no_finished", "missing_job", "lineage_changed", "concurrent", "mode_changed", "pending"} {
 		t.Run(scenario, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, s Store) {
-				ctx := WithEventRecoveryActor(context.Background(), "api_key", "retry-operator")
-				review, app, run, now := seedAutomaticRecoveryReview(t, s, nil)
+			state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
+				ctx := state.WithEventRecoveryActor(context.Background(), "api_key", "retry-operator")
+				review, app, run, now := state.SeedAutomaticRecoveryReview(t, s, nil)
 				action := review.AutomaticExecution.Actions[0].ActionID
-				evidence := s.(WorkflowRetryEvidenceStore)
+				evidence := s.(state.WorkflowRetryEvidenceStore)
 				req := api.WorkflowInitialEvidenceRepairRequest{RequestID: uuid.NewString(), Reason: "restore exact retry proof"}
 				if scenario == "pending" {
 					d, err := evidence.DiagnoseWorkflowRetryEvidence(ctx, app.AccountID, app.ID, review.ID, action)
 					if err != nil || d.Repairable || d.Reason != "retry_not_applied" {
 						t.Fatalf("pending diagnosis %+v %v", d, err)
 					}
-					if _, err = evidence.RepairWorkflowRetryEvidence(ctx, app.AccountID, app.ID, review.ID, action, req); !errors.Is(err, ErrWorkflowRecoveryEvidenceBlocked) {
+					if _, err = evidence.RepairWorkflowRetryEvidence(ctx, app.AccountID, app.ID, review.ID, action, req); !errors.Is(err, state.ErrWorkflowRecoveryEvidenceBlocked) {
 						t.Fatal(err)
 					}
 					return
 				}
-				runAutomaticPolicy(t, s, now)
-				child, err := automaticChild(t, s, app, review)
+				state.RunAutomaticPolicy(t, s, now)
+				child, err := state.AutomaticChild(t, s, app, review)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err = s.(EventRecoveryStore).ProcessNextEventRecovery(ctx, time.Now().UTC()); err != nil {
+				if _, err = s.(state.EventRecoveryStore).ProcessNextEventRecovery(ctx, time.Now().UTC()); err != nil {
 					t.Fatal(err)
 				}
 				if _, err = s.ClaimNextDueWorkflowRun(ctx); err != nil {
 					t.Fatal(err)
 				}
 				if scenario != "running" {
-					status := WorkflowRunStatusSucceeded
+					status := state.WorkflowRunStatusSucceeded
 					var last *string
 					if scenario == "failed" || scenario == "cancelled" {
-						status = WorkflowRunStatusFailed
+						status = state.WorkflowRunStatusFailed
 					}
 					if scenario == "cancelled" {
 						v := "cancelled by operator"
@@ -55,32 +56,32 @@ func TestWorkflowRetryEvidenceRepair(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if m, ok := s.(*MemStore); ok {
-					m.mu.Lock()
-					delete(m.eventRecoveryJobs[child.ID].WorkflowResults, 1)
+				if m, ok := s.(*state.MemStore); ok {
+					(*m.Mu()).Lock()
+					delete((*m.EventRecoveryJobs())[child.ID].WorkflowResults, 1)
 					switch scenario {
 					case "superseded":
-						v := m.workflowRuns[run.ID]
+						v := (*m.WorkflowRuns())[run.ID]
 						v.ResumeCount = 3
-						m.workflowRuns[run.ID] = v
+						(*m.WorkflowRuns())[run.ID] = v
 					case "no_finished":
-						v := m.workflowRuns[run.ID]
+						v := (*m.WorkflowRuns())[run.ID]
 						v.FinishedAt = nil
-						m.workflowRuns[run.ID] = v
+						(*m.WorkflowRuns())[run.ID] = v
 					case "missing_job":
-						delete(m.eventRecoveryJobs, child.ID)
+						delete((*m.EventRecoveryJobs()), child.ID)
 					case "lineage_changed":
 						v := int64(42)
-						m.eventRecoveryJobs[child.ID].Items[0].ParentPosition = &v
+						(*m.EventRecoveryJobs())[child.ID].Items[0].ParentPosition = &v
 					}
-					m.mu.Unlock()
+					(*m.Mu()).Unlock()
 				} else {
-					pg := s.(*PgStore)
-					if _, err = pg.pool.Exec(ctx, "DELETE FROM event_recovery_workflow_results WHERE job_id=$1::uuid", child.ID); err != nil {
+					pg := s.(*state.PgStore)
+					if _, err = (*pg.Pool()).Exec(ctx, "DELETE FROM event_recovery_workflow_results WHERE job_id=$1::uuid", child.ID); err != nil {
 						t.Fatal(err)
 					}
 					if scenario == "superseded" || scenario == "no_finished" {
-						tx, err := pg.pool.Begin(ctx)
+						tx, err := (*pg.Pool()).Begin(ctx)
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -103,29 +104,29 @@ func TestWorkflowRetryEvidenceRepair(t *testing.T) {
 						}
 					}
 					if scenario == "missing_job" {
-						if _, err = pg.pool.Exec(ctx, "DELETE FROM event_recovery_jobs WHERE id=$1::uuid", child.ID); err != nil {
+						if _, err = (*pg.Pool()).Exec(ctx, "DELETE FROM event_recovery_jobs WHERE id=$1::uuid", child.ID); err != nil {
 							t.Fatal(err)
 						}
 					}
 					if scenario == "lineage_changed" {
-						if _, err = pg.pool.Exec(ctx, "UPDATE event_recovery_items SET expected_progress=jsonb_set(expected_progress,'{parent_position}','42'::jsonb) WHERE job_id=$1::uuid", child.ID); err != nil {
+						if _, err = (*pg.Pool()).Exec(ctx, "UPDATE event_recovery_items SET expected_progress=jsonb_set(expected_progress,'{parent_position}','42'::jsonb) WHERE job_id=$1::uuid", child.ID); err != nil {
 							t.Fatal(err)
 						}
 					}
 				}
 				if scenario == "mode_changed" {
-					p, err := s.(WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID)
+					p, err := s.(state.WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID)
 					if err != nil {
 						t.Fatal(err)
 					}
 					p.Policy.Mode = "automatic_initial"
 					p.Policy.Triggers = []string{"initial_failure"}
-					if _, err = s.(WorkflowRecoveryPolicyStore).SetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.SetWorkflowRecoveryPolicyRequest{ExpectedVersion: p.Version, Policy: p.Policy}); err != nil {
+					if _, err = s.(state.WorkflowRecoveryPolicyStore).SetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.SetWorkflowRecoveryPolicyRequest{ExpectedVersion: p.Version, Policy: p.Policy}); err != nil {
 						t.Fatal(err)
 					}
 				}
 				getReview := func() api.WorkflowRecoveryPolicyReview {
-					r, err := s.(WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicyReview(ctx, app.AccountID, app.ID, review.ID)
+					r, err := s.(state.WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicyReview(ctx, app.AccountID, app.ID, review.ID)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -143,10 +144,10 @@ func TestWorkflowRetryEvidenceRepair(t *testing.T) {
 				if d.Repairable != eligible || d.ResumeCount != 2 || d.RunID != run.ID || d.ActionID != action {
 					t.Fatalf("diagnosis %+v", d)
 				}
-				if _, err = evidence.DiagnoseWorkflowRetryEvidence(ctx, uuid.NewString(), app.ID, review.ID, action); !errors.Is(err, ErrNotFound) {
+				if _, err = evidence.DiagnoseWorkflowRetryEvidence(ctx, uuid.NewString(), app.ID, review.ID, action); !errors.Is(err, state.ErrNotFound) {
 					t.Fatalf("account scope %v", err)
 				}
-				if _, err = evidence.DiagnoseWorkflowRetryEvidence(ctx, app.AccountID, app.ID, uuid.NewString(), action); !errors.Is(err, ErrNotFound) {
+				if _, err = evidence.DiagnoseWorkflowRetryEvidence(ctx, app.AccountID, app.ID, uuid.NewString(), action); !errors.Is(err, state.ErrNotFound) {
 					t.Fatalf("review scope %v", err)
 				}
 				if scenario == "concurrent" {
@@ -170,7 +171,7 @@ func TestWorkflowRetryEvidenceRepair(t *testing.T) {
 				}
 				out, err := evidence.RepairWorkflowRetryEvidence(ctx, app.AccountID, app.ID, review.ID, action, req)
 				if !eligible {
-					if !errors.Is(err, ErrWorkflowRecoveryEvidenceBlocked) {
+					if !errors.Is(err, state.ErrWorkflowRecoveryEvidenceBlocked) {
 						t.Fatalf("unsafe repair %+v %v", out, err)
 					}
 					return
@@ -181,9 +182,9 @@ func TestWorkflowRetryEvidenceRepair(t *testing.T) {
 				if getReview().EvidenceRepairs[action].RequestID != req.RequestID {
 					t.Fatal("missing review audit")
 				}
-				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool)
-					evidence = s.(WorkflowRetryEvidenceStore)
+				if pg, ok := s.(*state.PgStore); ok {
+					s = state.NewPgStore((*pg.Pool()).Pool)
+					evidence = s.(state.WorkflowRetryEvidenceStore)
 				}
 				again, err := evidence.RepairWorkflowRetryEvidence(ctx, app.AccountID, app.ID, review.ID, action, req)
 				if err != nil || !reflect.DeepEqual(again.Repair, out.Repair) {
@@ -191,14 +192,14 @@ func TestWorkflowRetryEvidenceRepair(t *testing.T) {
 				}
 				changed := req
 				changed.Reason = "different"
-				if _, err = evidence.RepairWorkflowRetryEvidence(ctx, app.AccountID, app.ID, review.ID, action, changed); !errors.Is(err, ErrEventRecoveryChanged) {
+				if _, err = evidence.RepairWorkflowRetryEvidence(ctx, app.AccountID, app.ID, review.ID, action, changed); !errors.Is(err, state.ErrEventRecoveryChanged) {
 					t.Fatalf("changed replay %v", err)
 				}
-				queue, err := s.(WorkflowRecoveryPolicyOperatorStore).GetWorkflowRecoveryAutomaticQueue(ctx, app.AccountID, app.ID)
+				queue, err := s.(state.WorkflowRecoveryPolicyOperatorStore).GetWorkflowRecoveryAutomaticQueue(ctx, app.AccountID, app.ID)
 				if err != nil || queue.Outstanding != 1 || queue.HourlyExecutions != 1 {
 					t.Fatalf("repair released slot/refunded %+v %v", queue, err)
 				}
-				runAutomaticPolicy(t, s, now.Add(3*time.Minute))
+				state.RunAutomaticPolicy(t, s, now.Add(3*time.Minute))
 				final := getReview()
 				result := final.AutomaticExecution.Actions[0].Result
 				if result == nil || !result.Complete || result.ResumeCount != 2 || result.Outcome != out.Repair.Outcome {

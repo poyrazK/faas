@@ -1,5 +1,5 @@
 // adr: 590
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -7,14 +7,15 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestAppEnvironmentFlagScopesConfigurationReadsAndWrites(t *testing.T) {
 	for _, command := range []string{"app", "scale"} {
 		t.Run(command, func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = true
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = true
 			var reads, writes int
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/v1/apps/hello" || r.URL.Query().Get("environment") != "staging" {
@@ -23,7 +24,7 @@ func TestAppEnvironmentFlagScopesConfigurationReadsAndWrites(t *testing.T) {
 				if r.Method == http.MethodGet {
 					reads++
 					w.Header().Set("X-Gregale-Workload-Revision", "7")
-					writeJSONTest(w, api.AppResponse{Slug: "hello", MinInstances: 2,
+					main.WriteJSONTest(w, api.AppResponse{Slug: "hello", MinInstances: 2,
 						ScalingPolicy: &api.ScalingPolicy{MinInstances: 2, MaxInstances: 8, ScaleInCooldownS: 73}})
 					return
 				}
@@ -38,7 +39,7 @@ func TestAppEnvironmentFlagScopesConfigurationReadsAndWrites(t *testing.T) {
 				if req.ScalingPolicy == nil || req.ScalingPolicy.MaxInstances != 8 || req.ScalingPolicy.ScaleInCooldownS != 73 || req.ScalingPolicy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop {
 					t.Errorf("stage policy was not preserved during merge: %+v", req.ScalingPolicy)
 				}
-				writeJSONTest(w, api.AppResponse{Slug: "hello"})
+				main.WriteJSONTest(w, api.AppResponse{Slug: "hello"})
 			}))
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
@@ -46,9 +47,9 @@ func TestAppEnvironmentFlagScopesConfigurationReadsAndWrites(t *testing.T) {
 			args := []string{"--environment", "staging", "--concurrency-overflow", "drop"}
 			var code int
 			if command == "app" {
-				code = cmdApp(append([]string{"hello"}, args...))
+				code = main.CmdApp(append([]string{"hello"}, args...))
 			} else {
-				code = cmdAppScale("hello", args)
+				code = main.CmdAppScale("hello", args)
 			}
 			if code != 0 || reads != 1 || writes != 1 {
 				t.Fatalf("command result=%d reads=%d writes=%d", code, reads, writes)
@@ -75,10 +76,10 @@ func TestProductionAppClientDelegatesConfigurationReadsAndWrites(t *testing.T) {
 		default:
 			t.Errorf("unexpected method: %s", r.Method)
 		}
-		writeJSONTest(w, api.AppResponse{Slug: "hello", MinInstances: 2})
+		main.WriteJSONTest(w, api.AppResponse{Slug: "hello", MinInstances: 2})
 	}))
 	defer srv.Close()
-	client := environmentAppClient{Client: api.NewClient(srv.URL, "fp_test_x")}
+	client := main.EnvironmentAppClient{Client: api.NewClient(srv.URL, "fp_test_x")}
 	app, err := client.GetApp(t.Context(), "hello")
 	if err != nil || app.Slug != "hello" {
 		t.Fatalf("production read: %+v %v", app, err)

@@ -14,6 +14,8 @@ type updateAppCLISurface struct {
 
 var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"expected_service_binding_fingerprint": {Path: "gregale bindings service apply <app> --plan"},
+	"release_policy":                       {Path: "gregale app <slug> --release-policy", AppFlags: []string{"release-policy"}},
+	"release_probe_paths":                  {Path: "gregale app <slug> --release-probe-paths", AppFlags: []string{"release-probe-paths"}},
 	"visibility":                           {Path: "gregale app <slug> --visibility", AppFlags: []string{"visibility"}},
 	"allowed_service_callers":              {Path: "gregale bindings service configure <app> --file"},
 	"allowed_service_call_scopes":          {Path: "gregale bindings service configure <app> --file"},
@@ -23,7 +25,7 @@ var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"service_binding_transport":            {Path: "gregale bindings service configure <app> --file"},
 	"ram_mb":                               {Path: "gregale app <slug> --ram", AppFlags: []string{"ram"}},
 	"cpu_millicores":                       {Path: "gregale app <slug> --cpu-millicores", AppFlags: []string{"cpu-millicores"}},
-	"resource_profile":                     {Path: "gregale app <slug> --profile", AppFlags: []string{"profile"}},
+	"resource_profile":                     {Path: "gregale app <slug> --size", AppFlags: []string{"size"}},
 	"idle_timeout_s":                       {Path: "gregale app <slug> --idle", AppFlags: []string{"idle"}},
 	"max_concurrency":                      {Path: "gregale app <slug> --max-concurrency", AppFlags: []string{"max-concurrency"}},
 	"execution_mode":                       {Path: "gregale.yaml lifecycle.execution_mode"},
@@ -82,4 +84,5 @@ var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"cors_default_origins":                 {KnownGap: "no customer CLI setter; API-only today"},
 	"scaling_policy":                       {Path: "gregale app <slug> --min / --autoscale-target-rps / --autoscale-target-cpu-pct", AppFlags: []string{"min", "autoscale-target-rps", "autoscale-target-cpu-pct"}},
 	"pause":                                {Path: "gregale.yaml lifecycle.pause"},
+	"deploy_settings_condition":            {Path: "deploy / deploy resume guarded post-ready settings (ADR-20261019120047/992)"},
 }

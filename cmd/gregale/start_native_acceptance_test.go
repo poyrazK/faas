@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 )
 
@@ -47,7 +48,7 @@ m['write_fixture'](pathlib.Path(sys.argv[1]) / 'apps/start-contract-private-name
 			t.Fatalf("unexpected fixture build target: %+v", workload)
 		}
 		want[name] = true
-		required, _, configErr := startRequiredConfiguration(filepath.Join(root, workload.RootDir))
+		required, _, configErr := main.StartRequiredConfiguration(filepath.Join(root, workload.RootDir))
 		expected := []string{}
 		if name == "private-named" {
 			expected = append(expected, "START_NATIVE_REQUIRED")

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // Durable-store tests use simulated native consumption. They do not prove KVM
 // enforcement or whole-application convergence.
@@ -14,23 +14,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type standardRuntimeQualificationTestStore interface {
-	nativeArtifactTestStore
-	InstanceApplicationStandardRuntimeQualificationStore
-	InstanceApplicationStandardRuntimeReceiptStore
-	SetComputeNodeActive(context.Context, string, bool) error
-}
+type standardRuntimeQualificationTestStore = state.ContractTestStore
 
-func standardRuntimeQualificationRead(t *testing.T, s standardRuntimeQualificationTestStore, ins Instance, reason string) InstanceApplicationStandardRuntimeQualification {
+func standardRuntimeQualificationRead(t *testing.T, s standardRuntimeQualificationTestStore, ins state.Instance, reason string) state.InstanceApplicationStandardRuntimeQualification {
 	t.Helper()
 	app, err := s.AppByID(t.Context(), ins.AppID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	q, err := s.GetInstanceApplicationStandardRuntimeQualification(t.Context(), app.OrgID, app.ID, ins.ID)
-	if err != nil || q.Reason != reason || q.Qualified != (reason == "") || !sameStandardUUID(q.InstanceID, ins.ID) || q.CheckedAt.IsZero() || q.CheckedAt.After(time.Now()) || !runtimeadmission.ValidHash(q.RosterFingerprint) {
+	if err != nil || q.Reason != reason || q.Qualified != (reason == "") || !state.SameStandardUUID(q.InstanceID, ins.ID) || q.CheckedAt.IsZero() || q.CheckedAt.After(time.Now()) || !runtimeadmission.ValidHash(q.RosterFingerprint) {
 		t.Fatalf("qualification: %+v %v; want reason %s", q, err, reason)
 	}
 	if q.Qualified && !q.ApprovalExpiresAt.After(q.CheckedAt) || !q.Qualified && !q.ApprovalExpiresAt.IsZero() {
@@ -50,9 +46,9 @@ func standardRuntimeQualificationRead(t *testing.T, s standardRuntimeQualificati
 func standardRuntimeQualificationLifecycle(t *testing.T, s standardRuntimeQualificationTestStore) {
 	t.Helper()
 	ctx := t.Context()
-	ins, receipt := issueConsumedNativeFixture(t, s)
+	ins, receipt := state.IssueConsumedNativeFixture(t, s)
 	standardRuntimeQualificationRead(t, s, ins, "runtime_transition_pending")
-	ins, err := s.PublishInstanceApplicationStandardRuntime(ctx, ins.State, StateRunning, receipt)
+	ins, err := s.PublishInstanceApplicationStandardRuntime(ctx, ins.State, state.StateRunning, receipt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +58,7 @@ func standardRuntimeQualificationLifecycle(t *testing.T, s standardRuntimeQualif
 		t.Fatal(err)
 	}
 	for _, scope := range [][3]string{{uuid.NewString(), app.ID, ins.ID}, {app.OrgID, uuid.NewString(), ins.ID}, {app.OrgID, app.ID, uuid.NewString()}} {
-		if _, err := s.GetInstanceApplicationStandardRuntimeQualification(ctx, scope[0], scope[1], scope[2]); !errors.Is(err, ErrNotFound) {
+		if _, err := s.GetInstanceApplicationStandardRuntimeQualification(ctx, scope[0], scope[1], scope[2]); !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("unowned instance exposed qualification: %v", err)
 		}
 	}
@@ -71,7 +67,7 @@ func standardRuntimeQualificationLifecycle(t *testing.T, s standardRuntimeQualif
 	if _, err := s.GetInstanceApplicationStandardRuntimeQualification(canceled, app.OrgID, app.ID, ins.ID); !errors.Is(err, context.Canceled) {
 		t.Fatal("canceled qualification succeeded", err)
 	}
-	if _, err := s.GetInstanceApplicationStandardRuntimeQualification(ctx, app.OrgID, app.ID, "invalid"); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := s.GetInstanceApplicationStandardRuntimeQualification(ctx, app.OrgID, app.ID, "invalid"); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatal("invalid instance id reached storage", err)
 	}
 	if err := s.SetComputeNodeActive(ctx, ins.NodeID, false); err != nil {
@@ -86,20 +82,20 @@ func standardRuntimeQualificationLifecycle(t *testing.T, s standardRuntimeQualif
 	}
 	restarted := receipt.Binding
 	restarted.Incarnation = uuid.NewString()
-	registerConsumedNativeIdentity(t, s, restarted, runtimeadmission.ArtifactProtocolVersion)
+	state.RegisterConsumedNativeIdentity(t, s, restarted, runtimeadmission.ArtifactProtocolVersion)
 	standardRuntimeQualificationRead(t, s, ins, "native_receipt_stale")
-	if err := s.UpdateInstanceStateToTerminal(ctx, ins.ID, string(StateStopped), time.Now()); err != nil {
+	if err := s.UpdateInstanceStateToTerminal(ctx, ins.ID, string(state.StateStopped), time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetInstanceApplicationStandardRuntimeQualification(ctx, app.OrgID, app.ID, ins.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := s.GetInstanceApplicationStandardRuntimeQualification(ctx, app.OrgID, app.ID, ins.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("terminal instance qualified as a live consumer", err)
 	}
 }
 
 func standardRuntimeQualificationScanSelection(t *testing.T, s standardRuntimeQualificationTestStore) {
 	t.Helper()
-	ins, receipt := issueConsumedNativeFixture(t, s)
-	ins, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, StateRunning, receipt)
+	ins, receipt := state.IssueConsumedNativeFixture(t, s)
+	ins, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, state.StateRunning, receipt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,62 +126,62 @@ func standardRuntimeQualificationScanSelection(t *testing.T, s standardRuntimeQu
 }
 
 func TestMemStandardRuntimeQualificationLifecycle(t *testing.T) {
-	standardRuntimeQualificationLifecycle(t, NewMemStore())
+	standardRuntimeQualificationLifecycle(t, state.NewMemStore())
 }
 
 func TestMemStandardRuntimeQualificationScanSelection(t *testing.T) {
-	standardRuntimeQualificationScanSelection(t, NewMemStore())
+	standardRuntimeQualificationScanSelection(t, state.NewMemStore())
 }
 
 func TestMemStandardRuntimeQualificationCurrentInputs(t *testing.T) {
 	for _, change := range []string{"revision", "runtime", "publisher", "expiry", "receipt", "receipt_scope"} {
 		t.Run(change, func(t *testing.T) {
-			s := NewMemStore()
-			ins, receipt := issueConsumedNativeFixture(t, s)
-			ins, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, StateRunning, receipt)
+			s := state.NewMemStore()
+			ins, receipt := state.IssueConsumedNativeFixture(t, s)
+			ins, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, state.StateRunning, receipt)
 			if err != nil {
 				t.Fatal(err)
 			}
 			standardRuntimeQualificationRead(t, s, ins, "")
-			s.mu.Lock()
+			(*s.Mu()).Lock()
 			want := "runtime_inputs_stale"
 			switch change {
 			case "revision":
-				e := s.applicationStandardEnrollments[ins.AppID]
+				e := (*s.ApplicationStandardEnrollments())[ins.AppID]
 				e.DesiredRevision++
 				e.PersistedRevision++
-				s.applicationStandardEnrollments[ins.AppID] = e
+				(*s.ApplicationStandardEnrollments())[ins.AppID] = e
 			case "runtime":
-				a := s.apps[ins.AppID]
+				a := (*s.Apps())[ins.AppID]
 				a.RAMMB++
-				s.apps[ins.AppID] = a
+				(*s.Apps())[ins.AppID] = a
 			case "publisher":
-				for key, signer := range s.trustedSigners {
-					if sameStandardUUID(signer.AppID, ins.AppID) {
-						delete(s.trustedSigners, key)
+				for key, signer := range *s.TrustedSigners() {
+					if state.SameStandardUUID(signer.AppID, ins.AppID) {
+						delete((*s.TrustedSigners()), key)
 					}
 				}
 			case "expiry":
-				key := s.deploymentRuntimeScanCurrent[canonicalStandardUUID(ins.DeploymentID)]
-				scan := s.deploymentRuntimeScans[key]
+				key := (*s.DeploymentRuntimeScanCurrent())[state.CanonicalStandardUUID(ins.DeploymentID)]
+				scan := (*s.DeploymentRuntimeScans())[key]
 				scan.ScannedAt = time.Now().Add(-api.ApplicationStandardArtifactScanTTL - time.Second).UTC()
 				scan.ExpiresAt = scan.ScannedAt.Add(api.ApplicationStandardArtifactScanTTL)
-				s.deploymentRuntimeScans[key] = scan
+				(*s.DeploymentRuntimeScans())[key] = scan
 				want = "artifact_approval_stale"
 			case "receipt":
-				key := s.instanceApplicationStandardBootTokens[ins.ID]
-				boot := s.instanceApplicationStandardBoots[key]
+				key := (*s.InstanceApplicationStandardBootTokens())[ins.ID]
+				boot := (*s.InstanceApplicationStandardBoots())[key]
 				boot.Receipt = nil
-				s.instanceApplicationStandardBoots[key] = boot
+				(*s.InstanceApplicationStandardBoots())[key] = boot
 				want = "native_receipt_stale"
 			case "receipt_scope":
-				key := s.instanceApplicationStandardBootTokens[ins.ID]
-				boot := s.instanceApplicationStandardBoots[key]
+				key := (*s.InstanceApplicationStandardBootTokens())[ins.ID]
+				boot := (*s.InstanceApplicationStandardBoots())[key]
 				boot.Receipt.Binding.AppID = uuid.NewString()
-				s.instanceApplicationStandardBoots[key] = boot
+				(*s.InstanceApplicationStandardBoots())[key] = boot
 				want = "native_receipt_stale"
 			}
-			s.mu.Unlock()
+			(*s.Mu()).Unlock()
 			standardRuntimeQualificationRead(t, s, ins, want)
 		})
 	}

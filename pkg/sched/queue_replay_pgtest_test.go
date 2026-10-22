@@ -1,5 +1,5 @@
 // adr: 568 — environment intent and runtime ownership contracts.
-package sched
+package sched_test
 
 import (
 	"encoding/json"
@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -55,7 +56,7 @@ func TestQueueReplayDispatchesOriginalConsumerAfterRename(t *testing.T) {
 	ctx := t.Context()
 	calls := 0
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var envelope triggerDispatchRequest
+		var envelope sched.TriggerDispatchRequest
 		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil || len(envelope.Records) != 1 {
 			t.Errorf("recovery envelope: %+v %v", envelope, err)
 			w.WriteHeader(400)
@@ -78,20 +79,20 @@ func TestQueueReplayDispatchesOriginalConsumerAfterRename(t *testing.T) {
 			status = "succeeded"
 		}
 		calls++
-		_ = json.NewEncoder(w).Encode(triggerDispatchResponse{Results: []triggerDispatchResult{{ItemIdentifier: inv.ID, Status: status, Code: "poison_record", Error: "delivery failed"}}})
+		_ = json.NewEncoder(w).Encode(sched.TriggerDispatchResponse{Results: []sched.TriggerDispatchResult{{ItemIdentifier: inv.ID, Status: status, Code: "poison_record", Error: "delivery failed"}}})
 	}))
 	defer gateway.Close()
-	loop := makeLoopForDLQ()
-	loop.pool = pool
-	loop.gatewayHTTPClient, loop.gatewayBaseURL = gateway.Client(), gateway.URL
+	loop := sched.MakeLoopForDLQ()
+	(*loop.Pool()) = pool
+	(*loop.GatewayHTTPClient()), (*loop.GatewayBaseURL()) = gateway.Client(), gateway.URL
 	t.Cleanup(func() {
-		for _, poller := range loop.triggerPollers {
+		for _, poller := range *loop.TriggerPollers() {
 			_ = poller.Close()
 		}
 	})
 	tick := func(tg sqlc.Trigger) {
 		t.Helper()
-		if err := loop.dispatchOneTrigger(ctx, tg, store, func(string) api.Plan { return api.PlanPro }); err != nil {
+		if err := loop.DispatchOneTrigger(ctx, tg, store, func(string) api.Plan { return api.PlanPro }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -160,11 +161,11 @@ func TestQueueReplayDispatchesOriginalConsumerAfterRename(t *testing.T) {
 func TestQueueReplayFencesPriorPollerHandles(t *testing.T) {
 	pool, store, _, trigger, inv := seedQueueReplay(t)
 	ctx := t.Context()
-	source, err := newQueuePoller(pool, trigger, nil)
+	source, err := sched.NewQueuePoller(pool, trigger, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := source.(*queuePoller)
+	old := source.(*sched.QueuePoller)
 	first := old.Poll(ctx, trigger)
 	if first.Error != nil || len(first.Records) != 1 {
 		t.Fatalf("first claim=%+v", first)
@@ -175,32 +176,32 @@ func TestQueueReplayFencesPriorPollerHandles(t *testing.T) {
 	if _, err := store.RetryQueueDeadLetter(ctx, inv.AccountID, inv.ID); err != nil {
 		t.Fatal(err)
 	}
-	oldDelivery := old.deliveryPoller(first.Records)
+	oldDelivery := old.DeliveryPoller(first.Records)
 	second := old.Poll(ctx, trigger)
 	if second.Error != nil || len(second.Records) != 1 || second.Records[0].InvocationAttempt != first.Records[0].InvocationAttempt || second.Records[0].InvocationReplayGeneration != 1 {
 		t.Fatalf("replay claim=%+v", second)
 	}
-	current := old.deliveryPoller(second.Records)
+	current := old.DeliveryPoller(second.Records)
 	if err := oldDelivery.Ack(ctx, trigger, []string{inv.ID}); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal(err)
 	}
-	if old.itemsInFlight[inv.ID].ReplayGeneration != 1 {
+	if (*old.ItemsInFlight())[inv.ID].ReplayGeneration != 1 {
 		t.Fatal("old batch cleared the recovered delivery handle")
 	}
 	for _, operation := range []string{"ack", "nack", "release"} {
-		staleSource, err := newQueuePoller(pool, trigger, nil)
+		staleSource, err := sched.NewQueuePoller(pool, trigger, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		stale := staleSource.(*queuePoller)
-		stale.itemsInFlight[inv.ID] = queueDeliveryClaim{Attempt: 1, ReplayGeneration: 0}
+		stale := staleSource.(*sched.QueuePoller)
+		(*stale.ItemsInFlight())[inv.ID] = sched.QueueDeliveryClaim{Attempt: 1, ReplayGeneration: 0}
 		switch operation {
 		case "ack":
 			err = stale.Ack(ctx, trigger, []string{inv.ID})
 		case "nack":
-			err = stale.Nack(ctx, trigger, []string{inv.ID}, triggerReasonPoisonRecord)
+			err = stale.Nack(ctx, trigger, []string{inv.ID}, sched.TriggerReasonPoisonRecord)
 		case "release":
-			err = stale.releaseNamedClaims(ctx, map[string]queueDeliveryClaim{inv.ID: {Attempt: 1, ReplayGeneration: 0}}, trigger)
+			err = stale.ReleaseNamedClaims(ctx, map[string]sched.QueueDeliveryClaim{inv.ID: {Attempt: 1, ReplayGeneration: 0}}, trigger)
 		}
 		if err != nil {
 			t.Fatal(err)

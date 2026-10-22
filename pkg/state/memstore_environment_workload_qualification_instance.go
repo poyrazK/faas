@@ -19,6 +19,9 @@ func (m *MemStore) CreateEnvironmentWorkloadQualificationInstance(ctx context.Co
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return EnvironmentWorkloadQualificationAdmission{}, err
+	}
 	if err := m.checkNodeAdmissionLocked(ctx, placement.NodeID); err != nil {
 		return EnvironmentWorkloadQualificationAdmission{}, err
 	}
@@ -90,6 +93,9 @@ func (m *MemStore) CreateEnvironmentWorkloadQualificationInstance(ctx context.Co
 // Ordinary lifecycle writers cannot borrow a qualification reservation.
 // Dedicated execution methods must first validate its capability under m.mu.
 func (m *MemStore) guardInstanceRuntimeTransitionLocked(ctx context.Context, old, next Instance) error {
+	if next.State != "parked" && next.State != "stopped" && next.State != "failed" && m.migrationDeploymentRetiredLocked(next.DeploymentID) {
+		return ErrConflict
+	}
 	if err := m.guardMigrationAdmissionSourceLocked(old, next); err != nil {
 		return err
 	}

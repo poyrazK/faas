@@ -39,6 +39,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -106,7 +107,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 			"Unsupported format", "format must be '"+fieldNameTarball+"' (PR-A)"))
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Environment: req.Environment, TrafficPercent: req.TrafficPercent, Canary: req.Canary, RollbackOn5xx: req.RollbackOn5xx, DisableStartupCPUBoost: req.DisableStartupCPUBoost, MCPTaskMigrationOverride: req.MCPTaskMigrationOverride}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: req.Environment, TrafficPercent: req.TrafficPercent, Canary: req.Canary, RollbackOn5xx: req.RollbackOn5xx, DisableStartupCPUBoost: req.DisableStartupCPUBoost, MCPTaskMigrationOverride: req.MCPTaskMigrationOverride, OverrideFreeze: req.OverrideFreeze, ReleaseAt: req.ReleaseAt, ReleaseNotify: req.ReleaseNotify}
 	if problem := reviewedSourceStage(req, rolloutReq); problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -119,6 +120,16 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	}
 	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); p != nil {
 		api.WriteProblem(w, p)
+		return
+	}
+	sched, p := s.releaseFreezeOrSchedule(r, acct, app, rolloutReq)
+	if p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
+	if ap := s.releaseApprovalCanaryProblem(r.Context(), app, rolloutReq); ap != nil {
+		api.WriteProblem(w, ap)
 		return
 	}
 	if p := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); p != nil {
@@ -142,6 +153,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.ErrValidation("native_rollout must match the reviewed workload mode"))
 		return
 	}
+	sched.park(rolloutReq)
 	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
 	if rolloutProblem != nil {
 		api.WriteProblem(w, rolloutProblem)
@@ -299,7 +311,10 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 			s.log.Warn("source-ref manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
 		}
 	}(r.Context())
-	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !req.NoTriggers)
+	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !req.NoTriggers)
+	if stagedManifest.cronIntent != nil {
+		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
+	}
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return
@@ -403,6 +418,10 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	d.StagedReview = res.StagedReview
+	if p := s.recordReleaseSchedule(r, acct, app, d, sched); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
 }
 

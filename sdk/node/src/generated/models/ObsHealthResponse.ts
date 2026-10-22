@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ObsAlertCollectionHealth } from './ObsAlertCollectionHealth.js';
+import type { ObsAlertRetentionHealth } from './ObsAlertRetentionHealth.js';
+import type { ObsHealthSignal } from './ObsHealthSignal.js';
 /**
  * Wire shape for GET /v1/admin/obs/health (admin scope +
  * FAAS_ADMIN_EMAILS allowlist + MFA). Composed from
@@ -17,27 +20,29 @@
  */
 export type ObsHealthResponse = {
   /**
-   * Snapshot timestamp (UTC, RFC 3339).
+   * Response generation timestamp (UTC, RFC 3339); not a telemetry observation time.
    */
   generated_at: string;
   /**
-   * True only when every PromQL query used for this snapshot
-   * completed successfully. False means Prometheus-derived numeric
-   * fields are fallback values and must not be interpreted as
-   * observed telemetry.
+   * True only when all three Prometheus signals are healthy with
+   * fresh underlying observations. When false, consult each signal:
+   * healthy values remain usable and other numeric values are zero
+   * compatibility fallbacks. On legacy responses without signals,
+   * false makes all Prometheus-derived values unavailable.
    *
    */
   prometheus_available: boolean;
   /**
    * Increase of apid_audit_log_write_total over the trailing 5m
-   * window. 0 when the audit pipeline has been silent in the
-   * window. Check `prometheus_available` before interpreting it.
+   * window. Zero activity is a healthy zero only when the matching
+   * signals entry is healthy; otherwise zero is a compatibility fallback.
    *
    */
   audit_log_write_total_5m: number;
   /**
    * Increase of apid_audit_log_write_failures_total over the trailing
-   * 5m window. Check `prometheus_available` before interpreting it.
+   * 5m window. Interpret only when the matching signals entry is
+   * healthy, or prometheus_available is true on a legacy response.
    *
    */
   audit_log_write_failures_5m: number;
@@ -70,10 +75,23 @@ export type ObsHealthResponse = {
   trace_id_completeness_ratio: Record<string, number>;
   /**
    * Count of Prometheus alert rules in the firing state
-   * via PromQL ALERTS{alertstate="firing"}. Check
-   * `prometheus_available` before interpreting a zero value.
+   * via PromQL ALERTS{alertstate="firing"}, excluding watchdog and
+   * info-only rules. A fresh faas.rules.yml evaluation heartbeat is
+   * required for the matching signal to be healthy, including when
+   * no alerts fire. This describes source freshness, not alert severity.
    *
    */
   alerts_firing: number;
+  alert_history?: ObsAlertCollectionHealth;
+  alert_retention?: ObsAlertRetentionHealth;
+  /**
+   * Independent evidence for audit_log_write_total_5m,
+   * audit_log_write_failures_5m, and alerts_firing. Present on new
+   * servers; optional for compatibility with older responses.
+   * Only healthy signal values are usable. SQL-derived fields remain
+   * independent; a database read failure returns 503.
+   *
+   */
+  signals?: Record<string, ObsHealthSignal>;
 };
 

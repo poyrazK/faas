@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"archive/tar"
@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -39,7 +40,7 @@ func TestReadDevEnvFileIsSafeAndPreservesEquals(t *testing.T) {
 	if err := os.WriteFile(path, []byte("# local\nTOKEN=secret=value\nEMPTY=\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	pairs, _, err := readDevEnvFile(path)
+	pairs, _, err := main.ReadDevEnvFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +51,7 @@ func TestReadDevEnvFileIsSafeAndPreservesEquals(t *testing.T) {
 	if err := os.WriteFile(path, []byte("BROKEN secret-value\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = readDevEnvFile(path)
+	_, _, err = main.ReadDevEnvFile(path)
 	if err == nil || strings.Contains(err.Error(), "secret-value") {
 		t.Fatalf("malformed env error = %v; plaintext must not be echoed", err)
 	}
@@ -62,8 +63,8 @@ func TestDevEnvSyncIsKeyOnlyAndIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := &fakeDevSecretClient{keys: []api.AppSecretResponse{{Key: "EXISTING"}}}
-	state := &devEnvSyncState{}
-	report, err := state.sync(context.Background(), fake, "dev-app", path)
+	state := &main.DevEnvSyncState{}
+	report, err := state.Sync(context.Background(), fake, "dev-app", path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +78,7 @@ func TestDevEnvSyncIsKeyOnlyAndIdempotent(t *testing.T) {
 		t.Fatalf("sets = %+v; sync must use the default scope and developer app", fake.sets)
 	}
 
-	second, err := state.sync(context.Background(), fake, "dev-app", path)
+	second, err := state.Sync(context.Background(), fake, "dev-app", path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,11 +93,11 @@ func TestDevEnvSyncDoesNotMarkFailedUploadAsSynced(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := &failingDevSecretClient{}
-	state := &devEnvSyncState{}
-	if _, err := state.sync(context.Background(), fake, "dev-app", path); err == nil {
+	state := &main.DevEnvSyncState{}
+	if _, err := state.Sync(context.Background(), fake, "dev-app", path); err == nil {
 		t.Fatal("sync succeeded despite failed secret write")
 	}
-	if state.synced {
+	if *state.Synced() {
 		t.Fatal("failed upload was marked synced")
 	}
 }
@@ -106,7 +107,7 @@ func TestReadDevServiceOverrideFileValidatesSupportedURLs(t *testing.T) {
 	if err := os.WriteFile(path, []byte("DATABASE_URL=postgresql://dev:secret@db.example.test/app\nREDIS_URL=rediss://cache.example.test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	pairs, _, err := readDevServiceOverrideFile(path)
+	pairs, _, err := main.ReadDevServiceOverrideFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +129,7 @@ func TestReadDevServiceOverrideFileValidatesSupportedURLs(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			_, _, err := readDevServiceOverrideFile(path)
+			_, _, err := main.ReadDevServiceOverrideFile(path)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "secret-value") {
 				t.Fatalf("error = %v, want %q without plaintext", err, tc.want)
 			}
@@ -142,8 +143,8 @@ func TestDevServiceOverrideSyncUsesDeveloperAppAndIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := &fakeDevSecretClient{}
-	state := &devEnvSyncState{}
-	report, err := state.syncServiceOverrides(context.Background(), fake, "dev-app", path)
+	state := &main.DevEnvSyncState{}
+	report, err := state.SyncServiceOverrides(context.Background(), fake, "dev-app", path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +154,7 @@ func TestDevServiceOverrideSyncUsesDeveloperAppAndIsIdempotent(t *testing.T) {
 	if fake.sets[0].app != "dev-app" || fake.sets[0].key != "DATABASE_URL" || fake.sets[0].scope != "" {
 		t.Fatalf("set = %+v; override must use the developer app default scope", fake.sets[0])
 	}
-	second, err := state.syncServiceOverrides(context.Background(), fake, "dev-app", path)
+	second, err := state.SyncServiceOverrides(context.Background(), fake, "dev-app", path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,10 +187,10 @@ func TestPackExcludesExplicitDeveloperEnvFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	archivePath := filepath.Join(t.TempDir(), "source.tar.gz")
-	if _, err := packDirToTarGz(dir, archivePath, defaultZeroConfigSourceCapMB, nil, envPath, servicePath); err != nil {
+	if _, err := main.PackDirToTarGz(dir, archivePath, main.DefaultZeroConfigSourceCapMB, nil, envPath, servicePath); err != nil {
 		t.Fatal(err)
 	}
-	f, err := openCustomerFile(archivePath)
+	f, err := main.OpenCustomerFile(archivePath)
 	if err != nil {
 		t.Fatal(err)
 	}

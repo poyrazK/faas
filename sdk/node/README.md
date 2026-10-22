@@ -52,6 +52,93 @@ cd /path/to/your/project
 npm install /tmp/gregale-sdk-node-0.1.0.tgz
 ```
 
+## PostgreSQL pools across checkpoint, restore and thaw
+
+The `@gregale/sdk-node/postgres/runtime` subpath exports `createPostgresPool`,
+`postgresPoolConfig`, and `PostgresPoolError`. Install `pg` separately. This
+runtime has no control-plane client or driver dependency, and does not install
+process handlers. The CLI's `rest-api-postgres` starter bundles the same compiled
+runtime, so scaffolding does not depend on a published npm SDK.
+
+```ts
+import pg from 'pg';
+import {createPostgresPool, postgresPoolConfig} from '@gregale/sdk-node/postgres/runtime';
+
+const database = createPostgresPool(
+  () => new pg.Pool(postgresPoolConfig(process.env.DATABASE_URL!)),
+  {
+    readinessQuery: {text: 'SELECT id FROM notes LIMIT 1'},
+    onEvent: event => console.error(JSON.stringify(event)),
+  },
+);
+const {rows} = await database.query<{id: number; body: string}>(
+  'INSERT INTO notes(body) VALUES ($1) RETURNING id, body', ['hello'],
+  {write: true, signal: requestAbortSignal},
+);
+```
+
+Read current credentials **inside** the factory; it must return a fresh `pg.Pool`
+each time. The helper does not mutate `process.env` or subscribe to secret
+reloads. Managed binding rotation still uses Gregale's replacement/retirement
+protocol. Never share the underlying pool with other borrowers or call its
+`end()` yourself.
+
+Declare both hooks in `gregale.yaml` and wire their HTTP handlers:
+
+```yaml
+lifecycle:
+  before_checkpoint:
+    path: /internal/before-checkpoint
+    timeout_ms: 2000
+  after_restore:
+    path: /internal/after-restore
+    timeout_ms: 2000
+```
+
+| Handler | Required marker | SDK call |
+| --- | --- | --- |
+| `POST /internal/before-checkpoint` | `X-Faas-Before-Checkpoint: 1` | `await database.beforeCheckpoint({signal})` |
+| `POST /internal/after-restore` | `X-Faas-After-Restore: 1` | `await database.afterRestore({signal})` |
+
+Require the actual socket peer to be `127.0.0.1`, `::1`, or `::ffff:127.0.0.1`
+**and** the exact marker. Forwarded client addresses are insufficient. Return
+204 only after the SDK call resolves, and 503 on failure; pass the HTTP
+disconnect signal. The [starter handlers](../../cmd/gregale/templates/rest-api-postgres/app.js)
+provide the complete wiring. Gregale's [lifecycle contract](../../docs/cold-wake.md)
+defines capture failures, restore cold fallback, and thaw recovery.
+
+`beforeCheckpoint` stops admission, cancels unfinished transactions and waits
+for all owned sessions to close. The pool stays closed until `afterRestore`
+creates a new one and probes readiness in a read-only transaction. The latter
+also works without a prior checkpoint, as required for frozen thaw. Duplicate
+calls of the same hook coalesce; different hooks cannot overlap. A cancelled
+duplicate waiter does not cancel the owning hook. Failed or timed-out hooks
+leave SQL admission closed; a late probe cannot make the old pool ready.
+
+The total hook and shutdown budget defaults to 1500ms (maximum 1500ms), leaving
+headroom within the platform's two-second hook. `timeoutMs` defaults to 5000ms
+per request, including acquisition and COMMIT. `maxInFlight` defaults to 16
+executing/queued requests; excess work fails with `database_busy`. Other fixed
+errors are `database_unavailable` and `database_cancelled`. `diagnostics` reports
+state, successful restore generation, active requests, and owned pool count;
+`onEvent` receives only fixed event codes and those counts, without provider
+errors, SQL or credentials. `close()` is terminal, bounded and idempotent.
+
+`query` executes one statement in an explicit read-only transaction by default;
+use `write: true` for mutations. Use parameterized statements, not transaction
+control SQL. The helper is not a drop-in `pg.Pool` for ORMs or multi-statement
+transaction callbacks. It never retries SQL or performs schema changes. A
+cancelled connection before COMMIT rolls back; a lost COMMIT response can have
+an uncertain outcome. Add application idempotency before retrying writes.
+
+`postgresPoolConfig` preserves certificate and hostname verification even for
+`sslmode=require`, rejects URL TLS overrides, and accepts explicit
+`sslmode=disable` for local development. Private CAs use `NODE_EXTRA_CA_CERTS`.
+Migrate the application schema separately before deployment; a probe of an
+existing table also detects missing migrations. The default probe is `SELECT 1`.
+Remote PostgreSQL and transaction-mode poolers can use the helper, but provider
+pooling and native guest behavior require their separate acceptance gates.
+
 ## Container listeners
 
 UDP ingress requires an operator-enabled public edge and source-CIDR/firewall
@@ -451,6 +538,57 @@ generated services. The canonical mapping:
 
 Regenerate via `npm run gen` (committed per ADR-013; CI's
 `sdk-gen-node` job is the dirty-diff gate).
+
+## Batched trigger delivery
+
+A trigger with `delivery: batch` sends one request with several records
+(ADR-1321). `handleTriggerBatch` parses the body, runs your handler for each
+record in delivery order and returns the response body; a record whose handler
+throws is retried, the rest are complete:
+
+```ts
+import { handleTriggerBatch, isTriggerBatch } from '@gregale/sdk-node/triggers/runtime';
+
+export async function POST(request: Request) {
+  const result = await handleTriggerBatch(await request.json(), async (record) => {
+    await saveOrder(record.data); // record.isJSON, record.bytes, record.text(), record.metadata
+  });
+  return Response.json(result); // {"batchItemFailures": [...]}
+}
+```
+
+`isTriggerBatch(request.headers)` tells batch and single-record deliveries apart.
+Options: `concurrency` (1-100) for records that do not depend on each other's
+order, `stopOnFailure` to retry every record after a failure in order, and
+`onError` to log each failure. A malformed body throws `TriggerBatchError`;
+let the request fail so the whole batch is retried.
+
+## Realtime in the browser and React
+
+`createRealtimeClient` keeps one WebSocket per endpoint and subscribes channels
+while something watches them. Each channel handle has an immutable view
+(`status`, recent `messages`, `presence`, `occupancy`, `error`) that changes
+only when something does, so it works with `useSyncExternalStore` and other
+stores:
+
+```ts
+import { createBrowserRealtimeTicketSocketFactory, createRealtimeClient } from '@gregale/sdk-node/browser';
+
+const client = createRealtimeClient({ url, webSocketFactory: createBrowserRealtimeTicketSocketFactory(fetchTicket) });
+const lobby = client.channel('lobby', { occupancy: true });
+const stop = lobby.subscribe(() => render(lobby.getView()));
+```
+
+React bindings live in `@gregale/sdk-node/react` (React 18+, an optional peer
+dependency): `RealtimeProvider`, `useRealtimeChannel(channel, options)`,
+`usePresence(channel)`, `useOccupancy(channel)` and `useRealtimeClient()`.
+A channel is released `lingerMs` (default 1 s) after its last watcher leaves.
+A client watches at most 8 channels at once; a refused channel reports
+`status: 'error'` with the server's code while the others continue.
+
+`consumeRealtimeChannels` also takes a `controller` callback whose `add()` and
+`remove()` change the channel set on a live connection, plus per-channel
+`onSubscriptionError` and connection-level `onConnectionChange` hooks.
 
 ## Transactional operation handlers
 

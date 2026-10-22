@@ -1,4 +1,5 @@
-import { HTTPError } from './authz.mjs'
+import { HTTPError, organizationClaims } from './authz.mjs'
+import { actClaims } from './impersonation.mjs'
 import { consentPath, limits, oauthAudience } from './config.mjs'
 
 // OAuth 2.1 authorization server (ADR-1190). GoTrue v2.197.0 registers
@@ -25,11 +26,21 @@ export function consentLocation(location, site, external) {
 }
 
 // bearerClaims reads a bearer token's claims without verifying them. They
-// only ever refuse a request, never allow one.
+// only ever refuse a request, never allow one. It reads the header the way
+// GoTrue does ((?i)^bearer (\S+)$: the scheme in any letter case), so no
+// token reaches GoTrue unread: null means there is no JWT (GoTrue accepts
+// none with other than three parts, and clients such as supabase-js send
+// placeholder keys), false a JWT whose claims cannot be read, which the
+// front refuses.
 export function bearerClaims(header) {
-  const match = /^Bearer [A-Za-z0-9_-]+\.([A-Za-z0-9_-]+)\.[A-Za-z0-9_-]+$/.exec(header ?? '')
-  if (!match) return null
-  try { return JSON.parse(Buffer.from(match[1], 'base64url').toString('utf8')) } catch { return null }
+  const token = /^bearer (\S+)$/i.exec(header ?? '')?.[1]
+  if (!token) return null
+  const parts = token.split('.')
+  if (parts.length !== 3) return null
+  try {
+    const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'))
+    return claims !== null && typeof claims === 'object' && !Array.isArray(claims) ? claims : false
+  } catch { return false }
 }
 
 export function isClientToken(claims) {
@@ -53,14 +64,18 @@ export function wellKnownPath(url) {
 }
 
 // accessTokenClaims answers GoTrue's custom access token hook. The
-// application's own tokens pass unchanged.
-export async function accessTokenClaims(pool, payload) {
+// application's own tokens pass unchanged, or gain their session's
+// organization with AUTH_ORG_CLAIMS on; a client's token never does.
+export async function accessTokenClaims(pool, payload, { orgClaims = false, impersonation = false } = {}) {
   const claims = payload?.claims
   if (!claims || typeof claims !== 'object' || Array.isArray(claims)) throw new HTTPError(400, 'invalid_hook_payload')
   // GoTrue writes a single audience as a string, but only from its first
   // signature on: the first hook call after every start sends an array.
   const aud = Array.isArray(claims.aud) && claims.aud.length === 1 ? claims.aud[0] : claims.aud
-  if (!isClientToken(claims)) return { claims: { ...claims, aud } }
+  if (!isClientToken(claims)) {
+    const act = impersonation && typeof claims.session_id === 'string' ? await actClaims(pool, claims.session_id) : {}
+    return { claims: { ...claims, aud, ...(orgClaims ? await organizationClaims(pool, claims) : {}), ...act } }
+  }
   return { claims: { ...claims, aud: (await sessionResource(pool, claims)) ?? oauthAudience } }
 }
 

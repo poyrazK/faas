@@ -14,7 +14,7 @@
 // env vars so the test exercises the same code path as the CLI
 // binary in production.
 
-package main
+package main_test
 
 import (
 	"bytes"
@@ -25,6 +25,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -76,7 +77,7 @@ func runPreflightCLI(t *testing.T, args []string) (int, string, string) {
 		os.Stderr = origStderr
 	})
 
-	code := cmdBillingReconcilePaddleOverage(args)
+	code := main.CmdBillingReconcilePaddleOverage(args)
 	wOut.Close()
 	wErr.Close()
 	_, _ = stdoutBuf.ReadFrom(rOut)
@@ -178,7 +179,7 @@ func TestCmdBillingReconcilePaddleOverage_UsageErrorOnArg(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "test")
 
-	code := cmdBillingReconcilePaddleOverage([]string{"surprise"})
+	code := main.CmdBillingReconcilePaddleOverage([]string{"surprise"})
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}

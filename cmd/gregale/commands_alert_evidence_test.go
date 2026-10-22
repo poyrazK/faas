@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -39,7 +40,7 @@ func TestAlertEvidenceWaitRejectsChangedOrClearedAcceptedEvidence(t *testing.T) 
 			case "cleared":
 				complete.DeploymentEvidence = nil
 			}
-			_, err := waitAlertRollback(t.Context(), &alertWaitFixtureClient{rows: []api.AlertRollback{complete}}, "app", pin, time.Millisecond)
+			_, err := main.WaitAlertRollback(t.Context(), &alertWaitFixtureClient{rows: []api.AlertRollback{complete}}, "app", pin, time.Millisecond)
 			if change == "valid completion" && err != nil || change != "valid completion" && err == nil {
 				t.Fatalf("wait %s: %v", change, err)
 			}
@@ -49,11 +50,11 @@ func TestAlertEvidenceWaitRejectsChangedOrClearedAcceptedEvidence(t *testing.T) 
 
 func TestAlertEvidenceHumanOutput(t *testing.T) {
 	var out bytes.Buffer
-	old := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = old })
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = old })
 	r := api.AlertRollback{Status: "blocked", Historical: true, DeploymentEvidence: &api.AlertRollbackDeploymentEvidence{Status: "insufficient", Code: "alert_rollback_evidence_insufficient", Requests: 3, MinimumRequests: 20, Threshold: 1, Comparison: "gt"}}
-	if code := outputAlertRollback(r); code != 0 {
+	if code := main.OutputAlertRollback(r); code != 0 {
 		t.Fatal(code)
 	}
 	for _, want := range []string{"deployment evidence: insufficient", "requests: 3 (minimum 20)", "error rate:", "alert_rollback_evidence_insufficient"} {

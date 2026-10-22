@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -18,6 +19,9 @@ func (m *MemStore) MigrateInstanceOwnerWithRuntimeConfig(ctx context.Context, id
 	defer m.mu.Unlock()
 	if err := m.checkNodeAdmissionLocked(ctx, to); err != nil {
 		return err
+	}
+	if strings.HasPrefix(leaseToken, FunctionMigrationTokenPrefix) {
+		return m.commitFunctionDestinationLocked(ctx, id, from, to, leaseToken, input)
 	}
 	instance, exists := m.instances[id]
 	if !exists {

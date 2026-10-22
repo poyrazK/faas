@@ -67,7 +67,7 @@ func TestFinancialBudgetPreview(t *testing.T) {
 		t.Run(tc.action, func(t *testing.T) {
 			spec.Action = tc.action
 			out, err := PreviewFinancialBudget(t.Context(), store, account.ID, spec, store.timeNow)
-			if err != nil || len(out.Targets) != tc.selected || len(out.ContinuingTargets) != tc.continuing || out.KnownMillicents != 150 || !out.KnownLimitReached || !out.CoverageComplete || out.EnforcementReady {
+			if err != nil || len(out.Targets) != tc.selected || len(out.ContinuingTargets) != tc.continuing || out.KnownMillicents != 150 || !out.KnownLimitReached || !out.CoverageComplete || out.EnforcementReady != (tc.action == "stop_previews") {
 				t.Fatalf("preview: %+v, %v", out, err)
 			}
 			if tc.action == "stop_previews" && out.Targets[0].ID != apps[1].ID {

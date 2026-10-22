@@ -49,6 +49,20 @@ func (*stubVmmdClient) MaterializeRuntimeScan(context.Context, *vmmdpb.Materiali
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not materialize runtime scans")
 }
 
+// ADR-1642: forwarding fixtures cannot authenticate or launch managed probes.
+func (*stubVmmdClient) ResolveServiceCaller(context.Context, *vmmdpb.ResolveServiceCallerRequest, ...grpc.CallOption) (*vmmdpb.ResolveServiceCallerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not authenticate service callers")
+}
+
+// ADR-1138: forwarding fixtures name no in-flight request trace.
+func (*stubVmmdClient) InflightRequestTrace(context.Context, *vmmdpb.InflightRequestTraceRequest, ...grpc.CallOption) (*vmmdpb.InflightRequestTraceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not track request traces")
+}
+
+func (*stubVmmdClient) RestoreManagedServiceProbe(context.Context, *vmmdpb.RestoreAppTaskRequest, ...grpc.CallOption) (*vmmdpb.RestoreAppTaskResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not launch managed service probes")
+}
+
 func (*stubVmmdClient) GetOperatorRestartGeneration(context.Context, *vmmdpb.GetOperatorRestartGenerationRequest, ...grpc.CallOption) (*vmmdpb.GetOperatorRestartGenerationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not resolve operator restart generations")
 }

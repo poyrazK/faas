@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestAutomationSimulationSuccessfulWaits(t *testing.T) {
@@ -23,10 +24,10 @@ func TestAutomationSimulationSuccessfulWaits(t *testing.T) {
 				MockAttempts: map[string][]api.AutomationSimulationMockAttempt{"approval": {{Outcome: "success", Output: json.RawMessage(payload)}}},
 				MockOutputs:  map[string]json.RawMessage{"fulfill": json.RawMessage(`true`)},
 			}
-			result := simulateTest(t, request)
-			approval := simulationStep(t, result, "approval")
-			fulfill := simulationStep(t, result, "fulfill")
-			if !result.Complete || approval.State != "mocked" || approval.Reason != reason || string(approval.Output) != payload || len(approval.Attempts) != 1 || approval.Attempts[0].Outcome != "success" || string(fulfill.Input) != `{"payload":`+payload+`}` || simulationStep(t, result, "expire").State != "skipped" {
+			result := state.SimulateTest(t, request)
+			approval := state.SimulationStep(t, result, "approval")
+			fulfill := state.SimulationStep(t, result, "fulfill")
+			if !result.Complete || approval.State != "mocked" || approval.Reason != reason || string(approval.Output) != payload || len(approval.Attempts) != 1 || approval.Attempts[0].Outcome != "success" || string(fulfill.Input) != `{"payload":`+payload+`}` || state.SimulationStep(t, result, "expire").State != "skipped" {
 				t.Fatalf("callback=%v payload=%s: %+v", callback, payload, result)
 			}
 		}
@@ -42,7 +43,7 @@ func TestAutomationSimulationRejectsIncompatibleWaitSuccess(t *testing.T) {
 		{{Outcome: "success", Output: json.RawMessage(`null`)}, {Outcome: "success", Output: json.RawMessage(`null`)}},
 	} {
 		request := api.SimulateAutomationRequest{Definition: api.WorkflowSpec{Name: "approve", Steps: []api.WorkflowStepSpec{wait}}, MockAttempts: map[string][]api.AutomationSimulationMockAttempt{"approval": attempts}}
-		if _, err := SimulateAutomation(context.Background(), request, api.PlanHobby); !errors.Is(err, ErrAutomationSimulationInvalid) {
+		if _, err := state.SimulateAutomation(context.Background(), request, api.PlanHobby); !errors.Is(err, state.ErrAutomationSimulationInvalid) {
 			t.Fatalf("accepted incompatible wait outcomes: %v", err)
 		}
 	}

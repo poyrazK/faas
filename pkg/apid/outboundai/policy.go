@@ -11,7 +11,7 @@ import (
 
 // PolicyInvalidDetail explains a rejected AI policy; integration creation
 // in apidserver shares it.
-const PolicyInvalidDetail = "ai_provider must be openai, anthropic, gemini, azure_openai, bedrock or vertex; token limits (1 to 100,000,000,000), cost limits (1 to 1,000,000,000,000 millicents) and the request log require a provider; request_log_content requires the request log"
+const PolicyInvalidDetail = "ai_provider must be openai, anthropic, gemini, azure_openai, bedrock or vertex; token limits (1 to 100,000,000,000), cost limits (1 to 1,000,000,000,000 millicents) and the request log require a provider; request_log_content requires the request log; log_export and allow_unmetered require a provider"
 
 func (s *Service) aiStore(w http.ResponseWriter) (state.OutboundAIStore, bool) {
 	store, ok := s.Host.Store().(state.OutboundAIStore)
@@ -57,6 +57,7 @@ func (s *Service) PutPolicy(w http.ResponseWriter, r *http.Request, acct state.A
 		DailyCostLimit: req.DailyCostLimitMillicents, MonthlyCostLimit: req.MonthlyCostLimitMillicents,
 		RequestLogEnabled: req.RequestLogEnabled, UserDailyTokenLimit: req.UserDailyTokenLimit,
 		UserDailyCostLimit: req.UserDailyCostLimitMillicents, RequestLogContent: req.RequestLogContent,
+		LogExport: req.LogExport, AllowUnmetered: req.AllowUnmetered, AutoPromptCache: req.AutoPromptCache,
 	})
 	s.writeResult(w, err, "customer outbound integration not found", PolicyInvalidDetail)
 }
@@ -101,6 +102,10 @@ func usageResponse(usage state.OutboundAIUsage) api.OutboundAIUsageResponse {
 			UsageUnknownRequests: item.UsageUnknownRequests, InputTokens: item.InputTokens,
 			CachedInputTokens: item.CachedInputTokens, CacheWriteTokens: item.CacheWriteTokens, OutputTokens: item.OutputTokens,
 			CostMillicents: item.CostMillicents, Images: item.Images, AudioSeconds: item.AudioSeconds, Characters: item.Characters,
+			VideoSeconds: item.VideoSeconds, WebSearches: item.WebSearches, FileSearches: item.FileSearches,
+			CodeSessionGB: item.CodeSessionGB, CachedRequests: item.CachedRequests, CacheSavedMillicents: item.CacheSavedMillicents,
+			PromptCacheSavedMillicents: item.PromptCacheSavedMillicents,
+			InputAudioTokens:           item.InputAudioTokens, OutputAudioTokens: item.OutputAudioTokens,
 		})
 	}
 	return out
@@ -176,7 +181,12 @@ func (s *Service) PutPrices(w http.ResponseWriter, r *http.Request, acct state.A
 
 // contentPolicyInvalidDetail explains a rejected content policy (ADR-997).
 const contentPolicyInvalidDetail = "email, payment_card, iban and secret must be off, redact or block; blocked_terms at most 32 " +
-	"distinct printable terms of 1 to 128 bytes; an active policy requires an AI provider"
+	"distinct printable terms of 1 to 128 bytes; an active policy requires an AI provider; moderation.action must be off, flag or block, " +
+	"and an active check needs kind openai_moderation (an OpenAI integration, without prompt_injection) or classifier (with a model), " +
+	"integration_id naming one of this account's enabled AI integrations, distinct categories from prompt_injection, harassment, hate, " +
+	"self_harm, sexual, violence and illicit, and on_error allow or block; response.email, payment_card, iban and secret must be off, " +
+	"redact or block, response.blocked_terms off or block, and response.moderation off, flag or block, which needs a complete " +
+	"moderation check with a category besides prompt_injection"
 
 // PutContentPolicy replaces a customer AI integration's content guardrails
 // (ADR-997).

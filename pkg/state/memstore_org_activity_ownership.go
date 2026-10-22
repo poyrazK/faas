@@ -18,9 +18,12 @@ func transferOrgOwnershipLocked(m *MemStore, orgID, fromAccountID, toAccountID s
 	return from, to, nil
 }
 
-func (m *MemStore) TransferOrgOwnershipWithActivity(_ context.Context, orgID, fromAccountID, toAccountID string, activity OrgActivity) (int64, error) {
+func (m *MemStore) TransferOrgOwnershipWithActivity(ctx context.Context, orgID, fromAccountID, toAccountID string, activity OrgActivity) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return 0, err
+	}
 
 	from, to, err := orgOwnershipTransferMembersLocked(m, orgID, fromAccountID, toAccountID)
 	if err != nil {
@@ -62,6 +65,6 @@ func orgOwnershipTransferMembersLocked(m *MemStore, orgID, fromAccountID, toAcco
 func applyOrgOwnershipTransferLocked(m *MemStore, from, to OrgMembership) {
 	from.Role = OrgRoleAdmin
 	to.Role = OrgRoleOwner
-	m.memberships[orgAccountKey{OrgID: from.OrgID, AccountID: from.AccountID}] = from
-	m.memberships[orgAccountKey{OrgID: to.OrgID, AccountID: to.AccountID}] = to
+	m.setOrgMembershipLocked(orgAccountKey{OrgID: from.OrgID, AccountID: from.AccountID}, from)
+	m.setOrgMembershipLocked(orgAccountKey{OrgID: to.OrgID, AccountID: to.AccountID}, to)
 }

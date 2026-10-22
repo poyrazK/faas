@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,34 +8,35 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestWorkflowRecoveryRetainedResultsAndNotifications(t *testing.T) {
 	for _, outcome := range []string{"succeeded", "failed", "cancelled", "unknown", "skipped"} {
 		t.Run(outcome, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, store Store) {
+			state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 				ctx := context.Background()
-				run, app := seedResumeRun(t, store, simpleResumeSpec())
-				failResumeRun(t, store, run, "send")
-				hook, err := store.CreateAppWebhook(ctx, AppWebhook{AccountID: app.AccountID, AppID: app.ID, TargetURL: "https://recovery.example.test/finished", SecretSealed: []byte("test-sealed"), Enabled: true, EventFilter: []string{string(AppWebhookEventRecoveryExecutionFinished)}})
+				run, app := state.SeedResumeRun(t, store, state.SimpleResumeSpec())
+				state.FailResumeRun(t, store, run, "send")
+				hook, err := store.CreateAppWebhook(ctx, state.AppWebhook{AccountID: app.AccountID, AppID: app.ID, TargetURL: "https://recovery.example.test/finished", SecretSealed: []byte("test-sealed"), Enabled: true, EventFilter: []string{string(state.AppWebhookEventRecoveryExecutionFinished)}})
 				if err != nil {
 					t.Fatal(err)
 				}
-				recovery := store.(EventRecoveryStore)
+				recovery := store.(state.EventRecoveryStore)
 				job, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, api.EventRecoveryRequest{RequestID: uuid.NewString(), WorkflowRuns: &api.WorkflowRunRecoveryPlan{Name: run.WorkflowName, Runs: []api.WorkflowRunRecoveryTarget{{RunID: run.ID}}}})
 				if err != nil {
 					t.Fatal(err)
 				}
 				if outcome == "skipped" {
-					if _, _, _, err := store.(WorkflowResumeStore).ResumeWorkflowRun(ctx, resumeOptions(run, app, 0)); err != nil {
+					if _, _, _, err := store.(state.WorkflowResumeStore).ResumeWorkflowRun(ctx, state.ResumeOptions(run, app, 0)); err != nil {
 						t.Fatal(err)
 					}
 				}
 				if _, err = recovery.ProcessNextEventRecovery(ctx, time.Now().UTC()); err != nil {
 					t.Fatal(err)
 				}
-				notices := store.(EventRecoveryExecutionNotificationStore)
+				notices := store.(state.EventRecoveryExecutionNotificationStore)
 				poll := time.Now().UTC()
 				if did, err := notices.ProcessNextEventRecoveryExecutionNotification(ctx, poll); err != nil || !did {
 					t.Fatalf("queued poll=%v %v", did, err)
@@ -48,13 +49,13 @@ func TestWorkflowRecoveryRetainedResultsAndNotifications(t *testing.T) {
 					t.Helper()
 					var out *api.EventRecoveryExecutionHealth
 					var err error
-					if mem, ok := store.(*MemStore); ok {
-						mem.mu.Lock()
-						out, err = mem.recoveryExecutionHealthLocked(ctx, app.AccountID, app.ID, time.Now().UTC())
-						mem.mu.Unlock()
+					if mem, ok := store.(*state.MemStore); ok {
+						(*mem.Mu()).Lock()
+						out, err = mem.RecoveryExecutionHealthLocked(ctx, app.AccountID, app.ID, time.Now().UTC())
+						(*mem.Mu()).Unlock()
 					} else {
-						pg := store.(*PgStore)
-						out, err = observeRecoveryExecutionHealth(ctx, sqlc.New(), pg.pool, app.AccountID, app.ID, time.Now().UTC())
+						pg := store.(*state.PgStore)
+						out, err = state.ObserveRecoveryExecutionHealth(ctx, sqlc.New(), (*pg.Pool()), app.AccountID, app.ID, time.Now().UTC())
 					}
 					if err != nil {
 						t.Fatal(err)
@@ -68,7 +69,7 @@ func TestWorkflowRecoveryRetainedResultsAndNotifications(t *testing.T) {
 					if _, err = notices.ProcessNextEventRecoveryExecutionNotification(ctx, poll.Add(time.Second)); err != nil {
 						t.Fatal(err)
 					}
-					if _, err = store.(AppWebhookEventOutboxStore).DrainAppWebhookEventOutbox(ctx, 32); err != nil {
+					if _, err = store.(state.AppWebhookEventOutboxStore).DrainAppWebhookEventOutbox(ctx, 32); err != nil {
 						t.Fatal(err)
 					}
 					rows, _, err := store.ListAppWebhookDeliveries(ctx, app.ID, hook.ID, 100, "")
@@ -90,18 +91,18 @@ func TestWorkflowRecoveryRetainedResultsAndNotifications(t *testing.T) {
 					}
 				}
 				// Prune the workflow independently of the owning recovery job.
-				if mem, ok := store.(*MemStore); ok {
-					mem.mu.Lock()
-					delete(mem.workflowRuns, run.ID)
-					delete(mem.workflowResumes, run.ID)
-					mem.mu.Unlock()
+				if mem, ok := store.(*state.MemStore); ok {
+					(*mem.Mu()).Lock()
+					delete((*mem.WorkflowRuns()), run.ID)
+					delete((*mem.WorkflowResumes()), run.ID)
+					(*mem.Mu()).Unlock()
 				} else {
-					pg := store.(*PgStore)
-					if _, err = pg.pool.Exec(ctx, "DELETE FROM workflow_runs WHERE id=$1::uuid", run.ID); err != nil {
+					pg := store.(*state.PgStore)
+					if _, err = (*pg.Pool()).Exec(ctx, "DELETE FROM workflow_runs WHERE id=$1::uuid", run.ID); err != nil {
 						t.Fatal(err)
 					}
 					// New store instance proves capture survives a server restart.
-					fresh := NewPgStore(pg.pool)
+					fresh := state.NewPgStore((*pg.Pool()).Pool)
 					recovery = fresh
 					notices = fresh
 				}
@@ -112,7 +113,7 @@ func TestWorkflowRecoveryRetainedResultsAndNotifications(t *testing.T) {
 				if _, err = notices.ProcessNextEventRecoveryExecutionNotification(ctx, now.Add(time.Second)); err != nil {
 					t.Fatal(err)
 				}
-				if _, err = store.(AppWebhookEventOutboxStore).DrainAppWebhookEventOutbox(ctx, 32); err != nil {
+				if _, err = store.(state.AppWebhookEventOutboxStore).DrainAppWebhookEventOutbox(ctx, 32); err != nil {
 					t.Fatal(err)
 				}
 				deliveries, _, err := store.ListAppWebhookDeliveries(ctx, app.ID, hook.ID, 100, "")
@@ -138,7 +139,7 @@ func TestWorkflowRecoveryRetainedResultsAndNotifications(t *testing.T) {
 				if h := health(); h.WaitingJobs != 0 {
 					t.Fatalf("finished health=%+v", h)
 				}
-				report, err := store.(EventRecoveryNotificationsStore).GetEventRecoveryNotifications(ctx, app.AccountID, job.ID, now)
+				report, err := store.(state.EventRecoveryNotificationsStore).GetEventRecoveryNotifications(ctx, app.AccountID, job.ID, now)
 				if err != nil {
 					t.Fatal(err)
 				}

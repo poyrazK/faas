@@ -48,12 +48,26 @@ func (s *Service) PutOperationWebhookBinding(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	// Bind only to an operation that exists now; each event resolves again.
-	if _, _, err := s.resolveWebhookDefinition(r.Context(), state.OperationWebhookBinding{AccountID: acct.ID, AppID: endpoint.AppID, Scope: req.Scope, OperationName: req.Operation}); err != nil {
+	def, _, err := s.resolveWebhookDefinition(r.Context(), state.OperationWebhookBinding{AccountID: acct.ID, AppID: endpoint.AppID, Scope: req.Scope, OperationName: req.Operation})
+	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Operation not found", "no operation with this name is defined on the environment's live deployment"))
 		return
 	}
+	if req.Mode == api.OperationWebhookModeSignal {
+		for _, signal := range req.Signals {
+			if reservedSignalEvent(acct.ID, signal.Event) {
+				writeReservedSignalEvent(w)
+				return
+			}
+		}
+		if problem := s.signalBindingProblem(r.Context(), def, req); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
 	binding, err := store.SaveOperationWebhookBinding(r.Context(), state.OperationWebhookBindingOptions{EndpointID: endpoint.ID, AccountID: acct.ID, AppID: endpoint.AppID,
-		ExpectedVersion: *req.ExpectedVersion, Scope: req.Scope, OperationName: req.Operation, PlatformTenantID: req.PlatformTenantID, EventTypes: req.EventTypes})
+		ExpectedVersion: *req.ExpectedVersion, Scope: req.Scope, OperationName: req.Operation, PlatformTenantID: req.PlatformTenantID, EventTypes: req.EventTypes,
+		Mode: req.Mode, Subject: req.Subject, Signals: req.Signals})
 	if err != nil {
 		writeOperationWebhookBindingError(w, err)
 		return
@@ -99,7 +113,8 @@ func operationWebhookBindingResponse(b state.OperationWebhookBinding) api.Operat
 		types = []string{}
 	}
 	return api.OperationWebhookBindingResponse{EndpointID: b.EndpointID, AppID: b.AppID, Scope: b.Scope, Operation: b.OperationName, PlatformTenantID: b.PlatformTenantID,
-		EventTypes: types, Version: b.Version, CreatedAt: b.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: b.UpdatedAt.UTC().Format(time.RFC3339Nano)}
+		EventTypes: types, Mode: b.Mode, Subject: b.Subject, Signals: b.Signals, Version: b.Version,
+		CreatedAt: b.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: b.UpdatedAt.UTC().Format(time.RFC3339Nano)}
 }
 
 func writeOperationWebhookBindingError(w http.ResponseWriter, err error) {
@@ -167,7 +182,18 @@ func webhookIdempotencyKey(endpointID, eventID string) string {
 // ReceiveBoundWebhook admits a verified event for an endpoint bound to a
 // customer operation. It returns false when the endpoint has no binding.
 // Every refusal is non-2xx, so the provider retains and retries the event.
+// Each handled event is counted by binding mode and result (ADR-20261016123221).
 func (s *Service) ReceiveBoundWebhook(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, eventID, eventType string, body []byte) bool {
+	recorder := &webhookOutcomeWriter{ResponseWriter: w}
+	mode := api.OperationWebhookModeStart
+	handled := s.receiveBoundWebhook(recorder, r, endpoint, eventID, eventType, body, &mode)
+	if handled {
+		s.Metrics.webhookEvent(mode, recorder.result())
+	}
+	return handled
+}
+
+func (s *Service) receiveBoundWebhook(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, eventID, eventType string, body []byte, mode *string) bool {
 	store, ok := s.Host.Store().(state.OperationWebhookStore)
 	if !ok {
 		return false
@@ -197,6 +223,11 @@ func (s *Service) ReceiveBoundWebhook(w http.ResponseWriter, r *http.Request, en
 	w.Header().Set("Cache-Control", "no-store")
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not load inbound webhook operation binding"))
+		return true
+	}
+	if binding.Mode == api.OperationWebhookModeSignal {
+		*mode = binding.Mode
+		s.signalBoundWebhook(w, r, binding, endpoint, eventID, eventType, body)
 		return true
 	}
 	if !binding.Admits(eventType) {

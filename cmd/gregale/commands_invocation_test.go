@@ -6,7 +6,7 @@
 // on $?. It previously returned 0 for every 200 response, including
 // ones whose body carried status=failed, so a parked or broken app
 // reported success. These tests pin the terminal-state mapping.
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -47,7 +48,7 @@ func TestCmdInvoke_ExitCodeByTerminalState(t *testing.T) {
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-			if got := cmdInvoke([]string{"some-app"}); got != c.wantCode {
+			if got := main.CmdInvoke([]string{"some-app"}); got != c.wantCode {
 				t.Errorf("cmdInvoke(status=%s) = %d, want %d", c.status, got, c.wantCode)
 			}
 		})
@@ -56,7 +57,7 @@ func TestCmdInvoke_ExitCodeByTerminalState(t *testing.T) {
 
 func TestCmdInvoke_JSONFailedExitsOne(t *testing.T) {
 	resetJSONEnv(t)
-	jsonOutput = true
+	(*main.JsonOutput) = true
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(api.InvokeResponse{
 			ID:     "5a0d1c2e-0000-4000-8000-000000000003",
@@ -68,7 +69,7 @@ func TestCmdInvoke_JSONFailedExitsOne(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if got := cmdInvoke([]string{"some-app"}); got != 1 {
+	if got := main.CmdInvoke([]string{"some-app"}); got != 1 {
 		t.Errorf("cmdInvoke(JSON failed) = %d, want 1", got)
 	}
 }
@@ -88,7 +89,7 @@ func TestCmdInvoke_Async_ExitsZeroOnQueued(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if got := cmdInvoke([]string{"--async", "some-app"}); got != 0 {
+	if got := main.CmdInvoke([]string{"--async", "some-app"}); got != 0 {
 		t.Errorf("cmdInvoke(--async) = %d, want 0", got)
 	}
 }
@@ -115,21 +116,21 @@ func TestCmdInvoke_AsyncWorkPolicy(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if got := cmdInvoke([]string{"some-app", "--async", "--work-policy", "document-index",
+	if got := main.CmdInvoke([]string{"some-app", "--async", "--work-policy", "document-index",
 		"--work-key", `"d1"`, "--work-fairness-key", `"tenant-1"`}); got != 0 || !called {
 		t.Fatalf("cmdInvoke = %d, called=%v", got, called)
 	}
-	if got := cmdInvoke([]string{"some-app", "--work-policy", "document-index", "--work-key", `"d1"`}); got != 1 {
+	if got := main.CmdInvoke([]string{"some-app", "--work-policy", "document-index", "--work-key", `"d1"`}); got != 1 {
 		t.Fatalf("sync work policy exit = %d, want 1", got)
 	}
 }
 
 func TestInvokeStatusOK(t *testing.T) {
-	if !invokeStatusOK("completed") {
+	if !main.InvokeStatusOK("completed") {
 		t.Errorf("invokeStatusOK(completed) = false, want true")
 	}
 	for _, s := range []string{"failed", "cancelled", "dead_letter", "pending", "dispatching", ""} {
-		if invokeStatusOK(s) {
+		if main.InvokeStatusOK(s) {
 			t.Errorf("invokeStatusOK(%q) = true, want false", s)
 		}
 	}

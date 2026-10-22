@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,26 +12,27 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/behaviorcompare"
 )
 
 const behaviorTestDocument = `{"version":1,"observations":[{"key":"notification.successes","value":1}]}`
 
-func behaviorTestScenario(t *testing.T) (string, testScenario) {
+func behaviorTestScenario(t *testing.T) (string, main.TestScenario) {
 	t.Helper()
 	dir := t.TempDir()
-	writeSuiteTestFile(t, filepath.Join(dir, "fixture.json"), `{"report":"private-fixture-input"}`)
-	writeSuiteTestFile(t, filepath.Join(dir, "observe.sh"), `printf '%s' '`+behaviorTestDocument+`' > "$GREGALE_TEST_BEHAVIOR_OUTPUT"
+	main.WriteSuiteTestFile(t, filepath.Join(dir, "fixture.json"), `{"report":"private-fixture-input"}`)
+	main.WriteSuiteTestFile(t, filepath.Join(dir, "observe.sh"), `printf '%s' '`+behaviorTestDocument+`' > "$GREGALE_TEST_BEHAVIOR_OUTPUT"
 printf '%s' "$GREGALE_TEST_BEHAVIOR_OUTPUT" > output-path.txt
 exit "${BEHAVIOR_TEST_EXIT:-0}"
 `)
-	return dir, testScenario{Project: "behavior-test", Source: ".", Command: []string{"sh", "observe.sh"}, Simulation: []string{"sh", "observe.sh"}, Timeout: "5s",
-		Behavior: &testBehaviorSpec{Version: 1, Fixtures: []string{"fixture.json"}, Observers: []string{"observe.sh"},
+	return dir, main.TestScenario{Project: "behavior-test", Source: ".", Command: []string{"sh", "observe.sh"}, Simulation: []string{"sh", "observe.sh"}, Timeout: "5s",
+		Behavior: &main.TestBehaviorSpec{Version: 1, Fixtures: []string{"fixture.json"}, Observers: []string{"observe.sh"},
 			Observations: []behaviorcompare.Spec{{Key: "notification.successes", Kind: "delivery"}}}}
 }
 
 func TestBehaviorCollectionAcrossLocalAndSimulatedRunners(t *testing.T) {
-	captureSuiteTestOutput(t)
+	main.CaptureSuiteTestOutput(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) }))
 	defer server.Close()
 	for _, engine := range []string{"local", "simulated"} {
@@ -39,11 +40,11 @@ func TestBehaviorCollectionAcrossLocalAndSimulatedRunners(t *testing.T) {
 			t.Run(engine+"/exit-"+exit, func(t *testing.T) {
 				t.Setenv("BEHAVIOR_TEST_EXIT", exit)
 				dir, scenario := behaviorTestScenario(t)
-				var receipt testRunReceipt
+				var receipt main.TestRunReceipt
 				if engine == "local" {
-					receipt = runLocalTest(context.Background(), "delivery-smoke", scenario, dir, server.URL, testDataCase{})
+					receipt = main.RunLocalTest(context.Background(), "delivery-smoke", scenario, dir, server.URL, main.TestDataCase{})
 				} else {
-					receipt = runSimulatedTest(context.Background(), "delivery-smoke", scenario, dir)
+					receipt = main.RunSimulatedTest(context.Background(), "delivery-smoke", scenario, dir)
 				}
 				if receipt.Behavior == nil || receipt.Behavior.Status != "complete" || string(receipt.Behavior.Observations[0].Value) != "1" {
 					t.Fatalf("behavior collection failed: %+v", receipt)
@@ -71,34 +72,34 @@ func TestBehaviorCollectionFailsClosedAndCleansPrivateFiles(t *testing.T) {
 	for _, mode := range []string{"missing", "malformed", "fixture-changed", "observer-changed", "symlink", "oversized"} {
 		t.Run(mode, func(t *testing.T) {
 			dir, scenario := behaviorTestScenario(t)
-			receipt := testRunReceipt{Status: "passed"}
-			session, err := prepareTestBehavior(dir, scenario, &receipt)
+			receipt := main.TestRunReceipt{Status: "passed"}
+			session, err := main.PrepareTestBehavior(dir, scenario, &receipt)
 			if err != nil {
 				t.Fatal(err)
 			}
 			switch mode {
 			case "malformed":
-				writeSuiteTestFile(t, session.outputPath, `{"private":"do-not-echo"}`)
+				main.WriteSuiteTestFile(t, (*session.OutputPath()), `{"private":"do-not-echo"}`)
 			case "fixture-changed", "observer-changed":
 				file := "fixture.json"
 				if mode == "observer-changed" {
 					file = "observe.sh"
 				}
-				writeSuiteTestFile(t, filepath.Join(dir, file), "changed")
-				writeSuiteTestFile(t, session.outputPath, behaviorTestDocument)
+				main.WriteSuiteTestFile(t, filepath.Join(dir, file), "changed")
+				main.WriteSuiteTestFile(t, (*session.OutputPath()), behaviorTestDocument)
 			case "symlink":
-				if err := os.Symlink(filepath.Join(dir, "fixture.json"), session.outputPath); err != nil {
+				if err := os.Symlink(filepath.Join(dir, "fixture.json"), (*session.OutputPath())); err != nil {
 					t.Fatal(err)
 				}
 			case "oversized":
-				writeSuiteTestFile(t, session.outputPath, strings.Repeat(" ", behaviorcompare.MaxDocumentBytes+1))
+				main.WriteSuiteTestFile(t, (*session.OutputPath()), strings.Repeat(" ", behaviorcompare.MaxDocumentBytes+1))
 			}
-			session.finish(&receipt)
-			session.finish(&receipt)
+			session.Finish(&receipt)
+			session.Finish(&receipt)
 			if receipt.Status != "failed" || receipt.Behavior.Status != "incomplete" || strings.Contains(receipt.Error, "do-not-echo") {
 				t.Fatalf("invalid observation handling: %+v", receipt)
 			}
-			if _, err := os.Stat(session.dir); !os.IsNotExist(err) {
+			if _, err := os.Stat((*session.Dir())); !os.IsNotExist(err) {
 				t.Fatalf("behavior directory leaked: %v", err)
 			}
 		})
@@ -106,10 +107,10 @@ func TestBehaviorCollectionFailsClosedAndCleansPrivateFiles(t *testing.T) {
 }
 
 func TestBehaviorCollectionPrecedesLocalFixtureCleanup(t *testing.T) {
-	captureSuiteTestOutput(t)
+	main.CaptureSuiteTestOutput(t)
 	dir, scenario := behaviorTestScenario(t)
 	scenario.Cleanup = [][]string{{"sh", "-c", `printf 'retired' > fixture.json`}}
-	receipt := runLocalTest(context.Background(), "delivery-smoke", scenario, dir, "http://127.0.0.1:1", testDataCase{})
+	receipt := main.RunLocalTest(context.Background(), "delivery-smoke", scenario, dir, "http://127.0.0.1:1", main.TestDataCase{})
 	if receipt.Status != "passed" || receipt.Behavior == nil || receipt.Behavior.Status != "complete" {
 		t.Fatalf("fixture cleanup invalidated already collected evidence: %+v", receipt)
 	}
@@ -120,38 +121,38 @@ func TestBehaviorCollectionPrecedesLocalFixtureCleanup(t *testing.T) {
 }
 
 func TestBehaviorOptInSurvivesEarlyRunnerFailures(t *testing.T) {
-	captureSuiteTestOutput(t)
+	main.CaptureSuiteTestOutput(t)
 	dir, scenario := behaviorTestScenario(t)
 	scenario.Source = "missing-source"
-	client := NewClient("http://127.0.0.1:1", "unused-test-key")
-	for _, receipt := range []testRunReceipt{
-		runLocalTest(context.Background(), "delivery-smoke", scenario, dir, "http://127.0.0.1:1", testDataCase{}),
-		runSimulatedTest(context.Background(), "delivery-smoke", scenario, dir),
-		runTestProfile(context.Background(), client, "delivery-smoke", scenario, dir, "warm"),
+	client := main.NewClient("http://127.0.0.1:1", "unused-test-key")
+	for _, receipt := range []main.TestRunReceipt{
+		main.RunLocalTest(context.Background(), "delivery-smoke", scenario, dir, "http://127.0.0.1:1", main.TestDataCase{}),
+		main.RunSimulatedTest(context.Background(), "delivery-smoke", scenario, dir),
+		main.RunTestProfile(context.Background(), client, "delivery-smoke", scenario, dir, "warm"),
 	} {
 		if receipt.Status != "failed" || receipt.Behavior == nil || receipt.Behavior.Status != "incomplete" {
 			t.Fatalf("early failure lost behavior opt-in: %+v", receipt)
 		}
-		if compareTestBehavior(receipt, receipt).Status != "inconclusive" {
+		if main.CompareTestBehavior(receipt, receipt).Status != "inconclusive" {
 			t.Fatal("two early failures were reported as equivalent")
 		}
 	}
 }
 
 func TestBehaviorComparisonRejectsChangedRecipeAndCaseValues(t *testing.T) {
-	captureSuiteTestOutput(t)
+	main.CaptureSuiteTestOutput(t)
 	dir, scenario := behaviorTestScenario(t)
-	before := runSimulatedTest(context.Background(), "delivery-smoke", scenario, dir)
+	before := main.RunSimulatedTest(context.Background(), "delivery-smoke", scenario, dir)
 	scenario.Simulation = []string{"sh", "observe.sh", "changed-journey"}
-	after := runSimulatedTest(context.Background(), "delivery-smoke", scenario, dir)
-	if before.Status != "passed" || after.Status != "passed" || compareTestBehavior(before, after).Status != "inconclusive" {
+	after := main.RunSimulatedTest(context.Background(), "delivery-smoke", scenario, dir)
+	if before.Status != "passed" || after.Status != "passed" || main.CompareTestBehavior(before, after).Status != "inconclusive" {
 		t.Fatal("changed command recipe was accepted as equivalent")
 	}
-	first := testDataCase{Name: "row-1", Values: map[string]any{"customer": "first"}}
-	second := testDataCase{Name: "row-1", Values: map[string]any{"customer": "second"}}
-	before = runLocalTest(context.Background(), "delivery-smoke", scenario, dir, "http://127.0.0.1:1", first)
-	after = runLocalTest(context.Background(), "delivery-smoke", scenario, dir, "http://127.0.0.1:1", second)
-	if before.Status != "passed" || after.Status != "passed" || compareTestBehavior(before, after).Status != "inconclusive" {
+	first := main.TestDataCase{Name: "row-1", Values: map[string]any{"customer": "first"}}
+	second := main.TestDataCase{Name: "row-1", Values: map[string]any{"customer": "second"}}
+	before = main.RunLocalTest(context.Background(), "delivery-smoke", scenario, dir, "http://127.0.0.1:1", first)
+	after = main.RunLocalTest(context.Background(), "delivery-smoke", scenario, dir, "http://127.0.0.1:1", second)
+	if before.Status != "passed" || after.Status != "passed" || main.CompareTestBehavior(before, after).Status != "inconclusive" {
 		t.Fatal("different case values were accepted as equivalent")
 	}
 }
@@ -173,7 +174,7 @@ func TestBehaviorManifestValidationAndSourceBoundary(t *testing.T) {
 				scenario.Behavior.Fixtures = []string{"../fixture.json"}
 			case "outside-symlink":
 				outside := filepath.Join(t.TempDir(), "outside.json")
-				writeSuiteTestFile(t, outside, "private-outside-value")
+				main.WriteSuiteTestFile(t, outside, "private-outside-value")
 				if err := os.Symlink(outside, filepath.Join(dir, "outside.json")); err != nil {
 					t.Fatal(err)
 				}
@@ -181,10 +182,10 @@ func TestBehaviorManifestValidationAndSourceBoundary(t *testing.T) {
 			case "missing-file":
 				scenario.Behavior.Fixtures = []string{"missing.json"}
 			case "resilience":
-				scenario.Resilience = &testResilienceSpec{}
+				scenario.Resilience = &main.TestResilienceSpec{}
 			}
-			manifest := writeSuiteTestManifest(t, dir, testManifest{Version: 1, Scenarios: map[string]testScenario{"delivery-smoke": scenario}})
-			if _, _, err := readTestManifest(manifest); err == nil {
+			manifest := main.WriteSuiteTestManifest(t, dir, main.TestManifest{Version: 1, Scenarios: map[string]main.TestScenario{"delivery-smoke": scenario}})
+			if _, _, err := main.ReadTestManifest(manifest); err == nil {
 				t.Fatal("invalid behavior manifest accepted")
 			}
 		})
@@ -195,23 +196,23 @@ func TestBehaviorExportExampleDetectsDuplicateNotification(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("Node.js is required for the export acceptance fixture")
 	}
-	stdout, stderr := captureSuiteTestOutput(t)
+	stdout, stderr := main.CaptureSuiteTestOutput(t)
 	manifest := filepath.Join("..", "..", "tests", "scenario-acceptance", "behavior", "gregale-test.yaml")
-	scenarios, dir, err := readTestManifest(manifest)
+	scenarios, dir, err := main.ReadTestManifest(manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reports := make([]testRunReceipt, 0, 2)
+	reports := make([]main.TestRunReceipt, 0, 2)
 	for _, variant := range []string{"baseline", "duplicate"} {
 		t.Setenv("GREGALE_BEHAVIOR_EXAMPLE_VARIANT", variant)
-		receipt := runSimulatedTest(context.Background(), "customer-export", scenarios["customer-export"], dir)
+		receipt := main.RunSimulatedTest(context.Background(), "customer-export", scenarios["customer-export"], dir)
 		receipt.Attempt = 1
 		if receipt.Status != "passed" || receipt.Behavior == nil || receipt.Behavior.Status != "complete" {
 			t.Fatalf("%s execution failed: %+v\n%s", variant, receipt, stderr)
 		}
 		reports = append(reports, receipt)
 	}
-	comparison, err := compareTestReports("base", "candidate", reports[:1], reports[1:])
+	comparison, err := main.CompareTestReports("base", "candidate", reports[:1], reports[1:])
 	if err != nil || comparison.BehaviorStatus != "failed" {
 		t.Fatalf("comparison = %+v (%v)", comparison, err)
 	}
@@ -221,22 +222,22 @@ func TestBehaviorExportExampleDetectsDuplicateNotification(t *testing.T) {
 	}
 	output := t.TempDir()
 	before, after := filepath.Join(output, "before.json"), filepath.Join(output, "after.json")
-	if err := writeTestReport(before, reports[:1]); err != nil {
+	if err := main.WriteTestReport(before, reports[:1]); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeTestReport(after, reports[1:]); err != nil {
+	if err := main.WriteTestReport(after, reports[1:]); err != nil {
 		t.Fatal(err)
 	}
 	stdout.Reset()
 	html, markdown := filepath.Join(output, "comparison.html"), filepath.Join(output, "comparison.md")
-	if code := cmdTestCompare([]string{before, after, "--html", html, "--markdown", markdown}); code != 1 {
+	if code := main.CmdTestCompare([]string{before, after, "--html", html, "--markdown", markdown}); code != 1 {
 		t.Fatalf("behavior change must fail without a performance budget: exit %d; %s", code, stderr)
 	}
 	for _, report := range []string{html, markdown} {
 		body, err := os.ReadFile(report)
 		key := "notification.successful_deliveries"
 		if report == markdown {
-			key = markdownComparisonText(key)
+			key = main.MarkdownComparisonText(key)
 		}
 		if err != nil || !bytes.Contains(body, []byte(key)) || !bytes.Contains(body, []byte("unchanged")) || !bytes.Contains(body, []byte("changed")) {
 			t.Fatalf("missing behavior comparison in %s: %v", report, err)
@@ -245,9 +246,9 @@ func TestBehaviorExportExampleDetectsDuplicateNotification(t *testing.T) {
 }
 
 func TestBehaviorComparisonFailsClosedForMissingAndFailedRuns(t *testing.T) {
-	stdout, stderr := captureSuiteTestOutput(t)
+	stdout, stderr := main.CaptureSuiteTestOutput(t)
 	dir, scenario := behaviorTestScenario(t)
-	good := runSimulatedTest(context.Background(), "delivery-smoke", scenario, dir)
+	good := main.RunSimulatedTest(context.Background(), "delivery-smoke", scenario, dir)
 	good.Attempt = 1
 	if good.Status != "passed" {
 		t.Fatalf("baseline: %+v", good)
@@ -275,10 +276,10 @@ func TestBehaviorComparisonFailsClosedForMissingAndFailedRuns(t *testing.T) {
 				}
 			}
 			beforePath, afterPath := filepath.Join(t.TempDir(), "before.json"), filepath.Join(t.TempDir(), "after.json")
-			if err := writeTestReport(beforePath, []testRunReceipt{before}); err != nil {
+			if err := main.WriteTestReport(beforePath, []main.TestRunReceipt{before}); err != nil {
 				t.Fatal(err)
 			}
-			if err := writeTestReport(afterPath, []testRunReceipt{after}); err != nil {
+			if err := main.WriteTestReport(afterPath, []main.TestRunReceipt{after}); err != nil {
 				t.Fatal(err)
 			}
 			want := 1
@@ -286,7 +287,7 @@ func TestBehaviorComparisonFailsClosedForMissingAndFailedRuns(t *testing.T) {
 				want = 0
 			}
 			stdout.Reset()
-			if code := cmdTestCompare([]string{beforePath, afterPath}); code != want {
+			if code := main.CmdTestCompare([]string{beforePath, afterPath}); code != want {
 				t.Fatalf("comparison exit %d, want %d: %s", code, want, stderr)
 			}
 		})

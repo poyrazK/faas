@@ -27,15 +27,25 @@ func (m *MemStore) ownedObjectBucketEncryptionLocked(account, app, bucket string
 	return cloneObjectBucketEncryption(j), nil
 }
 
-func (m *MemStore) GetObjectBucketEncryption(_ context.Context, account, app, bucket string) (ObjectBucketEncryption, error) {
+func (m *MemStore) GetObjectBucketEncryption(ctx context.Context, account, app, bucket string) (ObjectBucketEncryption, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketEncryption
+		return zero0, err
+	}
+
 	return m.ownedObjectBucketEncryptionLocked(account, app, bucket)
 }
 
-func (m *MemStore) RequestObjectBucketEncryption(_ context.Context, account, app, bucket string, desired ObjectEncryptionSnapshot) (ObjectBucketEncryption, error) {
+func (m *MemStore) RequestObjectBucketEncryption(ctx context.Context, account, app, bucket string, desired ObjectEncryptionSnapshot) (ObjectBucketEncryption, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketEncryption
+		return zero0, err
+	}
+
 	j, err := m.ownedObjectBucketEncryptionLocked(account, app, bucket)
 	if err != nil {
 		return j, err
@@ -50,12 +60,17 @@ func (m *MemStore) RequestObjectBucketEncryption(_ context.Context, account, app
 	return cloneObjectBucketEncryption(j), err
 }
 
-func (m *MemStore) DueObjectBucketEncryption(_ context.Context, limit int32) ([]ObjectBucketEncryption, error) {
+func (m *MemStore) DueObjectBucketEncryption(ctx context.Context, limit int32) ([]ObjectBucketEncryption, error) {
 	if limit < 1 || limit > api.ObjectBucketEncryptionBatch {
 		return nil, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectBucketEncryption
+		return zero0, err
+	}
+
 	jobs := []ObjectBucketEncryption{}
 	for _, j := range m.objectBucketEncryption {
 		if j.State != "ready" && !j.LeaseUntil.After(m.clock()) && !j.RetryAt.After(m.clock()) {
@@ -65,9 +80,14 @@ func (m *MemStore) DueObjectBucketEncryption(_ context.Context, limit int32) ([]
 	return orderObjectBucketEncryptionJobs(jobs, limit), nil
 }
 
-func (m *MemStore) RefreshObjectBucketEncryption(_ context.Context, account, app, bucket string, revision int64) (ObjectBucketEncryption, error) {
+func (m *MemStore) RefreshObjectBucketEncryption(ctx context.Context, account, app, bucket string, revision int64) (ObjectBucketEncryption, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketEncryption
+		return zero0, err
+	}
+
 	if _, err := m.ownedObjectBucketEncryptionLocked(account, app, bucket); err != nil {
 		return ObjectBucketEncryption{}, err
 	}
@@ -91,17 +111,27 @@ func (m *MemStore) mutateObjectBucketEncryptionLocked(bucket string, fn func(Obj
 	return cloneObjectBucketEncryption(j), err
 }
 
-func (m *MemStore) ClaimObjectBucketEncryption(_ context.Context, bucket, token string) (ObjectBucketEncryption, error) {
+func (m *MemStore) ClaimObjectBucketEncryption(ctx context.Context, bucket, token string) (ObjectBucketEncryption, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketEncryption
+		return zero0, err
+	}
+
 	return m.mutateObjectBucketEncryptionLocked(bucket, func(j ObjectBucketEncryption) (ObjectBucketEncryption, error) {
 		return claimObjectBucketEncryption(j, token, m.clock())
 	})
 }
 
-func (m *MemStore) DispatchObjectBucketEncryption(_ context.Context, bucket, token string) (ObjectBucketEncryption, error) {
+func (m *MemStore) DispatchObjectBucketEncryption(ctx context.Context, bucket, token string) (ObjectBucketEncryption, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketEncryption
+		return zero0, err
+	}
+
 	return m.mutateObjectBucketEncryptionLocked(bucket, func(j ObjectBucketEncryption) (ObjectBucketEncryption, error) {
 		if !validObjectBucketEncryptionLease(j, token, m.clock()) {
 			return j, ErrConflict
@@ -111,17 +141,26 @@ func (m *MemStore) DispatchObjectBucketEncryption(_ context.Context, bucket, tok
 	})
 }
 
-func (m *MemStore) FinishObjectBucketEncryption(_ context.Context, bucket, token string, verified ObjectEncryptionSnapshot) (ObjectBucketEncryption, error) {
+func (m *MemStore) FinishObjectBucketEncryption(ctx context.Context, bucket, token string, verified ObjectEncryptionSnapshot) (ObjectBucketEncryption, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketEncryption
+		return zero0, err
+	}
+
 	return m.mutateObjectBucketEncryptionLocked(bucket, func(j ObjectBucketEncryption) (ObjectBucketEncryption, error) {
 		return finishObjectBucketEncryption(j, token, verified, m.clock())
 	})
 }
 
-func (m *MemStore) RetryObjectBucketEncryption(_ context.Context, bucket, token string) error {
+func (m *MemStore) RetryObjectBucketEncryption(ctx context.Context, bucket, token string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	_, err := m.mutateObjectBucketEncryptionLocked(bucket, func(j ObjectBucketEncryption) (ObjectBucketEncryption, error) {
 		return retryObjectBucketEncryption(j, token, m.clock())
 	})

@@ -1,0 +1,109 @@
+{
+  "uid": 1000,
+  "dev_kvm_exists": false,
+  "native_marker_exists": false,
+  "two_host_fixture_configured": false,
+  "native_migration_executed": false,
+  "native_reply_boundaries_qualified": false,
+  "failure_matrix_qualified": false,
+  "production_ready": false,
+  "temporary_native_binary_removed": true,
+  "checks": [
+    {
+      "check": "native-compile",
+      "command": [
+        "go",
+        "test",
+        "-p",
+        "1",
+        "-race",
+        "-tags",
+        "metal,function_background_native",
+        "-c",
+        "-o",
+        "/tmp/function-migration-replies-native.test",
+        "./cmd/e2e"
+      ],
+      "exit_code": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_tail": "",
+      "native_acceptance": false,
+      "binary_sha256": "d9ff0028eae57b05c467e4bf9335562c59be4fd8ce9bb4efeab14ca0dc7276bc",
+      "binary_bytes": 247938117,
+      "binary_executed_for_migration": false
+    },
+    {
+      "check": "native-case-list",
+      "command": [
+        "/tmp/function-migration-replies-native.test",
+        "-test.run",
+        "^TestFunctionMigrationDestinationPostgresMetal$",
+        "-test.list",
+        "^TestFunctionMigrationDestinationPostgresMetal$"
+      ],
+      "exit_code": 0,
+      "log_sha256": "aa64243a2b20c7c40971d35220a0522bc816e0ca9ee9ba02e8a7112cbb7f85b9",
+      "output_tail": "TestFunctionMigrationDestinationPostgresMetal\n",
+      "native_acceptance": false
+    },
+    {
+      "check": "direct-native-guard",
+      "command": [
+        "/tmp/function-migration-replies-native.test",
+        "-test.run",
+        "^TestFunctionMigrationDestinationPostgresMetal$",
+        "-test.v"
+      ],
+      "exit_code": 1,
+      "log_sha256": "0a85a3dfa233ec912ad889c1de2747864e70c8fcfd973be586b7cd9e7ebdf424",
+      "output_tail": "=== RUN   TestFunctionMigrationDestinationPostgresMetal\n    function_migration_destination_postgres_metal_test.go:29: use make test-function-migration-native on the prepared native fixture; skips cannot qualify\n--- FAIL: TestFunctionMigrationDestinationPostgresMetal (0.00s)\nFAIL\n",
+      "native_acceptance": false
+    },
+    {
+      "check": "native-selection-guard",
+      "command": [
+        "/tmp/function-migration-replies-native.test",
+        "-test.run",
+        "^TestOther$"
+      ],
+      "exit_code": 2,
+      "log_sha256": "eb703a9eb5bc287bb48450a8c220ca238360dfd1770bba730fed723fa01f3674",
+      "output_tail": "native migration requires its qualified build and exact reply-boundary suite\n",
+      "native_acceptance": false
+    },
+    {
+      "check": "strict-native-target",
+      "command": [
+        "make",
+        "test-function-migration-native"
+      ],
+      "exit_code": 2,
+      "log_sha256": "84863a4a37820a0b07a5cce4cb0aeec274ba52b4195f80a1dc326074a315a921",
+      "output_tail": "python3 scripts/ci/function-migration-native.py --config \"$FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG\" --out \"$FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE\"\nnative function migration gate failed: requires root on the isolated native fixture coordinator\nmake: *** [Makefile:487: test-function-migration-native] Error 1\n",
+      "native_acceptance": false
+    },
+    {
+      "check": "standard-metal",
+      "command": [
+        "make",
+        "test-metal",
+        "PKGS=./pkg/fcvm"
+      ],
+      "exit_code": 2,
+      "log_sha256": "543c84a3afe50dc2a389214ef4a714639a9932f76eefbe9157534a6d8b43e934",
+      "output_tail": "--- FAIL: TestMetalNativeSnapshotCaptureMeasuresWarmAndParkAndPreservesRetry (0.00s)\n    runtime_snapshot_capture_metal_test.go:39: native standards acceptance requires readable FAAS_TEST_KERNEL: open : no such file or directory\nFAIL\nFAIL\tgithub.com/onebox-faas/faas/pkg/fcvm\t0.084s\nFAIL\nmake: *** [Makefile:462: test-metal] Error 1\n",
+      "native_acceptance": false
+    },
+    {
+      "check": "leakcheck",
+      "command": [
+        "make",
+        "leakcheck"
+      ],
+      "exit_code": 2,
+      "log_sha256": "0949e156181f0758a4d0526fd6ab3b7a187072b27be8bb17f40fb9a40fddebec",
+      "output_tail": "LEAK: cannot inspect native loop loop0: [Errno 2] No such file or directory: '/dev/loop0'\nLEAK: cannot inspect native loop loop1: [Errno 2] No such file or directory: '/dev/loop1'\nLEAK: cannot inspect native loop loop2: [Errno 2] No such file or directory: '/dev/loop2'\nLEAK: cannot inspect native loop loop3: [Errno 2] No such file or directory: '/dev/loop3'\nLEAK: cannot inspect native loop loop4: [Errno 2] No such file or directory: '/dev/loop4'\nLEAK: cannot inspect native loop loop5: [Errno 2] No such file or directory: '/dev/loop5'\nLEAK: cannot inspect native loop loop6: [Errno 2] No such file or directory: '/dev/loop6'\nLEAK: cannot inspect native loop loop7: [Errno 2] No such file or directory: '/dev/loop7'\nleakcheck FAILED\nmake: *** [Makefile:507: leakcheck] Error 1\n",
+      "native_acceptance": false
+    }
+  ]
+}

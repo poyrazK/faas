@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,31 +8,32 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 1270
 func TestWorkflowRecoveryEvidenceHistory(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, s Store) {
-		ctx := WithEventRecoveryActor(context.Background(), "api_key", "history-operator")
-		review, app, run, _ := seedAutomaticRecoveryReview(t, s, nil)
+	state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
+		ctx := state.WithEventRecoveryActor(context.Background(), "api_key", "history-operator")
+		review, app, run, _ := state.SeedAutomaticRecoveryReview(t, s, nil)
 		action := review.AutomaticExecution.Actions[0].ActionID
-		if m, ok := s.(*MemStore); ok {
-			m.mu.Lock()
-			delete(m.eventRecoveryJobs[review.JobID].WorkflowResults, 1)
-			m.recoveryPolicies[canonicalMemUUID(app.ID)].Executions[action].Reason = "evidence_unknown"
-			m.mu.Unlock()
+		if m, ok := s.(*state.MemStore); ok {
+			(*m.Mu()).Lock()
+			delete((*m.EventRecoveryJobs())[review.JobID].WorkflowResults, 1)
+			(*m.RecoveryPolicies())[state.CanonicalMemUUID(app.ID)].Executions[action].Reason = "evidence_unknown"
+			(*m.Mu()).Unlock()
 		} else {
-			pg := s.(*PgStore)
-			if _, err := pg.pool.Exec(ctx, "DELETE FROM event_recovery_workflow_results WHERE job_id=$1::uuid", review.JobID); err != nil {
+			pg := s.(*state.PgStore)
+			if _, err := (*pg.Pool()).Exec(ctx, "DELETE FROM event_recovery_workflow_results WHERE job_id=$1::uuid", review.JobID); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := pg.pool.Exec(ctx, "UPDATE workflow_recovery_policy_executions SET reason='evidence_unknown' WHERE action_id=$1::uuid", action); err != nil {
+			if _, err := (*pg.Pool()).Exec(ctx, "UPDATE workflow_recovery_policy_executions SET reason='evidence_unknown' WHERE action_id=$1::uuid", action); err != nil {
 				t.Fatal(err)
 			}
 		}
 		poll := func() {
 			t.Helper()
-			if _, err := s.(WorkflowRecoveryAutomaticBlockedStore).ProcessNextWorkflowRecoveryAutomaticBlockedNotification(ctx, time.Now().UTC()); err != nil {
+			if _, err := s.(state.WorkflowRecoveryAutomaticBlockedStore).ProcessNextWorkflowRecoveryAutomaticBlockedNotification(ctx, time.Now().UTC()); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -40,27 +41,27 @@ func TestWorkflowRecoveryEvidenceHistory(t *testing.T) {
 		req := api.WorkflowInitialEvidenceRepairRequest{RequestID: uuid.NewString(), Reason: "restore history proof"}
 		repair := func() {
 			t.Helper()
-			if _, err := s.(WorkflowRetryParentEvidenceStore).RepairWorkflowRetryParentEvidence(ctx, app.AccountID, app.ID, review.ID, action, req); err != nil {
+			if _, err := s.(state.WorkflowRetryParentEvidenceStore).RepairWorkflowRetryParentEvidence(ctx, app.AccountID, app.ID, review.ID, action, req); err != nil {
 				t.Fatal(err)
 			}
 		}
 		repair()
 		repair()
-		if m, ok := s.(*MemStore); ok {
-			m.mu.Lock()
-			m.recoveryPolicies[canonicalMemUUID(app.ID)].BlockedNext[action] = time.Time{}
-			m.mu.Unlock()
+		if m, ok := s.(*state.MemStore); ok {
+			(*m.Mu()).Lock()
+			(*m.RecoveryPolicies())[state.CanonicalMemUUID(app.ID)].BlockedNext[action] = time.Time{}
+			(*m.Mu()).Unlock()
 		} else {
-			if _, err := s.(*PgStore).pool.Exec(ctx, "UPDATE workflow_recovery_policy_executions SET next_blocked_at=$2 WHERE action_id=$1::uuid", action, time.Now().Add(-time.Minute)); err != nil {
+			if _, err := (*s.(*state.PgStore).Pool()).Exec(ctx, "UPDATE workflow_recovery_policy_executions SET next_blocked_at=$2 WHERE action_id=$1::uuid", action, time.Now().Add(-time.Minute)); err != nil {
 				t.Fatal(err)
 			}
 		}
 		poll()
-		if pg, ok := s.(*PgStore); ok {
-			s = NewPgStore(pg.pool)
+		if pg, ok := s.(*state.PgStore); ok {
+			s = state.NewPgStore((*pg.Pool()).Pool)
 		}
 		options := api.WorkflowRecoveryHistoryOptions{RunID: run.ID, Workflow: run.WorkflowName, PolicyVersion: review.PolicyVersion, Limit: 100}
-		history := s.(WorkflowRecoveryHistoryStore)
+		history := s.(state.WorkflowRecoveryHistoryStore)
 		read := func() api.WorkflowRecoveryHistory {
 			t.Helper()
 			out, err := history.GetWorkflowRecoveryHistory(ctx, app.AccountID, app.ID, options)
@@ -108,36 +109,36 @@ func TestWorkflowRecoveryEvidenceHistory(t *testing.T) {
 		if len(seen) != len(out.Entries) {
 			t.Fatal("pagination lost events")
 		}
-		if _, err := history.GetWorkflowRecoveryHistory(ctx, uuid.NewString(), app.ID, api.WorkflowRecoveryHistoryOptions{}); !errors.Is(err, ErrNotFound) {
+		if _, err := history.GetWorkflowRecoveryHistory(ctx, uuid.NewString(), app.ID, api.WorkflowRecoveryHistoryOptions{}); !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("foreign scope %v", err)
 		}
 		// Parent and child repairs keep independent audit identities on one action.
-		runAutomaticPolicy(t, s, time.Now().Add(5*time.Minute))
-		child, err := automaticChild(t, s, app, review)
+		state.RunAutomaticPolicy(t, s, time.Now().Add(5*time.Minute))
+		child, err := state.AutomaticChild(t, s, app, review)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = s.(EventRecoveryStore).ProcessNextEventRecovery(ctx, time.Now().UTC()); err != nil {
+		if _, err = s.(state.EventRecoveryStore).ProcessNextEventRecovery(ctx, time.Now().UTC()); err != nil {
 			t.Fatal(err)
 		}
 		if _, err = s.ClaimNextDueWorkflowRun(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if err = s.MarkWorkflowRunStatus(ctx, run.ID, WorkflowRunStatusFailed, nil, nil); err != nil {
+		if err = s.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusFailed, nil, nil); err != nil {
 			t.Fatal(err)
 		}
-		if m, ok := s.(*MemStore); ok {
-			m.mu.Lock()
-			delete(m.eventRecoveryJobs[child.ID].WorkflowResults, 1)
-			m.mu.Unlock()
+		if m, ok := s.(*state.MemStore); ok {
+			(*m.Mu()).Lock()
+			delete((*m.EventRecoveryJobs())[child.ID].WorkflowResults, 1)
+			(*m.Mu()).Unlock()
 		} else {
-			if _, err = s.(*PgStore).pool.Exec(ctx, "DELETE FROM event_recovery_workflow_results WHERE job_id=$1::uuid", child.ID); err != nil {
+			if _, err = (*s.(*state.PgStore).Pool()).Exec(ctx, "DELETE FROM event_recovery_workflow_results WHERE job_id=$1::uuid", child.ID); err != nil {
 				t.Fatal(err)
 			}
 		}
 		childReq := api.WorkflowInitialEvidenceRepairRequest{RequestID: uuid.NewString(), Reason: "restore child proof"}
 		for range 2 {
-			if _, err = s.(WorkflowRetryEvidenceStore).RepairWorkflowRetryEvidence(ctx, app.AccountID, app.ID, review.ID, action, childReq); err != nil {
+			if _, err = s.(state.WorkflowRetryEvidenceStore).RepairWorkflowRetryEvidence(ctx, app.AccountID, app.ID, review.ID, action, childReq); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -156,9 +157,9 @@ func TestWorkflowRecoveryEvidenceHistory(t *testing.T) {
 			t.Fatal("child replay duplicated history")
 		}
 		// A pre-history receipt remains a retained observation while its review exists.
-		if m, ok := s.(*MemStore); ok {
-			m.mu.Lock()
-			p := m.recoveryPolicies[canonicalMemUUID(app.ID)]
+		if m, ok := s.(*state.MemStore); ok {
+			(*m.Mu()).Lock()
+			p := (*m.RecoveryPolicies())[state.CanonicalMemUUID(app.ID)]
 			kept := p.History[:0]
 			for _, event := range p.History {
 				if event.Entry.RequestID != req.RequestID {
@@ -166,10 +167,10 @@ func TestWorkflowRecoveryEvidenceHistory(t *testing.T) {
 				}
 			}
 			p.History = kept
-			m.mu.Unlock()
+			(*m.Mu()).Unlock()
 		} else {
-			pg := s.(*PgStore)
-			if _, err := pg.pool.Exec(ctx, "DELETE FROM workflow_recovery_history_events WHERE app_id=$1::uuid AND entry->>'request_id'=$2", app.ID, req.RequestID); err != nil {
+			pg := s.(*state.PgStore)
+			if _, err := (*pg.Pool()).Exec(ctx, "DELETE FROM workflow_recovery_history_events WHERE app_id=$1::uuid AND entry->>'request_id'=$2", app.ID, req.RequestID); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -188,13 +189,13 @@ func TestWorkflowRecoveryEvidenceHistory(t *testing.T) {
 			t.Fatalf("legacy receipt count %d", count)
 		}
 		// Durable child and alert events survive source job/review pruning.
-		if m, ok := s.(*MemStore); ok {
-			m.mu.Lock()
-			delete(m.eventRecoveryJobs, review.JobID)
-			delete(m.recoveryPolicies[canonicalMemUUID(app.ID)].Reviews, review.ID)
-			m.mu.Unlock()
+		if m, ok := s.(*state.MemStore); ok {
+			(*m.Mu()).Lock()
+			delete((*m.EventRecoveryJobs()), review.JobID)
+			delete((*m.RecoveryPolicies())[state.CanonicalMemUUID(app.ID)].Reviews, review.ID)
+			(*m.Mu()).Unlock()
 		} else {
-			if _, err := s.(*PgStore).pool.Exec(ctx, "DELETE FROM event_recovery_jobs WHERE id=$1::uuid", review.JobID); err != nil {
+			if _, err := (*s.(*state.PgStore).Pool()).Exec(ctx, "DELETE FROM event_recovery_jobs WHERE id=$1::uuid", review.JobID); err != nil {
 				t.Fatal(err)
 			}
 		}

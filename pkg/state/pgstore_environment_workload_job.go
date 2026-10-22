@@ -27,7 +27,7 @@ func environmentGitOpsScheduledJobsReadyTx(ctx context.Context, tx sqlc.DBTX, gr
 		if !canonicalStateUUID(member.JobID) || graph.ResourceIDs[member.Resource] != member.AppID {
 			return false, nil
 		}
-		query := `SELECT i.account_id::text,i.app_id::text,i.environment_id::text,i.job_id::text,i.source,i.schedule,i.service_bindings,i.variables
+		query := `SELECT i.account_id::text,i.app_id::text,i.environment_id::text,i.job_id::text,i.source,i.schedule,i.service_bindings,i.variables,i.runtime,coalesce(i.source_revision,'')
 			FROM app_environment_workload_intents i
 			WHERE i.account_id=(SELECT account_id FROM active_environment_git_sources WHERE id=$1::uuid)
 				AND i.app_id=$2::uuid AND i.environment_id=$3::uuid AND i.job_id=$4::uuid`
@@ -36,8 +36,8 @@ func environmentGitOpsScheduledJobsReadyTx(ctx context.Context, tx sqlc.DBTX, gr
 		}
 		row := tx.QueryRow(ctx, query, graph.SourceID, member.AppID, graph.EnvironmentID, member.JobID)
 		var intent EnvironmentWorkloadIntent
-		var sourceRaw, scheduleRaw, serviceBindingsRaw, variablesRaw []byte
-		err := row.Scan(&intent.AccountID, &intent.AppID, &intent.EnvironmentID, &intent.JobID, &sourceRaw, &scheduleRaw, &serviceBindingsRaw, &variablesRaw)
+		var sourceRaw, scheduleRaw, serviceBindingsRaw, variablesRaw, runtimeRaw []byte
+		err := row.Scan(&intent.AccountID, &intent.AppID, &intent.EnvironmentID, &intent.JobID, &sourceRaw, &scheduleRaw, &serviceBindingsRaw, &variablesRaw, &runtimeRaw, &intent.SourceRevision)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil
 		}
@@ -56,9 +56,38 @@ func environmentGitOpsScheduledJobsReadyTx(ctx context.Context, tx sqlc.DBTX, gr
 			return false, mapErr(err)
 		}
 		if json.Unmarshal(sourceRaw, &intent.Source) != nil || json.Unmarshal(scheduleRaw, &intent.Schedule) != nil ||
-			json.Unmarshal(serviceBindingsRaw, &intent.ServiceBindings) != nil || json.Unmarshal(variablesRaw, &intent.Variables) != nil ||
-			!environmentGitOpsScheduledJobMatches(graph, member, intent, job, status) {
+			json.Unmarshal(serviceBindingsRaw, &intent.ServiceBindings) != nil || json.Unmarshal(variablesRaw, &intent.Variables) != nil || json.Unmarshal(runtimeRaw, &intent.Runtime) != nil {
 			return false, nil //nolint:nilerr // Invalid frozen intent makes the graph unready; it is not a database failure.
+		}
+		if intent.Source != nil && intent.Source.Kind != "image" {
+			q := sqlc.New()
+			if lock && member.CandidateDeploymentID != "" {
+				count, err := q.BindEnvironmentSourceJobArtifact(ctx, tx, sqlc.BindEnvironmentSourceJobArtifactParams{
+					JobID: mustPgUUID(member.JobID), DeploymentID: mustPgUUID(member.CandidateDeploymentID), GraphID: mustPgUUID(graph.ID),
+				})
+				if err != nil {
+					return false, mapErr(err)
+				}
+				if count != 1 {
+					return false, nil
+				}
+				job, err = scanJob(tx.QueryRow(ctx, jobQuery, member.JobID))
+				if err != nil {
+					return false, mapErr(err)
+				}
+			}
+			ready, err := q.EnvironmentSourceJobArtifactReady(ctx, tx, sqlc.EnvironmentSourceJobArtifactReadyParams{
+				JobID: mustPgUUID(member.JobID), GraphID: mustPgUUID(graph.ID),
+			})
+			if err != nil {
+				return false, mapErr(err)
+			}
+			if !ready {
+				return false, nil
+			}
+		}
+		if !environmentGitOpsScheduledJobMatches(graph, member, intent, job, status) {
+			return false, nil
 		}
 	}
 	return true, nil
@@ -135,9 +164,19 @@ func syncEnvironmentGitOpsJobTx(ctx context.Context, tx pgx.Tx, source Environme
 	}
 	image := intent.Source
 	if image == nil {
-		image, _, _ = observedWorkloadSource(app, "")
+		image, _, _ = observedWorkloadSource(app, EnvironmentGitSourceSpec{})
 	}
-	if image == nil || image.Kind != "image" {
+	if image == nil {
+		return intent, ErrConflict
+	}
+	jobIntent := intent
+	jobIntent.Source = image
+	sourceRef, ok := environmentGitOpsJobSourceRef(jobIntent)
+	if !ok {
+		return intent, ErrConflict
+	}
+	command, commandOK := EnvironmentGitOpsJobCommand(jobIntent)
+	if !commandOK {
 		return intent, ErrConflict
 	}
 	index := plan.PlanIndex()
@@ -147,6 +186,9 @@ func syncEnvironmentGitOpsJobTx(ctx context.Context, tx pgx.Tx, source Environme
 	jobName := environmentGitOpsJobName(source.EnvironmentID, app.ID)
 	envOverrides := json.RawMessage(variables)
 	if intent.JobID == "" {
+		if err := financialComputeJobCreationAllowed(ctx, tx, source.AccountID); err != nil {
+			return intent, err
+		}
 		var count int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE account_id=$1::uuid AND status<>'deleted'`, source.AccountID).Scan(&count); err != nil {
 			return intent, mapErr(err)
@@ -157,10 +199,10 @@ func syncEnvironmentGitOpsJobTx(ctx context.Context, tx pgx.Tx, source Environme
 		}
 		row := tx.QueryRow(ctx, `INSERT INTO jobs(account_id,kind,name,image_ref,ram_mb,task_timeout_s,max_parallelism,
 			retry_max,env_overrides,status,command,cron_schedule,cron_timezone,schedule_policy,failure_rules)
-			VALUES($1::uuid,'recurring',$2,$3,$4,$5,1,0,$6::jsonb,'paused','{}'::text[],$7,$8,$9::jsonb,$10::jsonb)
+			VALUES($1::uuid,'recurring',$2,$3,$4,$5,1,0,$6::jsonb,'paused',$11::text[],$7,$8,$9::jsonb,$10::jsonb)
 			RETURNING `+jobSelectCols,
-			source.AccountID, jobName, image.Image, api.JobRAMMB[index], api.JobTaskTimeoutSec[index], []byte(envOverrides),
-			intent.Schedule.Cron, intent.Schedule.Timezone, policyJSON(intent.Schedule.SchedulePolicy), policyJSON(intent.Schedule.FailureRules))
+			source.AccountID, jobName, sourceRef, api.JobRAMMB[index], api.JobTaskTimeoutSec[index], []byte(envOverrides),
+			intent.Schedule.Cron, intent.Schedule.Timezone, policyJSON(intent.Schedule.SchedulePolicy), policyJSON(intent.Schedule.FailureRules), command)
 		created, err := scanJob(row)
 		if err != nil {
 			return intent, mapErr(err)
@@ -188,13 +230,13 @@ func syncEnvironmentGitOpsJobTx(ctx context.Context, tx pgx.Tx, source Environme
 		image_materialization_lease_owner=CASE WHEN image_ref IS DISTINCT FROM $3 THEN NULL ELSE image_materialization_lease_owner END,
 		image_materialization_lease_until=CASE WHEN image_ref IS DISTINCT FROM $3 THEN NULL ELSE image_materialization_lease_until END,
 		name=$2,image_ref=$3,ram_mb=$4,task_timeout_s=$5,max_parallelism=1,retry_max=0,
-		env_overrides=$6::jsonb,status='paused',command='{}'::text[],cron_schedule=$7,cron_timezone=$8,
+		env_overrides=$6::jsonb,status='paused',command=$12::text[],cron_schedule=$7,cron_timezone=$8,
 		schedule_policy=$9::jsonb,failure_rules=$10::jsonb,updated_at=now()
 		WHERE id=$1::uuid AND account_id=$11::uuid AND status<>'deleted'
 		RETURNING `+jobSelectCols,
-		intent.JobID, jobName, image.Image, api.JobRAMMB[index], api.JobTaskTimeoutSec[index], []byte(envOverrides),
+		intent.JobID, jobName, sourceRef, api.JobRAMMB[index], api.JobTaskTimeoutSec[index], []byte(envOverrides),
 		intent.Schedule.Cron, intent.Schedule.Timezone, policyJSON(intent.Schedule.SchedulePolicy),
-		policyJSON(intent.Schedule.FailureRules), source.AccountID)
+		policyJSON(intent.Schedule.FailureRules), source.AccountID, command)
 	if _, err := scanJob(row); err != nil {
 		return intent, mapErr(err)
 	}

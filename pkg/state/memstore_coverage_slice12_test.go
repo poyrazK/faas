@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,13 +8,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // TestMemStoreCoverageOverageCap drives UpdateAccountOverageCapCents across
 // its three branches (set / clear / re-set) and pins the customer self-service
 // "set / clear cap" surface used by issue #561's raiseOverageCap endpoint.
 func TestMemStoreCoverageOverageCap(t *testing.T) {
-	m, ctx, account, _, _ := memCoverageFixture(t)
+	m, ctx, account, _, _ := state.MemCoverageFixture(t)
 
 	// nil clears the cap (NULL round-trip in pgstore).
 	if err := m.UpdateAccountOverageCapCents(ctx, account.ID, nil); err != nil {
@@ -53,7 +54,7 @@ func TestMemStoreCoverageOverageCap(t *testing.T) {
 // the creditLedger slice. CreateCreditLedgerEntry is the bridge that
 // mirrors an issuance into the ledger.
 func TestMemStoreCoverageCreditLedger(t *testing.T) {
-	m, _, account, _, _ := memCoverageFixture(t)
+	m, _, account, _, _ := state.MemCoverageFixture(t)
 
 	// Empty ledger for an account that has no credits.
 	if got := m.ListCreditLedgerForTest(account.ID); len(got) != 0 {
@@ -61,26 +62,26 @@ func TestMemStoreCoverageCreditLedger(t *testing.T) {
 	}
 
 	// Append two credit entries to the credits map.
-	m.AppendCreditForTest(AccountCredit{
+	m.AppendCreditForTest(state.AccountCredit{
 		AccountID:      account.ID,
 		CentsRemaining: 1000,
 		Reason:         "stripe_reconciliation",
 	})
-	m.AppendCreditForTest(AccountCredit{
+	m.AppendCreditForTest(state.AccountCredit{
 		AccountID:      account.ID,
 		CentsRemaining: 500,
 		Reason:         "manual_grant",
 	})
 
 	// Mirror those issuances into the audit ledger.
-	if err := m.CreateCreditLedgerEntry(context.Background(), CreditLedgerEntry{
+	if err := m.CreateCreditLedgerEntry(context.Background(), state.CreditLedgerEntry{
 		AccountID:  account.ID,
 		DeltaCents: 1000,
 		Reason:     "issuance",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.CreateCreditLedgerEntry(context.Background(), CreditLedgerEntry{
+	if err := m.CreateCreditLedgerEntry(context.Background(), state.CreditLedgerEntry{
 		AccountID:  account.ID,
 		DeltaCents: 500,
 		Reason:     "issuance",
@@ -98,7 +99,7 @@ func TestMemStoreCoverageCreditLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.AppendCreditForTest(AccountCredit{AccountID: other.ID, CentsRemaining: 1})
+	m.AppendCreditForTest(state.AccountCredit{AccountID: other.ID, CentsRemaining: 1})
 	if got := m.ListCreditLedgerForTest(account.ID); len(got) != 2 {
 		t.Fatalf("cross-account bleed: %d entries on account", len(got))
 	}
@@ -113,7 +114,7 @@ func TestMemStoreCoverageCreditLedger(t *testing.T) {
 // no-op contract so that handlers don't crash on dev/host builds where
 // MemStore is the active store.
 func TestMemStoreCoverageUsageSLO(t *testing.T) {
-	m, ctx, account, app, _ := memCoverageFixture(t)
+	m, ctx, account, app, _ := state.MemCoverageFixture(t)
 	now := time.Now().UTC()
 	start := now.Add(-24 * time.Hour)
 
@@ -133,7 +134,7 @@ func TestMemStoreCoverageUsageSLO(t *testing.T) {
 // the operator-side "list all live deployments" view used by meterd's
 // per-instance rollup walks.
 func TestMemStoreCoverageDeploymentListing(t *testing.T) {
-	m, ctx, _, _, dep := memCoverageFixture(t)
+	m, ctx, _, _, dep := state.MemCoverageFixture(t)
 
 	// The fixture already creates one deployment; ListAllDeployments
 	// returns it (filtered to non-deleted apps).
@@ -145,10 +146,10 @@ func TestMemStoreCoverageDeploymentListing(t *testing.T) {
 	// Two instances on different nodes share the same deployment. The
 	// deployment is "on node-a" via its primary instance; secondary
 	// instances on node-b must not leak into node-a's view.
-	if _, err := m.CreateInstance(ctx, dep.AppID, dep.ID, string(StateRunning), 256, "node-a", ""); err != nil {
+	if _, err := m.CreateInstance(ctx, dep.AppID, dep.ID, string(state.StateRunning), 256, "node-a", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.CreateInstance(ctx, dep.AppID, dep.ID, string(StateRunning), 256, "node-b", ""); err != nil {
+	if _, err := m.CreateInstance(ctx, dep.AppID, dep.ID, string(state.StateRunning), 256, "node-b", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -169,7 +170,7 @@ func TestMemStoreCoverageDeploymentListing(t *testing.T) {
 // that the call round-trips without panicking on either the first write
 // (insert) or a subsequent write (update).
 func TestMemStoreCoverageScanResult(t *testing.T) {
-	m, ctx, _, _, dep := memCoverageFixture(t)
+	m, ctx, _, _, dep := state.MemCoverageFixture(t)
 	scan := []byte(`{"summary":"ok"}`)
 
 	if err := m.UpsertDeploymentScanResult(ctx, dep.ID, scan, "pass"); err != nil {
@@ -184,7 +185,7 @@ func TestMemStoreCoverageScanResult(t *testing.T) {
 
 	// Missing deployment ID is rejected with a not-found error path
 	// (the pgstore path returns ErrNotFound; MemStore returns the same).
-	if err := m.UpsertDeploymentScanResult(ctx, "missing-deployment", scan, "pass"); !errors.Is(err, ErrNotFound) {
+	if err := m.UpsertDeploymentScanResult(ctx, "missing-deployment", scan, "pass"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("upsert missing: %v, want ErrNotFound", err)
 	}
 }

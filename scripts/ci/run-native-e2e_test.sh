@@ -34,8 +34,11 @@ source "${phases}"
 [[ "${#NATIVE_E2E_REQUIRED_TESTS[@]}" -ge 9 ]] ||
   fail "the required-test contract shrank to ${#NATIVE_E2E_REQUIRED_TESTS[@]} tests"
 
-printf '%s\n' "${NATIVE_E2E_REQUIRED_TESTS[@]}" | grep -qx 'TestFeatureFlagsNativeParkRestoreMetal' ||
+printf '%s\n' "${NATIVE_E2E_REQUIRED_TESTS[@]}" | grep -x 'TestFeatureFlagsNativeParkRestoreMetal' >/dev/null ||
   fail "the native Flags park/restore qualification is not required"
+
+printf '%s\n' "${NATIVE_E2E_REQUIRED_TESTS[@]}" | grep -x 'TestProjectWorkerReleaseMetal' >/dev/null ||
+  fail "the native project worker release qualification is not required"
 
 for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
   # A typo'd requirement could never match a PASS line: the gate would fail for
@@ -228,6 +231,25 @@ for victim in "${customer_workflow_tests[@]}"; do
   done
 done
 
+customer_http_tests=()
+while IFS= read -r selected_test; do
+  customer_http_tests+=("${selected_test}")
+done < <(native_e2e_lane_tests customer-http-operations-only "${repo_root}")
+[[ "${#customer_http_tests[@]}" -ge 4 ]] || fail "customer HTTP lane lost its acceptance scenarios"
+lane_pass_log "${work}/customer-http-green.log" "${customer_http_tests[@]}"
+native_e2e_lane_verdict "${work}/customer-http-green.log" "customer HTTP lane" "${customer_http_tests[@]}" >/dev/null || fail "complete customer HTTP lane was rejected"
+for victim in "${customer_http_tests[@]}"; do
+  for outcome in absent SKIP FAIL; do
+    grep -v -- "--- PASS: ${victim} " "${work}/customer-http-green.log" > "${work}/customer-http-red.log"
+    if [[ "${outcome}" != absent ]]; then
+      printf -- '--- %s: %s (0.00s)\n' "${outcome}" "${victim}" >> "${work}/customer-http-red.log"
+    fi
+    if native_e2e_lane_verdict "${work}/customer-http-red.log" "customer HTTP lane" "${customer_http_tests[@]}" >/dev/null 2>&1; then
+      fail "customer HTTP lane accepted ${victim} ${outcome}"
+    fi
+  done
+done
+
 lane_pass_log "${work}/lane-skip.log" "${lane_tests[@]}"
 grep -v -- "--- PASS: ${lane_tests[0]} " "${work}/lane-skip.log" > "${work}/lane-skip.tmp"
 printf -- '--- SKIP: %s (0.00s)\n' "${lane_tests[0]}" >> "${work}/lane-skip.tmp"
@@ -386,14 +408,40 @@ metal_count="$(printf '%s\n' "${metal_tests}" | wc -l | tr -d ' ')"
 
 # Every required test must be derivable, or it would silently stop being run.
 for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
-  printf '%s\n' "${metal_tests}" | grep -qx "${required}" ||
+  printf '%s\n' "${metal_tests}" | grep -x "${required}" >/dev/null ||
     fail "required test ${required} is not in the metal-tagged set (lost its //go:build metal tag?)"
 done
 
-# The derivation must actually key on the build tag, not on a filename pattern:
-# metal tests live in files both with and without a _metal_ infix.
-grep -Fq "grep -l '^//go:build metal'" "${repo_root}/scripts/ci/native-e2e-verdict.sh" ||
-  fail "the run set is no longer derived from the //go:build metal tag"
+# Execute discovery against owned sources: Go constraints, not filenames,
+# header text ordering or commented-out functions, determine the run set.
+discovery_probe="${work}/discovery"
+mkdir -p "$discovery_probe/cmd/e2e"
+cat > "$discovery_probe/cmd/e2e/plain_test.go" <<'GO'
+//go:build linux && metal
+
+package e2e_test
+// func TestCommented(t *testing.T) {}
+func TestSemantic(t *testing.T) {}
+func TestMultiline(
+  t *testing.T,
+) {}
+GO
+cat > "$discovery_probe/cmd/e2e/specialized_test.go" <<'GO'
+//go:build object_storage_native && metal
+
+package e2e_test
+func TestSpecialized(t *testing.T) {}
+GO
+cat > "$discovery_probe/cmd/e2e/ordinary_test.go" <<'GO'
+//go:build !metal
+
+package e2e_test
+func TestOrdinary(t *testing.T) {}
+GO
+[[ "$(native_e2e_metal_tests "$discovery_probe")" == $'TestMultiline\nTestSemantic' ]] ||
+  fail "native discovery does not follow the plain-metal Go build constraints and AST"
+native_e2e_inventory "$discovery_probe" --tags metal,object_storage_native | grep -qx TestSpecialized ||
+  fail "native discovery lost the reordered specialized build constraint"
 
 # The runner must build its filter from that derivation and refuse an empty set.
 grep -Fq 'native_e2e_metal_tests "${repo_root}"' "${runner}" ||
@@ -444,19 +492,22 @@ probe_plain="$(
 if grep -Fqx -- '-run' <<<"${probe_plain}"; then
   fail "test-metal injects -run even when RUN_REGEX is unset"
 fi
+grep -Fqx -- metal <<<"${probe_plain}" || fail "default test-metal lost the metal tag"
+probe_contract="$(FAAS_METAL_TEST_TAGS=metal,contractacceptance make -C "${repo_root}" GO="${probe_bin}" PKGS=./cmd/e2e/... RUN_ARGS='-timeout=210m -v' test-metal 2>/dev/null)"
+grep -Fqx -- metal,contractacceptance <<<"${probe_contract}" || fail "contract acceptance tag did not reach go test"
 rm -rf "$(dirname "${probe_bin}")"
 
 expanded="$(
   make -n -C "${repo_root}" GO=/usr/bin/true PKGS=./cmd/e2e/... \
     RUN_ARGS="-timeout=75m -v" test-metal
 )"
-grep -Fq -- '/usr/bin/true test -tags metal -race -count=1 -timeout=75m -v' <<<"${expanded}" || {
+grep -Fq -- '/usr/bin/true test -tags "${FAAS_METAL_TEST_TAGS:-metal}" -race -count=1 -timeout=75m -v' <<<"${expanded}" || {
   printf '%s\n' "${expanded}" >&2
   fail "the invocation expanded incorrectly"
 }
 # The metal build tag is what makes this a platform gate instead of a rerun of
 # the pure-Go e2e shard CI already has.
-grep -Fq -- '-tags metal' <<<"${expanded}" || fail "the gate does not use the metal build tag"
+grep -Fq -- '-tags "${FAAS_METAL_TEST_TAGS:-metal}"' <<<"${expanded}" || fail "the gate does not use the metal build tag"
 grep -Fq 'PKGS=./cmd/e2e/...' "${runner}" ||
   fail "the wrapper no longer targets the ./cmd/e2e package"
 
@@ -645,4 +696,123 @@ grep -Fq 'customer_workflow_operations_only=${{ steps.phase_customer_workflow_op
 customer_workflow_exclusions="$(grep -Fc "inputs.lane != 'customer-workflow-operations-only'" "${workflow}" || true)"
 [[ "${customer_workflow_exclusions}" -eq 9 ]] || fail "customer Workflow lane must skip all nine platform phases"
 
+
+# The deployment lane must propagate its result into the final blocking verdict.
+grep -Fq 'native_e2e_lane_tests project-worker-release-only "$GITHUB_WORKSPACE"' "${workflow}" || fail "project worker workflow verdict lost its derived scenario set"
+grep -Fq "inputs.lane == 'project-worker-release-only'" "${workflow}" || fail "project worker workflow dispatch missing"
+grep -Fq 'project_worker_release_only=${{ steps.phase_project_worker_release_only.outcome }}' "${workflow}" || fail "project worker step outcome absent from Verdict"
+worker_exclusions="$(grep -Fc "inputs.lane != 'project-worker-release-only'" "${workflow}" || true)"
+[[ "${worker_exclusions}" -eq 9 ]] || fail "project worker lane must skip all nine platform phases"
+grep -Fq 'native_e2e_lane_tests customer-http-operations-only "$GITHUB_WORKSPACE"' "${workflow}" || fail "customer HTTP workflow verdict lost its derived scenario set"
+grep -Fq "inputs.lane == 'customer-http-operations-only'" "${workflow}" || fail "customer HTTP workflow dispatch missing"
+grep -Fq 'customer_http_operations_only=${{ steps.phase_customer_http_operations_only.outcome }}' "${workflow}" || fail "customer HTTP step outcome absent from Verdict"
+customer_http_exclusions="$(grep -Fc "inputs.lane != 'customer-http-operations-only'" "${workflow}" || true)"
+[[ "${customer_http_exclusions}" -eq 9 ]] || fail "customer HTTP lane must skip all nine platform phases"
+
 echo "native e2e wrapper contracts OK"
+
+# Progressive qualification must require both independently executed scenarios.
+mapfile -t progressive_tests < <(native_e2e_lane_tests project-progressive-release-only "${repo_root}")
+[[ "${#progressive_tests[@]}" -eq 4 ]] || fail "progressive lane lost promotion, rollback or stabilization"
+lane_pass_log "${work}/progressive-green.log" "${progressive_tests[@]}"
+native_e2e_lane_verdict "${work}/progressive-green.log" progressive "${progressive_tests[@]}" >/dev/null || fail "complete progressive lane rejected"
+for required in "${progressive_tests[@]}"; do
+  for failure in SKIP FAIL absent; do
+    grep -v -- "--- PASS: ${required} " "${work}/progressive-green.log" > "${work}/progressive-red.log"
+    if [[ "${failure}" != absent ]]; then printf -- '--- %s: %s (1.00s)\n' "${failure}" "${required}" >> "${work}/progressive-red.log"; fi
+    if native_e2e_lane_verdict "${work}/progressive-red.log" progressive "${progressive_tests[@]}" >/dev/null 2>&1; then fail "progressive ${required} ${failure} was accepted"; fi
+  done
+done
+grep -Fq 'native_e2e_lane_tests project-progressive-release-only "$GITHUB_WORKSPACE"' "${workflow}" || fail "progressive workflow verdict lost its derived tests"
+grep -Fq "inputs.lane == 'project-progressive-release-only'" "${workflow}" || fail "progressive dispatch missing"
+echo "progressive native lane contracts OK"
+
+# Contract qualification requires all guest outcomes; omission is a failure.
+mapfile -t contract_tests < <(native_e2e_lane_tests project-migration-contract-only "${repo_root}")
+[[ "${#contract_tests[@]}" -eq 3 ]] || fail "contract lane lost success, failure or interrupted execution"
+lane_pass_log "${work}/contract-green.log" "${contract_tests[@]}"
+native_e2e_lane_verdict "${work}/contract-green.log" contract "${contract_tests[@]}" >/dev/null || fail "complete contract lane rejected"
+for required in "${contract_tests[@]}"; do
+  for failure in SKIP FAIL absent; do
+    grep -v -- "--- PASS: ${required} " "${work}/contract-green.log" > "${work}/contract-red.log"
+    if [[ "${failure}" != absent ]]; then printf -- '--- %s: %s (1.00s)\n' "${failure}" "${required}" >> "${work}/contract-red.log"; fi
+    if native_e2e_lane_verdict "${work}/contract-red.log" contract "${contract_tests[@]}" >/dev/null 2>&1; then fail "contract ${required} ${failure} was accepted"; fi
+  done
+done
+grep -Fq 'native_e2e_lane_tests project-migration-contract-only "$GITHUB_WORKSPACE"' "${workflow}" || fail "contract workflow verdict lost its derived tests"
+grep -Fq "inputs.lane == 'project-migration-contract-only'" "${workflow}" || fail "contract dispatch missing"
+contract_exclusions="$(grep -c "inputs.lane != 'project-migration-contract-only'" "${workflow}")"
+[[ "${contract_exclusions}" -eq 9 ]] || fail "contract lane must skip all nine platform phases"
+grep -Fq 'project-migration-contract-only) phase_timeout=210m' "${repo_root}/scripts/ci/run-native-e2e.sh" || fail "contract lane budget missing"
+grep -Fq 'RuntimeMaxSec=215m' "${workflow}" || fail "contract systemd envelope missing"
+echo "contract native lane contracts OK"
+
+# SQL acceptance must pass both real data compatibility and interrupted DDL.
+mapfile -t sql_tests < <(native_e2e_lane_tests project-migration-sql-only "${repo_root}")
+[[ "${#sql_tests[@]}" -eq 2 ]] || fail "SQL lane lost success or interrupted recovery"
+lane_pass_log "${work}/sql-green.log" "${sql_tests[@]}"
+native_e2e_lane_verdict "${work}/sql-green.log" sql "${sql_tests[@]}" >/dev/null || fail "complete SQL lane rejected"
+for required in "${sql_tests[@]}"; do
+  for failure in SKIP FAIL absent; do
+    grep -v -- "--- PASS: ${required} " "${work}/sql-green.log" > "${work}/sql-red.log"
+    if [[ "${failure}" != absent ]]; then printf -- '--- %s: %s (1.00s)\n' "${failure}" "${required}" >> "${work}/sql-red.log"; fi
+    if native_e2e_lane_verdict "${work}/sql-red.log" sql "${sql_tests[@]}" >/dev/null 2>&1; then fail "SQL ${required} ${failure} accepted"; fi
+  done
+done
+grep -Fq 'native_e2e_lane_tests project-migration-sql-only "$GITHUB_WORKSPACE"' "${workflow}" || fail "SQL verdict lost selected tests"
+[[ "$(grep -c "inputs.lane != 'project-migration-sql-only'" "${workflow}")" -eq 9 ]] || fail "SQL lane runs platform phases"
+grep -Fq 'FAAS_METAL_TEST_TAGS=metal,contractacceptance,managed_postgres_contract' "${runner}" || fail "SQL lane build tags missing"
+grep -Fq 'project-migration-sql-only) phase_timeout=150m' "${runner}" || fail "SQL lane test budget missing"
+grep -Fq 'RuntimeMaxSec=155m' "${workflow}" || fail "SQL lane systemd envelope missing"
+grep -Fq 'project_migration_sql_only=${{ steps.phase_project_migration_sql_only.outcome }}' "${workflow}" || fail "SQL runner failure omitted from verdict"
+echo 'managed SQL native lane contracts OK'
+
+mapfile -t promotion_tests < <(native_e2e_lane_tests project-environment-promotion-only "${repo_root}")
+[[ "${#promotion_tests[@]}" -eq 11 ]] || fail 'promotion lane lost a required scenario'
+lane_pass_log "${work}/promotion-green.log" "${promotion_tests[@]}"
+native_e2e_lane_verdict "${work}/promotion-green.log" promotion "${promotion_tests[@]}" >/dev/null || fail 'complete promotion lane rejected'
+for required in "${promotion_tests[@]}"; do
+  for failure in SKIP FAIL absent; do
+    grep -v -- "--- PASS: ${required} " "${work}/promotion-green.log" > "${work}/promotion-red.log"
+    if [[ "${failure}" != absent ]]; then printf -- '--- %s: %s (1.00s)\n' "${failure}" "${required}" >> "${work}/promotion-red.log"; fi
+    if native_e2e_lane_verdict "${work}/promotion-red.log" promotion "${promotion_tests[@]}" >/dev/null 2>&1; then fail "promotion ${required} ${failure} accepted"; fi
+  done
+done
+grep -Fq 'native_e2e_lane_tests project-environment-promotion-only "$GITHUB_WORKSPACE" "$PHASE_GROUP"' "${workflow}" || fail 'promotion verdict lost derived scenarios'
+[[ "$(grep -c "inputs.lane != 'project-environment-promotion-only'" "${workflow}")" -eq 9 ]] || fail 'promotion lane runs platform phases'
+grep -Fq 'project_environment_promotion_only=${{ steps.phase_project_environment_promotion_only.outcome }}' "${workflow}" || fail 'promotion runner outcome omitted'
+grep -Fq 'FAAS_METAL_TEST_TAGS=metal,promotionacceptance' "${runner}" || fail 'promotion acceptance build tags missing'
+grep -Fq 'project-environment-promotion-only) phase_timeout=210m' "${runner}" || fail 'promotion test budget missing'
+grep -Fq 'RuntimeMaxSec=215m' "${workflow}" || fail 'promotion systemd envelope missing'
+grep -Fq 'native promotion qualification: final_leakcheck_rc=${rc}' "${runner}" || fail 'promotion leak verdict missing'
+grep -Fq 'native promotion qualification: sha=${FAAS_E2E_SOURCE_SHA} final_rc=${rc}' "${runner}" || fail 'promotion source-bound completion missing'
+grep -Fq 'python3 scripts/ci/promotion-qualification.py --log "$log" --sha "$GITHUB_SHA"' "${workflow}" || fail 'promotion evidence verification missing'
+echo 'environment promotion native lane contracts OK'
+
+grep -Fq '["promotion-core","promotion-controls","promotion-load","promotion-admission","promotion-migrations","promotion-publication"]' "$workflow" || fail 'promotion lane lost bounded matrix groups'
+grep -Fq -- "--setenv=FAAS_E2E_PROMOTION_GROUP=" "$workflow" || fail 'remote promotion group missing'
+grep -Fq -- '--group "$PHASE_GROUP"' "$workflow" || fail 'partition qualification missing'
+echo 'promotion partition runner contracts OK'
+
+grep -Fq 'then phase_timeout=330m' "$runner" || fail 'admission native budget missing'
+grep -Fq 'then runtime=335m' "$workflow" || fail 'admission systemd budget missing'
+grep -Fq "(matrix.group == 'promotion-admission' || matrix.group == 'promotion-migrations' || matrix.group == 'promotion-coordinated') && 360 || 240" "$workflow" || fail 'admission job envelope missing'
+grep -Fq '"${phase}" == project-environment-promotion-only && ( "${FAAS_E2E_PROMOTION_GROUP}" == promotion-migrations || "${FAAS_E2E_PROMOTION_GROUP}" == promotion-coordinated )' "$runner" || fail 'migration promotion SQL proxy setup missing'
+grep -Fq 'promotion-migrations) files=(project_environment_promotion_migrations_metal_test.go)' "$phases" || fail 'migration promotion scenarios missing'
+grep -Fq 'promotion-publication) files=(project_environment_promotion_publication_metal_test.go)' "$phases" || fail 'publication crash scenarios missing'
+grep -Fq 'const daemonBuildTags = "metal,promotionacceptance"' "$repo_root/pkg/e2etest/buildtags_promotion.go" || fail 'promotion daemons omit native publication barriers'
+grep -Fq 'export FAAS_PGTEST_TEMPLATE_DATABASE=1' "$runner" || fail 'promotion qualification catalog isolation missing'
+grep -Fq 'SELECT rolcreatedb OR rolsuper FROM pg_roles WHERE rolname=current_user' "$runner" || fail 'private promotion database privilege preflight missing'
+
+grep -Fq 'qualify_service_graph:' "$workflow" || fail 'optional service graph input missing'
+grep -Fq 'promotion-service-graph' "$workflow" || fail 'optional service graph job missing'
+grep -Fq 'promotion-service-graph-qualification.py' "$workflow" || fail 'service graph evidence validator missing'
+grep -Fq '"${QUALIFY_SERVICE_GRAPH:-false}"' "$workflow" || fail 'aggregate lost optional capability selection'
+echo 'optional service graph runner contracts OK'
+
+grep -Fq 'qualify_coordinated:' "$workflow" || fail 'optional coordinated input missing'
+grep -Fq 'promotion-coordinated-qualification.py' "$workflow" || fail 'coordinated evidence validator missing'
+grep -Fq '"${QUALIFY_COORDINATED:-false}"' "$workflow" || fail 'aggregate lost coordinated selection'
+grep -Fq 'QUALIFY_SERVICE_GRAPH: ${{ inputs.qualify_service_graph || inputs.qualify_coordinated }}' "$workflow" || fail 'coordinated mode lost service graph dependency'
+grep -Fq 'coordinated-qualification-${{ github.sha }}' "$workflow" || fail 'coordinated report upload missing'
+echo 'optional coordinated runner contracts OK'

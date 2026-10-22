@@ -170,16 +170,42 @@ answers `authorize` checks. GoTrue verifies the caller's token on loopback;
 the front then calls one owner-only `gregale_auth` function per request in a
 transaction whose `request.jwt.claims` carry only the verified `sub` and
 `session_id`. The functions enforce the rules themselves: managing members
-needs `members:manage`, only owners grant or remove the owner role, members
-may always leave, and changes in one organization are serialized so none loses
-its last owner. An invitation token is returned once to the inviter until the
-email hook delivers it, is stored only as a hash, and can be accepted only by a
-signed-in user whose confirmed email matches the invited address.
+needs `members:manage`, a member gives, changes or removes only roles whose
+every permission it holds (`can_grant`, sql/0022; `*` covers all), only owners
+grant or remove the owner role, members may always leave, and changes in one
+organization are serialized so none loses its last owner. The same grant rule
+covers the roles of service accounts, of people joining by email domain and of
+identity-provider users, so `members:manage` never lets a member raise itself
+or anyone else above its own permissions; an app that wants admins to hand out
+a role gives the admin role that role's permissions in `AUTH_AUTHZ`. An
+invitation token is returned once to the inviter until the email hook delivers
+it, is stored only as a hash, and can be accepted only by a signed-in user
+whose confirmed email matches the invited address. Invitations send email to
+any address through the customer's provider on behalf of any member, so they
+are bounded: one pending invitation per address and organization, at most
+`AuthInvitationsPerInviterPerHour` per inviter and
+`AuthInvitationsPerAddressPerDay` per address, refused with
+`invitation_rate_limited` (429).
 
 Custom roles and policies are declarative: `gregale auth create --authz FILE`
 seals an `AUTH_AUTHZ` document (`roles` and `policies`), and the release task
 replaces custom roles and every policy from it. The `owner` role always holds
 every permission, and a role still assigned cannot be removed.
+
+With `AUTH_ORG_CLAIMS` on, a session chooses the organization it acts in
+(`gregale_auth.set_active_organization()`, a member's own session only), and
+GoTrue's custom access token hook adds `org_id`, `org_slug`, `org_role` and
+`org_permissions` to its first-party tokens, joining the choice with the
+current membership and role. The choice is per session, not per user, so
+devices and tabs act independently; a foreign key to `auth.sessions` and to
+the organization removes it with either. Backends then authorize from a
+verified token without a call, accepting that a removed member or changed role
+holds until the token expires (`AuthAccessTokenTTLSeconds`); `authorize()`
+remains the current check. The hook, which otherwise runs only with the OAuth
+server, runs whenever either is on, so apps that use neither pay nothing per
+token. Client tokens never carry the claims, and nothing is chosen
+implicitly: a user in one organization still sets it, so a token's claims are
+never a guess.
 
 ### One authorization function
 
@@ -272,6 +298,19 @@ Gregale operates no sender for application email. Without a provider, email
 flows fail with `email_provider_unconfigured`. Links and codes are never
 logged.
 
+Owners replace the subject and body of each of eight email types. A template
+is plain text with per-type `{{placeholders}}`; the front escapes every value
+and builds the HTML itself, so a template cannot carry markup or scripts into
+recipients' mail, and an email's link or code is appended when the body does
+not place it. Full HTML templates were left out for that reason. Templates live
+in the app's database (`gregale_auth.email_templates`), not in app secrets:
+they are not secret, the CLI and dashboard must read them back to edit them,
+an edit should not need a restart, and Free apps have eight secrets in all.
+They are edited through `/admin/v1/emails` with an admin key (CLI and the
+dashboard's Emails tab, from the owner's browser), with a preview that renders
+example values and can send through the provider. The hook reads them per
+email and falls back to the defaults if the database cannot be read.
+
 Organization invitations are emailed when a provider is configured. The send
 happens inside the invitation transaction, so a failed send leaves no pending
 invitation, and the token is then withheld from the inviter. The link carries
@@ -291,6 +330,21 @@ are always in GoTrue's redirect allow list so recovery links return to them.
 `sessionFromUrl`, sign-out, user updates and the `/authz/v1` calls. Refresh is
 single-flight because refresh tokens rotate, and `getAccessToken` plugs into
 `@gregale/data`.
+
+`@gregale/auth/react` (React 18+, an optional peer dependency) puts the same
+client behind a provider, hooks and plain-HTML components: an embedded sign-in
+form, `SignedIn`/`SignedOut`, a user menu, an organization switcher and
+`Authorized`. It treats a user with a verified authenticator app or phone as
+signed out until the second step is done, as the hosted pages do, by asking
+GoTrue for the user's factors once per aal1 session; that check only decides
+what to render, because aal2 is enforced where it matters (RLS, the Auth app).
+
+Native clients (`sdk/swift`, `sdk/kotlin`) mirror it for mobile apps. Sessions
+live in the Keychain or the Android Keystore. Returns from the browser use
+HTTPS universal links / App Links, because redirect URLs stay HTTPS-only and a
+custom scheme can be claimed by another app. OAuth and emailed links from the
+app use PKCE with the verifier kept in the session store; emailed codes and
+platform ID tokens (Sign in with Apple, Google) need no browser at all.
 
 ### Administration and import
 
@@ -320,6 +374,47 @@ bcrypt, argon2 or Firebase scrypt hash. Plain-text passwords are refused, and
 repeated addresses within a batch are skipped because concurrent creates of
 one address race inside GoTrue. Responses report rows by position and never
 echo addresses.
+
+Custom claims are the keys of a user's `app_metadata` other than GoTrue's
+`provider` and `providers`. Only the admin API writes `app_metadata`, and
+GoTrue already puts it in every access token, so applications get
+Firebase-style per-user claims without a token hook on every refresh.
+Dynamic claims computed from the application's own tables were rejected for
+now: the Auth binding cannot read customer schemas by design, so a claims
+function would need customers to grant a hashed role access to their schema
+and a security-definer function. `PATCH /admin/v1/users/{id}/claims`
+`{set, unset}` sends GoTrue a merge patch after checking names and
+`AuthCustomClaimsMaxBytes` (1,000 bytes, Firebase's bound) against the
+user's current claims.
+
+Sign-up restrictions (`AUTH_SIGNUP_ALLOWED_DOMAINS`,
+`AUTH_SIGNUP_BLOCKED_DOMAINS`, `AUTH_SIGNUP_BLOCK_DISPOSABLE`,
+`AUTH_SIGNUP_ACCESS` open|invite|waitlist) are checked in GoTrue's
+before-user-created HTTP hook, which v2.197.0 calls outside its transactions
+for every self-service creation (sign-up, OTP, OAuth, SAML, anonymous, Web3
+and GoTrue's own invite) and not for admin-created users. The hook runs only
+while a restriction is set. Invitation and waitlist access read
+`gregale_auth.signup_access` (sql/0018) and pending organization
+invitations; a refused waitlist sign-up records a request, bounded by
+`AuthWaitlistMaxPending`, rather than adding a public waitlist endpoint that
+would need its own CAPTCHA and rate limits. GoTrue returns the hook's
+refusal as `msg`, so the hosted pages and SDK read a stable code from it.
+The hook fails closed (503). The throwaway list is vendored from the CC0
+disposable-email-domains project.
+
+Impersonation (`AUTH_IMPERSONATION`, off by default) lets the admin key
+open a session as a user. GoTrue v2.197.0 has no administrator sign-in, so
+the front generates a magic link through the admin API and redeems it
+server-side, which yields a real session that every authorization surface
+already understands; minting tokens ourselves would lack the session row
+that `session_active()` requires. The front then caps the session with
+`auth.sessions.not_after` (5 to 60 minutes), records it in
+`gregale_auth.impersonations` (sql/0019) with the key's ID and the reason,
+and refreshes once so the access token hook adds `act` before the session is
+handed over. Account changes are refused at the front from tokens with
+`act`, by path, before GoTrue sees them; dropping `act` would break the
+token's signature, so reading the unverified payload there is safe. Admin
+keys now carry their IDs so the record names the key that acted.
 
 ### Lifecycle events and activity
 
@@ -389,6 +484,79 @@ enforce `aal2` themselves, through the `aal` claim. GoTrue texts a phone
 factor's challenge through the SMS provider even for numbers in
 `GOTRUE_SMS_TEST_OTP`, which covers sign-in codes only.
 
+The hosted account page `/ui/account` gives people the self-service that
+GoTrue's user API allows without each application building it: email and
+password changes, second factors and recovery codes, passkeys, linked
+providers, connected OAuth apps and their own sessions. Like the consent page
+it signs in through the usual pages (so the session is `aal2` for anyone with
+a second factor, which removing a factor requires), keeps the session only in
+the tab's memory and ends it on leaving; it never reuses the application's
+session, which would need a token handed across origins. GoTrue v2.197.0 can
+end the current session, the others or all, but cannot list sessions or end
+one, so `gregale_auth.list_sessions()` and `end_session()` (owner-only, run by
+the front under the caller's verified claims like the organization
+functions) serve `/authz/v1/sessions`. They leave third-party OAuth clients'
+sessions to connected apps, and the current session to GoTrue's logout. The
+page's image policy adds `data:` for the QR code GoTrue returns inline.
+
+Session limits are typed settings over GoTrue's own: `AUTH_SESSION_MAX_AGE_MINUTES`
+becomes `GOTRUE_SESSIONS_TIMEBOX`, `AUTH_SESSION_IDLE_MINUTES` the inactivity
+timeout and `AUTH_SINGLE_SESSION` `GOTRUE_SESSIONS_SINGLE_PER_USER`, which keeps a
+user's most recently refreshed session and refuses the others at their next
+refresh. GoTrue checks all three when a session refreshes, so they are bounded
+from `AuthSessionMinMinutes` (above the access token lifetime) to
+`AuthSessionMaxMinutes`, and an issued token outlives its session by at most
+`AuthAccessTokenTTLSeconds`, as after a sign-out. `GOTRUE_SESSIONS_*` stays
+managed, not passed through. An idle limit above the maximum age is accepted
+and has no effect: the two are set separately, and refusing the combination
+at start would take the app down.
+
+GoTrue has no endpoint for people to delete themselves. With
+`AUTH_SELF_DELETION` on (off by default: an app may need to settle billing
+or data first), `DELETE /authz/v1/account` deletes the caller through the
+same path as an owner's deletion, so the last-owner refusal and the removal
+of organizations left without members are shared. It requires the token's
+session to be younger than `AuthReauthenticationSeconds` and, for a user
+with a verified second factor, `aal2`; anonymous users are exempt because
+they cannot sign in again. A third-party client's token cannot reach it.
+GoTrue's audit log records the deletion as an administrator's, since it goes
+through the admin API; the lifecycle event `auth.user.deleted` is the same
+either way.
+
+Wallet sign-in uses GoTrue v2.197.0's `web3` grant
+(`GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED`, `_SOLANA_ENABLED`, set by
+`gregale auth config --web3`): GoTrue parses the EIP-4361 or Solana message,
+verifies the signature and requires the message's URI to be an allowed
+redirect URL and its domain to be that URI's host. The hosted pages sign on
+the Auth app's own host, so while Web3 is on its root is added to
+`GOTRUE_URI_ALLOW_LIST`. `@gregale/auth` builds the message in the grammar
+GoTrue's parsers accept and asks an injected wallet (EIP-1193 or Solana) to
+sign it. GoTrue keeps no record of nonces, so a signed message is valid for
+its ten-minute window.
+
+An organization can require a second factor of its members
+(`organizations.mfa_required`, sql/0016). The check lives in
+`has_permission`, so every surface that already goes through it (row-level
+security via `authorize()`, storage signing, workflows, realtime channels and
+the organization functions) refuses sessions below `aal2` for that
+organization without its own code. It reads the session row, not the token's
+`aal` claim: GoTrue lowers a session to `aal1` when its factor is removed,
+while tokens issued earlier keep saying `aal2` until they expire. The access
+token hook does the opposite and reads the claim, because GoTrue calls it
+inside the transaction that raises the session, before the row shows `aal2`;
+below `aal2` it leaves such an organization's claims out. Members are not
+removed: they keep the membership, still list the organization (with
+`mfa_required`), and get `mfa_required` instead of `forbidden` from the
+organization API so an application can send them to verify. Changing the
+setting needs `mfa:manage` and an `aal2` session in both directions, so
+turning it on cannot lock out the person doing it and a session that skipped
+the second factor cannot turn it off; the application's operator can change
+it through the admin API without being a member. Members with `members:manage`
+see which members have a verified second factor. The subject-level
+`authorize_subject` cannot see a session, so for such an organization it needs
+the user to hold some live `aal2` session. Single sign-on counts as one factor:
+GoTrue does not see the identity provider's own second step.
+
 ### Phone sign-in
 
 Phone sign-in uses GoTrue's own SMS providers (Twilio, Twilio Verify,
@@ -457,6 +625,47 @@ the provider's organization, never its last owner; deleting the record does the
 same rather than deleting the account. Groups are not supported: the
 provider's organization link decides membership.
 
+Each organization has an audit log (sql/0020) that its owners, or roles
+granted `audit:read`, read through `/authz/v1/orgs/{org}/audit-log`.
+Triggers on the organization tables record changes in the same transaction
+as the change, whichever path made it (the organization API, the admin key,
+SSO and SCIM joins inside GoTrue's transactions, domain joining), so no
+surface can skip the record; the actor is the verified caller the front
+set in `request.jwt.claims`, and null otherwise. A trigger skips an
+organization that is being deleted, so cascades cannot fail. Members'
+sign-ins are read from GoTrue's audit log at query time, for current
+members, rather than copied per organization. Entries follow the app's
+activity retention.
+
+Organizations can also let people join by email domain
+(`AUTH_ORG_DOMAINS`, sql/0017), reusing the TXT-verified domains of
+self-service SSO without needing SSO. Joining is 'suggest' (the person
+chooses, from the API or the hosted account page) or 'automatic' (triggers on
+`auth.users` and SSO identities add people when their address is confirmed or
+changes, and turning it on adds those already there). It trusts only proven
+addresses: confirmed while the app confirms addresses, which the front writes
+to `domain_join_settings` at startup because the triggers run inside GoTrue's
+transactions and cannot see the app's settings. With `AUTH_AUTOCONFIRM` on,
+anyone could claim any address, so joining stays off; the dashboard and a
+single `auth config` change refuse the combination, and status reports it. SSO users count only for their provider's
+domains, as with invitations. `membership_history` records every membership
+ever made, so domain joining adds a person once and never undoes an owner's
+removal; the triggers do nothing that can fail inside GoTrue's transaction.
+Domains are managed with `domains:manage` or, as before, `sso:manage`.
+
+GoTrue v2.197.0 takes whatever address a SAML identity provider asserts and
+marks it confirmed, without checking the provider's domains (`samlacs.go`). A
+provider the app's operator registered is trusted for that. One an
+organization connected itself, or whose metadata or domains it changed
+through the organization API, is marked self-service
+(`sso_organizations.self_service`, sql/0023) and trusted only for the domains
+the organization verified: with organization SSO on, the before-user-created
+hook refuses its users whose address is elsewhere
+(`sso_email_domain_not_allowed`), and applies the app's invitation or waitlist
+rules to them as to anyone, where the operator's providers are exempt. GoTrue
+creates a returning SSO user's account once and never changes its address at
+later sign-ins, so the check at creation holds.
+
 ### Dark launch
 
 Application Auth reaches no customer until it launches. apid reads
@@ -501,7 +710,15 @@ user's own session, and lets it call every user endpoint, including changing
 the email address or password. The front therefore confines such tokens
 (those with a `client_id` claim): on the Auth host they reach only userinfo,
 their own sign-out and the permission check `/authz/v1/authorize`, which a
-resource server needs; everything else answers `oauth_client_token`.
+resource server needs; everything else answers `oauth_client_token`. The front
+reads `Authorization` the way GoTrue does, the scheme in any letter case, and
+refuses a bearer JWT whose claims it cannot read before GoTrue sees it, so
+no token reaches GoTrue unchecked; GoTrue checks no audience. Deny-lists, such
+as an impersonated session's, ignore trailing slashes, which GoTrue's router
+does. A new password needs the current one
+(`GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD`), except in a
+password reset or for a user without one, so a stolen access token cannot
+take over an account by setting one.
 GoTrue's custom access token hook, on only with the server, sets their
 audience to the RFC 8707 resource the client was authorized for, or
 `oauth-client` when it named none. GoTrue drops the authorization at the
@@ -512,6 +729,77 @@ edge rules, realtime and the SDKs by default) never accepts a client's
 token; an API or MCP server accepts one for its own resource
 (`gregale mcp init --auth-app`, the SDKs' audience option). GoTrue issues
 only the OpenID scopes, so finer permissions come from `authorize()`.
+
+### Service accounts
+
+A B2B application's customers want their own scripts and servers to call
+the application's API, and its Data API, as their organization: without a
+person, a browser or a password. GoTrue has no machine principal and no
+client-credentials grant, and the OAuth server's clients act only for a
+consenting user. `AUTH_SERVICE_ACCOUNTS` (off by default) adds service
+accounts, with no GoTrue user behind them.
+
+A service account belongs to one organization and holds one of its roles,
+like a member; it is not in `auth.users`, so it never signs in, never
+counts as a user and is not listed among members. Members holding
+`members:manage` create, rename, re-role, disable and delete their
+organization's service accounts through `/authz/v1/orgs/<id>/service-accounts`
+and issue or revoke its secrets; as with invitations, only an owner gives one
+the owner role. The app's operator does the same for any organization with
+an admin key (`/admin/v1/service-accounts`, `gregale auth service-accounts`).
+An organization holds at most `AuthServiceAccountsPerOrg`, each with at most
+`AuthServiceAccountSecrets` live secrets, two so a secret can be rotated
+without downtime. A secret is shown once and stored as a SHA-256 digest; it
+may expire. The organization's audit log records each change.
+
+A backend exchanges its client ID (the service account's ID) and a secret
+for an access token with RFC 6749's client-credentials grant at the OAuth
+token endpoint `<host>/auth/v1/oauth/token`, authenticating with HTTP Basic or
+in the form body; the front answers that grant itself and passes every other
+grant to GoTrue. An optional `scope` lists permissions to narrow the token to;
+each must be one the role holds. The front signs the token with the app's
+current signing key, so it verifies like a user's token everywhere:
+
+    iss <host>/auth/v1   aud authenticated   role authenticated   exp +600 s
+    sub <service account ID>   service_account true   secret_id <secret ID>
+    org_id, org_slug, org_role, org_permissions   scope (when narrowed)
+
+There is no refresh token and no session: a backend asks again when its token
+expires. This path bypasses GoTrue's rate limits, so it keeps two of its own,
+both `AuthServiceAccountTokensPerMinute`: failed requests per client address,
+checked before the database is asked, and tokens per service account, counted
+only once the secret matched, so knowing an account's ID (which is not secret)
+is not enough to exhaust its budget.
+
+The SQL helpers know the new principal. `has_permission()`, and through it
+`authorize()` in row-level security, storage and the front, grants a token
+marked `service_account` the permissions of its account's role in its own
+organization, within the token's scope, while `service_account_active()`
+holds: the account exists and is not disabled and the token's secret is
+neither revoked nor expired. Deleting, disabling or revoking therefore takes
+effect at once wherever `authorize()` runs, and at the token's expiry, at
+most 600 seconds later, in edge-only JWT checks, as sign-out does. A
+service-account token never satisfies `session_active()`, so policies written
+for people (`auth.uid() = owner_id`, `session_active()`) keep refusing it, and
+a user's token never satisfies `service_account_active()`. An organization
+that requires a second factor (`mfa_required`) applies it to the people who
+manage its service accounts; the accounts themselves have no factor to verify.
+
+On the Auth host such a token reaches only `/authz/v1/authorize` and
+`/authz/v1/storage/sign`; GoTrue's user endpoints and every other route answer
+`service_account_token`. Managed realtime checks subjects, not tokens, and
+refuses service accounts. The SDKs' verifiers expose the account
+(`serviceAccount`), so an API can tell it from a person; Node, Go and Python
+backends get a client-credentials helper that caches the token until shortly
+before it expires.
+
+Rejected: a GoTrue user per service account with a long-lived session, which
+would have needed no new SQL but would put machines in user lists, member
+lists, sign-up rules, domain joining and lifecycle events; opaque API keys
+checked by the Auth app on every request, which would wake a parked Auth app
+for every API call; a separate audience for these tokens, which would keep
+them out of the Data API and of `authorize()` in row-level security, the main
+reasons to have them.
 
 ### Anonymous users and identity linking
 
@@ -641,5 +929,34 @@ returned 404. Native acceptance must show sign-up, Data
 API RLS and session revocation through a builder-built deployment, with wake
 latency, resident memory and snapshot size within plan limits.
 `make auth-staging-canary` (tests/auth/staging) implements that run against an
-isolated staging account; it has not yet run. This ADR alone changes no
-production gate.
+isolated staging account; it has not yet run, and no staging target exists
+yet. This ADR alone changes no production gate.
+
+On 2026-10-20 the image built from `main` (edefb05a19), with every feature in
+this ADR merged, was requalified natively on x86_64 (gregale-internal-test-1,
+since fsn-4 was unavailable). The 2026-10-17 run passed again (47 checks: SMS,
+second factors, SAML through Keycloak, SCIM, organization SSO), as did the
+OAuth server (37) and anonymous users with retention (12). Under the Free
+plan's 136 MiB container cgroup the 47 checks ran with a 68 MiB peak and no
+`memory.max` or OOM events. The checks written for the later features ran
+against the same image with stand-ins for Resend, Twilio and DNS: custom
+claims (11), sign-up restrictions (17), impersonation (21), organization
+claims, the organization audit log (6), organization-required MFA (24), domain
+join with real TXT resolution (25, plus 5 under autoconfirm), Web3 (10),
+self-deletion, email templates and session limits (6). That run found the
+account page listing sessions GoTrue had revoked under one session per user;
+the list now keeps only the live one.
+
+On 2026-10-21 the image built from the service-accounts branch ran against
+GoTrue v2.197.0 and PostgreSQL 16 on the same host (31 checks with
+`AUTH_SERVICE_ACCOUNTS` on, 3 with it off): an owner made an account, the
+token endpoint issued and narrowed tokens that the SDK verified against the
+published keys, `authorize()` granted the role from the front and from an
+unprivileged database role (which could not read the accounts table), the
+token reached no other route, other grants still reached GoTrue, discovery
+listed the grant, revoking or disabling ended tokens at once, the operator
+managed accounts with an admin key, the audit log recorded the changes, and
+both rate limits held. With it off the grant and routes did not exist.
+Review between the first and second runs found that failed requests counted
+against an account's budget, so anyone knowing its ID could block it;
+failures now count per client address.

@@ -5,23 +5,26 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/outbound"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// configureAIGateway reads the AI gateway release gate (ADR-991) and its
-// staged rollout (ADR-998). The gate is off unless ai_gateway_enabled or
-// FAAS_AI_GATEWAY_ENABLED=1 turns it on; ai_gateway_accounts or
-// FAAS_AI_GATEWAY_ACCOUNTS then limits it to listed accounts.
+// configureAIGateway seeds the ai_gateway platform flag (ADR-1700) from the
+// release gate (ADR-991) and staged rollout (ADR-998) settings. The gate is
+// off unless ai_gateway_enabled or FAAS_AI_GATEWAY_ENABLED=1 turns it on;
+// ai_gateway_accounts or FAAS_AI_GATEWAY_ACCOUNTS then limits it to listed
+// accounts. They are only the boot fallback: an operator value written
+// through /v1/admin/config wins and applies without a restart.
 func (s *server) configureAIGateway(cfg Config, getenv func(string) string) error {
-	s.aiGatewayEnabled = cfg.AIGatewayEnabled
+	enabled := cfg.AIGatewayEnabled
 	if v := getenv("FAAS_AI_GATEWAY_ENABLED"); v != "" {
-		s.aiGatewayEnabled = v == "1"
+		enabled = v == "1"
 	}
 	rollout, err := outbound.ParseAIGatewayRollout(cfg.AIGatewayAccounts, getenv("FAAS_AI_GATEWAY_ACCOUNTS"))
 	if err != nil {
 		return err
 	}
-	s.aiGatewayRollout = rollout
+	s.seedPlatformFlag(platformflags.AIGateway, outbound.AIGatewayFlagBootstrap(enabled, rollout))
 	return nil
 }
 
@@ -31,13 +34,13 @@ func writeAIGatewayUnavailable(w http.ResponseWriter) {
 }
 
 // aiGatewayDenied writes the reason an account cannot use the AI gateway
-// (ADR-998): the platform gate, the staged rollout, or the plan. It reports
-// whether it wrote a refusal.
+// (ADR-998): the platform kill switch, the account rollout, or the plan. It
+// reports whether it wrote a refusal.
 func (s *server) aiGatewayDenied(w http.ResponseWriter, acct state.Account) bool {
 	switch {
-	case !s.aiGatewayEnabled:
+	case !s.platformFlagOn(platformflags.AIGateway):
 		writeAIGatewayUnavailable(w)
-	case !s.aiGatewayRollout.Allows(acct.ID):
+	case !s.platformFlagEnabled(platformflags.AIGateway, acct):
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "outbound_ai_gateway_unavailable",
 			"AI gateway unavailable", "The AI gateway preview is not enabled for this account yet"))
 	case !outbound.AIGatewayEntitled(acct.Plan):
@@ -48,9 +51,9 @@ func (s *server) aiGatewayDenied(w http.ResponseWriter, acct state.Account) bool
 	return true
 }
 
-// aiGateway refuses an AI gateway endpoint for an account the gate, the
-// rollout or the plan excludes. The gate is read per request, so an
-// operator change applies on restart without re-registering routes.
+// aiGateway refuses an AI gateway endpoint for an account the kill switch,
+// the rollout or the plan excludes. The flag is read per request, so an
+// operator change applies to the next request.
 func (s *server) aiGateway(next accountHandler) accountHandler {
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		if s.aiGatewayDenied(w, acct) {

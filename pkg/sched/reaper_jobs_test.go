@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 import (
 	"context"
@@ -6,20 +6,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 099 — a stale claimed task retries within its budget, then dead-letters.
 func TestReapStuckJobTasksUsesRetryBudget(t *testing.T) {
 	store := state.NewMemStore()
-	_, _, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	_, _, run := sched.SeedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
 	ctx := context.Background()
-	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	engine := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 	expired := time.Now().Add(-2 * time.Minute)
 	if err := store.JobTaskMarkClaimed(ctx, run.ID, 0, "instance-1", "lease-1", expired, state.DefaultLocalNodeName); err != nil {
 		t.Fatal(err)
 	}
-	count, err := engine.ReapStuckJobTasks(ctx, StuckJobReaperConfig{TTL: time.Minute})
+	count, err := engine.ReapStuckJobTasks(ctx, sched.StuckJobReaperConfig{TTL: time.Minute})
 	if err != nil || count != 1 {
 		t.Fatalf("first reaper sweep = (%d, %v)", count, err)
 	}
@@ -30,7 +31,7 @@ func TestReapStuckJobTasksUsesRetryBudget(t *testing.T) {
 	if err := store.JobTaskMarkClaimed(ctx, run.ID, 0, "instance-2", "lease-2", expired, state.DefaultLocalNodeName); err != nil {
 		t.Fatal(err)
 	}
-	count, err = engine.ReapStuckJobTasks(ctx, StuckJobReaperConfig{TTL: time.Minute})
+	count, err = engine.ReapStuckJobTasks(ctx, sched.StuckJobReaperConfig{TTL: time.Minute})
 	if err != nil || count != 1 {
 		t.Fatalf("second reaper sweep = (%d, %v)", count, err)
 	}

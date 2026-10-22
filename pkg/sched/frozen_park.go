@@ -25,6 +25,7 @@ func (e *Engine) ParkFrozen(ctx context.Context, instanceID, reason string) erro
 // the app lock. The deployment's snapshot is untouched, so the next request
 // restores from it.
 func (e *Engine) parkFrozenLocked(ctx context.Context, frozen state.Instance, reason string) {
+	e.thawTickets.drop(frozen.ID)
 	cleanupCtx := context.WithoutCancel(ctx)
 	if e.frozenNodeUnreachable(cleanupCtx, frozen.NodeID) {
 		// The VM went with its node or vmmd. Parking the row is enough:
@@ -35,13 +36,19 @@ func (e *Engine) parkFrozenLocked(ctx context.Context, frozen state.Instance, re
 		e.log.Warn("sched: frozen park: destroy", "instance", frozen.ID, "reason", reason, "err", err)
 	}
 	e.ledger.Release(frozen.ID)
-	if err := updateInstanceStateCAS(cleanupCtx, e.store, frozen.ID, string(state.StateFrozen), string(state.StateParked)); err != nil {
+	// A worker has no snapshot to wake from (ADR-138): it stops, and the
+	// pool cold-boots the next one (ADR-20261019103000).
+	next := state.StateParked
+	if !instanceModeUsesSnapshots(frozen.Mode) {
+		next = state.StateStopped
+	}
+	if err := updateInstanceStateCAS(cleanupCtx, e.store, frozen.ID, string(state.StateFrozen), string(next)); err != nil {
 		if !errors.Is(err, state.ErrConflict) {
 			e.log.Warn("sched: frozen park: park row", "instance", frozen.ID, "reason", reason, "err", err)
 		}
 		return
 	}
-	e.recordCommittedInstanceTransition(cleanupCtx, frozen, state.StateFrozen, state.StateParked, frozen.AppID, "frozen_park", reason)
+	e.recordCommittedInstanceTransition(cleanupCtx, frozen, state.StateFrozen, next, frozen.AppID, "frozen_park", reason)
 	e.observeFrozenPark(reason)
 }
 
@@ -56,6 +63,12 @@ func (e *Engine) frozenNodeUnreachable(ctx context.Context, nodeID string) bool 
 	if err != nil {
 		return errors.Is(err, state.ErrNotFound)
 	}
+	return e.frozenNodeRowUnreachable(node)
+}
+
+// frozenNodeRowUnreachable is frozenNodeUnreachable for a node row the
+// caller already read.
+func (e *Engine) frozenNodeRowUnreachable(node state.ComputeNode) bool {
 	if node.Lifecycle == state.NodeLifecycleUnavailable {
 		return true
 	}
@@ -116,7 +129,7 @@ func (e *Engine) warmCapturePending(ctx context.Context, app state.App, ins stat
 	if !app.WarmSnapshotEnabled || ins.FrameworkReadyAt == nil || app.Manifest.BeforeCheckpoint != nil {
 		return false
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil || !acct.Plan.WarmSnapshotAllowed() {
 		return false
 	}

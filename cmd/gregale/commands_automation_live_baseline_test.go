@@ -1,5 +1,5 @@
 // adr: 1302
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/automationgate"
 )
@@ -22,7 +23,7 @@ func baselineCLIReceipt() api.AutomationLiveBaseline {
 	limit := int64(60)
 	policy := automationgate.CoveragePolicy{Version: 2, RequiredCases: []string{"happy"}, MaxCandidateAgeSeconds: &limit}
 	raw, _ := json.Marshal(policy)
-	return api.AutomationLiveBaseline{PromotionID: baselineCLIPromotion, AppID: liveCLIDeployment, Name: view.Baseline.Name, BaselineName: "production", Revision: 1, ActorAccountID: liveCLIDeployment, PromotedAt: time.Now().UTC(), Suite: view.Baseline, Policy: raw, PolicyHash: policy.Hash(), CasesPassed: 1, OldestRunCreatedAt: time.Now().Add(-10 * time.Second).UTC(), EvidenceAgeSeconds: 10}
+	return api.AutomationLiveBaseline{PromotionID: baselineCLIPromotion, AppID: main.LiveCLIDeployment, Name: view.Baseline.Name, BaselineName: "production", Revision: 1, ActorAccountID: main.LiveCLIDeployment, PromotedAt: time.Now().UTC(), Suite: view.Baseline, Policy: raw, PolicyHash: policy.Hash(), CasesPassed: 1, OldestRunCreatedAt: time.Now().Add(-10 * time.Second).UTC(), EvidenceAgeSeconds: 10}
 }
 func namedGateArgs() []string {
 	args := automationGateArgs()
@@ -38,12 +39,12 @@ func namedGateArgs() []string {
 func TestAutomationGateNamedBaselineResolvesReviewedPolicy(t *testing.T) {
 	for _, mode := range []string{"passed", "stale-candidate", "policy-mismatch", "invalid-receipt", "head-missing", "comparison-missing", "same-candidate"} {
 		t.Run(mode, func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = true
-			out := captureAutomationStdout(t)
-			fake := authedFakeAPI(t, "", http.StatusOK)
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = true
+			out := main.CaptureAutomationStdout(t)
+			fake := main.AuthedFakeAPI(t, "", http.StatusOK)
 			calls := []string{}
-			fake.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			(*fake.Srv()).Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls = append(calls, r.Method+" "+r.URL.EscapedPath())
 				if r.Method != http.MethodGet || r.ContentLength > 0 {
 					t.Error("named gate mutated state")
@@ -83,12 +84,12 @@ func TestAutomationGateNamedBaselineResolvesReviewedPolicy(t *testing.T) {
 				}
 				args = append(args, "--policy", path)
 			}
-			code, stderr := runWithStderr(t, func() int { return run(args) })
+			code, stderr := main.RunWithStderr(t, func() int { return main.Run(args) })
 			want := map[string]int{"passed": 0, "stale-candidate": 7, "policy-mismatch": 7, "invalid-receipt": 3, "head-missing": 4, "comparison-missing": 4, "same-candidate": 1}[mode]
 			if code != want {
 				t.Fatalf("exit %d, want %d: %s %s", code, want, stderr, out.String())
 			}
-			var report automationLiveGateReport
+			var report main.AutomationLiveGateReport
 			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 				t.Fatal(err)
 			}
@@ -115,13 +116,13 @@ func TestAutomationGateNamedBaselineResolvesReviewedPolicy(t *testing.T) {
 func TestAutomationLiveBaselineCLIExplicitWriteAndRead(t *testing.T) {
 	for _, verb := range []string{"promote", "show", "history"} {
 		t.Run(verb, func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = true
-			out := captureAutomationStdout(t)
-			fake := authedFakeAPI(t, "", http.StatusOK)
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = true
+			out := main.CaptureAutomationStdout(t)
+			fake := main.AuthedFakeAPI(t, "", http.StatusOK)
 			calls := 0
 			receipt := baselineCLIReceipt()
-			fake.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			(*fake.Srv()).Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				root := "/v1/apps/billing/automations/case%2Freport/live-baselines/production"
 				wantMethod, wantPath := http.MethodGet, root
@@ -151,9 +152,9 @@ func TestAutomationLiveBaselineCLIExplicitWriteAndRead(t *testing.T) {
 				if err := os.WriteFile(path, receipt.Policy, 0600); err != nil {
 					t.Fatal(err)
 				}
-				args = append(args, "--suite", gateCLIBaseline, "--promotion-id", baselineCLIPromotion, "--expected-revision", "0", "--expected-version", "7", "--expected-published-version", "4", "--expected-deployment-id", liveCLIDeployment, "--policy", path)
+				args = append(args, "--suite", gateCLIBaseline, "--promotion-id", baselineCLIPromotion, "--expected-revision", "0", "--expected-version", "7", "--expected-published-version", "4", "--expected-deployment-id", main.LiveCLIDeployment, "--policy", path)
 			}
-			code, stderr := runWithStderr(t, func() int { return run(args) })
+			code, stderr := main.RunWithStderr(t, func() int { return main.Run(args) })
 			if code != 0 || calls != 1 || !strings.Contains(out.String(), baselineCLIPromotion) {
 				t.Fatalf("exit %d calls %d: %s %s", code, calls, stderr, out.String())
 			}
@@ -162,11 +163,11 @@ func TestAutomationLiveBaselineCLIExplicitWriteAndRead(t *testing.T) {
 }
 func TestAutomationLiveBaselineCLIRejectsAmbiguousSelectionLocally(t *testing.T) {
 	for _, args := range [][]string{append(namedGateArgs(), "--baseline", gateCLIBaseline), append(namedGateArgs(), "--confirm-real-actions"), {"automations", "live", "baseline", "promote", "--app", "billing", "--name", "report", "--baseline-name", "production"}} {
-		resetJSONOut(t)
-		fake := authedFakeAPI(t, "", 200)
+		main.ResetJSONOut(t)
+		fake := main.AuthedFakeAPI(t, "", 200)
 		calls := 0
-		fake.srv.Config.Handler = http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ })
-		code, _ := runWithStderr(t, func() int { return run(args) })
+		(*fake.Srv()).Config.Handler = http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ })
+		code, _ := main.RunWithStderr(t, func() int { return main.Run(args) })
 		if code != 1 || calls != 0 {
 			t.Fatal("ambiguous or incomplete selection reached API", code, calls)
 		}

@@ -1,8 +1,9 @@
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"reflect"
 	"testing"
 	"time"
@@ -10,12 +11,12 @@ import (
 
 func TestMemStoreObjectUploadRoutesCoverage(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
-	if _, err := m.UpsertObjectUploadRoute(ctx, ObjectUploadRoute{}); !errors.Is(err, ErrConflict) {
+	m := state.NewMemStore()
+	if _, err := m.UpsertObjectUploadRoute(ctx, state.ObjectUploadRoute{}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("invalid route error = %v, want ErrConflict", err)
 	}
 
-	first, err := m.UpsertObjectUploadRoute(ctx, ObjectUploadRoute{
+	first, err := m.UpsertObjectUploadRoute(ctx, state.ObjectUploadRoute{
 		ID: "route-z", AccountID: "acct", AppID: "app", Name: "zeta", BucketID: "bucket",
 		KeyPrefix: "uploads/", MaxBytes: 1024, AllowedContentTypes: []string{"text/plain"}, Enabled: true,
 	})
@@ -26,7 +27,7 @@ func TestMemStoreObjectUploadRoutesCoverage(t *testing.T) {
 		t.Fatalf("insert timestamps = %+v, want populated", first)
 	}
 
-	second, err := m.UpsertObjectUploadRoute(ctx, ObjectUploadRoute{
+	second, err := m.UpsertObjectUploadRoute(ctx, state.ObjectUploadRoute{
 		ID: "route-a", AccountID: "acct", AppID: "app", Name: "alpha", BucketID: "bucket",
 		MaxBytes: 2048, AllowedContentTypes: []string{"image/png"},
 	})
@@ -48,7 +49,7 @@ func TestMemStoreObjectUploadRoutesCoverage(t *testing.T) {
 	if !reflect.DeepEqual(got.AllowedContentTypes, []string{"image/png"}) {
 		t.Fatalf("route was not defensively cloned: %+v", got.AllowedContentTypes)
 	}
-	if _, err := m.GetObjectUploadRoute(ctx, "other", "app", "alpha"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.GetObjectUploadRoute(ctx, "other", "app", "alpha"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account get error = %v, want ErrNotFound", err)
 	}
 	if got, err := m.ListObjectUploadRoutes(ctx, "other", "app"); err != nil || len(got) != 0 {
@@ -57,36 +58,36 @@ func TestMemStoreObjectUploadRoutesCoverage(t *testing.T) {
 
 	// Updating an existing ID preserves its creation timestamp and replaces
 	// the policy while a different ID with the same app/name is rejected.
-	updated, err := m.UpsertObjectUploadRoute(ctx, ObjectUploadRoute{
+	updated, err := m.UpsertObjectUploadRoute(ctx, state.ObjectUploadRoute{
 		ID: "route-z", AccountID: "acct", AppID: "app", Name: "zeta", BucketID: "bucket",
 		KeyPrefix: "new/", MaxBytes: 4096, AllowedContentTypes: []string{"application/json"},
 	})
 	if err != nil || !updated.CreatedAt.Equal(first.CreatedAt) || updated.KeyPrefix != "new/" {
 		t.Fatalf("updated route = %+v, err=%v; want preserved creation time", updated, err)
 	}
-	if _, err := m.UpsertObjectUploadRoute(ctx, ObjectUploadRoute{
+	if _, err := m.UpsertObjectUploadRoute(ctx, state.ObjectUploadRoute{
 		ID: "route-duplicate", AccountID: "acct", AppID: "app", Name: "zeta", BucketID: "bucket", MaxBytes: 1,
-	}); !errors.Is(err, ErrConflict) {
+	}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate route error = %v, want ErrConflict", err)
 	}
-	if err := m.DeleteObjectUploadRoute(ctx, "acct", "app", "missing"); !errors.Is(err, ErrNotFound) {
+	if err := m.DeleteObjectUploadRoute(ctx, "acct", "app", "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing delete error = %v, want ErrNotFound", err)
 	}
 	if err := m.DeleteObjectUploadRoute(ctx, "acct", "app", "alpha"); err != nil {
 		t.Fatalf("delete route: %v", err)
 	}
 
-	if _, err := m.RecordObjectUploadCompletion(ctx, ObjectUploadCompletion{}); !errors.Is(err, ErrConflict) {
+	if _, err := m.RecordObjectUploadCompletion(ctx, state.ObjectUploadCompletion{}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("invalid completion error = %v, want ErrConflict", err)
 	}
-	completion, err := m.RecordObjectUploadCompletion(ctx, ObjectUploadCompletion{
+	completion, err := m.RecordObjectUploadCompletion(ctx, state.ObjectUploadCompletion{
 		ID: "completion-1", RouteID: "route-z", Key: "new/file", Bytes: 12,
 	})
 	if err != nil || completion.CreatedAt.IsZero() {
 		t.Fatalf("completion = %+v, err=%v; want timestamp", completion, err)
 	}
 	created := time.Unix(123, 0).UTC()
-	completion, err = m.RecordObjectUploadCompletion(ctx, ObjectUploadCompletion{
+	completion, err = m.RecordObjectUploadCompletion(ctx, state.ObjectUploadCompletion{
 		ID: "completion-2", RouteID: "route-z", Key: "new/file-2", Bytes: 0, CreatedAt: created,
 	})
 	if err != nil || !completion.CreatedAt.Equal(created) {

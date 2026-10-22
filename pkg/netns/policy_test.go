@@ -504,6 +504,17 @@ func TestHostPolicyMasqueradeChainAppendsV6Sibling(t *testing.T) {
 // "postrouting".
 func TestHostPolicyPostroutingIsLastChain(t *testing.T) {
 	out := DefaultHostPolicy.Render()
+	// This ordering belongs to the primary tenant table. The independent
+	// public-forward generation guard has its own output hook/table.
+	start := strings.Index(out, "table inet faas {\n")
+	if start < 0 {
+		t.Fatal("primary tenant table missing")
+	}
+	end := strings.Index(out[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("primary tenant table unterminated")
+	}
+	out = out[start : start+end+3]
 	wantOrder := []string{"chain input {", "chain forward {", "chain output {", "chain postrouting {"}
 	last := -1
 	for _, w := range wantOrder {

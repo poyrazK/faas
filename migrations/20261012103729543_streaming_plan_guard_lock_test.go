@@ -54,8 +54,10 @@ func TestStreamingPlanGuardDoesNotBlockForeignKeyChecks(t *testing.T) {
 		if _, err := update.Exec(ctx, `UPDATE apps SET ram_mb = 256, streaming_enabled = streaming_enabled WHERE id = $1`, streamingApp); err != nil {
 			t.Fatalf("app update: %v", err)
 		}
-		return lockTimesOut(ctx, t, pool, `INSERT INTO request_id_journal (id, account_id, app_id, request_id, received_at, expires_at)
-			VALUES ($1, $2, $3, 'req-1', now(), now() + interval '1 hour')`, uuid.NewString(), accountID, streamingApp)
+		// request_id_journal's account key references resource_namespaces
+		// since #4882, so a session insert stands in for the foreign-key check
+		// that still takes FOR KEY SHARE on the accounts row.
+		return lockTimesOut(ctx, t, pool, `INSERT INTO sessions (account_id) VALUES ($1)`, accountID)
 	}
 	if journalBlocked() {
 		t.Fatal("a request-journal insert waited on an app update; foreign-key checks must not queue behind the streaming guard")

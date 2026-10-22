@@ -227,7 +227,14 @@ func (f *customerWorkflowFixture) waitState(t *testing.T, id string, want api.Op
 }
 func (f *customerWorkflowFixture) waitPrivate(t *testing.T, id string) string {
 	t.Helper()
-	customerWorkflowEventually(t, time.Minute, "private final-action file and replayed acknowledgement", func() bool { observed := f.relay.observation(id); return observed.prepared && observed.lookups >= 2 })
+	deadline := time.Now().Add(time.Minute)
+	for observed := f.relay.observation(id); !observed.prepared || observed.lookups < 2; observed = f.relay.observation(id) {
+		if time.Now().After(deadline) {
+			f.logWorkflowDiagnostics(t, id)
+			t.Fatalf("timed out waiting for private final-action file and replayed acknowledgement (relay: entered=%v uploads=%d lookups=%d lostAck=%v prepared=%v)", observed.entered, observed.uploads, observed.lookups, observed.lostAck, observed.prepared)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	op, err := f.store.OperationByID(t.Context(), f.account.ID, f.tenantID, id)
 	mustCustomerWorkflow(t, err)
 	receipt, ok := op.WorkflowArtifactReceipts["export-csv"]
@@ -292,6 +299,39 @@ func (f *customerWorkflowFixture) assertProgress(t *testing.T, id string) {
 	for _, step := range []string{"collect", "transform", "finish"} {
 		if observed.entered[step] != 1 {
 			t.Fatal("guest did not execute the three-step chain exactly once")
+		}
+	}
+}
+
+// logWorkflowDiagnostics records where a native workflow Operation stopped:
+// its state, the run and every step's attempts.
+func (f *customerWorkflowFixture) logWorkflowDiagnostics(t *testing.T, id string) {
+	t.Helper()
+	op, err := f.store.OperationByID(t.Context(), f.account.ID, f.tenantID, id)
+	if err != nil {
+		t.Logf("diagnostics: operation %s: %v", id, err)
+		return
+	}
+	t.Logf("diagnostics: operation state=%s failure=%q waiting=%+v run=%s generation=%d", op.State, op.FailureCode, op.Waiting, op.WorkflowRunID, op.Generation)
+	if op.WorkflowRunID == "" {
+		return
+	}
+	if run, err := f.store.GetWorkflowRun(t.Context(), op.WorkflowRunID); err == nil && run != nil {
+		t.Logf("diagnostics: run %+v", *run)
+	}
+	for _, step := range []string{"collect", "transform", "finish"} {
+		attempts, err := f.store.GetWorkflowStepAttempts(t.Context(), op.WorkflowRunID, step)
+		if err != nil {
+			t.Logf("diagnostics: step %s: %v", step, err)
+		}
+		for _, attempt := range attempts {
+			raw, _ := json.Marshal(attempt)
+			t.Logf("diagnostics: step %s attempt %s", step, raw)
+		}
+	}
+	if page, err := f.owner.GetAccountOperationEvents(t.Context(), f.app.Slug, id, 0); err == nil {
+		for _, event := range page.Events {
+			t.Logf("diagnostics: event %d %s %s", event.Sequence, event.Type, event.Data)
 		}
 	}
 }

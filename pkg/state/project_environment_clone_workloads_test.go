@@ -15,22 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type cloneWorkloadTestStore interface {
-	cloneReservationStore
-	cloneFlagFixtureStore
-	state.ProjectEnvironmentCloneWorkloadStore
-	state.ProjectEnvironmentWorkloadSpecStore
-	state.ProjectEnvironmentClonePublicationStore
-	state.ProjectEnvironmentCloneWorkerLeaseStore
-	state.ProjectEnvironmentCloneValuesStore
-	state.ProjectReleaseSetReader
-	state.ProjectPromotionDeploymentStore
-	ProjectEnvironmentWorkloadSpecForDeployment(context.Context, string, string, string) (state.ProjectEnvironmentWorkloadSpec, error)
-	DeploymentSidecarSecretReloadSignal(context.Context, string, string) (string, error)
-	GetProjectEnvironmentEdgePolicy(context.Context, string, string, string) (state.ProjectEnvironmentEdgePolicy, error)
-	PutProjectEnvironmentEdgePolicy(context.Context, state.ProjectEnvironmentEdgePolicy) (state.ProjectEnvironmentEdgePolicy, error)
-	GetProjectEnvironmentRoutePolicy(context.Context, string, string, string) (state.ProjectEnvironmentRoutePolicy, error)
-}
+type cloneWorkloadTestStore = contractTestStore
 
 // ADR-590: a clone reuses the selected immutable artifacts and actual deployed
 // settings. It must survive a source head edit and a later production rollout.

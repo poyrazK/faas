@@ -1742,7 +1742,7 @@ func debugTelemetryRowToItem(row sqlc.ListRequestTelemetryByAppRow) api.DebugTel
 }
 
 func debugTelemetryGetRowToItem(row sqlc.GetRequestTelemetryByAppAndIdentifierRow) api.DebugTelemetryRequestItem {
-	return debugTelemetryItemFromFields(
+	item := debugTelemetryItemFromFields(
 		row.ID,
 		row.DeploymentID,
 		row.Route,
@@ -1767,6 +1767,8 @@ func debugTelemetryGetRowToItem(row sqlc.GetRequestTelemetryByAppAndIdentifierRo
 		row.DeploymentCreatedAt,
 		row.ImageDigest,
 	)
+	item.TraceInferred = row.TraceInferred
+	return item
 }
 
 func debugTelemetryItemFromFields(

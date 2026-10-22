@@ -23,6 +23,73 @@ type productMemory struct {
 	planChanges       map[string]productMemoryPlanChange
 	help              map[string]productHelpRow
 	notificationReads map[string]productNotificationRead
+	// overduePolicies are keyed by app, overdueHolds by app/tenant.
+	overduePolicies map[string]ProductOverduePolicy
+	overdueHolds    map[string]ProductOverdueHold
+	// planHistory is each customer's assignments by app/tenant, oldest
+	// first (ADR-20261021154511).
+	planHistory map[string][]productMemoryPlanEntry
+}
+
+type productMemoryPlanEntry struct {
+	account, revision, plan string
+	first                   bool
+	at                      time.Time
+}
+
+// assignProductCustomerLocked stores an assignment and, when its revision or
+// plan changed, appends it to the plan history, as the Postgres upsert does
+// (ADR-20261021154511).
+func (m *MemStore) assignProductCustomerLocked(account, app string, customer api.ProductCustomer) api.ProductCustomer {
+	d := m.productLocked()
+	key := app + "/" + customer.TenantID
+	prior, existed := d.customers[key]
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	// A customer keeps any trial they had, and without one starts the
+	// plan's trial (ADR-20261021195901).
+	customer.TrialStartsAt, customer.TrialEndsAt = prior.TrialStartsAt, prior.TrialEndsAt
+	if days := d.revisions[app+"/"+customer.Revision].Spec.Plans[customer.Plan].TrialDays; customer.TrialStartsAt == nil && days > 0 {
+		end := now.AddDate(0, 0, int(days))
+		customer.TrialStartsAt, customer.TrialEndsAt = &now, &end
+	}
+	d.customers[key] = customer
+	if existed && prior.Revision == customer.Revision && prior.Plan == customer.Plan {
+		return customer
+	}
+	if d.planHistory == nil {
+		d.planHistory = map[string][]productMemoryPlanEntry{}
+	}
+	d.planHistory[key] = append(d.planHistory[key], productMemoryPlanEntry{account: account, revision: customer.Revision, plan: customer.Plan, first: !existed, at: now})
+	return customer
+}
+
+// productMonthPlansLocked is ProductControlMonthPlans for the memory store:
+// each assignment that overlaps the month, held until the next one.
+func (m *MemStore) productMonthPlansLocked(scope ProductBillingScope) []productcontrol.PlanHeld {
+	start, end := productMonthBounds(scope.Period)
+	var entries []productMemoryPlanEntry
+	for _, e := range m.productLocked().planHistory[scope.AppID+"/"+scope.TenantID] {
+		if e.account == scope.AccountID && e.at.Before(end) {
+			entries = append(entries, e)
+		}
+	}
+	held := []productcontrol.PlanHeld{}
+	for i, e := range entries {
+		var until time.Time
+		if i+1 < len(entries) {
+			until = entries[i+1].at
+		}
+		if !until.IsZero() && !until.After(start) {
+			continue
+		}
+		held = append(held, productcontrol.PlanHeld{Revision: e.revision, Plan: e.plan, Since: e.at, Until: until, First: e.first})
+	}
+	return held
+}
+
+// productTrialLocked is a customer's trial, nil without one.
+func (m *MemStore) productTrialLocked(app, tenant string) *productcontrol.Trial {
+	return productTrial(m.productLocked().customers[app+"/"+tenant])
 }
 
 type productMemoryReceipt struct {
@@ -139,8 +206,7 @@ func (m *MemStore) SetProductCustomer(_ context.Context, account, appID string, 
 			return api.ProductCustomer{}, ErrConflict
 		}
 	}
-	d.customers[appID+"/"+customer.TenantID] = customer
-	return customer, nil
+	return m.assignProductCustomerLocked(account, appID, customer), nil
 }
 
 func (m *MemStore) GetProductCustomer(_ context.Context, account, appID, tenantID string) (api.ProductCustomer, error) {
@@ -195,10 +261,18 @@ func (m *MemStore) GetProductUsage(_ context.Context, account, appID, tenantID, 
 		return api.ProductUsage{}, ErrNotFound
 	}
 	lines := map[string]api.ProductUsageLine{}
+	var trialStarts map[string]int64
+	from, until, trial := productTrialInPeriod(d.customers[appID+"/"+tenantID], period)
 	for _, row := range d.receipts {
 		r := row.receipt
 		if row.account != account || row.app != appID || row.tenant != tenantID || r.Period != period {
 			continue
+		}
+		if trial && !r.AdmittedAt.Before(from) && r.AdmittedAt.Before(until) {
+			if trialStarts == nil {
+				trialStarts = map[string]int64{}
+			}
+			trialStarts[r.Feature]++
 		}
 		key := r.Feature + "/" + r.Revision + "/" + r.Plan
 		line := lines[key]
@@ -212,7 +286,7 @@ func (m *MemStore) GetProductUsage(_ context.Context, account, appID, tenantID, 
 		}
 		lines[key] = line
 	}
-	return api.ProductUsage{Period: period, Currency: catalog.Spec.Currency, Lines: productUsageLines(lines), Provisional: true}, nil
+	return api.ProductUsage{Period: period, Currency: catalog.Spec.Currency, Lines: productUsageLines(lines), Provisional: true, TrialStarts: trialStarts}, nil
 }
 
 // Called under the same lock as Operations admission, after duplicate lookup.
@@ -231,6 +305,9 @@ func (m *MemStore) prepareProductOperationLocked(op *Operation, def OperationDef
 	if err != nil {
 		return err
 	}
+	if hold, held := m.productOverdueHoldLocked(op.AccountID, op.AppID, op.PlatformTenantID); held {
+		return productOverdueRefusal(hold)
+	}
 	feature := catalog.Spec.Features[admission.ProductFeature]
 	if feature.Operation != nil {
 		current, err := m.productDefinitionLocked(op.AccountID, op.AppID, feature)
@@ -238,13 +315,17 @@ func (m *MemStore) prepareProductOperationLocked(op *Operation, def OperationDef
 			return ErrProductBindingUnavailable
 		}
 	}
-	var starts int64
+	var starts, trialStarts int64
+	from, until, trial := productTrialInMonth(customer, now)
 	for _, r := range d.receipts {
 		if r.app == op.AppID && r.tenant == op.PlatformTenantID && r.receipt.Feature == admission.ProductFeature && r.receipt.Period == productcontrol.Period(now) {
 			starts++
+			if trial && !r.receipt.AdmittedAt.Before(from) && r.receipt.AdmittedAt.Before(until) {
+				trialStarts++
+			}
 		}
 	}
-	return prepareProductReceipt(op, admission, catalog, customer, grant, starts, now)
+	return prepareProductReceipt(op, admission, catalog, customer, grant, starts, trialStarts, now)
 }
 
 func (m *MemStore) insertProductOperationLocked(op Operation) {

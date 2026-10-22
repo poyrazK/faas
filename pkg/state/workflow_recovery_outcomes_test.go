@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWorkflowRecoveryEvidenceObservations(t *testing.T) {
@@ -32,7 +33,7 @@ func TestWorkflowRecoveryEvidenceObservations(t *testing.T) {
 		{"future completion", &admitted, now, &future, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := workflowRecoveryExecution(now, WorkflowRunStatusSucceeded, tc.count, 0, tc.admitted, tc.updated, tc.finished, false)
+			got := state.WorkflowRecoveryExecution(now, state.WorkflowRunStatusSucceeded, tc.count, 0, tc.admitted, tc.updated, tc.finished, false)
 			if got.State != "unknown" || got.CompletedAt != nil {
 				t.Fatalf("inconsistent evidence attributed success: %+v", got)
 			}
@@ -41,11 +42,11 @@ func TestWorkflowRecoveryEvidenceObservations(t *testing.T) {
 }
 
 func TestWorkflowRecoveryExecutionObservations(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
-		run, app := seedResumeRun(t, store, simpleResumeSpec())
-		failResumeRun(t, store, run, "send")
-		recovery := store.(EventRecoveryStore)
+		run, app := state.SeedResumeRun(t, store, state.SimpleResumeSpec())
+		state.FailResumeRun(t, store, run, "send")
+		recovery := store.(state.EventRecoveryStore)
 		job, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, api.EventRecoveryRequest{RequestID: uuid.NewString(), WorkflowRuns: &api.WorkflowRunRecoveryPlan{Name: run.WorkflowName, Runs: []api.WorkflowRunRecoveryTarget{{RunID: run.ID}}}})
 		if err != nil {
 			t.Fatal(err)
@@ -57,8 +58,8 @@ func TestWorkflowRecoveryExecutionObservations(t *testing.T) {
 		if did, err := recovery.ProcessNextEventRecovery(ctx, time.Now().UTC()); err != nil || !did {
 			t.Fatalf("admission=%v %v", did, err)
 		}
-		if pg, ok := store.(*PgStore); ok {
-			recovery = NewPgStore(pg.pool)
+		if pg, ok := store.(*state.PgStore); ok {
+			recovery = state.NewPgStore((*pg.Pool()).Pool)
 		}
 		check := func(want string) {
 			t.Helper()
@@ -108,38 +109,38 @@ func TestWorkflowRecoveryExecutionObservations(t *testing.T) {
 			t.Fatal(err)
 		}
 		check("running")
-		if err := store.MarkWorkflowRunStatus(ctx, run.ID, WorkflowRunStatusAwaitingEvent, nil, nil); err != nil {
+		if err := store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusAwaitingEvent, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		check("running")
-		current := WithWorkflowRunGeneration(ctx, run.ID, 1)
-		if err := store.MarkWorkflowRunStatus(current, run.ID, WorkflowRunStatusPending, nil, nil); err != nil {
+		current := state.WithWorkflowRunGeneration(ctx, run.ID, 1)
+		if err := store.MarkWorkflowRunStatus(current, run.ID, state.WorkflowRunStatusPending, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := store.ClaimNextDueWorkflowRun(current); err != nil {
 			t.Fatal(err)
 		}
-		step := guardStep(t, store, run.ID, "send")
+		step := state.GuardStep(t, store, run.ID, "send")
 		if _, err := store.StartWorkflowStep(current, run.ID, "send", step.Attempt+1, run.Input); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.MarkWorkflowStepAttemptStatus(current, run.ID, "send", WorkflowStepStatusDead, step.Attempt+1, nil, nil, nil); err != nil {
+		if err := store.MarkWorkflowStepAttemptStatus(current, run.ID, "send", state.WorkflowStepStatusDead, step.Attempt+1, nil, nil, nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.MarkWorkflowRunStatus(current, run.ID, WorkflowRunStatusDead, nil, nil); err != nil {
+		if err := store.MarkWorkflowRunStatus(current, run.ID, state.WorkflowRunStatusDead, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		check("failed")
 		// First confirmed failure stays authoritative across later resumes.
-		if _, _, _, err := store.(WorkflowResumeStore).ResumeWorkflowRun(ctx, resumeOptions(run, app, 1)); err != nil {
+		if _, _, _, err := store.(state.WorkflowResumeStore).ResumeWorkflowRun(ctx, state.ResumeOptions(run, app, 1)); err != nil {
 			t.Fatal(err)
 		}
 		check("failed")
-		if err := store.MarkWorkflowRunStatus(ctx, run.ID, WorkflowRunStatusSucceeded, nil, nil); err != nil {
+		if err := store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusSucceeded, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		check("failed")
-		records, err := store.(WorkflowResumeStore).ListWorkflowResumes(ctx, run.ID)
+		records, err := store.(state.WorkflowResumeStore).ListWorkflowResumes(ctx, run.ID)
 		if err != nil || len(records) != 2 {
 			t.Fatalf("reads mutated resumes=%+v %v", records, err)
 		}
@@ -156,11 +157,11 @@ func TestWorkflowRecoveryExecutionObservations(t *testing.T) {
 func TestWorkflowRecoveryTerminalObservations(t *testing.T) {
 	for _, scenario := range []string{"succeeded", "dead", "cancelled", "missing_run", "missing_resume"} {
 		t.Run(scenario, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, store Store) {
+			state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 				ctx := context.Background()
-				run, app := seedResumeRun(t, store, simpleResumeSpec())
-				failResumeRun(t, store, run, "send")
-				recovery := store.(EventRecoveryStore)
+				run, app := state.SeedResumeRun(t, store, state.SimpleResumeSpec())
+				state.FailResumeRun(t, store, run, "send")
+				recovery := store.(state.EventRecoveryStore)
 				job, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, api.EventRecoveryRequest{RequestID: uuid.NewString(), WorkflowRuns: &api.WorkflowRunRecoveryPlan{Name: run.WorkflowName, Runs: []api.WorkflowRunRecoveryTarget{{RunID: run.ID}}}})
 				if err != nil {
 					t.Fatal(err)
@@ -171,11 +172,11 @@ func TestWorkflowRecoveryTerminalObservations(t *testing.T) {
 				want := scenario
 				switch scenario {
 				case "succeeded":
-					if err := store.MarkWorkflowRunStatus(ctx, run.ID, WorkflowRunStatusSucceeded, nil, nil); err != nil {
+					if err := store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusSucceeded, nil, nil); err != nil {
 						t.Fatal(err)
 					}
 				case "dead":
-					if err := store.MarkWorkflowRunStatus(ctx, run.ID, WorkflowRunStatusDead, nil, nil); err != nil {
+					if err := store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusDead, nil, nil); err != nil {
 						t.Fatal(err)
 					}
 					want = "failed"
@@ -185,21 +186,21 @@ func TestWorkflowRecoveryTerminalObservations(t *testing.T) {
 					}
 				case "missing_run", "missing_resume":
 					want = "unknown"
-					if mem, ok := store.(*MemStore); ok {
-						mem.mu.Lock()
+					if mem, ok := store.(*state.MemStore); ok {
+						(*mem.Mu()).Lock()
 						if scenario == "missing_run" {
-							delete(mem.workflowRuns, run.ID)
+							delete((*mem.WorkflowRuns()), run.ID)
 						} else {
-							delete(mem.workflowResumes, run.ID)
+							delete((*mem.WorkflowResumes()), run.ID)
 						}
-						mem.mu.Unlock()
+						(*mem.Mu()).Unlock()
 					} else {
-						pg := store.(*PgStore)
+						pg := store.(*state.PgStore)
 						query := "DELETE FROM workflow_runs WHERE id=$1::uuid"
 						if scenario == "missing_resume" {
 							query = "DELETE FROM workflow_run_resumes WHERE run_id=$1::uuid"
 						}
-						if _, err := pg.pool.Exec(ctx, query, run.ID); err != nil {
+						if _, err := (*pg.Pool()).Exec(ctx, query, run.ID); err != nil {
 							t.Fatal(err)
 						}
 					}

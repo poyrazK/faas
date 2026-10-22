@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -109,21 +110,21 @@ scenarios:
 	if err := os.WriteFile(data, []byte(`[{"customer":"private/customer?&${literal}","count":9007199254740993,"enabled":true},{"customer":"private/second","count":2,"enabled":false}]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readTestManifest(manifest); err == nil {
+	if _, _, err := main.ReadTestManifest(manifest); err == nil {
 		t.Fatal("manifest with data references was accepted without a data file")
 	}
-	if code := cmdTest([]string{"--validate", "--engine", "local", "--manifest", manifest, "--data", data}); code != 0 {
+	if code := main.CmdTest([]string{"--validate", "--engine", "local", "--manifest", manifest, "--data", data}); code != 0 {
 		t.Fatalf("local validation required deployable source: exit %d", code)
 	}
-	oldJSON, oldOut, oldErr := jsonOutput, osStdout, osStderr
+	oldJSON, oldOut, oldErr := (*main.JsonOutput), (*main.OsStdout), (*main.OsStderr)
 	var stdout, stderr bytes.Buffer
-	jsonOutput, osStdout, osStderr = true, &stdout, &stderr
-	t.Cleanup(func() { jsonOutput, osStdout, osStderr = oldJSON, oldOut, oldErr })
+	(*main.JsonOutput), (*main.OsStdout), (*main.OsStderr) = true, &stdout, &stderr
+	t.Cleanup(func() { (*main.JsonOutput), (*main.OsStdout), (*main.OsStderr) = oldJSON, oldOut, oldErr })
 	report, junit := filepath.Join(dir, "results.json"), filepath.Join(dir, "results.xml")
-	if code := cmdTest([]string{"--scenario", "customer-export", "--engine", "local", "--base-url", server.URL, "--manifest", manifest, "--data", data, "--repeat", "2", "--report", report, "--junit", junit}); code != 0 {
+	if code := main.CmdTest([]string{"--scenario", "customer-export", "--engine", "local", "--base-url", server.URL, "--manifest", manifest, "--data", data, "--repeat", "2", "--report", report, "--junit", junit}); code != 0 {
 		t.Fatalf("local run exit %d: %s", code, stderr.String())
 	}
-	var receipts []testRunReceipt
+	var receipts []main.TestRunReceipt
 	if err := json.Unmarshal(stdout.Bytes(), &receipts); err != nil || len(receipts) != 4 {
 		t.Fatalf("JSON output = %s (%v)", stdout.String(), err)
 	}
@@ -148,7 +149,7 @@ scenarios:
 			}
 		}
 		if path == junit {
-			var suite testJUnitSuite
+			var suite main.TestJUnitSuite
 			if err := xml.Unmarshal(body, &suite); err != nil || suite.Tests != 4 || suite.Failures != 0 {
 				t.Fatalf("JUnit suite = (%+v, %v)", suite, err)
 			}
@@ -180,13 +181,13 @@ func TestLocalScenarioCleansUpFailuresAndCancellation(t *testing.T) {
 	for _, failure := range []string{"setup", "request", "command", "cleanup", "canceled"} {
 		t.Run(failure, func(t *testing.T) {
 			dir := t.TempDir()
-			scenario := testScenario{Command: []string{"sh", "-c", "exit 0"}, Cleanup: [][]string{{"sh", "-c", "printf cleaned > cleanup.txt"}}}
+			scenario := main.TestScenario{Command: []string{"sh", "-c", "exit 0"}, Cleanup: [][]string{{"sh", "-c", "printf cleaned > cleanup.txt"}}}
 			ctx := context.Background()
 			switch failure {
 			case "setup":
 				scenario.Setup = [][]string{{"sh", "-c", "exit 1"}}
 			case "request":
-				scenario.Requests = []testHTTPRequest{{Name: "denied", Method: "GET", Path: "/", Expect: testHTTPExpect{Status: 200}}}
+				scenario.Requests = []main.TestHTTPRequest{{Name: "denied", Method: "GET", Path: "/", Expect: main.TestHTTPExpect{Status: 200}}}
 			case "command":
 				scenario.Command = []string{"sh", "-c", "exit 1"}
 			case "cleanup":
@@ -196,7 +197,7 @@ func TestLocalScenarioCleansUpFailuresAndCancellation(t *testing.T) {
 				cancel()
 				ctx = canceled
 			}
-			receipt := runLocalTest(ctx, "failure", scenario, dir, server.URL, testDataCase{})
+			receipt := main.RunLocalTest(ctx, "failure", scenario, dir, server.URL, main.TestDataCase{})
 			if receipt.Status != "failed" || (receipt.Error == "" && receipt.CleanupError == "") {
 				t.Fatalf("failed receipt = %+v", receipt)
 			}
@@ -248,14 +249,14 @@ scenarios:
 	if err := os.WriteFile(data, []byte("path,enabled,count\ndenied,true,2\nallowed,true,2\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdTest([]string{"--scenario", "csv-test", "--engine", "local", "--base-url", server.URL, "--manifest", manifest, "--data", data, "--report", report, "--junit", junit}); code != 1 {
+	if code := main.CmdTest([]string{"--scenario", "csv-test", "--engine", "local", "--base-url", server.URL, "--manifest", manifest, "--data", data, "--report", report, "--junit", junit}); code != 1 {
 		t.Fatalf("partial failure exit = %d, want 1", code)
 	}
 	body, err := os.ReadFile(report)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var receipts []testRunReceipt
+	var receipts []main.TestRunReceipt
 	if err := json.Unmarshal(body, &receipts); err != nil || len(receipts) != 2 || receipts[0].Status != "failed" || receipts[1].Status != "passed" {
 		t.Fatalf("CSV receipts = (%+v, %v)", receipts, err)
 	}
@@ -263,7 +264,7 @@ scenarios:
 	if err != nil {
 		t.Fatal(err)
 	}
-	var suite testJUnitSuite
+	var suite main.TestJUnitSuite
 	if err := xml.Unmarshal(body, &suite); err != nil || suite.Tests != 2 || suite.Failures != 1 {
 		t.Fatalf("partial failure JUnit = (%+v, %v)", suite, err)
 	}
@@ -293,10 +294,10 @@ scenarios:
 	if err := os.WriteFile(manifest, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdTest([]string{"--scenario", "smoke-test", "--engine", "local", "--manifest", manifest, "--base-url", "http://localhost:3000"}); code != 0 {
+	if code := main.CmdTest([]string{"--scenario", "smoke-test", "--engine", "local", "--manifest", manifest, "--base-url", "http://localhost:3000"}); code != 0 {
 		t.Fatalf("unselected data scenario blocked smoke run: exit %d", code)
 	}
-	if code := cmdTest([]string{"--scenario", "data-test", "--engine", "local", "--validate", "--manifest", manifest}); code == 0 {
+	if code := main.CmdTest([]string{"--scenario", "data-test", "--engine", "local", "--validate", "--manifest", manifest}); code == 0 {
 		t.Fatal("selected data scenario accepted unresolved data references")
 	}
 	// A deployable source lets real-VM validation select the ordinary scenario
@@ -304,34 +305,34 @@ scenarios:
 	if err := os.WriteFile(filepath.Join(dir, "handler.js"), []byte("exports.handler = async () => ({statusCode: 200});\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdTest([]string{"--scenario", "smoke-test", "--validate", "--manifest", manifest}); code != 0 {
+	if code := main.CmdTest([]string{"--scenario", "smoke-test", "--validate", "--manifest", manifest}); code != 0 {
 		t.Fatalf("unselected data scenario blocked real-VM validation: exit %d", code)
 	}
 }
 
 func TestLocalScenarioRejectsPlatformWaitsMissingKeysAndInvalidURLs(t *testing.T) {
 	for _, raw := range []string{"", "https://localhost:3000", "http://example.com", "http://192.168.1.3", "http://user:secret@localhost", "http://localhost/path", "http://localhost?key=value", "http://localhost?", "http://localhost#fragment", "http://localhost#", "http://localhost:0", "http://localhost:65536"} {
-		if _, err := validateLocalTestURL(raw); err == nil {
+		if _, err := main.ValidateLocalTestURL(raw); err == nil {
 			t.Errorf("invalid local origin was accepted: %q", raw)
 		}
 	}
 	for _, raw := range []string{"http://localhost:3000/", "http://127.0.0.1:3000", "http://[::1]:3000"} {
-		if got, err := validateLocalTestURL(raw); err != nil || got != strings.TrimSuffix(raw, "/") {
+		if got, err := main.ValidateLocalTestURL(raw); err != nil || got != strings.TrimSuffix(raw, "/") {
 			t.Errorf("local origin = (%q, %v)", got, err)
 		}
 	}
-	for _, condition := range []testWaitFor{{QueueIdle: true}, {Objects: []testObjectOutput{{Bucket: "exports"}}}, {Invocations: []testInvocationOutput{{Service: "worker"}}}, {Deliveries: []testDeliveryOutput{{Service: "sink"}}}} {
-		if err := validateLocalTestScenario(testScenario{WaitFor: condition}); err == nil {
+	for _, condition := range []main.TestWaitFor{{QueueIdle: true}, {Objects: []main.TestObjectOutput{{Bucket: "exports"}}}, {Invocations: []main.TestInvocationOutput{{Service: "worker"}}}, {Deliveries: []main.TestDeliveryOutput{{Service: "sink"}}}} {
+		if err := main.ValidateLocalTestScenario(main.TestScenario{WaitFor: condition}); err == nil {
 			t.Errorf("local run accepted platform wait: %+v", condition)
 		}
 	}
 	t.Setenv("GREGALE_TEST_CONSUMER_BUYER_KEY", "")
-	scenario := testScenario{Consumers: []testConsumer{{Name: "buyer"}}, Checks: []testHTTPRequest{{As: "buyer"}}}
-	if _, err := localTestConsumerEnv(scenario); err == nil || !strings.Contains(err.Error(), "GREGALE_TEST_CONSUMER_BUYER_KEY") {
+	scenario := main.TestScenario{Consumers: []main.TestConsumer{{Name: "buyer"}}, Checks: []main.TestHTTPRequest{{As: "buyer"}}}
+	if _, err := main.LocalTestConsumerEnv(scenario); err == nil || !strings.Contains(err.Error(), "GREGALE_TEST_CONSUMER_BUYER_KEY") {
 		t.Fatalf("missing local consumer key = %v", err)
 	}
 	t.Setenv("GREGALE_TEST_CONSUMER_BUYER_KEY", "test-key")
-	if env, err := localTestConsumerEnv(scenario); err != nil || len(env) != 1 {
+	if env, err := main.LocalTestConsumerEnv(scenario); err != nil || len(env) != 1 {
 		t.Fatalf("local consumer env = (%v, %v)", env, err)
 	}
 	for _, args := range [][]string{
@@ -341,7 +342,7 @@ func TestLocalScenarioRejectsPlatformWaitsMissingKeysAndInvalidURLs(t *testing.T
 		{"--scenario", "local-test", "--engine", "local", "--max-workload-minutes", "1"},
 		{"--scenario", "local-test", "--engine", "local"},
 	} {
-		if code := cmdTest(args); code == 0 {
+		if code := main.CmdTest(args); code == 0 {
 			t.Errorf("invalid flags were accepted: %v", args)
 		}
 	}

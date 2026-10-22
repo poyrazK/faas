@@ -19,13 +19,14 @@
 //   - Multiple nodes: global Σ matches the sum of per-node
 //     counters (cross-node accounting invariant).
 
-package sched
+package sched_test
 
 import (
 	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // TestAdmit_CombinedRAMAndVCPUAtBoundary pins the corner case:
@@ -34,10 +35,10 @@ import (
 // the FIRST gate (RAM or VCPU; we accept either as long as
 // the gate fires).
 func TestAdmit_CombinedRAMAndVCPUAtBoundary(t *testing.T) {
-	l := NewNodeLedger()
+	l := sched.NewNodeLedger()
 	// First admit uses 128 MB + 8 overhead = 136 MB; vCPU=1.
 	// Node ceiling: 200 MB RAM, 4 vCPU. Plenty of headroom.
-	r := Request{
+	r := sched.Request{
 		Instance: "vm-1", AppID: "app-1", Plan: api.PlanHobby,
 		RAMMB: 128, VCPU: 1, MaxConcurrency: 1,
 		NodeID: "node-a", NodeCeilingMB: 200, VCPUBudget: 4,
@@ -48,7 +49,7 @@ func TestAdmit_CombinedRAMAndVCPUAtBoundary(t *testing.T) {
 	// Second admit: 64 MB + 8 = 72 MB (total 208 > 200). This
 	// bumps RAM over the ceiling. vCPU is still 1+1=2 ≤ 4. So
 	// the rejection must be on RAM, not vCPU.
-	err := l.Admit(Request{
+	err := l.Admit(sched.Request{
 		Instance: "vm-2", AppID: "app-2", Plan: api.PlanHobby,
 		RAMMB: 64, VCPU: 1, MaxConcurrency: 1,
 		NodeID: "node-a", NodeCeilingMB: 200, VCPUBudget: 4,
@@ -66,12 +67,12 @@ func TestAdmit_CombinedRAMAndVCPUAtBoundary(t *testing.T) {
 // the current ResidentRAM. With one 128 MB admission on a
 // global ceiling of 47,600 MB, headroom should be 47,600 - 136.
 func TestHeadroomMB_AfterPartialAdmit(t *testing.T) {
-	l := NewNodeLedger()
+	l := sched.NewNodeLedger()
 	want := api.RAMAdmissionCeilingMB
 	if got := l.HeadroomMB(); got != want {
 		t.Errorf("empty HeadroomMB = %d, want %d", got, want)
 	}
-	if err := l.Admit(Request{
+	if err := l.Admit(sched.Request{
 		Instance: "vm-1", AppID: "app-1", Plan: api.PlanHobby,
 		RAMMB: 128, VCPU: 1, MaxConcurrency: 1,
 		NodeID: "node-a",
@@ -89,13 +90,13 @@ func TestHeadroomMB_AfterPartialAdmit(t *testing.T) {
 // not the global Σ. Two nodes with different RAM footprints
 // must each report their own.
 func TestResidentRAMForNode_ReportsPerNode(t *testing.T) {
-	l := NewNodeLedger()
-	_ = l.Admit(Request{
+	l := sched.NewNodeLedger()
+	_ = l.Admit(sched.Request{
 		Instance: "vm-a", AppID: "app-a", Plan: api.PlanHobby,
 		RAMMB: 256, VCPU: 1, MaxConcurrency: 1,
 		NodeID: "node-a", NodeCeilingMB: 100000, VCPUBudget: 160,
 	})
-	_ = l.Admit(Request{
+	_ = l.Admit(sched.Request{
 		Instance: "vm-b", AppID: "app-b", Plan: api.PlanHobby,
 		RAMMB: 512, VCPU: 1, MaxConcurrency: 1,
 		NodeID: "node-b", NodeCeilingMB: 100000, VCPUBudget: 160,
@@ -122,13 +123,13 @@ func TestResidentRAMForNode_ReportsPerNode(t *testing.T) {
 // accessor: UsedVCPUForNode reports just the node's vCPU
 // usage, UsedVCPU() returns the fleet Σ.
 func TestUsedVCPUForNode_ReportsPerNode(t *testing.T) {
-	l := NewNodeLedger()
-	_ = l.Admit(Request{
+	l := sched.NewNodeLedger()
+	_ = l.Admit(sched.Request{
 		Instance: "vm-a", AppID: "app-a", Plan: api.PlanHobby,
 		RAMMB: 128, VCPU: 3, MaxConcurrency: 1,
 		NodeID: "node-a", NodeCeilingMB: 100000, VCPUBudget: 160,
 	})
-	_ = l.Admit(Request{
+	_ = l.Admit(sched.Request{
 		Instance: "vm-b", AppID: "app-b", Plan: api.PlanHobby,
 		RAMMB: 128, VCPU: 5, MaxConcurrency: 1,
 		NodeID: "node-b", NodeCeilingMB: 100000, VCPUBudget: 160,
@@ -153,8 +154,8 @@ func TestUsedVCPUForNode_ReportsPerNode(t *testing.T) {
 // NOT route admits based on it. The chooser picks placement
 // upstream.
 func TestAdmit_PreferredNodeIDIsRecordedNotEnforced(t *testing.T) {
-	l := NewNodeLedger()
-	r := Request{
+	l := sched.NewNodeLedger()
+	r := sched.Request{
 		Instance: "vm-1", AppID: "app-1", Plan: api.PlanHobby,
 		RAMMB: 256, VCPU: 1, MaxConcurrency: 1,
 		NodeID: "node-a", NodeCeilingMB: 100000, VCPUBudget: 160,
@@ -165,7 +166,7 @@ func TestAdmit_PreferredNodeIDIsRecordedNotEnforced(t *testing.T) {
 	// The reservation must be on node-a regardless of the hint
 	// (which is empty here, but the field is documented as
 	// chooser-side state, not ledger-side).
-	if _, ok := l.resident["node-a"]; !ok {
+	if _, ok := (*l.Resident())["node-a"]; !ok {
 		t.Error("reservation not on NodeID 'node-a'; ledger ignored NodeID")
 	}
 }
@@ -179,8 +180,8 @@ func TestAdmit_PreferredNodeIDIsRecordedNotEnforced(t *testing.T) {
 // accounting") is a deliberate contract change rather than a
 // silent behaviour drift.
 func TestAdmit_ZeroRAMBehavior(t *testing.T) {
-	l := NewNodeLedger()
-	err := l.Admit(Request{
+	l := sched.NewNodeLedger()
+	err := l.Admit(sched.Request{
 		Instance: "vm-0ram", AppID: "app-1", Plan: api.PlanHobby,
 		RAMMB: 0, VCPU: 1, MaxConcurrency: 1,
 		NodeID: "node-a", NodeCeilingMB: 100000, VCPUBudget: 160,

@@ -1,5 +1,5 @@
 // ADR-1708: access policies are immutable catalog revisions, independent of prices.
-package state
+package state_test
 
 import (
 	"errors"
@@ -8,9 +8,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/productcontrol"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func TestProductControlAccessMemory(t *testing.T) { productAccessContract(t, NewMemStore()) }
+func TestProductControlAccessMemory(t *testing.T) { productAccessContract(t, state.NewMemStore()) }
 
 func productAccessContract(t *testing.T, s productSetupTestStore) {
 	t.Helper()
@@ -19,7 +20,7 @@ func productAccessContract(t *testing.T, s productSetupTestStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := s.CreateApp(ctx, App{AccountID: acct.ID, Slug: "access-" + uuid.NewString()[:8]})
+	app, err := s.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "access-" + uuid.NewString()[:8]})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,13 +57,13 @@ func productAccessContract(t *testing.T, s productSetupTestStore) {
 	if err != nil || old.Spec.Access != nil {
 		t.Fatal("historical omitted policy was rewritten", err)
 	}
-	updated := cloneProductBilling(stored.Spec)
+	updated := state.CloneProductBilling(stored.Spec)
 	updated.Access.Roles["operator"] = []api.ProductPermission{}
 	head, err := s.PublishProductCatalog(ctx, acct.ID, app.ID, updated, stored.Revision)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.PublishProductCatalog(ctx, acct.ID, app.ID, stored.Spec, before.Revision); !errors.Is(err, ErrProductCatalogStale) {
+	if _, err = s.PublishProductCatalog(ctx, acct.ID, app.ID, stored.Spec, before.Revision); !errors.Is(err, state.ErrProductCatalogStale) {
 		t.Fatal("old retry restored revoked access", err)
 	}
 	latest, err := s.GetProductCatalog(ctx, acct.ID, app.ID, "")
@@ -73,9 +74,9 @@ func productAccessContract(t *testing.T, s productSetupTestStore) {
 	if err != nil || customer != assigned {
 		t.Fatal("permission publication changed commercial assignment", err)
 	}
-	invalid := cloneProductBilling(latest.Spec)
+	invalid := state.CloneProductBilling(latest.Spec)
 	invalid.Access.Roles["member"] = []api.ProductPermission{"*"}
-	if _, err = s.PutProductCatalog(ctx, acct.ID, app.ID, invalid); !errors.Is(err, ErrInvalidArgument) {
+	if _, err = s.PutProductCatalog(ctx, acct.ID, app.ID, invalid); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatal("invalid permission persisted", err)
 	}
 }

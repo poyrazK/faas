@@ -92,7 +92,8 @@ type openedAISettlement struct {
 }
 
 // openAISettlement claims the call's settlement key, reads the integration's
-// limits, and inserts the request-log row, in one round trip.
+// limits, and inserts the request-log row and the export line (ADR-1340),
+// in one round trip.
 func openAISettlement(ctx context.Context, tx pgx.Tx, integrationID, leaseID uuid.UUID, record AIUsageRecord) (openedAISettlement, error) {
 	batch := &pgx.Batch{}
 	if leaseID != uuid.Nil {
@@ -108,6 +109,9 @@ func openAISettlement(ctx context.Context, tx pgx.Tx, integrationID, leaseID uui
 		  FROM outbound_integrations WHERE id = $1`, integrationID)
 	if record.Log != nil {
 		queueAIRequestLog(batch, integrationID, record)
+	}
+	if record.Export != nil {
+		queueAILogExport(batch, record.Export)
 	}
 	results := tx.SendBatch(ctx, batch)
 	opened, err := scanOpenedAISettlement(results, leaseID, record)
@@ -140,28 +144,51 @@ func scanOpenedAISettlement(results pgx.BatchResults, leaseID uuid.UUID, record 
 			return opened, err
 		}
 	}
+	if record.Export != nil {
+		if _, err := results.Exec(); err != nil {
+			return opened, err
+		}
+	}
 	return opened, nil
+}
+
+// queueAILogExport adds the call's line to the export outbox the gateways
+// read for the app's log drains (ADR-1340).
+func queueAILogExport(batch *pgx.Batch, export *AILogExport) {
+	attributes, err := json.Marshal(export.Attributes)
+	if err != nil || export.Attributes == nil {
+		attributes = []byte("{}")
+	}
+	batch.Queue(`
+		INSERT INTO outbound_ai_log_exports (app_id, account_id, line, attributes)
+		VALUES ($1, $2, $3, $4::jsonb)`, uuid.MustParse(export.AppID), uuid.MustParse(export.AccountID), export.Line, string(attributes))
 }
 
 // settleAIUsageRows adds the call to the caller/model and end-user rollups
 // and to the admission and binding counters, deletes its lease, and stores
-// its captured content, in one round trip. It returns each limited budget's
-// before and after values. The rollup is written before the admission
+// its captured content, in one round trip. A canary-tracked route attempt
+// adds to its target's per-minute row last (ADR-1340). It returns each
+// limited budget's before and after values. The rollup is written before the admission
 // counter so the transaction takes locks in the same order as admission and
 // integration deletion: integration, then state.
 func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uuid.UUID, record AIUsageRecord,
 	opened openedAISettlement) ([]aiBudgetCrossing, error) {
 	plan := aiSettlementPlan{
 		endUser:  record.EndUser != "",
+		tags:     len(record.Tags) > 0,
 		counters: record.Usage.BudgetTokens() > 0 || record.CostMillicents > 0,
 		binding:  record.Usage.BudgetTokens() > 0 && appCaller(record.Caller),
 		lease:    leaseID != uuid.Nil,
 		content:  record.Log != nil && record.Log.Content != nil,
+		route:    record.Route != nil,
 	}
 	batch := &pgx.Batch{}
 	queueAIUsageRollup(batch, integrationID, record)
 	if plan.endUser {
 		queueAIUserUsageRollup(batch, integrationID, record)
+	}
+	if plan.tags {
+		queueAITagUsageRollup(batch, integrationID, record)
 	}
 	queueAIUsageCounters(batch, integrationID, record, plan)
 	if plan.lease {
@@ -169,6 +196,9 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 	}
 	if plan.content {
 		queueAIRequestContent(batch, integrationID, opened.logID, record.Log.Content)
+	}
+	if plan.route {
+		queueAIRouteAttempt(batch, record)
 	}
 	results := tx.SendBatch(ctx, batch)
 	crossings, err := scanAIUsageRows(results, record, opened, plan)
@@ -180,7 +210,36 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 
 // aiSettlementPlan names the statements one settlement sends.
 type aiSettlementPlan struct {
-	endUser, counters, binding, lease, content bool
+	endUser, tags, counters, binding, lease, content, route bool
+}
+
+// queueAIRouteAttempt adds a route attempt to its target's row for the
+// current UTC minute while the route's canary is active, or when its
+// strategy judges targets by these rows (ADR-1434). Otherwise, or for a
+// route deleted meanwhile, it writes nothing: the table has no foreign key,
+// so a settlement never fails on it.
+func queueAIRouteAttempt(batch *pgx.Batch, record AIUsageRecord) {
+	attempt := record.Route
+	var errorCount, ttfbCalls, ttfbMS int64
+	if attempt.Error {
+		errorCount = 1
+	}
+	if attempt.TTFBMS != nil {
+		ttfbCalls, ttfbMS = 1, *attempt.TTFBMS
+	}
+	batch.Queue(`
+		INSERT INTO outbound_ai_route_target_minutes AS stats
+		    (route_id, position, minute, calls, errors, ttfb_calls, ttfb_ms_total, cost_millicents)
+		SELECT $1, $2, date_trunc('minute', now()), 1, $3, $4, $5, $6
+		 WHERE EXISTS (SELECT 1 FROM outbound_ai_route_canaries canary WHERE canary.route_id = $1 AND canary.state = 'active')
+		    OR EXISTS (SELECT 1 FROM outbound_ai_routes route WHERE route.id = $1 AND route.strategy IN ('latency', 'cost'))
+		ON CONFLICT (route_id, position, minute) DO UPDATE SET
+		    calls = stats.calls + 1,
+		    errors = stats.errors + EXCLUDED.errors,
+		    ttfb_calls = stats.ttfb_calls + EXCLUDED.ttfb_calls,
+		    ttfb_ms_total = stats.ttfb_ms_total + EXCLUDED.ttfb_ms_total,
+		    cost_millicents = stats.cost_millicents + EXCLUDED.cost_millicents`,
+		uuid.MustParse(attempt.RouteID), attempt.Position, errorCount, ttfbCalls, ttfbMS, record.CostMillicents)
 }
 
 // queueAIUsageCounters adds the call to the admission and binding counters.
@@ -246,6 +305,13 @@ func scanAIUsageRows(results pgx.BatchResults, record AIUsageRecord, opened open
 			return nil, err
 		}
 	}
+	var tagDays []aiTagDay
+	if plan.tags {
+		var err error
+		if tagDays, err = scanAITagDays(results); err != nil {
+			return nil, err
+		}
+	}
 	budgetTokens, cost := record.Usage.BudgetTokens(), record.CostMillicents
 	limits := opened.limits
 	day, month := utcDayStart(opened.now), utcMonthStart(opened.now)
@@ -263,9 +329,9 @@ func scanAIUsageRows(results pgx.BatchResults, record AIUsageRecord, opened open
 		}
 		if err == nil {
 			crossings = append(crossings,
-				aiBudgetCrossing{api.OutboundAIBudgetDailyTokens, "", day, positiveLimit(limits.dailyTokens), dailyTokens - budgetTokens, dailyTokens, ""},
-				aiBudgetCrossing{api.OutboundAIBudgetDailyCost, "", day, positiveLimit(limits.dailyCost), dailyCost - cost, dailyCost, ""},
-				aiBudgetCrossing{api.OutboundAIBudgetMonthlyCost, "", month, positiveLimit(limits.monthlyCost), monthlyCost - cost, monthlyCost, ""})
+				aiBudgetCrossing{api.OutboundAIBudgetDailyTokens, "", day, positiveLimit(limits.dailyTokens), dailyTokens - budgetTokens, dailyTokens, "", ""},
+				aiBudgetCrossing{api.OutboundAIBudgetDailyCost, "", day, positiveLimit(limits.dailyCost), dailyCost - cost, dailyCost, "", ""},
+				aiBudgetCrossing{api.OutboundAIBudgetMonthlyCost, "", month, positiveLimit(limits.monthlyCost), monthlyCost - cost, monthlyCost, "", ""})
 		}
 	}
 	if plan.binding {
@@ -276,7 +342,7 @@ func scanAIUsageRows(results pgx.BatchResults, record AIUsageRecord, opened open
 		}
 		if err == nil {
 			crossings = append(crossings, aiBudgetCrossing{api.OutboundAIBudgetAppDailyTokens, record.Caller, day,
-				positiveLimit(bindingLimit), bindingTokens - budgetTokens, bindingTokens, ""})
+				positiveLimit(bindingLimit), bindingTokens - budgetTokens, bindingTokens, "", ""})
 		}
 	}
 	if plan.lease {
@@ -291,9 +357,23 @@ func scanAIUsageRows(results pgx.BatchResults, record AIUsageRecord, opened open
 			}
 		}
 	}
+	if plan.route {
+		if _, err := results.Exec(); err != nil {
+			return nil, err
+		}
+	}
 	crossings = append(crossings, userBudgetCrossings(user.endUser, day, positiveLimit(limits.userTokens),
 		positiveLimit(limits.userCost), user.tokens, user.cost, record.Usage.InputTokens+record.Usage.OutputTokens, cost)...)
+	crossings = append(crossings, tagBudgetCrossings(tagDays, day, cost)...)
 	return crossings, nil
+}
+
+// cachedRequests counts a cache hit (ADR-1440).
+func cachedRequests(record AIUsageRecord) int64 {
+	if record.Cached {
+		return 1
+	}
+	return 0
 }
 
 func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsageRecord) {
@@ -312,7 +392,8 @@ func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsag
 		INSERT INTO outbound_ai_usage_daily AS usage
 		    (integration_id, usage_date, caller, model, requests, error_requests, usage_unknown_requests,
 		     input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents,
-		     images, audio_seconds, characters)
+		     images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb,
+		     cached_requests, cache_saved_millicents, prompt_cache_saved_millicents, input_audio_tokens, output_audio_tokens)
 		SELECT $1, day.today, $2,
 		       CASE WHEN EXISTS (SELECT 1 FROM outbound_ai_usage_daily existing
 		                          WHERE existing.integration_id = $1 AND existing.usage_date = day.today
@@ -320,7 +401,7 @@ func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsag
 		              OR (SELECT count(DISTINCT existing.model) FROM outbound_ai_usage_daily existing
 		                   WHERE existing.integration_id = $1 AND existing.usage_date = day.today) < $4
 		            THEN $3 ELSE $5 END,
-		       1, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+		       1, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
 		  FROM (SELECT (now() AT TIME ZONE 'UTC')::date AS today) day
 		ON CONFLICT (integration_id, usage_date, caller, model) DO UPDATE SET
 		    requests = usage.requests + 1,
@@ -334,10 +415,21 @@ func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsag
 		    images = usage.images + EXCLUDED.images,
 		    audio_seconds = usage.audio_seconds + EXCLUDED.audio_seconds,
 		    characters = usage.characters + EXCLUDED.characters,
+		    video_seconds = usage.video_seconds + EXCLUDED.video_seconds,
+		    web_searches = usage.web_searches + EXCLUDED.web_searches,
+		    file_searches = usage.file_searches + EXCLUDED.file_searches,
+		    code_session_gb = usage.code_session_gb + EXCLUDED.code_session_gb,
+		    cached_requests = usage.cached_requests + EXCLUDED.cached_requests,
+		    cache_saved_millicents = usage.cache_saved_millicents + EXCLUDED.cache_saved_millicents,
+		    prompt_cache_saved_millicents = usage.prompt_cache_saved_millicents + EXCLUDED.prompt_cache_saved_millicents,
+		    input_audio_tokens = usage.input_audio_tokens + EXCLUDED.input_audio_tokens,
+		    output_audio_tokens = usage.output_audio_tokens + EXCLUDED.output_audio_tokens,
 		    updated_at = now()`,
 		integrationID, record.Caller, usage.Model, api.OutboundAIUsageModelsPerDay, aiUsageOverflowModel,
 		errorRequests, unknownRequests, usage.InputTokens, usage.CachedInputTokens, usage.CacheWriteTokens,
-		usage.OutputTokens, record.CostMillicents, usage.Images, usage.AudioSeconds, usage.Characters)
+		usage.OutputTokens, record.CostMillicents, usage.Images, usage.AudioSeconds, usage.Characters, usage.VideoSeconds,
+		usage.WebSearches, usage.FileSearches, usage.CodeSessionGB, cachedRequests(record), record.CacheSavedMillicents,
+		record.PromptCacheSavedMillicents, usage.InputAudioTokens, usage.OutputAudioTokens)
 }
 
 // recordAIBudgetAlerts stores first-time alerts and enqueues one
@@ -357,11 +449,11 @@ func recordAIBudgetAlerts(ctx context.Context, tx pgx.Tx, integrationID uuid.UUI
 		var crossedAt time.Time
 		err := tx.QueryRow(ctx, `
 			INSERT INTO outbound_ai_budget_alerts
-			    (integration_id, account_id, budget, app_id, end_user, period_start, threshold_percent, limit_value, used_value)
-			VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9)
+			    (integration_id, account_id, budget, app_id, end_user, period_start, threshold_percent, limit_value, used_value, tag)
+			VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9, NULLIF($10, ''))
 			ON CONFLICT DO NOTHING
 			RETURNING id, crossed_at`, integrationID, limits.accountID, alert.Budget, appID, alert.EndUser, alert.PeriodStart,
-			alert.ThresholdPercent, alert.Limit, alert.Used).Scan(&id, &crossedAt)
+			alert.ThresholdPercent, alert.Limit, alert.Used, alert.Tag).Scan(&id, &crossedAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
 		}
@@ -370,14 +462,16 @@ func recordAIBudgetAlerts(ctx context.Context, tx pgx.Tx, integrationID uuid.UUI
 		}
 		alert.ID, alert.CrossedAt = id.String(), crossedAt.UTC()
 		notify := alert.AppID
-		if alert.EndUser != "" {
-			// Runs have no app to notify; the alert is still listed.
+		perCall := alert.EndUser != "" || alert.Tag != ""
+		if perCall {
+			// A user's or tag's budget notifies the app whose call crossed it;
+			// Runs have no app to notify, and the alert is still listed.
 			notify = ""
 			if appCaller(caller) {
 				notify = caller
 			}
 		}
-		if alert.EndUser == "" || notify != "" {
+		if !perCall || notify != "" {
 			if err := enqueueAIBudgetWebhooks(ctx, tx, integrationID, limits, alert, notify); err != nil {
 				return nil, err
 			}
@@ -400,6 +494,9 @@ func enqueueAIBudgetWebhooks(ctx context.Context, tx pgx.Tx, integrationID uuid.
 	}
 	if alert.EndUser != "" {
 		payload.EndUser = &alert.EndUser
+	}
+	if alert.Tag != "" {
+		payload.Tag = &alert.Tag
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -440,12 +537,12 @@ func queueAIRequestLog(batch *pgx.Batch, integrationID uuid.UUID, record AIUsage
 	batch.Queue(`
 		INSERT INTO outbound_ai_request_log
 		    (integration_id, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens,
-		     cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULLIF($15, ''))
+		     cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user, tags)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULLIF($15, ''), $16)
 		RETURNING id`,
 		integrationID, record.Caller, routeID, usage.Model, record.Log.Status, string(record.Outcome), usage.InputTokens,
 		usage.CachedInputTokens, usage.CacheWriteTokens, usage.OutputTokens, record.CostMillicents,
-		record.Log.DurationMS, record.Log.TTFBMS, record.Log.Attempts, record.EndUser)
+		record.Log.DurationMS, record.Log.TTFBMS, record.Log.Attempts, record.EndUser, nilIfEmpty(record.Tags))
 }
 
 // queueAIRequestContent stores a logged call's captured bodies while the
@@ -499,10 +596,26 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		// ADR-997: replays and their results.
 		{`DELETE FROM outbound_ai_replays WHERE created_at < now() - make_interval(days => $1::int)`, api.OutboundAIReplayRetentionDays},
 		{`DELETE FROM outbound_ai_user_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
-		// ADR-995: end users' alerts follow the per-user rollup retention.
-		{`DELETE FROM outbound_ai_budget_alerts WHERE end_user IS NOT NULL AND period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
+		// ADR-1436: tag rows follow the per-user rollup retention.
+		{`DELETE FROM outbound_ai_tag_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
+		// ADR-995: end users' alerts follow the per-user rollup retention, and
+		// tags' alerts the tag rollup's (ADR-1438).
+		{`DELETE FROM outbound_ai_budget_alerts WHERE (end_user IS NOT NULL OR tag IS NOT NULL) AND period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
+		// ADR 20261019132139: shared prompt prefixes outlive two cache lifetimes.
+		{`DELETE FROM outbound_ai_prompt_prefixes WHERE seen_at < now() - make_interval(secs => $1::int)`,
+			2 * api.OutboundAIPromptCacheLifetimeSeconds},
 		// ADR-1120: a settled call's key only has to outlive its retries.
 		{`DELETE FROM outbound_ai_settlements WHERE settled_at < now() - make_interval(mins => $1::int)`, api.OutboundAISettlementKeyRetentionMinutes},
+		// ADR-1340: canary rows and export lines.
+		{`DELETE FROM outbound_ai_route_target_minutes WHERE minute < now() - make_interval(hours => $1::int)`, api.OutboundAIRouteStatsRetentionHours},
+		{`DELETE FROM outbound_ai_log_exports WHERE created_at < now() - make_interval(hours => $1::int)`, api.OutboundAILogExportRetentionHours},
+		// ADR-1431: settled batches, evaluations with their items, and
+		// tokens that expired or were revoked.
+		{`DELETE FROM outbound_ai_batches WHERE state = 'settled' AND settled_at < now() - make_interval(days => $1::int)`, api.OutboundAIBatchRetentionDays},
+		{`DELETE FROM outbound_ai_evaluations WHERE created_at < now() - make_interval(days => $1::int)`, api.OutboundAIEvaluationRetentionDays},
+		{`DELETE FROM outbound_ai_access_tokens
+		   WHERE least(expires_at, COALESCE(revoked_at, expires_at)) < now() - make_interval(days => $1::int)`,
+			api.OutboundAIAccessTokenRetentionDays},
 	} {
 		command, err := b.pool.Exec(ctx, statement.sql, statement.age)
 		if err != nil {

@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,39 +11,39 @@ import (
 )
 
 func TestSplitArgsForFlags_PreservesDocumentedPositionalFirstForms(t *testing.T) {
-	flags, pos := splitArgsForFlags([]string{"demo", "--payload", "{}", "--method", "POST", "--async"}, "async")
+	flags, pos := main.SplitArgsForFlags([]string{"demo", "--payload", "{}", "--method", "POST", "--async"}, "async")
 	if got, want := strings.Join(pos, " "), "demo"; got != want {
 		t.Fatalf("positionals = %q, want %q", got, want)
 	}
 	if got, want := strings.Join(flags, " "), "--payload {} --method POST --async"; got != want {
 		t.Fatalf("flags = %q, want %q", got, want)
 	}
-	if looksLikeFlag("-1") {
+	if main.LooksLikeFlag("-1") {
 		t.Fatal("looksLikeFlag(-1) = true, want numeric values to remain flag arguments")
 	}
 }
 
 func TestCmdAppsRm_LongQuietAlias(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, "", http.StatusNoContent)
-	if code := cmdAppsRm([]string{"--quiet", "demo"}); code != 0 {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, "", http.StatusNoContent)
+	if code := main.CmdAppsRm([]string{"--quiet", "demo"}); code != 0 {
 		t.Fatalf("cmdAppsRm --quiet = %d, want 0", code)
 	}
-	if f.sawMethod != http.MethodDelete || f.sawPath != "/v1/apps/demo" {
-		t.Errorf("request = %s %s, want DELETE /v1/apps/demo", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != http.MethodDelete || (*f.SawPath()) != "/v1/apps/demo" {
+		t.Errorf("request = %s %s, want DELETE /v1/apps/demo", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
 func TestCmdAppsDispatch_QuietDeleteSpellings(t *testing.T) {
 	for _, spelling := range []string{"-q", "--quiet"} {
 		t.Run(spelling, func(t *testing.T) {
-			resetJSONOut(t)
-			f := authedFakeAPI(t, "", http.StatusNoContent)
-			if code := run([]string{"apps", spelling, "demo"}); code != 0 {
+			main.ResetJSONOut(t)
+			f := main.AuthedFakeAPI(t, "", http.StatusNoContent)
+			if code := main.Run([]string{"apps", spelling, "demo"}); code != 0 {
 				t.Fatalf("run(apps %s demo) = %d, want 0", spelling, code)
 			}
-			if f.sawMethod != http.MethodDelete || f.sawPath != "/v1/apps/demo" {
-				t.Errorf("request = %s %s, want DELETE /v1/apps/demo", f.sawMethod, f.sawPath)
+			if (*f.SawMethod()) != http.MethodDelete || (*f.SawPath()) != "/v1/apps/demo" {
+				t.Errorf("request = %s %s, want DELETE /v1/apps/demo", (*f.SawMethod()), (*f.SawPath()))
 			}
 		})
 	}
@@ -51,26 +52,26 @@ func TestCmdAppsDispatch_QuietDeleteSpellings(t *testing.T) {
 func TestCmdAppsDispatch_RejectsUnknownPositionals(t *testing.T) {
 	for _, args := range [][]string{{"delete", "--help"}, {"typo"}, {"ls", "extra"}} {
 		t.Run(strings.Join(args, "-"), func(t *testing.T) {
-			resetJSONOut(t)
-			f := authedFakeAPI(t, `[]`, http.StatusOK)
-			if code := run(append([]string{"apps"}, args...)); code != 1 {
+			main.ResetJSONOut(t)
+			f := main.AuthedFakeAPI(t, `[]`, http.StatusOK)
+			if code := main.Run(append([]string{"apps"}, args...)); code != 1 {
 				t.Fatalf("run(apps %s) = %d, want usage error 1", strings.Join(args, " "), code)
 			}
-			if f.sawMethod != "" {
-				t.Fatalf("unknown apps positional made %s %s request", f.sawMethod, f.sawPath)
+			if (*f.SawMethod()) != "" {
+				t.Fatalf("unknown apps positional made %s %s request", (*f.SawMethod()), (*f.SawPath()))
 			}
 		})
 	}
 }
 
 func TestBuildHelpListsEveryImplementedSubcommand(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	var out bytes.Buffer
-	oldOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 
-	if code := run([]string{"build", "--help"}); code != 0 {
+	if code := main.Run([]string{"build", "--help"}); code != 0 {
 		t.Fatalf("build --help = %d, want 0", code)
 	}
 	for _, sub := range []string{"status", "list", "provenance", "sbom"} {
@@ -81,7 +82,7 @@ func TestBuildHelpListsEveryImplementedSubcommand(t *testing.T) {
 }
 
 func TestKeysAddHelpNeverCreatesCredential(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	for _, help := range []string{"-h", "--help"} {
 		t.Run(help, func(t *testing.T) {
 			calls := 0
@@ -93,10 +94,10 @@ func TestKeysAddHelpNeverCreatesCredential(t *testing.T) {
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "test-token")
 			var stdout bytes.Buffer
-			oldOut := osStdout
-			osStdout = &stdout
-			t.Cleanup(func() { osStdout = oldOut })
-			if code := run([]string{"keys", "add", help}); code != 0 {
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &stdout
+			t.Cleanup(func() { (*main.OsStdout) = oldOut })
+			if code := main.Run([]string{"keys", "add", help}); code != 0 {
 				t.Fatalf("keys add %s = %d, want 0", help, code)
 			}
 			if calls != 0 {
@@ -126,10 +127,10 @@ func TestNestedHelpNeverMakesProductionRequests(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "test-token")
-			oldOut := osStdout
-			osStdout = io.Discard
-			t.Cleanup(func() { osStdout = oldOut })
-			if code := run(args); code != 0 {
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = io.Discard
+			t.Cleanup(func() { (*main.OsStdout) = oldOut })
+			if code := main.Run(args); code != 0 {
 				t.Fatalf("run(%v) = %d", args, code)
 			}
 			if calls != 0 {
@@ -151,10 +152,10 @@ func TestGeneratedHelpUsesDispatcherArgumentOrder(t *testing.T) {
 	} {
 		t.Run(tc.command, func(t *testing.T) {
 			var stdout bytes.Buffer
-			oldOut := osStdout
-			osStdout = &stdout
-			t.Cleanup(func() { osStdout = oldOut })
-			if code := run([]string{tc.command, "--help"}); code != 0 {
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &stdout
+			t.Cleanup(func() { (*main.OsStdout) = oldOut })
+			if code := main.Run([]string{tc.command, "--help"}); code != 0 {
 				t.Fatalf("%s --help = %d", tc.command, code)
 			}
 			if got := stdout.String(); !strings.Contains(got, tc.want) || strings.Contains(got, tc.reject) {
@@ -166,10 +167,10 @@ func TestGeneratedHelpUsesDispatcherArgumentOrder(t *testing.T) {
 
 func TestLogsHelpDocumentsOptionalSlugAndFilters(t *testing.T) {
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	t.Cleanup(func() { osStdout = oldOut })
-	if code := run([]string{"logs", "--help"}); code != 0 {
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
+	if code := main.Run([]string{"logs", "--help"}); code != 0 {
 		t.Fatalf("logs --help = %d", code)
 	}
 	for _, want := range []string{
@@ -188,11 +189,11 @@ func TestCLIContract_PaginationBounds(t *testing.T) {
 		name string
 		fn   func() int
 	}{
-		{name: "deployments", fn: func() int { return cmdDeployments([]string{"--limit", "0"}) }},
-		{name: "invocations", fn: func() int { return cmdInvocationsList([]string{"--limit", "0"}) }},
-		{name: "queue", fn: func() int { return cmdQueuePeek([]string{"demo", "--limit", "0"}) }},
-		{name: "crons", fn: func() int { return cmdCronsRuns([]string{cronID, "--limit", "0"}) }},
-		{name: "workflows", fn: func() int { return cmdWorkflowsList([]string{"--app", "demo", "--limit", "0"}) }},
+		{name: "deployments", fn: func() int { return main.CmdDeployments([]string{"--limit", "0"}) }},
+		{name: "invocations", fn: func() int { return main.CmdInvocationsList([]string{"--limit", "0"}) }},
+		{name: "queue", fn: func() int { return main.CmdQueuePeek([]string{"demo", "--limit", "0"}) }},
+		{name: "crons", fn: func() int { return main.CmdCronsRuns([]string{cronID, "--limit", "0"}) }},
+		{name: "workflows", fn: func() int { return main.CmdWorkflowsList([]string{"--app", "demo", "--limit", "0"}) }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -209,12 +210,12 @@ func TestValidateCLILimitAndOffset(t *testing.T) {
 		got  error
 		want bool
 	}{
-		{name: "limit zero", got: validateCLILimit("limit", 0, 100), want: true},
-		{name: "limit negative", got: validateCLILimit("limit", -1, 100), want: true},
-		{name: "limit above max", got: validateCLILimit("limit", 101, 100), want: true},
-		{name: "limit boundary", got: validateCLILimit("limit", 100, 100), want: false},
-		{name: "offset negative", got: validateCLIOffset("offset", -1), want: true},
-		{name: "offset zero", got: validateCLIOffset("offset", 0), want: false},
+		{name: "limit zero", got: main.ValidateCLILimit("limit", 0, 100), want: true},
+		{name: "limit negative", got: main.ValidateCLILimit("limit", -1, 100), want: true},
+		{name: "limit above max", got: main.ValidateCLILimit("limit", 101, 100), want: true},
+		{name: "limit boundary", got: main.ValidateCLILimit("limit", 100, 100), want: false},
+		{name: "offset negative", got: main.ValidateCLIOffset("offset", -1), want: true},
+		{name: "offset zero", got: main.ValidateCLIOffset("offset", 0), want: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if (tc.got != nil) != tc.want {
@@ -233,17 +234,17 @@ func TestCmdAppsDispatch_RmSubcommand(t *testing.T) {
 		{"apps", "rm", "-q", "demo"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			resetJSONOut(t)
-			f := authedFakeAPI(t, "", http.StatusNoContent)
-			if code := run(args); code != 0 {
+			main.ResetJSONOut(t)
+			f := main.AuthedFakeAPI(t, "", http.StatusNoContent)
+			if code := main.Run(args); code != 0 {
 				t.Fatalf("run(%q) = %d, want 0", args, code)
 			}
-			if f.sawMethod != http.MethodDelete || f.sawPath != "/v1/apps/demo" {
-				t.Errorf("request = %s %s, want DELETE /v1/apps/demo", f.sawMethod, f.sawPath)
+			if (*f.SawMethod()) != http.MethodDelete || (*f.SawPath()) != "/v1/apps/demo" {
+				t.Errorf("request = %s %s, want DELETE /v1/apps/demo", (*f.SawMethod()), (*f.SawPath()))
 			}
 		})
 	}
-	if code := run([]string{"apps", "rm"}); code != 1 {
+	if code := main.Run([]string{"apps", "rm"}); code != 1 {
 		t.Errorf("run(apps rm) = %d, want 1 (usage)", code)
 	}
 }

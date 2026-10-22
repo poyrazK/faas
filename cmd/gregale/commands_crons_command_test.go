@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,10 +35,10 @@ func TestCmdCronsAddCommandPreservesArgv(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	out, _, restore := swapIO(t)
+	out, _, restore := main.SwapIO(t)
 	defer restore()
 
-	code := cmdCrons([]string{
+	code := main.CmdCrons([]string{
 		"add", "--app", "my-app", "--schedule", "0 2 * * *", "--command", "bin/reindex",
 		"--arg=--delta", "--timeout-seconds", "90", "--retry-max", "2", "--retry-backoff-seconds", "15",
 	})
@@ -62,10 +63,10 @@ func TestCmdCronsAddRejectsRetryOptionsForHTTPCronBeforeRequest(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	_, errOut, restore := swapIO(t)
+	_, errOut, restore := main.SwapIO(t)
 	defer restore()
 
-	code := cmdCrons([]string{
+	code := main.CmdCrons([]string{
 		"add", "--app", "my-app", "--schedule", "0 2 * * *", "--path", "/run", "--retry-max", "1",
 	})
 	if code == 0 || calls != 0 || !strings.Contains(errOut(), "require --command") {
@@ -81,10 +82,10 @@ func TestCmdCronsAddRejectsPathAndCommandBeforeRequest(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	_, errOut, restore := swapIO(t)
+	_, errOut, restore := main.SwapIO(t)
 	defer restore()
 
-	code := cmdCrons([]string{
+	code := main.CmdCrons([]string{
 		"add", "--app", "my-app", "--schedule", "0 2 * * *", "--path", "/run",
 		"--command", "bin/reindex",
 	})

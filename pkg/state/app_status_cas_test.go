@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,16 +7,17 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestCompareAndSetAppStatusAllowsOneRestartClaim(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	account, err := store.CreateAccount(ctx, "restart-race@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "restart-race", Status: AppActive})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "restart-race", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +28,7 @@ func TestCompareAndSetAppStatusAllowsOneRestartClaim(t *testing.T) {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			ok, err := store.CompareAndSetAppStatus(ctx, app.ID, AppActive, AppEvictedCold)
+			ok, err := store.CompareAndSetAppStatus(ctx, app.ID, state.AppActive, state.AppEvictedCold)
 			if err != nil {
 				t.Errorf("CompareAndSetAppStatus: %v", err)
 				return
@@ -45,7 +46,7 @@ func TestCompareAndSetAppStatusAllowsOneRestartClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Status != AppEvictedCold {
-		t.Fatalf("status = %q, want %q", updated.Status, AppEvictedCold)
+	if updated.Status != state.AppEvictedCold {
+		t.Fatalf("status = %q, want %q", updated.Status, state.AppEvictedCold)
 	}
 }

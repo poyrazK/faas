@@ -124,7 +124,7 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
 		return err
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: load account: %w", err)
 	}
@@ -175,6 +175,12 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 	values, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: owned runtime values: %w", err)
+	}
+	if budgetErr := e.checkFinancialBudgetAdmission(ctx, app, dep.ID); budgetErr != nil {
+		if errors.Is(budgetErr, state.ErrFinancialBudgetHeld) {
+			return e.reclaimWarmPool(ctx, append(warm, obsolete...), 0)
+		}
+		return budgetErr
 	}
 	if securityQuarantineErr(dep) != nil || runtimeValuesHaveEphemeralSecrets(values.Snapshot) {
 		return e.reclaimWarmPool(ctx, append(warm, obsolete...), 0)
@@ -455,6 +461,9 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 		Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID),
 	})
 	if err != nil {
+		if errors.Is(err, state.ErrFinancialBudgetHeld) {
+			return errors.Join(err, e.retireFinancialBudgetRuntime(ctx, ins))
+		}
 		cleanup("publish_warm_state_failed")
 		return err
 	}

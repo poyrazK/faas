@@ -60,8 +60,13 @@ func newServiceAddressLookup(store state.Store, nodeName string, log *slog.Logge
 
 func resolveServiceAddress(ctx context.Context, store state.Store, resolve gateway.ServiceProxyResolver, caller state.ServiceAddressCaller, service string, log *slog.Logger) (netip.Addr, bool) {
 	targetAppID := ""
-	if bindingStore, ok := store.(state.EnvironmentGitOpsServiceBindingStore); ok {
-		route, managed, found, err := bindingStore.ResolveEnvironmentGitOpsServiceBinding(ctx, caller.AppID, caller.DeploymentID, service)
+	{
+		route, managed, found, err := resolveFrozenProjectBinding(ctx, store, caller.AppID, caller.DeploymentID, service)
+		if err == nil && !managed {
+			if bindingStore, ok := store.(state.EnvironmentGitOpsServiceBindingStore); ok {
+				route, managed, found, err = bindingStore.ResolveEnvironmentGitOpsServiceBinding(ctx, caller.AppID, caller.DeploymentID, service)
+			}
+		}
 		if err != nil {
 			log.Debug("gatewayd: GitOps service address lookup fell back to the bridge", "service", service, "err", err)
 			return netip.Addr{}, false
@@ -85,7 +90,10 @@ func resolveServiceAddress(ctx context.Context, store state.Store, resolve gatew
 		targetAppID = target.AppID
 	}
 	app, err := store.AppByID(ctx, targetAppID)
-	if err != nil || app.Status == state.AppDeleted || app.AccountID != caller.AccountID {
+	source, sourceErr := store.AppByID(ctx, caller.AppID)
+	// Synthetic addresses are indexed within a storage namespace. A company
+	// spanning several namespaces must use the app-ID-based service bridge.
+	if err != nil || sourceErr != nil || source.AccountID != caller.AccountID || app.AccountID != caller.AccountID || source.Status == state.AppDeleted || app.Status == state.AppDeleted || !state.SameAppResourceOwner(source, app) {
 		return netip.Addr{}, false
 	}
 	index, err := store.AppServiceAddressIndex(ctx, app.ID)

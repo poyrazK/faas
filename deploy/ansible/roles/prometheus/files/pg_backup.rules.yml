@@ -77,17 +77,27 @@ groups:
             `journalctl -u faas-pg-wal-prune.service` on the control-plane host.
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PostgresBackup.md"
 
+      # ADR-1344's archive_timeout = 60s archives a full 16 MiB segment almost
+      # every minute, about 20 GiB a day, so archive size measured traffic, not
+      # pruning: on 2026-10-20 production held 32 GiB with pruning healthy and
+      # the old 20 GiB bound fired permanently. Keeping the two newest daily
+      # basebackups holds the oldest retained segment at 24-48 h; three days
+      # means the boundary stopped advancing. Host disk alerts cover space.
+      # for: 90m outlasts one hourly prune, which rewrites the stats with
+      # segment-only ages after an upgrade.
       - alert: PgWalArchiveLarge
-        expr: apid_pg_wal_archive_bytes > 21474836480
-        for: 30m
+        expr: apid_pg_wal_archive_oldest_age_seconds > 259200
+        for: 90m
         labels:
           severity: warn
           family: pg_backup
         annotations:
-          summary: "Local PostgreSQL WAL archive exceeds 20 GiB"
+          summary: "Local PostgreSQL WAL archive reaches back more than three days"
           description: |
-            Verified pruning is not keeping the local archive bounded. Check the
-            prune journal and off-host object-store reachability before deleting files.
+            Verified pruning is not keeping the local archive bounded: the oldest
+            retained WAL segment is more than three days old although only the two
+            newest basebackups are kept. Check the prune journal, the basebackup
+            push and off-host object-store reachability before deleting files.
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PostgresBackup.md"
 
       # ADR-1344 §3: the WAL off-host copy bounds the region-loss RPO. The

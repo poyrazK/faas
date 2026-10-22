@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -18,7 +19,7 @@ const recoveryDeadLetterID = "33333333-3333-4333-8333-333333333333"
 
 func eventRecoveryAPI(t *testing.T, handler http.HandlerFunc) {
 	t.Helper()
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	t.Setenv("FAAS_API", server.URL)
@@ -104,17 +105,17 @@ func TestCmdEventsRecoverSelectsReceiptAction(t *testing.T) {
 					w.WriteHeader(http.StatusAccepted)
 					_, _ = w.Write([]byte(`{"id":"` + recoveryChildID + `"}`))
 				})
-				jsonOutput = true
-				stdout, restore := swapStdout(t)
+				(*main.JsonOutput) = true
+				stdout, restore := main.SwapStdout(t)
 				defer restore()
 				args := []string{"recover", "--source", "orders/?+", "--id", "evt&1", "--subscription", "selected"}
 				if dryRun {
 					args = append(args, "--dry-run")
 				}
-				if code := cmdEvents(args); code != 0 {
+				if code := main.CmdEvents(args); code != 0 {
 					t.Fatalf("exit=%d output=%s", code, stdout)
 				}
-				var got eventRecoveryResult
+				var got main.EventRecoveryResult
 				if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || got.Action == nil || got.Action.Kind != actionKind || got.SubscriptionID != "selected" || got.DryRun != dryRun {
 					t.Fatalf("output=%s err=%v", stdout, err)
 				}
@@ -170,7 +171,7 @@ func TestCmdEventsRecoverUnavailable(t *testing.T) {
 				}
 				_ = json.NewEncoder(w).Encode(api.EventReceiptResponse{EventSource: "orders", EventID: "evt", SnapshotCaptured: true, Recipients: []api.EventReceiptRecipientResponse{recipient}})
 			})
-			stdout, restore := swapStdout(t)
+			stdout, restore := main.SwapStdout(t)
 			defer restore()
 			for _, dryRun := range []bool{false, true} {
 				args := []string{"--source", "orders", "--id", "evt", "--subscription", "selected"}
@@ -180,7 +181,7 @@ func TestCmdEventsRecoverUnavailable(t *testing.T) {
 					wantCode = 0
 				}
 				stdout.Reset()
-				if code := cmdEventsRecover(args); code != wantCode || !strings.Contains(stdout.String(), tc.want) || posts != 0 {
+				if code := main.CmdEventsRecover(args); code != wantCode || !strings.Contains(stdout.String(), tc.want) || posts != 0 {
 					t.Fatalf("dry=%t exit=%d posts=%d output=%s", dryRun, code, posts, stdout)
 				}
 			}
@@ -226,8 +227,8 @@ func TestCmdEventsRecoverRejectsUnsafeOrAmbiguousActions(t *testing.T) {
 				}
 				_ = json.NewEncoder(w).Encode(api.EventReceiptResponse{EventSource: "orders/?+", EventID: "evt&1", SnapshotCaptured: true, Recipients: []api.EventReceiptRecipientResponse{recipient}})
 			})
-			code, _ := runWithStderr(t, func() int {
-				return cmdEventsRecover([]string{"--source", "orders/?+", "--id", "evt&1", "--subscription", "selected"})
+			code, _ := main.RunWithStderr(t, func() int {
+				return main.CmdEventsRecover([]string{"--source", "orders/?+", "--id", "evt&1", "--subscription", "selected"})
 			})
 			if code != 1 || posts != 0 {
 				t.Fatalf("exit=%d posts=%d", code, posts)
@@ -254,8 +255,8 @@ func TestCmdEventsRecoverLookupErrors(t *testing.T) {
 				}
 				_ = json.NewEncoder(w).Encode(tc.page)
 			})
-			code, stderr := runWithStderr(t, func() int {
-				return cmdEventsRecover([]string{"--source", "orders", "--id", "evt", "--subscription", "selected"})
+			code, stderr := main.RunWithStderr(t, func() int {
+				return main.CmdEventsRecover([]string{"--source", "orders", "--id", "evt", "--subscription", "selected"})
 			})
 			if code != 1 || !strings.Contains(stderr, tc.want) {
 				t.Fatalf("exit=%d stderr=%s", code, stderr)
@@ -275,8 +276,8 @@ func TestCmdEventsRecoverStaleActionDoesNotFallBack(t *testing.T) {
 		w.WriteHeader(http.StatusConflict)
 		_, _ = w.Write([]byte(`{"status":409,"title":"Replay unavailable","detail":"eligibility changed","code":"invocation_replay_unavailable"}`))
 	})
-	code, stderr := runWithStderr(t, func() int {
-		return cmdEventsRecover([]string{"--source", "orders", "--id", "evt", "--subscription", "selected"})
+	code, stderr := main.RunWithStderr(t, func() int {
+		return main.CmdEventsRecover([]string{"--source", "orders", "--id", "evt", "--subscription", "selected"})
 	})
 	if code == 0 || posts != 1 || !strings.Contains(stderr, "eligibility changed") {
 		t.Fatalf("exit=%d posts=%d stderr=%s", code, posts, stderr)
@@ -284,9 +285,9 @@ func TestCmdEventsRecoverStaleActionDoesNotFallBack(t *testing.T) {
 }
 
 func TestCmdEventsRecoverRejectsInvalidArguments(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	for _, args := range [][]string{nil, {"--source", "orders", "--id", "evt"}, {"app", "--source", "orders", "--id", "evt", "--subscription", "sub"}, {"--source", " ", "--id", "evt", "--subscription", "sub"}, {"--source", "orders", "--id", "evt", "--subscription", "sub", "--dry-run=invalid"}} {
-		code, _ := runWithStderr(t, func() int { return cmdEventsRecover(args) })
+		code, _ := main.RunWithStderr(t, func() int { return main.CmdEventsRecover(args) })
 		if code != 1 {
 			t.Fatalf("arguments %v exit=%d", args, code)
 		}

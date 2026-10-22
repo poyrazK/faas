@@ -2,6 +2,7 @@
 // Sign-up, sign-in, passkeys, sessions with single-flight refresh, the hosted
 // pages, and the /authz/v1 organization and authorization API. No
 // dependencies.
+import { aal, activeOrganization, claims, type ActiveOrganization } from './claims.js'
 import { baseURL } from './url.js'
 
 export type Session = Readonly<{
@@ -48,24 +49,79 @@ export type FactorChallenge = Readonly<{ id: string; type: string; expires_at?: 
 export type RecoveryCodes = Readonly<{ id: string; type: string; total: number; remaining?: number; codes?: readonly string[] }>
 export type AssuranceLevel = Readonly<{ current: 'aal1' | 'aal2' | null; next: 'aal1' | 'aal2' | null }>
 
-/** aal reads the assurance level of an access token without verifying it. */
-function aal(token: string): 'aal1' | 'aal2' {
-  try {
-    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
-    return JSON.parse(atob(part + '='.repeat((4 - part.length % 4) % 4))).aal === 'aal2' ? 'aal2' : 'aal1'
-  } catch { return 'aal1' }
-}
+export type { ActiveOrganization } from './claims.js'
 
 /** A third-party app (an OAuth client) the user allowed to use their account. */
 export type ConnectedApp = Readonly<{ client: { id: string; name: string; uri?: string; logo_uri?: string }; scopes: string[]; granted_at: string }>
+/** One of the signed-in user's own sessions; current is the one making the call. */
+export type UserSession = Readonly<{ id: string; created_at: string; last_active_at: string; user_agent: string | null; ip: string | null; aal: string | null; current: boolean }>
 
-export type Organization = Readonly<{ id: string; slug: string; name: string; role?: string; created_at: string }>
-export type Member = Readonly<{ user_id: string; email: string; role: string; created_at: string }>
+/**
+ * mfa_required: the organization's permissions hold only in sessions
+ * verified with a second factor (aal2); requests from others fail with
+ * mfa_required.
+ */
+export type Organization = Readonly<{ id: string; slug: string; name: string; role?: string; created_at: string; mfa_required?: boolean }>
+/**
+ * One entry of an organization's audit log. actor_id is null for changes the
+ * app's operator, an identity provider or SCIM made.
+ */
+export type AuditEntry = Readonly<{
+  id: string; occurred_at: string
+  action: 'organization.created' | 'member.added' | 'member.role_changed' | 'member.removed' | 'member.signed_in' | 'invitation.created' | 'invitation.revoked'
+    | 'invitation.accepted' | 'domain.added' | 'domain.verified' | 'domain.removed' | 'sso.connected' | 'sso.updated' | 'sso.disconnected'
+    | 'service_account.created' | 'service_account.updated' | 'service_account.deleted' | 'service_account.secret_created' | 'service_account.secret_revoked'
+  actor_id: string | null; actor_email: string | null; target_user_id: string | null; target_email: string | null; data: Readonly<Record<string, unknown>>
+}>
+/** mfa_enabled (a verified second factor) is shown only to those who manage members, null to others. */
+export type Member = Readonly<{ user_id: string; email: string; role: string; created_at: string; mfa_enabled?: boolean | null }>
 export type Invitation = Readonly<{ id: string; email: string; role: string; expires_at: string; created_at?: string }>
 /** An email domain an organization proves it controls with a DNS TXT record. */
-export type OrgDomain = Readonly<{ domain: string; verified: boolean; verified_at: string | null; record: Readonly<{ type: 'TXT'; name: string; value: string }> }>
+/** How people at a verified domain join its organization: not at all, offered to them, or at once. */
+export type DomainJoinMode = 'off' | 'suggest' | 'automatic'
+export type OrgDomain = Readonly<{ domain: string; verified: boolean; verified_at: string | null; record: Readonly<{ type: 'TXT'; name: string; value: string }>; join: Readonly<{ mode: DomainJoinMode; role: string }> }>
+/** An organization the user may join because it verified the user's email domain. */
+export type SuggestedOrganization = Readonly<{ id: string; slug: string; name: string; domain: string; role: string }>
 export type OrgSSOProvider = Readonly<{ id: string; entity_id: string | null; metadata_url: string | null; domains: readonly string[]; role: string }>
 export type CreatedInvitation = Invitation & Readonly<{ delivered: boolean; token?: string }>
+/** A secret of a service account: only its last four characters are kept to show. */
+export type ServiceAccountSecret = Readonly<{ id: string; hint: string; created_at: string; expires_at: string | null; last_used_at: string | null }>
+/**
+ * An organization's machine principal. Its ID is the client ID of the
+ * client-credentials grant; it holds one of the organization's roles.
+ */
+export type ServiceAccount = Readonly<{ id: string; name: string; role: string; disabled: boolean; created_at: string; secrets: readonly ServiceAccountSecret[] }>
+/** A new secret, shown only in this answer. */
+export type CreatedServiceAccountSecret = Readonly<{ client_id: string; client_secret: string; secret: Readonly<{ id: string; hint: string; expires_at: string | null }> }>
+
+/** The wallets GoTrue verifies sign-ins from (EIP-4361 and Sign-In With Solana). */
+export type Web3Chain = 'ethereum' | 'solana'
+/** An injected Ethereum wallet (EIP-1193), such as window.ethereum. */
+export type EthereumWallet = { request(args: { method: string; params?: unknown[] }): Promise<unknown> }
+/** An injected Solana wallet, such as window.solana or window.phantom.solana. */
+export type SolanaWallet = {
+  publicKey?: { toBase58(): string } | null
+  connect(): Promise<unknown>
+  signMessage(message: Uint8Array, encoding?: string): Promise<Uint8Array | { signature: Uint8Array }>
+}
+
+/**
+ * web3Message writes the message a wallet signs, in the grammar GoTrue's
+ * parsers accept (EIP-4361 for Ethereum; its Solana equivalent). GoTrue
+ * checks that uri is the app's site URL or an allowed redirect URL, that
+ * domain is uri's host, and that the message is at most ten minutes old.
+ */
+export function web3Message(chain: Web3Chain, input: { domain: string; address: string; uri: string; statement?: string; chainId?: number; nonce: string; issuedAt: string }): string {
+  const name = chain === 'ethereum' ? 'Ethereum' : 'Solana'
+  return [
+    `${input.domain} wants you to sign in with your ${name} account:`, input.address, '',
+    ...(input.statement ? [input.statement.replace(/[\r\n]+/g, ' '), ''] : []),
+    `URI: ${input.uri}`, 'Version: 1', ...(input.chainId !== undefined ? [`Chain ID: ${input.chainId}`] : []), `Nonce: ${input.nonce}`, `Issued At: ${input.issuedAt}`,
+  ].join('\n')
+}
+
+const hexOf = (bytes: Uint8Array) => Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
+const base64Of = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes))
 
 /** A failed request. `code` is the stable server code, or `http_<status>`. */
 export class AuthError extends Error {
@@ -168,7 +224,11 @@ export function createAuthClient(options: AuthClientOptions) {
     let data: any = null
     try { data = text ? JSON.parse(text) : null } catch { data = null }
     if (!response.ok) {
-      const code = data?.error_code ?? data?.code ?? data?.error
+      // GoTrue reports a hook's refusal (sign-up restrictions) as msg, with
+      // error_code "unknown".
+      const hookCode = typeof data?.msg === 'string' && /^[a-z0-9_]{1,64}$/.test(data.msg) ? data.msg : undefined
+      const errorCode = data?.error_code === 'unknown' ? undefined : data?.error_code
+      const code = errorCode ?? hookCode ?? data?.code ?? data?.error
       throw new AuthError(response.status, typeof code === 'string' && /^[a-z0-9_]{1,64}$/.test(code) ? code : `http_${response.status}`)
     }
     return data as T
@@ -225,6 +285,21 @@ export function createAuthClient(options: AuthClientOptions) {
 
   const withRedirect = (path: string, redirectTo?: string) => redirectTo ? `${path}${path.includes('?') ? '&' : '?'}redirect_to=${encodeURIComponent(redirectTo)}` : path
   const id = (value: string) => encodeURIComponent(value)
+  const domains = {
+    list: async (org: string) => (await authz<{ domains: OrgDomain[] }>('GET', `/orgs/${id(org)}/domains`)).domains,
+    /** Returns the TXT record to publish; then call verify. */
+    add: (org: string, domain: string) => authz<OrgDomain>('POST', `/orgs/${id(org)}/domains`, { domain }),
+    verify: (org: string, domain: string) => authz<OrgDomain>('POST', `/orgs/${id(org)}/domains/${id(domain)}/verify`, {}),
+    remove: (org: string, domain: string) => authz<null>('DELETE', `/orgs/${id(org)}/domains/${id(domain)}`),
+    /**
+     * Lets people with a confirmed address at a verified domain join:
+     * 'suggest' offers the organization, 'automatic' adds them (and those
+     * already there) with role, never owner. A person who left or was removed
+     * comes back only by invitation.
+     */
+    setJoin: (org: string, domain: string, input: { join: DomainJoinMode; role?: string }) =>
+      authz<{ domain: string; join: { mode: DomainJoinMode; role: string }; joined: number }>('PATCH', `/orgs/${id(org)}/domains/${id(domain)}`, input),
+  }
 
   return {
     async signUp(input: { email: string; password: string; redirectTo?: string } & Captcha): Promise<{ session: Session | null; user: User | null }> {
@@ -243,6 +318,43 @@ export function createAuthClient(options: AuthClientOptions) {
      */
     async signInAnonymously(input: Captcha = {}): Promise<Session> {
       return save(toSession(await call<TokenResponse>('POST', '/auth/v1/signup', { body: captcha(input) })), 'SIGNED_IN')
+    },
+    /**
+     * Signs in with a crypto wallet when the Auth app has Web3 sign-in on
+     * for that chain. The wallet (window.ethereum or window.solana unless
+     * given) asks its owner to sign a message naming this page; the first
+     * sign-in creates the user. uri defaults to this page's origin, which must
+     * be the app's site URL or an allowed redirect URL.
+     */
+    async signInWithWeb3(input: { chain: Web3Chain; wallet?: EthereumWallet | SolanaWallet; statement?: string; uri?: string }): Promise<Session> {
+      const page = (globalThis as { location?: Location }).location
+      const uri = input.uri ?? page?.origin
+      if (!uri) throw new AuthError(400, 'web3_uri_required')
+      const domain = new URL(uri).host
+      const nonce = hexOf(crypto.getRandomValues(new Uint8Array(16)))
+      const issuedAt = new Date().toISOString()
+      const statement = input.statement ?? `Sign in to ${domain}`
+      let message: string, signature: string
+      if (input.chain === 'ethereum') {
+        const wallet = (input.wallet ?? (globalThis as { ethereum?: EthereumWallet }).ethereum) as EthereumWallet | undefined
+        if (!wallet?.request) throw new AuthError(400, 'web3_wallet_not_found')
+        const [address] = await wallet.request({ method: 'eth_requestAccounts' }) as string[]
+        const chainId = Number.parseInt(String(await wallet.request({ method: 'eth_chainId' })), 16)
+        message = web3Message('ethereum', { domain, address, uri, statement, chainId, nonce, issuedAt })
+        signature = String(await wallet.request({ method: 'personal_sign', params: [`0x${hexOf(new TextEncoder().encode(message))}`, address] }))
+      } else if (input.chain === 'solana') {
+        const wallet = (input.wallet ?? (globalThis as { solana?: SolanaWallet }).solana) as SolanaWallet | undefined
+        if (!wallet?.signMessage) throw new AuthError(400, 'web3_wallet_not_found')
+        if (!wallet.publicKey) await wallet.connect()
+        const address = wallet.publicKey?.toBase58()
+        if (!address) throw new AuthError(400, 'web3_wallet_not_connected')
+        message = web3Message('solana', { domain, address, uri, statement, nonce, issuedAt })
+        const signed = await wallet.signMessage(new TextEncoder().encode(message), 'utf8')
+        signature = base64Of(signed instanceof Uint8Array ? signed : signed.signature)
+      } else {
+        throw new AuthError(400, 'web3_unsupported_chain')
+      }
+      return save(toSession(await call<TokenResponse>('POST', '/auth/v1/token?grant_type=web3', { body: { chain: input.chain, message, signature } })), 'SIGNED_IN')
     },
     async signInWithPassword(input: { email: string; password: string } & Captcha): Promise<Session> {
       return save(toSession(await call<TokenResponse>('POST', '/auth/v1/token?grant_type=password', { body: { email: input.email, password: input.password, ...captcha(input) } })), 'SIGNED_IN')
@@ -285,9 +397,16 @@ export function createAuthClient(options: AuthClientOptions) {
      */
     mfa: {
       listFactors: async (): Promise<Factor[]> => (await call<{ factors?: Factor[] }>('GET', '/auth/v1/user', { token: await bearer() })).factors ?? [],
-      /** Starts enrolling an authenticator app; show totp.qr_code, then challenge and verify to activate it. */
-      enrollTOTP: async (input: { friendlyName?: string; issuer?: string } = {}): Promise<TOTPEnrollment> =>
-        call<TOTPEnrollment>('POST', '/auth/v1/factors', { token: await bearer(), body: { factor_type: 'totp', ...(input.friendlyName ? { friendly_name: input.friendlyName } : {}), ...(input.issuer ? { issuer: input.issuer } : {}) } }),
+      /**
+       * Starts enrolling an authenticator app; show totp.qr_code (an image
+       * URL) or totp.secret, then challenge and verify to activate it.
+       */
+      enrollTOTP: async (input: { friendlyName?: string; issuer?: string } = {}): Promise<TOTPEnrollment> => {
+        const enrollment = await call<TOTPEnrollment>('POST', '/auth/v1/factors', { token: await bearer(), body: { factor_type: 'totp', ...(input.friendlyName ? { friendly_name: input.friendlyName } : {}), ...(input.issuer ? { issuer: input.issuer } : {}) } })
+        // GoTrue v2.197.0 returns the QR code as SVG markup.
+        const qr = enrollment.totp.qr_code
+        return { ...enrollment, totp: { ...enrollment.totp, qr_code: qr.startsWith('data:') ? qr : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr)}` } }
+      },
       /** Starts enrolling a phone for SMS codes; challenge and verify to activate it. */
       enrollPhone: async (input: { phone: string; friendlyName?: string }): Promise<Factor> =>
         call<Factor>('POST', '/auth/v1/factors', { token: await bearer(), body: { factor_type: 'phone', phone: input.phone, ...(input.friendlyName ? { friendly_name: input.friendlyName } : {}) } }),
@@ -359,6 +478,14 @@ export function createAuthClient(options: AuthClientOptions) {
       return withRedirect(`${origin}/ui/sign-in`, input.redirectTo)
     },
     /**
+     * The hosted account page, where people change their email address and
+     * password, second factors, passkeys, sign-in methods, connected apps and
+     * sessions. It signs in on its own; Back returns to redirectTo.
+     */
+    hostedAccountUrl(input: { redirectTo?: string } = {}): string {
+      return withRedirect(`${origin}/ui/account`, input.redirectTo)
+    },
+    /**
      * Completes a redirect from the hosted pages, a magic link or OAuth: reads
      * the session from the URL fragment, stores it and removes it from the
      * address bar. Returns null when the URL carries no session.
@@ -383,42 +510,147 @@ export function createAuthClient(options: AuthClientOptions) {
     async getUser(): Promise<User> {
       return call<User>('GET', '/auth/v1/user', { token: await bearer() })
     },
-    async updateUser(input: { email?: string; password?: string; data?: Record<string, unknown> }): Promise<User> {
-      return call<User>('PUT', '/auth/v1/user', { token: await bearer(), body: input })
+    /**
+     * A new password needs currentPassword, except in a password reset
+     * (resetPasswordForEmail's link) or for a user who has no password yet;
+     * otherwise it fails with current_password_required or
+     * current_password_invalid.
+     */
+    async updateUser(input: { email?: string; password?: string; currentPassword?: string; data?: Record<string, unknown> }): Promise<User> {
+      const { currentPassword, ...fields } = input
+      return call<User>('PUT', '/auth/v1/user', { token: await bearer(), body: { ...fields, ...(currentPassword !== undefined ? { current_password: currentPassword } : {}) } })
     },
     async resetPasswordForEmail(email: string, input: { redirectTo?: string } & Captcha = {}): Promise<void> {
       await call('POST', withRedirect('/auth/v1/recover', input.redirectTo ?? `${origin}/ui/reset-password`), { body: { email, ...captcha(input) } })
     },
-    /** Ends this session, or every session of the user with scope "global". */
-    async signOut(input: { scope?: 'local' | 'global' } = {}): Promise<void> {
+    /**
+     * Ends this session, every session of the user with scope "global", or
+     * every session but this one with scope "others".
+     */
+    async signOut(input: { scope?: 'local' | 'global' | 'others' } = {}): Promise<void> {
       const session = parseSession(await store.get())
       try {
         if (session) await call('POST', `/auth/v1/logout?scope=${input.scope ?? 'local'}`, { token: session.accessToken })
       } catch (err) {
         if (!(err instanceof AuthError) || err.status >= 500) throw err
       } finally {
-        await clear()
+        if (input.scope !== 'others') await clear()
       }
     },
     onAuthStateChange(listener: (event: AuthEvent, session: Session | null) => void): () => void {
       listeners.add(listener)
       return () => { listeners.delete(listener) }
     },
+    /**
+     * The signed-in user's own sessions, most recently active first. Ending
+     * one signs that device out; end this one with signOut().
+     */
+    sessions: {
+      list: async () => (await authz<{ sessions: UserSession[] }>('GET', '/sessions')).sessions,
+      revoke: (session: string) => authz<null>('DELETE', `/sessions/${id(session)}`),
+    },
+    /**
+     * Deletes the signed-in user's account, when the Auth app allows it. The
+     * session must come from a sign-in in the last ten minutes (with the
+     * second step, if the user has one), else this fails with
+     * reauthentication_required; the last owner of an organization with
+     * other members gets last_owner. Clears the stored session.
+     */
+    async deleteAccount(): Promise<{ organizations_deleted: number }> {
+      const result = await authz<{ deleted: boolean; organizations_deleted: number }>('DELETE', '/account')
+      await clear()
+      return { organizations_deleted: result.organizations_deleted }
+    },
+    /**
+     * Who is using this session as the user, when the app's support staff
+     * opened it (impersonation), such as "admin:0A1B2C3D"; null otherwise.
+     * Show a banner, and leave actions the person must take to them.
+     */
+    async actor(): Promise<string | null> {
+      const session = await getSession()
+      const act = session ? claims(session.accessToken).act as { sub?: unknown } | undefined : undefined
+      return typeof act?.sub === 'string' ? act.sub : null
+    },
     organizations: {
       list: async () => (await authz<{ organizations: Organization[] }>('GET', '/orgs')).organizations,
       create: (input: { slug: string; name: string }) => authz<Organization>('POST', '/orgs', input),
+      /**
+       * The organization's audit log, newest first (needs audit:read; owners
+       * hold it). Pass the returned next as cursor for the following page.
+       */
+      auditLog: (org: string, input: { cursor?: string; limit?: number } = {}) => {
+        const query = new URLSearchParams({ ...(input.cursor ? { cursor: input.cursor } : {}), ...(input.limit ? { limit: String(input.limit) } : {}) }).toString()
+        return authz<{ entries: AuditEntry[]; next: string | null }>('GET', `/orgs/${id(org)}/audit-log${query ? `?${query}` : ''}`)
+      },
+      /**
+       * Requires (or stops requiring) a verified second factor for the
+       * organization's permissions. Needs mfa:manage (owners hold it) and a
+       * session at aal2 either way; others get forbidden or mfa_required.
+       */
+      setMfaRequired: (org: string, required: boolean) =>
+        authz<Organization>('PATCH', `/orgs/${id(org)}`, { mfa_required: required }),
+      /**
+       * Makes org (one the user belongs to) the session's active
+       * organization, or none with null, and refreshes the session so its
+       * token carries it. Needs organization claims on in the Auth app. An
+       * organization that requires a second factor fails with mfa_required
+       * until the session is aal2.
+       */
+      setActive: async (org: string | null): Promise<ActiveOrganization | null> => {
+        await authz('POST', '/active-organization', { org })
+        const session = await refresh()
+        return session ? activeOrganization(session.accessToken) : null
+      },
+      /** The session's active organization, read from its token; null when none. */
+      active: async (): Promise<ActiveOrganization | null> => {
+        const session = await getSession()
+        return session ? activeOrganization(session.accessToken) : null
+      },
+      /**
+       * The organization the user may join because it verified the user's
+       * confirmed email domain (organization domains on in the Auth app).
+       */
+      suggested: async () => (await authz<{ organizations: SuggestedOrganization[] }>('GET', '/suggested-organizations')).organizations,
+      /** Joins a suggested organization with the role its domain gives. */
+      join: (org: string) => authz<{ org_id: string; role: string }>('POST', `/orgs/${id(org)}/join`, {}),
+      /**
+       * Email domains an organization proves with a DNS TXT record (owners,
+       * or members with domains:manage or sso:manage), and whether people at
+       * each join it.
+       */
+      domains,
     },
     members: {
       list: async (org: string) => (await authz<{ members: Member[] }>('GET', `/orgs/${id(org)}/members`)).members,
       setRole: (org: string, user: string, role: string) => authz<{ org_id: string; user_id: string; role: string }>('PATCH', `/orgs/${id(org)}/members/${id(user)}`, { role }),
       remove: (org: string, user: string) => authz<null>('DELETE', `/orgs/${id(org)}/members/${id(user)}`),
     },
+    /**
+     * Service accounts, when the app turned them on: members holding
+     * members:manage make machine principals that get tokens with the
+     * client-credentials grant (createClientCredentials in
+     * @gregale/auth/server). Only owners manage owner-role accounts. A
+     * secret is shown once; an account has at most two live ones.
+     */
+    serviceAccounts: {
+      list: async (org: string) => (await authz<{ service_accounts: ServiceAccount[] }>('GET', `/orgs/${id(org)}/service-accounts`)).service_accounts,
+      create: (org: string, input: { name: string; role: string; expiresInDays?: number }) =>
+        authz<CreatedServiceAccountSecret & Readonly<{ id: string; org_id: string; name: string; role: string; created_at: string }>>('POST', `/orgs/${id(org)}/service-accounts`,
+          { name: input.name, role: input.role, ...(input.expiresInDays ? { expires_in_days: input.expiresInDays } : {}) }),
+      update: (org: string, account: string, input: { name?: string; role?: string; disabled?: boolean }) =>
+        authz<Omit<ServiceAccount, 'secrets'>>('PATCH', `/orgs/${id(org)}/service-accounts/${id(account)}`, input),
+      remove: (org: string, account: string) => authz<null>('DELETE', `/orgs/${id(org)}/service-accounts/${id(account)}`),
+      addSecret: (org: string, account: string, input: { expiresInDays?: number } = {}) =>
+        authz<CreatedServiceAccountSecret>('POST', `/orgs/${id(org)}/service-accounts/${id(account)}/secrets`, input.expiresInDays ? { expires_in_days: input.expiresInDays } : {}),
+      revokeSecret: (org: string, account: string, secret: string) => authz<null>('DELETE', `/orgs/${id(org)}/service-accounts/${id(account)}/secrets/${id(secret)}`),
+    },
     invitations: {
       create: (org: string, input: { email: string; role: string; expiresIn?: number }) =>
         authz<CreatedInvitation>('POST', `/orgs/${id(org)}/invitations`, { email: input.email, role: input.role, ...(input.expiresIn ? { expires_in: input.expiresIn } : {}) }),
       list: async (org: string) => (await authz<{ invitations: Invitation[] }>('GET', `/orgs/${id(org)}/invitations`)).invitations,
       revoke: (org: string, invitation: string) => authz<null>('DELETE', `/orgs/${id(org)}/invitations/${id(invitation)}`),
-      accept: (token: string) => authz<{ org_id: string; role: string }>('POST', '/invitations/accept', { token }),
+      /** mfa_required: the organization needs a verified second factor before the new member can use it. */
+      accept: (token: string) => authz<{ org_id: string; role: string; mfa_required?: boolean }>('POST', '/invitations/accept', { token }),
     },
     /**
      * Self-service organization SSO, when the app owner turned it on: an
@@ -427,13 +659,7 @@ export function createAuthClient(options: AuthClientOptions) {
      * provider for those domains.
      */
     orgSSO: {
-      domains: {
-        list: async (org: string) => (await authz<{ domains: OrgDomain[] }>('GET', `/orgs/${id(org)}/domains`)).domains,
-        /** Returns the TXT record to publish; then call verify. */
-        add: (org: string, domain: string) => authz<OrgDomain>('POST', `/orgs/${id(org)}/domains`, { domain }),
-        verify: (org: string, domain: string) => authz<OrgDomain>('POST', `/orgs/${id(org)}/domains/${id(domain)}/verify`, {}),
-        remove: (org: string, domain: string) => authz<null>('DELETE', `/orgs/${id(org)}/domains/${id(domain)}`),
-      },
+      domains,
       providers: {
         list: async (org: string) => (await authz<{ providers: OrgSSOProvider[] }>('GET', `/orgs/${id(org)}/sso`)).providers,
         add: (org: string, input: { metadataUrl?: string; metadataXml?: string; domains: string[]; role?: string }) =>

@@ -23,10 +23,15 @@ type PlatformTenantPlanRequest struct {
 	Tiers                  []APIConsumerRateCardTier `json:"tiers,omitempty"`
 	RouteWeights           map[string]int64          `json:"route_weights,omitempty"`
 	RequestBudget          *PlatformTenantPlanBudget `json:"request_budget,omitempty"`
-	// Unit (ADR-1310) and TierMode (ADR-1309) default to request and
-	// graduated.
+	// Unit (ADR-1310, ADR-1319) and TierMode (ADR-1309) default to request
+	// and graduated.
 	Unit     string `json:"unit,omitempty"`
 	TierMode string `json:"tier_mode,omitempty"`
+	// Monthly base fee and minimum spend the plan's card charges (ADR-1322),
+	// optionally prorated in a tenant's first month (ADR-1325).
+	BaseFeeMillicentsPerMonth int64 `json:"base_fee_millicents_per_month,omitempty"`
+	MinimumMillicentsPerMonth int64 `json:"minimum_millicents_per_month,omitempty"`
+	ProrateMonthlyFees        bool  `json:"prorate_monthly_fees,omitempty"`
 }
 
 // PlatformTenantPlanResponse is one tenant plan.
@@ -41,8 +46,12 @@ type PlatformTenantPlanResponse struct {
 	RequestBudget          *PlatformTenantPlanBudget `json:"request_budget,omitempty"`
 	Unit                   string                    `json:"unit"`
 	TierMode               string                    `json:"tier_mode"`
-	CreatedAt              time.Time                 `json:"created_at"`
-	UpdatedAt              time.Time                 `json:"updated_at"`
+	// Monthly base fee and minimum spend (ADR-1322, ADR-1325).
+	BaseFeeMillicentsPerMonth int64     `json:"base_fee_millicents_per_month,omitempty"`
+	MinimumMillicentsPerMonth int64     `json:"minimum_millicents_per_month,omitempty"`
+	ProrateMonthlyFees        bool      `json:"prorate_monthly_fees,omitempty"`
+	CreatedAt                 time.Time `json:"created_at"`
+	UpdatedAt                 time.Time `json:"updated_at"`
 }
 
 // PlatformTenantPlanListResponse lists an account's tenant plans by name.

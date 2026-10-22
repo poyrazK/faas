@@ -7,10 +7,11 @@
 // future PR adds a bind call, the URL won't change and the test
 // stays green, but the bind call would surface in a test that
 // spies on pkg/api.Client.
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"testing"
 )
 
@@ -19,17 +20,17 @@ import (
 // the browser handoff. The encoded query value is decoded by the
 // dashboard router back to the GitHub owner/name string.
 func TestCmdConnectRepo_OpensDashboard(t *testing.T) {
-	rec := withRecorder(t)
+	rec := main.WithRecorder(t)
 	t.Setenv("FAAS_API", "https://api.example.test")
-	if code := cmdConnectRepo([]string{"poyrazK/gregale"}); code != 0 {
+	if code := main.CmdConnectRepo([]string{"poyrazK/gregale"}); code != 0 {
 		t.Fatalf("cmdConnectRepo exit = %d, want 0", code)
 	}
-	if len(rec.urls) != 1 {
-		t.Fatalf("recorded urls = %d, want 1", len(rec.urls))
+	if len((*rec.Urls())) != 1 {
+		t.Fatalf("recorded urls = %d, want 1", len((*rec.Urls())))
 	}
 	want := "https://api.example.test/dashboard/apps/new?repo=poyrazK%2Fgregale"
-	if rec.urls[0] != want {
-		t.Errorf("url = %q, want %q", rec.urls[0], want)
+	if (*rec.Urls())[0] != want {
+		t.Errorf("url = %q, want %q", (*rec.Urls())[0], want)
 	}
 }
 
@@ -38,7 +39,7 @@ func TestCmdConnectRepo_OpensDashboard(t *testing.T) {
 // `gregale deploy --repo`; sharing it is the deliberate contract
 // (commands_connect_repo.go doc-comment).
 func TestCmdConnectRepo_RejectsInvalidShape(t *testing.T) {
-	rec := withRecorder(t)
+	rec := main.WithRecorder(t)
 	t.Setenv("FAAS_API", "https://api.example.test")
 	bad := []string{
 		"",            // empty
@@ -54,24 +55,24 @@ func TestCmdConnectRepo_RejectsInvalidShape(t *testing.T) {
 		"foo\nbar/baz", // newline
 	}
 	for _, in := range bad {
-		if code := cmdConnectRepo([]string{in}); code != 1 {
+		if code := main.CmdConnectRepo([]string{in}); code != 1 {
 			t.Errorf("cmdConnectRepo(%q) = %d, want 1", in, code)
 		}
 	}
-	if len(rec.urls) != 0 {
-		t.Errorf("invalid shapes opened %d urls; want 0", len(rec.urls))
+	if len((*rec.Urls())) != 0 {
+		t.Errorf("invalid shapes opened %d urls; want 0", len((*rec.Urls())))
 	}
 }
 
 // TestCmdConnectRepo_NoArgsPrintsUsage pins the dispatcher
 // behavior for the missing-positional case.
 func TestCmdConnectRepo_NoArgsPrintsUsage(t *testing.T) {
-	_ = withRecorder(t)
+	_ = main.WithRecorder(t)
 	t.Setenv("FAAS_API", "https://api.example.test")
-	if code := cmdConnectRepo(nil); code != 1 {
+	if code := main.CmdConnectRepo(nil); code != 1 {
 		t.Errorf("cmdConnectRepo(nil) = %d, want 1", code)
 	}
-	if code := cmdConnectRepo([]string{}); code != 1 {
+	if code := main.CmdConnectRepo([]string{}); code != 1 {
 		t.Errorf("cmdConnectRepo([]) = %d, want 1", code)
 	}
 }
@@ -81,14 +82,14 @@ func TestCmdConnectRepo_NoArgsPrintsUsage(t *testing.T) {
 // failure — the URL is the value the customer came for, so the
 // CLI exits 0 after printing the URL.
 func TestCmdConnectRepo_FallsBackOnBrowserError(t *testing.T) {
-	rec := withRecorder(t)
-	rec.err = errBoom
+	rec := main.WithRecorder(t)
+	(*rec.Err()) = (*main.ErrBoom)
 	t.Setenv("FAAS_API", "https://api.example.test")
-	if code := cmdConnectRepo([]string{"poyrazK/gregale"}); code != 0 {
+	if code := main.CmdConnectRepo([]string{"poyrazK/gregale"}); code != 0 {
 		t.Fatalf("cmdConnectRepo exit = %d, want 0", code)
 	}
-	if len(rec.urls) != 1 {
-		t.Errorf("recorded urls = %d, want 1", len(rec.urls))
+	if len((*rec.Urls())) != 1 {
+		t.Errorf("recorded urls = %d, want 1", len((*rec.Urls())))
 	}
 }
 
@@ -96,15 +97,14 @@ func TestCmdConnectRepo_FallsBackOnBrowserError(t *testing.T) {
 // dashboard uses the same shape to compose the wizard URL in
 // scripts.
 func TestCmdConnectRepo_JSONOutput(t *testing.T) {
-	rec := withRecorder(t)
+	rec := main.WithRecorder(t)
 	t.Setenv("FAAS_API", "https://api.example.test")
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = false }()
 
-	jsonOutput = true
-	defer func() { jsonOutput = false }()
-
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdConnectRepo([]string{"poyrazK/gregale"}); code != 0 {
+	if code := main.CmdConnectRepo([]string{"poyrazK/gregale"}); code != 0 {
 		t.Fatalf("cmdConnectRepo --json = %d, want 0", code)
 	}
 	var got map[string]any
@@ -114,14 +114,14 @@ func TestCmdConnectRepo_JSONOutput(t *testing.T) {
 	if got["url"] != "https://api.example.test/dashboard/apps/new?repo=poyrazK%2Fgregale" {
 		t.Errorf("json url = %v, want the dashboard apps-new URL", got["url"])
 	}
-	if got["service"] != svcRepo {
-		t.Errorf("json service = %v, want %q", got["service"], svcRepo)
+	if got["service"] != main.SvcRepo {
+		t.Errorf("json service = %v, want %q", got["service"], main.SvcRepo)
 	}
 	if got["repo"] != "poyrazK/gregale" {
 		t.Errorf("json repo = %v, want \"poyrazK/gregale\"", got["repo"])
 	}
-	if len(rec.urls) != 0 {
-		t.Errorf("--json opened browser %d times; want 0", len(rec.urls))
+	if len((*rec.Urls())) != 0 {
+		t.Errorf("--json opened browser %d times; want 0", len((*rec.Urls())))
 	}
 }
 
@@ -130,17 +130,17 @@ func TestCmdConnectRepo_JSONOutput(t *testing.T) {
 // switch branch is wired correctly. Mirrors the existing
 // TestCmdConnect_GithubOpensDashboard test at commands2_test.go:489.
 func TestCmdConnect_RepoRoutesToCmdConnectRepoEndToEnd(t *testing.T) {
-	rec := withRecorder(t)
+	rec := main.WithRecorder(t)
 	t.Setenv("FAAS_API", "https://api.example.test")
-	if code := cmdConnect([]string{"repo", "poyrazK/gregale"}); code != 0 {
+	if code := main.CmdConnect([]string{"repo", "poyrazK/gregale"}); code != 0 {
 		t.Fatalf("cmdConnect repo exit = %d, want 0", code)
 	}
-	if len(rec.urls) != 1 {
-		t.Fatalf("recorded urls = %d, want 1", len(rec.urls))
+	if len((*rec.Urls())) != 1 {
+		t.Fatalf("recorded urls = %d, want 1", len((*rec.Urls())))
 	}
 	want := "https://api.example.test/dashboard/apps/new?repo=poyrazK%2Fgregale"
-	if rec.urls[0] != want {
-		t.Errorf("url = %q, want %q", rec.urls[0], want)
+	if (*rec.Urls())[0] != want {
+		t.Errorf("url = %q, want %q", (*rec.Urls())[0], want)
 	}
 }
 
@@ -148,9 +148,9 @@ func TestCmdConnect_RepoRoutesToCmdConnectRepoEndToEnd(t *testing.T) {
 // unknown-service error mentions both options ("github" + "repo
 // <owner>/<name>"), so the customer gets actionable help text.
 func TestCmdConnect_RepoUnknownServiceErrors(t *testing.T) {
-	_ = withRecorder(t)
+	_ = main.WithRecorder(t)
 	t.Setenv("FAAS_API", "https://api.example.test")
-	if code := cmdConnect([]string{"gitlab"}); code != 1 {
+	if code := main.CmdConnect([]string{"gitlab"}); code != 1 {
 		t.Errorf("cmdConnect gitlab = %d, want 1", code)
 	}
 }
@@ -165,7 +165,7 @@ func TestDashboardAppsNewURL(t *testing.T) {
 		{"http://localhost:8080", "octo/api", "http://localhost:8080/dashboard/apps/new?repo=octo%2Fapi"},
 	}
 	for _, c := range cases {
-		if got := dashboardAppsNewURL(c.api, c.repo); got != c.want {
+		if got := main.DashboardAppsNewURL(c.api, c.repo); got != c.want {
 			t.Errorf("dashboardAppsNewURL(%q, %q) = %q, want %q", c.api, c.repo, got, c.want)
 		}
 	}

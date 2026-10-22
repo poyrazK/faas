@@ -24,6 +24,8 @@ type workflowFixtureAPI struct {
 	cancelled, hold                                bool
 	deadline                                       time.Time
 	artifact                                       *api.OperationResultArtifact
+	children                                       []api.OperationChildRequest
+	childIDs                                       map[string]string
 }
 
 func workflowRequest(t *testing.T, client *http.Client, endpoint, step, mode string, generation int) *http.Response {
@@ -81,6 +83,25 @@ func newWorkflowFixtureTest(t *testing.T, state *workflowFixtureAPI) *httptest.S
 				bound = time.Now().Add(time.Minute)
 			}
 			_ = json.NewEncoder(w).Encode(api.OperationWorkflowControlResponse{OperationID: workflowTestID, WorkflowRunID: workflowTestRun, WorkflowStep: r.Header.Get(api.OperationWorkflowStepHeader), Generation: 1, Attempt: 1, ObservedAt: time.Now(), DeadlineAt: bound, LeaseExpiresAt: bound, CancellationRequested: state.cancelled})
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/children") {
+			if r.Header.Get(api.OperationExecutionKindHeader) != "workflow" || r.Header.Get(api.OperationWorkflowStepHeader) != "fan" {
+				t.Error("child start lacked the step proof")
+			}
+			var child api.OperationChildRequest
+			_ = json.NewDecoder(r.Body).Decode(&child)
+			state.children = append(state.children, child)
+			if state.childIDs == nil {
+				state.childIDs = map[string]string{}
+			}
+			id, replayed := state.childIDs[child.Key]
+			if !replayed {
+				id = child.Key + "-operation"
+				state.childIDs[child.Key] = id
+				w.WriteHeader(http.StatusCreated)
+			}
+			_ = json.NewEncoder(w).Encode(api.OperationChildStartResponse{OperationChild: api.OperationChild{Key: child.Key, Operation: api.OperationResponse{ID: id}}, Replayed: replayed})
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/artifact-upload-receipts") {
@@ -230,5 +251,25 @@ func TestCustomerWorkflowFixtureUsesLoopbackIdentity(t *testing.T) {
 	t.Setenv("FAAS_WORKLOAD_IDENTITY_ENDPOINT", "https://identity.example.test/oidc/token")
 	if _, err := nativeWorkflowFixtureClient(t.Context()); err == nil {
 		t.Fatal("nonloopback identity endpoint accepted")
+	}
+}
+
+func TestCustomerWorkflowFixtureFanStartsAndReplaysChildren(t *testing.T) {
+	state := &workflowFixtureAPI{}
+	server := newWorkflowFixtureTest(t, state)
+	if response := workflowRequest(t, server.Client(), server.URL, "fan", "complete", 1); response.StatusCode != http.StatusOK {
+		t.Fatalf("fan step answered %d", response.StatusCode)
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	keys := []string{}
+	for _, child := range state.children {
+		if child.Operation != "export" || string(child.Input) != `{"mode":"complete"}` {
+			t.Fatalf("child request = %+v", child)
+		}
+		keys = append(keys, child.Key)
+	}
+	if strings.Join(keys, ",") != "child-a,child-b,child-a" || state.uploads != 0 {
+		t.Fatalf("fan step started %v and uploaded %d", keys, state.uploads)
 	}
 }

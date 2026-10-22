@@ -1,5 +1,5 @@
 // adr: 069
-package sched
+package sched_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -17,7 +18,7 @@ import (
 func TestWakeRestoresCompanionSnapshot(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	_, app, _ := sched.SeedApp(t, store, api.PlanPro, 512, 5)
 	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:companion", Status: state.DeployPending,
 		Sidecars: json.RawMessage(`[{"name":"heartbeat","type":"sidecar","ram_mb":64}]`)})
 	if err != nil {
@@ -39,19 +40,19 @@ func TestWakeRestoresCompanionSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vmm := &fakeVMM{}
-	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	vmm := &sched.FakeVMM{}
+	e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 	if _, err := e.Wake(ctx, app.ID, "", "", ""); err != nil {
 		t.Fatalf("Wake: %v", err)
 	}
-	if vmm.restores != 1 || vmm.coldBoots != 0 {
-		t.Fatalf("restores=%d coldBoots=%d; want the companion snapshot restored", vmm.restores, vmm.coldBoots)
+	if (*vmm.Restores()) != 1 || (*vmm.ColdBoots()) != 0 {
+		t.Fatalf("restores=%d coldBoots=%d; want the companion snapshot restored", (*vmm.Restores()), (*vmm.ColdBoots()))
 	}
 	// vmmd matches this against the requested guest memory before it
 	// restores a companion; production-us rc.252 sent 0 and every
 	// companion wake cold-booted (SnapshotRef had no mem_bytes).
-	if vmm.lastSnapRef.MemBytes != (512+64)<<20 {
-		t.Fatalf("wake SnapshotRef.MemBytes = %d; want the snapshot's %d", vmm.lastSnapRef.MemBytes, (512+64)<<20)
+	if (*vmm.LastSnapRef()).MemBytes != (512+64)<<20 {
+		t.Fatalf("wake SnapshotRef.MemBytes = %d; want the snapshot's %d", (*vmm.LastSnapRef()).MemBytes, (512+64)<<20)
 	}
 	got, err := store.LatestSnapshot(ctx, dep.ID)
 	if err != nil || got.ID != snap.ID || got.Stale {

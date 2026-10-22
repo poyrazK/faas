@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -6,11 +6,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreListLatestDeploymentPerApp(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "latest-owned@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
@@ -19,21 +20,21 @@ func TestMemStoreListLatestDeploymentPerApp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	createApp := func(accountID, slug string) App {
+	createApp := func(accountID, slug string) state.App {
 		t.Helper()
-		app, createErr := store.CreateApp(ctx, App{
-			AccountID: accountID, Slug: slug, Type: AppTypeApp, Status: AppActive,
+		app, createErr := store.CreateApp(ctx, state.App{
+			AccountID: accountID, Slug: slug, Type: state.AppTypeApp, Status: state.AppActive,
 		})
 		if createErr != nil {
 			t.Fatal(createErr)
 		}
 		return app
 	}
-	createDeployment := func(appID, id string, createdAt time.Time) Deployment {
+	createDeployment := func(appID, id string, createdAt time.Time) state.Deployment {
 		t.Helper()
-		deployment, createErr := store.CreateDeployment(ctx, Deployment{
+		deployment, createErr := store.CreateDeployment(ctx, state.Deployment{
 			ID: id, AppID: appID, ImageDigest: "sha256:" + id,
-			Kind: DeploymentKindImage, Status: DeployLive, CreatedAt: createdAt,
+			Kind: state.DeploymentKindImage, Status: state.DeployLive, CreatedAt: createdAt,
 		})
 		if createErr != nil {
 			t.Fatal(createErr)
@@ -50,10 +51,10 @@ func TestMemStoreListLatestDeploymentPerApp(t *testing.T) {
 
 	appB := createApp(account.ID, "latest-store-b")
 	wantB := createDeployment(appB.ID, "00000000-0000-0000-0000-000000000003", stamp.Add(time.Minute))
-	clearedB, err := store.CreateDeployment(ctx, Deployment{
+	clearedB, err := store.CreateDeployment(ctx, state.Deployment{
 		ID: "00000000-0000-0000-0000-000000000006", AppID: appB.ID,
-		ImageDigest: "sha256:cleared", Kind: DeploymentKindImage,
-		Status: DeployFailed, CreatedAt: stamp.Add(2 * time.Minute),
+		ImageDigest: "sha256:cleared", Kind: state.DeploymentKindImage,
+		Status: state.DeployFailed, CreatedAt: stamp.Add(2 * time.Minute),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +95,7 @@ func TestMemStoreListLatestDeploymentPerApp(t *testing.T) {
 
 func TestMemStoreListLatestDeploymentPerAppEmpty(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "latest-empty@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +112,7 @@ func TestMemStoreListLatestDeploymentPerAppEmpty(t *testing.T) {
 
 func TestMemStoreListAppsWithLiveDeploymentIsScopedAndFiltersHistory(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "live-app-owned@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
@@ -120,34 +121,34 @@ func TestMemStoreListAppsWithLiveDeploymentIsScopedAndFiltersHistory(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	createApp := func(accountID, slug string) App {
+	createApp := func(accountID, slug string) state.App {
 		t.Helper()
-		app, createErr := store.CreateApp(ctx, App{AccountID: accountID, Slug: slug, Type: AppTypeApp, Status: AppActive})
+		app, createErr := store.CreateApp(ctx, state.App{AccountID: accountID, Slug: slug, Type: state.AppTypeApp, Status: state.AppActive})
 		if createErr != nil {
 			t.Fatal(createErr)
 		}
 		return app
 	}
-	createDeployment := func(appID, id string, status DeploymentStatus) {
+	createDeployment := func(appID, id string, status state.DeploymentStatus) {
 		t.Helper()
-		if _, createErr := store.CreateDeployment(ctx, Deployment{
-			ID: id, AppID: appID, ImageDigest: "sha256:" + id, Kind: DeploymentKindImage, Status: status,
+		if _, createErr := store.CreateDeployment(ctx, state.Deployment{
+			ID: id, AppID: appID, ImageDigest: "sha256:" + id, Kind: state.DeploymentKindImage, Status: status,
 		}); createErr != nil {
 			t.Fatal(createErr)
 		}
 	}
 
 	liveApp := createApp(account.ID, "live-list-app")
-	createDeployment(liveApp.ID, "00000000-0000-0000-0000-000000000011", DeployLive)
+	createDeployment(liveApp.ID, "00000000-0000-0000-0000-000000000011", state.DeployLive)
 	historicalApp := createApp(account.ID, "historical-list-app")
-	createDeployment(historicalApp.ID, "00000000-0000-0000-0000-000000000012", DeploySuperseded)
+	createDeployment(historicalApp.ID, "00000000-0000-0000-0000-000000000012", state.DeploySuperseded)
 	deletedApp := createApp(account.ID, "deleted-live-list-app")
-	createDeployment(deletedApp.ID, "00000000-0000-0000-0000-000000000013", DeployLive)
+	createDeployment(deletedApp.ID, "00000000-0000-0000-0000-000000000013", state.DeployLive)
 	if err := store.DeleteApp(ctx, deletedApp.ID); err != nil {
 		t.Fatal(err)
 	}
 	foreignApp := createApp(foreign.ID, "foreign-live-list-app")
-	createDeployment(foreignApp.ID, "00000000-0000-0000-0000-000000000014", DeployLive)
+	createDeployment(foreignApp.ID, "00000000-0000-0000-0000-000000000014", state.DeployLive)
 
 	got, err := store.ListAppsWithLiveDeployment(ctx, account.ID)
 	if err != nil {

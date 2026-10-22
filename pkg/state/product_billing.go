@@ -27,6 +27,7 @@ type ProductBillingStore interface {
 	ReviewProductBilling(context.Context, ProductBillingScope) (api.ProductBillingReview, error)
 	ListProductBillingReceipts(context.Context, ProductBillingScope, string) (api.ProductBillingReceipts, error)
 	ListProductBillingDocuments(context.Context, ProductBillingScope, string) (api.ProductBillingDocuments, error)
+	GetProductBillingDocument(context.Context, ProductBillingScope, string) (api.ProductBillingDocument, error)
 	FinalizeProductBilling(context.Context, ProductBillingScope, string) (api.ProductBillingDocument, error)
 	WaiveProductReceipt(context.Context, ProductBillingScope, string, string) (api.ProductReceiptEvidence, error)
 	CreditProductReceipt(context.Context, ProductBillingScope, api.ProductCreditRequest) (api.ProductBillingDocument, error)
@@ -60,7 +61,7 @@ func validProductBillingText(value string, max int) bool {
 	return utf8.ValidString(value) && len(value) > 0 && len(value) <= max && strings.TrimSpace(value) == value && strings.IndexFunc(value, unicode.IsControl) < 0
 }
 
-func productBillingReview(scope ProductBillingScope, currency string, lines []api.ProductBillingLine, now time.Time) (api.ProductBillingReview, error) {
+func productBillingReview(scope ProductBillingScope, currency string, lines []api.ProductBillingLine, fee *api.ProductBillingFee, now time.Time) (api.ProductBillingReview, error) {
 	if len(lines) > api.ProductControlBillingMaxLines {
 		return api.ProductBillingReview{}, NewOperationLimitError("product_billing_lines", api.ProductControlBillingMaxLines, int64(len(lines)))
 	}
@@ -74,6 +75,14 @@ func productBillingReview(scope ProductBillingScope, currency string, lines []ap
 		review.Unresolved += line.Unresolved
 		review.AmountMillicents += line.AmountMillicents
 	}
+	// The month's plan fee is part of the reviewed total (ADR-20261021154511).
+	if fee != nil {
+		if fee.AmountMillicents < 0 || review.AmountMillicents > math.MaxInt64-fee.AmountMillicents {
+			return review, ErrConflict
+		}
+		review.Fees = []api.ProductBillingFee{*fee}
+		review.AmountMillicents += fee.AmountMillicents
+	}
 	// Bind the review to its owner and application as well as its public evidence.
 	raw, err := json.Marshal(struct {
 		Account, App string
@@ -85,6 +94,34 @@ func productBillingReview(scope ProductBillingScope, currency string, lines []ap
 	hash := sha256.Sum256(raw)
 	review.ReviewHash = hex.EncodeToString(hash[:])
 	return review, nil
+}
+
+// productMonthFee prices a customer's month from the plans they held in it,
+// less their trial (ADR-20261021154511, ADR-20261021195901); catalog loads
+// a revision of the scope's app.
+func productMonthFee(held []productcontrol.PlanHeld, period string, trial *productcontrol.Trial, catalog func(revision string) (api.ProductCatalog, bool)) *api.ProductBillingFee {
+	return productcontrol.MonthlyFee(held, func(revision, plan string) int64 {
+		c, ok := catalog(revision)
+		if !ok {
+			return 0
+		}
+		return c.Spec.Plans[plan].MonthlyFeeMillicents
+	}, period, trial)
+}
+
+// productTrial is a customer's trial for fees, nil without one.
+func productTrial(c api.ProductCustomer) *productcontrol.Trial {
+	if c.TrialStartsAt == nil || c.TrialEndsAt == nil {
+		return nil
+	}
+	return &productcontrol.Trial{Start: *c.TrialStartsAt, End: *c.TrialEndsAt}
+}
+
+// productMonthBounds is a billing period's first instant and the next
+// month's.
+func productMonthBounds(period string) (time.Time, time.Time) {
+	start, _ := time.Parse("2006-01", period)
+	return start, start.AddDate(0, 1, 0)
 }
 
 func validateProductFinalization(review api.ProductBillingReview, expected string) error {

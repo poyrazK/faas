@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // adr: 435. Authentic signatures and portable composed-scan fixtures. These
 // tests confer no native consumed-byte, rollout ACK or scanner acceptance.
@@ -15,30 +15,27 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appstandards"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type standardArtifactReviewTestStore interface {
-	standardMaterializationTestStore
-	sourceRootfsTestStore
-	runtimeScanTestStore
-}
+type standardArtifactReviewTestStore = state.ContractTestStore
 
 func TestMemApplicationStandardArtifactSecurityReview(t *testing.T) {
-	standardArtifactSecurityReview(t, func(*testing.T) standardArtifactReviewTestStore { return NewMemStore() })
+	standardArtifactSecurityReview(t, func(*testing.T) standardArtifactReviewTestStore { return state.NewMemStore() })
 }
 
-func standardArtifactReviewFixture(t *testing.T, s standardArtifactReviewTestStore, kind string, scan, unsafe bool) (App, Deployment) {
+func standardArtifactReviewFixture(t *testing.T, s standardArtifactReviewTestStore, kind string, scan, unsafe bool) (state.App, state.Deployment) {
 	t.Helper()
-	var app App
-	var dep Deployment
+	var app state.App
+	var dep state.Deployment
 	if kind == "registry" {
-		_, _, app, dep = artifactScanBaseFixture(t, s)
+		_, _, app, dep = state.ArtifactScanBaseFixture(t, s)
 	} else {
 		runtime := ""
 		if kind == "function" {
 			runtime = "node22"
 		}
-		f := sourceBuildRootfsFixtureRuntime(t, s, runtime)
+		f := state.SourceBuildRootfsFixtureRuntime(t, s, runtime)
 		if _, err := s.PublishSourceBuildRootfs(t.Context(), f.Input); err != nil {
 			t.Fatal(err)
 		}
@@ -50,13 +47,13 @@ func standardArtifactReviewFixture(t *testing.T, s standardArtifactReviewTestSto
 	return app, dep
 }
 
-func publishStandardReviewScan(t *testing.T, s standardArtifactReviewTestStore, app App, dep Deployment, unsafe bool) DeploymentRuntimeScan {
+func publishStandardReviewScan(t *testing.T, s standardArtifactReviewTestStore, app state.App, dep state.Deployment, unsafe bool) state.DeploymentRuntimeScan {
 	t.Helper()
 	inputs, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), app.AccountID, app.ID, dep.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := runtimeScanInputFixture(t, inputs)
+	in := state.RuntimeScanInputFixture(t, inputs)
 	if !unsafe {
 		for i := range in.Reports {
 			in.Reports[i].Report.SeverityCounts = api.SeverityCounts{}
@@ -70,7 +67,7 @@ func publishStandardReviewScan(t *testing.T, s standardArtifactReviewTestStore, 
 	return v
 }
 
-func standardArtifactReviewRequest(t *testing.T, s standardArtifactReviewTestStore, app App, otherKey bool) ApplicationStandardReviewRequest {
+func standardArtifactReviewRequest(t *testing.T, s standardArtifactReviewTestStore, app state.App, otherKey bool) state.ApplicationStandardReviewRequest {
 	t.Helper()
 	keys, err := s.ListAppTrustedSignersForApp(t.Context(), app.ID)
 	if err != nil || len(keys) != 1 {
@@ -87,20 +84,20 @@ func standardArtifactReviewRequest(t *testing.T, s standardArtifactReviewTestSto
 			t.Fatal(err)
 		}
 	}
-	publisher, err := s.CreateApplicationStandardPublisher(t.Context(), ApplicationStandardPublisherCreate{OrgID: app.OrgID, ActorID: app.AccountID, Name: "Reviewed company publisher", PublicKeyDER: der})
+	publisher, err := s.CreateApplicationStandardPublisher(t.Context(), state.ApplicationStandardPublisherCreate{OrgID: app.OrgID, ActorID: app.AccountID, Name: "Reviewed company publisher", PublicKeyDER: der})
 	if err != nil {
 		t.Fatal(err)
 	}
-	definition := mustMaterializationJSON(t, appstandards.Definition{
+	definition := state.MustMaterializationJSON(t, appstandards.Definition{
 		appstandards.RequireSigned:     {Mode: appstandards.Mandatory, Value: json.RawMessage(`true`)},
-		appstandards.TrustedPublishers: {Mode: appstandards.Mandatory, Value: mustMaterializationJSON(t, []string{publisher.ID})},
+		appstandards.TrustedPublishers: {Mode: appstandards.Mandatory, Value: state.MustMaterializationJSON(t, []string{publisher.ID})},
 		appstandards.SecurityPolicy:    {Mode: appstandards.Mandatory, Value: json.RawMessage(`"enforce"`)},
 	})
-	v, err := s.PublishApplicationStandardVersion(t.Context(), ApplicationStandardPublish{OrgID: app.OrgID, ActorID: app.AccountID, Slug: "review-security-" + uuid.NewString()[:8], CreateApplicationStandardVersionRequest: api.CreateApplicationStandardVersionRequest{Definition: definition}})
+	v, err := s.PublishApplicationStandardVersion(t.Context(), state.ApplicationStandardPublish{OrgID: app.OrgID, ActorID: app.AccountID, Slug: "review-security-" + uuid.NewString()[:8], CreateApplicationStandardVersionRequest: api.CreateApplicationStandardVersionRequest{Definition: definition}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return ApplicationStandardReviewRequest{Scope: "application", ScopeID: app.ID, StandardID: v.StandardID, AdmissionVersion: 1, Active: true, BatchSize: 1}
+	return state.ApplicationStandardReviewRequest{Scope: "application", ScopeID: app.ID, StandardID: v.StandardID, AdmissionVersion: 1, Active: true, BatchSize: 1}
 }
 
 func standardArtifactSecurityReview(t *testing.T, newStore func(*testing.T) standardArtifactReviewTestStore) {
@@ -138,7 +135,7 @@ func standardArtifactSecurityReview(t *testing.T, newStore func(*testing.T) stan
 }
 
 func TestMemApplicationStandardArtifactSecurityBlockers(t *testing.T) {
-	standardArtifactSecurityBlockers(t, NewMemStore())
+	standardArtifactSecurityBlockers(t, state.NewMemStore())
 }
 
 func standardArtifactSecurityBlockers(t *testing.T, s standardArtifactReviewTestStore) {
@@ -158,7 +155,7 @@ func standardArtifactSecurityBlockers(t *testing.T, s standardArtifactReviewTest
 			if err != nil || len(p.Blockers) != 1 || p.Blockers[0].Code != tc.code {
 				t.Fatal("unsafe image policy review was not explained", p.Blockers, err)
 			}
-			if _, err := s.ApproveApplicationStandardReview(t.Context(), app.OrgID, app.AccountID, p.ID, p.ApprovalHash); !errors.Is(err, ErrApplicationStandardReviewBlocked) {
+			if _, err := s.ApproveApplicationStandardReview(t.Context(), app.OrgID, app.AccountID, p.ID, p.ApprovalHash); !errors.Is(err, state.ErrApplicationStandardReviewBlocked) {
 				t.Fatal("blocked policy acquired approval", err)
 			}
 		})
@@ -166,7 +163,7 @@ func standardArtifactSecurityBlockers(t *testing.T, s standardArtifactReviewTest
 }
 
 func TestMemApplicationStandardArtifactReviewRescanInvalidatesApproval(t *testing.T) {
-	standardArtifactReviewRescan(t, NewMemStore())
+	standardArtifactReviewRescan(t, state.NewMemStore())
 }
 
 func standardArtifactReviewRescan(t *testing.T, s standardArtifactReviewTestStore) {
@@ -178,10 +175,10 @@ func standardArtifactReviewRescan(t *testing.T, s standardArtifactReviewTestStor
 		t.Fatal(p.Blockers, err)
 	}
 	publishStandardReviewScan(t, s, app, dep, true)
-	if _, err := s.ValidateApplicationStandardReview(t.Context(), app.OrgID, app.AccountID, p.ID, p.ApprovalHash); !errors.Is(err, ErrApplicationStandardReviewStale) {
+	if _, err := s.ValidateApplicationStandardReview(t.Context(), app.OrgID, app.AccountID, p.ID, p.ApprovalHash); !errors.Is(err, state.ErrApplicationStandardReviewStale) {
 		t.Fatal("changed selected scan retained old review authority", err)
 	}
-	if _, err := s.ApproveApplicationStandardReview(t.Context(), app.OrgID, app.AccountID, p.ID, p.ApprovalHash); !errors.Is(err, ErrApplicationStandardReviewStale) {
+	if _, err := s.ApproveApplicationStandardReview(t.Context(), app.OrgID, app.AccountID, p.ID, p.ApprovalHash); !errors.Is(err, state.ErrApplicationStandardReviewStale) {
 		t.Fatal("changed selected scan acquired old approval", err)
 	}
 }

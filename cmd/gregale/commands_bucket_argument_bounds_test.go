@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 )
 
 func TestBucketCommandsRejectInvalidArity(t *testing.T) {
@@ -19,23 +20,23 @@ func TestBucketCommandsRejectInvalidArity(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "token")
 	var stderr bytes.Buffer
-	oldErr := osStderr
-	osStderr = &stderr
-	t.Cleanup(func() { osStderr = oldErr })
+	oldErr := (*main.OsStderr)
+	(*main.OsStderr) = &stderr
+	t.Cleanup(func() { (*main.OsStderr) = oldErr })
 	bucket, request := uuid.NewString(), uuid.NewString()
 	for _, tc := range []struct {
 		name string
 		run  func([]string) int
 		args []string
 	}{
-		{"deletion_start", cmdBucketDeletions, []string{"start", "demo", bucket, "key", request}},
-		{"deletion_status", cmdBucketDeletions, []string{"status", "demo", bucket, request}},
-		{"tag_set", cmdBucketTags, []string{"set", "demo", bucket, "key", "team=core"}},
-		{"tag_get", cmdBucketTags, []string{"get", "demo", bucket, "key"}},
-		{"notification_set", cmdBucketNotifications, []string{"set", "demo", bucket, "-"}},
-		{"notification_get", cmdBucketNotifications, []string{"get", "demo", bucket}},
-		{"encryption_kms", cmdBucketDefaultEncryption, []string{"aws:kms", "demo", bucket, "owned-key"}},
-		{"encryption_status", cmdBucketDefaultEncryption, []string{"status", "demo", bucket}},
+		{"deletion_start", main.CmdBucketDeletions, []string{"start", "demo", bucket, "key", request}},
+		{"deletion_status", main.CmdBucketDeletions, []string{"status", "demo", bucket, request}},
+		{"tag_set", main.CmdBucketTags, []string{"set", "demo", bucket, "key", "team=core"}},
+		{"tag_get", main.CmdBucketTags, []string{"get", "demo", bucket, "key"}},
+		{"notification_set", main.CmdBucketNotifications, []string{"set", "demo", bucket, "-"}},
+		{"notification_get", main.CmdBucketNotifications, []string{"get", "demo", bucket}},
+		{"encryption_kms", main.CmdBucketDefaultEncryption, []string{"aws:kms", "demo", bucket, "owned-key"}},
+		{"encryption_status", main.CmdBucketDefaultEncryption, []string{"status", "demo", bucket}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for count := 0; count < len(tc.args); count++ {

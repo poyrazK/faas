@@ -15,12 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type cloneWorkerLeaseTestStore interface {
-	state.Store
-	state.ProjectEnvironmentCloneOperationStore
-	state.ProjectEnvironmentCloneWorkerLeaseStore
-	state.ProjectEnvironmentCloneWorkloadStore
-}
+type cloneWorkerLeaseTestStore = contractTestStore
 
 func TestMemProjectEnvironmentCloneWorkerLeaseOwnership(t *testing.T) {
 	projectEnvironmentCloneWorkerLeaseOwnership(t, state.NewMemStore())

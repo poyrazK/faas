@@ -19,6 +19,46 @@ import (
 // (action, role) cell. A missing cell returns false (deny), not panic
 // — fail closed.
 var allowRoleMatrix = map[OrgAction]map[state.OrgRole]bool{
+	OrgActionReadQueues:        {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true, state.OrgRoleViewer: true},
+	OrgActionConfigureQueues:   {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true},
+	OrgActionOperateQueues:     {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true},
+	OrgActionReplayQueues:      {state.OrgRoleOwner: true, state.OrgRoleAdmin: true},
+	OrgActionReadQueueUsage:    {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true, state.OrgRoleViewer: true, state.OrgRoleBilling: true},
+	ReadObjectStorage:          {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true, state.OrgRoleViewer: true},
+	ManageObjectStorage:        {state.OrgRoleOwner: true, state.OrgRoleAdmin: true},
+	BindObjectStorage:          {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true},
+	ReadObjectStorageUsage:     {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true, state.OrgRoleViewer: true, state.OrgRoleBilling: true},
+	OrgActionReadPostgres:      {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true, state.OrgRoleViewer: true},
+	OrgActionManagePostgres:    {state.OrgRoleOwner: true, state.OrgRoleAdmin: true},
+	OrgActionBindPostgres:      {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true},
+	OrgActionReadPostgresUsage: {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true, state.OrgRoleViewer: true, state.OrgRoleBilling: true},
+	OrgActionReadApp: {
+		state.OrgRoleOwner: true, state.OrgRoleAdmin: true,
+		state.OrgRoleDeveloper: true, state.OrgRoleViewer: true,
+	},
+	OrgActionReadAppLogs: {
+		state.OrgRoleOwner: true, state.OrgRoleAdmin: true,
+		state.OrgRoleDeveloper: true, state.OrgRoleViewer: true,
+	},
+	OrgActionConfigureApp: {
+		state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true,
+	},
+	OrgActionDeployApp: {
+		state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true,
+	},
+	OrgActionManageAppSecrets: {
+		state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true,
+	},
+	OrgActionManageAppSecurity:         {state.OrgRoleOwner: true, state.OrgRoleAdmin: true},
+	OrgActionDeleteApp:                 {state.OrgRoleOwner: true, state.OrgRoleAdmin: true},
+	OrgActionApproveAppRelease:         {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true},
+	OrgActionReadProject:               {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true, state.OrgRoleViewer: true},
+	OrgActionConfigureProject:          {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true},
+	OrgActionDeployProject:             {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true},
+	OrgActionManageProjectSecurity:     {state.OrgRoleOwner: true, state.OrgRoleAdmin: true},
+	OrgActionManageProjectSecrets:      {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true},
+	OrgActionApproveProjectEnvironment: {state.OrgRoleOwner: true, state.OrgRoleAdmin: true},
+	OrgActionDeleteProject:             {state.OrgRoleOwner: true, state.OrgRoleAdmin: true},
 	OrgActionSetApplicationStandardLocalIntent: {
 		state.OrgRoleOwner:     true,
 		state.OrgRoleAdmin:     true,
@@ -168,6 +208,10 @@ func AuthorizeOrgAction(ctx context.Context, action OrgAction, audit AuditEmitte
 	emitAudit(ctx, audit, acct, action.String(), p)
 	return p
 }
+
+// Can evaluates the same role matrix for resource inventory filtering. Mutating
+// handlers must use AuthorizeOrgAction so denials retain their audit evidence.
+func Can(role state.OrgRole, action OrgAction) bool { return allowRoleMatrix[action][role] }
 
 // emitAudit is a tiny helper that no-ops when audit is nil so callers
 // don't need to nil-check at every site. Audit emission is opt-in per

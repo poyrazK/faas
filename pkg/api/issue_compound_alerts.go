@@ -1,0 +1,72 @@
+package api
+
+import (
+	"fmt"
+	"sort"
+	"time"
+)
+
+// IssueCompoundAlertRule requires both thresholds in the same retained-event window.
+type IssueCompoundAlertRule struct {
+	Key              string `json:"key"`
+	Enabled          bool   `json:"enabled"`
+	Environment      string `json:"environment"`
+	MinimumEvents    int64  `json:"minimum_events"`
+	MinimumCustomers int64  `json:"minimum_customers"`
+	WindowSeconds    int64  `json:"window_seconds"`
+	CooldownSeconds  int64  `json:"cooldown_seconds"`
+}
+
+type IssueCompoundAlertPolicy struct {
+	Revision int64                    `json:"revision"`
+	Rules    []IssueCompoundAlertRule `json:"rules"`
+}
+
+type UpdateIssueCompoundAlertPolicyRequest struct {
+	ExpectedRevision *int64                   `json:"expected_revision"`
+	Rules            []IssueCompoundAlertRule `json:"rules"`
+}
+
+type PreviewIssueCompoundAlertRequest struct {
+	IssueID string                 `json:"issue_id"`
+	Rule    IssueCompoundAlertRule `json:"rule"`
+}
+
+type IssueCompoundAlertPreview struct {
+	IssueID             string     `json:"issue_id"`
+	RuleKey             string     `json:"rule_key"`
+	Environment         string     `json:"environment"`
+	PolicyRevision      int64      `json:"policy_revision"`
+	WindowStart         time.Time  `json:"window_start"`
+	WindowEnd           time.Time  `json:"window_end"`
+	ObservedEvents      int64      `json:"observed_events"`
+	IdentifiedCustomers int64      `json:"identified_customers"`
+	Enabled             bool       `json:"enabled"`
+	EnvironmentMatches  bool       `json:"environment_matches"`
+	EventsMatched       bool       `json:"events_matched"`
+	CustomersMatched    bool       `json:"customers_matched"`
+	Suppressed          bool       `json:"suppressed"`
+	CooldownReady       bool       `json:"cooldown_ready"`
+	Allowed             bool       `json:"allowed"`
+	Reason              string     `json:"reason"`
+	NextEligibleAt      *time.Time `json:"next_eligible_at,omitempty"`
+}
+
+func NormalizeIssueCompoundAlertRules(in []IssueCompoundAlertRule) ([]IssueCompoundAlertRule, error) {
+	if len(in) > IssueCompoundAlertMaxRules {
+		return nil, fmt.Errorf("at most %d compound alert rules are allowed", IssueCompoundAlertMaxRules)
+	}
+	frequency := make([]IssueFrequencyAlertRule, 0, len(in))
+	for _, r := range in {
+		if r.MinimumCustomers < 1 || r.MinimumCustomers > IssueCompoundAlertMaxCustomers {
+			return nil, fmt.Errorf("minimum_customers must be between 1 and %d", IssueCompoundAlertMaxCustomers)
+		}
+		frequency = append(frequency, IssueFrequencyAlertRule{Key: r.Key, Enabled: r.Enabled, Environment: r.Environment, MinimumEvents: r.MinimumEvents, WindowSeconds: r.WindowSeconds, CooldownSeconds: r.CooldownSeconds})
+	}
+	if _, err := NormalizeIssueFrequencyAlertRules(frequency); err != nil {
+		return nil, err
+	}
+	out := append([]IssueCompoundAlertRule{}, in...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out, nil
+}

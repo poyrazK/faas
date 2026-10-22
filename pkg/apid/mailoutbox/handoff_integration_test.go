@@ -49,9 +49,11 @@ CREATE TABLE billing_identities(account_id uuid NOT NULL REFERENCES accounts(id)
 CREATE TABLE apps(id uuid PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,streaming_enabled boolean NOT NULL DEFAULT false,slug text NOT NULL DEFAULT 'test-app',status text NOT NULL DEFAULT 'active',org_id uuid,project_id uuid,last_deploy_failed_email_at timestamptz);
 CREATE TABLE deployments(id uuid PRIMARY KEY,app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,status text NOT NULL DEFAULT 'pending',scope text NOT NULL DEFAULT 'default',deployed_by_user_id uuid REFERENCES accounts(id) ON DELETE SET NULL,deleted_at timestamptz,created_at timestamptz NOT NULL DEFAULT now(),error_code text,error text,error_hint text,error_why text,error_fix text);
 CREATE TABLE org_memberships(org_id uuid NOT NULL,account_id uuid NOT NULL,role text NOT NULL,removed_at timestamptz,PRIMARY KEY(org_id,account_id));
-CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); err != nil {
+CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz);
+CREATE TABLE scenario_test_action_policies(app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE)`); err != nil {
 		t.Fatal(err)
 	}
+	addOrgBillingPolicyFixture(t, pool)
 	names, err := fs.Glob(migrations.FS, "*_internal_mail_*.sql")
 	if err != nil {
 		t.Fatal(err)

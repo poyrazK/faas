@@ -33,6 +33,13 @@ type operationMemory struct {
 	workflowStateReports   map[string]operationWorkflowStateReceipt
 	webhooks               *operationWebhookMemory
 	attemptInstances       map[operationAttemptKey]string
+	schedules              map[string]OperationSchedule
+	scheduleLeases         map[string]time.Time
+	children               map[string]map[string]memOperationChild
+	childParents           map[string]string
+	concurrencyPolicies    map[string]memOperationConcurrencyPolicy
+	queue                  map[string]memQueuedOperation
+	approvalForms          map[string]memOperationApprovalForm
 }
 
 // operationAttemptKey names one HTTP attempt of one execution generation.
@@ -232,6 +239,10 @@ func (m *MemStore) admitOperationLocked(admission OperationAdmission, releaseErr
 	if pending >= limits.Operations.PendingPerAccount {
 		return Operation{}, false, NewOperationLimitError("pending_per_account", int64(limits.Operations.PendingPerAccount), int64(pending)+1)
 	}
+	queued := m.operationConcurrencyHoldLocked(op, def)
+	if queued {
+		holdOperationDispatch(&op, &inv)
+	}
 	var jobRun JobRun
 	if def.Spec.Job != "" {
 		jobRun, err = m.prepareOperationJobLocked(&op, inv, def, acct.Plan)
@@ -263,6 +274,9 @@ func (m *MemStore) admitOperationLocked(admission OperationAdmission, releaseErr
 		m.invocations[inv.ID] = inv
 		data.executions[inv.ID] = op.ID
 		data.generations[inv.ID] = op.Generation
+	}
+	if queued {
+		m.queueOperationLocked(op, def, now)
 	}
 	return cloneOperation(op), true, nil
 }

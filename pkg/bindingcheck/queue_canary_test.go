@@ -49,3 +49,20 @@ func TestQueueCanaryPolicyCannotPassPollOrWrongCompletion(t *testing.T) {
 		})
 	}
 }
+
+func TestQueueCanaryEligibilityBlocksReleasePlan(t *testing.T) {
+	for _, reason := range []string{"queue_canary_context_unavailable", "queue_handler_unsupported"} {
+		t.Run(reason, func(t *testing.T) {
+			inventory, _, now := fixture()
+			q := readinessQueue(now)
+			q.QueueCanarySupported = false
+			q.QueueCanaryReason = reason
+			inventory.Bindings = []api.AppBindingInventoryItem{q}
+			stored := api.BindingReleasePolicy{Mode: "enforce", Scope: "production", MaxVerificationAge: "5m", QueueRequirements: map[string]string{"orders": api.QueueEvidenceHandlerCompletion}}
+			steps, blockers, _, err := VerificationPlan(inventory, stored, now)
+			if err == nil || len(steps) != 1 || steps[0].Action != "blocked" || steps[0].Reason != reason || len(blockers) != 1 || blockers[0].Code != reason {
+				t.Fatalf("unavailable canary became executable: %+v %+v %v", steps, blockers, err)
+			}
+		})
+	}
+}

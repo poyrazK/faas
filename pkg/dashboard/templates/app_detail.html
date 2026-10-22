@@ -935,6 +935,49 @@
         {{end}}
       </section>
 
+      {{with .Data.RouteInsights}}
+        <section id="route-insights" aria-label="Route insights">
+          <h2>Route insights</h2>
+          <p class="muted">Checked every six hours from this app's traffic: routes that keep it awake, routes safe to cache, and cache rules that serve stale or too-short responses.</p>
+          {{if eq .Flash "fixed"}}<p role="status"><strong>Fix applied.</strong> {{.FlashDetail}}</p>{{end}}
+          {{if eq .Flash "changed"}}<p role="status">The fix changed since the page loaded. Review the current fix below before applying it.</p>{{end}}
+          {{if eq .Flash "error"}}<p role="alert"><strong>The fix was not applied.</strong> {{.FlashDetail}}</p>{{end}}
+          {{if not .Available}}
+            <p role="status">Route insights are temporarily unavailable. Refresh the page to try again.</p>
+          {{else if .Active}}
+            <ul aria-label="Active route insights">
+              {{range .Active}}
+                <li>
+                  <p><span class="badge">{{.KindLabel}}</span> <code>{{.Method}} {{.Route}}</code> · detected {{.FirstDetectedAt}}</p>
+                  <p>{{.Message}}</p>
+                  {{if .FixID}}
+                    <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/routes/insights/{{.ID}}/fix">
+                      <input type="hidden" name="csrf_token" value="{{$.Data.RouteInsights.CSRF}}">
+                      <input type="hidden" name="fix_id" value="{{.FixID}}">
+                      <p class="muted">{{.FixSummary}}</p>
+                      <button type="submit">Apply fix</button>
+                    </form>
+                  {{end}}
+                </li>
+              {{end}}
+            </ul>
+          {{else}}
+            <p>No active insights. Nothing measured in the last day keeps this app awake or should change how its routes are cached.</p>
+          {{end}}
+          {{if .Resolved}}
+            <details>
+              <summary>Resolved in the last 7 days ({{len .Resolved}})</summary>
+              <ul aria-label="Resolved route insights">
+                {{range .Resolved}}
+                  <li><span class="badge">{{.KindLabel}}</span> <code>{{.Method}} {{.Route}}</code> · {{if .FixedAt}}fixed {{.FixedAt}}{{else}}resolved {{.ResolvedAt}}{{end}}</li>
+                {{end}}
+              </ul>
+            </details>
+          {{end}}
+          <p class="muted">To hear about new insights by email, Slack or PagerDuty, enable the "New route insights" <a href="#alert-presets">alert preset</a> and bind a notification channel.</p>
+        </section>
+      {{end}}
+
       {{if .Data.PreviewEnvironment}}
         {{with .Data.PreviewEnvironment}}
           <section aria-label="PR preview environment" id="pr-preview-environment">

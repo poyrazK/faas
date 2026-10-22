@@ -26,7 +26,14 @@
 //	                      activate a release; --only restarts just those
 //	                      services, --expect-current refuses unless that
 //	                      release is still active (per-unit releases)
-//	rollback [--only a,b] activate the newest other verified release
+//	rollback [--only a,b] [--expect-current <release-id>] [--to <release-id>]
+//	                      activate the release that was active before the
+//	                      current one (or --to); --expect-current refuses
+//	                      unless that release is still active
+//	restart-changed [--only a,b] [--dry-run] [--json]
+//	                      restart, one at a time to readiness, the active
+//	                      daemons whose start inputs changed since they
+//	                      started (host-configuration lane)
 //
 // Invocation sites:
 //
@@ -56,7 +63,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: deployctl <generate|check|diff|deploy|rollback|bundle-create|unit-overlay|bundle-check|bundle-check-installed|migration-dry-run|legacy-import|upgrade-node> [args...]")
+		fmt.Fprintln(os.Stderr, "usage: deployctl <generate|check|diff|deploy|rollback|restart-changed|bundle-create|unit-overlay|bundle-check|bundle-check-installed|migration-dry-run|legacy-import|upgrade-node> [args...]")
 		os.Exit(2)
 	}
 	cmd := os.Args[1]
@@ -105,6 +112,11 @@ func main() {
 	case "rollback":
 		if err := runRollback(args); err != nil {
 			fmt.Fprintln(os.Stderr, "deployctl rollback:", err)
+			os.Exit(1)
+		}
+	case "restart-changed":
+		if err := runRestartChanged(args); err != nil {
+			fmt.Fprintln(os.Stderr, "deployctl restart-changed:", err)
 			os.Exit(1)
 		}
 	case "migration-dry-run":
@@ -168,6 +180,7 @@ var defaultTargets = []target{
 	{dir: "deploy/ansible/roles/s3_gateway_service/files", skip: only("s3-gatewayd")},
 	{dir: "deploy/ansible/roles/internal_mail_service/files", skip: only("maild")},
 	{dir: "deploy/ansible/roles/profiled_service/files", skip: only("profiled")},
+	{dir: "deploy/ansible/roles/livequeryd_service/files", skip: only("livequeryd")},
 }
 
 // ansibleRoleSkips: the control_plane_service role ships apid, meterd
@@ -186,6 +199,7 @@ func ansibleRoleSkips() map[string]bool {
 		"maild":                true,
 		"realtimed":            true,
 		"profiled":             true,
+		"livequeryd":           true,
 	}
 }
 
@@ -213,6 +227,7 @@ func legacySkips() map[string]bool {
 		"meterd":               true,
 		"s3-gatewayd":          true,
 		"gatewayd-public-edge": true,
+		"livequeryd":           true,
 	}
 }
 
@@ -480,8 +495,8 @@ func runUnitOverlay(args []string) error {
 	return nil
 }
 
-// runRollback activates the newest verified retained release other than the
-// one currently active.
+// runRollback activates the release that was active before the current one,
+// as deployctl's activation history records it, or the --to release.
 //
 // Deploy already unwinds its own steps, but the CD pipeline's post-activation
 // gates — liveness, the public customer path, metering convergence — run after
@@ -489,17 +504,23 @@ func runUnitOverlay(args []string) error {
 // has reported "rollback available: true" the whole time with nothing able to
 // act on it.
 //
+// A per-unit lane passes both flags from its plan: --expect-current the
+// release it activated, --to the release it was built over. A rerun after the
+// rollback completed is a no-op.
+//
 // Takes the same lock as deploy, so it cannot interleave with one, and prints
 // the release it activated so the CD log records what the fleet was put back
 // to.
 func runRollback(args []string) error {
 	fs := flag.NewFlagSet("rollback", flag.ContinueOnError)
 	only := fs.String("only", "", "comma-separated services to restart (per-unit release)")
+	expect := fs.String("expect-current", "", "refuse unless this release id is active")
+	to := fs.String("to", "", "release id to activate (default: the release active before the current one)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("usage: deployctl rollback [--only a,b]")
+		return fmt.Errorf("usage: deployctl rollback [--only a,b] [--expect-current <release-id>] [--to <release-id>]")
 	}
 	runtime := defaultHostRuntime()
 	services, err := parseOnly(*only, flagSet(fs, "only"))
@@ -515,7 +536,10 @@ func runRollback(args []string) error {
 	if err != nil {
 		return err
 	}
-	target, err := controller.Rollback(context.Background())
+	target, err := controller.Rollback(context.Background(), deploycontroller.RollbackRequest{Target: *to, ExpectedCurrent: *expect})
+	if errors.Is(err, deploycontroller.ErrNoRecordedRelease) {
+		return fmt.Errorf("%w; pass it with --to <release-id>", err)
+	}
 	if err != nil {
 		return err
 	}

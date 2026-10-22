@@ -486,17 +486,17 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			if err != nil {
 				if errors.Is(err, state.ErrAPIKeyExpired) {
 					setBearerChallenge(w, "invalid_token")
-					m.Audit.Emit(r.Context(), "key.expired", nil, map[string]any{
-						"key_id": key.ID,
-					})
+					if m.Audit != nil {
+						m.Audit.Emit(r.Context(), "key.expired", nil, map[string]any{"key_id": key.ID})
+					}
 					api.WriteProblem(w, api.ErrAPIKeyExpired())
 					return
 				}
 				if errors.Is(err, state.ErrAPIKeyRevoked) {
 					setBearerChallenge(w, "invalid_token")
-					m.Audit.Emit(r.Context(), "key.auth_rejected_revoked", nil, map[string]any{
-						"key_id": key.ID,
-					})
+					if m.Audit != nil {
+						m.Audit.Emit(r.Context(), "key.auth_rejected_revoked", nil, map[string]any{"key_id": key.ID})
+					}
 					api.WriteProblem(w, api.ErrAPIKeyRevoked())
 					return
 				}
@@ -804,13 +804,33 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	if suffix == "customer-operation-milestones" {
 		return method == http.MethodGet
 	}
+	// ADR-20261017100853: a customer signals its own Operations by subject.
+	if suffix == "customer-operation-signals" {
+		return method == http.MethodPost
+	}
+	// ADR-20261018210500: a customer reads its own queued Operations.
+	if suffix == "customer-operation-queue" {
+		return method == http.MethodGet
+	}
+	// ADR-20261018161833: a customer manages its own Operation schedules.
+	// apid hides these routes unless the account is allowlisted.
+	if suffix == "customer-operation-schedules" {
+		return method == http.MethodPost || method == http.MethodGet
+	}
+	if strings.HasPrefix(suffix, "customer-operation-schedules/") {
+		parts := strings.Split(suffix, "/")
+		if len(parts) == 2 && parts[1] != "" {
+			return method == http.MethodGet
+		}
+		return len(parts) == 3 && parts[1] != "" && (parts[2] == "pause" || parts[2] == "resume" || parts[2] == "cancel") && method == http.MethodPost
+	}
 	if strings.HasPrefix(suffix, "customer-operations/") {
 		parts := strings.Split(suffix, "/")
 		if len(parts) == 2 && parts[1] != "" {
 			return method == http.MethodGet
 		}
 		if len(parts) == 3 && parts[1] != "" {
-			return ((parts[2] == "events" || parts[2] == "milestones") && method == http.MethodGet) || (parts[2] == "cancel" && method == http.MethodPost)
+			return ((parts[2] == "events" || parts[2] == "milestones" || parts[2] == "children") && method == http.MethodGet) || ((parts[2] == "cancel" || parts[2] == "signals") && method == http.MethodPost)
 		}
 		if len(parts) == 4 && parts[1] != "" && parts[2] == "artifacts" && parts[3] != "" {
 			return method == http.MethodGet
@@ -818,6 +838,10 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 		// ADR-1194: a customer decides approvals its operation's definition assigns to it.
 		if len(parts) == 4 && parts[1] != "" && parts[2] == "approvals" && parts[3] != "" {
 			return method == http.MethodPost
+		}
+		// ADR-20261019001500: a customer reads the form of an approval it decides.
+		if len(parts) == 5 && parts[1] != "" && parts[2] == "approvals" && parts[3] != "" && parts[4] == "form" {
+			return method == http.MethodGet
 		}
 		return false
 	}

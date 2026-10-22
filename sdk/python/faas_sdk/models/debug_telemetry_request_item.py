@@ -48,6 +48,9 @@ class DebugTelemetryRequestItem:
     """Number of original requests represented by this collapsed telemetry row."""
     trace_id: None | str | Unset = UNSET
     """W3C distributed-tracing identifier (32 hex chars), separate from request_id."""
+    trace_inferred: bool | Unset = UNSET
+    """True when Gregale linked this service call to its caller's trace because the caller sent no traceparent and
+    was serving exactly one request (ADR-1138): the trace id is inferred, not propagated."""
     wake_id: str | Unset = UNSET
     """Opaque wake identifier when this request admitted a wake; omitted for warm requests."""
     instance_id: str | Unset = UNSET
@@ -109,6 +112,8 @@ class DebugTelemetryRequestItem:
         else:
             trace_id = self.trace_id
 
+        trace_inferred = self.trace_inferred
+
         wake_id = self.wake_id
 
         instance_id = self.instance_id
@@ -165,6 +170,8 @@ class DebugTelemetryRequestItem:
             field_dict["count"] = count
         if trace_id is not UNSET:
             field_dict["trace_id"] = trace_id
+        if trace_inferred is not UNSET:
+            field_dict["trace_inferred"] = trace_inferred
         if wake_id is not UNSET:
             field_dict["wake_id"] = wake_id
         if instance_id is not UNSET:
@@ -246,6 +253,8 @@ class DebugTelemetryRequestItem:
 
         trace_id = _parse_trace_id(d.pop("trace_id", UNSET))
 
+        trace_inferred = d.pop("trace_inferred", UNSET)
+
         wake_id = d.pop("wake_id", UNSET)
 
         instance_id = d.pop("instance_id", UNSET)
@@ -296,6 +305,7 @@ class DebugTelemetryRequestItem:
             latency_ms=latency_ms,
             count=count,
             trace_id=trace_id,
+            trace_inferred=trace_inferred,
             wake_id=wake_id,
             instance_id=instance_id,
             consumer_id=consumer_id,

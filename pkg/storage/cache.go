@@ -194,6 +194,13 @@ func WithDeferredCacheDurability(ctx context.Context) context.Context {
 	return context.WithValue(ctx, deferredDurabilityKey{}, true)
 }
 
+// WithDurableCacheFill clears WithDeferredCacheDurability for one call, so a
+// cache miss is fsynced and installed as a cache entry before Get returns.
+// A caller that resolves the key's local path right after Get relies on it.
+func WithDurableCacheFill(ctx context.Context) context.Context {
+	return context.WithValue(ctx, deferredDurabilityKey{}, false)
+}
+
 func deferredCacheDurability(ctx context.Context) bool {
 	deferred, _ := ctx.Value(deferredDurabilityKey{}).(bool)
 	return deferred

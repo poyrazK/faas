@@ -713,6 +713,20 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 	// in vmmdgrpc.Logs consults MD as the runtime source; the
 	// proto field is the documentation seam.
 	fields, _ := wire.FromContext(ctx)
+	// A boot without wake correlation (the deploy prime) still names its
+	// app, deployment and instance: vmmd reads the deployment from this
+	// metadata, records a worker deployment as proven by it (ADR-20261018101500)
+	// and lets the booting guest register its secret-reload process (ADR-508).
+	// Wake events stay keyed on the wake id, which is not filled in here.
+	if fields.AppID == "" {
+		fields.AppID = app.AppID
+	}
+	if fields.DeploymentID == "" {
+		fields.DeploymentID = app.DeploymentID
+	}
+	if fields.InstanceID == "" {
+		fields.InstanceID = instance
+	}
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	boot := c.cli.CreateColdBoot
 	if app.RehearsalRunID != "" {
@@ -777,6 +791,7 @@ func (c *VMMClient) JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmRes
 		QualificationExecution: execution,
 		SealedEnv:              sealedSecretsToProto(spec.SealedEnvEntries),
 	}
+	request.ImageProcess, request.ProcessUser, request.ProcessWorkdir = spec.ImageProcess, spec.ProcessUser, spec.ProcessWorkdir
 	if in := spec.Interactive; in != nil {
 		request.Interactive = &vmmdpb.JobInteractiveAttach{Tty: in.TTY,
 			AttachTokenSha256: append([]byte(nil), in.TokenSHA256...), AttachTimeoutSeconds: int32(in.AttachTimeoutSec)}
@@ -796,7 +811,7 @@ func (c *VMMClient) JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmRes
 	}
 	return JobVmmResult{InstanceID: resp.GetInstance(), NodeID: resp.GetNodeId(), Netns: resp.GetNetns(),
 		HostIP: resp.GetHostIp(), GuestUID: int(resp.GetGuestUid()), StartHeld: resp.GetStartHeld(),
-		Interactive: resp.GetInteractive()}, nil
+		Interactive: resp.GetInteractive(), ImageProcess: resp.GetImageProcess()}, nil
 }
 
 func sealedSecretsToProto(entries []fcvm.SealedEnvEntry) []*vmmdpb.SealedSecret {
@@ -1243,6 +1258,8 @@ func (c *VMMClient) FrameworkReady(ctx context.Context, instance string, warmupM
 }
 
 func (c *VMMClient) Destroy(ctx context.Context, instance string) error {
+	fields, _ := wire.FromContext(ctx)
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	if _, err := c.cli.Destroy(ctx, &vmmdpb.DestroyRequest{Instance: instance}); err != nil {
 		return liftErr(err)
 	}
@@ -1661,6 +1678,18 @@ func (c *VMMClient) CancelLiveMigration(ctx context.Context, _, instanceID, leas
 		return liftErr(err)
 	}
 	return nil
+}
+
+// CancelFunctionMigrationSource preserves the physical rollback outcome.
+func (c *VMMClient) CancelFunctionMigrationSource(ctx context.Context, _ string, id, token string) (bool, error) {
+	response, err := c.cli.CancelLiveMigration(ctx, &vmmdpb.CancelLiveMigrationRequest{InstanceId: id, LeaseToken: token})
+	if err != nil {
+		return false, liftErr(err)
+	}
+	if response.GetSourceProtocolVersion() != fcvm.FunctionMigrationSourceProtocolVersion {
+		return false, state.ErrMigrationCommitUnresolved
+	}
+	return response.GetSourceRetired(), nil
 }
 
 // Ping implements VMM. Wire-level liveness probe (issue #97 /

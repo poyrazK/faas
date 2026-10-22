@@ -31,14 +31,19 @@ T = TypeVar("T", bound="BillingRunItemResponse")
 
 @_attrs_define
 class BillingRunItemResponse:
-    """What a billing run did for one app consumer or platform tenant."""
+    """What a billing run did for one app consumer, platform tenant or Product Control customer. A product_control item
+    names its app in app_id and its customer in platform_tenant_id; its statement_id is the Product Control statement
+    document.
+
+    """
 
     source_kind: BillingRunItemResponseSourceKind
     external_ref: str
     """The consumer's or tenant's external_ref when the run started."""
     outcome: BillingRunItemResponseOutcome
-    """up_to_date: nothing new to bill or export. held: needs attention, such as unpriced usage or a completeness
-    gap. skipped: billed through a platform tenant, or already invoiced through the other path."""
+    """up_to_date: nothing new to bill or export. held: needs attention, such as unpriced usage, a completeness
+    gap, or Product Control runs with no recorded outcome. skipped: billed through a platform tenant, or already
+    invoiced through the other path or by hand."""
     exported_invoices: int
     """Provider invoices this run created for the customer."""
     attempts: int

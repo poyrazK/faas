@@ -1537,6 +1537,55 @@ func TestForwardingReverseProxyWithEvents_FirstByteOncePerWake(t *testing.T) {
 	countRows("wake-b", 1)
 }
 
+// adr: 1151 — a frozen VM keeps its wake id across thaws, so first-byte
+// dedupe is per wake generation: each thaw emits its own row, while a
+// repeat in the same generation and a request without a claimed generation
+// (a cron synth on the cached target) do not.
+func TestForwardingReverseProxyWithEvents_FirstBytePerWakeGeneration(t *testing.T) {
+	store := state.NewMemStore()
+	platform := events.NewPlatform("gatewayd-internal", store, slog.Default(), wire.NewOpsMetrics("gatewayd-test"), nil)
+	serve := func(generation time.Time, requestID string) {
+		stream := &fakeBidiStream{Responses: []*vmmdpb.ForwardHTTPStreamResponse{
+			{Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{Init: &vmmdpb.ForwardHTTPResponseInit{Status: 200}}},
+		}}
+		proxy := gateway.ForwardingReverseProxyWithEvents(&fakeNodeLookup{cli: &fakeVmmdClient{Stream: stream}}, nil, platform)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		if !generation.IsZero() {
+			req = req.WithContext(gateway.WithWakeTimelineStart(req.Context(), generation))
+		}
+		req.Header.Set("x-faas-request-id", requestID)
+		rec := httptest.NewRecorder()
+		proxy(gateway.Target{AppID: "app-1", NodeID: "node-1", InstanceID: "inst-1", WakeID: "wake-frozen"}).ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+	}
+	rowsAfter := func(want int) {
+		t.Helper()
+		deadline := time.Now().Add(time.Second)
+		var rows []state.Event
+		for time.Now().Before(deadline) {
+			rows, _ = store.ListEventsByWakeID(context.Background(), "wake-frozen", time.Time{}, 0)
+			if len(rows) >= want {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		time.Sleep(20 * time.Millisecond) // let a wrongly queued duplicate land
+		if rows, _ = store.ListEventsByWakeID(context.Background(), "wake-frozen", time.Time{}, 0); len(rows) != want {
+			t.Fatalf("first-byte rows = %d, want %d", len(rows), want)
+		}
+	}
+	firstThaw, secondThaw := time.Unix(1_700_000_000, 0), time.Unix(1_700_000_090, 0)
+	serve(firstThaw, "req-1")
+	rowsAfter(1)
+	serve(firstThaw, "req-2")   // same generation
+	serve(time.Time{}, "req-3") // no claimed generation, cached wake id
+	rowsAfter(1)
+	serve(secondThaw, "req-4")
+	rowsAfter(2)
+}
+
 // keys is a small helper for diagnostics — keeps the test failure
 // messages readable when a payload field is missing.
 func keys(m map[string]any) []string {

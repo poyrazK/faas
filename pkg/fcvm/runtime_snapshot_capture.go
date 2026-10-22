@@ -25,12 +25,68 @@ type nativeSnapshotFlight struct {
 	parent  runtimeadmission.Receipt
 }
 
+type snapshotCaptureMode uint8
+
+const (
+	snapshotTerminal snapshotCaptureMode = iota
+	snapshotWarm
+	snapshotMigration
+)
+
 // Pin the live identity for teardown and bind capture authority before the VMM
 // can pause or publish it. Both admission checks use the cancellable flight.
-func (m *Manager) beginSnapshotFlight(ctx context.Context, instance string, spec SnapshotSpec) (context.Context, *Instance, SnapshotSpec, *instanceFlight, error) {
+func (m *Manager) beginSnapshotFlight(ctx context.Context, instance string, spec SnapshotSpec, mode snapshotCaptureMode) (context.Context, *Instance, SnapshotSpec, *instanceFlight, error) {
 	ctx, inst, flight, err := m.beginOperatorSnapshotFlight(ctx, instance, spec.operatorGeneration)
 	if err != nil {
+		if mode == snapshotWarm && errors.Is(err, ErrInstanceBusy) {
+			err = errors.Join(errWarmSnapshotAdmissionBusy, err)
+		}
 		return nil, nil, SnapshotSpec{}, nil, err
+	}
+	spec, err = m.configureSnapshotFlight(ctx, instance, inst, spec, mode, flight)
+	if err != nil {
+		m.finishInstanceFlight(instance, flight)
+		return nil, nil, SnapshotSpec{}, nil, err
+	}
+	return ctx, inst, spec, flight, nil
+}
+
+// An owned function source registers its flight before obtaining permission.
+// This shared validation runs only after that permission has been checked.
+func (m *Manager) configureSnapshotFlight(ctx context.Context, instance string, inst *Instance, spec SnapshotSpec, mode snapshotCaptureMode, flight *instanceFlight) (SnapshotSpec, error) {
+	var err error
+	m.mu.Lock()
+	resources := m.functionResourcesEnabled(inst)
+	// The legacy warm RPC has no callback flag. The qualified host requires
+	// drainage itself; measured captures must explicitly retain it in the grant.
+	if resources && mode == snapshotWarm && spec.admittedGrant == nil {
+		spec.BeforeCheckpoint = true
+	}
+	_, recoverable := m.vmm.(functionResourceRecoverer)
+	busy := functionExecutionBusy(inst) || resources && (!spec.BeforeCheckpoint || mode == snapshotMigration && spec.functionMigration == nil)
+	unsupported := resources && (mode == snapshotWarm || mode == snapshotMigration) && !recoverable
+	if !busy && !unsupported {
+		flight.functionHookAdmission = spec.BeforeCheckpoint
+	}
+	m.mu.Unlock()
+	if busy || unsupported {
+		if unsupported && !busy {
+			return SnapshotSpec{}, runtimeadmission.ErrUnavailable
+		}
+		if mode == snapshotWarm {
+			return SnapshotSpec{}, errors.Join(errWarmSnapshotAdmissionBusy, ErrInstanceBusy)
+		}
+		return SnapshotSpec{}, ErrInstanceBusy
+	}
+	// A qualified idle park first freezes the VM to close admission before
+	// schedd changes its state or chooses a reuse/destroy shortcut. Resume
+	// only after this capture flight owns the gate; no ordinary Begin can
+	// enter between the freeze and the final capture pause.
+	if m.functionActivity != nil && (inst.Runtime == "node22" || inst.Runtime == "node24") && m.isFrozen(inst) {
+		if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
+			return SnapshotSpec{}, err
+		}
+		m.clearFrozen(inst)
 	}
 	if err = m.checkLiveAdmission(ctx, inst); err == nil {
 		var captured *Instance
@@ -40,10 +96,9 @@ func (m *Manager) beginSnapshotFlight(ctx context.Context, instance string, spec
 		}
 	}
 	if err != nil {
-		m.finishInstanceFlight(instance, flight)
-		return nil, nil, SnapshotSpec{}, nil, err
+		return SnapshotSpec{}, err
 	}
-	return ctx, inst, spec, flight, nil
+	return spec, nil
 }
 
 func (m *Manager) snapshotInstance(instance string, spec SnapshotSpec) (*Instance, SnapshotSpec, error) {

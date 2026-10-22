@@ -351,8 +351,12 @@ type authPublicSettings struct {
 	SiteURL      string   `json:"site_url"`
 	RedirectURLs []string `json:"redirect_urls"`
 	Signup       struct {
-		Enabled     bool `json:"enabled"`
-		Autoconfirm bool `json:"autoconfirm"`
+		Enabled         bool     `json:"enabled"`
+		Autoconfirm     bool     `json:"autoconfirm"`
+		Access          string   `json:"access"`
+		AllowedDomains  []string `json:"allowed_domains"`
+		BlockDisposable bool     `json:"block_disposable"`
+		BlockedDomains  int      `json:"blocked_domains"`
 	} `json:"signup"`
 	Providers []string `json:"providers"`
 	Password  struct {
@@ -412,8 +416,28 @@ type authPublicSettings struct {
 		Enabled       bool `json:"enabled"`
 		RetentionDays *int `json:"retention_days"`
 	} `json:"anonymous"`
-	IdentityLinking bool `json:"identity_linking"`
-	Keys            struct {
+	IdentityLinking    bool `json:"identity_linking"`
+	SelfDeletion       bool `json:"self_deletion"`
+	OrganizationClaims bool `json:"organization_claims"`
+	Impersonation      bool `json:"impersonation"`
+	Web3               struct {
+		Ethereum bool `json:"ethereum"`
+		Solana   bool `json:"solana"`
+	} `json:"web3"`
+	Sessions struct {
+		MaxAgeMinutes *int `json:"max_age_minutes"`
+		IdleMinutes   *int `json:"idle_minutes"`
+		SinglePerUser bool `json:"single_per_user"`
+	} `json:"sessions"`
+	OrganizationDomains struct {
+		Enabled bool `json:"enabled"`
+		Joining bool `json:"joining"`
+	} `json:"organization_domains"`
+	ServiceAccounts struct {
+		Enabled       bool   `json:"enabled"`
+		TokenEndpoint string `json:"token_endpoint"`
+	} `json:"service_accounts"`
+	Keys struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`
 	} `json:"keys"`

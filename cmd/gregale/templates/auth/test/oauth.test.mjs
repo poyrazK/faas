@@ -54,7 +54,12 @@ test('consent, discovery and client tokens on the front', () => {
   assert.equal(wellKnownPath('/.well-known/oauth-authorization-server'), null)
   assert.equal(isClientToken(bearerClaims(`Bearer ${token({ sub: user, client_id: client })}`)), true)
   assert.equal(isClientToken(bearerClaims(`Bearer ${token({ sub: user })}`)), false)
-  assert.equal(bearerClaims('Bearer gaak_x'), null)
+  // The scheme is read in any letter case, as GoTrue reads it.
+  for (const scheme of ['bearer', 'BEARER', 'BeArEr']) assert.equal(isClientToken(bearerClaims(`${scheme} ${token({ sub: user, client_id: client })}`)), true, scheme)
+  // A JWT whose claims cannot be read is reported as such; anything that is
+  // not a JWT (admin keys, placeholder keys) is no token for these checks.
+  for (const header of ['Bearer a.!!!.c', `Bearer x.${Buffer.from('[1]').toString('base64url')}.y`, `bearer x.${Buffer.from('null').toString('base64url')}.y`]) assert.equal(bearerClaims(header), false, header)
+  for (const header of [undefined, '', 'Basic abc', 'Bearer  two-spaces.a.b', 'Bearer', 'Bearer gaak_x', 'bearer a.b', 'Bearer anon']) assert.equal(bearerClaims(header), null, header)
   assert.equal(clientTokenAllowed('GET', '/auth/v1/oauth/userinfo'), true)
   assert.equal(clientTokenAllowed('POST', '/auth/v1/logout?scope=local'), true)
   assert.equal(clientTokenAllowed('POST', '/authz/v1/authorize'), true)
@@ -142,11 +147,15 @@ test('the front confines client tokens and steers consent to the hosted page', a
     res.end('{}')
   })
   const thirdParty = { Authorization: `Bearer ${token({ sub: user, client_id: client })}` }
-  for (const [method, path] of [['PUT', '/auth/v1/user'], ['GET', '/auth/v1/factors'], ['POST', '/auth/v1/logout'], ['GET', '/authz/v1/orgs']]) {
-    const response = await fetch(base + path, { method, headers: thirdParty })
-    assert.equal(response.status, 403, `${method} ${path}`)
-    assert.equal((await response.json()).code, 'oauth_client_token')
+  // GoTrue reads the scheme in any letter case, so the front does too.
+  for (const scheme of ['Bearer', 'bearer', 'BEARER']) {
+    for (const [method, path] of [['PUT', '/auth/v1/user'], ['PUT', '/auth/v1/user/'], ['GET', '/auth/v1/factors'], ['POST', '/auth/v1/logout'], ['GET', '/authz/v1/orgs']]) {
+      const response = await fetch(base + path, { method, headers: { Authorization: `${scheme} ${token({ sub: user, client_id: client })}` } })
+      assert.equal(response.status, 403, `${scheme} ${method} ${path}`)
+      assert.equal((await response.json()).code, 'oauth_client_token')
+    }
   }
+  assert.equal(seen.some(entry => / \/user/.test(entry)), false, 'GoTrue never saw the client token on /user')
   assert.equal((await fetch(`${base}/auth/v1/oauth/userinfo`, { headers: thirdParty })).status, 200)
   assert.equal((await fetch(`${base}/auth/v1/logout?scope=local`, { method: 'POST', headers: thirdParty })).status, 200)
   assert.equal((await fetch(`${base}/authz/v1/orgs`, { headers: { Authorization: `Bearer ${token({ sub: user })}` } })).status, 200, 'the app\'s own tokens are unaffected')
@@ -207,4 +216,33 @@ test('a client token may check its user\'s permissions and nothing else in /auth
   for (const [method, path] of [['GET', '/orgs'], ['POST', '/orgs'], ['POST', '/invitations/accept'], ['POST', '/storage/sign']]) {
     await assert.rejects(route(pool, claims, method, path, {}), { status: 403, code: 'oauth_client_token' }, `${method} ${path}`)
   }
+})
+
+test('first-party tokens carry the session organization with AUTH_ORG_CLAIMS on', async () => {
+  const base = { sub: user, session_id: session, aud: 'authenticated', role: 'authenticated' }
+  const queries = []
+  let row = { id: '6f1c1a52-34c0-4a8e-9c55-2f5d7c0e4a11', slug: 'acme', role: 'admin', permissions: ['org:read', 'members:manage'] }
+  const pool = { query: async (sql, args) => { queries.push({ sql, args }); return { rows: row ? [row] : [] } } }
+  const { claims } = await accessTokenClaims(pool, { claims: base }, { orgClaims: true })
+  assert.deepEqual(claims, { ...base, org_id: row.id, org_slug: 'acme', org_role: 'admin', org_permissions: ['org:read', 'members:manage'] })
+  assert.deepEqual(queries[0].args, [session, user])
+  assert.match(queries[0].sql, /JOIN gregale_auth\.memberships m ON m\.org_id = s\.org_id AND m\.user_id = \$2/, 'the current membership decides')
+  row = null
+  assert.deepEqual((await accessTokenClaims(pool, { claims: base }, { orgClaims: true })).claims, base, 'no active organization, or no longer a member')
+  queries.length = 0
+  assert.deepEqual((await accessTokenClaims(pool, { claims: base })).claims, base, 'off: no query')
+  assert.equal(queries.length, 0)
+  const forClient = await accessTokenClaims(fakePool(), { claims: { ...base, client_id: client } }, { orgClaims: true })
+  assert.equal(forClient.claims.org_id, undefined, 'a client token never carries them')
+})
+
+test('an organization that requires a second factor stays out of tokens below aal2', async () => {
+  const base = { sub: user, session_id: session, aud: 'authenticated', role: 'authenticated' }
+  const row = { id: '6f1c1a52-34c0-4a8e-9c55-2f5d7c0e4a11', slug: 'acme', mfa_required: true, role: 'member', permissions: ['org:read'] }
+  const pool = { query: async () => ({ rows: [row] }) }
+  for (const aal of [undefined, 'aal1']) {
+    assert.deepEqual((await accessTokenClaims(pool, { claims: { ...base, aal } }, { orgClaims: true })).claims, { ...base, aal }, String(aal))
+  }
+  const { claims } = await accessTokenClaims(pool, { claims: { ...base, aal: 'aal2' } }, { orgClaims: true })
+  assert.equal(claims.org_slug, 'acme', 'the token GoTrue issues on verifying carries it')
 })

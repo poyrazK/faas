@@ -32,7 +32,7 @@
 //     set; pins prevent a regression that re-introduces a label
 //     without bumping the metric set.
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -41,6 +41,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -68,7 +69,7 @@ func seedPressureApp(t *testing.T, store *state.MemStore, ctx context.Context, p
 // + WithPressureAggregator + WithPressureConfig + (optional)
 // WithPressureMigrationPolicy. Default policy is the package
 // default (migrate_after_2).
-func newPressureEngine(t *testing.T, store *state.MemStore, ownerNodeID string, notif *fakeNotifier, policy string) *Engine {
+func newPressureEngine(t *testing.T, store *state.MemStore, ownerNodeID string, notif *sched.FakeNotifier, policy string) *sched.Engine {
 	t.Helper()
 	return newPressureEngineWithOps(t, store, ownerNodeID, notif, policy, nil)
 }
@@ -83,14 +84,14 @@ func newPressureEngine(t *testing.T, store *state.MemStore, ownerNodeID string, 
 // var (see below) so multiple calls don't double-register
 // counters. This matches the §12 dashboard contract: a single
 // registry per test binary, just labelled "test" prefix.
-func newPressureEngineWithOps(t *testing.T, store *state.MemStore, ownerNodeID string, notif *fakeNotifier, policy string, opsOverride *wire.OpsMetrics) *Engine {
+func newPressureEngineWithOps(t *testing.T, store *state.MemStore, ownerNodeID string, notif *sched.FakeNotifier, policy string, opsOverride *wire.OpsMetrics) *sched.Engine {
 	t.Helper()
-	agg := NewPressureAggregator()
+	agg := sched.NewPressureAggregator()
 	ops := opsOverride
 	if ops == nil {
 		ops = wire.NewOpsMetrics("test")
 	}
-	e := newEngine(t, store, &fakeVMM{}, notif, "1.10.0").
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, notif, "1.10.0").
 		WithOwnerNodeID(ownerNodeID).
 		WithPressureConfig(5, 30).
 		WithPressureAggregator(agg).
@@ -110,7 +111,7 @@ func TestRebalancePressuredApps_MigratesAppOnOwner(t *testing.T) {
 
 	app := seedPressureApp(t, store, ctx, api.PlanHobby, 128, defaultLocal.ID)
 
-	notif := &fakeNotifier{}
+	notif := &sched.FakeNotifier{}
 	e := newPressureEngine(t, store, defaultLocal.ID, notif, "")
 	if err := e.RebalancePressuredApps(ctx, app.ID); err != nil {
 		t.Fatalf("RebalancePressuredApps: %v", err)
@@ -145,7 +146,7 @@ func TestRebalancePressuredApps_SkipsAppNotOnOwner(t *testing.T) {
 	// App pinned on the peer — not on the owner.
 	app := seedPressureApp(t, store, ctx, api.PlanHobby, 128, peer.ID)
 
-	notif := &fakeNotifier{}
+	notif := &sched.FakeNotifier{}
 	e := newPressureEngine(t, store, defaultLocal.ID, notif, "")
 	if err := e.RebalancePressuredApps(ctx, app.ID); err != nil {
 		t.Fatalf("RebalancePressuredApps: %v", err)
@@ -190,7 +191,7 @@ func TestRebalancePressuredApps_NoPeerNoMigration(t *testing.T) {
 
 	app := seedPressureApp(t, store, ctx, api.PlanHobby, 128, defaultLocal.ID)
 
-	notif := &fakeNotifier{}
+	notif := &sched.FakeNotifier{}
 	e := newPressureEngine(t, store, defaultLocal.ID, notif, "")
 	// ownerNodeID != "" guards the early-return; the active=
 	// false flag eliminates both the owner AND the (nonexistent)
@@ -218,14 +219,14 @@ func TestRebalancePressuredApps_RespectsCooldown(t *testing.T) {
 	app := seedPressureApp(t, store, ctx, api.PlanHobby, 128, defaultLocal.ID)
 
 	// First reassign — succeeds, stamps ReassignedAt.
-	notif := &fakeNotifier{}
+	notif := &sched.FakeNotifier{}
 	e := newPressureEngine(t, store, defaultLocal.ID, notif, "")
 	if err := e.RebalancePressuredApps(ctx, app.ID); err != nil {
 		t.Fatalf("first RebalancePressuredApps: %v", err)
 	}
 
 	// Second reassign within the cooldown window — drops.
-	notif2 := &fakeNotifier{}
+	notif2 := &sched.FakeNotifier{}
 	if err := e.RebalancePressuredApps(ctx, app.ID); err != nil {
 		t.Fatalf("second RebalancePressuredApps: %v", err)
 	}
@@ -256,7 +257,7 @@ func TestRebalancePressuredApps_EmitsPressureRebalancedNotify(t *testing.T) {
 
 	app := seedPressureApp(t, store, ctx, api.PlanHobby, 128, defaultLocal.ID)
 
-	notif := &fakeNotifier{}
+	notif := &sched.FakeNotifier{}
 	e := newPressureEngine(t, store, defaultLocal.ID, notif, "")
 	if err := e.RebalancePressuredApps(ctx, app.ID); err != nil {
 		t.Fatalf("RebalancePressuredApps: %v", err)
@@ -264,22 +265,22 @@ func TestRebalancePressuredApps_EmitsPressureRebalancedNotify(t *testing.T) {
 	// Find the NotifyAppChanged emit and verify the payload
 	// contains the right kind + endpoints.
 	var found bool
-	notif.mu.Lock()
-	for _, c := range notif.events {
-		if c.channel == "app_changed" && strings.Contains(c.payload, "pressure_rebalanced") {
-			if !strings.Contains(c.payload, app.ID) {
-				t.Errorf("payload missing app id: %s", c.payload)
+	(*notif.Mu()).Lock()
+	for _, c := range *notif.Events() {
+		if (*c.Channel()) == "app_changed" && strings.Contains((*c.Payload()), "pressure_rebalanced") {
+			if !strings.Contains((*c.Payload()), app.ID) {
+				t.Errorf("payload missing app id: %s", (*c.Payload()))
 			}
-			if !strings.Contains(c.payload, defaultLocal.ID) {
-				t.Errorf("payload missing from_node %q: %s", defaultLocal.ID, c.payload)
+			if !strings.Contains((*c.Payload()), defaultLocal.ID) {
+				t.Errorf("payload missing from_node %q: %s", defaultLocal.ID, (*c.Payload()))
 			}
-			if !strings.Contains(c.payload, peer.ID) {
-				t.Errorf("payload missing to_node %q: %s", peer.ID, c.payload)
+			if !strings.Contains((*c.Payload()), peer.ID) {
+				t.Errorf("payload missing to_node %q: %s", peer.ID, (*c.Payload()))
 			}
 			found = true
 		}
 	}
-	notif.mu.Unlock()
+	(*notif.Mu()).Unlock()
 	if !found {
 		t.Errorf("no NotifyAppChanged{pressure_rebalanced} emitted")
 	}
@@ -301,7 +302,7 @@ func TestRebalancePressuredApps_KeepsAppsWithResidentInstancesPinned(t *testing.
 		t.Fatal(err)
 	}
 
-	notif := &fakeNotifier{}
+	notif := &sched.FakeNotifier{}
 	e := newPressureEngine(t, store, defaultLocal.ID, notif, "")
 	if err := e.RebalancePressuredApps(ctx, app.ID); err != nil {
 		t.Fatalf("RebalancePressuredApps: %v", err)
@@ -327,7 +328,7 @@ func TestRebalancePressuredApps_PolicySkipLive(t *testing.T) {
 
 	app := seedPressureApp(t, store, ctx, api.PlanHobby, 128, defaultLocal.ID)
 
-	notif := &fakeNotifier{}
+	notif := &sched.FakeNotifier{}
 	e := newPressureEngine(t, store, defaultLocal.ID, notif, "skip_live")
 	// Drive the sweep counter to 3 (>>2) to demonstrate the
 	// policy alone closes the live window, not the sweep count.
@@ -361,7 +362,7 @@ func TestRebalancePressuredApps_PolicyMigrateAfter2_SecondSweep(t *testing.T) {
 
 	app := seedPressureApp(t, store, ctx, api.PlanHobby, 128, defaultLocal.ID)
 
-	notif := &fakeNotifier{}
+	notif := &sched.FakeNotifier{}
 	e := newPressureEngine(t, store, defaultLocal.ID, notif, "migrate_after_2")
 	// First sweep — counter is 1, below the threshold of 2.
 	e.IncrementPressureSweepCounter(app.ID)
@@ -370,13 +371,13 @@ func TestRebalancePressuredApps_PolicyMigrateAfter2_SecondSweep(t *testing.T) {
 	// We can't intercept MigrateLiveInstances from this
 	// test surface (the helper is on Engine); pin the
 	// sweep counter behaviour directly.
-	if got := e.pressureSweepCounterValue(app.ID); got != 1 {
+	if got := e.PressureSweepCounterValue(app.ID); got != 1 {
 		t.Fatalf("after first increment, sweep counter = %d, want 1", got)
 	}
 
 	// Second sweep — counter is 2, policy opens the live window.
 	e.IncrementPressureSweepCounter(app.ID)
-	if got := e.pressureSweepCounterValue(app.ID); got != 2 {
+	if got := e.PressureSweepCounterValue(app.ID); got != 2 {
 		t.Fatalf("after second increment, sweep counter = %d, want 2", got)
 	}
 
@@ -385,7 +386,7 @@ func TestRebalancePressuredApps_PolicyMigrateAfter2_SecondSweep(t *testing.T) {
 		t.Fatalf("second RebalancePressuredApps: %v", err)
 	}
 	// Counter is reset on a successful reassign.
-	if got := e.pressureSweepCounterValue(app.ID); got != 0 {
+	if got := e.PressureSweepCounterValue(app.ID); got != 0 {
 		t.Errorf("after successful reassign, sweep counter = %d, want 0 (reset)", got)
 	}
 }
@@ -393,12 +394,12 @@ func TestRebalancePressuredApps_PolicyMigrateAfter2_SecondSweep(t *testing.T) {
 // countPressureRebalancedNotifies is the test-side matcher
 // for the NotifyAppChanged{pressure_rebalanced} emit. Mirrors
 // countRebalancedNotifies at rebalance_engine_test.go.
-func countPressureRebalancedNotifies(notif *fakeNotifier) int {
-	notif.mu.Lock()
-	defer notif.mu.Unlock()
+func countPressureRebalancedNotifies(notif *sched.FakeNotifier) int {
+	(*notif.Mu()).Lock()
+	defer (*notif.Mu()).Unlock()
 	var n int
-	for _, c := range notif.events {
-		if c.channel == "app_changed" && strings.Contains(c.payload, "pressure_rebalanced") {
+	for _, c := range *notif.Events() {
+		if (*c.Channel()) == "app_changed" && strings.Contains((*c.Payload()), "pressure_rebalanced") {
 			n++
 		}
 	}
@@ -436,9 +437,9 @@ func TestPressureReassignmentsOutcomeSet(t *testing.T) {
 	// test surface (pkg/wire/metrics_test.go) covers the
 	// closed-set initialization order; this test pins the
 	// engine-side accessor contract specifically.
-	notif := &fakeNotifier{}
+	notif := &sched.FakeNotifier{}
 	e := newPressureEngine(t, store, defaultLocal.ID, notif, api.PressureMigrationPolicy)
-	if e.ops == nil {
+	if (*e.Ops()) == nil {
 		t.Fatal("engine.ops is nil; opsmetrics wiring regressed")
 	}
 	// accepted labels: every value the engine code paths
@@ -461,7 +462,7 @@ func TestPressureReassignmentsOutcomeSet(t *testing.T) {
 		// pre-instantiation at NewOpsMetrics time is the
 		// authoritative "label exists" gate; we just smoke
 		// the accessor here.
-		if c := e.ops.PressureReassignments(label); c == nil {
+		if c := (*e.Ops()).PressureReassignments(label); c == nil {
 			t.Errorf("PressureReassignments(%q) returned nil", label)
 		}
 	}

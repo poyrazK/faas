@@ -194,6 +194,26 @@ func TestLimiterAllowAccount_UnknownPlanFailsClosed(t *testing.T) {
 	}
 }
 
+// An edited edge rule refills at its old rate up to the edit: raising rps
+// must not grant the new rate for the time the bucket sat at the old one.
+func TestLimiterConsumerKey_RateChangeIsNotRetroactive(t *testing.T) {
+	clock := time.Now()
+	l := NewLimiterWithClock(func() time.Time { return clock })
+	if !l.AllowWithConsumerKey("rule", "c1", 1, 1, 10) {
+		t.Fatal("first request should spend the initial token")
+	}
+	clock = clock.Add(time.Second)
+	allowed := 0
+	for i := 0; i < 60; i++ {
+		if l.AllowWithConsumerKey("rule", "c1", 100, 50, 10) {
+			allowed++
+		}
+	}
+	if allowed != 1 {
+		t.Fatalf("allowed %d after one second at 1 rps; want 1", allowed)
+	}
+}
+
 func TestLimiterAllowAccount_PlanChange(t *testing.T) {
 	l := NewLimiter()
 	clock := time.Now()

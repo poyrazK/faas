@@ -108,7 +108,7 @@ SELECT id FROM apps WHERE id=sqlc.arg(app_id)::uuid AND account_id=sqlc.arg(acco
 -- name: ListDueMCPCatalogObservers :many
 SELECT m.app_id,m.account_id,a.slug,views.key::text AS role,views.value::jsonb AS view
 FROM mcp_catalog_monitors m JOIN apps a ON a.id=m.app_id AND a.account_id=m.account_id
-JOIN accounts ac ON ac.id=a.account_id
+JOIN app_resource_accounts ac ON ac.app_id = a.id
 CROSS JOIN LATERAL jsonb_each(jsonb_build_object('default',m.payload)||COALESCE(m.payload->'roles','{}'::jsonb)) views
 WHERE a.workload_class='http' AND a.status IN ('active','evicted_cold') AND ac.plan IN ('hobby','pro','scale')
 AND a.public_auth_mode<>'internal_only'

@@ -105,16 +105,18 @@ type FinancialBudgetPreviewRequest struct {
 }
 
 type FinancialBudgetResponse struct {
-	ID               string               `json:"id"`
-	AccountID        string               `json:"account_id"`
-	Revision         int64                `json:"revision"`
-	Spec             financial.BudgetSpec `json:"spec"`
-	CreatedAt        time.Time            `json:"created_at"`
-	UpdatedAt        time.Time            `json:"updated_at"`
-	DeletedAt        *time.Time           `json:"deleted_at,omitempty"`
-	Status           string               `json:"status"`
-	EnforcementReady bool                 `json:"enforcement_ready"`
-	Reasons          []string             `json:"reasons"`
+	ID                string                   `json:"id"`
+	AccountID         string                   `json:"account_id"`
+	Revision          int64                    `json:"revision"`
+	Spec              financial.BudgetSpec     `json:"spec"`
+	CreatedAt         time.Time                `json:"created_at"`
+	UpdatedAt         time.Time                `json:"updated_at"`
+	DeletedAt         *time.Time               `json:"deleted_at,omitempty"`
+	Status            string                   `json:"status"`
+	EnforcementReady  bool                     `json:"enforcement_ready"`
+	NotificationReady bool                     `json:"notification_ready"`
+	Reasons           []string                 `json:"reasons"`
+	Runtime           *financial.BudgetRuntime `json:"runtime,omitempty"`
 }
 
 type FinancialBudgetListResponse struct {
@@ -132,6 +134,20 @@ type UpdateFinancialBudgetRequest struct {
 
 type DeleteFinancialBudgetRequest struct {
 	ExpectedRevision int64 `json:"expected_revision"`
+}
+
+// SetFinancialBudgetChannelsRequest replaces the notification channels a
+// budget's threshold alerts also go to (ADR-20261019193500). An empty list
+// leaves only the account email.
+type SetFinancialBudgetChannelsRequest struct {
+	ChannelIDs []string `json:"channel_ids"`
+}
+
+// FinancialBudgetChannelsResponse lists a budget's channels with each
+// channel's latest delivery outcome.
+type FinancialBudgetChannelsResponse struct {
+	PolicyID string                        `json:"policy_id"`
+	Channels []NotificationChannelResponse `json:"channels"`
 }
 
 type FinancialBudgetRevisionResponse struct {
@@ -206,6 +222,21 @@ func (c *Client) UpdateFinancialBudget(ctx context.Context, id string, req Updat
 func (c *Client) DeleteFinancialBudget(ctx context.Context, id string, expectedRevision int64) (FinancialBudgetResponse, error) {
 	var out FinancialBudgetResponse
 	err := c.do(ctx, "DELETE", "/v1/billing/budgets/"+url.PathEscape(id), DeleteFinancialBudgetRequest{ExpectedRevision: expectedRevision}, &out)
+	return out, err
+}
+
+func (c *Client) GetFinancialBudgetChannels(ctx context.Context, id string) (FinancialBudgetChannelsResponse, error) {
+	var out FinancialBudgetChannelsResponse
+	err := c.do(ctx, "GET", "/v1/billing/budgets/"+url.PathEscape(id)+"/channels", nil, &out)
+	return out, err
+}
+
+func (c *Client) SetFinancialBudgetChannels(ctx context.Context, id string, channelIDs []string) (FinancialBudgetChannelsResponse, error) {
+	var out FinancialBudgetChannelsResponse
+	if channelIDs == nil {
+		channelIDs = []string{}
+	}
+	err := c.do(ctx, "PUT", "/v1/billing/budgets/"+url.PathEscape(id)+"/channels", SetFinancialBudgetChannelsRequest{ChannelIDs: channelIDs}, &out)
 	return out, err
 }
 

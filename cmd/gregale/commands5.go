@@ -260,10 +260,14 @@ func cmdStatus(args []string) int {
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale env <create|clone-status|pull|push|diff>", "env")
+		PrintUsage(os.Stderr, "usage: gregale env <create|clone-status|pull|push|diff|history|rollback>", "env")
 		return 1
 	}
 	switch args[0] {
+	case "history":
+		return envHistory(args[1:])
+	case "rollback":
+		return envRollback(args[1:])
 	case "create":
 		return envCreate(args[1:])
 	case "clone-status":
@@ -431,6 +435,7 @@ func envPush(args []string) int {
 	// "SECRET_KEY", not "my live Stripe key". Override with
 	// --secret-scan=off for local-dev sandbox keys (e.g. sk_test_…).
 	secretScan := fs.String("secret-scan", "on", "scan pairs for known credential patterns before pushing (on|off|strict|source-tree; default on)")
+	noGuard := fs.Bool("no-guard", false, "do not open a config guard for these changes (ADR-1451)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -613,6 +618,9 @@ func envPush(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	if *noGuard {
+		client = client.WithoutConfigGuard()
+	}
 	printMutationTarget(*app, *scope, appSource, scopeSource)
 	receipt := envPushReceipt{
 		AppSlug: *app, Scope: scopeOrDefault(*scope), Result: "applied",
@@ -629,6 +637,7 @@ func envPush(args []string) int {
 			PrintOK(osStdout, "%s set (scope=%s)", p.k, scopeOrDefault(*scope))
 		}
 	}
+	printConfigGuardNotice(context.Background(), client, *app, *scope)
 	if *waitForAck {
 		return finishEnvPushWait(context.Background(), client, receipt, *restart, *timeout)
 	}
@@ -771,7 +780,7 @@ func openCustomerFile(path string) (*os.File, error) {
 
 // --- app scale / rename (called from cmdAppDispatch) ------------------------
 
-const appScaleUsage = "usage: gregale app <slug> scale [--interactive | --plan [--out PATH] | --apply PLAN.json --confirm] [--environment SLUG] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
+const appScaleUsage = "usage: gregale app <slug> scale [--interactive | --plan [--out PATH] | --apply PLAN.json --confirm] [--environment SLUG] [--size micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
 
 // cmdAppScale is the subcommand form of `gregale app <slug> scale ...`.
 // Uses the same fs.Visit pattern so 0 is distinguishable from "unset".
@@ -791,7 +800,8 @@ func cmdAppScale(slug string, args []string) int {
 	workloadRevision := int64(-1)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
 	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
-	profile := fs.String("profile", "", "update named resource profile: micro|small|medium|large|xlarge")
+	profile := new(string)
+	resourceSizeFlag(fs, profile, "update named resource size: micro|small|medium|large|xlarge")
 	conc := fs.Int("max-concurrency", 0, "update max concurrent requests")
 	concurrencyOverflow := fs.String("concurrency-overflow", "", "saturated concurrency behavior: queue|drop")
 	maxQueueDepth := fs.Int("max-queue-depth", 0, "maximum queued requests at warm saturation (0 = plan default)")
@@ -886,7 +896,7 @@ func cmdAppScale(slug string, args []string) int {
 		v := *cpuMillicores
 		req.CPUMillicores = &v
 	}
-	if explicit["profile"] {
+	if resourceSizeSet(explicit) {
 		req.ResourceProfile = profile
 	}
 	if explicit["max-concurrency"] {

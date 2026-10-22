@@ -4,6 +4,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"io"
@@ -11,6 +13,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/resumetimingproto"
 	"golang.org/x/sys/unix"
 )
 
@@ -29,7 +32,7 @@ func TestResumeAckWaitsForUserspaceReseed(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			origHook := runResumeHookFn
-			runResumeHookFn = func(int64, []byte) error { return nil }
+			runResumeHookFn = func(int64, []byte, *resumetimingproto.Timings) error { return nil }
 			t.Cleanup(func() { runResumeHookFn = origHook })
 
 			b, sock := startTestBarrier(t)
@@ -45,7 +48,7 @@ func TestResumeAckWaitsForUserspaceReseed(t *testing.T) {
 			guest := os.NewFile(uintptr(fds[0]), "guest-resume")
 			host := os.NewFile(uintptr(fds[1]), "host-resume")
 			defer func() { _ = host.Close() }()
-			body, _ := json.Marshal(map[string]any{"hostTimeUnixNano": 1})
+			body, _ := json.Marshal(map[string]any{"hostTimeUnixNano": 1, "entropy": base64.StdEncoding.EncodeToString(make([]byte, 32))})
 			msg := make([]byte, 8+len(body))
 			binary.BigEndian.PutUint32(msg[:4], VsockResumeMsgType)
 			binary.BigEndian.PutUint32(msg[4:8], uint32(len(body)))
@@ -61,10 +64,45 @@ func TestResumeAckWaitsForUserspaceReseed(t *testing.T) {
 				t.Fatalf("ack = %d, want %d", frame[0], tc.wantAck)
 			}
 			wantCap := tc.wantAck == VsockResumeAckOK
-			if gotCap := len(frame) == 2 && frame[1] == VsockResumeCapUserspaceReseed; gotCap != wantCap {
+			if gotCap := len(frame) >= 2 && frame[1]&VsockResumeCapUserspaceReseed != 0; gotCap != wantCap {
 				t.Fatalf("ack frame %v: reseed capability = %v, want %v", frame, gotCap, wantCap)
 			}
+			if !wantCap {
+				return
+			}
+			// The timing frame rides after the capability byte (ADR-022
+			// amendment) and names the process the barrier waited for.
+			if frame[1]&resumetimingproto.CapTimings == 0 {
+				t.Fatalf("capability byte %#x lacks CapTimings", frame[1])
+			}
+			timings, err := resumetimingproto.ReadFrame(bytes.NewReader(frame[2:]))
+			if err != nil {
+				t.Fatalf("timing frame: %v", err)
+			}
+			if timings.ReseedClients != 1 || timings.ReseedSlowestRuntime != "node" {
+				t.Fatalf("timings = %+v, want one node reseed client", timings)
+			}
+			if timings.TotalUs < timings.UserspaceReseedUs {
+				t.Fatalf("total %d us < userspace reseed %d us", timings.TotalUs, timings.UserspaceReseedUs)
+			}
 		})
+	}
+}
+
+// A guest without the ADR-687 contract keeps the bare one-byte ack: the
+// timing frame rides on the capability byte, never in place of it.
+func TestResumeAckFrameShape(t *testing.T) {
+	if got := resumeAckFrame(false, resumetimingproto.Timings{TotalUs: 5}); !bytes.Equal(got, []byte{VsockResumeAckOK}) {
+		t.Fatalf("no contract: ack frame = %v, want [0]", got)
+	}
+	want := resumetimingproto.Timings{ReadUs: 1, ClockUs: 2, UserspaceReseedUs: 3, ReseedClients: 1, TotalUs: 9}
+	got := resumeAckFrame(true, want)
+	if len(got) < 2 || got[0] != VsockResumeAckOK || got[1] != VsockResumeCapUserspaceReseed|resumetimingproto.CapTimings {
+		t.Fatalf("contract: ack frame head = %v", got)
+	}
+	decoded, err := resumetimingproto.ReadFrame(bytes.NewReader(got[2:]))
+	if err != nil || decoded != want {
+		t.Fatalf("timing frame = %+v, %v; want %+v", decoded, err, want)
 	}
 }
 

@@ -1,5 +1,5 @@
 // adr: 501
-package sched
+package sched_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -29,12 +30,12 @@ func makeResumeTargetLive(t *testing.T, store state.Store, run *state.WorkflowRu
 	return app
 }
 func TestWorkflowResumeContinuesFailedBatchWithoutRepeatingSuccess(t *testing.T) {
-	guardOrchestrationStores(t, func(t *testing.T, store state.Store) {
+	sched.GuardOrchestrationStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
-		run := createGuardedRun(t, store, foreachOrchestrationSpec(), `{"items":["a","{{input.literal}}",3]}`)
+		run := sched.CreateGuardedRun(t, store, foreachOrchestrationSpec(), `{"items":["a","{{input.literal}}",3]}`)
 		app := makeResumeTargetLive(t, store, run)
 		executor := &foreachExecutor{failSecond: true}
-		orchestrator := NewWorkflowOrchestrator(store, executor, nil, nil, nil)
+		orchestrator := sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil)
 		if err := orchestrator.DispatchTick(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -57,7 +58,7 @@ func TestWorkflowResumeContinuesFailedBatchWithoutRepeatingSuccess(t *testing.T)
 		if executor.names[0] != api.WorkflowForEachItemName("batch", 0) || executor.names[1] != item || executor.names[2] != item || executor.names[3] != api.WorkflowForEachItemName("batch", 2) || executor.keys[1] != executor.keys[2] || string(executor.inputs[1]) != string(executor.inputs[2]) {
 			t.Fatalf("items replayed or payload/key changed: names=%v inputs=%q", executor.names, executor.inputs)
 		}
-		if !workflowJSONEqual(final.Output, []byte(`[{"index":0,"item":"a"},{"index":1,"item":"{{input.literal}}"},{"index":2,"item":3}]`)) {
+		if !sched.WorkflowJSONEqual(final.Output, []byte(`[{"index":0,"item":"a"},{"index":1,"item":"{{input.literal}}"},{"index":2,"item":3}]`)) {
 			t.Fatalf("batch output=%s", final.Output)
 		}
 		attempts, err := store.GetWorkflowStepAttempts(ctx, run.ID, item)
@@ -83,13 +84,13 @@ func (e *resumeRetryExecutor) ExecuteStep(_ context.Context, _, _, _ string, hea
 	return 200, []byte(`{"ok":true}`), nil
 }
 func TestWorkflowResumeGrantsFreshRetryBudgetAndKeepsAttemptNumbers(t *testing.T) {
-	guardOrchestrationStores(t, func(t *testing.T, store state.Store) {
+	sched.GuardOrchestrationStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
 		spec := api.WorkflowSpec{Name: "retry", Steps: []api.WorkflowStepSpec{{Name: "send", Run: "send", Retry: &api.WorkflowRetrySpec{MaxAttempts: 2, Backoff: "exponential"}, Input: json.RawMessage(`{"literal":"{{input}}"}`)}}}
-		run := createGuardedRun(t, store, spec, `{"text":"{{input.secret}}"}`)
+		run := sched.CreateGuardedRun(t, store, spec, `{"text":"{{input.secret}}"}`)
 		app := makeResumeTargetLive(t, store, run)
 		executor := &resumeRetryExecutor{}
-		orchestrator := NewWorkflowOrchestrator(store, executor, nil, nil, nil)
+		orchestrator := sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil)
 		tickUntil := func(want string) {
 			t.Helper()
 			deadline := time.Now().Add(8 * time.Second)

@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/ociidentity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -60,6 +61,10 @@ type Handler struct {
 	Audit  func(ctx context.Context, kind string, accountID *string, data map[string]any)
 	Notify func(ctx context.Context, channel, payload string) error
 	Log    *slog.Logger
+	// SetRegistryCredential seals and stores a registry credential on a
+	// runner job, exactly as PUT /v1/jobs/{name}/registry-credentials does
+	// (ADR-1790). Nil means the store cannot hold job credentials.
+	SetRegistryCredential func(ctx context.Context, acct state.Account, job state.Job, cred api.PutJobRegistryCredentialRequest) *api.Problem
 }
 
 // request is a validated CreateImageRunRequest.
@@ -67,6 +72,9 @@ type request struct {
 	ensure state.ImageRunEnsure
 	env    json.RawMessage
 	raw    api.CreateImageRunRequest
+	// credential is the request's registry_auth for the image's registry
+	// host, or nil.
+	credential *api.PutJobRegistryCredentialRequest
 }
 
 // Create handles POST /v1/image-runs.
@@ -93,10 +101,23 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, prob)
 		return
 	}
+	if req.credential != nil && h.SetRegistryCredential == nil {
+		api.WriteProblem(w, api.ErrCapacity("job registry credentials are unavailable"))
+		return
+	}
 	res, err := h.Store.JobEnsureImageRun(r.Context(), req.ensure)
 	if err != nil {
 		api.WriteProblem(w, h.ensureProblem(acct, req.ensure.Name, err))
 		return
+	}
+	// The credential lands on the runner job before imaged is told to pull,
+	// and every run that supplies it refreshes it, so an evicted and
+	// recreated runner job picks it up again (ADR-1790).
+	if req.credential != nil {
+		if prob := h.SetRegistryCredential(r.Context(), acct, res.Job, *req.credential); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
 	}
 	h.announce(r.Context(), acct, res)
 	if res.Job.ImageMaterializationStatus != "ready" {
@@ -117,7 +138,7 @@ func (h *Handler) startRun(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Invalid command", fmt.Sprintf("the resolved command has %d entries; at most %d are allowed", len(argv), api.ImageRunArgvMax)))
 		return
 	}
-	opts := state.JobRunOptions{CommandArgs: &argv}
+	opts := state.JobRunOptions{CommandArgs: &argv, ProcessUser: req.raw.User, ProcessWorkdir: req.raw.Workdir}
 	token := ""
 	if req.raw.Interactive {
 		var prob *api.Problem
@@ -234,6 +255,13 @@ func resolve(acct state.Account, body api.CreateImageRunRequest) (request, *api.
 	if prob := validateInteractive(body, timeoutSec); prob != nil {
 		return request{}, prob
 	}
+	if prob := validateProcess(body); prob != nil {
+		return request{}, prob
+	}
+	credential, prob := registryCredential(ref, body.RegistryAuth)
+	if prob != nil {
+		return request{}, prob
+	}
 	env, prob := encodeEnv(acct.Plan, body.Env)
 	if prob != nil {
 		return request{}, prob
@@ -245,9 +273,36 @@ func resolve(acct state.Account, body api.CreateImageRunRequest) (request, *api.
 			RAMMB: ramMB, TaskTimeoutSec: timeoutSec, PullAlways: pull == api.ImageRunPullAlways,
 			MaxCached: api.ImageRunCachedImages[acct.Plan.PlanIndex()],
 		},
-		env: env,
-		raw: body,
+		env:        env,
+		raw:        body,
+		credential: credential,
 	}, nil
+}
+
+// validateProcess checks the `-u/-w` overrides of the image's USER and
+// WORKDIR (ADR-1790).
+func validateProcess(body api.CreateImageRunRequest) *api.Problem {
+	if len(body.User) > api.ImageRunUserMaxBytes || ociidentity.ValidateSpec(body.User) != nil {
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid user",
+			"user must be name|uid[:group|gid], at most 256 bytes, without whitespace")
+	}
+	if err := api.ValidateImageRunWorkdir(body.Workdir); err != nil {
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid workdir", err.Error())
+	}
+	return nil
+}
+
+// registryCredential binds registry_auth to the image's registry API host,
+// the key imaged uses to find a job's credential.
+func registryCredential(ref oci.Reference, auth *api.ImageRunRegistryAuth) (*api.PutJobRegistryCredentialRequest, *api.Problem) {
+	if auth == nil {
+		return nil, nil
+	}
+	cred := api.PutJobRegistryCredentialRequest{Registry: strings.ToLower(ref.APIHost()), Username: auth.Username, Password: auth.Password}
+	if prob := cred.Validate(); prob != nil {
+		return nil, prob
+	}
+	return &cred, nil
 }
 
 func validateArgv(field string, argv *[]string) *api.Problem {

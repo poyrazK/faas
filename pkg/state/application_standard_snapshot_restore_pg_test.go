@@ -1,36 +1,37 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
-func newStandardRestorePGStore(t *testing.T) standardSnapshotPublicationTestStore {
-	s, _ := runtimeCapturePGStore(t)
+func newStandardRestorePGStore(t *testing.T) state.StandardSnapshotPublicationTestStore {
+	s, _ := state.RuntimeCapturePGStore(t)
 	return s
 }
 func TestPgStandardSnapshotRestoreAuthority(t *testing.T) {
-	standardRestoreAuthority(t, newStandardRestorePGStore(t))
+	state.StandardRestoreAuthority(t, newStandardRestorePGStore(t))
 }
 func TestPgStandardSnapshotRestoreRefusal(t *testing.T) {
-	standardRestoreRefusal(t, newStandardRestorePGStore)
+	state.StandardRestoreRefusal(t, newStandardRestorePGStore)
 }
 func TestPgStandardSnapshotRestoreFinalPublicationFence(t *testing.T) {
-	standardRestorePublicationRefusal(t, newStandardRestorePGStore)
+	state.StandardRestorePublicationRefusal(t, newStandardRestorePGStore)
 }
 
 func TestPgStandardSnapshotRestoreFreshTargetRefusesOldPolicy(t *testing.T) {
-	standardRestoreFreshTargetRefusal(t, newStandardRestorePGStore(t))
+	state.StandardRestoreFreshTargetRefusal(t, newStandardRestorePGStore(t))
 }
 
 func TestPgStandardSnapshotRestoreCatalogContention(t *testing.T) {
 	for _, table := range []string{"snapshots", "application_standard_snapshot_captures"} {
 		t.Run(table, func(t *testing.T) {
-			s, pool := runtimeCapturePGStore(t)
-			f := standardRestoreTestFixture(t, s)
+			s, pool := state.RuntimeCapturePGStore(t)
+			f := state.StandardRestoreTestFixture(t, s)
 			tx, err := pool.Begin(t.Context())
 			if err != nil {
 				t.Fatal(err)
@@ -45,14 +46,14 @@ func TestPgStandardSnapshotRestoreCatalogContention(t *testing.T) {
 				t.Fatal(err)
 			}
 			start := time.Now()
-			if _, err := s.IssueInstanceApplicationStandardBoot(t.Context(), f.Target.State, f.Binding); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+			if _, err := s.IssueInstanceApplicationStandardBoot(t.Context(), f.Target.State, f.Binding); !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 				t.Fatal("catalog lock bypassed fail-fast fence", err)
 			}
 			// Busy replays roll back before each backoff; only a lock wait exceeds this.
 			if time.Since(start) > runtimeAdmissionBusyBudget()+time.Second {
 				t.Fatal("catalog contention held parent locks")
 			}
-			assertStandardRestoreNoGrant(t, s, f.Binding.Token)
+			state.AssertStandardRestoreNoGrant(t, s, f.Binding.Token)
 			if err := tx.Rollback(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -68,14 +69,14 @@ func TestPgStandardSnapshotRestoreCatalogContention(t *testing.T) {
 			if _, err := tx.Exec(t.Context(), `SELECT 1 FROM snapshots WHERE id=$1 FOR UPDATE`, f.Snapshot.ID); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), f.Target.State, StateRunning, consumedNativeReceipt(b, f.Capture)); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+			if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), f.Target.State, state.StateRunning, state.ConsumedNativeReceipt(b, f.Capture)); !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 				t.Fatal("publication bypassed catalog lock", err)
 			}
-			assertNativeBootUnpublished(t, s, f.Target)
+			state.AssertNativeBootUnpublished(t, s, f.Target)
 			if err := tx.Rollback(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), f.Target.State, StateRunning, consumedNativeReceipt(b, f.Capture)); err != nil {
+			if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), f.Target.State, state.StateRunning, state.ConsumedNativeReceipt(b, f.Capture)); err != nil {
 				t.Fatal("publication retry refused", err)
 			}
 		})

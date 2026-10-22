@@ -21,12 +21,25 @@ import (
 
 type hostJournalExitError struct{ code int }
 
+// listBoots answers vmmd's retained-span query: two boots, the older one
+// first logged at 1_724_000_000.5.
+func listBoots(args []string) ([]byte, bool) {
+	if len(args) == 0 || args[0] != "--list-boots" {
+		return nil, false
+	}
+	return []byte(`[{"index":-1,"boot_id":"a","first_entry":1724000000500000,"last_entry":1724500000000000},` +
+		`{"index":0,"boot_id":"b","first_entry":1724500000000001,"last_entry":1725000000000000}]`), true
+}
+
 func (e hostJournalExitError) Error() string { return "host journal command exited" }
 func (e hostJournalExitError) ExitCode() int { return e.code }
 
 func TestHostJournalMetricsSample(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if out, ok := listBoots(args); ok && name == "journalctl" {
+			return out, nil
+		}
 		switch {
 		case name == "journalctl":
 			joined := strings.Join(args, " ")
@@ -63,9 +76,10 @@ func TestHostJournalMetricsSample(t *testing.T) {
 		collector prometheus.Collector
 		want      float64
 	}{
-		"vmmd_networkd_dispatcher_errors_last_5m": {m.dispatcherErrors, 2},
-		"vmmd_journal_disk_usage_bytes":           {m.journalBytes, 1_050_624},
-		"vmmd_host_journal_metrics_up":            {m.up, 1},
+		"vmmd_networkd_dispatcher_errors_last_5m":     {m.dispatcherErrors, 2},
+		"vmmd_journal_disk_usage_bytes":               {m.journalBytes, 1_050_624},
+		"vmmd_journal_oldest_entry_timestamp_seconds": {m.oldestEntry, 1_724_000_000.5},
+		"vmmd_host_journal_metrics_up":                {m.up, 1},
 		"vmmd_host_journal_metrics_last_success_timestamp_seconds": {
 			m.lastSuccess, 1_725_000_000,
 		},
@@ -79,6 +93,9 @@ func TestHostJournalMetricsSample(t *testing.T) {
 func TestHostJournalMetricsReachCanonicalVMMDMetricsEndpoint(t *testing.T) {
 	ops := wire.NewOpsMetrics("vmmd")
 	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if out, ok := listBoots(args); ok && name == "journalctl" {
+			return out, nil
+		}
 		if name == "journalctl" {
 			return []byte("persistent failure\n"), nil
 		}
@@ -107,6 +124,7 @@ func TestHostJournalMetricsReachCanonicalVMMDMetricsEndpoint(t *testing.T) {
 	for _, want := range []string{
 		"vmmd_networkd_dispatcher_errors_last_5m 1",
 		"vmmd_journal_disk_usage_bytes 4096",
+		"vmmd_journal_oldest_entry_timestamp_seconds 1.7240000005e+09",
 		"vmmd_host_journal_metrics_up 1",
 	} {
 		if !strings.Contains(rec.Body.String(), want) {
@@ -119,6 +137,9 @@ func TestHostJournalMetricsPartialFailureKeepsLastGoodValues(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	failJournal := false
 	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if out, ok := listBoots(args); ok && name == "journalctl" {
+			return out, nil
+		}
 		if name == "journalctl" {
 			if failJournal {
 				return nil, errors.New("journal unavailable")
@@ -153,6 +174,9 @@ func TestHostJournalMetricsPartialFailureKeepsLastGoodValues(t *testing.T) {
 func TestHostJournalMetricsTreatsNoGrepMatchesAsZero(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if out, ok := listBoots(args); ok && name == "journalctl" {
+			return out, nil
+		}
 		if name == "journalctl" {
 			return nil, hostJournalExitError{code: 1}
 		}
@@ -167,6 +191,61 @@ func TestHostJournalMetricsTreatsNoGrepMatchesAsZero(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(m.up); got != 1 {
 		t.Fatalf("collector up = %v, want 1", got)
+	}
+}
+
+// The retained span refines FaasHostJournalNearLimit; losing it must not mark
+// the collector down or zero the last good value (a zero would read as a
+// journal holding no history and keep the alert firing).
+func TestHostJournalMetricsOldestEntryFailureKeepsCollectorUp(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	failBoots := false
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if out, ok := listBoots(args); ok && name == "journalctl" {
+			if failBoots {
+				return []byte("No boots found\n"), hostJournalExitError{code: 1}
+			}
+			return out, nil
+		}
+		if name == "journalctl" {
+			return nil, nil
+		}
+		return []byte("4096\t" + args[len(args)-1] + "\n"), nil
+	}
+	m := newHostJournalMetrics(reg, run, time.Now)
+	if err := m.sample(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	failBoots = true
+	if err := m.sample(context.Background()); err == nil {
+		t.Fatal("a failed --list-boots was not reported")
+	}
+	if got := testutil.ToFloat64(m.up); got != 1 {
+		t.Errorf("up = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(m.oldestEntry); got != 1_724_000_000.5 {
+		t.Errorf("oldest entry = %v, want last good value", got)
+	}
+}
+
+func TestOldestJournalEntryMicros(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want uint64
+		err  bool
+	}{
+		{name: "earliest boot wins", in: `[{"first_entry":30},{"first_entry":10},{"first_entry":20}]`, want: 10},
+		{name: "boot without entries is skipped", in: `[{"first_entry":0},{"first_entry":7}]`, want: 7},
+		{name: "no boots", in: `[]`, err: true},
+		{name: "not json", in: `No journal files were found.`, err: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := oldestJournalEntryMicros([]byte(tc.in))
+			if (err != nil) != tc.err || got != tc.want {
+				t.Fatalf("got %d, %v; want %d, error %v", got, err, tc.want, tc.err)
+			}
+		})
 	}
 }
 

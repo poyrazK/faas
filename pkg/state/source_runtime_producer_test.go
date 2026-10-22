@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // adr: 435. Portable signed fixtures do not prove native mounting or Grype.
 
@@ -13,18 +13,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/buildpublisher"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type sourceRuntimeTestStore interface {
-	sourceRootfsTestStore
-	DeploymentRuntimeScanStore
-	DeploymentRuntimeArtifactInputStore
-	BuildExportPublicationHistoryStore
-}
+type sourceRuntimeTestStore = state.ContractTestStore
 
-func sourceRuntimeFixture(t *testing.T, s sourceRuntimeTestStore) (sourceRootfsFixture, SourceBuildRootfs, DeploymentRuntimeProducerInputs) {
+func sourceRuntimeFixture(t *testing.T, s sourceRuntimeTestStore) (state.SourceRootfsFixture, state.SourceBuildRootfs, state.DeploymentRuntimeProducerInputs) {
 	t.Helper()
-	f := sourceBuildRootfsFixture(t, s)
+	f := state.SourceBuildRootfsFixture(t, s)
 	root, err := s.PublishSourceBuildRootfs(t.Context(), f.Input)
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +35,7 @@ func sourceRuntimeFixture(t *testing.T, s sourceRuntimeTestStore) (sourceRootfsF
 func sourceRuntimeRenewal(t *testing.T, s sourceRuntimeTestStore) {
 	t.Helper()
 	f, root, before := sourceRuntimeFixture(t, s)
-	if len(before.Artifacts) != 2 || before.Artifacts[0].ProducerID != f.Base.ID || before.Artifacts[1] != runtimeArtifactFromSourceRootfs(root) || !before.ExpiresAt.Equal(f.Parent.ExpiresAt) {
+	if len(before.Artifacts) != 2 || before.Artifacts[0].ProducerID != f.Base.ID || before.Artifacts[1] != state.RuntimeArtifactFromSourceRootfs(root) || !before.ExpiresAt.Equal(f.Parent.ExpiresAt) {
 		t.Fatal("source/bootstrap lineage lost")
 	}
 	retained, err := s.GetLatestBuildExportPublication(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID, f.Build.ID)
@@ -59,7 +55,7 @@ func sourceRuntimeRenewal(t *testing.T, s sourceRuntimeTestStore) {
 	if err != nil || !reflect.DeepEqual(root, history) {
 		t.Fatal("renewal rewrote conversion", err)
 	}
-	if _, err := s.GetLatestBuildExportPublication(t.Context(), uuid.NewString(), f.App.ID, f.Dep.ID, f.Build.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := s.GetLatestBuildExportPublication(t.Context(), uuid.NewString(), f.App.ID, f.Dep.ID, f.Build.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("history crossed owner", err)
 	}
 	if err := s.DeleteAppTrustedSigner(t.Context(), f.App.AccountID, f.App.ID, "company"); err != nil {
@@ -76,10 +72,10 @@ func sourceRuntimeRenewal(t *testing.T, s sourceRuntimeTestStore) {
 func sourceRuntimeScanLifecycle(t *testing.T, s sourceRuntimeTestStore) {
 	t.Helper()
 	f, _, inputs := sourceRuntimeFixture(t, s)
-	if _, err := s.GetFreshDeploymentRuntimeScan(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentRuntimeScan(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatal("bootstrap fabricated scan", err)
 	}
-	value, err := s.PublishDeploymentRuntimeScan(t.Context(), runtimeScanInputFixture(t, inputs))
+	value, err := s.PublishDeploymentRuntimeScan(t.Context(), state.RuntimeScanInputFixture(t, inputs))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,18 +83,18 @@ func sourceRuntimeScanLifecycle(t *testing.T, s sourceRuntimeTestStore) {
 	if err != nil || fresh.Scan.ID != value.ID || fresh.ExpiresAt.After(inputs.ExpiresAt) {
 		t.Fatal("source scan lost producer binding", err)
 	}
-	if _, err := s.GetFreshDeploymentRuntimeArtifactInputs(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentRuntimeArtifactInputs(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatal("scan fabricated component/native approval", err)
 	}
 	command := "/changed/start"
-	if _, err := s.UpdateApp(t.Context(), f.App.ID, UpdateAppParams{StartCommand: &command}); err != nil {
+	if _, err := s.UpdateApp(t.Context(), f.App.ID, state.UpdateAppParams{StartCommand: &command}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetFreshDeploymentRuntimeScan(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentRuntimeScan(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatal("changed intent retained fresh scan", err)
 	}
 	value.Input.ID = uuid.NewString()
-	if _, err := s.PublishDeploymentRuntimeScan(t.Context(), value.Input); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.PublishDeploymentRuntimeScan(t.Context(), value.Input); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatal("late intent changed scan publication", err)
 	}
 	if old, err := s.GetCurrentDeploymentRuntimeScan(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); err != nil || old.ID != value.ID {
@@ -160,11 +156,11 @@ func sourceRuntimeInvalidation(t *testing.T, s sourceRuntimeTestStore, mode stri
 	case "manifest":
 		manifest := f.App.Manifest
 		manifest.Env = map[string]string{"CHANGED": "yes"}
-		if _, err := s.UpdateApp(t.Context(), f.App.ID, UpdateAppParams{Manifest: &manifest}); err != nil {
+		if _, err := s.UpdateApp(t.Context(), f.App.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatal("changed source input approved", mode, err)
 	}
 	if present, err := s.HasDeploymentRuntimeProducers(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); err != nil || !present {
@@ -172,28 +168,30 @@ func sourceRuntimeInvalidation(t *testing.T, s sourceRuntimeTestStore, mode stri
 	}
 }
 
-func TestMemSourceRuntimeRenewal(t *testing.T)       { sourceRuntimeRenewal(t, NewMemStore()) }
-func TestMemSourceRuntimeScanLifecycle(t *testing.T) { sourceRuntimeScanLifecycle(t, NewMemStore()) }
+func TestMemSourceRuntimeRenewal(t *testing.T) { sourceRuntimeRenewal(t, state.NewMemStore()) }
+func TestMemSourceRuntimeScanLifecycle(t *testing.T) {
+	sourceRuntimeScanLifecycle(t, state.NewMemStore())
+}
 func TestMemSourceRuntimePublisherReplacement(t *testing.T) {
-	sourceRuntimePublisherReplacement(t, NewMemStore())
+	sourceRuntimePublisherReplacement(t, state.NewMemStore())
 }
 func TestMemSourceRuntimeInvalidation(t *testing.T) {
 	for _, mode := range []string{"base", "build", "metadata", "manifest"} {
-		t.Run(mode, func(t *testing.T) { sourceRuntimeInvalidation(t, NewMemStore(), mode) })
+		t.Run(mode, func(t *testing.T) { sourceRuntimeInvalidation(t, state.NewMemStore(), mode) })
 	}
 }
 
 func TestMemSourceRuntimeNativeCaptureRetainsSourceIdentity(t *testing.T) {
-	s := NewMemStore()
+	s := state.NewMemStore()
 	f, _, inputs := sourceRuntimeFixture(t, s)
 	var err error
 	f.Dep, err = s.DeploymentByID(t.Context(), f.Dep.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if identity, err := s.runtimeArtifactIdentityLocked(f.App, f.Dep); err != nil || identity == nil || !reflect.DeepEqual(*identity, inputs.deploymentRuntimeArtifactIdentity) {
+	(*s.Mu()).Lock()
+	defer (*s.Mu()).Unlock()
+	if identity, err := s.RuntimeArtifactIdentityLocked(f.App, f.Dep); err != nil || identity == nil || !reflect.DeepEqual(*identity, (*inputs.DeploymentRuntimeArtifactIdentity())) {
 		t.Fatal("source capture lost distinct producer identity", err)
 	}
 }

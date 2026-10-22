@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -26,8 +27,12 @@ type featureFlagAutoAdvancer struct {
 	afterEnvironmentID string
 }
 
+// startFeatureFlagAutoAdvancer runs whenever the store supports automatic
+// rollouts. The customer_flags platform flag (ADR-1700) is checked on every
+// pass and candidate instead of at boot, so releasing Flags at runtime needs
+// no restart.
 func startFeatureFlagAutoAdvancer(ctx context.Context, s *server, log *slog.Logger) {
-	if s == nil || !s.featureFlagsEnabled || s.store == nil {
+	if s == nil || s.store == nil {
 		return
 	}
 	if _, ok := s.store.(state.FeatureFlagAutoRolloutLister); !ok {
@@ -50,6 +55,9 @@ func startFeatureFlagAutoAdvancer(ctx context.Context, s *server, log *slog.Logg
 }
 
 func (a *featureFlagAutoAdvancer) runPass(ctx context.Context) {
+	if !a.server.platformFlagOn(platformflags.CustomerFlags) {
+		return
+	}
 	lister, ok := a.server.store.(state.FeatureFlagAutoRolloutLister)
 	if !ok {
 		return
@@ -88,7 +96,7 @@ func (a *featureFlagAutoAdvancer) runPass(ctx context.Context) {
 // marker: waiting a full window after its creation ensures the evidence window
 // contains only requests served under this stage before any automatic change.
 func (s *server) autoAdvanceFeatureFlagRollout(ctx context.Context, candidate state.FeatureFlagAutoRolloutCandidate, now time.Time) error {
-	if !s.featureFlagsEnabled || s.store == nil {
+	if !s.platformFlagOn(platformflags.CustomerFlags) || s.store == nil {
 		return nil
 	}
 	configStore, ok := s.store.(state.FeatureFlagStore)
@@ -112,6 +120,9 @@ func (s *server) autoAdvanceFeatureFlagRollout(ctx context.Context, candidate st
 			return nil
 		}
 		return err
+	}
+	if !s.platformFlagEnabled(platformflags.CustomerFlags, account) {
+		return nil
 	}
 	limits := api.MustLimitsFor(account.Plan)
 	if !limits.DebugTelemetryEnabled {

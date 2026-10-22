@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"errors"
@@ -6,23 +6,20 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/imagepublisher"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type registryPreparationTestStore interface {
-	registryRootfsTestStore
-	DeploymentImagePreparationStore
-	RegistryImagePreparationStore
-}
+type registryPreparationTestStore = state.ContractTestStore
 
 func registryImagePreparationContract(t *testing.T, s registryPreparationTestStore, kind, outcome string) {
 	t.Helper()
-	in, _, app, dep := registryRootfsFixture(t, s, false)
+	in, _, app, dep := state.RegistryRootfsFixture(t, s, false)
 	in.Kind = kind
 	p, err := s.BeginImagePreparation(t.Context(), dep.ID, "registry-node")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.TransitionImagePreparation(t.Context(), dep.ID, p.ClaimToken, DeployImaging); err != nil {
+	if err := s.TransitionImagePreparation(t.Context(), dep.ID, p.ClaimToken, state.DeployImaging); err != nil {
 		t.Fatal(err)
 	}
 	token := p.ClaimToken
@@ -42,29 +39,29 @@ func registryImagePreparationContract(t *testing.T, s registryPreparationTestSto
 		assertRegistryImageCheckpoint(t, s, in, dep, value)
 		return
 	}
-	if outcome == "stale claim" && !errors.Is(err, ErrConflict) || outcome == "revoked publisher" && !errors.Is(err, imagepublisher.ErrSignatureInvalid) {
+	if outcome == "stale claim" && !errors.Is(err, state.ErrConflict) || outcome == "revoked publisher" && !errors.Is(err, imagepublisher.ErrSignatureInvalid) {
 		t.Fatal("refused for an unrelated reason", err)
 	}
 	got, err := s.DeploymentByID(t.Context(), dep.ID)
 	if err != nil || got.RootfsPath != dep.RootfsPath || got.RootfsKey != dep.RootfsKey || got.RootfsBytes != dep.RootfsBytes {
 		t.Fatal("refusal partially stamped metadata", err)
 	}
-	if _, err := s.GetCurrentDeploymentRegistryRootfs(t.Context(), app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, ErrNotFound) {
+	if _, err := s.GetCurrentDeploymentRegistryRootfs(t.Context(), app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("refusal retained selected registry evidence", err)
 	}
 }
 
-func assertRegistryImageCheckpoint(t *testing.T, s registryPreparationTestStore, in DeploymentRegistryRootfsInput, dep Deployment, value DeploymentRegistryRootfs) {
+func assertRegistryImageCheckpoint(t *testing.T, s registryPreparationTestStore, in state.DeploymentRegistryRootfsInput, dep state.Deployment, value state.DeploymentRegistryRootfs) {
 	t.Helper()
 	got, err := s.DeploymentByID(t.Context(), dep.ID)
 	if err != nil || got.RootfsKey != in.StorageKey || got.RootfsBytes != in.ContentBytes {
 		t.Fatal("verified rootfs stamp missing", err)
 	}
 	p, err := s.BeginImagePreparation(t.Context(), dep.ID, "registry-node")
-	if err != nil || p.Phase != ImageLayerPublished || p.InputPath != dep.ImageDigest {
+	if err != nil || p.Phase != state.ImageLayerPublished || p.InputPath != dep.ImageDigest {
 		t.Fatal("restart lost original registry input or checkpoint", err)
 	}
-	if _, err := s.PublishRegistryImagePreparationLayer(t.Context(), in, p.ClaimToken); !errors.Is(err, ErrConflict) {
+	if _, err := s.PublishRegistryImagePreparationLayer(t.Context(), in, p.ClaimToken); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("completed registry conversion was republished", err)
 	}
 	current, err := s.GetCurrentDeploymentRegistryRootfs(t.Context(), in.AccountID, in.AppID, in.DeploymentID, "")
@@ -77,7 +74,7 @@ func TestRegistryImagePreparationAtomicCheckpoint(t *testing.T) {
 	for _, kind := range []string{"app-layer", "full-rootfs"} {
 		for _, outcome := range []string{"complete", "stale claim", "revoked publisher"} {
 			t.Run(kind+"/"+outcome, func(t *testing.T) {
-				registryImagePreparationContract(t, NewMemStore(), kind, outcome)
+				registryImagePreparationContract(t, state.NewMemStore(), kind, outcome)
 			})
 		}
 	}

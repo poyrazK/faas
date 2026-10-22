@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routehealth"
 )
@@ -42,8 +43,8 @@ func routeHealthCorrelationFixtures(t *testing.T) (api.RouteHealthReport, map[st
 func TestRouteHealthCorrelationCLI(t *testing.T) {
 	for _, scenario := range []string{"json", "human", "unshared", "partial", "missing_spans", "no_latency_routes", "out", "invalid_limit"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			health, investigations := routeHealthCorrelationFixtures(t)
 			if scenario == "no_latency_routes" {
 				for i := range health.Routes {
@@ -70,7 +71,7 @@ func TestRouteHealthCorrelationCLI(t *testing.T) {
 				calls[r.URL.Path+"?"+r.URL.RawQuery]++
 				mu.Unlock()
 				if r.URL.Path == "/v1/apps/demo/route-health/deployments/"+healthCandidateID {
-					writeJSONTest(w, health)
+					main.WriteJSONTest(w, health)
 					return
 				}
 				if r.URL.Path == "/v1/apps/demo/route-health/deployments/"+healthCandidateID+"/investigation" {
@@ -80,7 +81,7 @@ func TestRouteHealthCorrelationCLI(t *testing.T) {
 						return
 					}
 					if investigation, ok := investigations[key]; ok {
-						writeJSONTest(w, investigation)
+						main.WriteJSONTest(w, investigation)
 						return
 					}
 				}
@@ -90,9 +91,9 @@ func TestRouteHealthCorrelationCLI(t *testing.T) {
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var output bytes.Buffer
-			old := osStdout
-			osStdout = &output
-			t.Cleanup(func() { osStdout = old })
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &output
+			t.Cleanup(func() { (*main.OsStdout) = old })
 			args := []string{"routes", "health", "correlate", "demo", "--deployment", healthCandidateID}
 			if scenario != "human" {
 				args = append(args, "--json")
@@ -107,7 +108,7 @@ func TestRouteHealthCorrelationCLI(t *testing.T) {
 			if scenario == "invalid_limit" {
 				wantExit = 1
 			}
-			if code := run(args); code != wantExit {
+			if code := main.Run(args); code != wantExit {
 				t.Fatalf("exit %d want %d: %s", code, wantExit, output.String())
 			}
 			mu.Lock()
@@ -145,7 +146,7 @@ func TestRouteHealthCorrelationCLI(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			var got routeHealthCorrelationReport
+			var got main.RouteHealthCorrelationReport
 			if err := json.Unmarshal(body, &got); err != nil {
 				t.Fatal(err)
 			}

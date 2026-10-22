@@ -107,7 +107,7 @@ func (r *WorkloadIdentityReceiver) handleGuestStream(instance string, conn net.C
 	if r.mgr == nil {
 		return r.respond(conn, workloadIdentityInstanceNotFound, workloadIdentityResponse{Error: "instance_not_found"})
 	}
-	appID, accountID, err := r.mgr.InstanceExternalActionIdentity(r.ctx, instance)
+	appID, accountID, err := r.mgr.WorkloadTokenIdentity(r.ctx, instance)
 	if errors.Is(err, fcvm.ErrRehearsalExternalActionDenied) {
 		return r.respond(conn, workloadIdentityInvalidAudience, workloadIdentityResponse{Error: "rehearsal_identity_unavailable"})
 	}

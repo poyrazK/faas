@@ -133,6 +133,9 @@ type EnvironmentGitOpsData struct {
 	CSRFToken               string
 	Status                  *api.EnvironmentGitOpsStatusResponse
 	Review                  *api.PreviewEnvironmentGitRevisionResponse
+	Recovery                *api.ListEnvironmentGitReleasesResponse
+	RecoveryError           string
+	RecoveryCommit          string
 	PlanPreview             *api.PreviewEnvironmentGitPlanResponse
 	Definition              string
 	Adoption                *api.EnvironmentGitOpsPlan
@@ -980,9 +983,31 @@ type AppEdgeRulesData struct {
 	Events EdgeRuleEventsPageData
 	// Recipes is the protection-recipes section (ADR-986).
 	Recipes []EdgeRuleRecipeView
+	// RecipeAlerts is set when the plan includes alert rules, so recipe
+	// forms offer "alert me".
+	RecipeAlerts bool
+	// Suggestions recommends recipes from the app's own traffic (ADR-20261020105000).
+	Suggestions []EdgeRuleSuggestionView
 	// Hosts lists the hostnames the app serves and how many enabled rules
 	// apply to each (ADR-1191), so an uncovered custom domain stands out.
 	Hosts []EdgeRuleHostCoverage
+	// Review lists log-mode rules to decide on and rules that went quiet
+	// (ADR-20261020105001).
+	Review []EdgeRuleReviewView
+}
+
+// EdgeRuleReviewView is one rule in the rule review (ADR-20261020105001). Status is
+// one of the api.EdgeRuleReview* values; Matches and PerDay count from
+// Since, the rule's last change or the start of the 7-day window.
+type EdgeRuleReviewView struct {
+	ID            string
+	Label         string
+	Match         string
+	Status        string
+	Since         string
+	ObservedHours int64
+	Matches       int64
+	PerDay        int64
 }
 
 // EdgeRuleHostCoverage is one hostname of the app and the number of
@@ -1083,6 +1108,10 @@ type EdgeRulePageItem struct {
 	Mode       string
 	Matched24h int64
 	Logged24h  int64
+	// ADR-20261020105001: matches over the last 7 days, as an SVG polyline of
+	// 6-hour totals and their sum.
+	SparkPoints string
+	Matches7d   int64
 }
 
 // CorsPresetPageItem is the read-only preset summary shown beside an app's
@@ -1577,6 +1606,9 @@ type AppDetailData struct {
 	// DiscoveredRoutes is the persistent, opt-in API route catalog. The
 	// dashboard keeps the rest of the app page available if this read fails.
 	DiscoveredRoutes DiscoveredRoutesView
+	// RouteInsights is the route insights panel (ADR-20261020161310); nil
+	// when the plan has no request telemetry, so no insights are evaluated.
+	RouteInsights *RouteInsightsView
 	// Alerts is the per-app (and account-wide) alert-rule snapshot
 	// (issue #396 / ADR-045, PR 4). nil means the apid dashboard
 	// query failed non-fatally (the page renders the "Alerts"
@@ -2427,6 +2459,36 @@ type DiscoveredRouteItem struct {
 	RequestCount int64
 	Contract     string
 	Policy       string
+}
+
+// RouteInsightsView is the app page's route insights panel
+// (ADR-20261020161310): active insights with their one-click fixes, and the
+// ones resolved in the last seven days.
+type RouteInsightsView struct {
+	// Available is false when the best-effort read failed.
+	Available bool
+	Active    []RouteInsightItem
+	Resolved  []RouteInsightItem
+	// CSRF is the named token the fix forms post.
+	CSRF string
+	// Flash reports the last fix: "fixed", "changed" or "error".
+	Flash       string
+	FlashDetail string
+}
+
+// RouteInsightItem is one insight; FixID and FixSummary are empty when the
+// platform has no fix to apply.
+type RouteInsightItem struct {
+	ID              string
+	KindLabel       string
+	Method          string
+	Route           string
+	Message         string
+	FirstDetectedAt string
+	ResolvedAt      string
+	FixedAt         string
+	FixID           string
+	FixSummary      string
 }
 
 // DebugPageData is the server-rendered production debugger surface for one
@@ -3814,4 +3876,25 @@ type OrgActivityItem struct {
 	OccurredAt string
 	Kind       string
 	Summary    string
+}
+
+// EdgeRuleSuggestionView is one suggested recipe (ADR-20261020105000): the observation
+// behind it, the parameters it is added with (Hidden), the required inputs
+// the user still has to give (Inputs), and the plan gate if any (Blocked).
+type EdgeRuleSuggestionView struct {
+	Recipe  string
+	Title   string
+	Reason  string
+	Hidden  []EdgeRuleSuggestionField
+	Inputs  []EdgeRuleRecipeParamView
+	Blocked string
+	// Alternative is a softer recipe for the same observation, such as a
+	// challenge instead of a rate limit (ADR-831 amendment 7).
+	Alternative *EdgeRuleSuggestionView
+}
+
+// EdgeRuleSuggestionField is one pre-filled recipe parameter.
+type EdgeRuleSuggestionField struct {
+	Name  string
+	Value string
 }

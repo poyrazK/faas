@@ -159,7 +159,8 @@ restore callback; both must succeed before it accepts traffic.
 
 The [combined rollout verifier](ops/managed-postgres-native-acceptance.md#combined-rollout-verification)
 joins provider v8 evidence with a versioned report from actual execution of all
-nineteen guest phases, including both shipped Node and Python starters.
+twenty guest phases (suite version 4), including both shipped Node and Python
+starters and the Node frozen-thaw recovery witness.
 `managed-postgres-qualify --verify --rollout` checks the
 approved qualification-bundle manifest, PostgreSQL major, native host class,
 cleanup and expiry without making provider or SQL calls. Before a staging
@@ -373,6 +374,14 @@ committed database changes. The PostgreSQL starters use direct
 and a 120-second statement timeout. Serving startup performs no DDL. For other
 frameworks, declare your migration tool as the release command and configure it
 to use the migration connection.
+
+A rollback never undoes a migration. A rollback to a release that has not
+served since a later release command ran is refused with
+`rollback_crosses_release`, which gives the `gregale postgres restore`
+command for each database the release commands can migrate, at the moment
+before the earliest of them
+([ADR-1448](adr/1448-releases-that-change-the-database.md); see
+[Releases that change the database](deploys.md#releases-that-change-the-database)).
 
 Migration sessions automatically switch to the schema owner. `SET ROLE NONE`
 removes DDL access until that owner is selected again, so normal migrations do

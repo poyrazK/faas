@@ -24,6 +24,10 @@
       "lane": "control-plane",
       "services": [{"name": "s3-gatewayd", "optional": true, "readyz": "http://127.0.0.1:9096/readyz"}]
     },
+    "livequeryd": {
+      "lane": "control-plane",
+      "services": [{"name": "livequeryd", "optional": true, "readyz": "http://127.0.0.1:9471/readyz"}]
+    },
     "bridged": {
       "lane": "control-plane",
       "services": [{"name": "bridged", "optional": true}]
@@ -67,6 +71,13 @@
     "canary": {"duration": "4m", "max_hold": "2m"},
     "follower": {"duration": "90s", "max_hold": "30s"}
   },
+  "watch": {
+    "_comment": "Post-deploy watch (docs/adr/20261020214632-automatic-unit-deploy-safety-rails.md): the SLO gate keeps running for `window` after a run's last activation, each rule held for its own for: (max hold = window). `max_blind_rounds` rounds without evidence (5 minutes at the interval) make it inconclusive. A host holds at most `max_unwatched` unit releases not yet watched clean, so release retention (3 previous releases) still holds its known-good release.",
+    "window": "30m",
+    "interval": "15s",
+    "max_blind_rounds": 20,
+    "max_unwatched": 2
+  },
   "global_inputs": ["go.mod", "go.sum"],
   "_migrations_comment": "Goose migrations (*.sql directly in migrations_dir). When every one added since base is lane-eligible (declared -- migration-compat: expand, no contract change; docs/adr/20261018084150-unit-lane-expand-migrations.md), they are the data step the control-plane lane applies before restarting anything. Otherwise they block like any other path under blocking_paths.migrations.",
   "migrations_dir": "migrations/",
@@ -82,17 +93,27 @@
       "cmd/release-artifact/"
     ]
   },
-  "compute_only_paths": [
-    "deploy/ansible/roles/builderd_service/",
-    "deploy/ansible/roles/compute_admission/",
-    "deploy/ansible/roles/compute_only_service/",
-    "deploy/ansible/roles/gatewayd_internal_service/",
-    "deploy/ansible/roles/gatewayd_public_edge_service/",
-    "deploy/ansible/roles/geoip/",
-    "deploy/ansible/roles/profiled_service/",
-    "deploy/ansible/roles/tenant_egress_client/",
-    "deploy/ansible/roles/vmmd_service/"
-  ],
+  "_host_config_comment": "Host configuration (docs/adr/20261018133100-host-configuration-lane.md). A deploy/ path a control-plane host role reads (scripts/ci/host_roles.py: the role's files and every path it names) no longer blocks the control-plane lane, which converges the roles whose content hash changed before it restarts anything (cd-controlplane.yml converge-host-config). A path a compute host role reads waits for the full release and holds the edge lane (compute_deploy). release_units are the files cd-controlplane's bundle installs through deployctl at activation (systemd/, optional-systemd/, tmpfiles.d/): a unit release reuses the base's copies, so a change to one still needs a full release. stateful_services are services the lane never restarts: a role that can restart or stop one (a task, or a notified handler of any role, scripts/ci/host_roles.py restart_roles) blocks both lanes when its content changes (stateful_restart), the planner never selects it on its own, and in lane mode the roles refuse a restart (faas_stateful_restart_allowed). outside_releases are trees no release installs, so a change there maps to nothing unless a host role names the file: deploy/systemd/ is deployctl generate's legacy and dev-VM tree, deploy/grafana/ mirrors the grafana role's dashboards (make grafana-mirror-check), and deploy/cloudflare/ workers deploy through their own workflows.",
+  "host_config": {
+    "converged_groups": ["control_plane"],
+    "stateful_services": ["postgresql", "pgbouncer"],
+    "release_units": [
+      "deploy/ansible/roles/control_plane_service/files/faas-apid.service",
+      "deploy/ansible/roles/control_plane_service/files/faas-apid.socket",
+      "deploy/ansible/roles/control_plane_service/files/faas-cp.slice",
+      "deploy/ansible/roles/control_plane_service/files/faas-meterd.service",
+      "deploy/ansible/roles/control_plane_service/files/faas-outboundd.service",
+      "deploy/ansible/roles/control_plane_service/files/faas-schedd.service",
+      "deploy/ansible/roles/control_plane_service/files/faas-schedd.socket",
+      "deploy/ansible/roles/control_plane_service/files/faas.conf",
+      "deploy/ansible/roles/gatewayd_public_service/files/faas-gatewayd-public.service",
+      "deploy/ansible/roles/gatewayd_public_service/files/faas-gatewayd-public.socket",
+      "deploy/ansible/roles/githubd_service/files/faas-githubd.service",
+      "deploy/ansible/roles/s3_gateway_service/files/faas-s3-gatewayd.service",
+      "deploy/ansible/roles/livequeryd_service/files/faas-livequeryd.service"
+    ],
+    "outside_releases": ["deploy/systemd/", "deploy/grafana/", "deploy/cloudflare/"]
+  },
   "pending_paths": {
     "guest": ["guest/"],
     "images": ["images/"],

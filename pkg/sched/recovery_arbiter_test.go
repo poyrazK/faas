@@ -10,7 +10,7 @@
 // (running on unavailable with no usable snapshot → Recreate);
 // adding a row here is the load-bearing step when the column
 // lands.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -56,96 +57,96 @@ func (n *noopDispatcher) RecreateInstance(_ context.Context, id string) error {
 // eviction sweep) that already owns the row.
 func TestArbiter_Decide_Table(t *testing.T) {
 	t.Parallel()
-	a := NewArbiter(nil, nil) // dispatch not exercised in pure-Decide tests
+	a := sched.NewArbiter(nil, nil) // dispatch not exercised in pure-Decide tests
 	cases := []struct {
 		name     string
 		node     state.ComputeNode
 		instance state.RecoveryInstance
-		want     Decision
+		want     sched.Decision
 	}{
 		{
 			name:     "draining_running → LiveMigrate",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleDraining},
 			instance: state.RecoveryInstance{State: "running"},
-			want:     DecisionLiveMigrate,
+			want:     sched.DecisionLiveMigrate,
 		},
 		{
 			name:     "draining_job_task → None (lease reaper owns retry)",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleDraining},
 			instance: state.RecoveryInstance{State: "running", Kind: "job_task"},
-			want:     DecisionNone,
+			want:     sched.DecisionNone,
 		},
 		{
 			name:     "draining_waking → None (healthy boot stays local)",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleDraining},
 			instance: state.RecoveryInstance{State: "waking"},
-			want:     DecisionNone,
+			want:     sched.DecisionNone,
 		},
 		{
 			name:     "draining_cold_booting → None (healthy boot stays local)",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleDraining},
 			instance: state.RecoveryInstance{State: "cold_booting"},
-			want:     DecisionNone,
+			want:     sched.DecisionNone,
 		},
 		{
 			name:     "draining_parked → None",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleDraining},
 			instance: state.RecoveryInstance{State: "parked"},
-			want:     DecisionNone,
+			want:     sched.DecisionNone,
 		},
 		{
 			name:     "recovering_running → LiveMigrate",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleRecovering},
 			instance: state.RecoveryInstance{State: "running"},
-			want:     DecisionLiveMigrate,
+			want:     sched.DecisionLiveMigrate,
 		},
 		{
 			name:     "recovering_parked → None",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleRecovering},
 			instance: state.RecoveryInstance{State: "parked"},
-			want:     DecisionNone,
+			want:     sched.DecisionNone,
 		},
 		{
 			name:     "recovering_waking → None (healthy boot stays local)",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleRecovering},
 			instance: state.RecoveryInstance{State: "waking"},
-			want:     DecisionNone,
+			want:     sched.DecisionNone,
 		},
 		{
 			name:     "recovering_cold_booting → None (healthy boot stays local)",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleRecovering},
 			instance: state.RecoveryInstance{State: "cold_booting"},
-			want:     DecisionNone,
+			want:     sched.DecisionNone,
 		},
 		{
 			name:     "unavailable_running → LiveMigrate",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleUnavailable},
 			instance: state.RecoveryInstance{State: "running"},
-			want:     DecisionLiveMigrate,
+			want:     sched.DecisionLiveMigrate,
 		},
 		{
 			name:     "unavailable_cold_booting → Recreate",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleUnavailable},
 			instance: state.RecoveryInstance{State: "cold_booting"},
-			want:     DecisionRecreate,
+			want:     sched.DecisionRecreate,
 		},
 		{
 			name:     "active_running → None (out of scope)",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleActive},
 			instance: state.RecoveryInstance{State: "running"},
-			want:     DecisionNone,
+			want:     sched.DecisionNone,
 		},
 		{
 			name:     "unavailable_failed → None",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleUnavailable},
 			instance: state.RecoveryInstance{State: "failed"},
-			want:     DecisionNone,
+			want:     sched.DecisionNone,
 		},
 		{
 			name:     "unavailable_terminated → None",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleUnavailable},
 			instance: state.RecoveryInstance{State: "terminated"},
-			want:     DecisionNone,
+			want:     sched.DecisionNone,
 		},
 		// Fix #6: in-flight deny-list. The arbiter must NOT
 		// re-issue a verdict for a row whose state says a peer
@@ -156,25 +157,25 @@ func TestArbiter_Decide_Table(t *testing.T) {
 			name:     "unavailable_migrating → None (in-flight)",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleUnavailable},
 			instance: state.RecoveryInstance{State: "migrating"},
-			want:     DecisionNone,
+			want:     sched.DecisionNone,
 		},
 		{
 			name:     "draining_snapshotting → None (in-flight)",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleDraining},
 			instance: state.RecoveryInstance{State: "snapshotting"},
-			want:     DecisionNone,
+			want:     sched.DecisionNone,
 		},
 		{
 			name:     "unavailable_evicting_grace → None (in-flight)",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleUnavailable},
 			instance: state.RecoveryInstance{State: "evicting_grace"},
-			want:     DecisionNone,
+			want:     sched.DecisionNone,
 		},
 		{
 			name:     "force-draining waking is recreated",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleForceDraining},
 			instance: state.RecoveryInstance{State: "waking"},
-			want:     DecisionRecreate,
+			want:     sched.DecisionRecreate,
 		},
 	}
 	for _, tc := range cases {
@@ -196,7 +197,7 @@ func TestArbiter_Decide_Table(t *testing.T) {
 func TestArbiter_Tick_DispatchCounts(t *testing.T) {
 	t.Parallel()
 	disp := &noopDispatcher{}
-	a := NewArbiter(disp, disp)
+	a := sched.NewArbiter(disp, disp)
 
 	nodes := []state.ComputeNode{
 		{ID: "n-drain", Lifecycle: state.NodeLifecycleDraining},
@@ -246,7 +247,7 @@ func TestArbiter_Tick_DispatchCounts(t *testing.T) {
 // been wired yet.
 func TestArbiter_Tick_NilDispatchers(t *testing.T) {
 	t.Parallel()
-	a := NewArbiter(nil, nil)
+	a := sched.NewArbiter(nil, nil)
 	nodes := []state.ComputeNode{
 		{ID: "n1", Lifecycle: state.NodeLifecycleUnavailable},
 	}
@@ -280,7 +281,7 @@ func TestArbiter_Tick_UnhealthyMigrationFailureFallsBackToRecreate(t *testing.T)
 			t.Parallel()
 			recreate := &noopDispatcher{}
 			migrationErr := errors.New("source vmmd unavailable")
-			a := NewArbiter(MigrationDispatcherFunc(func(context.Context, string) error {
+			a := sched.NewArbiter(sched.MigrationDispatcherFunc(func(context.Context, string) error {
 				return migrationErr
 			}), recreate)
 
@@ -313,7 +314,7 @@ func TestArbiter_Tick_HealthyMigrationFailureRetries(t *testing.T) {
 			t.Parallel()
 			recreate := &noopDispatcher{}
 			migrationErr := errors.New("temporary migration failure")
-			a := NewArbiter(MigrationDispatcherFunc(func(context.Context, string) error {
+			a := sched.NewArbiter(sched.MigrationDispatcherFunc(func(context.Context, string) error {
 				return migrationErr
 			}), recreate)
 
@@ -338,7 +339,7 @@ func TestArbiter_Tick_HealthyMigrationFailureRetries(t *testing.T) {
 func TestArbiter_Tick_ConflictDoesNotFallback(t *testing.T) {
 	t.Parallel()
 	recreate := &noopDispatcher{}
-	a := NewArbiter(MigrationDispatcherFunc(func(context.Context, string) error {
+	a := sched.NewArbiter(sched.MigrationDispatcherFunc(func(context.Context, string) error {
 		return state.ErrConflict
 	}), recreate)
 
@@ -364,12 +365,12 @@ func TestArbiter_Tick_ConflictDoesNotFallback(t *testing.T) {
 func TestDecision_String(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		in   Decision
+		in   sched.Decision
 		want string
 	}{
-		{DecisionNone, "none"},
-		{DecisionLiveMigrate, "live-migrate"},
-		{DecisionRecreate, "recreate"},
+		{sched.DecisionNone, "none"},
+		{sched.DecisionLiveMigrate, "live-migrate"},
+		{sched.DecisionRecreate, "recreate"},
 	}
 	for _, tc := range cases {
 		if got := tc.in.String(); got != tc.want {
@@ -426,7 +427,7 @@ func TestArbiter_Tick_MigratesNodeConcurrentlyWithinLimit(t *testing.T) {
 		t.Run(fmt.Sprintf("limit=%d/instances=%d", tc.limit, tc.instances), func(t *testing.T) {
 			t.Parallel()
 			gate := &gatedDispatcher{release: make(chan struct{})}
-			a := NewArbiter(gate, &noopDispatcher{}).WithLiveMigrationConcurrency(tc.limit)
+			a := sched.NewArbiter(gate, &noopDispatcher{}).WithLiveMigrationConcurrency(tc.limit)
 			type result struct {
 				liveMig int
 				err     error
@@ -473,7 +474,7 @@ func TestArbiter_Tick_MigratesNodeConcurrentlyWithinLimit(t *testing.T) {
 func TestArbiter_Tick_ConcurrentOutcomes(t *testing.T) {
 	t.Parallel()
 	errA, errB := errors.New("handoff a failed"), errors.New("handoff b failed")
-	fail := MigrationDispatcherFunc(func(_ context.Context, id string) error {
+	fail := sched.MigrationDispatcherFunc(func(_ context.Context, id string) error {
 		switch id {
 		case "i0":
 			return errA
@@ -482,7 +483,7 @@ func TestArbiter_Tick_ConcurrentOutcomes(t *testing.T) {
 		}
 		return nil
 	})
-	_, _, _, err := NewArbiter(fail, &noopDispatcher{}).Tick(context.Background(),
+	_, _, _, err := sched.NewArbiter(fail, &noopDispatcher{}).Tick(context.Background(),
 		[]state.ComputeNode{{ID: "n1", Lifecycle: state.NodeLifecycleDraining}},
 		map[string][]state.RecoveryInstance{"n1": runningInstances(4)})
 	if !errors.Is(err, errA) || !errors.Is(err, errB) {
@@ -490,7 +491,7 @@ func TestArbiter_Tick_ConcurrentOutcomes(t *testing.T) {
 	}
 
 	recreate := &noopDispatcher{}
-	liveMig, recreated, _, err := NewArbiter(fail, recreate).Tick(context.Background(),
+	liveMig, recreated, _, err := sched.NewArbiter(fail, recreate).Tick(context.Background(),
 		[]state.ComputeNode{{ID: "n1", Lifecycle: state.NodeLifecycleUnavailable}},
 		map[string][]state.RecoveryInstance{"n1": runningInstances(4)})
 	if err != nil || liveMig != 2 || recreated != 2 {

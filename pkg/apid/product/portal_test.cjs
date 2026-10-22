@@ -243,6 +243,39 @@ test('changed terms require a second visible confirmation without automatic resu
   await b.submit(8); assert.equal(starts, 2); assert.match(b.confirms.at(-1), /EUR 0.50/);
   assert.equal(JSON.parse(b.calls.filter(c => c.path.endsWith('/start'))[1].options.body).expected_quote, changedQuote);
 });
+// ADR-20261021154511: included starts come first at no charge, then the unit price.
+test('included starts show the included runs left and confirm a free start before the priced ones', async () => {
+  const included = remaining => {
+    const value = fixture(); value.remaining_starts = { export: remaining };
+    value.catalog.spec.plans.starter.features.export = { included_starts: 3, monthly_starts: 10, unit_price_millicents: 20000 };
+    return value;
+  };
+  let remaining = 8;
+  const b = browser(async path => {
+    if (path.endsWith('/start')) { remaining--; return { ok: true, status: 202, json: async () => ({ id: ids.op }) }; }
+    if (path.endsWith('/product')) return { ok: true, status: 200, json: async () => included(remaining) };
+  });
+  await b.signIn();
+  assert.equal(b.get('features').children[0].children[1].textContent, '1 of 3 included runs left, then EUR 0.20 per successful run · 8 of 10 starts remaining this month.');
+  await b.submit(1); assert.match(b.confirms[0], /included in your plan at no charge/);
+  await waitFor(() => b.get('features').children[0].children[1].textContent.startsWith('0 of 3 included runs left'));
+  await b.submit(2); assert.match(b.confirms.at(-1), /EUR 0.20 will be recorded only if it succeeds/);
+});
+// ADR-20261021195901: during a free trial every start is free and the portal says until when.
+test('a running trial shows free runs until it ends and confirms a free start', async () => {
+  const ends = new Date(Date.now() + 5 * 86400000).toISOString();
+  const b = browser(async path => {
+    if (path.endsWith('/start')) return { ok: true, status: 202, json: async () => ({ id: ids.op }) };
+    if (path.endsWith('/product')) {
+      const value = fixture(); value.customer.trial_starts_at = new Date(Date.now() - 86400000).toISOString(); value.customer.trial_ends_at = ends;
+      value.catalog.spec.plans.starter.features.export = { included_starts: 3, monthly_starts: 10, unit_price_millicents: 20000 }; value.included_remaining = { export: 3 };
+      return { ok: true, status: 200, json: async () => value };
+    }
+  });
+  await b.signIn();
+  assert.equal(b.get('features').children[0].children[1].textContent, `Free during your trial until ${ends.slice(0, 10)}, then EUR 0.20 per successful run · 10 of 10 starts remaining this month.`);
+  await b.submit(1); assert.match(b.confirms[0], /free during your trial/);
+});
 test('reload discovers a lost acknowledgement without sending any work', async () => {
   const storage = new Map(), first = browser(async path => { if (path.endsWith('/start')) throw new Error('lost'); }, storage);
   await first.signIn(); await first.submit(8);
@@ -341,6 +374,109 @@ test('billing displays immutable statements and signed credit notes with explici
   assert.match(b.get('billing-documents').children[0].textContent, /Finalized statement/);
   assert.equal(b.get('billing-more').hidden, true);
   assert.ok(b.calls.filter(c => c.path.includes('/billing?')).every(c => c.options.method === undefined));
+});
+
+// adr: 20261021154511 — the month's plan fee shows in provisional charges and on finalized statements, with its proration.
+test('billing shows the month plan fee and its proration', async () => {
+  const fee = { plan: 'pro', revision: 'a'.repeat(64), monthly_fee_millicents: 2900000, amount_millicents: 1029032, prorated_from: '2026-10-21T00:00:00Z' };
+  const b = browser(async path => {
+    if (!path.includes('/billing?')) return;
+    const finalized = new URL(path, 'https://portal.example').searchParams.get('period') === '2026-09';
+    return { ok: true, status: 200, json: async () => ({
+      review: finalized ? { period: '2026-09', currency: 'EUR', finalized: { amount_millicents: 2900000 } } : { period: '2026-10', currency: 'EUR', amount_millicents: 1129032, unresolved: 0, closed: false, fees: [fee] },
+      documents: { documents: finalized ? [{ id: randomUUID(), kind: 'statement', currency: 'EUR', amount_millicents: 2900000, snapshot: { lines: [], fees: [{ ...fee, amount_millicents: 2900000, prorated_from: undefined }] } }] : [], next_cursor: '' },
+    }) };
+  });
+  await b.signIn(); b.get('billing-period').value = '2026-10';
+  await b.get('billing-form').onsubmit({ preventDefault() {} });
+  assert.match(b.get('billing-summary').textContent, /Provisional charges EUR 11.29032 including the monthly fee for plan pro, EUR 10.29032 prorated from 2026-10-21/);
+  b.get('billing-period').value = '2026-09';
+  await b.get('billing-form').onsubmit({ preventDefault() {} });
+  assert.equal(b.get('billing-documents').children[0].children[0].textContent, 'the monthly fee for plan pro, EUR 29.00');
+});
+
+// adr: 20261018212918 — exported statements show the provider's payment status and only its own https invoice page.
+test('billing shows exported statement invoices and links only to the provider https page', async () => {
+  const statement = (id, invoice) => ({ id, kind: 'statement', currency: 'EUR', amount_millicents: 50000, invoice });
+  const b = browser(async path => {
+    if (!path.includes('/billing?')) return;
+    return { ok: true, status: 200, json: async () => ({
+      review: { period: '2026-09', currency: 'EUR', finalized: { amount_millicents: 50000 } },
+      documents: { documents: [
+        statement(randomUUID(), { payment_status: 'open', overdue: true, currency: 'EUR', amount_minor: 1250, amount_remaining_minor: 1250, amount_remaining_millicents: 1250000, due_at: '2026-10-15T00:00:00Z', hosted_invoice_url: 'https://invoice.stripe.com/i/acct_1/in_2' }),
+        statement(randomUUID(), { payment_status: 'paid', overdue: false, currency: 'EUR', amount_minor: 50, amount_remaining_minor: 0, amount_remaining_millicents: 0, hosted_invoice_url: 'javascript:alert(1)' }),
+        statement(randomUUID(), { overdue: false, currency: 'EUR', amount_minor: 50 }),
+      ], next_cursor: '' },
+    }) };
+  });
+  await b.signIn(); b.get('billing-period').value = '2026-09';
+  await b.get('billing-form').onsubmit({ preventDefault() {} });
+  const [overdue, paid, unsynced] = b.get('billing-documents').children;
+  assert.equal(overdue.children[0].textContent, 'Invoice overdue · due 2026-10-15 · EUR 12.50 remaining');
+  const pay = overdue.children[1];
+  assert.equal(pay.tag, 'a'); assert.equal(pay.textContent, 'View and pay invoice'); assert.equal(pay.href, 'https://invoice.stripe.com/i/acct_1/in_2');
+  assert.equal(pay.target, '_blank'); assert.equal(pay.rel, 'noopener noreferrer');
+  assert.equal(paid.children[0].textContent, 'Invoice paid');
+  assert.equal(paid.children.length, 1, 'a non-https invoice link must not render');
+  assert.equal(unsynced.children[0].textContent, 'Invoice issued; payment status not available yet');
+  assert.equal(unsynced.children.length, 1);
+});
+
+test('an overdue invoice hold pauses new runs and links only to the provider https page', async () => {
+  const held = hosted_invoice_url => async path => {
+    if (!path.endsWith('/product')) return;
+    const view = fixture(); view.overdue_hold = { due_at: '2026-10-15T00:00:00Z', hosted_invoice_url };
+    return { ok: true, status: 200, json: async () => view };
+  };
+  const b = browser(held('https://invoice.stripe.com/i/acct_1/in_2'));
+  await b.signIn();
+  const status = b.get('overdue-status');
+  assert.equal(status.hidden, false);
+  assert.equal(status.children[0].textContent, 'New runs are paused until your invoice due 2026-10-15 is paid. Work already running continues.');
+  const pay = status.children[1];
+  assert.equal(pay.tag, 'a'); assert.equal(pay.textContent, 'View and pay invoice'); assert.equal(pay.href, 'https://invoice.stripe.com/i/acct_1/in_2');
+  assert.equal(pay.target, '_blank'); assert.equal(pay.rel, 'noopener noreferrer');
+  assert.equal(b.get('account-status').textContent, 'Your workspace is active.', 'a hold is not the product team pausing the workspace');
+  const run = b.get('features').children[0].children.find(el => el.tag === 'form').children.at(-1);
+  assert.equal(run.disabled, true);
+
+  const unsafe = browser(held('javascript:alert(1)'));
+  await unsafe.signIn();
+  assert.equal(unsafe.get('overdue-status').children.length, 1, 'a non-https invoice link must not render');
+
+  const clear = browser();
+  await clear.signIn();
+  assert.equal(clear.get('overdue-status').hidden, true);
+});
+
+test('billing details load and save through the product team billing provider for roles that manage billing', async () => {
+  let saved;
+  const withManageBilling = manage => async (path, options) => {
+    if (path.endsWith('/product')) { const view = fixture(); view.access.permissions.manage_billing = manage; return { ok: true, status: 200, json: async () => view }; }
+    if (!path.endsWith('/billing-details')) return;
+    if (options?.method === 'PUT') { saved = JSON.parse(options.body); return { ok: true, status: 200, json: async () => ({ provider: 'paddle', ...saved }) }; }
+    return { ok: true, status: 200, json: async () => ({ provider: 'paddle', address: { country_code: 'DE', postal_code: '10115', city: 'Berlin', first_line: 'Unter den Linden 1' } }) };
+  };
+  const denied = browser(withManageBilling(false));
+  await denied.signIn();
+  assert.equal(denied.get('billing-details-section').hidden, true);
+
+  const b = browser(withManageBilling(true));
+  await b.signIn();
+  assert.equal(b.get('billing-details-section').hidden, false);
+  await b.get('billing-details-load').onclick();
+  assert.equal(b.get('billing-details-form').hidden, false);
+  assert.equal(b.get('billing-country').value, 'DE'); assert.equal(b.get('billing-city').value, 'Berlin'); assert.equal(b.get('billing-business').value, '');
+  assert.equal(b.get('billing-details-status').textContent, 'Invoices are addressed to these details.');
+  b.get('billing-country').value = ' gb '; b.get('billing-postal').value = 'SW1A 1AA'; b.get('billing-city').value = 'London'; b.get('billing-line1').value = '10 Downing St';
+  await b.get('billing-details-form').onsubmit({ preventDefault() {} });
+  assert.deepEqual(saved, { address: { country_code: 'GB', postal_code: 'SW1A 1AA', region: '', city: 'London', first_line: '10 Downing St', second_line: '' } }, 'an empty business name keeps the current business');
+  assert.equal(b.get('billing-details-status').textContent, 'Billing details saved. New invoices use them.');
+  b.get('billing-business').value = 'Acme Ltd'; b.get('billing-tax-id').value = 'GB123';
+  await b.get('billing-details-form').onsubmit({ preventDefault() {} });
+  assert.deepEqual(saved.business, { name: 'Acme Ltd', tax_identifier: 'GB123' });
+  const put = b.calls.filter(call => call.path.endsWith('/billing-details') && call.options?.method === 'PUT');
+  assert.equal(put.length, 2); assert.equal(put[0].path, '/v1/product-control/customer/exports/billing-details');
 });
 
 test('billing responses cannot restore another workspace after logout', async () => {
@@ -667,6 +803,7 @@ test('plan managers compare exact prices and carried usage, then explicitly conf
   await reviewPlan(b);
   assert.match(textTree(b.get('plan-comparison')), /EUR 0.25.*10 starts\/month.*1 used.*9 remaining/);
   assert.match(textTree(b.get('plan-comparison')), /EUR 0.10.*100 starts\/month.*99 remaining/);
+  assert.match(textTree(b.get('plan-comparison')), /Monthly fee.*No monthly fee.*No monthly fee/);
   assert.equal(b.get('plan-options').children[0].textContent, '<script>Pro</script>');
   assert.equal(b.calls.filter(c => c.path.endsWith('/plans/confirm')).length, 0);
   await b.get('plan-confirm').onclick();

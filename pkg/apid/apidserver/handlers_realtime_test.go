@@ -214,9 +214,11 @@ func TestManagedRealtimeAuthRotationKeepsPreviousCredentialDuringGrace(t *testin
 
 func TestManagedRealtimeEndpointPlanGate(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanFree)
-	// The gate must run before slug loading, preserving the existing paid-only
-	// resource posture and avoiding a slug-existence oracle for Free accounts.
-	rec := e.Do(t, http.MethodPost, "/v1/apps/missing/realtime/endpoints", api.CreateManagedRealtimeEndpointRequest{}, nil)
+	// App access answers missing and foreign slugs with the same 404 (#4882),
+	// so Free accounts still get no slug-existence oracle; the paid-only gate
+	// is observed on an app the caller owns.
+	apidserver.MustSeedApp(t, e, "realtime-gate")
+	rec := e.Do(t, http.MethodPost, "/v1/apps/realtime-gate/realtime/endpoints", api.CreateManagedRealtimeEndpointRequest{}, nil)
 	if rec.Code != http.StatusPaymentRequired {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}

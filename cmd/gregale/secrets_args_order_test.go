@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"slices"
 	"testing"
 )
@@ -21,7 +22,7 @@ func TestReorderSecretsSetArgsSendsUnknownFlagsToParser(t *testing.T) {
 		{"bare dash", []string{"-"}, []string{"-"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := reorderSecretsSetArgs(tc.args)
+			got, err := main.ReorderSecretsSetArgs(tc.args)
 			if err != nil {
 				t.Fatalf("reorderSecretsSetArgs: %v", err)
 			}
