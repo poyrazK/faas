@@ -426,7 +426,7 @@ func renderPowershellFlag(w io.Writer, f cliFlag) {
 func powershellStringArray(values []string) string {
 	quoted := make([]string, 0, len(values))
 	for _, value := range values {
-		quoted = append(quoted, psLiteral(value))
+		quoted = append(quoted, "'"+escapePS(value)+"'")
 	}
 	return strings.Join(quoted, ", ")
 }
@@ -439,15 +439,19 @@ func renderPowershellFooter(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "}")
 }
 
-// psLiteral renders s as a PowerShell single-quoted string, which expands
-// nothing: help text may hold double quotes or $ that a double-quoted string
-// would end or expand.
-func psLiteral(s string) string {
-	return "'" + escapePS(s) + "'"
+// escapePS escapes s for a PowerShell single-quoted string. PowerShell also
+// closes such a string on the typographic single quotes, so they are doubled
+// too.
+func escapePS(s string) string {
+	return psSingleQuote.Replace(s)
 }
 
-// escapePS doubles single quotes for PowerShell single-quoted strings,
-// including the typographic ones PowerShell also treats as quotes.
-func escapePS(s string) string {
-	return strings.NewReplacer("'", "''", "‘", "‘‘", "’", "’’", "‚", "‚‚", "‛", "‛‛").Replace(s)
+var psSingleQuote = strings.NewReplacer("'", "''", "\u2018", "\u2018\u2018", "\u2019", "\u2019\u2019", "\u201a", "\u201a\u201a", "\u201b", "\u201b\u201b")
+
+// psLiteral renders s as a PowerShell single-quoted literal. Help text must not
+// use Go's %q: a double-quoted PowerShell string has no \" escape and expands
+// $variables, so a description such as `--at "2026-10-22 02:00"` broke the
+// generated script.
+func psLiteral(s string) string {
+	return "'" + escapePS(s) + "'"
 }

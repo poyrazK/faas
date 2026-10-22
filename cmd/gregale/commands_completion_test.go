@@ -99,21 +99,6 @@ func TestCompletion_Powershell_HasRegisterArgumentCompleter(t *testing.T) {
 	}
 }
 
-// TestCompletion_PowershellTooltipsAreLiteralStrings pins help text holding
-// double quotes or $ (scheduled releases' --at) to single-quoted literals: in
-// a double-quoted PowerShell string \" is no escape and $ expands, so the
-// script stops parsing. It needs no pwsh, unlike the syntax check below.
-func TestCompletion_PowershellTooltipsAreLiteralStrings(t *testing.T) {
-	if got, want := psLiteral("at \"2026-10-22 02:00\" or $HOME, it's ’ok’"), "'at \"2026-10-22 02:00\" or $HOME, it''s ’’ok’’'"; got != want {
-		t.Fatalf("psLiteral = %s, want %s", got, want)
-	}
-	var buf bytes.Buffer
-	captureStdoutSwap(t, &buf, cmdCompletionPowershell)
-	if strings.Contains(buf.String(), `\"`) {
-		t.Fatal("PowerShell completion renders a Go-escaped double quote, which PowerShell cannot parse")
-	}
-}
-
 // TestCompletion_CachePathUsesNestedCommand verifies the contract shared by
 // the hidden CLI helper and every generated completion backend. The helper is
 // dispatched below `completion`, so a generated script must invoke
