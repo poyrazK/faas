@@ -7,6 +7,18 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.scenario_action_snapshot_event_capture_version import (
+    ScenarioActionSnapshotEventCaptureVersion,
+    check_scenario_action_snapshot_event_capture_version,
+)
+from ..models.scenario_action_snapshot_platform_capture_version import (
+    ScenarioActionSnapshotPlatformCaptureVersion,
+    check_scenario_action_snapshot_platform_capture_version,
+)
+from ..models.scenario_action_snapshot_queue_capture_version import (
+    ScenarioActionSnapshotQueueCaptureVersion,
+    check_scenario_action_snapshot_queue_capture_version,
+)
 from ..models.scenario_action_snapshot_recorder_version import (
     ScenarioActionSnapshotRecorderVersion,
     check_scenario_action_snapshot_recorder_version,
@@ -25,9 +37,13 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.scenario_captured_action import ScenarioCapturedAction
+    from ..models.scenario_captured_event import ScenarioCapturedEvent
+    from ..models.scenario_captured_platform_call import ScenarioCapturedPlatformCall
+    from ..models.scenario_captured_queue_message import ScenarioCapturedQueueMessage
     from ..models.scenario_cold_start_evidence import ScenarioColdStartEvidence
     from ..models.scenario_managed_work_evidence import ScenarioManagedWorkEvidence
     from ..models.scenario_simulation_attempt import ScenarioSimulationAttempt
+    from ..models.scenario_suppressed_webhook_events import ScenarioSuppressedWebhookEvents
     from ..models.scenario_suspend_resume_evidence import ScenarioSuspendResumeEvidence
 
 
@@ -78,6 +94,19 @@ class ScenarioActionSnapshot:
     pending_simulation_attempts: int | Unset = UNSET
     incomplete_simulation_attempts: int | Unset = UNSET
     reason: str | Unset = UNSET
+    event_capture_version: ScenarioActionSnapshotEventCaptureVersion | Unset = UNSET
+    """Present from servers that capture published events. A comparison across capture versions is inconclusive."""
+    published_events: list[ScenarioCapturedEvent] | Unset = UNSET
+    suppressed_webhook_events: list[ScenarioSuppressedWebhookEvents] | Unset = UNSET
+    incomplete_captured_events: int | Unset = UNSET
+    queue_capture_version: ScenarioActionSnapshotQueueCaptureVersion | Unset = UNSET
+    """Present from servers that capture queue sends and delayed tasks."""
+    queue_messages: list[ScenarioCapturedQueueMessage] | Unset = UNSET
+    incomplete_queue_messages: int | Unset = UNSET
+    platform_capture_version: ScenarioActionSnapshotPlatformCaptureVersion | Unset = UNSET
+    """Present from servers that capture workflow and realtime calls."""
+    platform_calls: list[ScenarioCapturedPlatformCall] | Unset = UNSET
+    incomplete_platform_calls: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -151,6 +180,52 @@ class ScenarioActionSnapshot:
 
         reason = self.reason
 
+        event_capture_version: int | Unset = UNSET
+        if not isinstance(self.event_capture_version, Unset):
+            event_capture_version = self.event_capture_version
+
+        published_events: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.published_events, Unset):
+            published_events = []
+            for published_events_item_data in self.published_events:
+                published_events_item = published_events_item_data.to_dict()
+                published_events.append(published_events_item)
+
+        suppressed_webhook_events: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.suppressed_webhook_events, Unset):
+            suppressed_webhook_events = []
+            for suppressed_webhook_events_item_data in self.suppressed_webhook_events:
+                suppressed_webhook_events_item = suppressed_webhook_events_item_data.to_dict()
+                suppressed_webhook_events.append(suppressed_webhook_events_item)
+
+        incomplete_captured_events = self.incomplete_captured_events
+
+        queue_capture_version: int | Unset = UNSET
+        if not isinstance(self.queue_capture_version, Unset):
+            queue_capture_version = self.queue_capture_version
+
+        queue_messages: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.queue_messages, Unset):
+            queue_messages = []
+            for queue_messages_item_data in self.queue_messages:
+                queue_messages_item = queue_messages_item_data.to_dict()
+                queue_messages.append(queue_messages_item)
+
+        incomplete_queue_messages = self.incomplete_queue_messages
+
+        platform_capture_version: int | Unset = UNSET
+        if not isinstance(self.platform_capture_version, Unset):
+            platform_capture_version = self.platform_capture_version
+
+        platform_calls: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.platform_calls, Unset):
+            platform_calls = []
+            for platform_calls_item_data in self.platform_calls:
+                platform_calls_item = platform_calls_item_data.to_dict()
+                platform_calls.append(platform_calls_item)
+
+        incomplete_platform_calls = self.incomplete_platform_calls
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -196,15 +271,39 @@ class ScenarioActionSnapshot:
             field_dict["incomplete_simulation_attempts"] = incomplete_simulation_attempts
         if reason is not UNSET:
             field_dict["reason"] = reason
+        if event_capture_version is not UNSET:
+            field_dict["event_capture_version"] = event_capture_version
+        if published_events is not UNSET:
+            field_dict["published_events"] = published_events
+        if suppressed_webhook_events is not UNSET:
+            field_dict["suppressed_webhook_events"] = suppressed_webhook_events
+        if incomplete_captured_events is not UNSET:
+            field_dict["incomplete_captured_events"] = incomplete_captured_events
+        if queue_capture_version is not UNSET:
+            field_dict["queue_capture_version"] = queue_capture_version
+        if queue_messages is not UNSET:
+            field_dict["queue_messages"] = queue_messages
+        if incomplete_queue_messages is not UNSET:
+            field_dict["incomplete_queue_messages"] = incomplete_queue_messages
+        if platform_capture_version is not UNSET:
+            field_dict["platform_capture_version"] = platform_capture_version
+        if platform_calls is not UNSET:
+            field_dict["platform_calls"] = platform_calls
+        if incomplete_platform_calls is not UNSET:
+            field_dict["incomplete_platform_calls"] = incomplete_platform_calls
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.scenario_captured_action import ScenarioCapturedAction
+        from ..models.scenario_captured_event import ScenarioCapturedEvent
+        from ..models.scenario_captured_platform_call import ScenarioCapturedPlatformCall
+        from ..models.scenario_captured_queue_message import ScenarioCapturedQueueMessage
         from ..models.scenario_cold_start_evidence import ScenarioColdStartEvidence
         from ..models.scenario_managed_work_evidence import ScenarioManagedWorkEvidence
         from ..models.scenario_simulation_attempt import ScenarioSimulationAttempt
+        from ..models.scenario_suppressed_webhook_events import ScenarioSuppressedWebhookEvents
         from ..models.scenario_suspend_resume_evidence import ScenarioSuspendResumeEvidence
 
         d = dict(src_dict)
@@ -300,6 +399,73 @@ class ScenarioActionSnapshot:
 
         reason = d.pop("reason", UNSET)
 
+        _event_capture_version = d.pop("event_capture_version", UNSET)
+        event_capture_version: ScenarioActionSnapshotEventCaptureVersion | Unset
+        if isinstance(_event_capture_version, Unset):
+            event_capture_version = UNSET
+        else:
+            event_capture_version = check_scenario_action_snapshot_event_capture_version(_event_capture_version)
+
+        _published_events = d.pop("published_events", UNSET)
+        published_events: list[ScenarioCapturedEvent] | Unset = UNSET
+        if _published_events is not UNSET:
+            published_events = []
+            for published_events_item_data in _published_events:
+                published_events_item = ScenarioCapturedEvent.from_dict(published_events_item_data)
+
+                published_events.append(published_events_item)
+
+        _suppressed_webhook_events = d.pop("suppressed_webhook_events", UNSET)
+        suppressed_webhook_events: list[ScenarioSuppressedWebhookEvents] | Unset = UNSET
+        if _suppressed_webhook_events is not UNSET:
+            suppressed_webhook_events = []
+            for suppressed_webhook_events_item_data in _suppressed_webhook_events:
+                suppressed_webhook_events_item = ScenarioSuppressedWebhookEvents.from_dict(
+                    suppressed_webhook_events_item_data
+                )
+
+                suppressed_webhook_events.append(suppressed_webhook_events_item)
+
+        incomplete_captured_events = d.pop("incomplete_captured_events", UNSET)
+
+        _queue_capture_version = d.pop("queue_capture_version", UNSET)
+        queue_capture_version: ScenarioActionSnapshotQueueCaptureVersion | Unset
+        if isinstance(_queue_capture_version, Unset):
+            queue_capture_version = UNSET
+        else:
+            queue_capture_version = check_scenario_action_snapshot_queue_capture_version(_queue_capture_version)
+
+        _queue_messages = d.pop("queue_messages", UNSET)
+        queue_messages: list[ScenarioCapturedQueueMessage] | Unset = UNSET
+        if _queue_messages is not UNSET:
+            queue_messages = []
+            for queue_messages_item_data in _queue_messages:
+                queue_messages_item = ScenarioCapturedQueueMessage.from_dict(queue_messages_item_data)
+
+                queue_messages.append(queue_messages_item)
+
+        incomplete_queue_messages = d.pop("incomplete_queue_messages", UNSET)
+
+        _platform_capture_version = d.pop("platform_capture_version", UNSET)
+        platform_capture_version: ScenarioActionSnapshotPlatformCaptureVersion | Unset
+        if isinstance(_platform_capture_version, Unset):
+            platform_capture_version = UNSET
+        else:
+            platform_capture_version = check_scenario_action_snapshot_platform_capture_version(
+                _platform_capture_version
+            )
+
+        _platform_calls = d.pop("platform_calls", UNSET)
+        platform_calls: list[ScenarioCapturedPlatformCall] | Unset = UNSET
+        if _platform_calls is not UNSET:
+            platform_calls = []
+            for platform_calls_item_data in _platform_calls:
+                platform_calls_item = ScenarioCapturedPlatformCall.from_dict(platform_calls_item_data)
+
+                platform_calls.append(platform_calls_item)
+
+        incomplete_platform_calls = d.pop("incomplete_platform_calls", UNSET)
+
         scenario_action_snapshot = cls(
             version=version,
             scope=scope,
@@ -326,6 +492,16 @@ class ScenarioActionSnapshot:
             pending_simulation_attempts=pending_simulation_attempts,
             incomplete_simulation_attempts=incomplete_simulation_attempts,
             reason=reason,
+            event_capture_version=event_capture_version,
+            published_events=published_events,
+            suppressed_webhook_events=suppressed_webhook_events,
+            incomplete_captured_events=incomplete_captured_events,
+            queue_capture_version=queue_capture_version,
+            queue_messages=queue_messages,
+            incomplete_queue_messages=incomplete_queue_messages,
+            platform_capture_version=platform_capture_version,
+            platform_calls=platform_calls,
+            incomplete_platform_calls=incomplete_platform_calls,
         )
 
         scenario_action_snapshot.additional_properties = d

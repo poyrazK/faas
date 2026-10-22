@@ -306,7 +306,7 @@ func TestCmdWorkersStatus_DetailAndDLQWarning(t *testing.T) {
 	if !strings.Contains(out, "Broker:     kafka") {
 		t.Errorf("missing broker line; got: %s", out)
 	}
-	if !strings.Contains(out, "DLQ:        12 dead-letter messages ⚠️") {
+	if !strings.Contains(out, "DLQ:        12 dead-letter messages (needs attention)") {
 		t.Errorf("missing DLQ warning in status; got: %s", out)
 	}
 	if !strings.Contains(out, "0192134a-0001-7000-8000-000000000001") {

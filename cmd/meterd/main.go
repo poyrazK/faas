@@ -1267,6 +1267,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	rec := reconciler.New(provName, store, pusher, log, recRegistry).WithMode(billingMode)
 	go rec.Loop(ctx, mc.ReconcileInterval)
+	// ADR-20261019193600: the ledger dual run compares the financial ledger with the
+	// pusher's receipts on the same cadence. Read-only.
+	ledgerProvider := ""
+	if billingMode.Enabled() {
+		ledgerProvider = provName // with billing off there are no receipts to compare
+	}
+	ledgerRec := meter.NewLedgerReconciler(meter.NewPusher(store, pusher, log, deps.now, ops), ledgerProvider, recRegistry)
+	go ledgerRec.Loop(ctx, mc.ReconcileInterval)
 
 	// ADR-049 §B.3: snapshot/app-layer storage rollup. The store
 	// interface (pkg/meter/storage.go) is a narrow projection over
@@ -1717,6 +1725,16 @@ func (a *safedeployStoreAdapter) SafedeployStampRollout(ctx context.Context, id 
 
 func (a *safedeployStoreAdapter) AppendDeploymentAudit(ctx context.Context, entry state.DeploymentAudit) (int64, error) {
 	return a.store.AppendDeploymentAudit(ctx, entry)
+}
+
+// LatestRolloutHold lets the orchestrator tell a release waiting for
+// approval from a stuck one (ADR-20261020085706).
+func (a *safedeployStoreAdapter) LatestRolloutHold(ctx context.Context, deploymentID string) (json.RawMessage, error) {
+	holds, ok := a.store.(state.RolloutDecisionStore)
+	if !ok {
+		return nil, nil
+	}
+	return holds.LatestRolloutHold(ctx, deploymentID)
 }
 
 // func(ctx context.Context) signature so Loop.WithPartitionCreate

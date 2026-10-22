@@ -59,6 +59,15 @@ func ReadFinancialCosts(ctx context.Context, store state.Store, account string, 
 		out.Meters = append(out.Meters, m)
 		total.Add(total, big.NewInt(m.Accrued.NetMillicents))
 	}
+	// ADR-20261020160000: object storage joins the report where apid has
+	// recorded a live estimate for the account and month.
+	if m, ok, err := financialObjectStorageMeter(ctx, store, account, start, end, asOf, now); err != nil {
+		return out, err
+	} else if ok {
+		out.Meters = append(out.Meters, m)
+		out.Scope = "retained_compute_interface_egress_and_object_storage"
+		total.Add(total, big.NewInt(m.Accrued.NetMillicents))
+	}
 	if !total.IsInt64() {
 		return out, financial.ErrOverflow
 	}

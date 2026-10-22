@@ -25,8 +25,6 @@ func (s *Service) reconcilePostgresFaults(ctx context.Context, shutdown bool) {
 	if err != nil {
 		return
 	}
-	s.faultMu.Lock()
-	defer s.faultMu.Unlock()
 	for _, row := range rows {
 		if ctx.Err() != nil {
 			return
@@ -34,12 +32,19 @@ func (s *Service) reconcilePostgresFaults(ctx context.Context, shutdown bool) {
 		if shutdown && row.OwnerID != s.OwnerID {
 			continue
 		}
-		current, err := c.ScenarioPostgresFault(ctx, row.ID)
-		if err != nil {
-			continue
-		}
-		s.stepPostgresFault(ctx, c, current, shutdown)
+		s.reconcilePostgresFault(ctx, c, row, shutdown)
 	}
+}
+
+// reconcilePostgresFault re-reads and steps one fault under its run's lock, so
+// a concurrent Seal or Delete of the same run observes a settled transition.
+func (s *Service) reconcilePostgresFault(ctx context.Context, c rehearsalfault.Catalog, row rehearsalfault.Row, shutdown bool) {
+	defer s.runs.lock(row.AccountID, row.RunID)()
+	current, err := c.ScenarioPostgresFault(ctx, row.ID)
+	if err != nil {
+		return
+	}
+	s.stepPostgresFault(ctx, c, current, shutdown)
 }
 
 func (s *Service) stepPostgresFault(ctx context.Context, c rehearsalfault.Catalog, f rehearsalfault.Row, force bool) {
@@ -154,7 +159,7 @@ func (s *Service) recoverPostgresFault(ctx context.Context, c rehearsalfault.Cat
 	_ = c.TransitionScenarioPostgresFault(call, f, "recovering")
 }
 
-// Called under faultMu before ordinary fixture fencing. Deletion always tries
+// Called under the run's lock before ordinary fixture fencing. Deletion always tries
 // to restore a retained outage first; a verified Drop is the final cleanup fence.
 func (s *Service) settlePostgresFault(ctx context.Context, account, run string, deleting bool) error {
 	c, ok := s.Catalog.(rehearsalfault.Catalog)

@@ -534,3 +534,42 @@ func TestProbeHTTP_URLShape(t *testing.T) {
 		t.Fatalf("probe URL shape drift: %q", want)
 	}
 }
+
+// ADR-20261018101500: a proven worker's boot only shows that its process started and
+// stayed up; every other boot watches for the full window.
+func TestWaitForBindProvenWorkerUsesShortWindow(t *testing.T) {
+	for _, tt := range []struct {
+		proven bool
+		want   time.Duration
+	}{
+		{proven: false, want: api.CharacterizationDeadline},
+		{proven: true, want: api.ProvenWorkerCharacterizationWindow},
+	} {
+		start := time.Unix(1_700_000_000, 0)
+		now := start
+		args := RunArgs{
+			ProvenWorker: tt.proven,
+			AppPID:       func() int { return -1 },
+			ExitStatus:   func() (int, bool) { return 0, false },
+			Now:          func() time.Time { now = now.Add(250 * time.Millisecond); return now },
+		}
+		var res CharacterizationResult
+		bound, _, _, exited := waitForBind(context.Background(), args, &res)
+		if elapsed := now.Sub(start); bound || exited || elapsed < tt.want || elapsed > tt.want+time.Second {
+			t.Fatalf("proven=%v: watched %s (bound=%v exited=%v), want about %s", tt.proven, elapsed, bound, exited, tt.want)
+		}
+	}
+}
+
+func TestHasBootArgMatchesWholeField(t *testing.T) {
+	for cmdline, want := range map[string]bool{
+		"console=ttyS0 " + api.ProvenWorkerBootArg:         true,
+		api.ProvenWorkerBootArg + " quiet":                 true,
+		"console=ttyS0 " + api.ProvenWorkerBootArg + "ish": false,
+		"": false,
+	} {
+		if got := hasBootArg(cmdline, api.ProvenWorkerBootArg); got != want {
+			t.Errorf("hasBootArg(%q) = %v, want %v", cmdline, got, want)
+		}
+	}
+}

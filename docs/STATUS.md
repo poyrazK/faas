@@ -1682,6 +1682,11 @@ remain open; production admission is disabled.
   the artifact cache and acknowledged by the builder guest.
   - Unit tests pass. A native multi-stage build (with and without a target,
     and a changed argument on identical source) has not run.
+- **Compose extends and include.**
+  [ADR-20261019190527](adr/20261019190527-compose-extends-and-include.md)
+  (2026-10-19): the scan resolves `extends` (same file, other file, chains)
+  and top-level `include` (with their own paths), replacing the ADR-1337
+  warnings. Unit tests pass; no native run.
 - **No native run recorded.** The `containers` native lane has no recorded
   passing run; [container qualification](container-qualification.md) remains
   the coverage plan.

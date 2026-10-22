@@ -17,6 +17,7 @@ import (
 
 func TestFinancialBudgetAccountStrictCompute(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanHobby)
+	releaseStrictBudgets(e)
 	store := *e.Store()
 	account := *e.Acct()
 	ctx := t.Context()
