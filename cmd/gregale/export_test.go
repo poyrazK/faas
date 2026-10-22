@@ -2359,3 +2359,4 @@ func (r *zeroConfigStubServer) Srv() **httptest.Server    { return &r.srv }
 var PrintEdgeRuleEvents = printEdgeRuleEvents
 var ResolveArchiveInstance = resolveArchiveInstance
 var RequestLatencyMS = requestLatencyMS
+var SafeDeployWaitTimeoutSeconds = safeDeployWaitTimeoutSeconds
