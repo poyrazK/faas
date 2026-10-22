@@ -91,16 +91,21 @@ retention.
   summarizes the app over `since` (default 1h) as one verdict, worst first:
   - `failing`: at least 5% server errors over at least 20 requests;
   - `rolled_back`: a rollback inside the window;
-  - `degraded`: open regressions or any server error;
+  - `degraded`: an out-of-memory kill, open regressions, or any server
+    error;
   - `releasing`: a rollout in flight;
   - otherwise `healthy`, or `idle` with no requests.
 
   It also returns the serving deployments, their requests, server errors and
   p95, the rollout explanation when one is in flight or rolled back in the
-  window, the open regressions, the five newest server-error requests, and
-  whether tracing is on. The CLI prints the drill-down commands.
+  window, the open regressions, the five newest server-error requests, the
+  five newest out-of-memory kills with their total and the remedy for the
+  newest (the `app_runtime_oom` fix text for its peak and plan), and whether
+  tracing is on. The CLI prints the drill-down commands.
 
 The logic lives in `pkg/apid/rolloutevidence` (ADR-982). It reads existing
-sqlc queries only, `RequestTelemetryErrorsByRoute`,
+sqlc queries, `RequestTelemetryErrorsByRoute`,
 `RequestTelemetryBaselineP95ByRoute`, `ListRequestTelemetryByApp` and
-`RequestTelemetryAnalyticsSummary`, so no migration or index is added.
+`RequestTelemetryAnalyticsSummary`, plus `ListAppWorkloadOOMKills`, which
+reads the app's `instances.workload_oom_failed` events (ADR-121) through the
+existing `events_kind_at_idx`. No migration or index is added.

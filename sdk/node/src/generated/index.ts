@@ -602,6 +602,7 @@ export type { DebugRunningRequestAttribution } from './models/DebugRunningReques
 export type { DebugRunningResponse } from './models/DebugRunningResponse.js';
 export type { DebugStatusDeployment } from './models/DebugStatusDeployment.js';
 export type { DebugStatusHealth } from './models/DebugStatusHealth.js';
+export type { DebugStatusOOMKill } from './models/DebugStatusOOMKill.js';
 export type { DebugStatusResponse } from './models/DebugStatusResponse.js';
 export type { DebugSuspectedDependency } from './models/DebugSuspectedDependency.js';
 export type { DebugTelemetryListFilters } from './models/DebugTelemetryListFilters.js';

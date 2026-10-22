@@ -116991,8 +116991,28 @@ components:
           type: array
           maxItems: 5
           items: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
+        oom_kills:
+          type: array
+          maxItems: 5
+          description: "Out-of-memory kills of the app's instances in the window, newest first."
+          items: { $ref: '#/components/schemas/DebugStatusOOMKill' }
+        oom_kills_total: { type: integer, minimum: 0 }
+        oom_fix:
+          type: string
+          description: "The remedy for the newest out-of-memory kill, one suggestion per line."
         tracing_enabled: { type: boolean }
         generated_at: { type: string, format: date-time }
+
+    DebugStatusOOMKill:
+      type: object
+      description: "One out-of-memory kill of an app instance. A deployment that was not yet live fails; a live release keeps serving on a new instance."
+      required: [at, deployment_id, peak_mb, plan_mb, deployment_failed]
+      properties:
+        at: { type: string, format: date-time }
+        deployment_id: { type: string, format: uuid }
+        peak_mb: { type: integer, minimum: 0 }
+        plan_mb: { type: integer, minimum: 0 }
+        deployment_failed: { type: boolean }
 
     DebugStatusHealth:
       type: object

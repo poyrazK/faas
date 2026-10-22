@@ -2546,7 +2546,12 @@ type DebugStatusView struct {
 	Release        string
 	Examples       []DebugStatusRequestView
 	Failures       []DebugStatusRequestView
-	CLICommand     string
+	// OOMKills lists the window's out-of-memory kills (ADR-121), newest
+	// first; OOMKillsTotal counts all of them and OOMFix is the remedy.
+	OOMKills      []string
+	OOMKillsTotal int
+	OOMFix        []string
+	CLICommand    string
 }
 
 // DebugStatusRequestView links one request from the status card to its

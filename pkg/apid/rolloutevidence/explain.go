@@ -59,6 +59,9 @@ type Reader struct {
 	Holds HoldReader
 	// Regressions lists the app's open regressions seen within since.
 	Regressions func(ctx context.Context, appID string, since time.Duration) ([]api.DebugRegressionItem, error)
+	// OOMKills lists the app's out-of-memory kills in [start, end], newest
+	// first, at most api.DebugStatusMaxOOMKills, and their total.
+	OOMKills func(ctx context.Context, appID string, start, end time.Time) ([]api.DebugStatusOOMKill, int, error)
 	// RequestItem converts a telemetry row for the response.
 	RequestItem func(sqlc.ListRequestTelemetryByAppRow) api.DebugTelemetryRequestItem
 	Now         func() time.Time

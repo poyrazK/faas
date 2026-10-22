@@ -104,6 +104,9 @@
             <ul>{{range .Examples}}<li><a href="{{.URL}}">{{.ReceivedAt}} · {{.Label}}</a></li>{{end}}</ul>{{end}}
           {{if .Failures}}<p class="muted">Recent server errors:</p>
             <ul>{{range .Failures}}<li><a href="{{.URL}}">{{.ReceivedAt}} · {{.Label}}</a></li>{{end}}</ul>{{end}}
+          {{if .OOMKills}}<p class="muted">Out-of-memory kills ({{.OOMKillsTotal}}):</p>
+            <ul>{{range .OOMKills}}<li>{{.}}</li>{{end}}</ul>
+            {{if .OOMFix}}<ul class="muted">{{range .OOMFix}}<li>{{.}}</li>{{end}}</ul>{{end}}{{end}}
           <p class="muted">CLI: <code>{{.CLICommand}}</code></p>
         </div>
       {{end}}

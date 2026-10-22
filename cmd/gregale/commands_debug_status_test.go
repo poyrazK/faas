@@ -19,6 +19,12 @@ func TestRenderDebugStatus(t *testing.T) {
 		Regressions:      []api.DebugRegressionItem{{Route: "/checkout", Kind: "errors", ErrorRatePct: 95.2, DeploymentID: "7d1e2f3a-0000-4000-8000-000000000002"}},
 		RegressionsTotal: 3,
 		RecentFailures:   []api.DebugTelemetryRequestItem{{RequestID: "req_8f2", Method: "GET", Route: "GET /checkout", Status: 500, ReceivedAt: "2026-10-22T12:04:31.118Z"}},
+		OOMKills: []api.DebugStatusOOMKill{
+			{At: "2026-10-22T11:50:02Z", DeploymentID: "3f2a9c41-0000-4000-8000-000000000001", PeakMB: 600, PlanMB: 512},
+			{At: "2026-10-22T11:41:00Z", DeploymentID: "7d1e2f3a-0000-4000-8000-000000000002", PlanMB: 512, DeploymentFailed: true},
+		},
+		OOMKillsTotal: 4,
+		OOMFix:        "• upgrade from a 512 MB plan to a plan with at least 608 MB of RAM\n• trim in-memory state",
 	}
 	var out bytes.Buffer
 	renderDebugStatus(&out, "shop", resp)
@@ -30,8 +36,13 @@ func TestRenderDebugStatus(t *testing.T) {
 		"/checkout  errors 95.2% (was 0.0%)  deployment 7d1e2f3a",
 		"... and 2 more",
 		"12:04:31  GET /checkout  500  req_8f2",
+		"Out of memory ",
+		"11:50:02  peak 600 MB, plan 512 MB  deployment 3f2a9c41  (instance replaced)",
+		"... and 2 more",
+		"11:41:00  plan 512 MB  deployment 7d1e2f3a  (deployment failed)",
 		"off (set tracing.enabled: true",
-		"Next:\n  gregale debug rollout shop\n  gregale debug requests inspect shop req_8f2\n  gregale debug regressions shop\n",
+		"Memory:\n  • upgrade from a 512 MB plan to a plan with at least 608 MB of RAM\n  • trim in-memory state\n",
+		"Next:\n  gregale debug rollout shop\n  gregale debug requests inspect shop req_8f2\n  gregale debug regressions shop\n  gregale logs shop\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("status output missing %q:\n%s", want, got)

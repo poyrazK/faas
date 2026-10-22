@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from ..models.debug_rollout_explanation import DebugRolloutExplanation
     from ..models.debug_status_deployment import DebugStatusDeployment
     from ..models.debug_status_health import DebugStatusHealth
+    from ..models.debug_status_oom_kill import DebugStatusOOMKill
     from ..models.debug_telemetry_request_item import DebugTelemetryRequestItem
 
 
@@ -42,6 +43,11 @@ class DebugStatusResponse:
     """Why a release was rolled back or is held, with the request evidence
     behind the decision (ADR-127 amendment following ADR-1447).
     """
+    oom_kills: list[DebugStatusOOMKill] | Unset = UNSET
+    """Out-of-memory kills of the app's instances in the window, newest first."""
+    oom_kills_total: int | Unset = UNSET
+    oom_fix: str | Unset = UNSET
+    """The remedy for the newest out-of-memory kill, one suggestion per line."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -82,6 +88,17 @@ class DebugStatusResponse:
         if not isinstance(self.rollout, Unset):
             rollout = self.rollout.to_dict()
 
+        oom_kills: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.oom_kills, Unset):
+            oom_kills = []
+            for oom_kills_item_data in self.oom_kills:
+                oom_kills_item = oom_kills_item_data.to_dict()
+                oom_kills.append(oom_kills_item)
+
+        oom_kills_total = self.oom_kills_total
+
+        oom_fix = self.oom_fix
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -102,6 +119,12 @@ class DebugStatusResponse:
         )
         if rollout is not UNSET:
             field_dict["rollout"] = rollout
+        if oom_kills is not UNSET:
+            field_dict["oom_kills"] = oom_kills
+        if oom_kills_total is not UNSET:
+            field_dict["oom_kills_total"] = oom_kills_total
+        if oom_fix is not UNSET:
+            field_dict["oom_fix"] = oom_fix
 
         return field_dict
 
@@ -111,6 +134,7 @@ class DebugStatusResponse:
         from ..models.debug_rollout_explanation import DebugRolloutExplanation
         from ..models.debug_status_deployment import DebugStatusDeployment
         from ..models.debug_status_health import DebugStatusHealth
+        from ..models.debug_status_oom_kill import DebugStatusOOMKill
         from ..models.debug_telemetry_request_item import DebugTelemetryRequestItem
 
         d = dict(src_dict)
@@ -160,6 +184,19 @@ class DebugStatusResponse:
         else:
             rollout = DebugRolloutExplanation.from_dict(_rollout)
 
+        _oom_kills = d.pop("oom_kills", UNSET)
+        oom_kills: list[DebugStatusOOMKill] | Unset = UNSET
+        if _oom_kills is not UNSET:
+            oom_kills = []
+            for oom_kills_item_data in _oom_kills:
+                oom_kills_item = DebugStatusOOMKill.from_dict(oom_kills_item_data)
+
+                oom_kills.append(oom_kills_item)
+
+        oom_kills_total = d.pop("oom_kills_total", UNSET)
+
+        oom_fix = d.pop("oom_fix", UNSET)
+
         debug_status_response = cls(
             verdict=verdict,
             headline=headline,
@@ -174,6 +211,9 @@ class DebugStatusResponse:
             tracing_enabled=tracing_enabled,
             generated_at=generated_at,
             rollout=rollout,
+            oom_kills=oom_kills,
+            oom_kills_total=oom_kills_total,
+            oom_fix=oom_fix,
         )
 
         debug_status_response.additional_properties = d

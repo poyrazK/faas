@@ -73,7 +73,16 @@ func TestDashboardDebugStatusView(t *testing.T) {
 		Rollout: &api.DebugRolloutExplanation{State: api.DebugRolloutAborted, Headline: "Rolled back at 10% traffic.",
 			Examples: []api.DebugTelemetryRequestItem{{ID: "row-1", Method: "GET", Route: "GET /checkout", Status: 500, LatencyMS: 12, ReceivedAt: "t1"}}},
 		RecentFailures: []api.DebugTelemetryRequestItem{{ID: "row-2", Method: "POST", Route: "/pay", Status: 502, LatencyMS: 40, ReceivedAt: "t2"}},
+		OOMKills: []api.DebugStatusOOMKill{
+			{At: "t3", DeploymentID: "dep-1", PeakMB: 600, PlanMB: 512},
+			{At: "t4", DeploymentID: "dep-2", DeploymentFailed: true},
+		},
+		OOMKillsTotal: 3, OOMFix: "• upgrade\n• trim",
 	}, "shop")
+	if len(view.OOMKills) != 2 || view.OOMKills[0] != "t3 · deployment dep-1 · peak 600 MB · plan 512 MB · instance replaced" ||
+		view.OOMKills[1] != "t4 · deployment dep-2 · deployment failed" || view.OOMKillsTotal != 3 || len(view.OOMFix) != 2 {
+		t.Fatalf("OOM kills = %q total=%d fix=%q", view.OOMKills, view.OOMKillsTotal, view.OOMFix)
+	}
 	if view.VerdictLabel != "rolled back" || view.Release != "Rolled back at 10% traffic." || view.Regressions != 2 || view.CLICommand != "gregale debug rollout shop" {
 		t.Fatalf("view = %+v", view)
 	}

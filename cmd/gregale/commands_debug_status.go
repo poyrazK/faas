@@ -97,6 +97,14 @@ func renderDebugStatus(w io.Writer, slug string, resp api.DebugStatusResponse) {
 	if more := resp.RegressionsTotal - len(resp.Regressions); more > 0 {
 		_, _ = fmt.Fprintf(tw, "\t... and %d more\n", more)
 	}
+	label = "Out of memory"
+	for _, kill := range resp.OOMKills {
+		_, _ = fmt.Fprintf(tw, "%s\t%s  %s  deployment %s%s\n", label, debugClock(kill.At), debugOOMPeak(kill), debugShortID(kill.DeploymentID), debugOOMOutcome(kill))
+		label = ""
+	}
+	if more := resp.OOMKillsTotal - len(resp.OOMKills); more > 0 {
+		_, _ = fmt.Fprintf(tw, "\t... and %d more\n", more)
+	}
 	label = "Recent failures"
 	for _, req := range resp.RecentFailures {
 		_, _ = fmt.Fprintf(tw, "%s\t%s  %s  %d  %s\n", label, debugClock(req.ReceivedAt), requestLine(req.Method, req.Route), req.Status, debugRequestRef(req))
@@ -108,6 +116,12 @@ func renderDebugStatus(w io.Writer, slug string, resp api.DebugStatusResponse) {
 	}
 	_, _ = fmt.Fprintf(tw, "Tracing\t%s\n", tracing)
 	_ = tw.Flush()
+	if resp.OOMFix != "" {
+		_, _ = fmt.Fprintln(w, "\nMemory:")
+		for _, line := range strings.Split(resp.OOMFix, "\n") {
+			_, _ = fmt.Fprintf(w, "  %s\n", line)
+		}
+	}
 	next := debugStatusNext(slug, resp)
 	if len(next) > 0 {
 		_, _ = fmt.Fprintln(w, "\nNext:")
@@ -130,7 +144,29 @@ func debugStatusNext(slug string, resp api.DebugStatusResponse) []string {
 	if resp.RegressionsTotal > 0 {
 		next = append(next, "gregale debug regressions "+slug)
 	}
+	if resp.OOMKillsTotal > 0 {
+		next = append(next, "gregale logs "+slug)
+	}
 	return next
+}
+
+func debugOOMPeak(kill api.DebugStatusOOMKill) string {
+	switch {
+	case kill.PeakMB > 0 && kill.PlanMB > 0:
+		return fmt.Sprintf("peak %d MB, plan %d MB", kill.PeakMB, kill.PlanMB)
+	case kill.PlanMB > 0:
+		return fmt.Sprintf("plan %d MB", kill.PlanMB)
+	}
+	return "killed"
+}
+
+// debugOOMOutcome says what the kill did to its deployment: a deployment that
+// was not yet live failed; a live release kept serving on a new instance.
+func debugOOMOutcome(kill api.DebugStatusOOMKill) string {
+	if kill.DeploymentFailed {
+		return "  (deployment failed)"
+	}
+	return "  (instance replaced)"
 }
 
 func renderDebugRollout(w io.Writer, slug string, resp api.DebugRolloutExplanation) {

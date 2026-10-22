@@ -2,6 +2,7 @@ package rolloutevidence
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,6 +99,60 @@ func TestStatusReportsReleaseAndTracing(t *testing.T) {
 	}
 	if out.Health.Requests != 100 || out.Deployments[0].ID != testStable || out.Deployments[1].TrafficPercent != 10 {
 		t.Fatalf("health=%+v deployments=%+v", out.Health, out.Deployments)
+	}
+}
+
+// adr: 121 — out-of-memory kills in the window degrade the status, ahead of
+// regressions and stray server errors, and carry the remedy for the newest.
+func TestStatusReportsOOMKills(t *testing.T) {
+	kills := []api.DebugStatusOOMKill{
+		{At: "2026-10-22T11:50:00Z", DeploymentID: testStable, PeakMB: 600, PlanMB: 512},
+		{At: "2026-10-22T11:20:00Z", DeploymentID: testStable, PeakMB: 590, PlanMB: 512},
+	}
+	for _, tc := range []struct {
+		name   string
+		routes map[string]routeStats
+		want   string
+		head   string
+	}{
+		{
+			name: "degraded", routes: map[string]routeStats{"/": {100, 1, 50}},
+			want: api.DebugStatusDegraded, head: "3 out-of-memory kills in the last 1h; the newest peaked at 600 MB on a 512 MB plan.",
+		},
+		{
+			name: "failing still wins", routes: map[string]routeStats{"/": {40, 4, 50}},
+			want: api.DebugStatusFailing, head: "4 of 40 requests failed with a server error in the last 1h.",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeStore{live: []state.Deployment{{ID: testStable, AppID: testApp, TrafficPercent: 100}},
+				routes: map[string]map[string]routeStats{testStable: tc.routes}}
+			r := reader(store, nil, []api.DebugRegressionItem{{Route: "/a", LastDetectedAt: "1"}})
+			var gotStart, gotEnd time.Time
+			r.OOMKills = func(_ context.Context, appID string, start, end time.Time) ([]api.DebugStatusOOMKill, int, error) {
+				if appID != testApp {
+					t.Fatalf("OOM kills read for app %q", appID)
+				}
+				gotStart, gotEnd = start, end
+				return kills, 3, nil
+			}
+			out, err := r.Status(context.Background(), state.App{ID: testApp}, time.Hour, 7*24*time.Hour)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.Verdict != tc.want || out.Headline != tc.head {
+				t.Fatalf("verdict=%q headline=%q", out.Verdict, out.Headline)
+			}
+			if !gotEnd.Equal(testNow) || !gotStart.Equal(testNow.Add(-time.Hour)) {
+				t.Fatalf("OOM window = [%s, %s], want the status window", gotStart, gotEnd)
+			}
+			if out.OOMKillsTotal != 3 || len(out.OOMKills) != 2 || out.OOMKills[0].PeakMB != 600 {
+				t.Fatalf("OOM kills = %d %+v", out.OOMKillsTotal, out.OOMKills)
+			}
+			if !strings.Contains(out.OOMFix, "512 MB plan") || !strings.Contains(out.OOMFix, "608 MB") {
+				t.Fatalf("OOM fix = %q, want the plan and the peak plus 8 MB", out.OOMFix)
+			}
+		})
 	}
 }
 

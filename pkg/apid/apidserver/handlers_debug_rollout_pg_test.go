@@ -101,6 +101,26 @@ func TestDebugRolloutAndStatusPG(t *testing.T) {
 		t.Fatalf("headline = %q", rollout.Headline)
 	}
 
+	// ADR-121: the window's OOM kills of this app, newest first; another
+	// app's kill and one before the window are left out.
+	for _, kill := range []struct {
+		at    time.Time
+		appID string
+		peak  int
+	}{
+		{now.Add(-10 * time.Minute), app.ID, 150},
+		{now.Add(-2 * time.Minute), app.ID, 160},
+		{now.Add(-3 * time.Minute), uuid.NewString(), 999},
+		{now.Add(-2 * time.Hour), app.ID, 999},
+	} {
+		data, _ := json.Marshal(map[string]any{"app_id": kill.appID, "deployment_id": stable.ID, "instance_id": uuid.NewString(),
+			"peak_mb": kill.peak, "plan_mb": 128, "deployment_failed": false})
+		if _, err = (*e.Pool()).Exec(ctx, `INSERT INTO events (at, actor, kind, data) VALUES ($1, 'schedd', 'instances.workload_oom_failed', $2::jsonb)`,
+			kill.at, string(data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	rec = e.Do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/debug/status", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body)
@@ -114,5 +134,9 @@ func TestDebugRolloutAndStatusPG(t *testing.T) {
 	}
 	if len(status.Deployments) != 1 || status.Deployments[0].ID != stable.ID || status.Health.Requests != 6 || status.Health.ServerErrors != 0 {
 		t.Fatalf("serving health = %+v deployments = %+v", status.Health, status.Deployments)
+	}
+	if status.OOMKillsTotal != 2 || len(status.OOMKills) != 2 || status.OOMKills[0].PeakMB != 160 || status.OOMKills[1].PeakMB != 150 ||
+		status.OOMKills[0].PlanMB != 128 || status.OOMKills[0].DeploymentID != stable.ID || !strings.Contains(status.OOMFix, "at least 168 MB") {
+		t.Fatalf("OOM kills = %d %+v fix %q", status.OOMKillsTotal, status.OOMKills, status.OOMFix)
 	}
 }

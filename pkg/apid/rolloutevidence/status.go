@@ -10,6 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
 // An app is failing when at least failingErrorPct of at least
@@ -30,7 +31,7 @@ func (r Reader) Status(ctx context.Context, app state.App, since, retention time
 	out := api.DebugStatusResponse{
 		WindowStart: start.Format(time.RFC3339Nano), WindowEnd: now.Format(time.RFC3339Nano),
 		Deployments: []api.DebugStatusDeployment{}, Regressions: []api.DebugRegressionItem{},
-		RecentFailures: []api.DebugTelemetryRequestItem{},
+		RecentFailures: []api.DebugTelemetryRequestItem{}, OOMKills: []api.DebugStatusOOMKill{},
 		TracingEnabled: app.Manifest.Tracing != nil && app.Manifest.Tracing.Enabled,
 		GeneratedAt:    now.Format(time.RFC3339Nano),
 	}
@@ -84,8 +85,33 @@ func (r Reader) Status(ctx context.Context, app state.App, since, retention time
 			return out, err
 		}
 	}
+	if r.OOMKills != nil {
+		kills, total, err := r.OOMKills(ctx, app.ID, start, now)
+		if err != nil {
+			return out, err
+		}
+		out.OOMKills, out.OOMKillsTotal = kills, total
+		if len(kills) > 0 {
+			out.OOMFix = oomFix(kills[0])
+		}
+	}
 	out.Verdict, out.Headline = verdict(out, since)
 	return out, nil
+}
+
+// oomFix is the app_runtime_oom remedy for the kill's peak and plan.
+func oomFix(kill api.DebugStatusOOMKill) string {
+	problem := &api.Problem{}
+	_ = whycopy.Decorate(problem, api.CodeAppRuntimeOOM, struct{ PeakMB, PlanMB int }{PeakMB: kill.PeakMB, PlanMB: kill.PlanMB})
+	return problem.Fix
+}
+
+func oomHeadline(out api.DebugStatusResponse, window string) string {
+	headline := fmt.Sprintf("%s in the last %s", plural(out.OOMKillsTotal, "out-of-memory kill"), window)
+	if newest := out.OOMKills[0]; newest.PeakMB > 0 && newest.PlanMB > 0 {
+		headline += fmt.Sprintf("; the newest peaked at %d MB on a %d MB plan", newest.PeakMB, newest.PlanMB)
+	}
+	return headline + "."
 }
 
 // rolloutInWindow reports whether the status should carry the rollout: one
@@ -128,6 +154,8 @@ func verdict(out api.DebugStatusResponse, since time.Duration) (string, string) 
 			health.ServerErrors, health.Requests, window)
 	case out.Rollout != nil && out.Rollout.State == api.DebugRolloutAborted:
 		return api.DebugStatusRollback, out.Rollout.Headline
+	case out.OOMKillsTotal > 0 && len(out.OOMKills) > 0:
+		return api.DebugStatusDegraded, oomHeadline(out, window)
 	case out.RegressionsTotal > 0:
 		return api.DebugStatusDegraded, fmt.Sprintf("%s open in the last %s.", plural(out.RegressionsTotal, "regression"), window)
 	case health.ServerErrors > 0:

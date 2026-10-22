@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -26,7 +27,43 @@ func (s *server) rolloutEvidence() rolloutevidence.Reader {
 	if holds, ok := s.store.(state.RolloutDecisionStore); ok {
 		r.Holds = holds
 	}
+	if kills, ok := s.store.(state.WorkloadOOMKillLister); ok {
+		r.OOMKills = func(ctx context.Context, appID string, start, end time.Time) ([]api.DebugStatusOOMKill, int, error) {
+			return workloadOOMKills(ctx, kills, appID, start, end)
+		}
+	}
 	return r
+}
+
+// workloadOOMKills reads the app's OOM kill events (ADR-121 amendment) for
+// the debug status.
+func workloadOOMKills(ctx context.Context, store state.WorkloadOOMKillLister, appID string, start, end time.Time) ([]api.DebugStatusOOMKill, int, error) {
+	rows, err := store.ListAppWorkloadOOMKills(ctx, sqlc.ListAppWorkloadOOMKillsParams{
+		Since: pgtype.Timestamptz{Time: start, Valid: true}, Until: pgtype.Timestamptz{Time: end, Valid: true},
+		AppID: appID, RowLimit: api.DebugStatusMaxOOMKills,
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("debug status: OOM kills: %w", err)
+	}
+	kills := make([]api.DebugStatusOOMKill, 0, len(rows))
+	total := 0
+	for _, row := range rows {
+		var data struct {
+			DeploymentID     string `json:"deployment_id"`
+			PeakMB           int    `json:"peak_mb"`
+			PlanMB           int    `json:"plan_mb"`
+			DeploymentFailed bool   `json:"deployment_failed"`
+		}
+		if err := json.Unmarshal(row.Data, &data); err != nil {
+			return nil, 0, fmt.Errorf("debug status: decode OOM kill: %w", err)
+		}
+		kills = append(kills, api.DebugStatusOOMKill{
+			At: row.At.Time.UTC().Format(time.RFC3339), DeploymentID: data.DeploymentID,
+			PeakMB: data.PeakMB, PlanMB: data.PlanMB, DeploymentFailed: data.DeploymentFailed,
+		})
+		total = int(row.Total)
+	}
+	return kills, total, nil
 }
 
 func (s *server) activeRegressionItems(ctx context.Context, appID string, since time.Duration) ([]api.DebugRegressionItem, error) {
@@ -114,6 +151,25 @@ func dashboardDebugStatusView(status api.DebugStatusResponse, slug string) *dash
 	}
 	for _, item := range status.RecentFailures {
 		view.Failures = append(view.Failures, link(item))
+	}
+	view.OOMKillsTotal = status.OOMKillsTotal
+	for _, kill := range status.OOMKills {
+		line := kill.At + " · deployment " + kill.DeploymentID
+		if kill.PeakMB > 0 {
+			line += fmt.Sprintf(" · peak %d MB", kill.PeakMB)
+		}
+		if kill.PlanMB > 0 {
+			line += fmt.Sprintf(" · plan %d MB", kill.PlanMB)
+		}
+		if kill.DeploymentFailed {
+			line += " · deployment failed"
+		} else {
+			line += " · instance replaced"
+		}
+		view.OOMKills = append(view.OOMKills, line)
+	}
+	if status.OOMFix != "" {
+		view.OOMFix = strings.Split(status.OOMFix, "\n")
 	}
 	return view
 }

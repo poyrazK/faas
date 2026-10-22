@@ -33,7 +33,7 @@ The first line is the verdict, worst first:
 |---|---|
 | `failing` | At least 5% of at least 20 requests ended in a server error |
 | `rolled_back` | A canary release was rolled back inside the window |
-| `degraded` | A regression is open, or some requests failed |
+| `degraded` | An instance ran out of memory, a regression is open, or some requests failed |
 | `releasing` | A canary release is rolling out |
 | `healthy` | Requests were served with no server errors |
 | `idle` | No requests in the window |
@@ -41,6 +41,23 @@ The first line is the verdict, worst first:
 The window defaults to the last hour and never reaches further back than your
 plan's debugger retention. `--json` returns the full response from
 `GET /v1/apps/{slug}/debug/status`.
+
+When the kernel killed one of your app's processes for using more memory
+than its plan allows, the status lists the kill with the app's peak memory
+and what to change:
+
+```
+Out of memory     11:50:02  peak 600 MB, plan 512 MB  deployment 3f2a9c41  (instance replaced)
+
+Memory:
+  • upgrade from a 512 MB plan to a plan with at least 608 MB of RAM
+  • trim in-memory state (caches, buffers, large request bodies held in memory)
+```
+
+A live release keeps serving after an out-of-memory kill: the instance is
+replaced and the next request starts a new one. A deployment that is still
+starting or rolling out fails instead (`app_runtime_oom`), and your previous
+release keeps serving.
 
 ## Why was my release rolled back, or why is it waiting?
 

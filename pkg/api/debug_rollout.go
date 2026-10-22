@@ -34,6 +34,7 @@ const (
 	DebugRolloutMaxExamples  = 3
 	DebugStatusMaxFailures   = 5
 	DebugStatusMaxRegression = 5
+	DebugStatusMaxOOMKills   = 5
 	// DebugRolloutSearchDeployments is how many of the app's newest
 	// deployments are searched for one with a canary rollout when no
 	// deployment_id is given.
@@ -110,6 +111,12 @@ type DebugStatusResponse struct {
 	// RecentFailures are the newest server-error requests in the window; at
 	// most DebugStatusMaxFailures.
 	RecentFailures []DebugTelemetryRequestItem `json:"recent_failures"`
+	// OOMKills are the window's out-of-memory kills of the app's instances,
+	// newest first; at most DebugStatusMaxOOMKills, with OOMKillsTotal the
+	// full count. OOMFix is the remedy for the newest kill.
+	OOMKills      []DebugStatusOOMKill `json:"oom_kills"`
+	OOMKillsTotal int                  `json:"oom_kills_total"`
+	OOMFix        string               `json:"oom_fix,omitempty"`
 	// TracingEnabled reports whether in-guest tracing (spans and request
 	// logs) is on for the app.
 	TracingEnabled bool   `json:"tracing_enabled"`
@@ -121,6 +128,17 @@ type DebugStatusHealth struct {
 	Requests     int64 `json:"requests"`
 	ServerErrors int64 `json:"server_errors"`
 	P95MS        int   `json:"p95_ms"`
+}
+
+// DebugStatusOOMKill is one out-of-memory kill of an app instance (ADR-121).
+// DeploymentFailed is true when the kill failed a deployment that was not yet
+// live; a live release keeps serving and its instance is replaced.
+type DebugStatusOOMKill struct {
+	At               string `json:"at"`
+	DeploymentID     string `json:"deployment_id"`
+	PeakMB           int    `json:"peak_mb"`
+	PlanMB           int    `json:"plan_mb"`
+	DeploymentFailed bool   `json:"deployment_failed"`
 }
 
 // DebugStatusDeployment is one deployment currently serving traffic.
