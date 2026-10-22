@@ -1555,7 +1555,7 @@ var cliCommands = []cliCommand{
 		Examples: []string{"gregale apps", "gregale apps --json", "gregale apps rm my-api --dry-run", "gregale apps rm my-api --yes"},
 		Subcommands: []cliSub{
 			{Name: "ls", Short: "Alias for the default list action"},
-			{Name: "rm", Short: "Delete an app (alias: delete); restore it within the deletion grace window", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+			{Name: "rm", Aliases: []string{"delete"}, Short: "Delete an app (alias: delete); restore it within the deletion grace window", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "dry-run", Short: "preview deletion without changing resources", Bool: true},
 				{Name: "yes", Short: "confirm deletion without prompting; required in non-interactive and JSON mode", Bool: true},
 				{Name: "quiet", Short: "confirm deletion without prompting (alias of --yes)", Bool: true},
