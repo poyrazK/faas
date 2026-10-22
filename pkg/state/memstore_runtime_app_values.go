@@ -53,6 +53,7 @@ func (m *MemStore) runtimeAppValuesLocked(accountID, appID, deploymentID string)
 		}
 	}
 	sort.Slice(result.Secrets, func(i, j int) bool { return result.Secrets[i].Key < result.Secrets[j].Key })
+	result.InheritedSecrets = m.inheritedProjectSecretsLocked(result)
 	runtimeApp, err := AppForDeploymentRuntime(m.apps[appID], d)
 	if err != nil {
 		return RuntimeAppValuesSnapshot{}, err
@@ -97,6 +98,22 @@ func (m *MemStore) inheritedProjectEnvLocked(owner RuntimeAppEnvSnapshot) ([]App
 	}
 	latest := versions[len(versions)-1]
 	return inheritedProjectEnv(owner.AccountID, owner.AppID, owner.Scope, owner.Values, latest.Values, latest.CreatedAt.UTC())
+}
+
+// inheritedProjectSecretsLocked mirrors ReadRuntimeAppValuesForDeployment's
+// project_secrets column (ADR-1139).
+func (m *MemStore) inheritedProjectSecretsLocked(snapshot RuntimeAppValuesSnapshot) []ProjectEnvironmentSecret {
+	app := m.apps[snapshot.AppID]
+	if app.ProjectID == "" {
+		return []ProjectEnvironmentSecret{}
+	}
+	var rows []ProjectEnvironmentSecret
+	for _, secret := range m.projectEnvironmentSecretsLocked(app.ProjectID, workloadEnvironmentSlug(snapshot.Scope)) {
+		if secret.AccountID == snapshot.AccountID {
+			rows = append(rows, secret)
+		}
+	}
+	return inheritedProjectSecrets(snapshot, rows)
 }
 
 // PostgreSQL cascades observation rows when their scoped secret is deleted.

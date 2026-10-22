@@ -49,6 +49,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/fcvm/netstats"
 	"github.com/onebox-faas/faas/pkg/frameworkready"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/mcpprotocol"
 	"github.com/onebox-faas/faas/pkg/netns"
@@ -979,11 +980,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
 	if store != nil {
-		policies, ok := store.(state.ScenarioNetworkPolicyStore)
-		if !ok {
-			return errors.New("vmmd: rehearsal network policy storage is unavailable")
+		if rehearsalContainmentEnabled(os.Getenv) {
+			policies, ok := store.(state.ScenarioNetworkPolicyStore)
+			if !ok {
+				return errors.New("vmmd: rehearsal network policy storage is unavailable")
+			}
+			mgr.WithRehearsalNetworkPolicies(policies)
 		}
-		mgr.WithRehearsalNetworkPolicies(policies)
+		// Revoke unconditionally: identities left by an earlier enabled
+		// incarnation must not survive a restart with containment disabled.
 		if fencer, ok := store.(interface {
 			RevokeScenarioCommandNetworksForNode(context.Context, string) error
 		}); ok {
@@ -1166,6 +1171,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Activity: activityTracker,
 		Metrics:  fcvm.NewFreezeMetrics(ops.Registry(), mgr),
 	})
+	if functionlifetime.NativeQualificationBuild {
+		mgr.WithFunctionExecutionActivity(activityTracker)
+	}
 	// issue #299: wire the artifact backend the Manager uses to
 	// read Grype scan sidecars at boot time. Mirrors the VMM's
 	// own WithStorage wiring at line 223 above; the VMM uses
@@ -1355,6 +1363,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	defer closeTraceReceiver()
 	guestReceiverHealth := newGuestVsockReceiverHealth(ops.Registry())
 	jailer.WithGuestVsockTransportObserver(guestReceiverHealth.Observe)
+	if functionlifetime.NativeQualificationBuild {
+		if err := mgr.RegisterFunctionExecutionReceiver(jailer); err != nil {
+			return err
+		}
+		go mgr.RunFunctionExecutionWatchdog(ctx)
+	}
 	recv, err := StartFrameworkReadyReceiver(ctx, log, mgr, jailer)
 	if err != nil {
 		log.Warn("vmmd: framework_ready receiver unavailable", "err", err, "goos", runtime.GOOS)
@@ -1378,35 +1392,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if store == nil || pool == nil {
 				return errors.New("event publish persistence is not configured")
 			}
-			_, accountID, identityErr := mgr.InstanceExternalActionIdentity(publishCtx, instance)
+			appID, accountID, identityErr := mgr.InstanceExternalActionIdentity(publishCtx, instance)
 			if identityErr != nil {
 				return identityErr
 			}
-			var req api.PublishEventRequest
-			if err := json.Unmarshal(body, &req); err != nil {
-				return fmt.Errorf("decode in-guest event publish: %w", err)
-			}
-			occurredAt := time.Time{}
-			if req.Time != nil {
-				occurredAt = *req.Time
-			}
-			envelope, err := (events.Envelope{
-				ID: req.ID, Source: req.Source, Type: req.Type,
-				Time: occurredAt, DataContentType: req.DataContentType,
-				Data: req.Data, AccountID: req.AccountID, SchemaVersion: req.SchemaVersion,
-			}).Normalize(accountID, time.Now().UTC())
+			envelope, err := normalizeGuestEvent(publishCtx, store, accountID, body, time.Now().UTC())
 			if err != nil {
-				return fmt.Errorf("validate in-guest event publish: %w", err)
+				return err
 			}
-			if strings.HasPrefix(envelope.Source, "gregale.") {
-				return errors.New("gregale.* event sources are reserved for platform events")
-			}
-			registry, ok := store.(state.EventSchemaStore)
-			if !ok {
-				return errors.New("event schema registry is unavailable")
-			}
-			if err := state.ValidatePublishedEventSchema(publishCtx, registry, accountID, envelope.Source, envelope.Type, envelope.SchemaVersion, envelope.Data); err != nil {
-				return fmt.Errorf("validate in-guest event schema: %w", err)
+			// A capture-only rehearsal keeps its ordinary network, but its
+			// events still belong to its run (ADR-20261020090000).
+			if captured, err := captureGuestEvent(publishCtx, store, appID, "", accountID, envelope); captured || err != nil {
+				return err
 			}
 			payload, err := json.Marshal(envelope)
 			if err != nil {
@@ -1421,6 +1418,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Warn("vmmd: in-guest event publish wake failed", "event_id", envelope.ID, "err", err)
 			}
 			return nil
+		})
+		recv.WithEventCapturer(func(captureCtx context.Context, _ string, appID, accountID, runID string, body []byte) error {
+			if store == nil {
+				return errors.New("rehearsal event capture persistence is not configured")
+			}
+			envelope, err := normalizeGuestEvent(captureCtx, store, accountID, body, time.Now().UTC())
+			if err != nil {
+				return err
+			}
+			captured, err := captureGuestEvent(captureCtx, store, appID, runID, accountID, envelope)
+			if err == nil && !captured {
+				err = fcvm.ErrRehearsalExternalActionDenied
+			}
+			return err
 		})
 		// PR-C §3,§4 (issue #463 / ADR-069 / ADR-071):
 		// wire the sidecar events emitter onto the
@@ -1622,6 +1633,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	vmmdProbe, grpcBound := BuildReadinessProbe()
 	vmmdProbe.RegisterSignal(guestReceiverHealth.Signal(guestReceiverEvents), nil)
 	vmmdProbe.RegisterSignal(guestReceiverHealth.Signal(guestReceiverIdentity), nil)
+	if functionlifetime.NativeQualificationBuild {
+		vmmdProbe.RegisterSignal(guestReceiverHealth.Signal(guestReceiverFunction), nil)
+	}
 	vmmdProbe.SetReadyObserver(func(ready bool, reason string) {
 		ops.MarkReady("vmmd", ready, reason)
 	})

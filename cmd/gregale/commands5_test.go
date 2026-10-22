@@ -337,10 +337,14 @@ func TestCmdStatus_RendersFiveFields(t *testing.T) {
 		t.Errorf("cmdStatus exit = %d, want 0", code)
 	}
 	out := stdout.String()
-	for _, want := range []string{"99.97%", "312 ms", "98.40%", "2026-07-20 12:00:00 UTC", "prometheus"} {
+	for _, want := range []string{"99.97%", "312 ms", "98.40%", "2026-07-20 12:00:00 UTC"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output missing %q: %q", want, out)
 		}
+	}
+	// The healthy telemetry backend is an internal detail; --json keeps it.
+	if strings.Contains(out, "prometheus") || strings.Contains(out, "source:") {
+		t.Errorf("healthy status should not name its telemetry source: %q", out)
 	}
 }
 
@@ -361,8 +365,8 @@ func TestCmdStatus_DegradedSource(t *testing.T) {
 	if code := cmdStatus(nil); code != 0 {
 		t.Errorf("cmdStatus exit = %d, want 0", code)
 	}
-	if !strings.Contains(stdout.String(), "degraded") {
-		t.Errorf("degraded source should be visible: %q", stdout.String())
+	if !strings.Contains(stdout.String(), "degraded:     prometheus timeout") {
+		t.Errorf("degraded reason should be visible: %q", stdout.String())
 	}
 	// H10-46: a missing p95 is not proof that nothing woke; the query needs
 	// 20 wakes in 30 minutes.

@@ -18,11 +18,12 @@ import (
 // restore capability. A durable catalog review and hashed wire payload must
 // authorize these inputs before a caller may execute /snapshot/load.
 type SnapshotRestoreInputs struct {
-	Binding  runtimeadmission.Binding
-	Capture  runtimeadmission.SnapshotCapture
-	Snapshot Snapshot
-	Runtime  ColdBootSpec
-	Sources  []runtimeadmission.ArtifactSource
+	Binding           runtimeadmission.Binding
+	Capture           runtimeadmission.SnapshotCapture
+	Snapshot          Snapshot
+	Runtime           ColdBootSpec
+	Sources           []runtimeadmission.ArtifactSource
+	FunctionMigration *runtimeadmission.FunctionMigrationDestinationGrant
 }
 
 // VerifiedSnapshotInputs holds protected sources, not a runtime receipt. The
@@ -43,6 +44,10 @@ type snapshotSourceFlight struct {
 // It does not satisfy the disabled measured restore/promotion capability gates.
 func (v *JailerVMM) PrepareSnapshotRestoreInputs(ctx context.Context, lease Lease, req SnapshotRestoreInputs) (result VerifiedSnapshotInputs, err error) {
 	req.Capture = req.Capture.Clone()
+	if req.FunctionMigration != nil {
+		g := req.FunctionMigration.Clone()
+		req.FunctionMigration = &g
+	}
 	req.Sources = slices.Clone(req.Sources)
 	req.Runtime = cloneSnapshotRestoreRuntime(req.Runtime)
 	if err = checkSnapshotRestoreInputLayout(lease, req); err != nil {
@@ -91,7 +96,7 @@ func checkSnapshotRestoreInputLayoutAt(lease Lease, req SnapshotRestoreInputs, c
 	if req.Runtime.MemSizeMiB <= 0 || int64(req.Runtime.MemSizeMiB) > api.ApplicationStandardSnapshotMaxArtifactBytes>>20 {
 		return runtimeadmission.ErrInvalid
 	}
-	if err := req.Capture.CheckRestoreInputs(req.Binding, req.Sources, req.Snapshot.StorageKey, req.Snapshot.VMStateStorageKey, int64(req.Runtime.MemSizeMiB)<<20, clock); err != nil {
+	if err := checkFunctionOrSnapshotRestoreInputs(req, clock); err != nil {
 		return err
 	}
 	config := BuildColdBootConfig(req.Runtime, lease.Slot)

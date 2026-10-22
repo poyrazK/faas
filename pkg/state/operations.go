@@ -66,6 +66,9 @@ type Operation struct {
 	LimitExceeded     string `json:"limit_exceeded,omitempty"`
 	DataRepairID      string `json:"data_repair_id,omitempty"`
 	DataRepairBinding string `json:"data_repair_binding,omitempty"`
+	// dispatchHold, set only during admission, is the due time of a queued
+	// Operation's backend (ADR-20261018210500).
+	dispatchHold time.Time
 }
 
 // operationRecordJSON adds the normalized backend identity consumed by the

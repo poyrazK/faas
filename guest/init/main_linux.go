@@ -27,6 +27,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/overlaymetadata"
 	"golang.org/x/sys/unix"
 )
@@ -318,6 +319,13 @@ func boot() error {
 	}
 	if manifest.BeforeCheckpoint != nil {
 		beforeCheckpoint.Store(&beforeCheckpointRuntime{hook: *manifest.BeforeCheckpoint, port: manifest.EffectivePort()})
+	}
+	if functionlifetime.NativeQualificationBuild {
+		proxy, err := startFunctionExecutionProxy(lookupUID(manifest.EffectiveUser()))
+		if err != nil {
+			return fmt.Errorf("function lifetime proxy: %w", err)
+		}
+		functionExecutions.Store(proxy)
 	}
 	// Bind before starting the workload and grant only its configured group
 	// access to the local signal socket. The runner does not inherit root UID.
@@ -642,6 +650,14 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	defer retireGeneration()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
+	}
+	if proxy := functionExecutions.Load(); proxy != nil {
+		if err := proxy.bind(cmd.Process.Pid); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return err
+		}
+		defer proxy.retire(cmd.Process.Pid)
 	}
 	outputPipe.closeWriter()
 	retireImageReadiness := installImageReadinessRuntime(cmd, m, func() []string {
@@ -2652,9 +2668,10 @@ func runCharacterizationForSup(sup *Supervisor, manifest api.AppManifest) {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	args := RunArgs{
-		Manifest:   manifest,
-		AppPID:     func() int { return sup.LastAppPID() },
-		ExitStatus: func() (int, bool) { return sup.LastExitStatus() },
+		Manifest:     manifest,
+		ProvenWorker: bootProvenWorker(),
+		AppPID:       func() int { return sup.LastAppPID() },
+		ExitStatus:   func() (int, bool) { return sup.LastExitStatus() },
 		RingBufferTail: func() string {
 			// Populated from the supervisor's ring buffer (Slice A
 			// PR-B). The buffer is allocated lazily on the first

@@ -1162,6 +1162,8 @@ from .debug_telemetry_span import DebugTelemetrySpan
 from .debug_telemetry_span_dependency_type import DebugTelemetrySpanDependencyType
 from .debug_timeline_event import DebugTimelineEvent
 from .debug_timeline_event_phase import DebugTimelineEventPhase
+from .decide_release_approval_request import DecideReleaseApprovalRequest
+from .decide_release_approval_request_decision import DecideReleaseApprovalRequestDecision
 from .declared_route import DeclaredRoute
 from .declared_route_methods_item import DeclaredRouteMethodsItem
 from .delayed_task_after_request import DelayedTaskAfterRequest
@@ -1954,8 +1956,10 @@ from .financial_app_costs_response_currency import FinancialAppCostsResponseCurr
 from .financial_app_meter_costs import FinancialAppMeterCosts
 from .financial_attribution import FinancialAttribution
 from .financial_budget_alert import FinancialBudgetAlert
+from .financial_budget_alert_kind import FinancialBudgetAlertKind
 from .financial_budget_alert_last_error import FinancialBudgetAlertLastError
 from .financial_budget_alert_state import FinancialBudgetAlertState
+from .financial_budget_channels_response import FinancialBudgetChannelsResponse
 from .financial_budget_evaluation import FinancialBudgetEvaluation
 from .financial_budget_history_response import FinancialBudgetHistoryResponse
 from .financial_budget_list_response import FinancialBudgetListResponse
@@ -2444,6 +2448,7 @@ from .list_profile_investigations_response import ListProfileInvestigationsRespo
 from .list_profile_periodic_monitors_response import ListProfilePeriodicMonitorsResponse
 from .list_project_binding_verification_runs_status import ListProjectBindingVerificationRunsStatus
 from .list_project_environment_promotions_status import ListProjectEnvironmentPromotionsStatus
+from .list_release_approvals_response import ListReleaseApprovalsResponse
 from .list_release_freezes_response import ListReleaseFreezesResponse
 from .list_release_gates_response import ListReleaseGatesResponse
 from .list_schedule_occurrences_response import ListScheduleOccurrencesResponse
@@ -3832,13 +3837,17 @@ from .operator_park_execution_response_action import OperatorParkExecutionRespon
 from .operator_park_execution_response_phase import OperatorParkExecutionResponsePhase
 from .operator_park_execution_response_terminal_state import OperatorParkExecutionResponseTerminalState
 from .operator_platform_flag import OperatorPlatformFlag
+from .operator_platform_flag_attributes_item import OperatorPlatformFlagAttributesItem
 from .operator_platform_flag_convergence import OperatorPlatformFlagConvergence
 from .operator_platform_flag_decision import OperatorPlatformFlagDecision
+from .operator_platform_flag_decision_opt_in import OperatorPlatformFlagDecisionOptIn
 from .operator_platform_flag_decision_reason import OperatorPlatformFlagDecisionReason
+from .operator_platform_flag_decision_schedule_state import OperatorPlatformFlagDecisionScheduleState
 from .operator_platform_flag_groups import OperatorPlatformFlagGroups
 from .operator_platform_flag_groups_groups import OperatorPlatformFlagGroupsGroups
 from .operator_platform_flag_groups_references import OperatorPlatformFlagGroupsReferences
 from .operator_platform_flag_list import OperatorPlatformFlagList
+from .operator_platform_flag_opt_ins import OperatorPlatformFlagOptIns
 from .operator_platform_flag_source import OperatorPlatformFlagSource
 from .operator_platform_flag_status import OperatorPlatformFlagStatus
 from .operator_restart_execution_response import OperatorRestartExecutionResponse
@@ -4006,8 +4015,13 @@ from .plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
 from .plan_workload_depends_on_conditions_additional_property import PlanWorkloadDependsOnConditionsAdditionalProperty
 from .plan_workload_tier import PlanWorkloadTier
 from .platform_flag_definition import PlatformFlagDefinition
+from .platform_flag_opt_ins import PlatformFlagOptIns
+from .platform_flag_ramp import PlatformFlagRamp
+from .platform_flag_ramp_on_breach import PlatformFlagRampOnBreach
 from .platform_flag_rule import PlatformFlagRule
 from .platform_flag_rule_plans_item import PlatformFlagRulePlansItem
+from .platform_flag_self_serve import PlatformFlagSelfServe
+from .platform_flag_self_serve_plans_item import PlatformFlagSelfServePlansItem
 from .platform_tenant_access_token_list_response import PlatformTenantAccessTokenListResponse
 from .platform_tenant_access_token_response import PlatformTenantAccessTokenResponse
 from .platform_tenant_access_token_response_scopes_item import PlatformTenantAccessTokenResponseScopesItem
@@ -4170,6 +4184,7 @@ from .prepare_project_rollback_request import PrepareProjectRollbackRequest
 from .prepare_workflow_operation_artifact_x_gregale_operation_execution_kind import (
     PrepareWorkflowOperationArtifactXGregaleOperationExecutionKind,
 )
+from .preview import Preview
 from .preview_account_workflow_actions_body import PreviewAccountWorkflowActionsBody
 from .preview_artifact_response import PreviewArtifactResponse
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
@@ -4195,6 +4210,7 @@ from .preview_event_response import PreviewEventResponse
 from .preview_issue_compound_alert_request import PreviewIssueCompoundAlertRequest
 from .preview_issue_lifecycle_alert_request import PreviewIssueLifecycleAlertRequest
 from .preview_issue_lifecycle_alert_request_event import PreviewIssueLifecycleAlertRequestEvent
+from .preview_list import PreviewList
 from .preview_platform_tenant_self_workflow_actions_body import PreviewPlatformTenantSelfWorkflowActionsBody
 from .preview_production_changes_response import PreviewProductionChangesResponse
 from .preview_production_changes_response_configuration_changed_groups_item import (
@@ -4435,6 +4451,9 @@ from .project_environment_secret_response_managed_by import ProjectEnvironmentSe
 from .project_environment_shared_resource_response import ProjectEnvironmentSharedResourceResponse
 from .project_environment_shared_resource_response_kind import ProjectEnvironmentSharedResourceResponseKind
 from .project_environment_shared_resource_response_ownership import ProjectEnvironmentSharedResourceResponseOwnership
+from .project_environment_shared_secret import ProjectEnvironmentSharedSecret
+from .project_environment_shared_secret_response import ProjectEnvironmentSharedSecretResponse
+from .project_environment_shared_secrets_response import ProjectEnvironmentSharedSecretsResponse
 from .project_environment_state_response import ProjectEnvironmentStateResponse
 from .project_environment_state_response_release_set_status import ProjectEnvironmentStateResponseReleaseSetStatus
 from .project_environment_state_workload_response import ProjectEnvironmentStateWorkloadResponse
@@ -4779,7 +4798,25 @@ from .register_scenario_test_response_policy_version import RegisterScenarioTest
 from .register_scenario_test_response_recorder_version import RegisterScenarioTestResponseRecorderVersion
 from .register_scenario_test_response_webhook_mode import RegisterScenarioTestResponseWebhookMode
 from .rekey_progress import RekeyProgress
+from .release_approval_decision import ReleaseApprovalDecision
+from .release_approval_decision_decision import ReleaseApprovalDecisionDecision
+from .release_approval_decision_role import ReleaseApprovalDecisionRole
+from .release_approval_policy import ReleaseApprovalPolicy
+from .release_approval_policy_approvers import ReleaseApprovalPolicyApprovers
+from .release_approval_status import ReleaseApprovalStatus
+from .release_approval_status_state import ReleaseApprovalStatusState
 from .release_database_ref import ReleaseDatabaseRef
+from .release_diff import ReleaseDiff
+from .release_diff_code import ReleaseDiffCode
+from .release_diff_config import ReleaseDiffConfig
+from .release_diff_database import ReleaseDiffDatabase
+from .release_diff_dependencies import ReleaseDiffDependencies
+from .release_diff_field import ReleaseDiffField
+from .release_diff_field_field import ReleaseDiffFieldField
+from .release_diff_key import ReleaseDiffKey
+from .release_diff_key_change import ReleaseDiffKeyChange
+from .release_diff_package import ReleaseDiffPackage
+from .release_diff_side import ReleaseDiffSide
 from .release_freeze import ReleaseFreeze
 from .release_freeze_kind import ReleaseFreezeKind
 from .release_freeze_source import ReleaseFreezeSource
@@ -5017,6 +5054,11 @@ from .route_health_window_evidence_latency_status import RouteHealthWindowEviden
 from .route_health_window_evidence_status import RouteHealthWindowEvidenceStatus
 from .route_insight import RouteInsight
 from .route_insight_evidence import RouteInsightEvidence
+from .route_insight_fix import RouteInsightFix
+from .route_insight_fix_action import RouteInsightFixAction
+from .route_insight_fix_request import RouteInsightFixRequest
+from .route_insight_fix_response import RouteInsightFixResponse
+from .route_insight_fix_response_cache_purge import RouteInsightFixResponseCachePurge
 from .route_insight_kind import RouteInsightKind
 from .route_insight_state import RouteInsightState
 from .route_insights_response import RouteInsightsResponse
@@ -5183,6 +5225,9 @@ from .scan_project_project_worker_health import ScanProjectProjectWorkerHealth
 from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
 from .scenario_action_snapshot import ScenarioActionSnapshot
+from .scenario_action_snapshot_event_capture_version import ScenarioActionSnapshotEventCaptureVersion
+from .scenario_action_snapshot_platform_capture_version import ScenarioActionSnapshotPlatformCaptureVersion
+from .scenario_action_snapshot_queue_capture_version import ScenarioActionSnapshotQueueCaptureVersion
 from .scenario_action_snapshot_recorder_version import ScenarioActionSnapshotRecorderVersion
 from .scenario_action_snapshot_scope import ScenarioActionSnapshotScope
 from .scenario_action_snapshot_simulation_version import ScenarioActionSnapshotSimulationVersion
@@ -5190,6 +5235,11 @@ from .scenario_action_snapshot_status import ScenarioActionSnapshotStatus
 from .scenario_action_snapshot_version import ScenarioActionSnapshotVersion
 from .scenario_captured_action import ScenarioCapturedAction
 from .scenario_captured_action_source import ScenarioCapturedActionSource
+from .scenario_captured_event import ScenarioCapturedEvent
+from .scenario_captured_platform_call import ScenarioCapturedPlatformCall
+from .scenario_captured_platform_call_kind import ScenarioCapturedPlatformCallKind
+from .scenario_captured_queue_message import ScenarioCapturedQueueMessage
+from .scenario_captured_queue_message_kind import ScenarioCapturedQueueMessageKind
 from .scenario_cold_preparation import ScenarioColdPreparation
 from .scenario_cold_preparation_method import ScenarioColdPreparationMethod
 from .scenario_cold_preparation_state import ScenarioColdPreparationState
@@ -5251,6 +5301,7 @@ from .scenario_simulation_plan import ScenarioSimulationPlan
 from .scenario_simulation_plan_version import ScenarioSimulationPlanVersion
 from .scenario_simulation_response import ScenarioSimulationResponse
 from .scenario_simulation_response_fault import ScenarioSimulationResponseFault
+from .scenario_suppressed_webhook_events import ScenarioSuppressedWebhookEvents
 from .scenario_suspend_resume_evidence import ScenarioSuspendResumeEvidence
 from .scenario_suspend_resume_evidence_status import ScenarioSuspendResumeEvidenceStatus
 from .scenario_suspend_resume_evidence_version import ScenarioSuspendResumeEvidenceVersion
@@ -5276,6 +5327,10 @@ from .schedule_policy import SchedulePolicy
 from .schedule_policy_missed_runs import SchedulePolicyMissedRuns
 from .schedule_policy_overlap import SchedulePolicyOverlap
 from .schedule_policy_version import SchedulePolicyVersion
+from .schedule_release_request import ScheduleReleaseRequest
+from .scheduled_release import ScheduledRelease
+from .scheduled_release_list_response import ScheduledReleaseListResponse
+from .scheduled_release_state import ScheduledReleaseState
 from .scoped_app_env_response import ScopedAppEnvResponse
 from .scoped_app_secret_response import ScopedAppSecretResponse
 from .scoped_app_secret_response_delivery_status import ScopedAppSecretResponseDeliveryStatus
@@ -5378,6 +5433,7 @@ from .set_commit_source_enabled_body import SetCommitSourceEnabledBody
 from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_environment_route_budgets_request import SetEnvironmentRouteBudgetsRequest
 from .set_environment_route_budgets_scope import SetEnvironmentRouteBudgetsScope
+from .set_financial_budget_channels_request import SetFinancialBudgetChannelsRequest
 from .set_grace_window_request import SetGraceWindowRequest
 from .set_mcp_readiness_fallback_request import SetMCPReadinessFallbackRequest
 from .set_mcp_readiness_fallback_request_provider import SetMCPReadinessFallbackRequestProvider
@@ -5404,7 +5460,10 @@ from .set_platform_tenant_hostname_policy_request import SetPlatformTenantHostna
 from .set_platform_tenant_request_budget_request import SetPlatformTenantRequestBudgetRequest
 from .set_platform_tenant_status_request import SetPlatformTenantStatusRequest
 from .set_platform_tenant_status_request_status import SetPlatformTenantStatusRequestStatus
+from .set_project_environment_shared_secret_request import SetProjectEnvironmentSharedSecretRequest
 from .set_queue_binding_release_policy_request import SetQueueBindingReleasePolicyRequest
+from .set_release_approval_policy_request import SetReleaseApprovalPolicyRequest
+from .set_release_approval_policy_request_approvers import SetReleaseApprovalPolicyRequestApprovers
 from .set_route_health_gate_request import SetRouteHealthGateRequest
 from .set_route_health_gate_request_mode import SetRouteHealthGateRequestMode
 from .set_route_health_gate_request_on_regression import SetRouteHealthGateRequestOnRegression
@@ -7107,6 +7166,8 @@ __all__ = (
     "DebugTelemetrySpanDependencyType",
     "DebugTimelineEvent",
     "DebugTimelineEventPhase",
+    "DecideReleaseApprovalRequest",
+    "DecideReleaseApprovalRequestDecision",
     "DeclaredRoute",
     "DeclaredRouteMethodsItem",
     "DelayedTaskAfterRequest",
@@ -7861,8 +7922,10 @@ __all__ = (
     "FinancialAppMeterCosts",
     "FinancialAttribution",
     "FinancialBudgetAlert",
+    "FinancialBudgetAlertKind",
     "FinancialBudgetAlertLastError",
     "FinancialBudgetAlertState",
+    "FinancialBudgetChannelsResponse",
     "FinancialBudgetEvaluation",
     "FinancialBudgetHistoryResponse",
     "FinancialBudgetListResponse",
@@ -8307,6 +8370,7 @@ __all__ = (
     "ListProfilePeriodicMonitorsResponse",
     "ListProjectBindingVerificationRunsStatus",
     "ListProjectEnvironmentPromotionsStatus",
+    "ListReleaseApprovalsResponse",
     "ListReleaseFreezesResponse",
     "ListReleaseGatesResponse",
     "ListScheduleOccurrencesResponse",
@@ -9563,13 +9627,17 @@ __all__ = (
     "OperatorParkExecutionResponsePhase",
     "OperatorParkExecutionResponseTerminalState",
     "OperatorPlatformFlag",
+    "OperatorPlatformFlagAttributesItem",
     "OperatorPlatformFlagConvergence",
     "OperatorPlatformFlagDecision",
+    "OperatorPlatformFlagDecisionOptIn",
     "OperatorPlatformFlagDecisionReason",
+    "OperatorPlatformFlagDecisionScheduleState",
     "OperatorPlatformFlagGroups",
     "OperatorPlatformFlagGroupsGroups",
     "OperatorPlatformFlagGroupsReferences",
     "OperatorPlatformFlagList",
+    "OperatorPlatformFlagOptIns",
     "OperatorPlatformFlagSource",
     "OperatorPlatformFlagStatus",
     "OperatorRestartExecutionResponse",
@@ -9733,8 +9801,13 @@ __all__ = (
     "PlanWorkloadDependsOnConditionsAdditionalProperty",
     "PlanWorkloadTier",
     "PlatformFlagDefinition",
+    "PlatformFlagOptIns",
+    "PlatformFlagRamp",
+    "PlatformFlagRampOnBreach",
     "PlatformFlagRule",
     "PlatformFlagRulePlansItem",
+    "PlatformFlagSelfServe",
+    "PlatformFlagSelfServePlansItem",
     "PlatformTenantAccessTokenListResponse",
     "PlatformTenantAccessTokenResponse",
     "PlatformTenantAccessTokenResponseScopesItem",
@@ -9877,6 +9950,7 @@ __all__ = (
     "PrepareManagedPostgresCutoverRequest",
     "PrepareProjectRollbackRequest",
     "PrepareWorkflowOperationArtifactXGregaleOperationExecutionKind",
+    "Preview",
     "PreviewAccountWorkflowActionsBody",
     "PreviewArtifactResponse",
     "PreviewCreatedWebhookPayload",
@@ -9902,6 +9976,7 @@ __all__ = (
     "PreviewIssueCompoundAlertRequest",
     "PreviewIssueLifecycleAlertRequest",
     "PreviewIssueLifecycleAlertRequestEvent",
+    "PreviewList",
     "PreviewPlatformTenantSelfWorkflowActionsBody",
     "PreviewProductionChangesResponse",
     "PreviewProductionChangesResponseConfigurationChangedGroupsItem",
@@ -10112,6 +10187,9 @@ __all__ = (
     "ProjectEnvironmentSharedResourceResponse",
     "ProjectEnvironmentSharedResourceResponseKind",
     "ProjectEnvironmentSharedResourceResponseOwnership",
+    "ProjectEnvironmentSharedSecret",
+    "ProjectEnvironmentSharedSecretResponse",
+    "ProjectEnvironmentSharedSecretsResponse",
     "ProjectEnvironmentStateResponse",
     "ProjectEnvironmentStateResponseReleaseSetStatus",
     "ProjectEnvironmentStateWorkloadResponse",
@@ -10448,7 +10526,25 @@ __all__ = (
     "RegisterScenarioTestResponseRecorderVersion",
     "RegisterScenarioTestResponseWebhookMode",
     "RekeyProgress",
+    "ReleaseApprovalDecision",
+    "ReleaseApprovalDecisionDecision",
+    "ReleaseApprovalDecisionRole",
+    "ReleaseApprovalPolicy",
+    "ReleaseApprovalPolicyApprovers",
+    "ReleaseApprovalStatus",
+    "ReleaseApprovalStatusState",
     "ReleaseDatabaseRef",
+    "ReleaseDiff",
+    "ReleaseDiffCode",
+    "ReleaseDiffConfig",
+    "ReleaseDiffDatabase",
+    "ReleaseDiffDependencies",
+    "ReleaseDiffField",
+    "ReleaseDiffFieldField",
+    "ReleaseDiffKey",
+    "ReleaseDiffKeyChange",
+    "ReleaseDiffPackage",
+    "ReleaseDiffSide",
     "ReleaseFreeze",
     "ReleaseFreezeKind",
     "ReleaseFreezeSource",
@@ -10680,6 +10776,11 @@ __all__ = (
     "RouteHealthWindowEvidenceStatus",
     "RouteInsight",
     "RouteInsightEvidence",
+    "RouteInsightFix",
+    "RouteInsightFixAction",
+    "RouteInsightFixRequest",
+    "RouteInsightFixResponse",
+    "RouteInsightFixResponseCachePurge",
     "RouteInsightKind",
     "RouteInsightsResponse",
     "RouteInsightState",
@@ -10846,6 +10947,9 @@ __all__ = (
     "ScanResult",
     "ScanResultStatus",
     "ScenarioActionSnapshot",
+    "ScenarioActionSnapshotEventCaptureVersion",
+    "ScenarioActionSnapshotPlatformCaptureVersion",
+    "ScenarioActionSnapshotQueueCaptureVersion",
     "ScenarioActionSnapshotRecorderVersion",
     "ScenarioActionSnapshotScope",
     "ScenarioActionSnapshotSimulationVersion",
@@ -10853,6 +10957,11 @@ __all__ = (
     "ScenarioActionSnapshotVersion",
     "ScenarioCapturedAction",
     "ScenarioCapturedActionSource",
+    "ScenarioCapturedEvent",
+    "ScenarioCapturedPlatformCall",
+    "ScenarioCapturedPlatformCallKind",
+    "ScenarioCapturedQueueMessage",
+    "ScenarioCapturedQueueMessageKind",
     "ScenarioColdPreparation",
     "ScenarioColdPreparationMethod",
     "ScenarioColdPreparationState",
@@ -10914,6 +11023,7 @@ __all__ = (
     "ScenarioSimulationPlanVersion",
     "ScenarioSimulationResponse",
     "ScenarioSimulationResponseFault",
+    "ScenarioSuppressedWebhookEvents",
     "ScenarioSuspendResumeEvidence",
     "ScenarioSuspendResumeEvidenceStatus",
     "ScenarioSuspendResumeEvidenceVersion",
@@ -10933,12 +11043,16 @@ __all__ = (
     "ScenarioWorkerFault",
     "ScenarioWorkerFaultState",
     "ScenarioWorkerTermination",
+    "ScheduledRelease",
+    "ScheduledReleaseListResponse",
+    "ScheduledReleaseState",
     "ScheduleOccurrenceResponse",
     "ScheduleOccurrenceResponseStatus",
     "SchedulePolicy",
     "SchedulePolicyMissedRuns",
     "SchedulePolicyOverlap",
     "SchedulePolicyVersion",
+    "ScheduleReleaseRequest",
     "ScopedAppEnvResponse",
     "ScopedAppSecretResponse",
     "ScopedAppSecretResponseDeliveryStatus",
@@ -11037,6 +11151,7 @@ __all__ = (
     "SetDeploymentAliasRequest",
     "SetEnvironmentRouteBudgetsRequest",
     "SetEnvironmentRouteBudgetsScope",
+    "SetFinancialBudgetChannelsRequest",
     "SetGraceWindowRequest",
     "SetMCPReadinessFallbackRequest",
     "SetMCPReadinessFallbackRequestProvider",
@@ -11059,7 +11174,10 @@ __all__ = (
     "SetPlatformTenantRequestBudgetRequest",
     "SetPlatformTenantStatusRequest",
     "SetPlatformTenantStatusRequestStatus",
+    "SetProjectEnvironmentSharedSecretRequest",
     "SetQueueBindingReleasePolicyRequest",
+    "SetReleaseApprovalPolicyRequest",
+    "SetReleaseApprovalPolicyRequestApprovers",
     "SetRouteHealthGateRequest",
     "SetRouteHealthGateRequestMode",
     "SetRouteHealthGateRequestOnRegression",

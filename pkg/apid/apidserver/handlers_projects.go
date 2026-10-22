@@ -342,6 +342,7 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 		"protected": environment.Protected, "cloned_from": req.FromEnvironment,
 		"variables_copied": clone.VariablesCopied, "secrets_copied": clone.SecretsCopied,
 		"secret_references_copied": clone.SecretReferencesCopied,
+		"project_secrets_copied":   clone.ProjectSecretsCopied,
 		"bindings_copied":          clone.BindingsCopied, "routes_copied": clone.RoutesCopied, "policies_copied": clone.PoliciesCopied,
 	})
 	response := projectEnvironmentResponse(environment)
@@ -357,6 +358,7 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 			ConfigurationCopied: clone.ConfigurationCopied, VariablesCopied: clone.VariablesCopied,
 			SecretsCopied: clone.SecretsCopied, WorkloadsCopied: clone.WorkloadsCopied,
 			SecretReferencesCopied: clone.SecretReferencesCopied,
+			ProjectSecretsCopied:   clone.ProjectSecretsCopied,
 			BindingsCopied:         clone.BindingsCopied, RoutesCopied: clone.RoutesCopied, PoliciesCopied: clone.PoliciesCopied, SharedResources: sharedResources,
 		}
 	}

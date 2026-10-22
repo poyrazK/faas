@@ -208,6 +208,9 @@ func TestEngineEnvironmentQualificationRuntimeUsesFrozenInputsWithoutActivation(
 			if vmm.lastColdBootSpec.Port != 8087 || vmm.lastColdBootSpec.HealthcheckPath != "/reviewed-ready" || vmm.lastColdBootSpec.StartupDeadlineS != 25 || vmm.lastColdBootSpec.ExecutionMode != mode || vmm.coldBoots != 1 || vmm.snapshots != 0 {
 				t.Fatalf("frozen boot: %+v boots=%d snapshots=%d", vmm.lastColdBootSpec, vmm.coldBoots, vmm.snapshots)
 			}
+			if vmm.lastColdBootSpec.WorkerPushDelivery {
+				t.Fatal("candidate without frozen push bindings may bind as a push worker")
+			}
 			if vmm.createDeadline != *request.LeaseUntil {
 				t.Fatalf("native capture inherited boot deadline %v instead of claim deadline %v", vmm.createDeadline, *request.LeaseUntil)
 			}

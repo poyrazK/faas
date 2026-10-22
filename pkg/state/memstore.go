@@ -321,6 +321,10 @@ type MemStore struct {
 	financialBudgetEvaluations                 map[string]financialBudgetMemoryEvaluation
 	financialBudgetAlerts                      map[string]FinancialBudgetAlertDelivery
 	financialBudgetStops                       map[string]FinancialBudgetStop
+	financialBudgetChannels                    map[string][]string                            // policy id → channel ids (ADR-20261019193500)
+	financialBudgetChannelDeliveries           map[string]FinancialBudgetAlertChannelDelivery // alert id + "\n" + channel id
+	financialBudgetProjections                 map[string]FinancialBudgetAlertDelivery        // projection alert id (ADR-20261019193500)
+	financialObjectStorageEstimates            map[string]FinancialObjectStorageEstimate      // account + "\n" + period (ADR-20261020160000)
 	financialPreviewCommands                   map[string]FinancialPreviewCommandRuntime
 	financialComputeBooks                      map[string]financialComputeBook
 	financialComputeLeases                     map[string]financialComputeLease
@@ -365,6 +369,14 @@ type MemStore struct {
 	releaseFreezes map[string]ReleaseFreeze
 	// releaseGates mirrors app_release_gates (ADR-20261019071734).
 	releaseGates map[string]ReleaseGate
+	// releaseApprovalPolicies mirrors app_release_approval_policies, keyed by
+	// app ID; releaseApprovals mirrors deployment_release_approvals
+	// (ADR-20261020085706).
+	releaseApprovalPolicies map[string]ReleaseApprovalPolicy
+	releaseApprovals        map[string]ReleaseApproval
+	releaseApprovalEvents   map[string]ReleaseApprovalEvent
+	// scheduledReleases mirrors scheduled_releases (ADR-20261021152201).
+	scheduledReleases map[string]ScheduledRelease
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex
@@ -465,6 +477,9 @@ type MemStore struct {
 	scenarioPostgres          map[string]rehearsalpg.Resource
 	scenarioObjects           map[string]rehearsalobj.Resource
 	scenarioActionPolicies    map[string]scenarioActionPolicy
+	scenarioCapturedEvents    []memScenarioCapturedEvent
+	scenarioQueueCaptures     []memScenarioCapturedQueueMessage
+	scenarioPlatformCalls     []memScenarioCapturedPlatformCall
 	scenarioTestChaosPlans    map[string]chaos.Lease
 	scenarioTestChaosMatches  map[string]map[string]int64
 	previewSets               map[string]PRPreviewSet
@@ -530,7 +545,7 @@ type MemStore struct {
 	// installation_id so the resolver cache at
 	// pkg/githubd/webhook_secret.go can match the prod
 	// ON CONFLICT (installation_id) DO UPDATE shape.
-	githubWebhookSecrets map[int64][]byte
+	githubWebhookSecrets map[int64]GithubWebhookSecret
 	// githubWebhookSecretMeta stamps (upgraded_at, upgraded_by)
 	// for each per-tenant row so the apid admin route can echo
 	// the row back without a second query.
@@ -631,10 +646,13 @@ type MemStore struct {
 	// migrationLeases mirrors the durable source-side migration lease table.
 	// It lets vmmd migration tests exercise restart-safe lease semantics without
 	// requiring Postgres.
-	migrationLeases       map[string]MigrationLease // lease_token → lease
-	migrationSources      map[string]MigrationSource
-	migrationAdmissions   map[string]MigrationAdmission
-	migrationResumeFences map[string]bool
+	migrationLeases               map[string]MigrationLease
+	functionMigrationSources      map[string]FunctionMigrationSource      // instance_id → source
+	functionMigrationPermissions  map[string]functionMigrationPermissions // lease_token → permissions
+	functionMigrationDestinations map[string]FunctionMigrationDestination // lease_token → immutable destination epoch
+	migrationSources              map[string]MigrationSource
+	migrationAdmissions           map[string]MigrationAdmission
+	migrationResumeFences         map[string]bool
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).
@@ -1159,7 +1177,7 @@ type MemStore struct {
 	// (migration 00050, issue #259).
 	invoices               map[string]Invoice
 	invoiceRefunds         map[string]InvoiceRefund
-	billingUsageDeliveries map[string]struct{}
+	billingUsageDeliveries map[string]billingUsageDelivery
 	// objectStorageBilling is the in-memory mirror of the finalized
 	// object-storage month-close ledger.
 	objectStorageBilling           map[string]ObjectStorageBillingRecord
@@ -1310,6 +1328,7 @@ type MemStore struct {
 	projectEnvironmentCloneObjectCredentials  map[string]ProjectEnvironmentCloneObjectCredentialPreparation
 	projectEnvironmentApprovals               map[string]ProjectEnvironmentApproval
 	projectEnvironmentConfigs                 map[string][]ProjectEnvironmentConfig
+	projectEnvironmentSecrets                 map[string]ProjectEnvironmentSecret
 	projectEnvironmentRoutePolicies           map[string]ProjectEnvironmentRoutePolicy
 	projectEnvironmentEdgePolicies            map[string]ProjectEnvironmentEdgePolicy
 	projectEnvironmentPromotions              map[string]ProjectEnvironmentPromotion
@@ -1572,7 +1591,7 @@ func NewMemStore() *MemStore {
 		githubInstalls:          map[string]GitHubInstall{},
 		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
 		// store (mirror of github_webhook_secrets).
-		githubWebhookSecrets:    map[int64][]byte{},
+		githubWebhookSecrets:    map[int64]GithubWebhookSecret{},
 		githubWebhookSecretMeta: map[int64]webhookSecretMeta{},
 		// Issue #246 acceptance item 7: mail suppression list mirror.
 		mailSuppressions:    map[string]mailSuppressionRow{},
@@ -1814,7 +1833,7 @@ func NewMemStore() *MemStore {
 		// PR B writes via UpsertInvoice (webhook ingestion).
 		invoices:                       map[string]Invoice{},
 		invoiceRefunds:                 map[string]InvoiceRefund{},
-		billingUsageDeliveries:         map[string]struct{}{},
+		billingUsageDeliveries:         map[string]billingUsageDelivery{},
 		objectStorageBilling:           map[string]ObjectStorageBillingRecord{},
 		objectStorageBillingDeliveries: map[string]ObjectStorageBillingDelivery{},
 		// accountCredits starts empty; the operator-only
@@ -3873,6 +3892,11 @@ func (m *MemStore) deleteProjectLocked(projectID string) error {
 			delete(m.projectEnvironmentConfigs, key)
 		}
 	}
+	for key, secret := range m.projectEnvironmentSecrets {
+		if secret.ProjectID == projectID {
+			delete(m.projectEnvironmentSecrets, key)
+		}
+	}
 	for key, policy := range m.projectEnvironmentRoutePolicies {
 		if policy.ProjectID == projectID {
 			delete(m.projectEnvironmentRoutePolicies, key)
@@ -4106,6 +4130,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 		}
 	}
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
+	m.deleteProjectEnvironmentSecretsLocked(projectID, slug)
 	for key, policy := range m.projectEnvironmentRoutePolicies {
 		if policy.ProjectID == projectID && policy.EnvironmentSlug == slug {
 			delete(m.projectEnvironmentRoutePolicies, key)
@@ -5792,6 +5817,12 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	if d.Status != DeployLive {
 		return Deployment{}, ErrDeploymentNotLive
 	}
+	start, starting := scheduledStartFrom(ctx, id)
+	if starting {
+		if err := m.checkScheduledStartLocked(start, d); err != nil {
+			return Deployment{}, err
+		}
+	}
 	ctx, admission := captureMCPAdmission(ctx, id, newPercent)
 	defer func() { m.finishMCPAdmissionLocked(admission, resultErr) }()
 	if err := m.checkMCPAccessPolicyLocked(ctx, d.AppID); err != nil {
@@ -5899,6 +5930,10 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	}
 	if sum != 100 {
 		return Deployment{}, ErrTrafficPercentSumInvalid
+	}
+	if starting {
+		applyScheduledStart(&d, start)
+		m.finishScheduledStartLocked(start)
 	}
 	m.putDeploymentLocked(id, d)
 	for i, sibling := range siblings {
@@ -6044,7 +6079,7 @@ func (m *MemStore) ListOwnedCronsByNodeID(_ context.Context, nodeID string) ([]C
 	var out []Cron
 	for _, c := range m.crons {
 		app, ok := m.apps[c.AppID]
-		if ok && owner[c.AppID] == nodeID && app.Status != AppDeleted && c.Enabled {
+		if _, rehearsal := m.scenarioActionPolicies[c.AppID]; ok && owner[c.AppID] == nodeID && app.Status != AppDeleted && c.Enabled && !rehearsal {
 			out = append(out, c)
 		}
 	}
@@ -6252,6 +6287,9 @@ func (m *MemStore) MarkInstanceMigrating(ctx context.Context, instanceID, curren
 	if ins.NodeID != currentNodeID || ins.State != string(StateRunning) {
 		return ErrConflict
 	}
+	if err := m.markFunctionMigrationSourceLocked(ctx, ins, leaseToken); err != nil {
+		return err
+	}
 	ins.State = string(StateMigrating)
 	ins.LeaseToken = leaseToken
 	now := time.Now().UTC()
@@ -6370,6 +6408,9 @@ func (m *MemStore) ListExpiredMigrations(_ context.Context, maxPerTick int, olde
 	var out []Instance
 	for _, ins := range m.instances {
 		if ins.State != string(StateMigrating) || ins.LeaseToken == "" {
+			continue
+		}
+		if _, tracked := m.functionMigrationSources[ins.ID]; tracked {
 			continue
 		}
 		if !cutoff.IsZero() && (ins.MigrationStartedAt == nil || ins.MigrationStartedAt.After(cutoff)) {
@@ -7657,11 +7698,11 @@ func (m *MemStore) RecordGitHubInstallationSync(_ context.Context, installationI
 // amendment). The MemStore is the unit-test stand-in for the
 // resolver; the bytea is held in an in-memory map keyed by
 // installation_id.
-func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID int64, secret []byte, upgradedBy string) (time.Time, string, error) {
+func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID int64, secret GithubWebhookSecret, upgradedBy string) (time.Time, string, error) {
 	if installationID == 0 {
 		return time.Time{}, "", fmt.Errorf("memstore: UpsertGithubWebhookSecret: installation_id must be non-zero")
 	}
-	if len(secret) == 0 {
+	if len(secret.Value) == 0 {
 		return time.Time{}, "", fmt.Errorf("memstore: UpsertGithubWebhookSecret: secret must be non-empty")
 	}
 	if upgradedBy == "" {
@@ -7671,11 +7712,12 @@ func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID i
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.githubWebhookSecrets == nil {
-		m.githubWebhookSecrets = map[int64][]byte{}
+		m.githubWebhookSecrets = map[int64]GithubWebhookSecret{}
 	}
-	cp := make([]byte, len(secret))
-	copy(cp, secret)
-	m.githubWebhookSecrets[installationID] = cp
+	m.githubWebhookSecrets[installationID] = GithubWebhookSecret{
+		Value:  append([]byte(nil), secret.Value...),
+		Sealed: append([]byte(nil), secret.Sealed...),
+	}
 	if m.githubWebhookSecretMeta == nil {
 		m.githubWebhookSecretMeta = map[int64]webhookSecretMeta{}
 	}
@@ -7687,19 +7729,20 @@ func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID i
 }
 
 // GetGithubWebhookSecret mirrors PgStore. ErrNotFound on miss.
-func (m *MemStore) GetGithubWebhookSecret(_ context.Context, installationID int64) ([]byte, error) {
+func (m *MemStore) GetGithubWebhookSecret(_ context.Context, installationID int64) (GithubWebhookSecret, error) {
 	if installationID == 0 {
-		return nil, ErrNotFound
+		return GithubWebhookSecret{}, ErrNotFound
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	secret, ok := m.githubWebhookSecrets[installationID]
-	if !ok || len(secret) == 0 {
-		return nil, ErrNotFound
+	if !ok || (len(secret.Value) == 0 && len(secret.Sealed) == 0) {
+		return GithubWebhookSecret{}, ErrNotFound
 	}
-	cp := make([]byte, len(secret))
-	copy(cp, secret)
-	return cp, nil
+	return GithubWebhookSecret{
+		Value:  append([]byte(nil), secret.Value...),
+		Sealed: append([]byte(nil), secret.Sealed...),
+	}, nil
 }
 
 // GetGithubInstallBindingForApp mirrors PgStore. accountID scopes
@@ -10684,7 +10727,9 @@ func (m *MemStore) SetDeploymentRuntimeProfile(_ context.Context, id string, pro
 	if !ok {
 		return ErrNotFound
 	}
-	if d.Kind != DeploymentKindImage ||
+	// A built service that froze a Compose healthcheck records imaged's verdict
+	// here too (ADR-20261019195000); other source deployments cannot.
+	if (d.Kind != DeploymentKindImage && !profileFreezesImageHealthcheck(d.InferredProfile)) ||
 		(d.Status != DeployPending && d.Status != DeployBuilding && d.Status != DeployImaging) {
 		return ErrInvalidStateTransition
 	}
@@ -13500,7 +13545,8 @@ func (m *MemStore) ListEnabledCrons(_ context.Context) ([]Cron, error) {
 	defer m.mu.Unlock()
 	var out []Cron
 	for _, c := range m.crons {
-		if c.Enabled && c.SuspendedReason == "" {
+		// Mirrors PgStore: rehearsal-enrolled apps never fire from the clock.
+		if _, rehearsal := m.scenarioActionPolicies[c.AppID]; c.Enabled && c.SuspendedReason == "" && !rehearsal {
 			out = append(out, c)
 		}
 	}
@@ -13757,7 +13803,7 @@ func (m *MemStore) ListEnabledTriggers(_ context.Context) ([]sqlc.Trigger, error
 	defer m.mu.Unlock()
 	var out []sqlc.Trigger
 	for _, t := range m.triggers {
-		if t.Enabled && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) {
+		if t.Enabled && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) && !m.rehearsalBrokerTriggerLocked(t) {
 			out = append(out, t)
 		}
 	}
@@ -17057,7 +17103,7 @@ func (m *MemStore) ComputeNodeByName(_ context.Context, name string) (ComputeNod
 func (m *MemStore) ComputeNodeUsedMB(_ context.Context, nodeID string) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var used int64
+	used := m.functionMigrationNodeUsageLocked(nodeID).RAM
 	for _, ins := range m.instances {
 		if ins.NodeID != nodeID {
 			continue
@@ -17138,6 +17184,11 @@ func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs
 	for _, r := range m.migrationSources {
 		if _, ok := wanted[r.SourceNodeID]; ok {
 			used[r.SourceNodeID] += m.migrationSourceCostLocked(r, true).CPU
+		}
+	}
+	for node := range wanted {
+		if c := m.functionMigrationNodeUsageLocked(node); c.CPU != 0 {
+			used[node] += c.CPU
 		}
 	}
 	return used, nil
@@ -19960,6 +20011,15 @@ func (m *MemStore) UsageWindows(_ context.Context, start, end time.Time) ([]Usag
 	return out, nil
 }
 
+// billingUsageDelivery is one MemStore receipt; the first recorded quantity
+// wins, as in billing_usage_deliveries.
+type billingUsageDelivery struct {
+	provider, accountID string
+	meter               BillingMeter
+	hour                time.Time
+	quantity            int64
+}
+
 func billingUsageDeliveryKey(provider, accountID string, meter BillingMeter, hour time.Time) string {
 	return provider + "\x00" + accountID + "\x00" + string(meter) + "\x00" + hour.UTC().Truncate(time.Hour).Format(time.RFC3339)
 }
@@ -20039,7 +20099,10 @@ func (m *MemStore) RecordBillingMeterUsageDelivery(_ context.Context, provider, 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.billingUsageDeliveries[billingUsageDeliveryKey(provider, accountID, meter, windowStart)] = struct{}{}
+	key := billingUsageDeliveryKey(provider, accountID, meter, windowStart)
+	if _, exists := m.billingUsageDeliveries[key]; !exists { // Postgres: ON CONFLICT DO NOTHING
+		m.billingUsageDeliveries[key] = billingUsageDelivery{provider: provider, accountID: accountID, meter: meter, hour: windowStart.UTC().Truncate(time.Hour), quantity: quantity}
+	}
 	return nil
 }
 
@@ -23378,6 +23441,26 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.financialBudgetAlerts, key)
 		}
 	}
+	for key, d := range m.financialBudgetChannelDeliveries {
+		if d.Alert.AccountID == id {
+			delete(m.financialBudgetChannelDeliveries, key)
+		}
+	}
+	for key, a := range m.financialBudgetProjections {
+		if a.AccountID == id {
+			delete(m.financialBudgetProjections, key)
+		}
+	}
+	for key, e := range m.financialObjectStorageEstimates {
+		if e.AccountID == id {
+			delete(m.financialObjectStorageEstimates, key)
+		}
+	}
+	for key := range m.financialBudgetChannels {
+		if p, ok := m.financialBudgets[key]; !ok || p.AccountID == id {
+			delete(m.financialBudgetChannels, key)
+		}
+	}
 	for key, stop := range m.financialBudgetStops {
 		if stop.AccountID == id {
 			delete(m.financialBudgetStops, key)
@@ -24429,6 +24512,9 @@ func (m *MemStore) CountFailedDeploymentsSince(_ context.Context, accountID, app
 		if appID != "" && d.AppID != appID {
 			continue
 		}
+		if m.rehearsalAlertExcludedLocked(appID, d.AppID) {
+			continue
+		}
 		if d.Status != DeployFailed {
 			continue
 		}
@@ -24451,6 +24537,9 @@ func (m *MemStore) WasInvokedSuccessfullySince(_ context.Context, accountID, app
 			continue
 		}
 		if appID != "" && inv.AppID != appID {
+			continue
+		}
+		if m.rehearsalAlertExcludedLocked(appID, inv.AppID) {
 			continue
 		}
 		// MemStore keeps no request telemetry; mirror PgStore's
@@ -24995,6 +25084,9 @@ func (m *MemStore) CountFailedInvocationsSince(_ context.Context, accountID, app
 			continue
 		}
 		if appID != "" && inv.AppID != appID {
+			continue
+		}
+		if m.rehearsalAlertExcludedLocked(appID, inv.AppID) {
 			continue
 		}
 		if source != "" && inv.Source != source {
@@ -28711,4 +28803,15 @@ func requireAPIKeyScopes(scopes []string) error {
 		return fmt.Errorf("%w: api key scopes must not be empty", ErrInvalidArgument)
 	}
 	return nil
+}
+
+// profileFreezesImageHealthcheck mirrors the SQL `inferred_profile ?
+// 'image_healthcheck'` guard on SetDeploymentRuntimeProfile.
+func profileFreezesImageHealthcheck(profile json.RawMessage) bool {
+	var fields map[string]json.RawMessage
+	if len(profile) == 0 || json.Unmarshal(profile, &fields) != nil {
+		return false
+	}
+	_, frozen := fields["image_healthcheck"]
+	return frozen
 }

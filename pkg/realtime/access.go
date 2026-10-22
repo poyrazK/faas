@@ -60,7 +60,7 @@ func channelDenied(access state.ManagedRealtimeAccess, channel string) bool {
 }
 
 func (c *connection) accessEnabled() bool {
-	return c.ticketToken == "" && c.m.cfg.AccessPreview && c.endpoint.ClientAuth.Mode == AuthModeOIDCJWT
+	return c.ticketToken == "" && c.endpointConfig().accessOn(c.m.cfg) && c.endpoint.ClientAuth.Mode == AuthModeOIDCJWT
 }
 
 func (c *connection) refreshAccess(ctx context.Context) (state.ManagedRealtimeAccess, error) {

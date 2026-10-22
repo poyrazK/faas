@@ -65,9 +65,24 @@ func (p *startPrompt) choose(ctx context.Context, label string, choices []string
 	}
 }
 
+// confirm defaults to No: Enter never approves a change.
 func (p *startPrompt) confirm(ctx context.Context, label string) (bool, error) {
+	return p.confirmDefault(ctx, label, false)
+}
+
+// confirmYes defaults to Yes, for steps the flow cannot continue without,
+// such as signing in. EOF still returns an error rather than the default.
+func (p *startPrompt) confirmYes(ctx context.Context, label string) (bool, error) {
+	return p.confirmDefault(ctx, label, true)
+}
+
+func (p *startPrompt) confirmDefault(ctx context.Context, label string, yes bool) (bool, error) {
+	choices, fallback := " (y/N)", "n"
+	if yes {
+		choices, fallback = " (Y/n)", "y"
+	}
 	for {
-		value, err := p.text(ctx, label+" (y/N)", "n")
+		value, err := p.text(ctx, label+choices, fallback)
 		if err != nil {
 			return false, err
 		}

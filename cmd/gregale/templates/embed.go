@@ -43,7 +43,7 @@ var FS embed.FS
 // Go starters. Keep this aligned with the repository toolchain pin: unlike a
 // customer-owned go.mod, these generated modules are platform-owned defaults
 // and must not knowingly create images with HIGH stdlib findings.
-const GoToolchainVersion = "1.26.9"
+const GoToolchainVersion = "1.26.10"
 
 // Names is the canonical template list, kept here so the CLI can
 // validate --template before touching the embed FS. The hello/function and
@@ -492,6 +492,61 @@ func CategoryFor(name string) string {
 		return "operations"
 	}
 	return ""
+}
+
+// summaries are the one-line descriptions shown by `gregale init --list` and
+// the interactive template picker. Every listed template needs one.
+var summaries = map[string]string{
+	"hello-node":                         "Express HTTP app with a JSON greeting and health check",
+	"hello-python":                       "Flask HTTP app served by gunicorn",
+	"hello-go":                           "Go HTTP app using only the standard library",
+	"cron-example":                       "Handler for a scheduled request",
+	"function-node":                      "Node.js 22 function handler",
+	"function-python":                    "Python 3.12 function handler",
+	"function-go":                        "Go function handler",
+	"function-node24":                    "Node.js 24 function handler",
+	"function-python313":                 "Python 3.13 function handler",
+	"function-rust":                      "Rust function on the binary runtime",
+	"event-worker":                       "Node.js worker for Gregale's event router",
+	"queue-worker":                       "Node.js consumer for a durable queue",
+	"s3-uploader":                        "Node.js upload endpoint for S3-compatible storage",
+	"object-storage-node":                "Node.js file service on a managed bucket",
+	"object-storage-python":              "FastAPI file service on a managed bucket",
+	"slack-bot":                          "Node.js Slack Events API handler",
+	"rest-api-postgres":                  "Node.js REST API on PostgreSQL with migrations",
+	"rest-api-postgres-python":           "FastAPI REST API on PostgreSQL with migrations",
+	"cron-worker":                        "Node.js function run on a schedule by Upstash QStash",
+	"webhook-receiver":                   "Node.js endpoint for inbound webhooks",
+	"ai-chat":                            "Node.js chat endpoint for OpenAI or Anthropic",
+	"secret-reload-node":                 "Node.js and PostgreSQL app that reloads rotated secrets",
+	"customer-platform":                  "Node.js and PostgreSQL starter for multi-tenant apps",
+	"mcp-node":                           "Node.js MCP server with sample tools and prompts",
+	"mcp-go":                             "Go MCP server with sample tools",
+	"mcp-python":                         "Python MCP server with sample tools",
+	"customer-operation-export":          "HTTP operation with a CSV export and progress page",
+	"customer-operation-job-export":      "Job that exports a CSV with progress and download",
+	"customer-operation-workflow-export": "Workflow export with progress and cancellation",
+	"data-api":                           "Schema-generated PostgreSQL API with JWT auth",
+	"data-api-starter":                   "Data API app with migrations and row-level security",
+	"data-api-teams":                     "Data API app with team membership and roles",
+	"data-api-support-console":           "Read-only support console on the Data API",
+}
+
+// Summary returns a template's one-line description, or "" when it has none.
+func Summary(name string) string {
+	return summaries[name]
+}
+
+// CategoryLabels name each category in the interactive template picker.
+var CategoryLabels = map[string]string{
+	"hello":              "HTTP app",
+	"function":           "Function",
+	"event-driven":       "Event or queue worker",
+	"stateless-contract": "App with a database or external service",
+	"ai":                 "AI chat endpoint",
+	"mcp":                "MCP server",
+	"operations":         "Long-running customer operation",
+	"durable-entities":   "Durable entities",
 }
 
 // CategoryOrder is the canonical order in which `gregale init --list`

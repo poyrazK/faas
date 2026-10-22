@@ -27,6 +27,11 @@
   function clearResult() { resultRequest++; $('result').hidden = true; $('result').replaceChildren(); }
   $('billing-period').value = new Date().toISOString().slice(0, 7);
   function clearBilling() { billingRequest++; billingCursor = ''; billingPeriod = ''; $('billing-documents').replaceChildren(); $('billing-summary').textContent = 'Choose a month to review finalized charges and credit notes.'; $('billing-more').hidden = true; }
+  // A month's plan fee (ADR-20261021154511).
+  function feeText(fee, currency) {
+    const from = typeof fee.prorated_from === 'string' ? ` prorated from ${fee.prorated_from.slice(0, 10)}` : '';
+    return `the monthly fee for plan ${fee.plan}, ${amount(fee.amount_millicents, currency)}${from}`;
+  }
   async function loadBilling(next = false, check = () => {}) {
     if (!allowed('view_billing')) throw new Error('Your role does not include billing access.');
     const generation = epoch, request = ++billingRequest, period = next ? billingPeriod : $('billing-period').value;
@@ -36,12 +41,14 @@
     catch (error) { if (request !== billingRequest || generation !== epoch) return; throw error; }
     current(generation); check(); if (request !== billingRequest) return;
     const review = data.review; billingPeriod = period; billingCursor = data.documents.next_cursor || '';
-    $('billing-summary').textContent = review.finalized ? `${period} · Finalized charges ${amount(review.finalized.amount_millicents, review.currency)}. Credit notes reduce these charges.` : `${period} · Provisional charges ${amount(review.amount_millicents, review.currency)} · ${review.unresolved} unresolved runs. ${review.closed ? 'Awaiting finalization by your product team.' : 'This month is still open.'}`;
+    const fee = review.fees?.[0] ? ` including ${feeText(review.fees[0], review.currency)}` : '';
+    $('billing-summary').textContent = review.finalized ? `${period} · Finalized charges ${amount(review.finalized.amount_millicents, review.currency)}. Credit notes reduce these charges.` : `${period} · Provisional charges ${amount(review.amount_millicents, review.currency)}${fee} · ${review.unresolved} unresolved runs. ${review.closed ? 'Awaiting finalization by your product team.' : 'This month is still open.'}`;
     $('billing-documents').replaceChildren();
     for (const doc of data.documents.documents) {
       const row = node('li', `${doc.kind === 'credit_note' ? 'Credit note' : 'Finalized statement'} · ${amount(doc.amount_millicents, doc.currency)} · ${doc.id}`);
       if (doc.reason) row.append(node('p', doc.reason));
       if (doc.snapshot) for (const line of doc.snapshot.lines) row.append(node('p', `${line.feature} · ${line.succeeded} charged successes · ${line.waived} waived · ${amount(line.amount_millicents, doc.currency)}`));
+      for (const charge of doc.snapshot?.fees || []) row.append(node('p', feeText(charge, doc.currency)));
       if (doc.invoice) row.append(...invoiceNodes(doc.invoice));
       $('billing-documents').append(row);
     }
@@ -194,13 +201,33 @@
     try { link = new URL(hold.hosted_invoice_url); } catch { link = null; }
     if (link?.protocol === 'https:') { const a = node('a', 'View and pay invoice'); a.href = link.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; status.append(a); }
   }
+  // Included starts come first at no charge; later ones cost the unit price
+  // up to the monthly limit (ADR-20261021154511).
+  function includedLeft(name, grant, remaining) {
+    if (Number.isSafeInteger(view.included_remaining?.[name])) return view.included_remaining[name];
+    const included = Number.isSafeInteger(grant.included_starts) ? grant.included_starts : 0;
+    return Math.max(0, included - (grant.monthly_starts - remaining));
+  }
+  // During a free trial every start is free (ADR-20261021195901).
+  function trialUntil() {
+    const starts = Date.parse(view.customer.trial_starts_at || ''), ends = Date.parse(view.customer.trial_ends_at || ''), now = Date.now();
+    return Number.isFinite(starts) && Number.isFinite(ends) && starts <= now && now < ends ? view.customer.trial_ends_at.slice(0, 10) : '';
+  }
+  function featureTerms(name, grant, remaining) {
+    const price = `${amount(grant.unit_price_millicents, view.catalog.spec.currency)} per successful run`;
+    const starts = `${remaining} of ${grant.monthly_starts} starts remaining this month.`;
+    const trial = trialUntil();
+    if (trial) return `Free during your trial until ${trial}, then ${price} · ${starts}`;
+    if (!(grant.included_starts > 0)) return `${price} · ${starts}`;
+    return `${includedLeft(name, grant, remaining)} of ${grant.included_starts} included runs left, then ${price} · ${starts}`;
+  }
   function updateFeatureTerms() {
     const plan = view.catalog.spec.plans[view.customer.plan];
     for (const [name, card] of cards) {
       const grant = plan.features[name];
       if (!grant) { card.button.disabled = true; card.info.textContent = 'This feature is no longer included in your plan.'; continue; }
       const remaining = Number.isSafeInteger(view.remaining_starts?.[name]) ? view.remaining_starts[name] : 0;
-      card.info.textContent = `${amount(grant.unit_price_millicents, view.catalog.spec.currency)} per successful run · ${remaining} of ${grant.monthly_starts} starts remaining this month.`;
+      card.info.textContent = featureTerms(name, grant, remaining);
       card.button.disabled = !allowed('run_work') || card.busy || !card.pending && (view.customer.suspended || Boolean(view.overdue_hold) || view.bindings[name]?.available !== true || remaining === 0);
     }
   }
@@ -215,7 +242,7 @@
       const pending = saved && !saved.operationID, input = inputForm(binding?.input_schema, inputs.get(name));
       const button = node('button', pending ? 'Check / retry saved request' : 'Run feature'); button.type = 'submit';
       button.disabled = !pending && (view.customer.suspended || Boolean(view.overdue_hold) || binding?.available !== true || remaining === 0);
-      const info = node('p', `${amount(grant.unit_price_millicents, view.catalog.spec.currency)} per successful run · ${remaining} of ${grant.monthly_starts} starts remaining this month.`);
+      const info = node('p', featureTerms(name, grant, remaining));
       const cardState = { info, button, pending, busy: false }; cards.set(name, cardState); card.append(node('h3', feature.label), info);
       if (pending) card.append(node('p', 'A saved submission needs confirmation. Enter the original details if it has not been accepted.'));
       if (binding?.available !== true) card.append(node('p', 'This feature is temporarily unavailable while its deployment is being prepared.'));
@@ -239,7 +266,9 @@
         if (observation.state === 'expired') throw new Error('The saved submission has expired. Contact your product team before starting again.');
       }
       const grant = view.catalog.spec.plans[view.customer.plan].features[name];
-      if (!window.confirm(`Run ${view.catalog.spec.features[name].label}?\n${amount(grant.unit_price_millicents, view.catalog.spec.currency)} will be recorded only if it succeeds. This consumes one monthly start even if it fails or is cancelled.`)) return;
+      const remaining = Number.isSafeInteger(view.remaining_starts?.[name]) ? view.remaining_starts[name] : 0;
+      const charge = trialUntil() ? 'It is free during your trial' : includedLeft(name, grant, remaining) > 0 ? 'It is included in your plan at no charge' : `${amount(grant.unit_price_millicents, view.catalog.spec.currency)} will be recorded only if it succeeds`;
+      if (!window.confirm(`Run ${view.catalog.spec.features[name].label}?\n${charge}. This consumes one monthly start even if it fails or is cancelled.`)) return;
       current(generation);
       // Persist before POST. A failed save must prevent submission.
       const receipt = await store.prepare(selectedScope, input, view.quotes[name]); current(generation);

@@ -22,9 +22,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -164,14 +166,11 @@ func RenderDocsRow(w io.Writer, url string) {
 }
 
 // RenderHintRow is the error-explanations cluster (spec §6.4
-// amendment 1) hint renderer. Emits a single-line "💡 hint: <hint>"
-// row between Detail and Why in the APIError render. The 💡
-// glyph is in the central glyph table that the tripwire
-// TestLintTripwire_NoGlyphLiteralOutsideOutput pins to output.go
-// (lint_tripwires_test.go:138) — no other file in the package
-// may use 💡 verbatim. When Enabled() is false the row collapses
-// to "  hint: <hint>" so script consumers that grep on the
-// literal "hint:" still match.
+// amendment 1) hint renderer. Emits a single-line "hint: <hint>"
+// row between Detail and Why in the APIError render. The row has no
+// glyph in either mode: UX §3.2 allows only ✓ ✗ → ! and no emoji,
+// and none of those four means "hint". Script consumers that grep on
+// the literal "hint:" match the same text in pipes and terminals.
 //
 // The hint is the single short next-action line from the
 // pkg/whycopy catalog — one line, ≤200 bytes (the CLI tripwire in
@@ -179,10 +178,6 @@ func RenderDocsRow(w io.Writer, url string) {
 // ceiling on the catalog side, so this renderer never has to
 // truncate).
 func RenderHintRow(w io.Writer, hint string) {
-	if Enabled() {
-		_, _ = fmt.Fprintf(w, "  💡 hint: %s\n", hint)
-		return
-	}
 	_, _ = fmt.Fprintf(w, "  hint: %s\n", hint)
 }
 
@@ -307,6 +302,9 @@ func PrintUsage(w io.Writer, usage, topic string) {
 // PrintUsage remains the public call site so the doc-slug audit can continue
 // checking literal command topics.
 func printUsage(w io.Writer, usage, topic string) {
+	if flagHelpPrinted {
+		return
+	}
 	if jsonOutput && !jsonUsageHelp {
 		_ = writeJSONProblemWithExit(w, api.Problem{
 			Type:    docsSiteURL + "/errors/invalid-request",
@@ -318,8 +316,122 @@ func printUsage(w io.Writer, usage, topic string) {
 		}, 1)
 		return
 	}
-	_, _ = fmt.Fprintf(w, "%s\n", usage)
+	_, _ = fmt.Fprintf(w, "%s\n", compactUsage(usage))
 	_, _ = fmt.Fprintf(w, "  Docs: %s\n", docsURLForTopic(topic))
+}
+
+// usageSynopsisLimit bounds the usage line printed after a bad invocation.
+// Longer synopses list every flag on one line; --help groups and explains
+// them. JSON problems keep the full synopsis for scripts.
+const usageSynopsisLimit = 160
+
+var (
+	usageCommandWord = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	usagePlaceholder = regexp.MustCompile(`^(<[^<>|\[\]]+>|[A-Z][A-Z0-9_]*)$`)
+	usageVerbChoice  = regexp.MustCompile(`^[<\[(]?[a-z][a-z0-9-]*\|`)
+)
+
+// compactUsage shortens an over-long synopsis to its command path and
+// leading positionals, then names the --help command that lists every
+// option. The pointer stops at the first placeholder so it always runs as
+// typed. Lines after the first, such as the specific error, are kept.
+func compactUsage(usage string) string {
+	first, rest, hasRest := strings.Cut(usage, "\n")
+	if utf8.RuneCountInString(first) <= usageSynopsisLimit {
+		return usage
+	}
+	const prefix = "usage: gregale "
+	body, ok := strings.CutPrefix(first, prefix)
+	if !ok {
+		return usage
+	}
+	// A trailing "; <prose>" after the synopsis says what was wrong; keep it.
+	note := ""
+	if i := strings.LastIndex(body, "; "); i >= 0 && !strings.ContainsAny(body[i+2:], "[]<>|") {
+		body, note = body[:i], body[i+2:]
+	}
+	fields := strings.Fields(body)
+	var synopsis, helpPath []string
+	i := 0
+	for ; i < len(fields); i++ {
+		field := fields[i]
+		if usageCommandWord.MatchString(field) {
+			synopsis = append(synopsis, field)
+			if len(synopsis) == len(helpPath)+1 {
+				helpPath = append(helpPath, field)
+			}
+			continue
+		}
+		if !usagePlaceholder.MatchString(field) {
+			break
+		}
+		synopsis = append(synopsis, field)
+	}
+	if len(helpPath) == 0 {
+		return usage
+	}
+	remaining := strings.Join(fields[i:], " ")
+	hasFlags := strings.Contains(remaining, "--")
+	switch {
+	case remaining == "":
+	case usageVerbChoice.MatchString(remaining) && strings.HasPrefix(remaining, "<"):
+		synopsis = append(synopsis, "<command>")
+	case usageVerbChoice.MatchString(remaining):
+		synopsis = append(synopsis, "[command]")
+	case !hasFlags:
+		synopsis = append(synopsis, "...")
+	}
+	// Required flags often carry the error itself ("jobs add" without
+	// --image prints this line), so keep them when they fit.
+	if required := requiredUsageFlags(fields[i:]); len(required) > 0 {
+		withRequired := append(append([]string{}, synopsis...), required...)
+		if utf8.RuneCountInString(prefix+strings.Join(withRequired, " ")+" [flags]") <= usageSynopsisLimit {
+			synopsis = withRequired
+		}
+	}
+	if hasFlags {
+		synopsis = append(synopsis, "[flags]")
+	}
+	out := prefix + strings.Join(synopsis, " ")
+	if note != "" {
+		out += "\n  " + note
+	}
+	out += "\n  All options: gregale " + strings.Join(helpPath, " ") + " --help"
+	if hasRest {
+		out += "\n" + rest
+	}
+	return out
+}
+
+var (
+	usageCleanFlag = regexp.MustCompile(`^--[a-z0-9][a-z0-9-]*$`)
+	usageFlagValue = regexp.MustCompile(`^([A-Z][A-Z0-9_]*|<[^<>|\[\]]+>|[a-z0-9-]+(\|[a-z0-9-]+)+)$`)
+)
+
+// requiredUsageFlags returns the flags (with their values) that a synopsis
+// lists outside any [optional] or (alternative) group, up to the first
+// "|" separating alternative command forms.
+func requiredUsageFlags(tokens []string) []string {
+	var required []string
+	depth := 0
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		if depth == 0 && token == "|" {
+			break
+		}
+		if depth == 0 && usageCleanFlag.MatchString(token) {
+			required = append(required, token)
+			if i+1 < len(tokens) && usageFlagValue.MatchString(tokens[i+1]) {
+				required = append(required, tokens[i+1])
+				i++
+			}
+			continue
+		}
+		opened := strings.Count(token, "[") + strings.Count(token, "(")
+		closed := strings.Count(token, "]") + strings.Count(token, ")")
+		depth = max(0, depth+opened-closed)
+	}
+	return required
 }
 
 // LiveTicker is a per-command redraw buffer for tabular progress UI

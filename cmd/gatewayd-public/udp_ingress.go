@@ -25,7 +25,7 @@ const defaultUDPDScheddTarget = "unix:///run/faas/schedd.sock"
 
 // UDP requires explicit opt-in and source CIDRs. Shutdown cancels all peer
 // sessions before dependencies close; datagrams have no half-close drain.
-func startUDPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore, metrics *udpd.Metrics) (stop func(), err error) {
+func startUDPIngress(ctx context.Context, log *slog.Logger, store *state.EdgeStore, metrics *udpd.Metrics) (stop func(), err error) {
 	if !envBoolOr("FAAS_UDPD_ENABLED", false) {
 		return func() {}, nil
 	}

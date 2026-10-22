@@ -451,6 +451,9 @@ type AppSpec struct {
 	// ExecutionMode constrains vmmd's characterization result. Empty preserves
 	// legacy inference for callers predating ADR-137.
 	ExecutionMode string
+	// WorkerPushDelivery marks a worker-mode app with a push queue binding;
+	// vmmd accepts its private HTTP delivery listener at startup.
+	WorkerPushDelivery bool
 	// Plan and AccountID are request-level admission context. Keeping them
 	// with the flat spec makes deploy prime and ordinary wakes carry the same
 	// cgroup and metrics identity to vmmd.
@@ -713,6 +716,20 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 	// in vmmdgrpc.Logs consults MD as the runtime source; the
 	// proto field is the documentation seam.
 	fields, _ := wire.FromContext(ctx)
+	// A boot without wake correlation (the deploy prime) still names its
+	// app, deployment and instance: vmmd reads the deployment from this
+	// metadata, records a worker deployment as proven by it (ADR-20261018101500)
+	// and lets the booting guest register its secret-reload process (ADR-508).
+	// Wake events stay keyed on the wake id, which is not filled in here.
+	if fields.AppID == "" {
+		fields.AppID = app.AppID
+	}
+	if fields.DeploymentID == "" {
+		fields.DeploymentID = app.DeploymentID
+	}
+	if fields.InstanceID == "" {
+		fields.InstanceID = instance
+	}
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	boot := c.cli.CreateColdBoot
 	if app.RehearsalRunID != "" {
@@ -1666,6 +1683,18 @@ func (c *VMMClient) CancelLiveMigration(ctx context.Context, _, instanceID, leas
 	return nil
 }
 
+// CancelFunctionMigrationSource preserves the physical rollback outcome.
+func (c *VMMClient) CancelFunctionMigrationSource(ctx context.Context, _ string, id, token string) (bool, error) {
+	response, err := c.cli.CancelLiveMigration(ctx, &vmmdpb.CancelLiveMigrationRequest{InstanceId: id, LeaseToken: token})
+	if err != nil {
+		return false, liftErr(err)
+	}
+	if response.GetSourceProtocolVersion() != fcvm.FunctionMigrationSourceProtocolVersion {
+		return false, state.ErrMigrationCommitUnresolved
+	}
+	return response.GetSourceRetired(), nil
+}
+
 // Ping implements VMM. Wire-level liveness probe (issue #97 /
 // ADR-025 axis 3, PR #114); see RoutedVMM.Ping for the contract.
 func (c *VMMClient) Ping(ctx context.Context) (*PingOutcome, error) {
@@ -1912,6 +1941,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		StartupDeadlineS:           a.StartupDeadlineS,
 		DisableStartupCpuBoost:     a.DisableStartupCPUBoost,
 		ExecutionMode:              a.ExecutionMode,
+		WorkerPushDelivery:         a.WorkerPushDelivery,
 		PrivateNetworkCidrs:        a.PrivateNetworkCIDRs,
 		PrivateNetworkId:           a.PrivateNetworkID,
 		PrivateNetworkAddress:      a.PrivateNetworkAddress,

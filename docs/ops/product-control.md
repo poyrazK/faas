@@ -277,8 +277,10 @@ reviews feature inclusion, per-success prices, monthly allowances, used starts
 and remaining starts, then explicitly confirms. Changes apply immediately to
 future starts. Already accepted runs keep their admitted price. Consumed starts
 carry across plans and catalog revisions within the UTC month; a downgrade below
-that count leaves zero starts available. There is no subscription fee, proration,
-payment collection or scheduled downgrade in this release.
+that count leaves zero starts available. A plan's monthly fee follows the
+[monthly fee](#monthly-plan-fees) rule: the month owes the highest fee among the
+plans held in it, so a downgrade lowers the fee from the next month, and the
+review says so. There is no scheduled downgrade.
 
 A review binds the current assignment, both sets of terms, latest catalog head,
 UTC month and relevant consumed starts. Confirmation rechecks these with current
@@ -582,7 +584,8 @@ Use **Preview plan change** to compare prices, access and monthly caps, then
 confirm. Existing Auth organization links are preserved automatically. First
 assignments can supply an organization UUID. Terms change immediately for future
 admissions; starts already used do not reset and accepted runs keep their original
-terms. No subscription proration occurs. An intervening assignment, identity,
+terms. The review shows the plans' monthly fees; the month owes the higher one
+(see [monthly plan fees](#monthly-plan-fees)). An intervening assignment, identity,
 catalog or UTC-month change requires a new preview. Confirmation IDs and
 before/after receipts are durable: retry the same confirmation after a lost
 response; an older retry cannot reapply itself over a newer change. Expired or
@@ -651,6 +654,114 @@ For an intentionally fixed binding, use `init --definition DEFINITION_UUID`.
 Fixed bindings keep the original contract; publish and explicitly assign a new
 catalog before retiring their code. Catalog references alone do not extend
 deployment retention.
+
+### Included starts and overage
+
+A grant can include starts at no charge before its unit price applies
+([ADR-20261021154511](../adr/20261021154511-product-control-plan-fees-and-overage.md)):
+
+```json
+"export": {"included_starts": 100, "unit_price_millicents": 20000, "monthly_starts": 1000}
+```
+
+- **Pricing.** The first 100 starts of the UTC month cost nothing. Starts 101 to
+  1,000 cost €0.20 per verified success. The 1,001st start is refused, as any
+  start beyond `monthly_starts` is. `included_starts` ranges from 0 (the
+  default, today's pricing) to `monthly_starts`.
+- **What counts.** Every admitted start counts, whether it succeeds, fails or is
+  cancelled, across plans and catalog revisions in the month. A customer who
+  moves to a plan with more included starts keeps the starts already used.
+- **Price at admission.** Each run records its own price: 0 for an included start,
+  the unit price otherwise. Statements show included runs as their own line at
+  price 0, which invoices describe as "… included at no charge". A statement that
+  charges nothing is not exported.
+- **Confirmation.** The portal shows the included runs left, then the price. Its
+  quote binds the next start's price, so if another start uses the last included
+  one first, the confirmation fails with 409 `product_quote_changed` and shows
+  the new price. `gregale product quote` returns `included_starts` and
+  `next_start_price_millicents`.
+- **Release gate.** Publishing a catalog with included starts needs the
+  operator's `product_control_plan_pricing_enabled` runtime setting. Without it
+  the publication is refused with 409 `product_plan_pricing_unavailable`. Enable
+  the setting only once every apid replica runs this release, because an earlier
+  apid would charge included starts at the full price. Guided setup edits starts
+  and prices and keeps included starts set through the API.
+
+### Monthly plan fees
+
+A plan can charge a monthly fee besides its run prices
+([ADR-20261021154511](../adr/20261021154511-product-control-plan-fees-and-overage.md)):
+
+```json
+"pro": {"label": "Pro", "monthly_fee_millicents": 2900000, "features": {"export": {"included_starts": 100, "unit_price_millicents": 20000, "monthly_starts": 1000}}}
+```
+
+- **Which fee.** Each UTC month owes, once, the highest monthly fee among the
+  plans (catalog revision and plan) the customer held in it. A customer who
+  upgrades on the 20th owes the higher fee for the month. One who downgrades owes
+  the lower fee from the next month, and the plan-change reviews say so.
+- **First month.** In the month of a customer's first assignment, the fee is
+  prorated by the minute from the assignment to the month's end, rounded half up
+  to the millicent. Included starts are not prorated; cap a late joiner with
+  `monthly_starts`.
+- **Suspension** does not stop the fee. To stop charging, move the customer to a
+  plan without one.
+- **Plan history.** Every assignment change (owner assignment, reviewed owner
+  change, self-service change, onboarding) is recorded with its time. A month's
+  plans are the one in force when it starts and those assigned during it.
+- **Statements.** The review's `fees` names the plan, revision, monthly fee, the
+  amount and `prorated_from`, and `amount_millicents` includes it. A customer
+  whose month owes a fee gets a statement without runs, and billing runs bill
+  such customers too. The invoice item reads "Monthly fee for plan pro", with
+  ", prorated from 2026-10-21" when partial.
+- **Credits.** Credit notes still credit runs only. Refund a fee in your billing
+  provider.
+- **Release gate.** Plan fees need the same `product_control_plan_pricing_enabled`
+  setting as included starts, because an earlier apid would finalize statements
+  without them.
+### Free trials
+
+A plan can offer a free trial
+([ADR-20261021195901](../adr/20261021195901-product-control-free-trials.md)):
+
+```json
+"pro": {"label": "Pro", "monthly_fee_millicents": 2900000, "trial_days": 14, "features": {"export": {"included_starts": 100, "unit_price_millicents": 20000, "monthly_starts": 1000}}}
+```
+
+- **Starting.** A customer's first assignment to a plan with `trial_days` starts
+  their trial, if they never had one in the app, by any assignment path: owner
+  assignment, reviewed change, self-service change or onboarding. It lasts the
+  plan's days from the assignment. A customer gets one trial per app. Changing
+  plans keeps its end, and a customer whose trial has ended starts no other.
+- **Runs.** Starts during the trial cost nothing and are marked `trial` in their
+  admission evidence. They count toward `monthly_starts`, which still limits the
+  trial, but not toward `included_starts`, so the plan's included starts are
+  counted afresh when the trial ends. Usage shows `trial_starts` per feature. A
+  confirmation made during the trial goes stale (409 `product_quote_changed`) once
+  the start price it bound changes.
+- **Fees.** A month's fee covers only its minutes outside the trial, from the
+  customer's first assignment. It is the highest fee among the plans held in those
+  minutes, prorated by their share of the month. A month wholly inside the trial
+  owes nothing. The review's fee names the trial it excludes, and the invoice item
+  reads "…, excluding the free trial from 2026-11-01 to 2026-11-04".
+- **Owner control.** `PUT /v1/apps/{slug}/product/customers/{tenant}/trial` with
+  `{"ends_at": "…"}` moves a running trial's end, no earlier than the next UTC
+  minute and no more than 90 days after it started. `DELETE` ends it at the next
+  minute. A customer without a running trial is refused with 409
+  `product_trial_unavailable`. Changes are audited as
+  `product.customer.trial_changed`.
+
+  ```sh
+  gregale product customers trial --app exports --tenant TENANT_UUID --ends-at 2026-11-30T00:00:00Z
+  gregale product customers trial --app exports --tenant TENANT_UUID --end
+  ```
+- **Where it shows.** Customers and `gregale product quote` show `trial_starts_at`
+  and `trial_ends_at`. The portal says runs are free until the trial ends, and its
+  plan comparison names a plan's trial. The owner's plan review shows the trial a
+  change keeps or starts.
+- **Release gate.** `trial_days` and the trial routes need the
+  `product_control_plan_pricing_enabled` setting, because an earlier apid would
+  charge the trial's runs and fee.
 
 ## Deployment bindings
 
@@ -1387,9 +1498,10 @@ and, optionally, its business name and tax identifier. The routes are
   no Paddle connection, the tenant's external reference is not a Paddle customer ID,
   or the Paddle key cannot manage customer addresses.
 - **Billing.** With collection `send`, the next export, or a retry of one that
-  failed for lack of an address, bills the transaction with the customer's active
-  address and business, so Paddle issues the invoice with the connection's payment
-  terms. A billed invoice cannot be changed in Paddle, so finalize statements only
+  failed for lack of an address, bills the transaction with the customer's newest
+  active address and business, the ones the portal edits, so Paddle issues the
+  invoice with the connection's payment terms. Paddle orders them only by ID, so
+  "newest" means created last, not edited last. A billed invoice cannot be changed in Paddle, so finalize statements only
   after review.
 - Leaving the business name empty keeps the current business.
 
@@ -1697,6 +1809,45 @@ private commercial projections, scoped receipts, owner policy CAS, Origin/CSRF
 and the default-off routes. Browser contracts cover explicit comparisons,
 storage failure, cross-tab references, response loss, read-only reload recovery,
 history and logout/permission fencing. These checks do not qualify a real host.
+
+### Provider qualification
+
+The payment tests above use recorded fakes of Stripe, Paddle and Lago.
+`make product-control-provider-qualification` runs the owner flow
+(ADR-20261018212918) against each provider's real API through apid's routes and
+clients, for every provider whose test credentials are set; with none set it
+skips. Each provider gets a fresh customer and one finalized EUR 12.50 statement:
+
+1. The billing connection accepts the test key (`send` collection, 14 days, for
+   Stripe and Paddle; Lago without collection).
+2. Paddle only: the export without an address is refused with 422 and keeps the
+   draft. Billing details are written, read back field for field, skipped when
+   unchanged and updated with a cleared line. A second address created in Paddle
+   becomes the newest active one (ADR-20261020120000 amendment 1).
+3. The export completes, and repeating it returns the same invoice. Paddle's
+   transaction is `billed` with the newest address and the business.
+4. The payment sync reads it as open with EUR 12.50 remaining, a due date and,
+   for Stripe and Paddle, an https page to pay it. The owner's statement shows
+   the same.
+5. An overdue policy of 0 days holds the customer once the payment sync and hold
+   workers run past the provider's real due date. Their clocks are moved; the
+   provider is not.
+6. The invoice is settled in the provider: paid out of band in Stripe, cancelled
+   in Paddle (a sandbox invoice is paid only through checkout) and marked paid in
+   Lago. The sync reads `paid` or `void`, and the hold lifts.
+
+| Variable | Value |
+| --- | --- |
+| `FAAS_QUALIFY_STRIPE_TEST_KEY` | A Stripe test-mode secret or restricted key (`sk_test_…`, `rk_test_…`) |
+| `FAAS_QUALIFY_PADDLE_SANDBOX_KEY` | A Paddle sandbox API key (`pdl_sdbx_apikey_…`) with customer, address, business and transaction access |
+| `FAAS_QUALIFY_LAGO_KEY`, `FAAS_QUALIFY_LAGO_URL`, `FAAS_QUALIFY_LAGO_TEST_ORG=1` | Lago has no test mode: the key and public API URL of a Lago organization kept for tests, and the acknowledgement that it is one |
+| `FAAS_QUALIFY_EVIDENCE_DIR` | Optional: writes `product-control-<provider>.json` with the customer, invoice, links, due date and passed checks, never a key |
+
+Live keys are refused. Paddle gives a transaction a payment page only when the
+sandbox has a default payment link (Checkout settings); without one, step 4
+fails, as customers could not pay. Lago's URL goes through apid's egress guard,
+so a Lago on a private address is refused. Every run leaves its customer and its
+paid or cancelled invoice in the provider.
 
 
 ### Unsubscribing from notification email

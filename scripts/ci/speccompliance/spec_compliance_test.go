@@ -91,6 +91,9 @@ const (
 	configRevisionsFile              = "config_revisions.go"     // ADR-1451 guarded, reversible config changes
 	releaseFreezesFile               = "release_freezes.go"      // ADR-20261019071733 deploy freezes
 	releaseGatesFile                 = "release_gates.go"        // ADR-20261019071734 release gates
+	releaseApprovalsFile             = "release_approvals.go"    // ADR-20261020085706 release approvals
+	releaseDiffFile                  = "release_diff.go"         // ADR-20261021101117 release diff
+	scheduledReleasesFile            = "scheduled_releases.go"   // ADR-20261021152201 scheduled releases
 	changeTimelineFile               = "change_timeline.go"      // ADR-751 app change timeline DTOs
 	customMetricSeriesFile           = "custom_metric_series.go" // ADR-745 custom metric history DTOs
 	operatorPlatformFlagsFile        = "operator_platform_flags.go"
@@ -105,12 +108,30 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
-	"GET /v1/apps/{slug}/operation-schedules":                        true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
-	"GET /v1/apps/{slug}/operations/{id}/children":                   true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
-	"GET /v1/platform-tenant-self/customer-operation-schedules":      true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
-	"GET /v1/platform-tenant-self/customer-operation-schedules/{id}": true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
-	"GET /v1/platform-tenant-self/customer-operations/{id}/children": true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
-	"GET /v1/runtime/operations/{id}/children":                       true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
+	"DELETE /v1/apps/{slug}/operation-approval-forms/{id}":                        true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
+	"DELETE /v1/apps/{slug}/operation-concurrency/{id}":                           true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
+	"GET /v1/apps/{slug}/operation-approval-forms":                                true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
+	"GET /v1/apps/{slug}/operation-concurrency":                                   true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
+	"GET /v1/apps/{slug}/operation-schedules":                                     true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
+	"GET /v1/apps/{slug}/operations/{id}/approvals/{step}/form":                   true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
+	"GET /v1/apps/{slug}/operations/{id}/children":                                true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
+	"GET /v1/platform-tenant-self/customer-operation-queue":                       true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
+	"GET /v1/platform-tenant-self/customer-operation-schedules":                   true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
+	"GET /v1/platform-tenant-self/customer-operation-schedules/{id}":              true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
+	"GET /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}/form": true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
+	"GET /v1/platform-tenant-self/customer-operations/{id}/children":              true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
+	"GET /v1/runtime/job-operations/{id}/children":                                true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
+	"GET /v1/runtime/operations/{id}/children":                                    true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
+	"GET /v1/runtime/workflow-operations/{id}/children":                           true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules":                   true, // session + CSRF adapter for the public split-rule creation API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}":         true, // session + CSRF adapter for the public split-rule update API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo":    true, // session + CSRF adapter for the public split-rule undo API
+	"POST /dashboard/apps/{slug}/profiles/deployment-policy":                      true, // session + CSRF adapter for automatic profiling policy
+	"POST /dashboard/apps/{slug}/profiles/investigations/{id}/check":              true, // session + CSRF adapter for the profiling regression API
+	"POST /dashboard/apps/{slug}/profiles/investigations":                         true, // session + CSRF adapter for the profiling investigation API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":                       true, // scoped HTML/CSRF adapter for the public issue action API
+	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":                      true, // scoped HTML/CSRF adapter for issue impact alert policy updates
+	"POST /dashboard/apps/{slug}/issues/ownership-rules":                          true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
 	// Fixed-executor repair preview routes are documented in docs/data-repair.md;
 	// they are not part of the public SDK contract until native qualification.
 	"GET /v1/apps/{slug}/data-repair/review":                            true,
@@ -166,6 +187,8 @@ var routeExclude = map[string]bool{
 	"POST /v1/internal/hosting/sites/{site}/releases":                              true,
 	"POST /v1/internal/hosting/sites/{site}/releases/{release}/finalize":           true,
 	"POST /v1/internal/hosting/sites/{site}/releases/{release}/uploads":            true,
+	"POST /v1/runtime/job-operations/{id}/children":                                true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
+	"POST /v1/runtime/workflow-operations/{id}/children":                           true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
 	"PUT /v1/internal/hosting/sites/{site}/ci/{run}":                               true,
 	"PUT /v1/internal/hosting/sites/{site}/retention":                              true,
 	"PUT /v1/internal/hosting/sites/{site}/suspension":                             true,
@@ -196,96 +219,87 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/mcp/apps/{slug}/oauth":                            true,
 	"POST /dashboard/mcp/retirements/{id}":                             true,
 
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules":                true, // session + CSRF adapter for the public split-rule creation API
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}":      true, // session + CSRF adapter for the public split-rule update API
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo": true, // session + CSRF adapter for the public split-rule undo API
-	"POST /dashboard/apps/{slug}/profiles/deployment-policy":                   true, // session + CSRF adapter for automatic profiling policy
-	"POST /dashboard/apps/{slug}/profiles/investigations/{id}/check":           true, // session + CSRF adapter for the profiling regression API
-	"POST /dashboard/apps/{slug}/profiles/investigations":                      true, // session + CSRF adapter for the profiling investigation API
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":                    true, // scoped HTML/CSRF adapter for the public issue action API
-	"POST /dashboard/apps/{slug}/issues/frequency-alerts":                      true, // scoped HTML/CSRF frequency alert policy adapter
-	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":                   true, // scoped HTML/CSRF adapter for issue impact alert policy updates
-	"POST /dashboard/apps/{slug}/issues/ownership-rules":                       true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
-	"POST /dashboard/apps/{slug}/issues/bulk-actions":                          true, // session/CSRF HTML adapter for the corresponding public Issues API
-	"POST /dashboard/apps/{slug}/issues/saved-views":                           true, // session/CSRF HTML adapter for the corresponding public Issues API
-	"POST /dashboard/apps/{slug}/issues/teams":                                 true, // session/CSRF HTML adapter for the corresponding public Issues API
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-links":              true, // session/CSRF HTML adapter for the corresponding public Issues API
-	"GET /v1/product-control/email/unsubscribe":                                true,
-	"POST /v1/product-control/email/unsubscribe":                               true,
-	"GET /v1/product-control/email-unsubscribe.js":                             true,
-	"GET /v1/apps/{slug}/product/email-opt-outs":                               true,
-	"GET /v1/product-control/customer/{slug}/email-opt-outs":                   true,
-	"POST /v1/product-control/email/resend-events":                             true,
-	"GET /v1/apps/{slug}/product/email-deliveries":                             true,
-	"POST /v1/apps/{slug}/product/email-deliveries/{delivery}/retry":           true,
-	"GET /v1/apps/{slug}/product/billing/documents":                            true,
-	"GET /v1/apps/{slug}/product/billing/documents/{document}/handoff":         true,
-	"GET /v1/apps/{slug}/product/billing/documents/{document}/invoice":         true,
-	"GET /v1/apps/{slug}/product/billing/overdue-policy":                       true,
-	"PUT /v1/apps/{slug}/product/billing/overdue-policy":                       true,
-	"DELETE /v1/apps/{slug}/product/billing/overdue-policy":                    true,
-	"GET /v1/apps/{slug}/product/billing/overdue-holds":                        true,
-	"GET /v1/apps/{slug}/product/billing/receipts":                             true,
-	"POST /v1/apps/{slug}/product/onboarding/workspaces":                       true,
-	"POST /v1/apps/{slug}/product/onboarding/preview":                          true,
-	"POST /v1/apps/{slug}/product/onboarding/confirm":                          true,
-	"GET /v1/apps/{slug}/product/onboarding/{onboarding}":                      true,
-	"GET /v1/apps/{slug}/product/team-policy":                                  true,
-	"POST /v1/apps/{slug}/product/team-policy/preview":                         true,
-	"PUT /v1/apps/{slug}/product/team-policy":                                  true,
-	"GET /v1/product-control/portal-guidance.js":                               true,
-	"GET /v1/product-control/portal-email.js":                                  true,
-	"GET /v1/product-control/customer/{slug}/email-preferences":                true,
-	"PUT /v1/product-control/customer/{slug}/email-preferences":                true,
-	"GET /v1/apps/{slug}/product/email-recoveries":                             true,
-	"POST /v1/product-control/customer/{slug}/email-recovery":                  true,
-	"GET /v1/product-control/customer/{slug}/email-recoveries":                 true,
-	"GET /v1/product-control/customer/{slug}/email-deliveries":                 true,
-	"GET /v1/product-control/portal-activity.js":                               true,
-	"GET /v1/product-control/portal-history.js":                                true,
-	"GET /v1/product-control/customer/{slug}/work-history":                     true,
-	"GET /v1/product-control/portal-run.js":                                    true,
-	"GET /v1/product-control/customer/{slug}/operations/{operation}/details":   true,
-	"GET /v1/product-control/customer/{slug}/activity":                         true,
-	"GET /v1/product-control/portal-notifications.js":                          true,
-	"GET /v1/product-control/customer/{slug}/notifications":                    true,
-	"POST /v1/product-control/customer/{slug}/notifications/read":              true,
-	"GET /v1/product-control/portal-help.js":                                   true,
-	"POST /v1/product-control/customer/{slug}/help":                            true,
-	"GET /v1/product-control/customer/{slug}/help":                             true,
-	"GET /v1/product-control/customer/{slug}/help/{request}":                   true,
-	"GET /v1/apps/{slug}/product/help":                                         true,
-	"GET /v1/apps/{slug}/product/help/{request}":                               true,
-	"PUT /v1/apps/{slug}/product/help/{request}":                               true,
-	"GET /v1/product-control/portal-team.js":                                   true,
-	"GET /v1/product-control/customer/{slug}/team":                             true,
-	"POST /v1/product-control/customer/{slug}/team/preview":                    true,
-	"POST /v1/product-control/customer/{slug}/team/confirm":                    true,
-	"GET /v1/product-control/customer/{slug}/team/actions":                     true,
-	"GET /v1/product-control/customer/{slug}/team/actions/{change}":            true,
-	"GET /v1/product-control/portal-plans.js":                                  true,
-	"GET /v1/apps/{slug}/product/plan-policy":                                  true,
-	"POST /v1/apps/{slug}/product/plan-policy/preview":                         true,
-	"PUT /v1/apps/{slug}/product/plan-policy":                                  true,
-	"GET /v1/product-control/customer/{slug}/plans":                            true,
-	"GET /v1/product-control/customer/{slug}/billing-details":                  true,
-	"PUT /v1/product-control/customer/{slug}/billing-details":                  true,
-	"POST /v1/product-control/customer/{slug}/plans/preview":                   true,
-	"POST /v1/product-control/customer/{slug}/plans/confirm":                   true,
-	"GET /v1/product-control/customer/{slug}/plans/changes":                    true,
-	"GET /v1/product-control/customer/{slug}/plans/changes/{change}":           true,
-	"GET /v1/apps/{slug}/product/access":                                       true,
-	"POST /v1/apps/{slug}/product/access/preview":                              true,
-	"PUT /v1/apps/{slug}/product/access":                                       true,
-	"GET /v1/apps/{slug}/product/doctor":                                       true,
-	"GET /v1/apps/{slug}/product/billing/review":                               true,
-	"GET /v1/platform-tenant-self/product/billing":                             true,
-	"GET /v1/product-control/customer/{slug}/billing":                          true,
-	"POST /v1/apps/{slug}/product/billing/credits":                             true,
-	"POST /v1/apps/{slug}/product/billing/documents/{document}/handoff":        true,
-	"POST /v1/apps/{slug}/product/billing/documents/{document}/invoice":        true,
-	"POST /v1/apps/{slug}/product/billing/receipts/{operation}/waive":          true,
-	"POST /v1/apps/{slug}/product/billing/statements/finalize":                 true,
+	"POST /dashboard/apps/{slug}/issues/frequency-alerts":                    true, // scoped HTML/CSRF frequency alert policy adapter
+	"POST /dashboard/apps/{slug}/issues/bulk-actions":                        true, // session/CSRF HTML adapter for the corresponding public Issues API
+	"POST /dashboard/apps/{slug}/issues/saved-views":                         true, // session/CSRF HTML adapter for the corresponding public Issues API
+	"POST /dashboard/apps/{slug}/issues/teams":                               true, // session/CSRF HTML adapter for the corresponding public Issues API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-links":            true, // session/CSRF HTML adapter for the corresponding public Issues API
+	"GET /v1/product-control/email/unsubscribe":                              true,
+	"POST /v1/product-control/email/unsubscribe":                             true,
+	"GET /v1/product-control/email-unsubscribe.js":                           true,
+	"GET /v1/apps/{slug}/product/email-opt-outs":                             true,
+	"GET /v1/product-control/customer/{slug}/email-opt-outs":                 true,
+	"POST /v1/product-control/email/resend-events":                           true,
+	"GET /v1/apps/{slug}/product/email-deliveries":                           true,
+	"POST /v1/apps/{slug}/product/email-deliveries/{delivery}/retry":         true,
+	"GET /v1/apps/{slug}/product/billing/documents":                          true,
+	"GET /v1/apps/{slug}/product/billing/documents/{document}/handoff":       true,
+	"GET /v1/apps/{slug}/product/billing/receipts":                           true,
+	"POST /v1/apps/{slug}/product/onboarding/workspaces":                     true,
+	"POST /v1/apps/{slug}/product/onboarding/preview":                        true,
+	"POST /v1/apps/{slug}/product/onboarding/confirm":                        true,
+	"GET /v1/apps/{slug}/product/onboarding/{onboarding}":                    true,
+	"GET /v1/apps/{slug}/product/team-policy":                                true,
+	"POST /v1/apps/{slug}/product/team-policy/preview":                       true,
+	"PUT /v1/apps/{slug}/product/team-policy":                                true,
+	"GET /v1/product-control/portal-guidance.js":                             true,
+	"GET /v1/product-control/portal-email.js":                                true,
+	"GET /v1/product-control/customer/{slug}/email-preferences":              true,
+	"PUT /v1/product-control/customer/{slug}/email-preferences":              true,
+	"GET /v1/apps/{slug}/product/email-recoveries":                           true,
+	"POST /v1/product-control/customer/{slug}/email-recovery":                true,
+	"GET /v1/product-control/customer/{slug}/email-recoveries":               true,
+	"GET /v1/product-control/customer/{slug}/email-deliveries":               true,
+	"GET /v1/product-control/portal-activity.js":                             true,
+	"GET /v1/product-control/portal-history.js":                              true,
+	"GET /v1/product-control/customer/{slug}/work-history":                   true,
+	"GET /v1/product-control/portal-run.js":                                  true,
+	"GET /v1/product-control/customer/{slug}/operations/{operation}/details": true,
+	"GET /v1/product-control/customer/{slug}/activity":                       true,
+	"GET /v1/product-control/portal-notifications.js":                        true,
+	"GET /v1/product-control/customer/{slug}/notifications":                  true,
+	"POST /v1/product-control/customer/{slug}/notifications/read":            true,
+	"GET /v1/product-control/portal-help.js":                                 true,
+	"POST /v1/product-control/customer/{slug}/help":                          true,
+	"GET /v1/product-control/customer/{slug}/help":                           true,
+	"GET /v1/product-control/customer/{slug}/help/{request}":                 true,
+	"GET /v1/apps/{slug}/product/help":                                       true,
+	"GET /v1/apps/{slug}/product/help/{request}":                             true,
+	"PUT /v1/apps/{slug}/product/help/{request}":                             true,
+	"GET /v1/product-control/portal-team.js":                                 true,
+	"GET /v1/product-control/customer/{slug}/team":                           true,
+	"POST /v1/product-control/customer/{slug}/team/preview":                  true,
+	"POST /v1/product-control/customer/{slug}/team/confirm":                  true,
+	"GET /v1/product-control/customer/{slug}/team/actions":                   true,
+	"GET /v1/product-control/customer/{slug}/team/actions/{change}":          true,
+	"GET /v1/product-control/portal-plans.js":                                true,
+	"GET /v1/apps/{slug}/product/plan-policy":                                true,
+	"POST /v1/apps/{slug}/product/plan-policy/preview":                       true,
+	"PUT /v1/apps/{slug}/product/plan-policy":                                true,
+	"GET /v1/product-control/customer/{slug}/plans":                          true,
+	"POST /v1/product-control/customer/{slug}/plans/preview":                 true,
+	"POST /v1/product-control/customer/{slug}/plans/confirm":                 true,
+	"GET /v1/product-control/customer/{slug}/plans/changes":                  true,
+	"GET /v1/product-control/customer/{slug}/plans/changes/{change}":         true,
+	"GET /v1/apps/{slug}/product/access":                                     true,
+	"POST /v1/apps/{slug}/product/access/preview":                            true,
+	"PUT /v1/apps/{slug}/product/access":                                     true,
+	"GET /v1/apps/{slug}/product/doctor":                                     true,
+	"GET /v1/apps/{slug}/product/billing/review":                             true,
+	"GET /v1/platform-tenant-self/product/billing":                           true,
+	"GET /v1/product-control/customer/{slug}/billing":                        true,
+	"POST /v1/apps/{slug}/product/billing/credits":                           true,
+	"POST /v1/apps/{slug}/product/billing/documents/{document}/handoff":      true,
+	"POST /v1/apps/{slug}/product/billing/receipts/{operation}/waive":        true,
+	"POST /v1/apps/{slug}/product/billing/statements/finalize":               true,
+	"GET /v1/apps/{slug}/product/billing/documents/{document}/invoice":       true,
+	"GET /v1/apps/{slug}/product/billing/overdue-policy":                     true,
+	"PUT /v1/apps/{slug}/product/billing/overdue-policy":                     true,
+	"DELETE /v1/apps/{slug}/product/billing/overdue-policy":                  true,
+	"GET /v1/apps/{slug}/product/billing/overdue-holds":                      true,
+	"GET /v1/product-control/customer/{slug}/billing-details":                true,
+	"PUT /v1/product-control/customer/{slug}/billing-details":                true,
+	"POST /v1/apps/{slug}/product/billing/documents/{document}/invoice":      true,
 	// ADR-1701: internal Product Control pilot; absent from the public SDK contract.
 	"POST /v1/platform-tenant-self/product/start":                                  true,
 	"GET /v1/apps/{slug}/product":                                                  true,
@@ -502,9 +516,11 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/jobs/{name}/policy":                            true, // HTML form, scheduled-work policy editor (ADR-385)
 	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":           true, // HTML form, failed job partition replay (ADR-385)
 	"POST /dashboard/apps/{slug}/rollback":                          true, // HTML form, app rollback (issue #248)
+	"POST /dashboard/apps/{slug}/routes/insights/{id}/fix":          true, // HTML form, route insight fix (ADR-20261020161310); same core as the /v1 fix
 	"POST /dashboard/apps/{slug}/deployments/{id}/retry":            true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":       true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
 	"GET /dashboard/apps/{slug}/changes":                            true, // ADR-751 HTML view of GET /v1/apps/{slug}/changes
+	"GET /dashboard/releases/{id}/approval":                         true, // ADR-20261020085706 HTML page over GET/POST /v1/deployments/{id}/approvals
 	"GET /dashboard/apps/{slug}/custom-metrics":                     true, // ADR-745 HTML view of custom metric history
 	"GET /dashboard/apps/{slug}/automations":                        true, // ADR-1285 HTML authoring console
 	"POST /dashboard/apps/{slug}/automations/{action}":              true, // ADR-1285 app-bound CSRF forms
@@ -568,7 +584,9 @@ var routeExclude = map[string]bool{
 	// typed wrapper. Mirror the exclusion in
 	// cmd/sdk-coverage/main.go::routeExclude; the two lists must
 	// move together.
-	"POST /v1/otel/v1/traces": true,
+	"POST /v1/otel/v1/traces":                      true,
+	"PUT /v1/apps/{slug}/operation-approval-forms": true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
+	"PUT /v1/apps/{slug}/operation-concurrency":    true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
 
 	// ADR-1293: session-bound HTML progress and CSRF result-check fragments.
 	"GET /dashboard/apps/{slug}/automations/live-verifications/{run_id}":     true, // ADR-1293 session-authenticated HTML progress fragment
@@ -1698,6 +1716,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", envDiffFile),
 		filepath.Join(root, "pkg", "api", operatorConfigFile),
 		filepath.Join(root, "pkg", "api", operatorPlatformFlagsFile), // ADR-1700 — platform flags
+		filepath.Join(root, "pkg", "api", "previews.go"),             // ADR 20261021080640 — self-serve previews
 		filepath.Join(root, "pkg", "api", obsFile),
 		filepath.Join(root, "pkg", "api", "obs_triage.go"),
 		filepath.Join(root, "pkg", "api", "obs_triage_history.go"),
@@ -1732,6 +1751,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", projectsFile),
 		filepath.Join(root, "pkg", "api", "project_environment_clones.go"), // ADR-590
 		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),
+		filepath.Join(root, "pkg", "api", "project_environment_secrets.go"), // ADR-1139
 		filepath.Join(root, "pkg", "api", "project_release_bindings.go"),
 		filepath.Join(root, "pkg", "api", "project_release_staging.go"),
 		filepath.Join(root, "pkg", "api", "queue_binding_canary.go"),
@@ -1774,6 +1794,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", configRevisionsFile),
 		filepath.Join(root, "pkg", "api", releaseFreezesFile),
 		filepath.Join(root, "pkg", "api", releaseGatesFile),
+		filepath.Join(root, "pkg", "api", releaseApprovalsFile),
+		filepath.Join(root, "pkg", "api", releaseDiffFile),
+		filepath.Join(root, "pkg", "api", scheduledReleasesFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),

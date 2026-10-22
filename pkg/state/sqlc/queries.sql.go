@@ -2379,6 +2379,9 @@ SELECT EXISTS(
  AND r.lease_until>clock_timestamp() AND s.status='running' AND a.status<>'deleted'
  AND NOT a.maintenance_mode AND (NOT a.platform_tenant_required OR r.platform_tenant_id IS NOT NULL)
  AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
+ -- A rehearsal-enrolled app never reaches a real provider with live
+ -- credentials from a workflow step (ADR-20261019180000).
+ AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=a.id)
  AND COALESCE(r.platform_tenant_id::text, '')=COALESCE($7::text, '')
  AND (r.platform_tenant_id IS NULL OR EXISTS (
   SELECT 1 FROM platform_tenants t WHERE t.id=r.platform_tenant_id AND t.account_id=a.account_id AND t.status='active'
@@ -15123,6 +15126,77 @@ func (q *Queries) EnvironmentQualificationNodeUsedMB(ctx context.Context, db DBT
 	return column_1, err
 }
 
+const environmentQualificationObjectStorageDeadline = `-- name: EnvironmentQualificationObjectStorageDeadline :one
+SELECT environment_binding_object_storage_deadline(q,$1::text,$2::jsonb,$3::bigint,
+ $4::uuid)::timestamptz AS deadline
+FROM environment_workload_qualification_requests q WHERE q.id=$5::uuid
+`
+
+type EnvironmentQualificationObjectStorageDeadlineParams struct {
+	Scope              string
+	Requirements       []byte
+	MaxAgeSeconds      int64
+	RestoredInstanceID pgtype.UUID
+	RequestID          pgtype.UUID
+}
+
+// NULL blocks activation; 'infinity' means the candidate has no object storage binding.
+func (q *Queries) EnvironmentQualificationObjectStorageDeadline(ctx context.Context, db DBTX, arg EnvironmentQualificationObjectStorageDeadlineParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, environmentQualificationObjectStorageDeadline,
+		arg.Scope,
+		arg.Requirements,
+		arg.MaxAgeSeconds,
+		arg.RestoredInstanceID,
+		arg.RequestID,
+	)
+	var deadline pgtype.Timestamptz
+	err := row.Scan(&deadline)
+	return deadline, err
+}
+
+const environmentQualificationOutboundDeadline = `-- name: EnvironmentQualificationOutboundDeadline :one
+SELECT environment_binding_outbound_deadline(q,$1::bigint)::timestamptz AS deadline
+FROM environment_workload_qualification_requests q WHERE q.id=$2::uuid
+`
+
+type EnvironmentQualificationOutboundDeadlineParams struct {
+	MaxAgeSeconds int64
+	RequestID     pgtype.UUID
+}
+
+// NULL blocks activation; 'infinity' means the candidate has no active outbound binding.
+func (q *Queries) EnvironmentQualificationOutboundDeadline(ctx context.Context, db DBTX, arg EnvironmentQualificationOutboundDeadlineParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, environmentQualificationOutboundDeadline, arg.MaxAgeSeconds, arg.RequestID)
+	var deadline pgtype.Timestamptz
+	err := row.Scan(&deadline)
+	return deadline, err
+}
+
+const environmentQualificationPostgresDeadline = `-- name: EnvironmentQualificationPostgresDeadline :one
+SELECT environment_binding_postgres_deadline(q,$1::text,$2::bigint,$3::uuid)::timestamptz AS deadline
+FROM environment_workload_qualification_requests q WHERE q.id=$4::uuid
+`
+
+type EnvironmentQualificationPostgresDeadlineParams struct {
+	Scope              string
+	MaxAgeSeconds      int64
+	RestoredInstanceID pgtype.UUID
+	RequestID          pgtype.UUID
+}
+
+// NULL blocks activation; 'infinity' means the candidate has no PostgreSQL binding.
+func (q *Queries) EnvironmentQualificationPostgresDeadline(ctx context.Context, db DBTX, arg EnvironmentQualificationPostgresDeadlineParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, environmentQualificationPostgresDeadline,
+		arg.Scope,
+		arg.MaxAgeSeconds,
+		arg.RestoredInstanceID,
+		arg.RequestID,
+	)
+	var deadline pgtype.Timestamptz
+	err := row.Scan(&deadline)
+	return deadline, err
+}
+
 const environmentQualificationRestoreCurrent = `-- name: EnvironmentQualificationRestoreCurrent :one
 SELECT environment_qualification_restore_current($1::uuid,$2::uuid)::boolean
 `
@@ -21994,7 +22068,7 @@ SELECT r.receipt::jsonb AS receipt,coalesce(i.state IN ('running','snapshotting'
  AND r.receipt->'binding'->>'node_id'=i.node_id::text
  AND r.receipt->'binding'->>'incarnation'=n.vmmd_incarnation::text
  AND (r.receipt->'binding'->>'protocol_version')::integer<=n.vmmd_admission_protocol
- AND r.receipt->'binding'->>'captured_input_hash'=a.native_input_hash
+ AND r.receipt->'binding'->>'captured_input_hash'=application_standard_native_input_hash(a.input_snapshot,i.node_id)
  AND r.receipt->>'netns'=i.netns AND r.receipt->>'host_ip'=host(i.host_ip)
  AND r.receipt->>'lease_uid'=i.guest_uid::text AND r.receipt->>'paused'='false'
  AND (i.application_standard_promotion_token IS NULL OR p.parent_token=b.token),false)::boolean AS valid
@@ -22002,7 +22076,7 @@ FROM instances i JOIN instance_application_standard_admissions a ON a.instance_i
 JOIN instance_application_standard_boots b ON b.token=i.application_standard_boot_token AND b.instance_id=i.id
 LEFT JOIN instance_application_standard_promotions p ON p.token=i.application_standard_promotion_token AND p.instance_id=i.id
 JOIN compute_nodes n ON n.id=i.node_id
-CROSS JOIN LATERAL (SELECT CASE WHEN i.application_standard_promotion_token IS NULL THEN b.receipt ELSE p.receipt END AS receipt) r
+CROSS JOIN LATERAL (SELECT coalesce(function_migration_runtime_receipt(i.id,i.node_id,i.wake_id),CASE WHEN i.application_standard_promotion_token IS NULL THEN b.receipt ELSE p.receipt END) AS receipt) r
 WHERE i.id=$1::uuid
 `
 
@@ -42914,7 +42988,9 @@ func (q *Queries) ListEgressCircuitCandidates(ctx context.Context, db DBTX, samp
 
 const listEnabledAppLogDrainsWithStandardBinding = `-- name: ListEnabledAppLogDrainsWithStandardBinding :many
 SELECT d.id, d.app_id, d.account_id, d.kind, d.target_url, d.auth_header_sealed, d.enabled, d.created_at, d.updated_at,coalesce(application_standard_log_binding(d.app_id,d.id),'null'::jsonb)::jsonb AS standard_binding
-FROM app_log_drains d WHERE d.enabled ORDER BY d.created_at,d.id
+FROM app_log_drains d WHERE d.enabled
+ AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)
+ORDER BY d.created_at,d.id
 `
 
 type ListEnabledAppLogDrainsWithStandardBindingRow struct {
@@ -42930,6 +43006,8 @@ type ListEnabledAppLogDrainsWithStandardBindingRow struct {
 	StandardBinding  []byte
 }
 
+// A rehearsal-enrolled app's candidate output never leaves for a customer
+// log destination (ADR-20261019180000).
 func (q *Queries) ListEnabledAppLogDrainsWithStandardBinding(ctx context.Context, db DBTX) ([]ListEnabledAppLogDrainsWithStandardBindingRow, error) {
 	rows, err := db.Query(ctx, listEnabledAppLogDrainsWithStandardBinding)
 	if err != nil {
@@ -43112,6 +43190,8 @@ select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, qu
        filter_criteria, delivery,
        created_at, updated_at
 from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope)
+AND NOT (kind IN ('kafka','nats','redis_streams','sqs_compat')
+  AND EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=triggers.app_id))
 `
 
 type ListEnabledTriggersRow struct {
@@ -43146,6 +43226,9 @@ type ListEnabledTriggersRow struct {
 // ADR-118 / issue #757: filter_criteria is included so the dispatch
 // tick can evaluate per-record predicates without a second round-trip
 // (the column is JSONB; empty/null means "no filter").
+// A rehearsal-enrolled app never polls or commits offsets on a real external
+// broker; its queue, cron and realtime inputs stay inside the app
+// (ADR-20261019180000).
 func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabledTriggersRow, error) {
 	rows, err := db.Query(ctx, listEnabledTriggers)
 	if err != nil {
@@ -65930,6 +66013,208 @@ func (q *Queries) PendingEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const pendingEnvironmentQualificationObjectStorageChecks = `-- name: PendingEnvironmentQualificationObjectStorageChecks :many
+SELECT q.id::text AS request_id, q.attempt, c.account_id::text AS account_id, q.app_id::text AS app_id, e.slug AS scope,
+ c.id::text AS credential_id, c.managed_prefix::text AS prefix, c.permission,
+ coalesce(p.object_storage_requirements->>c.managed_prefix,'')::text AS required,
+ (SELECT jsonb_agg(jsonb_build_object('key',s.key,'delivery_version',s.delivery_version,'ciphertext',encode(s.ciphertext,'base64'),
+   'kid',coalesce(s.kid,''),'value_hash',coalesce(s.value_hash,'')) ORDER BY s.key)
+  FROM app_secrets s WHERE s.managed_object_storage_credential_id=c.id AND s.app_id=q.app_id AND s.scope=e.slug)::jsonb AS secrets
+FROM environment_workload_qualification_requests q
+JOIN environment_workload_graphs g ON g.id=q.graph_id
+JOIN project_environments e ON e.id=g.environment_id
+JOIN object_storage_s3_credentials c ON c.managed_app_id=q.app_id AND c.managed_scope=e.slug AND c.status='active' AND c.rotation_parent_id IS NULL
+LEFT JOIN app_binding_release_policies p ON p.app_id=q.app_id AND p.scope=e.slug
+WHERE q.graph_id=$1::uuid AND q.binding_context IS NOT NULL AND q.lease_until>clock_timestamp()
+ AND NOT EXISTS(SELECT 1 FROM object_storage_s3_credentials stage WHERE stage.rotation_parent_id=c.id AND stage.status='active')
+ AND environment_binding_object_storage_deliveries(c.id,q.app_id,e.slug) IS NOT NULL
+ AND environment_object_storage_mode_covers(c.permission,p.object_storage_requirements->>c.managed_prefix)
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_object_storage_receipts r WHERE r.request_id=q.id AND r.attempt=q.attempt AND r.credential_id=c.id)
+ORDER BY q.id, c.id
+`
+
+type PendingEnvironmentQualificationObjectStorageChecksRow struct {
+	RequestID    string
+	Attempt      int64
+	AccountID    string
+	AppID        string
+	Scope        string
+	CredentialID string
+	Prefix       string
+	Permission   string
+	Required     string
+	Secrets      []byte
+}
+
+// ADR-20261019121546: settled managed S3 credentials of a graph's enforced
+// candidates without a receipt for this attempt, with their sealed deliveries.
+func (q *Queries) PendingEnvironmentQualificationObjectStorageChecks(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]PendingEnvironmentQualificationObjectStorageChecksRow, error) {
+	rows, err := db.Query(ctx, pendingEnvironmentQualificationObjectStorageChecks, graphID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PendingEnvironmentQualificationObjectStorageChecksRow{}
+	for rows.Next() {
+		var i PendingEnvironmentQualificationObjectStorageChecksRow
+		if err := rows.Scan(
+			&i.RequestID,
+			&i.Attempt,
+			&i.AccountID,
+			&i.AppID,
+			&i.Scope,
+			&i.CredentialID,
+			&i.Prefix,
+			&i.Permission,
+			&i.Required,
+			&i.Secrets,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pendingEnvironmentQualificationOutboundProbes = `-- name: PendingEnvironmentQualificationOutboundProbes :many
+SELECT q.id::text AS request_id, q.attempt, b.account_id::text AS account_id, q.app_id::text AS app_id,
+ b.integration_id::text AS integration_id, rev.revision::text AS revision, p.method, p.path, p.expected_status
+FROM environment_workload_qualification_requests q
+JOIN outbound_app_bindings b ON b.app_id=q.app_id
+JOIN outbound_integration_probe_policies p ON p.integration_id=b.integration_id AND p.account_id=b.account_id
+CROSS JOIN LATERAL (SELECT environment_binding_outbound_revision(b.integration_id,q.app_id) AS revision) rev
+WHERE q.binding_context IS NOT NULL AND q.lease_until>clock_timestamp() AND rev.revision IS NOT NULL
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_outbound_receipts r WHERE r.request_id=q.id AND r.attempt=q.attempt
+  AND r.integration_id=b.integration_id AND r.revision=rev.revision)
+ORDER BY q.lease_until, q.id, b.integration_id
+LIMIT $1::integer
+`
+
+type PendingEnvironmentQualificationOutboundProbesRow struct {
+	RequestID      string
+	Attempt        int64
+	AccountID      string
+	AppID          string
+	IntegrationID  string
+	Revision       string
+	Method         string
+	Path           string
+	ExpectedStatus int32
+}
+
+// ADR-20261019152416: probe-ready outbound bindings of enforced candidates
+// with a live lease and no receipt for their current revision, soonest lease first.
+func (q *Queries) PendingEnvironmentQualificationOutboundProbes(ctx context.Context, db DBTX, rowLimit int32) ([]PendingEnvironmentQualificationOutboundProbesRow, error) {
+	rows, err := db.Query(ctx, pendingEnvironmentQualificationOutboundProbes, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PendingEnvironmentQualificationOutboundProbesRow{}
+	for rows.Next() {
+		var i PendingEnvironmentQualificationOutboundProbesRow
+		if err := rows.Scan(
+			&i.RequestID,
+			&i.Attempt,
+			&i.AccountID,
+			&i.AppID,
+			&i.IntegrationID,
+			&i.Revision,
+			&i.Method,
+			&i.Path,
+			&i.ExpectedStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pendingEnvironmentQualificationPostgresChecks = `-- name: PendingEnvironmentQualificationPostgresChecks :many
+SELECT q.id::text AS request_id, q.attempt, b.account_id::text AS account_id, q.app_id::text AS app_id, e.slug AS scope,
+ b.id::text AS binding_id, b.database_id::text AS database_id, b.environment_key, b.access, b.credential_generation,
+ s.delivery_version::bigint AS delivery_version, d.postgres_major::integer AS postgres_major,
+ coalesce(s.managed_credential_ref,'')::text AS credential_ref, s.ciphertext, coalesce(s.kid,'')::text AS kid,
+ coalesce(s.value_hash,'')::text AS value_hash
+FROM environment_workload_qualification_requests q
+JOIN environment_workload_graphs g ON g.id=q.graph_id
+JOIN project_environments e ON e.id=g.environment_id
+JOIN managed_postgres_bindings b ON b.app_id=q.app_id AND b.scope=e.slug AND b.state='ready'
+ AND b.access IN ('read_write','read_only','migration') AND b.rotation_previous_generation IS NULL AND b.cutover_id IS NULL
+JOIN app_secrets s ON s.app_id=q.app_id AND s.scope=e.slug AND s.key=b.environment_key
+ AND s.managed_postgres_binding_id=b.id AND s.managed_credential_generation=b.credential_generation AND s.delivery_version IS NOT NULL
+JOIN managed_postgres_databases d ON d.id=b.database_id AND d.deleted_at IS NULL
+WHERE q.graph_id=$1::uuid AND q.binding_context IS NOT NULL AND q.lease_until>clock_timestamp()
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_postgres_receipts r WHERE r.request_id=q.id AND r.attempt=q.attempt
+  AND r.binding_id=b.id AND r.credential_generation=b.credential_generation AND r.delivery_version=s.delivery_version)
+ORDER BY q.id, b.id
+`
+
+type PendingEnvironmentQualificationPostgresChecksRow struct {
+	RequestID            string
+	Attempt              int64
+	AccountID            string
+	AppID                string
+	Scope                string
+	BindingID            string
+	DatabaseID           string
+	EnvironmentKey       string
+	Access               string
+	CredentialGeneration int64
+	DeliveryVersion      int64
+	PostgresMajor        int32
+	CredentialRef        string
+	Ciphertext           []byte
+	Kid                  string
+	ValueHash            string
+}
+
+// ADR-20261019072523: settled managed PostgreSQL deliveries of a graph's
+// enforced candidates that have no receipt for their current credential.
+func (q *Queries) PendingEnvironmentQualificationPostgresChecks(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]PendingEnvironmentQualificationPostgresChecksRow, error) {
+	rows, err := db.Query(ctx, pendingEnvironmentQualificationPostgresChecks, graphID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PendingEnvironmentQualificationPostgresChecksRow{}
+	for rows.Next() {
+		var i PendingEnvironmentQualificationPostgresChecksRow
+		if err := rows.Scan(
+			&i.RequestID,
+			&i.Attempt,
+			&i.AccountID,
+			&i.AppID,
+			&i.Scope,
+			&i.BindingID,
+			&i.DatabaseID,
+			&i.EnvironmentKey,
+			&i.Access,
+			&i.CredentialGeneration,
+			&i.DeliveryVersion,
+			&i.PostgresMajor,
+			&i.CredentialRef,
+			&i.Ciphertext,
+			&i.Kid,
+			&i.ValueHash,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pendingLayerArtifactDeletions = `-- name: PendingLayerArtifactDeletions :many
 SELECT storage_key, state, coalesce(deletion_id::text, '')::text AS deletion_id FROM layer_artifact_retention
 WHERE state = 'deleting' OR (state = 'retained' AND delete_requested_at IS NOT NULL) ORDER BY storage_key
@@ -69433,6 +69718,9 @@ SELECT t.run_id, t.task_index, t.status, t.attempt, t.instance_id, t.error_class
  JOIN job_runs r ON r.id=t.run_id JOIN jobs j ON j.id=r.job_id
  WHERE t.task_index=0 AND t.status='queued' AND o.state='accepted' AND j.status='active'
  AND r.image_storage_key_snapshot IS NOT NULL
+ -- ADR-20261018210500: an Operation held by a per-customer concurrency
+ -- policy waits until apid's releaser removes its queue row.
+ AND NOT EXISTS (SELECT 1 FROM customer_operation_queue q WHERE q.operation_id=o.id)
  ORDER BY t.created_at LIMIT $1::integer
 `
 
@@ -77748,7 +78036,14 @@ SELECT (SELECT values_json FROM deployment_release_secret_snapshots WHERE deploy
         FROM project_environment_config_versions c
         WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
             AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
-        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
+        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config,
+    owner.project_id,
+    -- ADR-1139: the project environment secrets the deployment inherits.
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('key',p.key,'ciphertext',encode(p.ciphertext,'base64'),'kid',p.kid,
+        'value_hash',p.value_hash,'secret_version',p.secret_version,'created_at',p.created_at,'updated_at',p.updated_at) ORDER BY p.key)
+        FROM project_environment_secrets p
+        WHERE owner.project_id IS NOT NULL AND p.account_id=owner.account_id AND p.project_id=owner.project_id
+            AND p.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END),'[]'::jsonb)::jsonb AS project_secrets
 FROM owner
 `
 
@@ -77775,6 +78070,8 @@ type ReadRuntimeAppValuesForDeploymentRow struct {
 	Secrets                    []byte
 	ReloadSignals              []byte
 	ProjectConfig              []byte
+	ProjectID                  pgtype.UUID
+	ProjectSecrets             []byte
 }
 
 func (q *Queries) ReadRuntimeAppValuesForDeployment(ctx context.Context, db DBTX, arg ReadRuntimeAppValuesForDeploymentParams) (ReadRuntimeAppValuesForDeploymentRow, error) {
@@ -77797,6 +78094,8 @@ func (q *Queries) ReadRuntimeAppValuesForDeployment(ctx context.Context, db DBTX
 		&i.Secrets,
 		&i.ReloadSignals,
 		&i.ProjectConfig,
+		&i.ProjectID,
+		&i.ProjectSecrets,
 	)
 	return i, err
 }
@@ -79891,6 +80190,96 @@ func (q *Queries) RecordEnvironmentQualificationJobSmokeReceipt(ctx context.Cont
 		&i.RecordedAt,
 	)
 	return i, err
+}
+
+const recordEnvironmentQualificationObjectStorageReceipt = `-- name: RecordEnvironmentQualificationObjectStorageReceipt :exec
+INSERT INTO environment_qualification_object_storage_receipts(request_id,attempt,credential_id,prefix,permission,mode,deliveries)
+VALUES($1::uuid,$2::bigint,$3::uuid,$4::text,
+ $5::text,$6::text,$7::jsonb)
+ON CONFLICT DO NOTHING
+`
+
+type RecordEnvironmentQualificationObjectStorageReceiptParams struct {
+	RequestID    pgtype.UUID
+	Attempt      int64
+	CredentialID pgtype.UUID
+	Prefix       string
+	Permission   string
+	Mode         string
+	Deliveries   []byte
+}
+
+func (q *Queries) RecordEnvironmentQualificationObjectStorageReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationObjectStorageReceiptParams) error {
+	_, err := db.Exec(ctx, recordEnvironmentQualificationObjectStorageReceipt,
+		arg.RequestID,
+		arg.Attempt,
+		arg.CredentialID,
+		arg.Prefix,
+		arg.Permission,
+		arg.Mode,
+		arg.Deliveries,
+	)
+	return err
+}
+
+const recordEnvironmentQualificationOutboundReceipt = `-- name: RecordEnvironmentQualificationOutboundReceipt :exec
+INSERT INTO environment_qualification_outbound_receipts(request_id,attempt,integration_id,revision,method,path,status)
+VALUES($1::uuid,$2::bigint,$3::uuid,$4::text,
+ $5::text,$6::text,$7::integer)
+ON CONFLICT DO NOTHING
+`
+
+type RecordEnvironmentQualificationOutboundReceiptParams struct {
+	RequestID     pgtype.UUID
+	Attempt       int64
+	IntegrationID pgtype.UUID
+	Revision      string
+	Method        string
+	Path          string
+	Status        int32
+}
+
+func (q *Queries) RecordEnvironmentQualificationOutboundReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationOutboundReceiptParams) error {
+	_, err := db.Exec(ctx, recordEnvironmentQualificationOutboundReceipt,
+		arg.RequestID,
+		arg.Attempt,
+		arg.IntegrationID,
+		arg.Revision,
+		arg.Method,
+		arg.Path,
+		arg.Status,
+	)
+	return err
+}
+
+const recordEnvironmentQualificationPostgresReceipt = `-- name: RecordEnvironmentQualificationPostgresReceipt :exec
+INSERT INTO environment_qualification_postgres_receipts(request_id,attempt,binding_id,environment_key,access,credential_generation,delivery_version)
+VALUES($1::uuid,$2::bigint,$3::uuid,$4::text,
+ $5::text,$6::bigint,$7::bigint)
+ON CONFLICT DO NOTHING
+`
+
+type RecordEnvironmentQualificationPostgresReceiptParams struct {
+	RequestID            pgtype.UUID
+	Attempt              int64
+	BindingID            pgtype.UUID
+	EnvironmentKey       string
+	Access               string
+	CredentialGeneration int64
+	DeliveryVersion      int64
+}
+
+func (q *Queries) RecordEnvironmentQualificationPostgresReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationPostgresReceiptParams) error {
+	_, err := db.Exec(ctx, recordEnvironmentQualificationPostgresReceipt,
+		arg.RequestID,
+		arg.Attempt,
+		arg.BindingID,
+		arg.EnvironmentKey,
+		arg.Access,
+		arg.CredentialGeneration,
+		arg.DeliveryVersion,
+	)
+	return err
 }
 
 const recordEnvironmentQualificationRestoreReceipt = `-- name: RecordEnvironmentQualificationRestoreReceipt :one
@@ -85182,6 +85571,31 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 	return items, nil
 }
 
+const restampRuntimeInstanceConfigProof = `-- name: RestampRuntimeInstanceConfigProof :execrows
+UPDATE runtime_instance_config_proofs proof SET config_fingerprint=$1::text
+FROM instances i
+WHERE proof.instance_id=$2::uuid AND i.id=proof.instance_id AND i.wake_id=proof.wake_id
+    AND i.node_id=proof.node_id AND i.deployment_id=proof.deployment_id
+    AND proof.config_fingerprint=$3::text
+`
+
+type RestampRuntimeInstanceConfigProofParams struct {
+	ConfigFingerprint   string
+	InstanceID          pgtype.UUID
+	PreviousFingerprint string
+}
+
+// ADR-051 amendment (2026-10-22): moves a booted instance's proof from the
+// fingerprint it was published with to the one its own observed workload
+// class gives. Only the current wake's proof, and only from that fingerprint.
+func (q *Queries) RestampRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg RestampRuntimeInstanceConfigProofParams) (int64, error) {
+	result, err := db.Exec(ctx, restampRuntimeInstanceConfigProof, arg.ConfigFingerprint, arg.InstanceID, arg.PreviousFingerprint)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const restoreCanaryBaselineDefault = `-- name: RestoreCanaryBaselineDefault :execrows
 UPDATE project_release_sets SET active=true,expires_at=NULL WHERE id=$1::uuid AND NOT active
 `
@@ -89082,7 +89496,8 @@ SET inferred_profile = ($1::jsonb - 'image_command' - 'image_healthcheck') ||
     CASE WHEN inferred_profile ? 'image_healthcheck'
          THEN jsonb_build_object('image_healthcheck', inferred_profile -> 'image_healthcheck')
          ELSE '{}'::jsonb END
-WHERE id = $2::uuid AND kind = 'image'
+WHERE id = $2::uuid
+  AND (kind = 'image' OR inferred_profile ? 'image_healthcheck')
   AND status IN ('pending', 'building', 'imaging')
 `
 
@@ -89308,6 +89723,27 @@ func (q *Queries) SetInvoiceEnrichment(ctx context.Context, db DBTX, arg SetInvo
 		arg.UpdatedAt,
 	)
 	return err
+}
+
+const setObservedAppWorkloadClass = `-- name: SetObservedAppWorkloadClass :execrows
+UPDATE apps SET workload_class=$1::text
+WHERE id=$2::uuid AND account_id=$3::uuid AND status<>'deleted'
+`
+
+type SetObservedAppWorkloadClassParams struct {
+	WorkloadClass string
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+}
+
+// ADR-051: the workload class a cold boot observed. The caller holds the app
+// row exclusively.
+func (q *Queries) SetObservedAppWorkloadClass(ctx context.Context, db DBTX, arg SetObservedAppWorkloadClassParams) (int64, error) {
+	result, err := db.Exec(ctx, setObservedAppWorkloadClass, arg.WorkloadClass, arg.AppID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setOutboundBindingProbePolicy = `-- name: SetOutboundBindingProbePolicy :one
@@ -94001,6 +94437,8 @@ const workflowAlertSnapshot = `-- name: WorkflowAlertSnapshot :one
 WITH owned_apps AS (
  SELECT id FROM apps WHERE account_id = $3::uuid
  AND ($4::uuid IS NULL OR id = $4::uuid)
+ -- Account-wide rules skip rehearsal-enrolled apps (ADR-20261019180000).
+ AND ($4::uuid IS NOT NULL OR NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id = apps.id))
 ), due_runs AS (
  -- Same wake/lease eligibility as automation queue health (ADR-730/643).
  SELECT r.created_at,CASE WHEN r.status='running'

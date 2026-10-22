@@ -11,7 +11,8 @@ Use `gregale deploy --help` for common options and runnable examples. Add
 access, and other tasks. `gregale app --help` follows the same pattern;
 `gregale app my-api scale --help` explains resource changes and saved plans.
 Connection profiles go before the command (`gregale --profile staging deploy`);
-RAM/CPU resource profiles go after it (`gregale deploy --profile small`).
+RAM/CPU sizes use `--size` after it (`gregale deploy --size small`); the older
+`--profile SIZE` spelling after the command still works but is deprecated.
 
 ## Your first deployment with `gregale start`
 
@@ -321,10 +322,10 @@ warning to stderr, including with `--json`, so a script's stdout stays parseable
 
 ## Understand a preview
 
-`deploy --plan` and `deploy --dry-run` show the same connection, app,
+`deploy --preview` (also spelled `--plan`) and `deploy --dry-run` show the same connection, app,
 environment, source, and local-change summary. Their verification differs:
 
-- `--plan` performs local inference without authentication. It does not check
+- `--preview` performs local inference without authentication. It does not check
   the app's current remote configuration or guarantee build success.
 - `--dry-run` compares supported changes against remote state. It does not run
   the build or verify readiness, and state can change before deployment.

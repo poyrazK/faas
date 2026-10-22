@@ -41,27 +41,39 @@ import (
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
-// PgStore implements Store against Postgres. It holds a connection pool and
-// is safe for concurrent use.
-type PgStore struct {
+// pgCore is what every Postgres store holds: the pool and the probes over
+// it. The queries the edge daemons run are methods of *pgCore, so PgStore
+// and EdgeStore share one implementation of each; every other query is a
+// method of *PgStore (docs/adr/20261021092138-edge-store-blast-radius.md).
+type pgCore struct {
 	pool *orgAccessPool
 	// admission remembers whether the database has the instance admission
 	// functions (ADR-1741).
 	admission *admissionFunctionProbe
 }
 
+func newPgCore(pool *pgxpool.Pool) pgCore {
+	if pool == nil {
+		return pgCore{}
+	}
+	return pgCore{pool: &orgAccessPool{Pool: pool}, admission: &admissionFunctionProbe{}}
+}
+
+// PgStore implements Store against Postgres. It holds a connection pool and
+// is safe for concurrent use.
+type PgStore struct {
+	pgCore
+}
+
 // NewPgStore wraps a pool. The pool is owned by the caller; PgStore does not
 // close it on shutdown so daemons can share a single pool across a Store and
 // their LISTEN goroutine.
 func NewPgStore(pool *pgxpool.Pool) *PgStore {
-	if pool == nil {
-		return &PgStore{}
-	}
-	return &PgStore{pool: &orgAccessPool{Pool: pool}, admission: &admissionFunctionProbe{}}
+	return &PgStore{pgCore: newPgCore(pool)}
 }
 
 // Ping tests database connectivity through the underlying connection pool.
-func (s *PgStore) Ping(ctx context.Context) error {
+func (s *pgCore) Ping(ctx context.Context) error {
 	if s.pool == nil {
 		return errors.New("state: pgstore has nil pool")
 	}
@@ -396,7 +408,7 @@ func (s *PgStore) AccountByEmail(ctx context.Context, email string) (Account, er
 	return scanAccount(row)
 }
 
-func (s *PgStore) AccountByKeyHash(ctx context.Context, hash []byte) (Account, error) {
+func (s *pgCore) AccountByKeyHash(ctx context.Context, hash []byte) (Account, error) {
 	row := s.pool.QueryRow(ctx,
 		`select a.id, a.email, a.plan, a.status, coalesce(a.provider_customer_id,''), coalesce(a.stripe_subscription_item,''), a.created_at, a.deletion_requested_at, a.last_quota_warning_at, a.past_due_at, a.mfa_enrolled_at, a.mfa_secret_encrypted, a.mfa_recovery_codes_hash, a.mfa_required, a.egress_allowlist_extra, a.email_verified_at, coalesce(a.business_name,''), coalesce(a.billing_address,''), coalesce(a.tax_id,''), a.abuse_hold_at, coalesce(a.abuse_hold_reason,'')
 		 from accounts a join api_keys k on k.account_id = a.id where k.key_sha256 = $1`, hash)
@@ -415,7 +427,7 @@ func (s *PgStore) AccountByKeyHash(ctx context.Context, hash []byte) (Account, e
 // expiry / revoked gates without a second round-trip. The new
 // columns default to NULL / 'active', so existing rows round-trip
 // cleanly with Status='active' and ExpiresAt=nil.
-func (s *PgStore) APIKeyByHash(ctx context.Context, hash []byte) (APIKey, error) {
+func (s *pgCore) APIKeyByHash(ctx context.Context, hash []byte) (APIKey, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
 		        last_used_at,
@@ -714,7 +726,7 @@ func (s *PgStore) DeleteOIDCExchangedToken(ctx context.Context, id string) error
 	return q.DeleteOIDCExchangedToken(ctx, s.pool, pgtypeFromUUID(tokenUUID))
 }
 
-func (s *PgStore) AuthenticateKey(ctx context.Context, hash []byte) (Account, APIKey, error) {
+func (s *pgCore) AuthenticateKey(ctx context.Context, hash []byte) (Account, APIKey, error) {
 	acct, err := s.AccountByKeyHash(ctx, hash)
 	if err != nil {
 		return Account{}, APIKey{}, err
@@ -2757,7 +2769,7 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 	return created, nil
 }
 
-func (s *PgStore) AppByID(ctx context.Context, id string) (App, error) {
+func (s *pgCore) AppByID(ctx context.Context, id string) (App, error) {
 	// A job task instance carries no app ID. Looking one up sent '' as a
 	// uuid and logged "invalid input syntax for type uuid" in Postgres on
 	// every job run on production-us; no app has an empty ID (hunt #10).
@@ -2772,7 +2784,7 @@ func appByIDDB(ctx context.Context, db sqlc.DBTX, id string) (App, error) {
 	return scanApp(db.QueryRow(ctx, sel, id))
 }
 
-func (s *PgStore) AppBySlug(ctx context.Context, slug string) (App, error) {
+func (s *pgCore) AppBySlug(ctx context.Context, slug string) (App, error) {
 	sel := `select ` + appsSelectColumns + ` from apps where slug = $1 and status <> 'deleted'`
 	row := s.pool.QueryRow(ctx, sel, slug)
 	return scanApp(row)
@@ -3281,7 +3293,10 @@ func (s *PgStore) ListOwnedCronsByNodeID(ctx context.Context, nodeID string) ([]
 	sel := `select c.id, c.app_id, c.schedule, c.path, c.enabled, c.suspended_reason, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at, c.command, c.command_shell, c.command_timeout_seconds, c.command_max_output_bytes, c.retry_max, c.retry_backoff_seconds, c.schedule_policy, c.failure_rules, c.schedule_revision
 		   from crons c
 		   join apps a on a.id = c.app_id
-		  where a.node_id = $1 and c.suspended_reason = ''`
+		  where a.node_id = $1 and c.suspended_reason = ''
+		    -- A rehearsal fires crons only from its recipe, never from the
+		    -- clock (ADR-20261020200000).
+		    and not exists (select 1 from scenario_test_action_policies p where p.app_id = c.app_id)`
 	rows, err := s.pool.Query(ctx, sel, nodeID)
 	if err != nil {
 		return nil, err
@@ -3572,6 +3587,9 @@ func (s *PgStore) MarkInstanceMigrating(ctx context.Context, instanceID, current
 	if leaseToken == "" {
 		return fmt.Errorf("state: mark instance migrating: empty leaseToken")
 	}
+	if handled, err := s.markFunctionMigrationSource(ctx, instanceID, currentNodeID, leaseToken); handled {
+		return err
+	}
 	tag, err := s.pool.Exec(ctx,
 		`update instances
 		    set state = 'migrating',
@@ -3712,7 +3730,9 @@ func (s *PgStore) CancelInstanceMigration(ctx context.Context, instanceID, origi
 // 'migrating' without a peer commit, so the unresolved row is the input
 // set. A row in 'migrating' without a lease or start timestamp is ignored
 // by the aged production query and remains visible through the legacy
-// unfiltered form for repair tooling.
+// unfiltered form for repair tooling. Instances with a function migration
+// source record are excluded: their own reconciler owns recovery, and
+// sources whose recovery keeps failing must not fill every page.
 //
 // Sorted by instance id ASC for determinism so two peers
 // observing the same bad-owner event read the same input
@@ -3740,7 +3760,8 @@ func (s *PgStore) ListExpiredMigrations(ctx context.Context, maxPerTick int, old
 	          from instances i
 	         where i.state = 'migrating'
 	           and i.lease_token is not null
-		           and ($2::timestamptz IS NULL OR i.migration_started_at <= $2)`
+		           and ($2::timestamptz IS NULL OR i.migration_started_at <= $2)
+	           and not exists (select 1 from function_migration_sources f where f.instance_id = i.id)`
 	orderBy := "i.id asc"
 	if cutoff != nil {
 		orderBy = "i.migration_started_at asc nulls first, i.id asc"
@@ -7481,7 +7502,7 @@ func (s *PgStore) LiveDeploymentForScope(ctx context.Context, appID, scope strin
 // search; the planner switches to deployments_live_traffic_idx when
 // the partial predicate is selective (typical: one or two live rows
 // per app, vs. O(N) total rows).
-func (s *PgStore) LiveDeployments(ctx context.Context, appID string) ([]Deployment, error) {
+func (s *pgCore) LiveDeployments(ctx context.Context, appID string) ([]Deployment, error) {
 	rows, err := s.pool.Query(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
 		 from deployments
@@ -8024,6 +8045,14 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		return Deployment{}, fmt.Errorf("state: deployment %s status=%s: %w",
 			id, status, ErrDeploymentNotLive)
 	}
+	// ADR-20261021152201: a scheduled start is this traffic change plus the
+	// rollout stamp, under the same locks.
+	start, starting := scheduledStartFrom(ctx, id)
+	if starting {
+		if err := checkScheduledStartTx(ctx, tx, start, id); err != nil {
+			return Deployment{}, err
+		}
+	}
 
 	// (3) Lock sibling live rows in the same app so a concurrent
 	// CreateDeployment (which supersedes prior live rows) doesn't
@@ -8172,6 +8201,11 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	if sum != 100 {
 		return Deployment{}, fmt.Errorf("state: Σ traffic_percent = %d, want 100: %w",
 			sum, ErrTrafficPercentSumInvalid)
+	}
+	if starting {
+		if err := stampScheduledStartTx(ctx, tx, start, id); err != nil {
+			return Deployment{}, err
+		}
 	}
 
 	// Read back the stamped row + commit.
@@ -13075,7 +13109,7 @@ func (s *PgStore) CreateCustomDomain(ctx context.Context, domain, appID, token s
 	return d, nil
 }
 
-func (s *PgStore) DomainByName(ctx context.Context, domain string) (CustomDomain, error) {
+func (s *pgCore) DomainByName(ctx context.Context, domain string) (CustomDomain, error) {
 	row := s.pool.QueryRow(ctx,
 		`select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz),
 		        cert_status, coalesce(cert_expires_at, 'epoch'::timestamptz),
@@ -13157,7 +13191,7 @@ func (s *PgStore) DefaultCustomDomain(ctx context.Context, appID string) (string
 // suffix strictly contains host. The leading dot in substr(domain, 2) makes
 // the match label-boundary safe ("badexample.com" cannot match
 // "*.example.com").
-func (s *PgStore) WildcardDomainForHost(ctx context.Context, host string) (CustomDomain, error) {
+func (s *pgCore) WildcardDomainForHost(ctx context.Context, host string) (CustomDomain, error) {
 	row := s.pool.QueryRow(ctx,
 		`select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz),
 		        cert_status, coalesce(cert_expires_at, 'epoch'::timestamptz),
@@ -13956,7 +13990,8 @@ func (s *PgStore) ListCronsForApp(ctx context.Context, appID string) ([]Cron, er
 
 func (s *PgStore) ListEnabledCrons(ctx context.Context) ([]Cron, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision from crons where enabled = true and suspended_reason = ''`)
+		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision from crons c where enabled = true and suspended_reason = ''
+		  and not exists (select 1 from scenario_test_action_policies p where p.app_id = c.app_id)`)
 	if err != nil {
 		return nil, err
 	}
@@ -14987,13 +15022,17 @@ func (s *PgStore) CountFailedDeploymentsSince(ctx context.Context, accountID, ap
 		appArg = appID
 	}
 	var n int
+	// Account-wide aggregates skip rehearsal-enrolled apps: a candidate
+	// revision's injected faults must not page the account or mask an
+	// outage (ADR-20261019180000). App-scoped rules are unchanged.
 	row := s.pool.QueryRow(ctx, `
 		select count(*) from deployments d
 		 join apps a on a.id = d.app_id
 		 where a.account_id = $1
 		   and d.status = 'failed'
 		   and d.created_at >= $2
-		   and ($3::uuid is null or d.app_id = $3::uuid)`,
+		   and ($3::uuid is null or d.app_id = $3::uuid)
+		   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = d.app_id))`,
 		accountID, since.UTC(), appArg)
 	if err := row.Scan(&n); err != nil {
 		return 0, err
@@ -15023,18 +15062,20 @@ func (s *PgStore) WasInvokedSuccessfullySince(ctx context.Context, accountID, ap
 	var exists bool
 	row := s.pool.QueryRow(ctx, `
 		select exists(
-			select 1 from invocations
+			select 1 from invocations v
 			 where account_id = $1
 			   and state = 'completed'
 			   and created_at >= $2
 			   and ($3::uuid is null or app_id is not distinct from $3::uuid)
+			   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = v.app_id))
 			 limit 1)
 		    or exists(
-			select 1 from request_telemetry
+			select 1 from request_telemetry t
 			 where account_id = $1
 			   and received_at >= $2
 			   and status < 500
 			   and ($3::uuid is null or app_id = $3::uuid)
+			   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = t.app_id))
 			 limit 1)`,
 		accountID, since.UTC(), appArg)
 	if err := row.Scan(&exists); err != nil {
@@ -15069,10 +15110,11 @@ func (s *PgStore) CountNewErrorFingerprintsSince(ctx context.Context, accountID,
 	var total int
 	err := s.pool.QueryRow(ctx, `
 		select count(*)::int
-		  from app_errors
+		  from app_errors e
 		 where account_id = $1
 		   and first_seen_at >= $2
-		   and ($3::uuid is null or app_id = $3::uuid)`,
+		   and ($3::uuid is null or app_id = $3::uuid)
+		   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = e.app_id))`,
 		accountID, since.UTC(), appArg).Scan(&total)
 	if err != nil {
 		return 0, err
@@ -15095,10 +15137,11 @@ func (s *PgStore) ColdWakeRatePctSince(ctx context.Context, accountID, appID str
 			100.0 * sum(case when cold_boot then count else 0 end)::float8
 			/ nullif(sum(count), 0), 0
 		)::float8
-		  from request_telemetry
+		  from request_telemetry t
 		 where account_id = $1
 		   and received_at >= $2
-		   and ($3::uuid is null or app_id = $3::uuid)`,
+		   and ($3::uuid is null or app_id = $3::uuid)
+		   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = t.app_id))`,
 		accountID, since.UTC(), appArg).Scan(&rate)
 	if err != nil {
 		return 0, err
@@ -15820,11 +15863,12 @@ func (s *PgStore) CountFailedInvocationsSince(ctx context.Context, accountID, ap
 	// alert most needs to see — and was not counted at all.
 	var n int
 	row := s.pool.QueryRow(ctx, `
-		select count(*) from invocations
+		select count(*) from invocations v
 		 where account_id = $1
 		   and state in ('failed', 'dead_letter')
 		   and coalesce(completed_at, created_at) >= $2
 		   and ($3::uuid is null or app_id is not distinct from $3::uuid)
+		   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = v.app_id))
 		   and ($4::text is null or source = $4::text)`,
 		accountID, since.UTC(), appArg, sourceArg)
 	if err := row.Scan(&n); err != nil {
@@ -17397,7 +17441,7 @@ func (s *PgStore) ReadActiveInstanceForWakeID(ctx context.Context, wakeID string
 	return inst, nil
 }
 
-func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error) {
+func (s *pgCore) ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
@@ -18592,7 +18636,7 @@ func scanComputeNode(row pgx.Row) (ComputeNode, error) {
 	return n, nil
 }
 
-func (s *PgStore) ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error) {
+func (s *pgCore) ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error) {
 	rows, err := s.pool.Query(ctx, `
 		select id, name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency,
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
@@ -18650,7 +18694,7 @@ func (s *PgStore) ListAllComputeNodes(ctx context.Context) ([]ComputeNode, error
 	return out, rows.Err()
 }
 
-func (s *PgStore) ComputeNodeByID(ctx context.Context, id string) (ComputeNode, error) {
+func (s *pgCore) ComputeNodeByID(ctx context.Context, id string) (ComputeNode, error) {
 	row := s.pool.QueryRow(ctx, `
 		select id, name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency,
 		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
@@ -25982,7 +26026,7 @@ func mapErr(err error) error {
 			return ErrLayerArtifactRetired
 		case "account_shared_app_ownership_pending":
 			return ErrOrgAppOwnershipPending
-		case "migration_admission_current", "migration_source_current":
+		case "migration_admission_current", "migration_source_current", "function_migration_node_pending":
 			return ErrConflict
 		case "migration_admission_capacity":
 			return ErrNodeCapacity
@@ -26086,6 +26130,9 @@ func mapErr(err error) error {
 			}
 			if pgErr.ConstraintName == "managed_postgres_cutover_admission_fenced" {
 				return ErrManagedPostgresAdmissionFenced
+			}
+			if pgErr.ConstraintName == "function_migration_destination_capacity" {
+				return ErrNodeCapacity
 			}
 			if pgErr.ConstraintName == "service_capacity_protection" {
 				return &ServiceCapacityError{}
@@ -29347,26 +29394,31 @@ func (s *PgStore) PerAccountRateLimitAggregate(ctx context.Context, arg sqlc.Per
 // overwritten; the test at
 // migrations/00208_github_webhook_secrets_test.go pins the
 // round-trip.
-func (s *PgStore) UpsertGithubWebhookSecret(ctx context.Context, installationID int64, secret []byte, upgradedBy string) (time.Time, string, error) {
+func (s *PgStore) UpsertGithubWebhookSecret(ctx context.Context, installationID int64, secret GithubWebhookSecret, upgradedBy string) (time.Time, string, error) {
 	if installationID == 0 {
 		return time.Time{}, "", fmt.Errorf("state: UpsertGithubWebhookSecret: installation_id must be non-zero")
 	}
-	if len(secret) == 0 {
+	if len(secret.Value) == 0 {
 		return time.Time{}, "", fmt.Errorf("state: UpsertGithubWebhookSecret: secret must be non-empty (use a 32-byte random value per GitHub's recommendation)")
 	}
 	if upgradedBy == "" {
 		upgradedBy = "platform"
 	}
+	var sealed []byte
+	if len(secret.Sealed) > 0 {
+		sealed = secret.Sealed
+	}
 	var upgradedAt time.Time
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO github_webhook_secrets (installation_id, secret_value, upgraded_by)
-		VALUES ($1, $2, $3)
+		INSERT INTO github_webhook_secrets (installation_id, secret_value, secret_sealed, upgraded_by)
+		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (installation_id) DO UPDATE
-		SET secret_value = EXCLUDED.secret_value,
-		    upgraded_at  = now(),
-		    upgraded_by  = EXCLUDED.upgraded_by
+		SET secret_value  = EXCLUDED.secret_value,
+		    secret_sealed = EXCLUDED.secret_sealed,
+		    upgraded_at   = now(),
+		    upgraded_by   = EXCLUDED.upgraded_by
 		RETURNING upgraded_at, upgraded_by
-	`, installationID, secret, upgradedBy).Scan(&upgradedAt, &upgradedBy)
+	`, installationID, secret.Value, sealed, upgradedBy).Scan(&upgradedAt, &upgradedBy)
 	if err != nil {
 		return time.Time{}, "", fmt.Errorf("state: UpsertGithubWebhookSecret: %w", err)
 	}
@@ -29379,23 +29431,23 @@ func (s *PgStore) UpsertGithubWebhookSecret(ctx context.Context, installationID 
 // webhook is rejected rather than falling back to the platform-
 // wide FAAS_GITHUB_WEBHOOK_SECRET, per PR-D's adoption posture).
 //
-// The bytea is returned as a raw byte slice; the caller
-// (pkg/githubd/webhook_secret.go::PGWebhookSecretResolver)
-// passes the bytes directly to VerifyPushSignature.
-func (s *PgStore) GetGithubWebhookSecret(ctx context.Context, installationID int64) ([]byte, error) {
+// Sealed is the copy sealed for githubd (ADR 20261022111812);
+// githubd opens it in preference to the plaintext Value, which
+// is kept only for the release that reads nothing else.
+func (s *PgStore) GetGithubWebhookSecret(ctx context.Context, installationID int64) (GithubWebhookSecret, error) {
 	if installationID == 0 {
-		return nil, ErrNotFound
+		return GithubWebhookSecret{}, ErrNotFound
 	}
-	var secret []byte
+	var secret GithubWebhookSecret
 	err := s.pool.QueryRow(ctx,
-		`SELECT secret_value FROM github_webhook_secrets WHERE installation_id = $1`,
+		`SELECT secret_value, secret_sealed FROM github_webhook_secrets WHERE installation_id = $1`,
 		installationID,
-	).Scan(&secret)
+	).Scan(&secret.Value, &secret.Sealed)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
+			return GithubWebhookSecret{}, ErrNotFound
 		}
-		return nil, fmt.Errorf("state: GetGithubWebhookSecret: %w", err)
+		return GithubWebhookSecret{}, fmt.Errorf("state: GetGithubWebhookSecret: %w", err)
 	}
 	return secret, nil
 }

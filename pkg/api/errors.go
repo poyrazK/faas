@@ -92,6 +92,10 @@ type Problem struct {
 	// Freezes lists the active freezes behind release_frozen
 	// (ADR-20261019071733).
 	Freezes []ReleaseFreeze `json:"freezes,omitempty"`
+	// ReleaseApproval is the release's approval status behind
+	// release_approval_required and release_approval_rejected
+	// (ADR-20261020085706).
+	ReleaseApproval *ReleaseApprovalStatus `json:"release_approval,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
@@ -890,6 +894,10 @@ const (
 	// app (ADR-20261019071733); the problem lists the active freezes.
 	// override_freeze with a reason releases anyway, audited.
 	CodeReleaseFrozen = "release_frozen"
+	// CodePlatformReleasePaused means an operator paused every release on the
+	// platform (ADR 20261022140000), for example while a security incident is
+	// contained. Nothing the caller sends overrides it; rollbacks still work.
+	CodePlatformReleasePaused = "platform_release_paused"
 	// CodeReleaseFreezeNotFound means the account has no such unlifted freeze.
 	CodeReleaseFreezeNotFound = "release_freeze_not_found"
 	// CodeReleaseFreezeLimit means the account already holds
@@ -900,6 +908,34 @@ const (
 	CodeReleaseGateLimit = "release_gate_limit"
 	// CodeReleaseGateNotFound means the app has no release gate by that name.
 	CodeReleaseGateNotFound = "release_gate_not_found"
+	// CodeReleaseApprovalRequired means the release waits for approvals
+	// before it may take more traffic (ADR-20261020085706); the problem
+	// carries the release's approval status.
+	CodeReleaseApprovalRequired = "release_approval_required"
+	// CodeReleaseApprovalRejected means someone rejected the release, so it
+	// can never take more traffic.
+	CodeReleaseApprovalRejected = "release_approval_rejected"
+	// CodeReleaseApprovalCanaryRequired means the app requires approvals and
+	// the production release would take traffic without a canary to wait in.
+	CodeReleaseApprovalCanaryRequired = "release_approval_canary_required"
+	// CodeReleaseApprovalSelf means the deployer tried to approve their own
+	// release while the policy does not allow self-approval.
+	CodeReleaseApprovalSelf = "release_approval_self"
+	// CodeReleaseApprovalDecided means this person already decided on the
+	// release, or the release no longer accepts decisions.
+	CodeReleaseApprovalDecided = "release_approval_decided"
+	// CodeReleaseApprovalPolicyNotFound means the app has no approval policy.
+	CodeReleaseApprovalPolicyNotFound = "release_approval_policy_not_found"
+	// CodeReleaseScheduled means the release waits for its scheduled start
+	// (ADR-20261021152201), so it takes no traffic by hand until the schedule
+	// is cancelled or moved.
+	CodeReleaseScheduled = "release_scheduled"
+	// CodeReleaseNotParked means the release cannot be scheduled: it is not
+	// live without traffic, or it already has a canary ladder.
+	CodeReleaseNotParked = "release_not_parked"
+	// CodeScheduledReleaseNotFound means the release has no schedule, or no
+	// pending one to cancel.
+	CodeScheduledReleaseNotFound = "scheduled_release_not_found"
 	// CodeConfigRevisionNotFound means the scope has no such config revision
 	// (ADR-1451), or it was pruned past ConfigRevisionsRetained.
 	CodeConfigRevisionNotFound = "config_revision_not_found"

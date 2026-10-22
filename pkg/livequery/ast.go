@@ -3,6 +3,7 @@ package livequery
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	pgq "github.com/pganalyze/pg_query_go/v6"
 	pgquery "github.com/wasilibs/go-pgquery"
@@ -66,6 +67,18 @@ func plainSelect(from []*pgq.Node, where *pgq.Node) *pgq.SelectStmt {
 		Op:          pgq.SetOperation_SETOP_NONE,
 		LimitOption: pgq.LimitOption_LIMIT_OPTION_DEFAULT,
 	}
+}
+
+// WarmParser loads the SQL parser. It is libpg_query compiled to WebAssembly,
+// and the first parse in a process compiles it to native code, which takes
+// seconds (6-8 s measured on an M-series laptop); later parses take under a
+// millisecond. Calling it when a process starts, off the path of any
+// request, keeps that cost off the first subscriber. It returns how long the
+// first parse took; later calls return at once.
+func WarmParser() time.Duration {
+	start := time.Now()
+	_, _ = pgquery.Parse("SELECT 1")
+	return time.Since(start)
 }
 
 // parseSelect parses exactly one SELECT statement.

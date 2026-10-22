@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -16,6 +17,12 @@ type Metrics struct {
 	registry      *prometheus.Registry
 	webhookEvents *prometheus.CounterVec
 	scheduleFires *prometheus.CounterVec
+	queueReleases prometheus.Counter
+	queued        prometheus.Gauge
+	queueOldest   prometheus.Gauge
+	childStarts   *prometheus.CounterVec
+	fanInSignals  *prometheus.CounterVec
+	fanInOldest   prometheus.Gauge
 }
 
 func NewMetrics(registry *prometheus.Registry, prefix string) *Metrics {
@@ -27,7 +34,56 @@ func NewMetrics(registry *prometheus.Registry, prefix string) *Metrics {
 		Name: prefix + "_customer_operation_schedule_fires_total",
 		Help: "Operation schedule fires by result: admitted, refused (recorded on the schedule) or error (retried after the lease lapses).",
 	}, "result")
-	return &Metrics{registry: registry, webhookEvents: events, scheduleFires: fires}
+	releases := registerCounterVec(registry, prometheus.CounterOpts{
+		Name: prefix + "_customer_operation_queue_releases_total",
+		Help: "Queued Operations started by the per-customer concurrency releaser.",
+	}).WithLabelValues()
+	queued := registerGauge(registry, prometheus.GaugeOpts{
+		Name: prefix + "_customer_operation_queued",
+		Help: "Operations held by per-customer concurrency policies, fleet-wide; every apid reports the same value.",
+	})
+	oldest := registerGauge(registry, prometheus.GaugeOpts{
+		Name: prefix + "_customer_operation_queue_oldest_seconds",
+		Help: "Age of the oldest Operation held by a per-customer concurrency policy; 0 when none is queued.",
+	})
+	childStarts := registerCounterVec(registry, prometheus.CounterOpts{
+		Name: prefix + "_customer_operation_child_starts_total",
+		Help: "Child Operation starts by parent execution (http, job, workflow) and result: started, replayed (the key already named a child) or refused.",
+	}, "parent", "result")
+	fanInSignals := registerCounterVec(registry, prometheus.CounterOpts{
+		Name: prefix + "_customer_operation_fan_in_signals_total",
+		Help: "operation.children.settled signals by result: signaled, skipped (the parent no longer waits) or error (retried on the next pass).",
+	}, "result")
+	fanInOldest := registerGauge(registry, prometheus.GaugeOpts{
+		Name: prefix + "_customer_operation_fan_in_oldest_seconds",
+		Help: "Time since the oldest parent waiting on operation.children.settled had every child settled, at the start of the latest signal pass; 0 when none.",
+	})
+	return &Metrics{registry: registry, webhookEvents: events, scheduleFires: fires, queueReleases: releases, queued: queued, queueOldest: oldest,
+		childStarts: childStarts, fanInSignals: fanInSignals, fanInOldest: fanInOldest}
+}
+
+func registerGauge(registry *prometheus.Registry, opts prometheus.GaugeOpts) prometheus.Gauge {
+	gauge := prometheus.NewGauge(opts)
+	if err := registry.Register(gauge); err != nil {
+		var existing prometheus.AlreadyRegisteredError
+		if !errors.As(err, &existing) {
+			panic(err)
+		}
+		gauge = existing.ExistingCollector.(prometheus.Gauge)
+	}
+	return gauge
+}
+
+func (m *Metrics) operationQueue(queued int64, oldest *time.Time, now time.Time) {
+	if m == nil {
+		return
+	}
+	m.queued.Set(float64(queued))
+	age := 0.0
+	if oldest != nil && now.After(*oldest) {
+		age = now.Sub(*oldest).Seconds()
+	}
+	m.queueOldest.Set(age)
 }
 
 func registerCounterVec(registry *prometheus.Registry, opts prometheus.CounterOpts, labels ...string) *prometheus.CounterVec {
@@ -40,6 +96,39 @@ func registerCounterVec(registry *prometheus.Registry, opts prometheus.CounterOp
 		counter = existing.ExistingCollector.(*prometheus.CounterVec)
 	}
 	return counter
+}
+
+func (m *Metrics) operationQueueReleases(n int) {
+	if m == nil || n <= 0 {
+		return
+	}
+	m.queueReleases.Add(float64(n))
+}
+
+func (m *Metrics) childStart(parent, result string) {
+	if m == nil {
+		return
+	}
+	m.childStarts.WithLabelValues(parent, result).Inc()
+}
+
+func (m *Metrics) fanInSignal(result string) {
+	if m == nil {
+		return
+	}
+	m.fanInSignals.WithLabelValues(result).Inc()
+}
+
+// fanIn reports how long the oldest ready parent has waited for its signal.
+func (m *Metrics) fanIn(oldest *time.Time, now time.Time) {
+	if m == nil {
+		return
+	}
+	age := 0.0
+	if oldest != nil && now.After(*oldest) {
+		age = now.Sub(*oldest).Seconds()
+	}
+	m.fanInOldest.Set(age)
 }
 
 func (m *Metrics) scheduleFire(result string) {

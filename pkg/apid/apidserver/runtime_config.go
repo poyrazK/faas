@@ -45,11 +45,14 @@ const (
 	runtimeConfigFrontendHostingAnalytics           = "frontend_hosting_analytics_enabled"
 	runtimeConfigFrontendHostingDomains             = "frontend_hosting_domains_enabled"
 	runtimeConfigAPIMonetization                    = "api_monetization_enabled"
+	runtimeConfigProductControlPlanPricing          = "product_control_plan_pricing_enabled"
+	runtimeConfigPlatformReleasePause               = runtimeconfig.KeyPlatformReleasePause
 
 	// Platform flags (ADR-1700) are catalogued from pkg/platformflags; their
 	// values are a flag definition or the shared account groups.
 	runtimeConfigKindPlatformFlag       = "platform_flag"
 	runtimeConfigKindPlatformFlagGroups = "platform_flag_groups"
+	runtimeConfigKindPlatformFlagOptIns = "platform_flag_opt_ins"
 	runtimeConfigCategoryPlatformFlags  = "Platform flags"
 
 	// pg_notify is deliberately only a wake-up signal. This repair interval
@@ -92,12 +95,14 @@ var runtimeConfigCatalog = []runtimeConfigDefinition{
 	{Key: runtimeConfigFrontendHosting, Label: "Internal frontend hosting", Description: "Enable operator-only static hosting management. Disabling expires leased routes within 120 seconds; durable sites continue serving. The independent Worker switch stops all traffic.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHostingDurable, Label: "Internal durable frontend routing", Description: "Create new static sites with durable edge routing. Existing sites keep their routing mode. Disabling does not stop existing durable sites or their safety reconciliation; the Worker has a separate durable-routing switch.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigAPIMonetization, Label: "API monetization", Description: "Expose rate cards, plans, statements, invoice exports, billing runs and their enforcement for every account. Disabled routes answer 404, background billing pauses and gateways stop enforcing monetization policy; stored data is kept.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: runtimeConfigProductControlPlanPricing, Label: "Product Control plan pricing", Description: "Allow Product Control catalogs with plan fees or included starts (ADR-20261021154511). Enable only after every apid replica runs the release that prices them; disabling refuses new such catalogs and keeps published ones.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigS3, Label: "S3 object storage", Description: "Allow bucket provisioning and new signed URLs. Disabling preserves metadata and cleanup; existing URLs expire normally. Provider configuration is still required.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigTenantSurfaces, Label: "Tenant surfaces", Description: "Expose the tenant surface and certificate lifecycle API.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDomainDoctor, Label: "Domain doctor", Description: "Run DNS and certificate readiness probes for customer domains.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDomainDoctorTTL, Label: "Domain doctor TTL", Description: "Maximum age in seconds before a domain doctor result is stale.", Category: "Operational policies", Kind: "integer", Default: json.RawMessage("300"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDataPlacement, Label: "Data placement", Description: "Enable customer data-upstream placement and affinity behavior.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigAppErrors, Label: "Automatic app errors", Description: "Accept and aggregate gateway error reports; enabling the socket is a graceful daemon change.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyGraceful, ControllerEnabled: false, Mutable: true},
+	{Key: runtimeConfigPlatformReleasePause, Label: "Break glass: pause releases", Description: "Refuse every new deployment and scheduled release start on the platform, and stop builders claiming queued builds (ADR 20261022140000). Running apps keep serving and rollbacks still work. For incident containment; set with gregalectl break-glass pause.", Category: "Security", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigRekey, Label: "Background secret rekey", Description: "Run the background app-secret re-seal worker when host identities are ready; worker lifecycle is rolling.", Category: "Security", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyRolling, ControllerEnabled: false, Mutable: true},
 	{Key: runtimeConfigHSTS, Label: "Strict transport security", Description: "Emit the HSTS response header on the customer-facing API.", Category: "Security", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: "request_read_timeout", Label: "Request read timeout", Description: "HTTP request body read timeout.", Category: "HTTP listener", Kind: "duration", Default: json.RawMessage(`"60s"`), ApplyMode: state.RuntimeConfigApplyGraceful, ControllerEnabled: false, Mutable: true},
@@ -195,17 +200,23 @@ func newRuntimeConfigManager(getenv func(string) string) *runtimeConfigManager {
 	return m
 }
 
-// platformFlagDefinitions catalogues every platform flag and the shared
-// groups row as hot runtime configuration, applied through the same
-// versioned path as the other hot settings.
+// platformFlagDefinitions catalogues every platform flag, its self-serve
+// opt-ins (ADR 20261021080640) and the shared groups row as hot runtime
+// configuration, applied through the same versioned path as the other hot
+// settings.
 func platformFlagDefinitions() []runtimeConfigDefinition {
 	specs := platformflags.Catalog()
-	defs := make([]runtimeConfigDefinition, 0, len(specs)+1)
+	defs := make([]runtimeConfigDefinition, 0, 2*len(specs)+1)
 	for _, spec := range specs {
 		defs = append(defs, runtimeConfigDefinition{
 			Key: platformflags.ConfigKey(spec.Key), Label: spec.Label, Description: spec.Description,
 			Category: runtimeConfigCategoryPlatformFlags, Kind: runtimeConfigKindPlatformFlag,
 			Default: spec.Default.Marshal(), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true,
+		}, runtimeConfigDefinition{
+			Key: platformflags.OptInsConfigKey(spec.Key), Label: spec.Label + " opt-ins",
+			Description: "Accounts and organizations that joined the " + spec.Label + " preview themselves.",
+			Category:    runtimeConfigCategoryPlatformFlags, Kind: runtimeConfigKindPlatformFlagOptIns,
+			Default: json.RawMessage(`{}`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true,
 		})
 	}
 	return append(defs, runtimeConfigDefinition{
@@ -497,6 +508,10 @@ func validateRuntimeConfigValue(def runtimeConfigDefinition, value json.RawMessa
 		}
 	case runtimeConfigKindPlatformFlagGroups:
 		if _, err := platformflags.ParseGroups(value); err != nil {
+			return fmt.Errorf("%s: %w", def.Key, err)
+		}
+	case runtimeConfigKindPlatformFlagOptIns:
+		if _, err := platformflags.ParseOptIns(value); err != nil {
 			return fmt.Errorf("%s: %w", def.Key, err)
 		}
 	case "string", "enum", "secret_reference":

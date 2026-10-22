@@ -9839,6 +9839,16 @@ paths:
           required: true
           schema: { type: string, format: uuid }
           description: Account to evaluate.
+        - name: org_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+          description: Organization the request would act under (ADR 20261021080640); omit to evaluate outside any organization.
+        - name: at
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: Decide as of this moment instead of now, to check scheduled rules.
       responses:
         '200':
           description: Decision
@@ -25417,6 +25427,61 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/routes/insights/{id}/fix:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: The insight id from GET /v1/apps/{slug}/routes/insights.
+    post:
+      tags: [apps]
+      operationId: fixRouteInsight
+      summary: Apply a route insight's fix.
+      description: |
+        Applies the edge-rule change the insight's `fix` describes
+        (ADR-20261020161310): `create_cache_rule` creates an enabled `@app`
+        cache rule with the measured safe max-age, `set_cache_max_age` and
+        `disable_cache_rule` change the cache rule serving exactly this route,
+        and `add_cache_override` adds a narrower rule ahead of a rule that also
+        covers other routes. A `cache_stale` fix then purges the route's cached
+        responses. Rules are written through the same path as the edge-rules
+        API, so plan quotas, validation and fleet convergence apply.
+
+        `fix_id` must be the `fix.id` the insight lists now; if the insight or
+        the app's edge rules changed, the request fails with 409
+        `route_insight_fix_changed` and nothing is written. An insight that is
+        resolved or has no fix fails with 409 `route_insight_no_fix`. On
+        success the route's affected insights resolve with `fix_action` and
+        `fixed_at`, and stay resolved for at least one evidence window. Uses
+        the deploy-write scopes, completed MFA, the DebugTelemetryEnabled plan
+        gate and Idempotency-Key replay.
+      x-since: 2026-10
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RouteInsightFixRequest' }
+      responses:
+        '200':
+          description: The fix was applied.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteInsightFixResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The insight has no fix to apply (`route_insight_no_fix`), or the fix changed since it was read (`route_insight_fix_changed`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/service-wake-ahead:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -28976,6 +29041,28 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/scheduled-releases:
+    get:
+      tags: [deployments]
+      operationId: listScheduledReleases
+      summary: List scheduled releases (ADR-20261021152201).
+      description: "The account's scheduled releases: pending ones first, soonest first, then the most recently ended."
+      parameters:
+        - name: app
+          in: query
+          required: false
+          description: Only this app's schedules.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The scheduled releases.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduledReleaseListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/freezes:
     get:
       tags: [deployments]
@@ -29119,6 +29206,77 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ReleaseGate' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/release-approval-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: getReleaseApprovalPolicy
+      summary: Show an app's release approval policy (ADR-20261020085706).
+      description: "404 `release_approval_policy_not_found` when the app does not require approvals."
+      responses:
+        '200':
+          description: The app's approval policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseApprovalPolicy' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [deployments]
+      operationId: setReleaseApprovalPolicy
+      summary: Require approvals for an app's production releases (ADR-20261020085706).
+      description: "Creates or replaces the policy. Each production release then waits in a canary stage until enough eligible people approve it. Organization owners and admins may change the policy. An app outside an organization always counts its owner's own approval."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetReleaseApprovalPolicyRequest' }
+            example: {"required_approvals": 2, "after_stage": 1, "timeout_minutes": 1440, "approvers": "admin"}
+      responses:
+        '200':
+          description: The saved policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseApprovalPolicy' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [deployments]
+      operationId: deleteReleaseApprovalPolicy
+      summary: Stop requiring release approvals (ADR-20261020085706).
+      description: "Releases waiting for approval continue on the canary's next step."
+      responses:
+        '204':
+          description: The policy was removed.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/release-approvals:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listReleaseApprovals
+      summary: List an app's releases waiting for approval (ADR-20261020085706).
+      description: "Releases in state waiting, and those past their timeout that the canary worker is about to abort."
+      responses:
+        '200':
+          description: The waiting releases.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListReleaseApprovalsResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -29919,6 +30077,125 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/deployments/{id}/approvals:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getReleaseApproval
+      summary: Show a release's approvals (ADR-20261020085706).
+      description: "The release's approval state, the decisions so far, and when its wait expires."
+      responses:
+        '200':
+          description: The release's approval status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseApprovalStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [deployments]
+      operationId: decideReleaseApproval
+      summary: Approve or reject a release (ADR-20261020085706).
+      description: "Records one decision per person. A rejection is final and aborts the rollout, restoring the previous release. 403 `release_approval_self` when the deployer approves their own release and the policy does not allow it; 409 `release_approval_decided` for a second decision or a release that no longer accepts one."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DecideReleaseApprovalRequest' }
+            example: {"decision": "approve", "comment": "canary looks clean"}
+      responses:
+        '200':
+          description: The release's approval status after the decision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseApprovalStatus' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/deployments/{id}/diff:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+      - name: against
+        in: query
+        required: false
+        description: The release to compare with; defaults to the release of the same scope that served before this one.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [deployments]
+      operationId: getReleaseDiff
+      summary: Show what changed between two releases (ADR-20261021101117).
+      description: "Compares the code, configuration keys, packages, runtime settings and release command of two releases of one app. Never returns variable values, secret fingerprints or SBOM files. A section whose history is missing reports known=false with a note."
+      responses:
+        '200':
+          description: The release diff.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseDiff' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/deployments/{id}/schedule:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getDeploymentSchedule
+      summary: Show a release's schedule (ADR-20261021152201).
+      description: "The release's newest schedule: pending, or how it ended. 404 `scheduled_release_not_found` when the release was never scheduled."
+      responses:
+        '200':
+          description: The schedule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduledRelease' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [deployments]
+      operationId: scheduleDeployment
+      summary: Schedule, or move, the start of a release waiting without traffic (ADR-20261021152201).
+      description: "The release must be live without traffic and without a canary ladder, or still building to go live without traffic; otherwise 409 `release_not_parked`. A release_at that has passed starts it on apid's next pass. Freezes active at release_at refuse the schedule with 409 `release_frozen` unless override_freeze gives a reason. An app that requires approvals needs a canary: 409 `release_approval_canary_required`. An app's earlier pending schedule is cancelled."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScheduleReleaseRequest' }
+            example: {"release_at": "2026-10-22T02:00:00Z", "notify_channels": ["releases"]}
+      responses:
+        '200':
+          description: The pending schedule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduledRelease' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [deployments]
+      operationId: cancelDeploymentSchedule
+      summary: Cancel a release's pending schedule (ADR-20261021152201).
+      description: "The release stays live without traffic. 404 `scheduled_release_not_found` when it has no pending schedule."
+      responses:
+        '200':
+          description: The cancelled schedule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduledRelease' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/deployments/{id}/canary/advance:
     parameters:
@@ -35781,6 +36058,123 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/secrets:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment shares the listed secrets.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Environment whose shared secrets are addressed.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+    get:
+      tags: [projects]
+      operationId: listProjectEnvironmentSecrets
+      summary: List the secrets shared by every service of a project environment.
+      description: |
+        Metadata only (ADR-1139): key, version, sealing key id and value
+        fingerprint. Values are write-only and never returned.
+      responses:
+        '200':
+          description: The environment's shared secrets and the plan's limit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentSharedSecretsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/secrets/{key}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment shares the secret.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Environment whose shared secret is addressed.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - $ref: '#/components/parameters/SecretKey'
+    put:
+      tags: [projects]
+      operationId: setProjectEnvironmentSecret
+      summary: Set a secret shared by every service of a project environment.
+      description: |
+        Seals the value for the fleet and stores it once for the environment
+        (ADR-1139). Each service receives it at its next boot unless it sets
+        the same key itself; services' snapshots in the environment are
+        invalidated. Platform identity keys are rejected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetProjectEnvironmentSharedSecretRequest' }
+      responses:
+        '200':
+          description: The stored secret's metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentSharedSecretResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanLimitProjectSecrets' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/SecretValueTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [projects]
+      operationId: deleteProjectEnvironmentSecret
+      summary: Delete a secret shared by a project environment.
+      description: Services stop receiving it at their next boot.
+      responses:
+        '204': { description: The shared secret was removed. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/secrets/{key}/rotate:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment shares the rotated secret.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Environment whose shared secret is rotated.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - $ref: '#/components/parameters/SecretKey'
+    post:
+      tags: [projects]
+      operationId: rotateProjectEnvironmentSecret
+      summary: Replace the value of an existing shared secret.
+      description: Like PUT, but an unknown key is 404 instead of being created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetProjectEnvironmentSharedSecretRequest' }
+      responses:
+        '200':
+          description: The rotated secret's metadata, with its new version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentSharedSecretResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/SecretValueTooLarge' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/environments/{environment}/releases:
@@ -49320,6 +49714,69 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/previews:
+    get:
+      tags: [account]
+      operationId: listPreviews
+      summary: List the platform previews you can join.
+      description: |
+        Self-serve platform previews (ADR 20261021080640): the previews an
+        operator opened to self-serve, plus any you joined that have since
+        closed, so you can still leave them. `eligible` says whether your plan
+        may join; `enabled` whether the preview is on for you now, for any
+        reason.
+      responses:
+        '200':
+          description: The previews.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/previews/{key}:
+    parameters:
+      - $ref: '#/components/parameters/PreviewKey'
+    put:
+      tags: [account]
+      operationId: joinPreview
+      summary: Join a platform preview.
+      description: |
+        Opts your account in. Joining twice changes nothing. A preview never
+        grants a plan entitlement, and an operator can still exclude an
+        account.
+      responses:
+        '200':
+          description: The preview after joining.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Preview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: "`preview_plan_not_eligible`: your plan cannot join this preview."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404':
+          description: "`preview_not_offered`: not a preview open to self-serve."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '409':
+          description: "`preview_full` (with limit and observed) or a concurrent change."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [account]
+      operationId: leavePreview
+      summary: Leave a platform preview.
+      description: "Removes your account's opt-in. Leaving is always allowed, even after the preview closed; leaving one you never joined changes nothing."
+      responses:
+        '200':
+          description: The preview after leaving.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Preview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: "`preview_not_offered`: not a platform preview."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/invocations/{id}:
     get:
       tags: [invocations]
@@ -50857,6 +51314,68 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/billing/budgets/{id}/channels:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Stable identity of a live account-owned budget policy.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [billing]
+      operationId: getFinancialBudgetChannels
+      summary: List the notification channels a budget's threshold alerts also go to.
+      description: |
+        Requires usage:read and session MFA (ADR-20261019193500). Each channel
+        reports its latest delivery outcome. Alerts always go to the account
+        email; channels are in addition to it. Deleted or foreign policies
+        return 404.
+      responses:
+        '200':
+          description: Bound channels in name order; empty when only the account email is used.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetChannelsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [billing]
+      operationId: setFinancialBudgetChannels
+      summary: Replace the notification channels a budget's threshold alerts also go to.
+      description: |
+        Requires admin scope, session MFA and Idempotency-Key (ADR-20261019193500).
+        Every id must be one of the account's notification channels, at most 5,
+        without duplicates. Each threshold alert is delivered once per channel
+        and retried with backoff for up to 12 attempts. A channel added later
+        receives a threshold already crossed this month when it is next
+        re-evaluated. Removing a channel holds its pending deliveries; deleting
+        the channel discards them. Does not change the policy revision.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Retry key for this replacement.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetFinancialBudgetChannelsRequest' }
+      responses:
+        '200':
+          description: The budget's channels after the replacement.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetChannelsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/billing/budgets/preview:
     post:
@@ -53802,6 +54321,81 @@ paths:
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/orgs/{slug}/previews:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listOrgPreviews
+      summary: List the platform previews the organization can join.
+      description: |
+        Like `GET /v1/previews`, for the organization: `joined` is the
+        company's opt-in, and `enabled` is decided for you acting under the
+        company. Previews released per account only are not listed. Requires
+        `org.view`.
+      responses:
+        '200':
+          description: The previews the organization can join or already joined.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: "`org_role_forbidden`: you are not a member of the organization."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/orgs/{slug}/previews/{key}:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - $ref: '#/components/parameters/PreviewKey'
+    put:
+      tags: [orgs]
+      operationId: joinOrgPreview
+      summary: Join a platform preview for the organization.
+      description: |
+        Opts the organization in: every member gets the preview while acting
+        for the company, if their plan is eligible. Requires
+        `org.manage_previews` (owner or admin).
+      responses:
+        '200':
+          description: The preview after the organization joined.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Preview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: "`org_role_forbidden` or `preview_plan_not_eligible`."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404':
+          description: "`preview_not_offered`, or the organization does not exist."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '409':
+          description: "`preview_full`, `preview_org_unsupported` (the preview is released per account only) or a concurrent change."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [orgs]
+      operationId: leaveOrgPreview
+      summary: Leave a platform preview for the organization.
+      description: "Removes the organization's opt-in. Requires `org.manage_previews` (owner or admin)."
+      responses:
+        '200':
+          description: The preview after the organization left.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Preview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: "`org_role_forbidden`: only an owner or admin can leave for the organization."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404':
+          description: "`preview_not_offered` (not a platform preview), or the organization does not exist."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '409':
+          description: "`preview_org_unsupported`."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/orgs/{slug}/members/{user_id}:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -64321,6 +64915,14 @@ components:
     # Slug matches the canonical regex in pkg/api/errors.go::OrgSlugPattern.
     # Max 32 chars (LoadOrg middleware caps at 64; oversize values
     # degrade to passthrough rather than a SQL CHECK 500).
+    PreviewKey:
+      name: key
+      in: path
+      required: true
+      description: "Platform preview key, as GET /v1/previews lists it."
+      schema:
+        type: string
+        pattern: '^[a-z][a-z0-9_-]{0,63}$'
     OrgSlug:
       name: slug
       in: path
@@ -74981,8 +75583,9 @@ components:
     RouteInsight:
       type: object
       description: "One finding for a route; also the payload of the routes.insight.detected and routes.insight.resolved webhooks."
-      required: [kind, method, route, state, message, evidence, first_detected_at, last_detected_at]
+      required: [id, kind, method, route, state, message, evidence, first_detected_at, last_detected_at]
       properties:
+        id: {"type": "string", "format": "uuid"}
         kind: {"type": "string", "enum": ["kept_awake", "cacheable", "cache_stale", "cache_too_short"]}
         method: {"type": "string"}
         route: {"type": "string", "description": "Route template, for example /catalog."}
@@ -74995,6 +75598,40 @@ components:
         first_detected_at: {"type": "string", "format": "date-time"}
         last_detected_at: {"type": "string", "format": "date-time"}
         resolved_at: {"type": "string", "format": "date-time"}
+        fixed_at: {"type": "string", "format": "date-time", "description": "When an applied fix resolved the insight."}
+        fix_action:
+          type: string
+          enum: [create_cache_rule, set_cache_max_age, add_cache_override, disable_cache_rule]
+          description: The fix that resolved the insight.
+        fix:
+          $ref: '#/components/schemas/RouteInsightFix'
+    RouteInsightFix:
+      type: object
+      description: "The edge-rule change applying an active insight would make now, planned from its evidence and the app's current rules (ADR-20261020161310). Absent when the platform has no fix; never in webhook payloads."
+      required: [id, action]
+      properties:
+        id: {"type": "string", "description": "Covers every value the fix would write; send it back to apply exactly this fix."}
+        action: {"type": "string", "enum": ["create_cache_rule", "set_cache_max_age", "add_cache_override", "disable_cache_rule"]}
+        summary: {"type": "string"}
+        max_age_seconds: {"type": "integer", "minimum": 1}
+        rule_id: {"type": "string", "description": "The cache rule the fix changes or overrides."}
+        purge_cache: {"type": "boolean", "description": "The fix also purges the route's cached responses."}
+    RouteInsightFixRequest:
+      type: object
+      description: "Applies the fix an insight listed; refused when the fix changed since (ADR-20261020161310)."
+      required: [fix_id]
+      properties:
+        fix_id: {"type": "string", "description": "The fix.id the insight lists now."}
+    RouteInsightFixResponse:
+      type: object
+      description: "An applied fix: the insight after it, the fix, the edge rule created or changed, the cache purge outcome, and how many of the route's insights it resolved."
+      required: [insight, fix, rule, resolved]
+      properties:
+        insight: { $ref: '#/components/schemas/RouteInsight' }
+        fix: { $ref: '#/components/schemas/RouteInsightFix' }
+        rule: { $ref: '#/components/schemas/EdgeRuleResponse' }
+        cache_purge: {"type": "string", "enum": ["requested", "failed"]}
+        resolved: {"type": "integer", "minimum": 0}
     RouteAdviceResponse:
       type: object
       description: "Route advisor suggestions derived from retained request telemetry (ADR-976). Nothing is applied."
@@ -76305,7 +76942,7 @@ components:
         verification_reason: { type: string, description: 'Empty for a supported managed contract; otherwise managed_service_verification_unsupported.' }
     ManagedServiceProbeSpec:
       type: object
-      description: Server-selected frozen context for a managed HTTPS route probe. Contains no credentials or application request. Changing context or policy invalidates the receipt.
+      description: Server-selected frozen context for a managed service route probe. Contains no credentials or application request. Changing context or policy invalidates the receipt.
       required: [version, caller_deployment_id, scope, service, binding, target_app_id, target_deployment_id, release_id, context_revision]
       properties:
         version: { type: integer, description: 'Managed probe contract version; currently 1.' }
@@ -76317,6 +76954,9 @@ components:
         target_deployment_id: { type: string, format: uuid }
         release_id: { type: string, format: uuid }
         context_revision: { type: string, pattern: '^[a-f0-9]{64}$' }
+        transport:
+          $ref: '#/components/schemas/ServiceBindingTransport'
+          description: "Caller transport the probe verifies (ADR-20261019200059). Absent means the original HTTPS probe; `http` probes the caller's plaintext `.svc.gregale` URL."
     AppBindingInventory:
       type: object
       description: Best-effort app binding metadata with explicit completeness and sanitized section issues.
@@ -76336,6 +76976,7 @@ components:
         requested_deployment_id: { type: string, format: uuid, description: 'Confirms that the explicit deployment_id selector was applied. Absent for default selection.' }
         verification_deployment_id: { type: string, format: uuid, description: 'Deployment selected for evidence: explicit selector or current manual-task deployment.' }
         verification_scope: { type: string, description: 'Scope of the selected verification deployment.' }
+        verification_probes_available: { type: boolean, description: 'Whether this control-plane host can run bindings verify probes (deployment-attached app tasks). False means probe evidence cannot be produced here; absent from older servers.' }
         runtime_freshness: { $ref: '#/components/schemas/BindingRuntimeFreshness' }
         complete: { type: boolean, description: 'All binding sections could be read; this does not mean that bindings are healthy or verified.' }
         bindings:
@@ -76661,12 +77302,15 @@ components:
         coverage_complete: { type: boolean }
         fresh: { type: boolean }
         reasons: { type: array, items: { type: string } }
+        projected_millicents: { type: integer, format: int64, minimum: 0, description: 'Month-end amount at the current run rate (ADR-20261019193500): an estimate, not an invoice. Absent, with projection_reason, when a selected meter has no forecast or the evidence is incomplete or stale.' }
+        projection_reason: { type: string, description: 'Why no projection is available, for example compute:insufficient_history (less than a day of evidence) or incomplete_evidence.' }
     FinancialBudgetAlert:
       type: object
       description: One threshold event per policy revision and UTC month. Edits re-evaluate monthly spending. Delivery is at least once with a stable transport idempotency key; delivered means accepted by the configured transport, not confirmed inbox receipt.
       required: [id, policy_revision, threshold_millicents, evaluation, state, attempts, next_attempt_at]
       properties:
         id: { type: string, format: uuid }
+        kind: { type: string, enum: [projection], description: 'Absent for a crossed threshold. projection marks a projected-overrun alert (ADR-20261019193500), whose threshold_millicents is the limit.' }
         policy_revision: { type: integer, format: int64, minimum: 1 }
         threshold_millicents: { type: integer, format: int64, minimum: 0 }
         evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
@@ -76724,8 +77368,10 @@ components:
         initialized: { type: boolean }
         app_id: { type: string, format: uuid }
         job_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid, description: 'The capped project of a strict project budget (ADR-1750, amendment 1): one gross book shared by every app in the project. Jobs are not covered.' }
+        environment_id: { type: string, format: uuid, description: 'The capped environment of a strict environment budget (ADR-1750, amendment 2): one gross book shared by every deployment that runs in the environment. Capacity floors and jobs are not covered.' }
         account_id: { type: string, format: uuid }
-        scope_kind: { type: string, enum: [account, app, job] }
+        scope_kind: { type: string, enum: [account, app, job, project, environment] }
         basis: { type: string, enum: [net_usage, gross_usage] }
         allowance_granted_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         allowance_committed_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
@@ -76747,6 +77393,7 @@ components:
         compute: { $ref: '#/components/schemas/FinancialComputeBalance' }
         evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
         alerts: { type: array, maxItems: 9, items: { $ref: '#/components/schemas/FinancialBudgetAlert' } }
+        projection: { $ref: '#/components/schemas/FinancialBudgetAlert' }
         stops: { type: array, maxItems: 1, items: { $ref: '#/components/schemas/FinancialBudgetStop' } }
     FinancialBudgetListResponse:
       type: object
@@ -76773,6 +77420,19 @@ components:
       required: [expected_revision]
       properties:
         expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740990 }
+    SetFinancialBudgetChannelsRequest:
+      type: object
+      description: The full replacement set of notification channels for a budget's alerts (ADR-20261019193500).
+      required: [channel_ids]
+      properties:
+        channel_ids: { type: array, maxItems: 5, uniqueItems: true, description: Account-owned notification channel ids; empty leaves only the account email., items: { type: string, format: uuid } }
+    FinancialBudgetChannelsResponse:
+      type: object
+      description: The notification channels a budget's threshold alerts also go to, with each channel's latest delivery outcome.
+      required: [policy_id, channels]
+      properties:
+        policy_id: { type: string, format: uuid }
+        channels: { type: array, maxItems: 5, items: { $ref: '#/components/schemas/NotificationChannelResponse' } }
     FinancialBudgetRevisionResponse:
       type: object
       description: Immutable intent audit written in the same transaction as the policy.
@@ -76806,7 +77466,7 @@ components:
         name: { type: string, minLength: 1, maxLength: 128, description: Nonblank name bounded to 128 UTF-8 bytes. }
         scope: { $ref: '#/components/schemas/FinancialBudgetScope' }
         currency: { type: string, enum: [USD, EUR], description: New writes require USD; EUR is retained only for historical policy responses. }
-        meters: { type: array, minItems: 1, maxItems: 2, uniqueItems: true, description: Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job strict covers compute only., items: { type: string, enum: [compute, egress] } }
+        meters: { type: array, minItems: 1, maxItems: 3, uniqueItems: true, description: Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job strict covers compute only. object_storage (ADR-20261020160000) is priced from the live object-storage estimate and only monitored account budgets may select it., items: { type: string, enum: [compute, egress, object_storage] } }
         basis: { type: string, enum: [net_usage, gross_usage], description: Net usage after the shared account allowance or gross usage before it; strict resource scopes require gross usage. }
         limit_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         notify_millicents: { type: array, maxItems: 8, uniqueItems: true, description: Increasing nonnegative thresholds at or below the limit. Strict compute requires an empty array; configure a separate monitored policy for alerts., items: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 } }
@@ -76932,6 +77592,7 @@ components:
         currency: { type: string, enum: [USD] }
         projected_quantity: { type: integer, format: int64 }
         projected_net_millicents: { type: integer, format: int64 }
+        projected_gross_millicents: { type: integer, format: int64, description: 'Set only for account-level meters priced by more than one rate, such as object_storage (ADR-20261020160000).' }
     FinancialMeterCoverage:
       type: object
       description: Completeness and freshness of authoritative retained meter evidence.
@@ -80474,7 +81135,7 @@ components:
         label: { type: string }
         description: { type: string }
         category: { type: string }
-        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference, platform_flag, platform_flag_groups] }
+        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference, platform_flag, platform_flag_groups, platform_flag_opt_ins] }
         default_value: {}
         desired_value: {}
         effective_value: {}
@@ -80542,8 +81203,29 @@ components:
 
     # ─── Platform flags (ADR-1700) ───────────────────────────────────────
 
+    Preview:
+      description: "One self-serve platform preview (ADR 20261021080640)."
+      type: object
+      required: [key, label, description, joined, eligible, enabled]
+      properties:
+        key: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        label: { type: string }
+        description: { type: string }
+        retire_by: { type: string, format: date, description: "Planned end of the preview, by general availability or removal." }
+        joined: { type: boolean, description: "Whether you (or, under /v1/orgs/{slug}, the organization) opted in." }
+        eligible: { type: boolean, description: "Whether the preview is open to self-serve and your plan may join it." }
+        enabled: { type: boolean, description: "Whether the preview is on for you now, for any reason." }
+
+    PreviewList:
+      description: "Platform previews you can join or already joined."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Preview' }
     PlatformFlagRule:
-      description: "One targeting rule of a platform flag. Accounts, group, plans and rollout combine with AND; the first matching rule decides."
+      description: "One targeting rule of a platform flag. Accounts, orgs, group, plans and rollout combine with AND; the first matching rule decides. Orgs match the organization a request acts under (ADR 20261021080640)."
       type: object
       required: [id, value]
       properties:
@@ -80552,12 +81234,37 @@ components:
           type: array
           maxItems: 1000
           items: { type: string, format: uuid }
+        orgs:
+          type: array
+          maxItems: 1000
+          items: { type: string, format: uuid }
         group: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
         plans:
           type: array
           items: { type: string, enum: [free, hobby, pro, scale] }
         rollout: { type: integer, minimum: 0, maximum: 10000, description: "Basis points of the accounts the other constraints admit." }
+        starts_at: { type: string, format: date-time, description: "The rule applies from this moment (inclusive); stored in UTC." }
+        ends_at: { type: string, format: date-time, description: "The rule stops applying at this moment (exclusive); must be after starts_at." }
+        ramp: { $ref: '#/components/schemas/PlatformFlagRamp' }
         value: { type: boolean }
+
+    PlatformFlagRamp:
+      description: "Advances the rule's rollout stage by stage (ADR 20261021080640). The rollout is the current stage; apid moves it on once the flag's version has held for interval_seconds and its health routes stayed under max_5xx_basis_points over that window with at least min_requests requests. On a breach it pauses (and for rollback returns one stage); a paused ramp waits for an operator to clear paused."
+      type: object
+      required: [stages, interval_seconds, max_5xx_basis_points, min_requests, on_breach]
+      properties:
+        stages:
+          type: array
+          minItems: 2
+          maxItems: 10
+          description: "Strictly ascending basis points; the rollout must be one of them."
+          items: { type: integer, minimum: 1, maximum: 10000 }
+        interval_seconds: { type: integer, minimum: 300, maximum: 604800 }
+        max_5xx_basis_points: { type: integer, minimum: 0, maximum: 10000 }
+        min_requests: { type: integer, format: int64, minimum: 0 }
+        on_breach: { type: string, enum: [pause, rollback] }
+        paused: { type: boolean }
+        paused_reason: { type: string, maxLength: 500 }
 
     PlatformFlagDefinition:
       description: "Stored value of a platform flag. Enabled is the kill switch; default applies to accounts no rule matches."
@@ -80570,6 +81277,35 @@ components:
           type: array
           maxItems: 32
           items: { $ref: '#/components/schemas/PlatformFlagRule' }
+        self_serve: { $ref: '#/components/schemas/PlatformFlagSelfServe' }
+
+    PlatformFlagSelfServe:
+      description: "Lets customers join the preview themselves (ADR 20261021080640). An opted-in account or organization on an eligible plan gets the flag when no rule matched. Disabling it ignores existing opt-ins without deleting them."
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        plans:
+          type: array
+          description: "Eligible plans; empty means every plan. A flag that releases a paid capability must list only entitled plans."
+          items: { type: string, enum: [free, hobby, pro, scale] }
+        max_subjects: { type: integer, minimum: 0, maximum: 5000, description: "Cap on opted-in accounts plus organizations; 0 means 5000." }
+
+    PlatformFlagOptIns:
+      description: "Stored value of platform_flag_opt_ins.<key>: the accounts and organizations that joined a self-serve preview."
+      type: object
+      properties:
+        accounts: { type: array, items: { type: string, format: uuid } }
+        orgs: { type: array, items: { type: string, format: uuid } }
+
+    OperatorPlatformFlagOptIns:
+      description: "How many accounts and organizations joined a self-serve preview, and the opt-in row's version."
+      type: object
+      required: [accounts, orgs, version]
+      properties:
+        accounts: { type: integer, minimum: 0 }
+        orgs: { type: integer, minimum: 0 }
+        version: { type: integer, format: int64 }
 
     OperatorRuntimeConfigApplyReceipt:
       description: "What one daemon instance reported applying for a runtime-configuration key."
@@ -80596,8 +81332,8 @@ components:
     OperatorPlatformFlag:
       description: "One catalogued platform flag with its live definition, apply receipts and convergence."
       type: object
-      required: [key, config_key, label, description, adr, consumers, legacy_env, definition,
-                 source, version, status, receipts, convergence]
+      required: [key, config_key, label, description, adr, consumers, attributes, legacy_env, definition,
+                 source, version, status, receipts, convergence, opt_ins]
       properties:
         key: { type: string }
         config_key: { type: string, description: "Runtime-configuration key that stores the flag; write it with PATCH /v1/admin/config/{key}." }
@@ -80606,6 +81342,10 @@ components:
         capability: { type: string }
         adr: { type: string }
         consumers: { type: array, items: { type: string } }
+        attributes:
+          type: array
+          description: "Subject attributes every consumer can supply, so rules may constrain them; a write using any other is refused (ADR 20261021080640)."
+          items: { type: string, enum: [account, plan, org] }
         legacy_env: { type: array, items: { type: string } }
         retire_by: { type: string, format: date }
         definition: { $ref: '#/components/schemas/PlatformFlagDefinition' }
@@ -80618,6 +81358,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/OperatorRuntimeConfigApplyReceipt' }
         convergence: { $ref: '#/components/schemas/OperatorPlatformFlagConvergence' }
+        opt_ins: { $ref: '#/components/schemas/OperatorPlatformFlagOptIns' }
 
     OperatorPlatformFlagGroups:
       description: "Shared named account sets referenced by platform-flag rules."
@@ -80651,14 +81392,19 @@ components:
       properties:
         flag: { type: string }
         account_id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid, description: "Organization the decision was made under, when the inspector was given one." }
         plan: { type: string }
         enabled: { type: boolean }
-        reason: { type: string, enum: [unknown_flag, flag_disabled, account_missing, rule_match, default] }
+        reason: { type: string, enum: [unknown_flag, flag_disabled, account_missing, rule_match, opt_in, default] }
         rule_id: { type: string }
         bucket: { type: integer, minimum: 0, maximum: 9999 }
         version: { type: integer, format: int64 }
         entitled: { type: boolean }
         available: { type: boolean }
+        scheduled_rule_id: { type: string, description: "First rule that matched but was outside its window." }
+        schedule_state: { type: string, enum: [rule_not_started, rule_ended] }
+        at: { type: string, format: date-time, description: "Decision time, when the inspector was asked about another moment than now." }
+        opt_in: { type: string, enum: [account, org], description: "Whose self-serve opt-in decided, when one did." }
 
     OperatorAccountPlatformFlags:
       description: "Every platform flag decided for one account."
@@ -83090,9 +83836,9 @@ components:
           description: "Stable target app name used by private service discovery."
 
     ServiceBindingPolicy:
-      description: "Caller-side authorization policy for internal service requests. `account` preserves same-account reachability; `declared` permits only targets present in the caller's service bindings."
+      description: "Caller-side authorization policy for internal service requests. `account` preserves same-account reachability; `declared` permits only targets present in the caller's service bindings; `project` also permits every service in the caller's own project (ADR-20261022111119)."
       type: string
-      enum: [account, declared]
+      enum: [account, declared, project]
 
     ServiceBindingTransport:
       description: "Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."
@@ -86834,6 +87580,52 @@ components:
         type: { type: string }
         payload: { description: Committed JSON business data bounded to 64 KiB per intent. }
 
+    ScenarioCapturedEvent:
+      description: An event an enrolled app published. It never reached the account's event bus; the sealed snapshot is its only record. Platform-generated IDs and times do not compare (ADR-20261020090000).
+      type: object
+      required: [id, workload, source, type, data]
+      properties:
+        id: { type: string, format: uuid }
+        workload: { type: string }
+        source: { type: string, maxLength: 256 }
+        type: { type: string, maxLength: 256 }
+        schema_version: { type: string, maxLength: 256 }
+        data: { description: Published JSON event data bounded to 64 KiB. }
+
+    ScenarioSuppressedWebhookEvents:
+      description: Count of ordinary webhook deliveries the capture fence suppressed for one workload and event type. Their payloads carry platform-generated identifiers, so only multiplicity compares.
+      type: object
+      required: [workload, event, count]
+      properties:
+        workload: { type: string }
+        event: { type: string, maxLength: 256 }
+        count: { type: integer, format: int64, minimum: 1 }
+
+    ScenarioCapturedQueueMessage:
+      description: A queue send, inbox message, delayed task or asynchronous invoke an enrolled app requested through the run-local platform API. It was never enqueued (ADR-20261021090000, ADR-20261022082721).
+      type: object
+      required: [id, workload, kind, target, message]
+      properties:
+        id: { type: string, format: uuid }
+        workload: { type: string }
+        kind: { type: string, enum: [queue, delayed_task, async_invoke] }
+        target: { type: string, pattern: '^(workload|app):[a-z0-9][a-z0-9-]{0,62}$', description: "A member of the same run is named workload:<name>; any other app is app:<slug>." }
+        queue_name: { type: string, maxLength: 256 }
+        schedule: { type: string, pattern: '^(absolute|delay:[0-9]{1,8})$', description: "A delayed task's requested delay, or absolute when it gave scheduled_at." }
+        message: { description: "The request's business content, bounded to 64 KiB." }
+
+    ScenarioCapturedPlatformCall:
+      description: A workflow or realtime call an enrolled app requested through the run-local platform API. It was never performed (ADR-20261021150000, ADR-20261021180000).
+      type: object
+      required: [id, workload, kind, target, name, message]
+      properties:
+        id: { type: string, format: uuid }
+        workload: { type: string }
+        kind: { type: string, enum: [workflow_run, workflow_event, realtime_publish, realtime_signal] }
+        target: { type: string, maxLength: 512, description: "What the call addressed, without platform IDs the run created." }
+        name: { type: string, maxLength: 256, description: "The workflow, event or channel name." }
+        message: { description: "The call's compared content, bounded to 64 KiB." }
+
     ScenarioActionSnapshot:
       description: Bounded evidence for a sealed action window. Version 1 covers managed webhooks. Version 2 adds declared simulated relay attempts and durable host recorder coverage. Incomplete snapshots never establish equivalent behavior.
       type: object
@@ -86875,6 +87667,28 @@ components:
         suppressed_deliveries: { type: integer, format: int64, minimum: 0, description: Unsupported ordinary deliveries blocked by the run policy; these are not successful business effects. }
         truncated: { type: boolean }
         reason: { type: string }
+        event_capture_version: { type: integer, enum: [1], description: Present from servers that capture published events. A comparison across capture versions is inconclusive. }
+        published_events:
+          type: array
+          maxItems: 256
+          items: { $ref: '#/components/schemas/ScenarioCapturedEvent' }
+        suppressed_webhook_events:
+          type: array
+          maxItems: 256
+          items: { $ref: '#/components/schemas/ScenarioSuppressedWebhookEvents' }
+        incomplete_captured_events: { type: integer, format: int64, minimum: 0 }
+        queue_capture_version: { type: integer, enum: [1], description: Present from servers that capture queue sends and delayed tasks. }
+        queue_messages:
+          type: array
+          maxItems: 256
+          items: { $ref: '#/components/schemas/ScenarioCapturedQueueMessage' }
+        incomplete_queue_messages: { type: integer, format: int64, minimum: 0 }
+        platform_capture_version: { type: integer, enum: [1], description: Present from servers that capture workflow and realtime calls. }
+        platform_calls:
+          type: array
+          maxItems: 256
+          items: { $ref: '#/components/schemas/ScenarioCapturedPlatformCall' }
+        incomplete_platform_calls: { type: integer, format: int64, minimum: 0 }
 
     RegisterScenarioTestResponse:
       description: Acknowledgement that the versioned webhook capture policy was committed before source deployment.
@@ -88844,6 +89658,15 @@ components:
           minLength: 1
           maxLength: 200
           description: "Commit this upload to production while a deploy freeze is active; the reason is audited with the freezes it overrode (ADR-20261019071733)."
+        release_at:
+          type: string
+          format: date-time
+          description: "Build this upload now, keep it live without traffic, and start its production rollout at this time; deploy freezes are checked at that time (ADR-20261021152201)."
+        release_notify:
+          type: array
+          maxItems: 5
+          items: { type: string, minLength: 1, maxLength: 256 }
+          description: "Slack or email notification channels told when this upload, scheduled with release_at, starts or cannot start."
 
     UploadStartResponse:
       description: "Body of POST /v1/uploads response. The session row persists for 24h; the reaper (cmd/apid/upload_session_reaper.go) flips `status='open'` rows whose `expires_at` has passed to 'expired' on a 5-min ticker. `chunk_size` is server-decided (8 MiB default; 16 MiB for Scale)."
@@ -89243,6 +90066,9 @@ components:
         promotion_hold:
           $ref: '#/components/schemas/DeploymentPromotionHold'
           description: Latest blocked automatic MCP task promotion; omitted once the candidate becomes live or terminal. A hold is not a failed deployment.
+        scheduled_release:
+          $ref: '#/components/schemas/ScheduledRelease'
+          description: The schedule of a release that waits live without traffic for its scheduled start, or how its latest schedule ended (ADR-20261021152201).
         durable_entity_validator:
           $ref: '#/components/schemas/DurableEntityValidatorDeploymentInfo'
         stage_state:
@@ -89695,6 +90521,15 @@ components:
           minLength: 1
           maxLength: 200
           description: "Release this source tarball to production while a deploy freeze is active; the reason is audited (ADR-20261019071733)."
+        release_at:
+          type: string
+          format: date-time
+          description: "Build this source tarball now, keep it live without traffic, and start its production rollout at this time; deploy freezes are checked at that time (ADR-20261021152201)."
+        release_notify:
+          type: array
+          maxItems: 5
+          items: { type: string, minLength: 1, maxLength: 256 }
+          description: "Slack or email notification channels told when this source tarball, scheduled with release_at, starts or cannot start."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this source-tarball deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -89788,7 +90623,7 @@ components:
         kind: { type: string, enum: [advance, hold, abort] }
         rule:
           type: string
-          enum: [advance_healthy, advance_probe_evidence, advance_low_traffic, advance_no_predecessor, advance_manual, hold_insufficient_samples, hold_signal_unavailable, hold_observation_unavailable, hold_health_alert, abort_5xx, abort_p95_latency, abort_cold_boot_p95, abort_cpu_per_request, abort_dependency_errors, abort_oom, abort_crash_loop, abort_manual, abort_worker_lease_expired, abort_post_release_5xx, abort_post_release_p95_latency, abort_release_gate, abort_post_release_gate]
+          enum: [advance_healthy, advance_probe_evidence, advance_low_traffic, advance_no_predecessor, advance_manual, hold_insufficient_samples, hold_signal_unavailable, hold_observation_unavailable, hold_health_alert, abort_5xx, abort_p95_latency, abort_cold_boot_p95, abort_cpu_per_request, abort_dependency_errors, abort_oom, abort_crash_loop, abort_manual, abort_worker_lease_expired, abort_post_release_5xx, abort_post_release_p95_latency, abort_release_gate, abort_post_release_gate, hold_awaiting_approval, abort_approval_rejected, abort_approval_timeout]
           description: "Closed set; the breaker rules reuse the canary_progression_circuit_breaker_total event names."
         summary: { type: string, maxLength: 256, description: "The circuit breaker's aggregate-only reason." }
         step: { type: integer, minimum: 0, description: "Zero-based canary step that was evaluated." }
@@ -98159,6 +98994,15 @@ components:
           minLength: 1
           maxLength: 200
           description: "Release this deployment to production while a deploy freeze is active; the reason is audited with the freezes it overrode (ADR-20261019071733)."
+        release_at:
+          type: string
+          format: date-time
+          description: "Build this deployment now, keep it live without traffic, and start its production rollout at this time; deploy freezes are checked at that time (ADR-20261021152201)."
+        release_notify:
+          type: array
+          maxItems: 5
+          items: { type: string, minLength: 1, maxLength: 256 }
+          description: "Slack or email notification channels told when this deployment, scheduled with release_at, starts or cannot start."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -100465,6 +101309,10 @@ components:
           type: integer
           minimum: 0
           description: Destination-to-source references copied under the new catalog environment identity. Git source bindings, ownership, overrides and runtime receipts are not copied.
+        project_secrets_copied:
+          type: integer
+          minimum: 0
+          description: Secrets the source environment shares with every service, copied to the new environment (ADR-1139). Values are never returned.
         workloads_copied: { type: integer, minimum: 0 }
         bindings_copied: { type: integer, minimum: 0 }
         routes_copied: { type: integer, minimum: 0 }
@@ -100907,6 +101755,46 @@ components:
           type: object
           additionalProperties: true
         updated_at: { type: string, format: date-time }
+
+    ProjectEnvironmentSharedSecret:
+      description: Metadata of one secret shared by every service of a project environment (ADR-1139). The value is write-only.
+      type: object
+      required: [key, version, kid, value_hash, created_at, updated_at]
+      properties:
+        key: { type: string }
+        version: { type: integer, format: int64, minimum: 1, description: "Increases on every value change." }
+        kid: { type: string, description: "Recipient of the fleet key that sealed the value." }
+        value_hash: { type: string, description: "HMAC fingerprint of the value, for comparing values without revealing them." }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ProjectEnvironmentSharedSecretsResponse:
+      description: The secrets a project environment shares with its services.
+      type: object
+      required: [project_slug, environment, secrets, limit]
+      properties:
+        project_slug: { type: string }
+        environment: { type: string }
+        secrets:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentSharedSecret' }
+        limit: { type: integer, description: "The plan's ProjectSecretCountMax for one environment." }
+
+    SetProjectEnvironmentSharedSecretRequest:
+      description: The plaintext value to seal. Never returned.
+      type: object
+      required: [value]
+      properties:
+        value: { type: string, minLength: 1 }
+
+    ProjectEnvironmentSharedSecretResponse:
+      description: A shared secret's metadata after a write.
+      type: object
+      required: [project_slug, environment, secret]
+      properties:
+        project_slug: { type: string }
+        environment: { type: string }
+        secret: { $ref: '#/components/schemas/ProjectEnvironmentSharedSecret' }
 
     ProjectEnvironmentConfigChange:
       description: One key-level change between two environment configuration snapshots.
@@ -101851,6 +102739,15 @@ components:
           minLength: 1
           maxLength: 200
           description: "Release this source ref to production while a deploy freeze is active; the reason is audited (ADR-20261019071733)."
+        release_at:
+          type: string
+          format: date-time
+          description: "Build this source ref now, keep it live without traffic, and start its production rollout at this time; deploy freezes are checked at that time (ADR-20261021152201)."
+        release_notify:
+          type: array
+          maxItems: 5
+          items: { type: string, minLength: 1, maxLength: 256 }
+          description: "Slack or email notification channels told when this source ref, scheduled with release_at, starts or cannot start."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -102482,7 +103379,7 @@ components:
           description: Reviewed public HTTPS base URL derived from this app allocation and installation domain. Absent when wildcard app URLs are disabled.
         app_slug:
           type: string
-          description: "Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans and existing allocations."
+          description: "Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug, which get the project-prefixed name (ADR-20261022120205)."
         name: { type: string, example: api }
         platform_tenant_required:
           type: boolean
@@ -102524,7 +103421,7 @@ components:
           description: "Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment."
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
-          description: "Effective policy selected by Compose `x-gregale-service-policy`. New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted."
+          description: "Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted."
         service_reliability:
           $ref: '#/components/schemas/ServiceReliabilityPolicies'
           description: "Dependency-specific policy selected by Compose `x-gregale-service-reliability`."
@@ -103398,6 +104295,7 @@ components:
             - edge_rule_hits
             - edge_rule_log_hits
             - edge_rule_activity
+            - route_insights_detected
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -103492,7 +104390,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected]
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -103572,7 +104470,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected]
         comparison: { type: string, enum: [gt, gte, lt, lte, above_baseline, below_baseline] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -106686,6 +107584,195 @@ components:
       required: [gates]
       properties:
         gates: { type: array, items: { $ref: '#/components/schemas/ReleaseGate' } }
+    ReleaseApprovalPolicy:
+      description: "An app's release approval policy (ADR-20261020085706)."
+      type: object
+      required: [app, required_approvals, after_stage, timeout_minutes, approvers, allow_self_approval, notify_channels, updated_by, created_at, updated_at]
+      properties:
+        app: { type: string }
+        required_approvals: { type: integer, minimum: 1, maximum: 5, description: "Distinct eligible people who must approve each production release." }
+        after_stage: { type: integer, minimum: 1, maximum: 10, description: "The canary stage a release waits in, counted from 1." }
+        timeout_minutes: { type: integer, minimum: 10, maximum: 10080, description: "How long a release may wait before its rollout is aborted." }
+        approvers: { type: string, enum: [admin, developer], description: "admin: organization owners and admins; developer: developers too." }
+        allow_self_approval: { type: boolean, description: "Whether the deployer's own approval counts." }
+        notify_channels: { type: array, maxItems: 5, items: { type: string }, description: "Notification channels told when a release waits, is approved or rejected, or times out." }
+        updated_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    SetReleaseApprovalPolicyRequest:
+      description: "Sets an app's approval policy. Omitted fields take the defaults: stage 1, a 24-hour timeout, owner or admin approvers, no self-approval."
+      type: object
+      required: [required_approvals]
+      properties:
+        required_approvals: { type: integer, minimum: 1, maximum: 5 }
+        after_stage: { type: integer, minimum: 1, maximum: 10, description: "Default 1." }
+        timeout_minutes: { type: integer, minimum: 10, maximum: 10080, description: "Default 1440." }
+        approvers: { type: string, enum: [admin, developer], description: "Default admin." }
+        allow_self_approval: { type: boolean, description: "Default false; always true for an app outside an organization." }
+        notify_channels: { type: array, maxItems: 5, uniqueItems: true, items: { type: string }, description: "Names of Slack or email notification channels; PagerDuty channels are refused. Slack messages link to the approval page." }
+    DecideReleaseApprovalRequest:
+      description: "One person's decision on a release. A rejection needs a comment."
+      type: object
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [approve, reject] }
+        comment: { type: string, maxLength: 200, description: "Recorded with the decision; required to reject." }
+    ReleaseApprovalDecision:
+      description: "A decision recorded on a release."
+      type: object
+      required: [approver, role, decision, counted, decided_at]
+      properties:
+        approver: { type: string }
+        role: { type: string, enum: [owner, admin, developer, personal], description: "The approver's organization role when they decided; personal for an app outside an organization." }
+        decision: { type: string, enum: [approve, reject] }
+        comment: { type: string }
+        counted: { type: boolean, description: "Whether the approval counts toward the policy; the deployer's own approval does not unless self-approval is allowed." }
+        decided_at: { type: string, format: date-time }
+    ScheduledRelease:
+      description: "A release built ahead of time that starts its rollout at release_at (ADR-20261021152201)."
+      type: object
+      required: [id, app, deployment_id, release_at, state, notify_channels, scheduled_by, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app: { type: string }
+        deployment_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 0 }
+        release_at: { type: string, format: date-time }
+        state: { type: string, enum: [scheduled, started, blocked, expired, cancelled, superseded] }
+        canary: { $ref: '#/components/schemas/CanaryPresetSpec' }
+        notify_channels: { type: array, items: { type: string } }
+        override_freeze: { type: string, maxLength: 200, description: "The reason given for releasing into the freezes in overridden_freezes." }
+        overridden_freezes: { type: array, items: { type: string, format: uuid } }
+        outcome_code: { type: string, description: "Why a schedule ended without starting, such as release_frozen or not_ready." }
+        outcome_detail: { type: string, maxLength: 500 }
+        scheduled_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+    ScheduledReleaseListResponse:
+      description: "Scheduled releases, pending ones first."
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ScheduledRelease' } }
+    ScheduleReleaseRequest:
+      description: "When and how a release waiting without traffic starts its rollout (ADR-20261021152201)."
+      type: object
+      required: [release_at]
+      properties:
+        release_at: { type: string, format: date-time, description: "When the rollout starts; at most 7 days ahead. A time that has passed starts it on apid's next pass." }
+        canary: { $ref: '#/components/schemas/CanaryPresetSpec' }
+        notify_channels: { type: array, maxItems: 5, items: { type: string, minLength: 1, maxLength: 256 } }
+        override_freeze: { type: string, minLength: 1, maxLength: 200, description: "Release into the deploy freezes active at release_at; audited when the release starts." }
+    ReleaseApprovalStatus:
+      description: "A release's approval state (ADR-20261020085706)."
+      type: object
+      required: [deployment_id, app, state, approvals, decisions]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        app: { type: string }
+        state: { type: string, enum: [not_required, waiting, approved, rejected, expired] }
+        required_approvals: { type: integer, minimum: 1, maximum: 5 }
+        approvals: { type: integer, minimum: 0, description: "Approvals that count toward the policy." }
+        after_stage: { type: integer, minimum: 1, maximum: 10 }
+        deployed_by: { type: string }
+        waiting_since: { type: string, format: date-time, description: "When the canary entered its waiting stage." }
+        expires_at: { type: string, format: date-time, description: "When a release still waiting is aborted." }
+        decisions: { type: array, items: { $ref: '#/components/schemas/ReleaseApprovalDecision' } }
+    ListReleaseApprovalsResponse:
+      description: "An app's releases waiting for approval."
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ReleaseApprovalStatus' } }
+    ReleaseDiff:
+      description: "What changed between two releases of one app (ADR-20261021101117)."
+      type: object
+      required: [app, to, summary, code, config, dependencies, runtime, database]
+      properties:
+        app: { type: string }
+        from: { $ref: '#/components/schemas/ReleaseDiffSide' }
+        to: { $ref: '#/components/schemas/ReleaseDiffSide' }
+        summary: { type: string, description: "One line, such as \"new code, 2 config keys, 5 packages\"." }
+        code: { $ref: '#/components/schemas/ReleaseDiffCode' }
+        config: { $ref: '#/components/schemas/ReleaseDiffConfig' }
+        dependencies: { $ref: '#/components/schemas/ReleaseDiffDependencies' }
+        runtime: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffField' } }
+        database: { $ref: '#/components/schemas/ReleaseDiffDatabase' }
+    ReleaseDiffSide:
+      description: "One of the two compared releases."
+      type: object
+      required: [deployment_id, created_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        deployed_by: { type: string }
+        reason: { type: string }
+        tag: { type: string }
+        pr_number: { type: integer, minimum: 0 }
+        commit: { type: string }
+    ReleaseDiffCode:
+      description: "How the releases' source and image differ."
+      type: object
+      required: [changed, image_changed]
+      properties:
+        changed: { type: boolean }
+        from_commit: { type: string }
+        to_commit: { type: string }
+        compare_url: { type: string, format: uri, description: "GitHub's compare page when both releases came from the same GitHub repository." }
+        image_changed: { type: boolean }
+    ReleaseDiffKey:
+      description: "A configuration key that differs; values are never included."
+      type: object
+      required: [key, change]
+      properties:
+        key: { type: string }
+        change: { type: string, enum: [added, removed, changed] }
+    ReleaseDiffConfig:
+      description: "How the configuration each release started with differs, by key."
+      type: object
+      required: [known, variables, secrets]
+      properties:
+        known: { type: boolean, description: "False when the retained config history no longer reaches one of the releases." }
+        note: { type: string }
+        variables: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffKey' } }
+        secrets: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffKey' } }
+    ReleaseDiffPackage:
+      description: "A package whose presence or version differs between the builds."
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, description: "The package's purl without its version, or its group and name." }
+        from: { type: string }
+        to: { type: string }
+    ReleaseDiffDependencies:
+      description: "How the builds' SBOM packages differ. Each list holds at most 100 entries."
+      type: object
+      required: [known, added, removed, changed]
+      properties:
+        known: { type: boolean, description: "False when either release has no build SBOM." }
+        note: { type: string }
+        added: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffPackage' } }
+        removed: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffPackage' } }
+        changed: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffPackage' } }
+        truncated: { type: boolean }
+    ReleaseDiffField:
+      description: "A runtime setting that differs; env overrides compare by key."
+      type: object
+      required: [field, from, to]
+      properties:
+        field: { type: string, enum: [kind, handler, runtime_base, port, entrypoint, command, min_instances, healthcheck, liveness_probe, readiness_probe, sidecars, workflows, env_override_keys] }
+        from: { type: string }
+        to: { type: string }
+    ReleaseDiffDatabase:
+      description: "How the releases' release commands, which run database migrations, differ (ADR-1448)."
+      type: object
+      required: [changed]
+      properties:
+        changed: { type: boolean }
+        from_release_command: { type: string }
+        to_release_command: { type: string }
     ReleaseGateResult:
       description: "One judged release gate in a rollout decision. Aggregates only: no routes, messages or metric labels."
       type: object
@@ -111335,6 +112422,8 @@ components:
           type: array
           items: { $ref: '#/components/schemas/ReleaseFreeze' }
           description: "release_frozen: the freezes refusing the release (ADR-20261019071733)."
+        release_approval:
+          $ref: '#/components/schemas/ReleaseApprovalStatus'
         type: { type: string, format: uri-reference, example: "https://gregale.dev/docs/errors/validation_failed"}
         title: { type: string , example: "Validation failed"}
         status: { type: integer , example: 422}
@@ -126844,6 +127933,12 @@ components:
 
     PlanLimitSecrets:
       description: 'code: plan_limit_secrets'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    PlanLimitProjectSecrets:
+      description: 'code: plan_limit_project_secrets'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

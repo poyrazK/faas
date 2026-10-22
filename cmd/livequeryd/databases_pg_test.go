@@ -93,8 +93,10 @@ func TestServeSeveralDatabases(t *testing.T) {
 		}
 	}
 	config, _ := json.Marshal(map[string]any{"databases": []map[string]any{
-		{"id": "db_a", "database_url_file": dsnFile(dbNames["db_a"])},
-		{"id": "db_b", "database_url_file": dsnFile(dbNames["db_b"])},
+		// Slot names are server-wide: per-run names keep a slot an
+		// interrupted run left behind from breaking the next one.
+		{"id": "db_a", "database_url_file": dsnFile(dbNames["db_a"]), "slot": "lqm_a_" + suffix},
+		{"id": "db_b", "database_url_file": dsnFile(dbNames["db_b"]), "slot": "lqm_b_" + suffix},
 		{"id": "db_c", "database_url_file": dsnFile("lqm_missing_" + suffix)},
 	}})
 	configPath := filepath.Join(dir, "databases.json")

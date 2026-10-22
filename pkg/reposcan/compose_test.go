@@ -466,8 +466,26 @@ func TestDetectCompose_RejectsUnknownServiceBindingPolicy(t *testing.T) {
     x-gregale-service-policy: permissive
 `)},
 	})
-	if err == nil || !strings.Contains(err.Error(), "must be account or declared") {
+	if err == nil || !strings.Contains(err.Error(), "must be project, declared or account") {
 		t.Fatalf("detectCompose error = %v, want closed policy validation", err)
+	}
+}
+
+func TestScanCompose_AcceptsProjectServiceBindingPolicy(t *testing.T) {
+	t.Parallel()
+	result, err := Scan(fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte(`services:
+  api:
+    build: ./api
+    x-gregale-service-policy: Project
+`)},
+		"api/Dockerfile": &fstest.MapFile{Data: []byte("FROM scratch\n")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Workloads) != 1 || result.Workloads[0].ServiceBindingPolicy != ServiceBindingPolicyProject {
+		t.Fatalf("workloads = %+v, want the project policy", result.Workloads)
 	}
 }
 

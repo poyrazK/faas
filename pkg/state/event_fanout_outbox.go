@@ -676,6 +676,15 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 	} else {
 		recipients = append(recipients, m.workflowEventRecipientsLocked(subject.String(), event.Source, event.Type)...)
 	}
+	// ADR-20261021210000: an app enrolled in a rehearsal never receives the
+	// account's events, mirroring enqueue_event_fanout.
+	kept := recipients[:0]
+	for _, recipient := range recipients {
+		if _, enrolled := m.scenarioActionPolicyLocked(recipient.AppID); !enrolled {
+			kept = append(kept, recipient)
+		}
+	}
+	recipients = kept
 	nextID := m.eventFanoutNextID + 1
 	for index := range recipients {
 		work := recipients[index].Work

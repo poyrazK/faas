@@ -109,7 +109,7 @@ type Workload struct {
 	// every ARG at its default.
 	DockerfileBuild  *api.DockerfileBuildOptions
 	Image            string                  // prebuilt OCI image when the source declares one
-	ImageHealthcheck *api.ComposeHealthcheck // partial Compose override for prebuilt images
+	ImageHealthcheck *api.ComposeHealthcheck // partial Compose healthcheck override, prebuilt or built
 	// ImageProcess carries a prebuilt image's Compose entrypoint, user,
 	// working_dir and stop contract (ADR-1337). Nil inherits the image.
 	ImageProcess *api.ComposeProcess
@@ -187,6 +187,7 @@ type ServiceBindingTransport string
 const (
 	ServiceBindingPolicyAccount  ServiceBindingPolicy    = "account"
 	ServiceBindingPolicyDeclared ServiceBindingPolicy    = "declared"
+	ServiceBindingPolicyProject  ServiceBindingPolicy    = "project"
 	ServiceBindingTransportHTTP  ServiceBindingTransport = "http"
 	ServiceBindingTransportHTTPS ServiceBindingTransport = "https"
 )

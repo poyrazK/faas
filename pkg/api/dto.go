@@ -2051,13 +2051,15 @@ type AppResponse struct {
 	Manifest AppManifest `json:"manifest"`
 	// ServiceBindings are declared same-account app
 	// dependencies currently injected into this workload. They are a read-only
-	// discovery projection; authorization applies them only when
-	// ServiceBindingPolicy is "declared".
+	// discovery projection; authorization applies them when
+	// ServiceBindingPolicy is "declared", and to targets outside the caller's
+	// project when it is "project".
 	ServiceBindings    []AppServiceBinding                 `json:"service_bindings,omitempty"`
 	ServiceReliability map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 	// ServiceBindingPolicy is the caller-side authorization policy applied to
 	// internal service requests. "account" preserves legacy same-account
-	// reachability; "declared" permits only ServiceBindings targets.
+	// reachability; "declared" permits only ServiceBindings targets; "project"
+	// also permits every service in the caller's project.
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
 	// ServiceBindingTransport selects the scheme used by the canonical
 	// GREGALE_SERVICE_<NAME>_URL environment variable. The HTTPS alias remains
@@ -2521,6 +2523,13 @@ type CreateDeploymentRequest struct {
 	// (ADR-20261019071733). It is the reason, 1-200 characters; apid audits
 	// it with the freezes it overrode.
 	OverrideFreeze string `json:"override_freeze,omitempty"`
+	// ReleaseAt schedules the production release (ADR-20261021152201): it is
+	// built now, waits live without traffic, and starts its rollout at this
+	// RFC 3339 time. Freezes are checked at that time.
+	ReleaseAt string `json:"release_at,omitempty"`
+	// ReleaseNotify names Slack or email channels told when a scheduled
+	// release starts or cannot start.
+	ReleaseNotify []string `json:"release_notify,omitempty"`
 	// Overrides is the Fargate-shaped deploy-time override object
 	// (issue #460 / ADR-053). Lets a customer redeploy the same
 	// digest-pinned image with a different entrypoint/cmd/env/port
@@ -3335,6 +3344,10 @@ type DeploymentResponse struct {
 	PromotionHold          *DeploymentPromotionHold              `json:"promotion_hold,omitempty"`
 	DurableEntityValidator *DurableEntityValidatorDeploymentInfo `json:"durable_entity_validator,omitempty"`
 	StageState             json.RawMessage                       `json:"stage_state,omitempty"`
+	// ScheduledRelease is the schedule of a release built ahead of time:
+	// pending while it waits, or how its latest schedule ended
+	// (ADR-20261021152201).
+	ScheduledRelease *ScheduledRelease `json:"scheduled_release,omitempty"`
 	// DevPatch is set only on the response to a developer source upload
 	// (`gregale dev`). It reports whether the sync could have been applied as
 	// a live source patch (ADR-740 phase 1, measurement only).
@@ -7259,6 +7272,9 @@ type SourceRefDeployRequest struct {
 	Healthcheck              *DeploymentHealthcheck `json:"healthcheck,omitempty"`
 	// OverrideFreeze is CreateDeploymentRequest.OverrideFreeze.
 	OverrideFreeze string `json:"override_freeze,omitempty"`
+	// ReleaseAt and ReleaseNotify are CreateDeploymentRequest's.
+	ReleaseAt     string   `json:"release_at,omitempty"`
+	ReleaseNotify []string `json:"release_notify,omitempty"`
 }
 
 // SourceTarballDeployRequest is the CLI-uploaded tarball sidecar for
@@ -7292,6 +7308,9 @@ type SourceTarballDeployRequest struct {
 	Healthcheck            *DeploymentHealthcheck `json:"healthcheck,omitempty"`
 	// OverrideFreeze is CreateDeploymentRequest.OverrideFreeze.
 	OverrideFreeze string `json:"override_freeze,omitempty"`
+	// ReleaseAt and ReleaseNotify are CreateDeploymentRequest's.
+	ReleaseAt     string   `json:"release_at,omitempty"`
+	ReleaseNotify []string `json:"release_notify,omitempty"`
 }
 
 // PlanWorkload mirrors reposcan.Workload (Phase 3 wire shape).
