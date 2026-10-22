@@ -1198,6 +1198,12 @@ gregale app APP_ID --visibility internal
 gregale app APP_ID --visibility public
 ```
 
+A Compose project sets this for you: a new app for a service without `ports:`
+is created internal, as Docker publishes nothing for it (ADR-20261022131852).
+The plan shows `visibility=internal`. The choice is made once, when the app is
+created; later syncs keep whatever visibility the app has, so publish such a
+service with `--visibility public`. PR previews inherit their app's visibility.
+
 Internal apps do not receive a public platform-subdomain or verified custom
 domain route. Service discovery continues to resolve them through
 `APP_SLUG.svc.gregale:10081`, where the service proxy enforces caller identity

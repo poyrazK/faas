@@ -7347,6 +7347,10 @@ type PlanWorkload struct {
 	AllowedServiceCallers     *[]string                           `json:"allowed_service_callers,omitempty"`
 	AllowedServiceCallScopes  *ServiceCallerScopes                `json:"allowed_service_call_scopes,omitempty"`
 	PlatformTenantRequired    *bool                               `json:"platform_tenant_required,omitempty"`
+	// Visibility is "internal" when the app is or will be hidden from the
+	// public edge: an existing internal app, or a new Compose service without
+	// `ports:` (ADR-20261022131852). Omitted means public.
+	Visibility AppVisibility `json:"visibility,omitempty"`
 
 	Class           string   `json:"class,omitempty"`
 	Schedule        string   `json:"schedule,omitempty"`

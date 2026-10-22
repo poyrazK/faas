@@ -257,6 +257,8 @@ This ADR ships with:
   needs no private identity.
 - `scripts/ci/sealdomaincheck` and its baseline.
 
+Rollout checklist: [Seal domains rollout](../runbooks/seal-domains-rollout.md).
+
 ## Implemented in the second slice: the runtime domain
 
 - **vmmd** loads `domains/runtime.age` (and its `.previous`) next to

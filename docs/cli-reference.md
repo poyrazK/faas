@@ -1196,7 +1196,7 @@ Acknowledge manual provider cleanup
 
 ### mcp deploy
 
-Pin the candidate catalog to its revision, verify MCP discovery and promote
+Pin the candidate catalog, verify MCP discovery and promote
 
 `gregale mcp deploy [--path <DIR>] --name <SLUG> [--size <SIZE>] [--profile <SIZE>] [--token-env <ENV>] [--secrets-file <PATH>] [--release-policy <PATH>] [--validate-url <URL>] [--fixtures <PATH>] [--allow-tool-execution] [--access-audit <PLACEMENT>] [--access-audit-algorithms <LIST>] [--idempotency-key <KEY>] [--mcp-task-migration-override] [--timeout <SECONDS>]`
 
@@ -1252,7 +1252,7 @@ gregale mcp access audit --app my-mcp --auth-placement guest-only --release-poli
 
 ### mcp overview
 
-Inspect serving replicas, Task workers, observer readiness and promotion holds
+Inspect replicas, Task workers, observers and promotion holds
 
 `gregale mcp overview --app <SLUG> [--worker-app <SLUG>] [--observer-app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--release-policy <PATH>] [--timeout <DURATION>]`
 
@@ -1276,7 +1276,7 @@ gregale mcp overview --app my-mcp --release-policy release.json
 
 ### mcp status
 
-Qualify serving MCP replicas and watch hosting health or catalog changes
+Qualify serving replicas and watch health or catalog changes
 
 `gregale mcp status --app <SLUG> [--endpoint <PATH>] [--token-env <ENV>] [--release-policy <PATH>] [--timeout <DURATION>] [--watch] [--interval <DURATION>]`
 
@@ -1301,7 +1301,7 @@ gregale mcp status --app my-mcp --watch --interval 15s --json
 
 ### mcp doctor
 
-Check discovery, Origin rejection, compatibility and optional streaming
+Check discovery, Origin rejection, compatibility and streaming
 
 `gregale mcp doctor [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--stack] [--hosting] [--path <DIR>] [--worker-app <SLUG>] [--observer-app <SLUG>] [--release-policy <PATH>]`
 
@@ -1333,6 +1333,8 @@ Examples:
 gregale mcp doctor --app my-mcp --legacy --stream-tool stream_demo
 gregale mcp doctor --stack --app reports-web --worker-app reports-worker --path ./reports/web --json
 ```
+
+The streaming check is optional.
 
 ### mcp tools
 
@@ -1820,7 +1822,7 @@ gregale mcp config --app my-mcp --name my-mcp
 
 ### mcp lock
 
-Capture MCP catalog definitions without reading resources, rendering prompts or invoking tools
+Capture MCP catalog definitions without invoking anything
 
 `gregale mcp lock [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--out <PATH>] [--force] [--timeout <DURATION>]`
 
@@ -1840,6 +1842,8 @@ Examples:
 ```sh
 gregale mcp lock --app my-mcp --out baseline.json
 ```
+
+Does not read resources, render prompts or invoke tools.
 
 ### mcp diff
 
@@ -1927,13 +1931,15 @@ Show account status
 
 ### account dpa
 
-Print the Data Processing Agreement template (placeholders are filled when the agreement is signed)
+Print the Data Processing Agreement template
 
 `gregale account dpa [-o <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `-o <PATH>` | write the DPA template to a file |  |
+
+Placeholders are filled when the agreement is signed.
 
 ### account slo
 
@@ -2488,7 +2494,7 @@ Configure standalone service bindings
 
 #### bindings service explain
 
-Explain service authorization, optionally for an exact deployment; exits 0 allowed, 1 denied, 2 indeterminate/error
+Explain service authorization, optionally for one deployment
 
 `gregale bindings service explain [--deployment <ID>] [--scope <ENV>] [--method <METHOD>] [--path <PATH>] <caller> <target>`
 
@@ -2498,6 +2504,8 @@ Explain service authorization, optionally for an exact deployment; exits 0 allow
 | `--scope <ENV>` | assert deployment environment; requires --deployment |  |
 | `--method <METHOD>` | HTTP method (default GET) |  |
 | `--path <PATH>` | origin-form request path (default /) |  |
+
+Exits 0 when allowed, 1 when denied, and 2 when indeterminate or on error.
 
 #### bindings service export
 
@@ -2697,7 +2705,7 @@ Block new admission and cancel unfinished owned work
 
 ### bindings verify
 
-Check a private service route or test a managed PostgreSQL or object-storage binding
+Check a private route or test a PostgreSQL or storage binding
 
 `gregale bindings verify [--all] [--require-complete] [--release-policy] [--durable] [--run-id <UUID>] [--progress <MODE>] [--status-read-retries <N>] [--concurrency <N>] [--dry-run] [--postgres <ENVIRONMENT_KEY>] [--outbound <INTEGRATION_ID>] [--object-storage <PREFIX>] [--queue <BINDING>] [--queue-publish] [--object-storage-write] [--deployment <ID|vN>] [--poll-interval <D>] [--wait-timeout <D>] <app> [<service>]`
 
@@ -2737,7 +2745,7 @@ gregale bindings verify my-api --deployment v12 --release-policy --object-storag
 
 ### bindings smoke
 
-Invoke a path on one exact live target deployment over the private HTTPS binding
+Invoke a path on one live deployment over the private binding
 
 `gregale bindings smoke [--target-deployment <ID>] [--deployment <ID>] [--caller-deployment <ID|vN>] --path <PATH> [--expect-status <CODE>] [--poll-interval <D>] [--wait-timeout <D>] <app> <service>`
 
@@ -2801,7 +2809,7 @@ gregale ai tokens create --app my-api --name laptop --expires-in-hours 24
 
 ### ai policy
 
-Set the AI provider and token or cost limits (unchanged flags keep their values)
+Set the AI provider and token or cost limits
 
 `gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <USD>] [--monthly-cost <USD>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <USD>] [--log-export <on|off>] [--allow-unmetered <on|off>] [--prompt-cache <on|off>] <integration-id>`
 
@@ -2819,9 +2827,11 @@ Set the AI provider and token or cost limits (unchanged flags keep their values)
 | `--allow-unmetered <on|off>` | let through calls the gateway cannot meter (realtime client secrets, vector stores, fine-tuning), outside the caps | one of `on` · `off` |
 | `--prompt-cache <on|off>` | add prompt-cache breakpoints to Claude requests that carry none: after a repeated system prompt or tools, and after a continuing conversation | one of `on` · `off` |
 
+Flags you omit keep their values.
+
 ### ai content-policy
 
-Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms, in requests and responses (unchanged flags keep their values)
+Show or set content guardrails for requests and responses
 
 `gregale ai content-policy [--email <ACTION>] [--payment-card <ACTION>] [--iban <ACTION>] [--secrets <ACTION>] [--block-term <TERM>] [--clear-terms] [--moderation <ACTION>] [--moderation-kind <KIND>] [--moderation-integration <ID>] [--moderation-model <MODEL>] [--moderation-categories <LIST>] [--moderation-on-error <allow|block>] [--response-email <ACTION>] [--response-payment-card <ACTION>] [--response-iban <ACTION>] [--response-secrets <ACTION>] [--response-terms <off|block>] [--response-moderation <ACTION>] <integration-id>`
 
@@ -2846,9 +2856,11 @@ Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets
 | `--response-terms <off|block>` | block responses containing a blocked term | one of `off` · `block` |
 | `--response-moderation <ACTION>` | check responses with the moderation check | one of `off` · `flag` · `block` |
 
+Redacts or blocks e-mail, cards, IBANs and secrets, and blocks terms. Flags you omit keep their values.
+
 ### ai tags
 
-Show one UTC day&#39;s AI usage by X-Gregale-AI-Tags tag, with each tag&#39;s limit, or export a day range: tags export &lt;integration-id&gt;
+Show one UTC day&#39;s AI usage by tag, or export a day range
 
 `gregale ai tags [--date <YYYY-MM-DD>] [--key <KEY>] [--limit <N>] [--from <YYYY-MM-DD>] [--to <YYYY-MM-DD>] [--format <FORMAT>] [export] <integration-id>`
 
@@ -2860,6 +2872,8 @@ Show one UTC day&#39;s AI usage by X-Gregale-AI-Tags tag, with each tag&#39;s li
 | `--from <YYYY-MM-DD>` | export: first UTC day within the last 31 days (default today) |  |
 | `--to <YYYY-MM-DD>` | export: last UTC day (default today) |  |
 | `--format <FORMAT>` | export: csv (default) or ndjson | one of `csv` · `ndjson` |
+
+Tags come from the X-Gregale-AI-Tags header, each with its limit. Export with: tags export &lt;integration-id&gt;.
 
 ### ai tag-limits
 
@@ -2886,7 +2900,7 @@ Set or clear one app&#39;s own daily AI token limit
 
 ### ai guardrails
 
-Set one app&#39;s per-minute limits, model allow-list and output-token ceiling (unchanged flags keep their values)
+Set an app&#39;s per-minute limits, model allow-list and output cap
 
 `gregale ai guardrails --app <slug> [--rpm <N>] [--tpm <N>] [--models <LIST>] [--max-output-tokens <N>] <integration-id>`
 
@@ -2898,9 +2912,11 @@ Set one app&#39;s per-minute limits, model allow-list and output-token ceiling (
 | `--models <LIST>` | comma-separated models or prefixes ending in *, or none |  |
 | `--max-output-tokens <N>` | per-request output-token ceiling, or none |  |
 
+Flags you omit keep their values.
+
 ### ai prices
 
-Show the price list, or replace it with: prices set &lt;integration-id&gt; --price ...
+Show the price list, or replace it with prices set
 
 `gregale ai prices [--price <SPEC>] [set] <integration-id>`
 
@@ -2908,9 +2924,11 @@ Show the price list, or replace it with: prices set &lt;integration-id&gt; --pri
 |---|---|---|
 | `--price <SPEC>` | model=PREFIX,input=USD,output=USD[,cached=USD][,cache-write=USD][,input-image=USD][,output-image=USD] per million tokens, [,image=USD] per image, [,audio-minute=USD] per minute, [,characters=USD] per million characters, [,video-second=USD] per second of video, with model=&lt;model&gt;@&lt;resolution&gt; for one resolution, [,web-search=USD] [,file-search=USD] per use, [,code-session-gb=USD] per GB container session, [,input-audio=USD][,cached-audio=USD][,output-audio=USD] per million audio tokens (repeat; none clears) |  |
 
+Replace with: prices set &lt;integration-id&gt; --price ...
+
 ### ai catalog
 
-Show the built-in prices that apply to models missing from a price list
+Show built-in prices for models missing from a price list
 
 `gregale ai catalog [--model <NAME>] <provider>`
 
@@ -2930,7 +2948,7 @@ Show one UTC day of token usage and cost by caller and model
 
 ### ai users
 
-Show one UTC day of usage by end user (X-Gregale-AI-User), most expensive first, or export a day range
+Show one UTC day of usage by end user, or export a day range
 
 `gregale ai users [--date <YYYY-MM-DD>] [--user <ID>] [--limit <N>] [--from <YYYY-MM-DD>] [--to <YYYY-MM-DD>] [--format <csv|ndjson>] [export] <integration-id>`
 
@@ -2943,9 +2961,11 @@ Show one UTC day of usage by end user (X-Gregale-AI-User), most expensive first,
 | `--to <YYYY-MM-DD>` | export: last UTC day (default today) |  |
 | `--format <csv|ndjson>` | export format | one of `csv` · `ndjson` |
 
+End users come from the X-Gregale-AI-User header, most expensive first.
+
 ### ai routes
 
-List, create, update (set) or delete (rm) AI routes, run a model canary on one, or show its targets&#39; recent stats
+Manage AI routes, run a model canary, or show target stats
 
 `gregale ai routes [--name <NAME>] [--format <FORMAT>] [--target <TARGET>] [--strategy <STRATEGY>] [--weights <70,30>] [--max-ttfb-ms <N>] [--position <N>] [--percent <N>] [--max-error-increase <N>] [--max-latency-increase <N>] [--min-calls <N>] [--window <N>] <list|create|set|rm|canary|stats> [<route-id>] [status|promote|stop]`
 
@@ -2963,6 +2983,8 @@ List, create, update (set) or delete (rm) AI routes, run a model canary on one, 
 | `--max-latency-increase <N>` | canary: roll back past this many percent slower time to first byte |  |
 | `--min-calls <N>` | canary: calls needed before judging (default 50) |  |
 | `--window <N>` | canary: minutes of calls to judge (default 30) |  |
+
+List, create, update (set) or delete (rm) routes.
 
 ### ai keys
 
@@ -2987,7 +3009,7 @@ List budget alerts recorded at 80% and 100%
 
 ### ai replay
 
-Resend a captured call to other integrations or models and compare status, tokens, cost, latency and output, or show a replay
+Resend a captured call to other models and compare the results
 
 `gregale ai replay [--target <TARGET>] [--no-wait] [--timeout <duration>] [show] <integration-id|replay-id> [<request-id>]`
 
@@ -2997,9 +3019,11 @@ Resend a captured call to other integrations or models and compare status, token
 | `--no-wait` | print the replay without waiting for results |  |
 | `--timeout <duration>` | how long to wait for results (default 3m) |  |
 
+Compares status, tokens, cost, latency and output across integrations or models, or shows a replay.
+
 ### ai evaluate
 
-Judge a route target against the route&#39;s first target on recent captured calls, optionally starting a canary when it passes, or list and show evaluations
+Judge a route target against its first target on captured calls
 
 `gregale ai evaluate [--position <N>] [--judge <INTEGRATION>] [--judge-model <MODEL>] [--sample <N>] [--max-loss-rate <N>] [--canary-percent <N>] [--no-wait] [--timeout <duration>] [list|show] <route-id|evaluation-id>`
 
@@ -3014,9 +3038,11 @@ Judge a route target against the route&#39;s first target on recent captured cal
 | `--no-wait` | print the evaluation without waiting for its verdict |  |
 | `--timeout <duration>` | how long to wait for the verdict (default 30m) |  |
 
+Optionally starts a canary when the target passes; also lists and shows evaluations.
+
 ### ai tokens
 
-List, create or revoke access tokens that let local development, CI or notebooks call the AI gateway as an app
+Manage tokens that let dev, CI or notebooks call the AI gateway
 
 `gregale ai tokens [--app <SLUG>] [--name <NAME>] [--expires-in-hours <N>] [--integration <INTEGRATION>] <list|create|revoke> [<token-id>]`
 
@@ -3027,9 +3053,11 @@ List, create or revoke access tokens that let local development, CI or notebooks
 | `--expires-in-hours <N>` | token lifetime for create, 1 to 2160 (default 168) |  |
 | `--integration <INTEGRATION>` | limit the token to this AI integration (repeat) |  |
 
+List, create or revoke tokens; a token acts as the app.
+
 ### ai logs
 
-Page the opt-in AI request log, newest first, or show one call&#39;s captured bodies
+Page the opt-in AI request log, or show one call&#39;s bodies
 
 `gregale ai logs [--limit <N>] [--before <TIME>] [show] <integration-id> [<request-id>]`
 
@@ -3037,6 +3065,8 @@ Page the opt-in AI request log, newest first, or show one call&#39;s captured bo
 |---|---|---|
 | `--limit <N>` | calls to show, 1 to 200 |  |
 | `--before <TIME>` | show calls before this RFC 3339 time |  |
+
+Newest first.
 
 
 ## channels
@@ -3215,7 +3245,7 @@ Manage an app&#39;s alert rules
 
 ### alerts actions
 
-Read or wait for automatic rollback status, deployment evidence and service handoffs
+Read or wait for automatic rollback status and evidence
 
 `gregale alerts actions [--interactive] [--app <slug>] [--fire <UUID>] [--wait] [--timeout <duration>] [--poll-interval <duration>]`
 
@@ -3233,6 +3263,8 @@ Examples:
 ```sh
 gregale alerts actions --app my-api --interactive
 ```
+
+Includes deployment evidence and service handoffs.
 
 ### alerts list
 
@@ -3435,7 +3467,7 @@ Preview account-wide event routing without publishing
 
 ### events replay-preview
 
-Preview retained events for one current subscription without creating deliveries
+Preview retained events for one subscription without delivering
 
 `gregale events replay-preview --subscription-id <UUID> --from <RFC3339> --until <RFC3339> [--after <CURSOR>] [--limit <N>] <app>`
 
@@ -3449,7 +3481,7 @@ Preview retained events for one current subscription without creating deliveries
 
 ### events workflow-replay-preview
 
-Preview captured workflow event recipients and admission status without starting runs
+Preview workflow event recipients without starting runs
 
 `gregale events workflow-replay-preview --workflow-name <NAME> --from <RFC3339> --until <RFC3339> [--after <CURSOR>] [--limit <N>] <app>`
 
@@ -3460,6 +3492,8 @@ Preview captured workflow event recipients and admission status without starting
 | `--until <RFC3339>` | exclusive acceptance timestamp | required |
 | `--after <CURSOR>` | opaque continuation cursor; keep app, workflow and range unchanged |  |
 | `--limit <N>` | envelopes examined per page (1..100; default 50) |  |
+
+Shows captured recipients and admission status.
 
 ### events backfill
 
@@ -3474,6 +3508,19 @@ Create a durable bounded delivery job for matching retained events
 | `--from <RFC3339>` | inclusive platform acceptance timestamp | required |
 | `--until <RFC3339>` | exclusive platform acceptance timestamp | required |
 | `--yes` | confirm that matching historical events may invoke this consumer | required |
+
+### events workflow-backfill
+
+Start event-triggered workflow runs for past events
+
+`gregale events workflow-backfill --workflow-name <NAME> --from <RFC3339> --until <RFC3339> --yes <app>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--workflow-name <NAME>` | target event-triggered workflow | required |
+| `--from <RFC3339>` | inclusive acceptance time | required |
+| `--until <RFC3339>` | exclusive acceptance time | required |
+| `--yes` | confirm that matching past events may start runs | required |
 
 ### events backfill-status
 
@@ -3519,7 +3566,7 @@ Inspect receipt expiry, backfill holds and account storage
 
 ### events publish-app-verify
 
-Compare an original publish file with retained content without publishing
+Compare a publish file with retained content without publishing
 
 `gregale events publish-app-verify [--expected-accepted-at <RFC3339>] [--file <PATH>] <app>`
 
@@ -3536,7 +3583,7 @@ gregale events publish-app-verify my-app --file event.json --json
 
 ### events publish-app-status
 
-Reconcile retained publication and consumer evidence without submitting an event
+Reconcile retained publication and consumer evidence
 
 `gregale events publish-app-status [--expected-accepted-at <RFC3339>] [--key <KEY>] [--after <CURSOR>] [--limit <N>] <app>`
 
@@ -3552,6 +3599,8 @@ Examples:
 ```sh
 gregale events publish-app-status my-app --key order-123-created --json
 ```
+
+Does not submit an event.
 
 ### events publish-app
 
@@ -3581,7 +3630,7 @@ Publish a bounded JSONL batch with per-event results
 
 ### events publish
 
-Publish one event (SOURCE TYPE can be positional; ID is generated by default)
+Publish one event
 
 `gregale events publish [--id <ID>] [--source <SOURCE>] [--type <TYPE>] --data <J|@file|-> [--time <RFC3339>]`
 
@@ -3592,6 +3641,8 @@ Publish one event (SOURCE TYPE can be positional; ID is generated by default)
 | `--type <TYPE>` | event type (or second positional argument) |  |
 | `--data <J|@file|->` | JSON event data (inline \| @file \| -) | required |
 | `--time <RFC3339>` | event time (RFC3339; defaults to server time) |  |
+
+SOURCE and TYPE can be positional; the ID is generated by default.
 
 ### events subscription-pause
 
@@ -4076,7 +4127,7 @@ Dead-letter a deferred delivery using its current secret token
 
 ### events deadline-alert-investigate
 
-Inspect current deadline identities and optional blockers for a saved Go alert
+Inspect deadline identities and blockers for a saved Go alert
 
 `gregale events deadline-alert-investigate [--alert-file <PATH>] [--limit <N>] [--cursor <CURSOR>] [--explain] <app>`
 
@@ -4196,7 +4247,7 @@ List a page of retained original capacity-command receipts
 
 ### events subscription-capacity-command
 
-Read retained original capacity-command evidence without applying a change
+Read retained capacity-command evidence without changing anything
 
 `gregale events subscription-capacity-command [--timeout <DURATION>] <app> <subscription-id> <command-id>`
 
@@ -4206,7 +4257,7 @@ Read retained original capacity-command evidence without applying a change
 
 ### events subscription-capacity-preview
 
-Preview delivery capacity and command receipt budget without changing controls
+Preview delivery capacity and command receipt budget
 
 `gregale events subscription-capacity-preview [--max-pending <N>] [--timeout <DURATION>] [--max-age <DURATION>] <app> <subscription-id>`
 
@@ -4215,6 +4266,8 @@ Preview delivery capacity and command receipt budget without changing controls
 | `--max-pending <N>` | proposed live ceiling; 0 restores plan default |  |
 | `--timeout <DURATION>` | total read deadline (default 5s) |  |
 | `--max-age <DURATION>` | maximum pressure snapshot age (default 30s) |  |
+
+Does not change controls.
 
 ### events recovery-preview
 
@@ -4292,7 +4345,7 @@ gregale events notification-retry-reconcile --file plan.json --wait --timeout 5m
 
 ### events notification-retry-plan
 
-Preview explicit notification retries across up to ten app jobs and save a plan
+Preview notification retries across app jobs and save a plan
 
 `gregale events notification-retry-plan [--file <PATH>] [--output <NEW_PATH>]`
 
@@ -4300,6 +4353,8 @@ Preview explicit notification retries across up to ten app jobs and save a plan
 |---|---|---|
 | `--file <PATH>` | Selection JSON with app_id and stable per-job requests |  |
 | `--output <NEW_PATH>` | Create a new private plan file; never overwrite |  |
+
+Covers up to ten app jobs.
 
 ### events notification-retry-apply
 
@@ -4562,7 +4617,7 @@ Inspect immutable routing outcomes and replay history for one event
 
 ### events replay
 
-Retry one terminal pre-invocation recipient failure using its event identity and subscription ID from events deliveries
+Retry one terminal pre-invocation recipient failure
 
 `gregale events replay [--expected-accepted-at <RFC3339>] [--expected-generation <N>] [--allow-expired] --event-id <ID> --event-source <SOURCE> --subscription-id <ID> <app>`
 
@@ -4575,9 +4630,11 @@ Retry one terminal pre-invocation recipient failure using its event identity and
 | `--event-source <SOURCE>` | published event source | required |
 | `--subscription-id <ID>` | failed subscription id | required |
 
+Uses the event identity and subscription ID from events deliveries.
+
 ### events replay-retryable
 
-Retry a bounded batch of terminal failures classified as retryable; pass --event-source and --event-id together to filter
+Retry a bounded batch of retryable terminal failures
 
 `gregale events replay-retryable [--event-source <SOURCE>] [--event-id <ID>] [--limit <N>] --yes <app>`
 
@@ -4587,6 +4644,8 @@ Retry a bounded batch of terminal failures classified as retryable; pass --event
 | `--event-id <ID>` | limit replay to one published event |  |
 | `--limit <N>` | max recipients to requeue (1..100) |  |
 | `--yes` | confirm requeueing retryable event recipients | required |
+
+Pass --event-source and --event-id together to filter.
 
 
 ## send
@@ -4650,7 +4709,7 @@ Alias for the default list action
 
 ### apps rm
 
-Delete an app (alias: delete); restore it within the deletion grace window
+Delete an app; restore it within the deletion grace window
 
 `gregale apps rm [--dry-run] [--yes] [--quiet] [-q] <slug>`
 
@@ -4660,6 +4719,8 @@ Delete an app (alias: delete); restore it within the deletion grace window
 | `--yes` | confirm deletion without prompting; required in non-interactive and JSON mode |  |
 | `--quiet` | confirm deletion without prompting (alias of --yes) |  |
 | `-q` | confirm deletion without prompting (alias of --yes) |  |
+
+Also accepted as delete.
 
 ### apps restore
 
@@ -5060,7 +5121,7 @@ Copy a path out of a fresh VM of the live deployment
 
 ### app port-forward
 
-Forward a local port to HOST:PORT reached from inside the app&#39;s network
+Forward a local port to a host and port inside the app&#39;s network
 
 `gregale app <slug> port-forward [--address <A>] [--wait-timeout <D>] [LOCAL_PORT:]HOST:PORT`
 
@@ -5924,7 +5985,7 @@ gregale connect github
 
 ### connect repo
 
-Open the dashboard wizard to bind &lt;owner&gt;/&lt;name&gt; to a Gregale app
+Open the dashboard wizard to bind a repository to an app
 
 `gregale connect repo <owner>/<name>`
 
@@ -5945,7 +6006,7 @@ See also: [`connect`](#connect).
 
 ### github status
 
-Show the GitHub connection health for &lt;slug&gt;
+Show an app&#39;s GitHub connection health
 
 `gregale github status <slug>`
 
@@ -5969,7 +6030,7 @@ gregale github sync my-api
 
 ### github repos
 
-List repositories visible to the connected GitHub installation for &lt;slug&gt;
+List repositories the connected GitHub installation can see
 
 `gregale github repos <slug>`
 
@@ -5981,7 +6042,7 @@ gregale github repos my-api
 
 ### github bind
 
-Bind &lt;slug&gt; to a visible GitHub repository
+Bind an app to a visible GitHub repository
 
 `gregale github bind [--installation-id <ID>] --repo <OWNER/NAME> [--branch <BRANCH>] [--deploy-branches <MAPPINGS>] <slug>`
 
@@ -6049,7 +6110,7 @@ Configure CORS for an app
 
 ### cors allow
 
-Attach a CORS rule to &lt;slug&gt;
+Attach a CORS rule to an app
 
 `gregale cors allow [--method <VERB>] [--credentials] [--max-age <N>] [--host <HOST>] <slug> <origin> [<origin>...]`
 
@@ -6068,9 +6129,11 @@ gregale cors allow my-api https://app.example.com --method GET --method POST
 
 ### cors ls
 
-List CORS rules bound to &lt;slug&gt; (defaults to linked context)
+List an app&#39;s CORS rules
 
 `gregale cors ls [<slug>]`
+
+The app defaults to the linked one.
 
 ### cors rm
 
@@ -6095,7 +6158,7 @@ See also: [`triggers`](#triggers).
 
 ### crons next
 
-Show upcoming expression times across app tasks, with state and policy caveats
+Show upcoming expression times across app tasks
 
 `gregale crons next [--app <SLUG>]`
 
@@ -6109,6 +6172,8 @@ Examples:
 gregale crons next --app my-api
 gregale crons next --app my-api --json
 ```
+
+Includes state and policy caveats.
 
 ### crons list
 
@@ -6467,7 +6532,7 @@ gregale jobs --help
 
 ### jobs resume
 
-Recover a saved Job run: observe, read failure logs, or collect results
+Recover a saved Job run: observe, read failures or collect results
 
 `gregale jobs resume [--dry-run] [--run <UUID|PREFIX>] [--list] [--overview] [--current-connection] [--forget <UUID>] [--timeout <DURATION>] [--poll-interval <DURATION>] [--job <NAME>] [--saved-job] [--latest] [--logs] [--results]`
 
@@ -6684,7 +6749,7 @@ gregale jobs runs --failed-only --all
 
 ### jobs overview
 
-Summarize Job readiness, latest run, and next commands (saved Job by default)
+Summarize Job readiness, latest run and next commands
 
 `gregale jobs overview [--check] [<name>]`
 
@@ -6700,9 +6765,11 @@ gregale jobs overview --check
 gregale jobs overview nightly-report --json
 ```
 
+Uses the saved Job by default.
+
 ### jobs status
 
-Read one exact or latest Job run summary (saved Job and latest by default)
+Read one exact or latest Job run summary
 
 `gregale jobs status [--check] [<name>] [<run-id|latest>]`
 
@@ -6719,6 +6786,8 @@ gregale jobs status nightly-report RUN_ID --check
 gregale jobs status nightly-report latest
 gregale --json jobs status nightly-report RUN_ID
 ```
+
+Uses the saved Job and its latest run by default.
 
 ### jobs occurrences
 
@@ -6864,7 +6933,7 @@ gregale jobs defaults clear --dry-run
 
 ### jobs results
 
-Wait for success and collect outputs, verifying matching existing files
+Wait for success and collect outputs
 
 `gregale jobs results [--out-dir <DIR>] [--all-artifacts] [--dry-run] [--timeout <DURATION>] [--poll-interval <DURATION>] [--include <GLOB>] [--exclude <GLOB>] [<name>] [<run-id|latest>]`
 
@@ -6885,6 +6954,8 @@ gregale jobs results nightly-report
 gregale jobs results nightly-report latest --out-dir ./results
 gregale jobs results nightly-report latest --out-dir ./results --dry-run
 ```
+
+Output files that already exist are verified, not replaced.
 
 ### jobs tasks
 
@@ -6946,7 +7017,7 @@ gregale jobs attempts --interactive
 
 ### jobs retry
 
-Retry one failed task; --task uses the saved Job and newest run
+Retry one failed task
 
 `gregale jobs retry [--dry-run] [--results] [--include <GLOB>] [--exclude <GLOB>] [--all-artifacts] [--task <N>] [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--interactive] [<name>] [<run-id>] [<task-index>]`
 
@@ -6974,9 +7045,11 @@ gregale jobs retry nightly-report RUN_ID 0 --wait
 gregale jobs retry --interactive
 ```
 
+With --task, uses the saved Job and its newest run.
+
 ### jobs replay-failed
 
-Replay unsuccessful tasks; omitted Job uses local defaults, omitted run uses latest
+Replay unsuccessful tasks of a Job run
 
 `gregale jobs replay-failed [--dry-run] [--results] [--include <GLOB>] [--exclude <GLOB>] [--all-artifacts] [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--interactive] [<name>] [<run-id|latest>]`
 
@@ -7002,6 +7075,8 @@ gregale jobs replay-failed nightly-report latest --wait
 gregale jobs replay-failed nightly-report RUN_ID --wait
 gregale jobs replay-failed --interactive
 ```
+
+An omitted Job uses local defaults; an omitted run uses the latest.
 
 ### jobs artifact-url
 
@@ -7188,7 +7263,7 @@ Manage named baselines and inspect audit history
 
 ##### automations live baseline retire
 
-Permanently retire a baseline with audit history and revision protection
+Permanently retire a baseline with audit history
 
 `gregale automations live baseline retire --app <SLUG> --name <NAME> --baseline-name <NAME> --retirement-id <UUID> --expected-revision <N> --confirm-retirement`
 
@@ -7201,9 +7276,11 @@ Permanently retire a baseline with audit history and revision protection
 | `--expected-revision <N>` | current positive baseline revision | required |
 | `--confirm-retirement` | confirm permanent retirement; release slot and evidence pin | required |
 
+Protected by revision checks.
+
 ##### automations live baseline list
 
-Discover active baseline heads and read retained evidence health; never execute
+Find active baselines and read retained evidence health
 
 `gregale automations live baseline list --app <SLUG> --name <NAME>`
 
@@ -7211,6 +7288,8 @@ Discover active baseline heads and read retained evidence health; never execute
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
 | `--name <NAME>` | automation name | required |
+
+Never executes anything.
 
 ##### automations live baseline show
 
@@ -7238,7 +7317,7 @@ Read up to 100 recent promotions
 
 ##### automations live baseline promote
 
-Promote passing evidence with revision protection; never execute workflows
+Promote passing evidence to a baseline with revision checks
 
 `gregale automations live baseline promote --app <SLUG> --name <NAME> --baseline-name <NAME> --suite <UUID> --promotion-id <UUID> --expected-revision <N> --expected-version <N> --expected-published-version <N> --expected-deployment-id <UUID> --policy <FILE>`
 
@@ -7255,9 +7334,11 @@ Promote passing evidence with revision protection; never execute workflows
 | `--expected-deployment-id <UUID>` | expected candidate deployment UUID | required |
 | `--policy <FILE>` | version 2 coverage and age policy JSON | required |
 
+Never executes workflows.
+
 #### automations live gate
 
-Require passing retained suite evidence for an explicit candidate target; read-only
+Require passing suite evidence for a candidate target
 
 `gregale automations live gate --app <SLUG> --name <NAME> [--policy <FILE>] [--baseline <UUID>] [--baseline-name <NAME>] --candidate <UUID> --expected-version <N> --expected-published-version <N> --expected-deployment-id <UUID>`
 
@@ -7272,6 +7353,8 @@ Require passing retained suite evidence for an explicit candidate target; read-o
 | `--expected-version <N>` | expected candidate saved automation version | required |
 | `--expected-published-version <N>` | expected candidate published revision | required |
 | `--expected-deployment-id <UUID>` | expected candidate live default deployment UUID | required |
+
+Read-only.
 
 #### automations live suite
 
@@ -7352,7 +7435,7 @@ Check a terminal verification and require a current passing verdict
 
 #### automations live wait
 
-Observe an existing run, check assertions and require a current passing verdict
+Observe a run, check assertions and require a passing verdict
 
 `gregale automations live wait --app <SLUG> --name <NAME> --run <UUID> [--timeout <DURATION>] [--poll-interval <DURATION>]`
 
@@ -7483,9 +7566,24 @@ Inspect app recovery health or named automation run reliability
 | `--created-after <RFC3339>` | inclusive RFC3339 window start (max 30 days) |  |
 | `--created-before <RFC3339>` | inclusive RFC3339 window end |  |
 
+### automations report
+
+Summarize workflow recovery outcomes over a time window
+
+`gregale automations report --app <SLUG> [--workflow <NAME>] [--policy-version <N>] [--since <DURATION>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--workflow <NAME>` | workflow name filter |  |
+| `--policy-version <N>` | policy version filter |  |
+| `--since <DURATION>` | lookback, at most 30 days (default 7d) |  |
+| `--created-after <RFC3339>` | inclusive start; excludes --since |  |
+| `--created-before <RFC3339>` | inclusive end |  |
+
 ### automations recover
 
-Resume explicitly selected failed runs with per-run generation checks and outcomes
+Resume selected failed runs with per-run generation checks
 
 `gregale automations recover [--plan-out <PATH>] --app <SLUG> --name <NAME> --run <UUID:COUNT> --idempotency-key <KEY>`
 
@@ -7496,6 +7594,8 @@ Resume explicitly selected failed runs with per-run generation checks and outcom
 | `--name <NAME>` | automation name | required |
 | `--run <UUID:COUNT>` | run UUID and original expected resume count; repeatable, at most 25 | required |
 | `--idempotency-key <KEY>` | stable batch key; reuse for interrupted retries | required |
+
+Reports each run&#39;s outcome.
 
 ### automations event-recovery-plan
 
@@ -7536,6 +7636,35 @@ Inspect, preview or update recovery policy
 | `--queue` | inspect automatic retry queue |  |
 | `--control <pause|resume>` | control automatic execution |  |
 | `--reason <TEXT>` | operator control reason |  |
+
+### automations recovery-policy-evaluate
+
+Compare a proposed recovery policy with recent history
+
+`gregale automations recovery-policy-evaluate --app <SLUG> --file <PATH> [--workflow <NAME>] [--since <DURATION>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | proposed policy JSON with expected_version | required |
+| `--workflow <NAME>` | only sample this workflow |  |
+| `--since <DURATION>` | lookback, at most 30 days (default 7d) |  |
+| `--created-after <RFC3339>` | inclusive start; excludes --since |  |
+| `--created-before <RFC3339>` | inclusive end |  |
+
+### automations recovery-suppress
+
+Stop one queued automatic retry
+
+`gregale automations recovery-suppress --app <SLUG> --review <UUID> --action <UUID> --policy-version <N> --reason <TEXT>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--review <UUID>` | review ID | required |
+| `--action <UUID>` | queued action ID | required |
+| `--policy-version <N>` | observed policy version | required |
+| `--reason <TEXT>` | why the retry is stopped | required |
 
 ### automations recovery-policy-reviews
 
@@ -7714,7 +7843,7 @@ Preview an initial failure and save a reviewed first recovery plan
 
 ### automations recovery-retry-plan
 
-Review saved workflow recovery failures and save an explicit retry plan
+Review recovery failures and save an explicit retry plan
 
 `gregale automations recovery-retry-plan --app <SLUG> --job <UUID> [--position <N>] [--plan-out <PATH>] [--key <KEY>]`
 
@@ -7776,7 +7905,7 @@ Execute a saved recovery plan with a durable per-attempt journal
 
 ### automations recovery-preview
 
-Inspect failed run recovery, retained events and schedule catch-up without writes
+Inspect failed-run recovery and schedule catch-up without writes
 
 `gregale automations recovery-preview --app <SLUG> --name <NAME> --from <TIME> [--until <TIME>] [--limit <N>] [--run-offset <N>] [--event-after <CURSOR>]`
 
@@ -7790,9 +7919,11 @@ Inspect failed run recovery, retained events and schedule catch-up without write
 | `--run-offset <N>` | offset in each failed/dead run page |  |
 | `--event-after <CURSOR>` | retained event preview cursor |  |
 
+Includes retained events.
+
 ### automations failure-policy
 
-Inspect failure pause status, history and resume preview or configure monitoring
+Inspect failure pauses and history, or configure monitoring
 
 `gregale automations failure-policy --app <SLUG> --name <NAME> [--enabled <BOOL>] [--expected-version <N>] [--failure-threshold <N>] [--min-completed-runs <N>] [--window-seconds <N>]`
 
@@ -7805,6 +7936,8 @@ Inspect failure pause status, history and resume preview or configure monitoring
 | `--failure-threshold <N>` | terminal failures needed to pause (1..10000, default 3) |  |
 | `--min-completed-runs <N>` | minimum completed outcomes (1..10000, default 5) |  |
 | `--window-seconds <N>` | observation window (60..86400, default 300) |  |
+
+Also previews a resume.
 
 ### automations failure-resume
 
@@ -7912,7 +8045,7 @@ Validate an automation definition without saving it
 
 ### automations simulate
 
-Trace an automation using sample input and mocked outputs, without running steps
+Trace an automation with sample input and mocked outputs
 
 `gregale automations simulate --app <SLUG> --file <PATH> [--input-file <PATH>] [--mock-outputs-file <PATH>] [--mock-item-outputs-file <PATH>] [--mock-attempts-file <PATH>] [--mock-item-attempts-file <PATH>] [--require-complete]`
 
@@ -7926,6 +8059,8 @@ Trace an automation using sample input and mocked outputs, without running steps
 | `--mock-attempts-file <PATH>` | JSON object of ordered attempt outcomes keyed by step name |  |
 | `--mock-item-attempts-file <PATH>` | JSON object mapping loops and zero-based item indexes to attempt outcomes |  |
 | `--require-complete` | fail if mocks leave steps unresolved |  |
+
+Does not run steps.
 
 ### automations apply
 
@@ -8004,9 +8139,11 @@ gregale workflows defaults set order-processing --app payments-api --dry-run
 
 #### workflows defaults show
 
-Show saved workflow/app selectors, preference path, and local recovery readiness
+Show saved workflow and app selectors and recovery readiness
 
 `gregale workflows defaults show`
+
+Includes the preference file path.
 
 #### workflows defaults update
 
@@ -8145,7 +8282,7 @@ Inspect recurring workflow admission history
 
 #### workflows schedule-history replay-preview
 
-Check selected skipped occurrences against current definitions, overlap, and quota
+Check skipped occurrences against definitions, overlap and quota
 
 `gregale workflows schedule-history replay-preview --app <SLUG> --occurrence-id <UUID>`
 
@@ -8162,7 +8299,7 @@ gregale workflows schedule-history replay-preview --app billing --occurrence-id 
 
 #### workflows schedule-history replay
 
-Replay eligible skipped occurrences using the current workflow and normal quota
+Replay eligible skipped occurrences with the current workflow
 
 `gregale workflows schedule-history replay --app <SLUG> --occurrence-id <UUID>`
 
@@ -8176,6 +8313,8 @@ Examples:
 ```sh
 gregale workflows schedule-history replay --app billing --occurrence-id <uuid>
 ```
+
+Normal quota applies.
 
 ### workflows run
 
@@ -8203,7 +8342,7 @@ gregale workflows run nightly-report --input-file -
 
 ### workflows wait
 
-Wait for an exact or latest workflow run to succeed; failure or timeout exits nonzero
+Wait for an exact or latest workflow run to succeed
 
 `gregale workflows wait [--app <SLUG>] [--workflow-name <NAME>] [--timeout <DURATION>] [--poll-interval <DURATION>] <run_id|latest>`
 
@@ -8220,6 +8359,8 @@ Examples:
 gregale workflows wait RUN_ID --timeout 5m
 gregale workflows wait latest --workflow-name billing --timeout 5m
 ```
+
+Exits nonzero on failure or timeout.
 
 ### workflows status
 
@@ -8284,7 +8425,7 @@ gregale workflows steps latest --workflow-name nightly-report
 
 ### workflows attempts
 
-List retry attempts and managed effect delivery status for a workflow step
+List a step&#39;s retry attempts and managed effect delivery
 
 `gregale workflows attempts [--failed-only] [--app <SLUG>] [--workflow-name <NAME>] <run_id|latest> <step_name>`
 
@@ -8685,7 +8826,7 @@ gregale deployment advance v42 --app my-api --expected-step 1
 
 ### deployment diff
 
-Show what changed between a release and the one before it: code, config keys, packages, runtime settings and the release command
+Show what changed since the previous release
 
 `gregale deployment diff [--against <ID|vN>] [--app <SLUG>] <id|vN>`
 
@@ -8700,6 +8841,8 @@ Examples:
 gregale deployment diff v42 --app my-api
 gregale deployment diff v42 --against v38 --app my-api
 ```
+
+Covers code, config keys, packages, runtime settings and the release command.
 
 ### deployment summary
 
@@ -8868,13 +9011,15 @@ Hide obsolete deployments older than a cutoff
 
 ### deploys retry
 
-Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
+Retry a failed deployment from a specific stage
 
 `gregale deploys retry [--from <STAGE>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--from <STAGE>` | retry from this stage (defaults to the failing stage) | one of `source_download` · `dependency_restore` · `image_build` · `security_scan` · `snapshot_prepare` · `readiness` |
+
+Choose the stage with --from.
 
 
 ## deploy
@@ -8993,7 +9138,7 @@ gregale deploy --path packages/api --source=worktree
 
 ### deploy check
 
-Check project prerequisites without uploading source or submitting work
+Check project prerequisites without uploading or submitting
 
 `gregale deploy check --project [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--environment <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
 
@@ -9029,7 +9174,7 @@ gregale deploy check --project --project-slug shop --from staging --environment 
 
 ### deploy resolve-contract
 
-Record operator checks and a verified roll-forward release after failed cleanup
+Record checks and a verified roll-forward after failed cleanup
 
 `gregale deploy resolve-contract [--replacement-attempt <ID>] [--task-id <ID>] [--generation <N>] [--request-id <ID>] [--evidence-hash <SHA256>] [--database-state-checked] [--execution-quiescent] ATTEMPT_ID`
 
@@ -9132,7 +9277,7 @@ Manage custom domains
 
 ### domains setup
 
-Guide DNS setup, wait for verification and TLS, and offer a default-domain change
+Guide DNS setup and wait for verification and TLS
 
 `gregale domains setup --app <SLUG> [--environment <SLUG>] [--timeout <DURATION>] [--poll-interval <DURATION>] <domain>`
 
@@ -9148,6 +9293,8 @@ Examples:
 ```sh
 gregale domains setup api.example.com --app my-api
 ```
+
+Offers a default-domain change at the end.
 
 ### domains list
 
@@ -9179,9 +9326,11 @@ Set a verified domain as the app default
 
 ### domains verify
 
-Check DNS and certificate verification status; exits nonzero while pending
+Check DNS and certificate verification status
 
 `gregale domains verify <domain>`
+
+Exits nonzero while pending.
 
 ### domains show
 
@@ -9195,9 +9344,11 @@ Show durable TLS status for all domains
 
 ### domains doctor
 
-5-check readiness report; exits nonzero when unhealthy, including in JSON mode
+Run a 5-check domain readiness report
 
 `gregale domains doctor <domain>`
+
+Exits nonzero when unhealthy, including in JSON mode.
 
 
 ## dev
@@ -9299,7 +9450,7 @@ show edit-to-live timings and SLO guidance
 
 ### dev info
 
-show the developer environment URL, app slug, lease, and database without renewing it
+Show the developer environment&#39;s URL, app, lease and database
 
 `gregale dev info [--path <DIR>] [--name <PROJECT>]`
 
@@ -9308,9 +9459,11 @@ show the developer environment URL, app slug, lease, and database without renewi
 | `--path <DIR>` | source directory |  |
 | `--name <PROJECT>` | developer-session project name |  |
 
+Does not renew the lease.
+
 ### dev trigger
 
-invoke the developer app, fire a declared cron route, or schedule a delayed task
+Invoke the developer app, fire a cron route or schedule a task
 
 `gregale dev trigger <invoke|cron|delayed-task> [--path <DIR>] [--name <PROJECT>]`
 
@@ -9329,7 +9482,7 @@ gregale dev trigger delayed-task --delay 5m --path /reminders
 
 #### dev trigger invoke
 
-run `gregale invoke` against the developer app
+Invoke the developer app
 
 `gregale dev trigger invoke`
 
@@ -9341,7 +9494,7 @@ POST to a cron route declared for this app in gregale.yaml
 
 #### dev trigger delayed-task
 
-run `gregale delayed-task add` against the developer app
+Schedule a delayed task on the developer app
 
 `gregale dev trigger delayed-task`
 
@@ -9485,7 +9638,7 @@ gregale test init --from openapi.yaml --project my-api --source .
 
 ### test recovery-trend
 
-Render offline recovery performance trends from ordered campaign reports
+Render recovery performance trends from campaign reports
 
 `gregale test recovery-trend [--manifest <PATH>] --scenario <NAME> --config <PATH> --html <PATH>`
 
@@ -9495,6 +9648,8 @@ Render offline recovery performance trends from ordered campaign reports
 | `--scenario <NAME>` | campaign scenario name | required |
 | `--config <PATH>` | ordered reports and recovery tolerances YAML | required |
 | `--html <PATH>` | standalone HTML recovery trend output | required |
+
+Works offline on ordered reports.
 
 ### test coverage-trend
 
@@ -9511,7 +9666,7 @@ Render offline campaign coverage trends from ordered reports
 
 ### test replay
 
-Replay a real-VM failure or passing recovery/duration configuration or sweep run from a saved report
+Replay a failure, configuration or sweep run from a saved report
 
 `gregale test replay --from <PATH> --run-id <ID> [--manifest <PATH>] [--validate] [--report <PATH>] [--junit <PATH>] [--html <PATH>]`
 
@@ -9532,9 +9687,11 @@ gregale test replay --from failed.json --run-id RUN_ID --manifest gregale-test.y
 gregale test replay --from failed.json --run-id RUN_ID --manifest gregale-test.yaml --report replay.json
 ```
 
+Covers real-VM failures and passing recovery or duration configurations.
+
 ### test minimize
 
-Minimize faults, outage durations, stability observations, or recovery deadlines
+Minimize faults, outages, stability checks or recovery deadlines
 
 `gregale test minimize --from <PATH> --run-id <ID> --assertion <TARGET> [--mode <MODE>] [--rule-index <N>] [--resolution <DURATION>] [--max-rate-kib-per-second <N>] [--rate-resolution-kib-per-second <N>] [--percent-resolution <N>] [--max-recovery-within <DURATION>] [--duration-resolution <DURATION>] [--stability-resolution <DURATION>] [--recovery-resolution <DURATION>] [--manifest <PATH>] [--max-runs <N>] --max-workload-minutes <N> [--validate] [--report <PATH>] [--junit <PATH>] [--html <PATH>]`
 
@@ -9598,7 +9755,7 @@ Set up GitHub Actions for scenario tests
 
 #### test ci init
 
-Generate GitHub Actions for local, simulated, or real-VM scenario tests
+Generate GitHub Actions for scenario tests
 
 `gregale test ci init [--manifest <PATH>] [--suite <NAME>] [--engine <ENGINE>] [--load] [--repeat <N>] [--profiles <LIST>] [--max-workload-minutes <N>] [--environment <NAME>] [--branch <NAME>] [--baseline-max-age-days <N>] [--workflow <PATH>] [--budget <PATH>]`
 
@@ -9625,9 +9782,11 @@ gregale test ci init --manifest gregale-test.yaml --suite smoke --baseline-max-a
 gregale test ci init --manifest tests/scenario-acceptance/gregale-test.yaml --suite real-vm --engine real-vm --profiles warm,cold,restored --max-workload-minutes 135
 ```
 
+Supports local, simulated and real-VM tests.
+
 ### test import
 
-Create draft native requests from a local Postman Collection v2.1 export
+Create draft requests from a Postman Collection v2.1 export
 
 `gregale test import --from <PATH> --project <SLUG> [--source <DIR>] [--scenario <NAME>] [--output <PATH>] [--requests-only] [--status <CODE>]`
 
@@ -9763,7 +9922,7 @@ gregale preview show pr-42-my-api
 
 ### preview report
 
-Review deployment route changes, gateway rule drift, and available test/traffic evidence
+Review route changes, gateway rule drift and test evidence
 
 `gregale preview report [--format <FORMAT>] [--since <DURATION>] [--customer-details] [--baseline-deployment <ID>] [--test-report <PATH>] [--source-impact <PATH>] [--requirements <PATH>] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-policy-drift] [--fail-on-incomplete] [--fail-on-requirements] [--route-removal-mode <MODE>] [--route-readiness <PATH>] [--route-mapping <PATH>] [--route-owner-approval <PATH>] [--route-evidence-max-age <DURATION>] <preview-slug>`
 
@@ -9798,6 +9957,8 @@ gregale preview report pr-42-my-api --source-impact impact.json --test-report re
 gregale preview report pr-42-my-api --fail-on-request-breaking --format markdown
 gregale preview report pr-42-my-api --fail-on-policy-drift --format markdown
 ```
+
+Includes available test and traffic evidence.
 
 ### preview review
 
@@ -9873,7 +10034,7 @@ gregale preview customers track --roster customer-roster.json --mapping route-su
 
 #### preview customers progress
 
-Measure sustained old-route traffic and customer migration progress across saved tracker windows
+Measure old-route traffic and customer migration progress
 
 `gregale preview customers progress --snapshot <PATH>... [--grace-period <DURATION>] [--min-windows <COUNT>] [--max-staleness <DURATION>] [--format <FORMAT>] [--out <PATH>] [--fail-on-incomplete] [--fail-on-not-ready]`
 
@@ -9894,6 +10055,8 @@ Examples:
 gregale preview customers progress --snapshot migration-week-1.json --snapshot migration-week-2.json --grace-period 30d --format markdown
 ```
 
+Across saved tracker windows.
+
 #### preview customers migration
 
 Join contract compatibility with customer cutover evidence
@@ -9902,7 +10065,7 @@ Join contract compatibility with customer cutover evidence
 
 ##### preview customers migration review
 
-Review contract compatibility and customer-by-customer route migration progress
+Review contract compatibility and per-customer migration
 
 `gregale preview customers migration review --contract-review <PATH> --snapshot <PATH>... [--grace-period <DURATION>] [--min-windows <COUNT>] [--max-staleness <DURATION>] [--format <FORMAT>] [--out <PATH>] [--fail-on-breaking] [--fail-on-incomplete] [--fail-on-not-ready]`
 
@@ -10444,7 +10607,7 @@ List edge rules
 
 ### edge-rules summary
 
-Show what the edge rejected for an app: pre-auth blocks, validation failures, and gate rejections by status
+Show what the edge rejected for an app
 
 `gregale edge-rules summary --app <slug> [--range <WINDOW>]`
 
@@ -10453,9 +10616,11 @@ Show what the edge rejected for an app: pre-auth blocks, validation failures, an
 | `--app <slug>` | app slug | required |
 | `--range <WINDOW>` | time window (default 1h) | one of `5m` · `15m` · `1h` · `6h` · `24h` · `7d` · `15d` |
 
+Includes pre-auth blocks, validation failures and gate rejections by status.
+
 ### edge-rules trace
 
-Simulate composed edge-rule outcomes and budget, throttle, retry, circuit-breaker, and async-route policy; --config loads reusable JSON scenarios (see edge-rule-trace docs)
+Simulate composed edge-rule outcomes and request policies
 
 `gregale edge-rules trace [--config <file|->] [--app <slug>] [--url <URL>] [--method <method>] [--client-ip <IP>] [--country <CC>] [--asn <AS>] [--verified-bot] [--header <Name:Value>] [--body-file <path|->] [--proposal <file|->] [--add-rule <JSON|@FILE>] [--remove-rule <ID>]`
 
@@ -10480,6 +10645,8 @@ Examples:
 ```sh
 gregale edge-rules trace --app my-api --url https://api.example.com/admin --add-rule '{"kind":"maintenance","match_host":"api.example.com","match_path":"/admin/*","action":{"maintenance":{"message":"migrating"}}}'
 ```
+
+Covers budget, throttle, retry, circuit-breaker and async-route policy. --config loads reusable JSON scenarios; see the edge-rule-trace docs.
 
 ### edge-rules create
 
@@ -10742,7 +10909,7 @@ Delete one edge rule
 
 ### edge-rules history
 
-List recorded versions of an app&#39;s edge-rule set (--version N shows its rules)
+List recorded versions of an app&#39;s edge rules
 
 `gregale edge-rules history --app <slug> [--version <N>]`
 
@@ -10751,13 +10918,15 @@ List recorded versions of an app&#39;s edge-rule set (--version N shows its rule
 | `--app <slug>` | app slug | required |
 | `--version <N>` | show the rules recorded in this version |  |
 
+--version N shows that version&#39;s rules.
+
 ### edge-rules recipes
 
 List protection recipes: ready-made rules that start in log mode
 
 ### edge-rules recipe
 
-Add a protection recipe&#39;s rule to an app, in log mode unless --enforce
+Add a protection recipe&#39;s rule to an app in log mode
 
 `gregale edge-rules recipe [--app <slug>] [--host <HOST>] [--set <NAME=VALUE>] [--enforce] [--alert-webhook-url <URL>] [--alert-webhook-secret-stdin] [--alert-webhook-secret <VALUE>] [--alert-threshold <N>] <recipe>`
 
@@ -10779,9 +10948,11 @@ gregale edge-rules recipe block-unverified-bots --app my-api
 gregale edge-rules recipe allow-ips-only --app my-api --set cidrs=203.0.113.7,198.51.100.0/24
 ```
 
+Use --enforce to enforce it immediately.
+
 ### edge-rules suggest
 
-Protection recipes suggested from the app&#39;s recent traffic, with the command to add each
+Suggest protection recipes from the app&#39;s recent traffic
 
 `gregale edge-rules suggest [--app <slug>]`
 
@@ -10795,9 +10966,11 @@ Examples:
 gregale edge-rules suggest --app my-api
 ```
 
+Prints the command to add each.
+
 ### edge-rules stats
 
-Per-rule match counts (matched for enforced rules, logged for log-mode rules)
+Show match counts per rule
 
 `gregale edge-rules stats --app <slug> [--window <WINDOW>]`
 
@@ -10806,9 +10979,11 @@ Per-rule match counts (matched for enforced rules, logged for log-mode rules)
 | `--app <slug>` | app slug | required |
 | `--window <WINDOW>` | window | one of `1h` · `24h` · `7d` |
 
+Enforced rules count matches; log-mode rules count logged requests.
+
 ### edge-rules review
 
-Log-mode rules ready to enforce, still collecting, or quiet for 7 days, with the command for each
+Show which log-mode rules are ready to enforce
 
 `gregale edge-rules review [--app <slug>]`
 
@@ -10822,9 +10997,11 @@ Examples:
 gregale edge-rules review --app my-api
 ```
 
+Also lists rules still collecting or quiet for 7 days, with the command for each.
+
 ### edge-rules events
 
-Sampled requests rules matched and kind=waf detections, newest first (up to 10 of each per rule per minute; kept 7 days)
+Show sampled requests that rules matched, newest first
 
 `gregale edge-rules events --app <slug> [--rule <ID>] [--outcome <OUTCOME>] [--since <DURATION>] [--limit <N>] [--cursor <CURSOR>]`
 
@@ -10844,9 +11021,11 @@ gregale edge-rules events --app my-api --outcome logged --since 7d
 gregale edge-rules events --app my-api --outcome blocked
 ```
 
+Includes kind=waf detections; up to 10 of each per rule per minute, kept 7 days.
+
 ### edge-rules rollback
 
-Restore an app&#39;s edge rules to a recorded version (recorded as a new version)
+Restore an app&#39;s edge rules to a recorded version
 
 `gregale edge-rules rollback --app <slug> --to <N> [--quiet]`
 
@@ -10861,6 +11040,8 @@ Examples:
 ```sh
 gregale edge-rules rollback --app my-api --to 12
 ```
+
+The restore is recorded as a new version.
 
 
 ## openapi
@@ -10877,13 +11058,15 @@ Diff two openapi.yaml files; exit 2 on any BREAKING row
 
 ### openapi get
 
-Fetch an app OpenAPI document (manual_import|auto; slug defaults to linked context)
+Fetch an app&#39;s OpenAPI document
 
 `gregale openapi get [--source <manual_import|auto>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--source <manual_import|auto>` | document source | one of `manual_import` · `auto` |
+
+The source is manual_import or auto; the app defaults to the linked one.
 
 ### openapi import
 
@@ -10893,13 +11076,15 @@ Import an app OpenAPI document from a JSON file or stdin
 
 ### openapi dry-run
 
-Preview uncovered routes without importing the document (slug defaults to linked context)
+Preview uncovered routes without importing the document
 
 `gregale openapi dry-run [<slug>] <file|->`
 
+The app defaults to the linked one.
+
 ### openapi preview
 
-Preview routes, edge policies, and the read-only OpenAPI contract diff (slug defaults to linked context)
+Preview routes, edge policies and the OpenAPI contract diff
 
 `gregale openapi preview [--scope <scope>] [--fail-on-unavailable] [<slug>]`
 
@@ -10907,6 +11092,8 @@ Preview routes, edge policies, and the read-only OpenAPI contract diff (slug def
 |---|---|---|
 | `--scope <scope>` | deployment scope to compare (defaults to linked environment, otherwise prod) |  |
 | `--fail-on-unavailable` | fail when the contract-diff backend is unavailable |  |
+
+Read-only; the app defaults to the linked one.
 
 ### openapi apply
 
@@ -10935,7 +11122,7 @@ Analyze route changes, migrations, lifecycle and production policies
 
 ### routes status
 
-Show every route with its contract, traffic, canary health, production budget, rollback mode and gaps
+Show each route&#39;s contract, traffic, health, budget and gaps
 
 `gregale routes status [--deployment <ID>] [--since <DURATION>] <slug>`
 
@@ -10951,9 +11138,11 @@ gregale routes status my-api
 gregale routes status my-api --since 24h --json
 ```
 
+Also shows canary health and rollback mode.
+
 ### routes advise
 
-Suggest cache, async and throttle edge rules from observed traffic, with what-if estimates
+Suggest cache, async and throttle rules from observed traffic
 
 `gregale routes advise [--since <DURATION>] [--until <RFC3339>] [--cache-max-age <SECONDS>] [--apply <ID>] [--enable] <slug>`
 
@@ -10973,9 +11162,11 @@ gregale routes advise my-api --cache-max-age 300
 gregale routes advise my-api --apply 3f9a1c2b7d4e
 ```
 
+Includes what-if estimates.
+
 ### routes awake
 
-Show which routes keep a scale-to-zero app awake, what each costs in awake time, and how to let it park
+Show which routes keep a scale-to-zero app awake and their cost
 
 `gregale routes awake [--since <DURATION>] [--until <RFC3339>] <slug>`
 
@@ -10991,9 +11182,11 @@ gregale routes awake my-api
 gregale routes awake my-api --since 24h --json
 ```
 
+Explains how to let the app park.
+
 ### routes insights
 
-List findings about routes that keep the app awake or are safe to cache, with a fix for each, evaluated every six hours
+List routes that keep the app awake or are safe to cache
 
 `gregale routes insights [--fix <INSIGHT_ID>] <slug>`
 
@@ -11009,9 +11202,11 @@ gregale routes insights my-api --json
 gregale routes insights my-api --fix 6c1e0b9a-3f7d-4a51-9c2e-8d4b5f0a1e27
 ```
 
+Each finding has a fix; findings are evaluated every six hours.
+
 ### routes priority
 
-Show or set which routes are served first, and turned away last, when every instance is busy
+Show or set which routes are served first when instances are busy
 
 `gregale routes priority [--critical <[METHOD] PATH>] [--bulk <[METHOD] PATH>] [--clear] [--reset] <slug>`
 
@@ -11029,6 +11224,8 @@ gregale routes priority my-api
 gregale routes priority my-api --critical "POST /checkout" --bulk "/exports/*"
 gregale routes priority my-api --reset
 ```
+
+Priority routes are also turned away last.
 
 ### routes requirements
 
@@ -11053,7 +11250,7 @@ gregale routes requirements set my-api --requirements gregale-routes.yaml --expe
 
 #### routes requirements get
 
-Read current route intent and optionally export requirements for planning
+Read current route intent and optionally export requirements
 
 `gregale routes requirements get [--out <PATH>] <slug>`
 
@@ -11073,7 +11270,7 @@ Read production route budgets and revision
 
 #### routes monitor preview
 
-Evaluate proposed budgets against recent production traffic without saving them
+Evaluate proposed budgets against recent production traffic
 
 `gregale routes monitor preview --routes <PATH> [--customer-group-by <DIMENSION>] [--customer-details] [--fail-on-unhealthy] <slug>`
 
@@ -11089,6 +11286,8 @@ Examples:
 ```sh
 gregale routes monitor preview my-api --routes production-routes.json --customer-group-by tenant
 ```
+
+Nothing is saved.
 
 #### routes monitor set
 
@@ -11126,7 +11325,7 @@ List retained production route incidents
 
 #### routes monitor explain
 
-Inspect a saved incident and optionally correlate affected customers and changed route owners
+Inspect a saved incident, optionally with affected customers
 
 `gregale routes monitor explain --incident <ID> [--out <PATH>] [--source-impact <PATH|auto>] <slug>`
 
@@ -11141,6 +11340,8 @@ Examples:
 ```sh
 gregale routes monitor explain api --incident INCIDENT_UUID --source-impact auto
 ```
+
+Can also correlate changed route owners.
 
 ### routes lifecycle
 
@@ -11263,7 +11464,7 @@ Compare retained sunset evidence and caller regressions
 
 ### routes migration
 
-Suggest successors, review contracts and assess customer cutover readiness
+Suggest successors, review contracts and assess cutover readiness
 
 #### routes migration policy
 
@@ -11360,7 +11561,7 @@ gregale routes migration approve --app api --baseline-deployment BASELINE_UUID -
 
 #### routes migration readiness
 
-Refresh mapped contracts and join customer windows into an owner approval checkpoint
+Refresh mapped contracts and build an owner approval checkpoint
 
 `gregale routes migration readiness --mapping <PATH> --from-deployment <APP=ID>... [--to-deployment <APP=ID>]... --snapshot <PATH>... [--grace-period <DURATION>] [--min-windows <COUNT>] [--max-staleness <DURATION>] [--format <FORMAT>] [--out <PATH>] [--fail-on-breaking] [--fail-on-incomplete] [--fail-on-not-ready]`
 
@@ -11384,6 +11585,8 @@ Examples:
 ```sh
 gregale routes migration readiness --mapping route-successors.json --from-deployment checkout=OLD_DEPLOYMENT --to-deployment checkout=NEW_DEPLOYMENT --snapshot migration-week-1.json --snapshot migration-week-2.json --format markdown --out readiness.json
 ```
+
+Joins customer windows into the checkpoint.
 
 #### routes migration suggest
 
@@ -11411,7 +11614,7 @@ gregale routes migration suggest --from-deployment checkout=OLD_DEPLOYMENT --to-
 
 #### routes migration review
 
-Compare method, path parameters, request, response and security contracts
+Compare method, path, request, response and security contracts
 
 `gregale routes migration review --mapping <PATH> --from-deployment <APP=ID>... --to-deployment <APP=ID>... [--format <FORMAT>] [--out <PATH>] [--fail-on-breaking] [--fail-on-incomplete]`
 
@@ -11433,7 +11636,9 @@ gregale routes migration review --mapping route-successors.json --from-deploymen
 
 ### routes health
 
-Compare critical route errors and optional p95 latency to gate canary progression
+Compare critical route errors to gate canary progression
+
+Can compare p95 latency too.
 
 #### routes health get
 
@@ -11468,7 +11673,7 @@ Save exact normalized telemetry route selectors
 
 #### routes health suggest
 
-Rank observed routes by customer reach and traffic; emit reviewable canary selectors
+Rank routes by customer reach and traffic for canary selectors
 
 `gregale routes health suggest --deployment <ID> [--since <WINDOW>] [--customer-group-by <DIMENSION>] [--limit <N>] [--preview-report <PATH>] [--out <PATH>] <slug>`
 
@@ -11481,9 +11686,11 @@ Rank observed routes by customer reach and traffic; emit reviewable canary selec
 | `--preview-report <PATH>` | restrict suggestions to source-affected routes in a bound preview report for this app and deployment |  |
 | `--out <PATH>` | save a JSON selector array ready for routes health set |  |
 
+Emits reviewable canary selectors.
+
 #### routes health review
 
-Join source-affected routes to configured canary coverage and candidate health evidence
+Join source-affected routes to canary coverage and health evidence
 
 `gregale routes health review --deployment <ID> --preview-report <PATH> [--fail-on-incomplete] <slug>`
 
@@ -11495,7 +11702,7 @@ Join source-affected routes to configured canary coverage and candidate health e
 
 #### routes health review-release
 
-Gate every app in an aggregate preview review on source-affected canary route health
+Gate an aggregate preview review on canary route health
 
 `gregale routes health review-release --release-report <PATH> [--fail-on-incomplete]`
 
@@ -11509,6 +11716,8 @@ Examples:
 ```sh
 gregale routes health review-release --release-report release-review.json --fail-on-incomplete --json
 ```
+
+Checks every app&#39;s source-affected routes.
 
 #### routes health report
 
@@ -11631,7 +11840,7 @@ gregale routes results my-api --deployment DEPLOYMENT_ID --refresh --wait
 
 ### routes check
 
-Check saved requirements against a captured deployment and current app policy
+Check saved requirements against a deployment and app policy
 
 `gregale routes check --deployment <ID> [--expected-revision <N>] [--format <FORMAT>] [--out <PATH>] [--fail-on-requirements] <slug>`
 
@@ -11651,7 +11860,7 @@ gregale routes check my-api --deployment DEPLOYMENT_ID --expected-revision 1 --f
 
 ### routes plan
 
-Plan throttle and budget patches with concrete or captured-family coverage
+Plan throttle and budget patches with route coverage
 
 `gregale routes plan [--requirements <PATH>] [--saved] [--expected-revision <N>] [--out <PATH>] [--throttle-burst <N>] [--deployment <ID>] [--consolidate-budgets] [--fail-on-unresolved] <slug>`
 
@@ -11674,9 +11883,11 @@ gregale routes plan my-api --saved --deployment DEPLOYMENT_ID --expected-revisio
 gregale routes plan pr-42-api --requirements gregale-routes.yaml --throttle-burst 20 --fail-on-unresolved --json
 ```
 
+Uses concrete or captured-family coverage.
+
 ### routes apply
 
-Atomically apply a reviewed server plan and recover its durable receipt
+Apply a reviewed server plan atomically and recover its receipt
 
 `gregale routes apply --plan <PATH> --confirm [--idempotency-key <KEY>] <slug>`
 
@@ -11694,7 +11905,7 @@ gregale routes apply my-api --plan route-plan.json --confirm
 
 ### routes impact
 
-Explain FastAPI, Go HTTP, Express, or Hono route impact between Git revisions
+Explain route impact between Git revisions
 
 `gregale routes impact --base <REF> [--head <REF>] [--path <DIR>] [--framework <FRAMEWORK>] [--entrypoint <MODULE:VARIABLE>] [--format <text|markdown>] [--out <PATH>] [--fail-on-impact] [--fail-on-incomplete] [<slug>]`
 
@@ -11720,13 +11931,17 @@ gregale routes impact --base origin/main --framework node-http --path services/n
 gregale routes impact --base origin/main --fail-on-impact --fail-on-incomplete --json
 ```
 
+Supports FastAPI, Go HTTP, Express and Hono.
+
 ### routes contract
 
-Check statically discovered source routes against a local OpenAPI contract
+Check source routes against a local OpenAPI contract
+
+Routes are discovered statically.
 
 #### routes contract check
 
-Find source-only and contract-only routes with conservative parameter matching
+Find source-only and contract-only routes
 
 `gregale routes contract check --openapi <FILE> --base <REF> [--head <REF>] [--path <DIR>] [--framework <FRAMEWORK>] [--entrypoint <MODULE:VARIABLE>] [--format <text|markdown>] [--out <PATH>] [--fail-on-drift] [--fail-on-incomplete] [<slug>]`
 
@@ -11749,6 +11964,8 @@ Examples:
 gregale routes contract check my-api --openapi openapi.yaml --base origin/main --fail-on-drift --json
 gregale routes contract check --openapi openapi.yaml --base HEAD --path services/api --framework go-nethttp --format markdown
 ```
+
+Path parameters are matched conservatively.
 
 
 ## env
@@ -11787,7 +12004,7 @@ gregale env create staging --from production --full --wait
 
 ### env clone-status
 
-Read durable clone progress before or after the target exists; timeout exits 3 with a resume command, failed or compensated operations exit 1
+Read clone progress before or after the target exists
 
 `gregale env clone-status [--project <SLUG>] [--wait] [--timeout <SECONDS>] <operation-id>`
 
@@ -11802,6 +12019,8 @@ Examples:
 ```sh
 gregale env clone-status <operation-id> --project shop --wait
 ```
+
+A timeout exits 3 with a resume command; failed or compensated operations exit 1.
 
 ### env pull
 
@@ -11824,7 +12043,7 @@ gregale env pull --app my-api --scope staging
 
 ### env push
 
-Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)
+Push KEY=VALUE pairs to sealed secrets
 
 `gregale env push [--wait-for-ack] [--timeout <DURATION>] [--dry-run] [--app <slug>] [--scope <SCOPE>] [-f <PATH>] [--from-stdin] [--restart] [--secret-scan <MODE>] [--no-guard]`
 
@@ -11848,6 +12067,8 @@ gregale env push --app my-api --dry-run
 printf 'LOG_LEVEL=info\n' | gregale env push --app my-api --from-stdin
 gregale env push --app my-api --restart
 ```
+
+Use --restart to apply them now.
 
 ### env diff
 
@@ -11887,7 +12108,7 @@ gregale env history --app my-api --scope staging --json
 
 ### env rollback
 
-Restore a scope&#39;s variables to a config revision as one guarded change; secrets that differ are listed, not restored
+Restore a scope&#39;s variables to a config revision
 
 `gregale env rollback [--app <slug>] [--scope <SCOPE>] [--yes] [--no-guard] <revision>`
 
@@ -11904,6 +12125,8 @@ Examples:
 gregale env rollback 12 --app my-api
 gregale env rollback 12 --app my-api --yes
 ```
+
+Applied as one guarded change; differing secrets are listed, not restored.
 
 
 ## init
@@ -12046,6 +12269,10 @@ List runs
 | `--offset <N>` | number of matching runs to skip |  |
 | `--status <STATUS>` | filter by lifecycle status | one of `queued` · `restoring` · `running` · `succeeded` · `failed` · `timed_out` · `out_of_memory` · `cancelled` |
 | `--workflow-id <ID>` | filter by caller-generated workflow id |  |
+
+### runs capabilities
+
+Show which runtimes isolated runs can use on your plan
 
 ### runs workflow
 
@@ -12283,6 +12510,28 @@ Examples:
 ```sh
 gregale issues ignore --app my-api --interactive
 ```
+
+### issues merge
+
+Merge an issue into another issue group
+
+`gregale issues merge --app <SLUG> --target <UUID> <issue-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | application slug | required |
+| `--target <UUID>` | destination issue UUID | required |
+
+### issues split
+
+Split an original group back out of an issue
+
+`gregale issues split --app <SLUG> --member <UUID> <issue-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | application slug | required |
+| `--member <UUID>` | original group UUID to split out | required |
 
 ### issues impact-alert
 
@@ -12631,7 +12880,7 @@ Generate typed application workflow bindings without credentials
 
 ### customer-operations doctor
 
-Observe submission blockers, delivery warnings and unverified qualification
+Observe submission blockers, delivery warnings and qualification gaps
 
 `gregale customer-operations doctor --app <SLUG> --deployment <UUID> --tenant <UUID> [--name <NAME>] [--timeout <D>]`
 
@@ -12673,7 +12922,7 @@ Read schemas and deployment pins as JSON
 
 ### customer-operations validate
 
-Validate source contracts and optional sample input without credentials
+Validate source contracts and sample input without credentials
 
 `gregale customer-operations validate --app <SLUG> --plan <PLAN> [--dir <PATH>] [--name <NAME>] [--input-file <PATH>]`
 
@@ -12684,6 +12933,8 @@ Validate source contracts and optional sample input without credentials
 | `--dir <PATH>` | source directory, default current directory |  |
 | `--name <NAME>` | selected operation; required for a sample |  |
 | `--input-file <PATH>` | sample JSON input |  |
+
+Sample input is optional.
 
 ### customer-operations types
 
@@ -12746,7 +12997,7 @@ Read business result and independent delivery status
 
 ### customer-operations inspect
 
-Inspect confirmed steps, uncertain attempts, retained files and retry blockers
+Inspect steps, uncertain attempts, retained files and retry blockers
 
 `gregale customer-operations inspect [--app <SLUG>] [--timeout <D>] <id>`
 
@@ -12796,9 +13047,30 @@ Read one chronological history of events, attempts and deliveries
 | `--all` | follow cursors to the end |  |
 | `--logs` | print archived instance log lines inside each HTTP attempt |  |
 
+### customer-operations milestones
+
+Read business milestones for an operation or reference
+
+`gregale customer-operations milestones [--app <SLUG>] [--self] [--scope <SCOPE>] [--subject-type <TYPE>] [--subject-id <ID>] [--workflow <NAME>] [--workflow-instance-id <ID>] [--workflow-state-cursor <CURSOR>] [--stale-only] [--tenant <UUID>] [--limit <N>] [--cursor <CURSOR>] [<operation-id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned app slug, or app UUID with --self |  |
+| `--self` | derive customer ownership from credentials |  |
+| `--scope <SCOPE>` | environment for a business-reference timeline |  |
+| `--subject-type <TYPE>` | business reference type |  |
+| `--subject-id <ID>` | exact business reference ID |  |
+| `--workflow <NAME>` | workflow for one business workflow run |  |
+| `--workflow-instance-id <ID>` | exact workflow run ID |  |
+| `--workflow-state-cursor <CURSOR>` | next workflow state history page |  |
+| `--stale-only` | only runs past their declared state age threshold |  |
+| `--tenant <UUID>` | account customer filter |  |
+| `--limit <N>` | page size |  |
+| `--cursor <CURSOR>` | next milestone page cursor |  |
+
 ### customer-operations watch
 
-Watch changed status; exit 0 success, 1 failure/cancel, 4 reconciliation, 124 timeout, 130 interrupt
+Watch an operation&#39;s status changes
 
 `gregale customer-operations watch [--app <SLUG>] [--timeout <D>] [--interval <D>] [--self] <id>`
 
@@ -12808,6 +13080,8 @@ Watch changed status; exit 0 success, 1 failure/cancel, 4 reconciliation, 124 ti
 | `--timeout <D>` | local request/wait deadline; work continues |  |
 | `--interval <D>` | polling interval, default 1s |  |
 | `--self` | use authenticated tenant routes; omit --app |  |
+
+Exits 0 on success, 1 on failure or cancel, 4 on reconciliation, 124 on timeout and 130 when interrupted.
 
 ### customer-operations download
 
@@ -12838,7 +13112,7 @@ Request cancellation at an observed generation
 
 ### customer-operations signal
 
-Deliver a named event to a waiting operation, by ID or by business subject
+Deliver a named event to a waiting operation
 
 `gregale customer-operations signal [--app <SLUG>] [--timeout <D>] --event <NAME> --signal-id <ID> [--payload <JSON>] [--payload-file <PATH>] [--scope <SCOPE>] [--operation <NAME>] [--subject <TYPE:ID>] [--self] [--definition <UUID>] [<id>]`
 
@@ -12855,6 +13129,8 @@ Deliver a named event to a waiting operation, by ID or by business subject
 | `--subject <TYPE:ID>` | business subject, instead of an operation ID |  |
 | `--self` | signal the authenticated tenant&#39;s own operations |  |
 | `--definition <UUID>` | operation definition, for a --self subject signal |  |
+
+Address the operation by ID or by business subject.
 
 ### customer-operations approve
 
@@ -12916,7 +13192,7 @@ Read retained notification attempt evidence
 
 ### customer-operations retry-delivery
 
-Record a receipt-backed notification retry without repeating business work
+Record a notification retry without repeating business work
 
 `gregale customer-operations retry-delivery [--app <SLUG>] [--timeout <D>] [--delivery <UUID>] [--expected-replay-generation <N>] [--retry-id <ID>] --receipt-file <PATH> <id>`
 
@@ -12928,6 +13204,8 @@ Record a receipt-backed notification retry without repeating business work
 | `--expected-replay-generation <N>` | observed notification generation; zero must be explicit |  |
 | `--retry-id <ID>` | stable retry decision identity |  |
 | `--receipt-file <PATH>` | private immutable request receipt | required |
+
+The retry is backed by a receipt.
 
 
 ## operations
@@ -12964,7 +13242,7 @@ Retire an idle policy and preserve ownership history
 
 ### operations bind-trigger
 
-Route an account-owned cron, inbound webhook, broker trigger, or Job schedule through a policy
+Route an account trigger or Job schedule through a policy
 
 `gregale operations bind-trigger --policy <NAME> --key <JSON> [--tenant <ID>] [--equivalence-key <KEY>] <cron|inbound_webhook|broker|job_schedule> <trigger-id>`
 
@@ -12974,6 +13252,8 @@ Route an account-owned cron, inbound webhook, broker trigger, or Job schedule th
 | `--key <JSON>` | JSON scalar business coordination key | required |
 | `--tenant <ID>` | account-authorized platform customer tenant |  |
 | `--equivalence-key <KEY>` | equivalent request identity for join_existing |  |
+
+Accepts an account-owned cron, inbound webhook, broker trigger or Job schedule.
 
 ### operations unbind-trigger
 
@@ -13163,7 +13443,7 @@ Show the linked span tree
 
 #### debug requests inspect
 
-Inspect one retained request or select --latest
+Inspect one retained request, or the latest one
 
 `gregale debug requests inspect [--since <DURATION>] [--route <PATH>] [--deployment-id <UUID>] [--status <N>] [--cold-boot <BOOL>] [--consumer-id <ID>] [--min-latency-ms <N>] [--latest] <slug> [<request-id-or-row-id>]`
 
@@ -13220,7 +13500,7 @@ Show observed dependency latency and regressions
 
 ### debug coverage
 
-Observed debugger signal coverage (coverage &lt;slug&gt; [--since D])
+Show observed debugger signal coverage
 
 `gregale debug coverage [--since <DURATION>] <slug>`
 
@@ -13228,9 +13508,11 @@ Observed debugger signal coverage (coverage &lt;slug&gt; [--since D])
 |---|---|---|
 | `--since <DURATION>` | lookback window |  |
 
+Usage: coverage &lt;slug&gt; [--since D].
+
 ### debug running
 
-Explain why an app is still running, with request evidence when available (running &lt;slug&gt; [--since D] [--limit N])
+Explain why an app is still running
 
 `gregale debug running [--since <DURATION>] [--limit <N>] <slug>`
 
@@ -13238,6 +13520,8 @@ Explain why an app is still running, with request evidence when available (runni
 |---|---|---|
 | `--since <DURATION>` | lookback window |  |
 | `--limit <N>` | maximum recent observations (1..100; default 20) |  |
+
+Includes request evidence when available. Usage: running &lt;slug&gt; [--since D] [--limit N].
 
 ### debug regressions
 
@@ -13634,7 +13918,7 @@ gregale context presets --help
 
 #### context presets copy
 
-Copy a local preset as a starting point without changing active context
+Copy a local preset without changing the active context
 
 `gregale context presets copy <source-name> <new-name>`
 
@@ -13810,7 +14094,7 @@ gregale logs defaults set errors --dry-run
 
 #### logs defaults show
 
-Show the preferred view, current filters, reference health, and preview command
+Show the preferred view, filters, reference health and preview
 
 `gregale logs defaults show [--app <SLUG>]`
 
@@ -13866,7 +14150,7 @@ gregale logs views --help
 
 #### logs views copy
 
-Copy saved filters as a starting point while preserving the source view
+Copy saved filters as a starting point; the source is kept
 
 `gregale logs views copy [--dry-run] <source-name> <new-name>`
 
@@ -13920,7 +14204,7 @@ gregale --json logs views show errors --app my-api --details
 
 #### logs views rename
 
-Rename a saved view without changing filters or overwriting another view
+Rename a saved view without changing filters
 
 `gregale logs views rename [--dry-run] <old-name> <new-name>`
 
@@ -13928,9 +14212,11 @@ Rename a saved view without changing filters or overwriting another view
 |---|---|---|
 | `--dry-run` | preview filters, destination, and preferred-view impact without writing |  |
 
+Never overwrites another view.
+
 #### logs views update
 
-Change selected filters while preserving view type and omitted settings
+Change selected filters; omitted settings are kept
 
 `gregale logs views update [--dry-run] [--since <DURATION>] [--route <PATH>] [--grep <TEXT>] [--level <LEVEL>] [--status <N>] [--limit <N>] [--follow] [--clear-route] [--clear-grep] [--clear-level] <name>`
 
@@ -13947,6 +14233,8 @@ Change selected filters while preserving view type and omitted settings
 | `--clear-route` | remove route filter |  |
 | `--clear-grep` | remove text filter |  |
 | `--clear-level` | remove level filter |  |
+
+The view type is preserved.
 
 #### logs views delete
 
@@ -14030,7 +14318,7 @@ Begin TOTP enrolment
 
 ### mfa confirm
 
-Confirm an enrolment code (positional code or --code)
+Confirm an enrolment code
 
 `gregale mfa confirm [--code <CODE>] [<6-digit-code>]`
 
@@ -14038,9 +14326,11 @@ Confirm an enrolment code (positional code or --code)
 |---|---|---|
 | `--code <CODE>` | 6-digit TOTP (alternative to positional code) |  |
 
+Pass the code as an argument or with --code.
+
 ### mfa verify
 
-Verify a TOTP code (step-up; positional code or --code)
+Verify a TOTP code for step-up
 
 `gregale mfa verify [--code <CODE>] [<6-digit-code>]`
 
@@ -14048,15 +14338,19 @@ Verify a TOTP code (step-up; positional code or --code)
 |---|---|---|
 | `--code <CODE>` | 6-digit TOTP (alternative to positional code) |  |
 
+Pass the code as an argument or with --code.
+
 ### mfa recover
 
-Use a recovery code (positional code or --code)
+Use a recovery code
 
 `gregale mfa recover [--code <CODE>] [<recovery-code>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--code <CODE>` | recovery code (alternative to positional code) |  |
+
+Pass the code as an argument or with --code.
 
 ### mfa disable
 
@@ -14083,7 +14377,9 @@ Open an app&#39;s URL in your browser
 
 ### open docs
 
-Open a CLI docs page (open docs [&lt;slug&gt;])
+Open a CLI docs page
+
+Usage: open docs [&lt;slug&gt;].
 
 
 ## orgs
@@ -14209,7 +14505,7 @@ Resume a paused rollout; admin only, release gated
 
 ##### orgs standards operation abort
 
-Stop outstanding targets and retain installed settings; admin only, release gated
+Stop outstanding targets and keep installed settings
 
 `gregale orgs standards operation abort --org <SLUG> --id <UUID> --file <PATH>`
 
@@ -14218,6 +14514,8 @@ Stop outstanding targets and retain installed settings; admin only, release gate
 | `--org <SLUG>` | organization slug | required |
 | `--id <UUID>` | operation UUID | required |
 | `--file <PATH>` | expected_updated_at JSON file | required |
+
+Admin only; release gated.
 
 #### orgs standards exceptions
 
@@ -14894,7 +15192,7 @@ Inspect binding refresh and credential retirement metadata
 
 ### data-api verify
 
-Verify named data integrity assertions and project authorization locally
+Verify data integrity assertions and project authorization
 
 `gregale data-api verify <release|coverage|init> [--directory <DIR>] [--config <FILE>] [--checks <FILE>] [--access-checks <FILE>] [--fixture <FILE>]`
 
@@ -14911,6 +15209,8 @@ Examples:
 ```sh
 gregale --json data-api verify --checks data-checks.json --fixture fixture.sql
 ```
+
+Runs locally.
 
 #### data-api verify release
 
@@ -15016,7 +15316,7 @@ Generate reviewable client migration guidance offline
 
 #### data-api migration preview
 
-Rebuild a disposable database and report API, types, client and replay checks
+Rebuild a disposable database and report migration checks
 
 `gregale data-api migration preview [--directory <DIR>] [--from-version <N>] [--fixture <FILE>] [--data-check <FILE>] --baseline <FILE> [--config <FILE>] [--output <FILE>] [--dependencies <FILE>] [--approval <FILE>] [--replay <FILE>] [--scenario <NAME>]`
 
@@ -15039,6 +15339,8 @@ Examples:
 ```sh
 gregale --json data-api migration preview --baseline schema.json --replay data-api.requests.json
 ```
+
+Reports API, types, client and replay checks.
 
 ### data-api onboard
 
@@ -15155,7 +15457,7 @@ Deploy a single-app Data API with its migrations as the release task
 
 ### data-api configure
 
-Change public access, aggregates, usage reporting or caps and fresh-restart the runtime
+Change access, aggregates, usage reporting or caps
 
 `gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--no-public-rpc] [--public-read-cache <DURATION|off>] [--usage-reporting <on|off>] [--monthly-caps <requests=N[,anonymous=N]|off>] [--aggregates <on|off>] [--pool <N|default>] [--server-key-concurrency <N|default>] [--server-key-rate-limit <N[,burst=M]|off>] [--scope <SCOPE>] [--no-restart] <name>`
 
@@ -15175,9 +15477,11 @@ Change public access, aggregates, usage reporting or caps and fresh-restart the 
 | `--scope <SCOPE>` | environment scope |  |
 | `--no-restart` | store settings without a fresh restart |  |
 
+Restarts the runtime fresh.
+
 ### data-api usage
 
-Show reported requests, rows and bytes per hour or day, and month-to-date totals
+Show reported requests, rows and bytes with month-to-date totals
 
 `gregale data-api usage [--since <DURATION>] [--granularity <hour|day>] <name>`
 
@@ -15192,13 +15496,15 @@ Examples:
 gregale data-api usage shop-data --since 30d
 ```
 
+Per hour or per day.
+
 ### data-api storage
 
 File storage governed by RLS on storage_objects
 
 #### data-api storage sql
 
-Print the storage_objects migration (table, RLS, guard trigger, example policies)
+Print the storage_objects migration
 
 `gregale data-api storage sql [--schema <SCHEMA>]`
 
@@ -15211,6 +15517,8 @@ Examples:
 ```sh
 gregale data-api storage sql > migrations/0005_storage.sql
 ```
+
+Includes the table, RLS, guard trigger and example policies.
 
 #### data-api storage enable
 
@@ -15259,7 +15567,7 @@ Live reads: results that stay current over a realtime connection
 
 #### data-api live enable
 
-Enable live queries on the database, usage reporting and a live-only realtime endpoint
+Enable live queries, usage reporting and a live-only endpoint
 
 `gregale data-api live enable [--scope <SCOPE>] [--no-restart] <name>`
 
@@ -15273,6 +15581,8 @@ Examples:
 ```sh
 gregale data-api live enable shop-data
 ```
+
+Creates a live-only realtime endpoint.
 
 #### data-api live status
 
@@ -15328,7 +15638,7 @@ Remove a key slot
 
 ### data-api types
 
-Generate TypeScript types or Python/Go clients from the database contract
+Generate TypeScript types or Python/Go clients from the contract
 
 `gregale data-api types [--output <FILE>] [--check] [--snapshot] [--validators] [--language <LANGUAGE>] [--package <NAME>] [--snapshot-file <FILE>] [--timeout <DURATION>] [<name>]`
 
@@ -15687,7 +15997,7 @@ Inspect one dead-letter event
 
 ### dlq replay
 
-Replay one event or --all
+Replay one event, or all of them
 
 `gregale dlq replay [--all] [--limit <N>] <app> [<event-id>]`
 
@@ -15696,9 +16006,11 @@ Replay one event or --all
 | `--all` | replay pending events |  |
 | `--limit <N>` | maximum events (1..200) |  |
 
+Use --all for every event.
+
 ### dlq purge
 
-Purge one event or --all
+Purge one event, or all of them
 
 `gregale dlq purge [--all] [--yes] [--limit <N>] <app> [<event-id>]`
 
@@ -15707,6 +16019,8 @@ Purge one event or --all
 | `--all` | purge all events (asks for typed confirmation) |  |
 | `--yes` | skip the --all confirmation (for scripts) |  |
 | `--limit <N>` | page size (1..200) |  |
+
+Use --all for every event.
 
 
 ## registry
@@ -15779,13 +16093,15 @@ List managed realtime endpoints
 
 ### realtime usage
 
-Show open connections against the plan&#39;s fair-use limit and recent hourly usage
+Show open connections against the fair-use limit and usage
 
 `gregale realtime usage [--hours <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--hours <N>` | UTC hours of usage to show (1-744, default 24) |  |
+
+Includes recent hourly usage.
 
 ### realtime get
 
@@ -15922,6 +16238,187 @@ Send a message to one live connection
 | `--data-stdin` | read the message from stdin |  |
 | `--binary` | send as a binary frame |  |
 
+### realtime send-principal
+
+Send a message to every connection of one principal
+
+`gregale realtime send-principal --principal <ID> [--data <DATA>] [--data-stdin] [--binary] [--delivery <MODE>] [--message-id <ID>] [--receipt] [--fallback-after-seconds <N>] [--notification-category <NAME>] [--notification-group <KEY>] [--notification-group-label <LABEL>] [--notification-priority <PRIORITY>] [--notification-ttl-seconds <N>] [--notification-collapse-key <KEY>] [--notification-not-before <TIME>] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified OIDC principal to target | required |
+| `--data <DATA>` | UTF-8 message text (or --data-stdin) |  |
+| `--data-stdin` | read the message bytes from stdin |  |
+| `--binary` | send as a binary frame |  |
+| `--delivery <MODE>` | live, or retained in the principal&#39;s durable inbox | one of `live` · `retained` |
+| `--message-id <ID>` | stable message ID; required with --receipt or --delivery retained |  |
+| `--receipt` | track client acknowledgements for one hour (live only) |  |
+| `--fallback-after-seconds <N>` | request push or webhook fallback after N unacknowledged seconds (retained only) |  |
+| `--notification-category <NAME>` | push preference category (default notifications) |  |
+| `--notification-group <KEY>` | stable conversation, job or project group key |  |
+| `--notification-group-label <LABEL>` | group name shown in summaries |  |
+| `--notification-priority <PRIORITY>` | push priority | one of `low` · `normal` · `urgent` |
+| `--notification-ttl-seconds <N>` | push lifetime, at most 259200 seconds |  |
+| `--notification-collapse-key <KEY>` | replace queued alerts that share this key |  |
+| `--notification-not-before <TIME>` | earliest push delivery, RFC3339, at most 48 hours ahead |  |
+
+### realtime edit-message
+
+Replace a retained message&#39;s payload
+
+`gregale realtime edit-message [--channel <CHANNEL>] [--principal <ID>] --message-id <ID> --expected-version <N> [--data <DATA>] [--data-stdin] [--binary] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--channel <CHANNEL>` | retained channel (or --principal) |  |
+| `--principal <ID>` | principal inbox (or --channel) |  |
+| `--message-id <ID>` | stable publisher message ID | required |
+| `--expected-version <N>` | current message version | required |
+| `--data <DATA>` | replacement payload (or --data-stdin) |  |
+| `--data-stdin` | read the replacement bytes from stdin |  |
+| `--binary` | the replacement is binary |  |
+
+### realtime delete-message
+
+Delete a retained message
+
+`gregale realtime delete-message [--channel <CHANNEL>] [--principal <ID>] --message-id <ID> --expected-version <N> <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--channel <CHANNEL>` | retained channel (or --principal) |  |
+| `--principal <ID>` | principal inbox (or --channel) |  |
+| `--message-id <ID>` | stable publisher message ID | required |
+| `--expected-version <N>` | current message version | required |
+
+### realtime receipt
+
+Show client acknowledgements for one sent message
+
+`gregale realtime receipt <app> <endpoint-id> <message-id>`
+
+### realtime inbox
+
+Read a principal&#39;s retained inbox
+
+`gregale realtime inbox --principal <ID> [--consumer <DEVICE>] [--after <SEQUENCE>] [--limit <N>] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified OIDC principal to inspect | required |
+| `--consumer <DEVICE>` | device checkpoint to inspect |  |
+| `--after <SEQUENCE>` | read after this sequence (default: the device checkpoint or zero) |  |
+| `--limit <N>` | messages to read, 1-100 |  |
+
+### realtime read-progress
+
+Show how far a principal has read
+
+`gregale realtime read-progress --principal <ID> [--channel <CHANNEL>] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified principal | required |
+| `--channel <CHANNEL>` | channel; omit for the principal inbox |  |
+
+### realtime mark-read
+
+Mark messages read through a sequence
+
+`gregale realtime mark-read --principal <ID> [--channel <CHANNEL>] --sequence <N> <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified principal | required |
+| `--channel <CHANNEL>` | channel; omit for the principal inbox |  |
+| `--sequence <N>` | mark seen through this sequence | required |
+
+### realtime push
+
+Configure push providers, devices and preferences
+
+#### realtime push providers
+
+List configured push providers
+
+`gregale realtime push providers <app> <endpoint-id>`
+
+#### realtime push configure
+
+Set one push provider&#39;s configuration from JSON
+
+`gregale realtime push configure --provider <PROVIDER> [--file <PATH>] [--enabled[=true|false]] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--provider <PROVIDER>` | push provider | required; one of `fcm` · `apns` · `webpush` |
+| `--file <PATH>` | request JSON file (default: stdin) |  |
+| `--enabled[=true|false]` | enable or disable the provider (default true) | one of `true` · `false` |
+
+#### realtime push devices
+
+List a principal&#39;s registered devices
+
+`gregale realtime push devices --principal <ID> <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified principal | required |
+
+#### realtime push register
+
+Register a principal&#39;s device from JSON
+
+`gregale realtime push register --principal <ID> --device <NAME> [--file <PATH>] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified principal | required |
+| `--device <NAME>` | stable device name | required |
+| `--file <PATH>` | request JSON file (default: stdin) |  |
+
+#### realtime push unregister
+
+Remove a principal&#39;s registered device
+
+`gregale realtime push unregister --principal <ID> --device <NAME> <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified principal | required |
+| `--device <NAME>` | stable device name | required |
+
+#### realtime push deliveries
+
+List recent push deliveries for a principal
+
+`gregale realtime push deliveries --principal <ID> <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified principal | required |
+
+#### realtime push preferences
+
+Show a principal&#39;s notification preferences
+
+`gregale realtime push preferences --principal <ID> <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified principal | required |
+
+#### realtime push set-preferences
+
+Replace a principal&#39;s notification preferences from JSON
+
+`gregale realtime push set-preferences --principal <ID> [--file <PATH>] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified principal | required |
+| `--file <PATH>` | request JSON file (default: stdin) |  |
+
 ### realtime close
 
 Close one live connection
@@ -16017,7 +16514,7 @@ gregale rollback my-api --to v41 --expected-current v42 --wait
 
 ### rollback status
 
-Read an exact rollback operation; waiting never submits another rollback
+Read an exact rollback operation
 
 `gregale rollback status --operation <UUID> [--wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug>`
 
@@ -16028,6 +16525,8 @@ Read an exact rollback operation; waiting never submits another rollback
 | `--timeout <duration>` | wait deadline (default 10m) |  |
 | `--poll-interval <duration>` | poll interval (default 2s) |  |
 | `--json` | print the operation receipt |  |
+
+Waiting never submits another rollback.
 
 
 ## projects
@@ -16048,7 +16547,9 @@ Show a project and its workloads
 
 ### projects environments
 
-Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config [set]|routes set|queues get|queues set|diff|preview|promote|status|rollback|abort|recover); qualify binds probes to release, config, and secret revisions
+Manage project environments, releases and promotions
+
+Qualify binds probes to release, config and secret revisions.
 
 #### projects environments list
 
@@ -16082,7 +16583,7 @@ Inspect the active graph and environment deployments
 
 #### projects environments release-sets
 
-List release graphs; qualify activation, rollback and deactivation with binding checks
+List release graphs and qualify changes with binding checks
 
 `gregale projects environments release-sets <stage|stage-status|cancel-stage|prepare-rollback|rollback|prepare|verification-runs|verify|activate|prepare-deactivation|deactivate> [--before <CURSOR>] [--cursor <CURSOR>] [--all] [--limit <N>]`
 
@@ -16093,9 +16594,11 @@ List release graphs; qualify activation, rollback and deactivation with binding 
 | `--all` | walk every page |  |
 | `--limit <N>` | page size |  |
 
+Covers activation, rollback and deactivation.
+
 ##### projects environments release-sets stage
 
-Lease billable capacity for exact candidate services without switching routes
+Lease capacity for exact candidate services without switching
 
 `gregale projects environments release-sets stage --file <FILE> [--ttl-seconds <N>] <project> <environment>`
 
@@ -16103,6 +16606,8 @@ Lease billable capacity for exact candidate services without switching routes
 |---|---|---|
 | `--file <FILE>` | prepared forward or rollback manifest JSON | required |
 | `--ttl-seconds <N>` | lease duration, 1–1800 seconds; repeating does not extend |  |
+
+The capacity is billable; routes are not switched.
 
 ##### projects environments release-sets stage-status
 
@@ -16126,7 +16631,7 @@ Cancel temporary candidate capacity
 
 ##### projects environments release-sets prepare-rollback
 
-Select retained historical graph and freeze current routing and policies
+Select a retained graph and freeze current routing and policies
 
 `gregale projects environments release-sets prepare-rollback --file <FILE> <project> <environment>`
 
@@ -16136,7 +16641,7 @@ Select retained historical graph and freeze current routing and policies
 
 ##### projects environments release-sets rollback
 
-Atomically recover a qualified historical graph and record recovery lineage
+Recover a qualified historical graph atomically
 
 `gregale projects environments release-sets rollback --file <FILE> <project> <environment>`
 
@@ -16144,15 +16649,19 @@ Atomically recover a qualified historical graph and record recovery lineage
 |---|---|---|
 | `--file <FILE>` | prepared recovery manifest JSON | required |
 
+Records the recovery lineage.
+
 ##### projects environments release-sets prepare
 
-Freeze candidate graph, current routing and enforced policies; emit a JSON manifest
+Freeze the candidate graph, routing and policies as a manifest
 
 `gregale projects environments release-sets prepare --file <FILE> <project> <environment>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--file <FILE>` | release selection or prepared manifest JSON | required |
+
+Emits a JSON manifest of the enforced policies.
 
 ##### projects environments release-sets verification-runs
 
@@ -16237,9 +16746,11 @@ Atomically activate after checking every member and service recipient
 
 ##### projects environments release-sets prepare-deactivation
 
-Freeze the active graph and every 100% fallback; emit a qualification manifest
+Freeze the active graph and its fallbacks as a manifest
 
 `gregale projects environments release-sets prepare-deactivation <project> <environment>`
+
+Includes every 100% fallback; emits a qualification manifest.
 
 ##### projects environments release-sets deactivate
 
@@ -16259,13 +16770,15 @@ List live workload deployments
 
 #### projects environments qualify
 
-Run health and smoke GET probes against exact active release-set deployments
+Run health and smoke probes against the active release set
 
 `gregale projects environments qualify --profile <FILE> <project-slug> <environment-slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--profile <FILE>` | YAML probe profile defining every release-set workload | required |
+
+Probes are GET requests to exact release-set deployments.
 
 #### projects environments preflight
 
@@ -16331,7 +16844,7 @@ Alias for config set
 
 #### projects environments secrets
 
-List or change secrets shared by every service of the environment (values are write-only)
+List or change secrets shared by an environment&#39;s services
 
 `gregale projects environments secrets <set|rotate|unset> <project-slug> <environment-slug>`
 
@@ -16342,9 +16855,11 @@ gregale projects environments secrets shop production
 printf 'DATABASE_PASSWORD=%s\n' "$PW" | gregale projects environments secrets set shop production --from-stdin
 ```
 
+Values are write-only.
+
 ##### projects environments secrets set
 
-Set shared secrets; services receive them at their next boot unless they set the key themselves
+Set secrets shared by every service of an environment
 
 `gregale projects environments secrets set [--from-stdin] [--file <PATH>] <project-slug> <environment-slug> [KEY=VALUE...]`
 
@@ -16352,6 +16867,8 @@ Set shared secrets; services receive them at their next boot unless they set the
 |---|---|---|
 | `--from-stdin` | read KEY=VALUE pairs from stdin (one per line) |  |
 | `--file <PATH>` | read KEY=VALUE pairs from a private file |  |
+
+Services receive them at their next boot unless they set the key themselves.
 
 ##### projects environments secrets rotate
 
@@ -16384,7 +16901,7 @@ Manage environment policies
 
 #### projects environments queues
 
-Read or replace a stage workload&#39;s complete desired queue collection; consumer activation is unavailable. Set input contains expected_revision and bindings; [] removes all definitions
+Read or replace a stage workload&#39;s queue definitions
 
 `gregale projects environments queues <get|set> [--file <PATH>] [--stdin] <get|set> <project> <stage> <workload>`
 
@@ -16400,6 +16917,8 @@ gregale projects environments queues get shop staging shop-worker
 gregale projects environments queues set shop staging shop-worker --file queues.json
 ```
 
+Consumer activation is unavailable. Set takes JSON with expected_revision and bindings; [] removes all definitions.
+
 ##### projects environments queues get
 
 Read queue definitions and their workload revision as JSON
@@ -16414,7 +16933,7 @@ gregale projects environments queues get shop staging shop-worker
 
 ##### projects environments queues set
 
-Replace queue definitions from JSON containing expected_revision and bindings; [] removes all stage bindings
+Replace queue definitions from JSON
 
 `gregale projects environments queues set [--file <PATH>] [--stdin] <project> <stage> <workload>`
 
@@ -16428,6 +16947,8 @@ Examples:
 ```sh
 gregale projects environments queues set shop staging shop-worker --file queues.json
 ```
+
+The JSON contains expected_revision and bindings; [] removes all stage bindings.
 
 #### projects environments gitops
 
@@ -16606,7 +17127,7 @@ gregale projects environments gitops releases shop production --target-commit CO
 
 ##### projects environments gitops rollback-plan
 
-Preview code rollback from a retained serving release and export a Git proposal
+Preview a code rollback and export it as a Git proposal
 
 `gregale projects environments gitops rollback-plan --to-release <UUID> --target-commit <SHA> [--format <FORMAT>] [--expected-plan-hash <HASH>] [--manifest <PATH>] [--fail-on-blocked] <project> <environment>`
 
@@ -16625,9 +17146,11 @@ Examples:
 gregale projects environments gitops rollback-plan shop production --to-release RELEASE_UUID --target-commit COMMIT_SHA
 ```
 
+Rolls back to a retained serving release.
+
 ##### projects environments gitops rollback-pr
 
-Open a draft recovery PR or MR for an explicitly selected served release
+Open a draft recovery PR or MR for a selected served release
 
 `gregale projects environments gitops rollback-pr --to-release <UUID> --target-commit <SHA> --expected-plan-hash <HASH> [--yes] [--json] <project> <environment>`
 
@@ -16772,7 +17295,7 @@ Roll back a promotion
 
 #### projects environments abort
 
-Abort a running promotion; after cutover qualify the baseline before restoration
+Abort a running promotion
 
 `gregale projects environments abort [--to <ENV>] [--generation <N>] [--request-id <ID>] [--wait] [--timeout <SECONDS|DURATION>] <project-slug> <promotion-id>`
 
@@ -16783,6 +17306,8 @@ Abort a running promotion; after cutover qualify the baseline before restoration
 | `--request-id <ID>` | stable 32-character lowercase hexadecimal request ID |  |
 | `--wait` | wait for this decision to finish |  |
 | `--timeout <SECONDS|DURATION>` | maximum local wait; server work continues |  |
+
+After cutover, qualify the baseline before restoration.
 
 #### projects environments recover
 
@@ -16797,6 +17322,26 @@ Retry a blocked restoration without rebuilding or extending retention
 | `--request-id <ID>` | stable 32-character lowercase hexadecimal request ID |  |
 | `--wait` | wait for this decision to finish |  |
 | `--timeout <SECONDS|DURATION>` | maximum local wait; server work continues |  |
+
+#### projects environments recover-migration
+
+Resume or resolve a promotion stopped by its migration task
+
+`gregale projects environments recover-migration --to <ENV> --action <ACTION> --task-id <TASK> --generation <N> --database-state-checked --evidence-sha256 <HASH> [--schema-compatible] [--replacement-promotion <ID>] [--request-id <ID>] [--wait] [--timeout <SECONDS>] <project-slug> <promotion-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--to <ENV>` | destination environment | required |
+| `--action <ACTION>` | resume, or resolve through a verified repair promotion | required; one of `resume` · `resolve` |
+| `--task-id <TASK>` | original migration task ID | required |
+| `--generation <N>` | inspected promotion health generation | required |
+| `--database-state-checked` | attest that the destination database was inspected | required |
+| `--evidence-sha256 <HASH>` | SHA-256 of private inspection evidence (not uploaded) | required |
+| `--schema-compatible` | attest that the expected expansion is present (resume only) |  |
+| `--replacement-promotion <ID>` | verified repair promotion (resolve only) |  |
+| `--request-id <ID>` | stable request ID (default: derived from the request) |  |
+| `--wait` | wait for recovery confirmation |  |
+| `--timeout <SECONDS>` | maximum wait in seconds or a duration |  |
 
 ### projects update
 
@@ -16857,7 +17402,7 @@ Manage local required secret names without reading or changing values
 
 #### secrets requirements check
 
-Compare saved required names with a dotenv example offline; exit 1 on differences or missing declaration
+Compare required names with a dotenv example offline
 
 `gregale secrets requirements check [--from-env-file <PATH>]`
 
@@ -16871,6 +17416,8 @@ Examples:
 gregale secrets requirements check
 gregale secrets requirements check --from-env-file config/example.env
 ```
+
+Exits 1 on differences or a missing declaration.
 
 #### secrets requirements set
 
@@ -16892,7 +17439,7 @@ gregale secrets requirements set --from-env-file .env.example --dry-run
 
 #### secrets requirements add
 
-Append required names while preserving existing names and skipping duplicates
+Append required names, skipping duplicates
 
 `gregale secrets requirements add [--dry-run] [--from-env-file <PATH>] [<KEY>...]`
 
@@ -16932,9 +17479,11 @@ Show required names, declaration status, and source path
 
 #### secrets requirements clear
 
-Remove the local declaration; missing requirements mean unknown completeness
+Remove the local declaration of required names
 
 `gregale secrets requirements clear`
+
+Without one, completeness is unknown.
 
 ### secrets defaults
 
@@ -16971,7 +17520,7 @@ Remove only the local comparison defaults
 
 ### secrets check
 
-Check required scoped secrets and current delivery evidence without reading values
+Check required secrets and delivery evidence without values
 
 `gregale secrets check [--app <slug>] [--scope <SCOPE>] [--required <KEY>]... [--required-file <PATH>] [--missing-template <PATH>] [--environments <SCOPE,...|saved>]`
 
@@ -17032,7 +17581,7 @@ gregale secrets refs set --app my-api --environment production DATABASE_URL=secr
 
 #### secrets refs unset
 
-Suppress a primary workload secret destination and preserve the sealed source
+Suppress a secret destination and keep the sealed source
 
 `gregale secrets refs unset --app <slug> --environment <ENV> <KEY>`
 
@@ -17046,6 +17595,8 @@ Examples:
 ```sh
 gregale secrets refs unset --app my-api --environment production DATABASE_URL
 ```
+
+Applies to a primary workload destination.
 
 ### secrets list
 
@@ -17155,7 +17706,7 @@ gregale secrets list-all --older-than 90d
 
 ### secrets audit
 
-Audit secret update age and report unknown timestamps without exposing values
+Audit secret update age without exposing values
 
 `gregale secrets audit --older-than <DURATION> [--fail-on-stale]`
 
@@ -17170,6 +17721,8 @@ Examples:
 gregale secrets audit --older-than 90d
 gregale secrets audit --older-than 90d --fail-on-stale --json
 ```
+
+Reports unknown timestamps too.
 
 ### secrets rotate
 
@@ -17727,13 +18280,15 @@ Manage release webhooks for apps and your account
 
 ### webhooks list
 
-List an app&#39;s webhooks (slug defaults to linked context)
+List an app&#39;s webhooks
 
 `gregale webhooks list [--app <slug>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug (alternative to the positional) |  |
+
+The app defaults to the linked one.
 
 ### webhooks add
 
@@ -17895,7 +18450,7 @@ Retry one failed delivery
 
 #### webhooks account rotate-secret
 
-Replace the signing secret using --from-stdin or --secret
+Replace the signing secret
 
 `gregale webhooks account rotate-secret [--secret <VALUE>] [--from-stdin] <id>`
 
@@ -17903,6 +18458,8 @@ Replace the signing secret using --from-stdin or --secret
 |---|---|---|
 | `--secret <VALUE>` | signing secret (prefer --from-stdin) |  |
 | `--from-stdin` | read the signing secret from stdin; mutually exclusive with --secret |  |
+
+Read it with --from-stdin, or pass --secret.
 
 
 ## whoami
