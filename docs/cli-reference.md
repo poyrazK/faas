@@ -28,8 +28,8 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`apps`](#apps) | List your apps |
 | [`app`](#app) | Inspect an app, change settings, or manage its runtime |
 | [`billing`](#billing) | Manage your subscription, payment method, budgets and cost reports |
-| [`approvals`](#approvals) | Require people to approve production releases before they leave their first canary stage |
-| [`scheduled-releases`](#scheduled-releases) | Start production releases at a set time; they build now and wait without traffic |
+| [`approvals`](#approvals) | Make production releases wait in their canary for approval |
+| [`scheduled-releases`](#scheduled-releases) | Build production releases now and start them at a set time |
 | [`freeze`](#freeze) | Pause production releases for a window, weekly, or after rollbacks |
 | [`release-gates`](#release-gates) | Stop rollouts on SLO, error or metric regressions and roll back |
 | [`canary`](#canary) | Advance canary stages, check their gates, or simulate a preset |
@@ -5557,7 +5557,7 @@ Export a partial FOCUS 1.4 invoice projection
 
 ## approvals
 
-Require people to approve production releases before they leave their first canary stage
+Make production releases wait in their canary for approval
 
 `gregale approvals [<subcommand>]`
 
@@ -5573,7 +5573,7 @@ gregale approvals reject v42 --app my-api --reason "checkout latency is up"
 
 ### approvals require
 
-Require approvals for an app&#39;s production releases (ADR-20261020085706)
+Require approvals for an app&#39;s production releases
 
 `gregale approvals require [--app <slug>] --approvals <N> [--after-stage <N>] [--timeout <DURATION>] [--approvers <ROLE>] [--allow-self-approval] [--notify <CHANNEL,...>]`
 
@@ -5652,7 +5652,7 @@ Reject a release and abort its rollout
 
 ## scheduled-releases
 
-Start production releases at a set time; they build now and wait without traffic
+Build production releases now and start them at a set time
 
 `gregale scheduled-releases [<subcommand>]`
 
@@ -5668,7 +5668,7 @@ gregale scheduled-releases cancel v42 --app my-api
 
 ### scheduled-releases list
 
-List scheduled releases, pending ones first (ADR-20261021152201)
+List scheduled releases, pending ones first
 
 `gregale scheduled-releases list [--app <slug>]`
 
@@ -8682,7 +8682,7 @@ gregale deployment advance v42 --app my-api --expected-step 1
 
 ### deployment diff
 
-Show what changed between a release and the one before it: code, config keys, packages, runtime settings, release command (ADR-20261021101117)
+Show what changed between a release and the one before it: code, config keys, packages, runtime settings and the release command
 
 `gregale deployment diff [--against <ID|vN>] [--app <SLUG>] <id|vN>`
 

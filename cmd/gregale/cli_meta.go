@@ -1768,7 +1768,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "approvals",
 		DocSlug: "approvals",
-		Short:   "Require people to approve production releases before they leave their first canary stage",
+		Short:   "Make production releases wait in their canary for approval",
 		Examples: []string{
 			"gregale approvals require --app my-api --approvals 2 --notify releases",
 			"gregale approvals require --app my-api --approvals 1 --approvers developer --timeout 4h",
@@ -1777,7 +1777,7 @@ var cliCommands = []cliCommand{
 			"gregale approvals reject v42 --app my-api --reason \"checkout latency is up\"",
 		},
 		Subcommands: []cliSub{
-			{Name: "require", Short: "Require approvals for an app's production releases (ADR-20261020085706)", Flags: []cliFlag{
+			{Name: "require", Short: "Require approvals for an app's production releases", Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
 				{Name: "approvals", Short: "approvals each production release needs (1-5)", Value: "N", Req: true},
 				{Name: "after-stage", Short: "canary stage the release waits in (default 1)", Value: "N"},
@@ -1811,7 +1811,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "scheduled-releases",
 		DocSlug: "scheduled-releases",
-		Short:   "Start production releases at a set time; they build now and wait without traffic",
+		Short:   "Build production releases now and start them at a set time",
 		Examples: []string{
 			"gregale deploy --at 02:00 --release-notify releases",
 			"gregale scheduled-releases list",
@@ -1820,7 +1820,7 @@ var cliCommands = []cliCommand{
 			"gregale scheduled-releases cancel v42 --app my-api",
 		},
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List scheduled releases, pending ones first (ADR-20261021152201)", Flags: []cliFlag{
+			{Name: "list", Short: "List scheduled releases, pending ones first", Flags: []cliFlag{
 				{Name: "app", Short: "only this app's schedules", Value: "slug"},
 			}},
 			{Name: "show", Short: "Show a release's schedule", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
@@ -2586,7 +2586,7 @@ var cliCommands = []cliCommand{
 			{Name: "retry-hold", Positionals: []string{"<ID|vN>"}, Short: "Schedule an MCP promotion hold retry with all activation checks", Examples: []string{"gregale deployment retry-hold v42 --app my-api"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
 			{Name: "runtime", Positionals: []string{"<ID|vN>"}, Short: "Inspect runtime identity or preview a published runtime change", Examples: []string{"gregale deployment runtime v42 --app my-function", "gregale deployment runtime v42 --app my-function --target RELEASE_ID --json"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug for a vN revision"}, {Name: "target", Value: "RELEASE_ID", Short: "published runtime release to preview without applying"}}},
 			{Name: "advance", Positionals: []string{"<ID|vN>"}, Short: "Advance a canary by one stage with route enforcement", Examples: []string{"gregale deployment advance DEPLOYMENT_UUID --expected-step 1", "gregale deployment advance v42 --app my-api --expected-step 1"}, Flags: []cliFlag{{Name: "expected-step", Value: "N", Short: "observed current canary step (see deployment summary)", Req: true}, {Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
-			{Name: "diff", Short: "Show what changed between a release and the one before it: code, config keys, packages, runtime settings, release command (ADR-20261021101117)", Examples: []string{"gregale deployment diff v42 --app my-api", "gregale deployment diff v42 --against v38 --app my-api"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
+			{Name: "diff", Short: "Show what changed between a release and the one before it: code, config keys, packages, runtime settings and the release command", Examples: []string{"gregale deployment diff v42 --app my-api", "gregale deployment diff v42 --against v38 --app my-api"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "against", Value: "ID|vN", Short: "release to compare with (default: the release that served before it)"},
 				{Name: "app", Value: "SLUG", Short: "app slug, to resolve vN revisions"},
 			}},

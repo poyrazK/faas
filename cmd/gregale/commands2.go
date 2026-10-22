@@ -2065,7 +2065,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	fs.Var(&queueCanaryBindings, "queue-canary-binding", "declare safe handler-completion support for a manifest push HTTP binding (repeatable; this deployment only)")
 	mcpTaskMigrationOverride := fs.Bool("mcp-task-migration-override", false, "allow this deployment to replace incompatible MCP task workers once")
 	overrideFreeze := fs.String("override-freeze", "", "release to production during a deploy freeze; the reason is audited (ADR-20261019071733)")
-	releaseAtFlag := fs.String("at", "", "build now and start the production rollout at this time; freezes are checked then (ADR-20261021152201)")
+	releaseAtFlag := fs.String("at", "", "build now and start the production rollout at this time; freezes are checked then")
 	releaseNotifyFlag := fs.String("release-notify", "", "Slack or email channels told when a scheduled release starts or cannot start (with --at)")
 	rollbackOn5xx := fs.Bool("rollback-on-5xx", false, "automatically roll back after repeated first-wake 5xx responses")
 	disableStartupCPUBoost := fs.Bool("disable-startup-cpu-boost", false, "disable the temporary CPU boost during VM startup")
@@ -4710,7 +4710,7 @@ func cmdTrafficPromote(args []string) int {
 	removalMapping := fs.String("route-mapping", "", "reviewed successor mapping JSON")
 	removalApproval := fs.String("route-owner-approval", "", "owner attestation for this exact change")
 	removalAge := fs.Duration("route-evidence-max-age", 72*time.Hour, "maximum route evidence age (at most 72h)")
-	at := fs.String("at", "", "start the release's rollout at this time instead of now (ADR-20261021152201)")
+	at := fs.String("at", "", "start the release's rollout at this time instead of now")
 	releaseNotify := fs.String("release-notify", "", "Slack or email channels told when the scheduled release starts or cannot start")
 	slug, args := peelLeadingSlug(args)
 	if err := fs.Parse(args); err != nil {
