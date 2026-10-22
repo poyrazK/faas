@@ -940,12 +940,49 @@ non-UTF-8 bytes) and adds three things that never change a verdict:
   On varied traffic the check takes about half the time. The regex share of
   that traffic fell from about 0.9-1.1 s to 0.52 s per 6,000 values.
 
-### What it does not yet do
+### On a production compute node
 
-Applied to amendment 9's production numbers, half the check time would put
-the median near 1 ms and p95 near 2 ms at 100-250 requests per second, at
-the gate rather than clearly under it, so `warn` and `block` stay in preview
-until a production measurement shows it. The largest remaining regex cost
-is rule 932237's list of unix commands in request headers, which has no
-literal or punctuation every match must contain; a sound keyword index for
-such lists is the next step before rules are dropped.
+`TestEdgeWAFInlineLoad_E2E` on `gregale-compute-2` again, isolated as in
+amendment 9 and removed afterwards, with two gatewayd-internal builds: stock
+`@rx` (8f28696ef0) and `@grx` (20ee6792d7). The run waited until the node
+was idle (load 0.42, three tenant microVMs), then ran one pass without a
+WAF rule and six `warn` passes, interleaved stock, `@grx`, `@grx`, stock,
+stock, `@grx`, so both saw the same node. Ranges cover the three passes of
+each build.
+
+| Rate (req/s) | Build | Check p50 | Check p95 | Check p99 | Within 2 ms | Skipped | Gateway CPU per request |
+|---|---|---|---|---|---|---|---|
+| 100 | stock | 1.89-1.91 ms | 3.93-4.10 ms | 4.9 ms | 56-57% | 1.8-2.1% | 4.0-4.1 ms |
+| 100 | `@grx` | 1.06-1.10 ms | 1.55-1.76 ms | 1.95-2.64 ms | 98-99.5% | 0.1-1.0% | 3.0-3.1 ms |
+| 250 | stock | 1.92-1.94 ms | 4.38-4.48 ms | 7.0-8.2 ms | 53-54% | 6.9-7.9% | 3.6-3.7 ms |
+| 250 | `@grx` | 0.94-1.13 ms | 1.49-2.00 ms | 2.05-4.49 ms | 95-99% | 2.5-3.2% | 2.6-2.8 ms |
+| 500 | stock | 2.00-2.12 ms | 4.78-6.04 ms | 8.9-9.8 ms | 46-50% | 19.1-21.6% | 3.4-3.6 ms |
+| 500 | `@grx` | 0.90-0.96 ms | 1.67-1.98 ms | 2.79-4.30 ms | 95-98% | 6.7-7.7% | 2.4 ms |
+| 1000 | stock | 2.36-2.42 ms | 6.39-7.09 ms | 9.7-9.9 ms | 36-39% | 33.9-35.3% | 4.0-4.1 ms |
+| 1000 | `@grx` | 1.05-1.07 ms | 2.75-2.92 ms | 4.9-5.0 ms | 88-90% | 21.3-22.0% | 2.2 ms |
+
+Without a WAF rule the gateway used 1.05-1.76 ms of CPU per request. No
+benign request was warned in any pass; the attacks not warned match the
+skipped checks.
+
+Findings:
+
+1. **The 2 ms gate is met at 100-500 requests per second.** `@grx`'s p95 is
+   1.49-2.00 ms there in every pass, against 3.93-6.04 ms for stock on the
+   same node minutes apart, and its median is about 1 ms. At 1000 requests
+   per second, where the node is saturated, p95 is 2.75-2.92 ms.
+2. **The WAF's added CPU falls by about 45%:** 1.3 ms per request at 100
+   requests per second against 2.3 ms for stock. At 1000 requests per
+   second stock saturated the node and clients waited 6-7.5 s (one pass
+   lost 168 requests); with `@grx` clients saw p50 13-16 ms.
+3. **Skips remain.** Checks are skipped from 250 requests per second (2.5-
+   3.2%, 7-8% at 500), fewer than stock's (7-8%, 19-22%). A skipped check
+   lets the request through unchecked, so under `block` a few percent of
+   requests at those rates are not inspected. The two check slots are the
+   limit; a slot count tied to the node's cores is the lever.
+
+Whether `warn` and `block` leave preview on this evidence is the product
+owner's decision. The largest remaining regex cost is rule 932237's list of
+unix commands in request headers, which has no literal or punctuation every
+match must contain; a sound keyword index for such lists is the next step
+if more headroom is wanted. Dropping rules is not needed for the gate.
