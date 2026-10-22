@@ -48,6 +48,9 @@ type releaseSchedule struct {
 // that time, and the schedule to record once the deployment exists is
 // returned.
 func (s *server) releaseFreezeOrSchedule(r *http.Request, acct state.Account, app state.App, req *api.CreateDeploymentRequest) (*releaseSchedule, *api.Problem) {
+	if p := s.platformReleasePauseProblem(); p != nil {
+		return nil, p
+	}
 	if strings.TrimSpace(req.ReleaseAt) == "" {
 		if len(req.ReleaseNotify) > 0 {
 			return nil, api.ErrValidation("release_notify needs release_at")

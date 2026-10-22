@@ -151,6 +151,9 @@ type Config struct {
 
 // Builderd is the orchestrator. It is the cmd/builderd main loop.
 type Builderd struct {
+	// releasePaused reports the break-glass release pause (ADR
+	// 20261022140000); while it is true no queued build is claimed.
+	releasePaused  func() bool
 	buildPublisher buildpublisher.Signer
 	validatorBuild func(context.Context, string, string, string, string) error
 	store          state.Store
@@ -378,6 +381,18 @@ func (b *Builderd) WithOpsMetrics(ops *wire.OpsMetrics) *Builderd {
 	return b
 }
 
+// WithReleasePause makes the claim paths check the break-glass release
+// pause (ADR 20261022140000). While paused() is true a queued build stays
+// queued; the polling worker claims it after the pause is lifted.
+func (b *Builderd) WithReleasePause(paused func() bool) *Builderd {
+	b.releasePaused = paused
+	return b
+}
+
+func (b *Builderd) claimsPaused() bool {
+	return b.releasePaused != nil && b.releasePaused()
+}
+
 // WithEvents attaches the events Platform (issue #517 / PR-C /
 // ADR-064) and returns the same Builderd for chaining. Mirrors
 // schedd.Engine.WithEvents / vmmd.Server.WithEvents. When non-nil,
@@ -537,6 +552,10 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 		return BuildResult{}, err
 	}
 	defer b.endProcess()
+	if b.claimsPaused() {
+		// Leave the build queued: no claim was acquired.
+		return BuildResult{}, nil
+	}
 
 	var build state.Build
 	var err error
@@ -579,6 +598,10 @@ func (b *Builderd) ProcessNext(ctx context.Context) (BuildResult, error) {
 		return BuildResult{}, err
 	}
 	defer b.endProcess()
+	if b.claimsPaused() {
+		// The same answer as an empty queue, so the poller backs off.
+		return BuildResult{}, state.ErrNotFound
+	}
 
 	var build state.Build
 	var err error
