@@ -263,7 +263,7 @@ func TestRenderWakeTimelinePage_DefaultSummaryHidesInternalPhases(t *testing.T) 
 	}
 
 	buf.Reset()
-	main.RenderWakeTimelinePageWithOptions(&buf, resp, true)
+	main.RenderWakeTimelinePageWithOptions(&buf, "", resp, true)
 	if !strings.Contains(buf.String(), "materialize_mem=3ms") {
 		t.Errorf("verbose output missing internal restore phase:\n%s", buf.String())
 	}
@@ -300,7 +300,7 @@ func TestRenderWakeTimelinePage_PostRPCBreakdown(t *testing.T) {
 		},
 	}}}
 	var buf bytes.Buffer
-	main.RenderWakeTimelinePageWithOptions(&buf, resp, true)
+	main.RenderWakeTimelinePageWithOptions(&buf, "", resp, true)
 	if want := "post-rpc pre_commit=3ms stamp_join=0ms lock_wait=61ms publish=24ms finalize=40ms"; !strings.Contains(buf.String(), want) {
 		t.Fatalf("verbose output missing %q:\n%s", want, buf.String())
 	}
@@ -308,5 +308,15 @@ func TestRenderWakeTimelinePage_PostRPCBreakdown(t *testing.T) {
 	main.RenderWakeTimelinePage(&buf, resp)
 	if strings.Contains(buf.String(), "post-rpc") {
 		t.Fatalf("default output shows implementation phases:\n%s", buf.String())
+	}
+}
+
+// The header named only the app UUID although the customer typed its slug
+// (Hunt 12 H12-55).
+func TestRenderWakeTimelinePageNamesSlug(t *testing.T) {
+	var buf bytes.Buffer
+	main.RenderWakeTimelinePageWithOptions(&buf, "h12-go", api.WakeTimelineResponse{WakeID: "wake-1", AppID: "app-1", Limit: 50}, false)
+	if want := "wake wake-1 app h12-go (app-1) limit 50:"; !strings.Contains(buf.String(), want) {
+		t.Fatalf("header missing %q:\n%s", want, buf.String())
 	}
 }

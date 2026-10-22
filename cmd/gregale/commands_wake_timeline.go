@@ -118,7 +118,7 @@ func cmdWakeTimeline(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(page))
 	}
-	renderWakeTimelinePageWithOptions(osStdout, page, *verbose)
+	renderWakeTimelinePageWithOptions(osStdout, slug, page, *verbose)
 	if page.NextCursor != "" {
 		_, _ = fmt.Fprintf(osStdout, "... more — pass --since %s\n", page.NextCursor)
 	}
@@ -145,7 +145,7 @@ func cmdWakeTimelineAll(ctx context.Context, client *api.Client, slug, wakeID st
 				}
 			}
 		} else {
-			renderWakeTimelinePageWithOptions(osStdout, page, verbose)
+			renderWakeTimelinePageWithOptions(osStdout, slug, page, verbose)
 		}
 		if page.NextCursor == "" || len(page.Events) == 0 {
 			return 0
@@ -165,11 +165,16 @@ func cmdWakeTimelineAll(ctx context.Context, client *api.Client, slug, wakeID st
 // present) so operators can answer "why did this instance start?"
 // without leaving the CLI. Pre-ADR-123 events render as before.
 func renderWakeTimelinePage(w io.Writer, p api.WakeTimelineResponse) {
-	renderWakeTimelinePageWithOptions(w, p, false)
+	renderWakeTimelinePageWithOptions(w, "", p, false)
 }
 
-func renderWakeTimelinePageWithOptions(w io.Writer, p api.WakeTimelineResponse, verbose bool) {
-	_, _ = fmt.Fprintf(w, "wake %s app %s limit %d:\n", p.WakeID, p.AppID, p.Limit)
+func renderWakeTimelinePageWithOptions(w io.Writer, slug string, p api.WakeTimelineResponse, verbose bool) {
+	app := p.AppID
+	if slug != "" {
+		// The UUID alone named no app the customer typed (Hunt 12 H12-55).
+		app = slug + " (" + p.AppID + ")"
+	}
+	_, _ = fmt.Fprintf(w, "wake %s app %s limit %d:\n", p.WakeID, app, p.Limit)
 	renderSummaryHeader(w, p.Events)
 	renderWakeTimingSummary(w, p.Events)
 	for _, ev := range p.Events {
