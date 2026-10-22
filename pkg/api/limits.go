@@ -5025,7 +5025,9 @@ var planLimits = map[Plan]Limits{
 		// scale to a meaningful production fan-out (3 workers,
 		// 5 service replicas, 30 min job runtimes).
 		DefaultStopGracePeriodS: 60,
-		DefaultStartupDeadlineS: 60,
+		// ADR-138 amendment (2026-10-22): capped at the cold-boot
+		// window, ColdBootReadyWindowS.
+		DefaultStartupDeadlineS: ColdBootReadyWindowS,
 		DefaultMaxRetries:       10,
 		WorkerReplicasMax:       3,
 		ServiceReplicasMax:      5,
@@ -5423,7 +5425,9 @@ var planLimits = map[Plan]Limits{
 		// a single Scale customer can host a small SaaS
 		// (10 workers, 20 service replicas, 1 h jobs).
 		DefaultStopGracePeriodS: 120,
-		DefaultStartupDeadlineS: 120,
+		// ADR-138 amendment (2026-10-22): capped at the cold-boot
+		// window, ColdBootReadyWindowS.
+		DefaultStartupDeadlineS: ColdBootReadyWindowS,
 		DefaultMaxRetries:       20,
 		WorkerReplicasMax:       10,
 		ServiceReplicasMax:      20,
@@ -6485,11 +6489,19 @@ const (
 	// point of use.
 	MaxAppManifestStopGracePeriod = 5 * time.Minute
 
+	// ColdBootReadyWindowS is how long an app may take to become ready
+	// on any cold boot: the spec §6.1 COLD_BOOTING budget the scheduler's
+	// watchdog enforces on every wake (sched.ColdBootSweepBudget).
+	ColdBootReadyWindowS = 30
+
 	// MaxAppManifestStartupDeadlineS is the gross upper bound on
 	// AppManifest.StartupDeadlineS (issue #1186 §D.2, ADR-137/138).
-	// Per-plan tightening replaces this in commit 10 of M-2 with
-	// per-plan tiers on the Limits struct.
-	MaxAppManifestStartupDeadlineS = 300
+	// ADR-138 amendment (2026-10-22, Hunt 12 H12-10): no app may take
+	// longer to start than a cold boot allows. A deploy prime accepted up
+	// to 120 s on Scale while every later cold boot (after a release, a
+	// secret change, a fresh restart or a snapshot miss) was killed at
+	// 30 s, so such an app deployed fine and then never came back.
+	MaxAppManifestStartupDeadlineS = ColdBootReadyWindowS
 
 	// MaxAppManifestMaxRetries is the gross upper bound on
 	// AppManifest.MaxRetries (issue #1186 §D.3, ADR-137/138). Per-plan
