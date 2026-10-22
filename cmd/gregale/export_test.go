@@ -763,6 +763,7 @@ var CmdCommit = cmdCommit
 var CmdCompletionBash = cmdCompletionBash
 var CmdCompletionFish = cmdCompletionFish
 var CmdCompletionPowershell = cmdCompletionPowershell
+var PSQuote = psQuote
 var CmdCompletionZsh = cmdCompletionZsh
 var CmdConfig = cmdConfig
 var CmdConnect = cmdConnect
