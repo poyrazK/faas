@@ -11,7 +11,51 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-var _ OutboundAIQualityStore = (*PgStore)(nil)
+var (
+	_ OutboundAIQualityStore   = (*PgStore)(nil)
+	_ OutboundAICallStatsStore = (*PgStore)(nil)
+)
+
+// GetOutboundAICallStats reads the latest logged calls through the
+// request log's (integration, time) index and summarises them by model.
+func (s *PgStore) GetOutboundAICallStats(ctx context.Context, accountID, integrationID string) ([]OutboundAICallStats, int64, error) {
+	if err := s.requireOutboundAIIntegration(ctx, accountID, integrationID); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.pool.Query(ctx, `
+		WITH recent AS (
+		    SELECT model, status, outcome, ttfb_ms, duration_ms
+		      FROM outbound_ai_request_log
+		     WHERE integration_id = $1 AND created_at >= now() - make_interval(hours => $2::int)
+		     ORDER BY created_at DESC, id DESC
+		     LIMIT $3
+		)
+		SELECT model, count(*), count(*) FILTER (WHERE outcome = 'error' OR status >= 400),
+		       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY ttfb_ms))::bigint,
+		       round(percentile_cont(0.95) WITHIN GROUP (ORDER BY ttfb_ms))::bigint,
+		       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms))::bigint,
+		       round(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms))::bigint
+		  FROM recent
+		 GROUP BY model
+		 ORDER BY count(*) DESC, model`,
+		mustPgUUID(integrationID), api.OutboundAICallStatsWindowHours, api.OutboundAICallStatsCallsMax)
+	if err != nil {
+		return nil, 0, mapErr(err)
+	}
+	defer rows.Close()
+	stats := make([]OutboundAICallStats, 0)
+	var total int64
+	for rows.Next() {
+		var item OutboundAICallStats
+		if err := rows.Scan(&item.Model, &item.Calls, &item.ErrorCalls, &item.TTFBP50MS, &item.TTFBP95MS, &item.DurationP50MS,
+			&item.DurationP95MS); err != nil {
+			return nil, 0, mapErr(err)
+		}
+		total += item.Calls
+		stats = append(stats, item)
+	}
+	return stats, total, mapErr(rows.Err())
+}
 
 // outboundAIUsageOverflowModel is the model outboundd's daily rollup counts
 // a day's models past its cap under.

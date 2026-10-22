@@ -32,3 +32,26 @@ type OutboundAIQualityStore interface {
 	// row counts the change.
 	SetOutboundAIRequestFeedback(ctx context.Context, accountID, integrationID, requestID, rating, label string) error
 }
+
+// OutboundAICallStats is one model's latency and errors over an
+// integration's latest logged calls (ADR 20261022145950). The
+// percentiles are nil when no call reported the value.
+type OutboundAICallStats struct {
+	Model         string
+	Calls         int64
+	ErrorCalls    int64
+	TTFBP50MS     *int64
+	TTFBP95MS     *int64
+	DurationP50MS *int64
+	DurationP95MS *int64
+}
+
+// OutboundAICallStatsStore reads latency and error rate from the request
+// log for the dashboard (ADR 20261022145950).
+type OutboundAICallStatsStore interface {
+	// GetOutboundAICallStats summarises the integration's latest
+	// OutboundAICallStatsCallsMax logged calls of the last
+	// OutboundAICallStatsWindowHours hours by model, busiest first, and
+	// reports how many calls it read.
+	GetOutboundAICallStats(ctx context.Context, accountID, integrationID string) ([]OutboundAICallStats, int64, error)
+}

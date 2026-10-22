@@ -1531,6 +1531,11 @@ const (
 	OutboundAIQualityDriftScoreDropTenths    = 5
 	OutboundAIQualityAlertRetentionDays      = 31
 	OutboundAIQualityAlertsPageMax           = 100
+	// Dashboard latency (ADR 20261022145950): the latest logged calls of an
+	// integration, from the last hours given, that per-model latency and
+	// error rate are taken over.
+	OutboundAICallStatsCallsMax    = 5_000
+	OutboundAICallStatsWindowHours = 24
 	// Automatic prompt caching (ADR-1437): the estimated prompt or prefix
 	// tokens below which no breakpoint is added, and the cache lifetime a
 	// repeated prefix must recur within.
