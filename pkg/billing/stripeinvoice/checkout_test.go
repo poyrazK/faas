@@ -58,7 +58,7 @@ func TestSetupCheckoutRequests(t *testing.T) {
 		t.Fatalf("CreateSetupCheckout = %+v, %v", session, err)
 	}
 	f := forms["POST /v1/checkout/sessions"]
-	if f["mode"] != "setup" || f["customer"] != "cus_1" || f["payment_method_types[0]"] != "card" || f["expires_at"] != "1900000000" ||
+	if f["mode"] != "setup" || f["customer"] != "cus_1" || f["payment_method_types[0]"] != "card" || f["currency"] != "" || f["expires_at"] != "1900000000" ||
 		f["success_url"] != "https://gregale.dev/ok" || f["client_reference_id"] != "s1" || f["setup_intent_data[metadata][gregale_signup]"] != "s1" {
 		t.Fatalf("checkout form = %v", f)
 	}
@@ -66,7 +66,7 @@ func TestSetupCheckoutRequests(t *testing.T) {
 	if err != nil || !read.Complete() || read.PaymentMethod != "pm_1" || read.Customer != "cus_1" {
 		t.Fatalf("GetCheckoutSession = %+v, %v", read, err)
 	}
-	if gotQuery != "expand[]=setup_intent" {
+	if gotQuery != "expand%5B%5D=setup_intent" {
 		t.Fatalf("session query = %q", gotQuery)
 	}
 	if err := c.SetDefaultPaymentMethod(ctx, "rk_test_k", "cus_1", "pm_1"); err != nil {

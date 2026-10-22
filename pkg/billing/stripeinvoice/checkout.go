@@ -6,12 +6,15 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
 // Consumer sign-up (ADR-20261021143000): a customer of the key holder's
 // API is created in the key holder's Stripe account and saves a card with
 // a setup-mode Checkout Session, which the usage invoices later charge.
+// Product Control self-serve signup (ADR-20261022100735) uses the same calls
+// to put a card on file for a workspace in the account's Stripe.
 
 // CustomerParams describe a new Stripe customer.
 type CustomerParams struct {
@@ -36,9 +39,14 @@ func (c *Client) CreateCustomer(ctx context.Context, key, idempotencyKey string,
 }
 
 // SetupCheckoutParams describe a setup-mode Checkout Session that saves a
-// card for Customer without charging it.
+// payment method for Customer without charging it. A setup session names
+// either the payment method types or a currency: with Currency set, Stripe
+// offers the methods enabled in the account for it; without, only cards.
+// A zero ExpiresAt keeps Stripe's default; SuccessURL may contain
+// {CHECKOUT_SESSION_ID}.
 type SetupCheckoutParams struct {
 	Customer          string
+	Currency          string
 	SuccessURL        string
 	CancelURL         string
 	ExpiresAt         time.Time
@@ -51,6 +59,7 @@ type SetupCheckoutParams struct {
 type CheckoutSession struct {
 	ID                string
 	URL               string
+	Mode              string
 	Status            string
 	Customer          string
 	Livemode          bool
@@ -69,6 +78,7 @@ func (s CheckoutSession) Complete() bool {
 type checkoutSessionJSON struct {
 	ID          string          `json:"id"`
 	URL         string          `json:"url"`
+	Mode        string          `json:"mode"`
 	Status      string          `json:"status"`
 	Customer    string          `json:"customer"`
 	Livemode    bool            `json:"livemode"`
@@ -76,7 +86,7 @@ type checkoutSessionJSON struct {
 }
 
 func (j checkoutSessionJSON) session() CheckoutSession {
-	out := CheckoutSession{ID: j.ID, URL: j.URL, Status: j.Status, Customer: j.Customer, Livemode: j.Livemode}
+	out := CheckoutSession{ID: j.ID, URL: j.URL, Mode: j.Mode, Status: j.Status, Customer: j.Customer, Livemode: j.Livemode}
 	var intent struct {
 		Status        string `json:"status"`
 		PaymentMethod string `json:"payment_method"`
@@ -87,15 +97,21 @@ func (j checkoutSessionJSON) session() CheckoutSession {
 	return out
 }
 
-// CreateSetupCheckout creates a setup-mode Checkout Session for cards.
+// CreateSetupCheckout creates a setup-mode Checkout Session.
 func (c *Client) CreateSetupCheckout(ctx context.Context, key, idempotencyKey string, p SetupCheckoutParams) (CheckoutSession, error) {
 	form := url.Values{}
 	form.Set("mode", "setup")
 	form.Set("customer", p.Customer)
-	form.Set("payment_method_types[0]", "card")
+	if p.Currency != "" {
+		form.Set("currency", strings.ToLower(p.Currency))
+	} else {
+		form.Set("payment_method_types[0]", "card")
+	}
 	form.Set("success_url", p.SuccessURL)
 	form.Set("cancel_url", p.CancelURL)
-	form.Set("expires_at", strconv.FormatInt(p.ExpiresAt.Unix(), 10))
+	if !p.ExpiresAt.IsZero() {
+		form.Set("expires_at", strconv.FormatInt(p.ExpiresAt.Unix(), 10))
+	}
 	if p.ClientReferenceID != "" {
 		form.Set("client_reference_id", p.ClientReferenceID)
 	}
@@ -113,7 +129,7 @@ func (c *Client) CreateSetupCheckout(ctx context.Context, key, idempotencyKey st
 // GetCheckoutSession reads a Checkout Session with its SetupIntent.
 func (c *Client) GetCheckoutSession(ctx context.Context, key, sessionID string) (CheckoutSession, error) {
 	var out checkoutSessionJSON
-	if err := c.do(ctx, key, http.MethodGet, "/v1/checkout/sessions/"+url.PathEscape(sessionID)+"?expand[]=setup_intent", "", nil, &out); err != nil {
+	if err := c.do(ctx, key, http.MethodGet, "/v1/checkout/sessions/"+url.PathEscape(sessionID)+"?expand%5B%5D=setup_intent", "", nil, &out); err != nil {
 		return CheckoutSession{}, err
 	}
 	return out.session(), nil
