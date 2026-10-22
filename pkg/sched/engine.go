@@ -2903,7 +2903,7 @@ func (e *Engine) admitAndDispatch(ctx context.Context, appID, trigger string, li
 // RPC and no Phase 4 commit. Explicit deployment callers still bypass the
 // request wake gates as before, but now share the complete boot lifecycle.
 func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploymentID, mode, trigger string, liftCapacityToResult, bypassGates bool) (WakeResult, error) {
-	// ADR-20261022160000: a wake its node refuses before starting the VM is
+	// ADR-20261022184531: a wake its node refuses before starting the VM is
 	// re-placed on another node.
 	return e.admitWithWakeFailover(ctx, appID, mode, func(ctx context.Context) (WakeResult, error) {
 		used := new(bool)

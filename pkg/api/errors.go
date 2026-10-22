@@ -992,7 +992,7 @@ const (
 	// Titles of the scan_critical refusals vmmd's boot gate returns before
 	// it starts a VM. These depend on the node (its configured base
 	// generation and its cache), not on the artifact, so schedd re-places
-	// such a wake on another node (ADR-20261022160000). pkg/fcvm's tests
+	// such a wake on another node (ADR-20261022184531). pkg/fcvm's tests
 	// pin the boot gate to these titles.
 	ScanCriticalTitleGenerationUnavailable = "runtime base generation unavailable"
 	ScanCriticalTitleGenerationMismatch    = "scan sidecar generation mismatch"

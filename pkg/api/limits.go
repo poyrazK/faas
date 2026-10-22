@@ -6067,7 +6067,7 @@ const (
 
 	// WakeFailoverMaxAlternates bounds how many other nodes schedd tries
 	// after a node refuses a wake before starting the VM
-	// (ADR-20261022160000): at most three attempts per wake.
+	// (ADR-20261022184531): at most three attempts per wake.
 	WakeFailoverMaxAlternates = 2
 	// WakeFailoverMinRemainingMs is the least of the wake's deadline that
 	// must remain for an alternate attempt to start. The coordinated wake

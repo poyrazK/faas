@@ -113,7 +113,7 @@ type OpsMetrics struct {
 	initSnapshotCaptureDuration *prometheus.HistogramVec
 	snapshotPublication         *prometheus.CounterVec
 	// wakeFailover counts schedd's re-placements of a wake a node refused
-	// before the VM started (ADR-20261022160000). Closed labels only.
+	// before the VM started (ADR-20261022184531). Closed labels only.
 	wakeFailover *prometheus.CounterVec
 	// warmPoolSize (issue #1056 / ADR-074) exposes the desired paused
 	// warm-pool size by plan. Runtime reconciliation will update the
@@ -2187,7 +2187,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"site", "outcome"})
 	wakeFailover := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_wake_failover_total",
-		Help: "Wakes a compute node refused before the VM started, by refusal reason and what schedd's re-placement did (ADR-20261022160000). outcome=succeeded is a wake another node served; refused_again means the alternate node refused too; no_alternate means no other node fit; out_of_time means too little of the wake's deadline remained; failed means the alternate attempt failed for another reason.",
+		Help: "Wakes a compute node refused before the VM started, by refusal reason and what schedd's re-placement did (ADR-20261022184531). outcome=succeeded is a wake another node served; refused_again means the alternate node refused too; no_alternate means no other node fit; out_of_time means too little of the wake's deadline remained; failed means the alternate attempt failed for another reason.",
 	}, []string{"reason", "outcome"})
 	if prefix == "schedd" {
 		for _, reason := range WakeFailoverReasons {
@@ -6178,7 +6178,7 @@ func (m *OpsMetrics) RecordInitSnapshotAttempt(site, outcome string, duration ti
 	}
 }
 
-// Closed label values of schedd_wake_failover_total (ADR-20261022160000).
+// Closed label values of schedd_wake_failover_total (ADR-20261022184531).
 const (
 	WakeFailoverReasonBaseGeneration     = "base_generation"
 	WakeFailoverReasonScanSidecarMissing = "scan_sidecar_missing"

@@ -1,4 +1,4 @@
-# ADR 20261022160000 · Wake failover away from a node that is up but not ready
+# ADR 20261022184531 · Wake failover away from a node that is up but not ready
 
 - **Status:** accepted (design approved by the owner, 2026-10-22). Built in
   five steps, one PR each; this ADR is updated as each step lands.

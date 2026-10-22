@@ -1,5 +1,5 @@
 // spec: §6.2
-// adr: 20261022160000
+// adr: 20261022184531
 package sched_test
 
 import (
