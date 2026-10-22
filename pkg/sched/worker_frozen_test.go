@@ -215,11 +215,11 @@ func TestFrozenWorkerGivesUpItsSlotToDemandElsewhere(t *testing.T) {
 	}
 }
 
-// A worker whose cold boot changed the app's observed workload class
-// (ADR-051) published its config proof before the class was recorded, so a
-// thaw would refuse it as config_changed. It stops at scale-in instead of
-// freezing a VM that can never thaw; the next worker boots with the class.
-func TestWorkerPoolStopsSurplusWorkerWithAStaleConfigProof(t *testing.T) {
+// An app's first cold boot that observes a new workload class records it
+// with the boot's config proof (ADR-051 amendment 2026-10-22): the class is
+// part of the configuration the proof covers, so the worker can still freeze
+// and thaw.
+func TestWorkerPoolFreezesAWorkerThatObservedANewClass(t *testing.T) {
 	ctx := t.Context()
 	store, vmm, engine, acct, app := newFrozenWorkerEngine(t, api.PlanPro, true)
 	if _, err := store.SetAppWorkloadClass(ctx, app.ID, state.WorkloadClassHTTP, "scan_hint"); err != nil {
@@ -238,6 +238,38 @@ func TestWorkerPoolStopsSurplusWorkerWithAStaleConfigProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	engine.WaitWorkerStops()
+	rows := workerRows(t, store, app.ID, "default")
+	if len(rows) != 1 || rows[0].State != string(state.StateFrozen) || vmm.freezes != 1 {
+		t.Fatalf("scale in: rows=%+v freezes=%d; the worker that observed its class must freeze", rows, vmm.freezes)
+	}
+	enqueueScopedDemand(t, store, acct, app, "default", "", 10)
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	thawed := workerRows(t, store, app.ID, "default")
+	if len(thawed) != 1 || thawed[0].ID != rows[0].ID || thawed[0].State != string(state.StateRunning) || vmm.coldBoots != 1 {
+		t.Fatalf("scale out: rows=%+v cold boots=%d; the frozen worker must thaw", thawed, vmm.coldBoots)
+	}
+}
+
+// A worker whose deployment's configuration changed after its boot has a
+// stale config proof, which a thaw would refuse: it stops at scale-in, and the
+// next worker, booted with the new configuration, freezes.
+func TestWorkerPoolStopsSurplusWorkerWithAStaleConfigProof(t *testing.T) {
+	ctx := t.Context()
+	store, vmm, engine, acct, app := newFrozenWorkerEngine(t, api.PlanPro, true)
+	demand := enqueueScopedDemand(t, store, acct, app, "default", "", 10)
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{EgressPorts: []int{8443}, SetEgressPorts: true}); err != nil {
+		t.Fatal(err)
+	}
+	cancelDemand(t, store, demand)
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	engine.WaitWorkerStops()
 	for _, row := range workerRows(t, store, app.ID, "default") {
 		if state.State(row.State).CountsForRAM() {
 			t.Fatalf("worker %s is %s; a worker with a stale config proof must stop at scale-in", row.ID, row.State)
@@ -247,7 +279,7 @@ func TestWorkerPoolStopsSurplusWorkerWithAStaleConfigProof(t *testing.T) {
 		t.Fatalf("froze %d workers with a stale config proof", vmm.freezes)
 	}
 
-	// The next worker boots with the recorded class and freezes.
+	// The next worker boots with the new configuration and freezes.
 	demand = enqueueScopedDemand(t, store, acct, app, "default", "", 10)
 	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
@@ -258,6 +290,6 @@ func TestWorkerPoolStopsSurplusWorkerWithAStaleConfigProof(t *testing.T) {
 	}
 	engine.WaitWorkerStops()
 	if vmm.freezes != 1 {
-		t.Fatalf("froze %d workers after the class settled, want 1", vmm.freezes)
+		t.Fatalf("froze %d workers after the configuration settled, want 1", vmm.freezes)
 	}
 }

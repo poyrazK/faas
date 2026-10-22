@@ -37,8 +37,41 @@ func (q *Queries) ProductControlCountStarts(ctx context.Context, db DBTX, arg Pr
 	return column_1, err
 }
 
+const productControlCountTrialStarts = `-- name: ProductControlCountTrialStarts :one
+SELECT count(*)::bigint FROM product_control_receipts
+WHERE account_id=$1 AND app_id=$2 AND tenant_id=$3 AND feature=$4 AND period=$5
+  AND admitted_at >= $6::timestamptz AND admitted_at < $7::timestamptz
+`
+
+type ProductControlCountTrialStartsParams struct {
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	TenantID   pgtype.UUID
+	Feature    string
+	Period     string
+	TrialFrom  pgtype.Timestamptz
+	TrialUntil pgtype.Timestamptz
+}
+
+// A feature's starts admitted during the customer's trial, which count toward
+// no included starts (ADR-20261021195901).
+func (q *Queries) ProductControlCountTrialStarts(ctx context.Context, db DBTX, arg ProductControlCountTrialStartsParams) (int64, error) {
+	row := db.QueryRow(ctx, productControlCountTrialStarts,
+		arg.AccountID,
+		arg.AppID,
+		arg.TenantID,
+		arg.Feature,
+		arg.Period,
+		arg.TrialFrom,
+		arg.TrialUntil,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const productControlCustomerByAuthOrganization = `-- name: ProductControlCustomerByAuthOrganization :one
-SELECT tenant_id,revision,plan,suspended,auth_organization_id FROM product_control_customers c
+SELECT tenant_id,revision,plan,suspended,auth_organization_id,trial_starts_at,trial_ends_at FROM product_control_customers c
 JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id
 WHERE c.account_id=$1 AND c.app_id=$2 AND c.auth_organization_id=$3 AND a.status<>'deleted'
 `
@@ -55,6 +88,8 @@ type ProductControlCustomerByAuthOrganizationRow struct {
 	Plan               string
 	Suspended          bool
 	AuthOrganizationID pgtype.UUID
+	TrialStartsAt      pgtype.Timestamptz
+	TrialEndsAt        pgtype.Timestamptz
 }
 
 func (q *Queries) ProductControlCustomerByAuthOrganization(ctx context.Context, db DBTX, arg ProductControlCustomerByAuthOrganizationParams) (ProductControlCustomerByAuthOrganizationRow, error) {
@@ -66,12 +101,48 @@ func (q *Queries) ProductControlCustomerByAuthOrganization(ctx context.Context, 
 		&i.Plan,
 		&i.Suspended,
 		&i.AuthOrganizationID,
+		&i.TrialStartsAt,
+		&i.TrialEndsAt,
+	)
+	return i, err
+}
+
+const productControlCustomerForUpdate = `-- name: ProductControlCustomerForUpdate :one
+SELECT revision,plan,suspended,auth_organization_id,trial_starts_at,trial_ends_at FROM product_control_customers
+WHERE account_id=$1 AND app_id=$2 AND tenant_id=$3 FOR UPDATE
+`
+
+type ProductControlCustomerForUpdateParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	TenantID  pgtype.UUID
+}
+
+type ProductControlCustomerForUpdateRow struct {
+	Revision           string
+	Plan               string
+	Suspended          bool
+	AuthOrganizationID pgtype.UUID
+	TrialStartsAt      pgtype.Timestamptz
+	TrialEndsAt        pgtype.Timestamptz
+}
+
+func (q *Queries) ProductControlCustomerForUpdate(ctx context.Context, db DBTX, arg ProductControlCustomerForUpdateParams) (ProductControlCustomerForUpdateRow, error) {
+	row := db.QueryRow(ctx, productControlCustomerForUpdate, arg.AccountID, arg.AppID, arg.TenantID)
+	var i ProductControlCustomerForUpdateRow
+	err := row.Scan(
+		&i.Revision,
+		&i.Plan,
+		&i.Suspended,
+		&i.AuthOrganizationID,
+		&i.TrialStartsAt,
+		&i.TrialEndsAt,
 	)
 	return i, err
 }
 
 const productControlGetCustomer = `-- name: ProductControlGetCustomer :one
-SELECT revision,plan,suspended,auth_organization_id FROM product_control_customers WHERE account_id=$1 AND app_id=$2 AND tenant_id=$3
+SELECT revision,plan,suspended,auth_organization_id,trial_starts_at,trial_ends_at FROM product_control_customers WHERE account_id=$1 AND app_id=$2 AND tenant_id=$3
 `
 
 type ProductControlGetCustomerParams struct {
@@ -85,6 +156,8 @@ type ProductControlGetCustomerRow struct {
 	Plan               string
 	Suspended          bool
 	AuthOrganizationID pgtype.UUID
+	TrialStartsAt      pgtype.Timestamptz
+	TrialEndsAt        pgtype.Timestamptz
 }
 
 func (q *Queries) ProductControlGetCustomer(ctx context.Context, db DBTX, arg ProductControlGetCustomerParams) (ProductControlGetCustomerRow, error) {
@@ -95,6 +168,8 @@ func (q *Queries) ProductControlGetCustomer(ctx context.Context, db DBTX, arg Pr
 		&i.Plan,
 		&i.Suspended,
 		&i.AuthOrganizationID,
+		&i.TrialStartsAt,
+		&i.TrialEndsAt,
 	)
 	return i, err
 }
@@ -240,7 +315,7 @@ func (q *Queries) ProductControlInsertReceipt(ctx context.Context, db DBTX, arg 
 }
 
 const productControlListCustomers = `-- name: ProductControlListCustomers :many
-SELECT tenant_id,revision,plan,suspended,auth_organization_id FROM product_control_customers
+SELECT tenant_id,revision,plan,suspended,auth_organization_id,trial_starts_at,trial_ends_at FROM product_control_customers
 WHERE account_id=$1 AND app_id=$2 AND tenant_id::text>$3::text
 ORDER BY tenant_id::text LIMIT 101
 `
@@ -257,6 +332,8 @@ type ProductControlListCustomersRow struct {
 	Plan               string
 	Suspended          bool
 	AuthOrganizationID pgtype.UUID
+	TrialStartsAt      pgtype.Timestamptz
+	TrialEndsAt        pgtype.Timestamptz
 }
 
 func (q *Queries) ProductControlListCustomers(ctx context.Context, db DBTX, arg ProductControlListCustomersParams) ([]ProductControlListCustomersRow, error) {
@@ -274,6 +351,8 @@ func (q *Queries) ProductControlListCustomers(ctx context.Context, db DBTX, arg 
 			&i.Plan,
 			&i.Suspended,
 			&i.AuthOrganizationID,
+			&i.TrialStartsAt,
+			&i.TrialEndsAt,
 		); err != nil {
 			return nil, err
 		}
@@ -331,15 +410,16 @@ func (q *Queries) ProductControlManagedApp(ctx context.Context, db DBTX, arg Pro
 }
 
 const productControlMonthPlans = `-- name: ProductControlMonthPlans :many
-SELECT h.revision, h.plan, bool_or(h.first_assignment)::boolean AS first_assignment, min(h.effective_at)::timestamptz AS since
-FROM product_control_plan_history h
-WHERE h.account_id=$1::uuid AND h.app_id=$2::uuid AND h.tenant_id=$3::uuid
-  AND h.effective_at < $4::timestamptz
-  AND h.effective_at >= COALESCE((SELECT max(s.effective_at) FROM product_control_plan_history s
-      WHERE s.account_id=$1::uuid AND s.app_id=$2::uuid AND s.tenant_id=$3::uuid
-        AND s.effective_at <= $5::timestamptz), '-infinity'::timestamptz)
-GROUP BY h.revision, h.plan
-ORDER BY since, h.revision, h.plan
+SELECT held.revision, held.plan, held.first_assignment, held.since, held.held_until
+FROM (
+  SELECT h.revision, h.plan, h.first_assignment, h.effective_at AS since,
+    (lead(h.effective_at) OVER (ORDER BY h.effective_at, h.id))::timestamptz AS held_until
+  FROM product_control_plan_history h
+  WHERE h.account_id=$1::uuid AND h.app_id=$2::uuid AND h.tenant_id=$3::uuid
+    AND h.effective_at < $4::timestamptz
+) held
+WHERE held.held_until IS NULL OR held.held_until > $5::timestamptz
+ORDER BY held.since
 LIMIT $6::int
 `
 
@@ -357,11 +437,12 @@ type ProductControlMonthPlansRow struct {
 	Plan            string
 	FirstAssignment bool
 	Since           pgtype.Timestamptz
+	HeldUntil       pgtype.Timestamptz
 }
 
-// The plans a customer held in a month: the one in force when it starts and
-// those assigned during it, each with when it was first held and whether it
-// includes their first assignment ever (ADR-20261021154511).
+// The assignments a customer held during a month, each from since until the
+// next one (null while still held), and whether it was their first ever
+// (ADR-20261021154511, ADR-20261021195901).
 func (q *Queries) ProductControlMonthPlans(ctx context.Context, db DBTX, arg ProductControlMonthPlansParams) ([]ProductControlMonthPlansRow, error) {
 	rows, err := db.Query(ctx, productControlMonthPlans,
 		arg.AccountID,
@@ -383,6 +464,7 @@ func (q *Queries) ProductControlMonthPlans(ctx context.Context, db DBTX, arg Pro
 			&i.Plan,
 			&i.FirstAssignment,
 			&i.Since,
+			&i.HeldUntil,
 		); err != nil {
 			return nil, err
 		}
@@ -436,12 +518,19 @@ const productControlSetCustomer = `-- name: ProductControlSetCustomer :exec
 WITH prior AS (
   SELECT c.revision, c.plan FROM product_control_customers c
   WHERE c.app_id=$2::uuid AND c.tenant_id=$3::uuid
+), offer AS (
+  SELECT COALESCE((v.spec->'plans'->($5::text)->>'trial_days')::int, 0) AS days FROM product_control_revisions v
+  WHERE v.app_id=$2::uuid AND v.revision=$4::text
 ), assigned AS (
-  INSERT INTO product_control_customers(account_id,app_id,tenant_id,revision,plan,suspended,auth_organization_id)
-  VALUES ($1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,
-    $6::boolean,$7::uuid)
+  INSERT INTO product_control_customers(account_id,app_id,tenant_id,revision,plan,suspended,auth_organization_id,trial_starts_at,trial_ends_at)
+  SELECT $1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,
+    $6::boolean,$7::uuid,
+    CASE WHEN o.days > 0 THEN now() END, CASE WHEN o.days > 0 THEN now() + make_interval(days => o.days) END
+  FROM (SELECT 1) AS one LEFT JOIN offer o ON true
   ON CONFLICT(app_id,tenant_id) DO UPDATE
-  SET revision=EXCLUDED.revision,plan=EXCLUDED.plan,suspended=EXCLUDED.suspended,auth_organization_id=EXCLUDED.auth_organization_id
+  SET revision=EXCLUDED.revision,plan=EXCLUDED.plan,suspended=EXCLUDED.suspended,auth_organization_id=EXCLUDED.auth_organization_id,
+    trial_starts_at=COALESCE(product_control_customers.trial_starts_at,EXCLUDED.trial_starts_at),
+    trial_ends_at=CASE WHEN product_control_customers.trial_starts_at IS NULL THEN EXCLUDED.trial_ends_at ELSE product_control_customers.trial_ends_at END
 )
 INSERT INTO product_control_plan_history(account_id,app_id,tenant_id,revision,plan,first_assignment)
 SELECT $1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,NOT EXISTS(SELECT 1 FROM prior)
@@ -459,7 +548,9 @@ type ProductControlSetCustomerParams struct {
 }
 
 // A change of revision or plan is appended to the plan history in the same
-// statement, so every writer records it (ADR-20261021154511).
+// statement, so every writer records it (ADR-20261021154511). A customer
+// without a trial starts one when assigned a plan offering it, and keeps
+// any trial they had (ADR-20261021195901).
 func (q *Queries) ProductControlSetCustomer(ctx context.Context, db DBTX, arg ProductControlSetCustomerParams) error {
 	_, err := db.Exec(ctx, productControlSetCustomer,
 		arg.AccountID,
@@ -489,6 +580,30 @@ func (q *Queries) ProductControlSetHead(ctx context.Context, db DBTX, arg Produc
 	return err
 }
 
+const productControlSetTrialEnd = `-- name: ProductControlSetTrialEnd :exec
+UPDATE product_control_customers SET trial_ends_at=$1::timestamptz
+WHERE account_id=$2 AND app_id=$3 AND tenant_id=$4 AND trial_starts_at IS NOT NULL
+`
+
+type ProductControlSetTrialEndParams struct {
+	TrialEndsAt pgtype.Timestamptz
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	TenantID    pgtype.UUID
+}
+
+// Moves a running trial's end (ADR-20261021195901); the caller checked it
+// under the row lock.
+func (q *Queries) ProductControlSetTrialEnd(ctx context.Context, db DBTX, arg ProductControlSetTrialEndParams) error {
+	_, err := db.Exec(ctx, productControlSetTrialEnd,
+		arg.TrialEndsAt,
+		arg.AccountID,
+		arg.AppID,
+		arg.TenantID,
+	)
+	return err
+}
+
 const productControlSettleReceipt = `-- name: ProductControlSettleReceipt :exec
 UPDATE product_control_receipts SET resolved_state=$1, resolved_at=$2,
 succeeded_at=CASE WHEN $1::text='succeeded' THEN $2 ELSE succeeded_at END
@@ -504,6 +619,54 @@ type ProductControlSettleReceiptParams struct {
 func (q *Queries) ProductControlSettleReceipt(ctx context.Context, db DBTX, arg ProductControlSettleReceiptParams) error {
 	_, err := db.Exec(ctx, productControlSettleReceipt, arg.ResolvedState, arg.ResolvedAt, arg.OperationID)
 	return err
+}
+
+const productControlTrialStartsByFeature = `-- name: ProductControlTrialStartsByFeature :many
+SELECT feature, count(*)::bigint AS starts FROM product_control_receipts
+WHERE account_id=$1 AND app_id=$2 AND tenant_id=$3 AND period=$4
+  AND admitted_at >= $5::timestamptz AND admitted_at < $6::timestamptz
+GROUP BY feature ORDER BY feature
+`
+
+type ProductControlTrialStartsByFeatureParams struct {
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	TenantID   pgtype.UUID
+	Period     string
+	TrialFrom  pgtype.Timestamptz
+	TrialUntil pgtype.Timestamptz
+}
+
+type ProductControlTrialStartsByFeatureRow struct {
+	Feature string
+	Starts  int64
+}
+
+func (q *Queries) ProductControlTrialStartsByFeature(ctx context.Context, db DBTX, arg ProductControlTrialStartsByFeatureParams) ([]ProductControlTrialStartsByFeatureRow, error) {
+	rows, err := db.Query(ctx, productControlTrialStartsByFeature,
+		arg.AccountID,
+		arg.AppID,
+		arg.TenantID,
+		arg.Period,
+		arg.TrialFrom,
+		arg.TrialUntil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProductControlTrialStartsByFeatureRow{}
+	for rows.Next() {
+		var i ProductControlTrialStartsByFeatureRow
+		if err := rows.Scan(&i.Feature, &i.Starts); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const productControlUsage = `-- name: ProductControlUsage :many

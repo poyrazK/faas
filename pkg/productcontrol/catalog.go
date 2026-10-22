@@ -45,7 +45,8 @@ func Compile(spec api.ProductCatalogSpec) (api.ProductCatalog, error) {
 	}
 	for name, plan := range spec.Plans {
 		if !slug.MatchString(name) || plan.Label == "" || len(plan.Label) > api.ProductControlMaxLabelBytes || len(plan.Features) > len(spec.Features) ||
-			plan.MonthlyFeeMillicents < 0 || plan.MonthlyFeeMillicents > api.ProductControlMaxMonthlyFeeMillicents {
+			plan.MonthlyFeeMillicents < 0 || plan.MonthlyFeeMillicents > api.ProductControlMaxMonthlyFeeMillicents ||
+			plan.TrialDays < 0 || plan.TrialDays > api.ProductControlMaxTrialDays {
 			return api.ProductCatalog{}, fmt.Errorf("invalid plan %q", name)
 		}
 		for feature, grant := range plan.Features {
@@ -68,12 +69,13 @@ func Compile(spec api.ProductCatalogSpec) (api.ProductCatalog, error) {
 	return api.ProductCatalog{Revision: hex.EncodeToString(digest[:]), Spec: copy}, nil
 }
 
-// UsesPlanPricing reports whether a catalog charges a plan fee or includes
-// starts, which a previous apid release would ignore: it would finalize
-// statements without fees and price every start (ADR-20261021154511).
+// UsesPlanPricing reports whether a catalog charges a plan fee, includes
+// starts or offers a trial, which a previous apid release would ignore: it
+// would finalize statements without fees and price every start
+// (ADR-20261021154511, ADR-20261021195901).
 func UsesPlanPricing(spec api.ProductCatalogSpec) bool {
 	for _, plan := range spec.Plans {
-		if plan.MonthlyFeeMillicents > 0 {
+		if plan.MonthlyFeeMillicents > 0 || plan.TrialDays > 0 {
 			return true
 		}
 		for _, grant := range plan.Features {

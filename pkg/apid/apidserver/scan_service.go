@@ -1522,6 +1522,17 @@ func (s *server) scanService(
 	if slugProblem != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, slugProblem
 	}
+	projectsetup.SetAppSlugs(result.Workloads, appSlugs)
+	allocated, allocErr := reconcile.AllocateAppSlugs(r.Context(), s.store.AppBySlugIncludingDeleted, result.Workloads, acctApps, acct.ID, projectID, req.ProjectSlug)
+	if allocErr != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, customerInternalProblem(s.log, "allocate project app names",
+			"Gregale could not check app name availability.", "Retry the scan before deploying.", allocErr)
+	}
+	for _, w := range allocated {
+		if _, chosen := appSlugs[w.Name]; !chosen && w.AppSlug != "" {
+			appSlugs[w.Name] = w.AppSlug
+		}
+	}
 	req.AppSlugs = appSlugs
 	projectsetup.SetAppSlugs(result.Workloads, appSlugs)
 	if scheduleErr := validateScannedSchedules(result.Workloads); scheduleErr != nil {
@@ -1925,7 +1936,23 @@ func (s *server) scanService(
 	respWorkloads := make([]api.PlanWorkload, len(filteredW))
 	for i, w := range filteredW {
 		pw := toPlanWorkload(w)
-		if s.domain != "" && (string(w.Class) == "http" || string(w.Class) == "graphql") {
+		pw.Action = partition.WillDeploy[i].Action
+		pw.ExistingAppID = partition.WillDeploy[i].ID
+		var existing *state.App
+		for j := range acctApps {
+			if pw.ExistingAppID != "" && acctApps[j].ID == pw.ExistingAppID {
+				existing = &acctApps[j]
+				break
+			}
+		}
+		if existing != nil {
+			// Visibility is create-only; the plan shows what the app has.
+			pw.Visibility = ""
+			if api.NormalizeAppVisibility(existing.Visibility) == api.AppVisibilityInternal {
+				pw.Visibility = api.AppVisibilityInternal
+			}
+		}
+		if s.domain != "" && pw.Visibility != api.AppVisibilityInternal && (string(w.Class) == "http" || string(w.Class) == "graphql") {
 			slug := w.AppSlug
 			if slug == "" {
 				slug = w.Name
@@ -1937,17 +1964,8 @@ func (s *server) scanService(
 			return nil, state.Project{}, nil, nil, nil, nil, api.ErrValidation("invalid required-secret declaration for a selected workload")
 		}
 		pw.RequiredEnvKeys = required
-		pw.Action = partition.WillDeploy[i].Action
-		pw.ExistingAppID = partition.WillDeploy[i].ID
-		if w.ServiceBindingPolicy == "" {
-			if pw.ExistingAppID != "" {
-				for _, existing := range acctApps {
-					if existing.ID == pw.ExistingAppID {
-						pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
-						break
-					}
-				}
-			}
+		if w.ServiceBindingPolicy == "" && existing != nil {
+			pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
 		}
 		respWorkloads[i] = pw
 	}

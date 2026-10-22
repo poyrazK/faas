@@ -1807,6 +1807,11 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 		release()
 		return result, nil
 	}
+	// A selection taken from a thaw ticket serves only the fast path; the
+	// rest of the wake resolves production from fresh reads.
+	if selected, ok := wakeEnvironmentFrom(ctx); ok && selected.fromTicket {
+		ctx = withoutWakeEnvironment(ctx)
+	}
 	// One app read serves the standards check, the fast path's tenant and,
 	// through the context, admission. It does not depend on the running
 	// instance lookup, so the two run at once; their errors are checked in
@@ -2336,29 +2341,32 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 	// synthetic default-local row has no NodeID constraint). Empty
 	// app.NodeID is the legacy non-shared case (an app never pinned
 	// to a node); the engine's chooser places it on the local box.
-	app, err := e.store.AppByID(ctx, appID)
-	if err != nil && !errors.Is(err, state.ErrNotFound) {
-		return CoordOutcome{}, fmt.Errorf("sched: EnsureWake: load app %q: %w", appID, err)
-	}
-	if err == nil && !e.ownsApp(app) {
-		return CoordOutcome{}, fmt.Errorf(
-			"sched: EnsureWake: app %q owned by node %q, this schedd owns %q — refusing (run on the owning box)",
-			appID, app.NodeID, e.ownerNodeID,
-		)
-	}
-	var loadedApp *state.App
-	if err == nil {
-		if checkErr := e.checkApplicationStandardAdmission(ctx, app); checkErr != nil {
-			return CoordOutcome{}, checkErr
+	selected, loadedApp, ok := e.ticketedWakeEnvironment(ctx, appID, deploymentID)
+	if !ok {
+		app, err := e.store.AppByID(ctx, appID)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return CoordOutcome{}, fmt.Errorf("sched: EnsureWake: load app %q: %w", appID, err)
 		}
-		loadedApp = &app
-	}
-	selected, err := e.resolveWakeEnvironmentForDeployment(ctx, appID, loadedApp, deploymentID)
-	if err != nil {
-		return CoordOutcome{}, err
-	}
-	if err := e.checkFinancialBudgetAdmission(ctx, selected.app, selected.deployment.ID); err != nil {
-		return CoordOutcome{}, err
+		if err == nil && !e.ownsApp(app) {
+			return CoordOutcome{}, fmt.Errorf(
+				"sched: EnsureWake: app %q owned by node %q, this schedd owns %q — refusing (run on the owning box)",
+				appID, app.NodeID, e.ownerNodeID,
+			)
+		}
+		if err == nil {
+			if checkErr := e.checkApplicationStandardAdmission(ctx, app); checkErr != nil {
+				return CoordOutcome{}, checkErr
+			}
+			loadedApp = &app
+		}
+		selected, err = e.resolveWakeEnvironmentForDeployment(ctx, appID, loadedApp, deploymentID)
+		if err != nil {
+			return CoordOutcome{}, err
+		}
+		if err := e.checkFinancialBudgetAdmission(ctx, selected.app, selected.deployment.ID); err != nil {
+			return CoordOutcome{}, err
+		}
+		selected.admissionChecked = true
 	}
 	ctx = withWakeEnvironment(ctx, selected)
 	coordinatorKey := selected.coordinatorKey()
@@ -3742,6 +3750,12 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		release()
 		return WakeResult{}, err
 	}
+	pushDelivery, err := e.workerPushDelivery(ctx, app)
+	if err != nil {
+		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_queue_bindings_unavailable")
+		release()
+		return WakeResult{}, fmt.Errorf("sched: wake: %w", err)
+	}
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
@@ -3751,6 +3765,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
 		DisableStartupCPUBoost: dep.DisableStartupCPUBoost,
 		ExecutionMode:          executionModeForApp(app),
+		WorkerPushDelivery:     pushDelivery,
 		Plan:                   acct.Plan, AccountID: acct.ID,
 		AppID: appID, DeploymentID: dep.ID,
 		SealedEnv:     sealedEnv.Entries,
@@ -4317,13 +4332,17 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// path runs the same scan-hint class the original cold boot
 	// committed). On cold-boot timeouts the report is empty and we
 	// keep the scan-hint class (no row mutation). Best-effort:
-	// SetAppWorkloadClass failure doesn't block the RUNNING
-	// transition — the class is metadata, not the boot path.
+	// a failed write doesn't block the RUNNING transition — the
+	// class is metadata, not the boot path. The class is part of
+	// the runtime configuration this boot's proof covers, so the
+	// same write moves the proof to the class it observed (ADR-051
+	// amendment 2026-10-22); otherwise the instance could never
+	// freeze, thaw or be promoted from the warm pool.
 	if out.Characterization.ObservedClass != "" {
 		observedClass := state.WorkloadClass(out.Characterization.ObservedClass)
 		if shouldPersistObservedClass(bootInput.appType, bootInput.spec.ExecutionMode, observedClass) {
-			if _, err := e.store.SetAppWorkloadClass(ctx, bootInput.appID, observedClass, "observed"); err != nil {
-				e.log.Warn("wake: SetAppWorkloadClass", "app", bootInput.appID, "err", err)
+			if _, err := e.store.RecordObservedWorkloadClass(ctx, bootInput.accountID, bootInput.appID, bootInput.insID, observedClass); err != nil {
+				e.log.Warn("wake: record observed workload class", "app", bootInput.appID, "err", err)
 			}
 		} else {
 			e.log.Warn("wake: ignoring incompatible characterization",
@@ -4610,6 +4629,12 @@ func shouldPersistObservedClass(appType state.AppType, executionMode string, obs
 		case state.WorkloadClassWorker, state.WorkloadClassJob:
 			return false
 		}
+	}
+	// vmmd lets a push-bound worker boot with its private delivery listener
+	// bound. That listener is not a public server, so the worker keeps its
+	// declared class rather than gaining HTTP routing.
+	if executionMode == api.ExecutionModeWorker && observed == state.WorkloadClassHTTP {
+		return false
 	}
 	if appType != state.AppTypeFunction {
 		return true
@@ -5703,6 +5728,10 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, err
 	}
+	pushDelivery, err := e.workerPushDelivery(ctx, app)
+	if err != nil {
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: %w", err)
+	}
 	return AppSpec{
 		migrationRuntime: migrationInputs,
 		BaseKey:          pinnedBase,
@@ -5716,6 +5745,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
 		DisableStartupCPUBoost: dep.DisableStartupCPUBoost,
 		ExecutionMode:          executionModeForApp(app),
+		WorkerPushDelivery:     pushDelivery,
 		Plan:                   acct.Plan,
 		AccountID:              acct.ID,
 		AppID:                  app.ID,

@@ -58,7 +58,7 @@
       registration or side-link exists for the chains to have to stop.
       The flag lives on `Instance.Net`, so in-place updates re-render it.
     Inbound DNAT from the veth peer keeps working, so the platform can still
-    reach the guest port. `AppSpec.quarantine` (field 34) carries the flag
+    reach the guest port. `AppSpec.quarantine` (field 35) carries the flag
     on both the restore and the cold-boot wire.
   - **Secrets.** Secrets are in the guest's memory and in the captured
     drive1 (`upper/etc/faas/secrets.env`, ADR-210), so a fork cannot be

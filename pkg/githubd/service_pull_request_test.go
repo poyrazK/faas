@@ -376,6 +376,28 @@ func TestHandlePullRequest_HappyPath_Opened(t *testing.T) {
 	}
 }
 
+// A preview of an internal service must not give it a public URL
+// (ADR-20261022131852): the preview inherits the parent's visibility.
+func TestHandlePullRequest_PreviewInheritsInternalVisibility(t *testing.T) {
+	rig := newPreviewRig(t)
+	internal := api.AppVisibilityInternal
+	if _, err := rig.mem.UpdateApp(context.Background(), rig.parentID, state.UpdateAppParams{Visibility: &internal, SetVisibility: true}); err != nil {
+		t.Fatalf("make parent internal: %v", err)
+	}
+	svc, _ := newPreviewService(t, rig)
+	result, err := svc.handlePullRequest(context.Background(), pullRequestOpenedBody(42, "deadbeef00000000000000000000000000000000"))
+	if err != nil || len(result.Added) != 1 {
+		t.Fatalf("handlePullRequest = %+v, %v", result, err)
+	}
+	stored, err := rig.mem.AppByID(context.Background(), result.Added[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Visibility != api.AppVisibilityInternal {
+		t.Fatalf("preview visibility = %q, want internal", stored.Visibility)
+	}
+}
+
 // TestHandlePullRequest_Synchronize_SamePR covers the
 // idempotent path: a 2nd event for the same PR reuses the
 // existing apps row (state.ErrConflict → handled as success)

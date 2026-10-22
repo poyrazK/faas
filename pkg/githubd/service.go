@@ -1497,6 +1497,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		Manifest:         previewManifest(parentApp.Manifest),
 		AppProtocol:      parentApp.AppProtocol,
 		Status:           state.AppActive,
+		Visibility:       parentApp.Visibility,
 		PreviewOfSlug:    parentApp.Slug,
 		PreviewPrNumber:  ev.Number,
 		PreviewPrState:   previewState,

@@ -2650,14 +2650,17 @@ type Store interface {
 	//
 	// Returns the (upgraded_at, upgraded_by) stamp so the apid
 	// admin route can echo the row back without a follow-up
-	// SELECT.
-	UpsertGithubWebhookSecret(ctx context.Context, installationID int64, secret []byte, upgradedBy string) (time.Time, string, error)
-	// GetGithubWebhookSecret returns the raw bytes for the per-tenant
-	// row, or ErrNotFound if the install hasn't been migrated off the
+	// SELECT. secret.Sealed is the copy sealed for githubd (ADR
+	// 20261022111812); secret.Value stays written for the previous
+	// release, which reads only the plaintext column.
+	UpsertGithubWebhookSecret(ctx context.Context, installationID int64, secret GithubWebhookSecret, upgradedBy string) (time.Time, string, error)
+	// GetGithubWebhookSecret returns the per-tenant row, or
+	// ErrNotFound if the install hasn't been migrated off the
 	// platform secret yet. Used by pkg/githubd's resolver cache;
 	// the resolver treats ErrNotFound as a fall-through to
-	// FAAS_GITHUB_WEBHOOK_SECRET rather than as an error.
-	GetGithubWebhookSecret(ctx context.Context, installationID int64) ([]byte, error)
+	// FAAS_GITHUB_WEBHOOK_SECRET rather than as an error. Readers
+	// prefer Sealed when it is present.
+	GetGithubWebhookSecret(ctx context.Context, installationID int64) (GithubWebhookSecret, error)
 
 	// Deployments.
 	// CreateDeployment atomically inserts a new pending deployment row

@@ -347,7 +347,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GRPC_DEFAULT_DEADLINE` | shared | `default` |  |  | `` | ADR-190; unary gRPC deadline applied when the caller set none (default 60s, 0 disables the bound but keeps the counter) |
 | `FAAS_GRYPE_BIN` | imaged | `default` |  |  | `` |  |
 | `FAAS_GUEST_INIT` | imaged, shared | `dropin` |  |  | `` |  |
-| `FAAS_GUEST_TRACING_ENABLED` | apid, vmmd | `default` |  | 0 | `` | operator-only in-guest request tracing broker; set in /etc/faas/otel.env on apid and vmmd hosts; apid refuses tracing.enabled until set (ADR-958) |
+| `FAAS_GUEST_TRACING_ENABLED` | apid, shared, vmmd | `default` |  | 0 | `` | operator-only in-guest request tracing broker; set in /etc/faas/otel.env on apid and vmmd hosts; apid refuses tracing.enabled until set (ADR-958); boot fallback for the guest_tracing platform flag (ADR-1700), ignored once an operator writes platform_flag.guest_tracing |
 | `FAAS_HANDOFF_CHECK_FDS` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set for a hand-off successor that is checked before it takes traffic: a JSON list of the check connections it serves (ADR 20261020214632) |
 | `FAAS_HANDOFF_FDS` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set by a daemon for the successor it starts on `systemctl reload`: how many listening sockets follow fd 3 (ADR-1736) |
 | `FAAS_HANDOFF_GO_FD` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set for a hand-off successor that is checked before it takes traffic: the pipe its predecessor writes go on once every check passed (ADR 20261020214632) |
@@ -524,11 +524,12 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_OPERATIONS_WORKLOAD_ISSUER` | apid | `default` |  |  | `url` | optional Operations workload issuer override; configures runtime trust without enabling customer admission |
 | `FAAS_OPERATIONS_WORKLOAD_JWKS_PATH` | apid | `default` |  |  | `path-exists` | optional public Operations workload JWKS override; missing trust denies runtime reports; customer admission remains closed |
 | `FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs approval input forms (ADR-20261019001500) are available to; unset admits none and ignores existing forms |
-| `FAAS_OPERATION_CHILDREN_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs child Operations (ADR-20261018183000) are available to; unset admits none |
+| `FAAS_OPERATION_CHILDREN_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs child Operations (ADR-20261018183000) are available to; unset admits none; boot fallback for the operation_children platform flag (ADR-1700), ignored once an operator writes platform_flag.operation_children |
 | `FAAS_OPERATION_CONCURRENCY_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs per-customer Operation concurrency (ADR-20261018210500) is available to; unset admits none and releases anything still queued |
-| `FAAS_OPERATION_SCHEDULES_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs Operation schedules (ADR-20261018161833) are available to; unset admits none and stops every schedule firing |
+| `FAAS_OPERATION_SCHEDULES_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs Operation schedules (ADR-20261018161833) are available to; unset admits none and stops every schedule firing; boot fallback for the operation_schedules platform flag (ADR-1700), ignored once an operator writes platform_flag.operation_schedules |
 | `FAAS_OTEL_FLUSH_INTERVAL` | apid, gatewayd-internal, gatewayd-public, outboundd | `default` |  |  | `` |  |
 | `FAAS_OTEL_SPANS_WRITER_ENABLED` | apid, gatewayd-internal, gatewayd-public, outboundd | `default` |  |  | `` |  |
+| `FAAS_OUTBOUNDD_CONFIG` | outboundd | `default` |  |  | `` | config path fallback when --config is absent; the unit passes --config /etc/faas/outboundd.toml |
 | `FAAS_OUTBOUNDD_ROLE` | outboundd, shared | `dropin` |  |  | `` |  |
 | `FAAS_OVERLAY_INTERFACE` | vmmd | `default` |  |  | `` |  |
 | `FAAS_OVERLAY_IP` | vmmd | `default` |  |  | `` | optional local encrypted-overlay IPv4; vmmd can auto-detect it when private-network transport is enabled |
@@ -615,7 +616,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PYROSCOPE_URL` | apid, profiled | `default` |  |  | `` | private tenant-enabled backend configured in /etc/faas/profiling.env |
 | `FAAS_QUIET_PAUSE` | vmmd | `default` |  |  | `` | optional boolean switch for ADR-1151 quiet pause between requests; production default is off |
 | `FAAS_QUOTA_INTERVAL` | meterd | `default` |  |  | `` |  |
-| `FAAS_REALTIME_ACCESS_PREVIEW_ENABLED` | apid, realtimed | `default` |  | 0 | `` | operator-only durable principal channel/session revocation preview; enable on apid and every realtime node before use |
+| `FAAS_REALTIME_ACCESS_PREVIEW_ENABLED` | apid, realtimed, shared | `default` |  | 0 | `` | operator-only durable principal channel/session revocation preview; enable on apid and every realtime node before use; on apid, the boot fallback for the realtime_access platform flag (ADR 20261021080640), which then decides per account and is sent to realtime nodes with each endpoint registration; this switch stays a node capability |
 | `FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CALLBACK_OUTBOX` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CALLBACK_REPLAY_WORKERS` | realtimed | `default` |  |  | `` | bounded parallel callback recovery; values above 32 are capped |
@@ -636,17 +637,17 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_MAX_AGE` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_MAX_CONNECTIONS` | realtimed | `default` |  | 10000 | `` | node connection cap; 6000 with FAAS_REALTIME_FAIR_USE_ENABLED=1, sized to realtimed's 512 MB MemoryMax at ~52 KB per idle connection (ADR-1323); raise only with MemoryMax |
 | `FAAS_REALTIME_MAX_MESSAGE_BYTES` | realtimed | `default` |  |  | `` |  |
-| `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` | apid, realtimed | `default` |  | 0 | `` | channel occupancy preview: the occupancy API on apid, live occupancy frames and SSE events on realtimed (ADR-1324); enable on apid and every realtime node |
+| `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` | apid, realtimed, shared | `default` |  | 0 | `` | channel occupancy preview: the occupancy API on apid, live occupancy frames and SSE events on realtimed (ADR-1324); enable on apid and every realtime node; on apid, the boot fallback for the realtime_occupancy platform flag (ADR 20261021080640), which then decides per account and is sent to realtime nodes with each endpoint registration; this switch stays a node capability |
 | `FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED` | realtimed | `default` |  | 0 | `` | node outbound payload budget and slow-consumer shedding (ADR-1323); also sets a 384 MiB soft memory limit unless GOMEMLIMIT is set |
 | `FAAS_REALTIME_OUTBOUND_NODE_BYTES` | realtimed | `default` |  | 67108864 | `` | outbound payload budget across every connection on the node, with FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED=1; the largest backlogs are disconnected first (ADR-1323); raise only with MemoryMax |
 | `FAAS_REALTIME_OUTBOUND_QUEUE` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_OUTBOUND_QUEUE_BYTES` | realtimed | `default` |  | 4194304 | `` | per-connection outbound payload budget, including a frame being written |
 | `FAAS_REALTIME_PONG_WAIT` | realtimed | `default` |  |  | `` |  |
-| `FAAS_REALTIME_RESUME_PREVIEW_ENABLED` | realtimed | `default` |  | 0 | `` | operator-only v2 WebSocket resume preview; requires apid history reader and OIDC endpoint authentication |
+| `FAAS_REALTIME_RESUME_PREVIEW_ENABLED` | apid, realtimed, shared | `default` |  | 0 | `` | operator-only v2 WebSocket resume preview; requires apid history reader and OIDC endpoint authentication; on apid, the boot fallback for the realtime_resume platform flag (ADR 20261021080640), which then decides per account and is sent to realtime nodes with each endpoint registration; this switch stays a node capability |
 | `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED` | apid | `default` |  | 0 | `` | operator-only retained outbound history preview; off pending plan entitlements and fleet qualification |
 | `FAAS_REALTIME_ROLE` | realtimed, shared | `dropin` |  |  | `` |  |
 | `FAAS_REALTIME_SOCKET` | apid, gatewayd-internal, realtimed, shared | `unit` |  |  | `` |  |
-| `FAAS_REALTIME_TICKETS_PREVIEW_ENABLED` | apid, realtimed | `default` |  | 0 | `` | operator-only short-lived channel subscription tickets; requires resume preview and private ticket reader |
+| `FAAS_REALTIME_TICKETS_PREVIEW_ENABLED` | apid, realtimed, shared | `default` |  | 0 | `` | operator-only short-lived channel subscription tickets; requires resume preview and private ticket reader; on apid, the boot fallback for the realtime_tickets platform flag (ADR 20261021080640), which then decides per account and is sent to realtime nodes with each endpoint registration; this switch stays a node capability |
 | `FAAS_REALTIME_TRANSACTIONAL_PREVIEW_ENABLED` | schedd | `default` |  | 0 | `` | opt-in transactional realtime outbox dispatcher; requires managed Commit relay and explicit customer schema installation |
 | `FAAS_REALTIME_USAGE_ENABLED` | apid, realtimed | `default` |  | 0 | `` | realtimed records per-endpoint realtime usage with apid and apid serves GET /v1/usage/realtime (ADR-1323); recorded only, not billed; uses the private history target |
 | `FAAS_REALTIME_WRITE_WAIT` | realtimed | `default` |  |  | `` |  |
@@ -715,6 +716,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCHEDD_RECONCILE_ENFORCE` | schedd, shared | `default` |  |  | `` | ADR-191; "1" lets the instance-divergence sweep write. Default off ships the sweep report-only: it counts and logs what it would repair and touches no row |
 | `FAAS_SCHEDD_ROLE` | schedd, shared | `dropin` |  |  | `` |  |
 | `FAAS_SCHEDD_SOCKET` | gatewayd-internal | `dropin` |  |  | `` |  |
+| `FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH` | outboundd | `dropin` |  |  | `` | outbound seal-domain identity (ADR 20261022111812) via LoadCredential=faas_seal_domain_outbound in the seal_domains role's 60-faas-seal-domain-outbound.conf; outboundd also keeps the fleet identity until the domain re-seal completes; unset leaves customer credentials on the fleet identity |
+| `FAAS_SEAL_DOMAIN_OUTBOUND_RECIPIENT_PATH` | apid | `dropin` |  |  | `` | outbound seal-domain recipient (ADR 20261022111812) via LoadCredential=faas_seal_domain_outbound_recipient in the seal_domains role's apid drop-in; apid seals customer outbound credentials to it and cannot open them; unset seals to the fleet recipient alone |
+| `FAAS_SEAL_DOMAIN_OUTBOUND_WRITES` | apid | `dropin` |  |  | `` | outbound seal-domain write mode (ADR 20261022111812): empty seals to the domain and fleet recipients once the domain recipient is staged; fleet keeps the fleet recipient alone; domain seals to the domain alone and is set by the seal_domains role only after every outboundd verified the domain and the previous release left the rollback window |
 | `FAAS_SECRETS_FILE` | guest | `guest` |  |  | `` | guest-init stamps the tmpfs path only for apps opted into secret reload |
 | `FAAS_SECRETS_RELOAD_ACK_ENDPOINT` | guest | `guest` |  |  | `` | guest-init stamps the local metadata endpoint only for apps opted into secret reload; app reports a closed outcome and non-sensitive secret revision |
 | `FAAS_SECRETS_RELOAD_GENERATION` | guest | `guest` |  |  | `` | guest-init injects the active per-workload process generation when launching an opted-in app, fencing acknowledgements to that execution |
@@ -723,7 +727,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SECRETS_SNAPSHOT_FILE` | guest | `guest` |  |  | `` | guest-init stamps the mode-0400 tmpfs snapshot path containing the atomic secret values and revision for opted-in apps |
 | `FAAS_SERVICE_CALLER_ASSERTIONS` | gatewayd-internal | `default` |  |  | `` | ADR-206/279 opt-in: mint a signed caller assertion on every internal service call. Workloads can fetch public verification keys from /v1/service-caller-keys; keep this off until the deployment's verifier rollout is ready. A signing failure remains additive and forwards the call unsigned |
 | `FAAS_SERVICE_CALLER_KEY_PATH` | gatewayd-internal | `default` |  |  | `` | ADR-206 per-host Ed25519 signing key path; code default /etc/faas/secrets/service-caller/gatewayd.ed25519 is production-correct and the key is generated there on first boot. Only read when FAAS_SERVICE_CALLER_ASSERTIONS is on |
-| `FAAS_SERVICE_MAP_ENABLED` | apid | `default` |  | 0 | `` | ADR-1131 operator gate for GET /v1/service-map and /dashboard/service-map; explicit 1 enables the internal preview |
+| `FAAS_SERVICE_MAP_ENABLED` | apid, shared | `default` |  | 0 | `` | ADR-1131 operator gate for GET /v1/service-map and /dashboard/service-map; explicit 1 enables the internal preview; boot fallback for the service_map platform flag (ADR-1700), ignored once an operator writes platform_flag.service_map |
 | `FAAS_SERVICE_TCP_ENABLED` | vmmd | `default` |  |  | `` | ADR-576 opt-in private TCP service addressing: new netns admit guest TCP to 198.19.0.0/16, the runtime host policy DNATs it onto the tenant-bridge service listeners, and the node records compute_nodes.service_address_ready_at. Pair with the nftables role's faas_service_tcp_enabled |
 | `FAAS_SESSION_KEY` | apid, gatewayd-internal, shared | `unit` |  |  | `` | LoadCredential= path form in faas-apid.service and faas-gatewayd-internal.service |
 | `FAAS_SIGN_KEY` | imaged | `default` |  |  | `` |  |
@@ -737,7 +741,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STANDBY_WARMUP_ENABLED` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_INTERVAL_MS` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_SLUGS_PATH` | gatewayd-public | `default` |  |  | `` |  |
-| `FAAS_STATIC_EGRESS_IP_ENABLED` | shared | `default` |  |  | `` |  |
+| `FAAS_STATIC_EGRESS_IP_ENABLED` | apid, shared | `default` |  |  | `` | boot fallback for the static_egress_ip platform flag (ADR-1700), ignored once an operator writes platform_flag.static_egress_ip |
 | `FAAS_STATUSPAGE_PATH` | apid, shared | `unit` |  |  | `` |  |
 | `FAAS_STORAGE_BACKEND` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_CACHE_DIR` | imaged, shared | `envfile` |  |  | `` |  |

@@ -383,7 +383,29 @@ func (s *PgStore) FinancialComputePolicies(ctx context.Context, account, app str
 		return nil, ErrInvalidArgument
 	}
 	reader := &pgFinancialComputeTxn{ctx: ctx, db: s.pool, q: sqlc.New(), account: a}
-	return computeWorkloadPolicies(reader, app)
+	// The pool serves the policies and the workload's scopes at once, so the
+	// check costs one round trip on every admission (scheduler wake path).
+	var (
+		scopes    computeScopes
+		scopesErr error
+		done      = make(chan struct{})
+	)
+	go func() {
+		defer close(done)
+		scopes, scopesErr = reader.workloadScopes(app, "", "")
+	}()
+	all, err := reader.allPolicies()
+	<-done
+	if err != nil {
+		return nil, err
+	}
+	if len(all) == 0 {
+		return []FinancialBudget{}, nil
+	}
+	if scopesErr != nil {
+		return nil, scopesErr
+	}
+	return computeWorkloadPoliciesIn(reader, app, all, scopes)
 }
 func (s *PgStore) FinancialComputeBillingSeconds(ctx context.Context, account, app, instance string, start time.Time, seconds int64) (int64, error) {
 	a, _ := parsePgUUID(account)

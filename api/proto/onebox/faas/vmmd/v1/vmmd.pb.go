@@ -242,6 +242,11 @@ type AppSpec struct {
 	// characterization class. Empty preserves legacy inference for rolling
 	// upgrades and older callers.
 	ExecutionMode string `protobuf:"bytes,18,opt,name=execution_mode,json=executionMode,proto3" json:"execution_mode,omitempty"`
+	// worker_push_delivery marks a worker-mode app with a push queue binding.
+	// Push deliveries reach it over private HTTP, so vmmd accepts a bound
+	// server from it at startup instead of an execution_mode_conflict. False
+	// (and older schedd) keeps the no-bind worker contract.
+	WorkerPushDelivery bool `protobuf:"varint,34,opt,name=worker_push_delivery,json=workerPushDelivery,proto3" json:"worker_push_delivery,omitempty"`
 	// readiness_probe_json is the optional recurring primary-app traffic probe
 	// (distinct from the startup healthcheck and liveness probe). Empty keeps
 	// legacy routing behavior; otherwise vmmd decodes the deployment's validated
@@ -294,7 +299,7 @@ type AppSpec struct {
 	// quarantine chains (no guest-originated flow, inbound only from the
 	// platform veth) and ignores the allowlist, private network, static
 	// egress IP and operator bundle. Only schedd's fork coordinator sets it.
-	Quarantine    bool `protobuf:"varint,34,opt,name=quarantine,proto3" json:"quarantine,omitempty"`
+	Quarantine    bool `protobuf:"varint,35,opt,name=quarantine,proto3" json:"quarantine,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -481,6 +486,13 @@ func (x *AppSpec) GetExecutionMode() string {
 		return x.ExecutionMode
 	}
 	return ""
+}
+
+func (x *AppSpec) GetWorkerPushDelivery() bool {
+	if x != nil {
+		return x.WorkerPushDelivery
+	}
+	return false
 }
 
 func (x *AppSpec) GetReadinessProbeJson() string {
@@ -15192,7 +15204,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xc4\f\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xf6\f\n" +
 	"\aAppSpec\x12(\n" +
 	"\x10rehearsal_run_id\x18! \x01(\tR\x0erehearsalRunId\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
@@ -15221,6 +15233,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x0ecpu_millicores\x18\x10 \x01(\x05R\rcpuMillicores\x12!\n" +
 	"\fapp_protocol\x18\x11 \x01(\tR\vappProtocol\x12%\n" +
 	"\x0eexecution_mode\x18\x12 \x01(\tR\rexecutionMode\x120\n" +
+	"\x14worker_push_delivery\x18\" \x01(\bR\x12workerPushDelivery\x120\n" +
 	"\x14readiness_probe_json\x18\x1b \x01(\tR\x12readinessProbeJson\x122\n" +
 	"\x15private_network_cidrs\x18\x13 \x03(\tR\x13privateNetworkCidrs\x12,\n" +
 	"\x12private_network_id\x18\x14 \x01(\tR\x10privateNetworkId\x126\n" +
@@ -15233,7 +15246,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x13liveness_probe_json\x18\x1f \x01(\tR\x11livenessProbeJson\x12/\n" +
 	"\x14quiet_pause_after_ms\x18  \x01(\x03R\x11quietPauseAfterMs\x12\x1e\n" +
 	"\n" +
-	"quarantine\x18\" \x01(\bR\n" +
+	"quarantine\x18# \x01(\bR\n" +
 	"quarantine\"\x92\b\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +

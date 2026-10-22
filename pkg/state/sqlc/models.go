@@ -4410,6 +4410,39 @@ type EnvironmentQualificationJobSmokeReceipt struct {
 	RecordedAt   pgtype.Timestamptz
 }
 
+type EnvironmentQualificationObjectStorageReceipt struct {
+	RequestID    pgtype.UUID
+	Attempt      int64
+	CredentialID pgtype.UUID
+	Prefix       string
+	Permission   string
+	Mode         string
+	Deliveries   []byte
+	RecordedAt   pgtype.Timestamptz
+}
+
+type EnvironmentQualificationOutboundReceipt struct {
+	RequestID     pgtype.UUID
+	Attempt       int64
+	IntegrationID pgtype.UUID
+	Revision      string
+	Method        string
+	Path          string
+	Status        int32
+	RecordedAt    pgtype.Timestamptz
+}
+
+type EnvironmentQualificationPostgresReceipt struct {
+	RequestID            pgtype.UUID
+	Attempt              int64
+	BindingID            pgtype.UUID
+	EnvironmentKey       string
+	Access               string
+	CredentialGeneration int64
+	DeliveryVersion      int64
+	RecordedAt           pgtype.Timestamptz
+}
+
 type EnvironmentQualificationRestoreReceipt struct {
 	RequestID         pgtype.UUID
 	Attempt           int64
@@ -5774,6 +5807,8 @@ type GithubWebhookSecret struct {
 	SecretValue    []byte
 	UpgradedAt     pgtype.Timestamptz
 	UpgradedBy     string
+	// The webhook secret sealed to the source domain write recipients (ADR 20261022111812); githubd prefers it over secret_value.
+	SecretSealed []byte
 }
 
 type GitlabOauthConnection struct {
@@ -10791,6 +10826,8 @@ type ProductControlCustomer struct {
 	Plan               string
 	Suspended          bool
 	AuthOrganizationID pgtype.UUID
+	TrialStartsAt      pgtype.Timestamptz
+	TrialEndsAt        pgtype.Timestamptz
 }
 
 type ProductControlCustomerChange struct {
@@ -13499,17 +13536,18 @@ type ScenarioCapturedPlatformCall struct {
 }
 
 type ScenarioCapturedQueueMessage struct {
-	ID        pgtype.UUID
-	AccountID pgtype.UUID
-	RunID     string
-	AppID     pgtype.UUID
-	Kind      string
-	Target    string
-	QueueName string
-	Schedule  string
-	Message   []byte
-	Oversized bool
-	CreatedAt pgtype.Timestamptz
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	RunID       string
+	AppID       pgtype.UUID
+	Kind        string
+	Target      string
+	QueueName   string
+	Schedule    string
+	Message     []byte
+	Oversized   bool
+	CreatedAt   pgtype.Timestamptz
+	ScheduledAt pgtype.Timestamptz
 }
 
 type ScenarioColdPreparation struct {
@@ -13722,6 +13760,14 @@ type ScheduledRelease struct {
 	CreatedAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
 	StartedAt         pgtype.Timestamptz
+}
+
+// One non-secret secretbox probe per seal domain, sealed to the domain recipient alone (ADR 20261022111812).
+type SealDomainProbe struct {
+	Domain     string
+	Recipient  string
+	SealedBlob []byte
+	UpdatedAt  pgtype.Timestamptz
 }
 
 type ServiceCallerKey struct {

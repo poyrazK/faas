@@ -56,6 +56,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`test`](#test) | Run scenario suites, lifecycle checks and local load tests |
 | [`chaos`](#chaos) | Inject faults into isolated scenario tests |
 | [`preview`](#preview) | Manage preview environments for pull requests |
+| [`previews`](#previews) | Join or leave early platform features |
 | [`flags`](#flags) | Roll out feature flags to selected customers |
 | [`consumers`](#consumers) | Issue keys to your API&#39;s consumers and meter their requests |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
@@ -1926,13 +1927,13 @@ Show account status
 
 ### account dpa
 
-Show DPA metadata
+Print the Data Processing Agreement template (placeholders are filled when the agreement is signed)
 
 `gregale account dpa [-o <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `-o <PATH>` | write DPA metadata to a file |  |
+| `-o <PATH>` | write the DPA template to a file |  |
 
 ### account slo
 
@@ -3473,6 +3474,19 @@ Create a durable bounded delivery job for matching retained events
 | `--from <RFC3339>` | inclusive platform acceptance timestamp | required |
 | `--until <RFC3339>` | exclusive platform acceptance timestamp | required |
 | `--yes` | confirm that matching historical events may invoke this consumer | required |
+
+### events workflow-backfill
+
+Start event-triggered workflow runs for past events
+
+`gregale events workflow-backfill --workflow-name <NAME> --from <RFC3339> --until <RFC3339> --yes <app>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--workflow-name <NAME>` | target event-triggered workflow | required |
+| `--from <RFC3339>` | inclusive acceptance time | required |
+| `--until <RFC3339>` | exclusive acceptance time | required |
+| `--yes` | confirm that matching past events may start runs | required |
 
 ### events backfill-status
 
@@ -6406,7 +6420,9 @@ Inspect and manage background worker pools
 
 ### workers list
 
-List background worker pools
+List background worker pools, or one pool by app
+
+`gregale workers list [<app>]`
 
 ### workers status
 
@@ -7480,6 +7496,21 @@ Inspect app recovery health or named automation run reliability
 | `--created-after <RFC3339>` | inclusive RFC3339 window start (max 30 days) |  |
 | `--created-before <RFC3339>` | inclusive RFC3339 window end |  |
 
+### automations report
+
+Summarize workflow recovery outcomes over a time window
+
+`gregale automations report --app <SLUG> [--workflow <NAME>] [--policy-version <N>] [--since <DURATION>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--workflow <NAME>` | workflow name filter |  |
+| `--policy-version <N>` | policy version filter |  |
+| `--since <DURATION>` | lookback, at most 30 days (default 7d) |  |
+| `--created-after <RFC3339>` | inclusive start; excludes --since |  |
+| `--created-before <RFC3339>` | inclusive end |  |
+
 ### automations recover
 
 Resume explicitly selected failed runs with per-run generation checks and outcomes
@@ -7533,6 +7564,35 @@ Inspect, preview or update recovery policy
 | `--queue` | inspect automatic retry queue |  |
 | `--control <pause|resume>` | control automatic execution |  |
 | `--reason <TEXT>` | operator control reason |  |
+
+### automations recovery-policy-evaluate
+
+Compare a proposed recovery policy with recent history
+
+`gregale automations recovery-policy-evaluate --app <SLUG> --file <PATH> [--workflow <NAME>] [--since <DURATION>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | proposed policy JSON with expected_version | required |
+| `--workflow <NAME>` | only sample this workflow |  |
+| `--since <DURATION>` | lookback, at most 30 days (default 7d) |  |
+| `--created-after <RFC3339>` | inclusive start; excludes --since |  |
+| `--created-before <RFC3339>` | inclusive end |  |
+
+### automations recovery-suppress
+
+Stop one queued automatic retry
+
+`gregale automations recovery-suppress --app <SLUG> --review <UUID> --action <UUID> --policy-version <N> --reason <TEXT>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--review <UUID>` | review ID | required |
+| `--action <UUID>` | queued action ID | required |
+| `--policy-version <N>` | observed policy version | required |
+| `--reason <TEXT>` | why the retry is stopped | required |
 
 ### automations recovery-policy-reviews
 
@@ -9470,7 +9530,7 @@ Create public GET smoke checks from a local OpenAPI document
 |---|---|---|
 | `--from <PATH>` | local OpenAPI 3.0 or 3.1 document | required |
 | `--project <SLUG>` | Gregale project slug | required |
-| `--source <DIR>` | application source directory |  |
+| `--source <DIR>` | application source directory, relative to the manifest (default: the workload holding --from, else .) |  |
 | `--scenario <NAME>` | scenario name |  |
 | `--output <PATH>` | new manifest path |  |
 
@@ -9698,6 +9758,8 @@ gregale chaos inject --scenario cache-resilience --target cache --tcp-port 6379 
 ## preview
 
 Manage preview environments for pull requests
+
+See also: [`previews`](#previews).
 
 `gregale preview [<subcommand>]`
 
@@ -9970,6 +10032,56 @@ Examples:
 ```sh
 gregale preview destroy pr-42-my-api
 ```
+
+
+## previews
+
+Join or leave early platform features
+
+See also: [`preview`](#preview).
+
+`gregale previews [<subcommand>]`
+
+Joining releases an early platform feature to your account; a preview never adds a plan entitlement.
+
+With --org, an owner or admin joins for the whole organization: members get it while acting for the company.
+
+### previews list
+
+List previews you can join or already joined
+
+`gregale previews list [--org <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | act for this organization (owner or admin to join or leave) |  |
+
+### previews join
+
+Join a preview
+
+`gregale previews join [--org <SLUG>] <key>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | act for this organization (owner or admin to join or leave) |  |
+
+Examples:
+
+```sh
+gregale previews join change_timeline
+gregale previews join change_timeline --org acme
+```
+
+### previews leave
+
+Leave a preview
+
+`gregale previews leave [--org <SLUG>] <key>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | act for this organization (owner or admin to join or leave) |  |
 
 
 ## flags
@@ -11992,6 +12104,10 @@ List runs
 | `--status <STATUS>` | filter by lifecycle status | one of `queued` · `restoring` · `running` · `succeeded` · `failed` · `timed_out` · `out_of_memory` · `cancelled` |
 | `--workflow-id <ID>` | filter by caller-generated workflow id |  |
 
+### runs capabilities
+
+Show which runtimes isolated runs can use on your plan
+
 ### runs workflow
 
 Show workflow status or manage an agent-owned Runs plan
@@ -12228,6 +12344,28 @@ Examples:
 ```sh
 gregale issues ignore --app my-api --interactive
 ```
+
+### issues merge
+
+Merge an issue into another issue group
+
+`gregale issues merge --app <SLUG> --target <UUID> <issue-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | application slug | required |
+| `--target <UUID>` | destination issue UUID | required |
+
+### issues split
+
+Split an original group back out of an issue
+
+`gregale issues split --app <SLUG> --member <UUID> <issue-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | application slug | required |
+| `--member <UUID>` | original group UUID to split out | required |
 
 ### issues impact-alert
 
@@ -12740,6 +12878,27 @@ Read one chronological history of events, attempts and deliveries
 | `--cursor <CURSOR>` | next timeline page cursor |  |
 | `--all` | follow cursors to the end |  |
 | `--logs` | print archived instance log lines inside each HTTP attempt |  |
+
+### customer-operations milestones
+
+Read business milestones for an operation or reference
+
+`gregale customer-operations milestones [--app <SLUG>] [--self] [--scope <SCOPE>] [--subject-type <TYPE>] [--subject-id <ID>] [--workflow <NAME>] [--workflow-instance-id <ID>] [--workflow-state-cursor <CURSOR>] [--stale-only] [--tenant <UUID>] [--limit <N>] [--cursor <CURSOR>] [<operation-id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned app slug, or app UUID with --self |  |
+| `--self` | derive customer ownership from credentials |  |
+| `--scope <SCOPE>` | environment for a business-reference timeline |  |
+| `--subject-type <TYPE>` | business reference type |  |
+| `--subject-id <ID>` | exact business reference ID |  |
+| `--workflow <NAME>` | workflow for one business workflow run |  |
+| `--workflow-instance-id <ID>` | exact workflow run ID |  |
+| `--workflow-state-cursor <CURSOR>` | next workflow state history page |  |
+| `--stale-only` | only runs past their declared state age threshold |  |
+| `--tenant <UUID>` | account customer filter |  |
+| `--limit <N>` | page size |  |
+| `--cursor <CURSOR>` | next milestone page cursor |  |
 
 ### customer-operations watch
 
@@ -15102,7 +15261,7 @@ Deploy a single-app Data API with its migrations as the release task
 
 Change public access, aggregates, usage reporting or caps and fresh-restart the runtime
 
-`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--no-public-rpc] [--public-read-cache <DURATION|off>] [--usage-reporting <on|off>] [--monthly-caps <requests=N[,anonymous=N]|off>] [--aggregates <on|off>] [--scope <SCOPE>] [--no-restart] <name>`
+`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--no-public-rpc] [--public-read-cache <DURATION|off>] [--usage-reporting <on|off>] [--monthly-caps <requests=N[,anonymous=N]|off>] [--aggregates <on|off>] [--pool <N|default>] [--server-key-concurrency <N|default>] [--server-key-rate-limit <N[,burst=M]|off>] [--scope <SCOPE>] [--no-restart] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -15114,6 +15273,9 @@ Change public access, aggregates, usage reporting or caps and fresh-restart the 
 | `--usage-reporting <on|off>` | report usage to the platform (on for new Data APIs) | one of `on` · `off` |
 | `--monthly-caps <requests=N[,anonymous=N]|off>` | monthly owner caps; reached caps answer 429 until the next UTC month |  |
 | `--aggregates <on|off>` | aggregate queries; on also enables the SQL deadline | one of `on` · `off` |
+| `--pool <N|default>` | engine connections per instance, 1 to 8 (default 2) |  |
+| `--server-key-concurrency <N|default>` | admission slots server keys may hold together (default: all but one) |  |
+| `--server-key-rate-limit <N[,burst=M]|off>` | requests per second per server key; refusals answer 429 |  |
 | `--scope <SCOPE>` | environment scope |  |
 | `--no-restart` | store settings without a fresh restart |  |
 
@@ -15863,6 +16025,187 @@ Send a message to one live connection
 | `--data <DATA>` | message text (or --data-stdin) |  |
 | `--data-stdin` | read the message from stdin |  |
 | `--binary` | send as a binary frame |  |
+
+### realtime send-principal
+
+Send a message to every connection of one principal
+
+`gregale realtime send-principal --principal <ID> [--data <DATA>] [--data-stdin] [--binary] [--delivery <MODE>] [--message-id <ID>] [--receipt] [--fallback-after-seconds <N>] [--notification-category <NAME>] [--notification-group <KEY>] [--notification-group-label <LABEL>] [--notification-priority <PRIORITY>] [--notification-ttl-seconds <N>] [--notification-collapse-key <KEY>] [--notification-not-before <TIME>] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified OIDC principal to target | required |
+| `--data <DATA>` | UTF-8 message text (or --data-stdin) |  |
+| `--data-stdin` | read the message bytes from stdin |  |
+| `--binary` | send as a binary frame |  |
+| `--delivery <MODE>` | live, or retained in the principal&#39;s durable inbox | one of `live` · `retained` |
+| `--message-id <ID>` | stable message ID; required with --receipt or --delivery retained |  |
+| `--receipt` | track client acknowledgements for one hour (live only) |  |
+| `--fallback-after-seconds <N>` | request push or webhook fallback after N unacknowledged seconds (retained only) |  |
+| `--notification-category <NAME>` | push preference category (default notifications) |  |
+| `--notification-group <KEY>` | stable conversation, job or project group key |  |
+| `--notification-group-label <LABEL>` | group name shown in summaries |  |
+| `--notification-priority <PRIORITY>` | push priority | one of `low` · `normal` · `urgent` |
+| `--notification-ttl-seconds <N>` | push lifetime, at most 259200 seconds |  |
+| `--notification-collapse-key <KEY>` | replace queued alerts that share this key |  |
+| `--notification-not-before <TIME>` | earliest push delivery, RFC3339, at most 48 hours ahead |  |
+
+### realtime edit-message
+
+Replace a retained message&#39;s payload
+
+`gregale realtime edit-message [--channel <CHANNEL>] [--principal <ID>] --message-id <ID> --expected-version <N> [--data <DATA>] [--data-stdin] [--binary] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--channel <CHANNEL>` | retained channel (or --principal) |  |
+| `--principal <ID>` | principal inbox (or --channel) |  |
+| `--message-id <ID>` | stable publisher message ID | required |
+| `--expected-version <N>` | current message version | required |
+| `--data <DATA>` | replacement payload (or --data-stdin) |  |
+| `--data-stdin` | read the replacement bytes from stdin |  |
+| `--binary` | the replacement is binary |  |
+
+### realtime delete-message
+
+Delete a retained message
+
+`gregale realtime delete-message [--channel <CHANNEL>] [--principal <ID>] --message-id <ID> --expected-version <N> <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--channel <CHANNEL>` | retained channel (or --principal) |  |
+| `--principal <ID>` | principal inbox (or --channel) |  |
+| `--message-id <ID>` | stable publisher message ID | required |
+| `--expected-version <N>` | current message version | required |
+
+### realtime receipt
+
+Show client acknowledgements for one sent message
+
+`gregale realtime receipt <app> <endpoint-id> <message-id>`
+
+### realtime inbox
+
+Read a principal&#39;s retained inbox
+
+`gregale realtime inbox --principal <ID> [--consumer <DEVICE>] [--after <SEQUENCE>] [--limit <N>] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified OIDC principal to inspect | required |
+| `--consumer <DEVICE>` | device checkpoint to inspect |  |
+| `--after <SEQUENCE>` | read after this sequence (default: the device checkpoint or zero) |  |
+| `--limit <N>` | messages to read, 1-100 |  |
+
+### realtime read-progress
+
+Show how far a principal has read
+
+`gregale realtime read-progress --principal <ID> [--channel <CHANNEL>] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified principal | required |
+| `--channel <CHANNEL>` | channel; omit for the principal inbox |  |
+
+### realtime mark-read
+
+Mark messages read through a sequence
+
+`gregale realtime mark-read --principal <ID> [--channel <CHANNEL>] --sequence <N> <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified principal | required |
+| `--channel <CHANNEL>` | channel; omit for the principal inbox |  |
+| `--sequence <N>` | mark seen through this sequence | required |
+
+### realtime push
+
+Configure push providers, devices and preferences
+
+#### realtime push providers
+
+List configured push providers
+
+`gregale realtime push providers <app> <endpoint-id>`
+
+#### realtime push configure
+
+Set one push provider&#39;s configuration from JSON
+
+`gregale realtime push configure --provider <PROVIDER> [--file <PATH>] [--enabled[=true|false]] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--provider <PROVIDER>` | push provider | required; one of `fcm` · `apns` · `webpush` |
+| `--file <PATH>` | request JSON file (default: stdin) |  |
+| `--enabled[=true|false]` | enable or disable the provider (default true) | one of `true` · `false` |
+
+#### realtime push devices
+
+List a principal&#39;s registered devices
+
+`gregale realtime push devices --principal <ID> <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified principal | required |
+
+#### realtime push register
+
+Register a principal&#39;s device from JSON
+
+`gregale realtime push register --principal <ID> --device <NAME> [--file <PATH>] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified principal | required |
+| `--device <NAME>` | stable device name | required |
+| `--file <PATH>` | request JSON file (default: stdin) |  |
+
+#### realtime push unregister
+
+Remove a principal&#39;s registered device
+
+`gregale realtime push unregister --principal <ID> --device <NAME> <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified principal | required |
+| `--device <NAME>` | stable device name | required |
+
+#### realtime push deliveries
+
+List recent push deliveries for a principal
+
+`gregale realtime push deliveries --principal <ID> <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified principal | required |
+
+#### realtime push preferences
+
+Show a principal&#39;s notification preferences
+
+`gregale realtime push preferences --principal <ID> <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified principal | required |
+
+#### realtime push set-preferences
+
+Replace a principal&#39;s notification preferences from JSON
+
+`gregale realtime push set-preferences --principal <ID> [--file <PATH>] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--principal <ID>` | verified principal | required |
+| `--file <PATH>` | request JSON file (default: stdin) |  |
 
 ### realtime close
 
@@ -16739,6 +17082,26 @@ Retry a blocked restoration without rebuilding or extending retention
 | `--request-id <ID>` | stable 32-character lowercase hexadecimal request ID |  |
 | `--wait` | wait for this decision to finish |  |
 | `--timeout <SECONDS|DURATION>` | maximum local wait; server work continues |  |
+
+#### projects environments recover-migration
+
+Resume or resolve a promotion stopped by its migration task
+
+`gregale projects environments recover-migration --to <ENV> --action <ACTION> --task-id <TASK> --generation <N> --database-state-checked --evidence-sha256 <HASH> [--schema-compatible] [--replacement-promotion <ID>] [--request-id <ID>] [--wait] [--timeout <SECONDS>] <project-slug> <promotion-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--to <ENV>` | destination environment | required |
+| `--action <ACTION>` | resume, or resolve through a verified repair promotion | required; one of `resume` · `resolve` |
+| `--task-id <TASK>` | original migration task ID | required |
+| `--generation <N>` | inspected promotion health generation | required |
+| `--database-state-checked` | attest that the destination database was inspected | required |
+| `--evidence-sha256 <HASH>` | SHA-256 of private inspection evidence (not uploaded) | required |
+| `--schema-compatible` | attest that the expected expansion is present (resume only) |  |
+| `--replacement-promotion <ID>` | verified repair promotion (resolve only) |  |
+| `--request-id <ID>` | stable request ID (default: derived from the request) |  |
+| `--wait` | wait for recovery confirmation |  |
+| `--timeout <SECONDS>` | maximum wait in seconds or a duration |  |
 
 ### projects update
 
