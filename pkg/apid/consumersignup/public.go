@@ -260,8 +260,7 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	metadata := map[string]string{"gregale_app": app.Slug, "gregale_signup": signup.ID}
 	stripe := s.stripe()
-	customer, err := stripe.CreateCustomer(ctx, key, "gregale-signup-"+signup.ID+"-customer", stripeinvoice.CustomerParams{Email: req.Email,
-		Name: req.Name, Metadata: metadata})
+	customer, err := stripe.CreateCustomer(ctx, key, "gregale-signup-"+signup.ID+"-customer", req.Email, req.Name, metadata)
 	if err != nil {
 		s.stripeFailed(ctx, w, app, signup.ID, err)
 		return
@@ -355,7 +354,7 @@ func (s *Service) completedConsumer(ctx context.Context, w http.ResponseWriter, 
 			"finish the checkout to save a card, then complete the sign-up"))
 		return state.APIConsumer{}, false
 	}
-	if err := stripe.SetDefaultPaymentMethod(ctx, key, signup.ProviderCustomerID, session.PaymentMethod); err != nil {
+	if err := stripe.SetDefaultPaymentMethod(ctx, key, signup.ProviderCustomerID, session.SetupIntent.PaymentMethod); err != nil {
 		s.stripeFailed(ctx, w, app, signup.ID, err)
 		return state.APIConsumer{}, false
 	}
