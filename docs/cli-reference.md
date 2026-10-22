@@ -17543,11 +17543,12 @@ Update one webhook
 
 Delete one webhook
 
-`gregale webhooks rm --app <slug> <id>`
+`gregale webhooks rm --app <slug> [--yes] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
+| `--yes` | accepted for consistency; rm does not prompt |  |
 
 ### webhooks deliveries
 

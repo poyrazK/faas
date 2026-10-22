@@ -6188,7 +6188,7 @@ var cliCommands = []cliCommand{
 				{Name: "enable", Short: "enable the webhook"},
 				{Name: "disable", Short: "disable the webhook"},
 			}},
-			{Name: "rm", Short: "Delete one webhook", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}}},
+			{Name: "rm", Short: "Delete one webhook", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "yes", Short: "accepted for consistency; rm does not prompt"}}},
 			{Name: "deliveries", Short: "Show the delivery ledger", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "SLUG"},
 				{Name: "status", Short: "filter delivery status", Value: "STATUS", ClosedSet: []string{"pending", "in_flight", "succeeded", "failed", "dead"}},
