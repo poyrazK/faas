@@ -20,6 +20,7 @@ import (
 
 type fakeRehearsalPlatformAPIStore struct {
 	run      string
+	plan     api.Plan
 	err      error
 	captured []state.ScenarioQueueCapture
 	events   []state.ScenarioEventCapture
@@ -41,11 +42,36 @@ func (f *fakeRehearsalPlatformAPIStore) ScenarioCapturedQueueMessage(_ context.C
 
 func (f *fakeRehearsalPlatformAPIStore) ScenarioCapturedPlatformCall(_ context.Context, accountID, runID, id string) (state.ScenarioCapturedPlatformRecord, error) {
 	record, ok := f.platformRecords[id]
+	if !ok {
+		record, ok = f.capturedRecord(id)
+	}
 	if !ok || accountID != fakeRehearsalAccount || runID != f.run {
 		return state.ScenarioCapturedPlatformRecord{}, state.ErrNotFound
 	}
 	return record, nil
 }
+
+// capturedRecord reads back the fake's own capture, cancelled by the first
+// later cancellation that addressed it.
+func (f *fakeRehearsalPlatformAPIStore) capturedRecord(id string) (state.ScenarioCapturedPlatformRecord, bool) {
+	for i, call := range f.calls {
+		if fakeCallID(i) != id {
+			continue
+		}
+		record := state.ScenarioCapturedPlatformRecord{Kind: call.Kind, Name: call.Name, Message: call.Message, Oversized: call.Oversized, CreatedAt: fakeCapturedAt}
+		for _, later := range f.calls[i+1:] {
+			if call.Kind == api.ScenarioPlatformKindExecution && later.Kind == api.ScenarioPlatformKindExecutionCancel && later.Address == id {
+				at := fakeCapturedAt.Add(time.Minute)
+				record.CancelledAt = &at
+				break
+			}
+		}
+		return record, true
+	}
+	return state.ScenarioCapturedPlatformRecord{}, false
+}
+
+var fakeCapturedAt = time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 
 func (f *fakeRehearsalPlatformAPIStore) ScenarioCapturedEvent(_ context.Context, accountID, runID, source, eventID string) (state.ScenarioCapturedEventRecord, error) {
 	record, ok := f.eventRecords[[2]string{source, eventID}]
@@ -58,7 +84,7 @@ func (f *fakeRehearsalPlatformAPIStore) ScenarioCapturedEvent(_ context.Context,
 const fakeRehearsalAccount = "5b0f6f0e-8a43-4d0e-9a4f-2d8f7a1c9e01"
 
 func (f *fakeRehearsalPlatformAPIStore) ScenarioRehearsalNetworkPolicy(context.Context, string) (state.ScenarioRehearsalNetworkPolicy, bool, error) {
-	return state.ScenarioRehearsalNetworkPolicy{RunID: f.run, AccountID: fakeRehearsalAccount}, f.run != "", nil
+	return state.ScenarioRehearsalNetworkPolicy{RunID: f.run, AccountID: fakeRehearsalAccount, Plan: f.plan}, f.run != "", nil
 }
 
 // CaptureScenarioEvent mirrors the store's identity rule: the same source and
@@ -95,9 +121,12 @@ func (f *fakeRehearsalPlatformAPIStore) CaptureScenarioPlatformCall(_ context.Co
 	if call.Address == "missing" {
 		return state.ScenarioPlatformCallResult{}, true, state.ErrNotFound
 	}
+	if record, ok := f.capturedRecord(call.Address); call.Kind == api.ScenarioPlatformKindExecutionCancel && (!ok || record.Kind != api.ScenarioPlatformKindExecution) {
+		return state.ScenarioPlatformCallResult{}, true, state.ErrNotFound
+	}
 	for i, prior := range f.calls {
 		if call.IdempotencyKey != "" && prior.IdempotencyKey == call.IdempotencyKey && prior.Kind == call.Kind && prior.Address == call.Address {
-			if prior.Name != call.Name {
+			if prior.Name != call.Name && call.Kind != api.ScenarioPlatformKindExecution {
 				return state.ScenarioPlatformCallResult{}, true, state.ErrScenarioIdempotencyConflict
 			}
 			return state.ScenarioPlatformCallResult{ID: fakeCallID(i), Replayed: true}, true, nil

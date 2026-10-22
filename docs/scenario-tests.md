@@ -1401,6 +1401,23 @@ compare. `publish-batch`, publisher-credential publishes and realtime reads are
 not served. See
 [ADR-20261021180000](adr/20261021180000-rehearsal-realtime-capture.md).
 
+Standalone Runs are captured too. `POST /v1/executions` is checked like the
+public API, against the run account's plan, and answers `202` with a Run in
+status `queued` that never starts. Source and input are sealed at rest in
+production, so the evidence keeps only their SHA-256 digests (a files bundle in
+path order, input as canonical JSON) beside the runtime, profile, entrypoint,
+output files, resolved limits, network, workflow ID, step label and integration
+IDs. A Run start compares by that content. `GET /v1/executions/{id}` reads back
+the run's own captured starts, and `DELETE /v1/executions/{id}` cancels one as a
+queued Run cancels at once: the start then reads back `cancelled`. A
+cancellation is named by its start's workload, runtime and start order
+(`execution:primary/python312#2`). Idempotency keys replay the first response
+under a key, as apid does. `artifact_inputs` are refused with `422`, because
+they read production Runs and redeem one-time grants. Listing Runs, the
+capabilities document and the event stream are not served, and a production
+Run cannot be read or cancelled. See
+[ADR-20261022170348](adr/20261022170348-rehearsal-run-capture.md).
+
 Database and object-store access require future isolated adapters. Ordinary app tasks,
 live migration, managed application-standard native admission and GitOps
 qualification remain unsupported for contained apps. Explicit
@@ -1410,7 +1427,8 @@ for example a database migration, runs the same way: it executes as the run's
 pinned contained command against the isolated fixtures before the deployment
 primes. This requires `FAAS_REHEARSAL_COMMAND_EXECUTION=1` on imaged and apid;
 without it, the candidate fails with `release_phase_unavailable` rather than
-waiting. Builds, other job VMs and standalone Runs remain outside this boundary.
+waiting. Builds and other job VMs remain outside this boundary; standalone
+Runs are captured, never executed.
 
 The receipt records `actions.network: contained`; comparisons with a different
 network policy are inconclusive. Blocked requests are not simulated or captured

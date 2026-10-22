@@ -603,6 +603,48 @@ func (q *Queries) ScenarioCapturedEvents(ctx context.Context, db DBTX, arg Scena
 	return items, nil
 }
 
+const scenarioCapturedExecutionCancelledAt = `-- name: ScenarioCapturedExecutionCancelledAt :one
+SELECT min(created_at)::timestamptz AS cancelled_at FROM scenario_captured_platform_calls
+WHERE account_id=$1::text::uuid AND run_id=$2::text AND kind='execution_cancel' AND target=$3::text
+`
+
+type ScenarioCapturedExecutionCancelledAtParams struct {
+	AccountID string
+	RunID     string
+	Target    string
+}
+
+func (q *Queries) ScenarioCapturedExecutionCancelledAt(ctx context.Context, db DBTX, arg ScenarioCapturedExecutionCancelledAtParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, scenarioCapturedExecutionCancelledAt, arg.AccountID, arg.RunID, arg.Target)
+	var cancelled_at pgtype.Timestamptz
+	err := row.Scan(&cancelled_at)
+	return cancelled_at, err
+}
+
+const scenarioCapturedExecutionReference = `-- name: ScenarioCapturedExecutionReference :one
+SELECT ('execution:' || p.workload_name || '/' || c.name || '#' ||
+ (SELECT count(*) FROM scenario_captured_platform_calls x WHERE x.account_id=c.account_id AND x.run_id=c.run_id AND x.app_id=c.app_id
+   AND x.kind='execution' AND x.name=c.name AND (x.created_at,x.id)<=(c.created_at,c.id))::text)::text AS reference
+FROM scenario_captured_platform_calls c JOIN scenario_test_action_policies p ON p.app_id=c.app_id
+WHERE c.id=$1::text::uuid AND c.account_id=$2::text::uuid AND c.run_id=$3::text AND c.kind='execution'
+`
+
+type ScenarioCapturedExecutionReferenceParams struct {
+	ID        string
+	AccountID string
+	RunID     string
+}
+
+// A captured Run start is named by its starter, runtime and start ordinal, so
+// a later cancellation of it compares across sibling runs
+// (ADR-20261022170348).
+func (q *Queries) ScenarioCapturedExecutionReference(ctx context.Context, db DBTX, arg ScenarioCapturedExecutionReferenceParams) (string, error) {
+	row := db.QueryRow(ctx, scenarioCapturedExecutionReference, arg.ID, arg.AccountID, arg.RunID)
+	var reference string
+	err := row.Scan(&reference)
+	return reference, err
+}
+
 const scenarioCapturedPlatformCallByID = `-- name: ScenarioCapturedPlatformCallByID :one
 SELECT kind,target,name,message,oversized,created_at FROM scenario_captured_platform_calls
 WHERE id=$1::text::uuid AND account_id=$2::text::uuid AND run_id=$3::text
@@ -1021,19 +1063,22 @@ func (q *Queries) ScenarioRealtimeEndpointTarget(ctx context.Context, db DBTX, a
 }
 
 const scenarioRehearsalNetworkPolicy = `-- name: ScenarioRehearsalNetworkPolicy :one
-SELECT run_id,account_id::text AS account_id FROM scenario_test_action_policies
-WHERE app_id=$1::text::uuid AND network_mode='contained'
+SELECT p.run_id,p.account_id::text AS account_id,a.plan FROM scenario_test_action_policies p JOIN accounts a ON a.id=p.account_id
+WHERE p.app_id=$1::text::uuid AND p.network_mode='contained'
 `
 
 type ScenarioRehearsalNetworkPolicyRow struct {
 	RunID     string
 	AccountID string
+	Plan      string
 }
 
+// The plan validates a contained Run start as the public API would
+// (ADR-20261022170348).
 func (q *Queries) ScenarioRehearsalNetworkPolicy(ctx context.Context, db DBTX, appID string) (ScenarioRehearsalNetworkPolicyRow, error) {
 	row := db.QueryRow(ctx, scenarioRehearsalNetworkPolicy, appID)
 	var i ScenarioRehearsalNetworkPolicyRow
-	err := row.Scan(&i.RunID, &i.AccountID)
+	err := row.Scan(&i.RunID, &i.AccountID, &i.Plan)
 	return i, err
 }
 

@@ -86,11 +86,18 @@ func rehearsalPlatformAPIRoute(r *http.Request) (rehearsalPlatformRoute, bool) {
 	switch r.Method {
 	case http.MethodGet:
 		return rehearsalReadRoute(r.URL.Path)
+	case http.MethodDelete:
+		if id, ok := strings.CutPrefix(r.URL.Path, "/v1/executions/"); ok && id != "" && !strings.Contains(id, "/") {
+			return executionCancelRoute(id), true
+		}
+		return nil, false
 	case http.MethodPost:
 	default:
 		return nil, false
 	}
 	switch r.URL.Path {
+	case "/v1/executions":
+		return serveRehearsalExecutionStart, true
 	case "/v1/events:publish":
 		return serveRehearsalEventPublish, true
 	case "/v1/events:publish-batch":

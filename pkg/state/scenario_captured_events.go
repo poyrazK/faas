@@ -54,6 +54,9 @@ var (
 // ScenarioRehearsalNetworkPolicy names a contained app's run and account.
 type ScenarioRehearsalNetworkPolicy struct {
 	RunID, AccountID string
+	// Plan is the run account's plan, which validates a contained Run start
+	// as the public API would (ADR-20261022170348).
+	Plan api.Plan
 }
 
 // ScenarioRehearsalNetworkPolicyStore reads a contained app's policy; ok is
@@ -70,7 +73,7 @@ func (s *PgStore) ScenarioRehearsalNetworkPolicy(ctx context.Context, appID stri
 	if err != nil {
 		return ScenarioRehearsalNetworkPolicy{}, false, fmt.Errorf("read rehearsal network policy: %w", err)
 	}
-	return ScenarioRehearsalNetworkPolicy{RunID: row.RunID, AccountID: row.AccountID}, true, nil
+	return ScenarioRehearsalNetworkPolicy{RunID: row.RunID, AccountID: row.AccountID, Plan: api.Plan(row.Plan)}, true, nil
 }
 
 func (m *MemStore) ScenarioRehearsalNetworkPolicy(ctx context.Context, appID string) (ScenarioRehearsalNetworkPolicy, bool, error) {
@@ -83,7 +86,7 @@ func (m *MemStore) ScenarioRehearsalNetworkPolicy(ctx context.Context, appID str
 	if !ok || policy.Member.NetworkMode != ScenarioNetworkContained {
 		return ScenarioRehearsalNetworkPolicy{}, false, nil
 	}
-	return ScenarioRehearsalNetworkPolicy{RunID: policy.Member.RunID, AccountID: policy.Member.AccountID}, true, nil
+	return ScenarioRehearsalNetworkPolicy{RunID: policy.Member.RunID, AccountID: policy.Member.AccountID, Plan: m.accounts[policy.Member.AccountID].Plan}, true, nil
 }
 
 type memScenarioCapturedEvent struct {

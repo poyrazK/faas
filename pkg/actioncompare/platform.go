@@ -11,12 +11,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/behaviorcompare"
 )
 
-var platformTargetPattern = regexp.MustCompile(`^(workload|app|run|endpoint):`)
+var platformTargetPattern = regexp.MustCompile(`^(workload|app|run|endpoint|execution):`)
 
-// addPlatformGroups compares the workflow and realtime calls an enrolled app
-// requested as a multiset per workload, kind, target and name, by canonical
-// message. Platform IDs never compare: a captured workflow run is addressed by
-// its starter, target, workflow and start ordinal.
+// addPlatformGroups compares the workflow, realtime and Run calls an enrolled
+// app requested as a multiset per workload, kind, target and name, by
+// canonical message. Platform IDs never compare: a captured workflow run or
+// Run start is addressed by its starter, target or runtime, and start ordinal.
 func addPlatformGroups(snapshot *api.ScenarioActionSnapshot, groups map[string]Change, ids map[string]bool) error {
 	if snapshot.PlatformCaptureVersion == 0 {
 		if len(snapshot.PlatformCalls) != 0 || snapshot.IncompletePlatformCalls != 0 {
@@ -36,7 +36,8 @@ func addPlatformGroups(snapshot *api.ScenarioActionSnapshot, groups map[string]C
 	for _, call := range snapshot.PlatformCalls {
 		id, err := uuid.Parse(call.ID)
 		switch call.Kind {
-		case api.ScenarioPlatformKindWorkflowRun, api.ScenarioPlatformKindWorkflowEvent, api.ScenarioPlatformKindRealtimePublish, api.ScenarioPlatformKindRealtimeSignal:
+		case api.ScenarioPlatformKindWorkflowRun, api.ScenarioPlatformKindWorkflowEvent, api.ScenarioPlatformKindRealtimePublish, api.ScenarioPlatformKindRealtimeSignal,
+			api.ScenarioPlatformKindExecution, api.ScenarioPlatformKindExecutionCancel:
 		default:
 			err = errors.New("unknown kind")
 		}

@@ -87609,15 +87609,15 @@ components:
         message: { description: "The request's business content, bounded to 64 KiB." }
 
     ScenarioCapturedPlatformCall:
-      description: A workflow or realtime call an enrolled app requested through the run-local platform API. It was never performed (ADR-20261021150000, ADR-20261021180000).
+      description: A workflow, realtime or Run call an enrolled app requested through the run-local platform API. It was never performed (ADR-20261021150000, ADR-20261021180000, ADR-20261022170348).
       type: object
       required: [id, workload, kind, target, name, message]
       properties:
         id: { type: string, format: uuid }
         workload: { type: string }
-        kind: { type: string, enum: [workflow_run, workflow_event, realtime_publish, realtime_signal] }
-        target: { type: string, maxLength: 512, description: "What the call addressed, without platform IDs the run created." }
-        name: { type: string, maxLength: 256, description: "The workflow, event or channel name." }
+        kind: { type: string, enum: [workflow_run, workflow_event, realtime_publish, realtime_signal, execution, execution_cancel] }
+        target: { type: string, maxLength: 512, description: "What the call addressed, without platform IDs the run created. A Run start addresses execution:runs." }
+        name: { type: string, maxLength: 256, description: "The workflow, event or channel name, or a Run's runtime." }
         message: { description: "The call's compared content, bounded to 64 KiB." }
 
     ScenarioActionSnapshot:

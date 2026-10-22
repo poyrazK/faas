@@ -151,8 +151,10 @@ WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::t
 ORDER BY created_at,id LIMIT 1;
 
 -- name: ScenarioRehearsalNetworkPolicy :one
-SELECT run_id,account_id::text AS account_id FROM scenario_test_action_policies
-WHERE app_id=sqlc.arg(app_id)::text::uuid AND network_mode='contained';
+-- The plan validates a contained Run start as the public API would
+-- (ADR-20261022170348).
+SELECT p.run_id,p.account_id::text AS account_id,a.plan FROM scenario_test_action_policies p JOIN accounts a ON a.id=p.account_id
+WHERE p.app_id=sqlc.arg(app_id)::text::uuid AND p.network_mode='contained';
 
 -- name: ScenarioCapturedEvents :many
 SELECT e.id::text AS id,p.workload_name AS workload,e.source,e.type,e.schema_version,e.data,e.oversized
@@ -225,6 +227,20 @@ SELECT ('run:' || p.workload_name || '/' || c.target || '/' || c.name || '#' ||
    AND x.kind='workflow_run' AND x.target=c.target AND x.name=c.name AND (x.created_at,x.id)<=(c.created_at,c.id))::text)::text AS reference
 FROM scenario_captured_platform_calls c JOIN scenario_test_action_policies p ON p.app_id=c.app_id
 WHERE c.id=sqlc.arg(id)::text::uuid AND c.account_id=sqlc.arg(account_id)::text::uuid AND c.run_id=sqlc.arg(run_id)::text AND c.kind='workflow_run';
+
+-- name: ScenarioCapturedExecutionReference :one
+-- A captured Run start is named by its starter, runtime and start ordinal, so
+-- a later cancellation of it compares across sibling runs
+-- (ADR-20261022170348).
+SELECT ('execution:' || p.workload_name || '/' || c.name || '#' ||
+ (SELECT count(*) FROM scenario_captured_platform_calls x WHERE x.account_id=c.account_id AND x.run_id=c.run_id AND x.app_id=c.app_id
+   AND x.kind='execution' AND x.name=c.name AND (x.created_at,x.id)<=(c.created_at,c.id))::text)::text AS reference
+FROM scenario_captured_platform_calls c JOIN scenario_test_action_policies p ON p.app_id=c.app_id
+WHERE c.id=sqlc.arg(id)::text::uuid AND c.account_id=sqlc.arg(account_id)::text::uuid AND c.run_id=sqlc.arg(run_id)::text AND c.kind='execution';
+
+-- name: ScenarioCapturedExecutionCancelledAt :one
+SELECT min(created_at)::timestamptz AS cancelled_at FROM scenario_captured_platform_calls
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text AND kind='execution_cancel' AND target=sqlc.arg(target)::text;
 
 -- name: ScenarioExternalWorkflowRunInAccount :one
 SELECT EXISTS(SELECT 1 FROM workflow_runs wr JOIN apps a ON a.id=wr.app_id

@@ -47,6 +47,13 @@ const (
 	ScenarioPlatformKindWorkflowEvent   = "workflow_event"
 	ScenarioPlatformKindRealtimePublish = "realtime_publish"
 	ScenarioPlatformKindRealtimeSignal  = "realtime_signal"
+
+	// A standalone Run start and its cancellation (ADR-20261022170348). A
+	// start addresses the Runs service; a cancellation addresses the
+	// captured start by its starter, runtime and start ordinal.
+	ScenarioPlatformKindExecution       = "execution"
+	ScenarioPlatformKindExecutionCancel = "execution_cancel"
+	ScenarioExecutionTarget             = "execution:runs"
 )
 
 // ScenarioCapturedPlatformCall is a workflow or realtime call an enrolled app

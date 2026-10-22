@@ -60,8 +60,12 @@ func scenarioRealtimeKind(kind string) bool {
 	return kind == api.ScenarioPlatformKindRealtimePublish || kind == api.ScenarioPlatformKindRealtimeSignal
 }
 
+func scenarioExecutionKind(kind string) bool {
+	return kind == api.ScenarioPlatformKindExecution || kind == api.ScenarioPlatformKindExecutionCancel
+}
+
 func validScenarioPlatformCall(call ScenarioPlatformCallCapture) bool {
-	if call.Kind != api.ScenarioPlatformKindWorkflowRun && call.Kind != api.ScenarioPlatformKindWorkflowEvent && !scenarioRealtimeKind(call.Kind) ||
+	if call.Kind != api.ScenarioPlatformKindWorkflowRun && call.Kind != api.ScenarioPlatformKindWorkflowEvent && !scenarioRealtimeKind(call.Kind) && !scenarioExecutionKind(call.Kind) ||
 		scenarioRealtimeKind(call.Kind) != (call.Endpoint != "") {
 		return false
 	}
@@ -71,10 +75,14 @@ func validScenarioPlatformCall(call ScenarioPlatformCallCapture) bool {
 // scenarioPlatformReplay applies production's idempotency rule to earlier
 // captures under the same key: a workflow start replays only the same input
 // to the same workflow; a workflow event replays the same event name whatever
-// its payload, and refuses another name.
+// its payload, and refuses another name. A Run start or cancellation replays
+// the first response under its key whatever the request, as apid's
+// account-wide Idempotency-Key does.
 func scenarioPlatformReplay(kind, name string, prior []sqlc.ScenarioPlatformCallsByIdempotencyKeyRow) (string, error) {
 	for _, row := range prior {
 		switch {
+		case scenarioExecutionKind(kind):
+			return row.ID, nil
 		case kind == api.ScenarioPlatformKindWorkflowEvent && row.Name == name:
 			return row.ID, nil
 		case kind == api.ScenarioPlatformKindWorkflowEvent:
@@ -164,6 +172,25 @@ func (s *PgStore) scenarioPlatformTarget(ctx context.Context, tx pgx.Tx, account
 			return "", ErrNotFound
 		}
 		return target, nil
+	}
+	switch call.Kind {
+	case api.ScenarioPlatformKindExecution:
+		return api.ScenarioExecutionTarget, nil
+	case api.ScenarioPlatformKindExecutionCancel:
+		// Only the run's own captured starts can be cancelled; a production
+		// Run is outside the run, as for a read of it.
+		id, err := uuid.Parse(call.Address)
+		if err != nil {
+			return "", ErrNotFound
+		}
+		reference, err := q.ScenarioCapturedExecutionReference(ctx, tx, sqlc.ScenarioCapturedExecutionReferenceParams{ID: id.String(), AccountID: accountID, RunID: runID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		if err != nil {
+			return "", fmt.Errorf("resolve captured execution: %w", err)
+		}
+		return reference, nil
 	}
 	if call.Kind == api.ScenarioPlatformKindWorkflowRun {
 		if !api.ValidAppSlug(call.Address) {
@@ -256,6 +283,12 @@ func (m *MemStore) scenarioPlatformTargetLocked(member ScenarioTestMember, call 
 	if scenarioRealtimeKind(call.Kind) {
 		return m.scenarioRealtimeTargetLocked(member, call)
 	}
+	switch call.Kind {
+	case api.ScenarioPlatformKindExecution:
+		return api.ScenarioExecutionTarget
+	case api.ScenarioPlatformKindExecutionCancel:
+		return m.scenarioExecutionReferenceLocked(member.AccountID, member.RunID, call.Address)
+	}
 	if call.Kind == api.ScenarioPlatformKindWorkflowRun {
 		if !api.ValidAppSlug(call.Address) {
 			return ""
@@ -284,6 +317,31 @@ func (m *MemStore) scenarioPlatformTargetLocked(member ScenarioTestMember, call 
 		if canonicalMemUUID(runID) == id.String() && sameScenarioAccount(m.apps[run.AppID].AccountID, member.AccountID) {
 			return "run:" + id.String()
 		}
+	}
+	return ""
+}
+
+// scenarioExecutionReferenceLocked mirrors ScenarioCapturedExecutionReference:
+// the run's captured start id as execution:<starter>/<runtime>#<ordinal>, or
+// "" for anything else.
+func (m *MemStore) scenarioExecutionReferenceLocked(accountID, runID, id string) string {
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return ""
+	}
+	for i, row := range m.scenarioPlatformCalls {
+		if !sameScenarioAccount(row.accountID, accountID) || row.runID != runID || row.call.Kind != api.ScenarioPlatformKindExecution || canonicalMemUUID(row.id) != parsed.String() {
+			continue
+		}
+		ordinal := 0
+		for _, earlier := range m.scenarioPlatformCalls[:i+1] {
+			if earlier.accountID == row.accountID && earlier.runID == row.runID && earlier.appID == row.appID &&
+				earlier.call.Kind == api.ScenarioPlatformKindExecution && earlier.call.Name == row.call.Name {
+				ordinal++
+			}
+		}
+		starter, _ := m.scenarioActionPolicyLocked(row.appID)
+		return "execution:" + starter.Member.Workload + "/" + row.call.Name + "#" + strconv.Itoa(ordinal)
 	}
 	return ""
 }

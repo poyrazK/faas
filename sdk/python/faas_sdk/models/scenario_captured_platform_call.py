@@ -17,8 +17,8 @@ T = TypeVar("T", bound="ScenarioCapturedPlatformCall")
 
 @_attrs_define
 class ScenarioCapturedPlatformCall:
-    """A workflow or realtime call an enrolled app requested through the run-local platform API. It was never performed
-    (ADR-20261021150000, ADR-20261021180000).
+    """A workflow, realtime or Run call an enrolled app requested through the run-local platform API. It was never
+    performed (ADR-20261021150000, ADR-20261021180000, ADR-20261022170348).
 
     """
 
@@ -26,9 +26,9 @@ class ScenarioCapturedPlatformCall:
     workload: str
     kind: ScenarioCapturedPlatformCallKind
     target: str
-    """What the call addressed, without platform IDs the run created."""
+    """What the call addressed, without platform IDs the run created. A Run start addresses execution:runs."""
     name: str
-    """The workflow, event or channel name."""
+    """The workflow, event or channel name, or a Run's runtime."""
     message: Any
     """The call's compared content, bounded to 64 KiB."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

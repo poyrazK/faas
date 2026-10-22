@@ -5659,6 +5659,11 @@ type Querier interface {
 	// lock, so the run index bounds this lookup (ADR-20261021120000).
 	ScenarioCapturedEventIdentity(ctx context.Context, db DBTX, arg ScenarioCapturedEventIdentityParams) (bool, error)
 	ScenarioCapturedEvents(ctx context.Context, db DBTX, arg ScenarioCapturedEventsParams) ([]ScenarioCapturedEventsRow, error)
+	ScenarioCapturedExecutionCancelledAt(ctx context.Context, db DBTX, arg ScenarioCapturedExecutionCancelledAtParams) (pgtype.Timestamptz, error)
+	// A captured Run start is named by its starter, runtime and start ordinal, so
+	// a later cancellation of it compares across sibling runs
+	// (ADR-20261022170348).
+	ScenarioCapturedExecutionReference(ctx context.Context, db DBTX, arg ScenarioCapturedExecutionReferenceParams) (string, error)
 	ScenarioCapturedPlatformCallByID(ctx context.Context, db DBTX, arg ScenarioCapturedPlatformCallByIDParams) (ScenarioCapturedPlatformCallByIDRow, error)
 	ScenarioCapturedPlatformCalls(ctx context.Context, db DBTX, arg ScenarioCapturedPlatformCallsParams) ([]ScenarioCapturedPlatformCallsRow, error)
 	// A capture is read back only inside its own run (ADR-20261022082721).
@@ -5696,6 +5701,8 @@ type Querier interface {
 	ScenarioRecorderRunCounts(ctx context.Context, db DBTX, arg ScenarioRecorderRunCountsParams) (ScenarioRecorderRunCountsRow, error)
 	ScenarioRecorderSession(ctx context.Context, db DBTX, arg ScenarioRecorderSessionParams) (ScenarioRecorderSessionRow, error)
 	ScenarioRecorderSnapshot(ctx context.Context, db DBTX, arg ScenarioRecorderSnapshotParams) (ScenarioRecorderSnapshotRow, error)
+	// The plan validates a contained Run start as the public API would
+	// (ADR-20261022170348).
 	ScenarioRehearsalNetworkPolicy(ctx context.Context, db DBTX, appID string) (ScenarioRehearsalNetworkPolicyRow, error)
 	ScenarioRehearsalNetworkRun(ctx context.Context, db DBTX, appID string) (string, error)
 	ScenarioRehearsalSimulationRun(ctx context.Context, db DBTX, appID string) (string, error)

@@ -24,8 +24,11 @@ func rehearsalReadRoute(path string) (rehearsalPlatformRoute, bool) {
 		"/v1/invocations/":    invocationReadRoute,
 		"/v1/delayed-tasks/":  delayedTaskReadRoute,
 		"/v1/workflows/runs/": workflowRunReadRoute,
+		"/v1/executions/":     executionReadRoute,
 	} {
-		if id, ok := strings.CutPrefix(path, prefix); ok && id != "" && !strings.Contains(id, "/") {
+		// The Runs capabilities document is not a capture; it is served as
+		// any other unmatched route.
+		if id, ok := strings.CutPrefix(path, prefix); ok && id != "" && !strings.Contains(id, "/") && path != "/v1/executions/capabilities" {
 			return serve(id), true
 		}
 	}

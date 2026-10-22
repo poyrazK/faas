@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -23,12 +24,14 @@ type ScenarioCapturedQueueRecord struct {
 	CreatedAt                         time.Time
 }
 
-// ScenarioCapturedPlatformRecord is a captured workflow or realtime call.
+// ScenarioCapturedPlatformRecord is a captured workflow, realtime or Run
+// call. CancelledAt is set on a captured Run start the run later cancelled.
 type ScenarioCapturedPlatformRecord struct {
 	Kind, Target, Name string
 	Message            json.RawMessage
 	Oversized          bool
 	CreatedAt          time.Time
+	CancelledAt        *time.Time
 }
 
 // ScenarioCapturedEventRecord is a captured event, found by its envelope
@@ -70,11 +73,25 @@ func (s *PgStore) ScenarioCapturedPlatformCall(ctx context.Context, accountID, r
 	if uuid.Validate(id) != nil || uuid.Validate(accountID) != nil {
 		return ScenarioCapturedPlatformRecord{}, ErrNotFound
 	}
-	row, err := sqlc.New().ScenarioCapturedPlatformCallByID(ctx, s.pool, sqlc.ScenarioCapturedPlatformCallByIDParams{ID: id, AccountID: accountID, RunID: runID})
+	q := sqlc.New()
+	row, err := q.ScenarioCapturedPlatformCallByID(ctx, s.pool, sqlc.ScenarioCapturedPlatformCallByIDParams{ID: id, AccountID: accountID, RunID: runID})
 	if err != nil {
 		return ScenarioCapturedPlatformRecord{}, scenarioCaptureReadError(err, "platform call")
 	}
-	return ScenarioCapturedPlatformRecord{Kind: row.Kind, Target: row.Target, Name: row.Name, Message: row.Message, Oversized: row.Oversized, CreatedAt: row.CreatedAt.Time}, nil
+	record := ScenarioCapturedPlatformRecord{Kind: row.Kind, Target: row.Target, Name: row.Name, Message: row.Message, Oversized: row.Oversized, CreatedAt: row.CreatedAt.Time}
+	if row.Kind != api.ScenarioPlatformKindExecution {
+		return record, nil
+	}
+	reference, err := q.ScenarioCapturedExecutionReference(ctx, s.pool, sqlc.ScenarioCapturedExecutionReferenceParams{ID: id, AccountID: accountID, RunID: runID})
+	if err != nil {
+		return ScenarioCapturedPlatformRecord{}, scenarioCaptureReadError(err, "execution")
+	}
+	cancelled, err := q.ScenarioCapturedExecutionCancelledAt(ctx, s.pool, sqlc.ScenarioCapturedExecutionCancelledAtParams{AccountID: accountID, RunID: runID, Target: reference})
+	if err != nil {
+		return ScenarioCapturedPlatformRecord{}, scenarioCaptureReadError(err, "execution cancellation")
+	}
+	record.CancelledAt = optionalTimestamptz(cancelled)
+	return record, nil
 }
 
 func (s *PgStore) ScenarioCapturedEvent(ctx context.Context, accountID, runID, source, eventID string) (ScenarioCapturedEventRecord, error) {
@@ -111,8 +128,12 @@ func (m *MemStore) ScenarioCapturedPlatformCall(ctx context.Context, accountID, 
 	defer m.mu.Unlock()
 	for _, row := range m.scenarioPlatformCalls {
 		if canonicalMemUUID(row.id) == canonicalMemUUID(id) && sameScenarioAccount(row.accountID, accountID) && row.runID == runID {
-			return ScenarioCapturedPlatformRecord{Kind: row.call.Kind, Target: row.target, Name: row.call.Name,
-				Message: append(json.RawMessage(nil), row.call.Message...), Oversized: row.call.Oversized, CreatedAt: row.createdAt}, nil
+			record := ScenarioCapturedPlatformRecord{Kind: row.call.Kind, Target: row.target, Name: row.call.Name,
+				Message: append(json.RawMessage(nil), row.call.Message...), Oversized: row.call.Oversized, CreatedAt: row.createdAt}
+			if row.call.Kind == api.ScenarioPlatformKindExecution {
+				record.CancelledAt = m.scenarioExecutionCancelledAtLocked(accountID, runID, id)
+			}
+			return record, nil
 		}
 	}
 	return ScenarioCapturedPlatformRecord{}, ErrNotFound
@@ -130,4 +151,16 @@ func (m *MemStore) ScenarioCapturedEvent(ctx context.Context, accountID, runID, 
 		}
 	}
 	return ScenarioCapturedEventRecord{}, ErrNotFound
+}
+
+// scenarioExecutionCancelledAtLocked mirrors ScenarioCapturedExecutionCancelledAt.
+func (m *MemStore) scenarioExecutionCancelledAtLocked(accountID, runID, id string) *time.Time {
+	reference := m.scenarioExecutionReferenceLocked(accountID, runID, id)
+	for _, row := range m.scenarioPlatformCalls {
+		if sameScenarioAccount(row.accountID, accountID) && row.runID == runID && row.call.Kind == api.ScenarioPlatformKindExecutionCancel && row.target == reference {
+			at := row.createdAt
+			return &at
+		}
+	}
+	return nil
 }

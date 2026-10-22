@@ -3,18 +3,18 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A workflow or realtime call an enrolled app requested through the run-local platform API. It was never performed (ADR-20261021150000, ADR-20261021180000).
+ * A workflow, realtime or Run call an enrolled app requested through the run-local platform API. It was never performed (ADR-20261021150000, ADR-20261021180000, ADR-20261022170348).
  */
 export type ScenarioCapturedPlatformCall = {
   id: string;
   workload: string;
-  kind: 'workflow_run' | 'workflow_event' | 'realtime_publish' | 'realtime_signal';
+  kind: 'workflow_run' | 'workflow_event' | 'realtime_publish' | 'realtime_signal' | 'execution' | 'execution_cancel';
   /**
-   * What the call addressed, without platform IDs the run created.
+   * What the call addressed, without platform IDs the run created. A Run start addresses execution:runs.
    */
   target: string;
   /**
-   * The workflow, event or channel name.
+   * The workflow, event or channel name, or a Run's runtime.
    */
   name: string;
   /**

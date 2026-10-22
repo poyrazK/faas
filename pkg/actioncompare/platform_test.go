@@ -63,3 +63,33 @@ func TestCapturedPlatformCallsCompareTargetNameAndMessage(t *testing.T) {
 		})
 	}
 }
+
+// A Run start compares by its digests and envelope, and a cancellation by the
+// start it addressed (ADR-20261022170348).
+func TestCapturedRunStartsAndCancellationsCompare(t *testing.T) {
+	start := func(source string) api.ScenarioCapturedPlatformCall {
+		return platformCall(api.ScenarioPlatformKindExecution, api.ScenarioExecutionTarget, "python312",
+			`{"execution":{"runtime":"python312","source_sha256":"`+source+`","limits":{"timeout_ms":30000}}}`)
+	}
+	cancel := func(ordinal string) api.ScenarioCapturedPlatformCall {
+		return platformCall(api.ScenarioPlatformKindExecutionCancel, "execution:primary/python312#"+ordinal, "cancel", `{}`)
+	}
+	for _, tc := range []struct {
+		name, status string
+		mutate       func(*Evidence)
+	}{
+		{"same-code-and-cancel", "passed", func(*Evidence) {}},
+		{"code-changed", "failed", func(e *Evidence) { e.Snapshot.PlatformCalls[0] = start("b") }},
+		{"cancelled-another-start", "failed", func(e *Evidence) { e.Snapshot.PlatformCalls[1] = cancel("2") }},
+		{"no-cancel", "failed", func(e *Evidence) { e.Snapshot.PlatformCalls = e.Snapshot.PlatformCalls[:1] }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := platformEvidence(start("a"), cancel("1"))
+			after := platformEvidence(start("a"), cancel("1"))
+			tc.mutate(after)
+			if result := Compare(before, after); result.Status != tc.status {
+				t.Fatalf("comparison=%+v, want %s", result, tc.status)
+			}
+		})
+	}
+}
