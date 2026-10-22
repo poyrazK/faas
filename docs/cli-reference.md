@@ -12010,13 +12010,13 @@ gregale issues assign --app my-api --interactive
 
 Resolve in a deployment
 
-`gregale issues resolve --app <SLUG> [--interactive] [--deployment <UUID>] [<issue-id>]`
+`gregale issues resolve --app <SLUG> [--interactive] [--deployment <UUID|vN>] [<issue-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
 | `--interactive` | choose an open issue and fixing release, then confirm resolution |  |
-| `--deployment <UUID>` | fixing deployment UUID (required unless interactive) |  |
+| `--deployment <UUID|vN>` | fixing deployment UUID or vN revision (required unless interactive) |  |
 
 Examples:
 
