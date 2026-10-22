@@ -98,7 +98,7 @@ func (e *codeTestExecutor) ExecuteStep(_ context.Context, _, path, _ string, hea
 		return e.status, []byte("handler crashed"), nil
 	}
 	var request workflowcode.Request
-	if err := json.Unmarshal(body, &request); err != nil || request.Protocol != api.WorkflowCodeProtocol {
+	if json.Unmarshal(body, &request) != nil || request.Protocol != api.WorkflowCodeProtocol {
 		return 400, nil, nil
 	}
 	wf := &codeTestWF{journal: request.Journal}
