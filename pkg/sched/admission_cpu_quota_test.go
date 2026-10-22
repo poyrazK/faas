@@ -1,10 +1,12 @@
-package sched
+package sched_test
 
 // adr: 1155 pins the admitted CPU quota the CPU saturation trigger measures against.
 
 import (
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // ADR-1155: CPU saturation captures compare use with the sustained quota,
@@ -13,14 +15,14 @@ func TestSustainedCPUMillicores(t *testing.T) {
 	t.Parallel()
 	// Admit expires boosts against the wall clock, so the test does too.
 	now := time.Now()
-	ledger := NewNodeLedger()
+	ledger := sched.NewNodeLedger()
 	steady := cpuAdmissionRequest("steady")
 	steady.CPUMillicores = 500
 	boosted := cpuAdmissionRequest("boosted")
 	boosted.CPUMillicores = 250
 	boosted.CPUStartupBoostMillicores = 1000
 	boosted.CPUStartupBoostUntil = now.Add(time.Minute)
-	for _, r := range []Request{steady, boosted} {
+	for _, r := range []sched.Request{steady, boosted} {
 		if err := ledger.Admit(r); err != nil {
 			t.Fatalf("admit %s: %v", r.Instance, err)
 		}

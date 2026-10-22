@@ -2188,6 +2188,7 @@ export type { ProfileCaptureProfile } from './models/ProfileCaptureProfile.js';
 export type { ProfileCaptureStack } from './models/ProfileCaptureStack.js';
 export type { ProfileCaptureStackDelta } from './models/ProfileCaptureStackDelta.js';
 export type { ProfileCaptureView } from './models/ProfileCaptureView.js';
+export type { ProfileCaptureWebhookPayload } from './models/ProfileCaptureWebhookPayload.js';
 export type { ProfileCompareRequest } from './models/ProfileCompareRequest.js';
 export type { ProfileCompareResponse } from './models/ProfileCompareResponse.js';
 export type { ProfileCoverage } from './models/ProfileCoverage.js';

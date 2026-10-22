@@ -117209,6 +117209,15 @@ components:
       required: [captures]
       properties:
         captures: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/ProfileCapture' } }
+    ProfileCaptureWebhookPayload:
+      description: Payload of the profile.capture_ready and profile.capture_oom_linked app webhook events (ADR-1155). Carries the capture record and its paths, never profile samples.
+      type: object
+      required: [version, capture, capture_path, api_path]
+      properties:
+        version: { type: integer, minimum: 1, maximum: 1 }
+        capture: { $ref: '#/components/schemas/ProfileCapture' }
+        capture_path: { type: string, description: Dashboard page of the capture. }
+        api_path: { type: string, description: API resource of the capture. }
     ProfileCaptureFunction:
       description: Self and inclusive cost of one function in the view's unit.
       type: object
