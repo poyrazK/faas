@@ -269,6 +269,8 @@ var MfaRecipient = &mfaRecipient
 var ObsJailInternalMarkers = &obsJailInternalMarkers
 var ObsSealedBlobMarkers = &obsSealedBlobMarkers
 var OutboundCredentialRecipient = &outboundCredentialRecipient
+var OutboundDomainRecipient = &outboundDomainRecipient
+var OutboundWriteMode = &outboundWriteMode
 var PgBackupStateRoot = &pgBackupStateRoot
 var PlanCache = &planCache
 var PlanCacheRoot = &planCacheRoot
@@ -282,6 +284,8 @@ var TimeNow = &timeNow
 var TxtLookupFunc = &txtLookupFunc
 
 // Package-level funcs
+var LoadSealDomains = loadSealDomains
+var SealOutboundCredential = sealOutboundCredential
 var AccountAbuseHoldView = accountAbuseHoldView
 var ActivatedAPIDListener = activatedAPIDListener
 var AggregateWakeTimeline = aggregateWakeTimeline
@@ -1568,4 +1572,35 @@ func (s *server) ConfigureLiveQueriesForTest(getenv func(string) string) error {
 // get none before the store is read.
 func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error) {
 	return s.liveRoutes(ctx, nil, accountID, appID)
+}
+
+// VerifyCandidatePostgresCredentialsForTest runs the GitOps backend's
+// pre-activation credential step (ADR-20261019072523) with an injected verifier.
+func VerifyCandidatePostgresCredentialsForTest(ctx context.Context, intent state.EnvironmentGitOpsIntentStore, graphID string,
+	verify func(context.Context, state.EnvironmentQualificationPostgresCheck) error) error {
+	b := &environmentGitOpsBackend{server: &server{candidatePostgresVerifier: verify}, intent: intent}
+	return b.verifyCandidatePostgresCredentials(ctx, graphID)
+}
+
+// VerifyCandidatePostgresCredentialForTest runs the production verifier's
+// sealed-credential checks with explicit host material and probe.
+func VerifyCandidatePostgresCredentialForTest(ctx context.Context, c state.EnvironmentQualificationPostgresCheck, identities []*age.X25519Identity,
+	hmacKey []byte, probe func(context.Context, string, managedpostgres.CredentialAccess, int) error) error {
+	sink := &appSecretCredentialSink{hmacKey: func() []byte { return hmacKey }, identities: func() []*age.X25519Identity { return identities }, probe: probe}
+	return verifyCandidatePostgresCredentialWith(ctx, sink, c)
+}
+
+// VerifyCandidateObjectStorageCredentialsForTest runs the GitOps backend's
+// pre-activation bucket credential step (ADR-20261019121546) with an injected verifier.
+func VerifyCandidateObjectStorageCredentialsForTest(ctx context.Context, intent state.EnvironmentGitOpsIntentStore, graphID string,
+	verify func(context.Context, state.EnvironmentQualificationObjectStorageCheck) error) error {
+	b := &environmentGitOpsBackend{server: &server{candidateObjectStorageVerifier: verify}, intent: intent}
+	return b.verifyCandidateObjectStorageCredentials(ctx, graphID)
+}
+
+// VerifyCandidateObjectStorageCredentialForTest runs the production verifier
+// with explicit host material and an injected bucket canary.
+func VerifyCandidateObjectStorageCredentialForTest(ctx context.Context, c state.EnvironmentQualificationObjectStorageCheck, identities []*age.X25519Identity,
+	hmacKey []byte, canary func(context.Context, string, string, func(string) string) api.ObjectStorageBindingProbeReport) error {
+	return verifyCandidateObjectStorageCredentialWith(ctx, identities, hmacKey, canary, c)
 }

@@ -1,6 +1,7 @@
 # Architecture Decision Records
 
 - [ADR-20261022140000: Break-glass controls for a compromised secret store](20261022140000-break-glass-controls.md)
+- [ADR-20261022111812: Seal domains: a sealed value opens only where it is read](20261022111812-seal-domains-per-reader.md)
 - [Platform flags: company targeting, full coverage, scheduled and automatic rollouts, self-serve previews](20261021080640-platform-flag-extensions.md)
 - [Product Control free trials](20261021195901-product-control-free-trials.md)
 - [ADR-20261021210000: Enrolled apps receive no account events](20261021210000-rehearsal-event-fanout-exclusion.md)
@@ -21,6 +22,7 @@
 - [Product Control billing records survive app purge](20261020090607-product-control-billing-records-survive-app-purge.md)
 - [Product Control customers keep their billing details in the owner's Paddle](20261020120000-product-control-customer-billing-details.md)
 - [Safety rails for automatic per-unit deploys](20261020214632-automatic-unit-deploy-safety-rails.md)
+- [Push-bound workers may listen for their deliveries](20261021153953-push-bound-worker-delivery-listener.md)
 - [What a fix restarts: daemon blast radius](20261020160744-daemon-blast-radius.md)
 - [Object storage in budgets](20261020160000-object-storage-in-budgets.md)
 - [Budget alerts on notification channels, and projected overruns](20261019193500-budget-alert-channels.md)

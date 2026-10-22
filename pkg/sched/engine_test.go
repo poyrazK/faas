@@ -1753,6 +1753,7 @@ func TestShouldPersistObservedClassKeepsSuccessfulServerIdentity(t *testing.T) {
 		{name: "request server refinement persists", appType: state.AppTypeApp, executionMode: api.ExecutionModeRequest, observed: state.WorkloadClassGraphQL, want: true},
 		{name: "declared worker persists", appType: state.AppTypeApp, executionMode: api.ExecutionModeWorker, observed: state.WorkloadClassWorker, want: true},
 		{name: "function cannot become worker", appType: state.AppTypeFunction, executionMode: api.ExecutionModeWorker, observed: state.WorkloadClassWorker},
+		{name: "push worker listener keeps worker class", appType: state.AppTypeApp, executionMode: api.ExecutionModeWorker, observed: state.WorkloadClassHTTP},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

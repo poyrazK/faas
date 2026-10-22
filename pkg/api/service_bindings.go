@@ -355,15 +355,35 @@ type ServiceBindingProbeReport struct {
 	Routing            ServiceBindingProbeCheck `json:"routing"`
 	HTTPStatus         int                      `json:"http_status,omitempty"`
 	Error              string                   `json:"error,omitempty"`
+	// Transport is the caller's service transport (ADR-20261019200059).
+	// Empty is the original HTTPS probe; an HTTP probe has no TLS stage.
+	Transport ServiceBindingTransport `json:"transport,omitempty"`
+}
+
+// ProbeTransport is the transport the report was taken over.
+func (r ServiceBindingProbeReport) ProbeTransport() ServiceBindingTransport {
+	if r.Transport == ServiceBindingTransportHTTP {
+		return ServiceBindingTransportHTTP
+	}
+	return ServiceBindingTransportHTTPS
 }
 
 // Passed reports whether every canary stage succeeded.
 func (r ServiceBindingProbeReport) Passed() bool {
-	if r.ManagedService != nil && (!r.ManagedService.Valid() || r.Service != r.ManagedService.Service || r.TargetDeploymentID != r.ManagedService.TargetDeploymentID || r.HTTPStatus != http.StatusNoContent) {
+	// The original HTTPS report shape is unchanged; an HTTP report names the
+	// plaintext proxy URL its caller's canonical binding holds.
+	if r.Transport != "" && (r.Transport != ServiceBindingTransportHTTP || r.URL != ServiceBindingCanonicalURL(r.Service, ServiceBindingTransportHTTP)) {
 		return false
 	}
-	return r.DNS.Status == "passed" && r.TLS.Status == "passed" &&
-		r.Authorization.Status == "passed" && r.Routing.Status == "passed"
+	if r.ManagedService != nil && (!r.ManagedService.Valid() || r.Service != r.ManagedService.Service || r.TargetDeploymentID != r.ManagedService.TargetDeploymentID ||
+		r.HTTPStatus != http.StatusNoContent || r.ProbeTransport() != r.ManagedService.ProbeTransport()) {
+		return false
+	}
+	tls := r.TLS.Status == "passed"
+	if r.ProbeTransport() == ServiceBindingTransportHTTP {
+		tls = r.TLS.Status == "not_checked"
+	}
+	return r.DNS.Status == "passed" && tls && r.Authorization.Status == "passed" && r.Routing.Status == "passed"
 }
 
 // ServiceBindingSmokeReport contains bounded, non-secret diagnostics from an
@@ -446,21 +466,24 @@ func ServiceBindingEnvForTransport(base map[string]string, bindings []AppService
 		}
 		env[key] = value
 	}
-	transport = transport.Effective()
 	for _, binding := range bindings {
-		httpsURL := fmt.Sprintf("https://%s.internal", binding.Service)
-		canonicalURL := fmt.Sprintf("http://%s.svc.gregale:%d", binding.Service, ServiceBindingPort)
-		if transport == ServiceBindingTransportHTTPS {
-			canonicalURL = httpsURL
-		}
-		env[binding.Binding] = canonicalURL
-		env[ServiceBindingHTTPSEnvKey(binding.Service)] = httpsURL
+		env[binding.Binding] = ServiceBindingCanonicalURL(binding.Service, transport)
+		env[ServiceBindingHTTPSEnvKey(binding.Service)] = ServiceBindingCanonicalURL(binding.Service, ServiceBindingTransportHTTPS)
 		env[ServiceBindingHostEnvKey(binding.Service)] = binding.Service + ".svc.gregale"
 	}
 	if len(env) == 0 {
 		return nil
 	}
 	return env
+}
+
+// ServiceBindingCanonicalURL is the GREGALE_SERVICE_<NAME>_URL value for a
+// caller's transport: the private HTTPS alias, or the plaintext service proxy.
+func ServiceBindingCanonicalURL(service string, transport ServiceBindingTransport) string {
+	if transport.Effective() == ServiceBindingTransportHTTPS {
+		return "https://" + service + ".internal"
+	}
+	return fmt.Sprintf("http://%s.svc.gregale:%d", service, ServiceBindingPort)
 }
 
 func validServiceCallerName(name string) bool {

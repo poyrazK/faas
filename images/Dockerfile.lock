@@ -19,35 +19,35 @@
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "mirror.gcr.io/library/golang:1.26.9",
+      "alias": "mirror.gcr.io/library/golang:1.26.10",
       "resolved_repo": "mirror.gcr.io/library/golang",
-      "resolved_tag": "1.26.9",
+      "resolved_tag": "1.26.10",
       "platform": "linux/amd64",
       "multi_arch": true,
-      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
-      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS guest-init-build"
+      "digest": "sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82",
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS guest-init-build"
     },
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "mirror.gcr.io/library/golang:1.26.9",
+      "alias": "mirror.gcr.io/library/golang:1.26.10",
       "resolved_repo": "mirror.gcr.io/library/golang",
-      "resolved_tag": "1.26.9",
+      "resolved_tag": "1.26.10",
       "platform": "linux/amd64",
       "multi_arch": true,
-      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
-      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS buildkit-client-build"
+      "digest": "sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82",
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS buildkit-client-build"
     },
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "mirror.gcr.io/library/golang:1.26.9",
+      "alias": "mirror.gcr.io/library/golang:1.26.10",
       "resolved_repo": "mirror.gcr.io/library/golang",
-      "resolved_tag": "1.26.9",
+      "resolved_tag": "1.26.10",
       "platform": "linux/amd64",
       "multi_arch": true,
-      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
-      "pinned_in_dockerfile": "FROM --platform=$TARGETPLATFORM mirror.gcr.io/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS runc-build"
+      "digest": "sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82",
+      "pinned_in_dockerfile": "FROM --platform=$TARGETPLATFORM mirror.gcr.io/library/golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS runc-build"
     },
     {
       "dockerfile": "images/base-debian-parent.Dockerfile",
@@ -153,23 +153,23 @@
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "mirror.gcr.io/library/golang:1.26.9",
+      "alias": "mirror.gcr.io/library/golang:1.26.10",
       "resolved_repo": "mirror.gcr.io/library/golang",
-      "resolved_tag": "1.26.9",
+      "resolved_tag": "1.26.10",
       "platform": "linux/amd64",
       "multi_arch": true,
-      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
-      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS railpack-build"
+      "digest": "sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82",
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS railpack-build"
     },
     {
       "dockerfile": "images/ci-runner.Dockerfile",
       "instruction": "FROM",
-      "alias": "public.ecr.aws/docker/library/golang:1.26.9",
+      "alias": "public.ecr.aws/docker/library/golang:1.26.10",
       "resolved_repo": "public.ecr.aws/docker/library/golang",
-      "resolved_tag": "1.26.9",
+      "resolved_tag": "1.26.10",
       "platform": "linux/amd64",
-      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
-      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS build",
+      "digest": "sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82",
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS build",
       "multi_arch": true
     },
     {
