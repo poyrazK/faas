@@ -159,15 +159,20 @@ func sampleNodeInspector(ctx context.Context, addr string, pid int, closeAfter b
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, api.ProfileNodeInspectorConnect)
 	defer cancel()
-	ws, _, err := (&websocket.Dialer{HandshakeTimeout: api.ProfileNodeInspectorConnect}).DialContext(dialCtx, target, nil)
+	ws, resp, err := (&websocket.Dialer{HandshakeTimeout: api.ProfileNodeInspectorConnect}).DialContext(dialCtx, target, nil)
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("connect inspector: %w", err)
 	}
 	cdp := newCDPConn(ws)
 	defer cdp.close()
+	// Cleanup calls run even when the capture's context is done.
+	cleanup := context.WithoutCancel(ctx)
 	if closeAfter {
 		defer func() {
-			_, _ = cdp.call(context.Background(), time.Second, "Runtime.evaluate", map[string]any{"expression": nodeCloseExpr})
+			_, _ = cdp.call(cleanup, time.Second, "Runtime.evaluate", map[string]any{"expression": nodeCloseExpr})
 		}()
 	}
 	var owner struct {
@@ -188,10 +193,10 @@ func sampleNodeInspector(ctx context.Context, addr string, pid int, closeAfter b
 	if _, err := cdp.call(ctx, api.ProfileNodeInspectorConnect, "Debugger.enable", map[string]any{}); err != nil {
 		return nil, err
 	}
-	defer func() { _, _ = cdp.call(context.Background(), time.Second, "Debugger.disable", map[string]any{}) }()
+	defer func() { _, _ = cdp.call(cleanup, time.Second, "Debugger.disable", map[string]any{}) }()
 	// Resume even when no pause was seen: one that lands after the wait must
 	// not leave the application stopped. Disabling the debugger follows.
-	defer func() { _, _ = cdp.call(context.Background(), time.Second, "Debugger.resume", map[string]any{}) }()
+	defer func() { _, _ = cdp.call(cleanup, time.Second, "Debugger.resume", map[string]any{}) }()
 	if _, err := cdp.call(ctx, api.ProfileNodeInspectorConnect, "Debugger.pause", map[string]any{}); err != nil {
 		return nil, err
 	}

@@ -158,7 +158,7 @@ func run(ctx context.Context, endpoint string) {
 					_ = resp.Body.Close()
 				}
 			}
-		} else if cfg.Enabled && active == nil && cfg.Epoch != "" && !(cfg.Capture && cfg.Epoch == finished) {
+		} else if cfg.Enabled && active == nil && cfg.Epoch != "" && (!cfg.Capture || cfg.Epoch != finished) {
 			w := &window{epoch: cfg.Epoch, from: time.Now(), span: time.Duration(cfg.WindowSeconds) * time.Second, heap: cfg.wants(api.ProfileKindHeap)}
 			w.checkpoint = w.from
 			buffer.Reset()

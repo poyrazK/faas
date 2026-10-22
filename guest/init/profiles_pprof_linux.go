@@ -134,7 +134,7 @@ func (s *pprofScraper) run(ctx context.Context) {
 			if active == nil {
 				s.bridge.pprofAcknowledge(cfg.Epoch)
 			}
-		case cfg.Enabled && active == nil && cfg.Epoch != "" && !(cfg.Capture && cfg.Epoch == finished):
+		case cfg.Enabled && active == nil && cfg.Epoch != "" && (!cfg.Capture || cfg.Epoch != finished):
 			active = s.start(ctx, cfg)
 		case !cfg.Enabled && active == nil:
 			delay = s.dormantPoll

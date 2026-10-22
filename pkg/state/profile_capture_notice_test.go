@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -65,7 +66,7 @@ func TestProfileCaptureNotifications(t *testing.T) {
 					t.Fatal(err)
 				}
 				if finish {
-					finishNoticeCapture(t, store, c.ID, instance, profiles, at.Add(10*time.Second))
+					finishNoticeCapture(ctx, t, store, c.ID, instance, profiles, at.Add(10*time.Second))
 				}
 				return c.ID
 			}
@@ -89,7 +90,7 @@ func TestProfileCaptureNotifications(t *testing.T) {
 			// finishes, with the kill.
 			interrupted := capture(api.ProfileCaptureTriggerManual, []string{api.ProfileKindHeap}, "i-oom", now.Add(-time.Minute), heap, false)
 			stamp("i-oom", now.Add(-50*time.Second))
-			finishNoticeCapture(t, store, interrupted, "i-oom", heap, now.Add(-49*time.Second))
+			finishNoticeCapture(ctx, t, store, interrupted, "i-oom", heap, now.Add(-49*time.Second))
 
 			relay, ok := store.(state.AppWebhookEventOutboxStore)
 			if !ok {
@@ -144,14 +145,14 @@ func TestProfileCaptureNotifications(t *testing.T) {
 	}
 }
 
-func finishNoticeCapture(t *testing.T, store profileCaptureBackend, id, instance string, profiles []api.ProfileCaptureProfile, at time.Time) {
+func finishNoticeCapture(ctx context.Context, t *testing.T, store profileCaptureBackend, id, instance string, profiles []api.ProfileCaptureProfile, at time.Time) {
 	t.Helper()
 	result := api.ProfileCapture{Status: api.ProfileCaptureReady, InstanceID: instance, DeploymentID: "dep-1", Processes: 1, Profiles: profiles}
 	var blobs []state.ProfileCaptureBlob
 	for _, p := range profiles {
 		blobs = append(blobs, state.ProfileCaptureBlob{Kind: p.Kind, ProcessID: p.ProcessID, Profile: []byte("prof")})
 	}
-	if err := store.FinishProfileCapture(t.Context(), id, result, blobs, at); err != nil {
+	if err := store.FinishProfileCapture(ctx, id, result, blobs, at); err != nil {
 		t.Fatal(err)
 	}
 }

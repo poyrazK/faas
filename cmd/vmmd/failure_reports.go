@@ -79,9 +79,11 @@ func wireFailureReports(sourceNodeID string, mgr *fcvm.Manager, cfg *Config, dep
 // (ADR-1155). They are advisory: the guest reports once per episode, so a
 // lost report only means no automatic heap capture, and nothing is spooled.
 func memoryPressureRelay(sourceNodeID, target string, tlsConfig func() *tls.Config, log *slog.Logger) fcvm.MemoryPressureSink {
-	return func(_ context.Context, instanceID string, availableMB, totalMB, anonMB int) {
+	return func(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int) {
+		// The relay outlives the report's caller.
+		ctx = context.WithoutCancel(ctx)
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 			var cfg *tls.Config
 			if tlsConfig != nil {
