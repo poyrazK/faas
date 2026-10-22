@@ -15,14 +15,21 @@ invocation drain and webhook delivery on disposable PostgreSQL, on
 ([report](ops/evidence/20261020-event-substrate-bench/REPORT.md)) sustained
 5 events/s end to end. Skipping the ordering scan for recipients without a
 work policy (#5090) and the webhook backlog drain (#5091) raised that to 20
-events/s and webhook delivery to about 150/s. Batched fanout claims
-(`perf/event-fanout-batch-claim`,
+events/s and webhook delivery to about 150/s. Batched fanout claims (#5161,
 [report](ops/evidence/20261022-event-fanout-batch-claims/REPORT.md)) bring
-fanout to 74 events/s over a 2,000-event backlog and the pipeline to
-**48.5 events/s at 50 offered** (p95 830 ms), and ordered work-policy lanes
-from under 1 to 21.7 events/s. Fanout is still the first stage to fall
-behind, at 200 events/s offered. Event caps stay where they are until the
-benchmark is re-run on the reference node.
+fanout to 74 events/s over a 2,000-event backlog and ordered work-policy
+lanes from under 1 to 21.7 events/s.
+
+A provisional V12 run of main on the same host
+([report](ops/evidence/20261022-v12-provisional/REPORT.md)), chosen by the
+owner until launch hardware is available, **sustains 20 events/s in every
+run**. 50/s holds only when the host is otherwise quiet: 49.9/s, p95 232 ms,
+against 27–33/s under other load. 75/s never holds. That bounds the aggregate
+event rate the caps may admit on one control plane at 10 events/s, far above
+today's per-account caps. Fanout no longer dominates database time. Publish
+(9.2 ms per event) and the invocation lifecycle (21.4 ms per invocation) now
+do. Event caps stay where they are until the benchmark runs on the reference
+node.
 
 ## Tenant egress denies NAT64 — 2026-10-18 (branch, not released)
 
