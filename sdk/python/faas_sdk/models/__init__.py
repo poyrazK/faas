@@ -5834,6 +5834,7 @@ from .workflow_callback_response import WorkflowCallbackResponse
 from .workflow_callback_webhook_binding_response import WorkflowCallbackWebhookBindingResponse
 from .workflow_callback_webhook_receipt_response import WorkflowCallbackWebhookReceiptResponse
 from .workflow_callback_webhook_receipt_response_status import WorkflowCallbackWebhookReceiptResponseStatus
+from .workflow_code_spec import WorkflowCodeSpec
 from .workflow_condition_spec import WorkflowConditionSpec
 from .workflow_diagnostic_blocker import WorkflowDiagnosticBlocker
 from .workflow_diagnostic_blocker_code import WorkflowDiagnosticBlockerCode
@@ -11539,6 +11540,7 @@ __all__ = (
     "WorkflowCallbackWebhookBindingResponse",
     "WorkflowCallbackWebhookReceiptResponse",
     "WorkflowCallbackWebhookReceiptResponseStatus",
+    "WorkflowCodeSpec",
     "WorkflowConditionSpec",
     "WorkflowDiagnosticBlocker",
     "WorkflowDiagnosticBlockerCode",

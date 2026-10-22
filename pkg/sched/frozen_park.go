@@ -81,12 +81,17 @@ func (e *Engine) frozenNodeRowUnreachable(node state.ComputeNode) bool {
 
 // freezeRefusal names why an idle RUNNING instance must park instead of
 // freezing, or returns "" when it may freeze. The caller holds the app lock.
-func (e *Engine) freezeRefusal(ctx context.Context, ins state.Instance) (string, error) {
+func (e *Engine) freezeRefusal(ctx context.Context, ins state.Instance, early bool) (string, error) {
 	app, err := e.store.AppByID(ctx, ins.AppID)
 	if err != nil {
 		return "", err
 	}
 	if app.Status != state.AppActive || !e.frozenTierAllows(app, ins.Mode, e.privateNetworkProjection(ctx, app).NetworkID) {
+		return "ineligible", nil
+	}
+	// An early freeze (ADR-20261021215353) stops timers before the idle
+	// timeout, which only between_requests workloads have agreed to.
+	if early && api.EffectivePause(app.Manifest.Pause, app.Type == state.AppTypeFunction) != api.PauseBetweenRequests {
 		return "ineligible", nil
 	}
 	if ins.RAMMB != app.RAMMB || e.runtimeConfigStale(ctx, ins) {

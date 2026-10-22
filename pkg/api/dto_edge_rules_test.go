@@ -54,6 +54,9 @@ func TestApplyEdgeRuleRewritePath(t *testing.T) {
 		{name: "wildcard from adds prefix", requestPath: "/items", from: "*", to: "v1/", wantPath: "/v1/items", wantApplied: true},
 		{name: "root is no-op", requestPath: "/items", from: "", to: "/", wantPath: "/items", wantApplied: true},
 		{name: "from mismatch", requestPath: "/api/items", from: "/v2", to: "/v1", wantPath: "/api/items", wantApplied: false},
+		{name: "strip prefix to root", requestPath: "/api/items", from: "/api", to: "/", wantPath: "/items", wantApplied: true},
+		{name: "strip exact prefix", requestPath: "/api", from: "/api", to: "/", wantPath: "/", wantApplied: true},
+		{name: "strip prefix keeps query-free tail", requestPath: "/api/v1/items/", from: "/api", to: "/", wantPath: "/v1/items/", wantApplied: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
