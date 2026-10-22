@@ -70,6 +70,7 @@ version and configuration next to the results.
 | `FAAS_EVENT_SUBSTRATE_BENCH_PUBLISHERS` | 12 | concurrent publishers (apid's pool size) |
 | `FAAS_EVENT_SUBSTRATE_BENCH_DRAIN_CONCURRENCY` | production default | drain dispatch workers |
 | `FAAS_EVENT_SUBSTRATE_BENCH_HANDLER_MS` | 0 | simulated handler time per invocation |
+| `FAAS_EVENT_SUBSTRATE_BENCH_ORDERED_KEYS` | 0 (unordered) | route every subscription through an ordered work-policy lane (ADR-795) keyed on `data.key`, cycling each tenant's events through this many keys |
 | `FAAS_EVENT_SUBSTRATE_BENCH_PIPELINE_RATES` | `50,200` | offered end-to-end rates, events/s |
 | `FAAS_EVENT_SUBSTRATE_BENCH_PIPELINE_SECONDS` | 20 | seconds of offered load per rate |
 | `FAAS_EVENT_SUBSTRATE_BENCH_WEBHOOK_DELIVERIES` | 1000 | webhook deliveries |
