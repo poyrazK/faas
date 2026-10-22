@@ -189,7 +189,8 @@ func preSeedHostKey(t *testing.T, keyPath, pubPath string) {
 	if err != nil {
 		t.Fatalf("GenerateX25519Identity: %v", err)
 	}
-	if err := os.WriteFile(keyPath, []byte(id.String()), 0o600); err != nil {
+	// secretbox.LoadHostKey accepts owner-read only; vmmd exits on 0600.
+	if err := os.WriteFile(keyPath, []byte(id.String()), 0o400); err != nil {
 		t.Fatalf("write key: %v", err)
 	}
 	if err := os.WriteFile(pubPath, []byte(id.Recipient().String()), 0o444); err != nil {
