@@ -167,6 +167,25 @@ func (f *failoverFleet) failoverCount(t *testing.T, reason, outcome string) floa
 	return 0
 }
 
+func counterValue(t *testing.T, ops *wire.OpsMetrics, name, label, value string) float64 {
+	t.Helper()
+	families, err := ops.Registry().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			if labelValue(metric, label) == value {
+				return metric.GetCounter().GetValue()
+			}
+		}
+	}
+	return 0
+}
+
 func labelValue(metric *dto.Metric, name string) string {
 	for _, label := range metric.GetLabel() {
 		if label.GetName() == name {
@@ -369,16 +388,17 @@ func TestWakeFailover_AlternateIsTheSameWake(t *testing.T) {
 		// The deployment has had snapshots but has none usable now, so the
 		// first attempt records a miss and arms the backoff gate.
 		f.e = sched.XNewEngine(t, statetest.NewMem(&snapshotHistoryStore{MemStore: f.store}), f.vmm, &sched.FakeNotifier{}, "1.10.0").
-			WithOwnerNodeID(f.nodes[0].ID)
+			WithOwnerNodeID(f.nodes[0].ID).WithOpsMetrics(f.ops)
 		app := f.app(t, api.PlanPro, 256, 5)
 		armed = true
 		res, err := f.e.Wake(f.ctx, app.ID, "", "", sched.TriggerGateway)
 		if err != nil || res.InstanceID == "" {
 			t.Fatalf("Wake = %+v, %v; want the alternate to cold boot past the miss its own first attempt recorded", res, err)
 		}
-		dep, err := f.store.LiveDeployment(f.ctx, app.ID)
-		if err != nil || dep.SnapshotMissCount != 1 {
-			t.Fatalf("snapshot misses = %d, %v; want 1 for one wake", dep.SnapshotMissCount, err)
+		// The successful wake clears the backoff asynchronously, so count
+		// the recordings rather than reading the deployment's counter.
+		if got := counterValue(t, f.ops, "schedd_snapshot_backoff_stamp_total", "outcome", "recorded"); got != 1 {
+			t.Fatalf("snapshot misses recorded = %v, want 1 for one wake", got)
 		}
 	})
 	t.Run("scale-out cooldown", func(t *testing.T) {
