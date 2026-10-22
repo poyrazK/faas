@@ -261,7 +261,7 @@ func executeConnectedRepoPreview(ctx context.Context, opts connectedRepoScanOpti
 		}
 		return 0
 	}
-	code := printPlanTextWithExplain(osStdout, plan, excludeList, opts.showAffected, opts.explain)
+	code = printPlanTextWithExplain(osStdout, plan, excludeList, opts.showAffected, opts.explain)
 	if code != 0 {
 		return code
 	}
