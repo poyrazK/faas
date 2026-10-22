@@ -175,10 +175,27 @@ SELECT coalesce((SELECT 'workload:' || p.workload_name FROM scenario_test_action
  '')::text AS target;
 
 -- name: InsertScenarioCapturedQueueMessage :one
-INSERT INTO scenario_captured_queue_messages(account_id,run_id,app_id,kind,target,queue_name,schedule,message,oversized)
+INSERT INTO scenario_captured_queue_messages(account_id,run_id,app_id,kind,target,queue_name,schedule,message,oversized,scheduled_at)
 VALUES(sqlc.arg(account_id)::text::uuid,sqlc.arg(run_id)::text,sqlc.arg(app_id)::text::uuid,sqlc.arg(kind)::text,
- sqlc.arg(target)::text,sqlc.arg(queue_name)::text,sqlc.arg(schedule)::text,sqlc.narg(message)::jsonb,sqlc.arg(oversized)::boolean)
+ sqlc.arg(target)::text,sqlc.arg(queue_name)::text,sqlc.arg(schedule)::text,sqlc.narg(message)::jsonb,sqlc.arg(oversized)::boolean,
+ sqlc.narg(scheduled_at)::timestamptz)
 RETURNING id::text AS id;
+
+-- name: ScenarioCapturedQueueMessageByID :one
+-- A capture is read back only inside its own run (ADR-20261022082721).
+SELECT kind,target,queue_name,schedule,message,oversized,scheduled_at,created_at
+FROM scenario_captured_queue_messages
+WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text;
+
+-- name: ScenarioCapturedPlatformCallByID :one
+SELECT kind,target,name,message,oversized,created_at FROM scenario_captured_platform_calls
+WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text;
+
+-- name: ScenarioCapturedEventByIdentity :one
+SELECT type,schema_version,created_at FROM scenario_captured_events
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text
+ AND source=sqlc.arg(source)::text AND event_id=sqlc.arg(event_id)::text
+ORDER BY created_at,id LIMIT 1;
 
 -- name: ScenarioCapturedQueueMessages :many
 SELECT m.id::text AS id,p.workload_name AS workload,m.kind,m.target,m.queue_name,m.schedule,m.message,m.oversized

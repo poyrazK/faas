@@ -12,7 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -23,6 +26,7 @@ type RehearsalPlatformAPIStore interface {
 	state.ScenarioQueueCaptureStore
 	state.ScenarioEventCaptureStore
 	state.ScenarioPlatformCaptureStore
+	state.ScenarioCapturedReadStore
 	state.EventSchemaStore
 }
 
@@ -76,7 +80,14 @@ func rehearsalPlatformAPIRoute(r *http.Request) (rehearsalPlatformRoute, bool) {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-	if r.Method != http.MethodPost || !strings.EqualFold(strings.TrimSuffix(host, "."), api.ScenarioPlatformAPIHost) {
+	if !strings.EqualFold(strings.TrimSuffix(host, "."), api.ScenarioPlatformAPIHost) {
+		return nil, false
+	}
+	switch r.Method {
+	case http.MethodGet:
+		return rehearsalReadRoute(r.URL.Path)
+	case http.MethodPost:
+	default:
 		return nil, false
 	}
 	switch r.URL.Path {
@@ -92,7 +103,17 @@ func rehearsalPlatformAPIRoute(r *http.Request) (rehearsalPlatformRoute, bool) {
 		}
 		return nil, false
 	}
-	rest, found := strings.CutPrefix(r.URL.Path, "/v1/apps/")
+	path := r.URL.Path
+	// An organization-scoped queue send addresses the same app; the run, not
+	// the organization, bounds what it may reach.
+	if rest, found := strings.CutPrefix(path, "/v1/orgs/"); found {
+		org, tail, _ := strings.Cut(rest, "/")
+		if org == "" || !strings.HasPrefix(tail, "apps/") || !strings.HasSuffix(tail, "/queues/send") {
+			return nil, false
+		}
+		path = "/v1/" + tail
+	}
+	rest, found := strings.CutPrefix(path, "/v1/apps/")
 	if !found {
 		return nil, false
 	}
@@ -105,6 +126,10 @@ func rehearsalPlatformAPIRoute(r *http.Request) (rehearsalPlatformRoute, bool) {
 		return queueCaptureRoute(api.ScenarioQueueKindQueue, slug), true
 	case "delayed-tasks":
 		return queueCaptureRoute(api.ScenarioQueueKindDelayedTask, slug), true
+	case "invoke/async":
+		return queueCaptureRoute(api.ScenarioQueueKindAsyncInvoke, slug), true
+	case "inbox":
+		return queueCaptureRoute(rehearsalInboxKind, slug), true
 	}
 	if rest, ok := strings.CutPrefix(route, "realtime/"); ok {
 		return realtimeRoute(slug, rest)
@@ -119,17 +144,25 @@ func rehearsalPlatformAPIRoute(r *http.Request) (rehearsalPlatformRoute, bool) {
 
 func queueCaptureRoute(kind, slug string) rehearsalPlatformRoute {
 	return func(w http.ResponseWriter, r *http.Request, call rehearsalPlatformCall) {
-		serveRehearsalQueueCapture(w, r, call.store, call.caller, kind, slug, call.now)
+		serveRehearsalQueueCapture(w, r, call, kind, slug)
 	}
 }
 
-func serveRehearsalQueueCapture(w http.ResponseWriter, r *http.Request, store state.ScenarioQueueCaptureStore, caller, kind, slug string, now time.Time) {
-	msg, scheduledAt, problem := decodeRehearsalQueueCapture(w, r, kind, slug, now)
+// rehearsalInboxKind routes POST .../inbox, the application-inbox facade over
+// a queue send; it is captured as kind queue.
+const rehearsalInboxKind = "inbox"
+
+func serveRehearsalQueueCapture(w http.ResponseWriter, r *http.Request, call rehearsalPlatformCall, kind, slug string) {
+	now := call.now
+	msg, scheduledAt, eventID, problem := decodeRehearsalQueueCapture(w, r, call.policy.AccountID, kind, slug, now)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
-	id, captured, err := store.CaptureScenarioQueueMessage(r.Context(), caller, msg)
+	if !scheduledAt.IsZero() {
+		msg.ScheduledAt = &scheduledAt
+	}
+	id, captured, err := call.store.CaptureScenarioQueueMessage(r.Context(), call.caller, msg)
 	switch {
 	case !captured || errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app"))
@@ -141,57 +174,147 @@ func serveRehearsalQueueCapture(w http.ResponseWriter, r *http.Request, store st
 		api.WriteProblem(w, api.ErrCapacity("rehearsal queue capture unavailable"))
 		return
 	}
-	w.Header().Set("X-Gregale-Rehearsal", "captured")
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	if kind == api.ScenarioQueueKindQueue {
-		_ = json.NewEncoder(w).Encode(api.QueueSendResponse{ID: id})
-		return
+	statusURL := "/v1/invocations/" + id
+	switch kind {
+	case api.ScenarioQueueKindQueue:
+		writeRehearsalCaptured(w, http.StatusCreated, api.QueueSendResponse{ID: id})
+	case rehearsalInboxKind:
+		writeRehearsalCaptured(w, http.StatusAccepted, api.SendAppMessageResponse{ID: id, EventID: eventID, TargetApp: slug,
+			Status: string(state.InvocationPending), StatusURL: statusURL})
+	case api.ScenarioQueueKindAsyncInvoke:
+		writeRehearsalCaptured(w, http.StatusAccepted, api.AsyncInvokeResponse{ID: id, StatusURL: statusURL})
+	default:
+		writeRehearsalCaptured(w, http.StatusCreated, api.DelayedTaskResponse{ID: id, ScheduledAt: scheduledAt, State: string(state.InvocationPending), CreatedAt: now})
 	}
-	_ = json.NewEncoder(w).Encode(api.DelayedTaskResponse{ID: id, ScheduledAt: scheduledAt, State: string(state.InvocationPending), CreatedAt: now})
 }
 
 // decodeRehearsalQueueCapture applies the public API's request contract. A
 // body over the capture bound is kept only as an incomplete marker, so the run
-// reports incomplete evidence rather than a different outcome.
-func decodeRehearsalQueueCapture(w http.ResponseWriter, r *http.Request, kind, slug string, now time.Time) (state.ScenarioQueueCapture, time.Time, *api.Problem) {
+// reports incomplete evidence rather than a different outcome. eventID is an
+// inbox message's envelope ID.
+func decodeRehearsalQueueCapture(w http.ResponseWriter, r *http.Request, accountID, kind, slug string, now time.Time) (state.ScenarioQueueCapture, time.Time, string, *api.Problem) {
 	msg := state.ScenarioQueueCapture{Kind: kind, Slug: slug}
+	if kind == rehearsalInboxKind {
+		msg.Kind = api.ScenarioQueueKindQueue
+	}
 	if r.Body == nil {
-		return msg, time.Time{}, api.ErrValidation("empty request body")
+		return msg, time.Time{}, "", api.ErrValidation("empty request body")
 	}
 	_ = http.NewResponseController(w).SetReadDeadline(now.Add(5 * time.Second))
 	body, err := io.ReadAll(io.LimitReader(r.Body, api.MaxScenarioCapturedQueueMessageBytes+1))
 	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
 	if err != nil {
-		return msg, time.Time{}, api.ErrValidation("read request body")
+		return msg, time.Time{}, "", api.ErrValidation("read request body")
 	}
 	if len(body) > api.MaxScenarioCapturedQueueMessageBytes {
 		msg.Oversized = true
-		return msg, now, nil
+		if kind == api.ScenarioQueueKindDelayedTask {
+			return msg, now, "", nil
+		}
+		return msg, time.Time{}, uuid.NewString(), nil
 	}
-	if kind == api.ScenarioQueueKindQueue {
+	switch kind {
+	case api.ScenarioQueueKindQueue:
 		var req api.QueueSendRequest
 		if problem := decodeRehearsalStrictJSON(body, &req); problem != nil {
-			return msg, time.Time{}, problem
+			return msg, time.Time{}, "", problem
+		}
+		if problem := req.RetryPolicy.Validate(); problem != nil {
+			return msg, time.Time{}, "", problem
 		}
 		msg.QueueName = req.QueueName
 		msg.Message, _ = json.Marshal(req)
-		return msg, time.Time{}, nil
+		return msg, time.Time{}, "", nil
+	case rehearsalInboxKind:
+		return decodeRehearsalInbox(body, msg, accountID, now)
+	case api.ScenarioQueueKindAsyncInvoke:
+		return decodeRehearsalAsyncInvoke(body, msg, now)
 	}
 	var req api.DelayedTaskRequest
 	if problem := decodeRehearsalStrictJSON(body, &req); problem != nil {
-		return msg, time.Time{}, problem
+		return msg, time.Time{}, "", problem
 	}
 	scheduledAt, schedule, problem := rehearsalDelayedTaskSchedule(now, req)
+	if problem == nil {
+		problem = req.RetryPolicy.Validate()
+	}
+	if problem == nil && req.RetentionSeconds != nil && *req.RetentionSeconds < 0 {
+		problem = api.ErrValidation("retention_seconds must be non-negative")
+	}
 	if problem != nil {
-		return msg, time.Time{}, problem
+		return msg, time.Time{}, "", problem
 	}
 	// The instant is wall-clock; only the requested delay or the fact of an
 	// absolute instant is compared.
 	req.ScheduledAt, req.DelaySeconds = time.Time{}, 0
 	msg.Schedule = schedule
 	msg.Message, _ = json.Marshal(req)
-	return msg, scheduledAt, nil
+	return msg, scheduledAt, "", nil
+}
+
+// decodeRehearsalInbox normalizes an application-inbox message as the public
+// API does. The envelope ID and time are platform defaults or wall-clock, so
+// only the business fields are compared.
+func decodeRehearsalInbox(body []byte, msg state.ScenarioQueueCapture, accountID string, now time.Time) (state.ScenarioQueueCapture, time.Time, string, *api.Problem) {
+	var req api.SendAppMessageRequest
+	if problem := decodeRehearsalStrictJSON(body, &req); problem != nil {
+		return msg, time.Time{}, "", problem
+	}
+	if req.ID == "" {
+		req.ID = uuid.NewString()
+	}
+	if req.Source == "" {
+		req.Source = "gregale.send"
+	}
+	occurredAt := time.Time{}
+	if req.Time != nil {
+		occurredAt = *req.Time
+	}
+	envelope, err := (events.Envelope{ID: req.ID, Source: req.Source, Type: req.Type, Time: occurredAt, DataContentType: req.DataContentType,
+		Data: req.Data}).Normalize(accountID, now)
+	if err != nil {
+		return msg, time.Time{}, "", api.ErrValidation(err.Error())
+	}
+	if problem := req.RetryPolicy.Validate(); problem != nil {
+		return msg, time.Time{}, "", problem
+	}
+	msg.QueueName = req.QueueName
+	msg.Message, _ = json.Marshal(map[string]any{"inbox": map[string]any{"source": envelope.Source, "type": envelope.Type,
+		"datacontenttype": envelope.DataContentType, "data": envelope.Data}, "queue_name": req.QueueName, "environment": req.Environment,
+		"flag_context": req.FlagContext, "retry_policy": req.RetryPolicy, "work": req.Work})
+	return msg, time.Time{}, envelope.ID, nil
+}
+
+// decodeRehearsalAsyncInvoke validates an asynchronous invoke as the public
+// API does. A deadline is an instant, so only its presence is compared.
+func decodeRehearsalAsyncInvoke(body []byte, msg state.ScenarioQueueCapture, now time.Time) (state.ScenarioQueueCapture, time.Time, string, *api.Problem) {
+	var req api.InvokeRequest
+	if problem := decodeRehearsalStrictJSON(body, &req); problem != nil {
+		return msg, time.Time{}, "", problem
+	}
+	if req.DeadlineAt != nil && !req.DeadlineAt.After(now) {
+		return msg, time.Time{}, "", api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid invocation deadline", "deadline_at must be in the future")
+	}
+	if req.RetentionSeconds != nil && *req.RetentionSeconds < 0 {
+		return msg, time.Time{}, "", api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid invocation retention", "retention_seconds must be non-negative")
+	}
+	if problem := req.RetryPolicy.Validate(); problem != nil {
+		return msg, time.Time{}, "", problem
+	}
+	if req.Method == "" {
+		req.Method = http.MethodPost
+	}
+	if req.Path == "" {
+		req.Path = "/"
+	}
+	deadline := ""
+	if req.DeadlineAt != nil {
+		deadline = "absolute"
+	}
+	req.DeadlineAt = nil
+	invoke, _ := json.Marshal(req)
+	msg.Message, _ = json.Marshal(map[string]json.RawMessage{"invoke": invoke, "deadline": json.RawMessage(fmt.Sprintf("%q", deadline))})
+	return msg, time.Time{}, "", nil
 }
 
 func decodeRehearsalStrictJSON(body []byte, dst any) *api.Problem {

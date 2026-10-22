@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -14,17 +15,20 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// ScenarioQueueCapture is one queue send or delayed task an enrolled app
-// requested through the run-local platform API. Slug is the {slug} the request
-// addressed. Schedule is delay:<seconds> or absolute for a delayed task and
-// empty for a queue send. Message is nil when Oversized.
+// ScenarioQueueCapture is one queue send, delayed task or asynchronous invoke
+// an enrolled app requested through the run-local platform API. Slug is the
+// {slug} the request addressed. Schedule is delay:<seconds> or absolute for a
+// delayed task and empty otherwise; ScheduledAt is the instant the response
+// reported, kept only so a read of the capture agrees (ADR-20261022082721).
+// Message is nil when Oversized.
 type ScenarioQueueCapture struct {
-	Kind      string
-	Slug      string
-	QueueName string
-	Schedule  string
-	Message   json.RawMessage
-	Oversized bool
+	Kind        string
+	Slug        string
+	QueueName   string
+	Schedule    string
+	ScheduledAt *time.Time
+	Message     json.RawMessage
+	Oversized   bool
 }
 
 // ScenarioQueueCaptureStore records an enrolled app's queue work as run
@@ -39,10 +43,16 @@ type ScenarioQueueCaptureStore interface {
 type memScenarioCapturedQueueMessage struct {
 	id, accountID, runID, appID, target string
 	msg                                 ScenarioQueueCapture
+	createdAt                           time.Time
 }
 
 func validScenarioQueueCapture(msg ScenarioQueueCapture) bool {
-	if msg.Kind != api.ScenarioQueueKindQueue && msg.Kind != api.ScenarioQueueKindDelayedTask || len(msg.QueueName) > 256 || msg.Oversized != (msg.Message == nil) {
+	switch msg.Kind {
+	case api.ScenarioQueueKindQueue, api.ScenarioQueueKindDelayedTask, api.ScenarioQueueKindAsyncInvoke:
+	default:
+		return false
+	}
+	if len(msg.QueueName) > 256 || msg.Oversized != (msg.Message == nil) {
 		return false
 	}
 	return msg.Oversized || (msg.Kind == api.ScenarioQueueKindDelayedTask) == (msg.Schedule != "")
@@ -91,7 +101,8 @@ func (s *PgStore) CaptureScenarioQueueMessage(ctx context.Context, appID string,
 		return uuid.NewString(), true, nil // the extra row already marks the inventory incomplete
 	}
 	id, err := q.InsertScenarioCapturedQueueMessage(ctx, tx, sqlc.InsertScenarioCapturedQueueMessageParams{AccountID: policy.AccountID, RunID: policy.RunID, AppID: appID,
-		Kind: msg.Kind, Target: target, QueueName: msg.QueueName, Schedule: msg.Schedule, Message: []byte(msg.Message), Oversized: msg.Oversized})
+		Kind: msg.Kind, Target: target, QueueName: msg.QueueName, Schedule: msg.Schedule, Message: []byte(msg.Message), Oversized: msg.Oversized,
+		ScheduledAt: standardNullablePgTime(msg.ScheduledAt)})
 	if err != nil {
 		return "", true, fmt.Errorf("persist rehearsal queue capture: %w", err)
 	}
@@ -136,7 +147,8 @@ func (m *MemStore) CaptureScenarioQueueMessage(ctx context.Context, appID string
 	if captured > api.MaxScenarioCapturedQueueMessages {
 		return uuid.NewString(), true, nil
 	}
-	row := memScenarioCapturedQueueMessage{id: uuid.NewString(), accountID: member.AccountID, runID: member.RunID, appID: member.AppID, target: target, msg: msg}
+	row := memScenarioCapturedQueueMessage{id: uuid.NewString(), accountID: member.AccountID, runID: member.RunID, appID: member.AppID, target: target, msg: msg,
+		createdAt: time.Now().UTC()}
 	row.msg.Message = append(json.RawMessage(nil), msg.Message...)
 	if msg.Oversized {
 		row.msg.Message = nil

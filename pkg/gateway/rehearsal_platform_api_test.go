@@ -25,6 +25,34 @@ type fakeRehearsalPlatformAPIStore struct {
 	events   []state.ScenarioEventCapture
 	eventRun string
 	calls    []state.ScenarioPlatformCallCapture
+	// Read-back fixtures keyed by capture ID (events by source and ID).
+	queueRecords    map[string]state.ScenarioCapturedQueueRecord
+	platformRecords map[string]state.ScenarioCapturedPlatformRecord
+	eventRecords    map[[2]string]state.ScenarioCapturedEventRecord
+}
+
+func (f *fakeRehearsalPlatformAPIStore) ScenarioCapturedQueueMessage(_ context.Context, accountID, runID, id string) (state.ScenarioCapturedQueueRecord, error) {
+	record, ok := f.queueRecords[id]
+	if !ok || accountID != fakeRehearsalAccount || runID != f.run {
+		return state.ScenarioCapturedQueueRecord{}, state.ErrNotFound
+	}
+	return record, nil
+}
+
+func (f *fakeRehearsalPlatformAPIStore) ScenarioCapturedPlatformCall(_ context.Context, accountID, runID, id string) (state.ScenarioCapturedPlatformRecord, error) {
+	record, ok := f.platformRecords[id]
+	if !ok || accountID != fakeRehearsalAccount || runID != f.run {
+		return state.ScenarioCapturedPlatformRecord{}, state.ErrNotFound
+	}
+	return record, nil
+}
+
+func (f *fakeRehearsalPlatformAPIStore) ScenarioCapturedEvent(_ context.Context, accountID, runID, source, eventID string) (state.ScenarioCapturedEventRecord, error) {
+	record, ok := f.eventRecords[[2]string{source, eventID}]
+	if !ok || accountID != fakeRehearsalAccount || runID != f.run {
+		return state.ScenarioCapturedEventRecord{}, state.ErrNotFound
+	}
+	return record, nil
 }
 
 const fakeRehearsalAccount = "5b0f6f0e-8a43-4d0e-9a4f-2d8f7a1c9e01"
