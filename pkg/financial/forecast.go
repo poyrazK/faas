@@ -21,6 +21,10 @@ type Forecast struct {
 	Currency               string    `json:"currency"`
 	ProjectedQuantity      *int64    `json:"projected_quantity,omitempty"`
 	ProjectedNetMillicents *int64    `json:"projected_net_millicents,omitempty"`
+	// ProjectedGrossMillicents is set only for account-level meters whose
+	// charge is not one unit price, such as object storage
+	// (ADR-20261020160000).
+	ProjectedGrossMillicents *int64 `json:"projected_gross_millicents,omitempty"`
 }
 
 // ForecastMeter requires an uninterrupted coverage interval from period start,

@@ -4074,6 +4074,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			guestServices = gateway.NewServiceProxy(serviceProxyConfig)
 			guestServiceProxy = newEnvironmentQualificationServiceProxy(pgStore, cfg.NodeName, deps.nodeCache.Forwarding(), guestServices)
+			// ADR-20261021090000: a contained rehearsal guest's queue sends and
+			// delayed tasks at api.svc.gregale become run evidence. Every other
+			// caller and request reaches the service proxy unchanged.
+			guestServiceProxy = gateway.WithRehearsalPlatformAPI(guestServiceProxy, func(ctx context.Context, remote string) (string, error) {
+				appID, _, err := serviceProxyConfig.ResolveCallerIdentity(ctx, remote)
+				return appID, err
+			}, pgStore)
 		}
 	}
 

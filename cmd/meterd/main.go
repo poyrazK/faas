@@ -1267,6 +1267,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	rec := reconciler.New(provName, store, pusher, log, recRegistry).WithMode(billingMode)
 	go rec.Loop(ctx, mc.ReconcileInterval)
+	// ADR-20261019193600: the ledger dual run compares the financial ledger with the
+	// pusher's receipts on the same cadence. Read-only.
+	ledgerProvider := ""
+	if billingMode.Enabled() {
+		ledgerProvider = provName // with billing off there are no receipts to compare
+	}
+	ledgerRec := meter.NewLedgerReconciler(meter.NewPusher(store, pusher, log, deps.now, ops), ledgerProvider, recRegistry)
+	go ledgerRec.Loop(ctx, mc.ReconcileInterval)
 
 	// ADR-049 §B.3: snapshot/app-layer storage rollup. The store
 	// interface (pkg/meter/storage.go) is a narrow projection over

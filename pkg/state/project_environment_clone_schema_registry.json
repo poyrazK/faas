@@ -27,6 +27,23 @@
     "kind": "account_identity"
   },
   {
+    "table": "financial_budget_alert_channel_deliveries",
+    "columns": [
+      "account_id",
+      "alert_id",
+      "attempts",
+      "channel_id",
+      "delivered_at",
+      "kind",
+      "last_error",
+      "lease_token",
+      "next_attempt_at",
+      "policy_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "financial_budget_alerts",
     "columns": [
       "account_id",
@@ -44,6 +61,55 @@
       "threshold_millicents"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "financial_object_storage_estimates",
+    "columns": [
+      "account_id",
+      "currency",
+      "egress_bytes",
+      "egress_millicents_per_gib",
+      "fresh",
+      "included_byte_hours",
+      "included_egress_bytes",
+      "included_requests",
+      "observed_at",
+      "period_start",
+      "request_count",
+      "requests_millicents_per_million",
+      "storage_millicents_per_gib_month",
+      "stored_byte_hours",
+      "usage_through"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_budget_projection_alerts",
+    "columns": [
+      "account_id",
+      "attempts",
+      "delivered_at",
+      "id",
+      "last_error",
+      "lease_token",
+      "limit_millicents",
+      "next_attempt_at",
+      "payload",
+      "period_start",
+      "policy_id",
+      "revision",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_budget_channels",
+    "columns": [
+      "account_id",
+      "channel_id",
+      "policy_id"
+    ],
+    "kind": "configuration"
   },
   {
     "table": "financial_budget_evaluations",
@@ -105,6 +171,18 @@
       "payload",
       "period_end",
       "period_start"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "financial_compute_scope_books",
+    "columns": [
+      "account_id",
+      "payload",
+      "period_end",
+      "period_start",
+      "scope_id",
+      "scope_kind"
     ],
     "kind": "account_identity"
   },
@@ -175,7 +253,8 @@
       "job_compute_incarnation",
       "node_id",
       "observed_at",
-      "protocol"
+      "protocol",
+      "scope_compute_incarnation"
     ],
     "kind": "operational"
   },
@@ -15459,6 +15538,57 @@
       "updated_at"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "scenario_captured_events",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "data",
+      "event_id",
+      "id",
+      "oversized",
+      "run_id",
+      "schema_version",
+      "source",
+      "type"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_captured_platform_calls",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "idempotency_key",
+      "kind",
+      "message",
+      "name",
+      "oversized",
+      "run_id",
+      "target"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_captured_queue_messages",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "kind",
+      "message",
+      "oversized",
+      "queue_name",
+      "run_id",
+      "schedule",
+      "target"
+    ],
+    "kind": "operational"
   },
   {
     "table": "scenario_cold_preparations",

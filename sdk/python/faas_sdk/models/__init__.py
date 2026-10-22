@@ -1957,8 +1957,10 @@ from .financial_app_costs_response_currency import FinancialAppCostsResponseCurr
 from .financial_app_meter_costs import FinancialAppMeterCosts
 from .financial_attribution import FinancialAttribution
 from .financial_budget_alert import FinancialBudgetAlert
+from .financial_budget_alert_kind import FinancialBudgetAlertKind
 from .financial_budget_alert_last_error import FinancialBudgetAlertLastError
 from .financial_budget_alert_state import FinancialBudgetAlertState
+from .financial_budget_channels_response import FinancialBudgetChannelsResponse
 from .financial_budget_evaluation import FinancialBudgetEvaluation
 from .financial_budget_history_response import FinancialBudgetHistoryResponse
 from .financial_budget_list_response import FinancialBudgetListResponse
@@ -5194,6 +5196,9 @@ from .scan_project_project_worker_health import ScanProjectProjectWorkerHealth
 from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
 from .scenario_action_snapshot import ScenarioActionSnapshot
+from .scenario_action_snapshot_event_capture_version import ScenarioActionSnapshotEventCaptureVersion
+from .scenario_action_snapshot_platform_capture_version import ScenarioActionSnapshotPlatformCaptureVersion
+from .scenario_action_snapshot_queue_capture_version import ScenarioActionSnapshotQueueCaptureVersion
 from .scenario_action_snapshot_recorder_version import ScenarioActionSnapshotRecorderVersion
 from .scenario_action_snapshot_scope import ScenarioActionSnapshotScope
 from .scenario_action_snapshot_simulation_version import ScenarioActionSnapshotSimulationVersion
@@ -5201,6 +5206,11 @@ from .scenario_action_snapshot_status import ScenarioActionSnapshotStatus
 from .scenario_action_snapshot_version import ScenarioActionSnapshotVersion
 from .scenario_captured_action import ScenarioCapturedAction
 from .scenario_captured_action_source import ScenarioCapturedActionSource
+from .scenario_captured_event import ScenarioCapturedEvent
+from .scenario_captured_platform_call import ScenarioCapturedPlatformCall
+from .scenario_captured_platform_call_kind import ScenarioCapturedPlatformCallKind
+from .scenario_captured_queue_message import ScenarioCapturedQueueMessage
+from .scenario_captured_queue_message_kind import ScenarioCapturedQueueMessageKind
 from .scenario_cold_preparation import ScenarioColdPreparation
 from .scenario_cold_preparation_method import ScenarioColdPreparationMethod
 from .scenario_cold_preparation_state import ScenarioColdPreparationState
@@ -5262,6 +5272,7 @@ from .scenario_simulation_plan import ScenarioSimulationPlan
 from .scenario_simulation_plan_version import ScenarioSimulationPlanVersion
 from .scenario_simulation_response import ScenarioSimulationResponse
 from .scenario_simulation_response_fault import ScenarioSimulationResponseFault
+from .scenario_suppressed_webhook_events import ScenarioSuppressedWebhookEvents
 from .scenario_suspend_resume_evidence import ScenarioSuspendResumeEvidence
 from .scenario_suspend_resume_evidence_status import ScenarioSuspendResumeEvidenceStatus
 from .scenario_suspend_resume_evidence_version import ScenarioSuspendResumeEvidenceVersion
@@ -5389,6 +5400,7 @@ from .set_commit_source_enabled_body import SetCommitSourceEnabledBody
 from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_environment_route_budgets_request import SetEnvironmentRouteBudgetsRequest
 from .set_environment_route_budgets_scope import SetEnvironmentRouteBudgetsScope
+from .set_financial_budget_channels_request import SetFinancialBudgetChannelsRequest
 from .set_grace_window_request import SetGraceWindowRequest
 from .set_mcp_readiness_fallback_request import SetMCPReadinessFallbackRequest
 from .set_mcp_readiness_fallback_request_provider import SetMCPReadinessFallbackRequestProvider
@@ -7876,8 +7888,10 @@ __all__ = (
     "FinancialAppMeterCosts",
     "FinancialAttribution",
     "FinancialBudgetAlert",
+    "FinancialBudgetAlertKind",
     "FinancialBudgetAlertLastError",
     "FinancialBudgetAlertState",
+    "FinancialBudgetChannelsResponse",
     "FinancialBudgetEvaluation",
     "FinancialBudgetHistoryResponse",
     "FinancialBudgetListResponse",
@@ -10869,6 +10883,9 @@ __all__ = (
     "ScanResult",
     "ScanResultStatus",
     "ScenarioActionSnapshot",
+    "ScenarioActionSnapshotEventCaptureVersion",
+    "ScenarioActionSnapshotPlatformCaptureVersion",
+    "ScenarioActionSnapshotQueueCaptureVersion",
     "ScenarioActionSnapshotRecorderVersion",
     "ScenarioActionSnapshotScope",
     "ScenarioActionSnapshotSimulationVersion",
@@ -10876,6 +10893,11 @@ __all__ = (
     "ScenarioActionSnapshotVersion",
     "ScenarioCapturedAction",
     "ScenarioCapturedActionSource",
+    "ScenarioCapturedEvent",
+    "ScenarioCapturedPlatformCall",
+    "ScenarioCapturedPlatformCallKind",
+    "ScenarioCapturedQueueMessage",
+    "ScenarioCapturedQueueMessageKind",
     "ScenarioColdPreparation",
     "ScenarioColdPreparationMethod",
     "ScenarioColdPreparationState",
@@ -10937,6 +10959,7 @@ __all__ = (
     "ScenarioSimulationPlanVersion",
     "ScenarioSimulationResponse",
     "ScenarioSimulationResponseFault",
+    "ScenarioSuppressedWebhookEvents",
     "ScenarioSuspendResumeEvidence",
     "ScenarioSuspendResumeEvidenceStatus",
     "ScenarioSuspendResumeEvidenceVersion",
@@ -11060,6 +11083,7 @@ __all__ = (
     "SetDeploymentAliasRequest",
     "SetEnvironmentRouteBudgetsRequest",
     "SetEnvironmentRouteBudgetsScope",
+    "SetFinancialBudgetChannelsRequest",
     "SetGraceWindowRequest",
     "SetMCPReadinessFallbackRequest",
     "SetMCPReadinessFallbackRequestProvider",

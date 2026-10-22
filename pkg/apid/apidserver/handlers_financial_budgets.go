@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/financialbudgets"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/financial"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -88,6 +89,10 @@ func (s *server) createFinancialBudget(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	req.Spec = state.NormalizeFinancialBudgetSpec(req.Spec)
+	if problem := s.strictBudgetReleaseProblem(acct, req.Spec, nil); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if !validateFinancialBudgetActivation(w, r, store, acct.ID, req.Spec) {
 		return
 	}
@@ -125,6 +130,21 @@ func (s *server) updateFinancialBudget(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	req.Spec = state.NormalizeFinancialBudgetSpec(req.Spec)
+	if strictBudgetActivation(req.Spec) && !s.platformFlagEnabled(platformflags.StrictBudgets, acct) {
+		current, err := store.GetFinancialBudget(r.Context(), acct.ID, r.PathValue("id"))
+		if err != nil {
+			api.WriteProblem(w, financialBudgetProblem(err))
+			return
+		}
+		// The exemption holds only for the revision this update replaces.
+		if current.Revision != req.ExpectedRevision {
+			current = state.FinancialBudget{}
+		}
+		if problem := s.strictBudgetReleaseProblem(acct, req.Spec, &current); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
 	if !validateFinancialBudgetActivation(w, r, store, acct.ID, req.Spec) {
 		return
 	}
@@ -181,6 +201,25 @@ func (s *server) listFinancialBudgetRevisions(w http.ResponseWriter, r *http.Req
 		out.NextRevision = rows[len(rows)-1].Revision
 	}
 	writeFinancialBudgetJSON(w, http.StatusOK, out)
+}
+
+func strictBudgetActivation(spec financial.BudgetSpec) bool {
+	return spec.Enabled && spec.Mode == "strict"
+}
+
+// strictBudgetReleaseProblem refuses enabling a strict budget the
+// strict_budgets platform flag (ADR-1750) has not released to the account.
+// A strict budget that is already enabled stays editable, and disabling or
+// deleting one is never refused.
+func (s *server) strictBudgetReleaseProblem(acct state.Account, spec financial.BudgetSpec, current *state.FinancialBudget) *api.Problem {
+	if !strictBudgetActivation(spec) || s.platformFlagEnabled(platformflags.StrictBudgets, acct) {
+		return nil
+	}
+	if current != nil && current.DeletedAt == nil && strictBudgetActivation(current.Spec) {
+		return nil
+	}
+	return api.NewProblem(http.StatusUnprocessableEntity, "financial_budget_activation_unavailable", "Strict budgets not released",
+		"Strict compute and egress budgets are not yet available to this account. Monitored budgets and alerts are unaffected, and strict budgets that are already enabled keep enforcing.")
 }
 
 func validateFinancialBudgetActivation(w http.ResponseWriter, r *http.Request, store state.FinancialBudgetStore, account string, spec financial.BudgetSpec) bool {

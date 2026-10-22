@@ -1348,12 +1348,25 @@ type Querier interface {
 	FinancialAdjustmentInsert(ctx context.Context, db DBTX, arg FinancialAdjustmentInsertParams) error
 	// ADR-566. Policy mutations serialize per account and publish an atomic audit.
 	FinancialBudgetAccountLock(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)
+	FinancialBudgetAlertChannelClaim(ctx context.Context, db DBTX, arg FinancialBudgetAlertChannelClaimParams) (FinancialBudgetAlertChannelDelivery, error)
+	FinancialBudgetAlertChannelGet(ctx context.Context, db DBTX, arg FinancialBudgetAlertChannelGetParams) (FinancialBudgetAlertChannelDelivery, error)
+	FinancialBudgetAlertChannelSettle(ctx context.Context, db DBTX, arg FinancialBudgetAlertChannelSettleParams) (pgtype.UUID, error)
+	// A channel bound after an alert was recorded still receives it once if the
+	// current month's evaluation crosses that threshold again.
+	FinancialBudgetAlertChannelsEnqueue(ctx context.Context, db DBTX, arg FinancialBudgetAlertChannelsEnqueueParams) error
 	FinancialBudgetAlertClaim(ctx context.Context, db DBTX, arg FinancialBudgetAlertClaimParams) (FinancialBudgetAlert, error)
 	FinancialBudgetAlertDeliveryGet(ctx context.Context, db DBTX, arg FinancialBudgetAlertDeliveryGetParams) (FinancialBudgetAlert, error)
+	FinancialBudgetAlertGetByID(ctx context.Context, db DBTX, id pgtype.UUID) (FinancialBudgetAlert, error)
 	FinancialBudgetAlertInsert(ctx context.Context, db DBTX, arg FinancialBudgetAlertInsertParams) error
 	FinancialBudgetAlertList(ctx context.Context, db DBTX, arg FinancialBudgetAlertListParams) ([]FinancialBudgetAlert, error)
 	FinancialBudgetAlertSettle(ctx context.Context, db DBTX, arg FinancialBudgetAlertSettleParams) (pgtype.UUID, error)
 	FinancialBudgetAppActionEligible(ctx context.Context, db DBTX, arg FinancialBudgetAppActionEligibleParams) (bool, error)
+	// ADR-20261019193500: budget -> notification channel bindings and one
+	// durable delivery per alert and channel.
+	FinancialBudgetChannelsDelete(ctx context.Context, db DBTX, arg FinancialBudgetChannelsDeleteParams) error
+	// Only channels owned by the policy's account are bound.
+	FinancialBudgetChannelsInsert(ctx context.Context, db DBTX, arg FinancialBudgetChannelsInsertParams) error
+	FinancialBudgetChannelsList(ctx context.Context, db DBTX, arg FinancialBudgetChannelsListParams) ([]NotificationChannel, error)
 	FinancialBudgetCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	FinancialBudgetDelete(ctx context.Context, db DBTX, arg FinancialBudgetDeleteParams) (FinancialBudgetPolicy, error)
 	FinancialBudgetEvaluationGet(ctx context.Context, db DBTX, arg FinancialBudgetEvaluationGetParams) ([]byte, error)
@@ -1361,6 +1374,13 @@ type Querier interface {
 	FinancialBudgetGet(ctx context.Context, db DBTX, arg FinancialBudgetGetParams) (FinancialBudgetPolicy, error)
 	FinancialBudgetInsert(ctx context.Context, db DBTX, arg FinancialBudgetInsertParams) (FinancialBudgetPolicy, error)
 	FinancialBudgetList(ctx context.Context, db DBTX, arg FinancialBudgetListParams) ([]FinancialBudgetPolicy, error)
+	FinancialBudgetProjectionChannelsEnqueue(ctx context.Context, db DBTX, arg FinancialBudgetProjectionChannelsEnqueueParams) error
+	FinancialBudgetProjectionClaim(ctx context.Context, db DBTX, arg FinancialBudgetProjectionClaimParams) (FinancialBudgetProjectionAlert, error)
+	FinancialBudgetProjectionDeliveryGet(ctx context.Context, db DBTX, arg FinancialBudgetProjectionDeliveryGetParams) (FinancialBudgetProjectionAlert, error)
+	FinancialBudgetProjectionGet(ctx context.Context, db DBTX, arg FinancialBudgetProjectionGetParams) (FinancialBudgetProjectionAlert, error)
+	FinancialBudgetProjectionGetByID(ctx context.Context, db DBTX, id pgtype.UUID) (FinancialBudgetProjectionAlert, error)
+	FinancialBudgetProjectionInsert(ctx context.Context, db DBTX, arg FinancialBudgetProjectionInsertParams) error
+	FinancialBudgetProjectionSettle(ctx context.Context, db DBTX, arg FinancialBudgetProjectionSettleParams) (pgtype.UUID, error)
 	FinancialBudgetRevisionInsert(ctx context.Context, db DBTX, arg FinancialBudgetRevisionInsertParams) error
 	FinancialBudgetRevisionList(ctx context.Context, db DBTX, arg FinancialBudgetRevisionListParams) ([]FinancialBudgetRevision, error)
 	FinancialBudgetScopeOwned(ctx context.Context, db DBTX, arg FinancialBudgetScopeOwnedParams) (bool, error)
@@ -1383,6 +1403,10 @@ type Querier interface {
 	FinancialComputeAppLeases(ctx context.Context, db DBTX, arg FinancialComputeAppLeasesParams) ([][]byte, error)
 	FinancialComputeAppManaged(ctx context.Context, db DBTX, arg FinancialComputeAppManagedParams) (pgtype.Bool, error)
 	FinancialComputeAppOwned(ctx context.Context, db DBTX, arg FinancialComputeAppOwnedParams) (bool, error)
+	// The scopes an app attempt funds: its current project, and the environment
+	// of its deployment. The instance's recorded deployment wins over the
+	// request's; an app outside any project has neither.
+	FinancialComputeAppScopes(ctx context.Context, db DBTX, arg FinancialComputeAppScopesParams) (FinancialComputeAppScopesRow, error)
 	// Positive retained charges seed admission conservatively. Corrections cannot
 	// grant execution authority, and missing contracts must fail activation.
 	FinancialComputeBaseline(ctx context.Context, db DBTX, arg FinancialComputeBaselineParams) (FinancialComputeBaselineRow, error)
@@ -1392,6 +1416,21 @@ type Querier interface {
 	FinancialComputeBookGet(ctx context.Context, db DBTX, arg FinancialComputeBookGetParams) ([]byte, error)
 	FinancialComputeBookPut(ctx context.Context, db DBTX, arg FinancialComputeBookPutParams) error
 	FinancialComputeClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
+	FinancialComputeDeploymentEnvironment(ctx context.Context, db DBTX, arg FinancialComputeDeploymentEnvironmentParams) (string, error)
+	// A quiet environment: no running instance, task, unsettled attempt or open
+	// billing interval of a deployment in it, nor of a project app instance whose
+	// deployment is unknown.
+	FinancialComputeEnvironmentActivationSafe(ctx context.Context, db DBTX, arg FinancialComputeEnvironmentActivationSafeParams) (pgtype.Bool, error)
+	// Charges recorded in the environment, or of a deployment now in it, seed
+	// the environment book. Synthetic capacity floors carry no deployment.
+	FinancialComputeEnvironmentBaseline(ctx context.Context, db DBTX, arg FinancialComputeEnvironmentBaselineParams) (FinancialComputeEnvironmentBaselineRow, error)
+	// An unsettled app attempt belongs to an environment's book when it funds
+	// it, or when its deployment now runs in the environment. Attempts acquired
+	// before deployments were recorded resolve through their instance.
+	FinancialComputeEnvironmentLeases(ctx context.Context, db DBTX, arg FinancialComputeEnvironmentLeasesParams) ([][]byte, error)
+	// Sampling must be complete from the earliest of the environment's and its
+	// project apps' creation, or from the month start.
+	FinancialComputeEnvironmentSamplingReady(ctx context.Context, db DBTX, arg FinancialComputeEnvironmentSamplingReadyParams) (pgtype.Bool, error)
 	FinancialComputeHoldPut(ctx context.Context, db DBTX, arg FinancialComputeHoldPutParams) error
 	FinancialComputeHolds(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]FinancialComputeHoldsRow, error)
 	FinancialComputeJobActivationSafe(ctx context.Context, db DBTX, arg FinancialComputeJobActivationSafeParams) (pgtype.Bool, error)
@@ -1414,8 +1453,25 @@ type Querier interface {
 	FinancialComputeOwnerPut(ctx context.Context, db DBTX, arg FinancialComputeOwnerPutParams) error
 	FinancialComputeOwnerValid(ctx context.Context, db DBTX, arg FinancialComputeOwnerValidParams) (bool, error)
 	FinancialComputeOwnersReady(ctx context.Context, db DBTX, maxAgeSeconds float64) (pgtype.Bool, error)
+	FinancialComputeProjectActivationSafe(ctx context.Context, db DBTX, arg FinancialComputeProjectActivationSafeParams) (pgtype.Bool, error)
+	// Positive retained charges of the project's apps seed the project book,
+	// exactly as FinancialComputeBaseline seeds one app's.
+	FinancialComputeProjectBaseline(ctx context.Context, db DBTX, arg FinancialComputeProjectBaselineParams) (FinancialComputeProjectBaselineRow, error)
+	FinancialComputeProjectEnvironments(ctx context.Context, db DBTX, arg FinancialComputeProjectEnvironmentsParams) ([]string, error)
+	// An unsettled attempt belongs to a project's book when it funds it, or
+	// when its app is now in the project.
+	FinancialComputeProjectLeases(ctx context.Context, db DBTX, arg FinancialComputeProjectLeasesParams) ([][]byte, error)
+	// An app is managed while its project, or an environment of its project,
+	// has a strict book: the meter then bills its residency through funding.
+	// Floor waivers are FinancialComputeFloorCovered's, which ignores
+	// environments since a floor has none.
+	FinancialComputeProjectManaged(ctx context.Context, db DBTX, arg FinancialComputeProjectManagedParams) (bool, error)
+	FinancialComputeProjectSamplingReady(ctx context.Context, db DBTX, arg FinancialComputeProjectSamplingReadyParams) (pgtype.Bool, error)
 	FinancialComputeRetired(ctx context.Context, db DBTX, arg FinancialComputeRetiredParams) (bool, error)
 	FinancialComputeSamplingReady(ctx context.Context, db DBTX, arg FinancialComputeSamplingReadyParams) (pgtype.Bool, error)
+	// ADR-1750, amendments 1 and 2: strict project and environment caps.
+	FinancialComputeScopeBookGet(ctx context.Context, db DBTX, arg FinancialComputeScopeBookGetParams) ([]byte, error)
+	FinancialComputeScopeBookPut(ctx context.Context, db DBTX, arg FinancialComputeScopeBookPutParams) error
 	FinancialEgressBaseline(ctx context.Context, db DBTX, arg FinancialEgressBaselineParams) (FinancialEgressBaselineRow, error)
 	FinancialEgressOwnerValid(ctx context.Context, db DBTX, arg FinancialEgressOwnerValidParams) (bool, error)
 	FinancialEgressOwnersReady(ctx context.Context, db DBTX, maxAgeSeconds float64) (bool, error)
@@ -1424,6 +1480,13 @@ type Querier interface {
 	FinancialEvidenceBySource(ctx context.Context, db DBTX, arg FinancialEvidenceBySourceParams) (FinancialUsageEvidence, error)
 	FinancialEvidenceCoverage(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	FinancialEvidenceHead(ctx context.Context, db DBTX, arg FinancialEvidenceHeadParams) (int64, error)
+	// ADR-20261019193600. Compute MB-seconds the pusher delivered to one provider for one
+	// account in [start, end); the ledger dual run compares it with ledger evidence.
+	FinancialLedgerDeliveredComputeMBSeconds(ctx context.Context, db DBTX, arg FinancialLedgerDeliveredComputeMBSecondsParams) (int64, error)
+	FinancialObjectStorageEstimateGet(ctx context.Context, db DBTX, arg FinancialObjectStorageEstimateGetParams) (FinancialObjectStorageEstimate, error)
+	// ADR-20261020160000: apid's newest live object-storage estimate replaces
+	// the month's row; an older observation never overwrites a newer one.
+	FinancialObjectStorageEstimatePut(ctx context.Context, db DBTX, arg FinancialObjectStorageEstimatePutParams) error
 	FinancialPreviewCommandActivate(ctx context.Context, db DBTX, arg FinancialPreviewCommandActivateParams) (int64, error)
 	FinancialPreviewCommandHeld(ctx context.Context, db DBTX, arg FinancialPreviewCommandHeldParams) (bool, error)
 	FinancialPreviewCommandList(ctx context.Context, db DBTX, arg FinancialPreviewCommandListParams) ([]FinancialPreviewCommandRuntime, error)
@@ -2235,6 +2298,9 @@ type Querier interface {
 	// Private immutable reviewed participants and durable verification (ADR-694).
 	InsertRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error)
 	InsertScenarioActionPolicy(ctx context.Context, db DBTX, arg InsertScenarioActionPolicyParams) error
+	InsertScenarioCapturedEvent(ctx context.Context, db DBTX, arg InsertScenarioCapturedEventParams) error
+	InsertScenarioCapturedPlatformCall(ctx context.Context, db DBTX, arg InsertScenarioCapturedPlatformCallParams) (string, error)
+	InsertScenarioCapturedQueueMessage(ctx context.Context, db DBTX, arg InsertScenarioCapturedQueueMessageParams) (string, error)
 	InsertScenarioColdPreparation(ctx context.Context, db DBTX, arg InsertScenarioColdPreparationParams) error
 	InsertScenarioRecorderRequest(ctx context.Context, db DBTX, arg InsertScenarioRecorderRequestParams) error
 	InsertScenarioSimulationAttempt(ctx context.Context, db DBTX, arg InsertScenarioSimulationAttemptParams) error
@@ -2958,6 +3024,8 @@ type Querier interface {
 	// the customer-facing API — those carry host_redacted_hash only
 	// (ADR-098 §11).
 	ListEgressCircuitCandidates(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) ([]ListEgressCircuitCandidatesRow, error)
+	// A rehearsal-enrolled app's candidate output never leaves for a customer
+	// log destination (ADR-20261019180000).
 	ListEnabledAppLogDrainsWithStandardBinding(ctx context.Context, db DBTX) ([]ListEnabledAppLogDrainsWithStandardBindingRow, error)
 	ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledCronsRow, error)
 	ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([]AlertRule, error)
@@ -2970,6 +3038,9 @@ type Querier interface {
 	// ADR-118 / issue #757: filter_criteria is included so the dispatch
 	// tick can evaluate per-record predicates without a second round-trip
 	// (the column is JSONB; empty/null means "no filter").
+	// A rehearsal-enrolled app never polls or commits offsets on a real external
+	// broker; its queue, cron and realtime inputs stay inside the app
+	// (ADR-20261019180000).
 	ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabledTriggersRow, error)
 	ListEnabledUDPListeners(ctx context.Context, db DBTX) ([]AppUdpListener, error)
 	ListEnvironmentGitOpsOverrideExpirations(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]ListEnvironmentGitOpsOverrideExpirationsRow, error)
@@ -5496,6 +5567,9 @@ type Querier interface {
 	SaveRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg SaveRuntimeInstanceConfigProofParams) (SaveRuntimeInstanceConfigProofRow, error)
 	SaveServiceRolloutHandoff(ctx context.Context, db DBTX, arg SaveServiceRolloutHandoffParams) error
 	SaveWebhookAutomationBinding(ctx context.Context, db DBTX, arg SaveWebhookAutomationBindingParams) (WorkflowWebhookBinding, error)
+	// A contained member cannot reach real managed PostgreSQL or object storage;
+	// refuse it at enrollment instead of failing later (ADR-20261019180000).
+	ScenarioActionAppHasManagedBindings(ctx context.Context, db DBTX, appID string) (bool, error)
 	ScenarioActionAppUnstarted(ctx context.Context, db DBTX, appID string) (pgtype.Bool, error)
 	ScenarioActionPoliciesForRun(ctx context.Context, db DBTX, arg ScenarioActionPoliciesForRunParams) ([]ScenarioActionPoliciesForRunRow, error)
 	ScenarioActionRunCanEnroll(ctx context.Context, db DBTX, arg ScenarioActionRunCanEnrollParams) (pgtype.Bool, error)
@@ -5503,22 +5577,55 @@ type Querier interface {
 	ScenarioActionSnapshotSummary(ctx context.Context, db DBTX, arg ScenarioActionSnapshotSummaryParams) (ScenarioActionSnapshotSummaryRow, error)
 	ScenarioCaptureReceiver(ctx context.Context, db DBTX, webhookID string) (ScenarioCaptureReceiverRow, error)
 	ScenarioCapturedActions(ctx context.Context, db DBTX, arg ScenarioCapturedActionsParams) ([]ScenarioCapturedActionsRow, error)
+	// Whether a captured event with this source and ID carries the same type,
+	// schema version and data. A run's events are few and read under the run
+	// lock, so the run index bounds this lookup (ADR-20261021120000).
+	ScenarioCapturedEventIdentity(ctx context.Context, db DBTX, arg ScenarioCapturedEventIdentityParams) (bool, error)
+	ScenarioCapturedEvents(ctx context.Context, db DBTX, arg ScenarioCapturedEventsParams) ([]ScenarioCapturedEventsRow, error)
+	ScenarioCapturedPlatformCalls(ctx context.Context, db DBTX, arg ScenarioCapturedPlatformCallsParams) ([]ScenarioCapturedPlatformCallsRow, error)
+	ScenarioCapturedQueueMessages(ctx context.Context, db DBTX, arg ScenarioCapturedQueueMessagesParams) ([]ScenarioCapturedQueueMessagesRow, error)
+	// A captured workflow run is named by its starter, target, workflow and
+	// start ordinal, so a later event to it compares across sibling runs.
+	ScenarioCapturedWorkflowRunReference(ctx context.Context, db DBTX, arg ScenarioCapturedWorkflowRunReferenceParams) (string, error)
 	ScenarioColdInventory(ctx context.Context, db DBTX, appID string) (ScenarioColdInventoryRow, error)
 	ScenarioColdPreparation(ctx context.Context, db DBTX, appID string) (ScenarioColdPreparationRow, error)
 	ScenarioCommandCallersByHostIP(ctx context.Context, db DBTX, arg ScenarioCommandCallersByHostIPParams) ([]ScenarioCommandCallersByHostIPRow, error)
+	// Any enrolled app, contained or capture-only, publishes into its run's
+	// evidence instead of the account's event bus (ADR-20261020090000).
+	ScenarioEventCapturePolicy(ctx context.Context, db DBTX, appID string) (ScenarioEventCapturePolicyRow, error)
+	ScenarioEventCaptureState(ctx context.Context, db DBTX, arg ScenarioEventCaptureStateParams) (ScenarioEventCaptureStateRow, error)
+	ScenarioExternalWorkflowRunInAccount(ctx context.Context, db DBTX, arg ScenarioExternalWorkflowRunInAccountParams) (bool, error)
 	ScenarioManagedWorkBindings(ctx context.Context, db DBTX, arg ScenarioManagedWorkBindingsParams) ([]ScenarioManagedWorkBindingsRow, error)
 	ScenarioManagedWorkInventoryValid(ctx context.Context, db DBTX, arg ScenarioManagedWorkInventoryValidParams) (pgtype.Bool, error)
 	ScenarioManagedWorkJobs(ctx context.Context, db DBTX, arg ScenarioManagedWorkJobsParams) ([]ScenarioManagedWorkJobsRow, error)
+	// Earlier captures under the same key; each kind applies the production
+	// replay rule to them (ADR-20261021150000).
+	ScenarioPlatformCallsByIdempotencyKey(ctx context.Context, db DBTX, arg ScenarioPlatformCallsByIdempotencyKeyParams) ([]ScenarioPlatformCallsByIdempotencyKeyRow, error)
+	ScenarioPlatformCaptureState(ctx context.Context, db DBTX, arg ScenarioPlatformCaptureStateParams) (ScenarioPlatformCaptureStateRow, error)
+	ScenarioQueueCaptureState(ctx context.Context, db DBTX, arg ScenarioQueueCaptureStateParams) (ScenarioQueueCaptureStateRow, error)
+	// A member of the same run is named by its workload, so sibling runs compare;
+	// any other app must exist in the caller's account, as for a real send.
+	ScenarioQueueCaptureTarget(ctx context.Context, db DBTX, arg ScenarioQueueCaptureTargetParams) (string, error)
+	// A run member's endpoint is named by its workload and creation order, so
+	// sibling runs compare; another account app's endpoint keeps its ID. The
+	// endpoint must belong to the addressed app, as in production
+	// (ADR-20261021180000).
+	ScenarioRealtimeEndpointTarget(ctx context.Context, db DBTX, arg ScenarioRealtimeEndpointTargetParams) (string, error)
 	ScenarioRecorderAttemptOwner(ctx context.Context, db DBTX, arg ScenarioRecorderAttemptOwnerParams) (bool, error)
 	ScenarioRecorderRequestAvailable(ctx context.Context, db DBTX, arg ScenarioRecorderRequestAvailableParams) (bool, error)
 	ScenarioRecorderRunCounts(ctx context.Context, db DBTX, arg ScenarioRecorderRunCountsParams) (ScenarioRecorderRunCountsRow, error)
 	ScenarioRecorderSession(ctx context.Context, db DBTX, arg ScenarioRecorderSessionParams) (ScenarioRecorderSessionRow, error)
 	ScenarioRecorderSnapshot(ctx context.Context, db DBTX, arg ScenarioRecorderSnapshotParams) (ScenarioRecorderSnapshotRow, error)
+	ScenarioRehearsalNetworkPolicy(ctx context.Context, db DBTX, appID string) (ScenarioRehearsalNetworkPolicyRow, error)
 	ScenarioRehearsalNetworkRun(ctx context.Context, db DBTX, appID string) (string, error)
 	ScenarioRehearsalSimulationRun(ctx context.Context, db DBTX, appID string) (string, error)
 	ScenarioResumingCallersByHostIP(ctx context.Context, db DBTX, arg ScenarioResumingCallersByHostIPParams) ([]ScenarioResumingCallersByHostIPRow, error)
 	ScenarioSimulationPolicy(ctx context.Context, db DBTX, arg ScenarioSimulationPolicyParams) (ScenarioSimulationPolicyRow, error)
 	ScenarioSimulationRunAttempts(ctx context.Context, db DBTX, arg ScenarioSimulationRunAttemptsParams) ([]ScenarioSimulationRunAttemptsRow, error)
+	// Ordinary webhook deliveries the capture fence suppressed, attributed like
+	// the snapshot summary: the delivery's app first, then the receiver's app.
+	// Managed operation effects are accounted separately as captured intent.
+	ScenarioSuppressedWebhookEvents(ctx context.Context, db DBTX, arg ScenarioSuppressedWebhookEventsParams) ([]ScenarioSuppressedWebhookEventsRow, error)
 	ScenarioSuspendCheckpoint(ctx context.Context, db DBTX, arg ScenarioSuspendCheckpointParams) (ScenarioSuspendCheckpointRow, error)
 	ScenarioSuspendCommandsPending(ctx context.Context, db DBTX, arg ScenarioSuspendCommandsPendingParams) (bool, error)
 	ScenarioSuspendResume(ctx context.Context, db DBTX, id string) (ScenarioSuspendResumeRow, error)
