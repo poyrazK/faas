@@ -191,6 +191,31 @@ or `[warn]` in the first 512 bytes. This is the same classification as
 counted. A line that only mentions "error" in prose is not counted. Build
 logs are never counted. Log alerts support every alert action, including
 rollback, and every window.
+
+### Log search alerts
+
+Where log search is enabled (preview), `log_search_matches` counts the log
+events matching a set of [log search](log-search.md) filters during the
+window: 5xx responses on one route, runtime errors mentioning the database,
+failed builds. Pass the filters as `log_query`, or name a saved search and the
+CLI copies its filters into the rule:
+
+```bash
+printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app shop --name "checkout 5xx" \
+  --metric log_search_matches --saved-search checkout-5xx --comparison gt --threshold 20 \
+  --window-spec 15m --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+
+printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app shop --name "database errors" \
+  --metric log_search_matches --log-query 'source=runtime&level=error&q=database' \
+  --comparison gt --threshold 0 --window-spec 1h \
+  --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+The rule keeps its own copy of the filters, so editing or deleting the saved
+search later does not change it. Counts include every occurrence of a
+deduplicated event. These rules are webhook-only and support windows up to
+`24h`. If the search cannot finish in time, the rule is `unknown` for that
+evaluation rather than firing or clearing.
 ## SLO alerts
 
 `slo_budget_burn` and `slo_budget_remaining_pct` watch one of the app's own

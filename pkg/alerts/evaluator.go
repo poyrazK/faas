@@ -1097,6 +1097,8 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricCustomMetric:
 		return e.observeCustomMetric(ctx, rule)
+	case state.AlertMetricLogSearchMatches:
+		return e.observeLogSearch(ctx, rule)
 	case state.AlertMetricSLOBudgetBurn, state.AlertMetricSLOBudgetRemaining:
 		return e.observeCustomSLO(ctx, rule)
 	case state.AlertMetricSyntheticConsecutiveFailures, state.AlertMetricSyntheticLatencyP95:
@@ -1313,6 +1315,9 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 	}
 	if rule.CustomMetricName != "" {
 		m["custom_metric_name"] = rule.CustomMetricName
+	}
+	if rule.LogQuery != "" {
+		m["log_query"] = rule.LogQuery
 	}
 	if rule.SLOID != "" {
 		m["slo_id"] = rule.SLOID

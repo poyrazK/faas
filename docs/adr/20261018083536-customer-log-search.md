@@ -123,6 +123,21 @@ facet query's bounds.
   /v1/apps/{slug}/log-searches/{name}`; `?saved=NAME` on the search and
   facet routes applies the saved filters under any filter the request sets
   itself. CLI: `gregale logs saved [list|save|delete]` and `--saved`.
+- The alert metric is `log_search_matches`. A rule stores its own canonical
+  `log_query` (`alert_rules.log_query`) rather than referencing a saved
+  search: deleting or editing a search never silently changes or orphans an
+  alert, and the alert tables gain no foreign key into a customer-editable
+  table. `gregale alerts add --saved-search NAME` copies the search's filters;
+  `--log-query` takes them directly. Like `custom_metric`, the rule is
+  app-scoped and webhook-only with windows up to 24 h
+  (`alert_rules_log_search_chk`), so a text filter stays within the text
+  search bound. The evaluator counts matches with `FacetLogEvents` (summed
+  occurrences) under the 5 s statement timeout; a failed or timed-out count
+  leaves the rule `unknown` instead of reading as zero.
+- The metric CHECK is widened online by swapping in a widened copy (add NOT
+  VALID, validate, drop old, re-add old name NOT VALID, validate, drop the
+  copy), each statement its own transaction, so `migration-compat` stays
+  `expand`.
 
 ## Limits
 
