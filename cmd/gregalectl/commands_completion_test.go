@@ -28,6 +28,7 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 		"dispatchOperatorAuth":     "auth",
 		"dispatchHostAge":          "host-age",
 		"dispatchFleetSeal":        "fleet-seal",
+		"dispatchBreakGlass":       "break-glass", // ADR 20261022140000 incident containment
 		"dispatchPKI":              "pki",
 		"dispatchSignKeys":         "sign-keys",
 		"dispatchNodeKey":          "node-key",
