@@ -1,0 +1,25 @@
+---
+# Seal domains (ADR 20261022111812). Off until an operator generates a
+# domain identity with `gregalectl seal-domain init --domain outbound --dir <dir>`
+# and points the sources below at it.
+faas_seal_domains_managed: false
+
+# Operator-local files from `gregalectl seal-domain init --domain outbound`.
+faas_seal_domain_outbound_identity_src: ""
+faas_seal_domain_outbound_recipient_src: ""
+
+# Who apid seals new outbound credentials to:
+#   ""      the domain and the fleet recipient (safe beside the previous
+#           release, whose outboundd holds only the fleet identity)
+#   fleet   the fleet recipient alone (opt out)
+#   domain  the domain recipient alone; needs
+#           faas_seal_domain_outbound_readers_verified
+faas_seal_domain_outbound_writes: ""
+
+# Set true only after `gregalectl seal-domain verify --domain outbound`
+# passed on every node that runs outboundd and the previous release left
+# the rollback window. Required for writes=domain.
+faas_seal_domain_outbound_readers_verified: false
+
+faas_seal_domain_db_env: /etc/faas/compute-db.env
+faas_seal_domain_textfile_dir: /var/lib/node_exporter/textfile_collector

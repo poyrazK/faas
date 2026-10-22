@@ -504,6 +504,12 @@ jobs:
       - name: sealed.env scope gate
         run: make sealed-env-scope-check
 
+      # Seal domains (ADR 20261022111812): holders of private age identities,
+      # direct identity loaders in daemon code and unsealed bytea columns are
+      # a baseline that only shrinks.
+      - name: seal domain scope gate
+        run: make seal-domain-scope-check
+
       # +incompatible direct-dep gate (release blocker B1). Today this
       # flags github.com/stripe/stripe-go v70.15.0+incompatible (go.mod:25)
       # — v70 pre-dates the modern lookup_key primitive on PlanParams

@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Issue:** #2437
-- **Amended by (proposed):** [ADR 20261022111812](20261022111812-seal-domains-per-reader.md) splits the fleet identity into per-reader seal domains and stops staging it on every node.
+- **Amended by:** [ADR 20261022111812](20261022111812-seal-domains-per-reader.md) splits the fleet identity into per-reader seal domains, starting with `outbound`.
 
 ## Decision
 

@@ -898,11 +898,11 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint-changed
-lint-changed: ## golangci-lint only what your change touches (ci-light's selection vs origin/main) + teststorecheck; BASE=<ref>, DRY_RUN=1
+lint-changed: ## golangci-lint only what your change touches (ci-light's selection vs origin/main) + teststorecheck + sealdomaincheck; BASE=<ref>, DRY_RUN=1
 	@GO=$(GO) bash scripts/lint-changed.sh
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check check-durable-entity-sdk-contract check-binding-runner-sync ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check seal-domain-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check check-durable-entity-sdk-contract check-binding-runner-sync ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
 	@python3 scripts/ci/check_gosec_baseline.py
 	@GO="$(GO)" python3 scripts/ci/lint_go_shard.py --shard 1 --shards 1 -- $(GO) tool golangci-lint
 
@@ -995,6 +995,10 @@ otlp-unit-check: ## Verify every instrumented daemon loads the operator-owned OT
 .PHONY: sealed-env-scope-check
 sealed-env-scope-check: ## Static gate: /etc/faas/sealed.env is loaded only by faas-apid.service (issue #585, ADR-127)
 	@bash scripts/ci/check_sealed_env_scope.sh $(CURDIR)
+
+.PHONY: seal-domain-scope-check
+seal-domain-scope-check: ## Static gate: private age identities, direct identity loaders and unsealed bytea columns only shrink (ADR 20261022111812)
+	@$(GO) run ./scripts/ci/sealdomaincheck -root $(CURDIR)
 
 .PHONY: text-encoding-check
 text-encoding-check: ## Static gate: no JSON built with fmt %q, no free text truncated with a byte slice

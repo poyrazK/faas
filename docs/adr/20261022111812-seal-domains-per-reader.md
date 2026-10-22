@@ -1,6 +1,8 @@
 # ADR 20261022111812 · Seal domains: a sealed value opens only where it is read
 
-- **Status:** proposed
+- **Status:** accepted (2026-10-22). The first slice ships with this ADR:
+  the registry, the gates, the `outbound` domain and the sealed GitHub
+  webhook secret (see "Implemented in the first slice").
 - **Date:** 2026-10-22
 - **Amends (when accepted):** ADR-178 (fleet sealed-secret domain: one fleet
   identity becomes a set of domain identities), ADR-253 (its "dedicated
@@ -44,11 +46,12 @@ the attacker reached something that could decrypt.
 
 The audit for this ADR found:
 
-1. **Ten units hold the private fleet identity**: apid, the apid clone
-   worker, schedd, gatewayd-internal, githubd, meterd, outboundd, imaged and
-   s3-gatewayd through `LoadCredential=` (`pkg/daemonunitspec/*.go`), and
-   vmmd, which runs as root and reads the directory directly
-   (`secretbox.LoadFleetAndHostKeys`, `cmd/vmmd/main.go`).
+1. **Eleven units hold the private fleet identity**: apid, the apid clone
+   worker, the apid data-pipeline worker, schedd, gatewayd-internal,
+   githubd, meterd, outboundd, imaged and s3-gatewayd through
+   `LoadCredential=` (`pkg/daemonunitspec/*.go`), and vmmd, which runs as
+   root and reads the directory directly (`secretbox.LoadFleetAndHostKeys`,
+   `cmd/vmmd/main.go`).
 2. **Every node gets it**, whatever its role: `deploy/ansible/node_join.yml`
    stages `fleet.age` before bootstrap. Compute nodes run untrusted guest
    code. A guest escape to root on any compute node therefore yields every
@@ -98,7 +101,7 @@ sealing customer secrets but can no longer open them.
 
 | domain | identity | readers | node role | opens |
 |---|---|---|---|---|
-| `runtime` | `domains/runtime.age` | vmmd | compute | `app_secrets`, `project_environment_secrets`, `deployment_release_secret_snapshots`, `project_release_secret_bundles`, sidecar env |
+| `runtime` | `domains/runtime.age` | vmmd | compute | `app_secrets`, `project_environment_secrets`, `app_config_guard_secrets`, `managed_postgres_cutover_credentials`, `deployment_release_secret_snapshots`, `project_release_secret_bundles`, sidecar env |
 | `outbound` | `domains/outbound.age` | outboundd | control plane | `outbound_integration_credentials`, `outbound_integration_credential_keys` |
 | `build` | `domains/build.age` | imaged | compute | `app_registry_credentials`, `job_registry_credentials` |
 | `source` | `domains/source.age` | githubd | control plane | `github_installations.sealed_install_token`, `github_webhook_secrets` (sealed by this ADR, see 5) |
@@ -107,7 +110,7 @@ sealing customer secrets but can no longer open them.
 | `storage` | `domains/storage.age` | s3-gatewayd | where s3-gatewayd runs | `object_storage_s3_credentials` |
 | `delivery` | `domains/delivery.age` | schedd | both | `execution_payloads`, `agent_execution_workflows.sealed_plan`, `app_webhooks`, trigger config envelopes, `commit_sources` |
 | `control` | `domains/control.age` | schedd; `gregalectl` at node join | both | `cluster_signing_keys`, internal service keys (`internal_svc`, `cluster_svc`) |
-| `account` | `domains/account.age` | apid, apid clone worker | control plane | `accounts.mfa_secret_encrypted`, `inbound_webhook_endpoints`, GitLab, Slack, Linear and MCP OAuth rows, `managed_realtime_*`, `managed_postgres_cutover_credentials`, `project_environment_clone_*`, `data_pipeline_*`, `product_control_email_*`, `account_billing_connections`, `mcp_readiness_pagerduty_acknowledgements` |
+| `account` | `domains/account.age` | apid, apid clone worker, apid data-pipeline worker | control plane | `accounts.mfa_secret_encrypted`, `inbound_webhook_endpoints`, GitLab, Slack, Linear and MCP OAuth rows, `managed_realtime_*`, `project_environment_clone_*`, `data_pipeline_*`, `product_control_email_*`, `account_billing_connections`, `mcp_readiness_pagerduty_acknowledgements` |
 
 Internal mail and livequeryd keep their existing dedicated identities and
 join the registry as the `mail`, `mail-verification` and `livequery` domains.
@@ -139,25 +142,28 @@ provider credentials, GitHub tokens or account material.
 
 A new package, `pkg/sealdomain`, is the single table of domains, their reader
 units and identity paths, their roles, and the sealed columns each one owns.
-Three gates read it:
+One program, `scripts/ci/sealdomaincheck` (`make seal-domain-scope-check`, in
+`make lint`, `make lint-changed`, CI's lint job and ci-light), runs three
+checks against `scripts/ci/sealdomaincheck/baseline.txt`. A finding missing
+from the baseline fails, and so does a baseline line that no longer occurs,
+so the file stays exact and only shrinks:
 
-1. **Unit gate** (`make seal-domain-scope-check`, in `make lint`). Every
-   `LoadCredential=` under `/etc/faas/secrets` in every generated unit and
-   Ansible mirror must belong to that unit's domains. It is modelled on
-   `scripts/ci/check_sealed_env_scope.sh`. A baseline file lists today's
-   fleet and host holders; the gate fails any new holder and any baseline
-   entry that has already been removed, so the list only shrinks.
-2. **Loader gate** (a `scripts/ci` check in `make lint-changed`). Daemons load
-   identities only through `sealdomain.Load(dir, domain)`. Direct calls to
-   `secretbox.LoadHostKey`, `LoadHostKeys` or `LoadFleetAndHostKeys` are
-   limited to a baseline (the `gregalectl` migration commands and today's
-   call sites) that only shrinks. The unit gate cannot see vmmd reading the
-   directory as root; this gate can.
-3. **Column gate** (a test over `schema.sql`). Every `bytea` column, and every
-   `jsonb` column holding envelopes, is either registered to a domain or
-   listed as not sealed (hashes, digests, signatures, payload bodies). Names
-   are not a reliable signal: `apps.public_auth_basic` is sealed and has no
-   "seal" in its name. A new sealed column must name its domain.
+1. **Credentials.** Every `LoadCredential=` of a private identity (a path
+   under `/etc/faas/secrets` ending in `.age` or `.age.previous`) in a unit
+   file or an Ansible drop-in. A unit may load the identities of the domains
+   it reads, and a `seal_domains` reader drop-in its domain's identity;
+   today's fleet and host holders are the baseline.
+2. **Loaders.** Direct calls to `secretbox.LoadHostKey`, `LoadHostKeys`,
+   `LoadFleetAndHostKeys`, `age.ParseX25519Identity` and
+   `age.ParseIdentities` in daemon code, counted per file. New code loads
+   through `sealdomain.LoadReaderIdentities`; the operator CLIs and the
+   defining packages are exempt. The credential check cannot see vmmd
+   reading the directory as root; this one can.
+3. **Columns.** Every `bytea` column in `schema.sql` is registered to a
+   domain, is a probe or a known plaintext secret, or is listed as not
+   sealed (hashes, digests, signatures, payload bodies). Names are not a
+   reliable signal: `apps.public_auth_basic` is sealed and has no "seal" in
+   its name. A new sealed column must name its domain.
 
 ### 5. Seal `github_webhook_secrets` into `source`
 
@@ -185,13 +191,17 @@ previous release.
    the node. A `domain` label on the readiness proof
    (`faas_seal_domain_ready{domain}`, next to `faas_fleet_seal_domain_ready`)
    feeds an alert in the style of `FaasFleetSealDomainUnverified`.
-2. **Dual-seal.** A per-domain runtime switch, `seal_domain_<D>_writes`
-   (`fleet` → `dual` → `domain`), makes writers seal to both the domain and
-   the fleet recipients. age encrypts to several recipients natively; new
-   `secretbox.SealMulti` and `SealBytesMulti` wrap it. Readers on N and N-1
-   both open these envelopes, so a rollback is safe. The switch moves to
-   `dual` only after `gregalectl seal-domain verify --domain D` shows every
-   reader unit of D on every active node reporting ready.
+2. **Dual-seal.** A per-domain switch, `FAAS_SEAL_DOMAIN_<D>_WRITES`
+   (`fleet`, `dual`, `domain`; empty means `dual` once the domain recipient
+   is staged), makes writers seal to both the domain and the fleet
+   recipients. age encrypts to several recipients natively;
+   `secretbox.SealBytesTo` wraps it. Readers on N and N-1 both open these
+   envelopes, so a rollback is safe. The switch and the recipient are unit
+   configuration rendered by the `seal_domains` role, not runtime
+   configuration in PostgreSQL: a database writer must not be able to point
+   sealing back at the fleet key or at a recipient of its own. The role
+   stages the reader's identity and runs `gregalectl seal-domain verify`
+   before it gives the writer the recipient.
 3. **Re-seal.** `gregalectl seal-domain migrate --domain D` walks D's
    registered columns. It opens each envelope with the fleet identity and
    writes it back sealed to the domain recipient alone, using
@@ -214,9 +224,44 @@ it has one reader on one role, and ADR-253 already anticipated it. Then
 `edge`, `alerting`, `storage`, `delivery` and `control`. `account` comes last.
 By then the fleet identity apid still holds opens only `account` rows.
 
-Each domain is delivered as its own small PR series: switch, re-seal command,
-contract. Section 4's gates ship first, with no behavior change, together with
-the `kid` fix of section 3.
+After the first slice, each domain arrives on its own: wire the writer and
+reader, re-seal, then contract in a later release.
+
+## Implemented in the first slice
+
+This ADR ships with:
+
+- `pkg/sealdomain`: the registry, `LoadReaderIdentities`, write modes and
+  `Recipients`, domain probes, and the webhook-secret seal; and
+  `pkg/sealdomain/sealmigrate` for the re-seal and the backfill.
+- `secretbox.SealBytesTo` (several recipients).
+- Migration `20261022090211159_seal_domains`: `seal_domain_probe`, and
+  `github_webhook_secrets.secret_sealed` with a `NOT VALID` CHECK.
+- The `outbound` domain, wired: apid seals customer outbound credentials to
+  `FAAS_SEAL_DOMAIN_OUTBOUND_RECIPIENT_PATH` under
+  `FAAS_SEAL_DOMAIN_OUTBOUND_WRITES`; outboundd opens them with
+  `FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH` and keeps the fleet identity
+  (and now its `.previous` twin, which it used to ignore); the
+  `seal_domains` Ansible role stages the files, renders both drop-ins, and
+  verifies the probe in between. Commit connections, which shared apid's
+  outbound recipient, stay on the fleet recipient: schedd reads them.
+- GitHub webhook secrets: the admin route writes a sealed copy beside the
+  plaintext column; githubd prefers the copy and fails closed when it does
+  not open; `gregalectl seal-domain migrate --domain source` backfills the
+  copy for older rows. Until `source` is wired the copy is sealed to the
+  fleet recipient, which still takes the secret out of a plain database
+  read.
+- `gregalectl seal-domain init|verify|migrate`, with
+  `faas_seal_domain_ready{domain}` written by `verify`.
+- The `kid` of app and project secrets is the seal recipient, so sealing
+  needs no private identity.
+- `scripts/ci/sealdomaincheck` and its baseline.
+
+Later slices: the other domains in the order above; the contract steps;
+moving the runtime re-seal out of apid's rekey runner; meterd sending test
+alerts; role-scoped staging in node join; an alert on
+`faas_seal_domain_ready`; and dropping `github_webhook_secrets.secret_value`
+once no release reads it.
 
 ## Consequences
 
