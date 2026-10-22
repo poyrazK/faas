@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 
 // Mirrors pkg/api/limits.go; TestDataAPIRuntimeBounds checks this contract.
-export const limits = Object.freeze({ pool: 2, connectionReportMs: 5000, connectionReportIntervalMs: 15000, connectionReportBytes: 4096, rows: 1000, bodyBytes: 1048576, responseBytes: 16777216, outputBytes: 1048576, queryMs: 15000, lockMs: 5000, relations: 1000, columns: 10000, types: 20000, queuedRequests: 8, admissionWaitMs: 1000, overloadRetrySeconds: 1, healthProbeMs: 2000, healthBytes: 8192, rateLimitDefaultPerSecond: 10, rateLimitDefaultBurst: 20, rateLimitMaxPerSecond: 1000, rateLimitMaxBurst: 1000, rateLimitMaxSubjects: 4096, rateLimitSweepMs: 1000, userConcurrencyMaxSubjects: 4096, userConcurrencyCooldownMs: 15000, publicReadMaxRelations: 64, serverKeySubjectMaxBytes: 255, publicReadMaxAgeSeconds: 3600, cacheTagMaxBytes: 128, cacheTagsMax: 32, serverKeyPermissionsBytes: 4096, serverKeyPermissionsEntries: 64, publicRpcMaxFunctions: 64, usageReportMs: 5000, usageReportIntervalMs: 15000, usageReportMaxHours: 48, usageMonthlyCapMax: 1000000000000, usageRestoreJumpMs: 5000, storageObjectDefaultBytes: 26214400, storageObjectMaxBytes: 104857600, storageTransfers: 4, storageTransferMs: 120000, storageSignSeconds: 60 })
+export const limits = Object.freeze({ pool: 2, poolMax: 8, connectionReportMs: 5000, connectionReportIntervalMs: 15000, connectionReportBytes: 4096, rows: 1000, bodyBytes: 1048576, responseBytes: 16777216, outputBytes: 1048576, queryMs: 15000, lockMs: 5000, relations: 1000, columns: 10000, types: 20000, queuedRequests: 8, admissionWaitMs: 1000, overloadRetrySeconds: 1, healthProbeMs: 2000, healthBytes: 8192, rateLimitDefaultPerSecond: 10, rateLimitDefaultBurst: 20, rateLimitMaxPerSecond: 1000, rateLimitMaxBurst: 1000, rateLimitMaxSubjects: 4096, rateLimitSweepMs: 1000, userConcurrencyMaxSubjects: 4096, userConcurrencyCooldownMs: 15000, publicReadMaxRelations: 64, serverKeySubjectMaxBytes: 255, publicReadMaxAgeSeconds: 3600, cacheTagMaxBytes: 128, cacheTagsMax: 32, serverKeyPermissionsBytes: 4096, serverKeyPermissionsEntries: 64, publicRpcMaxFunctions: 64, usageReportMs: 5000, usageReportIntervalMs: 15000, usageReportMaxHours: 48, usageMonthlyCapMax: 1000000000000, usageRestoreJumpMs: 5000, storageObjectDefaultBytes: 26214400, storageObjectMaxBytes: 104857600, storageTransfers: 4, storageTransferMs: 120000, storageSignSeconds: 60 })
 
 export const relationPart = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/
 const schemaPart = /^[a-z][a-z0-9_]{0,62}$/
@@ -93,8 +93,10 @@ export function userConcurrencyPolicy(value, capacity = limits.pool) {
 function userConcurrencyConfig(env, capacity) {
   const value = env.DATA_API_USER_CONCURRENCY
   if (value === undefined) return null
-  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) throw new Error('Invalid DATA_API_USER_CONCURRENCY')
-  return userConcurrencyPolicy(Number(value), capacity)
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value) || Number(value) > limits.poolMax) throw new Error('Invalid DATA_API_USER_CONCURRENCY')
+  // A value above the engine pool acts as the pool (ADR-20261021180534), so
+  // changing the pool alone never stops the runtime from starting.
+  return userConcurrencyPolicy(Math.min(Number(value), capacity), capacity)
 }
 
 export function rateLimitPolicy(value) {
@@ -103,14 +105,42 @@ export function rateLimitPolicy(value) {
   return Object.freeze({ perSecond: value.perSecond, burst: value.burst })
 }
 
-function rateLimitConfig(env) {
-  if (env.DATA_API_RATE_LIMIT_PER_SECOND === undefined && env.DATA_API_RATE_LIMIT_BURST === undefined) return null
+function rateLimitConfig(env, prefix = 'DATA_API_RATE_LIMIT') {
+  const perSecond = env[`${prefix}_PER_SECOND`], burst = env[`${prefix}_BURST`]
+  if (perSecond === undefined && burst === undefined) return null
   const setting = (value, fallback) => {
     if (value === undefined) return fallback
     if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) throw new Error('Invalid Data API rate-limit policy')
     return Number(value)
   }
-  return rateLimitPolicy({ perSecond: setting(env.DATA_API_RATE_LIMIT_PER_SECOND, limits.rateLimitDefaultPerSecond), burst: setting(env.DATA_API_RATE_LIMIT_BURST, limits.rateLimitDefaultBurst) })
+  return rateLimitPolicy({ perSecond: setting(perSecond, limits.rateLimitDefaultPerSecond), burst: setting(burst, limits.rateLimitDefaultBurst) })
+}
+
+// The engine pool (ADR-20261021180534): DATA_API_POOL from 1 to poolMax,
+// default 2. Coordinated refresh keeps one connection for its reader.
+export function poolConfig(value, coordinatedRefresh) {
+  if (value === undefined) return limits.pool
+  const pool = Number(value)
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value) || pool > limits.poolMax) throw new Error('Invalid DATA_API_POOL')
+  if (coordinatedRefresh && pool < 2) throw new Error('Coordinated refresh needs DATA_API_POOL of at least 2')
+  return pool
+}
+
+// enginePool is the engine's share of the pool: all of it, less the refresh
+// reader's connection under coordinated refresh.
+export function enginePool(config) {
+  return config.engine ?? (config.coordinatedRefresh ? limits.pool - 1 : limits.pool)
+}
+
+// Server-key requests together hold at most this many admission slots:
+// by default all but one, so users and visitors always keep a slot. A limit
+// at or above the engine pool keeps nothing back, so it is null and only
+// admission bounds server keys; changing the pool alone never stops the
+// runtime from starting.
+export function serverKeyConcurrencyConfig(value, engine) {
+  const limit = value === undefined ? engine - 1 : Number(value)
+  if (value !== undefined && (typeof value !== 'string' || !/^[1-9]\d*$/.test(value) || limit > limits.poolMax)) throw new Error('Invalid DATA_API_SERVER_KEY_CONCURRENCY')
+  return limit >= 1 && limit < engine ? limit : null
 }
 
 export function databaseURL(value) {
@@ -279,11 +309,13 @@ export function runtimeConfig(env) {
   if (schemas.includes('gregale_data_api')) throw new Error('Refresh control schema cannot be exposed')
   const secret = randomBytes(32)
   const storage = storageConfig(env, schemas)
-  return { connection, role, schemas, auth, secret, storage, coordinatedRefresh, sqlDeadline, queryShapes, readOnly, aggregates, publicRead: publicReadConfig(env.DATA_API_PUBLIC_READ, schemas), serverKeys: serverKeyConfig(env),
-    publicRpc: publicRpcConfig(env.DATA_API_PUBLIC_RPC, schemas), usage: usageConfig(env), publicReadMaxAge: publicReadMaxAge(env.DATA_API_PUBLIC_READ_MAX_AGE, env.DATA_API_PUBLIC_READ !== undefined || env.DATA_API_PUBLIC_RPC !== undefined), connectionObservation: connectionObservationConfig(env), rateLimit: rateLimitConfig(env), userConcurrency: userConcurrencyConfig(env, coordinatedRefresh ? limits.pool - 1 : limits.pool), acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
+  const pool = poolConfig(env.DATA_API_POOL, coordinatedRefresh)
+  const engine = coordinatedRefresh ? pool - 1 : pool
+  return { connection, role, schemas, auth, secret, storage, pool, engine, serverKeyConcurrency: serverKeyConcurrencyConfig(env.DATA_API_SERVER_KEY_CONCURRENCY, engine), serverKeyRateLimit: rateLimitConfig(env, 'DATA_API_SERVER_KEY_RATE_LIMIT'), coordinatedRefresh, sqlDeadline, queryShapes, readOnly, aggregates, publicRead: publicReadConfig(env.DATA_API_PUBLIC_READ, schemas), serverKeys: serverKeyConfig(env),
+    publicRpc: publicRpcConfig(env.DATA_API_PUBLIC_RPC, schemas), usage: usageConfig(env), publicReadMaxAge: publicReadMaxAge(env.DATA_API_PUBLIC_READ_MAX_AGE, env.DATA_API_PUBLIC_READ !== undefined || env.DATA_API_PUBLIC_RPC !== undefined), connectionObservation: connectionObservationConfig(env), rateLimit: rateLimitConfig(env), userConcurrency: userConcurrencyConfig(env, engine), acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
     postgrestEnv: { PGRST_DB_URI: connection, PGRST_DB_SCHEMAS: schemas.join(','), PGRST_JWT_SECRET: secret.toString('base64url'),
       PGRST_SERVER_HOST: '127.0.0.1', PGRST_SERVER_PORT: '3000', PGRST_ADMIN_SERVER_PORT: '3001', PGRST_SERVER_TIMING_ENABLED: 'true',
-      PGRST_DB_POOL: String(coordinatedRefresh ? limits.pool - 1 : limits.pool), PGRST_DB_MAX_ROWS: String(limits.rows), ...(sqlDeadline ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_deadline_request', PGRST_DB_CONFIG: 'false' } : coordinatedRefresh ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_request' } : {}), PGRST_DB_CHANNEL_ENABLED: 'false', PGRST_DB_PREPARED_STATEMENTS: 'false', ...(aggregates ? { PGRST_DB_AGGREGATES_ENABLED: 'true' } : {}),
+      PGRST_DB_POOL: String(engine), PGRST_DB_MAX_ROWS: String(limits.rows), ...(sqlDeadline ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_deadline_request', PGRST_DB_CONFIG: 'false' } : coordinatedRefresh ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_request' } : {}), PGRST_DB_CHANNEL_ENABLED: 'false', PGRST_DB_PREPARED_STATEMENTS: 'false', ...(aggregates ? { PGRST_DB_AGGREGATES_ENABLED: 'true' } : {}),
       // Storage authorizes before transferring with Prefer: tx=rollback dry runs.
       ...(storage ? { PGRST_DB_TX_END: 'commit-allow-override' } : {}) } }
 }

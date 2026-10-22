@@ -10,7 +10,7 @@ This guide does not enable production traffic or certify Vercel performance pari
 
 ## Portable checks
 
-Install Go 1.26.9, Node 22+ and Python 3.12+. Run:
+Install Go 1.26.10, Node 22+ and Python 3.12+. Run:
 
 ```sh
 go test -race ./guest/runners/... ./pkg/rootfs -count=1 -timeout=3m
