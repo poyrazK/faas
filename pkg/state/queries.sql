@@ -8447,6 +8447,16 @@ SELECT f.* FROM project_environment_promotion_feature_flags f
 JOIN project_environment_promotions p ON p.id = f.promotion_id
 WHERE p.id = sqlc.arg(promotion_id)::uuid AND p.account_id = sqlc.arg(account_id)::uuid;
 
+-- name: ListPromotionFeatureFlagHolds :many
+-- Receipts whose activation or rollback wrote this flag version; Go decides
+-- which promotion states still hold it.
+SELECT p.status, p.rollback_status, f.target_version, f.rollback_version
+FROM project_environment_promotion_feature_flags f
+JOIN project_environment_promotions p ON p.id = f.promotion_id
+WHERE p.account_id = sqlc.arg(account_id)::uuid AND p.project_id = sqlc.arg(project_id)::uuid
+ AND f.previous_target_snapshot->>'source_environment_id' = sqlc.arg(environment_id)::text
+ AND (f.target_version = sqlc.arg(version)::bigint OR f.rollback_version = sqlc.arg(version)::bigint);
+
 -- name: UpdatePromotionFeatureFlagReceipt :one
 UPDATE project_environment_promotion_feature_flags
 SET target_version = sqlc.arg(target_version)::bigint, rollback_version = sqlc.arg(rollback_version)::bigint

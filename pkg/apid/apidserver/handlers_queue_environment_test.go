@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -296,5 +297,57 @@ func TestQueueEnvironmentHTTPSelectsEnvironmentRelease(t *testing.T) {
 				t.Fatalf("captured release resolved wrong graph: %+v %v", version, resolveErr)
 			}
 		}
+	}
+}
+
+func TestQueueEnvironmentHTTPIdempotencyKeysStayInTheirEnvironment(t *testing.T) {
+	e, _, _ := scopedQueueHTTPFixture(t)
+	createScopedHTTPQueue(t, e, "", "orders")
+	createScopedHTTPQueue(t, e, "staging", "orders")
+	send := func(key, scope, queue string) (int, string) {
+		t.Helper()
+		rec := e.Do(t, http.MethodPost, "/v1/apps/queue-worker/queues/send", api.QueueSendRequest{Environment: scope, QueueName: queue, Payload: json.RawMessage(`{}`)}, map[string]string{"Idempotency-Key": key})
+		var result struct{ ID, Environment string }
+		_ = json.Unmarshal(rec.Body.Bytes(), &result)
+		return rec.Code, result.ID + "@" + result.Environment
+	}
+
+	// A production receipt is not replayed for the same key in a stage, or the reverse.
+	code, production := send("send-1", "", "orders")
+	if code != http.StatusCreated {
+		t.Fatalf("production send: %d %s", code, production)
+	}
+	code, staging := send("send-1", "staging", "orders")
+	if code != http.StatusCreated || staging == production || !strings.HasSuffix(staging, "@staging") {
+		t.Fatalf("stage send replayed production: %d %s vs %s", code, staging, production)
+	}
+	if code, replay := send("send-1", "staging", "orders"); code != http.StatusCreated || replay != staging {
+		t.Fatalf("stage replay: %d %s want %s", code, replay, staging)
+	}
+	if code, replay := send("send-1", "", "orders"); code != http.StatusCreated || replay != production {
+		t.Fatalf("production replay: %d %s want %s", code, replay, production)
+	}
+
+	// A refused stage request does not poison the production send that reuses its key.
+	if code, _ := send("send-2", "staging", "missing"); code != http.StatusBadRequest {
+		t.Fatalf("missing stage queue: %d", code)
+	}
+	if code, _ := send("send-2", "", "orders"); code != http.StatusCreated {
+		t.Fatalf("production send after stage refusal: %d", code)
+	}
+
+	// Binding creation is scoped the same way.
+	bind := func(scope, name string) api.QueueBindingResponse {
+		t.Helper()
+		rec := e.Do(t, http.MethodPost, "/v1/apps/queue-worker/queue-bindings", api.CreateQueueBindingRequest{Environment: scope, Name: name, QueueName: name, Mode: "push", WorkloadClass: "worker"}, map[string]string{"Idempotency-Key": "bind-1"})
+		var binding api.QueueBindingResponse
+		if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &binding) != nil {
+			t.Fatalf("bind %q: %d %s", scope, rec.Code, rec.Body)
+		}
+		return binding
+	}
+	stageBinding, sharedBinding := bind("staging", "payments"), bind("", "refunds")
+	if stageBinding.ID == sharedBinding.ID || stageBinding.Environment != "staging" || sharedBinding.Environment != "" || sharedBinding.Name != "refunds" {
+		t.Fatalf("binding receipts crossed environments: %+v %+v", stageBinding, sharedBinding)
 	}
 }

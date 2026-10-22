@@ -96,6 +96,14 @@ func TestQueueLeaseWorkloadTokenRecordsInstance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	stageDep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:stage-lease", Status: state.DeployLive, Scope: "staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stageInstance, err := store.CreateInstanceWithMode(ctx, app.ID, stageDep.ID, string(state.StateRunning), 128, "default-local", "", string(state.InstanceModeWorker))
+	if err != nil {
+		t.Fatal(err)
+	}
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -107,19 +115,23 @@ func TestQueueLeaseWorkloadTokenRecordsInstance(t *testing.T) {
 	if *(*e.S()).WorkloadVerifier(), err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer); err != nil {
 		t.Fatal(err)
 	}
-	bearer := func(audience string) map[string]string {
-		token, err := signer.Mint(time.Now(), (*e.Acct()).ID, app.ID, instance.ID, audience)
+	instanceBearer := func(instanceID, audience string) map[string]string {
+		token, err := signer.Mint(time.Now(), (*e.Acct()).ID, app.ID, instanceID, audience)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return map[string]string{"Authorization": "Bearer " + token.AccessToken}
 	}
+	bearer := func(audience string) map[string]string { return instanceBearer(instance.ID, audience) }
 
 	// A Flags token cannot be replayed to lease queue messages.
 	rec := e.Do(t, http.MethodPost, "/v1/apps/token-worker/queues/jobs/leases", nil, bearer(workloadidentity.FlagsAudience))
 	apidserver.AssertProblem(t, rec, http.StatusUnauthorized, api.CodeUnauthorized)
 	// A token names its own app; it cannot lease a neighbor's queue.
 	rec = e.Do(t, http.MethodPost, "/v1/apps/other-worker/queues/jobs/leases", nil, bearer(workloadidentity.QueuesAudience))
+	apidserver.AssertProblem(t, rec, http.StatusUnauthorized, api.CodeUnauthorized)
+	// A stage instance of the same app cannot consume production messages.
+	rec = e.Do(t, http.MethodPost, "/v1/apps/token-worker/queues/jobs/leases", nil, instanceBearer(stageInstance.ID, workloadidentity.QueuesAudience))
 	apidserver.AssertProblem(t, rec, http.StatusUnauthorized, api.CodeUnauthorized)
 
 	rec = e.Do(t, http.MethodPost, "/v1/apps/token-worker/queues/jobs/leases", nil, bearer(workloadidentity.QueuesAudience))
@@ -128,7 +140,7 @@ func TestQueueLeaseWorkloadTokenRecordsInstance(t *testing.T) {
 		t.Fatalf("workload lease = %d: %s", rec.Code, rec.Body.String())
 	}
 	held, err := store.QueueLeasesByInstance(ctx, app.ID)
-	if err != nil || held[instance.ID] != 1 {
-		t.Fatalf("lease not recorded on the instance: %v err=%v", held, err)
+	if err != nil || held[instance.ID] != 1 || held[stageInstance.ID] != 0 {
+		t.Fatalf("lease not recorded on the production instance only: %v err=%v", held, err)
 	}
 }

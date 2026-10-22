@@ -114,6 +114,14 @@ func (s *server) autoAdvanceFeatureFlagRollout(ctx context.Context, candidate st
 		}
 		return err
 	}
+	// An unfinished promotion completes or rolls back only while the version
+	// it wrote is still the head; advancing it would strand that promotion.
+	if holds, ok := s.store.(state.FeatureFlagPromotionHoldReader); ok {
+		held, err := holds.FeatureFlagVersionHeldByPromotion(ctx, candidate.Scope, current.Version)
+		if err != nil || held {
+			return err
+		}
+	}
 	account, err := s.store.AccountByID(ctx, candidate.Scope.AccountID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {

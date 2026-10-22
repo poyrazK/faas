@@ -234,6 +234,16 @@ func testPromotionFeatureFlags(t *testing.T, store promotionFlagTestStore, fault
 		if err != nil || receipt.TargetVersion != current.Version || receipt.RollbackVersion != 0 {
 			t.Fatalf("activation receipt: %+v, %v", receipt, err)
 		}
+		// The running promotion still needs this head to complete or roll back.
+		if held, err := store.FeatureFlagVersionHeldByPromotion(ctx, f.target, current.Version); err != nil || !held {
+			t.Fatalf("running promotion does not hold its activation: %v, %v", held, err)
+		}
+		if held, err := store.FeatureFlagVersionHeldByPromotion(ctx, f.target, f.targetFlags.Version); err != nil || held {
+			t.Fatalf("previous target version held: %v, %v", held, err)
+		}
+		if held, err := store.FeatureFlagVersionHeldByPromotion(ctx, f.source, current.Version); err != nil || held {
+			t.Fatalf("source environment held by the target's promotion: %v, %v", held, err)
+		}
 	}
 	if fault == "after_cutover" {
 		expected := update(f.target)

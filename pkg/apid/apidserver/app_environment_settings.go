@@ -28,6 +28,12 @@ func (s *server) appEnvironmentSettings(w http.ResponseWriter, r *http.Request, 
 	if write && env.Protected {
 		return state.App{}, state.ProjectEnvironment{}, api.NewProblem(http.StatusConflict, api.CodeConflict, "Protected environment", "apply configuration through an approved project plan or environment promotion")
 	}
+	// Production's application fields are its compatibility projection. Only
+	// the unscoped edit advances both them and the production desired head; a
+	// scoped write would leave GET /v1/apps/{slug} reporting stale settings.
+	if write && state.IsProductionDeploymentScope(env.Slug) {
+		return state.App{}, state.ProjectEnvironment{}, api.NewProblem(http.StatusConflict, api.CodeConflict, "Production settings", "edit production settings without the environment parameter")
+	}
 	reader, ok := s.store.(state.ProjectEnvironmentWorkloadSpecReader)
 	if !ok {
 		return state.App{}, state.ProjectEnvironment{}, api.ErrCapacity("environment workload settings unavailable")
