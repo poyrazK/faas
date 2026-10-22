@@ -76812,6 +76812,7 @@ components:
         requested_deployment_id: { type: string, format: uuid, description: 'Confirms that the explicit deployment_id selector was applied. Absent for default selection.' }
         verification_deployment_id: { type: string, format: uuid, description: 'Deployment selected for evidence: explicit selector or current manual-task deployment.' }
         verification_scope: { type: string, description: 'Scope of the selected verification deployment.' }
+        verification_probes_available: { type: boolean, description: 'Whether this control-plane host can run bindings verify probes (deployment-attached app tasks). False means probe evidence cannot be produced here; absent from older servers.' }
         runtime_freshness: { $ref: '#/components/schemas/BindingRuntimeFreshness' }
         complete: { type: boolean, description: 'All binding sections could be read; this does not mean that bindings are healthy or verified.' }
         bindings:
