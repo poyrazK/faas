@@ -20582,6 +20582,29 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/dashboards/{id}/data:
+    parameters:
+      - $ref: '#/components/parameters/DashboardID'
+    get:
+      tags: [observability]
+      operationId: getDashboardData
+      summary: Read a custom dashboard's widgets.
+      description: |
+        Resolves every widget for its window through the code behind the
+        per-app endpoints: request metrics, log search counts, pushed custom
+        metrics and SLO status. A widget that cannot be read carries `error`
+        and no value; the rest still resolve.
+      responses:
+        '200':
+          description: The resolved widgets.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardData' }
+        default:
+          description: No such dashboard (dashboard_not_found), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/apps/{slug}/log-searches:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -111024,6 +111047,38 @@ components:
           type: array
           maxItems: 24
           items: { $ref: '#/components/schemas/DashboardWidget' }
+    DashboardPoint:
+      type: object
+      description: One time-series sample.
+      required: [at, value]
+      properties:
+        at: { type: string, format: date-time }
+        value: { type: number, format: double }
+    DashboardWidgetValue:
+      description: A widget with its resolved value, or the reason it has none.
+      allOf:
+        - $ref: '#/components/schemas/DashboardWidget'
+        - type: object
+          properties:
+            value: { type: number, format: double, description: 'The headline number, in unit.' }
+            unit: { type: string, description: 'ms, %, requests, events, gauge, per second, or % budget left.' }
+            detail: { type: string, description: 'Context: log counts by level, SLO attainment.' }
+            series:
+              type: array
+              description: The custom metric's points over the window.
+              items: { $ref: '#/components/schemas/DashboardPoint' }
+            error: { type: string, description: 'Why the widget has no value: an unavailable app or source, no data, or a plan gate.' }
+    DashboardData:
+      type: object
+      description: A dashboard with every widget resolved.
+      required: [id, name, as_of, widgets]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        as_of: { type: string, format: date-time }
+        widgets:
+          type: array
+          items: { $ref: '#/components/schemas/DashboardWidgetValue' }
     DashboardsResponse:
       type: object
       description: The account's dashboards by name.

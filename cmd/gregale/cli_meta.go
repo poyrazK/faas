@@ -1053,6 +1053,7 @@ var cliCommands = []cliCommand{
 		Short:   "Save dashboards that combine metrics, log counts and SLOs across apps",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List the account's dashboards", Examples: []string{"gregale dashboards list"}},
+			{Name: "show", Short: "Show every widget's current value", Positionals: []string{"<dashboard-id>"}, Examples: []string{"gregale dashboards show DASHBOARD_ID"}},
 			{Name: "get", Short: "Show a dashboard's widgets", Positionals: []string{"<dashboard-id>"}},
 			{Name: "create", Short: "Create a dashboard from a widgets JSON file", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "file", Short: "JSON file with the widgets array (- for stdin)", Req: true, Value: "PATH"},

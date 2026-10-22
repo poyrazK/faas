@@ -762,11 +762,12 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/log-searches/{name}": "DeleteAppLogSavedSearch",
 
 	// ADR-20261022173833 custom dashboards.
-	"GET /v1/dashboards":         "ListDashboards",
-	"POST /v1/dashboards":        "CreateDashboard",
-	"GET /v1/dashboards/{id}":    "GetDashboard",
-	"PUT /v1/dashboards/{id}":    "ReplaceDashboard",
-	"DELETE /v1/dashboards/{id}": "DeleteDashboard",
+	"GET /v1/dashboards":           "ListDashboards",
+	"POST /v1/dashboards":          "CreateDashboard",
+	"GET /v1/dashboards/{id}":      "GetDashboard",
+	"PUT /v1/dashboards/{id}":      "ReplaceDashboard",
+	"DELETE /v1/dashboards/{id}":   "DeleteDashboard",
+	"GET /v1/dashboards/{id}/data": "GetDashboardData",
 	// ADR-745: hyphenated custom-metrics segment.
 	"GET /v1/apps/{slug}/custom-metrics/{name}/series": "GetCustomMetricSeries",
 	// ADR-1131: the hyphenated path segment has no derivable Go identifier.

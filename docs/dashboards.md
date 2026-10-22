@@ -14,7 +14,7 @@ Describe the widgets in a JSON file:
 [
   {"title": "Checkout p95", "kind": "app_metric", "app": "shop", "metric": "latency_p95_ms", "window": "1h"},
   {"title": "Checkout 5xx", "kind": "log_count", "app": "shop", "query": "route=/checkout&status=5xx", "window": "6h"},
-  {"title": "Orders waiting", "kind": "custom_metric", "app": "payments", "metric": "orders_pending", "window": "15m"},
+  {"title": "Orders waiting", "kind": "custom_metric", "app": "payments", "metric": "orders_pending", "window": "1h"},
   {"title": "Checkout SLO", "kind": "slo", "app": "shop", "slo_id": "6f0c…"}
 ]
 ```
@@ -22,10 +22,29 @@ Describe the widgets in a JSON file:
 ```sh
 gregale dashboards create checkout --file checkout.json
 gregale dashboards list
+gregale dashboards show DASHBOARD_ID
 gregale dashboards get DASHBOARD_ID
 gregale dashboards replace DASHBOARD_ID --name checkout --file checkout.json
 gregale dashboards rm DASHBOARD_ID
 ```
+
+`show` reads every widget now:
+
+```text
+checkout as of 2026-10-22 12:00:00 UTC
+  Checkout p95                 1h     182.5 ms
+  Checkout 5xx                 6h     87 events  (error 87)
+  Orders waiting               1h     1240 gauge
+  Checkout SLO                 -      82.4 % budget left  (attainment 99.912% over 168 of 168 hours)
+```
+
+A widget that cannot be read says why (`unavailable: no values pushed in the
+window`), and the rest of the dashboard still shows. The API is
+`GET /v1/dashboards/{id}/data`.
+
+In the web dashboard, **Dashboards** (`/dashboard/dashboards`) lists them,
+and each one opens as a page of cards, with a sparkline wherever the source
+has a series.
 
 ## Widgets
 

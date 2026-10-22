@@ -522,6 +522,8 @@ var routeExclude = map[string]bool{
 	"GET /dashboard/apps/{slug}/changes":                            true, // ADR-751 HTML view of GET /v1/apps/{slug}/changes
 	"GET /dashboard/releases/{id}/approval":                         true, // ADR-20261020085706 HTML page over GET/POST /v1/deployments/{id}/approvals
 	"GET /dashboard/apps/{slug}/log-search":                         true, // ADR-20261018083536 HTML view of GET /v1/apps/{slug}/log-events
+	"GET /dashboard/dashboards":                                     true, // ADR-20261022173833 HTML view of GET /v1/dashboards
+	"GET /dashboard/dashboards/{id}":                                true, // ADR-20261022173833 HTML view of GET /v1/dashboards/{id}/data
 	"GET /dashboard/apps/{slug}/custom-metrics":                     true, // ADR-745 HTML view of custom metric history
 	"GET /dashboard/apps/{slug}/automations":                        true, // ADR-1285 HTML authoring console
 	"POST /dashboard/apps/{slug}/automations/{action}":              true, // ADR-1285 app-bound CSRF forms

@@ -79,3 +79,32 @@ func TestCmdDashboardsCreateListGetRm(t *testing.T) {
 		t.Fatal("create without --file succeeded")
 	}
 }
+
+func TestCmdDashboardsShowRendersValuesAndErrors(t *testing.T) {
+	p95 := 182.5
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/dashboards/d-1/data" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(api.DashboardData{ID: "d-1", Name: "checkout", AsOf: time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), Widgets: []api.DashboardWidgetValue{
+			{DashboardWidget: api.DashboardWidget{Title: "Checkout p95", Kind: api.DashboardWidgetAppMetric, App: "shop", Window: "1h"}, Value: &p95, Unit: "ms"},
+			{DashboardWidget: api.DashboardWidget{Title: "Queue", Kind: api.DashboardWidgetCustomMetric, App: "shop", Window: "1h"}, Error: "no values pushed in the window"},
+		}})
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stdout bytes.Buffer
+	old := *main.OsStdout
+	*main.OsStdout = &stdout
+	t.Cleanup(func() { *main.OsStdout = old })
+	if code := main.CmdDashboards([]string{"show", "d-1"}); code != 0 {
+		t.Fatalf("show = %d", code)
+	}
+	out := stdout.String()
+	for _, s := range []string{"checkout as of 2026-10-22 12:00:00 UTC", "Checkout p95", "182.5 ms", "unavailable: no values pushed in the window"} {
+		if !strings.Contains(out, s) {
+			t.Errorf("output missing %q\nfull: %s", s, out)
+		}
+	}
+}

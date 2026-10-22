@@ -3092,6 +3092,18 @@ Examples:
 gregale dashboards list
 ```
 
+### dashboards show
+
+Show every widget&#39;s current value
+
+`gregale dashboards show <dashboard-id>`
+
+Examples:
+
+```sh
+gregale dashboards show DASHBOARD_ID
+```
+
 ### dashboards get
 
 Show a dashboard&#39;s widgets

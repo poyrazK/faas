@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const dashboardsUsage = "usage: gregale dashboards <list|get|create|replace|rm>"
+const dashboardsUsage = "usage: gregale dashboards <list|show|get|create|replace|rm>"
 
 // cmdDashboards implements `gregale dashboards` (ADR-20261022173833): an
 // account's saved custom dashboards.
@@ -25,6 +26,8 @@ func cmdDashboards(args []string) int {
 		return cmdDashboardsList(args[1:])
 	case "get":
 		return cmdDashboardsGet(args[1:])
+	case "show":
+		return cmdDashboardsShow(args[1:])
 	case "create":
 		return cmdDashboardsCreate(args[1:])
 	case "replace":
@@ -176,6 +179,51 @@ func cmdDashboardsRm(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "deleted dashboard %s\n", fs.Arg(0))
 	return 0
+}
+
+// cmdDashboardsShow implements `gregale dashboards show <id>`: every widget's
+// current value.
+func cmdDashboardsShow(args []string) int {
+	fs := newFlagSet("dashboards show", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale dashboards show <dashboard-id>", "dashboards")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	data, err := client.GetDashboardData(context.Background(), fs.Arg(0))
+	if err != nil {
+		return printErr("Could not read the dashboard", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(data))
+	}
+	renderDashboardData(osStdout, data)
+	return 0
+}
+
+func renderDashboardData(w io.Writer, data api.DashboardData) {
+	_, _ = fmt.Fprintf(w, "%s as of %s\n", data.Name, data.AsOf.Format("2006-01-02 15:04:05 UTC"))
+	for _, widget := range data.Widgets {
+		value := "-"
+		switch {
+		case widget.Error != "":
+			value = "unavailable: " + widget.Error
+		case widget.Value != nil:
+			value = strings.TrimSpace(fmt.Sprintf("%s %s", strconv.FormatFloat(*widget.Value, 'f', -1, 64), widget.Unit))
+		}
+		window := widget.Window
+		if window == "" {
+			window = "-"
+		}
+		line := fmt.Sprintf("  %-28s %-6s %s", widget.Title, window, value)
+		if widget.Detail != "" {
+			line += "  (" + widget.Detail + ")"
+		}
+		_, _ = fmt.Fprintln(w, line)
+	}
 }
 
 // readDashboardWidgets reads a widgets array, or an object holding one.

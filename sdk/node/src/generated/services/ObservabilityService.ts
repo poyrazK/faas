@@ -7,6 +7,7 @@ import type { AppLogDrainHealthResponse } from '../models/AppLogDrainHealthRespo
 import type { AppLogDrainResponse } from '../models/AppLogDrainResponse.js';
 import type { CreateAppLogDrainRequest } from '../models/CreateAppLogDrainRequest.js';
 import type { Dashboard } from '../models/Dashboard.js';
+import type { DashboardData } from '../models/DashboardData.js';
 import type { DashboardRequest } from '../models/DashboardRequest.js';
 import type { DashboardsResponse } from '../models/DashboardsResponse.js';
 import type { LogEventFacetsResponse } from '../models/LogEventFacetsResponse.js';
@@ -336,6 +337,33 @@ export class ObservabilityService {
     return __request(OpenAPI, {
       method: 'DELETE',
       url: '/v1/dashboards/{id}',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Read a custom dashboard's widgets.
+   * Resolves every widget for its window through the code behind the
+   * per-app endpoints: request metrics, log search counts, pushed custom
+   * metrics and SLO status. A widget that cannot be read carries `error`
+   * and no value; the rest still resolve.
+   *
+   * @returns DashboardData The resolved widgets.
+   * @returns Problem No such dashboard (dashboard_not_found), or the preview is disabled.
+   * @throws ApiError
+   */
+  public static getDashboardData({
+    id,
+  }: {
+    /**
+     * Dashboard id.
+     */
+    id: string,
+  }): CancelablePromise<DashboardData | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/dashboards/{id}/data',
       path: {
         'id': id,
       },

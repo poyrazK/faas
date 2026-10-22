@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -27,6 +28,7 @@ type Host interface {
 	// AppForAccount returns the account's app by slug, or false.
 	AppForAccount(ctx context.Context, acct state.Account, slug string) (state.App, bool)
 	Dashboards() state.DashboardStore
+	Sources() Sources
 	Logger() *slog.Logger
 }
 
@@ -35,6 +37,8 @@ type Host interface {
 type Service struct {
 	Host    Host
 	Enabled bool
+	// Now is the clock; nil means time.Now.
+	Now func() time.Time
 }
 
 const widgetTitleMax = 80
@@ -54,6 +58,19 @@ func (s *Service) List(w http.ResponseWriter, r *http.Request, acct state.Accoun
 		resp.Dashboards = append(resp.Dashboards, dto(row))
 	}
 	httpkit.WriteJSON(w, http.StatusOK, resp)
+}
+
+// ListFor returns the account's dashboards for the dashboard page.
+func (s *Service) ListFor(ctx context.Context, acct state.Account) ([]api.Dashboard, error) {
+	rows, err := s.Host.Dashboards().ListDashboards(ctx, acct.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]api.Dashboard, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, dto(row))
+	}
+	return out, nil
 }
 
 // Create serves POST /v1/dashboards.

@@ -82,6 +82,40 @@ func (c *Client) DeleteDashboard(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/dashboards/"+url.PathEscape(id), nil, nil)
 }
 
+// DashboardData is GET /v1/dashboards/{id}/data: every widget resolved for
+// its window. A widget that cannot be read carries Error and no value; the
+// rest of the dashboard still resolves.
+type DashboardData struct {
+	ID      string                 `json:"id"`
+	Name    string                 `json:"name"`
+	AsOf    time.Time              `json:"as_of"`
+	Widgets []DashboardWidgetValue `json:"widgets"`
+}
+
+// DashboardWidgetValue is one resolved widget. Value is the headline number
+// in Unit; Detail adds context (log counts by level, SLO attainment); Series
+// is the custom metric's points.
+type DashboardWidgetValue struct {
+	DashboardWidget
+	Value  *float64         `json:"value,omitempty"`
+	Unit   string           `json:"unit,omitempty"`
+	Detail string           `json:"detail,omitempty"`
+	Series []DashboardPoint `json:"series,omitempty"`
+	Error  string           `json:"error,omitempty"`
+}
+
+// DashboardPoint is one time-series sample.
+type DashboardPoint struct {
+	At    time.Time `json:"at"`
+	Value float64   `json:"value"`
+}
+
+// GetDashboardData runs GET /v1/dashboards/{id}/data.
+func (c *Client) GetDashboardData(ctx context.Context, id string) (DashboardData, error) {
+	var out DashboardData
+	return out, c.do(ctx, "GET", "/v1/dashboards/"+url.PathEscape(id)+"/data", nil, &out)
+}
+
 // ErrDashboardsUnavailable is the FAAS_CUSTOM_DASHBOARDS_ENABLED gate's answer.
 func ErrDashboardsUnavailable() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, "dashboards_unavailable", "Custom dashboards unavailable",

@@ -20,9 +20,12 @@ import (
 )
 
 type fakeHost struct {
-	store *state.MemStore
-	apps  map[string]state.App // slug → app
+	store   *state.MemStore
+	apps    map[string]state.App // slug → app
+	sources *fakeSources
 }
+
+func (h fakeHost) Sources() Sources { return h.sources }
 
 func (h fakeHost) AppForAccount(_ context.Context, acct state.Account, slug string) (state.App, bool) {
 	app, ok := h.apps[slug]
@@ -34,10 +37,11 @@ func (h fakeHost) Logger() *slog.Logger             { return slog.New(slog.NewTe
 func newService(enabled bool) (*Service, state.Account) {
 	acct := state.Account{ID: uuid.NewString()}
 	other := uuid.NewString()
-	host := fakeHost{store: state.NewMemStore(), apps: map[string]state.App{
+	store := state.NewMemStore()
+	host := fakeHost{store: store, apps: map[string]state.App{
 		"shop":    {ID: uuid.NewString(), AccountID: acct.ID, Slug: "shop"},
 		"foreign": {ID: uuid.NewString(), AccountID: other, Slug: "foreign"},
-	}}
+	}, sources: &fakeSources{ledger: store}}
 	return &Service{Host: host, Enabled: enabled}, acct
 }
 

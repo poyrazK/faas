@@ -524,10 +524,13 @@ export type { DailyUsageListResponse } from './models/DailyUsageListResponse.js'
 export type { DailyUsagePoint } from './models/DailyUsagePoint.js';
 export type { DailyUsageResponse } from './models/DailyUsageResponse.js';
 export type { Dashboard } from './models/Dashboard.js';
+export type { DashboardData } from './models/DashboardData.js';
 export type { DashboardID } from './models/DashboardID.js';
+export type { DashboardPoint } from './models/DashboardPoint.js';
 export type { DashboardRequest } from './models/DashboardRequest.js';
 export type { DashboardsResponse } from './models/DashboardsResponse.js';
 export type { DashboardWidget } from './models/DashboardWidget.js';
+export type { DashboardWidgetValue } from './models/DashboardWidgetValue.js';
 export type { DataAPIAccessConfig } from './models/DataAPIAccessConfig.js';
 export type { DataAPIConnectionBudgets } from './models/DataAPIConnectionBudgets.js';
 export type { DataAPIRuntimeConnectionReport } from './models/DataAPIRuntimeConnectionReport.js';
