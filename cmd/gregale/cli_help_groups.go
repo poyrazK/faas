@@ -36,7 +36,7 @@ var cliHelpGroups = []struct {
 	}},
 	{"Account & billing", []string{
 		"whoami", "account", "orgs", "invitations", "mfa", "profile", "logout", "plan", "billing",
-		"usage", "invoices", "overage-cap", "capabilities",
+		"usage", "invoices", "overage-cap", "capabilities", "previews",
 	}},
 }
 

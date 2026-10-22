@@ -56,7 +56,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`test`](#test) | Run scenario suites, lifecycle checks and local load tests |
 | [`chaos`](#chaos) | Inject faults into isolated scenario tests |
 | [`preview`](#preview) | Manage preview environments for pull requests |
-| [`previews`](#previews) | Join or leave platform previews (previews list\|join\|leave) |
+| [`previews`](#previews) | List, join, or leave platform previews |
 | [`flags`](#flags) | Roll out feature flags to selected customers |
 | [`consumers`](#consumers) | Issue keys to your API&#39;s consumers and meter their requests |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
@@ -9977,7 +9977,7 @@ gregale preview destroy pr-42-my-api
 
 ## previews
 
-Join or leave platform previews (previews list|join|leave)
+List, join, or leave platform previews
 
 `gregale previews [<subcommand>]`
 

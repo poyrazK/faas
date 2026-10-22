@@ -3202,7 +3202,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "previews",
 		DocSlug: "previews",
-		Short:   "Join or leave platform previews (previews list|join|leave)",
+		Short:   "List, join, or leave platform previews",
 		HelpNotes: []string{
 			"Joining releases an early platform feature to your account; a preview never adds a plan entitlement.",
 			"With --org, an owner or admin joins for the whole organization: members get it while acting for the company.",
