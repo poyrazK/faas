@@ -45,7 +45,9 @@ func TestWatchCPUSaturation(t *testing.T) {
 		now = start.Add(at)
 		p.watchCPUSaturation(t.Context(), rows)
 	}
-	row := func(id string, pct float64) InstanceStat { return InstanceStat{InstanceID: id, AppID: "app-" + id, CPUPct: pct} }
+	row := func(id string, pct float64) InstanceStat {
+		return InstanceStat{InstanceID: id, AppID: "app-" + id, CPUPct: pct}
+	}
 
 	// busy holds 48% of a CPU against a 500m quota (96%), with a 2 s dip;
 	// idle stays at 20%; brief saturates its 1000m quota for 10 s, then idles
