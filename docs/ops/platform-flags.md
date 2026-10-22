@@ -55,6 +55,7 @@ flag still cannot use a capability its plan lacks; the inspector reports both.
 | `change_timeline` | App change timeline preview (ADR-751) | apid | `FAAS_CHANGE_TIMELINE_ENABLED` |
 | `anomaly_alerts` | Baseline alert comparisons (ADR-744) | apid | `FAAS_ANOMALY_ALERTS_ENABLED` |
 | `trigger_batch_delivery` | `delivery: batch` on triggers (ADR-1321) | apid | `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` |
+| `strict_budgets` | Strict compute and egress budgets (ADR-1750) | apid | none (off until an operator writes it) |
 
 The environment and TOML values seed the flag at boot. Once an operator has
 written the flag, they are ignored, including after a restart.
@@ -75,6 +76,14 @@ Turning `anomaly_alerts` off refuses only new or changed baseline rules.
 Existing rules keep evaluating. In the same way, turning
 `trigger_batch_delivery` off refuses only creating a batch trigger or switching
 one to batch. Triggers that already deliver in batches keep doing so.
+
+`strict_budgets` is off until an operator writes it. While it is off for an
+account, creating or enabling a strict (`suspend_workloads`) budget returns 422
+`financial_budget_activation_unavailable` ("Strict budgets not released").
+Strict budgets that are already enabled keep enforcing and stay editable, and
+disabling or deleting one always works. Monitored budgets and alerts are not
+gated. To release it to one account, run `flags enable` (the kill switch, with
+the default still off) and then `flags allow` for that account.
 
 ## Day-to-day commands
 

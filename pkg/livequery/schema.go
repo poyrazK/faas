@@ -10,6 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/onebox-faas/faas/pkg/livequery/schemalog"
 )
 
 // Schema changes (ADR-20261016151947). pgoutput does not carry DDL, so Install adds an
@@ -37,59 +39,6 @@ const (
 	InvalidQuery = "invalid_query"
 )
 
-const installSQL = `
-CREATE SCHEMA IF NOT EXISTS gregale_live;
-CREATE TABLE IF NOT EXISTS gregale_live.ddl_log (
-	id bigserial PRIMARY KEY,
-	at timestamptz NOT NULL DEFAULT now(),
-	tag text NOT NULL,
-	objects oid[] NOT NULL,
-	broad boolean NOT NULL
-);
-CREATE OR REPLACE FUNCTION gregale_live.record_ddl() RETURNS event_trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-DECLARE
-	objs oid[] := '{}';
-	wide boolean := false;
-	seen boolean := false;
-	r record;
-BEGIN
-	-- Commands on the log's own schema (Install replacing this function)
-	-- change no live query.
-	IF TG_EVENT = 'sql_drop' THEN
-		FOR r IN SELECT classid, objid, schema_name FROM pg_event_trigger_dropped_objects() LOOP
-			CONTINUE WHEN r.schema_name IS NOT DISTINCT FROM 'gregale_live';
-			seen := true;
-			IF r.classid = 'pg_class'::regclass THEN
-				objs := objs || r.objid;
-			ELSE
-				wide := true;
-			END IF;
-		END LOOP;
-	ELSE
-		FOR r IN SELECT classid, objid, schema_name FROM pg_event_trigger_ddl_commands() LOOP
-			CONTINUE WHEN r.schema_name IS NOT DISTINCT FROM 'gregale_live';
-			seen := true;
-			IF r.classid = 'pg_class'::regclass THEN
-				objs := objs || r.objid;
-			ELSE
-				wide := true;
-			END IF;
-		END LOOP;
-	END IF;
-	IF NOT seen THEN
-		RETURN;
-	END IF;
-	-- The rows only need to reach the slot; old ones serve no one.
-	DELETE FROM gregale_live.ddl_log WHERE at < now() - interval '1 hour';
-	INSERT INTO gregale_live.ddl_log (tag, objects, broad) VALUES (TG_TAG, objs, wide);
-END
-$$;
-DROP EVENT TRIGGER IF EXISTS gregale_live_ddl;
-DROP EVENT TRIGGER IF EXISTS gregale_live_drop;
-CREATE EVENT TRIGGER gregale_live_ddl ON ddl_command_end EXECUTE FUNCTION gregale_live.record_ddl();
-CREATE EVENT TRIGGER gregale_live_drop ON sql_drop EXECUTE FUNCTION gregale_live.record_ddl();`
-
 // Install creates the schema-change log and its event triggers. It needs a
 // superuser, is idempotent, and must run before the engine's first round
 // for schema changes to be noticed.
@@ -99,8 +48,8 @@ func Install(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("livequery: install: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, installSQL); err != nil {
-		return fmt.Errorf("livequery: install schema-change log: %w", err)
+	if err := schemalog.Install(ctx, tx); err != nil {
+		return fmt.Errorf("livequery: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("livequery: install: %w", err)

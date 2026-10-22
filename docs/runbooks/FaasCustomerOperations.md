@@ -84,3 +84,77 @@ ORDER BY unknown DESC;
 Customers resolve each Operation through recovery
 (`gregale customer-operations recover`), after checking whether the effect
 happened. Do not change Operation state by hand.
+
+## FaasCustomerOperationQueueNotDraining
+
+An Operation held by a per-customer concurrency policy
+([ADR-20261018210500](../adr/20261018210500-per-customer-operation-concurrency.md))
+has waited more than thirty minutes and apid started no queued Operation in
+that time. apid reports `apid_customer_operation_queued`,
+`apid_customer_operation_queue_oldest_seconds` and
+`apid_customer_operation_queue_releases_total`; every replica reports the same
+queue, so rules read `max()`.
+
+```sql
+SELECT q.account_id, q.app_id, q.scope, q.operation, q.platform_tenant_id,
+       count(*) AS queued, min(q.queued_at) AS oldest,
+       (SELECT count(*) FROM customer_operations o
+          JOIN customer_operation_definitions d ON d.id = o.definition_id
+         WHERE o.platform_tenant_id = q.platform_tenant_id AND o.app_id = q.app_id
+           AND d.scope = q.scope AND d.name = q.operation
+           AND o.state IN ('accepted','running','requires_reconciliation')
+           AND NOT EXISTS (SELECT 1 FROM customer_operation_queue h WHERE h.operation_id = o.id)) AS in_flight
+FROM customer_operation_queue q
+GROUP BY 1, 2, 3, 4, 5
+ORDER BY oldest;
+```
+
+- **`in_flight` at the customer's limit:** the queue is working as configured;
+  the customer's earlier Operations are long-running. Check the policy with the
+  account (`GET /v1/apps/{slug}/operation-concurrency`) before changing it.
+- **`in_flight` below the limit:** the releaser is not running. Look for
+  `operation queue release failed` or `operation queue stats failed` in the apid
+  log, and check that apid is up; the releaser runs in every replica.
+- **An Operation stuck `accepted` and never dispatched after release:** its
+  invocation or workflow run is due but not claimed; follow the scheduler's
+  dispatch alerts.
+
+## FaasCustomerOperationFanInStuck
+
+A workflow Operation waits on `operation.children.settled`
+([ADR-20261018183000](../adr/20261018183000-child-operations.md)), every one of
+its children has settled, and apid has not signalled it for more than ten
+minutes. apid's fan-in signaler scans for such parents on every Operation
+change and every five seconds, and reports
+`apid_customer_operation_fan_in_oldest_seconds` (age of the oldest one at the
+start of its latest pass), `apid_customer_operation_fan_in_signals_total{result}`
+and `apid_customer_operation_child_starts_total{parent,result}`.
+
+```sql
+SELECT o.id, o.account_id, o.workflow_run_id,
+       count(co.id) AS children,
+       max((co.record ->> 'updated_at')::timestamptz) AS last_child_settled,
+       EXISTS (SELECT 1 FROM workflow_events e
+                WHERE e.run_id = o.workflow_run_id
+                  AND e.event_name = 'operation.children.settled') AS signalled
+FROM customer_operations o
+LEFT JOIN customer_operation_children c ON c.parent_operation_id = o.id
+LEFT JOIN customer_operations co ON co.id = c.child_operation_id
+WHERE o.state = 'waiting'
+  AND (o.record -> 'waiting' ->> 'event') = 'operation.children.settled'
+GROUP BY o.id
+HAVING count(co.id) = count(*) FILTER (WHERE co.state IN ('succeeded', 'failed', 'cancelled'))
+ORDER BY last_child_settled;
+```
+
+- **`signalled` false:** the signal is failing. Look for
+  `children-settled signal failed` (per parent) or `child settlement scan
+  failed` in the apid log; `fan_in_signals_total{result="error"}` rises with
+  each retry. Fix the cause (usually the database); the next pass signals the
+  parent. Do not insert the workflow event by hand.
+- **`signalled` true but the Operation still waits:** apid did its part and the
+  run is due; the scheduler has not resumed it. Follow the workflow dispatch
+  alerts.
+- Parents of accounts removed from `FAAS_OPERATION_CHILDREN_ACCOUNTS` are never
+  signalled and are not counted by the gauge; they wait out their step's
+  timeout.

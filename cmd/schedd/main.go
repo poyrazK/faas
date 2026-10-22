@@ -1672,7 +1672,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if cfg.FrozenTierApps {
 			engine.EnableFrozenTierApps()
 		}
-		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps,
+		if cfg.FrozenTierWorkers {
+			engine.EnableFrozenTierWorkers()
+		}
+		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps, "workers", cfg.FrozenTierWorkers,
 			"frozen_ttl_seconds", api.FrozenTTLSeconds, "frozen_max_per_node", api.FrozenMaxPerNode)
 	}
 	if cfg.FrozenFastPath {
@@ -2345,6 +2348,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// missed until the trigger re-fires. Pair the boot-fatal
 	// (sibling to the dial above) with a 5s retry ticker so a
 	// transient Postgres blip recovers without a daemon restart.
+	// A queue message also wakes its app's idle worker pool now rather than
+	// at the next targets tick (ADR-20261018101500).
+	onTriggerNotification := func(n db.Notification) {
+		if triggerWakeNotification(n) {
+			loop.WakeupTriggers()
+		}
+		if appID, ok := queueInvocationApp(n); ok {
+			targetsTrigger.WakeWorkerPool(ctx, appID)
+		}
+	}
 	triggerNotifC, triggerSubErr := db.SubscribeWithReconnect(ctx, pool,
 		[]string{db.NotifyTriggerReady, db.NotifyTriggerChanged, db.NotifyInvocationDue}, log)
 	if triggerSubErr != nil {
@@ -2380,9 +2393,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 							if !ok {
 								break
 							}
-							if triggerWakeNotification(n) {
-								loop.WakeupTriggers()
-							}
+							onTriggerNotification(n)
 						}
 					}
 				}
@@ -2398,9 +2409,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					if !ok {
 						return
 					}
-					if triggerWakeNotification(n) {
-						loop.WakeupTriggers()
-					}
+					onTriggerNotification(n)
 				}
 			}
 		}()
@@ -2543,6 +2552,22 @@ func triggerWakeNotification(n db.Notification) bool {
 		return false
 	}
 	return payload.Source == string(state.InvocationQueue) || payload.Source == string(state.InvocationDelayedTask)
+}
+
+// queueInvocationApp returns the app of an invocation_due notification for a
+// queue message.
+func queueInvocationApp(n db.Notification) (string, bool) {
+	if n.Channel != db.NotifyInvocationDue {
+		return "", false
+	}
+	var payload struct {
+		AppID  string `json:"app_id"`
+		Source string `json:"source"`
+	}
+	if json.Unmarshal([]byte(n.Payload), &payload) != nil || payload.Source != string(state.InvocationQueue) {
+		return "", false
+	}
+	return payload.AppID, payload.AppID != ""
 }
 
 // eventRecipientClaimsEnabled defaults to independent routing. Explicit values

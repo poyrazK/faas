@@ -9,8 +9,14 @@ import (
 // SlackPayload renders a message for a Slack incoming webhook: a fallback
 // text plus a small block layout.
 func SlackPayload(msg Message) map[string]any {
+	if msg.Release != nil {
+		return releaseSlackPayload(*msg.Release)
+	}
 	icon := map[string]string{EventFire: ":rotating_light:", EventResolve: ":white_check_mark:", EventTest: ":wave:"}[msg.Event]
 	text := fmt.Sprintf("%s *%s*\n%s", icon, Headline(msg), Detail(msg))
+	for _, note := range msg.Notes {
+		text += "\n• " + note
+	}
 	blocks := []map[string]any{{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": text}}}
 	if msg.DashboardURL != "" {
 		blocks = append(blocks, map[string]any{"type": "context", "elements": []map[string]any{{"type": "mrkdwn", "text": fmt.Sprintf("<%s|Open in Gregale>", msg.DashboardURL)}}})
@@ -31,6 +37,9 @@ func PagerDutyPayload(routingKey string, msg Message) map[string]any {
 		return out
 	}
 	severity := "error"
+	if msg.Severity != "" {
+		severity = msg.Severity
+	}
 	if msg.Event == EventTest {
 		severity = "info"
 	}
@@ -38,16 +47,27 @@ func PagerDutyPayload(routingKey string, msg Message) map[string]any {
 	if source == "" {
 		source = "gregale"
 	}
+	details := map[string]any{
+		"rule": msg.RuleName, "metric": msg.Metric, "observed": msg.Observed,
+		"comparison": msg.Comparison, "threshold": msg.Threshold, "window": msg.Window,
+	}
+	if len(msg.Notes) > 0 {
+		details["notes"] = msg.Notes
+	}
 	out["payload"] = map[string]any{
-		"summary":   truncate(Headline(msg)+" — "+Detail(msg), 1024),
-		"source":    source,
-		"severity":  severity,
-		"timestamp": msg.OccurredAt.UTC().Format(time.RFC3339),
-		"component": msg.Metric,
-		"custom_details": map[string]any{
-			"rule": msg.RuleName, "metric": msg.Metric, "observed": msg.Observed,
-			"comparison": msg.Comparison, "threshold": msg.Threshold, "window": msg.Window,
-		},
+		"summary":        truncate(Headline(msg)+" — "+Detail(msg), 1024),
+		"source":         source,
+		"severity":       severity,
+		"timestamp":      msg.OccurredAt.UTC().Format(time.RFC3339),
+		"component":      msg.Metric,
+		"custom_details": details,
+	}
+	if msg.Summary != "" {
+		summary := map[string]any{"rule": msg.RuleName, "summary": msg.Summary}
+		if len(msg.Notes) > 0 {
+			summary["notes"] = msg.Notes
+		}
+		out["payload"].(map[string]any)["custom_details"] = summary
 	}
 	if msg.DashboardURL != "" {
 		out["links"] = []map[string]any{{"href": msg.DashboardURL, "text": "Open in Gregale"}}
@@ -57,15 +77,28 @@ func PagerDutyPayload(routingKey string, msg Message) map[string]any {
 
 // EmailContent renders a plain-text email.
 func EmailContent(msg Message) (subject, body string) {
+	if msg.Release != nil {
+		return releaseEmailContent(*msg.Release)
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\n%s\n", Headline(msg), Detail(msg))
+	if len(msg.Notes) > 0 {
+		b.WriteString("\n")
+		for _, note := range msg.Notes {
+			fmt.Fprintf(&b, "- %s\n", note)
+		}
+	}
 	if !msg.OccurredAt.IsZero() {
 		fmt.Fprintf(&b, "\nAt: %s\n", msg.OccurredAt.UTC().Format(time.RFC1123))
 	}
 	if msg.DashboardURL != "" {
 		fmt.Fprintf(&b, "Dashboard: %s\n", msg.DashboardURL)
 	}
-	b.WriteString("\nYou receive this because a Gregale alert rule sends to this address. Manage channels with `gregale channels list`.\n")
+	footer := msg.Footer
+	if footer == "" {
+		footer = "You receive this because a Gregale alert rule sends to this address. Manage channels with `gregale channels list`."
+	}
+	b.WriteString("\n" + footer + "\n")
 	return "[Gregale] " + Headline(msg), b.String()
 }
 

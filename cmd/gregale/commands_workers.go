@@ -399,7 +399,7 @@ func cmdWorkersStatus(args []string) int {
 			_, _ = fmt.Fprintf(osStdout, "  Target:     %s\n", status.BrokerSource)
 		}
 		if status.DLQCount > 0 {
-			_, _ = fmt.Fprintf(osStdout, "  DLQ:        %d dead-letter messages ⚠️\n", status.DLQCount)
+			_, _ = fmt.Fprintf(osStdout, "  DLQ:        %d dead-letter messages (needs attention)\n", status.DLQCount)
 		} else {
 			_, _ = fmt.Fprintf(osStdout, "  DLQ:        0 dead-letter messages (healthy)\n")
 		}

@@ -148,6 +148,35 @@ func TestLocalCacheBackend_PlainFillIsDurableOnReturn(t *testing.T) {
 	}
 }
 
+// WithDurableCacheFill overrides a wake context's deferral: the entry is
+// installed when Get returns, before the caller reads or even closes the
+// stream, so its local path resolves at once (ADR-510's fetch of an evicted
+// backing image relies on this).
+func TestLocalCacheBackend_DurableFillOverridesDeferral(t *testing.T) {
+	parent := newFakeBackend()
+	ctx := context.Background()
+	if err := parent.Put(ctx, "base/releases/runner.ext4", strings.NewReader("base")); err != nil {
+		t.Fatal(err)
+	}
+	cache, err := storage.NewLocalCacheBackend(parent, filepath.Join(t.TempDir(), "cache"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, err := cache.Get(storage.WithDurableCacheFill(storage.WithDeferredCacheDurability(ctx)), "base/releases/runner.ext4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cached(t, cache, "base/releases/runner.ext4") {
+		t.Fatal("entry not installed when Get returned")
+	}
+	if err := rc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !cached(t, cache, "base/releases/runner.ext4") {
+		t.Fatal("entry lost when the unread stream was closed")
+	}
+}
+
 // A fill whose fsync fails is never installed and leaves no temp file; the
 // caller's bytes stay valid and the next miss fetches again.
 func TestLocalCacheBackend_DeferredFillSyncFailureIsNotCached(t *testing.T) {

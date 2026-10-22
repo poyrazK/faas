@@ -41,6 +41,9 @@ func (s *server) registerScenarioTest(w http.ResponseWriter, r *http.Request, ac
 		switch {
 		case errors.Is(err, state.ErrConflict):
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Test environment conflict", "run or workload is already registered"))
+		case errors.Is(err, state.ErrScenarioManagedBindings):
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Managed bindings cannot be contained",
+				"a contained rehearsal member cannot use real managed PostgreSQL or object storage; declare isolated postgres/objects fixtures instead"))
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "test developer session is unavailable")
 		default:

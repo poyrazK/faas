@@ -673,7 +673,7 @@ func cmdMCPDeploy(args []string) int {
 	var o mcpDeployOptions
 	fs.StringVar(&o.path, "path", ".", "source directory; uploads the current worktree")
 	fs.StringVar(&o.slug, "name", "", "app slug")
-	fs.StringVar(&o.profile, "profile", "", "app resource profile")
+	resourceSizeFlag(fs, &o.profile, "app resource size")
 	fs.StringVar(&o.tokenEnv, "token-env", "", "MCP client token for post-deployment verification")
 	fs.StringVar(&o.secretsFile, "secrets-file", "", "sealed app secrets configured before deployment")
 	fs.StringVar(&o.smokeFixtures, "fixtures", "", "run reviewed MCP smoke fixtures against the candidate before promotion")
@@ -801,7 +801,7 @@ func mcpDeployArgs(o mcpDeployOptions, dir string, secretsRequested ...bool) []s
 		args = append(args, "--mcp-task-migration-override")
 	}
 	if o.profile != "" {
-		args = append(args, "--profile", o.profile)
+		args = append(args, "--size", o.profile)
 	}
 	if includeSecrets && o.secretsFile != "" {
 		args = append(args, "--secrets-file", o.secretsFile)

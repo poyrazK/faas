@@ -48,34 +48,9 @@ func TestWorkloadIdentityMetal(t *testing.T) {
 	if err := dbMigrateUp(t, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyPath := filepath.Join(t.TempDir(), "identity.pem")
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
-	if err := os.WriteFile(keyPath, pemBytes, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// The key id and JWKS gregalectl workload-identity init writes (ADR-1141).
-	jwk, err := workloadidentity.PublicJWK(&key.PublicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signer, err := workloadidentity.NewSigner(key, workloadidentity.DefaultIssuer, jwk.KeyID, workloadidentity.DefaultTokenTTL)
-	if err != nil {
-		t.Fatal(err)
-	}
+	signer, identityEnv := workloadIdentityTrust(t)
 	verifier, err := workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
 	if err != nil {
-		t.Fatal(err)
-	}
-	jwks, err := json.Marshal(signer.JWKS())
-	if err != nil {
-		t.Fatal(err)
-	}
-	jwksPath := filepath.Join(t.TempDir(), "workload-identity.jwks.json")
-	if err := os.WriteFile(jwksPath, jwks, 0o444); err != nil {
 		t.Fatal(err)
 	}
 
@@ -87,8 +62,7 @@ func TestWorkloadIdentityMetal(t *testing.T) {
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.Start(t, pool, e2etest.DeployWake, "FAAS_WORKLOAD_IDENTITY_KEY_PATH="+keyPath,
-		"FAAS_WORKLOAD_IDENTITY_KEY_ID="+jwk.KeyID, "FAAS_WORKLOAD_JWKS_PATH="+jwksPath)
+	h := e2etest.Start(t, pool, e2etest.DeployWake, identityEnv...)
 	apiKey := h.SeedAccount(context.Background(), api.PlanPro)
 	img, _ := e2etest.IdentityProbeImageAboveBase("library/hello", helloBody)
 	ref := registry.AddImage("library/hello", img)
@@ -179,6 +153,40 @@ func TestWorkloadIdentityMetal(t *testing.T) {
 		t.Fatal("token verified for an audience it was not minted for")
 	}
 	assertWorkloadTokenLeasesQueue(t, h, pool, apiKey, appID, serving[0].ID)
+}
+
+// workloadIdentityTrust writes a signing key, its thumbprint key id and the
+// JWKS the way gregalectl workload-identity init does (ADR-1141), and returns
+// the signer with the daemon environment that points vmmd and apid at them.
+func workloadIdentityTrust(t *testing.T) (*workloadidentity.Signer, []string) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(t.TempDir(), "identity.pem")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	if err := os.WriteFile(keyPath, pemBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	jwk, err := workloadidentity.PublicJWK(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := workloadidentity.NewSigner(key, workloadidentity.DefaultIssuer, jwk.KeyID, workloadidentity.DefaultTokenTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwks, err := json.Marshal(signer.JWKS())
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwksPath := filepath.Join(t.TempDir(), "workload-identity.jwks.json")
+	if err := os.WriteFile(jwksPath, jwks, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	return signer, []string{"FAAS_WORKLOAD_IDENTITY_KEY_PATH=" + keyPath,
+		"FAAS_WORKLOAD_IDENTITY_KEY_ID=" + jwk.KeyID, "FAAS_WORKLOAD_JWKS_PATH=" + jwksPath}
 }
 
 // assertWorkloadTokenLeasesQueue fetches a gregale:queues token inside the

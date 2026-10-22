@@ -3293,7 +3293,10 @@ func (s *PgStore) ListOwnedCronsByNodeID(ctx context.Context, nodeID string) ([]
 	sel := `select c.id, c.app_id, c.schedule, c.path, c.enabled, c.suspended_reason, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at, c.command, c.command_shell, c.command_timeout_seconds, c.command_max_output_bytes, c.retry_max, c.retry_backoff_seconds, c.schedule_policy, c.failure_rules, c.schedule_revision
 		   from crons c
 		   join apps a on a.id = c.app_id
-		  where a.node_id = $1 and c.suspended_reason = ''`
+		  where a.node_id = $1 and c.suspended_reason = ''
+		    -- A rehearsal fires crons only from its recipe, never from the
+		    -- clock (ADR-20261020200000).
+		    and not exists (select 1 from scenario_test_action_policies p where p.app_id = c.app_id)`
 	rows, err := s.pool.Query(ctx, sel, nodeID)
 	if err != nil {
 		return nil, err
@@ -8042,6 +8045,14 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		return Deployment{}, fmt.Errorf("state: deployment %s status=%s: %w",
 			id, status, ErrDeploymentNotLive)
 	}
+	// ADR-20261021152201: a scheduled start is this traffic change plus the
+	// rollout stamp, under the same locks.
+	start, starting := scheduledStartFrom(ctx, id)
+	if starting {
+		if err := checkScheduledStartTx(ctx, tx, start, id); err != nil {
+			return Deployment{}, err
+		}
+	}
 
 	// (3) Lock sibling live rows in the same app so a concurrent
 	// CreateDeployment (which supersedes prior live rows) doesn't
@@ -8190,6 +8201,11 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	if sum != 100 {
 		return Deployment{}, fmt.Errorf("state: Σ traffic_percent = %d, want 100: %w",
 			sum, ErrTrafficPercentSumInvalid)
+	}
+	if starting {
+		if err := stampScheduledStartTx(ctx, tx, start, id); err != nil {
+			return Deployment{}, err
+		}
 	}
 
 	// Read back the stamped row + commit.
@@ -13974,7 +13990,8 @@ func (s *PgStore) ListCronsForApp(ctx context.Context, appID string) ([]Cron, er
 
 func (s *PgStore) ListEnabledCrons(ctx context.Context) ([]Cron, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision from crons where enabled = true and suspended_reason = ''`)
+		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision from crons c where enabled = true and suspended_reason = ''
+		  and not exists (select 1 from scenario_test_action_policies p where p.app_id = c.app_id)`)
 	if err != nil {
 		return nil, err
 	}
@@ -15005,13 +15022,17 @@ func (s *PgStore) CountFailedDeploymentsSince(ctx context.Context, accountID, ap
 		appArg = appID
 	}
 	var n int
+	// Account-wide aggregates skip rehearsal-enrolled apps: a candidate
+	// revision's injected faults must not page the account or mask an
+	// outage (ADR-20261019180000). App-scoped rules are unchanged.
 	row := s.pool.QueryRow(ctx, `
 		select count(*) from deployments d
 		 join apps a on a.id = d.app_id
 		 where a.account_id = $1
 		   and d.status = 'failed'
 		   and d.created_at >= $2
-		   and ($3::uuid is null or d.app_id = $3::uuid)`,
+		   and ($3::uuid is null or d.app_id = $3::uuid)
+		   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = d.app_id))`,
 		accountID, since.UTC(), appArg)
 	if err := row.Scan(&n); err != nil {
 		return 0, err
@@ -15041,18 +15062,20 @@ func (s *PgStore) WasInvokedSuccessfullySince(ctx context.Context, accountID, ap
 	var exists bool
 	row := s.pool.QueryRow(ctx, `
 		select exists(
-			select 1 from invocations
+			select 1 from invocations v
 			 where account_id = $1
 			   and state = 'completed'
 			   and created_at >= $2
 			   and ($3::uuid is null or app_id is not distinct from $3::uuid)
+			   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = v.app_id))
 			 limit 1)
 		    or exists(
-			select 1 from request_telemetry
+			select 1 from request_telemetry t
 			 where account_id = $1
 			   and received_at >= $2
 			   and status < 500
 			   and ($3::uuid is null or app_id = $3::uuid)
+			   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = t.app_id))
 			 limit 1)`,
 		accountID, since.UTC(), appArg)
 	if err := row.Scan(&exists); err != nil {
@@ -15087,10 +15110,11 @@ func (s *PgStore) CountNewErrorFingerprintsSince(ctx context.Context, accountID,
 	var total int
 	err := s.pool.QueryRow(ctx, `
 		select count(*)::int
-		  from app_errors
+		  from app_errors e
 		 where account_id = $1
 		   and first_seen_at >= $2
-		   and ($3::uuid is null or app_id = $3::uuid)`,
+		   and ($3::uuid is null or app_id = $3::uuid)
+		   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = e.app_id))`,
 		accountID, since.UTC(), appArg).Scan(&total)
 	if err != nil {
 		return 0, err
@@ -15113,10 +15137,11 @@ func (s *PgStore) ColdWakeRatePctSince(ctx context.Context, accountID, appID str
 			100.0 * sum(case when cold_boot then count else 0 end)::float8
 			/ nullif(sum(count), 0), 0
 		)::float8
-		  from request_telemetry
+		  from request_telemetry t
 		 where account_id = $1
 		   and received_at >= $2
-		   and ($3::uuid is null or app_id = $3::uuid)`,
+		   and ($3::uuid is null or app_id = $3::uuid)
+		   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = t.app_id))`,
 		accountID, since.UTC(), appArg).Scan(&rate)
 	if err != nil {
 		return 0, err
@@ -15838,11 +15863,12 @@ func (s *PgStore) CountFailedInvocationsSince(ctx context.Context, accountID, ap
 	// alert most needs to see — and was not counted at all.
 	var n int
 	row := s.pool.QueryRow(ctx, `
-		select count(*) from invocations
+		select count(*) from invocations v
 		 where account_id = $1
 		   and state in ('failed', 'dead_letter')
 		   and coalesce(completed_at, created_at) >= $2
 		   and ($3::uuid is null or app_id is not distinct from $3::uuid)
+		   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = v.app_id))
 		   and ($4::text is null or source = $4::text)`,
 		accountID, since.UTC(), appArg, sourceArg)
 	if err := row.Scan(&n); err != nil {

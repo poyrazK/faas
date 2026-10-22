@@ -2379,6 +2379,9 @@ SELECT EXISTS(
  AND r.lease_until>clock_timestamp() AND s.status='running' AND a.status<>'deleted'
  AND NOT a.maintenance_mode AND (NOT a.platform_tenant_required OR r.platform_tenant_id IS NOT NULL)
  AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
+ -- A rehearsal-enrolled app never reaches a real provider with live
+ -- credentials from a workflow step (ADR-20261019180000).
+ AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=a.id)
  AND COALESCE(r.platform_tenant_id::text, '')=COALESCE($7::text, '')
  AND (r.platform_tenant_id IS NULL OR EXISTS (
   SELECT 1 FROM platform_tenants t WHERE t.id=r.platform_tenant_id AND t.account_id=a.account_id AND t.status='active'
@@ -42914,7 +42917,9 @@ func (q *Queries) ListEgressCircuitCandidates(ctx context.Context, db DBTX, samp
 
 const listEnabledAppLogDrainsWithStandardBinding = `-- name: ListEnabledAppLogDrainsWithStandardBinding :many
 SELECT d.id, d.app_id, d.account_id, d.kind, d.target_url, d.auth_header_sealed, d.enabled, d.created_at, d.updated_at,coalesce(application_standard_log_binding(d.app_id,d.id),'null'::jsonb)::jsonb AS standard_binding
-FROM app_log_drains d WHERE d.enabled ORDER BY d.created_at,d.id
+FROM app_log_drains d WHERE d.enabled
+ AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)
+ORDER BY d.created_at,d.id
 `
 
 type ListEnabledAppLogDrainsWithStandardBindingRow struct {
@@ -42930,6 +42935,8 @@ type ListEnabledAppLogDrainsWithStandardBindingRow struct {
 	StandardBinding  []byte
 }
 
+// A rehearsal-enrolled app's candidate output never leaves for a customer
+// log destination (ADR-20261019180000).
 func (q *Queries) ListEnabledAppLogDrainsWithStandardBinding(ctx context.Context, db DBTX) ([]ListEnabledAppLogDrainsWithStandardBindingRow, error) {
 	rows, err := db.Query(ctx, listEnabledAppLogDrainsWithStandardBinding)
 	if err != nil {
@@ -43112,6 +43119,8 @@ select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, qu
        filter_criteria, delivery,
        created_at, updated_at
 from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope)
+AND NOT (kind IN ('kafka','nats','redis_streams','sqs_compat')
+  AND EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=triggers.app_id))
 `
 
 type ListEnabledTriggersRow struct {
@@ -43146,6 +43155,9 @@ type ListEnabledTriggersRow struct {
 // ADR-118 / issue #757: filter_criteria is included so the dispatch
 // tick can evaluate per-record predicates without a second round-trip
 // (the column is JSONB; empty/null means "no filter").
+// A rehearsal-enrolled app never polls or commits offsets on a real external
+// broker; its queue, cron and realtime inputs stay inside the app
+// (ADR-20261019180000).
 func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabledTriggersRow, error) {
 	rows, err := db.Query(ctx, listEnabledTriggers)
 	if err != nil {
@@ -69433,6 +69445,9 @@ SELECT t.run_id, t.task_index, t.status, t.attempt, t.instance_id, t.error_class
  JOIN job_runs r ON r.id=t.run_id JOIN jobs j ON j.id=r.job_id
  WHERE t.task_index=0 AND t.status='queued' AND o.state='accepted' AND j.status='active'
  AND r.image_storage_key_snapshot IS NOT NULL
+ -- ADR-20261018210500: an Operation held by a per-customer concurrency
+ -- policy waits until apid's releaser removes its queue row.
+ AND NOT EXISTS (SELECT 1 FROM customer_operation_queue q WHERE q.operation_id=o.id)
  ORDER BY t.created_at LIMIT $1::integer
 `
 
@@ -77748,7 +77763,14 @@ SELECT (SELECT values_json FROM deployment_release_secret_snapshots WHERE deploy
         FROM project_environment_config_versions c
         WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
             AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
-        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
+        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config,
+    owner.project_id,
+    -- ADR-1139: the project environment secrets the deployment inherits.
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('key',p.key,'ciphertext',encode(p.ciphertext,'base64'),'kid',p.kid,
+        'value_hash',p.value_hash,'secret_version',p.secret_version,'created_at',p.created_at,'updated_at',p.updated_at) ORDER BY p.key)
+        FROM project_environment_secrets p
+        WHERE owner.project_id IS NOT NULL AND p.account_id=owner.account_id AND p.project_id=owner.project_id
+            AND p.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END),'[]'::jsonb)::jsonb AS project_secrets
 FROM owner
 `
 
@@ -77775,6 +77797,8 @@ type ReadRuntimeAppValuesForDeploymentRow struct {
 	Secrets                    []byte
 	ReloadSignals              []byte
 	ProjectConfig              []byte
+	ProjectID                  pgtype.UUID
+	ProjectSecrets             []byte
 }
 
 func (q *Queries) ReadRuntimeAppValuesForDeployment(ctx context.Context, db DBTX, arg ReadRuntimeAppValuesForDeploymentParams) (ReadRuntimeAppValuesForDeploymentRow, error) {
@@ -77797,6 +77821,8 @@ func (q *Queries) ReadRuntimeAppValuesForDeployment(ctx context.Context, db DBTX
 		&i.Secrets,
 		&i.ReloadSignals,
 		&i.ProjectConfig,
+		&i.ProjectID,
+		&i.ProjectSecrets,
 	)
 	return i, err
 }
@@ -94001,6 +94027,8 @@ const workflowAlertSnapshot = `-- name: WorkflowAlertSnapshot :one
 WITH owned_apps AS (
  SELECT id FROM apps WHERE account_id = $3::uuid
  AND ($4::uuid IS NULL OR id = $4::uuid)
+ -- Account-wide rules skip rehearsal-enrolled apps (ADR-20261019180000).
+ AND ($4::uuid IS NOT NULL OR NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id = apps.id))
 ), due_runs AS (
  -- Same wake/lease eligibility as automation queue health (ADR-730/643).
  SELECT r.created_at,CASE WHEN r.status='running'

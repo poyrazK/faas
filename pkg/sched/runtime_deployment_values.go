@@ -102,6 +102,13 @@ func buildRuntimeDeploymentValues(app state.App, dep state.Deployment, reads run
 	if err != nil {
 		return runtimeDeploymentValues{}, err
 	}
+	// ADR-1139: an explicit secret selection is a least-privilege grant and
+	// inherits nothing; otherwise project secrets go first so vmmd lets the
+	// app's own entries win. They are not delivery candidates or receipt
+	// inputs: a change stamps the scope instead.
+	if len(refs) == 0 {
+		result.MainSecrets.Entries = withInheritedProjectSecrets(snapshot.InheritedSecrets, result.MainSecrets.Entries)
+	}
 	result.MainSecrets.Fence, err = state.NewRuntimeAppSecretFence(snapshot)
 	if err != nil {
 		return runtimeDeploymentValues{}, fmt.Errorf("capture runtime secret delivery owner: %w", err)
@@ -111,6 +118,27 @@ func buildRuntimeDeploymentValues(app state.App, dep state.Deployment, reads run
 		return runtimeDeploymentValues{}, fmt.Errorf("capture runtime configuration: %w", err)
 	}
 	return result, nil
+}
+
+// withInheritedProjectSecrets prepends the inherited project secrets the app
+// does not deliver itself. Each entry names its single source key, so vmmd
+// refuses an envelope that holds anything else.
+func withInheritedProjectSecrets(inherited []state.ProjectEnvironmentSecret, own []fcvm.SealedEnvEntry) []fcvm.SealedEnvEntry {
+	if len(inherited) == 0 {
+		return own
+	}
+	delivered := make(map[string]bool, len(own))
+	for _, entry := range own {
+		delivered[entry.Key] = true
+	}
+	entries := make([]fcvm.SealedEnvEntry, 0, len(inherited)+len(own))
+	for _, secret := range inherited {
+		if delivered[secret.Key] {
+			continue
+		}
+		entries = append(entries, fcvm.SealedEnvEntry{Key: secret.Key, Ciphertext: append([]byte(nil), secret.Ciphertext...), SourceKey: secret.Key})
+	}
+	return append(entries, own...)
 }
 
 func sameRuntimeJSON(a, b []byte) bool {
