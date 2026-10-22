@@ -1,8 +1,6 @@
 package projectsetup
 
 import (
-	"crypto/sha256"
-	"fmt"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -11,30 +9,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// SuggestedAppSlug is stable across scans. A digest preserves distinctions
-// lost by normalization or truncation; availability remains authoritative.
-func SuggestedAppSlug(project, name string) string {
-	raw := project + "-" + name
-	normalized := strings.Map(func(r rune) rune {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' {
-			return r
-		}
-		return '-'
-	}, strings.ToLower(raw))
-	normalized = strings.Trim(normalized, "-")
-	if raw == normalized && len(normalized) <= api.AppSlugMaxLength && api.ValidAppSlug(normalized) && !api.IsReservedAppSlug(normalized) {
-		return normalized
-	}
-	digest := sha256.Sum256([]byte(raw))
-	suffix := fmt.Sprintf("-%x", digest[:4])
-	if strings.HasPrefix(normalized, "tag-") || api.IsReservedAppSlug(normalized) || normalized == "" {
-		normalized = "app-" + normalized
-	}
-	if len(normalized) > api.AppSlugMaxLength-len(suffix) {
-		normalized = normalized[:api.AppSlugMaxLength-len(suffix)]
-	}
-	return strings.TrimRight(normalized, "-") + suffix
-}
+// SuggestedAppSlug is reconcile.SuggestedAppSlug, which the project scan and
+// GitHub reconciliation share.
+func SuggestedAppSlug(project, name string) string { return reconcile.SuggestedAppSlug(project, name) }
 
 // AppSlugs validates exact repository keys, preserves existing members, and
 // suggests project-prefixed names only for migration-mode scans.
