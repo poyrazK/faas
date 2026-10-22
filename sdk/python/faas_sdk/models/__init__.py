@@ -173,6 +173,14 @@ from .app_event_publish_status_response import AppEventPublishStatusResponse
 from .app_event_publish_status_response_acceptance import AppEventPublishStatusResponseAcceptance
 from .app_event_publish_status_response_reason import AppEventPublishStatusResponseReason
 from .app_event_publish_status_response_status import AppEventPublishStatusResponseStatus
+from .app_fork_exec_list_response import AppForkExecListResponse
+from .app_fork_exec_response import AppForkExecResponse
+from .app_fork_exec_response_failure import AppForkExecResponseFailure
+from .app_fork_exec_response_status import AppForkExecResponseStatus
+from .app_fork_list_response import AppForkListResponse
+from .app_fork_response import AppForkResponse
+from .app_fork_response_failure import AppForkResponseFailure
+from .app_fork_response_status import AppForkResponseStatus
 from .app_health_capacity import AppHealthCapacity
 from .app_health_changed_webhook_payload import AppHealthChangedWebhookPayload
 from .app_health_changed_webhook_payload_change import AppHealthChangedWebhookPayloadChange
@@ -795,6 +803,13 @@ from .control_workflow_recovery_policy_request import ControlWorkflowRecoveryPol
 from .control_workflow_recovery_policy_request_operation import ControlWorkflowRecoveryPolicyRequestOperation
 from .cors_preset_list_response import CorsPresetListResponse
 from .cors_preset_response import CorsPresetResponse
+from .crash_capture_list_response import CrashCaptureListResponse
+from .crash_capture_response import CrashCaptureResponse
+from .crash_capture_response_failure import CrashCaptureResponseFailure
+from .crash_capture_response_status import CrashCaptureResponseStatus
+from .crash_capture_response_trigger import CrashCaptureResponseTrigger
+from .crash_snapshot_settings_request import CrashSnapshotSettingsRequest
+from .crash_snapshot_settings_response import CrashSnapshotSettingsResponse
 from .create_account_release_webhook_request import CreateAccountReleaseWebhookRequest
 from .create_account_release_webhook_request_delivery_format import CreateAccountReleaseWebhookRequestDeliveryFormat
 from .create_account_release_webhook_request_event_filter_item import CreateAccountReleaseWebhookRequestEventFilterItem
@@ -812,6 +827,8 @@ from .create_api_consumer_rate_card_request_route_weights import CreateAPIConsum
 from .create_api_consumer_rate_card_request_tier_mode import CreateAPIConsumerRateCardRequestTierMode
 from .create_api_consumer_request import CreateAPIConsumerRequest
 from .create_api_consumer_usage_statement_request import CreateAPIConsumerUsageStatementRequest
+from .create_app_fork_exec_request import CreateAppForkExecRequest
+from .create_app_fork_request import CreateAppForkRequest
 from .create_app_log_drain_request import CreateAppLogDrainRequest
 from .create_app_log_drain_request_kind import CreateAppLogDrainRequestKind
 from .create_app_request import CreateAppRequest
@@ -6237,6 +6254,14 @@ __all__ = (
     "AppEventPublishStatusResponseAcceptance",
     "AppEventPublishStatusResponseReason",
     "AppEventPublishStatusResponseStatus",
+    "AppForkExecListResponse",
+    "AppForkExecResponse",
+    "AppForkExecResponseFailure",
+    "AppForkExecResponseStatus",
+    "AppForkListResponse",
+    "AppForkResponse",
+    "AppForkResponseFailure",
+    "AppForkResponseStatus",
     "AppHealthCapacity",
     "AppHealthChangedWebhookPayload",
     "AppHealthChangedWebhookPayloadChange",
@@ -6843,6 +6868,13 @@ __all__ = (
     "ControlWorkflowRecoveryPolicyRequestOperation",
     "CorsPresetListResponse",
     "CorsPresetResponse",
+    "CrashCaptureListResponse",
+    "CrashCaptureResponse",
+    "CrashCaptureResponseFailure",
+    "CrashCaptureResponseStatus",
+    "CrashCaptureResponseTrigger",
+    "CrashSnapshotSettingsRequest",
+    "CrashSnapshotSettingsResponse",
     "CreateAccountReleaseWebhookRequest",
     "CreateAccountReleaseWebhookRequestDeliveryFormat",
     "CreateAccountReleaseWebhookRequestEventFilterItem",
@@ -6860,6 +6892,8 @@ __all__ = (
     "CreateAPIConsumerRateCardRequestTierMode",
     "CreateAPIConsumerRequest",
     "CreateAPIConsumerUsageStatementRequest",
+    "CreateAppForkExecRequest",
+    "CreateAppForkRequest",
     "CreateApplicationStandardLogDestinationRequest",
     "CreateApplicationStandardLogDestinationRequestKind",
     "CreateApplicationStandardPublisherRequest",

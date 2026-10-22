@@ -426,7 +426,10 @@ type Engine struct {
 	// publication (WithNotifyInPublication).
 	notifyInPublication bool
 	fcVer               string // running Firecracker version — snapshots load only on a match (ADR-005)
-	log                 *slog.Logger
+	// sealCrashCaptures seals crash captures at the source (ADR-733,
+	// remote storage backends).
+	sealCrashCaptures bool
+	log               *slog.Logger
 	// Protected by mu: RPCs may already be serving when NewLoop attaches it.
 	serviceReconcileSubmit                         func(context.Context, string)
 	environmentQualificationServiceURL             func(context.Context, string) (string, error)
@@ -1967,7 +1970,9 @@ func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID
 		return state.Instance{}, err
 	}
 	for _, instance := range instances {
-		if instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) {
+		// ADR-732: a running fork shares the live deployment but never
+		// serves a wake; skipping it lets the wake find a real replica.
+		if instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && !state.IsFork(instance.Mode) {
 			return instance, nil
 		}
 	}
@@ -7046,9 +7051,11 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 				acted++
 				continue
 			}
-			if account.AbuseHeld() {
+			if account.AbuseHeld() || state.IsFork(fresh.Mode) {
 				// ADR-361: never snapshot a guest from an abuse-held
 				// account; a release would restore the offending process.
+				// ADR-732: a fork holds a copy of production memory and is
+				// never snapshotted either; parking its app ends it.
 				if destroyErr := e.timedDestroy(context.WithoutCancel(ctx), fresh.NodeID, fresh.ID, DestroyTimeout); destroyErr != nil {
 					errs = append(errs, fmt.Errorf("instance %s: destroy abuse-held VM: %w", fresh.ID, destroyErr))
 					continue
@@ -7426,6 +7433,10 @@ func (e *Engine) StopInstance(ctx context.Context, instanceID string, opts StopO
 
 	mode := state.InstanceMode(ins.Mode)
 	switch mode {
+	case state.InstanceModeFork:
+		// ADR-732: a fork holds a copy of production memory. It is
+		// destroyed, never snapshotted or parked, and never replaced.
+		return StopOutcome{}, e.destroyFork(ctx, *ins)
 	case state.InstanceModeWorker, state.InstanceModeJob:
 		// Signal-grace-SIGKILL sequence (ADR-138 §Decision 1).
 		// signal=0 → manifest.StopSignal (defaulting to SIGTERM);
@@ -7779,6 +7790,11 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				// A frozen VM books its measured memory; until the next
 				// sample the floor stands in for it (ADR-1151).
 				kind = KindFrozen
+			} else if state.IsFork(ins.Mode) {
+				// ADR-732: a fork keeps its RAM reservation across a
+				// restart but must never be rebuilt as serving
+				// concurrency (invariant 1).
+				kind = KindFork
 			}
 			request := Request{
 				Instance: ins.ID, AppID: app.ID, DeploymentID: ins.DeploymentID, EnvironmentKey: policy.environmentKey, Plan: acct.Plan,
@@ -7889,6 +7905,12 @@ func (e *Engine) snapshotAndParkPrime(ctx context.Context, ins state.Instance) e
 }
 
 func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, allowReuse bool) (retErr error) {
+	if state.IsFork(ins.Mode) {
+		// ADR-732: the single choke point for every park caller. A fork
+		// holds a copy of production memory and must never become a
+		// capture another wake could restore; it is destroyed instead.
+		return e.destroyFork(ctx, ins)
+	}
 	if barrier, ok := e.store.(state.ExclusiveSnapshotStore); ok {
 		if err := barrier.BeginExclusiveSnapshot(ctx, ins.ID); err != nil {
 			return fmt.Errorf("sched: park: exclusive operation owns or is capturing this instance: %w", err)
