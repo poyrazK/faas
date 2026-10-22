@@ -292,6 +292,9 @@ type ServiceProxyConfig struct {
 	// (ADR-20261018090210): while it reports true Gregale-Usage is consumed
 	// like on public requests. Nil leaves the header untouched.
 	APIMonetization func() bool
+	// APIMonetizationFor releases monetization to one account's service
+	// calls (ADR-20261020170649). Nil follows APIMonetization alone.
+	APIMonetizationFor func(accountID string) bool
 	// Wake is the optional wake-on-demand seam (ADR-196). nil keeps the
 	// legacy fail-fast behaviour for a parked target.
 	Wake ServiceProxyWaker
@@ -360,6 +363,7 @@ type ServiceProxy struct {
 	authorizeBound            ServiceProxyAuthorizer
 	admitRuntime              func(context.Context, string, string) error
 	apiMonetization           func() bool
+	apiMonetizationFor        func(accountID string) bool
 	admitManagedAsync         ServiceProxyAsyncAdmitter
 	mintAssertion             ServiceCallerMinter
 	localNodeID               string
@@ -470,6 +474,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 	return &ServiceProxy{
 		admitRuntime:              cfg.AdmitRuntime,
 		apiMonetization:           cfg.APIMonetization,
+		apiMonetizationFor:        cfg.APIMonetizationFor,
 		mintAssertion:             cfg.MintCallerAssertion,
 		localNodeID:               strings.TrimSpace(cfg.LocalNodeID),
 		provider:                  cfg.Provider,
@@ -803,6 +808,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// route this platform-owned span to apid without a customer API key.
 	if callerInfo.AccountID != "" {
 		dependencySpan.SetAttributes(attribute.String(retainedSpanAccountIDAttribute, callerInfo.AccountID))
+		if p.apiMonetizationFor != nil && p.apiMonetizationFor(callerInfo.AccountID) {
+			ownUsageHeader(r)
+		}
 	}
 	if !probe && callerInfo.CallScope != nil && !callerInfo.CallScope.Allows(r.Method, targetPath) {
 		p.metrics.IncServiceCall(ServiceCallScopeDenied)

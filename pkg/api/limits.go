@@ -207,6 +207,10 @@ const (
 	// ProductControlMaxTrialDays bounds a plan's trial and how far an owner
 	// can extend one from its start (ADR-20261021195901).
 	ProductControlMaxTrialDays = 90
+	// ProductControlSignupMaxWorkspacesPerUser bounds the workspaces one
+	// Application Auth user owns in a product through self-serve signup
+	// (ADR-20261022100735).
+	ProductControlSignupMaxWorkspacesPerUser = 3
 	// ProductControlPlanHistoryMonthMaxPlans bounds the distinct plans one
 	// customer month is read with for its fee.
 	ProductControlPlanHistoryMonthMaxPlans = 1000
@@ -614,6 +618,26 @@ const (
 	ConsumerSpendCapBatchSize     = 500
 )
 
+// Consumer self-service sign-up (ADR-20261021143000).
+const (
+	// An app takes this many sign-ups per UTC day unless its settings say
+	// otherwise, and at most the maximum.
+	ConsumerSignupDailyLimitDefault = 100
+	ConsumerSignupDailyLimitMax     = 1000
+	// One client address starts at most this many sign-ups an hour, and
+	// reads the form or completes a sign-up at most this often a minute.
+	ConsumerSignupPerIPPerHour        = 10
+	ConsumerSignupReadsPerIPPerMinute = 60
+	// A sign-up completes within its TTL; its Checkout Session expires an
+	// hour earlier, so a customer who saved a card can still claim the key.
+	ConsumerSignupTTL         = 24 * time.Hour
+	ConsumerSignupCheckoutTTL = 23 * time.Hour
+	// Pending sign-ups are deleted this long after they expire.
+	ConsumerSignupRetention = 7 * 24 * time.Hour
+	// The owner's sign-up list shows at most this many.
+	ConsumerSignupListMax = 100
+)
+
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,
 // ADR-1324).
 const (
@@ -628,6 +652,10 @@ const (
 	// An invoice holding its consumer has its payment status read at least
 	// this often, so paying it lifts the hold within minutes.
 	ConsumerOverdueHeldSyncInterval = 15 * time.Minute
+	// APIMonetizationUnreleasedRetry is how long a monetization worker sets
+	// aside a billing run or invoice sync of an account monetization is not
+	// released to (ADR-20261020170649).
+	APIMonetizationUnreleasedRetry = 15 * time.Minute
 	// Only a payment status read within this long holds a consumer or
 	// tenant: when Gregale cannot read the invoice (a rotated or removed
 	// key), the hold lifts rather than outlasting a payment it cannot see

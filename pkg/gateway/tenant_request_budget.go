@@ -71,7 +71,7 @@ func (h *Handler) enforceTenantRequestBudget(w http.ResponseWriter, r *http.Requ
 	// tenant is served (ADR-20261018090210). They refused before its budget
 	// was counted, so this request does not use budget.
 	monetized := decision.Scope == TenantBudgetScopeOverdue || decision.Scope == TenantBudgetScopeSpendCap
-	if decision.Allowed || monetized && !h.apiMonetizationEnabled() {
+	if decision.Allowed || monetized && !h.APIMonetizationEnabledFor(app.AccountID) {
 		return true
 	}
 	suppressFinancialUsage(r)

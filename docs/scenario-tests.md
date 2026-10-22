@@ -1234,6 +1234,8 @@ inventory under `actions.evidence`, with provenance
 `gregale_captured_managed_webhooks` and scope `managed_operation_webhooks`.
 Retries can retrieve that same snapshot after namespace cleanup or soft deletion;
 physical purge of its anchor app/account removes retained evidence.
+Rehearsal evidence never blocks erasing the account that ran it; only a fixture
+still holding a database or bucket does, until its cleanup finishes.
 
 `test rehearse` and `test compare` compare the captured intents independently of
 declared `behavior` observations. Each logical workload/source/effect name is

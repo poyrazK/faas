@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
+	"github.com/onebox-faas/faas/pkg/apid/consumersignup"
 	"github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
@@ -921,6 +922,7 @@ func (r *server) BillingRuns() *billingruns.Service             { return &r.bill
 func (r *server) ConsumerBilling() *consumerbilling.Service     { return &r.consumerBilling }
 func (r *server) ConsumerCredits() *consumercredits.Service     { return &r.consumerCredits }
 func (r *server) ConsumerControls() *consumercontrols.Service   { return &r.consumerControls }
+func (r *server) ConsumerSignup() *consumersignup.Service       { return &r.consumerSignup }
 func (r *server) TenantPlans() *tenantplans.Service             { return &r.tenantPlans }
 func (r *server) Store() *state.Store                           { return &r.store }
 func (r *server) StripeWebhookSecret() *string                  { return &r.stripeWebhookSecret }

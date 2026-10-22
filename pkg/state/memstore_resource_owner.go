@@ -138,6 +138,18 @@ func (m *MemStore) accountOwnershipErasureBlockedLocked(accountID string) bool {
 	if !shared {
 		return false
 	}
+	// Rehearsal evidence follows its run; only a fixture that still holds a
+	// database or bucket blocks erasure (ADR-20261022155043).
+	for _, r := range m.scenarioPostgres {
+		if r.AccountID == accountID && r.Status != "complete" && r.Status != "deleted" {
+			return true
+		}
+	}
+	for _, r := range m.scenarioObjects {
+		if r.AccountID == accountID && r.Status != "complete" && r.Status != "deleted" {
+			return true
+		}
+	}
 	// These stores are outside the core app lifecycle. PostgreSQL additionally
 	// checks the complete migration inventory of identity-bound child tables.
 	for _, r := range m.objectBuckets {
