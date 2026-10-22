@@ -1017,6 +1017,8 @@ JOIN accounts a ON a.id=d.mail_failure_account_id
 WHERE d.status='failed' AND d.deleted_at IS NULL AND d.mail_failed_at>=c.started_at
     AND d.mail_failed_at>clock_timestamp()-make_interval(secs=>sqlc.arg(ttl_seconds)::integer)
     AND NOT EXISTS(SELECT 1 FROM platform_mail_deployment_observations r WHERE r.deployment_id=d.id AND r.failure_revision=d.mail_failure_revision)
+    -- A rehearsal candidate's failed deploy is run evidence, not mail (ADR-20261019180000).
+    AND NOT EXISTS(SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)
 ORDER BY d.mail_failed_at,d.id LIMIT sqlc.arg(batch_size);
 
 -- name: LockDeploymentFailureApp :one

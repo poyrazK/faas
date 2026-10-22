@@ -169,6 +169,15 @@ func (s *PgStore) RegisterScenarioTestMembers(ctx context.Context, accountID, ru
 			if !unstarted.Valid || !unstarted.Bool {
 				return ErrConflict
 			}
+			if member.NetworkMode == ScenarioNetworkContained {
+				bound, err := q.ScenarioActionAppHasManagedBindings(ctx, tx, member.AppID)
+				if err != nil {
+					return err
+				}
+				if bound {
+					return ErrScenarioManagedBindings
+				}
+			}
 			if err := q.InsertScenarioActionPolicy(ctx, tx, sqlc.InsertScenarioActionPolicyParams{AccountID: accountID, RunID: runID, AppID: member.AppID, Workload: member.Workload, NetworkMode: member.NetworkMode, SimulationPlan: scenarioSimulationJSON(member.SimulationJSON), ColdStartSpec: scenarioSimulationJSON(member.ColdStartJSON), SuspendResumeSpec: scenarioSimulationJSON(member.SuspendResumeJSON), ManagedWorkPlan: scenarioSimulationJSON(member.ManagedWorkJSON)}); err != nil {
 				return mapErr(err)
 			}
@@ -228,6 +237,9 @@ func (m *MemStore) RegisterScenarioTestMembers(_ context.Context, accountID, run
 		}
 		if member.WebhookMode == ScenarioWebhookCaptureMode && !m.scenarioActionAppUnstartedLocked(member.AppID) {
 			return ErrConflict
+		}
+		if member.WebhookMode == ScenarioWebhookCaptureMode && member.NetworkMode == ScenarioNetworkContained && m.appHasManagedBindingsLocked(member.AppID) {
+			return ErrScenarioManagedBindings
 		}
 		for _, existing := range m.scenarioTestMembers {
 			if existing.AccountID == accountID && existing.RunID == runID && existing.Workload == member.Workload {

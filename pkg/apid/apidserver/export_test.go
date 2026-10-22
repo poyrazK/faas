@@ -1225,6 +1225,9 @@ func (r *server) RenderDeveloperEnvironments(p0 http.ResponseWriter, p1 *http.Re
 func (r *server) RenderPreviewsList(p0 http.ResponseWriter, p1 *http.Request, p2 *slog.Logger, p3 state.Account) {
 	r.renderPreviewsList(p0, p1, p2, p3)
 }
+func (r *server) RenderReleaseApprovalPage(p0 http.ResponseWriter, p1 *http.Request) {
+	r.renderReleaseApprovalPage(p0, p1)
+}
 func (r *server) ReplaceProjectEnvironmentQueueBindings(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.replaceProjectEnvironmentQueueBindings(p0, p1, p2)
 }
@@ -1263,6 +1266,12 @@ func (r *server) SetPostReleaseTelemetry(t PostReleaseTelemetry) {
 // (ADR-20261019071734).
 func (r *server) SetReleaseGateEvidence(e state.ReleaseGateEvidenceStore) {
 	r.releaseGateEvidence = e
+}
+
+// StartDueScheduledReleases runs one pass of the scheduled release worker
+// (ADR-20261021152201) at now.
+func (r *server) StartDueScheduledReleases(ctx context.Context, now time.Time) {
+	r.startDueScheduledReleases(ctx, now)
 }
 func (r *server) RollbackProjectEnvironmentPromotion(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rollbackProjectEnvironmentPromotion(p0, p1, p2)

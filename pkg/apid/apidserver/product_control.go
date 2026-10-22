@@ -55,6 +55,8 @@ func (s *server) registerProductControl(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/apps/{slug}/product/help/{request}", read(p.HelpGet))
 	mux.HandleFunc("PUT /v1/apps/{slug}/product/help/{request}", write(p.HelpUpdate))
 	mux.HandleFunc("PUT /v1/apps/{slug}/product/customers/{tenant}", write(p.SetCustomer))
+	mux.HandleFunc("PUT /v1/apps/{slug}/product/customers/{tenant}/trial", write(p.PutCustomerTrial))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/product/customers/{tenant}/trial", write(p.DeleteCustomerTrial))
 	mux.HandleFunc("POST /v1/apps/{slug}/product/onboarding/workspaces", write(p.OnboardingWorkspaces))
 	mux.HandleFunc("POST /v1/apps/{slug}/product/onboarding/preview", write(p.OnboardingPreview))
 	mux.HandleFunc("POST /v1/apps/{slug}/product/onboarding/confirm", write(p.OnboardingConfirm))

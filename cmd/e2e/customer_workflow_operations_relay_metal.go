@@ -155,7 +155,10 @@ func (r *customerWorkflowRelay) forward(w http.ResponseWriter, request *http.Req
 		return
 	}
 	id, action := parts[3], parts[4]
-	allowed := request.Method == http.MethodGet && action == "control" || request.Method == http.MethodPost && (action == "artifact-uploads" || action == "artifact-upload-receipts")
+	// "children" (ADR-20261018183000): a fan step starts its children with
+	// its own step proof; apid still checks that proof.
+	allowed := request.Method == http.MethodGet && (action == "control" || action == "children") ||
+		request.Method == http.MethodPost && (action == "artifact-uploads" || action == "artifact-upload-receipts" || action == "children")
 	if !r.f.ownsOperation(request.Context(), id) || !allowed {
 		http.NotFound(w, request)
 		return

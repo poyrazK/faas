@@ -94,6 +94,8 @@ native_e2e_phase_files() {
     wake) printf '%s\n' \
       wake_timeline_metal_test.go \
       frozen_tier_metal_test.go \
+      worker_frozen_metal_test.go \
+      worker_scale_from_zero_metal_test.go \
       wake_platform_bench_metal_test.go \
       wake_burst_metal_test.go \
       wake_platform_bench_metal_test.go \
@@ -127,6 +129,7 @@ native_e2e_phase_files() {
     # Real jobs harness and scratch-image workload. This phase remains
     # non-blocking until it passes on the dedicated KVM runner.
     jobs) printf '%s\n' jobs_metal_test.go customer_job_operations_metal_test.go \
+      customer_job_operations_features_metal_test.go \
       image_runs_metal_test.go job_task_logs_metal_test.go image_run_interactive_metal_test.go ;;
     *) echo "native-e2e-phases: unknown phase: $1" >&2; return 1 ;;
   esac
@@ -281,7 +284,9 @@ native_e2e_lane_tests() {
       printf '%s\n' "${NATIVE_E2E_MANAGED_OPERATION_TESTS[@]}"
       ;;
     customer-job-operations-only)
-      native_e2e_inventory "$root" --files customer_job_operations_metal_test.go
+      # Every customer_job_operations*_metal_test.go file, as the HTTP and
+      # workflow lanes do, so feature scenarios join without a selector edit.
+      native_e2e_inventory "$root" --files "$(native_e2e_sibling_files "$root" 'customer_job_operations*_metal_test.go')"
       ;;
     customer-workflow-operations-only)
       # Every customer_workflow_operations*_metal_test.go file, so the

@@ -25,6 +25,7 @@ func financialDraftSpec() financial.BudgetSpec {
 // adr: 566 — notifications and monitored compute-only preview stopping activate.
 func TestFinancialBudgetNotificationActivation(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanHobby)
+	releaseStrictBudgets(e) // the strict refusal below must come from readiness
 	spec := financialDraftSpec()
 	spec.Enabled, spec.Action, spec.DrainSeconds = true, "notify", 0
 	p := decodeFinancialBudget(t, e.Do(t, "POST", "/v1/billing/budgets", api.CreateFinancialBudgetRequest{Spec: spec}, map[string]string{"Idempotency-Key": "activate-notifications"}), http.StatusCreated)

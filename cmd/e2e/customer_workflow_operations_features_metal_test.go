@@ -6,13 +6,19 @@ package e2e
 // Native qualification of approvals with structured input
 // (ADR-20261019001500): the customer decides a real waiting workflow
 // Operation with form input, the input is validated and replays exactly, and
-// the run resumes through the real scheduler.
+// the run resumes through the real scheduler. Also workflow fan-in
+// (ADR-20261018183000): a step on the guest starts children and the run
+// resumes on the platform's children-settled signal.
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -74,4 +80,62 @@ func TestCustomerWorkflowOperationApprovalInputMetal(t *testing.T) {
 		DefinitionID: def.ID, Subject: api.OperationSubject{Type: "order", ID: "ord_input"}, SignalID: "pay-input", Event: "payment.succeeded", Payload: json.RawMessage(`{"charge":"ch_input"}`)})
 	mustCustomerWorkflow(t, err)
 	f.waitState(t, id, api.OperationSucceeded)
+}
+
+// A fan step on the real guest starts two children with its step proof and
+// replays one by key; the run parks on operation.children.settled until both
+// children have run on the guest, then apid signals it and the run finishes.
+// The customer cannot send that event.
+func TestCustomerWorkflowOperationChildrenFanInMetal(t *testing.T) {
+	f := newCustomerWorkflowFixture(t, 0)
+	openOperationFeatures(t, f.h, f.account.ID)
+	def := f.defineWorkflow(t, "export-fan-in", "fan-chain", []string{"fan", "gather", "finish"}, nil)
+	id := f.startDefinition(t, def.ID, map[string]any{"mode": "complete"}, "fan-in-1")
+	var op api.OperationResponse
+	customerWorkflowEventually(t, 8*time.Minute, "fan-in parent outcome", func() bool {
+		var err error
+		op, err = f.customer.GetPlatformTenantSelfOperation(t.Context(), id)
+		return err == nil && (op.State == api.OperationSucceeded || op.State == api.OperationFailed || op.State == api.OperationCancelled)
+	})
+	if op.State != api.OperationSucceeded {
+		t.Fatalf("fan-in parent settled %s (%s)", op.State, op.FailureCode)
+	}
+	var children api.OperationChildrenResponse
+	mustGatedJSON(t, f.customer, http.MethodGet, "/v1/platform-tenant-self/customer-operations/"+id+"/children", nil, &children, http.StatusOK)
+	keys := []string{}
+	for _, child := range children.Children {
+		f.mu.Lock()
+		f.operationIDs[child.Operation.ID] = true
+		f.mu.Unlock()
+		keys = append(keys, child.Key)
+		// The parent resumed only after every child settled.
+		if got := f.read(t, child.Operation.ID); got.State != api.OperationSucceeded {
+			t.Fatalf("child %s is %s after its parent finished", child.Key, got.State)
+		}
+	}
+	sort.Strings(keys)
+	if strings.Join(keys, ",") != "child-a,child-b" {
+		t.Fatalf("children %v", keys)
+	}
+	page, err := f.customer.GetPlatformTenantSelfOperationEvents(t.Context(), id, 0)
+	mustCustomerWorkflow(t, err)
+	settled := 0
+	for _, event := range page.Events {
+		var data struct {
+			Event  string `json:"event"`
+			Source string `json:"source"`
+		}
+		_ = json.Unmarshal(event.Data, &data)
+		if event.Type == "signal_received" && data.Event == api.OperationChildrenSettledEvent && data.Source == api.OperationSignalSourceAccount {
+			settled++
+		}
+	}
+	if settled != 1 {
+		t.Fatalf("parent received %d children-settled signals: %+v", settled, page.Events)
+	}
+	_, err = f.customer.SignalPlatformTenantSelfOperation(t.Context(), id, api.OperationSignalRequest{SignalID: "forged", Event: api.OperationChildrenSettledEvent})
+	var problem *api.APIError
+	if !errors.As(err, &problem) || problem.Problem.Status != http.StatusUnprocessableEntity {
+		t.Fatalf("customer sent the reserved event: %v", err)
+	}
 }

@@ -204,6 +204,9 @@ const (
 	// ProductControlMaxMonthlyFeeMillicents bounds a plan's monthly fee
 	// (ADR-20261021154511): 100,000 in the catalog currency's major unit.
 	ProductControlMaxMonthlyFeeMillicents int64 = 10000000000
+	// ProductControlMaxTrialDays bounds a plan's trial and how far an owner
+	// can extend one from its start (ADR-20261021195901).
+	ProductControlMaxTrialDays = 90
 	// ProductControlPlanHistoryMonthMaxPlans bounds the distinct plans one
 	// customer month is read with for its fee.
 	ProductControlPlanHistoryMonthMaxPlans = 1000
@@ -858,6 +861,50 @@ const ReleaseGateDefaultMaxNewGroups = 0
 const ReleaseGateDefaultMinEvents = 3
 const ReleaseGateDefaultMinSamples = 20
 const ReleaseGateErrorClassesMax = 5
+
+// Release approvals (ADR-20261020085706). A policy requires 1 to
+// ReleaseApprovalsRequiredMax approvals, waits in canary stage 1 to
+// ReleaseApprovalStageMax, and aborts a release that waited longer than its
+// timeout (ReleaseApprovalTimeoutMin to ReleaseApprovalTimeoutMax, default
+// ReleaseApprovalTimeoutDefault). A decision's comment is at most
+// ReleaseApprovalCommentMax characters. Plan-independent, but the wait
+// happens in a canary, so only plans with traffic splits can set a policy.
+const ReleaseApprovalsRequiredMax = 5
+const ReleaseApprovalStageMax = 10
+const ReleaseApprovalTimeoutMin = 10 * time.Minute
+const ReleaseApprovalTimeoutMax = 7 * 24 * time.Hour
+const ReleaseApprovalTimeoutDefault = 24 * time.Hour
+const ReleaseApprovalCommentMax = 200
+
+// A policy notifies at most ReleaseApprovalNotifyChannelsMax channels; meterd
+// tries an approval event at most ReleaseApprovalNotifyAttemptsMax times,
+// waiting ReleaseApprovalNotifyRetryBase doubled per attempt between tries.
+const ReleaseApprovalNotifyChannelsMax = 5
+const ReleaseApprovalNotifyAttemptsMax = 6
+const ReleaseApprovalNotifyRetryBase = time.Minute
+
+// A release diff (ADR-20261021101117) lists at most ReleaseDiffPackagesMax
+// packages per change kind and reads at most ReleaseDiffSBOMMaxBytes of each
+// build's SBOM.
+const ReleaseDiffPackagesMax = 100
+const ReleaseDiffSBOMMaxBytes = 16 << 20
+
+// Scheduled releases (ADR-20261021152201). A release may be scheduled at
+// most ScheduledReleaseMaxAhead ahead, and up to ScheduledReleasePastSkew in
+// the past for clock skew. apid looks for due schedules every
+// ScheduledReleaseCheckInterval, ScheduledReleaseBatch at a time, and gives
+// up on a release that is still not ready ScheduledReleaseStartGrace after
+// its time. A schedule notifies at most ScheduledReleaseNotifyChannelsMax
+// channels; a listing returns at most ScheduledReleaseListMax schedules.
+// Plan-independent: scheduling changes when a release starts, not what it
+// may use.
+const ScheduledReleaseMaxAhead = 7 * 24 * time.Hour
+const ScheduledReleasePastSkew = time.Minute
+const ScheduledReleaseCheckInterval = 15 * time.Second
+const ScheduledReleaseBatch = 20
+const ScheduledReleaseStartGrace = time.Hour
+const ScheduledReleaseNotifyChannelsMax = 5
+const ScheduledReleaseListMax = 50
 
 // Verified rollback outcomes (ADR-1446). apid resolves each plain rollback
 // every RollbackOutcomeCheckInterval: complete once the target serves,
@@ -5985,6 +6032,12 @@ const (
 	// The host receiver stays open longer than this window so a no-bind
 	// worker can use the entire observation budget before reporting.
 	CharacterizationDeadline = 10 * time.Second
+	// ProvenWorkerCharacterizationWindow replaces CharacterizationDeadline for
+	// a declared worker whose deployment already passed the full window on
+	// the same node (ADR-20261018101500). The full window still validates a deployment's
+	// first boot there; a later boot only shows its process started and
+	// stayed up, so a pool scales out without waiting ten seconds per worker.
+	ProvenWorkerCharacterizationWindow = time.Second
 	// CharacterizationPreferredPortGrace is how long waitForBind waits for
 	// the app's expected port once it sees another listener first: an app
 	// may open a private TCP (ADR-576), metrics or admin port before its
@@ -13047,6 +13100,23 @@ const OperationWorkflowPlaybookReviewsMax = 32
 const (
 	MaxNotificationChannelsPerAccount = 20
 	MaxChannelsPerAlertRule           = 5
+)
+
+// Object storage in budgets (ADR-20261020160000): apid records each billing
+// account's live estimate every FinancialObjectStorageEstimateInterval; the
+// cost report treats an estimate older than FinancialObjectStorageEstimateFreshness
+// as stale.
+const (
+	FinancialObjectStorageEstimateInterval  = 5 * time.Minute
+	FinancialObjectStorageEstimateFreshness = 15 * time.Minute
+)
+
+// Budget alert channels (ADR-20261019193500). A delivery that keeps failing is
+// abandoned after FinancialBudgetChannelAttemptsMax claims; the account email
+// alert (ADR-566) is unaffected.
+const (
+	MaxChannelsPerFinancialBudget     = 5
+	FinancialBudgetChannelAttemptsMax = 12
 )
 
 // Change timeline bounds (ADR-751). Each source is read with the event cap so

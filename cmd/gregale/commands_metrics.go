@@ -352,7 +352,7 @@ func cmdThrottleSuggestions(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	renderThrottleSuggestions(osStdout, resp)
+	renderThrottleSuggestions(osStdout, slug, resp)
 	return 0
 }
 
@@ -366,7 +366,7 @@ func cmdThrottleSuggestions(args []string) int {
 // today; see ADR-104 amendment 5). Empty suggestions / empty
 // preview render as "(none)" so a customer reading the output
 // doesn't mistake silence for a bug.
-func renderThrottleSuggestions(w io.Writer, r api.ThrottleSuggestionsResponse) {
+func renderThrottleSuggestions(w io.Writer, slug string, r api.ThrottleSuggestionsResponse) {
 	if r.Source != "" && r.Source != "prometheus" {
 		_, _ = fmt.Fprintf(w, "Note: source=%s (values below may be zero — Prometheus is unavailable)\n", r.Source)
 	}
@@ -381,7 +381,11 @@ func renderThrottleSuggestions(w io.Writer, r api.ThrottleSuggestionsResponse) {
 	_, _ = fmt.Fprintf(w, "Plan ceiling:  rps=%d burst=%d\n", r.PlanCeilingRPS, r.PlanCeilingBurst)
 	_, _ = fmt.Fprintf(w, "Multiplier:    %.1fx\n", r.Multiplier)
 	if r.RouteMetricsDisabled {
-		_, _ = fmt.Fprintln(w, "(route metrics disabled on this app — Free plan)")
+		// The flag is the app's setting, not its plan: a paid app can have
+		// route metrics switched off, and the old "Free plan" note sent
+		// Scale customers looking for an upgrade they already had.
+		_, _ = fmt.Fprintln(w, "\nRoute metrics are off for this app, so there are no per-route suggestions.")
+		_, _ = fmt.Fprintf(w, "Turn them on (Hobby, Pro and Scale plans): %s app %s --route-metrics\n", recoveryCLI(), recoveryArgument(slug))
 		return
 	}
 	if r.RoutesCollapsed > 0 {

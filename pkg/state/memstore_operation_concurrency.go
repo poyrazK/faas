@@ -63,7 +63,14 @@ func (m *MemStore) operationInFlightLocked(appID, scope, name, tenantID string) 
 	return n
 }
 
-func (m *MemStore) operationQueuedLocked(k memOperationQueueKey) []memQueuedOperation {
+// operationQueuedLocked reports whether a per-customer concurrency policy
+// still holds the Operation.
+func (m *MemStore) operationQueuedLocked(operationID string) bool {
+	_, queued := m.operationMemoryLocked().queue[operationID]
+	return queued
+}
+
+func (m *MemStore) operationQueueLocked(k memOperationQueueKey) []memQueuedOperation {
 	var rows []memQueuedOperation
 	for _, q := range m.operationMemoryLocked().queue {
 		if q.key() == k {
@@ -84,7 +91,7 @@ func (m *MemStore) operationConcurrencyHoldLocked(op Operation, def OperationDef
 		return false
 	}
 	limit, limited := m.operationConcurrencyLimitLocked(op.AccountID, def.AppID, def.Scope, def.Spec.Name, op.PlatformTenantID)
-	queued := len(m.operationQueuedLocked(memOperationQueueKey{op.AccountID, def.AppID, def.Scope, def.Spec.Name, op.PlatformTenantID}))
+	queued := len(m.operationQueueLocked(memOperationQueueKey{op.AccountID, def.AppID, def.Scope, def.Spec.Name, op.PlatformTenantID}))
 	return operationConcurrencyHold(limit, limited, m.operationInFlightLocked(def.AppID, def.Scope, def.Spec.Name, op.PlatformTenantID), int64(queued))
 }
 
@@ -203,7 +210,7 @@ func (m *MemStore) CustomerOperationQueue(_ context.Context, accountID, tenantID
 	}
 	out := []api.OperationQueueEntry{}
 	for k := range keys {
-		for i, q := range m.operationQueuedLocked(k) {
+		for i, q := range m.operationQueueLocked(k) {
 			out = append(out, api.OperationQueueEntry{OperationID: q.operationID, AppID: q.appID, Scope: q.scope, Operation: q.operation, Position: int64(i + 1), QueuedAt: q.queuedAt})
 		}
 	}
@@ -227,7 +234,7 @@ func (m *MemStore) ReleaseQueuedOperations(_ context.Context, now time.Time) (in
 	released := 0
 	for k := range keys {
 		limit, limited := m.operationConcurrencyLimitLocked(k.accountID, k.appID, k.scope, k.operation, k.tenantID)
-		rows := m.operationQueuedLocked(k)
+		rows := m.operationQueueLocked(k)
 		slots := operationQueueSlots(limit, limited, m.operationInFlightLocked(k.appID, k.scope, k.operation, k.tenantID), len(rows))
 		started := 0
 		for _, q := range rows {
@@ -249,6 +256,9 @@ func (m *MemStore) ReleaseQueuedOperations(_ context.Context, now time.Time) (in
 }
 
 func (m *MemStore) releaseOperationDispatchLocked(op Operation, now time.Time) {
+	if op.JobRunID != "" {
+		return // the job claim skips queued Operations; deleting the queue row releases it
+	}
 	if op.WorkflowRunID != "" {
 		if run, ok := m.workflowRuns[op.WorkflowRunID]; ok && run.Status == WorkflowRunStatusPending && run.ScheduledFor.After(now) {
 			run.ScheduledFor = now
@@ -260,4 +270,17 @@ func (m *MemStore) releaseOperationDispatchLocked(op Operation, now time.Time) {
 		inv.DueAt = now
 		m.invocations[inv.ID] = inv
 	}
+}
+
+func (m *MemStore) OperationQueueStats(_ context.Context) (int64, *time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var oldest *time.Time
+	for _, q := range m.operationMemoryLocked().queue {
+		if oldest == nil || q.queuedAt.Before(*oldest) {
+			at := q.queuedAt
+			oldest = &at
+		}
+	}
+	return int64(len(m.operationMemoryLocked().queue)), oldest, nil
 }

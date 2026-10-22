@@ -31,7 +31,12 @@ type AppBindingInventory struct {
 	VerificationDeploymentID string                    `json:"verification_deployment_id,omitempty"`
 	RequestedDeploymentID    string                    `json:"requested_deployment_id,omitempty"`
 	VerificationScope        string                    `json:"verification_scope,omitempty"`
-	RuntimeFreshness         *BindingRuntimeFreshness  `json:"runtime_freshness,omitempty"`
+	// VerificationProbesAvailable reports whether this control-plane host can
+	// run `bindings verify` probes (deployment-attached app tasks). An explicit
+	// false means probe evidence cannot be produced here; nil is an older
+	// server that did not say.
+	VerificationProbesAvailable *bool                    `json:"verification_probes_available,omitempty"`
+	RuntimeFreshness            *BindingRuntimeFreshness `json:"runtime_freshness,omitempty"`
 }
 
 // AppBindingInventoryItem contains only public binding metadata. State is

@@ -39,6 +39,7 @@ const (
 	AnomalyAlerts        = "anomaly_alerts"
 	TriggerBatchDelivery = "trigger_batch_delivery"
 	APIMonetization      = "api_monetization"
+	StrictBudgets        = "strict_budgets"
 )
 
 // Spec declares one platform flag. Adding a flag is a code change: the
@@ -133,6 +134,13 @@ var catalog = []Spec{
 			"its routes answer an unregistered route to accounts outside the flag after authentication.",
 		ADR:       "ADR-20261020170649",
 		Consumers: []string{"apid", "gatewayd-internal"},
+	},
+	{
+		Key:         StrictBudgets,
+		Label:       "Strict budgets",
+		Description: "Release strict (suspend_workloads) compute and egress budgets to accounts. Off by default until native acceptance passes. Strict budgets that are already enabled keep enforcing and stay editable while it is off; only creating or enabling one is refused.",
+		ADR:         "ADR-1750",
+		Consumers:   []string{"apid"},
 	},
 }
 
