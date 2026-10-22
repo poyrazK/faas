@@ -244,6 +244,10 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 			return err
 		}
 	}
+	// A database with live queries lets its live login read as this login.
+	if err := grantLiveMembership(ctx, tx, role); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 

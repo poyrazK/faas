@@ -496,8 +496,10 @@ Live queries are invisible to customers until launch.
    both. Which accounts see live queries is the `live_queries` platform flag
    (ADR-1700). One livequeryd serves every database the role lists in
    `faas_livequeryd_databases` (`-databases-file`), each at
-   `/<database_id>/live`. A database must be listed there before its live
-   queries work. The flags below serve a single database, for development.
+   `/<database_id>/live`. With `faas_livequeryd_discover_backends`, it also
+   serves every live database of those backends whose provider issued a live
+   login when live queries were enabled (the Neon provider does), with no
+   listing. The flags below serve a single database, for development.
    - `-database-url-file`: a file holding the database connection string
      (`-database-url` puts its password in the process list);
    - `-keys-dsn-file`: a file holding a read-only control-plane connection
