@@ -8289,49 +8289,16 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 		return SnapshotBytes{}, nil
 	}
 
-	// Gate 3 + 4: framework-ready stamp + time-since-first-ready
-	// floor. A nil FrameworkReadyAt means the runner never sent
-	// its DGRAM (it crashed, never woke, or the warmup timed out).
-	// WarmSnapshotMinMs is bounded [100, 60000] by apid's edit
-	// validator (handlers_ext.go:249-257), so denormalising to a
-	// duration is safe.
-	if ins.FrameworkReadyAt == nil {
-		return SnapshotBytes{}, nil
-	}
-	if app.WarmSnapshotMinMs > 0 {
-		minAge := time.Duration(app.WarmSnapshotMinMs) * time.Millisecond
-		if time.Since(*ins.FrameworkReadyAt) < minAge {
-			return SnapshotBytes{}, nil
-		}
-	}
-
-	// Gate 5 (ADR-098 C10, supersedes ADR-071 PR-C): per-instance
-	// request-count floor. The plan is the load-bearing knob: with
-	// min > 0 the promotion only fires once the instance has served
-	// at least `min` requests. min == 0 is the "disabled" label
-	// case (Free/Hobby default) — the gate never opens, AND the
-	// engine does NOT spin a warm snapshot, so a Free app with
-	// min=0 never sees a warm tier (per ADR-071 §Plan gate, the
-	// plan forbids it anyway, but the explicit zero guard is
-	// belt-and-braces against a Free app that somehow reaches
-	// here).
-	//
-	// The comparison is `count < min` not `count % min == 0`. The
-	// latter is the multiple-of-5 regression (issue #675 review
-	// finding): a cold app requests_count=3 with min=5 would
-	// never promote (3 % 5 = 3, not 0), and the warm tier would
-	// stay cold indefinitely. The threshold is a "have we
-	// crossed the threshold?" comparison, not a "is this a
-	// multiple?" one.
-	//
-	// Why mirror on the instance row (not an engine cache):
-	//   The column is the authoritative counter; the engine
-	//   reads ins.RequestCount (mirror on the Instance struct)
-	//   on every park site. The batched writer flushes
-	//   gateway-side per-instance counts every 1–2s (C9), and
-	//   the engine reads the latest value at gate time. There
-	//   is no in-process cache to drift.
-	if app.WarmSnapshotMinRequests > 0 && ins.RequestCount < int64(app.WarmSnapshotMinRequests) {
+	// Gates 3-5: framework-ready stamp, time-since-first-ready floor and
+	// per-instance request-count floor (ADR-098 C10; `count < min`, not
+	// the multiple-of-5 regression of issue #675). A nil FrameworkReadyAt
+	// means the runner never sent its DGRAM; WarmSnapshotMinMs is bounded
+	// [100, 60000] by apid's edit validator; min_requests == 0 skips the
+	// count check (the plan gate keeps Free/Hobby off the warm tier). They
+	// live in warmCaptureInstanceGatesOpen,
+	// shared with the freeze decision's warmCapturePending so the two
+	// cannot drift (Hunt 12 H12-52).
+	if !warmCaptureInstanceGatesOpen(app, ins, time.Now()) {
 		return SnapshotBytes{}, nil
 	}
 

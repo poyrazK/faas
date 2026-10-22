@@ -652,3 +652,7 @@ func QueueRetryGroups(items []string, statusByID map[string]TriggerDispatchResul
 	}
 	return out
 }
+
+// WarmCaptureInstanceGatesOpen exposes the warm-capture gates shared by the
+// capture and the freeze decision (Hunt 12 H12-52).
+var WarmCaptureInstanceGatesOpen = warmCaptureInstanceGatesOpen
