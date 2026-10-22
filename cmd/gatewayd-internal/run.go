@@ -1408,8 +1408,6 @@ func readyWhenClosed(ctx context.Context, signal *gateway.ReadySignal, done <-ch
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
-	// ADR-733 5xx capture requests; registered with gatewayOps below.
-	crashCaptureRequests := newCrashCaptureRequestCounter()
 	pool, err := db.OpenWithAppName(ctx, "", "faas-gatewayd-internal")
 	if err != nil {
 		return fmt.Errorf("gatewayd: open db: %w", err)
@@ -1439,6 +1437,8 @@ func runThenClosePool(ctx context.Context, log *slog.Logger, closePool func(), b
 
 // runOnPool is run's body; runThenClosePool owns the pool's lifetime.
 func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error {
+	// ADR-733 5xx capture requests; registered with gatewayOps below.
+	crashCaptureRequests := newCrashCaptureRequestCounter()
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		return err
