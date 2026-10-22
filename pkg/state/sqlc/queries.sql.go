@@ -52510,10 +52510,13 @@ func (q *Queries) LockCreditConsumption(ctx context.Context, db DBTX, providerIn
 }
 
 const lockCronAccountForApp = `-- name: LockCronAccountForApp :one
-SELECT id::text AS account_id FROM accounts
+SELECT id::text AS account_id FROM resource_namespaces
 WHERE id=(SELECT account_id FROM apps WHERE id=$1::text::uuid) FOR UPDATE
 `
 
+// An app's account_id is a resource namespace: a personal account or a company
+// org (ADR-202610171908). Lock the namespace row, as ApplyProject does, so every
+// cron quota check for one namespace serializes on the same row.
 func (q *Queries) LockCronAccountForApp(ctx context.Context, db DBTX, appID string) (string, error) {
 	row := db.QueryRow(ctx, lockCronAccountForApp, appID)
 	var account_id string
@@ -52522,7 +52525,7 @@ func (q *Queries) LockCronAccountForApp(ctx context.Context, db DBTX, appID stri
 }
 
 const lockCronAccountForCron = `-- name: LockCronAccountForCron :one
-SELECT id::text AS account_id FROM accounts
+SELECT id::text AS account_id FROM resource_namespaces
 WHERE id=(SELECT a.account_id FROM apps a JOIN crons c ON c.app_id=a.id WHERE c.id=$1::text::uuid) FOR UPDATE
 `
 

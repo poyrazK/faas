@@ -21812,11 +21812,14 @@ UPDATE apps SET manifest=CASE WHEN sqlc.arg(set_policies)::boolean
 WHERE id=sqlc.arg(app_id)::text::uuid;
 
 -- name: LockCronAccountForApp :one
-SELECT id::text AS account_id FROM accounts
+-- An app's account_id is a resource namespace: a personal account or a company
+-- org (ADR-202610171908). Lock the namespace row, as ApplyProject does, so every
+-- cron quota check for one namespace serializes on the same row.
+SELECT id::text AS account_id FROM resource_namespaces
 WHERE id=(SELECT account_id FROM apps WHERE id=sqlc.arg(app_id)::text::uuid) FOR UPDATE;
 
 -- name: LockCronAccountForCron :one
-SELECT id::text AS account_id FROM accounts
+SELECT id::text AS account_id FROM resource_namespaces
 WHERE id=(SELECT a.account_id FROM apps a JOIN crons c ON c.app_id=a.id WHERE c.id=sqlc.arg(cron_id)::text::uuid) FOR UPDATE;
 
 -- name: LockCronParent :one
