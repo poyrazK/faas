@@ -146,7 +146,8 @@ class AppResponse:
     bindings may appear."""
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
-    reachability; `declared` permits only targets present in the caller's service bindings."""
+    reachability; `declared` permits only targets present in the caller's service bindings; `project` also permits
+    every service in the caller's own project (ADR-20261022111119)."""
     service_binding_transport: ServiceBindingTransport | Unset = UNSET
     """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
     `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""

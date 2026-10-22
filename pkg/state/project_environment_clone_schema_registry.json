@@ -6711,6 +6711,7 @@
     "columns": [
       "installation_id",
       "secret_value",
+      "secret_sealed",
       "upgraded_at",
       "upgraded_by"
     ],
@@ -15886,6 +15887,16 @@
       "work_decision"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "seal_domain_probe",
+    "columns": [
+      "domain",
+      "recipient",
+      "sealed_blob",
+      "updated_at"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "service_caller_key_history",

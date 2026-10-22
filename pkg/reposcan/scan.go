@@ -187,6 +187,7 @@ type ServiceBindingTransport string
 const (
 	ServiceBindingPolicyAccount  ServiceBindingPolicy    = "account"
 	ServiceBindingPolicyDeclared ServiceBindingPolicy    = "declared"
+	ServiceBindingPolicyProject  ServiceBindingPolicy    = "project"
 	ServiceBindingTransportHTTP  ServiceBindingTransport = "http"
 	ServiceBindingTransportHTTPS ServiceBindingTransport = "https"
 )

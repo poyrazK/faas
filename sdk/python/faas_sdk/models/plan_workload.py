@@ -41,7 +41,8 @@ class PlanWorkload:
     wildcard app URLs are disabled."""
     app_slug: str | Unset = UNSET
     """Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original
-    identity. Present for migration scans and existing allocations."""
+    identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug,
+    which get the project-prefixed name (ADR-20261022120205)."""
     platform_tenant_required: bool | Unset = UNSET
     """Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override.
     Omitted preserves existing app policy; new apps default to false."""
@@ -70,7 +71,8 @@ class PlanWorkload:
     release on the captured same-project, same-environment dependency deployment."""
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
-    reachability; `declared` permits only targets present in the caller's service bindings."""
+    reachability; `declared` permits only targets present in the caller's service bindings; `project` also permits
+    every service in the caller's own project (ADR-20261022111119)."""
     service_reliability: ServiceReliabilityPolicies | Unset = UNSET
     """Map of declared target service names to caller-owned reliability policies. Only names in this app's service
     bindings may appear."""
