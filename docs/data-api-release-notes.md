@@ -68,6 +68,12 @@ closes five product gaps, all opt-in:
   `storage_objects` decide every upload, download and removal, so file lists
   are ordinary queries and live reads. `@gregale/data` adds
   `createStorageClient`.
+- **Change hooks.** `gregale data-api hooks sql` adds a change event table
+  and `gregale_hooks.enable()` hooks tables; `hooks enable` publishes every
+  committed insert, update and delete as an event from the Data API app's
+  source. Any app subscribes with `event_triggers` or a workflow trigger, with
+  the router's retries, dead letters and per-row ordering
+  ([ADR 20261022121642](adr/20261022121642-data-api-change-hooks.md)).
 
 Every request now carries a gateway-owned `gregale_access` claim (`user`,
 `anonymous` or `server`) for policies. Logs and `data-api diagnostics` report

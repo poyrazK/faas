@@ -15644,6 +15644,34 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/runtime/data-api/events:
+    post:
+      tags: [managed_postgres]
+      operationId: publishDataAPIChangeEvents
+      summary: Publish recorded Data API row changes
+      description: Private runtime surface for change hooks (ADR-20261022121642). Requires a short-lived gregale:data-api:events workload assertion from a live instance of an active app; account and app come from it, never from the body. Each event publishes as an app-scoped producer-key event under the app's own source with key data-api.change.ID, so a republished change deduplicates while its receipt is retained. Events publish in order; publication stops at the first event that may succeed later, and later events are reported as retryable without being attempted. Owner API keys and application JWTs are not accepted.
+      x-internal: true
+      security:
+        - dataAPIEventsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DataAPIChangeEventBatch' }
+      responses:
+        '200':
+          description: Per-event outcomes in input order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DataAPIChangeEventBatchResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413':
+          description: The publication exceeds 1 MiB.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/runtime/operations/{id}/control:
     get:
       tags:
@@ -64272,6 +64300,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Short-lived Gregale workload identity for audience gregale:data-api:usage, naming the reporting app and instance. Customer API keys cannot publish usage.
+    dataAPIEventsWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived Gregale workload identity for audience gregale:data-api:events, naming the publishing app and its live instance. Customer API keys cannot publish change events.
     operationsWorkloadIdentity:
       type: http
       scheme: bearer
@@ -80111,6 +80144,32 @@ components:
       required: [month_to_date]
       properties:
         month_to_date: { $ref: '#/components/schemas/DataAPIUsageMonthToDate' }
+    DataAPIChangeEvent:
+      description: One recorded row change. The id is the change's UUID in the database; the platform derives the producer key data-api.change.ID from it.
+      type: object
+      additionalProperties: false
+      required: [id, type, data]
+      properties:
+        id: { type: string, pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' }
+        type: { type: string, maxLength: 256, pattern: '^[!-~]+\.(inserted|updated|deleted)$', description: SCHEMA.TABLE.inserted, .updated or .deleted. }
+        time: { type: string, format: date-time, description: When the change was recorded. }
+        data: { description: The change, at most 64 KiB of JSON. }
+    DataAPIChangeEventBatch:
+      description: A runtime's private publication of recorded changes, in recorded order.
+      type: object
+      additionalProperties: false
+      required: [version, events]
+      properties:
+        version: { type: integer, enum: [1] }
+        events: { type: array, minItems: 1, maxItems: 100, items: { $ref: '#/components/schemas/DataAPIChangeEvent' } }
+    DataAPIChangeEventBatchResponse:
+      description: Per-event outcomes in input order, with the app source the events published under.
+      type: object
+      additionalProperties: false
+      required: [source, results]
+      properties:
+        source: { type: string, description: The app's producer source, app.APP_UUID. }
+        results: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/PublishEventBatchResult' } }
     DataAPIUsageBucket:
       description: One hour or UTC day of an owner usage view.
       allOf:

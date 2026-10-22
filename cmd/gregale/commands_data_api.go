@@ -19,7 +19,7 @@ import (
 
 func cmdDataAPI(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale data-api <create|deploy|configure|server-key|usage|live|storage|types|diff|check|refresh|sync|status|rotation|health|replay|diagnostics|dev|install|onboard|migration|fixture|explain|verify|transaction>", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api <create|deploy|configure|server-key|usage|live|storage|hooks|types|diff|check|refresh|sync|status|rotation|health|replay|diagnostics|dev|install|onboard|migration|fixture|explain|verify|transaction>", "data-api")
 		return 1
 	}
 	switch args[0] {
@@ -69,12 +69,14 @@ func cmdDataAPI(args []string) int {
 		return cmdDataAPILive(args[1:])
 	case "storage":
 		return cmdDataAPIStorage(args[1:])
+	case "hooks":
+		return cmdDataAPIHooks(args[1:])
 	case "deploy":
 		return cmdDataAPIDeploy(args[1:])
 	case "sync":
 		return cmdDataAPISync(args[1:])
 	default:
-		return printErr("Unknown Data API command", fmt.Errorf("use create, deploy, configure, server-key, usage, live, storage, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
+		return printErr("Unknown Data API command", fmt.Errorf("use create, deploy, configure, server-key, usage, live, storage, hooks, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
 	}
 }
 

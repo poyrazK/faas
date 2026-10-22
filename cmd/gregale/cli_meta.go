@@ -5262,6 +5262,22 @@ var cliCommands = []cliCommand{
 					{Name: "no-restart", Short: "store settings without a fresh restart"},
 				}},
 			}},
+			{Name: "hooks", Short: "Change hooks: publish committed row changes as events", Subcommands: []cliSub{
+				{Name: "sql", Short: "Print the change hooks migration (change event table, trigger, enable/disable helpers)", Flags: []cliFlag{
+					{Name: "schema", Value: "SCHEMA", Short: "the Data API's first exposed schema (default api)"},
+				}, Examples: []string{"gregale data-api hooks sql > migrations/0006_change_hooks.sql"}},
+				{Name: "enable", Short: "Publish recorded changes as events from the Data API app's source", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+					{Name: "no-restart", Short: "store settings without a fresh restart"},
+				}, Examples: []string{"gregale data-api hooks enable shop-data"}},
+				{Name: "status", Short: "Show whether change hooks are on and their event source", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+				}},
+				{Name: "disable", Short: "Stop publishing; recorded changes stay in the table", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+					{Name: "no-restart", Short: "store settings without a fresh restart"},
+				}},
+			}},
 			{Name: "live", Short: "Live reads: results that stay current over a realtime connection", Subcommands: []cliSub{
 				{Name: "enable", Short: "Enable live queries on the database, usage reporting and a live-only realtime endpoint", Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "scope", Value: "SCOPE", Short: "environment scope of the Data API's database binding"},

@@ -1424,6 +1424,90 @@ Each route asks PostgreSQL first, as the caller:
   guard trigger, storage routes answer `503 storage_unavailable` and the rest
   of the API keeps serving.
 
+## Change hooks
+
+Change hooks run your code when data changes: every committed insert, update
+and delete of a hooked table becomes a Gregale event, and any app can
+subscribe to it with `event_triggers` or start a workflow from it. Delivery
+uses the event router's retries, dead-letter queue and replay.
+
+1. Add the change event table with a migration, then hook tables. Hooking
+   needs a primary key:
+
+   ```sh
+   gregale data-api hooks sql > migrations/0006_change_hooks.sql
+   ```
+
+   ```sql
+   SELECT gregale_hooks.enable('api.orders');
+   SELECT gregale_hooks.enable('api.users', exclude => ARRAY['password_hash']);
+   SELECT gregale_hooks.enable('api.audit_log', payload => 'keys');
+   ```
+
+2. Turn publishing on. The command prints the event source, `app.<UUID>` of
+   the Data API app:
+
+   ```sh
+   gregale data-api hooks enable shop-data
+   ```
+
+3. Subscribe from any app in your account. Types are
+   `<schema>.<table>.inserted|updated|deleted`, so `api.orders.*` matches every
+   change of one table and `*.deleted` every deletion. To handle each row's
+   changes one at a time, in commit order:
+
+   ```yaml
+   work_policies:
+     - name: order-changes
+       max_running_per_key: 1
+       pending_updates: all
+   event_triggers:
+     - source: app.8c0a63d2-5a7e-4b8f-9a55-2f8a3c1d9e01
+       type: api.orders.*
+       work_policy: order-changes
+       work_key: data.key.id
+       ordered: true
+   ```
+
+An event's `data` holds the change:
+
+```json
+{"schema": "api", "table": "orders", "op": "update", "key": {"id": 7},
+ "new": {"id": 7, "status": "paid"}, "old": {"id": 7, "status": "new"},
+ "changed": ["status"], "sequence": 1042, "txid": 88123}
+```
+
+- **What is recorded.** The trigger records a change inside the writing
+  transaction, so a rolled-back write publishes nothing. Writes through the
+  Data API, your backends and migrations are all recorded. An update that
+  changes no included column records nothing. `exclude` keeps columns out of
+  every event; `payload => 'keys'` sends only the key and changed column
+  names. Rows over 64 KiB are left out and the event says `"truncated": true`;
+  read the row by its key.
+- **Delivery.** At least once. The Data API publishes changes in the order
+  they were recorded and retries the first one that fails before anything
+  after it, so each row's changes arrive in commit order. Event IDs are
+  stable: deduplicate side effects by them. Changes are published promptly
+  after writes through the API; changes made elsewhere publish while the
+  Data API is running, within 30 seconds.
+- **Backfills.** `SET LOCAL gregale_hooks.skip = 'on';` in a migration's
+  transaction records nothing for it.
+- **Failures.** An event the platform refuses, such as one that does not match
+  a registered event schema, stays in `api.gregale_change_events` with
+  `failed_at` and `failure_code` and does not hold back later events. Fix the
+  cause, then run `SELECT gregale_hooks.retry_failed();` or
+  `SELECT gregale_hooks.discard_failed();` with the migration binding.
+  Retried events publish after newer changes of the same rows.
+- **Isolation.** The change event table is the Data API's: the REST API
+  answers 404 for it, generated types leave it out, and its row-level security
+  admits only the Data API's own relay.
+- **Turning it off.** `gregale_hooks.disable('api.orders')` stops recording a
+  table. `gregale data-api hooks disable shop-data` stops publishing; recorded
+  changes wait in the table.
+- **Cost.** Each hooked write adds one row insert in its transaction. Events
+  count toward your account's event limits like any publication. See
+  [ADR 20261022121642](adr/20261022121642-data-api-change-hooks.md).
+
 ## Aggregates
 
 Aggregate queries are off by default. Turn them on with:

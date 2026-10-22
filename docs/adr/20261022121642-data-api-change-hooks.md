@@ -102,7 +102,8 @@ Each event becomes an app-scoped producer-key publication: source
 `app.<app UUID>`, key `data-api.change.<outbox event UUID>`. Retries of the
 same row therefore deduplicate while the acceptance receipt is retained, and
 the relay is at-least-once. The route stops at the first retryable failure and
-reports the rest as `not_attempted`, matching the relay's ordering.
+reports the rest as retryable rejections (`event_publish_not_attempted`),
+matching the relay's ordering; the batch result vocabulary is unchanged.
 
 The route grants no authority beyond the calling app's own event namespace,
 which its owner can already publish to (ADR-929). It does not require the app
@@ -114,9 +115,10 @@ to be a Data API.
   match one table (`api.orders.*`), one operation (`*.inserted`) or all.
 - `time`: capture time.
 - `data`: `schema`, `table`, `op`, `key` (primary key columns), `new`, `old`,
-  `changed` (updates), `sequence` (outbox ID) and `txid`. When `data` would
-  exceed 64 KiB, `new` and `old` are dropped and `truncated` is true;
-  consumers read the row by key.
+  `changed` (updates), `sequence` (outbox ID) and `txid`. The trigger leaves
+  out rows over 64 KiB together, and the relay drops `new` and `old` when
+  `data` would still exceed 64 KiB; either way `truncated` is true and
+  consumers read the row by key. This also bounds the outbox and each claim.
 
 ### Consumers and CLI
 
