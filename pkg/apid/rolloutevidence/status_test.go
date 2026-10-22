@@ -103,8 +103,8 @@ func TestStatusReportsReleaseAndTracing(t *testing.T) {
 
 func TestHumanWindow(t *testing.T) {
 	for d, want := range map[time.Duration]string{time.Hour: "1h", 30 * time.Minute: "30m", 48 * time.Hour: "2d", 90 * time.Second: "1m30s"} {
-		if got := humanWindow(d); got != want {
-			t.Fatalf("humanWindow(%s) = %q, want %q", d, got, want)
+		if got := FormatWindow(d); got != want {
+			t.Fatalf("FormatWindow(%s) = %q, want %q", d, got, want)
 		}
 	}
 }

@@ -120,7 +120,7 @@ func (r Reader) recentFailures(ctx context.Context, appID string, start, end tim
 // verdict picks the worst condition, in order: failing, rolled back,
 // degraded, releasing, healthy, idle.
 func verdict(out api.DebugStatusResponse, since time.Duration) (string, string) {
-	window := humanWindow(since)
+	window := FormatWindow(since)
 	health := out.Health
 	switch {
 	case health.Requests >= failingMinRequests && health.ServerErrors*100 >= failingErrorPct*health.Requests:
@@ -148,8 +148,9 @@ func plural(n int, noun string) string {
 	return fmt.Sprintf("%d %ss", n, noun)
 }
 
-// humanWindow renders a lookback such as 1h, 30m, or 2d for headlines.
-func humanWindow(d time.Duration) string {
+// FormatWindow renders a lookback such as 1h, 30m, or 2d for headlines and
+// the status response.
+func FormatWindow(d time.Duration) string {
 	switch {
 	case d >= 24*time.Hour && d%(24*time.Hour) == 0:
 		return fmt.Sprintf("%dd", int(d/(24*time.Hour)))

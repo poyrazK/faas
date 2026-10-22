@@ -110,6 +110,9 @@ func (s *server) debugStatusHandler(w http.ResponseWriter, r *http.Request, acct
 			"Gregale could not summarize this app's debugger evidence.", "Retry in a moment; if it continues, contact support.", err)
 		return
 	}
-	out.Since = echoDebugSince(sinceRaw, since)
+	out.Since = rolloutevidence.FormatWindow(since)
+	if sinceRaw != "" {
+		out.Since = echoDebugSince(sinceRaw, since)
+	}
 	writeJSON(w, http.StatusOK, out)
 }
