@@ -1331,6 +1331,12 @@ func incompatibleCreateOnlyFlags(explicit map[string]bool) []string {
 // already at its app cap. A missing app still falls through to CreateApp; a
 // 409 then retries the lookup once to cover a concurrent same-account create.
 func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequest, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock, resolved ...*api.AppResponse) error {
+	return createOrFetchAppWith(ctx, client, req, req, requireAuthnPtr, appProtocolPtr, publicAuthPtr, resolved...)
+}
+
+// createOrFetchAppWith creates the app from req, or configures an existing
+// one from existingReq, which leaves out defaults meant only for a new app.
+func createOrFetchAppWith(ctx context.Context, client *Client, req, existingReq api.CreateAppRequest, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock, resolved ...*api.AppResponse) error {
 	setResolved := func(app api.AppResponse) {
 		if len(resolved) > 0 && resolved[0] != nil {
 			*resolved[0] = app
@@ -1339,7 +1345,7 @@ func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequ
 	existing, err := client.GetApp(ctx, req.Slug)
 	if err == nil {
 		setResolved(existing)
-		return configureExistingApp(ctx, client, existing, req, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
+		return configureExistingApp(ctx, client, existing, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
 	}
 	var ae *APIError
 	if !errors.As(err, &ae) || ae.Problem.Status != http.StatusNotFound {
@@ -1361,7 +1367,7 @@ func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequ
 		return fmt.Errorf("slug %q is already in use; pick a different --name", req.Slug)
 	}
 	setResolved(existing)
-	return configureExistingApp(ctx, client, existing, req, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
+	return configureExistingApp(ctx, client, existing, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
 }
 
 // openPublicAuthAfterTokenRemoval is the public_auth change implied by
@@ -3452,6 +3458,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 	}
 
+	// gregale.yaml's worker: section (or lifecycle.execution_mode) decides how
+	// the first boot is judged, so it must reach the app before the build: a
+	// worker created in request mode never passes the HTTP readiness check,
+	// and the saved settings only apply after a live deploy (Hunt 12 H12-28).
+	if !projectRequested && resolvedShape == shapeApp && !explicit["execution-mode"] && sourceDir != "" {
+		if mode := manifestDeployExecutionMode(sourceDir); mode != "" {
+			*executionMode = mode
+		}
+	}
 	if !projectRequested && resolvedShape == shapeApp && *executionMode == "" && *restartPolicy == "" &&
 		*startupDeadlineS == 0 && *maxRetries == 0 {
 		sourceKind := simpleapp.SourceDirectory
@@ -3866,7 +3881,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if execution.resolveApp != nil {
 			resolvedApp, err = execution.resolveApp(ctx, client, createReq)
 		} else {
-			err = createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			// The simple plan's request-mode default describes a new app; on a
+			// redeploy it converted worker, service and job apps back to
+			// request mode before the build (Hunt 12 H12-28).
+			existingReq := createReq
+			if resolvedSimplePlan != nil {
+				existingReq.ExecutionMode = ""
+			}
+			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
 		}
 		if err != nil {
 			return printErr("Could not create or fetch app", err)
