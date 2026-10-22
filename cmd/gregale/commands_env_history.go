@@ -155,9 +155,12 @@ func envRollback(args []string) int {
 		if err != nil {
 			return printErr("Could not read revision", err)
 		}
-		_, _ = fmt.Fprintf(os.Stderr, "Revision %d (%s, %s) has %d variables: %s\n", revision, configChangeLabel(target.ConfigRevision),
-			target.CreatedAt, len(target.Variables), strings.Join(sortedKeys(target.Variables), ", "))
-		if !requireTyped(strconv.FormatInt(revision, 10)) {
+		vars := "no variables"
+		if len(target.Variables) > 0 {
+			vars = fmt.Sprintf("%d variables: %s", len(target.Variables), strings.Join(sortedKeys(target.Variables), ", "))
+		}
+		_, _ = fmt.Fprintf(os.Stderr, "Revision %d (%s, %s) has %s\n", revision, configChangeLabel(target.ConfigRevision), target.CreatedAt, vars)
+		if !requireTypedOr(strconv.FormatInt(revision, 10), "--yes") {
 			return 1
 		}
 	}
