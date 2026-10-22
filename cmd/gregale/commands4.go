@@ -231,5 +231,8 @@ func cmdAccountDPA(args []string) int {
 	if _, err := osStdout.Write(body); err != nil {
 		return printErr("Write failed", err)
 	}
+	// The public template keeps its {{...}} placeholders; say so rather than
+	// let them read as a rendering failure. stderr keeps a redirect clean.
+	_, _ = fmt.Fprintln(osStderr, "This is the DPA template: its {{...}} placeholders are completed in the agreement you sign.")
 	return 0
 }
