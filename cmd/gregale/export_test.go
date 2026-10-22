@@ -786,6 +786,7 @@ var CmdCronsUpdate = cmdCronsUpdate
 var CmdDLQPurge = cmdDLQPurge
 var CmdDashboard = cmdDashboard
 var CmdDataAPI = cmdDataAPI
+var CmdDataAPIConfigure = cmdDataAPIConfigure
 var CmdDataAPICreate = cmdDataAPICreate
 var CmdDataAPIDev = cmdDataAPIDev
 var CmdDataAPIExplain = cmdDataAPIExplain
@@ -2362,3 +2363,9 @@ func (r validateParamFlags) Resolve(p0 map[string]bool) (*api.EdgeRuleValidatePa
 // Members of zeroConfigStubServer
 func (r *zeroConfigStubServer) GotCalls() *map[string]int { return &r.gotCalls }
 func (r *zeroConfigStubServer) Srv() **httptest.Server    { return &r.srv }
+
+var CompactUsage = compactUsage
+
+const UsageSynopsisLimit = usageSynopsisLimit
+
+var InvokedCommandPath = &invokedCommandPath

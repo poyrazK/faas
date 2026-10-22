@@ -264,6 +264,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			AllowedServiceCallers:     b.allowedServiceCallers,
 			AllowedServiceCallScopes:  b.allowedServiceCallScopes,
 			PlatformTenantRequired:    b.platformTenantRequired,
+			Unpublished:               b.det == detCompose && len(b.ports) == 0,
 			InternalPorts:             b.internalPorts,
 
 			Class:     cls,

@@ -898,6 +898,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.consumerSignup.Start(ctx, log)             // ADR-20261021143000
 		srv.productControl.StartOverdueHolds(ctx, log) // ADR-20261018212918
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
+		startPlatformFlagRamps(ctx, srv, log) // ADR 20261021080640
 		srv.startIssuesMaintenance(ctx)
 		srv.startIssueTrackerAutoSync(ctx)
 		srv.startIssueTrackerReminders(ctx)
@@ -1615,6 +1616,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.changeTimelineEnabled = deps.getenv("FAAS_CHANGE_TIMELINE_ENABLED") == "1"
 	srv.anomalyAlertsEnabled = deps.getenv("FAAS_ANOMALY_ALERTS_ENABLED") == "1"
 	srv.seedEnvPlatformFlags(deps.getenv) // ADR-1700 boot fallbacks for the gates above
+	registerPlatformFlagRetireBy(ops.Registry())
 
 	srv.customMetricHistoryEnabled = deps.getenv("FAAS_CUSTOM_METRIC_HISTORY_ENABLED") == "1"
 	if srv.customMetricHistoryEnabled {
@@ -1970,6 +1972,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("fleet age recipient loaded", "path", recipientPath)
 	} else {
 		log.Warn("FAAS_FLEET_AGE_RECIPIENT_PATH unset — secrets PUT will return 503")
+	}
+	if err := loadSealDomains(deps.getenv, log); err != nil {
+		return err
 	}
 
 	// MFA (IAM-2, issue #186): load the host age identity so

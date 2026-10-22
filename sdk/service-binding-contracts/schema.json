@@ -107,7 +107,8 @@
     "ServiceBindingPolicy": {
       "enum": [
         "account",
-        "declared"
+        "declared",
+        "project"
       ],
       "type": "string"
     },

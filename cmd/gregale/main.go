@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -95,6 +96,18 @@ func writeRootHelpEntry(b *strings.Builder, name, short string) {
 	fmt.Fprintf(b, "  %-22s %s\n", name, short)
 }
 
+// leadingWords returns the arguments before the first flag, joined.
+func leadingWords(args []string) string {
+	var words []string
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			break
+		}
+		words = append(words, arg)
+	}
+	return strings.Join(words, " ")
+}
+
 func hasHelpFlag(args []string) bool {
 	for _, arg := range args {
 		if arg == "--" {
@@ -153,6 +166,19 @@ func run(args []string) (status int) {
 	}
 	jsonUsageHelp = hasHelpFlag(args)
 	invokedCommandPath = publicCommandPath(args)
+	previousHelpPrinted, previousHelpPath := flagHelpPrinted, helpRequestPath
+	flagHelpPrinted, helpRequestPath = false, ""
+	if jsonUsageHelp {
+		helpRequestPath = leadingWords(args)
+	}
+	defer func() {
+		// A parser that printed --help reports the request as a parse error;
+		// the user asked for help, so the run succeeded.
+		if flagHelpPrinted {
+			status = 0
+		}
+		flagHelpPrinted, helpRequestPath = previousHelpPrinted, previousHelpPath
+	}()
 	if len(args) == 0 {
 		_, _ = fmt.Fprint(osStdout, topLevelUsage(false, false))
 		return 0
@@ -271,6 +297,9 @@ func run(args []string) (status int) {
 		// switch in cmdPreview itself rather than living as
 		// siblings in main.go.
 		return cmdPreview(args[1:])
+	case "previews":
+		// ADR 20261021080640: join or leave self-serve platform previews.
+		return cmdPreviews(args[1:])
 	case "scan":
 		// Phase 3 (repo decomposition) — dry-run entry point. Prints
 		// the plan as a table or --json, never writes. The
@@ -1058,9 +1087,16 @@ func printCLIExamples(w io.Writer, examples []string) {
 	}
 }
 
+// findCliSubcommand resolves a verb by name, then by alias, so help for an
+// accepted spelling such as `orgs list` finds the `ls` entry.
 func findCliSubcommand(subcommands []cliSub, name string) (cliSub, bool) {
 	for _, sub := range subcommands {
 		if sub.Name == name {
+			return sub, true
+		}
+	}
+	for _, sub := range subcommands {
+		if slices.Contains(sub.Aliases, name) {
 			return sub, true
 		}
 	}

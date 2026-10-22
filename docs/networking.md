@@ -248,9 +248,17 @@ The same declared edges are exposed as service bindings by the app API and by
 `gregale bindings public-api`, alongside database, object-storage, queue,
 and outbound integration bindings. New project workloads use the `declared` caller policy: the gateway
 returns 403 for calls to services not listed in `depends_on`. Existing apps
-retain their persisted policy on reapply. For an intentional same-account
-escape hatch, set `x-gregale-service-policy: account` on the caller. The CLI
-reports declared service bindings as `enforced`.
+retain their persisted policy on reapply. To let a workload call every service
+in its own project without listing each one, set
+`x-gregale-service-policy: project` on the caller
+([ADR-20261022111119](adr/20261022111119-project-service-binding-policy.md)).
+Calls to services outside the project still need `depends_on`, and a target's
+`x-gregale-allow-callers` list still applies. An undeclared sibling has no
+injected URL or `.internal` alias; call it at
+`http://<app-slug>.svc.gregale:10081`. For an intentional same-account escape
+hatch, set `x-gregale-service-policy: account` on the caller. Under the
+`declared` policy the CLI reports service bindings as `enforced`; under
+`project` and `account` it reports them as `declared`.
 
 `GET /v1/apps/{slug}/bindings` provides the shared binding inventory used by
 the CLI and SDKs. It batches app-scoped catalog reads for services, PostgreSQL,
@@ -1190,6 +1198,12 @@ gregale app APP_ID --visibility internal
 gregale app APP_ID --visibility public
 ```
 
+A Compose project sets this for you: a new app for a service without `ports:`
+is created internal, as Docker publishes nothing for it (ADR-20261022131852).
+The plan shows `visibility=internal`. The choice is made once, when the app is
+created; later syncs keep whatever visibility the app has, so publish such a
+service with `--visibility public`. PR previews inherit their app's visibility.
+
 Internal apps do not receive a public platform-subdomain or verified custom
 domain route. Service discovery continues to resolve them through
 `APP_SLUG.svc.gregale:10081`, where the service proxy enforces caller identity
@@ -1449,8 +1463,9 @@ redis-cli -h "$GREGALE_SERVICE_CACHE_HOST" -p 6379 PING
 ```
 
 The same caller policy as HTTP service calls applies when the connection
-opens: same account, the caller's `depends_on` (under the `declared` policy),
-the target's allowed callers, and preview scoping. A target that grants a
+opens: same account, the caller's `depends_on` (under the `declared` policy,
+and for targets outside the caller's project under `project`), the target's
+allowed callers, and preview scoping. A target that grants a
 caller only method/path scopes (`x-gregale-allow-call-scopes`) refuses that
 caller's raw TCP connections, because those scopes cannot be enforced on raw
 bytes.

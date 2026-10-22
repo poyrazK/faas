@@ -14,3 +14,16 @@
 
 See [reviewed source verification](1645-reviewed-source-binding-verification.md)
 and [checked project releases](1348-checked-project-binding-release-graphs.md).
+
+Managed PostgreSQL bindings were later admitted by
+[ADR-20261019072523](20261019072523-candidate-postgres-binding-qualification.md)
+through control-plane credential receipts; the other blocked classes above remain.
+Managed object storage followed in
+[ADR-20261019121546](20261019121546-candidate-object-storage-binding-qualification.md),
+and customer outbound integration bindings in
+[ADR-20261019152416](20261019152416-candidate-outbound-binding-qualification.md)
+through probes outboundd sends itself; operator app attachments remain blocked.
+
+Plain HTTP service edges were admitted by
+[ADR-20261019200059](20261019200059-http-service-binding-evidence.md): service
+receipts now carry the caller's own transport.

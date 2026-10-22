@@ -63,6 +63,16 @@ func executeServiceBindingProbeCommand(ctx context.Context, req apptaskproto.Req
 		report.Error = "service name is invalid"
 		return writeServiceBindingProbeReport(stdout, report)
 	}
+	if manifest.EffectiveServiceBindingTransport() == api.ServiceBindingTransportHTTP {
+		// ADR-20261019200059: probe the URL this caller's binding actually holds.
+		report.Transport, report.URL = api.ServiceBindingTransportHTTP, api.ServiceBindingCanonicalURL(service, api.ServiceBindingTransportHTTP)
+		if got := appTaskEnvValue(BuildEnvWithSecrets(os.Environ(), manifest, secrets, apiEnv), api.ServiceBindingEnvKey(service)); got != report.URL {
+			report.Authorization = api.ServiceBindingProbeCheck{Status: "failed", Detail: "service has no matching HTTP binding in this deployment"}
+			report.Error = "service is not bound to this deployment"
+			return writeServiceBindingProbeReport(stdout, report)
+		}
+		return writeServiceBindingProbeReport(stdout, runServiceBindingHTTPProbe(ctx, service, target, nil, net.DefaultResolver, nil))
+	}
 	if got := appTaskEnvValue(BuildEnvWithSecrets(os.Environ(), manifest, secrets, apiEnv), api.ServiceBindingHTTPSEnvKey(service)); got != report.URL {
 		report.Authorization = api.ServiceBindingProbeCheck{Status: "failed", Detail: "service has no matching HTTPS binding in this deployment"}
 		report.Error = "service is not bound to this deployment"
@@ -190,7 +200,80 @@ func runServiceBindingContextProbe(ctx context.Context, service, target string, 
 		return report
 	}
 	report.TLS = api.ServiceBindingProbeCheck{Status: "passed", Detail: tlsVersionName(response.TLS.Version) + "; certificate verified"}
+	return finishServiceBindingProbe(report, response, target, managed)
+}
 
+// runServiceBindingHTTPProbe sends the same marked probe over the plaintext
+// service proxy that an HTTP-transport caller's canonical URL names
+// (ADR-20261019200059). It has no TLS stage.
+func runServiceBindingHTTPProbe(ctx context.Context, service, target string, managed *api.ManagedServiceProbeSpec, resolver serviceBindingProbeResolver, dialContext func(context.Context, string, string) (net.Conn, error)) api.ServiceBindingProbeReport {
+	report := api.ServiceBindingProbeReport{
+		ManagedService:     managed,
+		TargetDeploymentID: target,
+		Service:            service,
+		Transport:          api.ServiceBindingTransportHTTP,
+		URL:                api.ServiceBindingCanonicalURL(service, api.ServiceBindingTransportHTTP),
+		DNS:                api.ServiceBindingProbeCheck{Status: "not_checked"},
+		TLS:                api.ServiceBindingProbeCheck{Status: "not_checked", Detail: "the caller uses the plain HTTP service transport"},
+		Authorization:      api.ServiceBindingProbeCheck{Status: "not_checked"},
+		Routing:            api.ServiceBindingProbeCheck{Status: "not_checked"},
+	}
+	host := service + ".svc.gregale"
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+	ips, err := resolver.LookupIPAddr(ctx, host)
+	if err != nil || len(ips) == 0 {
+		detail := "service host did not resolve in the caller network"
+		if err != nil {
+			detail = boundedProbeDetail("service host lookup failed: " + err.Error())
+		}
+		report.DNS = api.ServiceBindingProbeCheck{Status: "failed", Detail: detail}
+		report.Error = "service host DNS lookup failed"
+		return report
+	}
+	report.DNS = api.ServiceBindingProbeCheck{Status: "passed", Detail: fmt.Sprintf("resolved to %d address(es)", len(ips))}
+	transport := &http.Transport{
+		Proxy:             nil, // Never allow ambient proxy settings to bypass the private route.
+		DisableKeepAlives: true,
+	}
+	if dialContext != nil {
+		transport.DialContext = dialContext
+	} else {
+		transport.DialContext = dialResolvedServiceAlias(ips)
+	}
+	client := &http.Client{
+		Transport:     transport,
+		Timeout:       serviceBindingProbeTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	defer transport.CloseIdleConnections()
+	request, err := http.NewRequestWithContext(ctx, http.MethodHead, report.URL+api.ServiceBindingProbePath, nil)
+	if err != nil {
+		report.Error = "could not construct the HTTP probe request"
+		return report
+	}
+	request.Header.Set(api.ServiceBindingProbeRequestHeader, api.ServiceBindingProbeVersion)
+	if target != "" {
+		request.Header.Set(api.TargetDeploymentHeader, target)
+	}
+	if managed != nil {
+		request.Header.Set(api.ReleaseHeader, managed.ReleaseID)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		report.Routing = api.ServiceBindingProbeCheck{Status: "failed", Detail: boundedProbeDetail("HTTP request failed: " + err.Error())}
+		report.Error = "service proxy connection failed"
+		return report
+	}
+	defer func() { _ = response.Body.Close() }()
+	report.HTTPStatus = response.StatusCode
+	return finishServiceBindingProbe(report, response, target, managed)
+}
+
+// finishServiceBindingProbe reads the gateway's probe stage from a response
+// on either transport.
+func finishServiceBindingProbe(report api.ServiceBindingProbeReport, response *http.Response, target string, managed *api.ManagedServiceProbeSpec) api.ServiceBindingProbeReport {
 	stage := response.Header.Get(api.ServiceBindingProbeStageHeader)
 	marker := response.Header.Get(api.ServiceBindingProbeResponseHeader)
 	managedConfirmed := managed == nil || len(response.Header.Values(api.TargetDeploymentHeader)) == 1 && response.Header.Get(api.TargetDeploymentHeader) == managed.TargetDeploymentID && len(response.Header.Values(api.ReleaseHeader)) == 1 && response.Header.Get(api.ReleaseHeader) == managed.ReleaseID

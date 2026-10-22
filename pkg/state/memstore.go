@@ -547,7 +547,7 @@ type MemStore struct {
 	// installation_id so the resolver cache at
 	// pkg/githubd/webhook_secret.go can match the prod
 	// ON CONFLICT (installation_id) DO UPDATE shape.
-	githubWebhookSecrets map[int64][]byte
+	githubWebhookSecrets map[int64]GithubWebhookSecret
 	// githubWebhookSecretMeta stamps (upgraded_at, upgraded_by)
 	// for each per-tenant row so the apid admin route can echo
 	// the row back without a second query.
@@ -1593,7 +1593,7 @@ func NewMemStore() *MemStore {
 		githubInstalls:          map[string]GitHubInstall{},
 		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
 		// store (mirror of github_webhook_secrets).
-		githubWebhookSecrets:    map[int64][]byte{},
+		githubWebhookSecrets:    map[int64]GithubWebhookSecret{},
 		githubWebhookSecretMeta: map[int64]webhookSecretMeta{},
 		// Issue #246 acceptance item 7: mail suppression list mirror.
 		mailSuppressions:    map[string]mailSuppressionRow{},
@@ -7700,11 +7700,11 @@ func (m *MemStore) RecordGitHubInstallationSync(_ context.Context, installationI
 // amendment). The MemStore is the unit-test stand-in for the
 // resolver; the bytea is held in an in-memory map keyed by
 // installation_id.
-func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID int64, secret []byte, upgradedBy string) (time.Time, string, error) {
+func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID int64, secret GithubWebhookSecret, upgradedBy string) (time.Time, string, error) {
 	if installationID == 0 {
 		return time.Time{}, "", fmt.Errorf("memstore: UpsertGithubWebhookSecret: installation_id must be non-zero")
 	}
-	if len(secret) == 0 {
+	if len(secret.Value) == 0 {
 		return time.Time{}, "", fmt.Errorf("memstore: UpsertGithubWebhookSecret: secret must be non-empty")
 	}
 	if upgradedBy == "" {
@@ -7714,11 +7714,12 @@ func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID i
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.githubWebhookSecrets == nil {
-		m.githubWebhookSecrets = map[int64][]byte{}
+		m.githubWebhookSecrets = map[int64]GithubWebhookSecret{}
 	}
-	cp := make([]byte, len(secret))
-	copy(cp, secret)
-	m.githubWebhookSecrets[installationID] = cp
+	m.githubWebhookSecrets[installationID] = GithubWebhookSecret{
+		Value:  append([]byte(nil), secret.Value...),
+		Sealed: append([]byte(nil), secret.Sealed...),
+	}
 	if m.githubWebhookSecretMeta == nil {
 		m.githubWebhookSecretMeta = map[int64]webhookSecretMeta{}
 	}
@@ -7730,19 +7731,20 @@ func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID i
 }
 
 // GetGithubWebhookSecret mirrors PgStore. ErrNotFound on miss.
-func (m *MemStore) GetGithubWebhookSecret(_ context.Context, installationID int64) ([]byte, error) {
+func (m *MemStore) GetGithubWebhookSecret(_ context.Context, installationID int64) (GithubWebhookSecret, error) {
 	if installationID == 0 {
-		return nil, ErrNotFound
+		return GithubWebhookSecret{}, ErrNotFound
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	secret, ok := m.githubWebhookSecrets[installationID]
-	if !ok || len(secret) == 0 {
-		return nil, ErrNotFound
+	if !ok || (len(secret.Value) == 0 && len(secret.Sealed) == 0) {
+		return GithubWebhookSecret{}, ErrNotFound
 	}
-	cp := make([]byte, len(secret))
-	copy(cp, secret)
-	return cp, nil
+	return GithubWebhookSecret{
+		Value:  append([]byte(nil), secret.Value...),
+		Sealed: append([]byte(nil), secret.Sealed...),
+	}, nil
 }
 
 // GetGithubInstallBindingForApp mirrors PgStore. accountID scopes
@@ -10727,7 +10729,9 @@ func (m *MemStore) SetDeploymentRuntimeProfile(_ context.Context, id string, pro
 	if !ok {
 		return ErrNotFound
 	}
-	if d.Kind != DeploymentKindImage ||
+	// A built service that froze a Compose healthcheck records imaged's verdict
+	// here too (ADR-20261019195000); other source deployments cannot.
+	if (d.Kind != DeploymentKindImage && !profileFreezesImageHealthcheck(d.InferredProfile)) ||
 		(d.Status != DeployPending && d.Status != DeployBuilding && d.Status != DeployImaging) {
 		return ErrInvalidStateTransition
 	}
@@ -28801,4 +28805,15 @@ func requireAPIKeyScopes(scopes []string) error {
 		return fmt.Errorf("%w: api key scopes must not be empty", ErrInvalidArgument)
 	}
 	return nil
+}
+
+// profileFreezesImageHealthcheck mirrors the SQL `inferred_profile ?
+// 'image_healthcheck'` guard on SetDeploymentRuntimeProfile.
+func profileFreezesImageHealthcheck(profile json.RawMessage) bool {
+	var fields map[string]json.RawMessage
+	if len(profile) == 0 || json.Unmarshal(profile, &fields) != nil {
+		return false
+	}
+	_, frozen := fields["image_healthcheck"]
+	return frozen
 }
