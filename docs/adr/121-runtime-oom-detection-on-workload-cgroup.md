@@ -414,3 +414,101 @@ byte + a switch case + a test in lockstep.
     will spike.
   - Plan-cap injection via VMM cmd-line / env (cleaner
     round-trip than re-reading memory.max).
+
+## Amendment (2026-10-22): every app reports OOM kills; only a release that is not yet live fails
+
+### Context
+
+Two gaps remained after the original decision.
+
+- **Single-process apps never reported.** guest-init created the
+  `main-app` leaf only for a declared workload with a RAM or CPU value.
+  Every other app ran in the guest's root cgroup, so `WatchOOM` never
+  started. A guest-wide OOM kill was restarted in place by the
+  supervisor, and nothing reached the host: no 0x05 report, no event, no
+  explanation.
+- **One OOM failed a live release.** `DestroyForWorkloadOOMFailure`
+  always called `SetDeploymentFailedEx`, which sets the deployment to
+  `failed` with 0% traffic and rebalances to a fallback release, or to
+  nothing. A release that had served for hours was rolled back, or the
+  app went offline, over one memory spike.
+
+The detection path also had two defects. The peak was read from the
+`high` line of `memory.events`, which counts `memory.high` breaches and
+is not a byte value, so reports carried a peak of 0 MB. The listener was
+cancelled as soon as the workload's `Wait` returned, and the exit could
+win the race against the listener's wakeup, which dropped the report.
+
+### Decision
+
+**Detection covers every app.** guest-init creates the `main-app` leaf for
+every runtime app (`prepareMainWorkloadCgroup`). Without a RAM or CPU
+value the leaf has no limit, and the host-side `writePlanCgroup` stays the
+authoritative cap; the leaf only observes. The kernel charges a global OOM
+kill to the victim's cgroup, so the leaf's `memory.events` `oom_kill`
+counts the app's kills whether the leaf or the whole guest ran out of
+memory. If the leaf cannot be created, the app starts in the root cgroup
+as before and its kills go unreported; a configured limit still fails
+closed. The guest kernel (6.18) supports `memory.peak`.
+
+**One report per run.** `startWorkloadOOMWatch` reads the `oom_kill`
+baseline before the workload starts, so a kill during startup counts.
+`stop`, deferred after `Wait`, repeats the check and reports a kill the
+listener missed. A run reports at most once. The peak comes from
+`memory.peak`, or `memory.current` where `memory.peak` is absent. A
+single-process guest has no in-guest cap, so it reports plan 0, and
+schedd uses the instance's RAM. guest-init also prints
+`guest-init: app out of memory: ...` to the console, which reaches the
+app's logs.
+
+**Only a release that is not yet live fails.** schedd still replaces the
+instance on every report: the instance is destroyed, its snapshots are
+marked stale, the `instances.workload_oom_failed` event is recorded and
+`vmm_workload_oom_kills_total` is incremented. It fails the deployment
+with `app_runtime_oom` only when `oomFailsDeployment` holds:
+
+| Deployment | Fails |
+|---|---|
+| `pending`, `building`, `imaging`, `snapshotting` | yes |
+| `live`, `rolling_out` (canary step or service handoff) | yes: the canary aborts and the stable release keeps its traffic |
+| `live`, `pending` with a canary ladder not yet started | yes |
+| `live`, `pending` without a ladder (predates rollout tracking; the safedeploy orchestrator completes it) | no |
+| `live`, `complete` or `aborted` | no |
+| `failed`, `superseded`, `cancelled` | no: already out of service |
+
+A live release keeps serving. The event's new `deployment_failed` field
+says which branch ran; the debugger's status summary (ADR-1447 amendment)
+lists these events. A failed deployment read keeps the release serving.
+
+**A startup killed for memory says so.** schedd ignores reports for
+instances that are not `RUNNING`, so a kill during a cold boot used to
+surface only as the generic readiness failure. vmmd now records the report
+on the instance (`JailerVMM.NoteWorkloadOOM`). When the startup then
+fails, `waitApplicationReady` returns `app_runtime_oom` with the peak,
+plan and the app's last output lines. A deploy-time boot fails the
+deployment with that code through the existing prime-failure path; a wake
+of a live release returns it to the request without failing the release.
+A startup that succeeds after an earlier kill is not reclassified.
+
+### Consequences
+
+- A live app that runs out of memory loses the in-flight requests on that
+  instance and the next request cold-boots, as before. It is no longer
+  rolled back or taken offline.
+- Repeated OOM kills of a live release are not escalated. The debugger
+  and the metric show them; a crash-loop policy is a separate decision.
+- A child process killed while the parent lives on (a pre-fork worker)
+  also replaces the instance, as it already did for declared workloads.
+- Sidecars without limits still have no leaf and do not report.
+- Rolling upgrade: an older guest-init keeps the old behaviour (no report
+  for single-process apps). An older schedd fails the deployment on every
+  report, as before, and ignores plan 0. Neither breaks the wire: the 0x05
+  envelope and the RPC are unchanged.
+
+### Verification
+
+Unit: guest/init (unlimited leaf and its fallback, the exit-race report,
+`memory.peak`), pkg/sched (`oomFailsDeployment` table, a live release
+keeps serving with the instance's plan RAM, a pre-live deployment is
+stamped), pkg/fcvm (a failed startup after a report is `app_runtime_oom`,
+a successful one is not). Metal: see the PR for the n2 run.
