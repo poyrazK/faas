@@ -59,13 +59,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Initializes the CodeQL CLI, runs autobuild, and uploads SARIF.
       # Pin the major version (v3) — CodeQL ships breaking changes between
       # major bumps; v3 has been stable for the duration of this milestone.
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           languages: ${{ matrix.language }}
           # 'security-and-quality' adds lint-style checks (unpinned
@@ -80,10 +80,10 @@ jobs:
       # 'autobuild' detects the build system. For Go: `go build ./...`.
       # For 'actions' (workflow yaml): no build step needed.
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v4
+        uses: github/codeql-action/autobuild@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           # category names the alert category in the SARIF upload.
           category: "/language:${{ matrix.language }}"
@@ -96,7 +96,7 @@ jobs:
 
       - name: Upload filtered Go results
         if: matrix.language == 'go'
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           sarif_file: codeql-results/go.sarif
           category: "/language:${{ matrix.language }}"

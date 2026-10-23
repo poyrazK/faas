@@ -178,13 +178,13 @@ jobs:
             exit 1
           }
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Unit/controller sources must come from the same commit as the
           # release assets. No daemon source is built in this workflow.
           ref: ${{ inputs.release_tag }}
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           # The fleet runner is long-lived and keeps its local Go build cache
@@ -1011,7 +1011,7 @@ jobs:
 
       - name: Upload control-plane rollout probe evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: control-plane-rollout-probes-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/gregale-rollout-availability-${{ github.run_id }}-${{ github.run_attempt }}-*.tsv
@@ -1332,7 +1332,7 @@ jobs:
 
       # The verifier comes from the workflow's own ref; the release commit's
       # checkout below is only trusted once its signature verified.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: workflow-src
           sparse-checkout: scripts/ci/verify_unit_release.sh
@@ -1353,7 +1353,7 @@ jobs:
             echo "The unit release changed no control-plane host role." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: steps.verify.outputs.carries == 'true'
         with:
           # The roles converge from the unit release's commit; the planner's
@@ -1573,7 +1573,7 @@ jobs:
 
       - name: Upload host-config rollout probe evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: control-plane-host-config-probes-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/gregale-rollout-availability-${{ github.run_id }}-${{ github.run_attempt }}-*.tsv
@@ -1672,7 +1672,7 @@ jobs:
 
       # The verifier comes from the workflow's own ref; the release commit's
       # checkout below is only trusted once its signature verified.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: workflow-src
           sparse-checkout: scripts/ci/verify_unit_release.sh
@@ -1687,7 +1687,7 @@ jobs:
           echo "UNITS_DIR=$RUNNER_TEMP/gregale-units/unpacked" >> "$GITHUB_ENV"
           echo "UNITS_SHA=$git_sha" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # The planner and deployctl come from the unit release's commit;
           # the planner's ancestry and N±1 checks need main's history and the
@@ -1819,7 +1819,7 @@ jobs:
 
       - name: Upload unit rollout probe evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: control-plane-unit-rollout-probes-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.units_lane }}
           path: ${{ runner.temp }}/gregale-rollout-availability-${{ github.run_id }}-${{ github.run_attempt }}-*.tsv
