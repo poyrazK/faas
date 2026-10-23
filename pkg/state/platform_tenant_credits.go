@@ -215,11 +215,10 @@ func (m *MemStore) PlatformTenantCreditPosition(_ context.Context, accountID, te
 			pos.AvailableMillicents += g.RemainingMillicents
 		}
 	}
-	for _, a := range m.platformTenantCreditApplications {
-		g := m.platformTenantCreditGrants[a.GrantID]
-		st, ok := m.platformTenantStatements[a.StatementID]
-		if ok && g.TenantID == tenantID && g.Currency == currency && !st.PeriodStart.Before(monthStart) && st.PeriodStart.Before(monthEnd) {
-			pos.AppliedInMonthMillicents += a.AmountMillicents
+	for _, st := range m.platformTenantStatements {
+		if st.AccountID == accountID && st.TenantID == tenantID && st.Currency == currency &&
+			!st.PeriodStart.Before(monthStart) && st.PeriodStart.Before(monthEnd) {
+			pos.AppliedToUsageInMonthMillicents += creditAppliedToUsage(st.CreditAppliedMillicents, st.Fees)
 		}
 	}
 	return pos, nil

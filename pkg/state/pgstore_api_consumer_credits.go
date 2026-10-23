@@ -108,6 +108,28 @@ func (s *PgStore) VoidAPIConsumerCreditGrant(ctx context.Context, accountID, app
 	return g, err
 }
 
+func (s *PgStore) APIConsumerUsageChangedSince(ctx context.Context, accountID, appID, consumerID string, windowFrom, since time.Time) (bool, error) {
+	var changed bool
+	err := s.pool.QueryRow(ctx, `select exists (select 1 from api_consumer_usage_minutes
+		 where account_id = $1::uuid and app_id = $2::uuid and consumer_key = $3
+		   and window_start >= $4 and updated_at > $5)`, accountID, appID, consumerID, windowFrom.UTC(), since.UTC()).Scan(&changed)
+	if err != nil {
+		return false, fmt.Errorf("consumer usage changes: %w", err)
+	}
+	return changed, nil
+}
+
+func (s *PgStore) PlatformTenantUsageChangedSince(ctx context.Context, accountID, tenantID string, windowFrom, since time.Time) (bool, error) {
+	var changed bool
+	err := s.pool.QueryRow(ctx, `select exists (select 1 from platform_tenant_usage_minutes
+		 where account_id = $1::uuid and platform_tenant_id = $2::uuid
+		   and window_start >= $3 and updated_at > $4)`, accountID, tenantID, windowFrom.UTC(), since.UTC()).Scan(&changed)
+	if err != nil {
+		return false, fmt.Errorf("tenant usage changes: %w", err)
+	}
+	return changed, nil
+}
+
 func (s *PgStore) APIConsumerCreditPosition(ctx context.Context, accountID, appID, consumerID, currency string, at time.Time) (APIConsumerCreditPosition, error) {
 	monthStart, monthEnd := creditMonth(at)
 	var pos APIConsumerCreditPosition
@@ -115,12 +137,10 @@ func (s *PgStore) APIConsumerCreditPosition(ctx context.Context, accountID, appI
 		coalesce((select sum(remaining_millicents) from api_consumer_credit_grants
 		           where account_id = $1::uuid and app_id = $2::uuid and consumer_id = $3::uuid and currency = $4
 		             and remaining_millicents > 0 and voided_at is null and (expires_at is null or expires_at > $5)), 0)::bigint,
-		coalesce((select sum(a.amount_millicents) from api_consumer_credit_applications a
-		            join api_consumer_credit_grants g on g.id = a.grant_id
-		            join api_consumer_usage_statements st on st.id = a.statement_id
-		           where g.account_id = $1::uuid and g.app_id = $2::uuid and g.consumer_id = $3::uuid and g.currency = $4
-		             and st.period_start >= $6 and st.period_start < $7), 0)::bigint`,
-		accountID, appID, consumerID, currency, at.UTC(), monthStart, monthEnd).Scan(&pos.AvailableMillicents, &pos.AppliedInMonthMillicents)
+		coalesce((select sum(`+creditAppliedToUsageSQL+`) from api_consumer_usage_statements st
+		           where st.account_id = $1::uuid and st.app_id = $2::uuid and st.consumer_id = $3::uuid and st.currency = $4
+		             and st.credit_applied_millicents > 0 and st.period_start >= $6 and st.period_start < $7), 0)::bigint`,
+		accountID, appID, consumerID, currency, at.UTC(), monthStart, monthEnd).Scan(&pos.AvailableMillicents, &pos.AppliedToUsageInMonthMillicents)
 	if err != nil {
 		return APIConsumerCreditPosition{}, fmt.Errorf("credit position: %w", err)
 	}
