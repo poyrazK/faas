@@ -1,0 +1,75 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "orders-api"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "github.com/poyrazK/faas/sdk/go/tracing"
+          },
+          "spans": [
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "0102030405060708",
+              "parentSpanId": "00f067aa0ba902b7",
+              "name": "GET /orders/{id}",
+              "kind": 2,
+              "startTimeUnixNano": "1700000000000000000",
+              "endTimeUnixNano": "1700000000020000000",
+              "attributes": [
+                {
+                  "key": "http.route",
+                  "value": {
+                    "stringValue": "/orders/{id}"
+                  }
+                },
+                {
+                  "key": "http.response.status_code",
+                  "value": {
+                    "intValue": "200"
+                  }
+                }
+              ]
+            },
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "090a0b0c0d0e0f10",
+              "parentSpanId": "0102030405060708",
+              "name": "SELECT",
+              "kind": 3,
+              "startTimeUnixNano": "1700000000002000000",
+              "endTimeUnixNano": "1700000000009000000",
+              "attributes": [
+                {
+                  "key": "db.system.name",
+                  "value": {
+                    "stringValue": "postgresql"
+                  }
+                },
+                {
+                  "key": "db.query.text",
+                  "value": {
+                    "stringValue": "SELECT id FROM orders WHERE id = $1"
+                  }
+                }
+              ],
+              "status": {
+                "code": 2,
+                "message": "canceling statement"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

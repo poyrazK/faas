@@ -36,5 +36,5 @@ vmmd opens at wake:
    `faas_seal_domain_runtime_writes: domain`, converge, and run
    `gregalectl seal-domain migrate --domain runtime --readers-verified`.
 
-The outbound checklist, with checks and rollbacks for each step, is
+The checklist for both domains, with checks and rollbacks for each step, is
 [docs/runbooks/seal-domains-rollout.md](../../../../docs/runbooks/seal-domains-rollout.md).

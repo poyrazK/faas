@@ -6652,6 +6652,27 @@ const (
 	EdgeChallengeRaiseFloorPerMinute = 60
 	EdgeChallengeBaselineMinutes     = 15
 
+	// --- ADR-20261022105846: penalty box -----------------------------
+
+	// MinEdgePenaltySeconds and MaxEdgePenaltySeconds bound how long a
+	// boxed client is refused.
+	MinEdgePenaltySeconds = 60
+	MaxEdgePenaltySeconds = 86400
+	// EdgePenaltyDefaultAfter boxes on the first rejection;
+	// MaxEdgePenaltyAfter bounds the threshold.
+	EdgePenaltyDefaultAfter = 1
+	MaxEdgePenaltyAfter     = 1000
+	// EdgePenaltyDefaultWithinSeconds is the window rejections count in.
+	EdgePenaltyDefaultWithinSeconds = 60
+	MaxEdgePenaltyWithinSeconds     = 3600
+	// EdgePenaltyBoxMaxPerApp and EdgePenaltyBoxMaxEntries bound one
+	// gateway's boxes (and its pending rejection counts) per app and in
+	// total, so a flood from rotating addresses costs bounded memory and
+	// one app cannot push out another's boxes. A full app box drops its
+	// soonest-ending entry.
+	EdgePenaltyBoxMaxPerApp  = 10000
+	EdgePenaltyBoxMaxEntries = 200000
+
 	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 
 	// EdgeRuleCircuitDefaultFailureThreshold is the failure ratio at or
@@ -7369,6 +7390,28 @@ const (
 	// once is an event to surface, not to repair in one transaction
 	// storm.
 	InstanceDivergenceTickLimit = 50
+
+	// AdoptionReportIntervalSeconds is how often schedd checks its nodes'
+	// vmmd ownership epochs for a restart whose adoption report it has not
+	// applied (vmmd restart adoption ADR §3). Guests the new vmmd refused
+	// keep their RUNNING rows until then, so this bounds how long requests
+	// can reach them after a restart.
+	AdoptionReportIntervalSeconds = 5
+
+	// VMMDRestartNoticeSeconds is how long a vmmd stopping for a planned,
+	// adopting restart tells schedd it is restarting (vmmd restart adoption
+	// ADR §3): wakes on the node are retried instead of failed and its
+	// failed heartbeats are not counted. The successor clears it once it
+	// serves, normally within seconds; a vmmd that never comes back loses
+	// the notice after this long and is treated as before.
+	VMMDRestartNoticeSeconds = 60
+
+	// GatewayVMMDRestartHoldSeconds bounds how long a gateway forward waits
+	// for a node's vmmd to come back under its planned-restart notice
+	// instead of answering 503 (vmmd restart adoption ADR, "Boundaries").
+	// The successor normally serves within a second; this matches the wake
+	// queue's hold (WakeQueueTTLSeconds).
+	GatewayVMMDRestartHoldSeconds = WakeQueueTTLSeconds
 
 	// Tier A9 (capacity-pressure-triggered cross-node app rebalance,
 	// ADR-087 — sibling to the dead-node rebalancer of ADR-064).

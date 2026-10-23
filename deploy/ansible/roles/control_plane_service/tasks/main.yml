@@ -418,6 +418,89 @@
     - faas-apid
     - faas-meterd
 
+# ADR-20261023104734: move each control-plane daemon off the schema owner onto
+# its own faas_runtime member. FAAS_DB_ROLE replaces the DSN's user, which only
+# works for the peer-authenticated socket DSN; a password DSN in this host's
+# compute-db.env would make the daemons refuse to start, so it stops the play.
+- name: control_plane_service — look for a password DSN the runtime roles cannot use
+  ansible.builtin.command:
+    argv:
+      - grep
+      - -Eqs
+      - -e
+      - "^(export[[:space:]]+)?(DATABASE_URL|FAAS_DATABASE_URL_DIRECT|FAAS_VMMD_DBURL)=['\"]?postgres(ql)?://[^/@]*:[^/@]*@"
+      - -e
+      - "^(export[[:space:]]+)?(DATABASE_URL|FAAS_DATABASE_URL_DIRECT|FAAS_VMMD_DBURL)=.*password="
+      - /etc/faas/compute-db.env
+  register: faas_runtime_roles_password_dsn
+  changed_when: false
+  # 0 = a password DSN, 1 = none, 2 = no compute-db.env (socket default).
+  failed_when: faas_runtime_roles_password_dsn.rc not in [0, 1, 2]
+  no_log: true
+  when: faas_postgres_runtime_roles_enabled | bool
+
+- name: control_plane_service — refuse runtime roles beside a password DSN
+  ansible.builtin.assert:
+    that:
+      - faas_runtime_roles_password_dsn.rc != 0
+    fail_msg: >-
+      /etc/faas/compute-db.env on this control plane carries a password DSN.
+      FAAS_DB_ROLE replaces only the user, so the daemons would refuse to
+      start. Point them at postgres:///faas?host=/run/postgresql&user=faas, or
+      leave faas_postgres_runtime_roles_enabled off on this host.
+  when: faas_postgres_runtime_roles_enabled | bool
+
+- name: control_plane_service — prove each runtime role's peer login
+  ansible.builtin.command:
+    argv: [psql, -X, -A, -t, "postgres:///faas?host=/run/postgresql&user={{ item.role }}", -c, "SELECT current_user"]
+  become: true
+  become_user: "{{ item.os_user }}"
+  register: faas_runtime_role_login
+  changed_when: false
+  failed_when: faas_runtime_role_login.rc != 0 or (faas_runtime_role_login.stdout | trim) != item.role
+  loop: "{{ faas_postgres_runtime_role_units }}"
+  loop_control:
+    label: "{{ item.os_user }} -> {{ item.role }}"
+  when: faas_postgres_runtime_roles_enabled | bool
+
+- name: control_plane_service — create runtime role drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item.unit }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ faas_postgres_runtime_role_units }}"
+  loop_control:
+    label: "{{ item.unit }}"
+  when: faas_postgres_runtime_roles_enabled | bool
+
+- name: control_plane_service — set each daemon's database runtime role
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.unit }}.service.d/zz-faas-db-role.conf"
+    content: |
+      [Service]
+      # ADR-20261023104734: log in as this daemon's faas_runtime member.
+      Environment=FAAS_DB_ROLE={{ item.role }}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: "{{ item.restart }}"
+  loop: "{{ faas_postgres_runtime_role_units }}"
+  loop_control:
+    label: "{{ item.unit }} -> {{ item.role }}"
+  when: faas_postgres_runtime_roles_enabled | bool
+
+- name: control_plane_service — return daemons to the owner role when disabled
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item.unit }}.service.d/zz-faas-db-role.conf"
+    state: absent
+  notify: "{{ item.restart }}"
+  loop: "{{ faas_postgres_runtime_role_units }}"
+  loop_control:
+    label: "{{ item.unit }}"
+  when: not (faas_postgres_runtime_roles_enabled | bool)
+
 # API-hosting contract safety (issue #1966 / ADR-121): enable the read-only
 # OpenAPI contract preview on the public-beta control plane. The matching
 # compute-only drop-in enables imaged's production promotion gate; shipping

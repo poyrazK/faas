@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -29,23 +30,8 @@ func TestScanProjectListsUnsetComposeEnvKeys(t *testing.T) {
       PORT: "8080"
       GREGALE_TRACE: "1"
 `
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-	if err := tw.WriteHeader(&tar.Header{Name: "compose.yaml", Mode: 0o644, Size: int64(len(compose)), Typeflag: tar.TypeReg}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tw.Write([]byte(compose)); err != nil {
-		t.Fatal(err)
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatal(err)
-	}
 	e, _ := apidserver.NewTestServerWithCapturingNotifier(t, api.PlanPro)
-	req := scanAuditRegressionRequest(t, *e.Key(), buf.Bytes(), map[string]string{"project_slug": "env-plan"})
+	req := scanAuditRegressionRequest(t, *e.Key(), composeTarGz(t, compose), map[string]string{"project_slug": "env-plan"})
 	rec := httptest.NewRecorder()
 	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -61,4 +47,29 @@ func TestScanProjectListsUnsetComposeEnvKeys(t *testing.T) {
 	if bytes.Contains(rec.Body.Bytes(), []byte("sk_test_example")) {
 		t.Fatal("the plan carried an environment value")
 	}
+	// Without x-gregale-env-import the plain value is reported, not imported.
+	if want := map[string]string{"LOG_LEVEL": "not_opted_in", "STRIPE_KEY": "secret"}; !maps.Equal(plan.Workloads[0].UnsetEnvKeyReasons, want) || len(plan.Workloads[0].ImportedEnvKeys) != 0 {
+		t.Fatalf("reasons = %v, imported = %v; want %v and nothing imported", plan.Workloads[0].UnsetEnvKeyReasons, plan.Workloads[0].ImportedEnvKeys, want)
+	}
+}
+
+// composeTarGz is a source archive holding only compose.yaml.
+func composeTarGz(t *testing.T, compose string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	if err := tw.WriteHeader(&tar.Header{Name: "compose.yaml", Mode: 0o644, Size: int64(len(compose)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte(compose)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }

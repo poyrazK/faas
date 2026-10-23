@@ -142,6 +142,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DATA_REPAIR_RUNNER_` | schedd, vmmd, shared | `default` |  |  | `` | qualification-only pinned runner metadata: BASE_KEY, LAYER_KEY, KERNEL_SHA256, BASE_SHA256 and LAYER_SHA256; all unset disables the runner, partial configuration fails startup, and both daemons must use matching immutable artifacts |
 | `FAAS_DB_BOOT_WAIT` | shared | `default` |  |  | `` | ADR-1344; under a Type=notify unit db.Open waits for an unreachable database while activating, extending the start timeout, instead of exiting into the restart limit. "0" restores fail-fast |
 | `FAAS_DB_NOTIFY_HUB` | shared | `default` |  |  | `` | ADR-190; "0" restores one LISTEN connection per subscriber instead of one per daemon, and selects db.DaemonMaxConnectionsNotifyHubDisabled so the daemon's pool is sized for that mode |
+| `FAAS_DB_ROLE` | shared | `dropin` |  |  | `` | ADR-20261023104734; faas_<daemon> runtime role that replaces the DSN user on both pools (control_plane_service zz-faas-db-role.conf). Unset = the DSN user; refused with a password DSN for another user |
 | `FAAS_DEAD_NODE_RECONCILER_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_DEAD_NODE_RECONCILER_STALENESS_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_DEPLOYMENT_CREATED_AT` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
@@ -216,6 +217,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_E2E_BIN_DIR` | shared | `dev-only` |  |  | `` | test-harness only; directory of pre-built daemon binaries shared across native e2e phases so each phase does not re-link them (the Go build cache does not cover the final link); must never be set on a production host |
 | `FAAS_E2E_ENTITY_ACCESS_KEY` | shared | `dev-only` |  |  | `` | ADR-712 fake credential for the isolated conditional S3 wire fixture; delivered only to the native harness's apid child; must never be set on a production host |
 | `FAAS_E2E_ENTITY_SECRET_KEY` | shared | `dev-only` |  |  | `` | ADR-712 fake credential for the isolated conditional S3 wire fixture; delivered only to the native harness's apid child; must never be set on a production host |
+| `FAAS_E2E_GO_TRACING_HELPER_BINARY` | shared | `dev-only` |  |  | `` | test-harness only; prebuilt Go SDK tracing-package fixture (ADR-958 amendment) for hosts without a matching Go toolchain |
 | `FAAS_E2E_HELLO_SERVER_BINARY` | shared | `dev-only` |  |  | `` | test-harness only; prebuilt hello-server fixture binary so shared metal hosts need no Go toolchain; must never be set on a production host |
 | `FAAS_E2E_PROMOTION_PUBLICATION_SOCKET` | apid, shared | `dev-only` |  |  | `` | private native publication barrier; compiled only with metal,promotionacceptance and guarded by native qualification host/catalog checks; production and ordinary metal builds ignore it |
 | `FAAS_E2E_READY_TIMEOUT_SCALE` | shared | `dev-only` |  |  | `` | test-harness only; whole-number multiplier (1-20) for pkg/e2etest's daemon readiness waits, for small native acceptance hosts that restage bases at startup; must never be set on a production host |
@@ -592,7 +594,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PRODUCT_CONTROL_ENABLED` | apid | `default` |  |  | `` | optional override for product_control_enabled TOML; exact 1 enables the internal service, any other nonempty value disables it, unset preserves TOML (default off) |
 | `FAAS_PROFILED_ROLE` | profiled, shared | `dropin` |  |  | `` |  |
 | `FAAS_PROFILE_SOCKET` | vmmd, profiled | `unit` |  |  | `` |  |
-| `FAAS_PROFILING_ENABLED` | apid, vmmd, profiled, guest, shared | `default` |  | 0 | `` | operator-only CPU profiling; opt in through /etc/faas/profiling.env (ADR-819) |
+| `FAAS_PROFILING_ENABLED` | apid, imaged, vmmd, profiled, guest, shared | `default` |  | 0 | `` | operator-only CPU profiling; opt in through /etc/faas/profiling.env (ADR-819); while off imaged turns an app's profiling.enabled off in its guest manifest |
 | `FAAS_PROFILING_ENDPOINT` | guest, shared | `guest` |  |  | `` | loopback bridge stamped by guest-init for SDKs |
 | `FAAS_PROFILING_ON_DEMAND` | apid, gatewayd-internal, imaged, schedd | `default` |  | 0 | `` | operator-only on-demand CPU/heap/stack captures; imaged stamps dormant collectors into new deployments, apid serves the captures API, gatewayd-internal reports slow requests for automatic stack captures and schedd captures CPU-saturated instances (ADR-1155) |
 | `FAAS_PROJECT_CANARIES_ENABLED` | apid | `default` |  |  | `` | disabled by default pending dedicated native release qualification; operator opt-in only |

@@ -1406,6 +1406,7 @@ from .durable_entity_validator_deployment_info_source import DurableEntityValida
 from .durable_entity_validator_deployment_info_status import DurableEntityValidatorDeploymentInfoStatus
 from .edge_protection_response import EdgeProtectionResponse
 from .edge_protection_response_challenge import EdgeProtectionResponseChallenge
+from .edge_protection_response_penalty import EdgeProtectionResponsePenalty
 from .edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
 from .edge_protection_response_range import EdgeProtectionResponseRange
 from .edge_protection_response_rejections_item import EdgeProtectionResponseRejectionsItem
@@ -1442,6 +1443,7 @@ from .edge_rule_list_response_kind import EdgeRuleListResponseKind
 from .edge_rule_maintenance_action import EdgeRuleMaintenanceAction
 from .edge_rule_match_expr import EdgeRuleMatchExpr
 from .edge_rule_match_expr_op import EdgeRuleMatchExprOp
+from .edge_rule_penalty import EdgeRulePenalty
 from .edge_rule_recipe_suggestion import EdgeRuleRecipeSuggestion
 from .edge_rule_recipe_suggestion_alternative import EdgeRuleRecipeSuggestionAlternative
 from .edge_rule_recipe_suggestion_alternative_params import EdgeRuleRecipeSuggestionAlternativeParams
@@ -4057,6 +4059,8 @@ from .plan_workload_class import PlanWorkloadClass
 from .plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
 from .plan_workload_depends_on_conditions_additional_property import PlanWorkloadDependsOnConditionsAdditionalProperty
 from .plan_workload_tier import PlanWorkloadTier
+from .plan_workload_unset_env_key_reasons import PlanWorkloadUnsetEnvKeyReasons
+from .plan_workload_unset_env_key_reasons_additional_property import PlanWorkloadUnsetEnvKeyReasonsAdditionalProperty
 from .plan_workload_visibility import PlanWorkloadVisibility
 from .platform_flag_definition import PlatformFlagDefinition
 from .platform_flag_opt_ins import PlatformFlagOptIns
@@ -7478,6 +7482,7 @@ __all__ = (
     "DurableEntityValidatorDeploymentInfoStatus",
     "EdgeProtectionResponse",
     "EdgeProtectionResponseChallenge",
+    "EdgeProtectionResponsePenalty",
     "EdgeProtectionResponsePreAuth",
     "EdgeProtectionResponseRange",
     "EdgeProtectionResponseRejectionsItem",
@@ -7514,6 +7519,7 @@ __all__ = (
     "EdgeRuleMaintenanceAction",
     "EdgeRuleMatchExpr",
     "EdgeRuleMatchExprOp",
+    "EdgeRulePenalty",
     "EdgeRuleRecipeSuggestion",
     "EdgeRuleRecipeSuggestionAlternative",
     "EdgeRuleRecipeSuggestionAlternativeParams",
@@ -9913,6 +9919,8 @@ __all__ = (
     "PlanWorkloadDependsOnConditions",
     "PlanWorkloadDependsOnConditionsAdditionalProperty",
     "PlanWorkloadTier",
+    "PlanWorkloadUnsetEnvKeyReasons",
+    "PlanWorkloadUnsetEnvKeyReasonsAdditionalProperty",
     "PlanWorkloadVisibility",
     "PlatformFlagDefinition",
     "PlatformFlagOptIns",

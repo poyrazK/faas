@@ -7360,11 +7360,19 @@ type PlanWorkload struct {
 	// UnsetEnvKeys are the keys from EnvKeys and RequiredEnvKeys that will
 	// have no value in the selected environment: not configured on the app
 	// and not provided by the platform. Names only, never values.
-	UnsetEnvKeys  []string `json:"unset_env_keys,omitempty"`
-	Source        string   `json:"source,omitempty"`
-	Tier          string   `json:"tier,omitempty"`
-	Action        string   `json:"action,omitempty"`          // ADR-124: "create" | "update"
-	ExistingAppID string   `json:"existing_app_id,omitempty"` // ADR-124: empty iff Action == "create"
+	UnsetEnvKeys []string `json:"unset_env_keys,omitempty"`
+	// UnsetEnvKeyReasons says why a Compose value for an UnsetEnvKeys name
+	// is not imported (ADR-20261023085230): not_opted_in, secret,
+	// service_address, local_address, interpolated, host_value, empty or
+	// invalid. Names and reasons only, never values.
+	UnsetEnvKeyReasons map[string]string `json:"unset_env_key_reasons,omitempty"`
+	// ImportedEnvKeys are the Compose environment names whose plain values
+	// apply will write, because the project opted in and they are unset.
+	ImportedEnvKeys []string `json:"imported_env_keys,omitempty"`
+	Source          string   `json:"source,omitempty"`
+	Tier            string   `json:"tier,omitempty"`
+	Action          string   `json:"action,omitempty"`          // ADR-124: "create" | "update"
+	ExistingAppID   string   `json:"existing_app_id,omitempty"` // ADR-124: empty iff Action == "create"
 	// DetectedBy is the structured detection trace (issue #742).
 	// Pointer + omitempty so the field is purely additive: an
 	// existing `gregale scan --json` consumer that does not know
@@ -10414,9 +10422,11 @@ type EdgeRuleResponse struct {
 	// Match (ADR-962) is the optional condition ANDed with the selectors.
 	Match *EdgeRuleMatchExpr `json:"match,omitempty"`
 	// Mode (ADR-960) is "enforce" or "log"; log-mode rules only count matches.
-	Mode      string    `json:"mode"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Mode string `json:"mode"`
+	// Penalty is the rule's penalty box (ADR-20261022105846), if any.
+	Penalty   *EdgeRulePenalty `json:"penalty,omitempty"`
+	CreatedAt time.Time        `json:"created_at"`
+	UpdatedAt time.Time        `json:"updated_at"`
 }
 
 // Edge-rule metadata bounds; the edge_rules CHECK constraints mirror them.
@@ -10465,6 +10475,9 @@ type CreateEdgeRuleRequest struct {
 	ExpiresAt    *time.Time         `json:"expires_at,omitempty"`
 	Match        *EdgeRuleMatchExpr `json:"match,omitempty"`
 	Mode         string             `json:"mode,omitempty"`
+	// Penalty boxes a client this rule keeps rejecting
+	// (ADR-20261022105846); ip, geo, throttle and waf (block) rules only.
+	Penalty *EdgeRulePenalty `json:"penalty,omitempty"`
 }
 
 // UpdateEdgeRuleRequest is the wire shape for PATCH /v1/edge-rules/{id}.
@@ -10495,6 +10508,11 @@ type UpdateEdgeRuleRequest struct {
 	Match      *EdgeRuleMatchExpr `json:"match,omitempty"`
 	ClearMatch bool               `json:"clear_match,omitempty"`
 	Mode       *string            `json:"mode,omitempty"`
+	// Penalty sets the rule's penalty box (ADR-20261022105846);
+	// ClearPenalty removes it, which also releases the clients it holds.
+	// Setting both is rejected.
+	Penalty      *EdgeRulePenalty `json:"penalty,omitempty"`
+	ClearPenalty bool             `json:"clear_penalty,omitempty"`
 }
 
 // Edge-rule modes (ADR-960).
