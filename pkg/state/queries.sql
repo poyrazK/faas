@@ -19145,6 +19145,7 @@ SELECT jsonb_build_object(
  'mirror_invocation_results.mirror_deployment_id', (SELECT count(*) FROM mirror_invocation_results WHERE mirror_deployment_id=sqlc.arg(deployment_id)::uuid),
  'mirror_invocation_results.source_deployment_id', (SELECT count(*) FROM mirror_invocation_results WHERE source_deployment_id=sqlc.arg(deployment_id)::uuid),
  'org_activity.deployment_id', (SELECT count(*) FROM org_activity WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
+ 'outbound_ai_deployment_minutes.deployment_id', (SELECT count(*) FROM outbound_ai_deployment_minutes WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'project_environment_clone_workloads.source_deployment_id', (SELECT count(*) FROM project_environment_clone_workloads WHERE source_deployment_id=sqlc.arg(deployment_id)::uuid),
  'project_environment_clone_workloads.target_deployment_id', (SELECT count(*) FROM project_environment_clone_workloads WHERE target_deployment_id=sqlc.arg(deployment_id)::uuid AND (operation_id<>sqlc.arg(operation_id)::uuid)),
  'project_environment_promotion_workloads.previous_target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE previous_target_deployment_id=sqlc.arg(deployment_id)::uuid::text),
