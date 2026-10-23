@@ -84,6 +84,7 @@ func writeDatabaseSwitchPlan(w io.Writer, slug string, p api.Problem) {
 			rp.DatabaseName, rp.PointInTime, rp.DatabaseName, rp.DatabaseName)
 	}
 	_, _ = fmt.Fprintf(w, "%s stops serving while it switches (usually under a minute, then a cold start).\n", slug)
+	_, _ = fmt.Fprintln(w, "Pass --acknowledge-releases to restore the database and roll back without this prompt.")
 }
 
 // followDatabaseSwitch polls a switch, printing each phase, until it ends or

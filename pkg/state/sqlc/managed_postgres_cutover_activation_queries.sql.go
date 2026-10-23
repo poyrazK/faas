@@ -12,7 +12,7 @@ import (
 )
 
 const activateManagedPostgresCutover = `-- name: ActivateManagedPostgresCutover :execrows
-UPDATE managed_postgres_cutovers SET state='activated',lease_token=NULL,lease_until=NULL,attempt_count=0,
+UPDATE managed_postgres_cutovers SET state='activated',verified_at=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,
 last_error_code=NULL,retry_at=$1::timestamptz,updated_at=$1::timestamptz
 WHERE id=$2::text::uuid AND account_id=$3::text::uuid AND state='verified' AND lease_token IS NULL
 `

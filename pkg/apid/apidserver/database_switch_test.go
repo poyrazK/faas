@@ -94,7 +94,7 @@ func (f switchFixture) do(t *testing.T, method, path string, body any) *httptest
 	return w
 }
 
-func problemCode(t *testing.T, w *httptest.ResponseRecorder) string {
+func switchProblemCode(t *testing.T, w *httptest.ResponseRecorder) string {
 	t.Helper()
 	var p api.Problem
 	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
@@ -107,7 +107,7 @@ func TestDatabaseSwitchRollbackRecordsTheSwitchWithoutTouchingTheRelease(t *test
 	f := newSwitchFixture(t)
 	rollback := "/v1/apps/" + f.slug + "/rollback"
 	w := f.do(t, http.MethodPost, rollback, api.RollbackRequest{TargetDeploymentID: &f.v1.ID, RestoreDatabases: true})
-	if w.Code != http.StatusConflict || problemCode(t, w) != api.CodeRollbackCrossesRelease {
+	if w.Code != http.StatusConflict || switchProblemCode(t, w) != api.CodeRollbackCrossesRelease {
 		t.Fatalf("unacknowledged switch = %d %s, want rollback_crosses_release", w.Code, w.Body)
 	}
 	w = f.do(t, http.MethodPost, rollback, api.RollbackRequest{TargetDeploymentID: &f.v1.ID, RestoreDatabases: true, AcknowledgeReleases: true})
@@ -134,7 +134,7 @@ func TestDatabaseSwitchRollbackRecordsTheSwitchWithoutTouchingTheRelease(t *test
 	}
 
 	w = f.do(t, http.MethodPost, rollback, api.RollbackRequest{TargetDeploymentID: &f.v1.ID, RestoreDatabases: true, AcknowledgeReleases: true})
-	if w.Code != http.StatusConflict || problemCode(t, w) != api.CodeDatabaseSwitchInProgress {
+	if w.Code != http.StatusConflict || switchProblemCode(t, w) != api.CodeDatabaseSwitchInProgress {
 		t.Fatalf("second switch = %d %s", w.Code, w.Body)
 	}
 	w = f.do(t, http.MethodGet, "/v1/apps/"+f.slug+"/database-switches", nil)
@@ -167,7 +167,7 @@ func TestDatabaseSwitchRollbackRefusals(t *testing.T) {
 	}
 	// v3's release ran while v2 served: nothing to restore.
 	w = f.do(t, http.MethodPost, rollback, api.RollbackRequest{TargetDeploymentID: &f.v2.ID, RestoreDatabases: true, AcknowledgeReleases: true})
-	if w.Code != http.StatusConflict || problemCode(t, w) != api.CodeDatabaseSwitchUnavailable {
+	if w.Code != http.StatusConflict || switchProblemCode(t, w) != api.CodeDatabaseSwitchUnavailable {
 		t.Fatalf("switch crossing nothing = %d %s", w.Code, w.Body)
 	}
 
@@ -213,13 +213,13 @@ func TestRollbackToAReleaseASwitchUndidIsRefused(t *testing.T) {
 	f := newSwitchFixture(t)
 	completeSwitch(t, f)
 	w := f.do(t, http.MethodPost, "/v1/apps/"+f.slug+"/rollback", api.RollbackRequest{TargetDeploymentID: &f.v3.ID, AcknowledgeReleases: true})
-	if w.Code != http.StatusConflict || problemCode(t, w) != api.CodeRollbackTargetDatabaseRestored {
+	if w.Code != http.StatusConflict || switchProblemCode(t, w) != api.CodeRollbackTargetDatabaseRestored {
 		t.Fatalf("rollback to an undone release = %d %s", w.Code, w.Body)
 	}
 	// v2's release is still in the database; v3's undone one is no longer
 	// listed as crossed.
 	w = f.do(t, http.MethodPost, "/v1/apps/"+f.slug+"/rollback", api.RollbackRequest{TargetDeploymentID: &f.v2.ID})
-	if w.Code == http.StatusConflict && problemCode(t, w) == api.CodeRollbackCrossesRelease {
+	if w.Code == http.StatusConflict && switchProblemCode(t, w) == api.CodeRollbackCrossesRelease {
 		t.Fatalf("rollback to v2 still crosses the undone release: %s", w.Body)
 	}
 }

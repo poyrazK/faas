@@ -19,7 +19,7 @@ WHERE app_id=sqlc.arg(app_id)::text::uuid AND coalesce(nullif(scope,''),'default
 ORDER BY id;
 
 -- name: ActivateManagedPostgresCutover :execrows
-UPDATE managed_postgres_cutovers SET state='activated',lease_token=NULL,lease_until=NULL,attempt_count=0,
+UPDATE managed_postgres_cutovers SET state='activated',verified_at=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,
 last_error_code=NULL,retry_at=sqlc.arg(now)::timestamptz,updated_at=sqlc.arg(now)::timestamptz
 WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND state='verified' AND lease_token IS NULL;
 
