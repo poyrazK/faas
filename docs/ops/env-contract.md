@@ -80,10 +80,13 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BILLING_PORTAL_URL` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_BILLING_PROVIDER` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_BRIDGED_ROLE` | bridged, shared | `envfile` |  |  | `` | optional control-plane relay; delivered by dev-bridge.env |
+| `FAAS_BRIDGE_EXPECT_UID` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd for an unprivileged bridge; the bridge exits unless it runs as this uid with no capability (pkg/bridgeproc) |
 | `FAAS_BRIDGE_HEADERS` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
 | `FAAS_BRIDGE_HOST` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
 | `FAAS_BRIDGE_METHOD` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
+| `FAAS_BRIDGE_PARENT_PID` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd for an unprivileged bridge; the bridge exits with that process (pkg/bridgeproc) |
 | `FAAS_BRIDGE_PROTOCOL` | vmmd-stream-bridge, shared | `default` |  |  | `` | rollback lever, see docs/ops/h2c-rollback.md |
+| `FAAS_BRIDGE_UNPRIVILEGED` | vmmd, shared | `default` |  |  | `` | 1 runs each instance's bridges as its own bridge uid with no capability (connection-survival ADR slice 1a); default off |
 | `FAAS_BRIDGE_URL` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
 | `FAAS_BROKER_EGRESS_IFNAME` | schedd | `default` |  |  | `` |  |
 | `FAAS_BROKER_EGRESS_MBIT` | schedd | `default` |  |  | `` |  |

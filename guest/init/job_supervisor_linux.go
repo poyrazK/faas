@@ -702,86 +702,57 @@ func shipExitEnvelope(payload JobExitPayload, log *slog.Logger) error {
 	binary.BigEndian.PutUint32(hdr[4:8], uint32(len(body)))
 	frame := append(hdr[:], body...)
 
-	addr := &unix.SockaddrVM{
-		CID:  unix.VMADDR_CID_HOST,
-		Port: VsockJobExitPort,
+	// Retry until acknowledged, for jobExitShipBudget: a vmmd restart can
+	// leave no listener for a few seconds before its successor re-binds.
+	attempts, err := retryJobExit(jobExitShipBudget, time.Now, time.Sleep, func(i int) error {
+		err := shipExitOnce(frame)
+		if err != nil {
+			log.Warn("job-exit vsock attempt", "err", err, "attempt", i)
+		}
+		return err
+	})
+	if err != nil {
+		log.Error("job-exit all attempts failed", "attempts", attempts)
+		return fmt.Errorf("job-exit all attempts failed: %w", err)
 	}
-	const attempts = 3
-	backoffs := []time.Duration{100 * time.Millisecond, 250 * time.Millisecond, 500 * time.Millisecond}
-	var lastErr error
-	for i := 0; i < attempts; i++ {
-		sock, sockErr := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
-		if sockErr != nil {
-			lastErr = sockErr
-			log.Warn("job-exit vsock socket", "err", sockErr, "attempt", i)
-			if i < attempts-1 {
-				time.Sleep(backoffs[i])
-			}
-			continue
-		}
-		// Bound connect, write, and ack wait. A missing host listener must not
-		// keep PID 1 alive beyond the scheduler's reaper window.
-		if timeoutErr := setSockTimeout(sock, unix.SO_SNDTIMEO, 1500*time.Millisecond); timeoutErr != nil {
-			lastErr = timeoutErr
-			log.Warn("job-exit vsock send timeout", "err", timeoutErr, "attempt", i)
-			_ = unix.Close(sock)
-			if i < attempts-1 {
-				time.Sleep(backoffs[i])
-			}
-			continue
-		}
-		if timeoutErr := setSockTimeout(sock, unix.SO_RCVTIMEO, 1500*time.Millisecond); timeoutErr != nil {
-			lastErr = timeoutErr
-			log.Warn("job-exit vsock receive timeout", "err", timeoutErr, "attempt", i)
-			_ = unix.Close(sock)
-			if i < attempts-1 {
-				time.Sleep(backoffs[i])
-			}
-			continue
-		}
-		if connectErr := unix.Connect(sock, addr); connectErr != nil {
-			lastErr = connectErr
-			log.Warn("job-exit vsock connect", "err", connectErr, "attempt", i)
-			_ = unix.Close(sock)
-			if i < attempts-1 {
-				time.Sleep(backoffs[i])
-			}
-			continue
-		}
-		if writeErr := writeJobExitFrame(sock, frame); writeErr != nil {
-			lastErr = writeErr
-			log.Warn("job-exit vsock write", "err", writeErr, "attempt", i)
-			_ = unix.Close(sock)
-			if i < attempts-1 {
-				time.Sleep(backoffs[i])
-			}
-			continue
-		}
-		var ack [1]byte
-		n, readErr := unix.Read(sock, ack[:])
-		_ = unix.Close(sock)
-		ackValue := ack[0]
-		if readErr != nil || n != 1 || ackValue != 0 {
-			if readErr != nil {
-				lastErr = fmt.Errorf("read ack: %w", readErr)
-			} else {
-				lastErr = fmt.Errorf("invalid ack n=%d value=%d", n, ackValue)
-			}
-			log.Warn("job-exit vsock ack", "err", lastErr, "attempt", i)
-			if i < attempts-1 {
-				time.Sleep(backoffs[i])
-			}
-			continue
-		}
-		log.Info("job-exit shipped",
-			"exit_code", payload.ExitCode,
-			"error_class", payload.ErrorClass,
-			"signal", payload.Signal,
-			"attempt", i+1)
-		return nil
+	log.Info("job-exit shipped",
+		"exit_code", payload.ExitCode,
+		"error_class", payload.ErrorClass,
+		"signal", payload.Signal,
+		"attempt", attempts)
+	return nil
+}
+
+// shipExitOnce makes one connect, write and ack wait. Connect, write and the
+// ack wait are each bounded, so a missing host listener costs one bounded
+// attempt.
+func shipExitOnce(frame []byte) error {
+	sock, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("socket: %w", err)
 	}
-	log.Error("job-exit all attempts failed", "attempts", attempts)
-	return fmt.Errorf("job-exit all attempts failed: %w", lastErr)
+	defer func() { _ = unix.Close(sock) }()
+	if err := setSockTimeout(sock, unix.SO_SNDTIMEO, 1500*time.Millisecond); err != nil {
+		return fmt.Errorf("send timeout: %w", err)
+	}
+	if err := setSockTimeout(sock, unix.SO_RCVTIMEO, 1500*time.Millisecond); err != nil {
+		return fmt.Errorf("receive timeout: %w", err)
+	}
+	if err := unix.Connect(sock, &unix.SockaddrVM{CID: unix.VMADDR_CID_HOST, Port: VsockJobExitPort}); err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	if err := writeJobExitFrame(sock, frame); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	var ack [1]byte
+	n, err := unix.Read(sock, ack[:])
+	switch {
+	case err != nil:
+		return fmt.Errorf("read ack: %w", err)
+	case n != 1 || ack[0] != 0:
+		return fmt.Errorf("invalid ack n=%d value=%d", n, ack[0])
+	}
+	return nil
 }
 
 func writeJobExitFrame(fd int, frame []byte) error {
