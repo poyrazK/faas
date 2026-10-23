@@ -9,10 +9,11 @@ Turns on what [ADR 20261022111812](../adr/20261022111812-seal-domains-per-reader
 2. move customer outbound credentials to the `outbound` seal domain;
 3. rehearse the break-glass release pause and credential revocation;
 4. move customer runtime secrets (env vars and secrets) to the `runtime` seal
-   domain.
+   domain;
+5. move GitHub install tokens and webhook secrets to the `source` seal domain.
 
 Do each stage in staging first, then production. Stages 1 and 3 stand alone.
-The steps of stages 2 and 4 run in order, and each has its own rollback.
+The steps of stages 2, 4 and 5 run in order, and each has its own rollback.
 Record in the change ticket who ran each step, when, and each domain's
 recipient (recipients are public).
 
@@ -363,3 +364,104 @@ this step stay domain-only. From now on:
   reader.
 - Never activate a compute node before it reports
   `faas_seal_domain_loaded{domain="runtime"} 1`.
+
+## 5. Source seal domain
+
+githubd is the only reader of GitHub install tokens and webhook secrets, and
+it seals the install tokens itself. apid seals the webhook secret copies. At
+the end of this stage only `source.age` opens them, and only githubd holds
+it.
+
+Install tokens need no migration. Each expires within the hour, and githubd
+seals its successor under the write mode. Webhook secrets keep their
+plaintext column until a later release drops it; this stage moves their
+sealed copy ahead of that.
+
+### 5a. Create the identity (operator machine)
+
+```bash
+gregalectl seal-domain init --domain source --dir ~/gregale-seal/<environment>
+```
+
+Store `source.age` with the other domain identities before going on. If it
+is lost after 5d, GitHub pushes and source fetches fail. Install tokens
+recover within the hour as they expire and githubd mints new ones, but every
+webhook secret must be set again.
+
+### 5b. Stage the reader; seal to both keys
+
+Add to the local variables file:
+
+```yaml
+faas_seal_domain_source_identity_src: /Users/<you>/gregale-seal/<environment>/source.age
+faas_seal_domain_source_recipient_src: /Users/<you>/gregale-seal/<environment>/source.age.pub
+```
+
+Converge the role alone:
+
+```bash
+gregalectl deploy converge-control-plane --roles seal_domains --manifest-file <signed manifest> --ssh-known-hosts-file <known_hosts> --ansible-vars-file <local vars file>
+```
+
+The role does these steps in order:
+
+1. Installs `source.age` for githubd and restarts it.
+2. Proves the domain probe, publishing it on the first host.
+3. Only then gives apid the recipient.
+
+With `faas_seal_domain_source_writes` left empty, githubd and apid seal to
+both the domain and the fleet key.
+
+If more than one host runs githubd, converge each one before step 5d.
+
+Check, on each host:
+
+- `faas_seal_domain_source.prom` shows `faas_seal_domain_ready{domain="source"} 1`.
+- githubd logs `"source seal domain"` with `"domain_identity":true`, and
+  `faas_seal_domain_loaded{domain="source"}` is 1.
+- apid logs `"source seal domain"` with `"domain_recipient_staged":true` and
+  `"recipients":2`.
+- Push to a connected repository and confirm the build starts. That one
+  delivery checks the webhook secret and an install token.
+
+Rollback: set `faas_seal_domain_source_writes: fleet` and converge the role
+again. Everything sealed in the meantime also carries the fleet key.
+
+### 5c. Wait out the rollback window
+
+Go on only when every githubd host passed the checks in 5b, and githubd's
+previous release (N-1) also carries the source reader.
+
+### 5d. Seal to the domain only; re-seal stored copies
+
+Add to the local variables file, and converge the role again:
+
+```yaml
+faas_seal_domain_source_readers_verified: true
+faas_seal_domain_source_writes: domain
+```
+
+githubd and apid then log `"write_mode":"domain"`. Re-seal the webhook
+secret copies on the control-plane host:
+
+```bash
+sudo gregalectl seal-domain migrate --domain source --readers-verified --db-env /etc/faas/compute-db.env
+```
+
+- Expect `0 failed`.
+- If `changed concurrently` is not 0, an admin rotated that secret during
+  the run; run the migration again.
+- A second run reports every row `current`.
+- If `failed` is not 0, githubd cannot open those copies today either; set
+  those webhook secrets again.
+
+Within an hour, githubd has re-sealed every live install token to the
+domain. Push to a connected repository again to confirm.
+
+Rollback: set `faas_seal_domain_source_writes` back to empty and converge.
+New tokens and copies go back to carrying the fleet key. Copies re-sealed in
+this step stay domain-only, so:
+
+- never remove `source.age` from githubd;
+- never roll githubd back past the first release that carried the source
+  reader.

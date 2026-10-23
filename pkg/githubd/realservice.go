@@ -110,6 +110,10 @@ type RealService struct {
 	ProtectedBranches ProtectedBranchClient
 	ReviewedMerges    ReviewedMergeClient
 	Recipient         *age.X25519Recipient
+	// Recipients, when set, are who install tokens are sealed to in place
+	// of Recipient: the source seal domain and the fleet recipient under
+	// the domain's write mode (ADR 20261022111812).
+	Recipients []*age.X25519Recipient
 	// Identities is the multi-identity unseal slice for rotation
 	// overlap (issue #316 / ADR-057). Pre-rotation: length 1
 	// (just the current). During the 30-day overlap window:
@@ -321,7 +325,7 @@ func (s *RealService) ExchangeOAuthCode(accountID, code, stateStr string) (strin
 	if s.Installs == nil {
 		return "", "", fmt.Errorf("githubd: install store not configured (PR-C wiring missing)")
 	}
-	if s.Recipient == nil {
+	if s.Recipient == nil && len(s.Recipients) == 0 {
 		return "", "", fmt.Errorf("githubd: age recipient not configured (PR-C wiring missing)")
 	}
 
@@ -355,7 +359,7 @@ func (s *RealService) ExchangeOAuthCode(accountID, code, stateStr string) (strin
 	}
 
 	// Seal before persist. Plaintext never reaches the database.
-	sealed, err := secretbox.SealOne(s.Recipient, installTokenSealKey, rawToken, maxInstallTokenBytes)
+	sealed, err := s.sealInstallToken(rawToken)
 	if err != nil {
 		return "", "", fmt.Errorf("githubd: seal install token: %w", err)
 	}
@@ -740,6 +744,18 @@ func (s *RealService) ensureInstallTokenForInstallation(ctx context.Context, acc
 	return 0, "", fmt.Errorf("githubd: install token unavailable: %w", err)
 }
 
+// sealInstallToken seals an install token to Recipients when they are set,
+// and to Recipient otherwise.
+func (s *RealService) sealInstallToken(rawToken string) ([]byte, error) {
+	if len(s.Recipients) == 0 {
+		return secretbox.SealOne(s.Recipient, installTokenSealKey, rawToken, maxInstallTokenBytes)
+	}
+	if len(rawToken) > maxInstallTokenBytes {
+		return nil, fmt.Errorf("githubd: install token is %d bytes, over the %d-byte cap", len(rawToken), maxInstallTokenBytes)
+	}
+	return secretbox.SealTo(s.Recipients, secretbox.Envelope{installTokenSealKey: rawToken})
+}
+
 // rotateInstallToken mints a fresh install token via the GitHub
 // App JWT, re-seals it under the host age key, persists it to
 // StoreInstalls, seeds TokenCache, and emits the
@@ -748,14 +764,14 @@ func (s *RealService) rotateInstallToken(ctx context.Context, accountID string, 
 	if s.Auth == nil {
 		return 0, "", fmt.Errorf("githubd: cannot rotate install token (Auth not configured)")
 	}
-	if s.Recipient == nil {
+	if s.Recipient == nil && len(s.Recipients) == 0 {
 		return 0, "", fmt.Errorf("githubd: cannot rotate install token (Recipient not configured)")
 	}
 	rawToken, expiresAt, err := s.Auth.ExchangeInstallationToken(ctx, installID)
 	if err != nil {
 		return 0, "", fmt.Errorf("githubd: rotate install token: %w", err)
 	}
-	sealed, err := secretbox.SealOne(s.Recipient, installTokenSealKey, rawToken, maxInstallTokenBytes)
+	sealed, err := s.sealInstallToken(rawToken)
 	if err != nil {
 		return 0, "", fmt.Errorf("githubd: seal rotated install token: %w", err)
 	}

@@ -122,7 +122,7 @@ var registry = []Spec{
 		cols("app_registry_credentials", "password_encrypted"),
 		cols("job_registry_credentials", "password_encrypted"),
 	)},
-	{Domain: Source, Readers: []string{"githubd"}, Roles: cpOnly, Columns: join(
+	{Domain: Source, Readers: []string{"githubd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("github_installations", "sealed_install_token"),
 		cols("github_webhook_secrets", "secret_sealed"),
 	)},
