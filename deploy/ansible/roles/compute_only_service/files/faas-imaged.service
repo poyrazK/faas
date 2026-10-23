@@ -23,6 +23,7 @@ EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/storage.env
 EnvironmentFile=-/etc/faas/imaged-storage.env
 EnvironmentFile=-/etc/faas/runtime-bases.env
+EnvironmentFile=-/etc/faas/profiling.env
 EnvironmentFile=-/etc/faas/otel.env
 Environment=TMPDIR=/srv/fc/base
 Environment=FAAS_BASE_STAGING_ROOT=/dev/shm/faas-base-staging

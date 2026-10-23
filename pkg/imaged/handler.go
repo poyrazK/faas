@@ -103,6 +103,9 @@ type Handler struct {
 	// profilingOnDemand stamps dormant guest collectors into manifests for
 	// plans that include profiling (ADR-1155, FAAS_PROFILING_ON_DEMAND).
 	profilingOnDemand bool
+	// continuousProfiling lets an app's profiling.enabled reach its guest
+	// (ADR-819, FAAS_PROFILING_ENABLED).
+	continuousProfiling bool
 	// hostingSmoke is optional in single-box and offline deployments. When
 	// configured, it must pass before the deployment is promoted to live.
 	hostingSmoke func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error)
@@ -510,11 +513,29 @@ func (h *Handler) WithProfilingOnDemand(enabled bool) *Handler {
 	return h
 }
 
-// stampProfilingOnDemand marks the manifest when the account's plan includes
-// profiling. The control plane enforces the plan again at capture time.
-func (h *Handler) stampProfilingOnDemand(manifest api.AppManifest, acct state.Account) api.AppManifest {
+// WithContinuousProfiling lets apps that set profiling.enabled run continuous
+// guest collectors in new deployments (ADR-819). Without it imaged turns the
+// setting off in the guest manifest, so no profiling code runs in a guest
+// unless an installation flag allows it: apid refuses the setting on most
+// paths, but deploys from a source ref copy it from gregale.yaml as is.
+func (h *Handler) WithContinuousProfiling(enabled bool) *Handler {
+	h.continuousProfiling = enabled
+	return h
+}
+
+// stampProfiling applies the installation's profiling flags to the guest
+// manifest. Dormant on-demand collectors are stamped when the account's plan
+// includes profiling; the control plane enforces the plan again at capture
+// time. The rest of the app's profiling settings stay, as pprof_port also
+// serves on-demand captures.
+func (h *Handler) stampProfiling(manifest api.AppManifest, acct state.Account) api.AppManifest {
 	limits, ok := api.LimitsFor(acct.Plan)
 	manifest.ProfilingOnDemand = h.profilingOnDemand && ok && limits.Profiling.Enabled
+	if manifest.Profiling != nil && manifest.Profiling.Enabled && !h.continuousProfiling {
+		cfg := *manifest.Profiling
+		cfg.Enabled = false
+		manifest.Profiling = &cfg
+	}
 	return manifest
 }
 
@@ -2373,7 +2394,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = h.stampProfilingOnDemand(applyAppLifecycle(manifest, app), acct)
+	manifest = h.stampProfiling(applyAppLifecycle(manifest, app), acct)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
@@ -3046,7 +3067,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = applyFunctionConcurrency(h.stampProfilingOnDemand(applyAppLifecycle(manifest, app), acct), app)
+	manifest = applyFunctionConcurrency(h.stampProfiling(applyAppLifecycle(manifest, app), acct), app)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
