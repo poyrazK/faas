@@ -3218,6 +3218,18 @@ per-period receipt commit together. Failed persistence, capacity exhaustion,
 recovery hold or gate withdrawal leaves the transition retryable. Duplicate
 ticks cannot create another notice. No historical deletion is backfilled.
 
+A deletion guard is not an outage. When the account still owns live managed
+PostgreSQL databases (or shared app ownership is unresolved), apid answers
+`409` with `{"reason":"managed_postgres_databases","managed_postgres_databases":N}`
+(or `shared_app_ownership`) and commits nothing. Meterd logs
+`meter: non-payment deletion blocked` with the account and reason, keeps the
+account suspended and retries on the next hourly sweep. The legacy direct
+store transition reports the same guard. The gauge
+`meterd_dunning_deletion_blocked_accounts{reason}` counts the accounts the last
+sweep could not advance; a non-zero `managed_postgres_databases` value means
+suspended accounts keep provider databases running. Meterd never deletes
+customer databases.
+
 The frozen V1 body retains the original overdue timestamp and the actual
 hard-deletion deadline: saved `deletion_requested_at` plus the canonical account
 grace period. Expiry is the earlier of 24 hours after that saved transition or
