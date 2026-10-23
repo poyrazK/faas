@@ -225,6 +225,10 @@ type AppManifest struct {
 	Pause     string           `json:"pause,omitempty"`
 	Profiling *ProfilingConfig `json:"profiling,omitempty"`
 	Tracing   *TracingConfig   `json:"tracing,omitempty"`
+	// ProfilingOnDemand starts dormant collectors that the control plane can
+	// arm for a bounded capture without a redeploy (ADR-1155). imaged stamps it
+	// when the operator enables on-demand profiling and the plan includes it.
+	ProfilingOnDemand bool `json:"profiling_on_demand,omitempty"`
 	// StartupDeadlineS is the upper bound on time-to-ready. After this
 	// many seconds without reaching READY the instance transitions to
 	// FAILED with lifecycle_failure_reason='startup_fail' (ADR-138

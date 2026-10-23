@@ -534,6 +534,98 @@ const (
 	ProfileLocalEndpoint            = "http://127.0.0.1:9191"
 	ProfileHealthListen             = "127.0.0.1:9160"
 	ProfileDefaultSocket            = "/run/faas/profiled.sock"
+
+	// On-demand captures (ADR-1155).
+	ProfileCaptureMinDuration     = time.Second
+	ProfileCaptureMaxDuration     = 60 * time.Second
+	ProfileCaptureDefaultDuration = 10 * time.Second
+	// ProfileCaptureGrace covers the collectors' final flush after the window.
+	ProfileCaptureGrace = 3 * time.Second
+	// ProfileCaptureMaxProfiles bounds one reply; profiles are per process and kind.
+	ProfileCaptureMaxProfiles = 8
+	// ProfileCaptureMaxProfileBytes bounds the summed compressed profiles so each
+	// host hop stays under gRPC's default 4 MiB message limit.
+	ProfileCaptureMaxProfileBytes = 3 << 20
+	// ProfileCaptureMaxPerAccountHour bounds captures started per account.
+	ProfileCaptureMaxPerAccountHour = 60
+	// net/http/pprof collection by guest-init (profiling.pprof_port). A heap
+	// or goroutine fetch, and a CPU fetch beyond its window, must answer
+	// within ProfilePprofFetchTimeout. An endpoint that has not answered yet
+	// is probed every ProfilePprofProbeInterval; until it answers guest-init
+	// does not register a collector, so captures and memory-pressure reports
+	// behave as for an uninstrumented process.
+	ProfilePprofFetchTimeout  = 5 * time.Second
+	ProfilePprofProbeInterval = 2 * time.Second
+	// Node stack snapshots through the inspector (ADR-1155). guest-init
+	// remembers a Node process's reported inspector for
+	// ProfileNodeInspectorRememberFor, so a main thread stuck longer than the
+	// collector's poll interval is still reachable. An event loop that does
+	// not run a setImmediate within ProfileNodeLivenessTimeout counts as
+	// stuck; its main thread is then paused, waiting at most
+	// ProfileNodePauseTimeout, and resumed at once.
+	ProfileNodeInspectorRememberFor = 10 * time.Minute
+	ProfileNodeInspectorConnect     = 2 * time.Second
+	ProfileNodeLivenessTimeout      = 200 * time.Millisecond
+	ProfileNodePauseTimeout         = time.Second
+	// Automatic heap captures on memory pressure (ADR-1155). guest-init reports
+	// pressure when MemAvailable falls to the threshold share of MemTotal and
+	// re-arms once it recovers above the re-arm share.
+	ProfileMemoryPressureAvailablePercent      = 15
+	ProfileMemoryPressureRearmAvailablePercent = 30
+	ProfileMemoryPressurePollInterval          = 2 * time.Second
+	ProfileCaptureAutomaticDuration            = 10 * time.Second
+	// ProfileCaptureAutomaticMinInterval bounds automatic captures per app.
+	ProfileCaptureAutomaticMinInterval = time.Hour
+	// ProfileCaptureCheckpointInterval paces interim heap profiles during an
+	// automatic capture, so an OOM kill mid-window still leaves the last
+	// heap before the kill.
+	ProfileCaptureCheckpointInterval = 2 * time.Second
+	// ProfileCaptureInterruptGrace replaces the final-flush grace when a
+	// capture ends early because the workload was OOM-killed.
+	ProfileCaptureInterruptGrace = 500 * time.Millisecond
+	// ProfileCaptureOOMFlushTimeout bounds how long guest-init holds an OOM
+	// report while an interrupted capture returns its profiles.
+	ProfileCaptureOOMFlushTimeout = 3 * time.Second
+	// ProfileCaptureOOMLinkWindow is how recent a heap capture on the killed
+	// instance must be for the OOM kill to be linked to it.
+	ProfileCaptureOOMLinkWindow = 15 * time.Minute
+	// Automatic stack snapshots of slow requests (ADR-1155). The gateway
+	// reports a request in flight for ProfileCaptureSlowRequestAfter at most
+	// once per app per ProfileCaptureSlowRequestReportEvery; schedd queues a
+	// stacks+CPU capture of that instance at most once per app per
+	// ProfileCaptureSlowRequestMinInterval.
+	ProfileCaptureSlowRequestAfter       = 10 * time.Second
+	ProfileCaptureSlowRequestReportEvery = time.Minute
+	ProfileCaptureSlowRequestMinInterval = 15 * time.Minute
+	ProfileCaptureSlowRequestDuration    = 5 * time.Second
+	// Automatic CPU captures on CPU saturation (ADR-1155). schedd's stats
+	// poller counts an instance saturated while its host CPU use is at least
+	// ProfileCPUSaturationPercent of its sustained cgroup quota; a dip shorter
+	// than ProfileCPUSaturationGrace does not end the episode. An episode
+	// lasting ProfileCPUSaturationAfter queues one CPU capture of
+	// ProfileCaptureCPUSaturationDuration, at most once per app per
+	// ProfileCaptureCPUSaturationMinInterval.
+	ProfileCPUSaturationPercent            = 90
+	ProfileCPUSaturationAfter              = 30 * time.Second
+	ProfileCPUSaturationGrace              = 5 * time.Second
+	ProfileCaptureCPUSaturationMinInterval = 15 * time.Minute
+	ProfileCaptureCPUSaturationDuration    = 10 * time.Second
+	// ProfileCaptureMaxKinds bounds the kinds one capture collects: every kind.
+	ProfileCaptureMaxKinds = 5
+	// Go contention sampling while a capture asks for block or mutex
+	// profiles: the Go SDK samples one blocking event per
+	// ProfileBlockRateNanos spent blocked and one in ProfileMutexFraction
+	// mutex contention events, for the window only.
+	ProfileBlockRateNanos = 10_000
+	ProfileMutexFraction  = 10
+	// ProfileCaptureDiffMaxNodes bounds a differential flamegraph.
+	ProfileCaptureDiffMaxNodes = 2 * ProfileMaxViewNodes
+	// ProfileCaptureMaxConcurrentPerScheduler bounds captures one schedd runs at once.
+	ProfileCaptureMaxConcurrentPerScheduler = 4
+	// ProfileCaptureMaxListed bounds GET /profiles/captures.
+	ProfileCaptureMaxListed = 50
+	// ProfileCaptureRetention is how long stored capture results remain.
+	ProfileCaptureRetention = 7 * 24 * time.Hour
 )
 
 // Billing runs (ADR-1503).
@@ -6563,6 +6655,27 @@ const (
 	EdgeChallengeRaiseFactor         = 4
 	EdgeChallengeRaiseFloorPerMinute = 60
 	EdgeChallengeBaselineMinutes     = 15
+
+	// --- ADR-20261022105846: penalty box -----------------------------
+
+	// MinEdgePenaltySeconds and MaxEdgePenaltySeconds bound how long a
+	// boxed client is refused.
+	MinEdgePenaltySeconds = 60
+	MaxEdgePenaltySeconds = 86400
+	// EdgePenaltyDefaultAfter boxes on the first rejection;
+	// MaxEdgePenaltyAfter bounds the threshold.
+	EdgePenaltyDefaultAfter = 1
+	MaxEdgePenaltyAfter     = 1000
+	// EdgePenaltyDefaultWithinSeconds is the window rejections count in.
+	EdgePenaltyDefaultWithinSeconds = 60
+	MaxEdgePenaltyWithinSeconds     = 3600
+	// EdgePenaltyBoxMaxPerApp and EdgePenaltyBoxMaxEntries bound one
+	// gateway's boxes (and its pending rejection counts) per app and in
+	// total, so a flood from rotating addresses costs bounded memory and
+	// one app cannot push out another's boxes. A full app box drops its
+	// soonest-ending entry.
+	EdgePenaltyBoxMaxPerApp  = 10000
+	EdgePenaltyBoxMaxEntries = 200000
 
 	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 
@@ -12629,7 +12742,7 @@ const (
 	EventPublishBatchTimeout            = 30 * time.Second
 )
 
-// Retention observations are bounded read-only snapshots (ADR-912).
+// Retention observations are bounded read-only snapshots (ADR-1155).
 const (
 	EventRetentionDefaultWindow  = 24 * time.Hour
 	EventRetentionMaxWindow      = 30 * 24 * time.Hour

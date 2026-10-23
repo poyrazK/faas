@@ -21,6 +21,9 @@
 //	-durable-counter serve the pure durable entity counter protocol
 //	-echo-session  interactive app-task fixture: report tty and size, echo lines
 //	-queue-consumer pull-queue worker: fetch a gregale:queues token, never listen
+//	-pprof-addr A  serve net/http/pprof on A and skip the Gregale collector
+//
+// GET /work burns CPU and retains heap for profile captures (ADR-1155).
 package main
 
 import (
@@ -84,6 +87,7 @@ func main() {
 	failLivez := flag.Bool("fail-livez", false, "answer /livez with 500 while /healthz stays healthy (crash loop)")
 	failRootAfter := flag.Int64("fail-root-after-requests", 0, "answer / with 500 after this many / requests, so a release passes its post-readiness smoke and fails later (0 disables)")
 	delayRoot := flag.Duration("delay-root", 0, "wait this long before answering / (a release that is slow at full traffic, ADR-1445)")
+	pprofAddr := flag.String("pprof-addr", "", "serve net/http/pprof on this address instead of starting the Gregale collector")
 	flag.Parse()
 	if *workerIsolation {
 		if err := assertWorkerTaskIsolation(workerStartupMarker, "127.0.0.1:8080"); err != nil {
@@ -147,6 +151,11 @@ func main() {
 		return
 	}
 
+	if *pprofAddr != "" {
+		servePprof(*pprofAddr)
+	} else {
+		startProfiling()
+	}
 	if *ignoreTerm {
 		signal.Ignore(syscall.SIGTERM)
 	}
@@ -213,6 +222,12 @@ func main() {
 	if !*noHealthz {
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	}
+	mux.HandleFunc("/work", serveWork)
+	mux.HandleFunc("/grow", serveGrow)
+	mux.HandleFunc("/release", serveRelease)
+	mux.HandleFunc("/hang", serveHang)
+	mux.HandleFunc("/spin", serveSpin)
+	mux.HandleFunc("/contend", serveContend)
 	if *queueAck {
 		mux.HandleFunc("/_triggers/esm/", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {

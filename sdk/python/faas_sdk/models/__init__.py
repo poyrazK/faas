@@ -983,6 +983,8 @@ from .create_platform_tenant_webhook_request_retry_policy import CreatePlatformT
 from .create_preview_request import CreatePreviewRequest
 from .create_private_network_peering_request import CreatePrivateNetworkPeeringRequest
 from .create_private_network_request import CreatePrivateNetworkRequest
+from .create_profile_capture_request import CreateProfileCaptureRequest
+from .create_profile_capture_request_kinds_item import CreateProfileCaptureRequestKindsItem
 from .create_project_binding_verification_run_request import CreateProjectBindingVerificationRunRequest
 from .create_project_binding_verification_run_request_review_digests import (
     CreateProjectBindingVerificationRunRequestReviewDigests,
@@ -1347,6 +1349,7 @@ from .diff_change_kind import DiffChangeKind
 from .diff_env_row import DiffEnvRow
 from .diff_payload import DiffPayload
 from .diff_payload_plan import DiffPayloadPlan
+from .diff_profile_captures_kind import DiffProfileCapturesKind
 from .diff_request import DiffRequest
 from .diff_request_env_by_scope import DiffRequestEnvByScope
 from .diff_response import DiffResponse
@@ -1370,6 +1373,7 @@ from .domain_doctor_check import DomainDoctorCheck
 from .domain_doctor_check_name import DomainDoctorCheckName
 from .domain_doctor_check_status import DomainDoctorCheckStatus
 from .domain_doctor_report import DomainDoctorReport
+from .download_profile_capture_kind import DownloadProfileCaptureKind
 from .dry_run_app_open_api_body import DryRunAppOpenAPIBody
 from .dry_run_app_open_api_body_info import DryRunAppOpenAPIBodyInfo
 from .dry_run_app_open_api_body_paths import DryRunAppOpenAPIBodyPaths
@@ -1402,6 +1406,7 @@ from .durable_entity_validator_deployment_info_source import DurableEntityValida
 from .durable_entity_validator_deployment_info_status import DurableEntityValidatorDeploymentInfoStatus
 from .edge_protection_response import EdgeProtectionResponse
 from .edge_protection_response_challenge import EdgeProtectionResponseChallenge
+from .edge_protection_response_penalty import EdgeProtectionResponsePenalty
 from .edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
 from .edge_protection_response_range import EdgeProtectionResponseRange
 from .edge_protection_response_rejections_item import EdgeProtectionResponseRejectionsItem
@@ -1438,6 +1443,7 @@ from .edge_rule_list_response_kind import EdgeRuleListResponseKind
 from .edge_rule_maintenance_action import EdgeRuleMaintenanceAction
 from .edge_rule_match_expr import EdgeRuleMatchExpr
 from .edge_rule_match_expr_op import EdgeRuleMatchExprOp
+from .edge_rule_penalty import EdgeRulePenalty
 from .edge_rule_recipe_suggestion import EdgeRuleRecipeSuggestion
 from .edge_rule_recipe_suggestion_alternative import EdgeRuleRecipeSuggestionAlternative
 from .edge_rule_recipe_suggestion_alternative_params import EdgeRuleRecipeSuggestionAlternativeParams
@@ -2115,6 +2121,7 @@ from .get_obs_recording_coverage_expected_set import GetObsRecordingCoverageExpe
 from .get_obs_rule_coverage_expected_set import GetObsRuleCoverageExpectedSet
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
 from .get_outbound_ai_price_catalog_provider import GetOutboundAIPriceCatalogProvider
+from .get_profile_capture_view_kind import GetProfileCaptureViewKind
 from .get_route_health_investigation_customer_group_by import GetRouteHealthInvestigationCustomerGroupBy
 from .get_route_health_investigation_method import GetRouteHealthInvestigationMethod
 from .get_route_health_investigation_signal import GetRouteHealthInvestigationSignal
@@ -4291,6 +4298,24 @@ from .profile_canary_gate_policy_on_timeout import ProfileCanaryGatePolicyOnTime
 from .profile_canary_gate_state import ProfileCanaryGateState
 from .profile_canary_gate_state_status import ProfileCanaryGateStateStatus
 from .profile_canary_history_page import ProfileCanaryHistoryPage
+from .profile_capture import ProfileCapture
+from .profile_capture_diff import ProfileCaptureDiff
+from .profile_capture_diff_kind import ProfileCaptureDiffKind
+from .profile_capture_diff_unit import ProfileCaptureDiffUnit
+from .profile_capture_function import ProfileCaptureFunction
+from .profile_capture_function_delta import ProfileCaptureFunctionDelta
+from .profile_capture_kinds_item import ProfileCaptureKindsItem
+from .profile_capture_list import ProfileCaptureList
+from .profile_capture_profile import ProfileCaptureProfile
+from .profile_capture_profile_kind import ProfileCaptureProfileKind
+from .profile_capture_stack import ProfileCaptureStack
+from .profile_capture_stack_delta import ProfileCaptureStackDelta
+from .profile_capture_status import ProfileCaptureStatus
+from .profile_capture_trigger import ProfileCaptureTrigger
+from .profile_capture_view import ProfileCaptureView
+from .profile_capture_view_kind import ProfileCaptureViewKind
+from .profile_capture_view_unit import ProfileCaptureViewUnit
+from .profile_capture_webhook_payload import ProfileCaptureWebhookPayload
 from .profile_compare_request import ProfileCompareRequest
 from .profile_compare_response import ProfileCompareResponse
 from .profile_coverage import ProfileCoverage
@@ -4303,6 +4328,9 @@ from .profile_function_delta import ProfileFunctionDelta
 from .profile_gate_override import ProfileGateOverride
 from .profile_gate_route_streak import ProfileGateRouteStreak
 from .profile_gate_route_streak_status import ProfileGateRouteStreakStatus
+from .profile_heap_response import ProfileHeapResponse
+from .profile_heap_response_kind import ProfileHeapResponseKind
+from .profile_heap_response_unit import ProfileHeapResponseUnit
 from .profile_investigation import ProfileInvestigation
 from .profile_investigation_input import ProfileInvestigationInput
 from .profile_investigation_response import ProfileInvestigationResponse
@@ -4343,6 +4371,7 @@ from .profile_source_location import ProfileSourceLocation
 from .profile_stack import ProfileStack
 from .profile_stack_delta import ProfileStackDelta
 from .profiling_config import ProfilingConfig
+from .profiling_config_kinds_item import ProfilingConfigKindsItem
 from .programmatic_api_key import ProgrammaticAPIKey
 from .programmatic_auth_response import ProgrammaticAuthResponse
 from .programmatic_auth_response_plan import ProgrammaticAuthResponsePlan
@@ -7041,6 +7070,8 @@ __all__ = (
     "CreatePreviewRequest",
     "CreatePrivateNetworkPeeringRequest",
     "CreatePrivateNetworkRequest",
+    "CreateProfileCaptureRequest",
+    "CreateProfileCaptureRequestKindsItem",
     "CreateProjectBindingVerificationRunRequest",
     "CreateProjectBindingVerificationRunRequestReviewDigests",
     "CreateProjectEnvironmentApprovalRequest",
@@ -7394,6 +7425,7 @@ __all__ = (
     "DiffEnvRow",
     "DiffPayload",
     "DiffPayloadPlan",
+    "DiffProfileCapturesKind",
     "DiffRequest",
     "DiffRequestEnvByScope",
     "DiffResponse",
@@ -7415,6 +7447,7 @@ __all__ = (
     "DomainDoctorCheckName",
     "DomainDoctorCheckStatus",
     "DomainDoctorReport",
+    "DownloadProfileCaptureKind",
     "DryRunAppOpenAPIBody",
     "DryRunAppOpenAPIBodyInfo",
     "DryRunAppOpenAPIBodyPaths",
@@ -7447,6 +7480,7 @@ __all__ = (
     "DurableEntityValidatorDeploymentInfoStatus",
     "EdgeProtectionResponse",
     "EdgeProtectionResponseChallenge",
+    "EdgeProtectionResponsePenalty",
     "EdgeProtectionResponsePreAuth",
     "EdgeProtectionResponseRange",
     "EdgeProtectionResponseRejectionsItem",
@@ -7483,6 +7517,7 @@ __all__ = (
     "EdgeRuleMaintenanceAction",
     "EdgeRuleMatchExpr",
     "EdgeRuleMatchExprOp",
+    "EdgeRulePenalty",
     "EdgeRuleRecipeSuggestion",
     "EdgeRuleRecipeSuggestionAlternative",
     "EdgeRuleRecipeSuggestionAlternativeParams",
@@ -8122,6 +8157,7 @@ __all__ = (
     "GetObsRuleCoverageExpectedSet",
     "GetOpenAPISpecJSONResponse200",
     "GetOutboundAIPriceCatalogProvider",
+    "GetProfileCaptureViewKind",
     "GetRouteHealthInvestigationCustomerGroupBy",
     "GetRouteHealthInvestigationMethod",
     "GetRouteHealthInvestigationSignal",
@@ -10098,6 +10134,24 @@ __all__ = (
     "ProfileCanaryGateState",
     "ProfileCanaryGateStateStatus",
     "ProfileCanaryHistoryPage",
+    "ProfileCapture",
+    "ProfileCaptureDiff",
+    "ProfileCaptureDiffKind",
+    "ProfileCaptureDiffUnit",
+    "ProfileCaptureFunction",
+    "ProfileCaptureFunctionDelta",
+    "ProfileCaptureKindsItem",
+    "ProfileCaptureList",
+    "ProfileCaptureProfile",
+    "ProfileCaptureProfileKind",
+    "ProfileCaptureStack",
+    "ProfileCaptureStackDelta",
+    "ProfileCaptureStatus",
+    "ProfileCaptureTrigger",
+    "ProfileCaptureView",
+    "ProfileCaptureViewKind",
+    "ProfileCaptureViewUnit",
+    "ProfileCaptureWebhookPayload",
     "ProfileCompareRequest",
     "ProfileCompareResponse",
     "ProfileCoverage",
@@ -10110,6 +10164,9 @@ __all__ = (
     "ProfileGateOverride",
     "ProfileGateRouteStreak",
     "ProfileGateRouteStreakStatus",
+    "ProfileHeapResponse",
+    "ProfileHeapResponseKind",
+    "ProfileHeapResponseUnit",
     "ProfileInvestigation",
     "ProfileInvestigationInput",
     "ProfileInvestigationResponse",
@@ -10150,6 +10207,7 @@ __all__ = (
     "ProfileStack",
     "ProfileStackDelta",
     "ProfilingConfig",
+    "ProfilingConfigKindsItem",
     "ProgrammaticAPIKey",
     "ProgrammaticAuthResponse",
     "ProgrammaticAuthResponsePlan",

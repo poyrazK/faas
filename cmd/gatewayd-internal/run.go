@@ -2766,6 +2766,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := configureOperationRoutes(handler, deps); err != nil {
 		return fmt.Errorf("gatewayd-internal: %w", err)
 	}
+	if osGetenv("FAAS_PROFILING_ON_DEMAND") == "1" && deps.scheddRouter != nil {
+		// ADR-1155: report requests in flight too long so the owning schedd
+		// can snapshot the serving instance's stacks while they are stuck.
+		watcher := gateway.NewSlowRequestWatcher(slowRequestReporter(deps.scheddRouter), log)
+		go watcher.Run(ctx)
+		handler.WithSlowRequestWatcher(watcher)
+	}
 	if osGetenv("FAAS_DEV_BRIDGE_ENABLED") == "1" && deps.pgStore != nil {
 		bridgeTarget := deps.apidLoopback
 		if bridgeTarget == "" {
@@ -3022,6 +3029,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// ADR-973 — verified crawlers via forward-confirmed reverse DNS.
 	handler.WithBotVerifier(gateway.NewBotVerifier(nil))
+	// ADR-20261022105846 — rule penalty boxes, held in this node's memory.
+	handler.WithPenaltyBox(gateway.NewPenaltyBox())
 	// ADR-960 — per-rule hit counts, flushed to Postgres once a minute. Only
 	// a store with the hit-count capability gets a recorder, so test and
 	// legacy wiring keep counting disabled.

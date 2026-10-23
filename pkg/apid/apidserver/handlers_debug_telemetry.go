@@ -1424,6 +1424,7 @@ func (s *server) debugTelemetryGetHandler(w http.ResponseWriter, r *http.Request
 			if telemetryErr == nil {
 				item := debugTelemetryGetRowToItem(row)
 				item.RequestID = identifier
+				s.linkRequestProfileCapture(r.Context(), acct, app, &item)
 				writeJSON(w, http.StatusOK, item)
 				return
 			}
@@ -1440,6 +1441,7 @@ func (s *server) debugTelemetryGetHandler(w http.ResponseWriter, r *http.Request
 			traceID := journal.TraceID
 			item.TraceID = &traceID
 		}
+		s.linkRequestProfileCapture(r.Context(), acct, app, &item)
 		writeJSON(w, http.StatusOK, item)
 		return
 	}
@@ -1457,7 +1459,17 @@ func (s *server) debugTelemetryGetHandler(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrCapacity("get request telemetry"))
 		return
 	}
-	writeJSON(w, http.StatusOK, debugTelemetryGetRowToItem(row))
+	item := debugTelemetryGetRowToItem(row)
+	s.linkRequestProfileCapture(r.Context(), acct, app, &item)
+	writeJSON(w, http.StatusOK, item)
+}
+
+// linkRequestProfileCapture names the stack snapshot taken while the request
+// was in flight (ADR-1155 slow_request capture), when one exists.
+func (s *server) linkRequestProfileCapture(ctx context.Context, acct state.Account, app state.App, item *api.DebugTelemetryRequestItem) {
+	if item.TraceID != nil {
+		item.ProfileCaptureID = s.requestProfileCaptureID(ctx, acct, app, *item.TraceID)
+	}
 }
 
 const debugEvidenceMaxSpans = api.DebugEvidenceMaxSpans

@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261022105846: Penalty box for edge rules](20261022105846-edge-rule-penalty-box.md)
 - [Compose build secrets for Dockerfile builds](20261022185329-compose-build-secrets.md)
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
 - [Compose process overrides on source-built services](20261022160000-compose-process-on-built-services.md)
@@ -332,6 +333,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 826 | [Periodic route profiling for running deployments](826-periodic-route-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 827 | [Route-specific profiling code evidence](827-route-specific-profile-code-evidence.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 828 | [Opt-in profiling gates for canary deployment stages](828-profile-canary-deployment-gates.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 1155 | [On-demand CPU and heap profiling](1155-on-demand-cpu-and-heap-profiling.md) | accepted for internal implementation; native acceptance pending | Dormant guest collectors armed per instance through a Postgres queue; continuous heap profiles; automatic heap capture on memory pressure |
 | 949 | [App consumer statement revisions and unbilled platform failures](949-app-consumer-statement-revisions-and-platform-failure-billing.md) | accepted | Late usage becomes additive app-local statement revisions; gateway-generated 5xx carry zero billable units |
 | 950 | [Monthly included units on app consumer rate cards](950-api-consumer-monthly-allowances.md) | accepted | Free requests per consumer per UTC month, consumed in minute order; adjustments bill allowance lost to late usage |
 | 951 | [Graduated tiers on app consumer rate cards](951-api-consumer-graduated-tiers.md) | accepted | Per-consumer monthly price ladders with exact re-rating; tiered statements cover whole UTC months |

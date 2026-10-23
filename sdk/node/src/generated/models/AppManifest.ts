@@ -18,6 +18,10 @@ import type { WorkloadPort } from './WorkloadPort.js';
 export type AppManifest = {
   profiling?: ProfilingConfig;
   tracing?: TracingConfig;
+  /**
+   * Dormant on-demand profile collectors stamped by imaged (ADR-1155).
+   */
+  profiling_on_demand?: boolean;
   entrypoint: Array<string>;
   env?: Record<string, string>;
   /**

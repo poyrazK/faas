@@ -1503,6 +1503,9 @@ type AppCostOverviewRow struct {
 
 // AppDetailData combines the bits the app detail page renders.
 type AppDetailData struct {
+	// AnnouncedCaptures is the banner for profile captures the platform
+	// took on its own or that an OOM kill followed (ADR-1155); nil hides it.
+	AnnouncedCaptures  *AnnouncedProfileCapturesView
 	ProductControlURL  string
 	ProfilingAvailable bool
 	// ApplicationAuth shows the application Auth screens' link, a dark
@@ -1762,6 +1765,9 @@ type WorkflowStepItem struct {
 // button. Alive=false still carries a non-nil pointer with
 // Host="" — the same shape api.DeploymentPreviewURL returns.
 type DeploymentDetailData struct {
+	// OOMCaptureURL links an OOM-failed deployment to the heap capture taken
+	// before the kill (ADR-1155); empty when none exists.
+	OOMCaptureURL               string
 	ProfileCheck                *api.ProfileDeploymentCheck
 	CanaryProfileSignal         *api.CanaryProfileSignal
 	CanaryProfileTraffic        *ProfileTrafficView
@@ -2774,6 +2780,9 @@ type DebugRequestDetailView struct {
 	Findings                   []DebugEvidenceFindingView
 	Recommendations            []DebugEvidenceRecommendationView
 	GeneratedAt                string
+	// ProfileCaptureURL links the stack snapshot taken while the request was
+	// in flight (ADR-1155 slow_request capture), when one exists.
+	ProfileCaptureURL string
 }
 
 // DebugCriticalPathView is the template-safe projection of the selected

@@ -123,6 +123,11 @@ type Poller struct {
 	EgressAbuseHandler EgressAbuseHandler
 	egressAbuseMu      sync.Mutex
 	egressAbuseActed   map[string]struct{}
+	// CPUSaturationHandler queues automatic CPU captures of instances held
+	// at their CPU quota (ADR-1155). Nil keeps the poller observation-only.
+	CPUSaturationHandler CPUSaturationHandler
+	cpuSaturationMu      sync.Mutex
+	cpuSaturation        map[string]*cpuSaturationEpisode
 	// sidecarMBs caches each live deployment's sidecar RAM slice (nil means
 	// no sidecars). A deployment's sidecars are written once at creation and
 	// never updated, so an entry stays valid until the deployment leaves the
@@ -329,6 +334,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		p.publishQuietPaused(rows, started)
 		p.enforceDiskPressure(ctx, rows)
 		p.enforceEgressAbuse(ctx, rows)
+		p.watchCPUSaturation(ctx, rows)
 		if p.Metrics != nil {
 			p.Metrics.ReplaceInstanceStats(rolled, p.now().Sub(started))
 		}
@@ -348,6 +354,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 	p.publishQuietPaused(rows, started)
 	p.enforceDiskPressure(ctx, rows)
 	p.enforceEgressAbuse(ctx, rows)
+	p.watchCPUSaturation(ctx, rows)
 	// Metrics rollup: max CPU / sum RSS / sum inflight per
 	// (app, node). The wire side collapses NaN for absent
 	// values; instancestats passes NaN through so the rollup
