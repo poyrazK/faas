@@ -2041,6 +2041,7 @@ type Querier interface {
 	HostingSitePurge(ctx context.Context, db DBTX, arg HostingSitePurgeParams) (int64, error)
 	HostingSiteRetireReleases(ctx context.Context, db DBTX, arg HostingSiteRetireReleasesParams) error
 	HostingSiteSuspend(ctx context.Context, db DBTX, arg HostingSiteSuspendParams) (HostingSite, error)
+	IdempotencyReceipt(ctx context.Context, db DBTX, arg IdempotencyReceiptParams) (IdempotencyReceiptRow, error)
 	// ---------------------------------------------------------------------------
 	// ADR-096 customer-facing automatic error grouping.
 	// Tables live in migrations/00222_app_errors.sql. gatewayd-internal
@@ -5555,6 +5556,13 @@ type Querier interface {
 	ReserveEnvironmentQualificationRestore(ctx context.Context, db DBTX, arg ReserveEnvironmentQualificationRestoreParams) error
 	ReserveEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) (int32, error)
 	ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accountID string) (int32, error)
+	// Claims an Idempotency-Key bound to its request fingerprint
+	// (ADR-20261022204036). A new key, a key past its 24 h replay window, or an
+	// in-flight reservation older than abandon_after_seconds is reserved. An
+	// abandoned reservation bound to another fingerprint under the same key id
+	// (its first 4 bytes) is not taken over: the key stays bound to its first
+	// request for the whole window.
+	ReserveIdempotentRequest(ctx context.Context, db DBTX, arg ReserveIdempotentRequestParams) (bool, error)
 	ReserveProjectReleaseAddition(ctx context.Context, db DBTX, arg ReserveProjectReleaseAdditionParams) error
 	ReserveProjectSubmission(ctx context.Context, db DBTX, arg ReserveProjectSubmissionParams) (int64, error)
 	ReserveRuntimeUpgradeCandidate(ctx context.Context, db DBTX, arg ReserveRuntimeUpgradeCandidateParams) (pgtype.UUID, error)
