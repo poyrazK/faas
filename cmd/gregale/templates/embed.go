@@ -28,6 +28,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // FS holds the embedded starter projects. The root is the directory
@@ -40,10 +42,10 @@ import (
 var FS embed.FS
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
-// Go starters. Keep this aligned with the repository toolchain pin: unlike a
-// customer-owned go.mod, these generated modules are platform-owned defaults
-// and must not knowingly create images with HIGH stdlib findings.
-const GoToolchainVersion = "1.26.10"
+// Go starters. Unlike a customer-owned go.mod, these generated modules are
+// platform-owned defaults and must not knowingly create images with HIGH
+// stdlib findings, so they name the release Go function builds use.
+const GoToolchainVersion = api.GoBuildToolchain
 
 // Names is the canonical template list, kept here so the CLI can
 // validate --template before touching the embed FS. The hello/function and
