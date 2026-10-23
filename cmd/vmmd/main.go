@@ -56,6 +56,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/snapshothipd"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -693,6 +694,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("vmmd: load host identities (%s): %w", filepath.Dir(keyPath), err)
 	}
+	// ADR 20261022111812: runtime secrets sealed to the runtime seal domain
+	// open with its identity; the fleet and host identities keep opening
+	// the rest until the domain re-seal completes.
+	runtimeIdentities, err := loadRuntimeSealDomain(filepath.Dir(keyPath))
+	if err != nil {
+		return fmt.Errorf("vmmd: load runtime seal domain: %w", err)
+	}
+	hostIdentities = append(runtimeIdentities, hostIdentities...)
+	registerSealDomainLoaded(ops.Registry(), sealdomain.Runtime, len(runtimeIdentities) > 0)
+	log.Info("vmmd: unseal identities loaded", "runtime_domain", len(runtimeIdentities) > 0, "identities", len(hostIdentities))
 
 	// Issue #98 / ADR-028: vmmd self-registers in compute_nodes
 	// before the gRPC listener binds. Fail-closed: if the upsert
