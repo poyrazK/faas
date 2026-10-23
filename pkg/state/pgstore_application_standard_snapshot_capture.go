@@ -34,7 +34,7 @@ func lockStandardSnapshotCapture(ctx context.Context, tx pgx.Tx, id, expectedSta
 }
 
 func decodeStandardSnapshotRecord(row sqlc.GetApplicationStandardSnapshotCaptureRow) (ApplicationStandardSnapshotCaptureRecord, error) {
-	r := ApplicationStandardSnapshotCaptureRecord{ExpectedState: row.ExpectedState, CreatedAt: row.CreatedAt.Time, ReceivedAt: row.ReceivedAt.Time}
+	r := ApplicationStandardSnapshotCaptureRecord{ExpectedState: row.ExpectedState, CreatedAt: row.CreatedAt.Time, ReceivedAt: row.ReceivedAt.Time, ProducerIncarnation: row.ProducerIncarnation}
 	if err := json.Unmarshal(row.GrantData, &r.Grant); err != nil {
 		return r, err
 	}

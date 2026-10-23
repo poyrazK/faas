@@ -297,43 +297,52 @@ type MemStore struct {
 	instanceApplicationStandardPromotions      map[string]instanceStandardPromotion
 	instanceApplicationStandardPromotionTokens map[string]string
 	computeNodeRuntimeHistory                  map[string]runtimeadmission.Identity
-	computeNodeRuntimeIncarnations             map[string]string
-	computeNodeRuntimeProtocols                map[string]uint32
-	appEgressRevisions                         map[string]int64
-	applicationStandardVersions                map[string][]ApplicationStandardVersion
-	applicationStandardLogDestinations         map[string]ApplicationStandardLogDestination
-	applicationStandardPublishers              map[string]api.ApplicationStandardPublisher
-	applicationStandardAssignments             map[string]applicationStandardAssignmentRecord
-	applicationStandardEnrollments             map[string]ApplicationStandardEnrollment
-	applicationStandardExceptions              map[string]ApplicationStandardException
-	applicationStandardLogDeliveries           map[string]ApplicationStandardLogDeliveryObservation
-	applicationStandardLogConsumers            map[string]ApplicationStandardLogConsumerSession
-	applicationStandardLogConsumerSessions     map[string]ApplicationStandardLogConsumerSession
-	applicationStandardLogConsumerClosures     map[string]ApplicationStandardLogConsumerClosure
-	applicationStandardLogInventories          map[string]ApplicationStandardLogInventoryObservation
-	applicationStandardLogHealth               map[string]ApplicationStandardLogHealthObservation
-	applicationStandardEgressObservations      map[string]ApplicationStandardEgressObservation
-	applicationStandardReviewPlans             map[string]ApplicationStandardReviewPlan
-	applicationStandardOperations              map[string]ApplicationStandardOperation
-	applicationStandardWorkerClaims            map[string]ApplicationStandardWorkerClaim
-	applicationStandardEnrollmentClaims        map[string]ApplicationStandardEnrollmentClaim
-	standardObservationChecks                  map[string]standardAutomaticObservationCheck
-	standardRuntimeRefreshRequests             map[string]ApplicationStandardRuntimeRefreshRequest
-	applicationStandardControlBindings         map[string]standardControlBinding
-	applicationStandardControlBackups          map[string]standardControlBackup
-	financialBudgetEvaluations                 map[string]financialBudgetMemoryEvaluation
-	financialBudgetAlerts                      map[string]FinancialBudgetAlertDelivery
-	financialBudgetStops                       map[string]FinancialBudgetStop
-	financialBudgetChannels                    map[string][]string                            // policy id → channel ids (ADR-20261019193500)
-	financialBudgetChannelDeliveries           map[string]FinancialBudgetAlertChannelDelivery // alert id + "\n" + channel id
-	financialBudgetProjections                 map[string]FinancialBudgetAlertDelivery        // projection alert id (ADR-20261019193500)
-	financialObjectStorageEstimates            map[string]FinancialObjectStorageEstimate      // account + "\n" + period (ADR-20261020160000)
-	financialPreviewCommands                   map[string]FinancialPreviewCommandRuntime
-	financialComputeBooks                      map[string]financialComputeBook
-	financialComputeLeases                     map[string]financialComputeLease
-	financialComputeHolds                      map[string][]financialComputeHold
-	financialComputeOwners                     map[string]financialComputeOwner
-	financialComputeJobAttempts                map[string]financialComputeJobAttempt
+	// computeNodeRuntimeOrder is each node incarnation's registration order,
+	// as application_standard_native_incarnations.registered_at orders them.
+	computeNodeRuntimeOrder map[string]uint64
+	computeNodeRuntimeSeq   uint64
+	// instanceApplicationStandardRebinds are each instance's admission
+	// re-binds, oldest first (ADR-595 extension).
+	instanceApplicationStandardRebinds     map[string][]ApplicationStandardRebind
+	computeNodeVMMDEpochs                  map[string]VMMDEpoch
+	computeNodeVMMDNotices                 map[string]time.Time
+	computeNodeRuntimeIncarnations         map[string]string
+	computeNodeRuntimeProtocols            map[string]uint32
+	appEgressRevisions                     map[string]int64
+	applicationStandardVersions            map[string][]ApplicationStandardVersion
+	applicationStandardLogDestinations     map[string]ApplicationStandardLogDestination
+	applicationStandardPublishers          map[string]api.ApplicationStandardPublisher
+	applicationStandardAssignments         map[string]applicationStandardAssignmentRecord
+	applicationStandardEnrollments         map[string]ApplicationStandardEnrollment
+	applicationStandardExceptions          map[string]ApplicationStandardException
+	applicationStandardLogDeliveries       map[string]ApplicationStandardLogDeliveryObservation
+	applicationStandardLogConsumers        map[string]ApplicationStandardLogConsumerSession
+	applicationStandardLogConsumerSessions map[string]ApplicationStandardLogConsumerSession
+	applicationStandardLogConsumerClosures map[string]ApplicationStandardLogConsumerClosure
+	applicationStandardLogInventories      map[string]ApplicationStandardLogInventoryObservation
+	applicationStandardLogHealth           map[string]ApplicationStandardLogHealthObservation
+	applicationStandardEgressObservations  map[string]ApplicationStandardEgressObservation
+	applicationStandardReviewPlans         map[string]ApplicationStandardReviewPlan
+	applicationStandardOperations          map[string]ApplicationStandardOperation
+	applicationStandardWorkerClaims        map[string]ApplicationStandardWorkerClaim
+	applicationStandardEnrollmentClaims    map[string]ApplicationStandardEnrollmentClaim
+	standardObservationChecks              map[string]standardAutomaticObservationCheck
+	standardRuntimeRefreshRequests         map[string]ApplicationStandardRuntimeRefreshRequest
+	applicationStandardControlBindings     map[string]standardControlBinding
+	applicationStandardControlBackups      map[string]standardControlBackup
+	financialBudgetEvaluations             map[string]financialBudgetMemoryEvaluation
+	financialBudgetAlerts                  map[string]FinancialBudgetAlertDelivery
+	financialBudgetStops                   map[string]FinancialBudgetStop
+	financialBudgetChannels                map[string][]string                            // policy id → channel ids (ADR-20261019193500)
+	financialBudgetChannelDeliveries       map[string]FinancialBudgetAlertChannelDelivery // alert id + "\n" + channel id
+	financialBudgetProjections             map[string]FinancialBudgetAlertDelivery        // projection alert id (ADR-20261019193500)
+	financialObjectStorageEstimates        map[string]FinancialObjectStorageEstimate      // account + "\n" + period (ADR-20261020160000)
+	financialPreviewCommands               map[string]FinancialPreviewCommandRuntime
+	financialComputeBooks                  map[string]financialComputeBook
+	financialComputeLeases                 map[string]financialComputeLease
+	financialComputeHolds                  map[string][]financialComputeHold
+	financialComputeOwners                 map[string]financialComputeOwner
+	financialComputeJobAttempts            map[string]financialComputeJobAttempt
 
 	eventCircuitBreakers              map[string]*eventCircuitRecord
 	eventSubscriptionControls         map[string]*memEventSubscriptionControl
@@ -17852,10 +17861,13 @@ func (m *MemStore) DeleteComputeNode(_ context.Context, id string) error {
 	}
 	delete(m.computeNodes, id)
 	delete(m.computeNodeRuntimeIncarnations, id)
+	delete(m.computeNodeVMMDEpochs, id)
+	delete(m.computeNodeVMMDNotices, id)
 	delete(m.computeNodeRuntimeProtocols, id)
 	m.eraseStandardLogConsumerNodeLocked(id)
 	m.eraseStandardEgressLocked("", id)
 	m.eraseNativeRuntimeHistoryLocked(id)
+	m.eraseStandardRebindsForNodeLocked(id)
 	// CP-1: cascade the heartbeat history. Mirrors the FK ON DELETE
 	// CASCADE on compute_node_heartbeats.node_id; the endpoint
 	// resolves the parent by name first, so a missing history rows
