@@ -87366,7 +87366,7 @@ components:
     EdgeProtectionResponse:
       description: Edge rejection counts for one app over a range.
       type: object
-      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge]
+      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge, penalty]
       properties:
         app_id: { type: string }
         range: { type: string, enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d] }
@@ -87394,7 +87394,7 @@ components:
             type: object
             required: [gate, status, count]
             properties:
-              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf, challenge] }
+              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf, challenge, penalty] }
               status: { type: string, enum: ['401', '403', '413', '429', '503', other] }
               count: { type: integer, format: int64, minimum: 0 }
         waf:
@@ -87439,6 +87439,30 @@ components:
             bypassed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a verified API key, consumer key or JWT." }
             invalid: { type: integer, format: int64, minimum: 0, description: "Solutions refused: wrong work or an expired token." }
             raised: { type: integer, format: int64, minimum: 0, description: "The part of issued served at a difficulty raised under attack (ADR-831 amendment 8)." }
+        penalty:
+          type: object
+          description: Penalty boxes (ADR-20261022105846); refusals also appear in rejections under gate penalty.
+          required: [boxed, rejected]
+          properties:
+            boxed: { type: integer, format: int64, minimum: 0, description: "Clients a rule's penalty boxed." }
+            rejected: { type: integer, format: int64, minimum: 0, description: "Requests refused from boxed clients." }
+
+    EdgeRulePenalty:
+      type: object
+      description: |
+        A rule's penalty box (ADR-20261022105846). Once the rule has refused
+        the same client `after` times within `within_seconds`, every request
+        from that client to the app is refused with 403 `penalty_box` and
+        Retry-After for `seconds`, whichever rule or path it targets. The
+        client is its IP address (an IPv6 client is its /64). Boxes are held
+        in each gateway node's memory. Allowed on ip, geo, throttle and waf
+        (block mode) rules; editing the rule's penalty away, disabling it or
+        putting it in log mode releases its clients.
+      required: [seconds]
+      properties:
+        seconds: { type: integer, minimum: 60, maximum: 86400, description: How long a boxed client is refused. }
+        after: { type: integer, minimum: 1, maximum: 1000, default: 1, description: Refusals by this rule that box the client. }
+        within_seconds: { type: integer, minimum: 1, maximum: 3600, default: 60, description: Window the refusals count in. }
 
     PreAuthEnforcementSuggestion:
       description: |
@@ -105721,6 +105745,7 @@ components:
         expired: { type: boolean, description: True once expires_at has passed and the rule no longer applies. }
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         mode: { type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts. }
+        penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
 
     DeploymentRoutePolicySnapshotResponse:
       description: Immutable gateway edge-rule state recorded on the deployment's first live transition.
@@ -105792,6 +105817,7 @@ components:
         expires_at: { type: string, format: date-time, description: Optional time after which the gateway stops applying the new rule. }
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         mode: { type: string, enum: [enforce, log], description: 'Start the rule enforced (default) or in log mode, where it is only matched and counted.' }
+        penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
 
     UpdateEdgeRuleRequest:
       description: 'Partial update — every field optional. Kind is not patchable.'
@@ -105845,6 +105871,8 @@ components:
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         clear_match: { type: boolean, description: Remove the match condition. }
         mode: { type: string, enum: [enforce, log], description: 'Switch the rule to enforce, or to log so it is matched and counted but never acts.' }
+        penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
+        clear_penalty: { type: boolean, description: "Remove the rule's penalty box, releasing the clients it holds." }
 
     EdgeRuleMatchExpr:
       description: |

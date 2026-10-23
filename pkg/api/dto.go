@@ -10414,9 +10414,11 @@ type EdgeRuleResponse struct {
 	// Match (ADR-962) is the optional condition ANDed with the selectors.
 	Match *EdgeRuleMatchExpr `json:"match,omitempty"`
 	// Mode (ADR-960) is "enforce" or "log"; log-mode rules only count matches.
-	Mode      string    `json:"mode"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Mode string `json:"mode"`
+	// Penalty is the rule's penalty box (ADR-20261022105846), if any.
+	Penalty   *EdgeRulePenalty `json:"penalty,omitempty"`
+	CreatedAt time.Time        `json:"created_at"`
+	UpdatedAt time.Time        `json:"updated_at"`
 }
 
 // Edge-rule metadata bounds; the edge_rules CHECK constraints mirror them.
@@ -10465,6 +10467,9 @@ type CreateEdgeRuleRequest struct {
 	ExpiresAt    *time.Time         `json:"expires_at,omitempty"`
 	Match        *EdgeRuleMatchExpr `json:"match,omitempty"`
 	Mode         string             `json:"mode,omitempty"`
+	// Penalty boxes a client this rule keeps rejecting
+	// (ADR-20261022105846); ip, geo, throttle and waf (block) rules only.
+	Penalty *EdgeRulePenalty `json:"penalty,omitempty"`
 }
 
 // UpdateEdgeRuleRequest is the wire shape for PATCH /v1/edge-rules/{id}.
@@ -10495,6 +10500,11 @@ type UpdateEdgeRuleRequest struct {
 	Match      *EdgeRuleMatchExpr `json:"match,omitempty"`
 	ClearMatch bool               `json:"clear_match,omitempty"`
 	Mode       *string            `json:"mode,omitempty"`
+	// Penalty sets the rule's penalty box (ADR-20261022105846);
+	// ClearPenalty removes it, which also releases the clients it holds.
+	// Setting both is rejected.
+	Penalty      *EdgeRulePenalty `json:"penalty,omitempty"`
+	ClearPenalty bool             `json:"clear_penalty,omitempty"`
 }
 
 // Edge-rule modes (ADR-960).

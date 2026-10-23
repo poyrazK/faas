@@ -666,6 +666,7 @@ var dtoExclude = map[string]bool{
 	// EdgeProtectionResponse in the spec, not named schemas.
 	"EdgeProtectionChallenge": true,
 	"EdgeProtectionCount":     true,
+	"EdgeProtectionPenalty":   true,
 	"EdgeProtectionPreAuth":   true,
 	"EdgeProtectionRejection": true,
 	"EdgeProtectionWAF":       true,
@@ -1697,6 +1698,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "edge_rule_waf.go"),                   // kind=waf action (ADR-831)
 		filepath.Join(root, "pkg", "api", "edge_rule_recipe_suggestion_dto.go"), // suggested protections (ADR-20261020105000)
 		filepath.Join(root, "pkg", "api", "edge_rule_challenge.go"),             // kind=challenge action (ADR-831)
+		filepath.Join(root, "pkg", "api", "edge_rule_penalty.go"),               // rule penalty box (ADR-20261022105846)
 		filepath.Join(root, "pkg", "api", cliauthFile),
 		filepath.Join(root, "pkg", "api", "browser_approvals.go"),
 		filepath.Join(root, "pkg", "api", "source_review.go"),

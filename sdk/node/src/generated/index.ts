@@ -757,6 +757,7 @@ export type { EdgeRuleLimitAction } from './models/EdgeRuleLimitAction.js';
 export type { EdgeRuleListResponse } from './models/EdgeRuleListResponse.js';
 export type { EdgeRuleMaintenanceAction } from './models/EdgeRuleMaintenanceAction.js';
 export type { EdgeRuleMatchExpr } from './models/EdgeRuleMatchExpr.js';
+export type { EdgeRulePenalty } from './models/EdgeRulePenalty.js';
 export type { EdgeRuleRecipeSuggestion } from './models/EdgeRuleRecipeSuggestion.js';
 export type { EdgeRuleRecipeSuggestionAlternative } from './models/EdgeRuleRecipeSuggestionAlternative.js';
 export type { EdgeRuleRecipeSuggestionsResponse } from './models/EdgeRuleRecipeSuggestionsResponse.js';
