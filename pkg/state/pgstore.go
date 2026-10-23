@@ -5896,13 +5896,15 @@ func (s *PgStore) ApplyProjectReconcile(
 	for _, mutation := range mutations {
 		switch mutation.Op {
 		case "update":
+			// Declared Compose resources (ADR-20261023120000): with
+			// SetResources, each positive value replaces its column.
 			app := mutation.App
 			rootDir, workloadName := app.RootDir, app.WorkloadName
 			manifestBytes, marshalErr := json.Marshal(app.Manifest)
 			if marshalErr != nil {
 				return ProjectReconcileResult{}, fmt.Errorf("state: marshal project app manifest: %w", marshalErr)
 			}
-			updated, err := scanApp(tx.QueryRow(ctx, `update apps set root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $7, platform_tenant_required = case when $8 then $9 else platform_tenant_required end where id = $1 and project_id = $6 and preview_of_slug is null and status <> 'deleted' returning `+appsSelectColumns, app.ID, rootDir, workloadName, string(app.WorkloadClass), nullString(app.StartCommand), project.ID, manifestBytes, mutation.SetPlatformTenantRequired, app.PlatformTenantRequired))
+			updated, err := scanApp(tx.QueryRow(ctx, `update apps set root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $7, platform_tenant_required = case when $8 then $9 else platform_tenant_required end, ram_mb = case when $10 and $11 > 0 then $11 else ram_mb end, cpu_millicores = case when $10 and $12 > 0 then $12 else cpu_millicores end, max_concurrency = case when $10 and $13 > 0 then $13 else max_concurrency end where id = $1 and project_id = $6 and preview_of_slug is null and status <> 'deleted' returning `+appsSelectColumns, app.ID, rootDir, workloadName, string(app.WorkloadClass), nullString(app.StartCommand), project.ID, manifestBytes, mutation.SetPlatformTenantRequired, app.PlatformTenantRequired, mutation.SetResources, app.RAMMB, app.CPUMillicores, app.MaxConcurrency))
 			if err != nil {
 				return ProjectReconcileResult{}, mapErr(err)
 			}
@@ -5927,7 +5929,7 @@ func (s *PgStore) ApplyProjectReconcile(
 				if marshalErr != nil {
 					return ProjectReconcileResult{}, fmt.Errorf("state: marshal restored project app manifest: %w", marshalErr)
 				}
-				restored, restoreErr := scanApp(tx.QueryRow(ctx, `update apps set status = 'active', deleted_at = null, delete_grace_until = null, root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $6, platform_tenant_required = case when $7 then $8 else platform_tenant_required end where id = $1 returning `+appsSelectColumns, tombstone.ID, tombstone.RootDir, tombstone.WorkloadName, string(tombstone.WorkloadClass), nullString(tombstone.StartCommand), manifestBytes, mutation.SetPlatformTenantRequired, app.PlatformTenantRequired))
+				restored, restoreErr := scanApp(tx.QueryRow(ctx, `update apps set status = 'active', deleted_at = null, delete_grace_until = null, root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $6, platform_tenant_required = case when $7 then $8 else platform_tenant_required end, ram_mb = case when $9 and $10 > 0 then $10 else ram_mb end, cpu_millicores = case when $9 and $11 > 0 then $11 else cpu_millicores end, max_concurrency = case when $9 and $12 > 0 then $12 else max_concurrency end where id = $1 returning `+appsSelectColumns, tombstone.ID, tombstone.RootDir, tombstone.WorkloadName, string(tombstone.WorkloadClass), nullString(tombstone.StartCommand), manifestBytes, mutation.SetPlatformTenantRequired, app.PlatformTenantRequired, mutation.SetResources, app.RAMMB, app.CPUMillicores, app.MaxConcurrency))
 				if restoreErr != nil {
 					return ProjectReconcileResult{}, mapErr(restoreErr)
 				}

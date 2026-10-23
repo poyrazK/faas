@@ -14392,6 +14392,11 @@ const (
 	DockerfileBuildSecretsMax = 16
 )
 
+// SecretFilesMax caps the Compose secrets one service writes to
+// /run/secrets (ADR-20261023090000). guest-init sizes the tmpfs it mounts
+// there from it and the largest plan's SecretValueMaxBytes.
+const SecretFilesMax = 16
+
 // Public build configuration is intentionally limited to reviewed URL values.
 const (
 	PublicBuildURLsMaxPerApp       = 10
