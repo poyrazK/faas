@@ -95,6 +95,8 @@ func TestFirecrackerControlLineRecognizesTimestampedProductionLines(t *testing.T
 		"2026-10-14T08:12:32.964295007 [" + id + ":main] [Rng:rng] notifying queues",
 		"2026-10-14T08:12:32.964295007 [" + id + ":main] [Vsock:vsock] signaling event queue",
 		"2026-10-14T08:12:32.964301857 [" + id + ":main] kick pmem base.",
+		// Hunt 12: in every job task log on rc.288.
+		"2026-10-22T09:22:49.314065038 [" + id + ":main] Net: The device is not yet activated. Spurious event received: 3",
 	} {
 		if !firecrackerControlLine([]byte(line)) {
 			t.Errorf("production control line was not filtered: %q", line)

@@ -236,6 +236,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go batchWorker.Run(ctx)
 	evaluationWorker := &outbound.AIEvaluationWorker{Store: backend, Handler: handler, Log: log}
 	go evaluationWorker.Run(ctx)
+	// ADR 20261021171712: sampled calls are scored by the integration's
+	// judge model, and quality drift alerts are checked.
+	onlineEvaluationWorker := &outbound.AIOnlineEvaluationWorker{Store: backend, Handler: handler, Log: log}
+	go onlineEvaluationWorker.Run(ctx)
+	driftWorker := &outbound.AIQualityDriftWorker{Store: backend, Metrics: outboundMetrics, Log: log}
+	go driftWorker.Run(ctx)
 	// ADR-20261019152416: enforced GitOps candidates cannot reach the gateway,
 	// so their outbound bindings are probed here and receipted for activation.
 	qualificationWorker := &outbound.QualificationProbeWorker{Store: state.NewPgStore(pool), Handler: handler, Log: log}

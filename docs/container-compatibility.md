@@ -249,7 +249,38 @@ to the built image as a Dockerfile's USER, WORKDIR and STOPSIGNAL would be.
 
 `env_file` contributes variable names only. The scan lists them as required
 environment keys, exactly like `environment:`; values never leave the source,
-so set them with `gregale env set` or secrets. An env file missing from the
+so set them with `gregale env set` or secrets. The project plan shows, per
+service, each name that will have no value in the target environment under
+**Needs a value**: names already configured on the app, supplied by
+`--secrets-file`, or set by Gregale itself (`PORT`, `GREGALE_*`) are left out.
+
+A Compose file can opt in to importing the plain values of `environment:`
+([ADR-20261023085230](adr/20261023085230-compose-env-import.md)):
+
+```yaml
+x-gregale-env-import: true
+services:
+  api:
+    build: ./api
+    environment:
+      LOG_LEVEL: info                   # imported
+      STRIPE_KEY: sk_test_example       # not imported: looks like a secret
+      BILLING_URL: http://billing:8080  # not imported: Docker service address
+```
+
+A reviewed project apply (`gregale deploy`, the dashboard, or
+`gregale deploy --repo … --project`) writes each imported value into the
+service's app, in the deploy's environment, before any build starts; a GitHub
+push deploy imports nothing. Values are written only where the key is still unset: a
+value configured on the app, as a variable or a secret, is never replaced. The
+plan lists imported names under **Imported from Compose** and gives the reason
+for each value it skips: a secret-looking key or value, an address of another
+Compose service or the local machine, `$` interpolation, an entry read from the
+host, or an empty value. Values never appear in the plan, logs or audit events.
+`env_file` values are never imported. `compose.override.yaml` is part of the
+Compose model, so its values are imported too; keep local-only settings out of
+an opted-in project. Without the opt-in the plan marks importable values as
+"plain value in Compose" and shows the line that imports them. An env file missing from the
 source (for example a git-ignored `.env`) is a warning, or silent with
 `required: false`. Quoted values, including multi-line double- or
 single-quoted ones, are read to their closing quote; a malformed line is
@@ -311,6 +342,65 @@ never stored in the image, its cache or Gregale's records; a build whose
 secret is not set fails with its name. Builds with secrets run on a fresh
 builder. At most 16 secrets per build (`DockerfileBuildSecretsMax`).
 
+A service's own `secrets` become files in `/run/secrets`
+([ADR-20261023090000](adr/20261023090000-compose-runtime-secret-files.md)):
+
+```yaml
+services:
+  db-client:
+    image: example/app:1
+    environment:
+      DB_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password                 # /run/secrets/db_password, mode 0444
+      - source: api_key
+        target: api.key             # /run/secrets/api.key
+        mode: 0400
+secrets:
+  db_password:
+    environment: DB_PASSWORD        # gregale secrets set DB_PASSWORD
+  api_key:
+    environment: API_KEY
+```
+
+Each entry names a top-level secret declared with `environment: NAME`; the file
+holds the secret the app receives as `NAME`, which is also in its environment.
+`target` is a file name in `/run/secrets` (an absolute path there is the same);
+a target elsewhere, a `file:` or external source is left out with a warning,
+and an undeclared name fails the scan. `mode` defaults to `0444`; the file is
+owned by the user the service runs as, and `uid`/`gid` are ignored. The files
+live in a memory-backed `/run/secrets` written before the service starts. An
+image that opts into live secret reload gets them rewritten with each new
+value; otherwise they change on the next start. A secret that is not set has
+no file. Only the service's main process gets the files, not sidecars, jobs or
+app tasks. At most 16 files per service (`SecretFilesMax`).
+
+A service's size and count set its app's settings
+([ADR-20261023120000](adr/20261023120000-compose-deploy-resources.md)):
+
+```yaml
+services:
+  api:
+    image: example/api:1
+    deploy:
+      replicas: 3                   # max_concurrency 3 (instances still park when idle)
+      resources:
+        limits:
+          memory: 512M              # ram_mb 512
+          cpus: "0.5"               # cpu_millicores 500
+```
+
+`memory` (or `mem_limit`) takes bytes or a `k`, `m`, `g` suffix in powers of
+1024 and is rounded up to whole MiB; more than the plan's RAM per app fails the
+plan. `cpus` (or the service-level `cpus`) is rounded up to an app CPU share,
+0.25, 0.5 or 1, with a warning; more than 1 is lowered to 1. `replicas` (or
+`scale`) caps a request-mode app's instances and fixes a worker's or service's
+replica count, within the plan's cap for that mode; it does not apply to jobs,
+and `replicas: 0` is ignored with a warning. Declared values are written on
+every apply and replace values set with `gregale app <slug> --ram` and the like; settings the
+file does not declare keep the app's. Reservations and the other `deploy` keys
+are warned.
+
 `extends` and top-level `include` are resolved as Compose resolves them
 ([ADR-20261019190527](adr/20261019190527-compose-extends-and-include.md)):
 
@@ -337,12 +427,12 @@ The scan reports every other Compose key instead of dropping it silently:
 
 | Keys | Result |
 |---|---|
-| `build` (`context`, `dockerfile`, `args`, `target`, `secrets`), `command`, `depends_on`, `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `ports`, `profiles`, `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied. |
+| `build` (`context`, `dockerfile`, `args`, `target`, `secrets`), `command`, `cpus`, `depends_on`, `deploy` (`replicas`, `resources.limits.memory`, `resources.limits.cpus`), `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `mem_limit`, `ports`, `profiles`, `scale`, `secrets` (`environment:` sources), `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied. |
 | `container_name`, `init`, `stdin_open`, `tty`, `platform: linux/amd64`, `x-*` extensions | Ignored without a warning; they have no effect on a microVM service. |
 | `volumes`, `tmpfs` | Warning: no persistent volumes or bind mounts; each start gets a fresh filesystem. |
-| `deploy`, `scale`, `cpus`, `mem_limit` and other resource keys | Warning: CPU, memory and replicas come from the plan and app scaling. |
+| Other `deploy` keys (`restart_policy`, `placement`, `update_config`, `resources.reservations`, …), `cpu_shares`, `cpu_quota`, `cpuset`, `mem_reservation`, `memswap_limit` | Warning, with the reason for each. |
 | `restart` | Warning: the platform starts, parks and restarts services. |
-| `secrets`, `configs` | Warning: use `gregale secrets set` or environment variables. |
+| `configs` | Warning: build the file into the image or use environment variables. |
 | `networks`, `network_mode`, `links`, `external_links` | Warning: services reach each other through `depends_on` service bindings. |
 | `cap_add`, `privileged`, `devices`, `security_opt`, `ulimits` and other kernel controls | Warning: each service runs in its own microVM. |
 | `dns`, `extra_hosts`, `hostname` and other guest networking keys | Warning: guest networking is managed by the platform. |

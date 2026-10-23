@@ -101,7 +101,7 @@ var computeOnly = []string{RoleCompute}
 var bothRoles = []string{RoleControlPlane, RoleCompute}
 
 var registry = []Spec{
-	{Domain: Runtime, Readers: []string{"vmmd"}, Roles: computeOnly, Columns: join(
+	{Domain: Runtime, Readers: []string{"vmmd"}, Roles: computeOnly, Wired: true, Columns: join(
 		cols("app_secrets", "ciphertext"),
 		cols("project_environment_secrets", "ciphertext"),
 		cols("app_config_guard_secrets", "ciphertext"),
@@ -118,11 +118,11 @@ var registry = []Spec{
 		cols("outbound_integration_credentials", "authorization_sealed"),
 		cols("outbound_integration_credential_keys", "authorization_sealed"),
 	)},
-	{Domain: Build, Readers: []string{"imaged"}, Roles: computeOnly, Columns: join(
+	{Domain: Build, Readers: []string{"imaged"}, Roles: computeOnly, Wired: true, Columns: join(
 		cols("app_registry_credentials", "password_encrypted"),
 		cols("job_registry_credentials", "password_encrypted"),
 	)},
-	{Domain: Source, Readers: []string{"githubd"}, Roles: cpOnly, Columns: join(
+	{Domain: Source, Readers: []string{"githubd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("github_installations", "sealed_install_token"),
 		cols("github_webhook_secrets", "secret_sealed"),
 	)},

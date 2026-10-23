@@ -88,6 +88,13 @@ func TestListPaginationCommandContract(t *testing.T) {
 					}
 					var cursors []string
 					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						// Human `invocations list` resolves each row's app slug
+						// (Hunt 12 H12-33); that lookup is not part of the
+						// invocation pagination this test pins.
+						if kind == "invocations" && !machine && r.Method == http.MethodGet && r.URL.Path == "/v1/apps" {
+							_, _ = w.Write([]byte(`[]`))
+							return
+						}
 						if r.Method != http.MethodGet || r.URL.Path != path || r.URL.Query().Get("limit") != "2" {
 							t.Errorf("request=%s %s", r.Method, r.URL.String())
 						}

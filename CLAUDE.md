@@ -140,6 +140,8 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
 - Tenant egress: deny 25/465/587, deny RFC1918 + link-local + metadata ranges.
 - No shared host directories with guests — block devices only. virtio-rng always attached.
 - Post-restore resume hook must re-seed entropy + step clock before readiness (test V6).
+- Only migrations run as the schema owner `faas`. Daemons log in as `faas_runtime` members
+  (`FAAS_DB_ROLE`): row DML only — never grant them DDL, TRUNCATE or ledger writes (ADR-20261023104734).
 
 ## Workflow
 

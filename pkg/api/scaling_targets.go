@@ -238,6 +238,21 @@ func ErrScalingTargetConflict() *Problem {
 		"scaling policy sets both target and targets; use targets (target is the single-signal form of the same field).")
 }
 
+// ValidatePerInstanceConcurrency bounds scaling_policy.per_instance_concurrency
+// (ADR-20261022203523) to [0, the plan's concurrency_per_vm]. Zero means the
+// plan bound. The problem carries the limit and the requested value.
+func ValidatePerInstanceConcurrency(plan Plan, requested int) *Problem {
+	limit := plan.ConcurrencyPerVMBound()
+	if requested >= 0 && requested <= limit {
+		return nil
+	}
+	return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+		"Invalid scaling policy",
+		fmt.Sprintf("per_instance_concurrency must be between 0 and %d (the %s plan's concurrency_per_vm); got %d. 0 uses the plan bound.", limit, plan, requested)).
+		WithLimit(int64(limit), int64(requested)).
+		WithDocs(docsBase + "/scaling-policy#requests-per-instance")
+}
+
 // validCustomMetricName mirrors the app_custom_metrics_name_shape CHECK in
 // the migration. Enforced in Go as well as in the database so a customer
 // gets a 422 naming the rule rather than a constraint violation, and so the

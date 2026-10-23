@@ -410,7 +410,9 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-044: see PlanFree. Hobby's tight quota is the
 			// load-bearing signal in the cpu-fairness e2e (cmd/e2e/cpu_fairness_test.go).
 			CPUWeight: 4, CPUQuotaUS: 200_000, CPUPeriodUS: 200_000,
-			MaxQueueDepth: 5, MaxDelayedTasksPerApp: 5, MaxSourceBytesPerInvocation: 64 * 1024, AsyncInvokeAllowed: true,
+			MaxQueueDepth: 10_000, MaxDelayedTasksPerApp: 5, MaxSourceBytesPerInvocation: 64 * 1024, AsyncInvokeAllowed: true,
+			// ADR-20261022105723: 100 MiB of pending queue messages per account, kept 1 day.
+			MaxQueueBacklogBytesPerAccount: 100 << 20, QueueMessageRetentionSeconds: 86_400,
 			// Issue #394: Hobby gets 3 retries before dead-letter — a
 			// poisoned row exits within ~15s at the default 5s backoff
 			// without thrashing the worker for long.
@@ -579,7 +581,9 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MinInstancesAllowed: true, CustomMetricsAllowed: true, MaxInstancesAllowed: true,
 			// ADR-044: see PlanFree.
 			CPUWeight: 8, CPUQuotaUS: 500_000, CPUPeriodUS: 500_000,
-			MaxQueueDepth: 25, MaxDelayedTasksPerApp: 50, MaxSourceBytesPerInvocation: 256 * 1024, AsyncInvokeAllowed: true,
+			MaxQueueDepth: 100_000, MaxDelayedTasksPerApp: 50, MaxSourceBytesPerInvocation: 256 * 1024, AsyncInvokeAllowed: true,
+			// ADR-20261022105723: 1 GiB of pending queue messages per account, kept 4 days.
+			MaxQueueBacklogBytesPerAccount: 1 << 30, QueueMessageRetentionSeconds: 4 * 86_400,
 			// Issue #394: Pro gets 10 retries — 5× Hobby's budget.
 			// Tolerates a transient downstream flap while still bounding
 			// the "permanently bad payload" worker cost.
@@ -601,9 +605,10 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Cron: Pro gets 20 per-app and 50 per-account.
 			CronLimitPerApp: 20, CronLimitPerAccount: 50,
 			// M-2 / ADR-137+138: Pro doubles Hobby (60 s grace,
-			// 60 s deadline, 10 retries). 3 workers, 5 service
+			// 10 retries); the startup deadline is the 30 s cold-boot
+			// window (ADR-138 amendment). 3 workers, 5 service
 			// replicas, 30-min job runtime.
-			DefaultStopGracePeriodS: 60, DefaultStartupDeadlineS: 60, DefaultMaxRetries: 10,
+			DefaultStopGracePeriodS: 60, DefaultStartupDeadlineS: 30, DefaultMaxRetries: 10,
 			WorkerReplicasMax: 3, ServiceReplicasMax: 5, JobMaxRuntimeS: 1800,
 			// Issue #475: Pro gets 2 reserved-tier apps.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 2,
@@ -742,7 +747,9 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// upper bound — 10 vCPU worth of compute at the per-instance
 			// level, gated by the §1 56 GB hard fence at the slice level.
 			CPUWeight: 16, CPUQuotaUS: 1_000_000, CPUPeriodUS: 1_000_000,
-			MaxQueueDepth: 100, MaxDelayedTasksPerApp: 1_000_000, MaxSourceBytesPerInvocation: 1024 * 1024, AsyncInvokeAllowed: true,
+			MaxQueueDepth: 1_000_000, MaxDelayedTasksPerApp: 1_000_000, MaxSourceBytesPerInvocation: 1024 * 1024, AsyncInvokeAllowed: true,
+			// ADR-20261022105723: 10 GiB of pending queue messages per account, kept 14 days.
+			MaxQueueBacklogBytesPerAccount: 10 << 30, QueueMessageRetentionSeconds: 14 * 86_400,
 			// Issue #394: Scale gets 25 retries — 2.5× Pro's budget, but
 			// capped so a genuinely-bad payload still terminates within
 			// the worker's hourly budget window.
@@ -767,9 +774,10 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Cron: Scale gets 100 per-app and 500 per-account.
 			CronLimitPerApp: 100, CronLimitPerAccount: 500,
 			// M-2 / ADR-137+138: Scale doubles Pro (120 s grace,
-			// 120 s deadline, 20 retries). 10 workers, 20
-			// service replicas, 1-h job runtime.
-			DefaultStopGracePeriodS: 120, DefaultStartupDeadlineS: 120, DefaultMaxRetries: 20,
+			// 20 retries); the startup deadline is the 30 s cold-boot
+			// window (ADR-138 amendment). 10 workers, 20 service
+			// replicas, 1-h job runtime.
+			DefaultStopGracePeriodS: 120, DefaultStartupDeadlineS: 30, DefaultMaxRetries: 20,
 			WorkerReplicasMax: 10, ServiceReplicasMax: 20, JobMaxRuntimeS: 3600,
 			// Issue #475: Scale gets 4 reserved-tier apps.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 4,

@@ -6,6 +6,7 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -43,6 +44,22 @@ type Config struct {
 	// ResourceJournalDir persists lease intent and process incarnations before
 	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
 	ResourceJournalDir string `toml:"resource_journal_dir"`
+	// AdoptionRecord writes version-7 adoption blocks into the resource
+	// journal (vmmd restart adoption ADR, slice 1). Older vmmd binaries
+	// refuse to open a journal holding version 7, so turn it on only after
+	// every compute node, and any rollback target, runs a version-7 reader.
+	// Ignored with native_process_recovery.
+	AdoptionRecord bool `toml:"adoption_record"`
+	// AdoptRunningVMs adopts restart survivors whose records prove ownership
+	// instead of quarantining them (vmmd restart adoption ADR, slice 2).
+	// Requires adoption_record, so the next restart can adopt too.
+	// Experimental until the fsn-4 adoption acceptance (slice 5) passes.
+	AdoptRunningVMs bool `toml:"adopt_running_vms"`
+	// AdoptAdmittedRuntimes also adopts guests booted under an ADR-595
+	// runtime-admission receipt; schedd then re-binds their admission to
+	// this process (docs/adr/20261018-runtime-admission-rebind.md). Off,
+	// they are refused and re-admitted. Requires adopt_running_vms.
+	AdoptAdmittedRuntimes bool `toml:"adopt_admitted_runtimes"`
 	// FailureReportDir is persistent root-owned storage for liveness/OOM
 	// reports (ADR-471). Keep it outside /run and the Firecracker jail tmpfs.
 	FailureReportDir string `toml:"failure_report_dir"`
@@ -581,6 +598,12 @@ func LoadConfig(path string) (*Config, error) {
 	if c.NativeProcessRecovery && !preparedNetworksSet {
 		c.PreparedNetworks = 0
 	}
+	if c.AdoptAdmittedRuntimes && !c.AdoptRunningVMs {
+		return nil, errors.New("vmmd: adopt_admitted_runtimes requires adopt_running_vms = true")
+	}
+	if err := validateAdoptionConfig(c.AdoptionRecord, c.AdoptRunningVMs, c.NativeProcessRecovery); err != nil {
+		return nil, err
+	}
 	if err := validateNativeSnapshotPublicationConfig(c.NativeProcessRecovery, c.NativeSnapshotPublicationRoot); err != nil {
 		return nil, err
 	}
@@ -893,6 +916,16 @@ func LoadConfig(path string) (*Config, error) {
 		}
 	}
 	return c, nil
+}
+
+func validateAdoptionConfig(record, adopt, nativeRecovery bool) error {
+	if adopt && !record {
+		return errors.New("vmmd: adopt_running_vms requires adoption_record = true")
+	}
+	if adopt && nativeRecovery {
+		return errors.New("vmmd: adopt_running_vms is not available with native_process_recovery")
+	}
+	return nil
 }
 
 func validateNativeSnapshotPublicationConfig(nativeRecovery bool, root string) error {

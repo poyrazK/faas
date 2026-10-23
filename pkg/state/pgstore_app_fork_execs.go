@@ -105,6 +105,19 @@ func (s *PgStore) FailOrphanedAppForkExecs(ctx context.Context, grace time.Durat
 	return out, nil
 }
 
+func (s *PgStore) ClearExpiredAppForkExecOutput(ctx context.Context, retention time.Duration, now time.Time, limit int) (int, error) {
+	if limit < 1 {
+		return 0, nil
+	}
+	cleared, err := sqlc.New().ClearExpiredAppForkExecOutput(ctx, s.pool, sqlc.ClearExpiredAppForkExecOutputParams{
+		Now: pgTime(now), Cutoff: pgTime(now.Add(-retention)), BatchLimit: int32(min(limit, 10000)), //nolint:gosec // bounded above
+	})
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	return int(cleared), nil
+}
+
 func nonNilBytes(b []byte) []byte {
 	if b == nil {
 		return []byte{}

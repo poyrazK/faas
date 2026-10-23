@@ -258,12 +258,13 @@ func (s *server) collectFleetObservedRoutes(ctx context.Context, appID string) o
 }
 
 func (s *server) collectLegacyObservedRoutes(ctx context.Context, appID, slug string) observedRoutesSnapshot {
-	if s.gatewaydControlURL == "" {
+	controlURL := s.gatewayControlURL(ctx)
+	if controlURL == "" {
 		return unavailableObservedRoutes(0)
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, routesDialTimeout)
 	defer cancel()
-	endpoint, err := url.JoinPath(s.gatewaydControlURL, "v1", "internal", "apps", slug, "routes")
+	endpoint, err := url.JoinPath(controlURL, "v1", "internal", "apps", slug, "routes")
 	if err != nil {
 		return unavailableObservedRoutes(1)
 	}

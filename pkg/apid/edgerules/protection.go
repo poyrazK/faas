@@ -164,6 +164,21 @@ func edgeProtectionQueries(resp *api.EdgeProtectionResponse, appID, rng string) 
 			},
 		},
 		{
+			"sum by (app) " + windowedCount(fmt.Sprintf(`gateway_edge_challenge_raised_total{app=%q}`, appID), rng),
+			func(_ map[string]string, count int64) { resp.Challenge.Raised += count },
+		},
+		{
+			"sum by (outcome) " + windowedCount(fmt.Sprintf(`gateway_edge_penalty_total{app=%q}`, appID), rng),
+			func(labels map[string]string, count int64) {
+				switch labels["outcome"] {
+				case "boxed":
+					resp.Penalty.Boxed += count
+				case "rejected":
+					resp.Penalty.Rejected += count
+				}
+			},
+		},
+		{
 			"sum by (category) " + windowedCount(fmt.Sprintf(`gateway_waf_detections_total{app=%q}`, appID), rng),
 			func(labels map[string]string, count int64) {
 				resp.WAF.Categories = append(resp.WAF.Categories, api.EdgeProtectionCount{Name: labels["category"], Count: count})

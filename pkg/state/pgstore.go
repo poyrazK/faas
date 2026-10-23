@@ -4795,6 +4795,22 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	if activeBuckets != 0 {
 		return ErrConflict
 	}
+	// A live managed PostgreSQL binding still owns provider credentials, and
+	// a dispatched, unsettled multipart part writer is an uncertain backend
+	// write that ADR-590 retains. Both keep the app until they finish; their finished
+	// rows (deleted bindings, settled writers) are removed below. Without
+	// that, the RESTRICT keys failed every purge and the grace sweep retried
+	// the same apps every minute forever (Hunt 11 H11-21).
+	var retained int
+	if err := tx.QueryRow(ctx,
+		`select (select count(*) from managed_postgres_bindings where app_id = $1 and state <> 'deleted')
+		      + (select count(*) from object_multipart_part_writers w join object_buckets b on b.id = w.bucket_id
+		          where b.app_id = $1 and w.dispatched and not w.settled)`, id).Scan(&retained); err != nil {
+		return fmt.Errorf("state: count app retained resources: %w", err)
+	}
+	if retained != 0 {
+		return ErrConflict
+	}
 	var exists int
 	if err := tx.QueryRow(ctx,
 		`select 1 from apps where id = $1 and status = 'deleted' and delete_grace_until <= now() and purge_claimed_at is not null for update`, id).Scan(&exists); err != nil {
@@ -4812,6 +4828,12 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 		sql  string
 	}{
 		{"object_storage_access_grants", `delete from object_storage_access_grants where bucket_id in (select id from object_buckets where app_id = $1)`},
+		// Settled or never-dispatched multipart writers (the uncertain ones
+		// refused the purge above) and the mutations naming them; the bucket
+		// delete would cascade those mutations, but the writers' RESTRICT key
+		// on the bucket comes first.
+		{"object_bucket_mutations", `delete from object_bucket_mutations where multipart_part_writer_id in (select w.id from object_multipart_part_writers w join object_buckets b on b.id = w.bucket_id where b.app_id = $1)`},
+		{"object_multipart_part_writers", `delete from object_multipart_part_writers where bucket_id in (select id from object_buckets where app_id = $1)`},
 		{"object_buckets", `delete from object_buckets where app_id = $1`},
 		{"invocations", `delete from invocations where app_id = $1`},
 		{"crons", `delete from crons where app_id = $1`},
@@ -4842,6 +4864,10 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 		{"snapshots", `delete from snapshots where deployment_id in (select id from deployments where app_id = $1)`},
 		{"builds", `delete from builds where deployment_id in (select id from deployments where app_id = $1)`},
 		{"deployments", `delete from deployments where app_id = $1`},
+		// Deleted managed PostgreSQL binding tombstones (only those remain, see
+		// above), as account deletion removes them; their app secrets went
+		// with app_secrets.
+		{"managed_postgres_bindings", `delete from managed_postgres_bindings where app_id = $1 and state = 'deleted'`},
 	}
 	for _, step := range steps {
 		if _, err := tx.Exec(ctx, step.sql, id); err != nil {
@@ -5870,13 +5896,15 @@ func (s *PgStore) ApplyProjectReconcile(
 	for _, mutation := range mutations {
 		switch mutation.Op {
 		case "update":
+			// Declared Compose resources (ADR-20261023120000): with
+			// SetResources, each positive value replaces its column.
 			app := mutation.App
 			rootDir, workloadName := app.RootDir, app.WorkloadName
 			manifestBytes, marshalErr := json.Marshal(app.Manifest)
 			if marshalErr != nil {
 				return ProjectReconcileResult{}, fmt.Errorf("state: marshal project app manifest: %w", marshalErr)
 			}
-			updated, err := scanApp(tx.QueryRow(ctx, `update apps set root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $7, platform_tenant_required = case when $8 then $9 else platform_tenant_required end where id = $1 and project_id = $6 and preview_of_slug is null and status <> 'deleted' returning `+appsSelectColumns, app.ID, rootDir, workloadName, string(app.WorkloadClass), nullString(app.StartCommand), project.ID, manifestBytes, mutation.SetPlatformTenantRequired, app.PlatformTenantRequired))
+			updated, err := scanApp(tx.QueryRow(ctx, `update apps set root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $7, platform_tenant_required = case when $8 then $9 else platform_tenant_required end, ram_mb = case when $10 and $11 > 0 then $11 else ram_mb end, cpu_millicores = case when $10 and $12 > 0 then $12 else cpu_millicores end, max_concurrency = case when $10 and $13 > 0 then $13 else max_concurrency end where id = $1 and project_id = $6 and preview_of_slug is null and status <> 'deleted' returning `+appsSelectColumns, app.ID, rootDir, workloadName, string(app.WorkloadClass), nullString(app.StartCommand), project.ID, manifestBytes, mutation.SetPlatformTenantRequired, app.PlatformTenantRequired, mutation.SetResources, app.RAMMB, app.CPUMillicores, app.MaxConcurrency))
 			if err != nil {
 				return ProjectReconcileResult{}, mapErr(err)
 			}
@@ -5901,7 +5929,7 @@ func (s *PgStore) ApplyProjectReconcile(
 				if marshalErr != nil {
 					return ProjectReconcileResult{}, fmt.Errorf("state: marshal restored project app manifest: %w", marshalErr)
 				}
-				restored, restoreErr := scanApp(tx.QueryRow(ctx, `update apps set status = 'active', deleted_at = null, delete_grace_until = null, root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $6, platform_tenant_required = case when $7 then $8 else platform_tenant_required end where id = $1 returning `+appsSelectColumns, tombstone.ID, tombstone.RootDir, tombstone.WorkloadName, string(tombstone.WorkloadClass), nullString(tombstone.StartCommand), manifestBytes, mutation.SetPlatformTenantRequired, app.PlatformTenantRequired))
+				restored, restoreErr := scanApp(tx.QueryRow(ctx, `update apps set status = 'active', deleted_at = null, delete_grace_until = null, root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $6, platform_tenant_required = case when $7 then $8 else platform_tenant_required end, ram_mb = case when $9 and $10 > 0 then $10 else ram_mb end, cpu_millicores = case when $9 and $11 > 0 then $11 else cpu_millicores end, max_concurrency = case when $9 and $12 > 0 then $12 else max_concurrency end where id = $1 returning `+appsSelectColumns, tombstone.ID, tombstone.RootDir, tombstone.WorkloadName, string(tombstone.WorkloadClass), nullString(tombstone.StartCommand), manifestBytes, mutation.SetPlatformTenantRequired, app.PlatformTenantRequired, mutation.SetResources, app.RAMMB, app.CPUMillicores, app.MaxConcurrency))
 				if restoreErr != nil {
 					return ProjectReconcileResult{}, mapErr(restoreErr)
 				}
@@ -15909,7 +15937,7 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 	if err != nil {
 		return Invocation{}, err
 	}
-	if info.environment.ID == "" && inv.AdmissionMaxPending <= 0 {
+	if info.environment.ID == "" && inv.AdmissionMaxPending <= 0 && inv.AdmissionMaxBacklogBytes <= 0 {
 		return enqueueInvocationRow(ctx, s.pool, inv)
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -17011,15 +17039,16 @@ func (s *PgStore) CountInstanceInvocationsInMinute(ctx context.Context, instance
 // (Fail allows the retry path) but the instance_id stamp must
 // only land while the row is dispatching — after that the row is
 // either terminal or back in pending with no instance binding.
+//
+// The stamp commits without waiting for its WAL flush
+// (stamp_invocation_instance): a crash can lose only the last stamps, which
+// feed the meter's fallback count, and the rows they were on are requeued.
 func (s *PgStore) StampInstanceInvocation(ctx context.Context, id, instanceID string) error {
-	tag, err := s.pool.Exec(ctx, `
-		update invocations
-		   set instance_id = $2
-		 where id = $1 and state = 'dispatching'`, id, instanceID)
-	if err != nil {
+	var stamped bool
+	if err := s.pool.QueryRow(ctx, `select stamp_invocation_instance($1, $2)`, id, instanceID).Scan(&stamped); err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if !stamped {
 		return ErrNotFound
 	}
 	return nil
@@ -20490,10 +20519,14 @@ func (s *PgStore) ListCustomerEvents(ctx context.Context, filter CustomerEventFi
 //
 // Resolve the app first, then build a bounded candidate set from the event
 // identity keys (app, deployment, build, and the two instance aliases). Each
-// branch is driven by an expression index on the event payload and compares
-// relationship columns as UUIDs (rather than casting indexed UUID columns to
-// text). UNION removes the rare duplicate where an event carries more than
-// one app identity. The account/anonymous subject policy and user filters
+// branch starts from the app's own deployments, builds or instances and looks
+// events up through the expression index on that payload key with the
+// related id in canonical text form. Driving from events instead (casting
+// each payload value to uuid) scanned every event carrying the key: 220k
+// instance_id events on production-us, past the request deadline, so the
+// filter always answered "Briefly at capacity" (Hunt 12 H12-44). UNION
+// removes the rare duplicate where an event carries more than one app
+// identity. The account/anonymous subject policy and user filters
 // remain identical to ListCustomerEvents.
 func (s *PgStore) listCustomerEventsByApp(ctx context.Context, filter CustomerEventFilter) ([]Event, error) {
 	appID, err := uuid.Parse(strings.TrimSpace(filter.AppID))
@@ -20519,49 +20552,33 @@ func (s *PgStore) listCustomerEventsByApp(ctx context.Context, filter CustomerEv
 			   AND e.data->>'app_id' = $1::text
 			UNION
 			SELECT e.id, e.at, e.actor, e.kind, e.subject, e.data
-			  FROM events e
-			  JOIN deployments d
-			    ON d.id = CASE
-					 WHEN e.data->>'deployment_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-					 THEN (e.data->>'deployment_id')::uuid
-					 ELSE NULL
-				   END
-			  JOIN owned_app a ON a.id = d.app_id
-			 WHERE e.data ? 'deployment_id'
+			  FROM owned_app a
+			  JOIN deployments d ON d.app_id = a.id
+			  JOIN events e
+			    ON e.data ? 'deployment_id'
+			   AND e.data->>'deployment_id' = d.id::text
 			UNION
 			SELECT e.id, e.at, e.actor, e.kind, e.subject, e.data
-			  FROM events e
-			  JOIN builds b
-			    ON b.id = CASE
-					 WHEN e.data->>'build_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-					 THEN (e.data->>'build_id')::uuid
-					 ELSE NULL
-				   END
-			  JOIN deployments d ON d.id = b.deployment_id
-			  JOIN owned_app a ON a.id = d.app_id
-			 WHERE e.data ? 'build_id'
+			  FROM owned_app a
+			  JOIN deployments d ON d.app_id = a.id
+			  JOIN builds b ON b.deployment_id = d.id
+			  JOIN events e
+			    ON e.data ? 'build_id'
+			   AND e.data->>'build_id' = b.id::text
 			UNION
 			SELECT e.id, e.at, e.actor, e.kind, e.subject, e.data
-			  FROM events e
-			  JOIN instances i
-			    ON i.id = CASE
-					 WHEN e.data->>'instance_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-					 THEN (e.data->>'instance_id')::uuid
-					 ELSE NULL
-				   END
-			  JOIN owned_app a ON a.id = i.app_id
-			 WHERE e.data ? 'instance_id'
+			  FROM owned_app a
+			  JOIN instances i ON i.app_id = a.id
+			  JOIN events e
+			    ON e.data ? 'instance_id'
+			   AND e.data->>'instance_id' = i.id::text
 			UNION
 			SELECT e.id, e.at, e.actor, e.kind, e.subject, e.data
-			  FROM events e
-			  JOIN instances i
-			    ON i.id = CASE
-					 WHEN e.data->>'instance' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-					 THEN (e.data->>'instance')::uuid
-					 ELSE NULL
-				   END
-			  JOIN owned_app a ON a.id = i.app_id
-			 WHERE e.data ? 'instance'
+			  FROM owned_app a
+			  JOIN instances i ON i.app_id = a.id
+			  JOIN events e
+			    ON e.data ? 'instance'
+			   AND e.data->>'instance' = i.id::text
 		)
 		SELECT id, at, actor, kind, subject, data
 		  FROM candidates
@@ -23109,41 +23126,48 @@ func (s *PgStore) PutIdempotent(ctx context.Context, accountID, key string, stat
 	return err
 }
 
-// ReserveIdempotent claims an Idempotency-Key before the request runs, so
-// two concurrent requests with one key cannot both execute. A new key, a
+// ReserveIdempotent claims an Idempotency-Key that is not bound to a request
+// fingerprint. See ReserveIdempotentRequest.
+func (s *PgStore) ReserveIdempotent(ctx context.Context, accountID, key string, abandonAfter time.Duration) (IdempotencyReservation, error) {
+	return s.ReserveIdempotentRequest(ctx, accountID, key, nil, abandonAfter)
+}
+
+// ReserveIdempotentRequest claims an Idempotency-Key before the request runs,
+// so two concurrent requests with one key cannot both execute. A new key, a
 // key whose last use is older than the 24 h replay window, or an in-flight
 // reservation older than abandonAfter (its request crashed) is reserved for
 // the caller as an in-flight row (response_status 0). Otherwise the caller
 // gets the completed response to replay, or InFlight while another request
 // still holds the key.
-func (s *PgStore) ReserveIdempotent(ctx context.Context, accountID, key string, abandonAfter time.Duration) (IdempotencyReservation, error) {
-	var reserved bool
-	err := s.pool.QueryRow(ctx,
-		`insert into idempotency_keys (key, account_id, response_status, response_body)
-		 values ($1, $2, 0, ''::bytea)
-		 on conflict (account_id, key) do update
-		    set response_status = 0, response_body = ''::bytea, request_digest = NULL, created_at = now()
-		  where idempotency_keys.created_at <= now() - interval '24 hours'
-		     or (idempotency_keys.response_status = 0
-		         and idempotency_keys.created_at <= now() - make_interval(secs => $3))
-		 returning true`,
-		key, accountID, abandonAfter.Seconds()).Scan(&reserved)
+//
+// A non-nil fingerprint (ADR-20261022204036) binds the key to the request.
+// While the key is in its window, a request whose fingerprint differs from
+// the bound one gets Conflict, never a replay, a wait or a takeover. A key
+// stored without a fingerprint (by an earlier release, or for a request too
+// large to fingerprint), or with one made under another key id, never
+// conflicts.
+func (s *PgStore) ReserveIdempotentRequest(ctx context.Context, accountID, key string, fingerprint []byte, abandonAfter time.Duration) (IdempotencyReservation, error) {
+	if fingerprint != nil && len(fingerprint) != IdempotencyFingerprintSize {
+		return IdempotencyReservation{}, errors.New("state: idempotency request fingerprint must be 32 bytes")
+	}
+	q := sqlc.New()
+	_, err := q.ReserveIdempotentRequest(ctx, s.pool, sqlc.ReserveIdempotentRequestParams{
+		Key: key, AccountID: accountID, RequestDigest: fingerprint, AbandonAfterSeconds: abandonAfter.Seconds(),
+	})
 	if err == nil {
 		return IdempotencyReservation{Reserved: true}, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return IdempotencyReservation{}, err
 	}
-	var res IdempotencyReservation
-	err = s.pool.QueryRow(ctx,
-		`select response_status, response_body from idempotency_keys
-		 where account_id = $1 and key = $2`,
-		accountID, key).Scan(&res.Status, &res.Body)
+	row, err := q.IdempotencyReceipt(ctx, s.pool, sqlc.IdempotencyReceiptParams{AccountID: accountID, Key: key})
 	if err != nil {
 		return IdempotencyReservation{}, err
 	}
-	res.InFlight = res.Status == 0
-	return res, nil
+	if idempotencyFingerprintsConflict(row.RequestDigest, fingerprint) {
+		return IdempotencyReservation{Conflict: true}, nil
+	}
+	return IdempotencyReservation{InFlight: row.ResponseStatus == 0, Status: int(row.ResponseStatus), Body: row.ResponseBody}, nil
 }
 
 // ReclaimIdempotent turns a completed response back into an in-flight

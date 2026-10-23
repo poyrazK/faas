@@ -897,12 +897,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.consumerCredits.Enabled, srv.consumerCredits.Released = monetizationOn, srv.apiMonetizationFor
 		srv.consumerControls.Enabled, srv.consumerControls.Released = monetizationOn, srv.apiMonetizationFor
 		srv.consumerSignup.Enabled = monetizationOn
-		srv.billingRuns.Start(ctx, log)                // ADR-1503
-		srv.statementInvoices.Start(ctx, log)          // ADR-1504
-		srv.consumerCredits.Start(ctx, log)            // ADR-1306
-		srv.consumerControls.Start(ctx, log)           // ADR-1315
-		srv.consumerSignup.Start(ctx, log)             // ADR-20261021143000
-		srv.productControl.StartOverdueHolds(ctx, log) // ADR-20261018212918
+		srv.billingRuns.Start(ctx, log)                   // ADR-1503
+		srv.statementInvoices.Start(ctx, log)             // ADR-1504
+		srv.consumerCredits.Start(ctx, log)               // ADR-1306
+		srv.consumerControls.Start(ctx, log)              // ADR-1315
+		srv.consumerSignup.Start(ctx, log)                // ADR-20261021143000
+		srv.productControl.StartOverdueHolds(ctx, log)    // ADR-20261018212918
+		srv.productControl.StartTrialResolution(ctx, log) // ADR-20261022180921
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		startPlatformFlagRamps(ctx, srv, log) // ADR 20261021080640
 		srv.startIssuesMaintenance(ctx)
@@ -1870,6 +1871,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// same-box install doesn't brick the per-route surface just
 	// because the operator never exported the env var.
 	srv.WithGatewaydControlURL(resolveGatewaydControlURL(deps.getenv))
+	srv.WithGatewaydControlFromRegistry(deps.getenv(gatewayControlFromRegistryEnv) == "1")
 	// ADR-156: same-box installs mirror durable realtime endpoint writes onto
 	// the local realtimed owner. Fleet installs replace it with the leased
 	// cross-node registrar below; the background reconciler repairs missed
@@ -2185,7 +2187,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// missing identity path.
 		srv.MarkRekeyRunnerOptedIn()
 		identities := mfaIdentities()
-		if len(identities) == 0 {
+		if blocked := runtimeSealDomainBlocksRekey(); blocked != nil {
+			log.Warn("FAAS_REKEY_ENABLED=true ignored: background re-seal disabled", "reason", blocked.Error())
+		} else if len(identities) == 0 {
 			log.Warn("FAAS_REKEY_ENABLED=true but no host age identities loaded — background re-seal disabled")
 		} else {
 			rekeyAudit := audit.New(store, log, nil, "rekey")

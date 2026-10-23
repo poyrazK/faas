@@ -649,6 +649,10 @@ const (
 	// navigation (ADR-831 amendment 7). A browser earns the pass by loading
 	// a page on the route; other clients need a verified credential.
 	CodeChallengeRequired = "challenge_required"
+	// CodePenaltyBox is returned by gatewayd for a request from a client
+	// an edge rule's penalty box holds (ADR-20261022105846). Retry-After
+	// says when the box ends.
+	CodePenaltyBox = "penalty_box"
 	// CodePreviewProductionDependencyDenied is returned by the internal
 	// service proxy when a project preview tries to call a production
 	// dependency while its preview_service_policy is deny. The rejection
@@ -674,10 +678,18 @@ const (
 	CodeRealtimeEntityVersionConflict  = "realtime_entity_version_conflict"
 	CodeRealtimeSequenceConflict       = "realtime_sequence_conflict"
 	CodeConflict                       = "conflict"
+	// CodeIdempotencyKeyReused (422, ADR-20261022204036): the request's
+	// Idempotency-Key was used within its 24 h replay window for a different
+	// request. Nothing ran, and the first request's result is kept.
+	CodeIdempotencyKeyReused = "idempotency_key_reused"
 
 	// ADR-961: an edge-rule mutation's If-Match named a rule-set version
 	// that is no longer the app's latest.
 	CodeEdgeRulesVersionMismatch = "edge_rules_version_mismatch"
+	// CodeEdgeFeatureUnavailable refuses configuring an edge rule feature
+	// (challenge rules, WAF warn and block, penalties) that its platform
+	// flag has not released to the account (ADR-20261023113721).
+	CodeEdgeFeatureUnavailable = "edge_feature_unavailable"
 	// ADR-963 reusable edge-rule lists.
 	CodeEdgeRuleListNotFound            = "edge_rule_list_not_found"
 	CodeEdgeRuleListExists              = "edge_rule_list_exists"
@@ -1288,6 +1300,9 @@ const (
 	// lets the dashboard render a "move to Scale to lift the cap"
 	// hint without parsing prose.
 	CodePlanQueueDepth = "plan_queue_depth"
+	// CodePlanQueueBacklogBytes: the account's pending queue messages hold
+	// the plan's MaxQueueBacklogBytesPerAccount (ADR-20261022105723).
+	CodePlanQueueBacklogBytes = "plan_queue_backlog_bytes"
 	// CodeCustomMetricLimit: a push of a NEW ADR-202 metric name by an app
 	// already at MaxCustomMetricsPerApp. A push to an EXISTING name never
 	// produces this — it is an upsert and cannot grow the count.
@@ -2024,7 +2039,7 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
-	case CodeAutomationInvalid:
+	case CodeAutomationInvalid, CodeEdgeFeatureUnavailable:
 		return http.StatusUnprocessableEntity
 	case CodeEdgeRulesVersionMismatch:
 		return http.StatusPreconditionFailed
@@ -2085,7 +2100,7 @@ func StatusForCode(code string) int {
 		return http.StatusServiceUnavailable
 	case CodeUnauthorized, CodeConsumerKeyRequired, CodeConsumerKeyInvalid, CodeConsumerKeyInactive:
 		return http.StatusUnauthorized
-	case CodeConsumerScopeMissing, CodePlatformTenantRequired, CodeChallengeRequired:
+	case CodeConsumerScopeMissing, CodePlatformTenantRequired, CodeChallengeRequired, CodePenaltyBox:
 		return http.StatusForbidden
 	case CodeSessionExpired, CodeSessionInvalid:
 		return http.StatusUnauthorized
@@ -2326,7 +2341,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeCliAuthUnavailable, CodeBrowserApprovalUnavailable:
 		return http.StatusGone
-	case CodePlanQueueDepth, CodePlanDelayedCap:
+	case CodePlanQueueDepth, CodePlanDelayedCap, CodePlanQueueBacklogBytes:
 		return http.StatusForbidden
 	case CodePlanSourceBytes:
 		return http.StatusRequestEntityTooLarge
@@ -2696,6 +2711,15 @@ func ErrCapacity(detail string) *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeCapacity,
 		"Briefly at capacity", detail).
 		WithDocs("https://gregale.dev/status")
+}
+
+// ErrIdempotencyKeyReused reports an Idempotency-Key sent with a request
+// other than the one it was first used for (ADR-20261022204036).
+func ErrIdempotencyKeyReused() *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeIdempotencyKeyReused,
+		"Idempotency-Key reused",
+		"this Idempotency-Key was used for a different request in the last 24 hours, whose result is kept; send a new key for a new request, or resend the original request unchanged to get its result").
+		WithDocs(docsBase + "/errors")
 }
 
 func ErrSafeReleaseUnavailable() *Problem {
@@ -6054,6 +6078,18 @@ func ErrPlanQueueDepth(limit, observed int) *Problem {
 		WithDocs(docsBase + "/event-driven#queue-depth")
 }
 
+// ErrPlanQueueBacklogBytes is returned on a queue send when the account's
+// pending queue messages already hold the plan's
+// MaxQueueBacklogBytesPerAccount (ADR-20261022105723). Observed is the
+// payload bytes they hold.
+func ErrPlanQueueBacklogBytes(limit, observed int64) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanQueueBacklogBytes,
+		"Account queue backlog full",
+		fmt.Sprintf("the plan caps this account's pending queue messages at %d bytes; observed %d.", limit, observed)).
+		WithLimit(limit, observed).
+		WithDocs(docsBase + "/event-driven#queue-backlog")
+}
+
 // ErrPlanSourceBytes is returned when a request body for an event-shaped
 // surface (sync / async / queue :send / delayed-task create) exceeds
 // the per-plan MaxSourceBytesPerInvocation.
@@ -6524,6 +6560,14 @@ func ErrEdgeRuleNotFound(id string) *Problem {
 func ErrEdgeRuleConflict(reason string) *Problem {
 	return NewProblem(http.StatusConflict, CodeEdgeRuleConflict,
 		"Edge rule conflict", reason)
+}
+
+// ErrEdgeFeatureUnavailable is the 422 returned when a rule would switch on
+// an edge feature its platform flag has not released to the account
+// (ADR-20261023113721). feature names it, capitalized, in the plural.
+func ErrEdgeFeatureUnavailable(feature string) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeEdgeFeatureUnavailable, "Edge feature not released",
+		feature+" are not yet available to this account. Rules that already use them can be edited, disabled and deleted.")
 }
 
 // ErrPlanLimitEdgeRules is the 403 returned when

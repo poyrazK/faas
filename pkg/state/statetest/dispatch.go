@@ -26,6 +26,9 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"DeleteAppPermanently":                   true,
+	"ListApplicationStandardRebinds":         true,
+	"RecordApplicationStandardRebind":        true,
 	"RestoreApp":                             true,
 	"RestoreAppWithActivity":                 true,
 	"AppTaskByID":                            true,
@@ -389,6 +392,15 @@ func (s *Mem) FinancialEvidenceCoverage(p0 context.Context) (time.Time, error) {
 		return o.FinancialEvidenceCoverage(p0)
 	}
 	return s.MemStore.FinancialEvidenceCoverage(p0)
+}
+
+func (s *Mem) DeleteAppPermanently(p0 context.Context, p1 string) error {
+	if o, ok := s.over.(interface {
+		DeleteAppPermanently(context.Context, string) error
+	}); ok {
+		return o.DeleteAppPermanently(p0, p1)
+	}
+	return s.MemStore.DeleteAppPermanently(p0, p1)
 }
 
 func (s *Mem) AppByID(p0 context.Context, p1 string) (state.App, error) {
@@ -1350,6 +1362,24 @@ func (s *Mem) WarmPoolReconciliationAppIDs(p0 context.Context, p1 string) ([]str
 		return o.WarmPoolReconciliationAppIDs(p0, p1)
 	}
 	return s.MemStore.WarmPoolReconciliationAppIDs(p0, p1)
+}
+
+func (s *Mem) ListApplicationStandardRebinds(p0 context.Context, p1 string) ([]state.ApplicationStandardRebind, error) {
+	if o, ok := s.over.(interface {
+		ListApplicationStandardRebinds(context.Context, string) ([]state.ApplicationStandardRebind, error)
+	}); ok {
+		return o.ListApplicationStandardRebinds(p0, p1)
+	}
+	return s.MemStore.ListApplicationStandardRebinds(p0, p1)
+}
+
+func (s *Mem) RecordApplicationStandardRebind(p0 context.Context, p1 state.ApplicationStandardRebind) error {
+	if o, ok := s.over.(interface {
+		RecordApplicationStandardRebind(context.Context, state.ApplicationStandardRebind) error
+	}); ok {
+		return o.RecordApplicationStandardRebind(p0, p1)
+	}
+	return s.MemStore.RecordApplicationStandardRebind(p0, p1)
 }
 
 func (s *Mem) DeploymentSidecarRAMs(p0 context.Context, p1 string) ([]int, error) {

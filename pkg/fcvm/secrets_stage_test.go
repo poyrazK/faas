@@ -303,7 +303,7 @@ func TestUnsealRuntimeSecretsBindsCiphertextToAuthorizedKey(t *testing.T) {
 	blob := sealEnv(t, id, secretbox.Envelope{"OTHER": "must-not-escape"})
 	m := newTestManager(&fakeRunner{}, &fakeVMM{})
 	m.SetHostIdentity(id)
-	secrets, err := m.UnsealRuntimeSecrets([]SealedEnvEntry{{Key: "DB_URL", Ciphertext: blob}})
+	secrets, err := m.UnsealRuntimeSecrets([]SealedEnvEntry{{Key: "DB_URL", Ciphertext: blob}}, "acct-1")
 	if err == nil {
 		t.Fatal("runtime unseal accepted ciphertext whose inner key differs from the allowlisted row")
 	}
