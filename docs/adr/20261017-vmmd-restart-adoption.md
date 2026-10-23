@@ -682,6 +682,12 @@ records.
     (`function_resources`).
   - Reset: console files being pre-opened, proven-worker marks (one full
     characterization window per deployment).
+- **State main added after 2026-10-22 (split into PRs 2026-10-23).**
+  - Refused: a production fork (ADR-732, `Lease.Quarantine`, reason
+    `production_fork`). Its quarantine lives on `Instance.Net`, which the
+    block does not carry, so a re-rendered netns would drop the fork's
+    quarantine chains. Forks are short-lived; refusing one keeps today's
+    quarantine.
 
 ## Invariants (§6.2)
 
