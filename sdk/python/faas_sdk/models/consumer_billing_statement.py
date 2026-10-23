@@ -28,6 +28,10 @@ class ConsumerBillingStatement:
     currency: str
     billable_units: int
     amount_millicents: int
+    credit_applied_millicents: int
+    """Prepaid credit drawn when the statement was finalized (ADR-20261020211500)."""
+    amount_due_millicents: int
+    """amount_millicents less credit_applied_millicents: what is left to pay."""
     finalized_at: datetime.datetime | Unset = UNSET
     invoice: ConsumerBillingInvoice | Unset = UNSET
     """The customer-facing view of a statement's exported invoice (ADR-1504)."""
@@ -48,6 +52,10 @@ class ConsumerBillingStatement:
 
         amount_millicents = self.amount_millicents
 
+        credit_applied_millicents = self.credit_applied_millicents
+
+        amount_due_millicents = self.amount_due_millicents
+
         finalized_at: str | Unset = UNSET
         if not isinstance(self.finalized_at, Unset):
             finalized_at = self.finalized_at.isoformat()
@@ -67,6 +75,8 @@ class ConsumerBillingStatement:
                 "currency": currency,
                 "billable_units": billable_units,
                 "amount_millicents": amount_millicents,
+                "credit_applied_millicents": credit_applied_millicents,
+                "amount_due_millicents": amount_due_millicents,
             }
         )
         if finalized_at is not UNSET:
@@ -95,6 +105,10 @@ class ConsumerBillingStatement:
 
         amount_millicents = d.pop("amount_millicents")
 
+        credit_applied_millicents = d.pop("credit_applied_millicents")
+
+        amount_due_millicents = d.pop("amount_due_millicents")
+
         _finalized_at = d.pop("finalized_at", UNSET)
         finalized_at: datetime.datetime | Unset
         if isinstance(_finalized_at, Unset):
@@ -117,6 +131,8 @@ class ConsumerBillingStatement:
             currency=currency,
             billable_units=billable_units,
             amount_millicents=amount_millicents,
+            credit_applied_millicents=credit_applied_millicents,
+            amount_due_millicents=amount_due_millicents,
             finalized_at=finalized_at,
             invoice=invoice,
         )

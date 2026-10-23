@@ -115851,7 +115851,7 @@ components:
     ConsumerBillingStatement:
       description: "One finalized statement as its consumer sees it."
       type: object
-      required: [id, period_start, period_end, revision, currency, billable_units, amount_millicents]
+      required: [id, period_start, period_end, revision, currency, billable_units, amount_millicents, credit_applied_millicents, amount_due_millicents]
       properties:
         id: { type: string, format: uuid }
         period_start: { type: string, format: date-time }
@@ -115860,6 +115860,8 @@ components:
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         billable_units: { type: integer, format: int64, minimum: 0 }
         amount_millicents: { type: integer, format: int64 }
+        credit_applied_millicents: { type: integer, format: int64, minimum: 0, description: "Prepaid credit drawn when the statement was finalized (ADR-20261020211500)." }
+        amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "amount_millicents less credit_applied_millicents: what is left to pay." }
         finalized_at: { type: string, format: date-time }
         invoice: { $ref: '#/components/schemas/ConsumerBillingInvoice' }
 
