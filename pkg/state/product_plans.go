@@ -31,6 +31,7 @@ type productPlanView struct {
 	customer      api.ProductCustomer
 	starts        map[string]int64
 	period        string
+	now           time.Time
 }
 
 func validateProductPlanScope(s ProductPlanScope) error {
@@ -76,7 +77,8 @@ func productPlanFeatures(v productPlanView) []string {
 
 func productPlanTerms(c api.ProductCatalog, name string, starts map[string]int64) api.ProductPlanTerms {
 	p := c.Spec.Plans[name]
-	out := api.ProductPlanTerms{Plan: name, Label: p.Label, Revision: c.Revision, Currency: c.Spec.Currency, Features: []api.ProductPlanFeatureTerms{}, MonthlyFeeMillicents: p.MonthlyFeeMillicents, TrialDays: p.TrialDays}
+	out := api.ProductPlanTerms{Plan: name, Label: p.Label, Revision: c.Revision, Currency: c.Spec.Currency, Features: []api.ProductPlanFeatureTerms{}, MonthlyFeeMillicents: p.MonthlyFeeMillicents, TrialDays: p.TrialDays,
+		RequiresPaymentMethod: p.RequiresPaymentMethod, FallbackPlan: p.FallbackPlan}
 	for feature, grant := range p.Features {
 		out.Features = append(out.Features, api.ProductPlanFeatureTerms{Name: feature, Label: c.Spec.Features[feature].Label, MonthlyStarts: grant.MonthlyStarts, UnitPriceMillicents: grant.UnitPriceMillicents, Starts: starts[feature], RemainingStarts: max(0, grant.MonthlyStarts-starts[feature]),
 			IncludedStarts: grant.IncludedStarts})
@@ -113,6 +115,9 @@ func productPlanPreview(s ProductPlanScope, v productPlanView, selection api.Pro
 	if !productcontrol.PlanOffered(v.head.Spec.SelfService, v.customer.Plan, selection.Plan) || selection.Plan == v.customer.Plan && v.customer.Revision == v.head.Revision {
 		return api.ProductPlanChangePreview{}, ErrProductPlanNotOffered
 	}
+	if productPlanNeedsPaymentMethod(v, selection.Plan) {
+		return api.ProductPlanChangePreview{}, ErrProductPaymentMethodRequired
+	}
 	selection.Revision = v.head.Revision
 	after := v.customer
 	after.Plan, after.Revision = selection.Plan, selection.Revision
@@ -142,4 +147,14 @@ func productPlanCursor(s ProductPlanScope, raw string) (productOwnerCursor, erro
 
 func productPlanReceipt(p api.ProductPlanChangePreview, role string) api.ProductPlanChangeReceipt {
 	return api.ProductPlanChangeReceipt{ID: p.Request.ID, Preview: p, ActorRole: role, EffectiveAt: time.Now().UTC().Truncate(time.Microsecond)}
+}
+
+// productPlanNeedsPaymentMethod refuses a self-service change to a plan that
+// requires a payment method, for a customer with none on file who would not
+// be in a trial after the change: neither one running nor one the change
+// starts (ADR-20261022180921).
+func productPlanNeedsPaymentMethod(v productPlanView, plan string) bool {
+	target := v.head.Spec.Plans[plan]
+	startsTrial := v.customer.TrialStartsAt == nil && target.TrialDays > 0
+	return target.RequiresPaymentMethod && v.customer.PaymentMethodAt == nil && !startsTrial && !v.customer.InTrial(v.now)
 }

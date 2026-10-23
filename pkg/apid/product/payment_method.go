@@ -44,9 +44,10 @@ func (s *Service) paymentMethodCustomer(w http.ResponseWriter, r *http.Request, 
 	return id, app, tenant.ExternalRef, true
 }
 
-// CustomerPaymentMethod shows the workspace's default invoice card.
+// CustomerPaymentMethod shows the workspace's default invoice card and
+// records whether one is on file (ADR-20261022180921).
 func (s *Service) CustomerPaymentMethod(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	_, _, customer, ok := s.paymentMethodCustomer(w, r, acct)
+	id, app, customer, ok := s.paymentMethodCustomer(w, r, acct)
 	if !ok {
 		return
 	}
@@ -57,6 +58,10 @@ func (s *Service) CustomerPaymentMethod(w http.ResponseWriter, r *http.Request, 
 	}
 	if problem != nil {
 		api.WriteProblem(w, problem)
+		return
+	}
+	if err := s.recordPaymentMethod(r.Context(), acct, app, id.TenantID, card != nil); err != nil {
+		respond(w, nil, err)
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusOK, api.ProductPaymentMethodView{Available: true, PaymentMethod: card})
@@ -103,7 +108,7 @@ func (s *Service) CustomerPaymentMethodCheckout(w http.ResponseWriter, r *http.R
 }
 
 // CustomerPaymentMethodComplete makes the card a returned Checkout saved the
-// workspace's default for invoices.
+// workspace's default for invoices, and records it on file.
 func (s *Service) CustomerPaymentMethodComplete(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.ProductPaymentMethodCompleteRequest
 	if !operation.DecodeOperationBody(w, r, &req, api.ProductControlAuthBodyBytes) {
@@ -120,6 +125,10 @@ func (s *Service) CustomerPaymentMethodComplete(w http.ResponseWriter, r *http.R
 	card, problem := s.CompletePaymentMethod(r.Context(), acct, customer, req.SessionID)
 	if problem != nil {
 		api.WriteProblem(w, problem)
+		return
+	}
+	if err := s.recordPaymentMethod(r.Context(), acct, app, id.TenantID, card != nil); err != nil {
+		respond(w, nil, err)
 		return
 	}
 	s.Host.EmitAudit(r.Context(), "product.customer.payment_method_saved", &acct.ID, map[string]any{"app_id": app.ID, "tenant_id": id.TenantID,

@@ -10885,6 +10885,8 @@ type ProductControlCustomer struct {
 	AuthOrganizationID pgtype.UUID
 	TrialStartsAt      pgtype.Timestamptz
 	TrialEndsAt        pgtype.Timestamptz
+	PaymentMethodAt    pgtype.Timestamptz
+	TrialResolvedAt    pgtype.Timestamptz
 }
 
 type ProductControlCustomerChange struct {
