@@ -27557,6 +27557,30 @@ func (q *Queries) HoldProjectEnvironmentCloneConfiguration(ctx context.Context, 
 	return i, err
 }
 
+const idempotencyReceipt = `-- name: IdempotencyReceipt :one
+SELECT response_status, response_body, request_digest
+FROM idempotency_keys
+WHERE account_id = $1::text::uuid AND key = $2::text
+`
+
+type IdempotencyReceiptParams struct {
+	AccountID string
+	Key       string
+}
+
+type IdempotencyReceiptRow struct {
+	ResponseStatus int32
+	ResponseBody   []byte
+	RequestDigest  []byte
+}
+
+func (q *Queries) IdempotencyReceipt(ctx context.Context, db DBTX, arg IdempotencyReceiptParams) (IdempotencyReceiptRow, error) {
+	row := db.QueryRow(ctx, idempotencyReceipt, arg.AccountID, arg.Key)
+	var i IdempotencyReceiptRow
+	err := row.Scan(&i.ResponseStatus, &i.ResponseBody, &i.RequestDigest)
+	return i, err
+}
+
 const incrementAppError = `-- name: IncrementAppError :one
 
 INSERT INTO app_errors (
@@ -87785,6 +87809,45 @@ func (q *Queries) ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accoun
 	var current_inflight int32
 	err := row.Scan(&current_inflight)
 	return current_inflight, err
+}
+
+const reserveIdempotentRequest = `-- name: ReserveIdempotentRequest :one
+INSERT INTO idempotency_keys (key, account_id, response_status, response_body, request_digest)
+VALUES ($1::text, $2::text::uuid, 0, ''::bytea, $3::bytea)
+ON CONFLICT (account_id, key) DO UPDATE
+   SET response_status = 0, response_body = ''::bytea, request_digest = excluded.request_digest, created_at = now()
+ WHERE idempotency_keys.created_at <= now() - interval '24 hours'
+    OR (idempotency_keys.response_status = 0
+        AND idempotency_keys.created_at <= now() - make_interval(secs => $4::double precision)
+        AND (idempotency_keys.request_digest IS NULL OR excluded.request_digest IS NULL
+             OR substring(idempotency_keys.request_digest, 1, 4) <> substring(excluded.request_digest, 1, 4)
+             OR idempotency_keys.request_digest = excluded.request_digest))
+RETURNING true::boolean AS reserved
+`
+
+type ReserveIdempotentRequestParams struct {
+	Key                 string
+	AccountID           string
+	RequestDigest       []byte
+	AbandonAfterSeconds float64
+}
+
+// Claims an Idempotency-Key bound to its request fingerprint
+// (ADR-20261022204036). A new key, a key past its 24 h replay window, or an
+// in-flight reservation older than abandon_after_seconds is reserved. An
+// abandoned reservation bound to another fingerprint under the same key id
+// (its first 4 bytes) is not taken over: the key stays bound to its first
+// request for the whole window.
+func (q *Queries) ReserveIdempotentRequest(ctx context.Context, db DBTX, arg ReserveIdempotentRequestParams) (bool, error) {
+	row := db.QueryRow(ctx, reserveIdempotentRequest,
+		arg.Key,
+		arg.AccountID,
+		arg.RequestDigest,
+		arg.AbandonAfterSeconds,
+	)
+	var reserved bool
+	err := row.Scan(&reserved)
+	return reserved, err
 }
 
 const reserveProjectSubmission = `-- name: ReserveProjectSubmission :execrows

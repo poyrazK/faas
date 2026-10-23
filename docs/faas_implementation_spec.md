@@ -415,7 +415,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 - Deploy inputs (three, ADR-004): `POST /v1/apps/{app}/deployments` with (a) tarball upload `source` (≤ 100 MB Free/Hobby, ≤ 250 MB Pro/Scale — reject larger with `413` and a docs link), (b) `dockerfile: true` flag if tarball root has one, or (c) `image: registry.gregale.dev/...@sha256:...` reference.
 - Function deploys: `type: function`, `runtime: node22 | node24 | python312 | python313 | go124 | go124-alpine | binary`, tarball contains `handler.{js,py}` (+ optional `package.json` / `requirements.txt`); a `binary` tarball contains a root `Dockerfile` whose image names one static executable inside `/app` (ADR-987). apid rewrites this into an App deployment using the runner scaffold (§4.9) and the same pipeline runs.
 - Validation enforces plan quotas *before* work happens: deployed-sandbox count, RAM size ≤ plan cap, concurrency setting ≤ plan cap.
-- Idempotency: `Idempotency-Key` header on all POSTs, stored 24 h.
+- Idempotency: `Idempotency-Key` header on all POSTs, stored 24 h. A key is bound to its first request; another request with the key gets `422 idempotency_key_reused` (ADR-20261022204036).
 - Never talks to vmmd/builderd directly — writes rows, notifies via `pg_notify`; owners poll/listen.
 - **Multi-workload repo decomposition (ADR-050) + blast-radius preview (ADR-124):** `POST /v1/projects/scan` (dry-run) and `POST /v1/projects` (apply) handle N-workload tarballs as a single transaction. The `PlanResponse` carries a partition so a single commit's blast radius is visible pre-apply — `will_deploy[]`, `unaffected[]`, `skipped[]`, and `removed[]` are the four sets, matched by `(RootDir, Name)` against the account's existing apps. CLI: `gregale scan --show-affected`, `gregale deploy --exclude=a,b`. Dashboard: `/dashboard/projects/{slug}/preview` (form + apply). Match key mirrors `pkg/reposcan.Workload.Key()` / `pkg/reconcile.diff.workloadDiff` so the wire and the apply engine agree byte-for-byte.
 
@@ -1972,6 +1972,13 @@ same values, so rules and panels aggregate with `max`. Alerts are `warn`
 | `schedd_customer_operations_outcome_unknown_accounts` | — | same | Accounts with an `execution_outcome_unknown` reconciliation in the last 900 s. Alert `FaasCustomerOperationOutcomesUnknown`: ≥ 3 for 5m. |
 | `schedd_customer_operations_telemetry_refreshed_timestamp_seconds` | — | same | When the snapshot was last read. |
 | `apid_customer_operation_webhook_events_total` | `mode`, `result` | `pkg/apid/operation/metrics.go` | Verified provider events on operation-bound endpoints; `result` is `accepted`, `duplicate`, `ignored`, `signaled`, `unmatched` or `refused` (non-2xx). |
+
+
+### 12.10 Idempotency-Key reuse (ADR-20261022204036)
+
+| Metric name | Labels | Producer | Semantics |
+|---|---|---|---|
+| `apid_idempotency_key_reused_total` | `route` | `pkg/apid/apidserver/idempotency_metrics.go` | Requests refused with `422 idempotency_key_reused` because their key was bound to a different request. `route` is the matched route pattern (`POST /v1/apps/{slug}/inbox`). A rising route names a client that reuses keys. |
 
 ---
 

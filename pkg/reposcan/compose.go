@@ -120,6 +120,9 @@ func rawComposeDoc(body []byte) (map[string]any, error) {
 
 type composeDoc struct {
 	Services map[string]composeCandidate `yaml:"services"`
+	// ServiceBindingPolicy is the project-wide x-gregale-service-policy: the
+	// policy of every deployable service that sets none (ADR-20261022111119).
+	ServiceBindingPolicy string `yaml:"x-gregale-service-policy"`
 }
 type composeRoot struct {
 	Compose composeDoc `yaml:"compose"`
@@ -201,6 +204,14 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		return nil, nil, nil, envErr
 	}
 	topSecrets, _ := rawDoc["secrets"].(map[string]any)
+	projectPolicy, err := interpolateComposeString(c.ServiceBindingPolicy, composeEnv, src, "(top level)", "x-gregale-service-policy")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	projectServiceBindingPolicy, err := normalizeServiceBindingPolicy(projectPolicy)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("reposcan: %s: %w", src, err)
+	}
 	for _, name := range svcNames {
 		s := c.Services[name]
 		if len(s.Profiles) > 0 {
@@ -233,6 +244,9 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		}
 		if !hasWorkload && serviceBindingPolicy != "" {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-policy requires a deployable workload", src, name)
+		}
+		if serviceBindingPolicy == "" && hasWorkload {
+			serviceBindingPolicy = projectServiceBindingPolicy
 		}
 		serviceBindingTransport, transportErr := normalizeServiceBindingTransport(s.ServiceBindingTransport)
 		if transportErr != nil {
