@@ -545,6 +545,11 @@ lookups only show work inside the window. Duplicate detection that relies on
 a stored invocation, such as inbound webhook receipts and async route
 idempotency keys, lasts as long as that invocation is kept.
 
+A failed queue or delayed-task message is one entry in `gregale dlq <app>`: its
+invocation. When a push binding delivered it, the binding's receipt failure
+stays in `gregale triggers dlq`, and replaying the entry re-arms that receipt.
+See [ADR-20261022203653](adr/20261022203653-one-dead-letter-entry-per-queue-message.md).
+
 ## Application inbox
 
 For straightforward application-to-application work, send directly to the
