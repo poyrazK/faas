@@ -45,7 +45,7 @@ func (e DataAPIChangeEvent) Validate() error {
 	if !dataAPIChangeEventID.MatchString(e.ID) {
 		return errors.New("id must be a lowercase UUID")
 	}
-	if len(e.Type) > 256 || !(strings.HasSuffix(e.Type, ".inserted") || strings.HasSuffix(e.Type, ".updated") || strings.HasSuffix(e.Type, ".deleted")) {
+	if len(e.Type) > 256 || !strings.HasSuffix(e.Type, ".inserted") && !strings.HasSuffix(e.Type, ".updated") && !strings.HasSuffix(e.Type, ".deleted") {
 		return errors.New("type must be SCHEMA.TABLE.inserted, .updated or .deleted, at most 256 bytes")
 	}
 	for _, b := range []byte(e.Type) {

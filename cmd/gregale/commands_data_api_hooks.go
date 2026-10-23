@@ -166,10 +166,10 @@ func dataAPIHooksStatus(ctx context.Context, client *api.Client, slug, scope str
 }
 
 func printDataAPIHooks(verb string, receipt dataAPIHooksReceipt) {
-	switch {
-	case verb == "disable":
+	switch verb {
+	case "disable":
 		PrintOK(osStdout, "Change hooks off for %s; recorded changes stay in gregale_change_events until hooks are on again", receipt.App)
-	case verb == "status":
+	case "status":
 		_, _ = fmt.Fprintf(osStdout, "change hooks  %s\nsource        %s\n", onOff(receipt.Enabled), receipt.Source)
 	default:
 		PrintOK(osStdout, "Change hooks on for %s: recorded changes publish as events from %s", receipt.App, receipt.Source)
