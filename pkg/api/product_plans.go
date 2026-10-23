@@ -50,6 +50,11 @@ type ProductPlanTerms struct {
 	// TrialDays is the plan's free trial for a customer who has not had one
 	// (ADR-20261021195901); omitted when zero.
 	TrialDays int64 `json:"trial_days,omitempty"`
+	// RequiresPaymentMethod and FallbackPlan say the plan is kept after a
+	// trial only with a payment method on file, and which plan follows
+	// otherwise (ADR-20261022180921); omitted when unset.
+	RequiresPaymentMethod bool   `json:"requires_payment_method,omitempty"`
+	FallbackPlan          string `json:"fallback_plan,omitempty"`
 }
 
 type ProductPlanOptions struct {

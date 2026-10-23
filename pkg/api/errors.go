@@ -686,6 +686,10 @@ const (
 	// ADR-961: an edge-rule mutation's If-Match named a rule-set version
 	// that is no longer the app's latest.
 	CodeEdgeRulesVersionMismatch = "edge_rules_version_mismatch"
+	// CodeEdgeFeatureUnavailable refuses configuring an edge rule feature
+	// (challenge rules, WAF warn and block, penalties) that its platform
+	// flag has not released to the account (ADR-20261023113721).
+	CodeEdgeFeatureUnavailable = "edge_feature_unavailable"
 	// ADR-963 reusable edge-rule lists.
 	CodeEdgeRuleListNotFound            = "edge_rule_list_not_found"
 	CodeEdgeRuleListExists              = "edge_rule_list_exists"
@@ -2035,7 +2039,7 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
-	case CodeAutomationInvalid:
+	case CodeAutomationInvalid, CodeEdgeFeatureUnavailable:
 		return http.StatusUnprocessableEntity
 	case CodeEdgeRulesVersionMismatch:
 		return http.StatusPreconditionFailed
@@ -6556,6 +6560,14 @@ func ErrEdgeRuleNotFound(id string) *Problem {
 func ErrEdgeRuleConflict(reason string) *Problem {
 	return NewProblem(http.StatusConflict, CodeEdgeRuleConflict,
 		"Edge rule conflict", reason)
+}
+
+// ErrEdgeFeatureUnavailable is the 422 returned when a rule would switch on
+// an edge feature its platform flag has not released to the account
+// (ADR-20261023113721). feature names it, capitalized, in the plural.
+func ErrEdgeFeatureUnavailable(feature string) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeEdgeFeatureUnavailable, "Edge feature not released",
+		feature+" are not yet available to this account. Rules that already use them can be edited, disabled and deleted.")
 }
 
 // ErrPlanLimitEdgeRules is the 403 returned when
