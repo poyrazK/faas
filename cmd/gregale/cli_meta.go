@@ -3412,7 +3412,7 @@ var cliCommands = []cliCommand{
 			{Name: "billing-policy-delete", Short: "Stop blocking consumers for overdue invoices", Notes: []string{"Holds lift within minutes."}, Positionals: []string{"<slug>"}},
 			{Name: "overdue-holds", Short: "List consumers the gateway refuses because of an overdue invoice", Positionals: []string{"<slug>"}},
 			{Name: "signup", Short: "Show the app's self-service sign-up settings and page URL", Positionals: []string{"<slug>"}},
-			{Name: "signup-set", Short: "Let customers sign up themselves, save a card and get a key", Notes: []string{"The sign-up page saves the card with Stripe."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
+			{Name: "signup-set", Short: "Let customers sign up themselves and get a key", Notes: []string{"Customers save a card with Stripe while they sign up."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "display-name", Short: "name the sign-up page shows", Value: "TEXT", Req: true},
 				{Name: "plans", Short: "comma-separated plan names customers choose from (default: the app default plan)", Value: "NAMES"},
 				{Name: "key-scopes", Short: "scopes of the key a customer gets (default write,billing)", Value: "SCOPES"},

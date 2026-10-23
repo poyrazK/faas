@@ -7703,6 +7703,9 @@ SELECT
  OR EXISTS(SELECT 1 FROM customer_operation_definitions p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM customer_operation_webhook_bindings p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM customer_operation_workflow_states p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM customer_operation_approval_forms p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM customer_operation_concurrency_policies p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM customer_operation_queue p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM customer_workflow_readiness_subscriptions p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM data_upstreams p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$1::text)
  OR EXISTS(SELECT 1 FROM deployment_openapi_snapshots p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
@@ -52434,6 +52437,18 @@ func (q *Queries) LockCloneCheckpointWakeDispatchTables(ctx context.Context, db 
 	return err
 }
 
+const lockCloneCustomerOperationEnvironmentCleanupBorrowers = `-- name: LockCloneCustomerOperationEnvironmentCleanupBorrowers :exec
+LOCK TABLE customer_operation_approval_forms,customer_operation_concurrency_policies,customer_operation_queue IN SHARE MODE
+`
+
+// Customer Operation approval forms, concurrency policies and queued Operations
+// were added after the migration-owned writer fence. Their scope-only rows have
+// no environment foreign key, so keep their writers out of the deletion window.
+func (q *Queries) LockCloneCustomerOperationEnvironmentCleanupBorrowers(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockCloneCustomerOperationEnvironmentCleanupBorrowers)
+	return err
+}
+
 const lockCloneDeploymentCleanupBorrowerWriters = `-- name: LockCloneDeploymentCleanupBorrowerWriters :exec
 SELECT lock_clone_deployment_cleanup_borrower_writers()
 `
@@ -52510,10 +52525,13 @@ func (q *Queries) LockCreditConsumption(ctx context.Context, db DBTX, providerIn
 }
 
 const lockCronAccountForApp = `-- name: LockCronAccountForApp :one
-SELECT id::text AS account_id FROM accounts
+SELECT id::text AS account_id FROM resource_namespaces
 WHERE id=(SELECT account_id FROM apps WHERE id=$1::text::uuid) FOR UPDATE
 `
 
+// An app's account_id is a resource namespace: a personal account or a company
+// org (ADR-202610171908). Lock the namespace row, as ApplyProject does, so every
+// cron quota check for one namespace serializes on the same row.
 func (q *Queries) LockCronAccountForApp(ctx context.Context, db DBTX, appID string) (string, error) {
 	row := db.QueryRow(ctx, lockCronAccountForApp, appID)
 	var account_id string
@@ -52522,7 +52540,7 @@ func (q *Queries) LockCronAccountForApp(ctx context.Context, db DBTX, appID stri
 }
 
 const lockCronAccountForCron = `-- name: LockCronAccountForCron :one
-SELECT id::text AS account_id FROM accounts
+SELECT id::text AS account_id FROM resource_namespaces
 WHERE id=(SELECT a.account_id FROM apps a JOIN crons c ON c.app_id=a.id WHERE c.id=$1::text::uuid) FOR UPDATE
 `
 
@@ -73564,6 +73582,9 @@ SELECT (jsonb_build_object(
     'deployment_project_release_workers_deployment_id_fkey', (SELECT count(*) FROM deployment_project_release_workers WHERE deployment_id = $1::uuid),
     'deployment_release_env_snapshots_deployment_id_fkey', (SELECT count(*) FROM deployment_release_env_snapshots WHERE deployment_id = $1::uuid),
     'deployment_release_secret_snapshots_deployment_id_fkey', (SELECT count(*) FROM deployment_release_secret_snapshots WHERE deployment_id = $1::uuid),
+    'deployment_release_approvals_deployment_id_fkey', (SELECT count(*) FROM deployment_release_approvals WHERE deployment_id = $1::uuid),
+    'release_approval_events_deployment_id_fkey', (SELECT count(*) FROM release_approval_events WHERE deployment_id = $1::uuid),
+    'scheduled_releases_deployment_id_fkey', (SELECT count(*) FROM scheduled_releases WHERE deployment_id = $1::uuid),
     'deployment_submission_receipts_deployment_id_fkey', (SELECT count(*) FROM deployment_submission_receipts WHERE deployment_id = $1::uuid),
     'project_worker_job_evidence_deployment_id_fkey', (SELECT count(*) FROM project_worker_job_evidence WHERE deployment_id = $1::uuid),
     'project_worker_release_pins_deployment_id_fkey', (SELECT count(*) FROM project_worker_release_pins WHERE deployment_id = $1::uuid),

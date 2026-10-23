@@ -2763,12 +2763,33 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if err := validateGitHubRef(*ref); err != nil {
 			return printErr("Invalid --ref", err)
 		}
-		// Phase 3 guard: --repo is the source-ref path; the
-		// one-key provision surface takes --tarball/--path, not
-		// --repo. Mixing them is almost always a mistake.
+		// --repo with --project deploys every service of the connected
+		// repository: the control plane fetches the ref, the plan is
+		// reviewed, and exactly that reviewed source is applied.
 		if projectRequested {
-			PrintFail(os.Stderr, "--repo cannot be combined with --project, --only, or --project-slug")
-			return 1
+			if err := validateRepoProjectFlags(explicit, *sourceBranch); err != nil {
+				return printErr("Invalid flags", err)
+			}
+			repoProjectSlug := *projectSlug
+			if repoProjectSlug == "" {
+				repoProjectSlug = defaultProjectSlug(filepath.Base(*repo) + ".tar.gz")
+				if *name != "" {
+					repoProjectSlug = sanitizeProjectSlug(*name)
+				}
+			}
+			scan := connectedRepoScanOptions{
+				repo: *repo, ref: *ref, projectSlug: repoProjectSlug,
+				bindingRepo: *bindingRepo, productionBranch: *productionBranch,
+				installID: *installID, environment: *environment,
+				only: *deployOnly, exclude: *deployExclude, showAffected: *deployShowAffected,
+			}
+			if *diff {
+				return executeConnectedRepoPreview(ctx, scan, *diffJSON, !*diffLenient, *noTriggers)
+			}
+			return deployConnectedRepoProject(ctx, connectedRepoProjectDeploy{
+				scan: scan, yes: *yes, wait: waitForDeploy,
+				waitTimeout: time.Duration(*waitTimeoutSeconds) * time.Second, noTriggers: *noTriggers,
+			})
 		}
 		if *diff {
 			if err := validateSourceRefPreviewFlags(explicit, *sourceBranch); err != nil {
@@ -3733,41 +3754,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		}
 
-		if !plan.CanApply {
-			if jsonOutput {
-				return jsonOut(writeJSONProblem(planProblem(plan)))
-			}
-			printPlanText(osStdout, plan, excludeList, *deployShowAffected)
-			return printErr("Project plan cannot be applied", planBlockedError(plan))
-		}
-		if !*yes {
-			if code := requireAutomationConfirmation(false, "--yes"); code != 0 {
-				return code
-			}
-			// JSON output is intentionally non-interactive: prompting would
-			// corrupt the machine-readable stdout stream. Emit the complete
-			// plan first, then fail closed so an operator or CI job must make
-			// the approval explicit with --yes.
-			if jsonOutput {
-				if code := jsonOut(writeJSON(plan)); code != 0 {
-					return code
-				}
-				return printErr("Confirmation required", errors.New(
-					"project deploy requires --yes in JSON mode"))
-			}
-			if stdoutIsTTY() && stdinIsTTY() {
-				if !confirmPlan(osStdout, osStdin, plan, excludeList, *deployShowAffected) {
-					return printErr("Aborted by user", errors.New("user declined at the confirm prompt"))
-				}
-			} else {
-				// A redirected stream, CI runner, pipeline, or unsupported
-				// platform must never turn the absence of a prompt into an
-				// implicit approval. Render the same complete plan the TTY
-				// prompt would have shown so removals remain visible.
-				printPlanText(osStdout, plan, excludeList, true)
-				return printErr("Confirmation required", errors.New(
-					"project deploy requires --yes when stdin or stdout is not a TTY; review the plan and rerun with --yes"))
-			}
+		if code := confirmProjectPlan(plan, excludeList, *deployShowAffected, *yes); code != 0 {
+			return code
 		}
 		approvalToken := ""
 		if plan.EnvironmentProtected {
