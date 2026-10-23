@@ -32,6 +32,7 @@ type environmentActionObservation struct {
 }
 
 type environmentActionView struct {
+	Review *savedPlanReference `json:"review,omitempty"`
 	environmentActionRecord
 	PlanAvailable bool                          `json:"plan_available"`
 	NextStep      string                        `json:"next_step"`
@@ -221,6 +222,9 @@ func (m *management) getEnvironmentAction(ctx context.Context, args getEnvironme
 
 func (m *management) environmentActionView(e environmentActionRecord, now time.Time) environmentActionView {
 	view := environmentActionView{environmentActionRecord: e, PlanAvailable: m.environmentActionPlanAvailable(e, now), NextStep: "inspect_recorded_receipt"}
+	if view.PlanAvailable {
+		view.Review = &savedPlanReference{Tool: "gregale_get_environment_plan", Arguments: getEnvironmentActionArgs{Project: e.Project, Environment: e.Environment, PlanID: e.PlanID}}
+	}
 	id := e.PromotionID
 	if e.Apply.Receipt != nil {
 		id = e.Apply.Receipt.PromotionID

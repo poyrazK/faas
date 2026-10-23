@@ -3116,3 +3116,22 @@ claiming improved performance or completed windows. An additive budget journal
 shares atomic persistence, retention, the connection bound and OAuth cleanup;
 no native API, schema or catalog count changes. See
 [ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
+
+
+## Management MCP saved-plan review (ADR-20261023184309)
+
+Read-only app and environment plan retrieval reopens an original unexpired
+connection-local proposal after history discovery or encrypted restart. Fixed
+projections expose intended changes and pinned revisions while excluding native
+retry and approval credentials, environment-variable and secret values. Current
+identity/consent checks include both environments and all project workloads for
+environment plans, and diagnostic consent for regression plans. Final guards
+recheck presence, expiry and storage availability before releasing the review.
+
+A saved review explicitly leaves current apply eligibility and native completion
+unobserved. Retrieval never replans, refreshes evidence, polls approval, writes
+state or renews expiry. Expired private payloads remain unavailable; original
+mutation guards retain CAS, consent and human approval. Catalog: 55 read/planning
+tools, 64 with existing writes enabled. Existing storage formats, limits and
+native APIs are unchanged. See
+[ADR-20261023184309](adr/20261023184309-management-mcp-saved-plan-review.md).

@@ -31,6 +31,7 @@ type getActionArgs struct {
 }
 
 type actionView struct {
+	Review *savedPlanReference `json:"review,omitempty"`
 	actionRecord
 	PlanAvailable bool               `json:"plan_available"`
 	NextStep      string             `json:"next_step"`
@@ -189,6 +190,13 @@ func (m *management) getAction(ctx context.Context, args getActionArgs) (any, er
 // original plan review, native guards, plan expiry, or completion observation.
 func (m *management) actionView(entry actionRecord, now time.Time) actionView {
 	view := actionView{actionRecord: entry, PlanAvailable: m.actionPlanAvailable(entry, now), NextStep: "inspect_recorded_receipt"}
+	if view.PlanAvailable {
+		environment := entry.Scope
+		if environment == api.DefaultEnvScope {
+			environment = ""
+		}
+		view.Review = &savedPlanReference{Tool: "gregale_get_plan", Arguments: getActionArgs{App: entry.App, Project: entry.Project, Environment: environment, PlanID: entry.PlanID}}
+	}
 	phase, tool := entry.Apply, map[string]string{"deploy": "gregale_apply_deploy", "rollback": "gregale_apply_rollback", "regression_action": "gregale_apply_regression_action", "workload_rollout": "gregale_apply_workload_rollout", "service_abort": "gregale_apply_service_abort", "route_budgets": "gregale_apply_route_budgets"}[entry.Action]
 	view.Observation = workloadActionObservation(entry)
 	if entry.Action == "route_budgets" {

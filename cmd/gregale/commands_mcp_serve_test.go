@@ -80,7 +80,7 @@ func TestMCPServeStdioUsesSelectedProfile(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = session.Close() })
 	tools, err := session.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 53 || requests.Load() != 0 {
+	if err != nil || len(tools.Tools) != 55 || requests.Load() != 0 {
 		t.Fatalf("discovery=%+v error=%v requests=%d", tools, err, requests.Load())
 	}
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "gregale_context", Arguments: map[string]any{}})

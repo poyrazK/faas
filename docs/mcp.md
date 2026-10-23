@@ -1560,12 +1560,38 @@ service abort, route-budget and regression-triage plans. Use `gregale_get_action
 with the same selector and an exact `plan_id` to inspect its apply phase and, for request deploys,
 separate promotion phase.
 These tools are read-only and remain available when writes are disabled.
-The catalog contains 53 read/planning tools, or 62 with writes enabled.
+The catalog contains 55 read/planning tools, or 64 with writes enabled.
+
+Use `gregale_get_plan` with the same app/project/environment selector and
+`plan_id` to reopen the original unexpired proposal. Environment promotion and
+rollback plans use `gregale_get_environment_plan` with project, target environment
+and plan ID. Available history entries provide a `review` tool and exact
+`arguments`; invoke that call explicitly. Both tools remain available when writes
+are disabled.
+
+A saved review includes original targets, proposed changes, pinned revisions and
+expiry. Its `review_kind: saved_original_proposal` and
+`apply_eligibility: not_checked` distinguish stored intent from current native
+state. A changed source branch, policy or deployment does not rewrite the review.
+Inspect current native state separately and use the original guarded apply tool
+only after reviewing the proposal. Existing consent, native CAS and human
+approval checks still run on apply.
+
+The review excludes request/retry keys, promotion/approval credentials,
+browser-review links and environment-variable/secret values. Environment rollback plans
+expose their exact promotion reference with `change_coverage:
+promotion_reference_only`; they do not invent a stored workload diff. Both
+immutable environments and every current project workload need read consent;
+regression plan reviews additionally require diagnostic consent. Expired plans
+return no private proposal. Reads never renew expiry or approval, refresh the
+proposal, persist state or perform a write. See
+[ADR-20261023184309](adr/20261023184309-management-mcp-saved-plan-review.md).
 
 For a lost apply response:
 
 1. Read `gregale_list_actions` with `{"app":"demo","limit":20}`.
-2. Inspect the selected `plan_id` through `gregale_get_action`.
+2. Inspect the selected `plan_id` through `gregale_get_action`; if its original
+   plan is available, reopen the saved proposal through the returned `review` call.
 3. An `outcome_unknown` phase means the native request may have committed.
    If the original plan is available and writes are enabled, retry the indicated
    existing apply/promotion tool with that **same plan ID**. Normal expiry,

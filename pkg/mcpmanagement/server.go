@@ -160,6 +160,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	register(s, m, "gregale_get_metrics", "Inspect recent app metrics. The source field identifies degraded telemetry; zero values alone do not establish app health.", m.getMetrics)
 	register(s, m, "gregale_preflight", "Check selected app/environment consent, read endpoint compatibility and durable bridge status without plans or writes. Passed reads do not prove mutation authorization or native qualification.", m.preflight)
 	registerRouteBudgets(s, m)
+	registerSavedPlans(s, m)
 	registerActionHistory(s, m)
 	registerEnvironmentActionHistory(s, m)
 	registerRegressionActions(s, m)

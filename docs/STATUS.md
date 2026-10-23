@@ -7,6 +7,23 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP saved-plan review — 2026-10-23 (branch, not released)
+
+Read-only app/environment plan retrieval reopens original proposed changes,
+pinned revisions and expiry after action-history discovery or encrypted restart.
+Fixed projections omit private execution/approval material and environment-variable/secret
+values; final guards recheck consent, identity, storage, plan presence and expiry.
+Saved intent remains separate from current apply eligibility and human approval.
+Catalog: 55 read/planning tools, 64 with writes enabled. Full MCP race tests and
+pinned real Codex 0.159.0-alpha.3 acceptance pass, including unchanged source,
+worker, budget and environment reviews across restart/refresh/revocation in three
+read-only fixture profiles with zero model requests and native writes. Tests
+cover both protocols, stale baselines, expiry, credential/configuration redaction
+and consent/identity races. Stdio CLI contracts, scoped lint for both changed Go
+packages and the spec/documentation gate pass without generated drift.
+See [ADR-20261023184309](adr/20261023184309-management-mcp-saved-plan-review.md).
+Native/provider deployment qualification remains separate.
+
 ## Management MCP route-budget action history — 2026-10-23 (branch, not released)
 
 App/environment action listing and detail now include reviewed budget overrides
