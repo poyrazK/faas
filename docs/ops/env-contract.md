@@ -231,6 +231,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_E2E_SERVICE_HTTPS_KEY` | shared | `dev-only` |  |  | `` | test-harness only; private server key for the isolated managed HTTPS bridge listener, held in a mode-0600 temporary file and never staged into guests or evidence; must never be set on a production host |
 | `FAAS_E2E_SERVICE_TCP` | shared | `dev-only` |  |  | `` | test-harness only; adds the gatewayd-internal private service TCP listener and service-address DNS (ADR-576) to the metal bridge config; must never be set on a production host |
 | `FAAS_E2E_TRACING_SERVER_BINARY` | shared | `dev-only` |  |  | `` | test-harness only; prebuilt ADR-958 tracing fixture for hosts without a matching Go toolchain |
+| `FAAS_E2E_VMMD_EXTRA_TOML` | shared | `dev-only` |  |  | `` | test-harness only; extra vmmd.toml lines from e2etest.OverrideVMMDConfig (e.g. the vmmd restart adoption switches); must never be set on a production host |
 | `FAAS_E2E_VMMD_SOCKET` | shared | `dev-only` |  |  | `` | test-harness only; pre-bound VMMD socket used by KVM-free general-path acceptance; must never be set on a production host |
 | `FAAS_EDGE_WAF_INLINE_DISABLED` | gatewayd-internal | `default` |  |  | `` | ADR-831 amendment 4 operator kill switch; "1" turns off in-path kind=waf checks so warn and block rules only observe |
 | `FAAS_EGRESS_ALLOW_LOOPBACK` | shared | `dev-only` |  |  | `` | must never be set on a production host |
