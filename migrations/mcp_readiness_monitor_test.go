@@ -1,3 +1,5 @@
+//go:build !no_pg
+
 package migrations_test
 
 import (
