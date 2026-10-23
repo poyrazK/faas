@@ -823,6 +823,9 @@ type MemStore struct {
 	edgeRuleLists             map[string]EdgeRuleList         // list id -> list (ADR-963)
 	edgeRuleEvents            []EdgeRuleEvent                 // sampled events (ADR-964)
 	edgeRuleEventSeq          int64
+	edgePenaltyBoxes          []EdgePenaltyBox // shared penalty boxes (ADR-20261022105846 amendment 1)
+	edgePenaltyBoxSeq         int64
+	edgePenaltyBoxClock       func() time.Time
 	edgeRuleHitCounts         map[edgeRuleHitKey]int64 // ADR-960 hourly hit buckets
 	routePolicyReceipts       map[string]routePolicyStoredReceipt
 	savedRouteRequirements    map[string]api.SavedRouteRequirements

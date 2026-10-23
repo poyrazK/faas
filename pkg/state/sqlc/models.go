@@ -4081,6 +4081,15 @@ type DurableWorkRetainedDeploymentRef struct {
 	DeploymentID pgtype.UUID
 }
 
+type EdgePenaltyBox struct {
+	ID         int64
+	AppID      pgtype.UUID
+	RuleID     pgtype.UUID
+	Client     netip.Prefix
+	BoxedUntil pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+}
+
 type EdgeRule struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID
