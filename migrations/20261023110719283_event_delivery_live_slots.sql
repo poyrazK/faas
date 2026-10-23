@@ -15,6 +15,13 @@ SET LOCAL lock_timeout = '5s';
 -- invocation's state, so a slot marked live too long only costs a lookup.
 ALTER TABLE event_delivery_slots ADD COLUMN IF NOT EXISTS live boolean NOT NULL DEFAULT true;
 
+-- An account with a long history has few live slots. Column statistics alone
+-- multiply the account's share of slots by the live share, overestimate its
+-- live slots, and plan a scan of every live delivery on the platform (8-10 ms
+-- with 10k-50k live elsewhere); joint statistics plan the live index (0.3 ms).
+CREATE STATISTICS IF NOT EXISTS event_delivery_slots_account_live (mcv, dependencies)
+    ON account_id, live FROM event_delivery_slots;
+
 CREATE OR REPLACE FUNCTION stamp_event_delivery_slot_live() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -110,5 +117,6 @@ DROP TRIGGER IF EXISTS event_delivery_slot_live_sync ON invocations;
 DROP TRIGGER IF EXISTS event_delivery_slot_live ON event_delivery_slots;
 DROP FUNCTION IF EXISTS sync_event_delivery_slot_live();
 DROP FUNCTION IF EXISTS stamp_event_delivery_slot_live();
+DROP STATISTICS IF EXISTS event_delivery_slots_account_live;
 ALTER TABLE event_delivery_slots DROP COLUMN IF EXISTS live;
 -- +goose StatementEnd
