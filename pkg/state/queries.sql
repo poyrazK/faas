@@ -23343,6 +23343,26 @@ WHERE f.id = e.fork_id AND e.status IN ('queued', 'running')
        OR (e.status = 'running' AND e.started_at + make_interval(secs => e.timeout_seconds + sqlc.arg(grace_seconds)::integer) < sqlc.arg(now)::timestamptz))
 RETURNING e.*;
 
+-- name: ClearExpiredAppForkExecOutput :execrows
+-- schedd: a fork command's output comes from inside a copy of production
+-- memory, so it is emptied once the fork has been over for the retention
+-- window (api.AppForkExecOutputRetention). The command record stays.
+UPDATE app_fork_execs e
+SET stdout = ''::bytea,
+    stderr = ''::bytea,
+    updated_at = greatest(e.updated_at, sqlc.arg(now)::timestamptz)
+WHERE e.id IN (
+    SELECT x.id FROM app_fork_execs x
+    JOIN app_forks f ON f.id = x.fork_id
+    WHERE x.finished_at IS NOT NULL
+      AND f.finished_at IS NOT NULL
+      AND f.finished_at <= sqlc.arg(cutoff)::timestamptz
+      AND (octet_length(x.stdout) > 0 OR octet_length(x.stderr) > 0)
+    ORDER BY f.finished_at, x.id
+    LIMIT sqlc.arg(batch_limit)::integer
+    FOR UPDATE OF x SKIP LOCKED
+);
+
 -- name: GetAppForkExec :one
 SELECT * FROM app_fork_execs
 WHERE id = sqlc.arg(exec_id)::uuid AND fork_id = sqlc.arg(fork_id)::uuid

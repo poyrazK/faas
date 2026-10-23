@@ -7318,6 +7318,41 @@ func (q *Queries) ClearApplicationStandardControlBindings(ctx context.Context, d
 	return err
 }
 
+const clearExpiredAppForkExecOutput = `-- name: ClearExpiredAppForkExecOutput :execrows
+UPDATE app_fork_execs e
+SET stdout = ''::bytea,
+    stderr = ''::bytea,
+    updated_at = greatest(e.updated_at, $1::timestamptz)
+WHERE e.id IN (
+    SELECT x.id FROM app_fork_execs x
+    JOIN app_forks f ON f.id = x.fork_id
+    WHERE x.finished_at IS NOT NULL
+      AND f.finished_at IS NOT NULL
+      AND f.finished_at <= $2::timestamptz
+      AND (octet_length(x.stdout) > 0 OR octet_length(x.stderr) > 0)
+    ORDER BY f.finished_at, x.id
+    LIMIT $3::integer
+    FOR UPDATE OF x SKIP LOCKED
+)
+`
+
+type ClearExpiredAppForkExecOutputParams struct {
+	Now        pgtype.Timestamptz
+	Cutoff     pgtype.Timestamptz
+	BatchLimit int32
+}
+
+// schedd: a fork command's output comes from inside a copy of production
+// memory, so it is emptied once the fork has been over for the retention
+// window (api.AppForkExecOutputRetention). The command record stays.
+func (q *Queries) ClearExpiredAppForkExecOutput(ctx context.Context, db DBTX, arg ClearExpiredAppForkExecOutputParams) (int64, error) {
+	result, err := db.Exec(ctx, clearExpiredAppForkExecOutput, arg.Now, arg.Cutoff, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearInstanceRuntimeConfigReceipt = `-- name: ClearInstanceRuntimeConfigReceipt :exec
 DELETE FROM instance_runtime_config_receipts WHERE instance_id = $1::uuid
 `

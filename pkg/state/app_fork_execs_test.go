@@ -109,3 +109,78 @@ func TestAppForkExec_Lifecycle(t *testing.T) {
 		})
 	}
 }
+
+// A command's output comes from inside a copy of production memory: it is
+// cleared once its fork has been over for the retention window, never while
+// the fork runs, and the command record stays.
+func TestAppForkExec_OutputClearedAfterRetention(t *testing.T) {
+	const retention = 24 * time.Hour
+	for name, f := range appForkStores(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			fork := f.runningFork(t, "sched-a")
+			at := forkT0.Add(3 * time.Second)
+			exec, err := f.store.CreateAppForkExec(ctx, f.execParams(fork.ID, at))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.store.ClaimNextAppForkExec(ctx, "sched-a", at.Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			zero := 0
+			if _, err := f.store.FinishAppForkExec(ctx, state.FinishAppForkExecParams{
+				ID: exec.ID, Status: state.AppForkExecSucceeded, ExitCode: &zero,
+				Stdout: []byte("DATABASE_URL=postgres://secret\n"), Stderr: []byte("warn\n"), FinishedAt: at.Add(2 * time.Second),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			output := func() state.AppForkExec {
+				t.Helper()
+				got, err := f.store.AppForkExecByID(ctx, f.accountID, f.appID, fork.ID, exec.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return got
+			}
+
+			// The fork still runs: its output stays however old it is.
+			if _, err := f.store.ClearExpiredAppForkExecOutput(ctx, retention, at.Add(48*time.Hour), 100); err != nil {
+				t.Fatal(err)
+			}
+			if got := output(); string(got.Stdout) == "" {
+				t.Fatal("output of a running fork was cleared")
+			}
+
+			ended := at.Add(10 * time.Second)
+			if _, err := f.store.FinishAppFork(ctx, state.FinishAppForkParams{
+				ForkID: fork.ID, LeaseToken: *fork.LeaseToken, Status: state.AppForkCancelled, FinishedAt: ended,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if n, err := f.store.ClearExpiredAppForkExecOutput(ctx, retention, ended.Add(retention-time.Second), 100); err != nil || (name == "mem" && n != 0) {
+				t.Fatalf("clear inside the window = %d, %v", n, err)
+			}
+			if got := output(); string(got.Stdout) == "" || string(got.Stderr) == "" {
+				t.Fatal("output cleared before the retention window passed")
+			}
+			if n, err := f.store.ClearExpiredAppForkExecOutput(ctx, retention, ended.Add(retention), 0); err != nil || n != 0 {
+				t.Fatalf("clear with no batch = %d, %v", n, err)
+			}
+
+			n, err := f.store.ClearExpiredAppForkExecOutput(ctx, retention, ended.Add(retention), 100)
+			if err != nil || n < 1 || (name == "mem" && n != 1) {
+				t.Fatalf("clear after the window = %d, %v", n, err)
+			}
+			got := output()
+			if len(got.Stdout) != 0 || len(got.Stderr) != 0 {
+				t.Fatalf("output after clearing = %q / %q, want empty", got.Stdout, got.Stderr)
+			}
+			if got.Status != state.AppForkExecSucceeded || got.ExitCode == nil || *got.ExitCode != 0 || len(got.Command) != 3 {
+				t.Fatalf("clearing changed the command record: %+v", got)
+			}
+			if n, err := f.store.ClearExpiredAppForkExecOutput(ctx, retention, ended.Add(retention+time.Hour), 100); err != nil || (name == "mem" && n != 0) {
+				t.Fatalf("second clear = %d, %v; want nothing left to clear", n, err)
+			}
+		})
+	}
+}
