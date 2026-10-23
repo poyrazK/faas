@@ -1205,7 +1205,7 @@ export class DeploymentsService {
      */
     slug: string,
     /**
-     * Database switch UUID.
+     * UUID of the database switch to cancel.
      */
     id: string,
   }): CancelablePromise<DatabaseSwitch> {

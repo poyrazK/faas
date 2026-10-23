@@ -27458,7 +27458,7 @@ paths:
       - name: id
         in: path
         required: true
-        description: Database switch UUID.
+        description: UUID of the database switch to cancel.
         schema: { type: string, format: uuid }
     post:
       tags: [deployments]
