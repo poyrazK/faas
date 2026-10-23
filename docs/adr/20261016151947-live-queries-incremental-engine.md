@@ -348,6 +348,19 @@ is a later step.
   database's key, and the key ring refuses a payload that names another
   database. Rotation keeps the previous key until a retirement time (default
   overlap 24 hours). Removing a key revokes its outstanding seals at once.
+- **At-rest binding (amendment, 2026-10-23).** A live key and a live login
+  are sealed to livequeryd's recipient under a fixed namespace (`livequery`,
+  `livequery-login`), which binds neither to its database: a blob copied onto
+  another database's row would open there, and livequeryd would serve one
+  database's login or key under another's ID. The namespace is bound to the
+  database ID (`livequery:<database>`, `livequery-login:<database>`) over
+  three releases, as N±1 requires:
+  1. livequeryd opens the legacy and the bound form, and refuses a blob
+     bound to another database (`livekeys.KeyNamespaceOpens`,
+     `livekeys.LoginNamespaceOpens`).
+  2. apid seals the bound form, and existing rows are re-sealed (keys
+     rotated, logins re-issued).
+  3. livequeryd stops opening the legacy form.
 - Limits (`pkg/api/limits.go`):
   - SQL up to 32 KiB, 256 parameters of 16 KiB each (as Neon);
   - a sealed payload up to 48 KiB;
