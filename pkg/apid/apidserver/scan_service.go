@@ -1941,6 +1941,12 @@ func (s *server) scanService(
 	// the JSON marshal sees string Tier (matching OpenAPI enum +
 	// pkg/api.PlanWorkload.Tier) instead of the raw int the
 	// reposcan type carries. See toPlanWorkload / toPlanManaged.
+	// The Compose environment's values are read apart from the scan so they
+	// never enter a plan; an unreadable one only means nothing is imported.
+	composeEnv, composeEnvErr := reposcan.ReadComposeEnv(os.DirFS(req.ScanDir))
+	if composeEnvErr != nil {
+		composeEnv = reposcan.ComposeEnv{}
+	}
 	respWorkloads := make([]api.PlanWorkload, len(filteredW))
 	for i, w := range filteredW {
 		pw := toPlanWorkload(w)
@@ -1980,7 +1986,7 @@ func (s *server) scanService(
 		if err != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not read the configuration of a selected workload")
 		}
-		pw.UnsetEnvKeys = unset
+		pw.UnsetEnvKeys, pw.ImportedEnvKeys, pw.UnsetEnvKeyReasons = projectsetup.SplitEnvImport(unset, projectsetup.PlanEnvImport(composeEnv, w.Name, limits))
 		if w.ServiceBindingPolicy == "" && existing != nil {
 			pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
 		}
@@ -2551,6 +2557,15 @@ func (s *server) scanService(
 		if problem != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, problem
 		}
+	}
+	// Opted-in Compose values fill what is still unset, after the secrets
+	// above, so a key configured either way keeps that value.
+	importScope := req.Environment
+	if importScope == "" {
+		importScope = api.DefaultEnvScope
+	}
+	if problem := s.importComposeEnv(r, acct, project.ID, importScope, composeEnv, filteredW, limits); problem != nil {
+		return resp, state.Project{}, nil, nil, nil, nil, problem
 	}
 	buildAdded := rec.Added
 	if run := projectmigration.FromContext(r.Context()); run != nil {
