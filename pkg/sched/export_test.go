@@ -671,3 +671,17 @@ func CreateRuntimeWithRehearsalRun(ctx context.Context, vmm RoutedVMM, spec AppS
 // Members of workPool
 func (r *workPool) Drain()                                          { r.drain() }
 func (r *workPool) Submit(p0 workKind, p1 string, p2 func()) string { return r.submit(p0, p1, p2) }
+
+// SettleTriggerDeadLetters runs the per-record DLQ settlement; queue selects
+// the queue poller's Nack-first order (ADR-20261022203653).
+func (r *Loop) SettleTriggerDeadLetters(ctx context.Context, t sqlc.Trigger, poller triggerSource, store storeLike, queue bool,
+	recordIDs, items, reasons, lastErrors []string, attempts []int32) {
+	claimed := make(map[string]sqlc.TriggerRecord, len(recordIDs))
+	for _, id := range recordIDs {
+		var record sqlc.TriggerRecord
+		_ = record.ID.Scan(id)
+		claimed[id] = record
+	}
+	r.settleTriggerDeadLetters(ctx, t, poller, store, queue, claimed, terminalTriggerResults{
+		recordIDs: recordIDs, items: items, reasons: reasons, errors: lastErrors, attempts: attempts})
+}

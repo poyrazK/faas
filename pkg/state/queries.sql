@@ -10152,11 +10152,48 @@ WHERE id = sqlc.arg(id)::uuid AND status = 'running';
 UPDATE compute_nodes SET vmmd_incarnation=sqlc.arg(incarnation)::uuid,
 vmmd_admission_protocol=sqlc.arg(protocol_version)::smallint WHERE id=sqlc.arg(node_id)::uuid;
 
+-- name: ComputeNodeVMMDEpoch :one
+-- vmmd restart adoption ADR §3: the node's current ownership epoch.
+SELECT vmmd_epoch, vmmd_epoch_incarnation, vmmd_predecessor_incarnation
+FROM compute_nodes WHERE id=sqlc.arg(node_id)::uuid;
+
+-- name: ClaimComputeNodeVMMDEpoch :one
+-- Compare-and-swap: the claim succeeds only from the epoch the claimant read,
+-- so two vmmd processes can never both hold the node's next epoch.
+UPDATE compute_nodes SET vmmd_epoch=vmmd_epoch+1,
+vmmd_predecessor_incarnation=vmmd_epoch_incarnation,
+vmmd_epoch_incarnation=sqlc.arg(incarnation)::uuid
+WHERE id=sqlc.arg(node_id)::uuid AND vmmd_epoch=sqlc.arg(expected_epoch)::bigint
+RETURNING vmmd_epoch;
+
+-- name: SetComputeNodeVMMDRestartNotice :execrows
+-- vmmd restart adoption ADR §3: a vmmd stopping for a planned restart tells
+-- schedd so it retries wakes and counts no heartbeat failures meanwhile.
+UPDATE compute_nodes SET vmmd_restart_notice_until=clock_timestamp()+make_interval(secs=>sqlc.arg(seconds)::int)
+WHERE id=sqlc.arg(node_id)::uuid;
+
+-- name: ClearComputeNodeVMMDRestartNotice :execrows
+UPDATE compute_nodes SET vmmd_restart_notice_until=NULL
+WHERE id=sqlc.arg(node_id)::uuid AND vmmd_restart_notice_until IS NOT NULL;
+
+-- name: ListComputeNodeVMMDRestartNotices :many
+SELECT id, vmmd_restart_notice_until FROM compute_nodes
+WHERE vmmd_restart_notice_until > clock_timestamp();
+
+-- name: ListAdoptionReportInstancesOnNode :many
+-- The rows a vmmd adoption report settles: RUNNING and FROZEN on the node.
+-- Read only after the node's epoch moves, so a scan of the live set is fine.
+SELECT id, coalesce(app_id::text, '')::text AS app_id, coalesce(deployment_id::text, '')::text AS deployment_id,
+state, wake_id, started_at, mode
+FROM instances WHERE node_id=sqlc.arg(node_id)::uuid AND state IN ('running', 'frozen')
+ORDER BY id LIMIT sqlc.arg(row_limit)::int;
+
 -- name: LockApplicationStandardSnapshotCapture :one
 SELECT application_standard_lock_snapshot_capture(sqlc.arg(instance_id)::uuid,sqlc.arg(expected_state)::text)::jsonb AS inputs;
 
 -- name: GetApplicationStandardSnapshotCapture :one
-SELECT expected_state,grant_data,acknowledgment,created_at,received_at FROM application_standard_snapshot_captures
+SELECT expected_state,grant_data,acknowledgment,created_at,received_at,
+ coalesce(producer_incarnation::text,'')::text AS producer_incarnation FROM application_standard_snapshot_captures
 WHERE token=sqlc.arg(token)::uuid AND account_id=sqlc.arg(account_id)::uuid
  AND app_id=sqlc.arg(app_id)::uuid AND deployment_id=sqlc.arg(deployment_id)::uuid;
 
@@ -10230,7 +10267,7 @@ SELECT r.receipt::jsonb AS receipt,coalesce(i.state IN ('running','snapshotting'
  AND r.receipt->'binding'->>'deployment_id'=i.deployment_id::text
  AND r.receipt->'binding'->>'account_id'=a.input_snapshot->>'account_id'
  AND r.receipt->'binding'->>'node_id'=i.node_id::text
- AND r.receipt->'binding'->>'incarnation'=n.vmmd_incarnation::text
+ AND application_standard_effective_incarnation(i.id,r.receipt->'binding'->>'incarnation')=n.vmmd_incarnation::text
  AND (r.receipt->'binding'->>'protocol_version')::integer<=n.vmmd_admission_protocol
  AND r.receipt->'binding'->>'captured_input_hash'=application_standard_native_input_hash(a.input_snapshot,i.node_id)
  AND r.receipt->>'netns'=i.netns AND r.receipt->>'host_ip'=host(i.host_ip)
@@ -10281,6 +10318,7 @@ SELECT d.id,application_standard_native_runtime_snapshot(d.app_id,d.id)::jsonb A
 
 -- name: ListApplicationStandardObservationSnapshots :many
 SELECT s.id,c.input_snapshot,c.grant_data,c.acknowledgment,c.expected_state,c.created_at,c.received_at,
+ coalesce(c.producer_incarnation::text,'')::text AS producer_incarnation,
  coalesce(application_standard_snapshot_catalog_matches(s,c),false)::boolean AS catalog_matches,
  (n.last_heartbeat_at+make_interval(secs=>sqlc.arg(heartbeat_seconds)::double precision))::timestamptz AS heartbeat_until
  FROM snapshots s LEFT JOIN application_standard_snapshot_captures c ON c.token=s.application_standard_capture_token
@@ -23961,6 +23999,22 @@ UPDATE invocations i SET state=CASE WHEN sqlc.arg(permanent)::boolean OR attempt
 FROM event_delivery_acknowledgments a WHERE i.id=sqlc.arg(invocation_id)::uuid AND a.invocation_id=i.id RETURNING i.state,i.due_at;
 -- name: EventAckRejectReceipt :exec
 UPDATE event_delivery_acknowledgments SET phase='rejected',completion_digest=sqlc.arg(request_digest)::bytea,rejection_status=sqlc.arg(rejection_status)::jsonb WHERE invocation_id=sqlc.arg(invocation_id)::uuid;
+
+-- name: InsertApplicationStandardRebind :exec
+-- ADR-595 extension: an admitted runtime survives a vmmd restart. The
+-- trigger admits only the node's current holder, extending the
+-- admission's current one, for an instance whose residency equals its
+-- receipt.
+INSERT INTO instance_application_standard_rebinds (instance_id, node_id, from_incarnation, to_incarnation, vmmd_epoch, observed)
+VALUES (sqlc.arg(instance_id)::uuid, sqlc.arg(node_id)::uuid, sqlc.arg(from_incarnation)::uuid, sqlc.arg(to_incarnation)::uuid,
+ sqlc.arg(vmmd_epoch)::bigint, sqlc.arg(observed)::jsonb);
+
+-- name: ListApplicationStandardRebinds :many
+SELECT instance_id, node_id, from_incarnation, to_incarnation, vmmd_epoch, observed, created_at
+FROM instance_application_standard_rebinds
+WHERE instance_id = sqlc.arg(instance_id)::uuid
+ORDER BY created_at, from_incarnation;
+
 -- name: ReadManagedPostgresOwnership :one
 SELECT * FROM managed_postgres_databases WHERE id=$1;
 

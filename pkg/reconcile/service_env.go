@@ -112,9 +112,11 @@ func serviceReliabilityForWorkload(w reposcan.Workload, available map[string]str
 	return out
 }
 
+// New project workloads may call their own project's services without
+// declaring them (ADR-20261022111119, slice 2).
 func serviceBindingPolicyForNewWorkload(w reposcan.Workload) api.ServiceBindingPolicy {
 	if w.ServiceBindingPolicy == "" {
-		return api.ServiceBindingPolicyDeclared
+		return api.ServiceBindingPolicyProject
 	}
 	return api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective()
 }
