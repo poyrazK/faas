@@ -8498,6 +8498,9 @@ type EdgeRuleAction struct {
 type EdgeRuleChallengeAction struct {
 	Difficulty     int `json:"difficulty,omitempty"`
 	PassTTLSeconds int `json:"pass_ttl_seconds,omitempty"`
+	// MaxDifficulty caps raising the difficulty under attack (ADR-831
+	// amendment 8); zero keeps it fixed.
+	MaxDifficulty int `json:"max_difficulty,omitempty"`
 }
 
 // EdgeRuleWAFAction is the stored kind=waf payload (ADR-831 step 1). Values

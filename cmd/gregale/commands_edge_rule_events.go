@@ -10,12 +10,14 @@ import (
 )
 
 // cmdEdgeRulesEvents prints sampled requests edge rules matched (ADR-964),
-// newest first. --rule / --outcome filter; --cursor continues a listing.
+// newest first. --rule / --outcome / --request-id filter; --cursor continues
+// a listing.
 func cmdEdgeRulesEvents(args []string) int {
 	fs := newFlagSet("edge-rules events", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	rule := fs.String("rule", "", "only this rule id")
-	outcome := fs.String("outcome", "", "matched, logged, or a kind=waf detection: detected, warned, blocked")
+	outcome := fs.String("outcome", "", "matched, logged, a kind=waf detection (detected, warned, blocked) or a kind=challenge outcome (challenged, rejected, solved, failed)")
+	requestID := fs.String("request-id", "", "only this request, e.g. the reference a visitor without JavaScript saw on the challenge page")
 	since := fs.String("since", "24h", "how far back, e.g. 1h, 24h, 7d (clamped to the plan window)")
 	limit := fs.Int("limit", 50, "events per page (1..200)")
 	cursor := fs.String("cursor", "", "continue from a previous page's next cursor")
@@ -23,7 +25,7 @@ func cmdEdgeRulesEvents(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules events --app <slug> [--rule ID] [--outcome matched|logged|detected|warned|blocked] [--since 24h] [--limit N] [--cursor C]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules events --app <slug> [--rule ID] [--outcome OUTCOME] [--request-id ID] [--since 24h] [--limit N] [--cursor C]", "edge-rules")
 		return 1
 	}
 	client, err := authedClient()
@@ -31,7 +33,7 @@ func cmdEdgeRulesEvents(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	out, err := client.ListEdgeRuleEvents(context.Background(), *slug, api.EdgeRuleEventsQuery{
-		RuleID: *rule, Outcome: *outcome, Since: *since, Limit: *limit, Cursor: *cursor,
+		RuleID: *rule, Outcome: *outcome, RequestID: *requestID, Since: *since, Limit: *limit, Cursor: *cursor,
 	})
 	if err != nil {
 		return printErr("Events failed", err)
