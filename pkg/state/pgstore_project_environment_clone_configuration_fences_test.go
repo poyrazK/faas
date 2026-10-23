@@ -34,6 +34,7 @@ type cloneConfigurationFenceFixture struct {
 func newCloneConfigurationFenceFixture(t *testing.T) cloneConfigurationFenceFixture {
 	t.Helper()
 	s, ctx, pool := pgWithPool(t)
+	enableFullCloneConfigurationFences(t, ctx, pool)
 	a, err := s.CreateAccount(ctx, "configuration-fence@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)

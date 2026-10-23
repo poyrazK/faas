@@ -88,6 +88,17 @@ func pgStoreWithPool(t *testing.T) (*state.PgStore, *pgxpool.Pool, context.Conte
 	return s, pool, ctx
 }
 
+// enableFullCloneConfigurationFences turns the configuration write fence back
+// on, as opening full-clone admission will (ADR-20261023091049); migrations
+// leave it off while full clones are not admitted.
+func enableFullCloneConfigurationFences(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	var enabled int
+	if err := pool.QueryRow(ctx, `SELECT set_full_clone_configuration_fences(true)`).Scan(&enabled); err != nil || enabled == 0 {
+		t.Fatalf("enable configuration fences: %d %v", enabled, err)
+	}
+}
+
 // seedLiveDeploy creates account+app+live-deployment and returns their ids.
 // The optional emailSuffix disambiguates the account.email UNIQUE key and
 // the optional slug disambiguates apps.slug (a global UNIQUE column, not
