@@ -914,6 +914,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	operational := s.appOperationalSummary(ctx, acct, app)
 	appCosts := s.dashboardAppCosts(ctx, log, acct, app, costMonth, costMonthNotice)
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
+		AnnouncedCaptures:  s.announcedProfileCaptures(ctx, log, acct, app),
 		ProductControlURL:  s.productControlConsoleURL(app.Slug),
 		ProfilingAvailable: s.profileBackend != nil && api.MustLimitsFor(acct.Plan).Profiling.Enabled,
 		ApplicationAuth:    s.applicationAuthEnabled(appFlagSubject(acct, app)),
@@ -2944,6 +2945,9 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 	data := dashboard.DeploymentDetailData{
 		App:        dashboard.AppListItem{Slug: app.Slug},
 		Deployment: dashboardDeploymentItem(dep),
+	}
+	if dep.ErrorCode == api.CodeAppRuntimeOOM {
+		data.OOMCaptureURL = s.oomProfileCaptureURL(r.Context(), acct, app, dep)
 	}
 	// Keep the dashboard's failure explanation aligned with the API/CLI
 	// projection: the persisted profile is the source of truth for the

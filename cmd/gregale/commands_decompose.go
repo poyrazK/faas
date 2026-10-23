@@ -616,6 +616,93 @@ func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, show
 	return printPlanTextWithExplain(w, plan, excludeSet, showAffected, false)
 }
 
+// printUnsetEnvKeys lists, per workload, the runtime keys that will have no
+// value, so an app does not start without configuration it names.
+//
+//nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
+func printUnsetEnvKeys(w io.Writer, workloads []api.PlanWorkload) {
+	ws := append([]api.PlanWorkload(nil), workloads...)
+	sort.Slice(ws, func(i, j int) bool { return ws[i].Name < ws[j].Name })
+	imported, unset, notOptedIn := false, false, false
+	for _, wl := range ws {
+		imported = imported || len(wl.ImportedEnvKeys) > 0
+		unset = unset || len(wl.UnsetEnvKeys) > 0
+	}
+	if imported {
+		fmt.Fprintln(w, "\nImported from Compose (values already set on an app are kept):")
+		for _, wl := range ws {
+			if len(wl.ImportedEnvKeys) > 0 {
+				fmt.Fprintf(w, "  - %-20s %s\n", wl.Name, strings.Join(wl.ImportedEnvKeys, ", "))
+			}
+		}
+	}
+	if !unset {
+		return
+	}
+	fmt.Fprintln(w, "\nNeeds a value (set before the first request):")
+	for _, wl := range ws {
+		if len(wl.UnsetEnvKeys) == 0 {
+			continue
+		}
+		keys := make([]string, 0, len(wl.UnsetEnvKeys))
+		for _, key := range wl.UnsetEnvKeys {
+			reason := wl.UnsetEnvKeyReasons[key]
+			notOptedIn = notOptedIn || reason == "not_opted_in"
+			if text := envImportReasonText[reason]; text != "" {
+				key += " (" + text + ")"
+			}
+			keys = append(keys, key)
+		}
+		fmt.Fprintf(w, "  - %-20s %s\n", wl.Name, strings.Join(keys, ", "))
+	}
+	fmt.Fprintln(w, "  Set them with `gregale env set --app <app> KEY=VALUE` or `gregale secrets set --app <app> KEY=VALUE`,")
+	fmt.Fprintln(w, "  or pass them in a --secrets-file to gregale deploy.")
+	if notOptedIn {
+		fmt.Fprintln(w, "  To import plain Compose values, add `x-gregale-env-import: true` at the top of the Compose file.")
+	}
+}
+
+// envImportReasonText renders the plan's unset_env_key_reasons codes.
+var envImportReasonText = map[string]string{
+	"not_opted_in":    "plain value in Compose",
+	"secret":          "looks like a secret",
+	"service_address": "Docker service address",
+	"local_address":   "local address",
+	"interpolated":    "uses $ interpolation",
+	"host_value":      "read from the host",
+	"empty":           "empty in Compose",
+	"invalid":         "not importable",
+}
+
+// withProvidedEnvKeys drops keys a --secrets-file supplies from every
+// workload's unset and imported lists: the file's values go to every
+// selected workload, before any Compose value is imported.
+func withProvidedEnvKeys(plan api.PlanResponse, pairs []secretsPair) api.PlanResponse {
+	if len(pairs) == 0 {
+		return plan
+	}
+	provided := make(map[string]bool, len(pairs))
+	for _, pair := range pairs {
+		provided[pair.Key] = true
+	}
+	notProvided := func(keys []string) []string {
+		var out []string
+		for _, key := range keys {
+			if !provided[key] {
+				out = append(out, key)
+			}
+		}
+		return out
+	}
+	workloads := append([]api.PlanWorkload(nil), plan.Workloads...)
+	for i := range workloads {
+		workloads[i].UnsetEnvKeys = notProvided(workloads[i].UnsetEnvKeys)
+		workloads[i].ImportedEnvKeys = notProvided(workloads[i].ImportedEnvKeys)
+	}
+	plan.Workloads = workloads
+	return plan
+}
+
 // printPlanTextWithExplain renders the plan and, when explain is true,
 // appends a deterministic detector trace below each workload. Keeping the
 // legacy printPlanText wrapper preserves the terse output used by deploy's
@@ -681,6 +768,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 	}
 	if showAffected {
 		printAffectedText(w, plan, excludeIdx)
+		printUnsetEnvKeys(w, plan.Workloads)
 		if explain {
 			printPlanDetectionTrace(w, plan.Workloads)
 			printPlanDetectionWarnings(w, plan.DetectionWarnings)
@@ -745,6 +833,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 				m.Name, m.Kind, m.EnvHint, m.Image)
 		}
 	}
+	printUnsetEnvKeys(w, plan.Workloads)
 	if len(plan.Warnings) > 0 {
 		fmt.Fprintln(w, "\nWarnings:")
 		for _, wn := range plan.Warnings {

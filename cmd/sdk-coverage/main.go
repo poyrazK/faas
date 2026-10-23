@@ -781,6 +781,14 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/profiles/canary-checks/{deployment}": "ListProfileCanaryChecks",
 	"GET /v1/apps/{slug}/profiles/periodic-monitors":          "ListProfilePeriodicMonitors",
 	"GET /v1/deployments/{id}/canary/profile-gate":            "GetProfileCanaryGate",
+	// ADR-1155: continuous heap profiles and on-demand captures.
+	"GET /v1/apps/{slug}/profiles/heap":                "GetAppHeapProfile",
+	"POST /v1/apps/{slug}/profiles/captures":           "CreateProfileCapture",
+	"GET /v1/apps/{slug}/profiles/captures":            "ListProfileCaptures",
+	"GET /v1/apps/{slug}/profiles/captures/{id}":       "GetProfileCapture",
+	"GET /v1/apps/{slug}/profiles/captures/{id}/view":  "GetProfileCaptureView",
+	"GET /v1/apps/{slug}/profiles/captures/{id}/diff":  "DiffProfileCaptures",
+	"GET /v1/apps/{slug}/profiles/captures/{id}/pprof": "DownloadProfileCapture",
 	// ADR-566: financial preview routes use financial-domain client names.
 	"GET /v1/billing/costs":                                                    "GetFinancialCosts",
 	"GET /v1/billing/forecast":                                                 "GetFinancialForecast",

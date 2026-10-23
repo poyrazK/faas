@@ -1117,7 +1117,10 @@ type Handler struct {
 	// call paths. observe nil-checks before enqueueing. The recorder
 	// never opens a Postgres connection itself — the publisher
 	// (request_telemetry_publisher.go) ships drained rows to apid.
-	requestTelemetry    *requestTelemetryRecorder
+	requestTelemetry *requestTelemetryRecorder
+	// slowRequests reports requests in flight too long for an automatic
+	// stack capture (ADR-1155); nil disables tracking.
+	slowRequests        *SlowRequestWatcher
 	requestIDJournal    RequestIDJournalWriter
 	usageOutbox         *usageoutbox.Outbox
 	requestAuditEnabled bool
@@ -1310,6 +1313,9 @@ type Handler struct {
 	asnReader ASNReader
 	// botVerifier resolves the verified_bot match field (ADR-973); nil = absent.
 	botVerifier *BotVerifier
+	// penaltyBox holds clients rule penalties boxed (ADR-20261022105846);
+	// nil leaves penalties unenforced.
+	penaltyBox *PenaltyBox
 	// edgeRuleHits counts per-rule matches (ADR-960); nil disables counting.
 	edgeRuleHits EdgeRuleHitRecorder
 	// resolveTargetApp is the closure the matcher uses to
@@ -3208,6 +3214,7 @@ func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app Ap
 			api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
 				api.CodeForbidden, "IP denied",
 				"client IP matches a deny CIDR on this edge rule"))
+			h.penalizeEdgeRuleRejection(r, app, rule.ID)
 			if h.edgeRuleAudit != nil {
 				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.ip_blocked", nil, map[string]any{
 					"rule_id":   rule.ID,
@@ -3244,6 +3251,7 @@ func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app Ap
 			api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
 				api.CodeForbidden, "IP not allowed",
 				"client IP does not match any allow CIDR on this edge rule"))
+			h.penalizeEdgeRuleRejection(r, app, rule.ID)
 			if h.edgeRuleAudit != nil {
 				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.ip_blocked", nil, map[string]any{
 					"rule_id":   rule.ID,
@@ -4265,6 +4273,7 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
 			api.CodeForbidden, "Country denied",
 			"client country matches a deny entry on this edge rule"))
+		h.penalizeEdgeRuleRejection(r, app, rule.ID)
 		if h.edgeRuleAudit != nil {
 			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.geo_blocked", nil, map[string]any{
 				"rule_id":   rule.ID,
@@ -4284,6 +4293,7 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 			api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
 				api.CodeForbidden, "Country not allowed",
 				"client country does not match any allow entry on this edge rule"))
+			h.penalizeEdgeRuleRejection(r, app, rule.ID)
 			if h.edgeRuleAudit != nil {
 				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.geo_blocked", nil, map[string]any{
 					"rule_id":   rule.ID,
@@ -4521,6 +4531,7 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		writeRateLimited(w, bucket, fmt.Sprintf(
 			"this route allows %s requests per second with bursts of %d; slow down and retry",
 			strconv.FormatFloat(rule.RequestsPerSecond, 'f', -1, 64), rule.Burst))
+		h.penalizeEdgeRuleRejection(r, app, rule.ID)
 		if h.edgeRuleAudit != nil {
 			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.throttle_rejected", nil, map[string]any{
 				"rule_id": rule.ID,
@@ -6181,6 +6192,13 @@ haveApp:
 	// table — a customer who flipped the whole app should never see
 	// a per-route 503 from a different Problem.code, because that
 	// would leak the existence of the fine-grained rule.
+	// ADR-20261022105846: a client a rule's penalty box holds is refused
+	// before any other gate.
+	if h.applyEdgePenaltyBox(w, r, app, deploymentSmoke) {
+		h.metrics.ObserveEdgeRejection(app.ID, "penalty", rec.status)
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
 	if h.applyAppsMaintenanceMode(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
@@ -7701,6 +7719,7 @@ haveApp:
 		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
 				req, _ = stampTargetIdentity(req, app, tgt)
+				defer h.trackSlowRequest(req, app, tgt, isStreaming)()
 				h.proxyByNode(tgt).ServeHTTP(w, req)
 			}, app)
 	} else {
@@ -7717,6 +7736,7 @@ haveApp:
 		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
 				req, _ = stampTargetIdentity(req, app, tgt)
+				defer h.trackSlowRequest(req, app, tgt, isStreaming)()
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
 			}, app)
 	}
