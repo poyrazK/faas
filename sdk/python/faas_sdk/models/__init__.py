@@ -1461,6 +1461,7 @@ from .edge_rule_response import EdgeRuleResponse
 from .edge_rule_response_kind import EdgeRuleResponseKind
 from .edge_rule_response_match_headers import EdgeRuleResponseMatchHeaders
 from .edge_rule_response_mode import EdgeRuleResponseMode
+from .edge_rule_response_unreleased_features_item import EdgeRuleResponseUnreleasedFeaturesItem
 from .edge_rule_response_validate_mode import EdgeRuleResponseValidateMode
 from .edge_rule_retry_action import EdgeRuleRetryAction
 from .edge_rule_rewrite_action import EdgeRuleRewriteAction
@@ -7557,6 +7558,7 @@ __all__ = (
     "EdgeRuleResponseKind",
     "EdgeRuleResponseMatchHeaders",
     "EdgeRuleResponseMode",
+    "EdgeRuleResponseUnreleasedFeaturesItem",
     "EdgeRuleResponseValidateMode",
     "EdgeRuleRetryAction",
     "EdgeRuleRewriteAction",

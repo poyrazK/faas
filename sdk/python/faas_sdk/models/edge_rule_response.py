@@ -9,6 +9,10 @@ from attrs import field as _attrs_field
 
 from ..models.edge_rule_response_kind import EdgeRuleResponseKind, check_edge_rule_response_kind
 from ..models.edge_rule_response_mode import EdgeRuleResponseMode, check_edge_rule_response_mode
+from ..models.edge_rule_response_unreleased_features_item import (
+    EdgeRuleResponseUnreleasedFeaturesItem,
+    check_edge_rule_response_unreleased_features_item,
+)
 from ..models.edge_rule_response_validate_mode import (
     EdgeRuleResponseValidateMode,
     check_edge_rule_response_validate_mode,
@@ -134,6 +138,13 @@ class EdgeRuleResponse:
     (block mode) rules; editing the rule's penalty away, disabling it or
     putting it in log mode releases its clients.
     """
+    unreleased_features: list[EdgeRuleResponseUnreleasedFeaturesItem] | Unset = UNSET
+    """Gated features this rule uses that are not yet released to the
+    account (ADR-20261023113721). The gateway does not enforce them:
+    a challenge rule is inert, a warn or block WAF rule only
+    observes, and a penalty boxes nobody. Absent when every feature
+    the rule uses is released.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -249,6 +260,13 @@ class EdgeRuleResponse:
         if not isinstance(self.penalty, Unset):
             penalty = self.penalty.to_dict()
 
+        unreleased_features: list[str] | Unset = UNSET
+        if not isinstance(self.unreleased_features, Unset):
+            unreleased_features = []
+            for unreleased_features_item_data in self.unreleased_features:
+                unreleased_features_item: str = unreleased_features_item_data
+                unreleased_features.append(unreleased_features_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -284,6 +302,8 @@ class EdgeRuleResponse:
             field_dict["mode"] = mode
         if penalty is not UNSET:
             field_dict["penalty"] = penalty
+        if unreleased_features is not UNSET:
+            field_dict["unreleased_features"] = unreleased_features
 
         return field_dict
 
@@ -563,6 +583,17 @@ class EdgeRuleResponse:
         else:
             penalty = EdgeRulePenalty.from_dict(_penalty)
 
+        _unreleased_features = d.pop("unreleased_features", UNSET)
+        unreleased_features: list[EdgeRuleResponseUnreleasedFeaturesItem] | Unset = UNSET
+        if _unreleased_features is not UNSET:
+            unreleased_features = []
+            for unreleased_features_item_data in _unreleased_features:
+                unreleased_features_item = check_edge_rule_response_unreleased_features_item(
+                    unreleased_features_item_data
+                )
+
+                unreleased_features.append(unreleased_features_item)
+
         edge_rule_response = cls(
             id=id,
             account_id=account_id,
@@ -585,6 +616,7 @@ class EdgeRuleResponse:
             match=match,
             mode=mode,
             penalty=penalty,
+            unreleased_features=unreleased_features,
         )
 
         edge_rule_response.additional_properties = d
