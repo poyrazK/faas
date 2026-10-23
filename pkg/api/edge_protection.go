@@ -42,7 +42,9 @@ type EdgeProtectionPenalty struct {
 // passes earned, Rejected non-browser requests answered 403
 // challenge_required, Passed requests let through on an earlier pass,
 // Bypassed requests let through on a verified API key, consumer key or JWT,
-// and Invalid solutions refused (bad work or an expired token).
+// Invalid solutions refused (bad work or an expired token), and Raised the
+// part of Issued served at a difficulty raised under attack (ADR-831
+// amendment 8).
 type EdgeProtectionChallenge struct {
 	Issued   int64 `json:"issued"`
 	Solved   int64 `json:"solved"`
@@ -50,6 +52,7 @@ type EdgeProtectionChallenge struct {
 	Passed   int64 `json:"passed"`
 	Bypassed int64 `json:"bypassed"`
 	Invalid  int64 `json:"invalid"`
+	Raised   int64 `json:"raised"`
 }
 
 // EdgeProtectionWAF is the kind=waf part of an EdgeProtectionResponse.

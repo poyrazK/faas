@@ -1946,6 +1946,7 @@ func compileChallengeRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleChall
 		action := api.EdgeRuleChallengeAction{
 			Difficulty:     rule.Action.Challenge.Difficulty,
 			PassTTLSeconds: rule.Action.Challenge.PassTTLSeconds,
+			MaxDifficulty:  rule.Action.Challenge.MaxDifficulty,
 		}
 		if action.Validate() != nil {
 			continue
@@ -1962,6 +1963,7 @@ func compileChallengeRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleChall
 			MatchHeaders:   buildMatchHeadersMap(rule.MatchHeaders),
 			Difficulty:     action.Difficulty,
 			PassTTLSeconds: action.PassTTLSeconds,
+			MaxDifficulty:  max(action.MaxDifficulty, action.Difficulty),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })

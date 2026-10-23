@@ -13,6 +13,7 @@ import (
 type edgeRuleChallengeFlags struct {
 	difficulty     *int
 	passTTLSeconds *int
+	maxDifficulty  *int
 }
 
 func addEdgeRuleChallengeFlags(fs *flag.FlagSet) edgeRuleChallengeFlags {
@@ -23,6 +24,9 @@ func addEdgeRuleChallengeFlags(fs *flag.FlagSet) edgeRuleChallengeFlags {
 		passTTLSeconds: fs.Int("challenge-pass-ttl", 0,
 			fmt.Sprintf("kind=challenge: seconds a solved challenge lets the browser through, %d..%d (default %d)",
 				api.MinEdgeChallengePassTTLSeconds, api.MaxEdgeChallengePassTTLSeconds, api.EdgeChallengeDefaultPassTTLSeconds)),
+		maxDifficulty: fs.Int("challenge-max-difficulty", 0,
+			fmt.Sprintf("kind=challenge: raise the difficulty up to this many bits, at most %d, while the rule serves far more challenge pages than usual (default: fixed)",
+				api.MaxEdgeChallengeDifficulty)),
 	}
 }
 
@@ -30,6 +34,7 @@ func buildEdgeRuleChallengeAction(in edgeRuleActionInputs) (json.RawMessage, err
 	a := api.EdgeRuleChallengeAction{
 		Difficulty:     in.ChallengeDifficulty,
 		PassTTLSeconds: in.ChallengePassTTLSeconds,
+		MaxDifficulty:  in.ChallengeMaxDifficulty,
 	}
 	if err := a.Validate(); err != nil {
 		return nil, errToError(err)

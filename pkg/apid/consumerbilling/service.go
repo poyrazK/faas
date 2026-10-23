@@ -308,7 +308,7 @@ func (s *Service) Statements(w http.ResponseWriter, r *http.Request) {
 	for _, st := range finalized {
 		item := api.ConsumerBillingStatement{ID: st.ID, PeriodStart: st.PeriodStart.UTC(), PeriodEnd: st.PeriodEnd.UTC(),
 			Revision: st.Revision, Currency: st.Currency, BillableUnits: st.BillableUnits, AmountMillicents: st.AmountMillicents,
-			FinalizedAt: st.FinalizedAt}
+			CreditAppliedMillicents: st.CreditAppliedMillicents, AmountDueMillicents: st.AmountDueMillicents(), FinalizedAt: st.FinalizedAt}
 		if exports != nil {
 			if e, err := exports.GetStatementInvoiceExport(r.Context(), c.app.AccountID, state.StatementSourceAppConsumer, st.ID); err == nil &&
 				e.Status == state.StatementInvoiceExportCompleted {

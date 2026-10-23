@@ -768,6 +768,7 @@ func ActionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 			out.Challenge = &state.EdgeRuleChallengeAction{
 				Difficulty:     a.Difficulty,
 				PassTTLSeconds: a.PassTTLSeconds,
+				MaxDifficulty:  a.MaxDifficulty,
 			}
 		}
 	}

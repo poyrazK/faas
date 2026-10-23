@@ -112,6 +112,10 @@ export type EdgeProtectionResponse = {
      * Solutions refused: wrong work or an expired token.
      */
     invalid: number;
+    /**
+     * The part of issued served at a difficulty raised under attack (ADR-831 amendment 8).
+     */
+    raised?: number;
   };
   /**
    * Penalty boxes (ADR-20261022105846); refusals also appear in rejections under gate penalty.

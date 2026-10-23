@@ -21,6 +21,7 @@ func TestMemStoreEdgeRuleEvents(t *testing.T) {
 		}
 		events = append(events, state.EdgeRuleEvent{RuleID: "r1", AppID: "app", OccurredAt: base.Add(time.Duration(i) * time.Minute), Outcome: outcome, ClientIP: "not-an-ip"})
 	}
+	events[3].RequestID = "req-7f3a"
 	events = append(events, state.EdgeRuleEvent{RuleID: "r2", AppID: "app", OccurredAt: base, Outcome: state.EdgeRuleHitMatched},
 		state.EdgeRuleEvent{RuleID: "r1", AppID: "other", OccurredAt: base, Outcome: state.EdgeRuleHitMatched})
 	if err := m.RecordEdgeRuleEvents(ctx, events); err != nil {
@@ -38,6 +39,9 @@ func TestMemStoreEdgeRuleEvents(t *testing.T) {
 	logged, _ := m.ListEdgeRuleEvents(ctx, state.EdgeRuleEventQuery{AppID: "app", Outcome: state.EdgeRuleHitLogged, Limit: 10})
 	if len(logged) != 2 {
 		t.Fatalf("logged = %d, want 2", len(logged))
+	}
+	if byRequest, _ := m.ListEdgeRuleEvents(ctx, state.EdgeRuleEventQuery{AppID: "app", RequestID: "req-7f3a", Limit: 10}); len(byRequest) != 1 || byRequest[0].RequestID != "req-7f3a" {
+		t.Fatalf("by request = %+v", byRequest)
 	}
 	recent, _ := m.ListEdgeRuleEvents(ctx, state.EdgeRuleEventQuery{AppID: "app", Since: base.Add(3 * time.Minute), Limit: 10})
 	if len(recent) != 2 {

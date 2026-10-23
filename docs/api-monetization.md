@@ -449,7 +449,11 @@ gregale platform-tenants statement-export --id TENANT_ID --statement-id STATEMEN
   addresses. Gregale's statement totals stay net of tax.
 - **Handoff.** The export records the statement's handoff with the provider's
   invoice ID, so the usual rule that a revision is invoiced once applies. A
-  statement exports to one provider only.
+  statement exports to one provider only. The export reserves the handoff
+  before it calls the provider, so while it runs, a statement covering the
+  same usage, such as a customer statement that includes the consumer, gets
+  `409` instead of being invoiced too. If the provider refuses the invoice,
+  the reservation is released.
 - **Retries.** If the provider fails part-way, run the export again. It
   resumes the same invoice and never adds an item twice. If Lago issued an
   invoice but the export stopped before tagging it, the retry names that
@@ -584,9 +588,15 @@ gregale consumers spend-cap my-api CONSUMER_ID
 - **Soft limit.** Gregale checks each cap every minute, and right away when
   you change the cap or the credit. A consumer can therefore go over by about
   two minutes of traffic. The refused requests are not billed.
+- **Repricing.** A check reprices the month only when the consumer made
+  requests since the last one, and at least every 15 minutes. Changes other
+  than usage, such as a new rate card or credit expiring, can take up to
+  15 minutes to reach the cap.
 - **Currency.** The cap is compared with the month to date in its own
   currency only.
 - **Usage only.** Caps count usage charges, not base fees or minimums.
+  Credit pays a statement's fees first, so credit spent on fees does not
+  lift a cap.
 
 ### Overdue invoices
 
@@ -626,9 +636,10 @@ curl -H "Authorization: Bearer ck_..." https://api.gregale.dev/v1/consumer-billi
 - **Month to date.** The summary prices this month's usage the same way the
   next statement will. It also shows the plan's monthly cap, the prepaid
   credit left, and the spend cap. Late usage can still change it.
-- **Statements.** The latest finalized statements include each invoice's
-  payment status and the provider's hosted invoice or checkout page, where
-  your customer can pay.
+- **Statements.** The latest finalized statements show the prepaid credit
+  applied (`credit_applied_millicents`), what is left to pay
+  (`amount_due_millicents`), and each invoice's payment status and the
+  provider's hosted invoice or checkout page, where your customer can pay.
 - **Own data only.** A key reads only its own consumer, never other customers
   or your rate cards. A key with only the `billing` scope cannot call your
   app.
@@ -810,8 +821,9 @@ gregale platform-tenants spend-cap --id TENANT_ID
 - **Spend caps.** Once the customer's usage for the month, after credit,
   passes the cap, every request attributed to the customer gets
   `402 tenant_spend_cap_reached`, through consumers, surfaces and JWT rules.
-  Caps count usage, not fees, are checked every minute, and can be overshot
-  by about two minutes of traffic, as for consumers.
+  Caps count usage, not fees, are checked every minute, repriced when the
+  customer has new usage or every 15 minutes, and can be overshot by about
+  two minutes of traffic, as for consumers.
 
 ### Tenant plans
 

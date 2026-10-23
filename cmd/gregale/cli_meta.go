@@ -3706,6 +3706,7 @@ var cliCommands = []cliCommand{
 				{Name: "waf-inspect-body-bytes", Short: "kind=waf: request body bytes to inspect, 1..65536 (default 8192)", Value: "BYTES"},
 				{Name: "challenge-difficulty", Short: "kind=challenge: proof-of-work difficulty in leading zero bits, 10..22 (default 16)", Value: "BITS"},
 				{Name: "challenge-pass-ttl", Short: "kind=challenge: seconds a solved challenge lets the browser through, 300..86400 (default 3600)", Value: "SECONDS"},
+				{Name: "challenge-max-difficulty", Short: "kind=challenge: raise the difficulty up to this many bits, at most 22, while the rule serves far more challenge pages than usual (default: fixed)", Value: "BITS"},
 				{Name: "validate-schema", Short: "JSON Schema (inline JSON, @file, or - for stdin; max 64 KiB)", Value: "JSON|@FILE|-"},
 				{Name: "validate-mode", Short: "invalid-request behavior (default block)", Value: "MODE", ClosedSet: []string{api.ValidateModeBlock, api.ValidateModeObserve, api.ValidateModeWarn}},
 				{Name: "validate-content-type", Short: "accepted application media type (repeat; e.g. application/json)", Value: "TYPE"},
@@ -3854,6 +3855,7 @@ var cliCommands = []cliCommand{
 				{Name: "waf-inspect-body-bytes", Short: "kind=waf: request body bytes to inspect, 1..65536 (default 8192)", Value: "BYTES"},
 				{Name: "challenge-difficulty", Short: "kind=challenge: proof-of-work difficulty in leading zero bits, 10..22 (default 16)", Value: "BITS"},
 				{Name: "challenge-pass-ttl", Short: "kind=challenge: seconds a solved challenge lets the browser through, 300..86400 (default 3600)", Value: "SECONDS"},
+				{Name: "challenge-max-difficulty", Short: "kind=challenge: raise the difficulty up to this many bits, at most 22, while the rule serves far more challenge pages than usual (default: fixed)", Value: "BITS"},
 				{Name: "validate-schema", Short: "replacement body schema; an action update replaces the body schema and parameter schemas together (inline JSON, @file, or -; max 64 KiB)", Value: "JSON|@FILE|-"},
 				{Name: "validate-mode", Short: "invalid-request behavior", Value: "MODE", ClosedSet: []string{api.ValidateModeBlock, api.ValidateModeObserve, api.ValidateModeWarn}},
 				{Name: "validate-content-type", Short: "accepted application media type (repeat; e.g. application/json)", Value: "TYPE"},
@@ -3917,9 +3919,11 @@ var cliCommands = []cliCommand{
 			{Name: "events", Short: "Show sampled requests that rules matched, newest first", Notes: []string{"Includes kind=waf detections; up to 10 of each per rule per minute, kept 7 days."}, Examples: []string{
 				"gregale edge-rules events --app my-api --outcome logged --since 7d",
 				"gregale edge-rules events --app my-api --outcome blocked",
+				"gregale edge-rules events --app my-site --request-id REQUEST_ID",
 			}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "rule", Short: "only this rule id", Value: "ID"},
+				{Name: "request-id", Short: "only this request, e.g. the reference a visitor without JavaScript saw on the challenge page", Value: "ID"},
 				{Name: "outcome", Short: "outcome filter; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes", Value: "OUTCOME", ClosedSet: []string{"matched", "logged", "detected", "warned", "blocked", "challenged", "rejected", "solved", "failed"}},
 				{Name: "since", Short: "how far back, e.g. 1h, 24h, 7d (clamped to the plan window)", Value: "DURATION"},
 				{Name: "limit", Short: "events per page (1..200)", Value: "N"},

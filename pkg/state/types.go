@@ -3316,6 +3316,15 @@ type CustomDomain struct {
 // Verified reports whether the TXT challenge has been satisfied.
 func (d CustomDomain) Verified() bool { return !d.VerifiedAt.IsZero() }
 
+// ClaimLive reports whether the row still reserves its hostname: it is
+// verified, or its verification deadline has not passed. An expired challenge
+// is not an ownership record; it must not shadow a broader route, deny a
+// certificate or block another reservation. A zero deadline predates the
+// column and never expires.
+func (d CustomDomain) ClaimLive(now time.Time) bool {
+	return d.Verified() || d.VerificationExpiresAt.IsZero() || d.VerificationExpiresAt.After(now)
+}
+
 // DomainDoctorObservation (ADR-120) is the dns_poller's
 // view of a per-domain probe pass. The struct mirrors the
 // domain_doctor_observations table (migrations/00309) so
@@ -8501,6 +8510,9 @@ type EdgeRulePenalty struct {
 type EdgeRuleChallengeAction struct {
 	Difficulty     int `json:"difficulty,omitempty"`
 	PassTTLSeconds int `json:"pass_ttl_seconds,omitempty"`
+	// MaxDifficulty caps raising the difficulty under attack (ADR-831
+	// amendment 8); zero keeps it fixed.
+	MaxDifficulty int `json:"max_difficulty,omitempty"`
 }
 
 // EdgeRuleWAFAction is the stored kind=waf payload (ADR-831 step 1). Values
