@@ -16,12 +16,19 @@ type idempotencyRequestStore interface {
 	PutIdempotent(ctx context.Context, accountID, key string, status int, body []byte) error
 }
 
+// testFingerprint builds a fingerprint: a key id, then a MAC of the request.
+func testFingerprint(keyID, request string) []byte {
+	id, mac := sha256.Sum256([]byte(keyID)), sha256.Sum256([]byte(request))
+	return append(id[:state.IdempotencyFingerprintKeyIDSize:state.IdempotencyFingerprintKeyIDSize], mac[:state.IdempotencyFingerprintSize-state.IdempotencyFingerprintKeyIDSize]...)
+}
+
 // testReserveIdempotentRequest is the ADR-20261022204036 contract: a key is
 // bound to its first request's fingerprint for its replay window, and a key
-// stored without one (an earlier release, an unbound caller) never conflicts.
+// stored without one (an earlier release, an unbound caller) or under another
+// key id (a rotated key) never conflicts.
 func testReserveIdempotentRequest(t *testing.T, ctx context.Context, s idempotencyRequestStore, acctID string) {
-	fpA, fpB := sha256.Sum256([]byte("request a")), sha256.Sum256([]byte("request b"))
-	a, b := fpA[:], fpB[:]
+	a, b := testFingerprint("key 1", "request a"), testFingerprint("key 1", "request b")
+	rotated := testFingerprint("key 2", "request b")
 	type step struct {
 		name         string
 		key          string
@@ -42,6 +49,12 @@ func testReserveIdempotentRequest(t *testing.T, ctx context.Context, s idempoten
 		{name: "same request replays", key: "k", fingerprint: a, abandonAfter: time.Hour, want: done},
 		{name: "other request conflicts", key: "k", fingerprint: b, abandonAfter: time.Hour, want: state.IdempotencyReservation{Conflict: true}},
 		{name: "unfingerprinted request replays", key: "k", abandonAfter: time.Hour, want: done},
+		{name: "request under a rotated key replays", key: "k", fingerprint: rotated, abandonAfter: time.Hour, want: done},
+
+		{name: "reservation under the old key", key: "rotation", fingerprint: a, abandonAfter: time.Hour, want: state.IdempotencyReservation{Reserved: true}},
+		{name: "rotated key waits for it in flight", key: "rotation", fingerprint: rotated, abandonAfter: time.Hour, want: state.IdempotencyReservation{InFlight: true}},
+		{name: "rotated key takes over the abandoned key", key: "rotation", fingerprint: rotated, want: state.IdempotencyReservation{Reserved: true}},
+		{name: "and binds it under the new key", key: "rotation", fingerprint: testFingerprint("key 2", "request c"), abandonAfter: time.Hour, want: state.IdempotencyReservation{Conflict: true}},
 
 		{name: "receipt stored without a fingerprint", key: "legacy", put: true},
 		{name: "any request replays an unbound receipt", key: "legacy", fingerprint: b, abandonAfter: time.Hour, want: done},
@@ -87,12 +100,12 @@ func TestPg_ReserveIdempotentRequest(t *testing.T) {
 	if _, err := pool.Exec(ctx, `update idempotency_keys set created_at = now() - interval '25 hours' where account_id = $1 and key = 'k'`, acctID); err != nil {
 		t.Fatal(err)
 	}
-	other := sha256.Sum256([]byte("request b"))
-	if res, err := s.ReserveIdempotentRequest(ctx, acctID, "k", other[:], time.Hour); err != nil || !res.Reserved {
+	other := testFingerprint("key 1", "request b")
+	if res, err := s.ReserveIdempotentRequest(ctx, acctID, "k", other, time.Hour); err != nil || !res.Reserved {
 		t.Fatalf("reserve after the window = %+v err=%v, want the key rebound", res, err)
 	}
 	var stored []byte
-	if err := pool.QueryRow(ctx, `select request_digest from idempotency_keys where account_id = $1 and key = 'k'`, acctID).Scan(&stored); err != nil || !bytes.Equal(stored, other[:]) {
+	if err := pool.QueryRow(ctx, `select request_digest from idempotency_keys where account_id = $1 and key = 'k'`, acctID).Scan(&stored); err != nil || !bytes.Equal(stored, other) {
 		t.Fatalf("stored fingerprint = %x err=%v, want %x", stored, err, other)
 	}
 }

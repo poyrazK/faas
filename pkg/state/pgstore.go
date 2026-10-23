@@ -23127,10 +23127,11 @@ func (s *PgStore) ReserveIdempotent(ctx context.Context, accountID, key string, 
 // While the key is in its window, a request whose fingerprint differs from
 // the bound one gets Conflict, never a replay, a wait or a takeover. A key
 // stored without a fingerprint (by an earlier release, or for a request too
-// large to fingerprint) never conflicts.
+// large to fingerprint), or with one made under another key id, never
+// conflicts.
 func (s *PgStore) ReserveIdempotentRequest(ctx context.Context, accountID, key string, fingerprint []byte, abandonAfter time.Duration) (IdempotencyReservation, error) {
-	if fingerprint != nil && len(fingerprint) != 32 {
-		return IdempotencyReservation{}, errors.New("state: idempotency request fingerprint must be SHA-256")
+	if fingerprint != nil && len(fingerprint) != IdempotencyFingerprintSize {
+		return IdempotencyReservation{}, errors.New("state: idempotency request fingerprint must be 32 bytes")
 	}
 	q := sqlc.New()
 	_, err := q.ReserveIdempotentRequest(ctx, s.pool, sqlc.ReserveIdempotentRequestParams{
@@ -23146,7 +23147,7 @@ func (s *PgStore) ReserveIdempotentRequest(ctx context.Context, accountID, key s
 	if err != nil {
 		return IdempotencyReservation{}, err
 	}
-	if fingerprint != nil && row.RequestDigest != nil && subtle.ConstantTimeCompare(row.RequestDigest, fingerprint) != 1 {
+	if idempotencyFingerprintsConflict(row.RequestDigest, fingerprint) {
 		return IdempotencyReservation{Conflict: true}, nil
 	}
 	return IdempotencyReservation{InFlight: row.ResponseStatus == 0, Status: int(row.ResponseStatus), Body: row.ResponseBody}, nil

@@ -15,7 +15,7 @@ info:
     and replay with `Idempotent-Replayed: true`; the one-time token-creation
     endpoint deliberately does not cache plaintext for retries. A key is
     bound to the request it was first used for: the same key with a
-    different body or precondition header returns
+    different body, query or precondition header returns
     `422 idempotency_key_reused` and does not run.
 
     Errors use RFC 9457 `application/problem+json` with a stable `code`

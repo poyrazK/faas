@@ -398,10 +398,11 @@ type server struct {
 	// preflight handler (GET /v1/preflight). It is built on first use so the
 	// egress-guarded HTTP client and verdict cache are not allocated on
 	// deployments that never receive a check.
-	preflightOnce    sync.Once
-	preflightHandler *preflight.Handler
-	statusMetrics    *statusMetrics
-	devLoopMetrics   *devloop.Metrics
+	preflightOnce      sync.Once
+	preflightHandler   *preflight.Handler
+	statusMetrics      *statusMetrics
+	idempotencyMetrics *idempotencyMetrics
+	devLoopMetrics     *devloop.Metrics
 	// promqlClient is the Prometheus HTTP client shared by the
 	// statusCache and the per-app metrics endpoint (issue #273 /
 	// ADR-042). Owned here so the GET /v1/apps/{slug}/metrics handler
@@ -687,6 +688,11 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 	}
 	if ops != nil && (s.statusMetrics == nil || s.statusMetrics.registry != ops.Registry()) {
 		s.statusMetrics = newStatusMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops == nil {
+		s.idempotencyMetrics = nil
+	} else if s.idempotencyMetrics == nil || s.idempotencyMetrics.registry != ops.Registry() {
+		s.idempotencyMetrics = newIdempotencyMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops != nil && (s.durable.Metrics == nil || s.durable.Metrics.Registry() != ops.Registry()) {
 		s.durable.Metrics = durable.NewMetrics(ops.Registry(), ops.MetricPrefix())
@@ -5826,6 +5832,7 @@ func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct
 	case res.Conflict:
 		// Nothing ran, and the key keeps its first request's outcome: the
 		// response is not stored, so retrying that request still replays.
+		s.idempotencyMetrics.observeKeyReused(r)
 		if s.log != nil {
 			s.log.InfoContext(r.Context(), "idempotency key reused with a different request",
 				"account_id", acct.ID, "method", r.Method, "route", r.Pattern)

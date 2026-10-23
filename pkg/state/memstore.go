@@ -20699,15 +20699,15 @@ func (m *MemStore) ReserveIdempotent(ctx context.Context, accountID, key string,
 
 // ReserveIdempotentRequest mirrors PgStore.ReserveIdempotentRequest.
 func (m *MemStore) ReserveIdempotentRequest(_ context.Context, accountID, key string, fingerprint []byte, abandonAfter time.Duration) (IdempotencyReservation, error) {
-	if fingerprint != nil && len(fingerprint) != sha256.Size {
-		return IdempotencyReservation{}, errors.New("state: idempotency request fingerprint must be SHA-256")
+	if fingerprint != nil && len(fingerprint) != IdempotencyFingerprintSize {
+		return IdempotencyReservation{}, errors.New("state: idempotency request fingerprint must be 32 bytes")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	id := accountID + "\x00" + key
 	e, ok := m.idem[id]
 	age := time.Since(e.created)
-	conflict := fingerprint != nil && e.requestDigest != nil && !bytes.Equal(e.requestDigest, fingerprint)
+	conflict := idempotencyFingerprintsConflict(e.requestDigest, fingerprint)
 	if !ok || age > 24*time.Hour || (e.status == 0 && age >= abandonAfter && !conflict) {
 		m.idem[id] = idemEntry{created: time.Now(), requestDigest: append([]byte(nil), fingerprint...)}
 		return IdempotencyReservation{Reserved: true}, nil

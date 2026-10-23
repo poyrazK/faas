@@ -87611,6 +87611,7 @@ ON CONFLICT (account_id, key) DO UPDATE
     OR (idempotency_keys.response_status = 0
         AND idempotency_keys.created_at <= now() - make_interval(secs => $4::double precision)
         AND (idempotency_keys.request_digest IS NULL OR excluded.request_digest IS NULL
+             OR substring(idempotency_keys.request_digest, 1, 4) <> substring(excluded.request_digest, 1, 4)
              OR idempotency_keys.request_digest = excluded.request_digest))
 RETURNING true::boolean AS reserved
 `
@@ -87625,8 +87626,9 @@ type ReserveIdempotentRequestParams struct {
 // Claims an Idempotency-Key bound to its request fingerprint
 // (ADR-20261022204036). A new key, a key past its 24 h replay window, or an
 // in-flight reservation older than abandon_after_seconds is reserved. An
-// abandoned reservation bound to another fingerprint is not taken over: the
-// key stays bound to its first request for the whole window.
+// abandoned reservation bound to another fingerprint under the same key id
+// (its first 4 bytes) is not taken over: the key stays bound to its first
+// request for the whole window.
 func (q *Queries) ReserveIdempotentRequest(ctx context.Context, db DBTX, arg ReserveIdempotentRequestParams) (bool, error) {
 	row := db.QueryRow(ctx, reserveIdempotentRequest,
 		arg.Key,

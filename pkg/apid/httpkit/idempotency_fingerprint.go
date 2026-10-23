@@ -11,8 +11,11 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // IdempotencyFingerprintMaxBodyBytes is the largest body a request
@@ -25,20 +28,22 @@ const IdempotencyFingerprintMaxBodyBytes = DefaultJSONBodyMaxBytes
 var idempotencyFingerprintHeaders = []string{"If-Match", "If-None-Match", "If-Workload-Revision"}
 
 // IdempotencyFingerprint returns the keyed request fingerprint that an
-// Idempotency-Key is bound to (ADR-20261022204036): an HMAC-SHA256 under key
-// over the method, path, the Content-Type media type, the precondition
-// headers and the canonical body. The query is left out: a selector that
-// names the default, such as ?environment=production, must still replay the
-// receipt of the request that omitted it. Equivalent JSON bodies and
-// multipart bodies that differ only in their boundary get one fingerprint.
-// The MAC is keyed so a stored fingerprint cannot be brute-forced back to a
-// low-entropy secret carried in the body.
+// Idempotency-Key is bound to (ADR-20261022204036). It is a key id followed
+// by a truncated HMAC-SHA256 over the method, path, canonical query, the
+// Content-Type media type, the precondition headers and the canonical body.
+// Equivalent JSON bodies, multipart bodies that differ only in their
+// boundary, and queries that differ only in order or in naming the default
+// environment get one fingerprint. The MAC is keyed so a stored fingerprint
+// cannot be brute-forced back to a low-entropy secret carried in the body.
+// The MAC key is derived from hostKey for this use alone, and the key id
+// (state.IdempotencyFingerprintKeyIDSize bytes) names it, so fingerprints
+// made under a rotated key are not compared.
 //
 // It reads the body and replaces r.Body with one that yields the same bytes.
-// It returns nil, and the key is not bound, when key is empty or the body is
-// larger than IdempotencyFingerprintMaxBodyBytes or could not be read.
-func IdempotencyFingerprint(r *http.Request, key []byte) []byte {
-	if len(key) == 0 || r.ContentLength > IdempotencyFingerprintMaxBodyBytes {
+// It returns nil, and the key is not bound, when hostKey is empty or the body
+// is larger than IdempotencyFingerprintMaxBodyBytes or could not be read.
+func IdempotencyFingerprint(r *http.Request, hostKey []byte) []byte {
+	if len(hostKey) == 0 || r.ContentLength > IdempotencyFingerprintMaxBodyBytes {
 		return nil
 	}
 	var body []byte
@@ -54,10 +59,11 @@ func IdempotencyFingerprint(r *http.Request, key []byte) []byte {
 	if err != nil {
 		mediaType, params = strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type"))), nil
 	}
+	key := hmacSum(hostKey, []byte("gregale idempotency request fingerprint v1"))
 	mac := hmac.New(sha256.New, key)
-	writeFingerprintField(mac, "gregale idempotency request fingerprint v1")
 	writeFingerprintField(mac, r.Method)
 	writeFingerprintField(mac, r.URL.Path)
+	writeFingerprintField(mac, canonicalQuery(r.URL.RawQuery))
 	writeFingerprintField(mac, mediaType)
 	for _, name := range idempotencyFingerprintHeaders {
 		writeFingerprintField(mac, name+":"+strings.Join(r.Header.Values(name), "\x00"))
@@ -65,6 +71,14 @@ func IdempotencyFingerprint(r *http.Request, key []byte) []byte {
 	kind, canonical := canonicalBody(mediaType, params, body)
 	writeFingerprintField(mac, kind)
 	writeFingerprintField(mac, string(canonical))
+	fingerprint := make([]byte, 0, state.IdempotencyFingerprintSize)
+	fingerprint = append(fingerprint, hmacSum(key, []byte("key id"))[:state.IdempotencyFingerprintKeyIDSize]...)
+	return append(fingerprint, mac.Sum(nil)[:state.IdempotencyFingerprintSize-state.IdempotencyFingerprintKeyIDSize]...)
+}
+
+func hmacSum(key, message []byte) []byte {
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write(message)
 	return mac.Sum(nil)
 }
 
@@ -73,6 +87,19 @@ func IdempotencyFingerprint(r *http.Request, key []byte) []byte {
 type replayedBody struct {
 	io.Reader
 	io.Closer
+}
+
+// canonicalQuery sorts the query. An environment selector naming the default
+// (environment=production) is the request that omits it.
+func canonicalQuery(raw string) string {
+	values, err := url.ParseQuery(raw)
+	if err != nil {
+		return raw
+	}
+	if env := values["environment"]; len(env) == 1 && env[0] == "production" {
+		delete(values, "environment")
+	}
+	return values.Encode()
 }
 
 // writeFingerprintField length-prefixes each field so no two field lists

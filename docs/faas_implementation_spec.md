@@ -1971,6 +1971,13 @@ same values, so rules and panels aggregate with `max`. Alerts are `warn`
 | `schedd_customer_operations_telemetry_refreshed_timestamp_seconds` | — | same | When the snapshot was last read. |
 | `apid_customer_operation_webhook_events_total` | `mode`, `result` | `pkg/apid/operation/metrics.go` | Verified provider events on operation-bound endpoints; `result` is `accepted`, `duplicate`, `ignored`, `signaled`, `unmatched` or `refused` (non-2xx). |
 
+
+### 12.10 Idempotency-Key reuse (ADR-20261022204036)
+
+| Metric name | Labels | Producer | Semantics |
+|---|---|---|---|
+| `apid_idempotency_key_reused_total` | `route` | `pkg/apid/apidserver/idempotency_metrics.go` | Requests refused with `422 idempotency_key_reused` because their key was bound to a different request. `route` is the matched route pattern (`POST /v1/apps/{slug}/inbox`). A rising route names a client that reuses keys. |
+
 ---
 
 ## 13. RAM budget ledger (enforced as systemd slices)

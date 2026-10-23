@@ -5521,8 +5521,9 @@ type Querier interface {
 	// Claims an Idempotency-Key bound to its request fingerprint
 	// (ADR-20261022204036). A new key, a key past its 24 h replay window, or an
 	// in-flight reservation older than abandon_after_seconds is reserved. An
-	// abandoned reservation bound to another fingerprint is not taken over: the
-	// key stays bound to its first request for the whole window.
+	// abandoned reservation bound to another fingerprint under the same key id
+	// (its first 4 bytes) is not taken over: the key stays bound to its first
+	// request for the whole window.
 	ReserveIdempotentRequest(ctx context.Context, db DBTX, arg ReserveIdempotentRequestParams) (bool, error)
 	ReserveProjectReleaseAddition(ctx context.Context, db DBTX, arg ReserveProjectReleaseAdditionParams) error
 	ReserveProjectSubmission(ctx context.Context, db DBTX, arg ReserveProjectSubmissionParams) (int64, error)

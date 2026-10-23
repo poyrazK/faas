@@ -1,6 +1,7 @@
 package apidserver_test
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // withIdempotencyHostKey installs the host HMAC key the request fingerprint
@@ -35,6 +37,8 @@ func TestIdempotent_KeyIsBoundToItsRequest(t *testing.T) {
 		// "deploy" or "intent" (project apply).
 		family    string
 		noHostKey bool
+		// rotateKey replaces the host key between the two requests.
+		rotateKey bool
 		// legacyReceipt stores the first response without a fingerprint, as
 		// apid before ADR-20261022204036 did, instead of running it.
 		legacyReceipt bool
@@ -48,6 +52,7 @@ func TestIdempotent_KeyIsBoundToItsRequest(t *testing.T) {
 		{name: "different payload is refused", retry: `{"queue":"jobs","body":"two"}`, wantStatus: http.StatusUnprocessableEntity, wantRuns: 1},
 		{name: "receipt from an earlier release keeps replaying", legacyReceipt: true, retry: `{"queue":"jobs","body":"two"}`, wantStatus: http.StatusCreated, wantReplayed: true},
 		{name: "no host key keeps replaying", noHostKey: true, retry: `{"queue":"jobs","body":"two"}`, wantStatus: http.StatusCreated, wantReplayed: true, wantRuns: 1},
+		{name: "rotated host key keeps replaying", rotateKey: true, retry: `{"queue":"jobs","body":"two"}`, wantStatus: http.StatusCreated, wantReplayed: true, wantRuns: 1},
 		{name: "deploy key names an intent", family: "deploy", retry: `{"queue":"jobs","body":"two"}`, wantStatus: http.StatusCreated, wantReplayed: true, wantRuns: 1},
 		{name: "project apply key names an intent", family: "intent", retry: `{"queue":"jobs","body":"two"}`, wantStatus: http.StatusCreated, wantReplayed: true, wantRuns: 1},
 	} {
@@ -93,6 +98,9 @@ func TestIdempotent_KeyIsBoundToItsRequest(t *testing.T) {
 				original = rec.Body.String()
 			}
 
+			if tc.rotateKey {
+				*apidserver.HostHMACKey = func() []byte { return []byte("rotated-idempotency-host-hmac-key") }
+			}
 			retry := call(tc.retry)
 			if retry.Code != tc.wantStatus || (retry.Header().Get("Idempotent-Replayed") == "true") != tc.wantReplayed {
 				t.Fatalf("retry = %d replayed=%q body=%s; want %d replayed=%v", retry.Code, retry.Header().Get("Idempotent-Replayed"), retry.Body, tc.wantStatus, tc.wantReplayed)
@@ -186,5 +194,42 @@ func TestIdempotent_ReusedKeyOnARealRoute(t *testing.T) {
 	}
 	if _, err := (*env.Store()).AppBySlug(t.Context(), "idem-second"); err == nil {
 		t.Fatal("the refused request created idem-second")
+	}
+}
+
+// TestIdempotent_SendWithReusedKeyIsRefused is the H12-26 repro on its route:
+// `gregale send --idempotency-key` posts to /v1/apps/{slug}/inbox, and a new
+// payload under a used key came back as the first message, queued. It is now
+// refused and counted, the new message is not queued, and the original send
+// still replays.
+func TestIdempotent_SendWithReusedKeyIsRefused(t *testing.T) {
+	withIdempotencyHostKey(t)
+	e := apidserver.Setup(t, api.PlanHobby)
+	ops := wire.NewOpsMetrics("apid")
+	(*e.S()).WithOpsMetrics(t.Context(), ops)
+	appID := apidserver.MustSeedApp(t, e, "billing")
+	send := func(data string) *httptest.ResponseRecorder {
+		return e.Do(t, http.MethodPost, "/v1/apps/billing/inbox", api.SendAppMessageRequest{
+			Type: "invoice.created", Data: json.RawMessage(data), QueueName: "billing-work",
+		}, map[string]string{"Idempotency-Key": "send-once"})
+	}
+	first := send(`{"invoice_id":"inv_1"}`)
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("first send = %d %s", first.Code, first.Body)
+	}
+	reused := send(`{"invoice_id":"inv_2"}`)
+	if reused.Code != http.StatusUnprocessableEntity || problemCode(t, reused.Body.Bytes()) != api.CodeIdempotencyKeyReused {
+		t.Fatalf("send with a new payload = %d %s, want 422 %s", reused.Code, reused.Body, api.CodeIdempotencyKeyReused)
+	}
+	again := send(`{"invoice_id":"inv_1"}`)
+	if again.Code != http.StatusAccepted || again.Header().Get("Idempotent-Replayed") != "true" || again.Body.String() != first.Body.String() {
+		t.Fatalf("retry of the first send = %d replayed=%q %s, want its 202 replayed", again.Code, again.Header().Get("Idempotent-Replayed"), again.Body)
+	}
+	invocations, err := (*e.Store()).ListInvocationsForApp(t.Context(), appID)
+	if err != nil || len(invocations) != 1 || !strings.Contains(string(invocations[0].Payload), "inv_1") {
+		t.Fatalf("queued messages = %d err=%v, want only the first", len(invocations), err)
+	}
+	if metrics := apidserver.ScrapeOpsMetrics(t, ops); !strings.Contains(metrics, `apid_idempotency_key_reused_total{route="POST /v1/apps/{slug}/inbox"} 1`) {
+		t.Fatalf("refusal not counted by route:\n%s", metrics)
 	}
 }
