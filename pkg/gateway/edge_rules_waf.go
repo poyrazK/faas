@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 )
 
 // EdgeRuleWAFResolved is the compiled kind=waf matcher payload (ADR-831
@@ -130,14 +131,15 @@ func (h *Handler) WithWAFInlineChecker(checker WAFInlineChecker) *Handler {
 // passes. Otherwise, and for observe rules, the body prefix is recorded as
 // later stages read it, and the returned func submits the sample off-path
 // once the request is finished (ServeHTTP defers it). Bodies are never
-// blocked.
+// blocked. For an account the edge_waf_blocking platform flag leaves out,
+// warn and block rules are inspected as observe (ADR-20261023113721).
 func (h *Handler) applyEdgeRuleWAF(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder) (handled bool, submit func()) {
 	rule := h.matchEdgeRuleWAF(r, app)
 	if rule == nil {
 		return false, nil
 	}
 	sample := newWAFSample(r, app, rule)
-	if rule.Mode == api.EdgeWAFModeWarn || rule.Mode == api.EdgeWAFModeBlock {
+	if (rule.Mode == api.EdgeWAFModeWarn || rule.Mode == api.EdgeWAFModeBlock) && h.edgeFeatureReleased(platformflags.EdgeWAFBlocking, app) {
 		outcome := h.checkEdgeRuleWAFInline(rule, sample)
 		if outcome == WAFInlineDetected {
 			if rule.Mode == api.EdgeWAFModeBlock {

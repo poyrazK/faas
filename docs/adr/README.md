@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261023113721: Platform flags for edge rule features](20261023113721-edge-feature-platform-flags.md)
 - [ADR-20261022105846: Penalty box for edge rules](20261022105846-edge-rule-penalty-box.md)
 - [Compose build secrets for Dockerfile builds](20261022185329-compose-build-secrets.md)
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)

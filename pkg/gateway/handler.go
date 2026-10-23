@@ -964,7 +964,10 @@ type Handler struct {
 	// apiMonetizationFlags is the api_monetization platform flag: it
 	// releases monetization to the accounts it admits (ADR-20261020170649).
 	apiMonetizationFlags *platformflags.Set
-	gate                 *WakeGate
+	// edgeFeatureFlags releases challenge rules, WAF warn and block, and the
+	// penalty box per account (ADR-20261023113721); nil enforces them all.
+	edgeFeatureFlags *platformflags.Set
+	gate             *WakeGate
 	// admissionQueue protects the control plane from a simultaneous cold
 	// burst across many apps. It is intentionally separate from gate:
 	// gate coalesces waiters for one app, while admissionQueue orders the
