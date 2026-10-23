@@ -77,3 +77,40 @@ func TestOpenKeys(t *testing.T) {
 		t.Fatal("ring identity ignores a changed retirement")
 	}
 }
+
+// adr: 20261016151947 — a live key sealed to its database's namespace opens
+// only for that database. This release also opens the legacy unbound
+// namespace apid still writes; a key bound to another database, or a login,
+// never opens as this database's key.
+func TestOpenKeysDatabaseBoundNamespace(t *testing.T) {
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	now := time.Unix(1_800_000_000, 0)
+	legacy, legacySecret := sealedKey(t, identity.Recipient(), livekeys.SealNamespace)
+	bound, boundSecret := sealedKey(t, identity.Recipient(), livekeys.KeySealNamespaceFor("db_1"))
+	otherDatabase, _ := sealedKey(t, identity.Recipient(), livekeys.KeySealNamespaceFor("db_2"))
+	login, _ := sealedKey(t, identity.Recipient(), livekeys.LoginSealNamespaceFor("db_1"))
+
+	ring, _ := OpenKeys("db_1", []livekeys.SealedKey{legacy, bound, otherDatabase, login}, []*age.X25519Identity{identity}, log)
+	if ring.Len() != 2 {
+		t.Fatalf("ring holds %d keys, want the legacy and the db_1-bound key only", ring.Len())
+	}
+	for name, secret := range map[string]seal.Secret{"legacy": legacySecret, "bound": boundSecret} {
+		token, err := secret.Seal(seal.Query{Database: "db_1", SQL: "SELECT 1"}, now, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ring.Open(token, now); err != nil {
+			t.Fatalf("%s key: %v", name, err)
+		}
+	}
+	if ring.Opens(otherDatabase.KID, now) || ring.Opens(login.KID, now) {
+		t.Fatal("a key bound to another database, or a login, joined db_1's ring")
+	}
+	if empty, _ := OpenKeys("", []livekeys.SealedKey{bound}, []*age.X25519Identity{identity}, log); empty.Len() != 0 {
+		t.Fatal("a bound key opened for an unnamed database")
+	}
+}
