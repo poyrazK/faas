@@ -102,6 +102,19 @@ func TestNativeRuntimeCaptureAuthorityRequiresAFreshCoupledNamespace(t *testing.
 	}
 }
 
+// A retained uncertain start must not stop the next vmmd: the ownership scan
+// that gates every start leaves runtime capture records to their own journal.
+func TestNativeJournalScanAdmitsRetainedRuntimeCaptures(t *testing.T) {
+	j, _ := preparedNativeJournal(t)
+	start := runtimeCaptureRecordFixture(t, runtimeCaptureAuthorityFixture(t, state.SnapshotTierInit))
+	if err := j.runtimeCaptures().write(start); err != nil {
+		t.Fatal(err)
+	}
+	if records, err := j.records(t.Context()); err != nil || len(records) != 1 {
+		t.Fatalf("records=%v err=%v", records, err)
+	}
+}
+
 func TestNativeRuntimeCaptureJournalStartsCompletesAndNeverReplays(t *testing.T) {
 	j := nativeJournalFixture(filepath.Join(t.TempDir(), "journal")).runtimeCaptures()
 	start := runtimeCaptureRecordFixture(t, runtimeCaptureAuthorityFixture(t, state.SnapshotTierWarm))
