@@ -5194,7 +5194,7 @@ func (s *server) handler() http.Handler {
 	//
 	// Issue #249 / spec §11: security response headers sit OUTERMOST
 	// (above observeWrap) so every status code carries them — even
-	// the ones observeWrap synthesizes on panic. httpsec.Static sets
+	// the 500 observeWrap's Recovery synthesizes on panic. httpsec.Static sets
 	// the five static headers; httpsec.Nonce mints a per-request CSP
 	// nonce and stamps it on the context that dashboard.Render reads
 	// to mark up <script>/<style> tags. apid serves only dashboard
@@ -5273,7 +5273,13 @@ func (p *fallbackProbe) Write(body []byte) (int, error) {
 // a scanner explode the label set unbounded (review finding #2 on
 // PR #132); the unmatched bucket still surfaces scanner traffic as
 // one series per code so the §12 dashboard can alert on it.
+//
+// Issue #4385: middleware.Recovery wraps the inner chain here, so a
+// handler panic becomes a problem+json 500 that carries the request ID
+// and is still counted below as a 5xx. Without it the panic unwound to
+// net/http, which dropped the connection and skipped every counter.
 func (s *server) observeWrap(h http.Handler) http.Handler {
+	h = middleware.Recovery(s.log)(h)
 	if s.ops == nil {
 		return h
 	}
