@@ -46,6 +46,10 @@ func (m *MemStore) CreateProjectEnvironmentQualification(_ context.Context, acco
 	if !sameProjectEnvironmentSecretRevisionHashes(normalizedSecretRevisionHashes, currentSecretRevisionHashes) {
 		return ProjectEnvironmentQualification{}, ErrConflict
 	}
+	// ADR-1139: the server records the shared secrets the probes ran with.
+	if normalizedSecretRevisionHashes, err = WithProjectSecretRevision(normalizedSecretRevisionHashes, m.projectEnvironmentSecretsLocked(projectID, environment)); err != nil {
+		return ProjectEnvironmentQualification{}, err
+	}
 	members := make(map[string]string, len(release.Members))
 	for _, member := range release.Members {
 		app, exists := m.apps[member.AppID]

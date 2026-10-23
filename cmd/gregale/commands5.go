@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -246,7 +247,11 @@ func cmdStatus(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "deployments ok: %.2f%%\n", page.BuildSuccessPct)
 	_, _ = fmt.Fprintf(osStdout, "as of:        %s\n", page.AsOf.Format("2006-01-02 15:04:05 UTC"))
-	_, _ = fmt.Fprintf(osStdout, "source:       %s\n", page.Source)
+	// A healthy page's source names the telemetry backend, which is noise for
+	// customers; a degraded one carries the reason the numbers are partial.
+	if reason, degraded := strings.CutPrefix(page.Source, appmetrics.SourceDegradedPrefix); degraded {
+		_, _ = fmt.Fprintf(osStdout, "degraded:     %s\n", reason)
+	}
 	return 0
 }
 

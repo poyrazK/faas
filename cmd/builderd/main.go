@@ -35,6 +35,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/storagekey"
@@ -285,6 +286,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	b.WithBuildPublisher(publisher)
+	startReleasePauseWatcher(ctx, store, pool, b, log)
 	notifCh, err := db.SubscribeWithReconnect(ctx, pool, builderNotificationChannels(), log)
 	if err != nil {
 		return err
@@ -740,4 +742,33 @@ type dbNotifier struct{ pool *pgxpool.Pool }
 
 func (d dbNotifier) Notify(ctx context.Context, channel, payload string) error {
 	return db.Notify(ctx, d.pool, channel, payload)
+}
+
+// startReleasePauseWatcher follows the break-glass release pause (ADR
+// 20261022140000): while it is on, builderd claims no queued build. A failed
+// first read leaves builds flowing; the watcher keeps retrying.
+func startReleasePauseWatcher(ctx context.Context, store *state.PgStore, pool *pgxpool.Pool, b *builderdpkg.Builderd, log *slog.Logger) {
+	paused := runtimeconfig.NewBoolFlag(false)
+	b.WithReleasePause(paused.Load)
+	watcher := runtimeconfig.New(store, pool, []string{runtimeconfig.KeyPlatformReleasePause},
+		func(_ context.Context, _ string, value json.RawMessage, _ int64) error {
+			on, err := runtimeconfig.Bool(value)
+			if err != nil {
+				return err
+			}
+			if on != paused.Load() {
+				log.Warn("builderd: break-glass release pause changed", "paused", on)
+			}
+			paused.Store(on)
+			return nil
+		}, log)
+	watcher.Daemon = "builderd"
+	if err := watcher.Reconcile(ctx); err != nil {
+		log.Warn("builderd: initial release pause read failed; claiming builds", "err", err)
+	}
+	go func() {
+		if err := watcher.Run(ctx); err != nil && !runtimeconfig.IsContextDone(err) {
+			log.Error("builderd: release pause watcher exited", "err", err)
+		}
+	}()
 }

@@ -168,6 +168,11 @@ var roleMatrixCells = []struct {
 	{OrgActionManageProjectSecurity, state.OrgRoleDeveloper, false},
 	{OrgActionManageProjectSecurity, state.OrgRoleViewer, false},
 	{OrgActionManageProjectSecurity, state.OrgRoleBilling, false},
+	{OrgActionApproveAppRelease, state.OrgRoleOwner, true},
+	{OrgActionApproveAppRelease, state.OrgRoleAdmin, true},
+	{OrgActionApproveAppRelease, state.OrgRoleDeveloper, true},
+	{OrgActionApproveAppRelease, state.OrgRoleViewer, false},
+	{OrgActionApproveAppRelease, state.OrgRoleBilling, false},
 	// ADR-1139: project secrets follow app secrets (owner, admin, developer).
 	{OrgActionManageProjectSecrets, state.OrgRoleOwner, true},
 	{OrgActionManageProjectSecrets, state.OrgRoleAdmin, true},
@@ -219,6 +224,11 @@ var roleMatrixCells = []struct {
 	{OrgActionDeleteApp, state.OrgRoleDeveloper, false},
 	{OrgActionDeleteApp, state.OrgRoleViewer, false},
 	{OrgActionDeleteApp, state.OrgRoleBilling, false},
+	{OrgActionManagePreviews, state.OrgRoleOwner, true},
+	{OrgActionManagePreviews, state.OrgRoleAdmin, true},
+	{OrgActionManagePreviews, state.OrgRoleDeveloper, false},
+	{OrgActionManagePreviews, state.OrgRoleViewer, false},
+	{OrgActionManagePreviews, state.OrgRoleBilling, false},
 	{OrgActionSetApplicationStandardLocalIntent, state.OrgRoleOwner, true},
 	{OrgActionSetApplicationStandardLocalIntent, state.OrgRoleAdmin, true},
 	{OrgActionSetApplicationStandardLocalIntent, state.OrgRoleDeveloper, true},
@@ -607,10 +617,12 @@ func TestAllOrgActions_Complete(t *testing.T) {
 		OrgActionManageAppSecrets:                  true,
 		OrgActionManageAppSecurity:                 true,
 		OrgActionDeleteApp:                         true,
+		OrgActionApproveAppRelease:                 true,
 		OrgActionViewApplicationStandards:          true,
 		OrgActionManageApplicationStandards:        true,
 		OrgActionApproveApplicationStandards:       true,
 		OrgActionSetApplicationStandardLocalIntent: true,
+		OrgActionManagePreviews:                    true,
 	}
 	got := map[OrgAction]bool{}
 	for _, a := range AllOrgActions {

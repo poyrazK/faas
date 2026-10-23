@@ -147,6 +147,9 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	// totpLastSteps is each account's last accepted TOTP step
+	// (AcceptTOTPStep), created on first use.
+	totpLastSteps                              map[string]int64
 	migrationContracts                         map[string]projectMigrationContract
 	projectCanaries                            map[string]projectCanaryRecord
 	workerReleasePins                          map[string]projectWorkerReleasePin
@@ -369,6 +372,14 @@ type MemStore struct {
 	releaseFreezes map[string]ReleaseFreeze
 	// releaseGates mirrors app_release_gates (ADR-20261019071734).
 	releaseGates map[string]ReleaseGate
+	// releaseApprovalPolicies mirrors app_release_approval_policies, keyed by
+	// app ID; releaseApprovals mirrors deployment_release_approvals
+	// (ADR-20261020085706).
+	releaseApprovalPolicies map[string]ReleaseApprovalPolicy
+	releaseApprovals        map[string]ReleaseApproval
+	releaseApprovalEvents   map[string]ReleaseApprovalEvent
+	// scheduledReleases mirrors scheduled_releases (ADR-20261021152201).
+	scheduledReleases map[string]ScheduledRelease
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex
@@ -469,6 +480,9 @@ type MemStore struct {
 	scenarioPostgres          map[string]rehearsalpg.Resource
 	scenarioObjects           map[string]rehearsalobj.Resource
 	scenarioActionPolicies    map[string]scenarioActionPolicy
+	scenarioCapturedEvents    []memScenarioCapturedEvent
+	scenarioQueueCaptures     []memScenarioCapturedQueueMessage
+	scenarioPlatformCalls     []memScenarioCapturedPlatformCall
 	scenarioTestChaosPlans    map[string]chaos.Lease
 	scenarioTestChaosMatches  map[string]map[string]int64
 	previewSets               map[string]PRPreviewSet
@@ -499,6 +513,8 @@ type MemStore struct {
 	// stable customer identity independent from rotatable credentials.
 	apiConsumers                         map[string]APIConsumer
 	apiConsumerTrials                    map[string]APIConsumerTrial               // ADR-1314
+	apiConsumerSignupSettings            map[string]APIConsumerSignupSettings      // ADR-20261021143000, by app ID
+	apiConsumerSignups                   map[string]APIConsumerSignup              // ADR-20261021143000
 	apiConsumerMeterUsage                map[string]APIConsumerMeterUsageBucket    // ADR-1318
 	platformTenantMeterUsage             map[string]PlatformTenantMeterUsageBucket // ADR-1319
 	platformTenantTrials                 map[string]PlatformTenantTrial            // ADR-1322, by tenant
@@ -534,7 +550,7 @@ type MemStore struct {
 	// installation_id so the resolver cache at
 	// pkg/githubd/webhook_secret.go can match the prod
 	// ON CONFLICT (installation_id) DO UPDATE shape.
-	githubWebhookSecrets map[int64][]byte
+	githubWebhookSecrets map[int64]GithubWebhookSecret
 	// githubWebhookSecretMeta stamps (upgraded_at, upgraded_by)
 	// for each per-tenant row so the apid admin route can echo
 	// the row back without a second query.
@@ -959,6 +975,13 @@ type MemStore struct {
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// appForks are production fork intents (ADR-732), keyed by fork id.
+	appForks map[string]AppFork
+	// appForkExecs mirrors app_fork_execs (ADR-732 fork exec).
+	appForkExecs map[string]AppForkExec
+	// crashCaptures / crashSettings are ADR-733 crash snapshots.
+	crashCaptures map[string]CrashCapture
+	crashSettings map[string]CrashSnapshotSettings
 	// appTaskAttach holds ADR-1037 interactive-session records by task id.
 	appTaskAttach map[string]AppTaskAttach
 	// jobRunAttach holds ADR-1330 interactive image-run sessions by run id.
@@ -1083,6 +1106,11 @@ type MemStore struct {
 	// committed gRPC batch after a response loss.
 	apiConsumerUsage      map[string]APIConsumerUsageBucket
 	apiConsumerRouteUsage map[string]APIConsumerRouteUsageBucket
+	// apiConsumerUsageRecordedAt and platformTenantUsageRecordedAt are
+	// when usage was last recorded per consumer and per tenant, as the
+	// usage minutes' updated_at (ADR-20261020211500).
+	apiConsumerUsageRecordedAt    map[string]time.Time
+	platformTenantUsageRecordedAt map[string]time.Time
 	// serviceWakeAhead holds ADR-977 opt-ins keyed by app ID.
 	serviceWakeAhead map[string]memServiceWakeAhead
 	// routePriorities holds ADR-978 saved route priorities keyed by app ID.
@@ -1580,7 +1608,7 @@ func NewMemStore() *MemStore {
 		githubInstalls:          map[string]GitHubInstall{},
 		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
 		// store (mirror of github_webhook_secrets).
-		githubWebhookSecrets:    map[int64][]byte{},
+		githubWebhookSecrets:    map[int64]GithubWebhookSecret{},
 		githubWebhookSecretMeta: map[int64]webhookSecretMeta{},
 		// Issue #246 acceptance item 7: mail suppression list mirror.
 		mailSuppressions:    map[string]mailSuppressionRow{},
@@ -1791,6 +1819,8 @@ func NewMemStore() *MemStore {
 		usage:                             []usageMinute{},
 		usageByMonth:                      []Usage{},
 		apiConsumerUsage:                  map[string]APIConsumerUsageBucket{},
+		apiConsumerUsageRecordedAt:        map[string]time.Time{},
+		platformTenantUsageRecordedAt:     map[string]time.Time{},
 		apiConsumerRouteUsage:             map[string]APIConsumerRouteUsageBucket{},
 		platformTenantUsage:               map[string]APIConsumerUsageBucket{},
 		apiConsumerPlans:                  map[string]APIConsumerPlan{},
@@ -5806,6 +5836,12 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	if d.Status != DeployLive {
 		return Deployment{}, ErrDeploymentNotLive
 	}
+	start, starting := scheduledStartFrom(ctx, id)
+	if starting {
+		if err := m.checkScheduledStartLocked(start, d); err != nil {
+			return Deployment{}, err
+		}
+	}
 	ctx, admission := captureMCPAdmission(ctx, id, newPercent)
 	defer func() { m.finishMCPAdmissionLocked(admission, resultErr) }()
 	if err := m.checkMCPAccessPolicyLocked(ctx, d.AppID); err != nil {
@@ -5913,6 +5949,10 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	}
 	if sum != 100 {
 		return Deployment{}, ErrTrafficPercentSumInvalid
+	}
+	if starting {
+		applyScheduledStart(&d, start)
+		m.finishScheduledStartLocked(start)
 	}
 	m.putDeploymentLocked(id, d)
 	for i, sibling := range siblings {
@@ -6058,7 +6098,7 @@ func (m *MemStore) ListOwnedCronsByNodeID(_ context.Context, nodeID string) ([]C
 	var out []Cron
 	for _, c := range m.crons {
 		app, ok := m.apps[c.AppID]
-		if ok && owner[c.AppID] == nodeID && app.Status != AppDeleted && c.Enabled {
+		if _, rehearsal := m.scenarioActionPolicies[c.AppID]; ok && owner[c.AppID] == nodeID && app.Status != AppDeleted && c.Enabled && !rehearsal {
 			out = append(out, c)
 		}
 	}
@@ -7191,6 +7231,11 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.appTasks, key)
 		}
 	}
+	for key, fork := range m.appForks {
+		if fork.AppID == id {
+			delete(m.appForks, key)
+		}
+	}
 	for key, v := range m.crons {
 		if v.AppID == id {
 			delete(m.crons, key)
@@ -7677,11 +7722,11 @@ func (m *MemStore) RecordGitHubInstallationSync(_ context.Context, installationI
 // amendment). The MemStore is the unit-test stand-in for the
 // resolver; the bytea is held in an in-memory map keyed by
 // installation_id.
-func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID int64, secret []byte, upgradedBy string) (time.Time, string, error) {
+func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID int64, secret GithubWebhookSecret, upgradedBy string) (time.Time, string, error) {
 	if installationID == 0 {
 		return time.Time{}, "", fmt.Errorf("memstore: UpsertGithubWebhookSecret: installation_id must be non-zero")
 	}
-	if len(secret) == 0 {
+	if len(secret.Value) == 0 {
 		return time.Time{}, "", fmt.Errorf("memstore: UpsertGithubWebhookSecret: secret must be non-empty")
 	}
 	if upgradedBy == "" {
@@ -7691,11 +7736,12 @@ func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID i
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.githubWebhookSecrets == nil {
-		m.githubWebhookSecrets = map[int64][]byte{}
+		m.githubWebhookSecrets = map[int64]GithubWebhookSecret{}
 	}
-	cp := make([]byte, len(secret))
-	copy(cp, secret)
-	m.githubWebhookSecrets[installationID] = cp
+	m.githubWebhookSecrets[installationID] = GithubWebhookSecret{
+		Value:  append([]byte(nil), secret.Value...),
+		Sealed: append([]byte(nil), secret.Sealed...),
+	}
 	if m.githubWebhookSecretMeta == nil {
 		m.githubWebhookSecretMeta = map[int64]webhookSecretMeta{}
 	}
@@ -7707,19 +7753,20 @@ func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID i
 }
 
 // GetGithubWebhookSecret mirrors PgStore. ErrNotFound on miss.
-func (m *MemStore) GetGithubWebhookSecret(_ context.Context, installationID int64) ([]byte, error) {
+func (m *MemStore) GetGithubWebhookSecret(_ context.Context, installationID int64) (GithubWebhookSecret, error) {
 	if installationID == 0 {
-		return nil, ErrNotFound
+		return GithubWebhookSecret{}, ErrNotFound
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	secret, ok := m.githubWebhookSecrets[installationID]
-	if !ok || len(secret) == 0 {
-		return nil, ErrNotFound
+	if !ok || (len(secret.Value) == 0 && len(secret.Sealed) == 0) {
+		return GithubWebhookSecret{}, ErrNotFound
 	}
-	cp := make([]byte, len(secret))
-	copy(cp, secret)
-	return cp, nil
+	return GithubWebhookSecret{
+		Value:  append([]byte(nil), secret.Value...),
+		Sealed: append([]byte(nil), secret.Sealed...),
+	}, nil
 }
 
 // GetGithubInstallBindingForApp mirrors PgStore. accountID scopes
@@ -10704,7 +10751,9 @@ func (m *MemStore) SetDeploymentRuntimeProfile(_ context.Context, id string, pro
 	if !ok {
 		return ErrNotFound
 	}
-	if d.Kind != DeploymentKindImage ||
+	// A built service that froze a Compose healthcheck records imaged's verdict
+	// here too (ADR-20261019195000); other source deployments cannot.
+	if (d.Kind != DeploymentKindImage && !profileFreezesImageHealthcheck(d.InferredProfile)) ||
 		(d.Status != DeployPending && d.Status != DeployBuilding && d.Status != DeployImaging) {
 		return ErrInvalidStateTransition
 	}
@@ -12520,16 +12569,17 @@ func (m *MemStore) DefaultCustomDomain(_ context.Context, appID string) (string,
 	return domain, nil
 }
 
-// WildcardDomainForHost returns the most-specific wildcard custom domain that
-// covers host. The strict suffix check keeps example.com from matching
+// WildcardDomainForHost returns the most-specific live wildcard custom domain
+// that covers host. The strict suffix check keeps example.com from matching
 // *.example.com and prevents look-alike domains such as badexample.com from
-// matching.
+// matching. An expired, unverified claim is skipped (CustomDomain.ClaimLive).
 func (m *MemStore) WildcardDomainForHost(_ context.Context, host string) (CustomDomain, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	now := time.Now()
 	var best CustomDomain
 	for _, d := range m.domains {
-		if !WildcardMatchesHost(d.Domain, host) {
+		if !WildcardMatchesHost(d.Domain, host) || !d.ClaimLive(now) {
 			continue
 		}
 		if best.Domain == "" || len(d.Domain) > len(best.Domain) {
@@ -13520,7 +13570,8 @@ func (m *MemStore) ListEnabledCrons(_ context.Context) ([]Cron, error) {
 	defer m.mu.Unlock()
 	var out []Cron
 	for _, c := range m.crons {
-		if c.Enabled && c.SuspendedReason == "" {
+		// Mirrors PgStore: rehearsal-enrolled apps never fire from the clock.
+		if _, rehearsal := m.scenarioActionPolicies[c.AppID]; c.Enabled && c.SuspendedReason == "" && !rehearsal {
 			out = append(out, c)
 		}
 	}
@@ -13777,7 +13828,7 @@ func (m *MemStore) ListEnabledTriggers(_ context.Context) ([]sqlc.Trigger, error
 	defer m.mu.Unlock()
 	var out []sqlc.Trigger
 	for _, t := range m.triggers {
-		if t.Enabled && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) {
+		if t.Enabled && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) && !m.rehearsalBrokerTriggerLocked(t) {
 			out = append(out, t)
 		}
 	}
@@ -16452,7 +16503,7 @@ func (m *MemStore) RunningInstanceForApp(_ context.Context, appID string) (Insta
 	var newest Instance
 	found := false
 	for _, ins := range m.instances {
-		if ins.AppID != appID || ins.State != "running" {
+		if ins.AppID != appID || ins.State != "running" || IsFork(ins.Mode) {
 			continue
 		}
 		dep, ok := m.deployments[ins.DeploymentID]
@@ -24486,6 +24537,9 @@ func (m *MemStore) CountFailedDeploymentsSince(_ context.Context, accountID, app
 		if appID != "" && d.AppID != appID {
 			continue
 		}
+		if m.rehearsalAlertExcludedLocked(appID, d.AppID) {
+			continue
+		}
 		if d.Status != DeployFailed {
 			continue
 		}
@@ -24508,6 +24562,9 @@ func (m *MemStore) WasInvokedSuccessfullySince(_ context.Context, accountID, app
 			continue
 		}
 		if appID != "" && inv.AppID != appID {
+			continue
+		}
+		if m.rehearsalAlertExcludedLocked(appID, inv.AppID) {
 			continue
 		}
 		// MemStore keeps no request telemetry; mirror PgStore's
@@ -25052,6 +25109,9 @@ func (m *MemStore) CountFailedInvocationsSince(_ context.Context, accountID, app
 			continue
 		}
 		if appID != "" && inv.AppID != appID {
+			continue
+		}
+		if m.rehearsalAlertExcludedLocked(appID, inv.AppID) {
 			continue
 		}
 		if source != "" && inv.Source != source {
@@ -28768,4 +28828,15 @@ func requireAPIKeyScopes(scopes []string) error {
 		return fmt.Errorf("%w: api key scopes must not be empty", ErrInvalidArgument)
 	}
 	return nil
+}
+
+// profileFreezesImageHealthcheck mirrors the SQL `inferred_profile ?
+// 'image_healthcheck'` guard on SetDeploymentRuntimeProfile.
+func profileFreezesImageHealthcheck(profile json.RawMessage) bool {
+	var fields map[string]json.RawMessage
+	if len(profile) == 0 || json.Unmarshal(profile, &fields) != nil {
+		return false
+	}
+	_, frozen := fields["image_healthcheck"]
+	return frozen
 }

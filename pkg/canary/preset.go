@@ -332,9 +332,14 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 		// runtime cannot apply a stale or caller-invented traffic value.
 		response, err := p.advance(ctx, row, record)
 		if err != nil {
-			var problem *api.Problem
-			if errors.As(err, &problem) && (problem.Code == api.CodeRouteGateBlocked || problem.Code == api.CodeRouteHealthBlocked || problem.Code == api.CodeProfileGateBlocked) {
+			switch problemCode(err) {
+			case api.CodeRouteGateBlocked, api.CodeRouteHealthBlocked, api.CodeProfileGateBlocked:
 				stats.SkippedRouteGate++
+				continue
+			case api.CodeReleaseApprovalRequired, api.CodeReleaseApprovalRejected:
+				// ADR-20261020085706: apid recorded why the release waits,
+				// and aborts it at the approval timeout.
+				stats.SkippedAwaitingApproval++
 				continue
 			}
 			p.Log.Warn("canary: advance failed",
@@ -561,6 +566,20 @@ func earlyAdvanceAllowed(stage canarycatalog.Stage, elapsed time.Duration) bool 
 
 // advance asks APID for one step, carrying the evidence when the client can
 // record it (ADR-1447).
+// problemCode is the API problem code behind err. apid's client wraps a
+// problem in *api.APIError; narrow test clients return *api.Problem.
+func problemCode(err error) string {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Problem.Code
+	}
+	var problem *api.Problem
+	if errors.As(err, &problem) {
+		return problem.Code
+	}
+	return ""
+}
+
 func (p *Progression) advance(ctx context.Context, row CanaryRow, record *api.RolloutDecision) (api.CanaryAdvanceResponse, error) {
 	if client, ok := p.APID.(decisionAdvanceClient); ok && record != nil {
 		err := record.Validate()
@@ -787,4 +806,7 @@ type Stats struct {
 	SkippedMirrorNotReady  int
 	SkippedHealthGate      int
 	SkippedRouteGate       int
+	// SkippedAwaitingApproval counts releases waiting for people
+	// (ADR-20261020085706).
+	SkippedAwaitingApproval int
 }

@@ -2250,21 +2250,21 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	frozenFastPathSkipped := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_frozen_fast_path_skipped_total",
-		Help: "Wakes of an app with a frozen VM that did not take the frozen fast path (ADR-1740), by reason: deployment (the wake named one), scope, selection (the coordinated wake selected another deployment or environment), no_ticket, capacity.",
+		Help: "Wakes of an app with a frozen VM that did not take the frozen fast path (ADR-1740), by reason: deployment (the wake named one), scope, selection (the coordinated wake selected another deployment or environment), no_ticket, admission (the budget or application-standards check refused; the ordinary path reports it), capacity.",
 	}, []string{"reason"})
 	for _, reason := range FrozenFastPathSkipReasons {
 		frozenFastPathSkipped.WithLabelValues(reason)
 	}
 	frozenThawTickets := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_frozen_thaw_tickets_total",
-		Help: "Thaw tickets recorded when a VM froze (ADR-1740) by outcome: issued, error (a read failed), or why the VM must thaw through the ordinary path.",
+		Help: "Thaw tickets recorded when a VM froze (ADR-1740) by outcome: issued, error (a read failed), or why the VM must thaw through the ordinary path (organization: a team organization's app).",
 	}, []string{"outcome"})
 	for _, outcome := range FrozenThawTicketOutcomes {
 		frozenThawTickets.WithLabelValues(outcome)
 	}
 	ownerCacheTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_owner_cache_total",
-		Help: "schedd owner cache (ADR-1741) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved), guarded_publish (a boot published on its admission's generation), guarded_publish_moved (the generation moved during the boot; it published through the fence), selection (a coordinated wake selected other than the entry's deployment; it decided from its own reads).",
+		Help: "schedd owner cache (ADR-1741) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved), guarded_publish (a boot published on its admission's generation), guarded_publish_moved (the generation moved during the boot; it published through the fence), selection (a coordinated wake selected other than the entry's deployment; it decided from its own reads), organization (a team organization's app, which the cache does not serve).",
 	}, []string{"outcome"})
 	for _, outcome := range OwnerCacheOutcomes {
 		ownerCacheTotal.WithLabelValues(outcome)
@@ -2504,9 +2504,12 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// break the wake-latency panel that ships to day-1.
 	wakeRPCDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prefix + "_wake_rpc_duration_seconds",
-		Help:    "Wall-clock seconds for each schedd-side wake RPC phase (ADR-097). phase ∈ {admit_to_rpc, rpc_call, rpc_to_running, resume}; app label is apps.id. admit_to_rpc covers the gRPC handler → vmmd RPC start window (lock + admitGate + ledger + placement). rpc_call covers the vmmd Create{FromSnapshot,ColdBoot} round trip. rpc_to_running covers the RPC return → WAKING/COLD_BOOTING → RUNNING transition. resume covers vmmd's in-place warm-pool resume. wake_id is attached as a prometheus.Exemplar on each observation so operators can join to gateway_wake_latency_seconds and to the events table. Bucket set reuses spec §6.3 verbatim with a 0.01 low-end bucket for admit_to_rpc.",
+		Help:    "Wall-clock seconds for each schedd-side wake RPC phase (ADR-097). phase ∈ {before_admission, lock_wait, reads, admit, post_admit, admit_to_rpc, rpc_call, rpc_to_running, resume}; app label is apps.id. before_admission .. post_admit split the work before the boot inputs exist: Wake's fast path, the admission gates and per-app lock, the app/deployment/runtime/snapshot reads, placement plus the instance admission insert, and the reads and writes after admission (they also ride wake.boot_started as pre_rpc_*_ms). admit_to_rpc covers the boot inputs → vmmd RPC start window. rpc_call covers the vmmd Create{FromSnapshot,ColdBoot} round trip. rpc_to_running covers the RPC return → WAKING/COLD_BOOTING → RUNNING transition. resume covers vmmd's in-place warm-pool resume. wake_id is attached as a prometheus.Exemplar on each observation so operators can join to gateway_wake_latency_seconds and to the events table. Bucket set reuses spec §6.3 verbatim with a 0.01 low-end bucket for admit_to_rpc.",
 		Buckets: []float64{0.01, 0.05, 0.1, 0.2, 0.35, 0.5, 0.8, 1, 1.5, 3, 5},
 	}, []string{"app", "phase"})
+	for _, phase := range []string{"before_admission", "lock_wait", "reads", "admit", "post_admit"} {
+		wakeRPCDuration.WithLabelValues("", phase)
+	}
 	wakeRPCDuration.WithLabelValues("", "admit_to_rpc")
 	wakeRPCDuration.WithLabelValues("", "rpc_call")
 	wakeRPCDuration.WithLabelValues("", "rpc_to_running")
@@ -6227,16 +6230,16 @@ func (m *OpsMetrics) WarmPoolResumeTotal(outcome string) prometheus.Counter {
 
 // Bounded label sets of the frozen-tier series (ADR-1151).
 var (
-	FrozenFreezeOutcomes = []string{"frozen", "busy", "error", "ineligible", "no_snapshot", "node_full"}
+	FrozenFreezeOutcomes = []string{"frozen", "frozen_early", "busy", "error", "ineligible", "no_snapshot", "node_full"}
 	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity", "fast", "fast_refused"}
 	// FrozenFastPathSkipReasons and FrozenThawTicketOutcomes are the closed
 	// label sets of the ADR-1740 fast path's series.
-	FrozenFastPathSkipReasons = []string{"deployment", "scope", "selection", "no_ticket", "capacity"}
+	FrozenFastPathSkipReasons = []string{"deployment", "scope", "selection", "no_ticket", "admission", "capacity"}
 	FrozenThawTicketOutcomes  = []string{"issued", "error", "mode", "not_selected", "operator_cold_boot",
-		"app_inactive", "managed_standards", "account", "shape", "config"}
+		"app_inactive", "managed_standards", "account", "organization", "shape", "config"}
 	// OwnerCacheOutcomes are schedd_owner_cache_total's closed label set
 	// (ADR-1741).
-	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused", "guarded_publish", "guarded_publish_moved", "selection"}
+	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused", "guarded_publish", "guarded_publish_moved", "selection", "organization"}
 	FrozenParkReasons  = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
 		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park"}
 	// FrozenCompressOutcomes: compressed keeps the VM frozen; insufficient,

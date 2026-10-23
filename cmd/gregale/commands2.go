@@ -236,8 +236,8 @@ func cmdApp(args []string) int {
 	functionConcurrency := fs.Int("function-concurrency", 0, "requests one Node/Python function worker serves at once (0 = one; applies from the next deploy)")
 	// --min sets the per-app cold-wake floor (ux_spec §6.5).
 	// Pro/Scale only — the API rejects Hobby/Free with 403
-	// plan_min_instances_not_allowed, which surfaces here as an
-	// "Update failed" error with the API's problem code.
+	// plan_min_instances_not_allowed, which surfaces here as a
+	// "Could not update app" error with the API's problem code.
 	min := fs.Int("min", 0, "min instances kept warm (Pro/Scale only; 0 = scale to zero)")
 	// Issue #169 / #172: per-app reactive scale-up trigger targets.
 	// --autoscale-target-rps sets the per-instance RPS target
@@ -282,7 +282,7 @@ func cmdApp(args []string) int {
 	// `gregale app <slug>` with neither flag still falls through to
 	// the info-block print path. Pro/Scale only — the API rejects
 	// Free/Hobby with 403 plan_require_authn_not_allowed, which
-	// surfaces here as an "Update failed" error with the API's
+	// surfaces here as a "Could not update app" error with the API's
 	// problem code.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
 	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement; a bearer-protected public URL opens, an IP allowlist, basic auth or internal_only setting stays")
@@ -334,8 +334,8 @@ func cmdApp(args []string) int {
 	// time. Basic auth lands as basic_user + basic_pass
 	// in the JSON body (the apid side handles the seal).
 	//
-	// Plan-gate (server-side, surfaces as an
-	// "Update failed" error with the API's problem
+	// Plan-gate (server-side, surfaces as a
+	// "Could not update app" error with the API's problem
 	// code): Free PATCH 'bearer' = 402
 	// plan_public_auth_bearer_not_allowed; Free/Hobby
 	// PATCH 'basic' or 'ip_allowlist' = 402.
@@ -974,7 +974,7 @@ func cmdApp(args []string) int {
 	printAppSettingsTarget(slug, *environment, "explicit --environment", req)
 	updated, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).UpdateApp(ctx, slug, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update app", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(updated))
@@ -1044,7 +1044,7 @@ func cmdAppsRm(args []string) int {
 		}
 	}
 	if err := client.DeleteApp(context.Background(), slug); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete app", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{
@@ -1679,6 +1679,11 @@ func validateSingleAppManifestTargets(cwd, slug string) error {
 			return fmt.Errorf("async_routes entry %d targets app %q, but this single-app deploy targets %q; fix the app name or use --project", i+1, route.App, slug)
 		}
 	}
+	for i, route := range m.Routes {
+		if route.To != slug {
+			return fmt.Errorf("routes entry %d sends traffic to app %q, but this single-app deploy targets %q; fix `to` or use --project", i+1, route.To, slug)
+		}
+	}
 	printManifestWarnings(m)
 	return nil
 }
@@ -2071,6 +2076,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	fs.Var(&queueCanaryBindings, "queue-canary-binding", "declare safe handler-completion support for a manifest push HTTP binding (repeatable; this deployment only)")
 	mcpTaskMigrationOverride := fs.Bool("mcp-task-migration-override", false, "allow this deployment to replace incompatible MCP task workers once")
 	overrideFreeze := fs.String("override-freeze", "", "release to production during a deploy freeze; the reason is audited (ADR-20261019071733)")
+	releaseAtFlag := fs.String("at", "", "build now and start the production rollout at this time; freezes are checked then")
+	releaseNotifyFlag := fs.String("release-notify", "", "Slack or email channels told when a scheduled release starts or cannot start (with --at)")
 	rollbackOn5xx := fs.Bool("rollback-on-5xx", false, "automatically roll back after repeated first-wake 5xx responses")
 	disableStartupCPUBoost := fs.Bool("disable-startup-cpu-boost", false, "disable the temporary CPU boost during VM startup")
 	// Issue #791 PR-C / ADR-090: skip the `gregale.yaml` triggers fan-out.
@@ -2392,6 +2399,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *safeDeploy && projectRequested {
 		return printErr("Invalid flags", errors.New("--safe currently supports single-app deploys only; use --canary-preset with a project deploy"))
 	}
+	releaseAt, releaseNotify, releaseAtErr := resolveDeployReleaseAt(*releaseAtFlag, *releaseNotifyFlag, explicit, *noTraffic,
+		projectRequested || *githubSnippet || *simplePlan || *dryRun || *diff || *serverDiff || *createOnly || developerSync != nil)
+	if releaseAtErr != nil {
+		return printErr("Invalid rollout policy", releaseAtErr)
+	}
+	// A scheduled release waits like a dark deployment until its time.
+	parkedDeploy := *noTraffic || releaseAt != ""
 	if *environment != "" {
 		if !api.ValidProjectEnvironmentSlug(*environment) {
 			return printErr("Invalid --environment", fmt.Errorf("must be a lowercase project environment slug; got %q", *environment))
@@ -2758,12 +2772,33 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if err := validateGitHubRef(*ref); err != nil {
 			return printErr("Invalid --ref", err)
 		}
-		// Phase 3 guard: --repo is the source-ref path; the
-		// one-key provision surface takes --tarball/--path, not
-		// --repo. Mixing them is almost always a mistake.
+		// --repo with --project deploys every service of the connected
+		// repository: the control plane fetches the ref, the plan is
+		// reviewed, and exactly that reviewed source is applied.
 		if projectRequested {
-			PrintFail(os.Stderr, "--repo cannot be combined with --project, --only, or --project-slug")
-			return 1
+			if err := validateRepoProjectFlags(explicit, *sourceBranch); err != nil {
+				return printErr("Invalid flags", err)
+			}
+			repoProjectSlug := *projectSlug
+			if repoProjectSlug == "" {
+				repoProjectSlug = defaultProjectSlug(filepath.Base(*repo) + ".tar.gz")
+				if *name != "" {
+					repoProjectSlug = sanitizeProjectSlug(*name)
+				}
+			}
+			scan := connectedRepoScanOptions{
+				repo: *repo, ref: *ref, projectSlug: repoProjectSlug,
+				bindingRepo: *bindingRepo, productionBranch: *productionBranch,
+				installID: *installID, environment: *environment,
+				only: *deployOnly, exclude: *deployExclude, showAffected: *deployShowAffected,
+			}
+			if *diff {
+				return executeConnectedRepoPreview(ctx, scan, *diffJSON, !*diffLenient, *noTriggers)
+			}
+			return deployConnectedRepoProject(ctx, connectedRepoProjectDeploy{
+				scan: scan, yes: *yes, wait: waitForDeploy,
+				waitTimeout: time.Duration(*waitTimeoutSeconds) * time.Second, noTriggers: *noTriggers,
+			})
 		}
 		if *diff {
 			if err := validateSourceRefPreviewFlags(explicit, *sourceBranch); err != nil {
@@ -2785,6 +2820,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
 			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck, NoTriggers: *noTriggers, RequireAuthn: requireAuthnPtr, PlatformTenantRequired: platformTenantRequiredPtr, PublicAuth: publicAuthPtr,
 			MCPTaskMigrationOverride: *mcpTaskMigrationOverride, OverrideFreeze: *overrideFreeze,
+			ReleaseAt: releaseAt, ReleaseNotify: releaseNotify,
 		}
 		refKey, keyErr := deployIdempotencyKey(*idempotencyKey, refIntent)
 		if keyErr != nil {
@@ -2819,8 +2855,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
 			RollbackOn5xx:            rollbackOn5xxPtr,
 			DisableStartupCPUBoost:   disableStartupCPUBoostPtr, Healthcheck: healthcheck,
-			OverrideFreeze: *overrideFreeze,
-		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, *noTraffic,
+			OverrideFreeze: *overrideFreeze, ReleaseAt: releaseAt, ReleaseNotify: releaseNotify,
+		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, parkedDeploy,
 			sourceRefAppPolicy{PlatformTenantRequired: platformTenantRequiredPtr, RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr})
 		return code
 	}
@@ -3017,6 +3053,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				planOnly:   *dryRun || *diff || *serverDiff || *createOnly,
 				noTriggers: *noTriggers,
 			})
+		}
+	}
+	// A plain `gregale deploy` of a repository whose root is no single app
+	// but a Compose project or several service roots deploys the project.
+	// Nothing is created before the project plan is reviewed (or --yes).
+	if !projectRequested && !existingApp && len(executions) == 0 && developerSync == nil &&
+		!deployFunction && !deployApp && deployRuntime == "" && deployHandler == "" &&
+		*image == "" && *tarball == "" && *templateName == "" && *repo == "" && sourceDir != "" {
+		if reason := multiServiceSource(sourceDir); reason != "" {
+			if !jsonOutput {
+				PrintProgress(osStderr, "%s; deploying it as one project (use --app or --function to deploy a single app)", reason)
+			}
+			return cmdDeployTarballToExisting(ctx, append([]string{"--project"}, args...), false)
 		}
 	}
 	// --project is an explicit, safe opt-in to project apply. Keep the
@@ -3587,6 +3636,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
 		MCPTaskMigrationOverride: *mcpTaskMigrationOverride, Healthcheck: healthcheck, NoTriggers: *noTriggers,
 		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude, OverrideFreeze: *overrideFreeze,
+		ReleaseAt: releaseAt, ReleaseNotify: releaseNotify,
 	}
 	if preparedIssueSourceMaps != nil {
 		deployIntent.IssueSourceMapsSHA256 = preparedIssueSourceMaps.Digest
@@ -3722,41 +3772,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		}
 
-		if !plan.CanApply {
-			if jsonOutput {
-				return jsonOut(writeJSONProblem(planProblem(plan)))
-			}
-			printPlanText(osStdout, plan, excludeList, *deployShowAffected)
-			return printErr("Project plan cannot be applied", planBlockedError(plan))
-		}
-		if !*yes {
-			if code := requireAutomationConfirmation(false, "--yes"); code != 0 {
-				return code
-			}
-			// JSON output is intentionally non-interactive: prompting would
-			// corrupt the machine-readable stdout stream. Emit the complete
-			// plan first, then fail closed so an operator or CI job must make
-			// the approval explicit with --yes.
-			if jsonOutput {
-				if code := jsonOut(writeJSON(plan)); code != 0 {
-					return code
-				}
-				return printErr("Confirmation required", errors.New(
-					"project deploy requires --yes in JSON mode"))
-			}
-			if stdoutIsTTY() && stdinIsTTY() {
-				if !confirmPlan(osStdout, osStdin, plan, excludeList, *deployShowAffected) {
-					return printErr("Aborted by user", errors.New("user declined at the confirm prompt"))
-				}
-			} else {
-				// A redirected stream, CI runner, pipeline, or unsupported
-				// platform must never turn the absence of a prompt into an
-				// implicit approval. Render the same complete plan the TTY
-				// prompt would have shown so removals remain visible.
-				printPlanText(osStdout, plan, excludeList, true)
-				return printErr("Confirmation required", errors.New(
-					"project deploy requires --yes when stdin or stdout is not a TTY; review the plan and rerun with --yes"))
-			}
+		if code := confirmProjectPlan(plan, excludeList, *deployShowAffected, *yes); code != 0 {
+			return code
 		}
 		approvalToken := ""
 		if plan.EnvironmentProtected {
@@ -3946,7 +3963,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// --no-triggers
 	// opts out of the entire fan-out.
 	var sessionLock *flock.Flock
-	savedSession, sessionLock, err := newSavedDeploySession(ctx, client, slug, resolvedApp.ID, sourceDir, deployKey, prov, *safeDeploy, *noTraffic)
+	savedSession, sessionLock, err := newSavedDeploySession(ctx, client, slug, resolvedApp.ID, sourceDir, deployKey, prov, *safeDeploy, parkedDeploy)
 	if err != nil {
 		return printErr("Could not save deploy session", err)
 	}
@@ -4078,6 +4095,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
 			OverrideEnv:              execution.overrideEnv,
 			OverrideFreeze:           *overrideFreeze,
+			ReleaseAt:                releaseAt,
+			ReleaseNotify:            releaseNotify,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -4101,6 +4120,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Companions: sidecarDefs,
 				NoTriggers: ann.NoTriggers, OverrideFreeze: ann.OverrideFreeze,
+				ReleaseAt: ann.ReleaseAt, ReleaseNotify: ann.ReleaseNotify,
 			}
 			var progress resumableUploadProgress
 			if !jsonOutput {
@@ -4178,12 +4198,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if err := applyManifestScaling(); err != nil {
 				return savedSession.failure("Saved deploy settings remain pending", "configuration", err)
 			}
-			renderQueuedDeployment(dep, appURL, *noTraffic)
+			renderQueuedDeployment(dep, appURL, parkedDeploy)
 			renderCronActivation(ctx)
 			return 0
 		}
 		if jsonWait {
-			code := writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx, client, dep, prov, appURL, sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, *noTraffic, issueMaps, resolvedSimplePlan)
+			code := writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx, client, dep, prov, appURL, sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, parkedDeploy, issueMaps, resolvedSimplePlan)
 			return code
 		}
 		code := streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
@@ -4195,8 +4215,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			quiet:           streamLogsOnJSON || execution.compactProgress,
 			waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 			waitForRollout:  *safeDeploy,
-			followRollout:   !*noTraffic && followRolloutByDefault(),
-			darkDeploy:      *noTraffic,
+			followRollout:   !parkedDeploy && followRolloutByDefault(),
+			darkDeploy:      parkedDeploy,
 		})
 		// A source deploy that waited in human mode returned here without
 		// applying gregale.yaml's saved settings (worker, lifecycle, scaling,
@@ -4233,6 +4253,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		DisableStartupCPUBoost:   disableStartupCPUBoostPtr,
 		MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
 		OverrideFreeze:           *overrideFreeze,
+		ReleaseAt:                releaseAt,
+		ReleaseNotify:            releaseNotify,
 		Overrides:                deployHealthcheckOverrides(healthcheck),
 		Workflows:                workflowDefs,
 		Companions:               sidecarDefs,
@@ -4268,12 +4290,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if err := applyManifestScaling(); err != nil {
 			return savedSession.failure("Saved deploy settings remain pending", "configuration", err)
 		}
-		renderQueuedDeployment(dep, appURL, *noTraffic)
+		renderQueuedDeployment(dep, appURL, parkedDeploy)
 		renderCronActivation(ctx)
 		return 0
 	}
 	if jsonWait {
-		code := writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, nil, appURL, "", slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, *noTraffic, resolvedSimplePlan)
+		code := writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, nil, appURL, "", slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, parkedDeploy, resolvedSimplePlan)
 		if code == 0 {
 			if err := applyManifestScaling(); err != nil {
 				return savedSession.failure("Saved deploy settings remain pending", "configuration", err)
@@ -4290,8 +4312,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		quiet:           streamLogsOnJSON || execution.compactProgress,
 		waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 		waitForRollout:  *safeDeploy,
-		followRollout:   !*noTraffic && followRolloutByDefault(),
-		darkDeploy:      *noTraffic,
+		followRollout:   !parkedDeploy && followRolloutByDefault(),
+		darkDeploy:      parkedDeploy,
 	})
 	if code == 0 {
 		if err := applyManifestScaling(); err != nil {
@@ -4728,6 +4750,8 @@ func cmdTrafficPromote(args []string) int {
 	removalMapping := fs.String("route-mapping", "", "reviewed successor mapping JSON")
 	removalApproval := fs.String("route-owner-approval", "", "owner attestation for this exact change")
 	removalAge := fs.Duration("route-evidence-max-age", 72*time.Hour, "maximum route evidence age (at most 72h)")
+	at := fs.String("at", "", "start the release's rollout at this time instead of now")
+	releaseNotify := fs.String("release-notify", "", "Slack or email channels told when the scheduled release starts or cannot start")
 	slug, args := peelLeadingSlug(args)
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -4774,6 +4798,9 @@ func cmdTrafficPromote(args []string) int {
 	deploymentID, err := resolveDeploymentArg(ctx, client, *app, *deployment)
 	if err != nil {
 		return printErr("Traffic promote failed", err)
+	}
+	if *at != "" || *releaseNotify != "" {
+		return scheduleTrafficPromotion(ctx, client, deploymentID, *at, *releaseNotify, ifServingSet || *requireBindings || removalPolicySet)
 	}
 	var servingID string
 	var servingDeployment api.DeploymentResponse
@@ -5045,7 +5072,7 @@ func cmdDomains(args []string) int {
 		}
 		out, err := client.ListDomains(context.Background())
 		if err != nil {
-			return printErr("Request failed", err)
+			return printErr("Could not list domains", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeNDJSON(out))
@@ -5116,7 +5143,7 @@ func cmdDomains(args []string) int {
 			return printErr("Not logged in", err)
 		}
 		if err := client.DeleteDomain(context.Background(), args[1]); err != nil {
-			return printErr("Delete failed", err)
+			return printErr("Could not remove domain", err)
 		}
 		PrintOK(osStdout, "Removed")
 		return 0
@@ -5182,7 +5209,7 @@ func cmdCrons(args []string) int {
 		}
 		out, err := client.ListCrons(context.Background(), *slug)
 		if err != nil {
-			return printErr("Request failed", err)
+			return printErr("Could not list crons", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeNDJSON(out))
@@ -5353,7 +5380,7 @@ var cronIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a-
 func createCronAndRender(ctx context.Context, client *Client, slug string, req api.CreateCronRequest) int {
 	c, err := client.CreateCron(ctx, slug, req)
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create cron", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(c))
@@ -5560,7 +5587,7 @@ func cmdCronsUpdate(args []string) int {
 func updateCronAndRender(ctx context.Context, client *Client, id string, req api.UpdateCronRequest) int {
 	updated, err := client.UpdateCron(ctx, id, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update cron", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(updated))
@@ -5589,7 +5616,7 @@ func cmdKeys(args []string) int {
 		}
 		out, err := client.ListKeys(context.Background())
 		if err != nil {
-			return printErr("Request failed", err)
+			return printErr("Could not list API keys", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeNDJSON(out))
@@ -5644,7 +5671,7 @@ func cmdKeys(args []string) int {
 		}
 		k, err := client.CreateKey(context.Background(), positional[0], scopes)
 		if err != nil {
-			return printErr("Create failed", err)
+			return printErr("Could not create API key", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(k))
@@ -5661,7 +5688,7 @@ func cmdKeys(args []string) int {
 			return printErr("Not logged in", err)
 		}
 		if err := client.DeleteKey(context.Background(), args[1]); err != nil {
-			return printErr("Delete failed", err)
+			return printErr("Could not delete API key", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]any{"id": args[1], "revoked": true}))
@@ -5848,7 +5875,7 @@ func cmdUsageList(args []string) int {
 	}
 	rows, err := client.GetUsage(context.Background(), *month)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not read usage", err)
 	}
 	if jsonOutput {
 		// NDJSON matches every other per-resource list (apps, instances,
@@ -5933,7 +5960,7 @@ func cmdUsageSummary(args []string) int {
 	}
 	s, err := client.UsageSummary(context.Background(), *month)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not read usage summary", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(s))
@@ -5967,7 +5994,7 @@ func cmdInvoices(args []string) int {
 	}
 	page, err := client.ListInvoices(context.Background(), *month, *before, *limit)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list invoices", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(page))

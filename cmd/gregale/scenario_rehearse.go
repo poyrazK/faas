@@ -311,6 +311,15 @@ func prepareTestRehearsal(ctx context.Context, o testRehearsalOptions) (*testReh
 	if err != nil {
 		return nil, err
 	}
+	// rehearsalRelativePath compares symlink-resolved paths, so the session
+	// root must be resolved too: macOS's default TMPDIR is below the /var
+	// symlink, which made every extracted source look outside the checkout.
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		_ = os.RemoveAll(root)
+		return nil, err
+	}
+	root = resolved
 	s := &testRehearsalSession{root: root, trusted: filepath.Join(root, "trusted")}
 	if err := s.prepare(ctx, o); err != nil {
 		_ = os.RemoveAll(root)

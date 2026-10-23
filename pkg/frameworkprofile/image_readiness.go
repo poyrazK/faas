@@ -28,3 +28,18 @@ func RequiresImageHealthcheck(profile []byte) bool {
 	}
 	return *required
 }
+
+// RequiresSourceImageHealthcheck applies the receipt to a built service only
+// when its profile froze a Compose healthcheck (ADR-20261019195000). Other
+// source deployments never require a command check, whatever else their
+// profile holds.
+func RequiresSourceImageHealthcheck(profile []byte) bool {
+	var fields map[string]json.RawMessage
+	if len(profile) == 0 || json.Unmarshal(profile, &fields) != nil {
+		return false
+	}
+	if _, captured := fields["image_healthcheck"]; !captured {
+		return false
+	}
+	return RequiresImageHealthcheck(profile)
+}

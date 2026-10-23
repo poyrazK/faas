@@ -300,7 +300,8 @@ SET inferred_profile = (sqlc.arg(profile)::jsonb - 'image_command' - 'image_heal
     CASE WHEN inferred_profile ? 'image_healthcheck'
          THEN jsonb_build_object('image_healthcheck', inferred_profile -> 'image_healthcheck')
          ELSE '{}'::jsonb END
-WHERE id = sqlc.arg(deployment_id)::uuid AND kind = 'image'
+WHERE id = sqlc.arg(deployment_id)::uuid
+  AND (kind = 'image' OR inferred_profile ? 'image_healthcheck')
   AND status IN ('pending', 'building', 'imaging');
 
 -- name: ReadSnapshotPublicationDeployment :one
@@ -1838,6 +1839,22 @@ JOIN instances i ON i.id=proof.instance_id AND i.wake_id=proof.wake_id AND i.nod
 JOIN apps a ON a.id=i.app_id
 WHERE i.id=sqlc.arg(instance_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted';
 
+-- name: SetObservedAppWorkloadClass :execrows
+-- ADR-051: the workload class a cold boot observed. The caller holds the app
+-- row exclusively.
+UPDATE apps SET workload_class=sqlc.arg(workload_class)::text
+WHERE id=sqlc.arg(app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND status<>'deleted';
+
+-- name: RestampRuntimeInstanceConfigProof :execrows
+-- ADR-051 amendment (2026-10-22): moves a booted instance's proof from the
+-- fingerprint it was published with to the one its own observed workload
+-- class gives. Only the current wake's proof, and only from that fingerprint.
+UPDATE runtime_instance_config_proofs proof SET config_fingerprint=sqlc.arg(config_fingerprint)::text
+FROM instances i
+WHERE proof.instance_id=sqlc.arg(instance_id)::uuid AND i.id=proof.instance_id AND i.wake_id=proof.wake_id
+    AND i.node_id=proof.node_id AND i.deployment_id=proof.deployment_id
+    AND proof.config_fingerprint=sqlc.arg(previous_fingerprint)::text;
+
 -- name: UpdateInstanceStateIf :execrows
 UPDATE instances SET state=sqlc.arg(next_state)::text,
     parked_at=CASE WHEN sqlc.arg(next_state)::text='parked' THEN now() ELSE parked_at END,
@@ -2838,7 +2855,12 @@ select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, qu
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria, delivery,
        created_at, updated_at
-from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope);
+from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope)
+-- A rehearsal-enrolled app never polls or commits offsets on a real external
+-- broker; its queue, cron and realtime inputs stay inside the app
+-- (ADR-20261019180000).
+AND NOT (kind IN ('kafka','nats','redis_streams','sqs_compat')
+  AND EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=triggers.app_id));
 
 -- name: CountTriggersByApp :one
 select count(*) from triggers t where t.app_id = $1
@@ -14687,8 +14709,12 @@ WITH expired AS (
 ) SELECT count(*)::bigint FROM audited;
 
 -- name: ListEnabledAppLogDrainsWithStandardBinding :many
+-- A rehearsal-enrolled app's candidate output never leaves for a customer
+-- log destination (ADR-20261019180000).
 SELECT d.*,coalesce(application_standard_log_binding(d.app_id,d.id),'null'::jsonb)::jsonb AS standard_binding
-FROM app_log_drains d WHERE d.enabled ORDER BY d.created_at,d.id;
+FROM app_log_drains d WHERE d.enabled
+ AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)
+ORDER BY d.created_at,d.id;
 
 -- name: RecordApplicationStandardLogDelivery :one
 WITH guarded AS MATERIALIZED (
@@ -16089,6 +16115,9 @@ SELECT EXISTS(
  AND r.lease_until>clock_timestamp() AND s.status='running' AND a.status<>'deleted'
  AND NOT a.maintenance_mode AND (NOT a.platform_tenant_required OR r.platform_tenant_id IS NOT NULL)
  AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
+ -- A rehearsal-enrolled app never reaches a real provider with live
+ -- credentials from a workflow step (ADR-20261019180000).
+ AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=a.id)
  AND COALESCE(r.platform_tenant_id::text, '')=COALESCE(sqlc.arg(tenant_id)::text, '')
  AND (r.platform_tenant_id IS NULL OR EXISTS (
   SELECT 1 FROM platform_tenants t WHERE t.id=r.platform_tenant_id AND t.account_id=a.account_id AND t.status='active'
@@ -18800,6 +18829,9 @@ SELECT
  OR EXISTS(SELECT 1 FROM customer_operation_definitions p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
  OR EXISTS(SELECT 1 FROM customer_operation_webhook_bindings p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
  OR EXISTS(SELECT 1 FROM customer_operation_workflow_states p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM customer_operation_approval_forms p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM customer_operation_concurrency_policies p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
+ OR EXISTS(SELECT 1 FROM customer_operation_queue p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
  OR EXISTS(SELECT 1 FROM customer_workflow_readiness_subscriptions p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
  OR EXISTS(SELECT 1 FROM data_upstreams p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=sqlc.arg(environment)::text)
  OR EXISTS(SELECT 1 FROM deployment_openapi_snapshots p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
@@ -18853,8 +18885,16 @@ LOCK TABLE binding_verification_runs,project_binding_verification_runs,project_r
 -- have no environment foreign key, so keep their writers out of the deletion window.
 LOCK TABLE app_mcp_readiness_policies,mcp_readiness_incidents,mcp_readiness_maintenance_windows IN SHARE MODE;
 
+-- name: LockCloneCustomerOperationEnvironmentCleanupBorrowers :exec
+-- Customer Operation approval forms, concurrency policies and queued Operations
+-- were added after the migration-owned writer fence. Their scope-only rows have
+-- no environment foreign key, so keep their writers out of the deletion window.
+LOCK TABLE customer_operation_approval_forms,customer_operation_concurrency_policies,customer_operation_queue IN SHARE MODE;
+
 -- name: ReadCloneDeploymentBorrowers :one
 SELECT (jsonb_build_object(
+    'app_forks_deployment_id_fkey', (SELECT count(*) FROM app_forks WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'crash_captures_deployment_id_fkey', (SELECT count(*) FROM crash_captures WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'binding_verification_runs_deployment_id_fkey', (SELECT count(*) FROM binding_verification_runs WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_build_dependency_gates_deployment_id_fkey', (SELECT count(*) FROM deployment_build_dependency_gates WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_public_build_urls_deployment_id_fkey', (SELECT count(*) FROM deployment_public_build_urls WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
@@ -18956,6 +18996,9 @@ SELECT (jsonb_build_object(
     'deployment_project_release_workers_deployment_id_fkey', (SELECT count(*) FROM deployment_project_release_workers WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_release_env_snapshots_deployment_id_fkey', (SELECT count(*) FROM deployment_release_env_snapshots WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_release_secret_snapshots_deployment_id_fkey', (SELECT count(*) FROM deployment_release_secret_snapshots WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'deployment_release_approvals_deployment_id_fkey', (SELECT count(*) FROM deployment_release_approvals WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'release_approval_events_deployment_id_fkey', (SELECT count(*) FROM release_approval_events WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'scheduled_releases_deployment_id_fkey', (SELECT count(*) FROM scheduled_releases WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_submission_receipts_deployment_id_fkey', (SELECT count(*) FROM deployment_submission_receipts WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'project_worker_job_evidence_deployment_id_fkey', (SELECT count(*) FROM project_worker_job_evidence WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'project_worker_release_pins_deployment_id_fkey', (SELECT count(*) FROM project_worker_release_pins WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
@@ -19213,6 +19256,8 @@ DELETE FROM workflow_schedule_occurrences WHERE id IN
 WITH owned_apps AS (
  SELECT id FROM apps WHERE account_id = sqlc.arg(account_id)::uuid
  AND (sqlc.narg(app_id)::uuid IS NULL OR id = sqlc.narg(app_id)::uuid)
+ -- Account-wide rules skip rehearsal-enrolled apps (ADR-20261019180000).
+ AND (sqlc.narg(app_id)::uuid IS NOT NULL OR NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id = apps.id))
 ), due_runs AS (
  -- Same wake/lease eligibility as automation queue health (ADR-730/643).
  SELECT r.created_at,CASE WHEN r.status='running'
@@ -21779,11 +21824,14 @@ UPDATE apps SET manifest=CASE WHEN sqlc.arg(set_policies)::boolean
 WHERE id=sqlc.arg(app_id)::text::uuid;
 
 -- name: LockCronAccountForApp :one
-SELECT id::text AS account_id FROM accounts
+-- An app's account_id is a resource namespace: a personal account or a company
+-- org (ADR-202610171908). Lock the namespace row, as ApplyProject does, so every
+-- cron quota check for one namespace serializes on the same row.
+SELECT id::text AS account_id FROM resource_namespaces
 WHERE id=(SELECT account_id FROM apps WHERE id=sqlc.arg(app_id)::text::uuid) FOR UPDATE;
 
 -- name: LockCronAccountForCron :one
-SELECT id::text AS account_id FROM accounts
+SELECT id::text AS account_id FROM resource_namespaces
 WHERE id=(SELECT a.account_id FROM apps a JOIN crons c ON c.app_id=a.id WHERE c.id=sqlc.arg(cron_id)::text::uuid) FOR UPDATE;
 
 -- name: LockCronParent :one
@@ -22772,6 +22820,558 @@ SELECT EXISTS (
     )
 ) AS managed;
 
+-- ADR-732: production fork intent (app_forks). apid admits forks under a
+-- per-account advisory lock so the active-fork limits hold under concurrent
+-- requests; expired-but-unswept rows do not count against the limits.
+
+-- name: LockAccountAppForks :exec
+SELECT pg_advisory_xact_lock(hashtextextended('app-forks:' || sqlc.arg(account_id)::uuid::text, 0));
+
+-- name: CountActiveAppForks :one
+SELECT count(*) FILTER (WHERE app_id = sqlc.arg(app_id)::uuid)::integer AS app_active,
+       count(*)::integer AS account_active
+FROM app_forks
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND status IN ('queued', 'restoring', 'running')
+  AND expires_at > sqlc.arg(now)::timestamptz;
+
+-- name: InsertAppFork :one
+INSERT INTO app_forks (account_id, app_id, deployment_id, requested_by, ttl_seconds,
+                       expires_at, created_at, updated_at, access_token_hash)
+SELECT a.account_id, a.id, d.id, sqlc.arg(requested_by)::text, sqlc.arg(ttl_seconds)::integer,
+       sqlc.arg(created_at)::timestamptz + make_interval(secs => sqlc.arg(ttl_seconds)::integer),
+       sqlc.arg(created_at)::timestamptz, sqlc.arg(created_at)::timestamptz,
+       sqlc.narg(access_token_hash)::bytea
+FROM apps a
+JOIN deployments d ON d.app_id = a.id
+WHERE a.id = sqlc.arg(app_id)::uuid
+  AND a.account_id = sqlc.arg(account_id)::uuid
+  AND a.status <> 'deleted'
+  AND d.id = sqlc.arg(deployment_id)::uuid
+  AND d.status = 'live'
+RETURNING *;
+
+-- name: GetAppFork :one
+SELECT * FROM app_forks
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND app_id = sqlc.arg(app_id)::uuid
+  AND id = sqlc.arg(fork_id)::uuid;
+
+-- name: GetAppForkForApp :one
+-- The gateway's fork routing lookup: scoped by app (resolved from the
+-- request host), never by account.
+SELECT * FROM app_forks
+WHERE app_id = sqlc.arg(app_id)::uuid
+  AND id = sqlc.arg(fork_id)::uuid;
+
+-- name: ListAppForks :many
+SELECT * FROM app_forks
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND app_id = sqlc.arg(app_id)::uuid
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: CancelAppFork :one
+-- A queued fork has no instance yet and is cancelled directly. A restoring or
+-- running fork only records the request; schedd destroys the instance and
+-- writes the terminal status under its lease.
+UPDATE app_forks
+SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
+    finished_at = CASE WHEN status = 'queued' THEN sqlc.arg(now)::timestamptz ELSE finished_at END,
+    cancel_requested_at = coalesce(cancel_requested_at, sqlc.arg(now)::timestamptz),
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND app_id = sqlc.arg(app_id)::uuid
+  AND id = sqlc.arg(fork_id)::uuid
+  AND status IN ('queued', 'restoring', 'running')
+RETURNING *;
+
+-- ADR-732 scheduler side. schedd holds a lease on every restoring or running
+-- fork; terminal transitions clear it (app_forks_lease_status_chk).
+
+-- name: ClaimNextAppFork :one
+UPDATE app_forks
+SET status = 'restoring',
+    lease_token = gen_random_uuid(),
+    lease_owner = sqlc.arg(owner)::text,
+    lease_expires_at = sqlc.arg(lease_expires_at)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = (
+    SELECT candidate.id FROM app_forks candidate
+    WHERE candidate.status = 'queued'
+      AND candidate.cancel_requested_at IS NULL
+      AND candidate.expires_at > sqlc.arg(now)::timestamptz
+      -- ADR-733: a fork pinned to an encrypted crash capture waits until
+      -- imaged has staged its plaintext, and a live fork (ADR-732) waits
+      -- for its capture to be taken. A failed or expired capture is
+      -- claimed so the restore fails fast.
+      AND (candidate.crash_capture_id IS NULL OR EXISTS (
+          SELECT 1 FROM crash_captures c
+          WHERE c.id = candidate.crash_capture_id
+            AND (c.status IN ('failed', 'expired')
+                 OR (c.status = 'ready' AND c.plaintext_state IN ('present', 'staged', 'sealed')))))
+    ORDER BY candidate.created_at, candidate.id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING *;
+
+-- name: RenewAppForkLease :one
+UPDATE app_forks
+SET lease_expires_at = sqlc.arg(lease_expires_at)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(fork_id)::uuid
+  AND lease_token = sqlc.arg(lease_token)::uuid
+  AND status IN ('restoring', 'running')
+RETURNING *;
+
+-- name: MarkAppForkRunning :one
+UPDATE app_forks
+SET status = 'running',
+    snapshot_id = sqlc.arg(snapshot_id)::uuid,
+    instance_id = sqlc.arg(instance_id)::uuid,
+    started_at = sqlc.arg(now)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(fork_id)::uuid
+  AND lease_token = sqlc.arg(lease_token)::uuid
+  AND status = 'restoring'
+RETURNING *;
+
+-- name: FinishAppFork :one
+UPDATE app_forks
+SET status = sqlc.arg(status)::text,
+    failure_code = sqlc.narg(failure_code)::text,
+    failure_message = sqlc.narg(failure_message)::text,
+    finished_at = sqlc.arg(now)::timestamptz,
+    lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(fork_id)::uuid
+  AND lease_token = sqlc.arg(lease_token)::uuid
+  AND status IN ('restoring', 'running')
+  AND sqlc.arg(status)::text IN ('expired', 'cancelled', 'failed')
+RETURNING *;
+
+-- name: ExpireUnclaimedAppForks :many
+-- Queued forks that reached expires_at, or were cancelled, before any
+-- scheduler claimed them. They never held an instance.
+UPDATE app_forks
+SET status = CASE WHEN cancel_requested_at IS NULL THEN 'expired' ELSE 'cancelled' END,
+    finished_at = sqlc.arg(now)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE status = 'queued'
+  AND (expires_at <= sqlc.arg(now)::timestamptz OR cancel_requested_at IS NOT NULL)
+RETURNING *;
+
+-- name: ListAppForksDueForTeardown :many
+-- Forks this scheduler holds that reached their TTL or were cancelled.
+SELECT * FROM app_forks
+WHERE lease_owner = sqlc.arg(owner)::text
+  AND status IN ('restoring', 'running')
+  AND (expires_at <= sqlc.arg(now)::timestamptz OR cancel_requested_at IS NOT NULL)
+ORDER BY expires_at, id
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: TakeOverAbandonedAppFork :one
+-- A fork whose lease expired lost its scheduler. The caller takes the lease,
+-- destroys any instance the fork recorded, and finishes it.
+UPDATE app_forks
+SET lease_token = gen_random_uuid(),
+    lease_owner = sqlc.arg(owner)::text,
+    lease_expires_at = sqlc.arg(lease_expires_at)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = (
+    SELECT candidate.id FROM app_forks candidate
+    WHERE candidate.status IN ('restoring', 'running')
+      AND candidate.lease_expires_at < sqlc.arg(now)::timestamptz
+    ORDER BY candidate.lease_expires_at, candidate.id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING *;
+
+-- ADR-733 crash snapshots.
+
+-- name: SetCrashSnapshotSettings :one
+INSERT INTO crash_snapshot_settings (app_id, account_id, enabled, updated_at)
+SELECT a.id, a.account_id, sqlc.arg(enabled)::boolean, sqlc.arg(now)::timestamptz
+FROM apps a
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.account_id = sqlc.arg(account_id)::uuid
+ON CONFLICT (app_id) DO UPDATE
+SET enabled = EXCLUDED.enabled, updated_at = EXCLUDED.updated_at
+RETURNING *;
+
+-- name: GetCrashSnapshotSettings :one
+SELECT * FROM crash_snapshot_settings
+WHERE app_id = sqlc.arg(app_id)::uuid AND account_id = sqlc.arg(account_id)::uuid;
+
+-- name: RequestHTTPCrashCapture :one
+-- gatewayd-internal, after a serving instance answered 5xx. Succeeds only
+-- when the app opted in, the instance is a running non-fork instance of the
+-- app, nothing is in flight and the cooldown has passed.
+INSERT INTO crash_captures (account_id, app_id, deployment_id, instance_id, trigger,
+                            status_code, route, requested_at, updated_at)
+SELECT a.account_id, a.id, i.deployment_id, i.id, 'http_5xx',
+       sqlc.arg(status_code)::integer, left(sqlc.arg(route)::text, 512),
+       sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz
+FROM instances i
+JOIN apps a ON a.id = i.app_id
+JOIN crash_snapshot_settings s ON s.app_id = a.id AND s.enabled
+WHERE i.id = sqlc.arg(instance_id)::uuid
+  AND i.app_id = sqlc.arg(app_id)::uuid
+  AND i.state = 'running' AND i.mode <> 'fork' AND a.status <> 'deleted'
+  AND NOT EXISTS (
+      SELECT 1 FROM crash_captures c
+      WHERE c.app_id = a.id
+        AND (c.status IN ('requested', 'capturing')
+             OR c.requested_at > sqlc.arg(now)::timestamptz - make_interval(secs => sqlc.arg(cooldown_seconds)::integer))
+  )
+ON CONFLICT DO NOTHING
+RETURNING *;
+
+-- name: RequestSDKCrashCapture :one
+-- vmmd, when an app asks for a capture of its own instance from inside its
+-- error handler (guest metadata endpoint). vmmd names the instance from the
+-- vsock listener that accepted the request. Same rules as the 5xx trigger:
+-- opt-in, a running non-fork instance, nothing in flight, cooldown passed.
+INSERT INTO crash_captures (account_id, app_id, deployment_id, instance_id, trigger,
+                            route, reason, requested_at, updated_at)
+SELECT a.account_id, a.id, i.deployment_id, i.id, 'sdk',
+       left(sqlc.arg(route)::text, 512), left(sqlc.arg(reason)::text, 256),
+       sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz
+FROM instances i
+JOIN apps a ON a.id = i.app_id
+JOIN crash_snapshot_settings s ON s.app_id = a.id AND s.enabled
+WHERE i.id = sqlc.arg(instance_id)::uuid
+  AND i.app_id = sqlc.arg(app_id)::uuid
+  AND i.state = 'running' AND i.mode <> 'fork' AND a.status <> 'deleted'
+  AND NOT EXISTS (
+      SELECT 1 FROM crash_captures c
+      WHERE c.app_id = a.id
+        AND (c.status IN ('requested', 'capturing')
+             OR c.requested_at > sqlc.arg(now)::timestamptz - make_interval(secs => sqlc.arg(cooldown_seconds)::integer))
+  )
+ON CONFLICT DO NOTHING
+RETURNING *;
+
+-- name: RequestManualCrashCapture :one
+-- apid, on an explicit customer request: the app's newest running
+-- non-fork instance, with the same in-flight and cooldown rules.
+INSERT INTO crash_captures (account_id, app_id, deployment_id, instance_id, trigger,
+                            route, requested_at, updated_at)
+SELECT a.account_id, a.id, i.deployment_id, i.id, 'manual', '',
+       sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz
+FROM apps a
+JOIN LATERAL (
+    SELECT ins.id, ins.deployment_id FROM instances ins
+    WHERE ins.app_id = a.id AND ins.state = 'running' AND ins.mode <> 'fork'
+    ORDER BY ins.started_at DESC NULLS LAST, ins.id
+    LIMIT 1
+) i ON true
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.account_id = sqlc.arg(account_id)::uuid AND a.status <> 'deleted'
+  AND NOT EXISTS (
+      SELECT 1 FROM crash_captures c
+      WHERE c.app_id = a.id
+        AND (c.status IN ('requested', 'capturing')
+             OR c.requested_at > sqlc.arg(now)::timestamptz - make_interval(secs => sqlc.arg(cooldown_seconds)::integer))
+  )
+ON CONFLICT DO NOTHING
+RETURNING *;
+
+-- name: ClaimNextCrashCapture :one
+UPDATE crash_captures
+SET status = 'capturing', updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = (
+    SELECT candidate.id FROM crash_captures candidate
+    WHERE candidate.status = 'requested'
+    ORDER BY candidate.requested_at, candidate.id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING *;
+
+-- name: CompleteCrashCapture :one
+UPDATE crash_captures
+SET status = 'ready',
+    storage_key = sqlc.arg(storage_key)::text,
+    vmstate_storage_key = sqlc.arg(vmstate_storage_key)::text,
+    fc_version = sqlc.arg(fc_version)::text,
+    mem_bytes = sqlc.arg(mem_bytes)::bigint,
+    captured_at = sqlc.arg(now)::timestamptz,
+    expires_at = sqlc.arg(expires_at)::timestamptz,
+    -- ADR-733: a capture vmmd sealed at the source is encrypted from the
+    -- start and never has plaintext on storage.
+    sealed_key = sqlc.narg(sealed_key)::bytea,
+    plaintext_state = CASE WHEN sqlc.narg(sealed_key)::bytea IS NULL THEN 'present' ELSE 'sealed' END,
+    encrypted_at = CASE WHEN sqlc.narg(sealed_key)::bytea IS NULL THEN NULL ELSE sqlc.arg(now)::timestamptz END,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(capture_id)::uuid AND status = 'capturing'
+RETURNING *;
+
+-- name: FailCrashCapture :one
+UPDATE crash_captures
+SET status = 'failed',
+    failure_code = sqlc.arg(failure_code)::text,
+    failure_message = sqlc.arg(failure_message)::text,
+    finished_at = sqlc.arg(now)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(capture_id)::uuid AND status IN ('requested', 'capturing')
+RETURNING *;
+
+-- name: FailStaleCrashCaptures :many
+-- A capture still capturing after the timeout lost its scheduler.
+UPDATE crash_captures
+SET status = 'failed', failure_code = 'capture_timeout',
+    failure_message = 'the capture did not finish in time',
+    finished_at = sqlc.arg(now)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE status = 'capturing' AND updated_at < sqlc.arg(cutoff)::timestamptz
+RETURNING *;
+
+-- name: ListExpiredCrashCaptures :many
+SELECT * FROM crash_captures
+WHERE status = 'ready' AND expires_at <= sqlc.arg(now)::timestamptz
+ORDER BY expires_at, id
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ExpireCrashCapture :one
+-- imaged, after deleting every object: the sealed key goes with them.
+UPDATE crash_captures
+SET status = 'expired', finished_at = sqlc.arg(now)::timestamptz,
+    sealed_key = NULL, plaintext_state = 'absent',
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(capture_id)::uuid AND status = 'ready'
+RETURNING *;
+
+-- ADR-733 encryption at rest. imaged owns plaintext_state, sealed_key and
+-- encrypted_at. A fork is active while queued, restoring or running; only
+-- an active fork keeps (or brings back) a plaintext copy.
+
+-- name: ListLiveCrashCaptureDeploymentIDs :many
+-- imaged's local orphan sweep keeps these deployments' capture directories.
+SELECT DISTINCT deployment_id FROM crash_captures
+WHERE status IN ('capturing', 'ready');
+
+-- name: ListCrashCapturesToEncrypt :many
+SELECT * FROM crash_captures
+WHERE status = 'ready' AND plaintext_state = 'present'
+  AND expires_at > sqlc.arg(now)::timestamptz
+ORDER BY captured_at, id
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: MarkCrashCaptureEncrypted :one
+-- The encrypted objects are written. The plaintext stays (staged) only when
+-- an active fork is pinned to the capture; otherwise it is purged next.
+UPDATE crash_captures c
+SET plaintext_state = CASE WHEN EXISTS (
+        SELECT 1 FROM app_forks f
+        WHERE f.crash_capture_id = c.id AND f.status IN ('queued', 'restoring', 'running')
+    ) THEN 'staged' ELSE 'purging' END,
+    sealed_key = sqlc.arg(sealed_key)::bytea,
+    encrypted_at = sqlc.arg(now)::timestamptz,
+    updated_at = greatest(c.updated_at, sqlc.arg(now)::timestamptz)
+WHERE c.id = sqlc.arg(capture_id)::uuid AND c.status = 'ready' AND c.plaintext_state = 'present'
+RETURNING *;
+
+-- name: ListCrashCapturesToPurge :many
+SELECT * FROM crash_captures c
+WHERE c.status = 'ready'
+  AND (c.plaintext_state = 'purging'
+       OR (c.plaintext_state IN ('staging', 'staged') AND NOT EXISTS (
+           SELECT 1 FROM app_forks f
+           WHERE f.crash_capture_id = c.id AND f.status IN ('queued', 'restoring', 'running'))))
+ORDER BY c.captured_at, c.id
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: BeginCrashCapturePurge :one
+-- Fenced on there being no active fork, so a fork that could still restore
+-- the plaintext never loses it.
+UPDATE crash_captures c
+SET plaintext_state = 'purging', updated_at = greatest(c.updated_at, sqlc.arg(now)::timestamptz)
+WHERE c.id = sqlc.arg(capture_id)::uuid AND c.status = 'ready'
+  AND c.plaintext_state IN ('staging', 'staged', 'purging')
+  AND NOT EXISTS (
+      SELECT 1 FROM app_forks f
+      WHERE f.crash_capture_id = c.id AND f.status IN ('queued', 'restoring', 'running'))
+RETURNING *;
+
+-- name: FinishCrashCapturePurge :one
+UPDATE crash_captures
+SET plaintext_state = 'absent', updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(capture_id)::uuid AND status = 'ready' AND plaintext_state = 'purging'
+RETURNING *;
+
+-- name: ListCrashCapturesToStage :many
+SELECT * FROM crash_captures c
+WHERE c.status = 'ready' AND c.plaintext_state IN ('absent', 'staging')
+  AND c.expires_at > sqlc.arg(now)::timestamptz
+  AND EXISTS (
+      SELECT 1 FROM app_forks f
+      WHERE f.crash_capture_id = c.id AND f.status IN ('queued', 'restoring', 'running'))
+ORDER BY c.captured_at, c.id
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: BeginCrashCaptureStage :one
+UPDATE crash_captures c
+SET plaintext_state = 'staging', updated_at = greatest(c.updated_at, sqlc.arg(now)::timestamptz)
+WHERE c.id = sqlc.arg(capture_id)::uuid AND c.status = 'ready'
+  AND c.plaintext_state IN ('absent', 'staging')
+  AND EXISTS (
+      SELECT 1 FROM app_forks f
+      WHERE f.crash_capture_id = c.id AND f.status IN ('queued', 'restoring', 'running'))
+RETURNING *;
+
+-- name: FinishCrashCaptureStage :one
+UPDATE crash_captures
+SET plaintext_state = 'staged', updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(capture_id)::uuid AND status = 'ready' AND plaintext_state = 'staging'
+RETURNING *;
+
+-- name: ListCrashCaptures :many
+SELECT * FROM crash_captures
+WHERE account_id = sqlc.arg(account_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+ORDER BY requested_at DESC, id DESC
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: GetCrashCapture :one
+SELECT * FROM crash_captures
+WHERE account_id = sqlc.arg(account_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+  AND id = sqlc.arg(capture_id)::uuid;
+
+-- name: GetCrashCaptureByID :one
+SELECT * FROM crash_captures WHERE id = sqlc.arg(capture_id)::uuid;
+
+-- name: RequestLiveForkCapture :one
+-- apid, for an ADR-732 live fork: capture the app's newest running non-fork
+-- instance now. No crash snapshot opt-in (the customer asked for this
+-- fork), but the in-flight and cooldown rules bound how often a serving
+-- instance is paused.
+INSERT INTO crash_captures (account_id, app_id, deployment_id, instance_id, trigger,
+                            route, requested_at, updated_at)
+SELECT a.account_id, a.id, i.deployment_id, i.id, 'live_fork', '',
+       sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz
+FROM apps a
+JOIN LATERAL (
+    SELECT ins.id, ins.deployment_id FROM instances ins
+    WHERE ins.app_id = a.id AND ins.state = 'running' AND ins.mode <> 'fork'
+    ORDER BY ins.started_at DESC NULLS LAST, ins.id
+    LIMIT 1
+) i ON true
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.account_id = sqlc.arg(account_id)::uuid AND a.status <> 'deleted'
+  AND NOT EXISTS (
+      SELECT 1 FROM crash_captures c
+      WHERE c.app_id = a.id
+        AND (c.status IN ('requested', 'capturing')
+             OR c.requested_at > sqlc.arg(now)::timestamptz - make_interval(secs => sqlc.arg(cooldown_seconds)::integer))
+  )
+ON CONFLICT DO NOTHING
+RETURNING *;
+
+-- name: InsertLiveAppFork :one
+-- ADR-732 live fork: pinned to the live_fork capture written in the same
+-- transaction, which is still requested. The claim waits for it.
+INSERT INTO app_forks (account_id, app_id, deployment_id, requested_by, ttl_seconds,
+                       expires_at, created_at, updated_at, access_token_hash, crash_capture_id)
+SELECT c.account_id, c.app_id, c.deployment_id, sqlc.arg(requested_by)::text, sqlc.arg(ttl_seconds)::integer,
+       sqlc.arg(created_at)::timestamptz + make_interval(secs => sqlc.arg(ttl_seconds)::integer),
+       sqlc.arg(created_at)::timestamptz, sqlc.arg(created_at)::timestamptz,
+       sqlc.narg(access_token_hash)::bytea, c.id
+FROM crash_captures c
+WHERE c.id = sqlc.arg(crash_capture_id)::uuid
+  AND c.trigger = 'live_fork' AND c.status = 'requested'
+RETURNING *;
+
+-- name: InsertAppForkExec :one
+-- apid: a command for a running fork of the app, refused when the fork is
+-- not running or already has max_pending commands queued or running.
+INSERT INTO app_fork_execs (fork_id, account_id, app_id, requested_by, command, command_shell,
+                            timeout_seconds, max_output_bytes, created_at, updated_at)
+SELECT f.id, f.account_id, f.app_id, sqlc.arg(requested_by)::text, sqlc.arg(command)::text[],
+       sqlc.arg(command_shell)::boolean, sqlc.arg(timeout_seconds)::integer, sqlc.arg(max_output_bytes)::integer,
+       sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz
+FROM app_forks f
+WHERE f.id = sqlc.arg(fork_id)::uuid AND f.app_id = sqlc.arg(app_id)::uuid
+  AND f.account_id = sqlc.arg(account_id)::uuid AND f.status = 'running'
+  AND f.cancel_requested_at IS NULL AND f.expires_at > sqlc.arg(now)::timestamptz
+  AND (SELECT count(*) FROM app_fork_execs e
+       WHERE e.fork_id = f.id AND e.status IN ('queued', 'running')) < sqlc.arg(max_pending)::integer
+RETURNING *;
+
+-- name: ClaimNextAppForkExec :one
+-- schedd: the oldest queued command of a running fork this scheduler holds.
+UPDATE app_fork_execs
+SET status = 'running',
+    started_at = sqlc.arg(now)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = (
+    SELECT e.id FROM app_fork_execs e
+    JOIN app_forks f ON f.id = e.fork_id
+    WHERE e.status = 'queued' AND f.status = 'running' AND f.lease_owner = sqlc.arg(owner)::text
+      AND NOT EXISTS (SELECT 1 FROM app_fork_execs r WHERE r.fork_id = e.fork_id AND r.status = 'running')
+    ORDER BY e.created_at, e.id
+    FOR UPDATE OF e SKIP LOCKED
+    LIMIT 1
+)
+RETURNING *;
+
+-- name: FinishAppForkExec :one
+UPDATE app_fork_execs
+SET status = sqlc.arg(status)::text,
+    exit_code = sqlc.narg(exit_code)::integer,
+    output_truncated = sqlc.arg(output_truncated)::boolean,
+    stdout = sqlc.arg(stdout)::bytea,
+    stderr = sqlc.arg(stderr)::bytea,
+    failure_code = sqlc.narg(failure_code)::text,
+    failure_message = sqlc.narg(failure_message)::text,
+    finished_at = sqlc.arg(now)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(exec_id)::uuid AND status = 'running'
+RETURNING *;
+
+-- name: FailOrphanedAppForkExecs :many
+-- schedd: commands whose fork is no longer running, or that ran past their
+-- timeout plus grace, end failed.
+UPDATE app_fork_execs e
+SET status = 'failed',
+    failure_code = 'fork_ended',
+    failure_message = 'the fork ended before the command finished',
+    started_at = coalesce(e.started_at, sqlc.arg(now)::timestamptz),
+    finished_at = sqlc.arg(now)::timestamptz,
+    updated_at = greatest(e.updated_at, sqlc.arg(now)::timestamptz)
+FROM app_forks f
+WHERE f.id = e.fork_id AND e.status IN ('queued', 'running')
+  AND (f.status <> 'running'
+       OR (e.status = 'running' AND e.started_at + make_interval(secs => e.timeout_seconds + sqlc.arg(grace_seconds)::integer) < sqlc.arg(now)::timestamptz))
+RETURNING e.*;
+
+-- name: GetAppForkExec :one
+SELECT * FROM app_fork_execs
+WHERE id = sqlc.arg(exec_id)::uuid AND fork_id = sqlc.arg(fork_id)::uuid
+  AND app_id = sqlc.arg(app_id)::uuid AND account_id = sqlc.arg(account_id)::uuid;
+
+-- name: ListAppForkExecs :many
+SELECT * FROM app_fork_execs
+WHERE fork_id = sqlc.arg(fork_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+  AND account_id = sqlc.arg(account_id)::uuid
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: InsertAppForkFromCrashCapture :one
+-- ADR-733: a fork pinned to a ready, unexpired crash capture of the app. The
+-- fork's deployment is the capture's, which may no longer be live.
+INSERT INTO app_forks (account_id, app_id, deployment_id, requested_by, ttl_seconds,
+                       expires_at, created_at, updated_at, access_token_hash, crash_capture_id)
+SELECT c.account_id, c.app_id, c.deployment_id, sqlc.arg(requested_by)::text, sqlc.arg(ttl_seconds)::integer,
+       sqlc.arg(created_at)::timestamptz + make_interval(secs => sqlc.arg(ttl_seconds)::integer),
+       sqlc.arg(created_at)::timestamptz, sqlc.arg(created_at)::timestamptz,
+       sqlc.narg(access_token_hash)::bytea, c.id
+FROM crash_captures c
+JOIN apps a ON a.id = c.app_id AND a.status <> 'deleted'
+WHERE c.id = sqlc.arg(crash_capture_id)::uuid
+  AND c.app_id = sqlc.arg(app_id)::uuid
+  AND c.account_id = sqlc.arg(account_id)::uuid
+  AND c.status = 'ready'
+  AND c.expires_at > sqlc.arg(created_at)::timestamptz
+RETURNING *;
 -- ADR-749: alert notification channels (apid writes definitions).
 
 -- name: InsertNotificationChannel :one
@@ -23062,6 +23662,97 @@ RETURNING created_at;
 
 -- name: AuthorizeEnvironmentBindingTraffic :one
 SELECT authorize_environment_binding_traffic(sqlc.arg(graph_id)::uuid,sqlc.arg(release_id)::uuid)::boolean;
+
+-- name: PendingEnvironmentQualificationPostgresChecks :many
+-- ADR-20261019072523: settled managed PostgreSQL deliveries of a graph's
+-- enforced candidates that have no receipt for their current credential.
+SELECT q.id::text AS request_id, q.attempt, b.account_id::text AS account_id, q.app_id::text AS app_id, e.slug AS scope,
+ b.id::text AS binding_id, b.database_id::text AS database_id, b.environment_key, b.access, b.credential_generation,
+ s.delivery_version::bigint AS delivery_version, d.postgres_major::integer AS postgres_major,
+ coalesce(s.managed_credential_ref,'')::text AS credential_ref, s.ciphertext, coalesce(s.kid,'')::text AS kid,
+ coalesce(s.value_hash,'')::text AS value_hash
+FROM environment_workload_qualification_requests q
+JOIN environment_workload_graphs g ON g.id=q.graph_id
+JOIN project_environments e ON e.id=g.environment_id
+JOIN managed_postgres_bindings b ON b.app_id=q.app_id AND b.scope=e.slug AND b.state='ready'
+ AND b.access IN ('read_write','read_only','migration') AND b.rotation_previous_generation IS NULL AND b.cutover_id IS NULL
+JOIN app_secrets s ON s.app_id=q.app_id AND s.scope=e.slug AND s.key=b.environment_key
+ AND s.managed_postgres_binding_id=b.id AND s.managed_credential_generation=b.credential_generation AND s.delivery_version IS NOT NULL
+JOIN managed_postgres_databases d ON d.id=b.database_id AND d.deleted_at IS NULL
+WHERE q.graph_id=sqlc.arg(graph_id)::uuid AND q.binding_context IS NOT NULL AND q.lease_until>clock_timestamp()
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_postgres_receipts r WHERE r.request_id=q.id AND r.attempt=q.attempt
+  AND r.binding_id=b.id AND r.credential_generation=b.credential_generation AND r.delivery_version=s.delivery_version)
+ORDER BY q.id, b.id;
+
+-- name: RecordEnvironmentQualificationPostgresReceipt :exec
+INSERT INTO environment_qualification_postgres_receipts(request_id,attempt,binding_id,environment_key,access,credential_generation,delivery_version)
+VALUES(sqlc.arg(request_id)::uuid,sqlc.arg(attempt)::bigint,sqlc.arg(binding_id)::uuid,sqlc.arg(environment_key)::text,
+ sqlc.arg(access)::text,sqlc.arg(credential_generation)::bigint,sqlc.arg(delivery_version)::bigint)
+ON CONFLICT DO NOTHING;
+
+-- name: PendingEnvironmentQualificationObjectStorageChecks :many
+-- ADR-20261019121546: settled managed S3 credentials of a graph's enforced
+-- candidates without a receipt for this attempt, with their sealed deliveries.
+SELECT q.id::text AS request_id, q.attempt, c.account_id::text AS account_id, q.app_id::text AS app_id, e.slug AS scope,
+ c.id::text AS credential_id, c.managed_prefix::text AS prefix, c.permission,
+ coalesce(p.object_storage_requirements->>c.managed_prefix,'')::text AS required,
+ (SELECT jsonb_agg(jsonb_build_object('key',s.key,'delivery_version',s.delivery_version,'ciphertext',encode(s.ciphertext,'base64'),
+   'kid',coalesce(s.kid,''),'value_hash',coalesce(s.value_hash,'')) ORDER BY s.key)
+  FROM app_secrets s WHERE s.managed_object_storage_credential_id=c.id AND s.app_id=q.app_id AND s.scope=e.slug)::jsonb AS secrets
+FROM environment_workload_qualification_requests q
+JOIN environment_workload_graphs g ON g.id=q.graph_id
+JOIN project_environments e ON e.id=g.environment_id
+JOIN object_storage_s3_credentials c ON c.managed_app_id=q.app_id AND c.managed_scope=e.slug AND c.status='active' AND c.rotation_parent_id IS NULL
+LEFT JOIN app_binding_release_policies p ON p.app_id=q.app_id AND p.scope=e.slug
+WHERE q.graph_id=sqlc.arg(graph_id)::uuid AND q.binding_context IS NOT NULL AND q.lease_until>clock_timestamp()
+ AND NOT EXISTS(SELECT 1 FROM object_storage_s3_credentials stage WHERE stage.rotation_parent_id=c.id AND stage.status='active')
+ AND environment_binding_object_storage_deliveries(c.id,q.app_id,e.slug) IS NOT NULL
+ AND environment_object_storage_mode_covers(c.permission,p.object_storage_requirements->>c.managed_prefix)
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_object_storage_receipts r WHERE r.request_id=q.id AND r.attempt=q.attempt AND r.credential_id=c.id)
+ORDER BY q.id, c.id;
+
+-- name: RecordEnvironmentQualificationObjectStorageReceipt :exec
+INSERT INTO environment_qualification_object_storage_receipts(request_id,attempt,credential_id,prefix,permission,mode,deliveries)
+VALUES(sqlc.arg(request_id)::uuid,sqlc.arg(attempt)::bigint,sqlc.arg(credential_id)::uuid,sqlc.arg(prefix)::text,
+ sqlc.arg(permission)::text,sqlc.arg(mode)::text,sqlc.arg(deliveries)::jsonb)
+ON CONFLICT DO NOTHING;
+
+-- name: EnvironmentQualificationObjectStorageDeadline :one
+-- NULL blocks activation; 'infinity' means the candidate has no object storage binding.
+SELECT environment_binding_object_storage_deadline(q,sqlc.arg(scope)::text,sqlc.arg(requirements)::jsonb,sqlc.arg(max_age_seconds)::bigint,
+ sqlc.arg(restored_instance_id)::uuid)::timestamptz AS deadline
+FROM environment_workload_qualification_requests q WHERE q.id=sqlc.arg(request_id)::uuid;
+
+-- name: EnvironmentQualificationPostgresDeadline :one
+-- NULL blocks activation; 'infinity' means the candidate has no PostgreSQL binding.
+SELECT environment_binding_postgres_deadline(q,sqlc.arg(scope)::text,sqlc.arg(max_age_seconds)::bigint,sqlc.arg(restored_instance_id)::uuid)::timestamptz AS deadline
+FROM environment_workload_qualification_requests q WHERE q.id=sqlc.arg(request_id)::uuid;
+
+-- name: PendingEnvironmentQualificationOutboundProbes :many
+-- ADR-20261019152416: probe-ready outbound bindings of enforced candidates
+-- with a live lease and no receipt for their current revision, soonest lease first.
+SELECT q.id::text AS request_id, q.attempt, b.account_id::text AS account_id, q.app_id::text AS app_id,
+ b.integration_id::text AS integration_id, rev.revision::text AS revision, p.method, p.path, p.expected_status
+FROM environment_workload_qualification_requests q
+JOIN outbound_app_bindings b ON b.app_id=q.app_id
+JOIN outbound_integration_probe_policies p ON p.integration_id=b.integration_id AND p.account_id=b.account_id
+CROSS JOIN LATERAL (SELECT environment_binding_outbound_revision(b.integration_id,q.app_id) AS revision) rev
+WHERE q.binding_context IS NOT NULL AND q.lease_until>clock_timestamp() AND rev.revision IS NOT NULL
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_outbound_receipts r WHERE r.request_id=q.id AND r.attempt=q.attempt
+  AND r.integration_id=b.integration_id AND r.revision=rev.revision)
+ORDER BY q.lease_until, q.id, b.integration_id
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: RecordEnvironmentQualificationOutboundReceipt :exec
+INSERT INTO environment_qualification_outbound_receipts(request_id,attempt,integration_id,revision,method,path,status)
+VALUES(sqlc.arg(request_id)::uuid,sqlc.arg(attempt)::bigint,sqlc.arg(integration_id)::uuid,sqlc.arg(revision)::text,
+ sqlc.arg(method)::text,sqlc.arg(path)::text,sqlc.arg(status)::integer)
+ON CONFLICT DO NOTHING;
+
+-- name: EnvironmentQualificationOutboundDeadline :one
+-- NULL blocks activation; 'infinity' means the candidate has no active outbound binding.
+SELECT environment_binding_outbound_deadline(q,sqlc.arg(max_age_seconds)::bigint)::timestamptz AS deadline
+FROM environment_workload_qualification_requests q WHERE q.id=sqlc.arg(request_id)::uuid;
 -- name: ReleaseRunsCrossedBy :many
 -- ADR-1448: release tasks of other deployments in a rollback target's scope
 -- that started after the target last served (serving_ended_at), or after it

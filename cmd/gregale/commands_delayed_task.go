@@ -177,7 +177,7 @@ func cmdDelayedTaskAdd(args []string) int {
 	}
 	resp, err := client.CreateDelayedTaskWithIdempotencyKey(context.Background(), *app, req, *idempotencyKey)
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not schedule delayed task", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))

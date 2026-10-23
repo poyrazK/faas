@@ -145,7 +145,7 @@ func cmdMirrorCreate(args []string) int {
 		RedactHeaders:      headers,
 	})
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create traffic mirror", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
@@ -319,7 +319,7 @@ func cmdMirrorUpdate(args []string) int {
 	}
 	resp, err := client.PatchAppsSlugMirrorsId(context.Background(), *slug, *id, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update traffic mirror", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
@@ -351,7 +351,7 @@ func cmdMirrorRm(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if err := client.DeleteAppsSlugMirrorsId(context.Background(), *slug, *id); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete traffic mirror", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{"deleted": true, "id": *id}))

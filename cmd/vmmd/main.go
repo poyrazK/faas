@@ -56,6 +56,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/snapshothipd"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -693,6 +694,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("vmmd: load host identities (%s): %w", filepath.Dir(keyPath), err)
 	}
+	// ADR 20261022111812: runtime secrets sealed to the runtime seal domain
+	// open with its identity; the fleet and host identities keep opening
+	// the rest until the domain re-seal completes.
+	runtimeIdentities, err := loadRuntimeSealDomain(filepath.Dir(keyPath))
+	if err != nil {
+		return fmt.Errorf("vmmd: load runtime seal domain: %w", err)
+	}
+	hostIdentities = append(runtimeIdentities, hostIdentities...)
+	registerSealDomainLoaded(ops.Registry(), sealdomain.Runtime, len(runtimeIdentities) > 0)
+	log.Info("vmmd: unseal identities loaded", "runtime_domain", len(runtimeIdentities) > 0, "identities", len(hostIdentities))
 
 	// Issue #98 / ADR-028: vmmd self-registers in compute_nodes
 	// before the gRPC listener binds. Fail-closed: if the upsert
@@ -980,11 +991,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
 	if store != nil {
-		policies, ok := store.(state.ScenarioNetworkPolicyStore)
-		if !ok {
-			return errors.New("vmmd: rehearsal network policy storage is unavailable")
+		if rehearsalContainmentEnabled(os.Getenv) {
+			policies, ok := store.(state.ScenarioNetworkPolicyStore)
+			if !ok {
+				return errors.New("vmmd: rehearsal network policy storage is unavailable")
+			}
+			mgr.WithRehearsalNetworkPolicies(policies)
 		}
-		mgr.WithRehearsalNetworkPolicies(policies)
+		// Revoke unconditionally: identities left by an earlier enabled
+		// incarnation must not survive a restart with containment disabled.
 		if fencer, ok := store.(interface {
 			RevokeScenarioCommandNetworksForNode(context.Context, string) error
 		}); ok {
@@ -1388,35 +1403,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if store == nil || pool == nil {
 				return errors.New("event publish persistence is not configured")
 			}
-			_, accountID, identityErr := mgr.InstanceExternalActionIdentity(publishCtx, instance)
+			appID, accountID, identityErr := mgr.InstanceExternalActionIdentity(publishCtx, instance)
 			if identityErr != nil {
 				return identityErr
 			}
-			var req api.PublishEventRequest
-			if err := json.Unmarshal(body, &req); err != nil {
-				return fmt.Errorf("decode in-guest event publish: %w", err)
-			}
-			occurredAt := time.Time{}
-			if req.Time != nil {
-				occurredAt = *req.Time
-			}
-			envelope, err := (events.Envelope{
-				ID: req.ID, Source: req.Source, Type: req.Type,
-				Time: occurredAt, DataContentType: req.DataContentType,
-				Data: req.Data, AccountID: req.AccountID, SchemaVersion: req.SchemaVersion,
-			}).Normalize(accountID, time.Now().UTC())
+			envelope, err := normalizeGuestEvent(publishCtx, store, accountID, body, time.Now().UTC())
 			if err != nil {
-				return fmt.Errorf("validate in-guest event publish: %w", err)
+				return err
 			}
-			if strings.HasPrefix(envelope.Source, "gregale.") {
-				return errors.New("gregale.* event sources are reserved for platform events")
-			}
-			registry, ok := store.(state.EventSchemaStore)
-			if !ok {
-				return errors.New("event schema registry is unavailable")
-			}
-			if err := state.ValidatePublishedEventSchema(publishCtx, registry, accountID, envelope.Source, envelope.Type, envelope.SchemaVersion, envelope.Data); err != nil {
-				return fmt.Errorf("validate in-guest event schema: %w", err)
+			// A capture-only rehearsal keeps its ordinary network, but its
+			// events still belong to its run (ADR-20261020090000).
+			if captured, err := captureGuestEvent(publishCtx, store, appID, "", accountID, envelope); captured || err != nil {
+				return err
 			}
 			payload, err := json.Marshal(envelope)
 			if err != nil {
@@ -1431,6 +1429,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Warn("vmmd: in-guest event publish wake failed", "event_id", envelope.ID, "err", err)
 			}
 			return nil
+		})
+		recv.WithEventCapturer(func(captureCtx context.Context, _ string, appID, accountID, runID string, body []byte) error {
+			if store == nil {
+				return errors.New("rehearsal event capture persistence is not configured")
+			}
+			envelope, err := normalizeGuestEvent(captureCtx, store, accountID, body, time.Now().UTC())
+			if err != nil {
+				return err
+			}
+			captured, err := captureGuestEvent(captureCtx, store, appID, runID, accountID, envelope)
+			if err == nil && !captured {
+				err = fcvm.ErrRehearsalExternalActionDenied
+			}
+			return err
 		})
 		// PR-C §3,§4 (issue #463 / ADR-069 / ADR-071):
 		// wire the sidecar events emitter onto the
@@ -1507,6 +1519,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("vmmd: runtime config receiver unavailable", "err", runtimeConfigErr, "goos", runtime.GOOS)
 	} else {
 		defer runtimeConfigRecv.Close()
+	}
+	// ADR-733 SDK trigger: an app asks for a crash capture of its own
+	// instance; the stream's listener names the instance.
+	crashStore, _ := store.(crashCaptureStore)
+	crashRecv, crashRecvErr := StartCrashCaptureReceiver(log, mgr, crashStore,
+		strings.TrimSpace(os.Getenv("FAAS_CRASH_SNAPSHOTS")) == "1", jailer)
+	if crashRecvErr != nil {
+		log.Warn("vmmd: crash capture receiver unavailable", "err", crashRecvErr, "goos", runtime.GOOS)
+	} else {
+		defer crashRecv.Close()
 	}
 	log.Info("vmmd ready", "fc_version", fcVersion, "max_slots", fcvm.MaxSlots,
 		"uid_lo", fcvm.JailUIDBase, "uid_hi", fcvm.JailUIDMax,

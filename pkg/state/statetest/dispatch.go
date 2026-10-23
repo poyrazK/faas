@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/checkpointselection"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyarchive"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copycontents"
@@ -30,6 +31,7 @@ var memDispatched = map[string]bool{
 	"RestoreAppWithActivity":                 true,
 	"AppTaskByID":                            true,
 	"LiveDeployment":                         true,
+	"RuntimeConfigReceiptRequired":           true,
 	"ResolveEnvironmentGitOpsServiceBinding": true,
 
 	"ClaimNextQueuedBuild":                                    true,
@@ -86,6 +88,7 @@ var memDispatched = map[string]bool{
 	"CreateProjectEnvironmentPromotion":                       true,
 	"CreateTCPListener":                                       true,
 	"DeadLetterEventByID":                                     true,
+	"DomainByName":                                            true,
 	"DeploymentByID":                                          true,
 	"DeploymentSnapshotBackoffActive":                         true,
 	"EdgeRuleHitStatsForApp":                                  true,
@@ -118,6 +121,8 @@ var memDispatched = map[string]bool{
 	"ListTCPListenerTLSObservations":                          true,
 	"ListWorkflowScheduleCandidates":                          true,
 	"LiveDeploymentForScope":                                  true,
+	"FinancialComputeBalance":                                 true,
+	"FinancialComputePolicies":                                true,
 	"ManagedPostgresAdmissionFenced":                          true,
 	"MigrateInstanceOwner":                                    true,
 	"MigrateInstanceOwnerWithRuntimeConfig":                   true,
@@ -242,6 +247,15 @@ func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.A
 		return over.AppTaskByID(ctx, account, app, id)
 	}
 	return s.MemStore.AppTaskByID(ctx, account, app, id)
+}
+
+func (s *Mem) RuntimeConfigReceiptRequired(ctx context.Context, appID, scope string) (bool, error) {
+	if o, ok := s.over.(interface {
+		RuntimeConfigReceiptRequired(context.Context, string, string) (bool, error)
+	}); ok {
+		return o.RuntimeConfigReceiptRequired(ctx, appID, scope)
+	}
+	return s.MemStore.RuntimeConfigReceiptRequired(ctx, appID, scope)
 }
 
 func (s *Mem) LiveDeployment(ctx context.Context, appID string) (state.Deployment, error) {
@@ -519,6 +533,15 @@ func (s *Mem) DeadLetterEventByID(p0 context.Context, p1 string, p2 string) (sta
 		return o.DeadLetterEventByID(p0, p1, p2)
 	}
 	return s.MemStore.DeadLetterEventByID(p0, p1, p2)
+}
+
+func (s *Mem) DomainByName(p0 context.Context, p1 string) (state.CustomDomain, error) {
+	if o, ok := s.over.(interface {
+		DomainByName(context.Context, string) (state.CustomDomain, error)
+	}); ok {
+		return o.DomainByName(p0, p1)
+	}
+	return s.MemStore.DomainByName(p0, p1)
 }
 
 func (s *Mem) DeploymentByID(p0 context.Context, p1 string) (state.Deployment, error) {
@@ -816,6 +839,24 @@ func (s *Mem) LiveDeploymentForScope(p0 context.Context, p1 string, p2 string) (
 		return o.LiveDeploymentForScope(p0, p1, p2)
 	}
 	return s.MemStore.LiveDeploymentForScope(p0, p1, p2)
+}
+
+func (s *Mem) FinancialComputeBalance(p0 context.Context, p1 state.FinancialBudget, p2 time.Time) (financial.ComputeBalance, error) {
+	if o, ok := s.over.(interface {
+		FinancialComputeBalance(context.Context, state.FinancialBudget, time.Time) (financial.ComputeBalance, error)
+	}); ok {
+		return o.FinancialComputeBalance(p0, p1, p2)
+	}
+	return s.MemStore.FinancialComputeBalance(p0, p1, p2)
+}
+
+func (s *Mem) FinancialComputePolicies(p0 context.Context, p1 string, p2 string) ([]state.FinancialBudget, error) {
+	if o, ok := s.over.(interface {
+		FinancialComputePolicies(context.Context, string, string) ([]state.FinancialBudget, error)
+	}); ok {
+		return o.FinancialComputePolicies(p0, p1, p2)
+	}
+	return s.MemStore.FinancialComputePolicies(p0, p1, p2)
 }
 
 func (s *Mem) ManagedPostgresAdmissionFenced(p0 context.Context, p1 string) (bool, error) {

@@ -8,7 +8,7 @@ deployed CI flags. The normal metal matrix does not automatically run this suite
 ## Prerequisites
 
 Use a drained native acceptance host with root access, `/dev/kvm`, Firecracker,
-jailer, cgroups v2, the tenant bridge/NAT setup, a staged kernel, Go 1.26.9 and
+jailer, cgroups v2, the tenant bridge/NAT setup, a staged kernel, Go 1.26.10 and
 the existing native host tools. Allow at least five 512 MiB CI VMs plus the
 128 MiB tenant probe and platform daemons; a four-vCPU, 16 GiB host is a suitable
 starting point. The gate shares `/var/lock/faas-builder-acceptance.lock` with the

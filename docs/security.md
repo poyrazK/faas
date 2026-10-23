@@ -283,13 +283,14 @@ Before 2026-10-09 these headers were fixed by the platform, including HSTS
 with `includeSubDomains` on custom domains. Browsers that cached that HSTS
 policy keep it until it expires (up to a year after their last visit).
 
-## Web application firewall (preview)
+## Web application firewall
 
 A `kind=waf` edge rule (Pro and above) checks matched requests against the
 OWASP Core Rule Set for SQL injection, cross-site scripting, path traversal,
 command injection, scanners, and header injection. It works the same on
-`*.gregale.dev` and on your custom domains. The rule's `mode` decides what
-happens to a detection:
+`*.gregale.dev` and on your custom domains. `observe` at paranoia level 1 is
+generally available; `warn`, `block` and paranoia level 2 are in preview.
+The rule's `mode` decides what happens to a detection:
 
 | Mode | Headers and URL | Request body |
 |---|---|---|
@@ -376,8 +377,30 @@ gregale edge-rules update <rule-id> --mode enforce
 
 `--challenge-difficulty` (10 to 22, default 16) sets how much work a browser
 does; each step doubles it. `--challenge-pass-ttl` (300 to 86400 seconds)
-sets how long a pass lasts. Visitors need JavaScript; without it the page
-explains that it is required.
+sets how long a pass lasts.
+
+Under attack the difficulty can rise on its own. Set
+`--challenge-max-difficulty` above the difficulty, and while the rule serves
+far more challenge pages than usual (more than four times its usual rate,
+and more than 60 a minute on one gateway) the difficulty rises by 2 bits a
+minute, up to that cap, then falls back as the load eases. Visitors who
+already hold a pass are not affected. The edge-protection summary shows how
+many pages were served at a raised difficulty. An update replaces the
+whole challenge action, so pass every setting you want to keep:
+
+```sh
+gregale edge-rules update <rule-id> --kind challenge --challenge-difficulty 16 \
+  --challenge-max-difficulty 20 --challenge-pass-ttl 3600
+```
+
+Visitors need JavaScript. Without it the page asks them to turn it on and
+shows a reference (the request ID) to send you. Look it up to see their
+address, then exempt it with a condition on the rule, such as
+`{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}`:
+
+```sh
+gregale edge-rules events --app my-site --request-id <reference>
+```
 
 An enforced challenge rule records what it did as security events, with
 the client's address, country, User-Agent and path: `challenged` (the page

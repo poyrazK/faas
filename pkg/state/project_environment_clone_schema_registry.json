@@ -352,6 +352,7 @@
       "mfa_required",
       "mfa_revision",
       "mfa_secret_encrypted",
+      "mfa_totp_last_step",
       "overage_cap_cents",
       "password_reset_revision",
       "past_due_at",
@@ -662,6 +663,50 @@
       "ends_at",
       "starts_at",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_signup_settings",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "customer_closing",
+      "customer_plan_changes",
+      "daily_limit",
+      "display_name",
+      "enabled",
+      "key_scopes",
+      "plan_ids",
+      "provider",
+      "return_url",
+      "terms_url",
+      "trial_days",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "api_consumer_signups",
+    "columns": [
+      "account_id",
+      "app_id",
+      "checkout_session_id",
+      "claim_hash",
+      "completed_at",
+      "consumer_id",
+      "created_at",
+      "email",
+      "expires_at",
+      "id",
+      "key_id",
+      "livemode",
+      "name",
+      "plan_id",
+      "provider",
+      "provider_customer_id",
+      "status"
     ],
     "kind": "operational"
   },
@@ -1093,6 +1138,60 @@
       "request_count",
       "route",
       "sample_message"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_fork_execs",
+    "columns": [
+      "account_id",
+      "app_id",
+      "command",
+      "command_shell",
+      "created_at",
+      "exit_code",
+      "failure_code",
+      "failure_message",
+      "finished_at",
+      "fork_id",
+      "id",
+      "max_output_bytes",
+      "output_truncated",
+      "requested_by",
+      "started_at",
+      "status",
+      "stderr",
+      "stdout",
+      "timeout_seconds",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_forks",
+    "columns": [
+      "access_token_hash",
+      "account_id",
+      "app_id",
+      "cancel_requested_at",
+      "crash_capture_id",
+      "created_at",
+      "deployment_id",
+      "expires_at",
+      "failure_code",
+      "failure_message",
+      "finished_at",
+      "id",
+      "instance_id",
+      "lease_expires_at",
+      "lease_owner",
+      "lease_token",
+      "requested_by",
+      "snapshot_id",
+      "started_at",
+      "status",
+      "ttl_seconds",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -3303,6 +3402,46 @@
     "kind": "configuration"
   },
   {
+    "table": "crash_captures",
+    "columns": [
+      "account_id",
+      "app_id",
+      "captured_at",
+      "deployment_id",
+      "encrypted_at",
+      "expires_at",
+      "failure_code",
+      "failure_message",
+      "fc_version",
+      "finished_at",
+      "id",
+      "instance_id",
+      "mem_bytes",
+      "plaintext_state",
+      "reason",
+      "requested_at",
+      "route",
+      "sealed_key",
+      "status",
+      "status_code",
+      "storage_key",
+      "trigger",
+      "updated_at",
+      "vmstate_storage_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "crash_snapshot_settings",
+    "columns": [
+      "account_id",
+      "app_id",
+      "enabled",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "credit_ledger",
     "columns": [
       "account_id",
@@ -5352,6 +5491,48 @@
     "kind": "operational"
   },
   {
+    "table": "environment_qualification_object_storage_receipts",
+    "columns": [
+      "attempt",
+      "credential_id",
+      "deliveries",
+      "mode",
+      "permission",
+      "prefix",
+      "recorded_at",
+      "request_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_outbound_receipts",
+    "columns": [
+      "attempt",
+      "integration_id",
+      "method",
+      "path",
+      "recorded_at",
+      "request_id",
+      "revision",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_postgres_receipts",
+    "columns": [
+      "access",
+      "attempt",
+      "binding_id",
+      "credential_generation",
+      "delivery_version",
+      "environment_key",
+      "recorded_at",
+      "request_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_qualification_service_receipts",
     "columns": [
       "attempt",
@@ -6668,6 +6849,7 @@
     "columns": [
       "installation_id",
       "secret_value",
+      "secret_sealed",
       "upgraded_at",
       "upgraded_by"
     ],
@@ -8908,6 +9090,20 @@
       "recipient",
       "retires_at",
       "sealed_secret"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_live_logins",
+    "columns": [
+      "account_id",
+      "awake",
+      "created_at",
+      "database_id",
+      "provider_identity_id",
+      "recipient",
+      "sealed_login",
+      "slot"
     ],
     "kind": "operational"
   },
@@ -12615,7 +12811,9 @@
       "plan",
       "revision",
       "suspended",
-      "tenant_id"
+      "tenant_id",
+      "trial_ends_at",
+      "trial_starts_at"
     ],
     "kind": "configuration"
   },
@@ -15540,6 +15738,58 @@
     "kind": "configuration"
   },
   {
+    "table": "scenario_captured_events",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "data",
+      "event_id",
+      "id",
+      "oversized",
+      "run_id",
+      "schema_version",
+      "source",
+      "type"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_captured_platform_calls",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "idempotency_key",
+      "kind",
+      "message",
+      "name",
+      "oversized",
+      "run_id",
+      "target"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_captured_queue_messages",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "kind",
+      "message",
+      "oversized",
+      "queue_name",
+      "run_id",
+      "schedule",
+      "scheduled_at",
+      "target"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "scenario_cold_preparations",
     "columns": [
       "account_id",
@@ -15776,6 +16026,16 @@
       "work_decision"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "seal_domain_probe",
+    "columns": [
+      "domain",
+      "recipient",
+      "sealed_blob",
+      "updated_at"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "service_caller_key_history",
@@ -16301,6 +16561,7 @@
       "customer",
       "days_until_due",
       "due_at",
+      "handoff_reserved",
       "hosted_invoice_url",
       "id",
       "livemode",
@@ -16910,6 +17171,80 @@
       "recipient_id",
       "status",
       "workflow_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_release_approval_policies",
+    "columns": [
+      "account_id",
+      "after_stage",
+      "allow_self_approval",
+      "app_id",
+      "approvers",
+      "created_at",
+      "notify_channel_ids",
+      "required_approvals",
+      "timeout_minutes",
+      "updated_at",
+      "updated_by"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "deployment_release_approvals",
+    "columns": [
+      "account_id",
+      "app_id",
+      "approver",
+      "approver_account_id",
+      "approver_role",
+      "comment",
+      "created_at",
+      "decision",
+      "deployment_id",
+      "id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "release_approval_events",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempts",
+      "channel_ids",
+      "created_at",
+      "delivered_at",
+      "deployment_id",
+      "event",
+      "id",
+      "last_error",
+      "next_attempt_at",
+      "payload",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scheduled_releases",
+    "columns": [
+      "account_id",
+      "app_id",
+      "canary",
+      "created_at",
+      "deployment_id",
+      "id",
+      "notify_channel_ids",
+      "outcome_code",
+      "outcome_detail",
+      "override_freeze",
+      "override_freeze_ids",
+      "release_at",
+      "scheduled_by",
+      "started_at",
+      "state",
+      "updated_at"
     ],
     "kind": "operational"
   }

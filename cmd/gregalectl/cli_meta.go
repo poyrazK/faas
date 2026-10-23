@@ -264,6 +264,27 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchBreakGlass,
+		DocSlug: "break-glass",
+		Short:   "Incident containment: pause releases platform-wide, revoke every control-plane credential (ADR 20261022140000)",
+		Subcommands: []cliSub{
+			{Name: "pause", Short: "Refuse new deployments and hold queued builds platform-wide", Flags: []cliFlag{{Name: "reason", Short: "why (recorded)"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "resume", Short: "Lift the release pause", Flags: []cliFlag{{Name: "reason", Short: "why (recorded)"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "status", Short: "Show the release pause and live credential counts", Flags: []cliFlag{{Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "revoke-credentials", Short: "Revoke every live session, API key and access token (dry run without --yes)", Flags: []cliFlag{{Name: "kinds", Short: "credential kinds to revoke"}, {Name: "reason", Short: "why (recorded)"}, {Name: "yes", Short: "revoke instead of counting"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+		},
+	},
+	{
+		Name:    dispatchSealDomain,
+		DocSlug: "seal-domain",
+		Short:   "Provision, verify, and migrate per-reader seal domains (ADR 20261022111812)",
+		Subcommands: []cliSub{
+			{Name: "init", Short: "Create <domain>.age and <domain>.age.pub", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "force", Short: "coordinated identity replacement"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "verify", Short: "Prove this node's domain identity opens the domain probe", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "publish", Short: "write the probe when the domain has none"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "metrics-file", Short: "node_exporter textfile output"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "migrate", Short: "Re-seal a domain's stored envelopes", Flags: []cliFlag{{Name: "domain", Short: "seal domain (outbound, runtime or source)"}, {Name: "dir", Short: "domain identity directory"}, {Name: "fleet-key", Short: "fleet.age identity"}, {Name: "host-key", Short: "legacy host.age identity"}, {Name: "readers-verified", Short: "every reader holds the domain identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+		},
+	},
+	{
 		// PR-911 image rollout (PR #929 mega; ADR-110 + ADR-111). Operator
 		// surfaces draining + activation of compute_nodes rows so the
 		// deployctl upgrade-node orchestrator can reason about which box
@@ -674,19 +695,37 @@ var cliCommands = []cliCommand{
 			{Name: "inspect", Short: "Explain one flag's decision for an account", Flags: []cliFlag{
 				{Name: "key", Short: "platform flag key", Req: true},
 				{Name: "account-id", Short: "account UUID", Req: true},
+				{Name: "org-id", Short: "organization UUID the request would act under"},
+				{Name: "at", Short: "decide as of this RFC 3339 time"},
 			}},
 			{Name: "account", Short: "Show every flag decided for an account", Flags: []cliFlag{
 				{Name: "account-id", Short: "account UUID", Req: true},
 			}},
 			{Name: "enable", Short: "Turn a flag's kill switch on", Flags: flagsMutationCLIFlags(true)},
 			{Name: "disable", Short: "Turn a flag off for every account", Flags: flagsMutationCLIFlags(true)},
-			{Name: "allow", Short: "Enable a flag for one account", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
-			{Name: "deny", Short: "Exclude one account from a flag", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
-			{Name: "revoke", Short: "Remove an account's explicit allow or deny", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
+			{Name: "allow", Short: "Enable a flag for one account or organization", Flags: append(flagsMutationCLIFlags(true), flagsSubjectCLIFlags()...)},
+			{Name: "deny", Short: "Exclude one account or organization from a flag", Flags: append(flagsMutationCLIFlags(true), flagsSubjectCLIFlags()...)},
+			{Name: "revoke", Short: "Remove an account's or organization's explicit allow or deny", Flags: append(flagsMutationCLIFlags(true), flagsSubjectCLIFlags()...)},
 			{Name: "rollout", Short: "Release a flag to a stable share of accounts", Flags: append(flagsMutationCLIFlags(true),
 				cliFlag{Name: "percent", Short: "share of eligible accounts, 0..100", Req: true},
 				cliFlag{Name: "plans", Short: "comma-separated plans the rollout is limited to"})},
 			{Name: "default", Short: "Set the value for accounts no rule matches", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "value", Short: "true or false", Req: true})},
+			{Name: "schedule", Short: "Set or clear the time window of one rule", Flags: append(flagsMutationCLIFlags(true),
+				cliFlag{Name: "rule-id", Short: "rule to schedule", Req: true},
+				cliFlag{Name: "starts-at", Short: "RFC 3339 start, or none to clear"},
+				cliFlag{Name: "ends-at", Short: "RFC 3339 end, or none to clear"})},
+			{Name: "ramp", Short: "Advance the rollout automatically while the flag stays healthy", Flags: append(flagsMutationCLIFlags(true),
+				cliFlag{Name: "stages", Short: "comma-separated rollout percentages, including the current one"},
+				cliFlag{Name: "interval", Short: "how long each stage holds before it is judged (>= 5m)"},
+				cliFlag{Name: "max-5xx-percent", Short: "highest 5xx share of the health routes that still advances"},
+				cliFlag{Name: "min-requests", Short: "requests a stage needs before it is judged"},
+				cliFlag{Name: "on-breach", Short: "pause or rollback"},
+				cliFlag{Name: "resume", Short: "clear a paused ramp"},
+				cliFlag{Name: "remove", Short: "remove the ramp, keep the rollout"})},
+			{Name: "self-serve", Short: "Open or close a preview to customer opt-ins", Flags: append(flagsMutationCLIFlags(true),
+				cliFlag{Name: "enabled", Short: "true opens the preview to opt-ins; false ignores existing ones", Req: true},
+				cliFlag{Name: "plans", Short: "comma-separated eligible plans, or all; empty keeps the current list"},
+				cliFlag{Name: "max-subjects", Short: "cap on opted-in accounts plus organizations (0 = 5000); -1 keeps it"})},
 			{Name: "set", Short: "Replace a flag's definition from a JSON file", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "file", Short: "JSON definition file, or - for stdin", Req: true})},
 			{Name: "groups", Short: "List account groups and the flags that use them"},
 			{Name: "group-add", Short: "Add an account to a group", Flags: append(flagsMutationCLIFlags(false),
@@ -1260,6 +1299,15 @@ func flagsMutationCLIFlags(withKey bool) []cliFlag {
 		flags = append([]cliFlag{{Name: "key", Short: "platform flag key", Req: true}}, flags...)
 	}
 	return flags
+}
+
+// flagsSubjectCLIFlags is who allow, deny and revoke act on: exactly one
+// account or one organization (ADR 20261021080640).
+func flagsSubjectCLIFlags() []cliFlag {
+	return []cliFlag{
+		{Name: "account-id", Short: "account UUID (or --org-id)"},
+		{Name: "org-id", Short: "organization UUID: everyone acting under the company (or --account-id)"},
+	}
 }
 
 func configMutationCLIFlags(set bool) []cliFlag {

@@ -27,6 +27,20 @@ tenant_bridge: br-tenants
 # Match native_process_recovery=true VMMD releases. Requires nftables 1.1.3+
 # and Linux 6.13+ for the public bridge socket generation guard (ADR-1749).
 faas_public_forwarding: false
+# Host prerequisites for VMMD's native public forwarding (ADR-1749); without
+# them VMMD refuses every native boot:
+# - Ubuntu 24.04 ships nftables 1.0.9, which rejects the guard's variable XOR.
+#   Build the pinned upstream release into a private prefix and divert
+#   /usr/sbin/nft to it (tasks/upstream.yml); distro libraries stay untouched.
+# - Strict reverse-path filtering (rp_filter=1, set by the GCE image) on the
+#   tenant bridge drops the forwarded replies; it must be loose (2).
+faas_public_forward_host: "{{ faas_public_forwarding | bool }}"
+nftables_upstream_version: "1.1.3"
+nftables_upstream_sha256: "9c8a64b59c90b0825e540a9b8fcb9d2d942c636f81ba50199f068fde44f34ed8"
+nftables_upstream_libnftnl_version: "1.2.9"
+nftables_upstream_libnftnl_sha256: "e8c216255e129f26270639fee7775265665a31b11aa920253c3e5d5d62dfc4b8"
+nftables_upstream_prefix: "/opt/faas/nftables-{{ nftables_upstream_version }}"
+nftables_upstream_src: /usr/local/src/faas-nftables
 bridge_cidr: 10.100.0.1/16
 public_iface: "{{ ansible_default_ipv4.interface | default('eth0') }}"
 masquerade_cidr: 10.100.0.0/16

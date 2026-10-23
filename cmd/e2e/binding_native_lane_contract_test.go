@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,8 +21,9 @@ func TestBindingNativeWorkflowIsolationAndEvidenceCustody(t *testing.T) {
 	}
 	var workflow struct {
 		Jobs map[string]struct {
-			If      string
-			Timeout int `yaml:"timeout-minutes"`
+			If string
+			// A string: the platform job's timeout is a per-group expression.
+			Timeout string `yaml:"timeout-minutes"`
 			Steps   []struct {
 				Name, Uses, If, Run string
 				With                map[string]string
@@ -45,8 +47,8 @@ func TestBindingNativeWorkflowIsolationAndEvidenceCustody(t *testing.T) {
 		t.Error("platform matrix can overlap the binding job")
 	}
 	// The remote bound leaves source staging, evidence collection and node stop.
-	if job.Timeout < 260 || job.Timeout > 360 {
-		t.Errorf("unsafe binding job timeout: %d", job.Timeout)
+	if timeout, err := strconv.Atoi(job.Timeout); err != nil || timeout < 260 || timeout > 360 {
+		t.Errorf("unsafe binding job timeout: %q", job.Timeout)
 	}
 	collected, stopped, staged, executed, uploaded := false, false, false, false, false
 	for _, step := range job.Steps {

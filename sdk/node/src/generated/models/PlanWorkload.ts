@@ -19,7 +19,7 @@ export type PlanWorkload = {
    */
   public_url?: string;
   /**
-   * Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans and existing allocations.
+   * Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug, which get the project-prefixed name (ADR-20261022120205).
    */
   app_slug?: string;
   name: string;
@@ -27,6 +27,10 @@ export type PlanWorkload = {
    * Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override. Omitted preserves existing app policy; new apps default to false.
    */
   platform_tenant_required?: boolean;
+  /**
+   * Present when the app is or will be internal (no public route): an existing internal app, or a new Compose service without `ports:` (ADR-20261022131852). Omitted means public.
+   */
+  visibility?: 'internal';
   /**
    * Effective build context inside the uploaded repository archive. Workspace manifests and sibling packages remain available outside this directory.
    */
@@ -62,7 +66,7 @@ export type PlanWorkload = {
    */
   depends_on_conditions?: Record<string, 'service_started' | 'service_healthy'>;
   /**
-   * Effective policy selected by Compose `x-gregale-service-policy`. New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted.
+   * Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted.
    */
   service_binding_policy?: ServiceBindingPolicy;
   /**

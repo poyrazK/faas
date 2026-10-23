@@ -88,7 +88,7 @@ func (s *server) prepareStagedPolicies(app state.App, policies map[string]json.R
 	if request.Profiling != nil && request.Profiling.Enabled && s.profileBackend == nil {
 		return app.Manifest, &api.APIError{Problem: *api.ErrCapacity("CPU profiling is unavailable on this installation")}
 	}
-	if request.Tracing != nil && request.Tracing.Enabled && !s.guestTracingEnabled {
+	if request.Tracing != nil && request.Tracing.Enabled && !s.guestTracingFor(acct) {
 		return app.Manifest, &api.APIError{Problem: *api.ErrCapacity("request tracing is unavailable on this installation")}
 	}
 	if problem := validateUpdateApp(&request, acct, api.MustLimitsFor(acct.Plan), app); problem != nil {

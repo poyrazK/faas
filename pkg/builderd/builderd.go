@@ -151,6 +151,9 @@ type Config struct {
 
 // Builderd is the orchestrator. It is the cmd/builderd main loop.
 type Builderd struct {
+	// releasePaused reports the break-glass release pause (ADR
+	// 20261022140000); while it is true no queued build is claimed.
+	releasePaused  func() bool
 	buildPublisher buildpublisher.Signer
 	validatorBuild func(context.Context, string, string, string, string) error
 	store          state.Store
@@ -378,6 +381,18 @@ func (b *Builderd) WithOpsMetrics(ops *wire.OpsMetrics) *Builderd {
 	return b
 }
 
+// WithReleasePause makes the claim paths check the break-glass release
+// pause (ADR 20261022140000). While paused() is true a queued build stays
+// queued; the polling worker claims it after the pause is lifted.
+func (b *Builderd) WithReleasePause(paused func() bool) *Builderd {
+	b.releasePaused = paused
+	return b
+}
+
+func (b *Builderd) claimsPaused() bool {
+	return b.releasePaused != nil && b.releasePaused()
+}
+
 // WithEvents attaches the events Platform (issue #517 / PR-C /
 // ADR-064) and returns the same Builderd for chaining. Mirrors
 // schedd.Engine.WithEvents / vmmd.Server.WithEvents. When non-nil,
@@ -537,6 +552,10 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 		return BuildResult{}, err
 	}
 	defer b.endProcess()
+	if b.claimsPaused() {
+		// Leave the build queued: no claim was acquired.
+		return BuildResult{}, nil
+	}
 
 	var build state.Build
 	var err error
@@ -579,6 +598,10 @@ func (b *Builderd) ProcessNext(ctx context.Context) (BuildResult, error) {
 		return BuildResult{}, err
 	}
 	defer b.endProcess()
+	if b.claimsPaused() {
+		// The same answer as an empty queue, so the poller backs off.
+		return BuildResult{}, state.ErrNotFound
+	}
 
 	var build state.Build
 	var err error
@@ -909,13 +932,30 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, buildOptionsErr
 	}
 	if buildOptionsIgnored {
-		b.emitBuildLog(ctx, build.ID, "Compose build.args and build.target ignored: this service builds without a Dockerfile\n")
+		b.emitBuildLog(ctx, build.ID, "Compose build.args, build.target and build.secrets ignored: this service builds without a Dockerfile\n")
 	}
 	if dockerfileBuild != nil && dockerfileBuild.Target != "" {
 		b.emitBuildLog(ctx, build.ID, "building Dockerfile stage "+dockerfileBuild.Target+"\n")
 	}
 	if shadowed := shadowedBuildArgs(dockerfileBuild, publicURLs); len(shadowed) > 0 {
 		b.emitBuildLog(ctx, build.ID, "build arguments "+strings.Join(shadowed, ", ")+" are also public build URLs; the reviewed URLs are used\n")
+	}
+	var buildSecrets []SealedBuildSecret
+	if dockerfileBuild != nil {
+		var secretsErr error
+		buildSecrets, secretsErr = loadBuildSecrets(ctx, b.store, app, dep, dockerfileBuild.Secrets)
+		if secretsErr != nil {
+			class := state.FailureInfra
+			if errors.Is(secretsErr, errBuildSecretMissing) {
+				class = state.FailureUserError
+			}
+			b.markFailed(ctx, build, class, secretsErr.Error(), buildStart)
+			return BuildResult{}, secretsErr
+		}
+		if len(buildSecrets) > 0 {
+			// Names only; vmmd opens the values into the builder VM.
+			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("mounting %d build secrets\n", len(dockerfileBuild.Secrets)))
+		}
 	}
 	recipe := BuildCacheRecipe{
 		BuildDependencyDigest: buildDependencyDigest,
@@ -1051,6 +1091,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		BuildDependencyDigest: buildDependencyDigest,
 		PublicBuildURLs:       publicURLs,
 		DockerfileBuild:       dockerfileBuild,
+		BuildSecrets:          buildSecrets,
 		BuildID:               build.ID,
 		TenantID:              app.AccountID,
 		DeploymentID:          dep.ID,
@@ -1072,6 +1113,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		TimeoutSec:            b.cfg.BuildTimeoutSeconds,
 		Plan:                  string(acct.Plan),
 		WarmScopeKey:          builderWarmScopeKey(app.AccountID, app.ID, fw, runtimeBaseRef),
+	}
+	if len(buildSecrets) > 0 {
+		// A build with secrets never restores or leaves a warm builder, so a
+		// value cannot outlive its build in a snapshot (ADR-20261022185329).
+		vmReq.WarmScopeKey = ""
 	}
 	warmVM, warmResult, warmSnapshot, warmStarted := b.prepareWarmBuilder(ctx, slot, vmReq)
 	var warmCaptured WarmSnapshot

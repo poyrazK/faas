@@ -148,6 +148,7 @@ type FrameworkReadyReceiver struct {
 	mgr                                 *fcvm.Manager
 	emitter                             SidecarEventEmitter
 	eventPublisher                      GuestEventPublisher
+	eventCapturer                       GuestEventCapturer
 	qualificationFrameworkReadyRecorder QualificationFrameworkReadyRecorder
 }
 
@@ -155,6 +156,10 @@ type FrameworkReadyReceiver struct {
 // metadata event endpoint. The callback receives the trusted instance id and
 // raw JSON request body; callers derive account identity from the instance.
 type GuestEventPublisher func(context.Context, string, []byte) error
+
+// GuestEventCapturer records a contained rehearsal guest's event into its run
+// (ADR-20261020090000). It receives the instance's installed identity.
+type GuestEventCapturer func(ctx context.Context, instance, appID, accountID, runID string, body []byte) error
 
 // StartFrameworkReadyReceiver registers the event channel with JailerVMM.
 // JailerVMM binds <vsock.sock>_1027 separately for every instance before
@@ -321,9 +326,9 @@ func (r *FrameworkReadyReceiver) dispatchSidecarInitExit(instance string, wire s
 		r.log.Warn("sidecar_init_exit unknown status", "instance", instance, "status", wire.Status)
 		return
 	}
-	depID, appID, perr := r.mgr.InstanceDeploymentIDAndAppID(instance)
+	depID, appID, perr := r.mgr.InstanceSidecarOwner(instance, wire.Sidecar)
 	if perr != nil {
-		r.log.Debug("sidecar_init_exit unknown instance", "instance", instance, "err", perr)
+		r.log.Debug("sidecar_init_exit dropped", "instance", instance, "err", perr)
 		return
 	}
 	r.emitter.EmitSidecarInitExit(r.ctx, instance, appID, depID, "" /* wakeID not on wire — see pkg/events.SidecarInitExit's struct doc */, wire)
@@ -349,9 +354,9 @@ func (r *FrameworkReadyReceiver) dispatchSidecarInitExit(instance string, wire s
 // guest-init Supervisor.OnCrash emit hook to actually drive
 // type=0x03.
 func (r *FrameworkReadyReceiver) dispatchSidecarRestart(instance string, wire sidecarRestartWire) {
-	appID, perr := r.mgr.InstanceAppID(instance)
+	_, appID, perr := r.mgr.InstanceSidecarOwner(instance, wire.Sidecar)
 	if perr != nil {
-		r.log.Debug("sidecar_restart unknown instance", "instance", instance, "err", perr)
+		r.log.Debug("sidecar_restart dropped", "instance", instance, "err", perr)
 		return
 	}
 	r.emitter.EmitSidecarRestart(r.ctx, instance, appID, "" /* wakeID not on wire — see pkg/events.SidecarRestart's struct doc */, wire)
@@ -370,9 +375,9 @@ func (r *FrameworkReadyReceiver) dispatchSidecarHealth(instance string, wire sid
 		return
 	}
 	wire.Reason = clampSidecarHealthReason(wire.Reason)
-	appID, perr := r.mgr.InstanceAppID(instance)
+	_, appID, perr := r.mgr.InstanceSidecarOwner(instance, wire.Sidecar)
 	if perr != nil {
-		r.log.Debug("sidecar_health unknown instance", "instance", instance, "err", perr)
+		r.log.Debug("sidecar_health dropped", "instance", instance, "err", perr)
 		return
 	}
 	r.emitter.EmitSidecarHealth(r.ctx, instance, appID, "", wire)
@@ -487,6 +492,20 @@ func (r *FrameworkReadyReceiver) dispatchDiskUsage(instance string, wire diskUsa
 }
 
 func (r *FrameworkReadyReceiver) dispatchEventPublish(instance string, payload []byte) {
+	// A contained rehearsal guest's events are captured into its run and never
+	// reach the account's event bus (ADR-20261020090000).
+	if r.mgr != nil {
+		if app, account, run, contained := r.mgr.InstanceRehearsalEventIdentity(instance); contained {
+			if r.eventCapturer == nil {
+				r.log.Warn("rehearsal event capture unavailable", "instance", instance)
+				return
+			}
+			if err := r.eventCapturer(r.ctx, instance, app, account, run, payload); err != nil {
+				r.log.Warn("rehearsal event capture failed", "instance", instance, "err", err)
+			}
+			return
+		}
+	}
 	if r.eventPublisher == nil || r.mgr == nil {
 		r.log.Warn("event publish receiver unavailable", "instance", instance)
 		return

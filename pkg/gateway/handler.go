@@ -15,6 +15,7 @@ import (
 	"net/http/httputil"
 	"net/netip"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,6 +34,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -959,7 +961,10 @@ type Handler struct {
 	// apiMonetization is the API monetization release gate
 	// (ADR-20261018090210); nil keeps monetization off.
 	apiMonetization func() bool
-	gate            *WakeGate
+	// apiMonetizationFlags is the api_monetization platform flag: it
+	// releases monetization to the accounts it admits (ADR-20261020170649).
+	apiMonetizationFlags *platformflags.Set
+	gate                 *WakeGate
 	// admissionQueue protects the control plane from a simultaneous cold
 	// burst across many apps. It is intentionally separate from gate:
 	// gate coalesces waiters for one app, while admissionQueue orders the
@@ -1039,6 +1044,10 @@ type Handler struct {
 	// constraint implicitly by being keys in the routing cache — see
 	// WithAppsSuffix docs.
 	appsSuffix string
+	// selectorSuffixes are the platform hostname suffixes under which the
+	// "--" companion and public-port selector applies (WithSelectorSuffixes).
+	// Empty keeps the legacy split on every host.
+	selectorSuffixes []string
 	// egressSink records per-instance HTTP response body bytes for
 	// ADR-046 (per-instance egress metering, telemetry only).
 	// Set via WithEgressSink from cmd/gatewayd-internal/main.go; nil in
@@ -1069,6 +1078,8 @@ type Handler struct {
 	// func(Target) http.Handler — the wire defaulting at vmmd
 	// keeps pre-PR-C targets (Port=0) reaching 8080.
 	proxyByNode func(t Target) http.Handler
+	// crashThrottle limits ADR-733 crash capture requests per app.
+	crashThrottle crashCaptureThrottle
 	// rawByNode (issue #676 / ADR-080) is the Upgrade-traffic
 	// counterpart of proxyByNode. When non-nil, the handler
 	// dispatches inbound Connection: Upgrade + Upgrade: <token>
@@ -1285,7 +1296,10 @@ type Handler struct {
 	challengeKey []byte
 	// challengeNow is the challenge clock; nil means time.Now.
 	challengeNow func() time.Time
-	operations   OperationRouteEnqueuer
+	// challengeLoad tracks challenge pages per rule for raising the
+	// difficulty under attack (ADR-831 amendment 8).
+	challengeLoad challengeLoads
+	operations    OperationRouteEnqueuer
 	// geoReader is the country lookup used by applyEdgeRuleGeo and
 	// country-keyed throttles (ADR-091 D21). A nil reader is allowed
 	// at boot, but a matched policy that needs geography fails closed.
@@ -1488,6 +1502,25 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	h.proxyFor = defaultProxy
 	// Route priorities also order the cold-wake queue (ADR-20261018181846).
 	h.gate.classifier = h
+	return h
+}
+
+// WithSelectorSuffixes limits the "--" selector split to hosts under the
+// given platform suffixes (for example ".gregale.dev"). Custom domains then
+// route whole even when they contain "--", as every internationalized domain
+// does. Call before serving.
+func (h *Handler) WithSelectorSuffixes(suffixes ...string) *Handler {
+	h.selectorSuffixes = h.selectorSuffixes[:0]
+	for _, suffix := range suffixes {
+		suffix = strings.ToLower(strings.TrimSpace(suffix))
+		if suffix == "" || slices.Contains(h.selectorSuffixes, suffix) {
+			continue
+		}
+		if suffix[0] != '.' {
+			suffix = "." + suffix
+		}
+		h.selectorSuffixes = append(h.selectorSuffixes, suffix)
+	}
 	return h
 }
 
@@ -5610,6 +5643,22 @@ func (h *Handler) apiMonetizationEnabled() bool {
 	return h.apiMonetization != nil && h.apiMonetization()
 }
 
+// WithAPIMonetizationFlags installs the api_monetization platform flag
+// (ADR-20261020170649), which releases monetization to the accounts it admits
+// while the runtime switch is off.
+func (h *Handler) WithAPIMonetizationFlags(flags *platformflags.Set) *Handler {
+	h.apiMonetizationFlags = flags
+	return h
+}
+
+// APIMonetizationEnabledFor reports whether monetization applies to an
+// account's traffic: released to every account, or to this one by the flag.
+// The flag is decided by account only, so plan rules never match.
+func (h *Handler) APIMonetizationEnabledFor(accountID string) bool {
+	return h.apiMonetizationEnabled() ||
+		h.apiMonetizationFlags.Enabled(platformflags.APIMonetization, platformflags.Subject{AccountID: accountID})
+}
+
 // WithRequestAudit enables exact completed-request evidence in the fsynced
 // usage envelope. Enable only after apid supports the audit receipt field.
 func (h *Handler) WithRequestAudit(enabled bool) { h.requestAuditEnabled = enabled }
@@ -5834,7 +5883,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// runs BEFORE the appsSuffix check so the suffix gate
 	// sees the appHost (the inner host), not the full
 	// selector hostname.
-	appHost, sidecarName := SplitHostSelectorWithSuffix(host, h.appsSuffix)
+	appHost, sidecarName := SplitHostSelectorUnder(host, h.appsSuffix, h.selectorSuffixes)
 	// Host allowlist suffix check (spec §4.1 wildcard contract). Closes the
 	// door on stale DNS records that land on the edge post-TLS by rejecting
 	// anything not matching the configured suffix before the cache is touched.
@@ -5900,6 +5949,12 @@ haveApp:
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"Environment is not ready", "the stage clone has not published all of its workloads and resources"))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
+	// ADR-732: a request addressed to a production fork never takes the
+	// serving path (no wake, no picker, no cache or edge rules).
+	if forkRequested(r) {
+		h.serveFork(w, r, app)
 		return
 	}
 	// Edge-rule matching from here on ignores rules another account
@@ -6017,6 +6072,9 @@ haveApp:
 			}
 		}
 		r = withAppAndAccount(r, accountUUID, appUUID)
+		if h.APIMonetizationEnabledFor(app.AccountID) {
+			ownUsageHeader(r)
+		}
 	}
 	if h.requestAuditEnabled {
 		// Snapshot the public gateway's single verified XFF value before
@@ -7272,18 +7330,10 @@ haveApp:
 
 	// Stamp the per-instance identity on the request BEFORE proxying so
 	// the per-node vmmd forwarder (issue #98 / ADR-028) can attribute
-	// the HTTP bytes to this exact instance. ApplyGuestHeaders first clears
-	// customer-supplied claims, then stamps the scheduler-selected identity.
-	identity := target.PlatformIdentity(app.AccountID, requestIDFrom(r))
-	identity.PlatformTenantID = authenticatedFrom(r.Context()).PlatformTenantID
-	if identity.AppID == "" {
-		identity.AppID = app.ID
-	}
-	identity.ApplyGuestHeaders(r.Header)
-	// Keep the same scheduler-authored identity on the request context so
-	// request-scoped logs and any subsequent schedd/vmmd metadata hop cannot
-	// drift from the headers sent to the guest.
-	r = r.WithContext(wire.WithPlatformIdentity(r.Context(), identity))
+	// the HTTP bytes to this exact instance. A retry restamps for its own
+	// target inside the forward closures below.
+	var identity api.PlatformIdentity
+	r, identity = stampTargetIdentity(r, app, target)
 	requestSpan.SetAttributes(pkgtrace.PlatformIdentityAttributes(identity)...)
 
 	// Semantic bridge span. The request context is passed through the existing
@@ -7668,6 +7718,7 @@ haveApp:
 		// returned above and never reach here.
 		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
+				req, _ = stampTargetIdentity(req, app, tgt)
 				h.proxyByNode(tgt).ServeHTTP(w, req)
 			}, app)
 	} else {
@@ -7683,9 +7734,14 @@ haveApp:
 		capped := h.setupBufferedCapWriter(w, r.Method, app, planCap)
 		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
+				req, _ = stampTargetIdentity(req, app, tgt)
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
 			}, app)
 	}
+	// ADR-733: a serving instance that answered 5xx may be captured for a
+	// crash snapshot. Asynchronous and throttled; never affects this
+	// response.
+	h.maybeRequestCrashCapture(r, app, target, rec.status)
 	// Issue #471 / ADR-047 PR-A buffered-fallback AC. The
 	// per-app streaming_enabled flag (ap.StreamingEnabled,
 	// propagated through pgRouter.toApp) is the load-bearing

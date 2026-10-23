@@ -46,6 +46,10 @@ type Profile struct {
 	// prefers it to the app's current options so a queued build keeps its
 	// plan's options.
 	DockerfileBuild *api.DockerfileBuildOptions `json:"dockerfile_build,omitempty"`
+	// BuildProcess is a built service's Compose user, working_dir and stop
+	// contract (ADR-20261022160000), frozen at enqueue; imaged applies it to
+	// the built image. Its entrypoint, if any, is already in the command.
+	BuildProcess *api.ComposeProcess `json:"build_process,omitempty"`
 	// PackageManager records the lockfile/package-manager choice used by
 	// static inference. It is advisory metadata; the builder remains the
 	// authority for dependency installation.

@@ -67,6 +67,9 @@ func Run(t *testing.T, open Open) {
 		{"post_release_watch_candidates_follow_the_newest_release", testPostReleaseWatchCandidates},
 		{"release_freezes_limit_list_and_lift", testReleaseFreezes},
 		{"release_gates_round_trip_and_follow_their_slo", testReleaseGates},
+		{"release_approvals_policy_and_one_decision_per_person", testReleaseApprovals},
+		{"release_approval_events_once_due_and_retried", testReleaseApprovalEvents},
+		{"scheduled_releases_one_pending_and_start_in_the_traffic_change", testScheduledReleases},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
@@ -94,6 +97,8 @@ func Run(t *testing.T, open Open) {
 		{"git_driven_deployment_promotion_is_scope_and_revision_fenced", testGitDrivenDeploymentPromotionFence},
 		{"image_deployment_promotion_is_scope_and_revision_fenced", testImageDeploymentPromotionFence},
 		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
+		{"observed_workload_class_without_a_proof", testObservedWorkloadClass},
+		{"source_runtime_profile_records_a_frozen_compose_healthcheck", testSourceRuntimeProfileHealthcheck},
 		{"rollback_prepare_preserves_current_live", testPrepareDeploymentRollback},
 		{"service_rollout_abort_handoff_is_durable", testServiceRolloutAbortHandoff},
 		{"service_recovery_claim_and_retry_are_durable", testServiceRecoveryClaims},
@@ -109,6 +114,11 @@ func Run(t *testing.T, open Open) {
 		{"ownership_recovery_pages_are_scoped_exclusive_and_bounded", testOwnershipRecoveryPages},
 		{"ownership_recovery_transfer_fences_health_cooldown_and_peers", testOwnershipRecoveryTransfer},
 		{"scenario_rehearsal_reads_for_unenrolled_app", testScenarioRehearsalReadsForUnenrolledApp},
+		{"rehearsal_apps_leave_account_alerts", testRehearsalAppsLeaveAccountAlerts},
+		{"rehearsal_app_logs_stay_inside_the_run", testRehearsalAppLogsStayInsideTheRun},
+		{"rehearsal_apps_never_poll_real_brokers", testRehearsalAppsNeverPollRealBrokers},
+		{"rehearsal_crons_never_fire_from_the_clock", testRehearsalCronsNeverFireFromTheClock},
+		{"rehearsal_apps_receive_no_account_events", testRehearsalAppsReceiveNoAccountEvents},
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"archived_logs_are_scoped_to_the_owning_app", testInstanceLogsOwnedByApp},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
@@ -3486,6 +3496,34 @@ func testAppSecretRuntimeProcessGenerationFence(t *testing.T, fx *Fixture) {
 	}
 	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(third, third)); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("reactivated a retired generation: %v", err)
+	}
+	// ADR-508 amendment 1: a guest process attempt that vmmd started after a
+	// registration (a restore that fell back to cold boot under the same
+	// instance) may replace it without knowing its generation; a start from
+	// an attempt that predates the registration is still fenced.
+	live, stray, fresh := strings.Repeat("d", 32), strings.Repeat("e", 32), strings.Repeat("f", 32)
+	// Register a minute ago: a replacement stamped time.Now() right after an
+	// unstamped registration can share its microsecond and not be "later".
+	registered := process(live, third)
+	registered.AttemptedAt = time.Now().Add(-time.Minute)
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, registered); err != nil {
+		t.Fatalf("BeginAppSecretRuntimeProcess(after retire): %v", err)
+	}
+	earlier := process(stray, "")
+	earlier.ProcessStartedAt = time.Now().Add(-time.Hour)
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, earlier); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("an earlier process attempt replaced a later registration: %v", err)
+	}
+	replacement := process(fresh, "")
+	replacement.ProcessStartedAt = time.Now()
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, replacement); err != nil {
+		t.Fatalf("a later process attempt was fenced by the replaced attempt's registration: %v", err)
+	}
+	if err := ack(live); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("accepted ACK from the replaced attempt's process: %v", err)
+	}
+	if err := ack(fresh); err != nil {
+		t.Fatalf("ACK the replacement attempt's process: %v", err)
 	}
 }
 

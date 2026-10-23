@@ -15,6 +15,13 @@ func (e *Engine) checkApplicationStandardAdmission(ctx context.Context, app stat
 	if err := e.checkFinancialBudgetAdmission(ctx, app, ""); err != nil {
 		return err
 	}
+	return e.checkApplicationStandardEnrollment(ctx, app)
+}
+
+// checkApplicationStandardEnrollment is checkApplicationStandardAdmission
+// without its budget check, for a caller that checks the budget for the
+// deployment it admits (a superset of the check without one).
+func (e *Engine) checkApplicationStandardEnrollment(ctx context.Context, app state.App) error {
 	if app.OrgID == "" { // Legacy unowned MemStore fixtures have no enrollment.
 		return nil
 	}

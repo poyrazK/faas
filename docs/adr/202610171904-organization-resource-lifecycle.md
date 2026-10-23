@@ -50,6 +50,8 @@ records still reference the identity.
 Rehearsal policies and fixture/runtime journals likewise remain unreviewed.
 Their account references block erasure, including completed fixture evidence
 that the rehearsal service could otherwise purge.
+Amended by ADR-20261022155043: rehearsal records follow their run and are
+erased with the identity; only a fixture still holding a backend resource blocks.
 
 Internal Product Control revisions, customer/billing records, onboarding,
 notifications and email preferences also require separate ownership coverage.

@@ -1016,6 +1016,11 @@ type EdgeRuleHostCoverage struct {
 	Host   string
 	Custom bool
 	Rules  int
+	// Selector names the companion, or the public listener when PublicPort
+	// is set, that this <app>--<name> hostname reaches instead of the main
+	// workload (ADR-069, ADR-176).
+	Selector   string
+	PublicPort bool
 }
 
 // EdgeRuleRecipeView is one protection recipe on the edge-rules page.

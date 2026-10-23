@@ -62,8 +62,18 @@ func TestProjectImageReconcileAndSourceTransition(t *testing.T) {
 		t.Fatalf("source transition = %+v, %v", result, err)
 	}
 	manifest := result.Changed[0].Manifest
-	if manifest.ProjectImage != "" || manifest.ProjectImageCommand != nil || manifest.ProjectImagePort != 0 || manifest.ProjectImageHealthcheck != nil || manifest.BuildDockerfile != "Dockerfile" || manifest.Env["CUSTOM_VALUE"] != "keep" {
+	if manifest.ProjectImage != "" || manifest.ProjectImageCommand != nil || manifest.ProjectImagePort != 0 || manifest.BuildDockerfile != "Dockerfile" || manifest.Env["CUSTOM_VALUE"] != "keep" {
 		t.Fatalf("source transition metadata = %+v", manifest)
+	}
+	// A built service keeps the healthcheck it still declares (ADR-20261019195000)
+	// and loses it once the declaration goes.
+	if !reflect.DeepEqual(manifest.ProjectImageHealthcheck, scan.Workloads[0].ImageHealthcheck) {
+		t.Fatalf("source transition dropped the declared healthcheck: %+v", manifest.ProjectImageHealthcheck)
+	}
+	scan.Workloads[0].ImageHealthcheck = nil
+	result, err = service.Reconcile(t.Context(), project, scan, "", "main", nil)
+	if err != nil || len(result.Changed) != 1 || result.Changed[0].Manifest.ProjectImageHealthcheck != nil {
+		t.Fatalf("removed healthcheck = %+v, %v", result, err)
 	}
 }
 

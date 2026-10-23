@@ -92,6 +92,10 @@ type Problem struct {
 	// Freezes lists the active freezes behind release_frozen
 	// (ADR-20261019071733).
 	Freezes []ReleaseFreeze `json:"freezes,omitempty"`
+	// ReleaseApproval is the release's approval status behind
+	// release_approval_required and release_approval_rejected
+	// (ADR-20261020085706).
+	ReleaseApproval *ReleaseApprovalStatus `json:"release_approval,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
@@ -890,6 +894,10 @@ const (
 	// app (ADR-20261019071733); the problem lists the active freezes.
 	// override_freeze with a reason releases anyway, audited.
 	CodeReleaseFrozen = "release_frozen"
+	// CodePlatformReleasePaused means an operator paused every release on the
+	// platform (ADR 20261022140000), for example while a security incident is
+	// contained. Nothing the caller sends overrides it; rollbacks still work.
+	CodePlatformReleasePaused = "platform_release_paused"
 	// CodeReleaseFreezeNotFound means the account has no such unlifted freeze.
 	CodeReleaseFreezeNotFound = "release_freeze_not_found"
 	// CodeReleaseFreezeLimit means the account already holds
@@ -900,6 +908,34 @@ const (
 	CodeReleaseGateLimit = "release_gate_limit"
 	// CodeReleaseGateNotFound means the app has no release gate by that name.
 	CodeReleaseGateNotFound = "release_gate_not_found"
+	// CodeReleaseApprovalRequired means the release waits for approvals
+	// before it may take more traffic (ADR-20261020085706); the problem
+	// carries the release's approval status.
+	CodeReleaseApprovalRequired = "release_approval_required"
+	// CodeReleaseApprovalRejected means someone rejected the release, so it
+	// can never take more traffic.
+	CodeReleaseApprovalRejected = "release_approval_rejected"
+	// CodeReleaseApprovalCanaryRequired means the app requires approvals and
+	// the production release would take traffic without a canary to wait in.
+	CodeReleaseApprovalCanaryRequired = "release_approval_canary_required"
+	// CodeReleaseApprovalSelf means the deployer tried to approve their own
+	// release while the policy does not allow self-approval.
+	CodeReleaseApprovalSelf = "release_approval_self"
+	// CodeReleaseApprovalDecided means this person already decided on the
+	// release, or the release no longer accepts decisions.
+	CodeReleaseApprovalDecided = "release_approval_decided"
+	// CodeReleaseApprovalPolicyNotFound means the app has no approval policy.
+	CodeReleaseApprovalPolicyNotFound = "release_approval_policy_not_found"
+	// CodeReleaseScheduled means the release waits for its scheduled start
+	// (ADR-20261021152201), so it takes no traffic by hand until the schedule
+	// is cancelled or moved.
+	CodeReleaseScheduled = "release_scheduled"
+	// CodeReleaseNotParked means the release cannot be scheduled: it is not
+	// live without traffic, or it already has a canary ladder.
+	CodeReleaseNotParked = "release_not_parked"
+	// CodeScheduledReleaseNotFound means the release has no schedule, or no
+	// pending one to cancel.
+	CodeScheduledReleaseNotFound = "scheduled_release_not_found"
 	// CodeConfigRevisionNotFound means the scope has no such config revision
 	// (ADR-1451), or it was pruned past ConfigRevisionsRetained.
 	CodeConfigRevisionNotFound = "config_revision_not_found"
@@ -2586,6 +2622,17 @@ func ErrAppLayerTooLarge(l Limits, observedBytes int64) *Problem {
 		fmt.Sprintf("%s plan caps total ephemeral app-filesystem capacity at %d MB (including app content and filesystem overhead); the built layer requires %.1f MB.",
 			l.Plan, l.EphemeralDiskMaxMB(), float64(observedBytes)/(1024*1024))).
 		WithLimit(capBytes, observedBytes).
+		WithDocs(docsBase + "/build/limits#app-layer")
+}
+
+// ErrAppLayerTooManyEntries is returned when an image's layers apply more tar
+// entries than one build may extract (LayerExtractionMaxEntries). It shares
+// ErrAppLayerTooLarge's stable code: the image is too large to assemble.
+func ErrAppLayerTooManyEntries(l Limits, limit int) *Problem {
+	return NewProblem(http.StatusForbidden, CodeAppLayerTooBig,
+		"App too large",
+		fmt.Sprintf("image layers contain more than %d files, directories and links in total; %s plan builds stop at that limit.", limit, l.Plan)).
+		WithLimit(int64(limit), int64(limit)+1).
 		WithDocs(docsBase + "/build/limits#app-layer")
 }
 
@@ -4592,6 +4639,17 @@ func ErrTenantHostnameQuota(p Plan, surfaceID string, limit, observed int) *Prob
 	return NewProblem(http.StatusForbidden, CodeTenantHostnameQuota,
 		"Tenant hostname limit reached",
 		fmt.Sprintf("%s plan caps tenant hostnames at %d per surface; you have %d on surface %s. Remove one to add another.",
+			p, limit, observed, surfaceID)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#tenant-surfaces")
+}
+
+// ErrTenantHostnamePendingQuota is the tenant_hostname_quota problem for
+// the unverified-hostname cap (ADR-20261020090500).
+func ErrTenantHostnamePendingQuota(p Plan, surfaceID string, limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodeTenantHostnameQuota,
+		"Tenant hostname limit reached",
+		fmt.Sprintf("%s plan caps unverified tenant hostnames at %d per surface; you have %d pending on surface %s. Verify or remove one to add another.",
 			p, limit, observed, surfaceID)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/plans#tenant-surfaces")

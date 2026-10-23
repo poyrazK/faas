@@ -399,7 +399,11 @@ func renderThrottleSuggestions(w io.Writer, slug string, r api.ThrottleSuggestio
 	_, _ = fmt.Fprintf(w, "Plan ceiling:  rps=%d burst=%d\n", r.PlanCeilingRPS, r.PlanCeilingBurst)
 	_, _ = fmt.Fprintf(w, "Multiplier:    %.1fx\n", r.Multiplier)
 	if r.RouteMetricsDisabled {
-		_, _ = fmt.Fprintln(w, "(route metrics disabled on this app — Free plan)")
+		// The flag is the app's setting, not its plan: a paid app can have
+		// route metrics switched off, and the old "Free plan" note sent
+		// Scale customers looking for an upgrade they already had.
+		_, _ = fmt.Fprintln(w, "\nRoute metrics are off for this app, so there are no per-route suggestions.")
+		_, _ = fmt.Fprintf(w, "Turn them on (Hobby, Pro and Scale plans): %s app %s --route-metrics\n", recoveryCLI(), recoveryArgument(slug))
 		return
 	}
 	if r.RoutesCollapsed > 0 {

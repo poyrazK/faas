@@ -28,6 +28,11 @@ type EdgeRuleChallengeAction struct {
 	// PassTTLSeconds is how long a solved challenge lets the client
 	// through. Zero applies EdgeChallengeDefaultPassTTLSeconds.
 	PassTTLSeconds int `json:"pass_ttl_seconds,omitempty"`
+	// MaxDifficulty, when above Difficulty, lets the gateway raise the
+	// difficulty up to it while the rule serves far more challenge pages
+	// than usual (ADR-831 amendment 8). Zero or equal to Difficulty keeps
+	// the difficulty fixed.
+	MaxDifficulty int `json:"max_difficulty,omitempty"`
 }
 
 // Validate applies the defaults and bounds, mutating the receiver so the
@@ -43,6 +48,11 @@ func (a *EdgeRuleChallengeAction) Validate() *Problem {
 		return ErrValidation(fmt.Sprintf(
 			"challenge action: difficulty must be in %d..%d leading zero bits (got %d)",
 			MinEdgeChallengeDifficulty, MaxEdgeChallengeDifficulty, a.Difficulty))
+	}
+	if a.MaxDifficulty != 0 && (a.MaxDifficulty < a.Difficulty || a.MaxDifficulty > MaxEdgeChallengeDifficulty) {
+		return ErrValidation(fmt.Sprintf(
+			"challenge action: max_difficulty must be in %d..%d, from the difficulty up (got %d)",
+			a.Difficulty, MaxEdgeChallengeDifficulty, a.MaxDifficulty))
 	}
 	if a.PassTTLSeconds == 0 {
 		a.PassTTLSeconds = EdgeChallengeDefaultPassTTLSeconds

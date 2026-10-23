@@ -237,3 +237,27 @@ requests into the customer's process, so they must not act on it:
   runner runtime, and guest-init reports the bind without probing.
 - The HTTP/2-preface gRPC probe runs only when the HTTP/1.1 probe got no
   HTTP/1.x answer (H11-5): an HTTP/1 server logged it as a protocol error.
+
+## Amendment (2026-10-22): the observed class moves the boot's config proof
+
+A cold boot publishes its instance with a config proof (ADR-531): the
+fingerprint of the deployment's runtime configuration it booted with. The
+workload class is part of that configuration, and the class is only known
+after the boot, so recording an observed class that differs from the scan
+hint left the booting instance's proof stale for good. Every later check
+of it failed: a frozen thaw refused it as `config_changed`, the frozen
+worker tier stopped it instead of freezing it (ADR-20261019103000), and
+warm-pool promotion and the ADR-1740 fast path discarded it. On n2 the first
+worker of every new worker app paid for this.
+
+schedd now records the class with `RecordObservedWorkloadClass`. In one
+transaction it takes the secret writers' lock order (the environment, then
+the app exclusively), checks that the instance's proof still matches the
+configuration (nothing changed since the publication), writes the class,
+and moves that proof to the fingerprint the configuration gives with the new
+class. When something else changed in between, it writes the class and
+leaves the proof stale, so a real configuration change is never adopted by
+a VM that did not boot with it. The secret fence is unaffected. A
+deployment pinned to a project environment workload spec never had the
+problem: its fingerprint hashes the spec's settings, not the app row's
+class.
