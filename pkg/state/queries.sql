@@ -7525,9 +7525,11 @@ SELECT EXISTS(SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id
 FROM invocations i JOIN invocation_environment_queue_admissions p ON p.invocation_id=i.id WHERE i.id=sqlc.arg(invocation_id)::uuid;
 
 -- name: EnvironmentQueueClaimCapacity :one
+-- The claimed invocation is not counted, so the answer is the same before and
+-- after its own claim update.
 SELECT (SELECT count(*) FROM invocation_environment_queue_admissions other JOIN invocations i ON i.id=other.invocation_id
     WHERE other.environment_id=p.environment_id AND other.app_id=p.app_id AND other.queue_name=p.queue_name
-        AND (i.state='dispatching' OR i.quota_reserved))::bigint AS active,
+        AND other.invocation_id<>p.invocation_id AND (i.state='dispatching' OR i.quota_reserved))::bigint AS active,
     (c.definition->>'max_concurrency')::integer AS max_concurrency
 FROM invocation_environment_queue_admissions p JOIN project_environment_queue_consumers c ON c.id=p.consumer_id
 WHERE p.invocation_id=$1;

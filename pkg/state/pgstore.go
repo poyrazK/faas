@@ -32375,19 +32375,22 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 		return Invocation{}, err
 	}
 
-	// Read account_id off the row, then upsert the cap row with
-	// maxInflight from the caller. The upsert is a no-op for
-	// accounts that already have a counter row.
+	// Read account_id off the row, and whether the account's own cap row is
+	// full: a read without its lock, so a full account is refused before the
+	// claim's update rather than after it.
 	var accountID, appID string
 	var workPolicyName *string
 	var workKeyDigest []byte
 	var workFairnessDigest []byte
 	var workFairnessLimit *int
+	var accountFull bool
 	if err := tx.QueryRow(ctx,
-		`select account_id, app_id, work_policy_name, work_key_digest,
-		 work_fairness_digest, work_fairness_limit from invocations where id = $1`, id).Scan(
+		`select i.account_id, i.app_id, i.work_policy_name, i.work_key_digest,
+		 i.work_fairness_digest, i.work_fairness_limit, coalesce(q.current_inflight >= q.max_inflight, false)
+		 from invocations i left join account_async_quota q on q.account_id = i.account_id
+		 where i.id = $1`, id).Scan(
 		&accountID, &appID, &workPolicyName, &workKeyDigest,
-		&workFairnessDigest, &workFairnessLimit); err != nil {
+		&workFairnessDigest, &workFairnessLimit, &accountFull); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Invocation{}, ErrNotFound
 		}
@@ -32411,44 +32414,14 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 	if owner.ResourceOwnershipEnabled && !owner.Active() {
 		return Invocation{}, ErrConflict
 	}
-	// The counter must be the subject stamp_invocation_async_subject records.
-	subject := accountID
-	if owner.AsyncQuotaPooled {
-		subject = owner.AsyncQuotaSubjectID()
-		if err := ensureQueueAsyncQuotaDB(ctx, tx, owner); err != nil {
-			return Invocation{}, err
-		}
-	} else if _, _, err := s.upsertAccountAsyncQuotaTx(ctx, tx, accountID, maxInflight); err != nil {
-		return Invocation{}, err
-	}
-
-	// CAS the counter: cap check + increment in one UPDATE. 0 rows
-	// returned means cap hit. The CHECK (current_inflight >= 0)
-	// keeps the counter non-negative under concurrent decrement.
-	var newInflight int
-	err = tx.QueryRow(ctx, `
-		update account_async_quota
-		   set current_inflight = current_inflight + 1,
-		       updated_at = now()
-		 where account_id = $1
-		   and current_inflight < max_inflight
-		returning current_inflight`, subject).Scan(&newInflight)
-	if errors.Is(err, pgx.ErrNoRows) {
-		// Either the cap is 0 or the cap is full. Either way,
-		// the claim is rejected. The deferred rollback cleans up.
+	if !owner.AsyncQuotaPooled && accountFull {
 		return Invocation{}, ErrQuotaExceeded
 	}
-	if err != nil {
-		return Invocation{}, fmt.Errorf("state: account_async_quota claim: %w", err)
-	}
 
-	// The quota row lock serializes all claims in this account, including
-	// different consumer generations of the same logical stage queue.
-	if err := queueClaimCapacityDB(ctx, tx, id); err != nil {
-		return Invocation{}, err
-	}
-
-	// Atomic state transition + lease stamp + attempts bump.
+	// Atomic state transition + lease stamp + attempts bump. It runs before
+	// the cap row is locked: every claim and terminal transition of the
+	// account takes that row, so its lock is held only for the counter, the
+	// queue capacity check and the commit.
 	row := tx.QueryRow(ctx, `
 		 update invocations
 		    set state = 'dispatching',
@@ -32468,6 +32441,24 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 		return Invocation{}, fmt.Errorf("state: invocations claim cap update: %w", mapErr(err))
 	}
 
+	// The counter must be the subject stamp_invocation_async_subject records.
+	subject := accountID
+	if owner.AsyncQuotaPooled {
+		subject = owner.AsyncQuotaSubjectID()
+		if err := ensureQueueAsyncQuotaDB(ctx, tx, owner); err != nil {
+			return Invocation{}, err
+		}
+	}
+	if err := claimAccountAsyncQuotaTx(ctx, tx, subject, !owner.AsyncQuotaPooled, maxInflight); err != nil {
+		return Invocation{}, err
+	}
+
+	// The quota row lock serializes all claims in this account, including
+	// different consumer generations of the same logical stage queue.
+	if err := queueClaimCapacityDB(ctx, tx, id); err != nil {
+		return Invocation{}, err
+	}
+
 	if err := rejectEnvironmentQueueReceiptDB(ctx, tx, id, false); err != nil {
 		return Invocation{}, err
 	}
@@ -32481,30 +32472,53 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 	return inv, nil
 }
 
-// upsertAccountAsyncQuotaTx is the tx-bound variant of
-// EnsureAccountAsyncQuota. Used by ClaimInvocationWithCap so the cap
-// row and the counter increment live in the same transaction.
+// claimAccountAsyncQuotaTx takes one in-flight slot of subject's cap for
+// ClaimInvocationWithCap, in the claim's transaction: cap check and increment
+// in one UPDATE, which writes the cap row once. The CHECK
+// (current_inflight >= 0) keeps the counter non-negative under concurrent
+// decrement.
 //
-// PR-B fixup (code-review #1185 finding #2): on conflict this is
-// DO NOTHING — max_inflight is preserved on the existing row. The
-// lazy-insert is a convenience for missing rows only; if the row
-// exists, the existing cap is authoritative and the caller's
-// maxInflight (which could be 0 from a transient lookup failure in
-// the drain) must NOT poison it. The CAS step below uses the
-// RETURNING values, so the existing max_inflight flows through.
-func (s *PgStore) upsertAccountAsyncQuotaTx(ctx context.Context, tx pgx.Tx, accountID string, maxInflight int) (int, int, error) {
-	row := tx.QueryRow(ctx, `
+// With create, a missing cap row is inserted with maxInflight first. On
+// conflict that insert does nothing (PR-B fixup, code-review #1185 finding
+// #2): the existing row's max_inflight is authoritative, and the caller's
+// maxInflight, which could be 0 from a transient lookup failure in the
+// drain, must not poison it. The second UPDATE then sees the row whether
+// this claim or a concurrent one inserted it.
+func claimAccountAsyncQuotaTx(ctx context.Context, tx pgx.Tx, subject string, create bool, maxInflight int) error {
+	take := func() (bool, error) {
+		tag, err := tx.Exec(ctx, `
+			update account_async_quota
+			   set current_inflight = current_inflight + 1,
+			       updated_at = now()
+			 where account_id = $1
+			   and current_inflight < max_inflight`, subject)
+		if err != nil {
+			return false, fmt.Errorf("state: account_async_quota claim: %w", err)
+		}
+		return tag.RowsAffected() == 1, nil
+	}
+	taken, err := take()
+	if err != nil || taken {
+		return err
+	}
+	if !create {
+		// Either the cap is 0 or the cap is full. Either way, the claim
+		// is rejected. The deferred rollback cleans up.
+		return ErrQuotaExceeded
+	}
+	if _, err := tx.Exec(ctx, `
 		insert into account_async_quota (account_id, max_inflight)
 		values ($1, $2)
-		on conflict (account_id) do update
-		  set updated_at = now()
-		returning max_inflight, current_inflight`,
-		accountID, maxInflight)
-	var gotMax, gotCur int
-	if err := row.Scan(&gotMax, &gotCur); err != nil {
-		return 0, 0, fmt.Errorf("state: account_async_quota upsert tx: %w", err)
+		on conflict (account_id) do nothing`, subject, maxInflight); err != nil {
+		return fmt.Errorf("state: account_async_quota insert tx: %w", err)
 	}
-	return gotMax, gotCur, nil
+	if taken, err = take(); err != nil {
+		return err
+	}
+	if !taken {
+		return ErrQuotaExceeded
+	}
+	return nil
 }
 
 // DecrementAccountAsyncInflight drops current_inflight by 1. Floor-safe:

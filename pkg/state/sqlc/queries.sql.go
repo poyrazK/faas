@@ -15769,7 +15769,7 @@ func (q *Queries) EnvironmentQualificationSnapshotReceipt(ctx context.Context, d
 const environmentQueueClaimCapacity = `-- name: EnvironmentQueueClaimCapacity :one
 SELECT (SELECT count(*) FROM invocation_environment_queue_admissions other JOIN invocations i ON i.id=other.invocation_id
     WHERE other.environment_id=p.environment_id AND other.app_id=p.app_id AND other.queue_name=p.queue_name
-        AND (i.state='dispatching' OR i.quota_reserved))::bigint AS active,
+        AND other.invocation_id<>p.invocation_id AND (i.state='dispatching' OR i.quota_reserved))::bigint AS active,
     (c.definition->>'max_concurrency')::integer AS max_concurrency
 FROM invocation_environment_queue_admissions p JOIN project_environment_queue_consumers c ON c.id=p.consumer_id
 WHERE p.invocation_id=$1
@@ -15780,6 +15780,8 @@ type EnvironmentQueueClaimCapacityRow struct {
 	MaxConcurrency int32
 }
 
+// The claimed invocation is not counted, so the answer is the same before and
+// after its own claim update.
 func (q *Queries) EnvironmentQueueClaimCapacity(ctx context.Context, db DBTX, invocationID pgtype.UUID) (EnvironmentQueueClaimCapacityRow, error) {
 	row := db.QueryRow(ctx, environmentQueueClaimCapacity, invocationID)
 	var i EnvironmentQueueClaimCapacityRow

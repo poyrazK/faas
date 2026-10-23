@@ -967,6 +967,8 @@ type Querier interface {
 	EnvironmentQualificationServiceExchanges(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]EnvironmentQualificationServiceReceipt, error)
 	EnvironmentQualificationSmokeReceipt(ctx context.Context, db DBTX, arg EnvironmentQualificationSmokeReceiptParams) (EnvironmentQualificationSmokeReceipt, error)
 	EnvironmentQualificationSnapshotReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationSnapshotReceiptRow, error)
+	// The claimed invocation is not counted, so the answer is the same before and
+	// after its own claim update.
 	EnvironmentQueueClaimCapacity(ctx context.Context, db DBTX, invocationID pgtype.UUID) (EnvironmentQueueClaimCapacityRow, error)
 	EnvironmentQueueDeliveryClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	EnvironmentQueueDeliveryReceiptExists(ctx context.Context, db DBTX, invocationID pgtype.UUID) (bool, error)
