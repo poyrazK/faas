@@ -1469,6 +1469,10 @@ type Querier interface {
 	FinancialComputeAppLeases(ctx context.Context, db DBTX, arg FinancialComputeAppLeasesParams) ([][]byte, error)
 	FinancialComputeAppManaged(ctx context.Context, db DBTX, arg FinancialComputeAppManagedParams) (pgtype.Bool, error)
 	FinancialComputeAppOwned(ctx context.Context, db DBTX, arg FinancialComputeAppOwnedParams) (bool, error)
+	// The account's budgets with the app's project, the one scope an app's
+	// budget check needs without a deployment. An account without budgets reads
+	// no app row; every admission of its apps runs this.
+	FinancialComputeAppPolicies(ctx context.Context, db DBTX, arg FinancialComputeAppPoliciesParams) ([]FinancialComputeAppPoliciesRow, error)
 	// The scopes an app attempt funds: its current project, and the environment
 	// of its deployment. The instance's recorded deployment wins over the
 	// request's; an app outside any project has neither.

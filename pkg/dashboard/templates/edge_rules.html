@@ -261,7 +261,7 @@
             {{if .TopRules}}<p>Top CRS rules: {{range $i, $c := .TopRules}}{{if $i}}, {{end}}<code>{{$c.Name}}</code> <strong>{{$c.Count}}</strong>{{end}}. Exclude a false positive with <code>exclude_rule_ids</code>.</p>{{end}}
           {{end}}{{end}}
           {{with .Challenge}}{{if or .Issued .Solved .Rejected .Passed .Bypassed .Invalid}}
-            <p>Challenges: <strong>{{.Issued}}</strong> pages served, <strong>{{.Solved}}</strong> solved, <strong>{{.Rejected}}</strong> non-browser requests refused, <strong>{{.Passed}}</strong> let through on an earlier solve, <strong>{{.Bypassed}}</strong> verified API clients, <strong>{{.Invalid}}</strong> invalid solutions.</p>
+            <p>Challenges: <strong>{{.Issued}}</strong> pages served, <strong>{{.Solved}}</strong> solved, <strong>{{.Rejected}}</strong> non-browser requests refused, <strong>{{.Passed}}</strong> let through on an earlier solve, <strong>{{.Bypassed}}</strong> verified API clients, <strong>{{.Invalid}}</strong> invalid solutions.{{if .Raised}} <strong>{{.Raised}}</strong> pages were served at a difficulty raised under attack.{{end}}</p>
           {{end}}{{end}}
           <p class="muted">Get alerted on bursts with the <code>pre_auth_pressure</code>, <code>edge_validation_failures</code>, <code>edge_rejection_pressure</code>, and <code>edge_waf_detections</code> alert presets. CLI: <code>gregale edge-rules summary --app {{$.Data.App.Slug}} --range 24h</code>.</p>
         {{end}}
