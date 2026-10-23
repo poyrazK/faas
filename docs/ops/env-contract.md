@@ -500,6 +500,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MIGRATE_LIVE_MAX_PER_TICK` | schedd | `default` |  |  | `` |  |
 | `FAAS_MIGRATING_WATCHDOG_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_MIGRATING_WATCHDOG_TICK_LIMIT` | schedd | `default` |  |  | `` |  |
+| `FAAS_NATIVE_RUNTIME_SNAPSHOT_ROOT` | imaged, schedd | `default` |  |  | `` | vmmd's private tree for native runtime snapshots (ADR 20261022184951 amendment 1); default /srv/fc/native-snap, read-only to these daemons; an absent tree changes nothing |
 | `FAAS_NODE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, realtimed, schedd, vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |  | `` |  |

@@ -60,6 +60,7 @@ type JailerVMM struct {
 	nativeImageStagingRoot        string                        // opt-in persistent disk claims; configure before native recovery
 	nativeSnapshotPublicationRoot string                        // opt-in immutable capture intent; configure before native recovery
 	nativeRuntimeCapture          bool                          // ADR 20261022184951: native park/warm capture; requires native recovery
+	nativeRuntimeSnapshots        *storage.LocalStorageBackend  // ADR 20261022184951 amendment 1: the tree only vmmd writes
 	chrootBase                    string                        // /srv/fc/jail
 	fcName                        string                        // chroot dir name jailer derives from the exec-file basename
 	readyTimeout                  time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
@@ -7915,8 +7916,9 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 		return key, nil // nil storage: key IS the direct host path (builderd path-through mode)
 	}
 	// A wake reads what it fetched from the page cache; the node cache
-	// makes the fill durable and installs it after the wake has it.
-	rc, err := v.storage.Get(storage.WithDeferredCacheDurability(ctx), key)
+	// makes the fill durable and installs it after the wake has it. A native
+	// runtime capture is read from the tree only vmmd writes.
+	rc, err := v.snapshotStore(key).Get(storage.WithDeferredCacheDurability(ctx), key)
 	if err != nil {
 		return "", fmt.Errorf("vmm: storage get %q: %w", key, err)
 	}
@@ -8057,11 +8059,12 @@ func (v *JailerVMM) probeRestoreLocalPath(key string) (string, string, bool, err
 	if key == "" || filepath.IsAbs(key) || v.storage == nil {
 		return "", "", false, nil
 	}
-	if resolver, ok := v.storage.(storage.LocalPathSourceResolver); ok {
+	store := v.snapshotStore(key)
+	if resolver, ok := store.(storage.LocalPathSourceResolver); ok {
 		path, source, local, err := resolver.LocalPathWithSource(key)
 		return path, string(source), local, err
 	}
-	if resolver, ok := v.storage.(storage.LocalPathResolver); ok {
+	if resolver, ok := store.(storage.LocalPathResolver); ok {
 		path, local, err := resolver.LocalPath(key)
 		if err != nil || !local {
 			return path, "", local, err

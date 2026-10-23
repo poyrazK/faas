@@ -26,8 +26,10 @@ func (v *JailerVMM) WithNativeRuntimeCapture() *JailerVMM {
 	return v
 }
 
+// The capture also needs the native tree to publish to (amendment 1); without
+// it the VMM keeps its refusal.
 func (v *JailerVMM) nativeRuntimeCaptureEnabled() bool {
-	return v != nil && v.nativeRecovery != nil && v.nativeRuntimeCapture
+	return v != nil && v.nativeRecovery != nil && v.nativeRuntimeCapture && v.nativeRuntimeSnapshots != nil
 }
 
 // nativeRuntimeCaptureRequest carries the Manager-owned facts an ordinary park

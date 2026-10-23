@@ -104,7 +104,9 @@ without scheduler changes.
    - Partial objects on the local backend are retained and counted by the
      disk-drift sweep (`snapshot_disk_drift_total`) as unexpected entries. The
      local backend cannot delete by inode identity (ADR-568), and they are
-     never deleted by pathname.
+     never deleted by pathname. (Superseded for runtime captures by
+     Amendment 1: vmmd is the only writer of the native tree, so it retires
+     them by name with their deployment.)
 
 6. **Recovery.** On restart, vmmd never promotes a started but incomplete
    runtime capture record. Its partial objects are handled as in 5. Its VM is
@@ -178,6 +180,70 @@ On a native x86_64 KVM host, with `native_process_recovery` and
   stay in the journals. GCS generation-conditional deletion (decision 5) must
   land before `native_runtime_capture` is enabled on a GCS-backed node.
 
+## Amendment 1 (2026-10-23): a root-only tree for native runtime snapshots
+
+**Finding.** The first lane B run with the setting on (`eaedb-20261023T162911`
+on the internal test node) reached the native producer from prime's park and
+failed at publication: "storage: exclusive publication requires an original
+owned directory without shared write permission". The local exclusive writer
+refuses a path with any group- or world-writable component, and production
+makes `/srv/fc/snap` mode 2770 `root:faas` on purpose
+(`deploy/ansible/roles/compute_only_service`): vmmd writes snapshots as root
+and imaged collects them as `faas-imaged`. So decision 5's local writer cannot
+publish under `/srv/fc/snap` on any production layout. The same lane found a
+journal bug: the ownership scan that gates every vmmd start rejected the
+`runtime-captures/` directory, so vmmd could not restart after a runtime
+capture (fixed in `84ed11eba9`).
+
+**Decision.** Native runtime captures publish into a separate tree that only
+vmmd can write, so no other principal can replace a published object.
+
+1. **Root.** A new vmmd setting, `native_runtime_snapshot_root`, is required
+   when `native_runtime_capture` is on. The production path is
+   `/srv/fc/native-snap`: mode 2750 `root:faas`, on the same filesystem as
+   `/srv/fc`. At startup vmmd refuses a root that is not a directory owned by
+   its own uid, has any group-write or other-access bit, or is on a filesystem
+   the exclusive writer does not support. Group read lets schedd and imaged
+   inspect it. Snapshot memory holds tenant secrets, so the tree is never
+   world-readable.
+2. **Keys are unchanged.** schedd still chooses
+   `snap/<deployment>/[warm/]captures/<uuid>/v2/{mem,vmstate,drive,backing}`,
+   and the snapshot row stores it as today. The object lives at
+   `<root>/<key>` instead of `/srv/fc/<key>`. Capture keys are fresh per
+   capture, so a key names an object in at most one of the two trees.
+3. **Publication.** On a node whose shared backend is local, the producer
+   publishes a runtime capture's four objects to the native tree only. A remote
+   backend (GCS) keeps receiving them: its `DoesNotExist`-conditioned writes
+   already exclude other writers, and other nodes must be able to restore.
+   Qualification capture keeps the canonical backend.
+4. **Restore.** vmmd resolves a snapshot object in the native tree first and
+   falls back to the canonical backend: restore staging
+   (`materializeFromStorage`, `probeRestoreLocalPath`) and the backing-identity
+   check. The local-path fast path is kept, so a native wake does not copy
+   memory.
+5. **Collection.** imaged stays the GC owner and decides what to delete, but
+   it cannot write the native tree. When an object it deletes exists in the
+   native tree, it asks vmmd to remove it with a new RPC,
+   `RetireNativeRuntimeSnapshotObject(storage_key)`. vmmd accepts only a v2
+   capture object key, unlinks it beneath the root without following links,
+   removes the capture's own directories once empty (never the shared
+   `captures/` directory a concurrent capture may be publishing into), and
+   treats a missing object as success, like `Delete`. imaged's orphan sweep also scans the native tree and retires the
+   objects of orphaned deployments the same way. Because vmmd is the only
+   writer, removing a key by name removes exactly what it published. That
+   closes decision 5's local gap for runtime captures: partial objects of a
+   failed capture are collected with their deployment.
+6. **Drift.** schedd's disk-drift sweep lists both trees and treats an object
+   as present if either tree has it.
+7. **Release skew.** The RPC is additive. An imaged that gets Unimplemented
+   keeps the row and retries on the next GC tick. Nodes without the setting
+   have no native tree, so imaged and schedd behave exactly as before.
+
+**Consequences.** On the local backend, the strict guarantee holds without
+native receipts on ordinary wakes: only vmmd can change a published runtime
+snapshot. GCS-backed nodes are unaffected; GCS deletion (decision 5) remains
+the prerequisite there.
+
 ## Rejected alternatives
 
 - **Remove the refusal and keep the ordinary capture under native recovery.**
@@ -189,3 +255,11 @@ On a native x86_64 KVM host, with `native_process_recovery` and
 - **Cold boot every wake of a strict-budget app.** Cold boot is the fallback
   (ADR-005), not the serving path; it misses the wake latency target and costs
   more per wake.
+- **Relax the exclusive writer for setgid group-writable directories
+  (Amendment 1).** imaged's group could then replace a runtime snapshot that an
+  ordinary wake restores without checking receipts. That is the trust the
+  legacy park path has today, not the guarantee native capture exists for.
+- **Give native runtime captures their own key prefix (Amendment 1).** The row
+  would say where the object lives, but schedd would have to learn each vmmd's
+  capture mode to choose the prefix. Keeping the keys moves the choice into
+  vmmd, the only writer.

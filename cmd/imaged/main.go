@@ -518,7 +518,12 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// matches /run/faas/vmmd.sock (ADR-015); operators can
 		// override with FAAS_VMM_SOCK for dev (e.g. a bufconn
 		// test on a Mac).
-		WithVMMClient(imaged.NewVMMClientWithTLS(vmmTarget, vmmTLS, log))
+		WithVMMClient(imaged.NewVMMClientWithTLS(vmmTarget, vmmTLS, log)).
+		// ADR 20261022184951 amendment 1: native runtime snapshots live in
+		// vmmd's private tree, which imaged only reads; vmmd removes them.
+		// An absent tree (every node without native runtime capture) leaves
+		// collection exactly as before.
+		WithNativeRuntimeSnapshotRoot(envOr("FAAS_NATIVE_RUNTIME_SNAPSHOT_ROOT", "/srv/fc/native-snap"))
 	releasePhaseEnabled, err := parseBoolEnv("FAAS_RELEASE_PHASE_ENABLED", getenv("FAAS_RELEASE_PHASE_ENABLED"))
 	if err != nil {
 		return err

@@ -97,6 +97,17 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 	}
 	v := (&JailerVMM{chrootBase: jail, fcName: "firecracker", storage: canonical}).
 		WithNativeImageStagingRoot(imagesRoot).WithNativeSnapshotPublicationRoot(intentRoot).WithNativeProcessRecovery()
+	// Runtime captures publish into a tree only vmmd writes (amendment 1),
+	// opened through the same private-root check vmmd runs at startup.
+	nativeRoot := filepath.Join(disk, "native-snap")
+	if runtimeCapture {
+		if err := os.Mkdir(nativeRoot, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := v.UseNativeRuntimeSnapshotRoot(nativeRoot); err != nil {
+			t.Fatal(err)
+		}
+	}
 	r := v.nativeRecovery
 	r.snapshotMemory = nativeModeledSnapshotMemoryBackend{} // This protocol peer has no real VM cgroup.
 	v.mountHelperPath = os.Getenv("FAAS_TEST_VMMD_BINARY")
@@ -293,7 +304,7 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 		spec.nativeRuntime.NativeGeneration = owner.Generation
 		info, captureErr := v.captureNativeRuntimeSnapshot(ctx, lease, spec)
 		join()
-		checkNativeMetalRuntimeCapture(t, ctx, v, canonical, objectRoot, intentRoot, lease, spec, outcome, info, captureErr, log.String())
+		checkNativeMetalRuntimeCapture(t, ctx, v, nativeRoot, objectRoot, intentRoot, lease, spec, outcome, info, captureErr, log.String())
 		return
 	}
 	incoming, err = q.read(lease.Instance)
@@ -387,11 +398,16 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 }
 
 // A completed runtime capture publishes the whole cohort under the scheduler's
-// keys and releases its producer bookkeeping. An uncertain one keeps its
-// durable start and intent, publishes nothing and refuses another capture.
-func checkNativeMetalRuntimeCapture(t *testing.T, ctx context.Context, v *JailerVMM, canonical storage.StorageBackend, objectRoot, intentRoot string, lease Lease, spec SnapshotSpec, outcome string, info SnapshotInfo, captureErr error, peerLog string) {
+// keys into the native tree, never the shared backend, and releases its
+// producer bookkeeping. An uncertain one keeps its durable start and intent,
+// publishes nothing and refuses another capture.
+func checkNativeMetalRuntimeCapture(t *testing.T, ctx context.Context, v *JailerVMM, nativeRoot, objectRoot, intentRoot string, lease Lease, spec SnapshotSpec, outcome string, info SnapshotInfo, captureErr error, peerLog string) {
 	t.Helper()
 	keys := nativeRuntimeCaptureKeys(spec.StorageKey)
+	native := v.nativeRuntimeSnapshots
+	if entries, err := os.ReadDir(objectRoot); err != nil || len(entries) != 0 {
+		t.Fatal("runtime capture wrote into the shared backend", err, entries)
+	}
 	record, recordErr := v.nativeRecovery.journal.runtimeCaptures().read(lease.Instance)
 	intents, err := os.ReadDir(intentRoot)
 	if err != nil {
@@ -402,7 +418,7 @@ func checkNativeMetalRuntimeCapture(t *testing.T, ctx context.Context, v *Jailer
 			t.Fatal("runtime capture sequence failed:", info, captureErr, peerLog)
 		}
 		for key, expected := range map[string]string{keys.Memory: "original-mem", keys.VMState: "original-vmstate", keys.Drive: "original-private-drive"} {
-			reader, err := canonical.Get(ctx, key)
+			reader, err := native.Get(ctx, key)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -411,7 +427,7 @@ func checkNativeMetalRuntimeCapture(t *testing.T, ctx context.Context, v *Jailer
 				t.Fatal("runtime cohort changed frozen/original bytes", key, string(body), err)
 			}
 		}
-		reader, err := canonical.Get(ctx, keys.Backing)
+		reader, err := native.Get(ctx, keys.Backing)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -435,7 +451,7 @@ func checkNativeMetalRuntimeCapture(t *testing.T, ctx context.Context, v *Jailer
 	if captureErr == nil || !info.IsZero() || peerLog != want {
 		t.Fatal("uncertain runtime control replayed or supplied completion:", info, captureErr, peerLog)
 	}
-	if entries, err := os.ReadDir(objectRoot); err != nil || len(entries) != 0 {
+	if entries, err := os.ReadDir(nativeRoot); err != nil || len(entries) != 0 {
 		t.Fatal("uncertain runtime control reached object publication", err, entries)
 	}
 	if recordErr != nil || !record.Capture.CompletedAt.IsZero() || len(intents) != 1 {

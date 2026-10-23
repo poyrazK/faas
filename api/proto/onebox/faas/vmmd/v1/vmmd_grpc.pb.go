@@ -60,6 +60,7 @@ const (
 	Vmmd_ThawInstance_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/ThawInstance"
 	Vmmd_WaitBuilderReady_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/WaitBuilderReady"
 	Vmmd_DeleteWarmSnapshot_FullMethodName                      = "/onebox.faas.vmmd.v1.Vmmd/DeleteWarmSnapshot"
+	Vmmd_RetireNativeRuntimeSnapshotObject_FullMethodName       = "/onebox.faas.vmmd.v1.Vmmd/RetireNativeRuntimeSnapshotObject"
 	Vmmd_FrameworkReady_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
 	Vmmd_Destroy_FullMethodName                                 = "/onebox.faas.vmmd.v1.Vmmd/Destroy"
 	Vmmd_GetOperatorRestartGeneration_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/GetOperatorRestartGeneration"
@@ -272,6 +273,11 @@ type VmmdClient interface {
 	// DeleteWarmSnapshot removes the two storage objects created by a builder
 	// warm capture. Missing objects are treated as an idempotent success.
 	DeleteWarmSnapshot(ctx context.Context, in *DeleteWarmSnapshotRequest, opts ...grpc.CallOption) (*DeleteWarmSnapshotResponse, error)
+	// RetireNativeRuntimeSnapshotObject removes one object of a native runtime
+	// capture from the tree only vmmd writes (ADR 20261022184951 amendment 1).
+	// imaged decides what to collect; vmmd accepts only a v2 capture object key
+	// and treats a missing object as success, like storage Delete.
+	RetireNativeRuntimeSnapshotObject(ctx context.Context, in *RetireNativeRuntimeSnapshotObjectRequest, opts ...grpc.CallOption) (*RetireNativeRuntimeSnapshotObjectResponse, error)
 	// FrameworkReady is the vmmd-side receipt of the guest-init
 	// "framework ready" vsock DGRAM (port 1027, msg=4) signal
 	// (issue #470, PR #470-FU-B). vmmd's host-side DGRAM listener
@@ -1052,6 +1058,16 @@ func (c *vmmdClient) DeleteWarmSnapshot(ctx context.Context, in *DeleteWarmSnaps
 	return out, nil
 }
 
+func (c *vmmdClient) RetireNativeRuntimeSnapshotObject(ctx context.Context, in *RetireNativeRuntimeSnapshotObjectRequest, opts ...grpc.CallOption) (*RetireNativeRuntimeSnapshotObjectResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RetireNativeRuntimeSnapshotObjectResponse)
+	err := c.cc.Invoke(ctx, Vmmd_RetireNativeRuntimeSnapshotObject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) FrameworkReady(ctx context.Context, in *FrameworkReadyRequest, opts ...grpc.CallOption) (*FrameworkReadyResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FrameworkReadyResponse)
@@ -1652,6 +1668,11 @@ type VmmdServer interface {
 	// DeleteWarmSnapshot removes the two storage objects created by a builder
 	// warm capture. Missing objects are treated as an idempotent success.
 	DeleteWarmSnapshot(context.Context, *DeleteWarmSnapshotRequest) (*DeleteWarmSnapshotResponse, error)
+	// RetireNativeRuntimeSnapshotObject removes one object of a native runtime
+	// capture from the tree only vmmd writes (ADR 20261022184951 amendment 1).
+	// imaged decides what to collect; vmmd accepts only a v2 capture object key
+	// and treats a missing object as success, like storage Delete.
+	RetireNativeRuntimeSnapshotObject(context.Context, *RetireNativeRuntimeSnapshotObjectRequest) (*RetireNativeRuntimeSnapshotObjectResponse, error)
 	// FrameworkReady is the vmmd-side receipt of the guest-init
 	// "framework ready" vsock DGRAM (port 1027, msg=4) signal
 	// (issue #470, PR #470-FU-B). vmmd's host-side DGRAM listener
@@ -2138,6 +2159,9 @@ func (UnimplementedVmmdServer) WaitBuilderReady(context.Context, *WaitBuilderRea
 }
 func (UnimplementedVmmdServer) DeleteWarmSnapshot(context.Context, *DeleteWarmSnapshotRequest) (*DeleteWarmSnapshotResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteWarmSnapshot not implemented")
+}
+func (UnimplementedVmmdServer) RetireNativeRuntimeSnapshotObject(context.Context, *RetireNativeRuntimeSnapshotObjectRequest) (*RetireNativeRuntimeSnapshotObjectResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RetireNativeRuntimeSnapshotObject not implemented")
 }
 func (UnimplementedVmmdServer) FrameworkReady(context.Context, *FrameworkReadyRequest) (*FrameworkReadyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FrameworkReady not implemented")
@@ -2916,6 +2940,24 @@ func _Vmmd_DeleteWarmSnapshot_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).DeleteWarmSnapshot(ctx, req.(*DeleteWarmSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_RetireNativeRuntimeSnapshotObject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RetireNativeRuntimeSnapshotObjectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RetireNativeRuntimeSnapshotObject(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RetireNativeRuntimeSnapshotObject_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RetireNativeRuntimeSnapshotObject(ctx, req.(*RetireNativeRuntimeSnapshotObjectRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3745,6 +3787,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteWarmSnapshot",
 			Handler:    _Vmmd_DeleteWarmSnapshot_Handler,
+		},
+		{
+			MethodName: "RetireNativeRuntimeSnapshotObject",
+			Handler:    _Vmmd_RetireNativeRuntimeSnapshotObject_Handler,
 		},
 		{
 			MethodName: "FrameworkReady",

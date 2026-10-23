@@ -955,6 +955,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.NativeProcessRecovery {
 		jailer.WithNativeProcessRecovery()
 	}
+	if cfg.NativeRuntimeSnapshotRoot != "" {
+		if err := jailer.UseNativeRuntimeSnapshotRoot(cfg.NativeRuntimeSnapshotRoot); err != nil {
+			return err
+		}
+	}
 	if cfg.NativeRuntimeCapture {
 		jailer.WithNativeRuntimeCapture()
 	}

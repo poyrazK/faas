@@ -172,6 +172,9 @@ type Harness struct {
 	scheddEnv        []string
 	scheddConfigPath string
 	vmmdLaunchEnv    []string
+	// nativeRuntimeSnapshotRoot is vmmd's private tree for native runtime
+	// snapshots when the run enables them (ADR 20261022184951 amendment 1).
+	nativeRuntimeSnapshotRoot string
 	// apidEnv/listen/socket retain the launch recipe for restart durability
 	// tests that exercise persistent control-plane state across apid lifetimes.
 	apidEnv              []string
@@ -345,7 +348,17 @@ failure_report_dir = %q
 			// Strict budgets need the native owner; their apps must still park
 			// and wake from snapshots (ADR 20261022184951).
 			if os.Getenv("FAAS_FINANCIAL_SYSTEM_ACCEPTANCE") == "1" {
-				cfg += "native_runtime_capture = true\n"
+				// They publish into a tree only vmmd writes (amendment 1);
+				// vmmd refuses a root with group write or other access.
+				snapshots := filepath.Join(tmp, "native-snap")
+				if err := os.Mkdir(snapshots, 0o750); err != nil {
+					t.Fatalf("e2etest: create native runtime snapshot root: %v", err)
+				}
+				if err := os.Chmod(snapshots, 0o750); err != nil {
+					t.Fatalf("e2etest: restrict native runtime snapshot root: %v", err)
+				}
+				h.nativeRuntimeSnapshotRoot = snapshots
+				cfg += fmt.Sprintf("native_runtime_capture = true\nnative_runtime_snapshot_root = %q\n", snapshots)
 			}
 		}
 		if which&VMMDMetrics != 0 {
@@ -379,6 +392,7 @@ failure_report_dir = %q
 		env := append(testEnvCommon(dbURL),
 			"FAAS_SCHEDD_CONFIG="+cfgPath,
 			"FAAS_SIGN_PUB="+signPubPath,
+			h.nativeRuntimeSnapshotEnv(tmp),
 		)
 		env = append(env, extraEnv...)
 		h.scheddConfigPath = cfgPath
@@ -899,6 +913,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		env := append(testEnvCommon(dbURL),
 			"FAAS_SCHEDD_CONFIG="+cfgPath,
 			"FAAS_SIGN_PUB="+signPubPath,
+			h.nativeRuntimeSnapshotEnv(tmp),
 		)
 		env = append(env, extraEnv...)
 		h.scheddConfigPath = cfgPath
@@ -3156,6 +3171,7 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 		env = append(env, "FAAS_API_HOSTING_SMOKE_URL="+h.GatewayURL)
 		env = append(env, "FAAS_APPS_DOMAIN="+testDomain)
 	}
+	env = append(env, h.nativeRuntimeSnapshotEnv(tmp))
 	// extraEnv last so a caller can override a harness default — a test
 	// that needs FAAS_STORAGE_ROOT somewhere writable, for instance.
 	env = append(env, extraEnv...)
@@ -3196,4 +3212,15 @@ func harnessGuestInit(tmp, configured, kernel string) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+// nativeRuntimeSnapshotEnv points imaged and schedd at this run's native
+// runtime snapshot tree. Runs without one get a path that never exists, so a
+// host's own /srv/fc/native-snap never enters a test.
+func (h *Harness) nativeRuntimeSnapshotEnv(tmp string) string {
+	root := h.nativeRuntimeSnapshotRoot
+	if root == "" {
+		root = filepath.Join(tmp, "native-snap")
+	}
+	return "FAAS_NATIVE_RUNTIME_SNAPSHOT_ROOT=" + root
 }

@@ -46,6 +46,13 @@ type Config struct {
 	// requires native process recovery and both private roots above, and
 	// stays off until native capture acceptance passes.
 	NativeRuntimeCapture bool `toml:"native_runtime_capture"`
+	// NativeRuntimeSnapshotRoot is the pre-created tree native runtime
+	// captures publish to (ADR 20261022184951 amendment 1): owned by vmmd's
+	// uid, no group write and no access for others (production
+	// /srv/fc/native-snap, 2750 root:faas). NativeRuntimeCapture requires it.
+	// Keep it configured after turning capture off: restores and collection
+	// still read the snapshots it holds.
+	NativeRuntimeSnapshotRoot string `toml:"native_runtime_snapshot_root"`
 	// ResourceJournalDir persists lease intent and process incarnations before
 	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
 	ResourceJournalDir string `toml:"resource_journal_dir"`
@@ -911,11 +918,14 @@ func validateNativeSnapshotPublicationConfig(nativeRecovery bool, root string) e
 // The native producer needs its publication journal and persistent output
 // staging; without them every capture would refuse at preflight.
 func validateNativeRuntimeCaptureConfig(c *Config) error {
+	if root := c.NativeRuntimeSnapshotRoot; root != "" && (!filepath.IsAbs(root) || filepath.Clean(root) != root || root == string(filepath.Separator)) {
+		return errors.New("vmmd: native_runtime_snapshot_root must be a clean absolute non-root path")
+	}
 	if !c.NativeRuntimeCapture {
 		return nil
 	}
-	if !c.NativeProcessRecovery || c.NativeSnapshotPublicationRoot == "" || c.NativeImageStagingRoot == "" {
-		return errors.New("vmmd: native_runtime_capture requires native_process_recovery = true, native_snapshot_publication_root and native_image_staging_root")
+	if !c.NativeProcessRecovery || c.NativeSnapshotPublicationRoot == "" || c.NativeImageStagingRoot == "" || c.NativeRuntimeSnapshotRoot == "" {
+		return errors.New("vmmd: native_runtime_capture requires native_process_recovery = true, native_snapshot_publication_root, native_image_staging_root and native_runtime_snapshot_root")
 	}
 	return nil
 }

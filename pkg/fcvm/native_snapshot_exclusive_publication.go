@@ -14,7 +14,10 @@ import (
 // This preflight grants no pause, output completion or publication receipt. The
 // complete capture producer must use it before its first Firecracker effect.
 func (v *JailerVMM) preflightNativeSnapshotPublication(ctx context.Context, lease Lease) (keys state.EnvironmentQualificationSnapshot, err error) {
-	backend := v.storage
+	backend, err := v.nativeSnapshotPublicationBackend(ctx)
+	if err != nil {
+		return keys, err
+	}
 	if p, ok := ctx.Value(nativeSnapshotPublicationContextKey{}).(nativeSnapshotPublicationPermit); ok {
 		backend = p.backend
 	}

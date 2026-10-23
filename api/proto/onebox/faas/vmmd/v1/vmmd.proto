@@ -200,6 +200,12 @@ service Vmmd {
   // warm capture. Missing objects are treated as an idempotent success.
   rpc DeleteWarmSnapshot(DeleteWarmSnapshotRequest) returns (DeleteWarmSnapshotResponse);
 
+  // RetireNativeRuntimeSnapshotObject removes one object of a native runtime
+  // capture from the tree only vmmd writes (ADR 20261022184951 amendment 1).
+  // imaged decides what to collect; vmmd accepts only a v2 capture object key
+  // and treats a missing object as success, like storage Delete.
+  rpc RetireNativeRuntimeSnapshotObject(RetireNativeRuntimeSnapshotObjectRequest) returns (RetireNativeRuntimeSnapshotObjectResponse);
+
   // FrameworkReady is the vmmd-side receipt of the guest-init
   // "framework ready" vsock DGRAM (port 1027, msg=4) signal
   // (issue #470, PR #470-FU-B). vmmd's host-side DGRAM listener
@@ -2488,6 +2494,13 @@ message DeleteWarmSnapshotRequest {
 message DeleteWarmSnapshotResponse {
   bool deleted = 1;
 }
+
+message RetireNativeRuntimeSnapshotObjectRequest {
+  // One of a v2 capture's memory, device state, drive or backing keys.
+  string storage_key = 1;
+}
+
+message RetireNativeRuntimeSnapshotObjectResponse {}
 
 // ExecuteExecution is the post-restore host/guest execution envelope. The
 // request is validated again at vmmd even though apid/schedd already admitted

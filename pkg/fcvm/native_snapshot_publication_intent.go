@@ -137,7 +137,10 @@ func (v *JailerVMM) beginNativeSnapshotPublication(ctx context.Context, lease Le
 	if r == nil || r.publications == nil {
 		return ctx, errors.New("native snapshot publication: persistent intent adapter is unavailable")
 	}
-	backend := v.storage
+	backend, err := v.nativeSnapshotPublicationBackend(ctx)
+	if err != nil {
+		return ctx, err
+	}
 	if _, ok := r.publications.(nativeSnapshotPublicationReceiptJournal); !ok {
 		return ctx, errors.New("native snapshot publication: original receipt journal is unavailable")
 	}

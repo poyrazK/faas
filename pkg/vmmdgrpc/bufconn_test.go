@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/qualificationwire"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -85,6 +86,7 @@ type fakeVMM struct {
 	frameworkReadyFn     func(ctx context.Context, instance string, warmupMs int64) (bool, string, string, error)
 	waitBuilderReadyFn   func(ctx context.Context, instance string, deadline time.Duration) (bool, int32, error)
 	deleteWarmSnapshotFn func(ctx context.Context, storageKey, vmstateStorageKey string) error
+	retireNativeObjectFn func(ctx context.Context, storageKey string) error
 	jobBootFn            func(context.Context, fcvm.JobBootRequest) (*fcvm.Instance, error)
 	qualificationJobFn   func(context.Context, state.EnvironmentQualificationExecution, fcvm.JobBootRequest) (*fcvm.Instance, error)
 	jobExitFn            func(context.Context, string, time.Duration) (fcvm.JobExitPayload, error)
@@ -158,6 +160,13 @@ func (f *fakeVMM) WaitBuilderReady(ctx context.Context, instance string, deadlin
 func (f *fakeVMM) DeleteWarmSnapshot(ctx context.Context, storageKey, vmstateStorageKey string) error {
 	if f.deleteWarmSnapshotFn != nil {
 		return f.deleteWarmSnapshotFn(ctx, storageKey, vmstateStorageKey)
+	}
+	return nil
+}
+
+func (f *fakeVMM) RetireNativeRuntimeSnapshotObject(ctx context.Context, storageKey string) error {
+	if f.retireNativeObjectFn != nil {
+		return f.retireNativeObjectFn(ctx, storageKey)
 	}
 	return nil
 }
@@ -810,6 +819,34 @@ func TestDeleteWarmSnapshot_RoundTrip(t *testing.T) {
 	_, err = cli.DeleteWarmSnapshot(context.Background(), &vmmdpb.DeleteWarmSnapshotRequest{StorageKey: "snap/builder/mem"})
 	if code := status.Code(err); code != codes.InvalidArgument {
 		t.Fatalf("missing vmstate code = %v, want InvalidArgument", code)
+	}
+}
+
+// adr: 20261022184951 — imaged collects native runtime snapshots through vmmd.
+func TestRetireNativeRuntimeSnapshotObject_MapsRefusals(t *testing.T) {
+	var got string
+	failure := error(nil)
+	f := &fakeVMM{retireNativeObjectFn: func(_ context.Context, storageKey string) error {
+		got = storageKey
+		return failure
+	}}
+	cli, _ := newServer(t, f)
+	const key = "snap/0b5f5ae4-0f0e-4c51-9d55-1b1d0b8e6a11/captures/3c8f2b1e-9d4a-4c6b-8f0e-2a7d5c9b1e33/v2/mem"
+	if _, err := cli.RetireNativeRuntimeSnapshotObject(context.Background(), &vmmdpb.RetireNativeRuntimeSnapshotObjectRequest{StorageKey: key}); err != nil || got != key {
+		t.Fatalf("retire = %v, key %q", err, got)
+	}
+	for _, tc := range []struct {
+		err  error
+		want codes.Code
+	}{
+		{err: fmt.Errorf("retire: %w", storage.ErrInvalidKey), want: codes.InvalidArgument},
+		{err: fcvm.ErrNativeRuntimeSnapshotRootUnset, want: codes.Unimplemented},
+	} {
+		failure = tc.err
+		_, err := cli.RetireNativeRuntimeSnapshotObject(context.Background(), &vmmdpb.RetireNativeRuntimeSnapshotObjectRequest{StorageKey: key})
+		if code := status.Code(err); code != tc.want {
+			t.Fatalf("%v: code = %v, want %v", tc.err, code, tc.want)
+		}
 	}
 }
 
