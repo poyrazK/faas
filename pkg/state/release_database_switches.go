@@ -327,6 +327,9 @@ func validDatabaseSwitchProgress(sw DatabaseSwitch) error {
 	if sw.ActivatedAt != nil && sw.Phase != DatabaseSwitchSwitching && sw.Phase != DatabaseSwitchResuming && sw.Phase != DatabaseSwitchCompleted {
 		return ErrInvalidArgument
 	}
+	if sw.Phase == DatabaseSwitchCompleted && (sw.ActivatedAt == nil || sw.ReleaseSwitchedAt == nil || sw.TargetDatabaseID == "" || sw.CutoverID == "") {
+		return ErrInvalidArgument
+	}
 	return nil
 }
 
