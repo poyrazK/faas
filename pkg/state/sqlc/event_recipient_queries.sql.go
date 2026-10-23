@@ -16,7 +16,7 @@ SELECT count(*)::bigint AS account_count,
  count(*) FILTER (WHERE s.app_id=$1::uuid)::bigint AS app_count,
  count(*) FILTER (WHERE s.app_id=$1::uuid AND s.subscription_id=$2::text)::bigint AS consumer_count
 FROM event_delivery_slots s JOIN invocations i ON i.id=s.invocation_id
-WHERE s.account_id=$3::uuid AND i.state IN ('pending','dispatching')
+WHERE s.account_id=$3::uuid AND s.live AND i.state IN ('pending','dispatching')
  AND NOT ($4::boolean AND i.state='pending' AND i.app_id=$1::uuid
    AND coalesce(i.work_policy_name,'')=$5::text AND i.work_key_digest=$6::bytea)
 `
@@ -36,6 +36,8 @@ type EventDeliveryCountsRow struct {
 	ConsumerCount int64
 }
 
+// Reads the account's live slots (event_delivery_slots_live), not its whole
+// delivery history; the invocation's state still decides.
 func (q *Queries) EventDeliveryCounts(ctx context.Context, db DBTX, arg EventDeliveryCountsParams) (EventDeliveryCountsRow, error) {
 	row := db.QueryRow(ctx, eventDeliveryCounts,
 		arg.AppID,

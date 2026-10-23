@@ -321,11 +321,13 @@ VALUES (sqlc.arg(account_id)::uuid,sqlc.arg(consumer_limit)::integer,sqlc.arg(ap
 ON CONFLICT (account_id) DO UPDATE SET consumer_limit=excluded.consumer_limit,app_limit=excluded.app_limit,account_limit=excluded.account_limit;
 
 -- name: EventDeliveryCounts :one
+-- Reads the account's live slots (event_delivery_slots_live), not its whole
+-- delivery history; the invocation's state still decides.
 SELECT count(*)::bigint AS account_count,
  count(*) FILTER (WHERE s.app_id=sqlc.arg(app_id)::uuid)::bigint AS app_count,
  count(*) FILTER (WHERE s.app_id=sqlc.arg(app_id)::uuid AND s.subscription_id=sqlc.arg(subscription_id)::text)::bigint AS consumer_count
 FROM event_delivery_slots s JOIN invocations i ON i.id=s.invocation_id
-WHERE s.account_id=sqlc.arg(account_id)::uuid AND i.state IN ('pending','dispatching')
+WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.live AND i.state IN ('pending','dispatching')
  AND NOT (sqlc.arg(replace_pending)::boolean AND i.state='pending' AND i.app_id=sqlc.arg(app_id)::uuid
    AND coalesce(i.work_policy_name,'')=sqlc.arg(policy_name)::text AND i.work_key_digest=sqlc.arg(key_digest)::bytea);
 
