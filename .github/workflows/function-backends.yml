@@ -152,6 +152,25 @@ jobs:
         run: |
           umask 022
           go test -p 1 -race ./guest/runners/... ./pkg/rootfs -count=1 -timeout=3m
+      - name: TEMPORARY repeat TestFunctionResourcesPostgres for flake evidence
+        if: ${{ !cancelled() }}
+        env:
+          DATABASE_URL: postgres://faas:function_fixture@127.0.0.1:5432/faas?sslmode=require
+          NODE_EXTRA_CA_CERTS: ${{ runner.temp }}/function-sql/ca.pem
+          FAAS_TEST_FUNCTION_POSTGRES: '1'
+        run: |
+          umask 022
+          failed=0
+          for i in $(seq 1 12); do
+            echo "::group::package run $i"
+            go test -p 1 -race ./guest/runners/internal -count=1 -timeout=3m > "$RUNNER_TEMP/run-$i.log" 2>&1 || { failed=$((failed+1)); echo "::error::package run $i failed"; grep -E 'FAIL|cycle|witness|panic' "$RUNNER_TEMP/run-$i.log" | head -40; }
+            tail -3 "$RUNNER_TEMP/run-$i.log"
+            echo "::endgroup::"
+          done
+          go test -p 1 -race ./guest/runners/internal -run '^TestFunctionResourcesPostgres$' -count=40 -timeout=20m > "$RUNNER_TEMP/isolated.log" 2>&1 || { failed=$((failed+1)); echo "::error::isolated runs failed"; grep -E 'FAIL|cycle|witness|panic' "$RUNNER_TEMP/isolated.log" | head -60; }
+          tail -3 "$RUNNER_TEMP/isolated.log"
+          echo "failed=$failed"
+          test "$failed" = 0
       - name: execution ownership and checkpoint admission race checks
         env:
           DATABASE_URL: postgres://faas:function_fixture@127.0.0.1:5432/faas?sslmode=require
