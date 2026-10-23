@@ -4945,6 +4945,29 @@ func (q *Queries) ClaimClonePostgresMaintenanceDispatch(ctx context.Context, db 
 	return i, err
 }
 
+const claimComputeNodeVMMDEpoch = `-- name: ClaimComputeNodeVMMDEpoch :one
+UPDATE compute_nodes SET vmmd_epoch=vmmd_epoch+1,
+vmmd_predecessor_incarnation=vmmd_epoch_incarnation,
+vmmd_epoch_incarnation=$1::uuid
+WHERE id=$2::uuid AND vmmd_epoch=$3::bigint
+RETURNING vmmd_epoch
+`
+
+type ClaimComputeNodeVMMDEpochParams struct {
+	Incarnation   pgtype.UUID
+	NodeID        pgtype.UUID
+	ExpectedEpoch int64
+}
+
+// Compare-and-swap: the claim succeeds only from the epoch the claimant read,
+// so two vmmd processes can never both hold the node's next epoch.
+func (q *Queries) ClaimComputeNodeVMMDEpoch(ctx context.Context, db DBTX, arg ClaimComputeNodeVMMDEpochParams) (int64, error) {
+	row := db.QueryRow(ctx, claimComputeNodeVMMDEpoch, arg.Incarnation, arg.NodeID, arg.ExpectedEpoch)
+	var vmmd_epoch int64
+	err := row.Scan(&vmmd_epoch)
+	return vmmd_epoch, err
+}
+
 const claimCustomerOperationBlobCleanup = `-- name: ClaimCustomerOperationBlobCleanup :one
 WITH candidate AS (
  SELECT b.id FROM customer_operation_result_blobs b
@@ -7318,6 +7341,19 @@ func (q *Queries) ClearApplicationStandardControlBindings(ctx context.Context, d
 	return err
 }
 
+const clearComputeNodeVMMDRestartNotice = `-- name: ClearComputeNodeVMMDRestartNotice :execrows
+UPDATE compute_nodes SET vmmd_restart_notice_until=NULL
+WHERE id=$1::uuid AND vmmd_restart_notice_until IS NOT NULL
+`
+
+func (q *Queries) ClearComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX, nodeID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, clearComputeNodeVMMDRestartNotice, nodeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearInstanceRuntimeConfigReceipt = `-- name: ClearInstanceRuntimeConfigReceipt :exec
 DELETE FROM instance_runtime_config_receipts WHERE instance_id = $1::uuid
 `
@@ -9465,6 +9501,25 @@ func (q *Queries) CompleteWorkflowJoin(ctx context.Context, db DBTX, arg Complet
 		arg.StepName,
 	)
 	return err
+}
+
+const computeNodeVMMDEpoch = `-- name: ComputeNodeVMMDEpoch :one
+SELECT vmmd_epoch, vmmd_epoch_incarnation, vmmd_predecessor_incarnation
+FROM compute_nodes WHERE id=$1::uuid
+`
+
+type ComputeNodeVMMDEpochRow struct {
+	VmmdEpoch                  int64
+	VmmdEpochIncarnation       pgtype.UUID
+	VmmdPredecessorIncarnation pgtype.UUID
+}
+
+// vmmd restart adoption ADR §3: the node's current ownership epoch.
+func (q *Queries) ComputeNodeVMMDEpoch(ctx context.Context, db DBTX, nodeID pgtype.UUID) (ComputeNodeVMMDEpochRow, error) {
+	row := db.QueryRow(ctx, computeNodeVMMDEpoch, nodeID)
+	var i ComputeNodeVMMDEpochRow
+	err := row.Scan(&i.VmmdEpoch, &i.VmmdEpochIncarnation, &i.VmmdPredecessorIncarnation)
+	return i, err
 }
 
 const consumeCustomerOperationWorkflowGuest = `-- name: ConsumeCustomerOperationWorkflowGuest :execrows
@@ -22804,7 +22859,8 @@ func (q *Queries) GetApplicationStandardRuntimeRefresh(ctx context.Context, db D
 }
 
 const getApplicationStandardSnapshotCapture = `-- name: GetApplicationStandardSnapshotCapture :one
-SELECT expected_state,grant_data,acknowledgment,created_at,received_at FROM application_standard_snapshot_captures
+SELECT expected_state,grant_data,acknowledgment,created_at,received_at,
+ coalesce(producer_incarnation::text,'')::text AS producer_incarnation FROM application_standard_snapshot_captures
 WHERE token=$1::uuid AND account_id=$2::uuid
  AND app_id=$3::uuid AND deployment_id=$4::uuid
 `
@@ -22817,11 +22873,12 @@ type GetApplicationStandardSnapshotCaptureParams struct {
 }
 
 type GetApplicationStandardSnapshotCaptureRow struct {
-	ExpectedState  string
-	GrantData      []byte
-	Acknowledgment []byte
-	CreatedAt      pgtype.Timestamptz
-	ReceivedAt     pgtype.Timestamptz
+	ExpectedState       string
+	GrantData           []byte
+	Acknowledgment      []byte
+	CreatedAt           pgtype.Timestamptz
+	ReceivedAt          pgtype.Timestamptz
+	ProducerIncarnation string
 }
 
 func (q *Queries) GetApplicationStandardSnapshotCapture(ctx context.Context, db DBTX, arg GetApplicationStandardSnapshotCaptureParams) (GetApplicationStandardSnapshotCaptureRow, error) {
@@ -22838,6 +22895,7 @@ func (q *Queries) GetApplicationStandardSnapshotCapture(ctx context.Context, db 
 		&i.Acknowledgment,
 		&i.CreatedAt,
 		&i.ReceivedAt,
+		&i.ProducerIncarnation,
 	)
 	return i, err
 }
@@ -23215,7 +23273,7 @@ SELECT r.receipt::jsonb AS receipt,coalesce(i.state IN ('running','snapshotting'
  AND r.receipt->'binding'->>'deployment_id'=i.deployment_id::text
  AND r.receipt->'binding'->>'account_id'=a.input_snapshot->>'account_id'
  AND r.receipt->'binding'->>'node_id'=i.node_id::text
- AND r.receipt->'binding'->>'incarnation'=n.vmmd_incarnation::text
+ AND application_standard_effective_incarnation(i.id,r.receipt->'binding'->>'incarnation')=n.vmmd_incarnation::text
  AND (r.receipt->'binding'->>'protocol_version')::integer<=n.vmmd_admission_protocol
  AND r.receipt->'binding'->>'captured_input_hash'=application_standard_native_input_hash(a.input_snapshot,i.node_id)
  AND r.receipt->>'netns'=i.netns AND r.receipt->>'host_ip'=host(i.host_ip)
@@ -28193,6 +28251,37 @@ func (q *Queries) InsertApplicationStandardOperationTarget(ctx context.Context, 
 		arg.Position,
 		arg.ApprovedApp,
 		arg.Now,
+	)
+	return err
+}
+
+const insertApplicationStandardRebind = `-- name: InsertApplicationStandardRebind :exec
+INSERT INTO instance_application_standard_rebinds (instance_id, node_id, from_incarnation, to_incarnation, vmmd_epoch, observed)
+VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+ $5::bigint, $6::jsonb)
+`
+
+type InsertApplicationStandardRebindParams struct {
+	InstanceID      pgtype.UUID
+	NodeID          pgtype.UUID
+	FromIncarnation pgtype.UUID
+	ToIncarnation   pgtype.UUID
+	VmmdEpoch       int64
+	Observed        []byte
+}
+
+// ADR-595 extension: an admitted runtime survives a vmmd restart. The
+// trigger admits only the node's current holder, extending the
+// admission's current one, for an instance whose residency equals its
+// receipt.
+func (q *Queries) InsertApplicationStandardRebind(ctx context.Context, db DBTX, arg InsertApplicationStandardRebindParams) error {
+	_, err := db.Exec(ctx, insertApplicationStandardRebind,
+		arg.InstanceID,
+		arg.NodeID,
+		arg.FromIncarnation,
+		arg.ToIncarnation,
+		arg.VmmdEpoch,
+		arg.Observed,
 	)
 	return err
 }
@@ -39667,6 +39756,58 @@ func (q *Queries) ListActiveTCPListeners(ctx context.Context, db DBTX) ([]AppTcp
 	return items, nil
 }
 
+const listAdoptionReportInstancesOnNode = `-- name: ListAdoptionReportInstancesOnNode :many
+SELECT id, coalesce(app_id::text, '')::text AS app_id, coalesce(deployment_id::text, '')::text AS deployment_id,
+state, wake_id, started_at, mode
+FROM instances WHERE node_id=$1::uuid AND state IN ('running', 'frozen')
+ORDER BY id LIMIT $2::int
+`
+
+type ListAdoptionReportInstancesOnNodeParams struct {
+	NodeID   pgtype.UUID
+	RowLimit int32
+}
+
+type ListAdoptionReportInstancesOnNodeRow struct {
+	ID           pgtype.UUID
+	AppID        string
+	DeploymentID string
+	State        string
+	WakeID       pgtype.UUID
+	StartedAt    pgtype.Timestamptz
+	Mode         string
+}
+
+// The rows a vmmd adoption report settles: RUNNING and FROZEN on the node.
+// Read only after the node's epoch moves, so a scan of the live set is fine.
+func (q *Queries) ListAdoptionReportInstancesOnNode(ctx context.Context, db DBTX, arg ListAdoptionReportInstancesOnNodeParams) ([]ListAdoptionReportInstancesOnNodeRow, error) {
+	rows, err := db.Query(ctx, listAdoptionReportInstancesOnNode, arg.NodeID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAdoptionReportInstancesOnNodeRow{}
+	for rows.Next() {
+		var i ListAdoptionReportInstancesOnNodeRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.State,
+			&i.WakeID,
+			&i.StartedAt,
+			&i.Mode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAlertRollbacks = `-- name: ListAlertRollbacks :many
 SELECT r.receipt FROM alert_rollback_actions r JOIN apps a ON a.id=r.app_id
  WHERE a.id=$1 AND a.account_id=$2 AND r.receipt->>'account_id'=a.account_id::text AND a.status<>'deleted'
@@ -41533,6 +41674,7 @@ func (q *Queries) ListApplicationStandardObservationArtifacts(ctx context.Contex
 
 const listApplicationStandardObservationSnapshots = `-- name: ListApplicationStandardObservationSnapshots :many
 SELECT s.id,c.input_snapshot,c.grant_data,c.acknowledgment,c.expected_state,c.created_at,c.received_at,
+ coalesce(c.producer_incarnation::text,'')::text AS producer_incarnation,
  coalesce(application_standard_snapshot_catalog_matches(s,c),false)::boolean AS catalog_matches,
  (n.last_heartbeat_at+make_interval(secs=>$1::double precision))::timestamptz AS heartbeat_until
  FROM snapshots s LEFT JOIN application_standard_snapshot_captures c ON c.token=s.application_standard_capture_token
@@ -41546,15 +41688,16 @@ type ListApplicationStandardObservationSnapshotsParams struct {
 }
 
 type ListApplicationStandardObservationSnapshotsRow struct {
-	ID             pgtype.UUID
-	InputSnapshot  []byte
-	GrantData      []byte
-	Acknowledgment []byte
-	ExpectedState  pgtype.Text
-	CreatedAt      pgtype.Timestamptz
-	ReceivedAt     pgtype.Timestamptz
-	CatalogMatches bool
-	HeartbeatUntil pgtype.Timestamptz
+	ID                  pgtype.UUID
+	InputSnapshot       []byte
+	GrantData           []byte
+	Acknowledgment      []byte
+	ExpectedState       pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+	ReceivedAt          pgtype.Timestamptz
+	ProducerIncarnation string
+	CatalogMatches      bool
+	HeartbeatUntil      pgtype.Timestamptz
 }
 
 func (q *Queries) ListApplicationStandardObservationSnapshots(ctx context.Context, db DBTX, arg ListApplicationStandardObservationSnapshotsParams) ([]ListApplicationStandardObservationSnapshotsRow, error) {
@@ -41574,6 +41717,7 @@ func (q *Queries) ListApplicationStandardObservationSnapshots(ctx context.Contex
 			&i.ExpectedState,
 			&i.CreatedAt,
 			&i.ReceivedAt,
+			&i.ProducerIncarnation,
 			&i.CatalogMatches,
 			&i.HeartbeatUntil,
 		); err != nil {
@@ -41615,6 +41759,41 @@ func (q *Queries) ListApplicationStandardPublishers(ctx context.Context, db DBTX
 			&i.PublicKeyDer,
 			&i.Fingerprint,
 			&i.CreatedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listApplicationStandardRebinds = `-- name: ListApplicationStandardRebinds :many
+SELECT instance_id, node_id, from_incarnation, to_incarnation, vmmd_epoch, observed, created_at
+FROM instance_application_standard_rebinds
+WHERE instance_id = $1::uuid
+ORDER BY created_at, from_incarnation
+`
+
+func (q *Queries) ListApplicationStandardRebinds(ctx context.Context, db DBTX, instanceID pgtype.UUID) ([]InstanceApplicationStandardRebind, error) {
+	rows, err := db.Query(ctx, listApplicationStandardRebinds, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []InstanceApplicationStandardRebind{}
+	for rows.Next() {
+		var i InstanceApplicationStandardRebind
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.NodeID,
+			&i.FromIncarnation,
+			&i.ToIncarnation,
+			&i.VmmdEpoch,
+			&i.Observed,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -42362,6 +42541,36 @@ func (q *Queries) ListComputeNodeHeartbeats(ctx context.Context, db DBTX, arg Li
 			&i.LastHeartbeatAt,
 			&i.Source,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listComputeNodeVMMDRestartNotices = `-- name: ListComputeNodeVMMDRestartNotices :many
+SELECT id, vmmd_restart_notice_until FROM compute_nodes
+WHERE vmmd_restart_notice_until > clock_timestamp()
+`
+
+type ListComputeNodeVMMDRestartNoticesRow struct {
+	ID                     pgtype.UUID
+	VmmdRestartNoticeUntil pgtype.Timestamptz
+}
+
+func (q *Queries) ListComputeNodeVMMDRestartNotices(ctx context.Context, db DBTX) ([]ListComputeNodeVMMDRestartNoticesRow, error) {
+	rows, err := db.Query(ctx, listComputeNodeVMMDRestartNotices)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListComputeNodeVMMDRestartNoticesRow{}
+	for rows.Next() {
+		var i ListComputeNodeVMMDRestartNoticesRow
+		if err := rows.Scan(&i.ID, &i.VmmdRestartNoticeUntil); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -91740,6 +91949,26 @@ type SetCommitSourceEnabledParams struct {
 func (q *Queries) SetCommitSourceEnabled(ctx context.Context, db DBTX, arg SetCommitSourceEnabledParams) error {
 	_, err := db.Exec(ctx, setCommitSourceEnabled, arg.Enabled, arg.AccountID, arg.SourceID)
 	return err
+}
+
+const setComputeNodeVMMDRestartNotice = `-- name: SetComputeNodeVMMDRestartNotice :execrows
+UPDATE compute_nodes SET vmmd_restart_notice_until=clock_timestamp()+make_interval(secs=>$1::int)
+WHERE id=$2::uuid
+`
+
+type SetComputeNodeVMMDRestartNoticeParams struct {
+	Seconds int32
+	NodeID  pgtype.UUID
+}
+
+// vmmd restart adoption ADR §3: a vmmd stopping for a planned restart tells
+// schedd so it retries wakes and counts no heartbeat failures meanwhile.
+func (q *Queries) SetComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX, arg SetComputeNodeVMMDRestartNoticeParams) (int64, error) {
+	result, err := db.Exec(ctx, setComputeNodeVMMDRestartNotice, arg.Seconds, arg.NodeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setCrashSnapshotSettings = `-- name: SetCrashSnapshotSettings :one
