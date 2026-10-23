@@ -122,7 +122,7 @@ func (e testEnv) addAdminSession(t *testing.T, req *http.Request) {
 	if e.s == nil || e.s.sessions == nil || e.store == nil {
 		t.Fatal("admin session helper requires a server, session manager, and store")
 	}
-	enrollOperatorForTest(t, e.store, e.acct.ID)
+	enrollOperatorForTest(req.Context(), t, e.store, e.acct.ID)
 	sid := uuid.NewString()
 	if _, err := e.store.CreateSession(req.Context(), sid, e.acct.ID, "192.0.2.10", "admin-test-ua"); err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -144,9 +144,8 @@ type operatorEnroller interface {
 // enrollOperatorForTest gives a test operator a confirmed authenticator:
 // operator sessions must belong to an enrolled operator (ADR
 // 20261023214253). An account that is already enrolled keeps its secret.
-func enrollOperatorForTest(t *testing.T, store operatorEnroller, accountID string) {
+func enrollOperatorForTest(ctx context.Context, t *testing.T, store operatorEnroller, accountID string) {
 	t.Helper()
-	ctx := context.Background()
 	acct, err := store.AccountByID(ctx, accountID)
 	if err != nil {
 		t.Fatalf("AccountByID: %v", err)

@@ -227,7 +227,7 @@ func newForceHarness(t *testing.T, fake *fakeStoreForIntent) (*server, *state.Me
 	if fake != nil {
 		srv.notif = &captureNotifier{}
 	}
-	enrollOperatorForTest(t, store, acct.ID)
+	enrollOperatorForTest(context.Background(), t, store, acct.ID)
 	sid := uuid.NewString()
 	if _, err := store.CreateSession(context.Background(), sid, acct.ID, "192.0.2.10", "force-test-ua"); err != nil {
 		t.Fatalf("CreateSession: %v", err)
