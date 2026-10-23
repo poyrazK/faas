@@ -45,6 +45,12 @@ class Failure(Exception):
     """Only fixed, credential-free diagnostics may leave this harness."""
 
 
+# Deploy's recovery guidance after an uncertain submission (deploy_recovery.go,
+# deploy_success.go). These lines may name an accepted deployment that the
+# guided session has not adopted.
+RECOVERY_GUIDANCE = re.compile(r"Stage: \S+; inspect: |Deployment: \S+; resume: |deployment wait \S+")
+
+
 def require(condition, message):
     if not condition:
         raise Failure(message)
@@ -1107,7 +1113,13 @@ class Run:
                             terminal.wait(-signal.SIGKILL)
                         else:
                             terminal.wait(3, timeout=60)
-                        require(receipt["deployment_id"] not in terminal.output, "CLI received the acceptance that should have been withheld")
+                        # The upload receipt confirms a commit whose reply was lost
+                        # (#4806), so deploy may name the deployment in its recovery
+                        # guidance. Nothing else may: the session keeps the submission
+                        # pending (checked below) until recovery verifies it.
+                        leaked = [line for line in terminal.output.splitlines()
+                                  if receipt["deployment_id"] in line and not RECOVERY_GUIDANCE.search(line)]
+                        require(not leaked, "CLI adopted the acceptance that should have been withheld: " + "; ".join(leaked)[:400])
                         item["exit_status"] = terminal.process.returncode
                         item["pending"] = run.pending_submission(launch, receipt, previous)
                         counts = relay.command("healthy", True)
