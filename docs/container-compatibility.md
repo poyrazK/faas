@@ -375,6 +375,32 @@ value; otherwise they change on the next start. A secret that is not set has
 no file. Only the service's main process gets the files, not sidecars, jobs or
 app tasks. At most 16 files per service (`SecretFilesMax`).
 
+A service's size and count set its app's settings
+([ADR-20261023120000](adr/20261023120000-compose-deploy-resources.md)):
+
+```yaml
+services:
+  api:
+    image: example/api:1
+    deploy:
+      replicas: 3                   # max_concurrency 3 (instances still park when idle)
+      resources:
+        limits:
+          memory: 512M              # ram_mb 512
+          cpus: "0.5"               # cpu_millicores 500
+```
+
+`memory` (or `mem_limit`) takes bytes or a `k`, `m`, `g` suffix in powers of
+1024 and is rounded up to whole MiB; more than the plan's RAM per app fails the
+plan. `cpus` (or the service-level `cpus`) is rounded up to an app CPU share,
+0.25, 0.5 or 1, with a warning; more than 1 is lowered to 1. `replicas` (or
+`scale`) caps a request-mode app's instances and fixes a worker's or service's
+replica count, within the plan's cap for that mode; it does not apply to jobs,
+and `replicas: 0` is ignored with a warning. Declared values are written on
+every apply and replace values set with `gregale app <slug> --ram` and the like; settings the
+file does not declare keep the app's. Reservations and the other `deploy` keys
+are warned.
+
 `extends` and top-level `include` are resolved as Compose resolves them
 ([ADR-20261019190527](adr/20261019190527-compose-extends-and-include.md)):
 
@@ -401,10 +427,10 @@ The scan reports every other Compose key instead of dropping it silently:
 
 | Keys | Result |
 |---|---|
-| `build` (`context`, `dockerfile`, `args`, `target`, `secrets`), `command`, `depends_on`, `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `ports`, `profiles`, `secrets` (`environment:` sources), `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied. |
+| `build` (`context`, `dockerfile`, `args`, `target`, `secrets`), `command`, `cpus`, `depends_on`, `deploy` (`replicas`, `resources.limits.memory`, `resources.limits.cpus`), `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `mem_limit`, `ports`, `profiles`, `scale`, `secrets` (`environment:` sources), `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied. |
 | `container_name`, `init`, `stdin_open`, `tty`, `platform: linux/amd64`, `x-*` extensions | Ignored without a warning; they have no effect on a microVM service. |
 | `volumes`, `tmpfs` | Warning: no persistent volumes or bind mounts; each start gets a fresh filesystem. |
-| `deploy`, `scale`, `cpus`, `mem_limit` and other resource keys | Warning: CPU, memory and replicas come from the plan and app scaling. |
+| Other `deploy` keys (`restart_policy`, `placement`, `update_config`, `resources.reservations`, …), `cpu_shares`, `cpu_quota`, `cpuset`, `mem_reservation`, `memswap_limit` | Warning, with the reason for each. |
 | `restart` | Warning: the platform starts, parks and restarts services. |
 | `configs` | Warning: build the file into the image or use environment variables. |
 | `networks`, `network_mode`, `links`, `external_links` | Warning: services reach each other through `depends_on` service bindings. |

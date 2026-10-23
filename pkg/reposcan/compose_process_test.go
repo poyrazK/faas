@@ -233,7 +233,7 @@ func TestComposeUnsupportedKeysWarn(t *testing.T) {
     init: true
     x-team: storefront
     volumes: [./data:/data]
-    deploy: {replicas: 3}
+    deploy: {replicas: 3, restart_policy: {condition: any}}
     restart: always
     labels: {tier: web}
     configs: [app_config]
@@ -256,7 +256,7 @@ func TestComposeUnsupportedKeysWarn(t *testing.T) {
 	}
 	for _, want := range []string{
 		"web: volumes ignored: persistent volumes and bind mounts are not supported",
-		"web: deploy ignored: CPU, memory and replicas come from the plan",
+		"web: deploy.restart_policy ignored: the platform starts, parks and restarts services itself",
 		"web: restart ignored: the platform starts, parks and restarts services itself",
 		"web: labels ignored: container labels are not used",
 		"web: configs ignored: Compose configs are not mounted",

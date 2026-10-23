@@ -117,7 +117,10 @@ type Workload struct {
 	// SecretFiles are the service's Compose secrets, written to /run/secrets
 	// (ADR-20261023090000). They name app secrets, never values.
 	SecretFiles []api.SecretFile
-	Command     []string // start-command override (compose `command:`, Procfile rhs)
+	// Resources are the service's Compose deploy.replicas and resource
+	// limits (ADR-20261023120000); nil declares none.
+	Resources *api.ComposeResources
+	Command   []string // start-command override (compose `command:`, Procfile rhs)
 	// CommandShell distinguishes shell-form strings from exec-form argv. The
 	// plan wire keeps Command as an array, while reconciliation uses this bit
 	// to preserve argument boundaries when persisting start_command.

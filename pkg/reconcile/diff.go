@@ -296,6 +296,7 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if !slices.Equal(a.Manifest.ProjectSecretFiles, imageManifest.ProjectSecretFiles) {
 		changed = append(changed, "secret_files")
 	}
+	changed = append(changed, composeResourcesChanged(a, w)...)
 	if !maps.Equal(a.Manifest.ProjectDependencyConditions, w.DependsOnConditions) {
 		changed = append(changed, "dependency_conditions")
 	}

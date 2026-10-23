@@ -197,6 +197,10 @@ func interpolateComposeCandidate(candidate *composeCandidate, values map[string]
 		{name: "stop_grace_period", value: &candidate.StopGracePeriod},
 		{name: "env_file", value: &candidate.EnvFile},
 		{name: "secrets", value: &candidate.Secrets},
+		{name: "deploy", value: &candidate.Deploy},
+		{name: "scale", value: &candidate.Scale},
+		{name: "mem_limit", value: &candidate.MemLimit},
+		{name: "cpus", value: &candidate.CPUs},
 	}
 	for _, field := range fields {
 		resolved, err := interpolateComposeValue(*field.value, values, source, service, field.name)

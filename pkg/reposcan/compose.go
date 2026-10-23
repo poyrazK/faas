@@ -41,6 +41,12 @@ type composeCandidate struct {
 	Image       string   `yaml:"image"`
 	Profiles    []string `yaml:"profiles"`
 	Secrets     any      `yaml:"secrets"` // names or {source, target, mode}; written to /run/secrets
+	// Resources and replicas (ADR-20261023120000); deploy wins over the
+	// service-level keys.
+	Deploy   any `yaml:"deploy"`
+	Scale    any `yaml:"scale"`
+	MemLimit any `yaml:"mem_limit"`
+	CPUs     any `yaml:"cpus"`
 
 	// Process overrides for prebuilt images (ADR-1337).
 	Entrypoint      any    `yaml:"entrypoint"` // string OR []string; empty clears
@@ -360,6 +366,13 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		for _, warning := range secretWarnings {
 			warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
 		}
+		resources, resourceWarnings, err := composeResources(s)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
+		}
+		for _, warning := range resourceWarnings {
+			warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
+		}
 		fileEnvKeys, envFileWarnings, envFileErr := composeEnvFileKeys(fsys, s.EnvFile)
 		if envFileErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, envFileErr)
@@ -389,6 +402,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			healthcheck:         healthcheck,
 			imageProcess:        process,
 			secretFiles:         secretFiles,
+			resources:           resources,
 			command:             command,
 			commandShell:        commandShell,
 			dependsOn:           dependencyNames(s.DependsOn),
