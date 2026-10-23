@@ -107726,7 +107726,7 @@ components:
     ReleaseTimelineEvent:
       description: "One thing that happened to a release."
       type: object
-      required: [at, kind, summary]
+      required: [at, summary, kind]
       properties:
         at: { type: string, format: date-time }
         kind:
