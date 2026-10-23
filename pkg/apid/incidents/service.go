@@ -19,9 +19,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Store is the slice of state.Store the projection reads.
+// Store is the slice of state.Store the projection reads, plus the notes it
+// keeps.
 type Store interface {
 	state.IncidentSourceStore
+	state.IncidentNoteStore
 	ListPublicStatusEvents(ctx context.Context, options state.StatusEventListOptions) ([]state.StatusIncident, error)
 	StatusEventByPublicID(ctx context.Context, publicID string) (state.StatusIncident, error)
 	ListAlertDeliveriesForRule(ctx context.Context, ruleID string, limit int, includeTest bool) ([]state.AlertDelivery, error)
@@ -37,6 +39,9 @@ type Host interface {
 	// Changes returns the app's change timeline (ADR-751) for the window,
 	// or false while the change timeline is off for the account.
 	Changes(ctx context.Context, acct state.Account, app state.App, since, until time.Time) (api.AppChangeTimelineResponse, bool)
+	// Actor names who made the request: the signed-in email, or
+	// api_key:<id>.
+	Actor(r *http.Request, acct state.Account) string
 	Logger() *slog.Logger
 }
 
@@ -178,7 +183,42 @@ func (s *Service) list(ctx context.Context, acct state.Account, app state.App, s
 	if len(resp.Incidents) > api.IncidentsMaxEntries {
 		resp.Incidents, resp.Truncated = resp.Incidents[:api.IncidentsMaxEntries], true
 	}
+	s.addAcknowledgements(ctx, acct, &resp)
 	return resp
+}
+
+// Recent is the list the dashboard page shows: every app, the default
+// window.
+func (s *Service) Recent(ctx context.Context, acct state.Account) api.IncidentsResponse {
+	return s.list(ctx, acct, state.App{}, s.now().Add(-api.IncidentsDefaultWindow))
+}
+
+// addAcknowledgements marks the listed incidents the account acknowledged,
+// with one read for the page.
+func (s *Service) addAcknowledgements(ctx context.Context, acct state.Account, resp *api.IncidentsResponse) {
+	if len(resp.Incidents) == 0 {
+		return
+	}
+	ids := make([]string, len(resp.Incidents))
+	for i, inc := range resp.Incidents {
+		ids[i] = inc.ID
+	}
+	acks, err := s.Host.Store().IncidentAcknowledgements(ctx, acct.ID, ids)
+	if err != nil {
+		s.Host.Logger().WarnContext(ctx, "incidents: read acknowledgements", "err", err)
+		resp.UnavailableSources = append(resp.UnavailableSources, "acknowledgements")
+		return
+	}
+	for i := range resp.Incidents {
+		if ack, ok := acks[resp.Incidents[i].ID]; ok {
+			markAcknowledged(&resp.Incidents[i], ack)
+		}
+	}
+}
+
+func markAcknowledged(inc *api.Incident, ack state.IncidentNote) {
+	at := ack.CreatedAt.UTC()
+	inc.AcknowledgedAt, inc.AcknowledgedBy = &at, ack.Author
 }
 
 // slugger maps app ids to slugs, reading each app once per request. The

@@ -63,6 +63,34 @@
   - Authorization: `ScopesReadSurface`, account-scoped, every plan.
   - Slices: (1) episodes, the list and detail API, CLI; (2) acknowledging
     and notes, and the dashboard page.
+  - Slice 2, notes: `incident_notes` holds an account's notes on an
+    incident. An acknowledgement is a note of kind `acknowledged` with no
+    body, at most one per account and incident (a unique index), so a
+    second acknowledgement returns the first. A row keys the incident by its
+    API id and by exactly one foreign key to the source row
+    (`alert_episodes.id`, `route_monitor_incidents.id` or
+    `status_incidents.public_id`, each `ON DELETE CASCADE`), and a CHECK
+    ties the two together; notes go with their incident when a rule is
+    deleted, an episode is trimmed or a route incident is pruned. Platform
+    incidents are shared, but each account's notes on them are its own.
+  - Notes are append-only: a correction is another note, as on the status
+    page. Bounds in `pkg/api/limits.go`: a body is at most 2,000
+    characters, and an incident holds at most 100 notes per account,
+    acknowledgement included; the detail returns them all, oldest first.
+    The author is the caller as release approvals record it: the signed-in
+    email, or `api_key:<id>`.
+  - `POST /v1/incidents/{id}/acknowledge` answers 201 with the new
+    acknowledgement or 200 with the existing one; a resolved incident
+    answers 409 `incident_resolved`, because there is nothing left to take
+    on. `POST /v1/incidents/{id}/notes` answers 201 on open and resolved
+    incidents alike; a resolved incident is where follow-up notes go. Both
+    need a write scope (`ScopesDeployWriteSurface`, as dashboards). List
+    entries carry `acknowledged_at` and `acknowledged_by`, read with one
+    query for the page; the detail carries `notes`.
+  - The dashboard's `/dashboard/incidents` lists incidents as the API
+    does, and `/dashboard/incidents/{id}` shows the evidence with an
+    Acknowledge button and a note form. Both forms are CSRF-checked and go
+    through the JSON handlers, so validation and bounds are the API's.
 - **Rejected alternatives:**
   - *An `incidents` table every producer writes.* Duplicates three stores
     and adds a write to each producer for what is a read; only the alert
@@ -73,6 +101,12 @@
   - *Episodes from the audit log's `alert.resolved` events.* The audit log
     has no app key and is not bounded per rule (ADR-751 rejected it for the
     same reason).
+  - *Acknowledging silences the alert's notifications.* meterd's evaluator
+    would read an apid table on every fire, and a rule's cool-down and
+    `enabled` already set how often it notifies. An acknowledgement says
+    who is on it; it does not change what the rule sends.
+  - *Editable or deletable notes.* An incident's record is only useful if
+    it is what people wrote at the time.
   - *Grouping all of an app's firing rules into one incident.* Which rules
     belong together is a judgement; slice 2's notes and acknowledgements
     are where people make it, and the list already sorts an app's open

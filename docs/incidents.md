@@ -16,10 +16,10 @@ gregale incidents --since 24h
 ```
 
 ```text
-STATUS     SOURCE          APP               DURATION    TITLE                         ID
-open       alert           shop              12m         checkout-5xx                  alert-3f0c…
-open       platform        -                 1h05m       Elevated wake latency         platform-9a1e…
-resolved   route_monitor   shop              40m         Route requirements violated…  route-77b2…
+STATUS     ACK  SOURCE          APP               DURATION    TITLE                         ID
+open       yes  alert           shop              12m         checkout-5xx                  alert-3f0c…
+open       -    platform        -                 1h05m       Elevated wake latency         platform-9a1e…
+resolved   -    route_monitor   shop              40m         Route requirements violated…  route-77b2…
 ```
 
 The list holds everything still open and whatever resolved in the last 7 days
@@ -69,4 +69,29 @@ app incident the app's changes from an hour before it opened until it
 resolved. Evidence that could not be read is named under `Could not read`
 rather than left out silently.
 
-The API is `GET /v1/incidents` and `GET /v1/incidents/{id}`.
+## Acknowledge and add notes
+
+```sh
+gregale incidents ack INCIDENT_ID
+gregale incidents note INCIDENT_ID "rolled back to v41; watching error rate"
+```
+
+Acknowledging an open incident tells everyone in your account that someone
+is on it: the list shows `yes` under `ACK`, and `show` says who and when. An
+incident is acknowledged once; acknowledging it again keeps the first. A
+resolved incident cannot be acknowledged, but it still takes notes, which is
+where follow-ups and links to a postmortem go.
+
+Notes are shared with everyone in your account, oldest first under `Notes`
+in `show`, and they cannot be edited or deleted; write a new note to correct
+one. A note is at most 2,000 characters, and an incident holds at most 100
+notes from your account, its acknowledgement included. Platform incidents
+are shared by every account, but your acknowledgement and notes on them are
+yours. Acknowledging does not silence an alert: its rule's cool-down and
+enabled switch still decide what it sends.
+
+The dashboard shows the same list at **Incidents**, and each incident's page
+has an Acknowledge button and a note form.
+
+The API is `GET /v1/incidents`, `GET /v1/incidents/{id}`,
+`POST /v1/incidents/{id}/acknowledge` and `POST /v1/incidents/{id}/notes`.

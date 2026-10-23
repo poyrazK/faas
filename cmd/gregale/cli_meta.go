@@ -1075,7 +1075,9 @@ var cliCommands = []cliCommand{
 				{Name: "open", Short: "open incidents only"},
 				{Name: "since", Short: "resolved incidents from this long ago (default 7d, at most 30d)", Value: "DURATION"},
 			}, Examples: []string{"gregale incidents list", "gregale incidents list --app shop --open"}},
-			{Name: "show", Short: "Show an incident with its notifications, log context and changes", Positionals: []string{"<incident-id>"}, Examples: []string{"gregale incidents show INCIDENT_ID"}},
+			{Name: "show", Short: "Show an incident with its notifications, log context, changes and notes", Positionals: []string{"<incident-id>"}, Examples: []string{"gregale incidents show INCIDENT_ID"}},
+			{Name: "ack", Short: "Acknowledge an open incident so the account sees someone is on it", Positionals: []string{"<incident-id>"}, Examples: []string{"gregale incidents ack INCIDENT_ID"}},
+			{Name: "note", Short: "Add a note to an incident; notes cannot be edited", Positionals: []string{"<incident-id>", "<text>"}, Examples: []string{`gregale incidents note INCIDENT_ID "rolled back to v41"`}},
 		},
 	},
 	{

@@ -13141,14 +13141,18 @@ var DashboardWindows = []string{"5m", "1h", "6h", "24h", "7d"}
 // so a flapping rule cannot grow alert_episodes without bound. The list
 // shows everything open plus what resolved inside the window, capped; each
 // source reads one row past the cap. An app incident's detail carries the
-// app's changes from IncidentChangeLookback before it opened.
+// app's changes from IncidentChangeLookback before it opened. An account's
+// notes on one incident, acknowledgement included, are capped (slice 2); the
+// body bound is also incident_notes_body_check.
 const (
-	AlertEpisodesPerRule   = 200
-	IncidentsDefaultWindow = 7 * 24 * time.Hour
-	IncidentsMaxWindow     = 30 * 24 * time.Hour
-	IncidentsMaxEntries    = 100
-	IncidentChangeLookback = time.Hour
-	IncidentFiresMax       = 20
+	AlertEpisodesPerRule     = 200
+	IncidentsDefaultWindow   = 7 * 24 * time.Hour
+	IncidentsMaxWindow       = 30 * 24 * time.Hour
+	IncidentsMaxEntries      = 100
+	IncidentChangeLookback   = time.Hour
+	IncidentFiresMax         = 20
+	IncidentNotesPerIncident = 100
+	IncidentNoteMaxChars     = 2000
 )
 
 // Runtime log projection into the ledger (ADR-20261018083536 slice B). vmmd

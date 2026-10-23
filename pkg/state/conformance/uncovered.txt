@@ -123,7 +123,6 @@ DecrementInstanceTailCount
 DeleteAPIKeyReturning
 DeleteAccount
 DeleteAccountPassword
-DeleteAlertRule
 DeleteAppEnv
 DeleteAppEnvInScope
 DeleteAppErrorRequestsByIDs

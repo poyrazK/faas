@@ -31,4 +31,9 @@ func (h incidentsHost) Changes(ctx context.Context, acct state.Account, app stat
 	return h.s.appChangeTimeline(ctx, acct, app, since, until, time.Now().UTC()), true
 }
 
+// Actor names the caller as release approvals record it.
+func (h incidentsHost) Actor(r *http.Request, acct state.Account) string {
+	return releaseApprovalActorLabel(r, acct)
+}
+
 func (h incidentsHost) Logger() *slog.Logger { return h.s.log }

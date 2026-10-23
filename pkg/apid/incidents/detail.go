@@ -24,58 +24,80 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request, acct state.Account
 	if !s.gate(w) {
 		return
 	}
-	detail, appID, err := s.read(r.Context(), acct, r.PathValue("id"))
+	detail, err := s.Detail(r.Context(), acct, r.PathValue("id"))
 	if err != nil {
 		s.writeReadErr(w, r, err)
 		return
-	}
-	if appID != "" {
-		s.addChanges(r.Context(), acct, appID, &detail)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpkit.WriteJSON(w, http.StatusOK, detail)
 }
 
-// read loads the incident from the store its id names and returns its app
-// id, empty for an account-wide alert or a platform incident.
-func (s *Service) read(ctx context.Context, acct state.Account, id string) (api.IncidentDetail, string, error) {
+// Detail reads an incident and its evidence; the dashboard page shares it.
+// Another account's incident or a malformed id is state.ErrNotFound.
+func (s *Service) Detail(ctx context.Context, acct state.Account, id string) (api.IncidentDetail, error) {
+	f, err := s.find(ctx, acct, id)
+	if err != nil {
+		return api.IncidentDetail{}, err
+	}
+	detail := api.IncidentDetail{Incident: f.incident, Updates: f.updates, Notes: []api.IncidentNote{}, UnavailableSources: []string{}}
+	if f.incident.Source == api.IncidentSourceAlert {
+		s.addFires(ctx, f.episode, &detail)
+	}
+	s.addNotes(ctx, acct, &detail)
+	if f.appID != "" {
+		s.addChanges(ctx, acct, f.appID, &detail)
+	}
+	return detail, nil
+}
+
+// found is an incident read from the store its id names.
+type found struct {
+	incident api.Incident
+	// appID is empty for an account-wide alert or a platform incident.
+	appID string
+	// episode is an alert incident's episode.
+	episode state.AlertEpisode
+	// updates are a platform incident's status page updates.
+	updates []api.IncidentUpdate
+}
+
+// find loads the incident from the store its id names; another account's
+// incident or a malformed id is state.ErrNotFound.
+func (s *Service) find(ctx context.Context, acct state.Account, id string) (found, error) {
 	store := s.Host.Store()
-	detail := api.IncidentDetail{UnavailableSources: []string{}}
 	prefix, key := splitID(id)
 	switch prefix {
 	case alertPrefix:
 		ep, err := store.AlertEpisodeByID(ctx, acct.ID, key)
 		if err != nil {
-			return detail, "", err
+			return found{}, err
 		}
-		detail.Incident = alertIncident(ep, s.slugger(ctx, state.App{})(ep.AppID))
-		s.addFires(ctx, ep, &detail)
-		return detail, ep.AppID, nil
+		return found{incident: alertIncident(ep, s.slugger(ctx, state.App{})(ep.AppID)), appID: ep.AppID, episode: ep}, nil
 	case routePrefix:
 		rm, err := store.RouteMonitorIncidentSummaryByID(ctx, acct.ID, key)
 		if err != nil {
-			return detail, "", err
+			return found{}, err
 		}
-		detail.Incident = routeIncident(rm, s.slugger(ctx, state.App{})(rm.AppID))
-		return detail, rm.AppID, nil
+		return found{incident: routeIncident(rm, s.slugger(ctx, state.App{})(rm.AppID)), appID: rm.AppID}, nil
 	case platformPrefix:
 		if _, err := uuid.Parse(key); err != nil {
-			return detail, "", state.ErrNotFound
+			return found{}, state.ErrNotFound
 		}
 		ev, err := store.StatusEventByPublicID(ctx, key)
 		if err != nil {
-			return detail, "", err
+			return found{}, err
 		}
 		if ev.Kind != publicstatus.KindIncident {
-			return detail, "", state.ErrNotFound
+			return found{}, state.ErrNotFound
 		}
-		detail.Incident = platformIncident(ev)
+		f := found{incident: platformIncident(ev)}
 		for _, u := range ev.Updates {
-			detail.Updates = append(detail.Updates, api.IncidentUpdate{At: u.At.UTC(), State: string(u.State), Message: u.Message})
+			f.updates = append(f.updates, api.IncidentUpdate{At: u.At.UTC(), State: string(u.State), Message: u.Message})
 		}
-		return detail, "", nil
+		return f, nil
 	}
-	return detail, "", state.ErrNotFound
+	return found{}, state.ErrNotFound
 }
 
 // addFires lists the notifications the episode sent, newest first, and the

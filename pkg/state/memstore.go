@@ -1027,6 +1027,8 @@ type MemStore struct {
 	// alertEpisodes mirrors alert_episodes by id (ADR-20261022193512); the
 	// rule columns are read from alertRules.
 	alertEpisodes map[string]AlertEpisode
+	// incidentNotes mirrors incident_notes in insertion order.
+	incidentNotes []IncidentNote
 	// Captured boot inputs belong to the instance wake and physical node.
 	runtimeInstanceConfigProofs map[string]runtimeInstanceConfigProof
 	// deploymentSidecarLayers (issue #463 / ADR-069 / PR-B)

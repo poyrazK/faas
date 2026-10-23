@@ -2341,6 +2341,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/dashboards/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.dashboards.Delete)))
 	mux.HandleFunc("GET /v1/incidents", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.incidents.List)))
 	mux.HandleFunc("GET /v1/incidents/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.incidents.Get)))
+	mux.HandleFunc("POST /v1/incidents/{id}/acknowledge", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.incidents.Acknowledge)))
+	mux.HandleFunc("POST /v1/incidents/{id}/notes", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.incidents.AddNote)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/log-searches/{name}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.logSearch.PutSaved)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/log-searches/{name}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.logSearch.DeleteSaved)))
 	// Issue #696 / ADR-082 — per-app SLO panel. Closed-set
@@ -4694,6 +4696,10 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /dashboard/apps/{slug}/log-search", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderAppLogSearchDashboard))))
 	mux.Handle("GET /dashboard/dashboards", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderCustomDashboards))))
 	mux.Handle("GET /dashboard/dashboards/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderCustomDashboard))))
+	mux.Handle("GET /dashboard/incidents", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderIncidents))))
+	mux.Handle("GET /dashboard/incidents/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderIncident))))
+	mux.Handle("POST /dashboard/incidents/{id}/acknowledge", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIncidentAcknowledge))))
+	mux.Handle("POST /dashboard/incidents/{id}/notes", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIncidentNote))))
 	mux.Handle("GET /dashboard/apps/{slug}/custom-metrics", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderCustomMetricsDashboard))))
 	mux.Handle("POST /dashboard/dev-bridges/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.revokeDevBridgeDashboard))))
 

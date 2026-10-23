@@ -20615,7 +20615,9 @@ paths:
         One list of alert rule firing periods, route monitor incidents and
         platform incidents from the status page: everything open plus what
         resolved since `since`, open first, then newest first, at most 100.
-        A source that cannot be read is named in `unavailable_sources`.
+        Each entry says who in the account acknowledged it. A source that
+        cannot be read (including `acknowledgements`) is named in
+        `unavailable_sources`.
       parameters:
         - name: app
           in: query
@@ -20653,8 +20655,9 @@ paths:
       description: |
         The incident with what the platform has for it: an alert's
         notifications and the log context its newest one carried, a platform
-        incident's status updates, and for an app incident the app's change
-        timeline from an hour before it opened until it resolved.
+        incident's status updates, for an app incident the app's change
+        timeline from an hour before it opened until it resolved, and the
+        account's acknowledgement and notes.
       responses:
         '200':
           description: The incident.
@@ -20663,6 +20666,62 @@ paths:
               schema: { $ref: '#/components/schemas/IncidentDetail' }
         default:
           description: No such incident (incident_not_found), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/incidents/{id}/acknowledge:
+    parameters:
+      - $ref: '#/components/parameters/IncidentID'
+    post:
+      tags: [observability]
+      operationId: acknowledgeIncident
+      summary: Acknowledge an open incident.
+      description: |
+        Records that someone in the account took the incident on. An
+        account acknowledges an incident once; acknowledging again returns
+        the first acknowledgement with 200. Acknowledging does not change
+        what an alert rule sends.
+      responses:
+        '201':
+          description: The new acknowledgement.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentNote' }
+        '200':
+          description: The account's existing acknowledgement.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentNote' }
+        default:
+          description: No such incident (incident_not_found), a resolved incident (incident_resolved), the per-incident note limit (incident_notes_limit), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/incidents/{id}/notes:
+    parameters:
+      - $ref: '#/components/parameters/IncidentID'
+    post:
+      tags: [observability]
+      operationId: addIncidentNote
+      summary: Add a note to an incident.
+      description: |
+        Appends a note to an open or resolved incident. Notes cannot be
+        edited or deleted. A note is at most 2000 characters, and an
+        incident holds at most 100 notes from an account, its
+        acknowledgement included.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IncidentNoteRequest' }
+      responses:
+        '201':
+          description: The note.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentNote' }
+        default:
+          description: An empty or too long note, no such incident (incident_not_found), the per-incident note limit (incident_notes_limit), or the preview is disabled.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -111130,6 +111189,23 @@ components:
         metric: { type: string, description: An alert incident's rule metric. }
         deployment_id: { type: string, format: uuid, description: The deployment a route monitor incident watched. }
         impact: { type: string, description: A platform incident's status page impact. }
+        acknowledged_at: { type: string, format: date-time, description: When someone in the account acknowledged the incident. }
+        acknowledged_by: { type: string, description: Who acknowledged it, an email or api_key:<id>. }
+    IncidentNote:
+      type: object
+      description: An account's acknowledgement (no body) or note on an incident.
+      required: [id, kind, author, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [acknowledged, note] }
+        body: { type: string, maxLength: 2000 }
+        author: { type: string, description: An email or api_key:<id>. }
+        created_at: { type: string, format: date-time }
+    IncidentNoteRequest:
+      type: object
+      required: [body]
+      properties:
+        body: { type: string, minLength: 1, maxLength: 2000 }
     IncidentsResponse:
       type: object
       required: [since, incidents, truncated, unavailable_sources]
@@ -111160,7 +111236,7 @@ components:
         message: { type: string }
     IncidentDetail:
       type: object
-      required: [incident, unavailable_sources]
+      required: [incident, notes, unavailable_sources]
       properties:
         incident: { $ref: '#/components/schemas/Incident' }
         fires:
@@ -111177,6 +111253,10 @@ components:
           type: array
           items: { $ref: '#/components/schemas/AppChangeEvent' }
         changes_truncated: { type: boolean }
+        notes:
+          type: array
+          description: The account's acknowledgement and notes, oldest first.
+          items: { $ref: '#/components/schemas/IncidentNote' }
         unavailable_sources:
           type: array
           items: { type: string }

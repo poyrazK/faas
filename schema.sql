@@ -37650,6 +37650,29 @@ CREATE TABLE public.inbound_webhook_endpoints (
 
 
 --
+-- Name: incident_notes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.incident_notes (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    incident_id text NOT NULL,
+    alert_episode_id uuid,
+    route_incident_id uuid,
+    status_incident_id uuid,
+    kind text NOT NULL,
+    body text NOT NULL,
+    author text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT incident_notes_author_check CHECK (((char_length(author) >= 1) AND (char_length(author) <= 320))),
+    CONSTRAINT incident_notes_body_check CHECK (((char_length(body) <= 2000) AND ((kind = 'note'::text) = (body <> ''::text)))),
+    CONSTRAINT incident_notes_id_matches_source CHECK ((incident_id = COALESCE(('alert-'::text || (alert_episode_id)::text), ('route-'::text || (route_incident_id)::text), ('platform-'::text || (status_incident_id)::text)))),
+    CONSTRAINT incident_notes_kind_check CHECK ((kind = ANY (ARRAY['acknowledged'::text, 'note'::text]))),
+    CONSTRAINT incident_notes_one_source CHECK ((num_nonnulls(alert_episode_id, route_incident_id, status_incident_id) = 1))
+);
+
+
+--
 -- Name: instance_application_standard_admissions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -58551,6 +58574,14 @@ ALTER TABLE ONLY public.inbound_webhook_endpoints
 
 
 --
+-- Name: incident_notes incident_notes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.incident_notes
+    ADD CONSTRAINT incident_notes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: instance_application_standard_admissions instance_application_standard_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69594,6 +69625,41 @@ CREATE INDEX inbound_webhook_endpoints_account_idx ON public.inbound_webhook_end
 --
 
 CREATE INDEX inbound_webhook_endpoints_app_created_idx ON public.inbound_webhook_endpoints USING btree (app_id, created_at, id);
+
+
+--
+-- Name: incident_notes_alert_episode_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX incident_notes_alert_episode_idx ON public.incident_notes USING btree (alert_episode_id) WHERE (alert_episode_id IS NOT NULL);
+
+
+--
+-- Name: incident_notes_incident_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX incident_notes_incident_idx ON public.incident_notes USING btree (account_id, incident_id, created_at);
+
+
+--
+-- Name: incident_notes_one_ack_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX incident_notes_one_ack_idx ON public.incident_notes USING btree (account_id, incident_id) WHERE (kind = 'acknowledged'::text);
+
+
+--
+-- Name: incident_notes_route_incident_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX incident_notes_route_incident_idx ON public.incident_notes USING btree (route_incident_id) WHERE (route_incident_id IS NOT NULL);
+
+
+--
+-- Name: incident_notes_status_incident_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX incident_notes_status_incident_idx ON public.incident_notes USING btree (status_incident_id) WHERE (status_incident_id IS NOT NULL);
 
 
 --
@@ -88003,6 +88069,38 @@ ALTER TABLE ONLY public.inbound_webhook_endpoints
 
 ALTER TABLE ONLY public.inbound_webhook_endpoints
     ADD CONSTRAINT inbound_webhook_endpoints_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: incident_notes incident_notes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.incident_notes
+    ADD CONSTRAINT incident_notes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: incident_notes incident_notes_alert_episode_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.incident_notes
+    ADD CONSTRAINT incident_notes_alert_episode_id_fkey FOREIGN KEY (alert_episode_id) REFERENCES public.alert_episodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: incident_notes incident_notes_route_incident_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.incident_notes
+    ADD CONSTRAINT incident_notes_route_incident_id_fkey FOREIGN KEY (route_incident_id) REFERENCES public.route_monitor_incidents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: incident_notes incident_notes_status_incident_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.incident_notes
+    ADD CONSTRAINT incident_notes_status_incident_id_fkey FOREIGN KEY (status_incident_id) REFERENCES public.status_incidents(public_id) ON DELETE CASCADE;
 
 
 --

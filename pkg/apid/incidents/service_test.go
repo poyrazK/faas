@@ -34,8 +34,9 @@ func (h fakeHost) LoadApp(w http.ResponseWriter, _ *http.Request, acct state.Acc
 	}
 	return app, true
 }
-func (h fakeHost) Store() Store         { return h.store }
-func (h fakeHost) Logger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+func (h fakeHost) Store() Store                                  { return h.store }
+func (h fakeHost) Actor(r *http.Request, _ state.Account) string { return r.Header.Get("X-Test-Actor") }
+func (h fakeHost) Logger() *slog.Logger                          { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 func (h fakeHost) Changes(_ context.Context, _ state.Account, app state.App, since, until time.Time) (api.AppChangeTimelineResponse, bool) {
 	*h.window = [2]time.Time{since, until}
 	return api.AppChangeTimelineResponse{AppID: app.ID, Events: []api.AppChangeEvent{

@@ -6930,6 +6930,22 @@
     "kind": "configuration"
   },
   {
+    "table": "incident_notes",
+    "columns": [
+      "account_id",
+      "alert_episode_id",
+      "author",
+      "body",
+      "created_at",
+      "id",
+      "incident_id",
+      "kind",
+      "route_incident_id",
+      "status_incident_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "instance_application_standard_admissions",
     "columns": [
       "app_id",

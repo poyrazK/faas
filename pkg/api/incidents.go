@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -37,6 +38,31 @@ type Incident struct {
 	DeploymentID string `json:"deployment_id,omitempty"`
 	// Impact is a platform incident's status page impact.
 	Impact string `json:"impact,omitempty"`
+	// AcknowledgedAt and AcknowledgedBy say who in the account took the
+	// incident on, and when.
+	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
+	AcknowledgedBy string     `json:"acknowledged_by,omitempty"`
+}
+
+// Incident note kinds. The set is closed; clients may rely on it.
+const (
+	IncidentNoteKindAcknowledged = "acknowledged"
+	IncidentNoteKindNote         = "note"
+)
+
+// IncidentNote is one entry of an incident's notes: an acknowledgement
+// (no body) or a note. Notes are append-only.
+type IncidentNote struct {
+	ID        string    `json:"id"`
+	Kind      string    `json:"kind"`
+	Body      string    `json:"body,omitempty"`
+	Author    string    `json:"author"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// IncidentNoteRequest is POST /v1/incidents/{id}/notes.
+type IncidentNoteRequest struct {
+	Body string `json:"body"`
 }
 
 // IncidentsResponse is GET /v1/incidents: everything open plus what resolved
@@ -80,8 +106,34 @@ type IncidentDetail struct {
 	// IncidentChangeLookback before the incident opened until it resolved.
 	Changes          []AppChangeEvent `json:"changes,omitempty"`
 	ChangesTruncated bool             `json:"changes_truncated,omitempty"`
+	// Notes are the account's acknowledgement and notes, oldest first.
+	Notes []IncidentNote `json:"notes"`
 	// UnavailableSources names evidence that could not be read.
 	UnavailableSources []string `json:"unavailable_sources"`
+}
+
+// IncidentLogSummary summarises an alert incident's log context
+// (ADR-20261022172052) the way its notification does, and returns the log
+// search it links to. Both are empty when there is no log context.
+func IncidentLogSummary(raw json.RawMessage) (line, searchPath string) {
+	var lc struct {
+		Errors            int    `json:"errors"`
+		Warnings          int    `json:"warnings"`
+		HTTP5xx           int    `json:"http_5xx"`
+		SearchPath        string `json:"search_path"`
+		BusiestErrorRoute *struct {
+			Route string `json:"route"`
+			Count int    `json:"count"`
+		} `json:"busiest_error_route"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &lc) != nil {
+		return "", ""
+	}
+	line = fmt.Sprintf("%d errors, %d warnings, %d HTTP 5xx", lc.Errors, lc.Warnings, lc.HTTP5xx)
+	if r := lc.BusiestErrorRoute; r != nil && r.Route != "" {
+		line += fmt.Sprintf(" (most errors on %s: %d)", r.Route, r.Count)
+	}
+	return line, lc.SearchPath
 }
 
 // IncidentsQuery filters GET /v1/incidents. Zero values select the server
@@ -116,6 +168,33 @@ func (c *Client) ListIncidents(ctx context.Context, q IncidentsQuery) (Incidents
 func (c *Client) GetIncident(ctx context.Context, id string) (IncidentDetail, error) {
 	var out IncidentDetail
 	return out, c.do(ctx, "GET", "/v1/incidents/"+url.PathEscape(id), nil, &out)
+}
+
+// AcknowledgeIncident runs POST /v1/incidents/{id}/acknowledge; acknowledging
+// again returns the first acknowledgement.
+func (c *Client) AcknowledgeIncident(ctx context.Context, id string) (IncidentNote, error) {
+	var out IncidentNote
+	return out, c.do(ctx, "POST", "/v1/incidents/"+url.PathEscape(id)+"/acknowledge", nil, &out)
+}
+
+// AddIncidentNote runs POST /v1/incidents/{id}/notes.
+func (c *Client) AddIncidentNote(ctx context.Context, id, body string) (IncidentNote, error) {
+	var out IncidentNote
+	return out, c.do(ctx, "POST", "/v1/incidents/"+url.PathEscape(id)+"/notes", IncidentNoteRequest{Body: body}, &out)
+}
+
+// ErrIncidentResolved refuses to acknowledge a resolved incident.
+func ErrIncidentResolved() *Problem {
+	return NewProblem(http.StatusConflict, "incident_resolved", "Incident resolved",
+		"the incident has already resolved, so there is nothing to acknowledge").
+		WithDocs(docsBase + "/incidents").WithHint("add a note instead with `gregale incidents note`")
+}
+
+// ErrIncidentNotesLimit reports the per-incident note cap.
+func ErrIncidentNotesLimit(limit, observed int) *Problem {
+	return NewProblem(http.StatusConflict, "incident_notes_limit", "Incident note limit reached",
+		fmt.Sprintf("the incident already has %d of %d notes from this account", observed, limit)).
+		WithLimit(int64(limit), int64(observed)).WithDocs(docsBase + "/incidents")
 }
 
 // ErrIncidentsUnavailable is the FAAS_INCIDENTS_ENABLED gate's answer.

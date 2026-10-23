@@ -112,6 +112,9 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/mcp/apps/{slug}/notifications/actions":            true,
 	"POST /dashboard/mcp/apps/{slug}/oauth":                            true,
 	"POST /dashboard/mcp/retirements/{id}":                             true,
+	// Browser session and named-CSRF adapters for the incident API (ADR-20261022193512).
+	"POST /dashboard/incidents/{id}/acknowledge": true,
+	"POST /dashboard/incidents/{id}/notes":       true,
 
 	"GET /v1/apps/{slug}/entities/connect":                                   true, // WebSocket frames require the durable-session transport, not Client.do.
 	"GET /v1/apps/{slug}/entities/session-connect":                           true, // Browser grant subprotocol and Origin authentication, not Bearer HTTP.
@@ -770,8 +773,10 @@ var methodRouteMap = map[string]string{
 	"GET /v1/dashboards/{id}/data": "GetDashboardData",
 
 	// ADR-20261022193512 unified incidents.
-	"GET /v1/incidents":      "ListIncidents",
-	"GET /v1/incidents/{id}": "GetIncident",
+	"GET /v1/incidents":                   "ListIncidents",
+	"GET /v1/incidents/{id}":              "GetIncident",
+	"POST /v1/incidents/{id}/acknowledge": "AcknowledgeIncident",
+	"POST /v1/incidents/{id}/notes":       "AddIncidentNote",
 	// ADR-745: hyphenated custom-metrics segment.
 	"GET /v1/apps/{slug}/custom-metrics/{name}/series": "GetCustomMetricSeries",
 	// ADR-1131: the hyphenated path segment has no derivable Go identifier.

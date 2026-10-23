@@ -341,7 +341,7 @@
       "id": "incidents",
       "name": "Incidents",
       "category": "observability",
-      "description": "One list of an account's open and recent incidents: alert rule firing periods, route monitor incidents and platform status incidents, each with its notifications, log context and the app's changes.",
+      "description": "One list of an account's open and recent incidents: alert rule firing periods, route monitor incidents and platform status incidents, each with its notifications, log context and the app's changes, plus the account's acknowledgements and notes.",
       "maturity": "internal",
       "plans": [],
       "docs_url": "/docs/adr/20261022193512-unified-incidents",

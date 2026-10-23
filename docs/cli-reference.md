@@ -3172,7 +3172,7 @@ gregale incidents list --app shop --open
 
 ### incidents show
 
-Show an incident with its notifications, log context and changes
+Show an incident with its notifications, log context, changes and notes
 
 `gregale incidents show <incident-id>`
 
@@ -3180,6 +3180,30 @@ Examples:
 
 ```sh
 gregale incidents show INCIDENT_ID
+```
+
+### incidents ack
+
+Acknowledge an open incident so the account sees someone is on it
+
+`gregale incidents ack <incident-id>`
+
+Examples:
+
+```sh
+gregale incidents ack INCIDENT_ID
+```
+
+### incidents note
+
+Add a note to an incident; notes cannot be edited
+
+`gregale incidents note <incident-id> <text>`
+
+Examples:
+
+```sh
+gregale incidents note INCIDENT_ID "rolled back to v41"
 ```
 
 

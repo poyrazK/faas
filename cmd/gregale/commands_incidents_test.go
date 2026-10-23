@@ -6,6 +6,7 @@ package main_test
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -73,5 +74,63 @@ func TestCmdIncidentsListAndShow(t *testing.T) {
 	}
 	if code := main.CmdIncidents([]string{"close"}); code != 1 {
 		t.Fatalf("unknown subcommand = %d, want 1", code)
+	}
+}
+
+func TestCmdIncidentsAckAndNote(t *testing.T) {
+	at := time.Date(2026, 10, 23, 9, 30, 0, 0, time.UTC)
+	type call struct{ method, path, body string }
+	var calls []call
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		calls = append(calls, call{r.Method, r.URL.Path, string(raw)})
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/acknowledge"):
+			_ = json.NewEncoder(w).Encode(api.IncidentNote{ID: "n1", Kind: api.IncidentNoteKindAcknowledged, Author: "ops@example.com", CreatedAt: at})
+		case strings.HasSuffix(r.URL.Path, "/notes"):
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(api.IncidentNote{ID: "n2", Kind: api.IncidentNoteKindNote, Body: "rolled back to v41", Author: "ops@example.com", CreatedAt: at})
+		default:
+			opened := at.Add(-10 * time.Minute)
+			_ = json.NewEncoder(w).Encode(api.IncidentDetail{
+				Incident: api.Incident{ID: "alert-e1", Source: api.IncidentSourceAlert, Status: api.IncidentStatusOpen, Title: "checkout-5xx",
+					OpenedAt: opened, AcknowledgedAt: &at, AcknowledgedBy: "ops@example.com"},
+				Notes: []api.IncidentNote{{ID: "n1", Kind: api.IncidentNoteKindAcknowledged, Author: "ops@example.com", CreatedAt: at},
+					{ID: "n2", Kind: api.IncidentNoteKindNote, Body: "rolled back to v41\nwatching", Author: "api_key:k-2", CreatedAt: at}},
+			})
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stdout bytes.Buffer
+	old := *main.OsStdout
+	*main.OsStdout = &stdout
+	t.Cleanup(func() { *main.OsStdout = old })
+
+	if code := main.CmdIncidents([]string{"ack", "alert-e1"}); code != 0 || !strings.Contains(stdout.String(), "Acknowledged alert-e1 (by ops@example.com at 2026-10-23 09:30 UTC).") {
+		t.Fatalf("ack = %d:\n%s", code, stdout.String())
+	}
+	if code := main.CmdIncidents([]string{"note", "alert-e1", "rolled", "back", "to", "v41"}); code != 0 || !strings.Contains(stdout.String(), "Added a note to alert-e1.") {
+		t.Fatalf("note = %d:\n%s", code, stdout.String())
+	}
+	if len(calls) != 2 || calls[0] != (call{"POST", "/v1/incidents/alert-e1/acknowledge", ""}) ||
+		calls[1].path != "/v1/incidents/alert-e1/notes" || !strings.Contains(calls[1].body, `"body":"rolled back to v41"`) {
+		t.Fatalf("calls = %+v", calls)
+	}
+	for _, args := range [][]string{{"ack"}, {"ack", "a", "b"}, {"note", "alert-e1"}} {
+		if code := main.CmdIncidents(args); code != 1 {
+			t.Errorf("%v = %d, want 1", args, code)
+		}
+	}
+	stdout.Reset()
+	if code := main.CmdIncidents([]string{"show", "alert-e1"}); code != 0 {
+		t.Fatalf("show = %d", code)
+	}
+	for _, want := range []string{"acked     2026-10-23 09:30:00 UTC by ops@example.com", "Notes", "(acknowledged)",
+		"api_key:k-2\n                    rolled back to v41\n                    watching"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("show output missing %q:\n%s", want, stdout.String())
+		}
 	}
 }
