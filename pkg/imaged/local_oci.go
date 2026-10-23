@@ -548,6 +548,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if config, err = applySourceComposeHealthcheck(config, healthcheck); err != nil {
 		return fmt.Errorf("imaged: Compose healthcheck: %w", err)
 	}
+	config = applySourceBuildProcess(config, *dep)
 	manifest, err := manifestFromLocalOCIConfig(config, *dep)
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest: %w", err)
@@ -563,7 +564,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest overrides: %w", err)
 	}
-	manifest = applyAppLifecycle(manifest, app)
+	manifest = h.stampProfilingOnDemand(applyAppLifecycle(manifest, app), acct)
 	if err := manifest.Validate(); err != nil {
 		return fmt.Errorf("imaged: built OCI manifest invalid: %w", err)
 	}

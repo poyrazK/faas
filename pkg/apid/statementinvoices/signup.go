@@ -118,7 +118,8 @@ func (s *Service) StripeSetupCheckout(ctx context.Context, acct state.Account, c
 	if problem != nil {
 		return "", problem
 	}
-	session, err := p.client.CreateSetupCheckout(ctx, conn.key, idempotencyKey, customer, currency, successURL, cancelURL)
+	session, err := p.client.CreateSetupCheckout(ctx, conn.key, idempotencyKey, stripeinvoice.SetupCheckoutParams{Customer: customer,
+		Currency: currency, SuccessURL: successURL, CancelURL: cancelURL})
 	if err != nil {
 		return "", paymentMethodProblem(err)
 	}

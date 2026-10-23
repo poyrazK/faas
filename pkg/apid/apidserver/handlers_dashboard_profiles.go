@@ -27,6 +27,7 @@ type profilePageData struct {
 	CPUChart       *dashboard.ProfileCPUChart
 	Investigations *dashboard.ProfileInvestigationsView
 	Automatic      *dashboard.ProfileDeploymentChecksView
+	Captures       *dashboard.ProfileCapturesView
 }
 
 func parseAppProfilesPath(rest string) (string, bool) {
@@ -56,6 +57,7 @@ func (s *server) renderAppProfiles(w http.ResponseWriter, r *http.Request, log *
 	data.CanaryFinding = finding
 	data.RouteView = dashboard.BuildProfileRoutes(app.Slug, data.Query, data.Baseline, data.Profile, data.Compare)
 	data.Automatic = s.profileDeploymentChecksView(w, r, acct, app)
+	data.Captures = s.profileCapturesView(w, r, acct, app)
 	if s.profileBackend != nil && api.MustLimitsFor(acct.Plan).Profiling.Enabled && data.Query.DeploymentID != "" {
 		if _, problem := s.profileQueryScope(ctx, acct, app, data.Query); problem == nil {
 			data.CPUChart = s.profileCPUChart(savedRequest, acct, app, data.Query)

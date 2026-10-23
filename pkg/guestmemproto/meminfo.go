@@ -22,8 +22,11 @@ const MaxBodyBytes = 4096
 
 // Stats is a subset of /proc/meminfo, in bytes.
 type Stats struct {
-	MemTotal     int64 `json:"mem_total"`
-	MemFree      int64 `json:"mem_free"`
+	MemTotal int64 `json:"mem_total"`
+	MemFree  int64 `json:"mem_free"`
+	// MemAvailable is the kernel's estimate of memory available without
+	// swapping, including reclaimable cache (memory-pressure captures).
+	MemAvailable int64 `json:"mem_available,omitempty"`
 	Buffers      int64 `json:"buffers"`
 	Cached       int64 `json:"cached"`
 	Shmem        int64 `json:"shmem"`
@@ -39,7 +42,7 @@ type Stats struct {
 func Parse(r io.Reader) (Stats, error) {
 	var s Stats
 	fields := map[string]*int64{
-		"MemTotal": &s.MemTotal, "MemFree": &s.MemFree, "Buffers": &s.Buffers,
+		"MemTotal": &s.MemTotal, "MemFree": &s.MemFree, "MemAvailable": &s.MemAvailable, "Buffers": &s.Buffers,
 		"Cached": &s.Cached, "Shmem": &s.Shmem, "AnonPages": &s.AnonPages,
 		"Slab": &s.Slab, "SReclaimable": &s.SReclaimable,
 		"KernelStack": &s.KernelStack, "PageTables": &s.PageTables,

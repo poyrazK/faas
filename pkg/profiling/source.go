@@ -22,8 +22,52 @@ type SourceProvenance struct {
 // LinkSources adds bounded, commit-pinned links without reading customer files
 // or contacting the Git provider. GitHub applies the viewer's repository access.
 func LinkSources(out *api.ProfileResponse, origin SourceProvenance) {
-	source := sourceRevision(origin)
+	source, link := sourceLinker(origin, out.Query.Runtime)
 	out.Source = &source
+	for i := range out.Functions {
+		f := &out.Functions[i]
+		f.Source = link(f.File, f.Line)
+	}
+	var visit func(*api.ProfileStack)
+	visit = func(frame *api.ProfileStack) {
+		if frame == nil {
+			return
+		}
+		frame.Source = link(frame.File, frame.Line)
+		for _, child := range frame.Children {
+			visit(child)
+		}
+	}
+	visit(out.Flamegraph)
+}
+
+// LinkCaptureSources adds the same commit-pinned links to an on-demand
+// capture view (ADR-1155). runtime is the app's runtime name; Go module and
+// standard-library paths outside the recorded repository stay unlinked.
+func LinkCaptureSources(out *api.ProfileCaptureView, origin SourceProvenance, runtime string) {
+	source, link := sourceLinker(origin, runtime)
+	out.Source = &source
+	for i := range out.Functions {
+		f := &out.Functions[i]
+		f.Source = link(f.File, f.Line)
+	}
+	var visit func(*api.ProfileCaptureStack)
+	visit = func(frame *api.ProfileCaptureStack) {
+		if frame == nil {
+			return
+		}
+		frame.Source = link(frame.File, frame.Line)
+		for _, child := range frame.Children {
+			visit(child)
+		}
+	}
+	visit(out.Flamegraph)
+}
+
+// sourceLinker returns the deployment's provenance and a link builder that
+// shares one symbol budget across every location it maps.
+func sourceLinker(origin SourceProvenance, runtime string) (api.ProfileSource, func(string, int64) *api.ProfileSourceLocation) {
+	source := sourceRevision(origin)
 	root, err := sourcecontext.StorageRoot(origin.SourceRoot)
 	if err != nil || root != "" && sourceFile(root, SourceProvenance{}) != root {
 		source.Available = false
@@ -38,7 +82,7 @@ func LinkSources(out *api.ProfileResponse, origin SourceProvenance) {
 		if prefix := "github.com/" + source.Repository + "/"; strings.HasPrefix(file, prefix) {
 			file = strings.TrimPrefix(file, prefix)
 			repositoryRelative = true
-		} else if strings.HasPrefix(out.Query.Runtime, "go") && !strings.HasPrefix(file, "/") && !strings.HasPrefix(file, "./") {
+		} else if strings.HasPrefix(runtime, "go") && !strings.HasPrefix(file, "/") && !strings.HasPrefix(file, "./") {
 			// Trimmed Go standard-library and dependency module paths are not
 			// repository-relative. Only the recorded module prefix is mapped.
 			return nil
@@ -66,21 +110,7 @@ func LinkSources(out *api.ProfileResponse, origin SourceProvenance) {
 		budget -= cost
 		return &location
 	}
-	for i := range out.Functions {
-		f := &out.Functions[i]
-		f.Source = link(f.File, f.Line)
-	}
-	var visit func(*api.ProfileStack)
-	visit = func(frame *api.ProfileStack) {
-		if frame == nil {
-			return
-		}
-		frame.Source = link(frame.File, frame.Line)
-		for _, child := range frame.Children {
-			visit(child)
-		}
-	}
-	visit(out.Flamegraph)
+	return source, link
 }
 
 // SourceRevision returns validated, immutable GitHub provenance for an

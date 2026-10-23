@@ -1429,7 +1429,7 @@ func (d BucketDependency) EffectiveLabel() string {
 // Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root.
 // The supported top-level declarations are `schema_version`, `hosting`,
 // `function`, `release`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
-// `triggers`, `event_triggers`, `async_routes`, `companions`, `main_depends_on`,
+// `triggers`, `event_triggers`, `async_routes`, `routes`, `companions`, `main_depends_on`,
 // `exclusive_operations`, `extensions`, `workflows`, `databases`, `buckets`,
 // and the local-only `dev`
 // profile; other keys are validated strictly (yaml.Decoder.KnownFields(true))
@@ -1468,6 +1468,7 @@ type Manifest struct {
 	OperationWorkflows []OperationWorkflow           `yaml:"operation_workflows,omitempty" toml:"operation_workflows"`
 	ResolvedOperations []api.OperationDefinitionSpec `yaml:"-"`
 	AsyncRoutes        []AsyncRoute                  `yaml:"async_routes,omitempty"`
+	Routes             []PathRoute                   `yaml:"routes,omitempty"` // ADR-20261021223225; nil/empty as AsyncRoutes
 	Companions         []CompanionSpec               `yaml:"companions,omitempty"`
 	// MainDependsOn gates the primary application workload on declared
 	// long-running companions. Init companions remain implicit prerequisites.
@@ -2156,7 +2157,7 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		if m.Lifecycle == nil {
 			m.Lifecycle = &LifecycleConfig{}
 		}
-		if m.Lifecycle.Profiling != nil && *m.Lifecycle.Profiling != *m.Profiling {
+		if m.Lifecycle.Profiling != nil && !m.Lifecycle.Profiling.Equal(m.Profiling) {
 			return fmt.Errorf("declare profiling once, at top level or in lifecycle")
 		}
 		m.Lifecycle.Profiling = m.Profiling
@@ -2249,6 +2250,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return fmt.Errorf("async_routes[%d]: duplicate route match for app %q", i, route.App)
 		}
 		seenAsyncMatches[route.App+"\x00"+matchKey] = struct{}{}
+	}
+	if err := validatePathRoutes(m.Routes); err != nil {
+		return err
 	}
 	if m.Lifecycle != nil {
 		if err := m.Lifecycle.Validate(); err != nil {

@@ -42,16 +42,18 @@ const (
 	ChangeTimeline       = "change_timeline"
 	AnomalyAlerts        = "anomaly_alerts"
 	TriggerBatchDelivery = "trigger_batch_delivery"
-	OperationSchedules   = "operation_schedules"
-	OperationChildren    = "operation_children"
-	ServiceMap           = "service_map"
-	GuestTracing         = "guest_tracing"
-	StaticEgressIP       = "static_egress_ip"
-	RealtimeResume       = "realtime_resume"
-	RealtimeTickets      = "realtime_tickets"
-	RealtimeAccess       = "realtime_access"
-	RealtimeOccupancy    = "realtime_occupancy"
-	StrictBudgets        = "strict_budgets"
+	APIMonetization      = "api_monetization"
+
+	OperationSchedules = "operation_schedules"
+	OperationChildren  = "operation_children"
+	ServiceMap         = "service_map"
+	GuestTracing       = "guest_tracing"
+	StaticEgressIP     = "static_egress_ip"
+	RealtimeResume     = "realtime_resume"
+	RealtimeTickets    = "realtime_tickets"
+	RealtimeAccess     = "realtime_access"
+	RealtimeOccupancy  = "realtime_occupancy"
+	StrictBudgets      = "strict_budgets"
 )
 
 // RealtimePreviews are the flags apid decides per endpoint and sends to
@@ -271,6 +273,15 @@ var catalog = []Spec{
 		LegacyEnv:    []string{"FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED"},
 		RetireBy:     "2027-01-31",
 		HealthRoutes: []string{"GET /v1/apps/{slug}/realtime/endpoints/{id}/occupancy"},
+	},
+	{
+		Key:   APIMonetization,
+		Label: "API monetization",
+		Description: "Release API monetization (rate cards, plans, statements, credits, invoice exports, billing runs and their gateway enforcement) " +
+			"to accounts. The api_monetization_enabled runtime switch still releases it to every account. Unless every account is included, " +
+			"its routes answer an unregistered route to accounts outside the flag after authentication.",
+		ADR:       "ADR-20261020170649",
+		Consumers: []string{"apid", "gatewayd-internal"},
 	},
 	{
 		Key:         StrictBudgets,

@@ -1,4 +1,4 @@
--- filename: 20261022181240512_product_control_trial_conversion.sql
+-- filename: 20261023115837671_product_control_trial_conversion.sql
 
 -- ADR-20261022180921: a Product Control customer records when a payment
 -- method was last seen on file and when their ended trial was resolved: kept

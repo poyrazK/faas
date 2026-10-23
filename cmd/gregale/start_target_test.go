@@ -130,3 +130,27 @@ func TestStartConnectionChangeAfterReviewStopsCreation(t *testing.T) {
 		})
 	}
 }
+
+// A lost submission reply leaves deploy knowing only the accepted deployment's
+// ID. start keeps that submission pending for recovery instead of adopting the
+// ID or reporting it as a deployment for a different target.
+func TestStartKeepsIDOnlyAcceptancePending(t *testing.T) {
+	stdout, stderr := main.StartTestEnvironment(t)
+	main.StartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/apps/first-app" {
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "first-app"})
+			return
+		}
+		api.WriteProblem(w, api.NewProblem(404, "not_found", "Not found", "No app"))
+	})
+	runner := main.StartTestRunner(t, main.StartTestSource(t), "2\ny\n")
+	(*runner.Deploy()) = func(_ context.Context, _ []string, _ bool, executions ...main.DeployExecution) int {
+		executions[0].NotifyQueued(api.DeploymentResponse{ID: "accepted-behind-lost-reply"})
+		return 3
+	}
+	code, submitted := runner.ReviewAndDeploy()
+	output := stdout.String() + stderr()
+	if code != 3 || submitted || (*runner.Session()).DeploymentID != "" || strings.Contains(output, "unexpected target") {
+		t.Fatalf("code=%d submitted=%t session deployment=%q output=%s", code, submitted, (*runner.Session()).DeploymentID, output)
+	}
+}

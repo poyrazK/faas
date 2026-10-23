@@ -2369,3 +2369,30 @@ var CompactUsage = compactUsage
 const UsageSynopsisLimit = usageSynopsisLimit
 
 var InvokedCommandPath = &invokedCommandPath
+
+var AppArgumentEnabled = &appArgumentEnabled
+
+// AppArgumentPaths lists every visible command path whose leaf takes the
+// app as its first argument.
+func AppArgumentPaths() [][]string {
+	var paths [][]string
+	var walk func(path []string, flags []cliFlag, positionals []string, children []cliSub)
+	walk = func(path []string, flags []cliFlag, positionals []string, children []cliSub) {
+		if takesAppArgument(flags, positionals, children) {
+			paths = append(paths, append([]string{}, path...))
+		}
+		for _, child := range children {
+			if child.SubcommandsAfterPositionals {
+				continue
+			}
+			walk(append(append([]string{}, path...), child.Name), child.Flags, child.Positionals, child.Subcommands)
+		}
+	}
+	for _, command := range visibleCliCommands() {
+		if command.SubcommandsAfterPositionals {
+			continue
+		}
+		walk([]string{command.Name}, command.Flags, command.Positionals, command.Subcommands)
+	}
+	return paths
+}

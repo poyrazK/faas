@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
+	"github.com/onebox-faas/faas/pkg/apid/consumersignup"
 	pipelineapi "github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	repairapi "github.com/onebox-faas/faas/pkg/apid/datarepair"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
@@ -47,6 +48,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/apid/previews"
 	"github.com/onebox-faas/faas/pkg/apid/product"
+	"github.com/onebox-faas/faas/pkg/apid/profilecapture"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/apid/queueleases"
 	"github.com/onebox-faas/faas/pkg/apid/servicemap"
@@ -152,7 +154,8 @@ type server struct {
 	// postReleaseTelemetry overrides the store's request telemetry for the
 	// post-release watch (ADR-1445); nil reads it from the store.
 	postReleaseTelemetry rollbackOn5xxTelemetry
-	outboundAI           outboundai.Service // ADR-977; Host wired in newServer
+	outboundAI           outboundai.Service     // ADR-977; Host wired in newServer
+	profileCaptures      profilecapture.Service // ADR-1155; Host wired in newServer
 	// releaseGateEvidence overrides the store's release gate evidence
 	// reader for the post-release watch (ADR-20261019071734; tests).
 	releaseGateEvidence   state.ReleaseGateEvidenceStore
@@ -162,6 +165,7 @@ type server struct {
 	consumerBilling       consumerbilling.Service   // ADR-1506; Host wired in newServer
 	consumerCredits       consumercredits.Service   // ADR-1306; Host wired in newServer
 	consumerControls      consumercontrols.Service  // ADR-1314, ADR-1315; Host wired in newServer
+	consumerSignup        consumersignup.Service    // ADR-20261021143000; Host wired in newServer
 	tenantPlans           tenantplans.Service       // ADR-1307; Host wired in newServer
 	// platformFlagBootstrap holds the boot-time fallbacks for platform flags
 	// (ADR-1700): customer Flags and the AI gateway gate and rollout.
@@ -529,6 +533,12 @@ type server struct {
 	// imageRunsEnabled is the operator gate for POST /v1/image-runs
 	// (ADR-1161, FAAS_IMAGE_RUNS).
 	imageRunsEnabled bool
+	// appForksEnabled is the fail-closed gate for production forks
+	// (ADR-732). It stays off until schedd can restore quarantined forks.
+	appForksEnabled bool
+	// crashSnapshotsEnabled is the fail-closed gate for ADR-733 crash
+	// snapshots (FAAS_CRASH_SNAPSHOTS).
+	crashSnapshotsEnabled bool
 	// interactiveImageRunsEnabled admits `interactive: true` image runs
 	// (ADR-1330, FAAS_INTERACTIVE_IMAGE_RUNS).
 	interactiveImageRunsEnabled bool
@@ -965,6 +975,20 @@ func (s *server) WithImageRunsEnabled(enabled bool) *server {
 // (ADR-1330).
 func (s *server) WithInteractiveImageRunsEnabled(enabled bool) *server {
 	s.interactiveImageRunsEnabled = enabled
+	return s
+}
+
+// WithAppForksEnabled attaches the boot-time gate for production forks
+// (ADR-732, FAAS_APP_FORKS).
+func (s *server) WithAppForksEnabled(enabled bool) *server {
+	s.appForksEnabled = enabled
+	return s
+}
+
+// WithCrashSnapshotsEnabled attaches the boot-time gate for ADR-733 crash
+// snapshots (FAAS_CRASH_SNAPSHOTS).
+func (s *server) WithCrashSnapshotsEnabled(enabled bool) *server {
+	s.crashSnapshotsEnabled = enabled
 	return s
 }
 
@@ -1452,6 +1476,7 @@ func newServerWithDeps(
 	s.productControl.CompletePaymentMethod = s.statementInvoices.CompleteStripeSetup
 	s.dataRepair.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
+	s.profileCaptures.Host = profileCaptureHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
 	s.realtime.Host = realtimeHost{s}
 	s.realtime.AuthLimiter = s.apiAuthLimiter
@@ -1463,6 +1488,7 @@ func newServerWithDeps(
 	s.consumerBilling.Host = consumerBillingHost{s}
 	s.consumerCredits.Host = consumerCreditsHost{s}
 	s.consumerControls.Host = consumerControlsHost{s}
+	s.consumerSignup.Host = consumerSignupHost{s}
 	s.tenantPlans.Host = tenantPlansHost{s}
 	s.serviceMap.Host = serviceMapHost{s}
 	s.serviceMap.Released = func(r *http.Request, acct state.Account) bool {
@@ -1759,6 +1785,25 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAppTask)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppTask))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelAppTask)))))
+	// ADR-732 production forks. Creating a fork exposes production memory,
+	// secrets included, so it needs deploy:write AND secrets:read.
+	mux.HandleFunc("GET /v1/apps/{slug}/forks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppForks))))
+	mux.HandleFunc("POST /v1/apps/{slug}/forks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireScope(api.ScopesAppForkSecretsSurface...)(s.idempotent(s.createAppFork))))))
+	mux.HandleFunc("GET /v1/apps/{slug}/forks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppFork))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/forks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelAppFork)))))
+	// ADR-732 fork exec: a command and its output can reach production data,
+	// so creating and reading one both need deploy:write and secrets:read.
+	mux.HandleFunc("POST /v1/apps/{slug}/forks/{id}/execs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireScope(api.ScopesAppForkSecretsSurface...)(s.idempotent(s.createAppForkExec))))))
+	mux.HandleFunc("GET /v1/apps/{slug}/forks/{id}/execs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireScope(api.ScopesAppForkSecretsSurface...)(s.listAppForkExecs)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/forks/{id}/execs/{exec_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireScope(api.ScopesAppForkSecretsSurface...)(s.getAppForkExec)))))
+	// ADR-733 crash snapshots. Opening one as a fork needs the fork route's
+	// deploy:write AND secrets:read.
+	mux.HandleFunc("GET /v1/apps/{slug}/crash-snapshots/settings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCrashSnapshotSettings))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/crash-snapshots/settings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putCrashSnapshotSettings))))
+	mux.HandleFunc("GET /v1/apps/{slug}/crash-snapshots", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listCrashSnapshots))))
+	mux.HandleFunc("POST /v1/apps/{slug}/crash-snapshots", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createCrashSnapshot)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/crash-snapshots/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCrashSnapshot))))
+	mux.HandleFunc("POST /v1/apps/{slug}/crash-snapshots/{id}/fork", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireScope(api.ScopesAppForkSecretsSurface...)(s.idempotent(s.forkCrashSnapshot))))))
 	mux.HandleFunc("POST /v1/admin/object-storage/usage-reports", s.authLimited(s.requireAdminMutation(s.object.RecordObjectStorageUsage)))
 	// IAM-6 (issue #190 / ADR-061, PR 4): active-org whoami. The
 	// route is undocumented in api/openapi.yaml for PR 4 — PR 5
@@ -1831,7 +1876,9 @@ func (s *server) handler() http.Handler {
 	// bypass until each route's threat model is re-audited.
 	// Compose order mirrors POST /v1/orgs/{slug}/transfer_ownership
 	// (server.go:655): authLimited → requireMFA → requireStepUpStrict.
-	mux.HandleFunc("POST /v1/invitations/{token}/accept", s.authLimited(s.requireMFA(s.requireStepUpStrict(5*time.Minute)(s.acceptInvitation))))
+	// requireVerifiedEmail makes the invitation's email match a binding:
+	// an unverified account could otherwise claim the invitee's address.
+	mux.HandleFunc("POST /v1/invitations/{token}/accept", s.authLimited(s.requireMFA(s.requireStepUpStrict(5*time.Minute)(s.requireVerifiedEmail(s.acceptInvitation)))))
 	mux.HandleFunc("DELETE /v1/orgs/{slug}/invitations/{invitation_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.revokeInvitation)))))
 	// PR-8 §2: list invitations surface (cursor-paginated, every role).
 	mux.HandleFunc("GET /v1/orgs/{slug}/invitations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgInvitations)))))
@@ -2261,6 +2308,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-billing-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.GetBillingPolicy)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/consumer-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.PutBillingPolicy))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/consumer-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.DeleteBillingPolicy))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumer-signup", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerSignup.GetSettings)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/consumer-signup", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerSignup.PutSettings))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/consumer-signup", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerSignup.DeleteSettings))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumer-signups", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerSignup.List))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-overdue-holds", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.ListOverdueHolds)))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerUsageAlerts))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage/quote", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageQuote))))
@@ -3878,6 +3929,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/profiles/investigations/{id}/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.checkProfileRegression))))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppProfiles))))
 	mux.HandleFunc("POST /v1/apps/{slug}/profiles/compare", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.compareAppProfiles))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/heap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppHeapProfile))))
+	// ADR-1155: on-demand CPU/heap captures, queued for schedd via Postgres.
+	mux.HandleFunc("POST /v1/apps/{slug}/profiles/captures", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.profileCaptures.Create))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.List))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.Get))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/view", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.View))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/pprof", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.Download))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/diff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.Diff))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryListHandler))))
 	// Portable incident artifact for the customer debugger. The export uses
 	// the same retention and tenant gates as the list endpoint, but is kept on
@@ -4955,6 +5014,11 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/issues/impact-alert-policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueImpactAlertPolicyHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/ownership-rules", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueOwnershipRulesHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/deployment-policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSaveProfileDeploymentPolicy))))
+	// ADR-1155: on-demand capture form, capture page and session-authenticated pprof download.
+	mux.Handle("POST /dashboard/apps/{slug}/profiles/captures", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateProfileCapture))))
+	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardProfileCapture))))
+	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}/pprof", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDownloadProfileCapture))))
+	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}/diff", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardProfileCaptureDiff))))
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/investigations", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSaveProfileInvestigation))))
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/investigations/{id}/check", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCheckProfileRegression))))
 	mux.Handle("POST /dashboard/apps/{slug}/debug/requests/{req_id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDebugReplay))))
@@ -5066,6 +5130,20 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/consumer-billing/{slug}", s.consumerBilling.Summary)
 	mux.HandleFunc("GET /v1/consumer-billing/{slug}/usage", s.consumerBilling.Usage)
 	mux.HandleFunc("GET /v1/consumer-billing/{slug}/statements", s.consumerBilling.Statements)
+	// Customer self-service with a billing-scope key (ADR-20261021183000).
+	mux.HandleFunc("GET /v1/consumer-billing/{slug}/plans", s.consumerBilling.Plans)
+	mux.HandleFunc("PUT /v1/consumer-billing/{slug}/plan", s.consumerBilling.ChangePlan)
+	mux.HandleFunc("POST /v1/consumer-billing/{slug}/portal", s.consumerBilling.Portal)
+	mux.HandleFunc("POST /v1/consumer-billing/{slug}/close", s.consumerBilling.Close)
+	// Consumer self-service sign-up (ADR-20261021143000): no credential; the
+	// service limits each client address and answers like an unregistered
+	// route unless the app's owner has API monetization.
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}", s.consumerSignup.Form)
+	mux.HandleFunc("POST /v1/consumer-signup/{slug}", s.consumerSignup.Create)
+	mux.HandleFunc("POST /v1/consumer-signup/{slug}/signups/{signup}/complete", s.consumerSignup.Complete)
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/page", s.consumerSignup.Page)
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/signup.js", s.consumerSignup.Script)
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/signup.css", s.consumerSignup.Style)
 	mux.HandleFunc("GET /v1/status/incidents/{public_id}", s.publicStatusIncidentHandler)
 	mux.HandleFunc("POST /v1/admin/status/incidents", s.authLimited(s.requireAdminMutation(s.createAdminStatusEvent)))
 	mux.HandleFunc("PATCH /v1/admin/status/incidents/{public_id}", s.authLimited(s.requireAdminMutation(s.editAdminStatusEvent)))
