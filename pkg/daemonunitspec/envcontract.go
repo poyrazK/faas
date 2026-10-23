@@ -773,6 +773,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_ROLLUP_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_ROUTE_PROBE_URL", Owners: []string{"apid"}, Source: EnvSourceDropin, Validate: EnvValidationURL, Note: "public origin for ADR-847 synthetic route probes; unset disables probes"},
 	{Name: "FAAS_RUNTIME_KIND", Owners: []string{"guest"}, Source: EnvSourceGuest},
+	{Name: "FAAS_RUNTIME_SECRET_BINDING", Owners: []string{"apid"}, Source: EnvSourceDropin, Default: "off", Note: "ADR-20261023173624; off or account. account binds each new runtime secret envelope to its account so vmmd opens it only for that account; enable only after every vmmd checks bindings (seal_domains role)"},
 	{Name: "FAAS_RUNTIME_UPGRADE_DRAIN_CONFIRMATION", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "default-off private forwarding drain receipt; requires reviewed runtime routing confirmation (ADR-697)"},
 	{Name: "FAAS_RUNTIME_UPGRADE_GATEWAY_SLOT_ID", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "reviewed private gateway slot identity; required only when runtime routing confirmation is enabled (ADR-695)"},
 	{Name: "FAAS_RUNTIME_UPGRADE_INGRESS_CONFIRMATION", Owners: []string{"gatewayd-internal", "gatewayd-public"}, Source: EnvSourceDefault, Note: "default-off private ingress identity proof; requires reviewed routing and drain confirmations (ADR-698)"},
