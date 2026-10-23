@@ -104406,6 +104406,10 @@ components:
           type: array
           items: { type: string }
           description: "Explicit names from .gregale/required-secrets.json. Detected env_keys alone do not establish requirements."
+        unset_env_keys:
+          type: array
+          items: { type: string }
+          description: "Names from env_keys and required_env_keys that will have no value in the selected environment: not configured on the app and not provided by the platform. Names only, never values."
         source:
           type: string
           description: "detector provenance, e.g. compose.yaml: api"

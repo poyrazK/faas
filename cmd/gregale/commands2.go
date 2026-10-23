@@ -3754,6 +3754,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		}
 
+		plan = withProvidedEnvKeys(plan, deploySecrets)
 		if code := confirmProjectPlan(plan, excludeList, *deployShowAffected, *yes); code != 0 {
 			return code
 		}

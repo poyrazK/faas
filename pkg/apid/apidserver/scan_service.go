@@ -1972,6 +1972,15 @@ func (s *server) scanService(
 			return nil, state.Project{}, nil, nil, nil, nil, api.ErrValidation("invalid required-secret declaration for a selected workload")
 		}
 		pw.RequiredEnvKeys = required
+		envScope := req.Environment
+		if envScope == "" {
+			envScope = api.DefaultEnvScope
+		}
+		unset, err := projectsetup.UnsetEnvKeys(r.Context(), s.store, acct.ID, envScope, existing, w.EnvKeys, required)
+		if err != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not read the configuration of a selected workload")
+		}
+		pw.UnsetEnvKeys = unset
 		if w.ServiceBindingPolicy == "" && existing != nil {
 			pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
 		}
