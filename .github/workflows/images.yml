@@ -181,6 +181,16 @@ jobs:
           echo "bases=$bases" >> "$GITHUB_OUTPUT"
           echo "Image build decision: builder=$builder bases=$bases"
 
+      # imaged stages runner-node24 and runner-python312 as deltas over the
+      # Debian parent (ADR-053). Every image builds and scans cleanly on its
+      # own even when a digest bump breaks that layer chain, so check it
+      # before the matrix runs.
+      - name: Debian parent is a layer prefix of its runtimes
+        if: steps.changed.outputs.bases == 'true'
+        run: |
+          python3 scripts/ci/check_parent_base_chain_test.py
+          python3 scripts/ci/check_parent_base_chain.py
+
   builder-base:
     name: builder-base (${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64 + linux/arm64' }})
     needs: runtime-change

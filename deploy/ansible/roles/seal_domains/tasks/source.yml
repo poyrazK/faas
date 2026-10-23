@@ -78,6 +78,29 @@
   register: faas_seal_domain_source_verify
   changed_when: (faas_seal_domain_source_verify.stdout | from_json).probe_written | default(false)
 
+# The recipient apid seals to must be the one readers published the probe
+# with; a recipient from another pair would seal to a key no reader holds.
+# Before any reader published the probe there is nothing to compare, which
+# is only acceptable while apid still seals to the fleet key too.
+- name: seal_domains — check the source recipient against the published probe
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - seal-domain
+      - verify
+      - --domain
+      - source
+      - --recipient-only
+      - --db-env
+      - "{{ faas_seal_domain_db_env }}"
+      - --json
+  register: faas_seal_domain_source_recipient_check
+  changed_when: false
+  failed_when: >-
+    faas_seal_domain_source_recipient_check.rc != 0 or
+    (faas_seal_domain_source_writes == 'domain' and
+     not (faas_seal_domain_source_recipient_check.stdout | from_json).probe_published)
+
 - name: seal_domains — have apid seal webhook secret copies to the domain
   ansible.builtin.template:
     src: 60-faas-seal-domain-source-writer.conf.j2
