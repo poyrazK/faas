@@ -15249,6 +15249,64 @@ Turn storage off; buckets stay bound and keep their files
 | `--scope <SCOPE>` | environment scope |  |
 | `--no-restart` | store settings without a fresh restart |  |
 
+### data-api hooks
+
+Change hooks: publish committed row changes as events
+
+#### data-api hooks sql
+
+Print the change hooks migration (change event table, trigger, enable/disable helpers)
+
+`gregale data-api hooks sql [--schema <SCHEMA>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--schema <SCHEMA>` | the Data API&#39;s first exposed schema (default api) |  |
+
+Examples:
+
+```sh
+gregale data-api hooks sql > migrations/0006_change_hooks.sql
+```
+
+#### data-api hooks enable
+
+Publish recorded changes as events from the Data API app&#39;s source
+
+`gregale data-api hooks enable [--scope <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+| `--no-restart` | store settings without a fresh restart |  |
+
+Examples:
+
+```sh
+gregale data-api hooks enable shop-data
+```
+
+#### data-api hooks status
+
+Show whether change hooks are on and their event source
+
+`gregale data-api hooks status [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### data-api hooks disable
+
+Stop publishing; recorded changes stay in the table
+
+`gregale data-api hooks disable [--scope <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+| `--no-restart` | store settings without a fresh restart |  |
+
 ### data-api live
 
 Live reads: results that stay current over a realtime connection

@@ -28,7 +28,8 @@ func TestDataAPIHooksSQLRendersTheSchema(t *testing.T) {
 			t.Fatalf("missing %q", want)
 		}
 	}
-	if strings.Contains(sql, "{{schema}}") || strings.Contains(sql, "@gregale:rpc") {
+	// The gateway routes only functions commented '@gregale:rpc'.
+	if strings.Contains(sql, "{{schema}}") || strings.Contains(sql, "COMMENT ON FUNCTION") {
 		t.Fatal("unrendered placeholder or an exposed relay function")
 	}
 	for _, bad := range []string{"", "API", "api;drop", "1api"} {
