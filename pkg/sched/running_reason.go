@@ -147,7 +147,7 @@ func explainRunning(now time.Time, instances []InstanceInfo) map[string]runningR
 		if workload != "" {
 			g.workloadClasses[workload]++
 		}
-		if in.WorkloadClass == state.WorkloadClassWorker || mode == string(state.InstanceModeWorker) || mode == string(state.InstanceModeService) || mode == string(state.InstanceModeJob) || mode == string(state.InstanceModeMirror) {
+		if in.WorkloadClass == state.WorkloadClassWorker || mode == string(state.InstanceModeWorker) || mode == string(state.InstanceModeService) || mode == string(state.InstanceModeJob) || mode == string(state.InstanceModeMirror) || mode == string(state.InstanceModeFork) {
 			g.workloadModes[mode]++
 		}
 		if anchor := scaleInCooldownAnchor(in); anchor != nil && in.ScaleInCooldownS > 0 {

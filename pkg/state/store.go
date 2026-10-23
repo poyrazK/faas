@@ -3617,6 +3617,14 @@ type Store interface {
 	// app's artifact, scoped configuration, bindings, and network policy.
 	AppTaskStore
 
+	// Production fork intent (ADR-732): quarantined, non-serving restores of
+	// an app's newest capture. apid admits; schedd owns the lifecycle.
+	AppForkStore
+	AppForkLifecycleStore
+	AppForkExecStore
+	// ADR-733 crash snapshots: captures of running instances, opened as forks.
+	CrashCaptureStore
+
 	// Sanitized runtime snapshot catalog (ADR-171 follow-up). Publication is
 	// trusted and insert-only; scheduler reads may observe retired rows and
 	// safely choose a same-identity cold boot.

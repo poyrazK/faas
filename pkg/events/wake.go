@@ -380,6 +380,53 @@ type BootStarted struct {
 	QueuedCount        int    // ADR-123 — ledger.Concurrency at admit
 	ConcurrencyAtAdmit int    // ADR-123 — same reading; 0 is cold start
 	AtCapacity         bool   // PR-A — true when post-admit ledger == plan MaxConcurrency
+	PreRPC             PreRPCTimings
+}
+
+// PreRPCTimings splits schedd's work before the vmmd Wake RPC, from the start
+// of the wake path to the boot inputs (schedd_wake_rpc_duration_seconds phase
+// "admit_to_rpc" starts there). Production-us measured ~157 ms of schedd
+// coordination per restore on rc.290 (schedd wait 429 ms against vmmd 272 ms)
+// that no phase covered before admission. Each field is a span in
+// milliseconds:
+//   - BeforeAdmissionMs: the wake's fast path (thaw ticket, running-instance
+//     lookup) up to this admission attempt, including an earlier attempt that
+//     an owner-cache refusal retried. Zero when the admission was not reached
+//     through Engine.Wake.
+//   - LockWaitMs: the admission's gates and acquiring the per-app lock.
+//   - ReadsMs: app, deployment, runtime values and snapshot choice.
+//   - AdmitMs: placement and the instance admission insert.
+//   - PostAdmitMs: lineage and CPU-boost writes, sidecars, secrets, receipt
+//     and binding reads before the boot inputs.
+type PreRPCTimings struct {
+	Set                                                          bool
+	BeforeAdmissionMs, LockWaitMs, ReadsMs, AdmitMs, PostAdmitMs int64
+}
+
+// NewPreRPCTimings derives the spans from the instants schedd stamps. A zero
+// wakeStarted means the attempt was the wake's start. A zero attempt or
+// admitted instant (a path that never admitted) leaves the timings unset.
+func NewPreRPCTimings(wakeStarted, attempt, locked, admitStarted, admitted, inputs time.Time) PreRPCTimings {
+	if attempt.IsZero() || admitted.IsZero() {
+		return PreRPCTimings{}
+	}
+	if wakeStarted.IsZero() {
+		wakeStarted = attempt
+	}
+	ms := func(from, to time.Time) int64 {
+		if to.Before(from) {
+			return 0
+		}
+		return to.Sub(from).Milliseconds()
+	}
+	return PreRPCTimings{
+		Set:               true,
+		BeforeAdmissionMs: ms(wakeStarted, attempt),
+		LockWaitMs:        ms(attempt, locked),
+		ReadsMs:           ms(locked, admitStarted),
+		AdmitMs:           ms(admitStarted, admitted),
+		PostAdmitMs:       ms(admitted, inputs),
+	}
 }
 
 // BootObserved is vmmd's narrow RPC-boundary acknowledgement. It deliberately
@@ -681,6 +728,13 @@ func (e BootStarted) Payload() map[string]any {
 	}
 	if e.ColdReason != "" {
 		p["cold_reason"] = e.ColdReason
+	}
+	if e.PreRPC.Set {
+		p["pre_rpc_before_admission_ms"] = e.PreRPC.BeforeAdmissionMs
+		p["pre_rpc_lock_wait_ms"] = e.PreRPC.LockWaitMs
+		p["pre_rpc_reads_ms"] = e.PreRPC.ReadsMs
+		p["pre_rpc_admit_ms"] = e.PreRPC.AdmitMs
+		p["pre_rpc_post_admit_ms"] = e.PreRPC.PostAdmitMs
 	}
 	return p
 }

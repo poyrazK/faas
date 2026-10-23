@@ -4053,6 +4053,15 @@ type Limits struct {
 	// api.ErrPlanAppUsageSummaryNotAllowed.
 	AppUsageSummaryAllowed bool
 
+	// AppForkMaxActivePerApp / AppForkMaxActivePerAccount (ADR-732) cap
+	// production forks that are queued, restoring or running. Zero means
+	// the plan has no forks: Free and Hobby. A fork holds tenant RAM
+	// outside max_concurrency, so the caps also bound how much of the
+	// 47,600 MB admission ceiling forks can take. Enforced atomically by
+	// state.CreateAppFork.
+	AppForkMaxActivePerApp     int
+	AppForkMaxActivePerAccount int
+
 	// AppErrorsAllowed (issue #TBD / ADR-TBD) gates whether the
 	// per-app error-fingerprint read is on for an account. The
 	// surface covers GET /v1/apps/{slug}/errors/summary (top
@@ -4570,11 +4579,14 @@ var planLimits = map[Plan]Limits{
 		AppUsageSummaryAllowed: false,
 		AppErrorsAllowed:       false,
 		JobsAllowed:            false,
-		WorkflowsAllowed:       false,
-		WorkflowMaxPerApp:      0,
-		WorkflowMaxConcurrent:  0,
-		WorkflowStepMaxTimeout: 0,
-		WorkflowMaxWaitDays:    0,
+		// ADR-732: no production forks below Pro.
+		AppForkMaxActivePerApp:     0,
+		AppForkMaxActivePerAccount: 0,
+		WorkflowsAllowed:           false,
+		WorkflowMaxPerApp:          0,
+		WorkflowMaxConcurrent:      0,
+		WorkflowStepMaxTimeout:     0,
+		WorkflowMaxWaitDays:        0,
 	},
 	PlanHobby: {
 		Plan:                      PlanHobby,
@@ -4995,11 +5007,14 @@ var planLimits = map[Plan]Limits{
 		AppUsageSummaryAllowed: true,
 		AppErrorsAllowed:       true,
 		JobsAllowed:            true,
-		WorkflowsAllowed:       true,
-		WorkflowMaxPerApp:      3,
-		WorkflowMaxConcurrent:  10,
-		WorkflowStepMaxTimeout: 10 * time.Minute,
-		WorkflowMaxWaitDays:    30,
+		// ADR-732: no production forks below Pro.
+		AppForkMaxActivePerApp:     0,
+		AppForkMaxActivePerAccount: 0,
+		WorkflowsAllowed:           true,
+		WorkflowMaxPerApp:          3,
+		WorkflowMaxConcurrent:      10,
+		WorkflowStepMaxTimeout:     10 * time.Minute,
+		WorkflowMaxWaitDays:        30,
 	},
 	PlanPro: {
 		Plan:                      PlanPro,
@@ -5382,11 +5397,14 @@ var planLimits = map[Plan]Limits{
 		AppUsageSummaryAllowed: true,
 		AppErrorsAllowed:       true,
 		JobsAllowed:            true,
-		WorkflowsAllowed:       true,
-		WorkflowMaxPerApp:      10,
-		WorkflowMaxConcurrent:  50,
-		WorkflowStepMaxTimeout: 30 * time.Minute,
-		WorkflowMaxWaitDays:    90,
+		// ADR-732: one active fork per app, two per account.
+		AppForkMaxActivePerApp:     1,
+		AppForkMaxActivePerAccount: 2,
+		WorkflowsAllowed:           true,
+		WorkflowMaxPerApp:          10,
+		WorkflowMaxConcurrent:      50,
+		WorkflowStepMaxTimeout:     30 * time.Minute,
+		WorkflowMaxWaitDays:        90,
 	},
 	PlanScale: {
 		Plan:                      PlanScale,
@@ -5802,11 +5820,14 @@ var planLimits = map[Plan]Limits{
 		AppUsageSummaryAllowed: true,
 		AppErrorsAllowed:       true,
 		JobsAllowed:            true,
-		WorkflowsAllowed:       true,
-		WorkflowMaxPerApp:      50,
-		WorkflowMaxConcurrent:  200,
-		WorkflowStepMaxTimeout: 2 * time.Hour,
-		WorkflowMaxWaitDays:    365,
+		// ADR-732: one active fork per app, two per account.
+		AppForkMaxActivePerApp:     1,
+		AppForkMaxActivePerAccount: 2,
+		WorkflowsAllowed:           true,
+		WorkflowMaxPerApp:          50,
+		WorkflowMaxConcurrent:      200,
+		WorkflowStepMaxTimeout:     2 * time.Hour,
+		WorkflowMaxWaitDays:        365,
 	},
 }
 
@@ -5958,6 +5979,40 @@ const (
 	// funded deadline, not this check, bounds strict spending.
 	FinancialBudgetAdmissionCacheTTL  = time.Second
 	FinancialBudgetAdmissionCacheSize = 10_000
+
+	// Production forks (ADR-732). A fork is destroyed at its TTL; the
+	// caller may ask for less than the default, never more than the max.
+	// Both stay inside the app_forks_ttl_chk backstop (60 s .. 24 h).
+	AppForkDefaultTTL = time.Hour
+	AppForkMinTTL     = time.Minute
+	AppForkMaxTTL     = 4 * time.Hour
+
+	// Live forks (ADR-732) capture the newest running instance when the
+	// fork is created. The capture pauses a serving instance, so a new one
+	// is refused within LiveForkCaptureCooldown of the app's last capture.
+	// It is kept for LiveForkCaptureRetention: past any fork's TTL, far
+	// shorter than a crash snapshot.
+	LiveForkCaptureCooldown  = time.Minute
+	LiveForkCaptureRetention = AppForkMaxTTL + 10*time.Minute
+
+	// Fork exec (ADR-732): commands run inside a running fork. At most
+	// AppForkExecMaxPending are queued or running per fork; each runs for at
+	// most AppForkExecMaxTimeout and keeps at most AppForkExecMaxOutputBytes
+	// of combined stdout/stderr (the tail beyond that is dropped).
+	AppForkExecMaxPending         = 4
+	AppForkExecDefaultTimeout     = time.Minute
+	AppForkExecMaxTimeout         = 10 * time.Minute
+	AppForkExecDefaultOutputBytes = 64 << 10
+	AppForkExecMaxOutputBytes     = 1 << 20
+
+	// Crash snapshots (ADR-733). A capture is kept for CrashCaptureRetention
+	// and then deleted. An app gets at most one capture in flight and no
+	// new request within CrashCaptureCooldown of the last; a capture that
+	// is not finished within CrashCaptureTimeout is failed. Captures are
+	// only opened as forks, so the plan gate is the fork entitlement.
+	CrashCaptureRetention = 7 * 24 * time.Hour
+	CrashCaptureCooldown  = 10 * time.Minute
+	CrashCaptureTimeout   = 5 * time.Minute
 
 	// PreflightRateLimitPerHour bounds anonymous "would this run here" checks per
 	// client IP. The check is unauthenticated, so the ceiling exists to protect
@@ -8701,6 +8756,17 @@ func (p Plan) AppUsageSummaryAllowed() bool {
 		return false
 	}
 	return l.AppUsageSummaryAllowed
+}
+
+// AppForkLimits returns the active production-fork caps per app and per
+// account (ADR-732). Zero means the plan has no forks; unknown plans get
+// none.
+func (p Plan) AppForkLimits() (perApp, perAccount int) {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0, 0
+	}
+	return l.AppForkMaxActivePerApp, l.AppForkMaxActivePerAccount
 }
 
 // AppErrorsAllowed returns whether the per-app error-fingerprint
@@ -14092,6 +14158,9 @@ const (
 	DockerfileBuildArgValueMaxBytes    = 4096
 	DockerfileBuildArgsEncodedMaxBytes = 32 << 10
 	DockerfileBuildTargetMaxBytes      = 128
+	// DockerfileBuildSecretsMax caps the build secrets one Dockerfile build
+	// mounts (ADR-20261022185329); each one is an app secret vmmd opens.
+	DockerfileBuildSecretsMax = 16
 )
 
 // Public build configuration is intentionally limited to reviewed URL values.

@@ -972,6 +972,13 @@ type MemStore struct {
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// appForks are production fork intents (ADR-732), keyed by fork id.
+	appForks map[string]AppFork
+	// appForkExecs mirrors app_fork_execs (ADR-732 fork exec).
+	appForkExecs map[string]AppForkExec
+	// crashCaptures / crashSettings are ADR-733 crash snapshots.
+	crashCaptures map[string]CrashCapture
+	crashSettings map[string]CrashSnapshotSettings
 	// appTaskAttach holds ADR-1037 interactive-session records by task id.
 	appTaskAttach map[string]AppTaskAttach
 	// jobRunAttach holds ADR-1330 interactive image-run sessions by run id.
@@ -7212,6 +7219,11 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key, task := range m.appTasks {
 		if task.AppID == id {
 			delete(m.appTasks, key)
+		}
+	}
+	for key, fork := range m.appForks {
+		if fork.AppID == id {
+			delete(m.appForks, key)
 		}
 	}
 	for key, v := range m.crons {
@@ -16480,7 +16492,7 @@ func (m *MemStore) RunningInstanceForApp(_ context.Context, appID string) (Insta
 	var newest Instance
 	found := false
 	for _, ins := range m.instances {
-		if ins.AppID != appID || ins.State != "running" {
+		if ins.AppID != appID || ins.State != "running" || IsFork(ins.Mode) {
 			continue
 		}
 		dep, ok := m.deployments[ins.DeploymentID]
