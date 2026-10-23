@@ -4502,6 +4502,20 @@ func (m *MemStore) ApplyProjectPlan(
 	return project, insertedApps, insertedCrons, nil
 }
 
+// applyProjectReconcileResources mirrors the Postgres rule: each positive
+// declared value replaces the app's (ADR-20261023120000).
+func applyProjectReconcileResources(app *App, declared App) {
+	if declared.RAMMB > 0 {
+		app.RAMMB = declared.RAMMB
+	}
+	if declared.CPUMillicores > 0 {
+		app.CPUMillicores = declared.CPUMillicores
+	}
+	if declared.MaxConcurrency > 0 {
+		app.MaxConcurrency = declared.MaxConcurrency
+	}
+}
+
 // ApplyProjectReconcile applies an existing project's desired app and cron
 // membership under one MemStore critical section. The map snapshots make
 // the operation rollback-safe even when a validation or uniqueness error is
@@ -4677,6 +4691,9 @@ func (m *MemStore) ApplyProjectReconcile(
 				if mutation.SetPlatformTenantRequired {
 					tombstone.PlatformTenantRequired = app.PlatformTenantRequired
 				}
+				if mutation.SetResources {
+					applyProjectReconcileResources(&tombstone, app)
+				}
 				tombstone.Status = AppActive
 				tombstone.DeletedAt = nil
 				tombstone.DeleteGraceUntil = nil
@@ -4726,6 +4743,9 @@ func (m *MemStore) ApplyProjectReconcile(
 			app.Manifest = mutation.App.Manifest
 			if mutation.SetPlatformTenantRequired {
 				app.PlatformTenantRequired = mutation.App.PlatformTenantRequired
+			}
+			if mutation.SetResources {
+				applyProjectReconcileResources(&app, mutation.App)
 			}
 			m.apps[app.ID] = app
 			if routeCheckAppInputsChanged(before, app) {
@@ -14092,7 +14112,7 @@ func (m *MemStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoc
 	if err := m.validateInvocationEnvironmentLocked(inv, info); err != nil {
 		return Invocation{}, err
 	}
-	if err := invocationAdmissionDepth(inv, m.pendingProductionInvocationsLocked(inv.AppID, inv.Source, nil)); err != nil {
+	if err := m.checkInvocationAdmissionLocked(inv, nil); err != nil {
 		return Invocation{}, err
 	}
 	return m.enqueueInvocationLocked(inv)

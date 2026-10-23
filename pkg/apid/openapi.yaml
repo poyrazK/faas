@@ -90018,6 +90018,11 @@ components:
           type: boolean
           default: false
           description: "Wait for the workload to publish FAAS_SECRETS_RELOAD_READY_FILE before sending a secret reload signal. Requires secret_reload_signal. Main and sidecar workloads opt in independently (ADR-506)."
+        secret_files:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecretFile'
+          description: "App secrets guest-init writes to /run/secrets for the main workload (ADR-20261023090000). Set from the app's Compose service secrets."
         stop_grace_period:
           type: [string, "null"]
           description: "OCI StopGracePeriod as a Go duration string (e.g. \"30s\"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s) enforced by Validate() — ADR-138 §Decision 4."
@@ -104348,6 +104353,39 @@ components:
           type: integer
           minimum: 1
           description: "Seconds between the stop signal and SIGKILL, capped by the plan."
+    SecretFile:
+      type: object
+      description: "An app secret guest-init writes to /run/secrets/<name> in the main workload (ADR-20261023090000), from a Compose service's secrets. Names the secret; its value is never returned."
+      required: [secret, name]
+      properties:
+        secret:
+          type: string
+          description: "App secret whose value the file holds."
+        name:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
+          description: "File name in /run/secrets."
+        mode:
+          type: integer
+          minimum: 0
+          maximum: 511
+          description: "Permission bits; omitted means 0444."
+    ComposeResources:
+      type: object
+      description: "A Compose service's deploy.replicas and deploy.resources.limits, converted to app settings (ADR-20261023120000). Omitted fields are undeclared and keep the app's own settings."
+      properties:
+        replicas:
+          type: integer
+          minimum: 1
+          description: "Caps a request-mode app's instances (max_concurrency) and fixes a worker's or service's replica count."
+        memory_mb:
+          type: integer
+          minimum: 1
+          description: "App RAM in MB, rounded up from the declared size."
+        cpu_millicores:
+          type: integer
+          enum: [250, 500, 1000]
+          description: "App CPU share."
     PlanWorkload:
       description: "One discovered unit of work. Mirrors reposcan.Workload."
       type: object
@@ -104389,6 +104427,13 @@ components:
           type: array
           items: { type: string }
           description: "Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."
+        secret_files:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecretFile'
+          description: "Compose secrets written to /run/secrets (ADR-20261023090000)."
+        resources:
+          $ref: '#/components/schemas/ComposeResources'
         command:
           type: array
           items: { type: string }

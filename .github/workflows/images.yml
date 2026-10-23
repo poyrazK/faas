@@ -170,10 +170,10 @@ jobs:
           fi
 
           # Runtime bases contain these Dockerfiles, the shared skeleton,
-          # and the profiling and tracing bootstraps (their hashed Python
-          # locks). Daemon code and guest runner shims ship in the signed
+          # runner-python312's pip pin, and the profiling and tracing
+          # bootstraps (their hashed Python locks). Daemon code and guest runner shims ship in the signed
           # release bundle and cannot change these image bytes.
-          if grep -Eq '^(images/(base-debian-parent|base-minimal|runner-node22|runner-node24|runner-python312|runner-python313|execution-python-data-v1|runner-go124|runner-go124-alpine)\.Dockerfile$|images/rootfs-skel/|guest/(profiling|tracing)/|images/install-execution-profile\.py$|images/install_execution_profile_test\.py$|pkg/executionprofiles/python-data-v1\.json$|images/Dockerfile\.lock$|scripts/ci/(install-grype|update-grype-db|scan-oci-image|validate-runtime-image|smoke-runtime-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
+          if grep -Eq '^(images/(base-debian-parent|base-minimal|runner-node22|runner-node24|runner-python312|runner-python313|execution-python-data-v1|runner-go124|runner-go124-alpine)\.Dockerfile$|images/rootfs-skel/|images/runner-python312-pip\.txt$|guest/(profiling|tracing)/|images/install-execution-profile\.py$|images/install_execution_profile_test\.py$|pkg/executionprofiles/python-data-v1\.json$|images/Dockerfile\.lock$|scripts/ci/(install-grype|update-grype-db|scan-oci-image|validate-runtime-image|smoke-runtime-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
             bases=true
           fi
 

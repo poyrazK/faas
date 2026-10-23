@@ -3097,6 +3097,15 @@ type Limits struct {
 	MaxSourceBytesPerInvocation int
 	AsyncInvokeAllowed          bool
 
+	// MaxQueueBacklogBytesPerAccount (ADR-20261022105723) caps the payload
+	// bytes of an account's pending queue messages across its apps, which
+	// bounds what a backlog costs the control-plane database.
+	// QueueMessageRetentionSeconds is how long a pending queue message
+	// waits for a worker before schedd moves it to the dead letter,
+	// counted from its enqueue. A message a worker holds does not expire.
+	MaxQueueBacklogBytesPerAccount int64
+	QueueMessageRetentionSeconds   int
+
 	// MaxQueueAttempts (issue #394 / Move 1 dead-letter) is the shared
 	// per-plan total-attempt budget for durable invocations that hit a
 	// transient failure during drain (pkg/sched/drain.go). It covers async,
@@ -4769,12 +4778,15 @@ var planLimits = map[Plan]Limits{
 		RegistryCredentialMax: 2,
 		// 64 KB envelope = 0.25 % of Hobby's 25 MB tarball budget — small
 		// enough to keep the drain tick bounded, large enough for typical
-		// JSON event payloads.
-		MaxQueueDepth:               5,
-		MaxDelayedTasksPerApp:       5,
-		MaxSourceBytesPerInvocation: 64 * 1024,
-		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 604800, EventRetentionSeconds: 86400, IdempotencyRetentionSeconds: 2592000, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20, RetainedArtifactBytesPerAccount: 256 << 20, RetainedArtifactsPerAccount: 256, DeadlineSecondsMax: 86400, AttemptsMax: 3, ExecutionSecondsMax: 3600, SchedulesPerAccount: 10, ScheduleMinIntervalSeconds: 300, ChildrenPerOperation: 10, ConcurrencyPoliciesPerApp: 10, ApprovalFormsPerApp: 10},
+		// JSON event payloads. ADR-20261022105723: 10,000 pending messages
+		// per app, 100 MiB of them per account, kept 1 day.
+		MaxQueueDepth:                  10_000,
+		MaxQueueBacklogBytesPerAccount: 100 << 20,
+		QueueMessageRetentionSeconds:   86_400,
+		MaxDelayedTasksPerApp:          5,
+		MaxSourceBytesPerInvocation:    64 * 1024,
+		AsyncInvokeAllowed:             true,
+		Operations:                     OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 604800, EventRetentionSeconds: 86400, IdempotencyRetentionSeconds: 2592000, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20, RetainedArtifactBytesPerAccount: 256 << 20, RetainedArtifactsPerAccount: 256, DeadlineSecondsMax: 86400, AttemptsMax: 3, ExecutionSecondsMax: 3600, SchedulesPerAccount: 10, ScheduleMinIntervalSeconds: 300, ChildrenPerOperation: 10, ConcurrencyPoliciesPerApp: 10, ApprovalFormsPerApp: 10},
 		// Hobby: 3 attempts. Tight on the cheap tier — a worker that
 		// keeps re-trying a bad payload would otherwise burn the
 		// per-app rps budget and starve the rest of the queue.
@@ -5204,12 +5216,16 @@ var planLimits = map[Plan]Limits{
 		// matrix (5-8 publishers). Enough for "every dev has their own
 		// key" workflows without letting the table grow unbounded.
 		TrustedSignerCountMax: 8,
-		// 256 KB = 0.1 % of Pro's 250 MB tarball.
-		MaxQueueDepth:               25,
-		MaxDelayedTasksPerApp:       50,
-		MaxSourceBytesPerInvocation: 256 * 1024,
-		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 2592000, EventRetentionSeconds: 604800, IdempotencyRetentionSeconds: 7776000, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20, RetainedArtifactBytesPerAccount: 1024 << 20, RetainedArtifactsPerAccount: 1024, DeadlineSecondsMax: 604800, AttemptsMax: 10, ExecutionSecondsMax: 86400, SchedulesPerAccount: 100, ScheduleMinIntervalSeconds: 60, ChildrenPerOperation: 100, ConcurrencyPoliciesPerApp: 100, ApprovalFormsPerApp: 100},
+		// 256 KB = 0.1 % of Pro's 250 MB tarball. ADR-20261022105723:
+		// 100,000 pending messages per app, 1 GiB of them per account,
+		// kept 4 days.
+		MaxQueueDepth:                  100_000,
+		MaxQueueBacklogBytesPerAccount: 1 << 30,
+		QueueMessageRetentionSeconds:   4 * 86_400,
+		MaxDelayedTasksPerApp:          50,
+		MaxSourceBytesPerInvocation:    256 * 1024,
+		AsyncInvokeAllowed:             true,
+		Operations:                     OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 2592000, EventRetentionSeconds: 604800, IdempotencyRetentionSeconds: 7776000, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20, RetainedArtifactBytesPerAccount: 1024 << 20, RetainedArtifactsPerAccount: 1024, DeadlineSecondsMax: 604800, AttemptsMax: 10, ExecutionSecondsMax: 86400, SchedulesPerAccount: 100, ScheduleMinIntervalSeconds: 60, ChildrenPerOperation: 100, ConcurrencyPoliciesPerApp: 100, ApprovalFormsPerApp: 100},
 		// Pro: 10 attempts. Trades tolerance against "a poisoned row
 		// churns indefinitely". At 10 retries a transient downstream
 		// flap has plenty of room, while a permanently-bad payload
@@ -5605,13 +5621,15 @@ var planLimits = map[Plan]Limits{
 		// key (1024 bytes per migration 00083 CHECK) keeps the
 		// table on-disk under ~16 KiB regardless.
 		TrustedSignerCountMax: 16,
-		// Soft ceiling: the binding constraint on Scale is the per-payload
-		// byte cap (1 MiB), not the row count.
-		MaxQueueDepth:               100,
-		MaxDelayedTasksPerApp:       1_000_000,
-		MaxSourceBytesPerInvocation: 1024 * 1024,
-		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7776000, EventRetentionSeconds: 2592000, IdempotencyRetentionSeconds: 15552000, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20, RetainedArtifactBytesPerAccount: 4096 << 20, RetainedArtifactsPerAccount: 4096, DeadlineSecondsMax: 2592000, AttemptsMax: 25, ExecutionSecondsMax: 604800, SchedulesPerAccount: 1000, ScheduleMinIntervalSeconds: 60, ChildrenPerOperation: 1000, ConcurrencyPoliciesPerApp: 1000, ApprovalFormsPerApp: 1000},
+		// ADR-20261022105723: 1,000,000 pending messages per app, 10 GiB
+		// of them per account, kept 14 days.
+		MaxQueueDepth:                  1_000_000,
+		MaxQueueBacklogBytesPerAccount: 10 << 30,
+		QueueMessageRetentionSeconds:   14 * 86_400,
+		MaxDelayedTasksPerApp:          1_000_000,
+		MaxSourceBytesPerInvocation:    1024 * 1024,
+		AsyncInvokeAllowed:             true,
+		Operations:                     OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7776000, EventRetentionSeconds: 2592000, IdempotencyRetentionSeconds: 15552000, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20, RetainedArtifactBytesPerAccount: 4096 << 20, RetainedArtifactsPerAccount: 4096, DeadlineSecondsMax: 2592000, AttemptsMax: 25, ExecutionSecondsMax: 604800, SchedulesPerAccount: 1000, ScheduleMinIntervalSeconds: 60, ChildrenPerOperation: 1000, ConcurrencyPoliciesPerApp: 1000, ApprovalFormsPerApp: 1000},
 		// Scale: 25 attempts. The highest tier gets the most
 		// tolerance so an upstream outage lasting a few minutes
 		// doesn't dump the queue into dead_letter on a single bad
@@ -14391,6 +14409,11 @@ const (
 	// mounts (ADR-20261022185329); each one is an app secret vmmd opens.
 	DockerfileBuildSecretsMax = 16
 )
+
+// SecretFilesMax caps the Compose secrets one service writes to
+// /run/secrets (ADR-20261023090000). guest-init sizes the tmpfs it mounts
+// there from it and the largest plan's SecretValueMaxBytes.
+const SecretFilesMax = 16
 
 // Public build configuration is intentionally limited to reviewed URL values.
 const (

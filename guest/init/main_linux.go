@@ -353,6 +353,16 @@ func boot() error {
 		// Don't surface the value, just the fact that the file failed.
 		slog.Default().Warn("secrets.env could not be loaded; proceeding without secrets", "err_kind", errorKind(secErr))
 	}
+	// Compose secrets declared as files (ADR-20261023090000) belong to the
+	// main workload, which runs from this root in both the single-workload
+	// and roster paths.
+	secretFiles, err := newSecretFileWriter("", manifest, slog.Default())
+	if err != nil {
+		return err
+	}
+	if err := secretFiles.write(secrets); err != nil {
+		return err
+	}
 
 	// Issue #395 / ADR-045: read /etc/faas/env.json (plaintext JSON
 	// map, written by vmmd at wake time) and thread it into the
