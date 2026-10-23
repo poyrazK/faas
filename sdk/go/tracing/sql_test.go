@@ -10,10 +10,9 @@ import (
 	"testing"
 )
 
-// fakeConn implements the context interfaces a modern driver does; legacy
-// drops them so database/sql prepares every statement.
+// fakeConn implements the context interfaces a modern driver does; legacyConn
+// lacks them, so database/sql prepares every statement.
 type fakeConn struct {
-	legacy  bool
 	mu      *sync.Mutex
 	checked *[]string
 }
