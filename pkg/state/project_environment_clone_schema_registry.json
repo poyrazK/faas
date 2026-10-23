@@ -352,6 +352,7 @@
       "mfa_required",
       "mfa_revision",
       "mfa_secret_encrypted",
+      "mfa_totp_last_step",
       "overage_cap_cents",
       "password_reset_revision",
       "past_due_at",

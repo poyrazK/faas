@@ -41,6 +41,7 @@ package auth
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base32"
 	"fmt"
 	"image/png"
@@ -135,12 +136,37 @@ func QRCode(key *otp.Key) ([]byte, error) {
 // malformed-code (length-mismatch), which surfaces as a definitive
 // false to the caller.
 func VerifyCode(secret, code string) bool {
-	ok, err := totp.ValidateCustom(code, secret, time.Now().UTC(),
-		totp.ValidateOpts{
-			Period:    30,
-			Skew:      1,
+	_, ok := VerifyCodeStep(secret, code, time.Now())
+	return ok
+}
+
+// totpPeriod is the RFC 6238 time step, in seconds.
+const totpPeriod = 30
+
+// VerifyCodeStep is VerifyCode that also reports which 30-second time step
+// the code matched (Unix time / 30). A caller that grants a session records
+// the step and refuses a code at or before it, so an accepted code cannot be
+// replayed within its ±1-step window (RFC 6238 §5.2). Every candidate step
+// is compared, in constant time, so timing does not reveal which matched.
+func VerifyCodeStep(secret, code string, now time.Time) (int64, bool) {
+	code = strings.TrimSpace(code)
+	if len(code) != int(otp.DigitsSix) {
+		return 0, false
+	}
+	current := now.UTC().Unix() / totpPeriod
+	matched := int64(-1)
+	for _, step := range []int64{current - 1, current, current + 1} {
+		want, err := totp.GenerateCodeCustom(secret, time.Unix(step*totpPeriod, 0).UTC(), totp.ValidateOpts{
+			Period:    totpPeriod,
 			Digits:    otp.DigitsSix,
 			Algorithm: otp.AlgorithmSHA1,
 		})
-	return err == nil && ok
+		if err != nil {
+			return 0, false
+		}
+		if subtle.ConstantTimeCompare([]byte(want), []byte(code)) == 1 && step > matched {
+			matched = step
+		}
+	}
+	return matched, matched >= 0
 }
