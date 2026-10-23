@@ -1,8 +1,12 @@
 # seal_domains
 
-Stages per-reader seal-domain identities (ADR 20261022111812). This release
-wires one domain, `outbound`: customer AI provider and other outbound
-credentials, opened only by outboundd.
+Stages per-reader seal-domain identities (ADR 20261022111812). Three domains
+are wired, each opened by one daemon:
+- `outbound`: customer AI provider and other outbound credentials (outboundd);
+- `runtime`: customer env vars and secrets (vmmd);
+- `source`: GitHub install tokens and webhook secrets (githubd).
+
+The `outbound` steps:
 
 1. On the operator machine: `gregalectl seal-domain init --domain outbound --dir <dir>`.
 2. Set `faas_seal_domains_managed: true`,
@@ -36,5 +40,14 @@ vmmd opens at wake:
    `faas_seal_domain_runtime_writes: domain`, converge, and run
    `gregalectl seal-domain migrate --domain runtime --readers-verified`.
 
-The checklist for both domains, with checks and rollbacks for each step, is
+The `source` domain covers GitHub install tokens and webhook secret copies,
+which githubd opens. Set `faas_seal_domain_source_identity_src` and
+`faas_seal_domain_source_recipient_src` (control-plane hosts stage both) and
+converge; the role gives githubd the identity and proves the probe before
+apid seals to the recipient. Then set
+`faas_seal_domain_source_readers_verified: true` and
+`faas_seal_domain_source_writes: domain`, converge, and run
+`gregalectl seal-domain migrate --domain source --readers-verified`.
+
+The checklist for every domain, with checks and rollbacks for each step, is
 [docs/runbooks/seal-domains-rollout.md](../../../../docs/runbooks/seal-domains-rollout.md).

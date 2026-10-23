@@ -227,3 +227,51 @@ func containsInstallation(rows []state.GithubWebhookSecretRow, id int64) bool {
 	}
 	return false
 }
+
+// TestPostgresMigrateSource moves webhook secret copies to the source domain
+// through the compare-and-swap writes: a fleet-sealed copy is re-sealed and a
+// row without a copy gets a domain-sealed one.
+func TestPostgresMigrateSource(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	fleet, domain := mustIdentity(t), mustIdentity(t)
+	base := rand.Int64N(1<<40) + 1<<42
+	sealedID, plainID := base, base+1
+	sealedSecret, plainSecret := []byte("fleet-sealed-secret-0123"), []byte("plaintext-only-secret-01")
+	fleetCopy, err := sealdomain.SealGithubWebhookSecret([]*age.X25519Recipient{fleet.Recipient()}, sealedSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.UpsertGithubWebhookSecret(ctx, sealedID, state.GithubWebhookSecret{Value: sealedSecret, Sealed: fleetCopy}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.UpsertGithubWebhookSecret(ctx, plainID, state.GithubWebhookSecret{Value: plainSecret}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if updated, err := store.ResealGithubWebhookSecret(ctx, sealedID, []byte("not-the-stored-copy"), fleetCopy); err != nil || updated {
+		t.Fatalf("re-sealing against a changed copy = %v, %v; want no write", updated, err)
+	}
+	report, err := sealmigrate.MigrateSource(ctx, store, domain, []*age.X25519Identity{fleet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Resealed < 2 {
+		t.Fatalf("report = %+v, want both rows sealed to the domain", report)
+	}
+	for id, want := range map[int64][]byte{sealedID: sealedSecret, plainID: plainSecret} {
+		got, err := store.GetGithubWebhookSecret(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if opened, err := sealdomain.OpenGithubWebhookSecret([]*age.X25519Identity{domain}, got.Sealed); err != nil || !bytes.Equal(opened, want) {
+			t.Fatalf("installation %d: domain open = %q, %v", id, opened, err)
+		}
+		if _, err := sealdomain.OpenGithubWebhookSecret([]*age.X25519Identity{fleet}, got.Sealed); err == nil {
+			t.Fatalf("installation %d: the fleet identity still opens the copy", id)
+		}
+	}
+	again, err := sealmigrate.MigrateSource(ctx, store, domain, []*age.X25519Identity{fleet})
+	if err != nil || again.Resealed != 0 || again.Current < 2 {
+		t.Fatalf("second run = %+v, %v; want both rows current", again, err)
+	}
+}

@@ -717,7 +717,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("vmmd: load runtime seal domain: %w", err)
 	}
 	hostIdentities = append(runtimeIdentities, hostIdentities...)
-	registerSealDomainLoaded(ops.Registry(), sealdomain.Runtime, len(runtimeIdentities) > 0)
+	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Runtime, len(runtimeIdentities) > 0)
 	log.Info("vmmd: unseal identities loaded", "runtime_domain", len(runtimeIdentities) > 0, "identities", len(hostIdentities))
 
 	// Issue #98 / ADR-028: vmmd self-registers in compute_nodes

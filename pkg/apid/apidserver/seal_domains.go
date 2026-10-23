@@ -20,6 +20,8 @@ const (
 	envSealDomainOutboundWrites    = "FAAS_SEAL_DOMAIN_OUTBOUND_WRITES"
 	envSealDomainRuntimeRecipient  = "FAAS_SEAL_DOMAIN_RUNTIME_RECIPIENT_PATH"
 	envSealDomainRuntimeWrites     = "FAAS_SEAL_DOMAIN_RUNTIME_WRITES"
+	envSealDomainSourceRecipient   = "FAAS_SEAL_DOMAIN_SOURCE_RECIPIENT_PATH"
+	envSealDomainSourceWrites      = "FAAS_SEAL_DOMAIN_SOURCE_WRITES"
 )
 
 // outboundDomainRecipient is the outbound domain's recipient once the
@@ -28,6 +30,14 @@ var outboundDomainRecipient func() *age.X25519Recipient
 
 // outboundWriteMode picks the recipients of new outbound credentials.
 var outboundWriteMode sealdomain.WriteMode
+
+// sourceDomainRecipient is the source domain's recipient once the
+// seal_domains role stages it; nil until then.
+var sourceDomainRecipient func() *age.X25519Recipient
+
+// sourceWriteMode picks the recipients of a GitHub webhook secret's sealed
+// copy. githubd, which opens it, seals install tokens under the same mode.
+var sourceWriteMode sealdomain.WriteMode
 
 // runtimeDomainRecipient is the runtime domain's recipient once the
 // seal_domains role stages it; nil until then.
@@ -52,6 +62,15 @@ func loadSealDomains(getenv func(string) string, log *slog.Logger) error {
 		return fmt.Errorf("apid: outbound seal domain: %w", err)
 	}
 	log.Info("outbound seal domain", "write_mode", string(outboundWriteMode), "domain_recipient_staged", outboundDomainRecipient != nil, "recipients", len(recipients))
+
+	if sourceDomainRecipient, sourceWriteMode, err = loadDomainWriter(getenv, envSealDomainSourceRecipient, envSealDomainSourceWrites); err != nil {
+		return err
+	}
+	sourceRecipients, err := githubWebhookSecretRecipients()
+	if err != nil && sourceWriteMode != sealdomain.WriteAuto && sourceWriteMode != sealdomain.WriteFleet {
+		return fmt.Errorf("apid: source seal domain: %w", err)
+	}
+	log.Info("source seal domain", "write_mode", string(sourceWriteMode), "domain_recipient_staged", sourceDomainRecipient != nil, "recipients", len(sourceRecipients))
 
 	if runtimeDomainRecipient, runtimeWriteMode, err = loadDomainWriter(getenv, envSealDomainRuntimeRecipient, envSealDomainRuntimeWrites); err != nil {
 		return err
@@ -89,6 +108,13 @@ func loadDomainWriter(getenv func(string) string, recipientEnv, writesEnv string
 // domain and the fleet recipient, then the domain alone.
 func outboundCredentialRecipients() ([]*age.X25519Recipient, error) {
 	return sealdomain.Recipients(outboundWriteMode, recipientOrNil(outboundDomainRecipient), recipientOrNil(outboundCredentialRecipient))
+}
+
+// githubWebhookSecretRecipients returns who a GitHub webhook secret's sealed
+// copy is sealed to: the fleet recipient alone until the source domain is
+// staged, then the domain and the fleet recipient, then the domain alone.
+func githubWebhookSecretRecipients() ([]*age.X25519Recipient, error) {
+	return sealdomain.Recipients(sourceWriteMode, recipientOrNil(sourceDomainRecipient), hostSecretRecipient())
 }
 
 // runtimeSecretRecipient is who app, project, release and binding secrets,

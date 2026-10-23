@@ -50,6 +50,19 @@ func TestRegistry_OutboundIsWiredToOutbounddAlone(t *testing.T) {
 	}
 }
 
+func TestRegistry_SourceIsWiredToGithubdAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Source)
+	if !ok || !s.Wired {
+		t.Fatalf("source domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "githubd" {
+		t.Fatalf("source readers = %v, want [githubd]", s.Readers)
+	}
+	if got := sealdomain.ReaderDomains("apid"); containsDomain(got, sealdomain.Source) {
+		t.Fatalf("apid reads %v; it must only seal webhook secrets", got)
+	}
+}
+
 func TestParse_RejectsUnknownDomain(t *testing.T) {
 	if _, err := sealdomain.Parse("fleet"); err == nil {
 		t.Fatal("Parse accepted a name outside the registry")

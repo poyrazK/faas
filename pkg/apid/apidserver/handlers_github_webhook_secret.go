@@ -43,8 +43,6 @@ import (
 	"net/http"
 	"time"
 
-	"filippo.io/age"
-
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -127,11 +125,11 @@ func (s *server) handleSetGithubWebhookSecret(w http.ResponseWriter, r *http.Req
 // recipient; the plaintext column stays written for the release that reads
 // only it.
 func sealGithubWebhookSecret(raw []byte) ([]byte, *api.Problem) {
-	recipient := hostSecretRecipient()
-	if recipient == nil {
+	recipients, err := githubWebhookSecretRecipients()
+	if err != nil {
 		return nil, api.ErrCapacity("could not seal webhook secret")
 	}
-	sealed, err := sealdomain.SealGithubWebhookSecret([]*age.X25519Recipient{recipient}, raw)
+	sealed, err := sealdomain.SealGithubWebhookSecret(recipients, raw)
 	if err != nil {
 		return nil, api.ErrCapacity("could not seal webhook secret")
 	}
