@@ -83,7 +83,7 @@ func adoptionCheckCommand(args []string, stdout, stderr io.Writer) int {
 	}
 	cfg, err := LoadConfig(*configPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "vmmd adoption-check: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "vmmd adoption-check: %v\n", err)
 		return adoptionExitError
 	}
 	res := adoptionCheckResult{Killed: []string{}, Unadoptable: []adoptionCheckVerdict{}}

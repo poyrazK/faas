@@ -93,3 +93,47 @@ func TestAdoptGuestProcessRefusesAnotherIncarnation(t *testing.T) {
 		t.Fatal("refused adoption left a process registered")
 	}
 }
+
+// Where vmmd shares the host's mount namespace (the e2e harness), the TUN
+// source bind the previous vmmd made is still mounted: adoption registers it
+// and teardown unmounts it, so the jail can be removed. Under systemd's
+// per-start namespace it is gone and nothing is registered.
+func TestAdoptTunSourceBindFollowsTheMountNamespace(t *testing.T) {
+	v := NewJailerVMM(t.TempDir(), time.Second)
+	target := filepath.Join(v.chrootRoot(idLive), nativeTunTargetName)
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.adoptTunSourceBind(idLive); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(v.bindMounts[idLive]); n != 0 {
+		t.Fatalf("registered %d binds for an unmounted TUN target", n)
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("mounting a TUN source stand-in needs root")
+	}
+	source := filepath.Join(t.TempDir(), "tun")
+	if err := os.WriteFile(source, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := bindFileMount(source, target); err != nil {
+		t.Fatalf("bind the stand-in: %v (%s)", err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command("umount", target).Run() })
+	if err := v.adoptTunSourceBind(idLive); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.unmountBindMounts(idLive); err != nil {
+		t.Fatalf("teardown of the adopted TUN bind: %v", err)
+	}
+	if present, err := hostMountPresent(target); err != nil || present {
+		t.Fatalf("TUN bind still mounted after teardown: %v, %v", present, err)
+	}
+	if err := resourceMountTreeClear(filepath.Dir(target)); err != nil {
+		t.Fatalf("jail still holds a mount: %v", err)
+	}
+}

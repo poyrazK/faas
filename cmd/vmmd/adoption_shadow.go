@@ -190,12 +190,12 @@ func stopGRPC(srv grpcStopper, adopting bool, log *slog.Logger) {
 // stops (adoption ADR §3), so schedd retries wakes and ignores failed pings
 // until the successor serves. A crash sets none. ctx is already cancelled at
 // shutdown, so the write gets its own short deadline.
-func announceRestart(store any, nodeID string, log *slog.Logger) {
+func announceRestart(ctx context.Context, store any, nodeID string, log *slog.Logger) {
 	notices, ok := store.(state.VMMDRestartNoticeStore)
 	if !ok || nodeID == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if err := notices.SetComputeNodeVMMDRestartNotice(ctx, nodeID, api.VMMDRestartNoticeSeconds); err != nil {
 		log.Warn("vmmd: planned-restart notice not set", "node_id", nodeID, "err", err)

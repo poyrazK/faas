@@ -60,12 +60,19 @@ func (v *JailerVMM) adoptGuestProcess(l Lease, process resourceProcessIdentity, 
 		if a.File == nil {
 			return fail(fmt.Errorf("vmm: adopt %s: %s %s has no recorded identity", l.Instance, a.Kind, a.Path))
 		}
-		if present, err := resourceFileMatches(a.Path, *a.File); err != nil || !present {
-			return fail(fmt.Errorf("vmm: adopt %s: %s %s is not the recorded file: present=%v err=%v", l.Instance, a.Kind, a.Path, present, err))
+		present, err := resourceFileMatches(a.Path, *a.File)
+		if err != nil {
+			return fail(fmt.Errorf("vmm: adopt %s: check %s %s against the recorded file: %w", l.Instance, a.Kind, a.Path, err))
+		}
+		if !present {
+			return fail(fmt.Errorf("vmm: adopt %s: %s %s is not the recorded file", l.Instance, a.Kind, a.Path))
 		}
 	}
 	if err := v.adoptGuestBinds(l.Instance, binds); err != nil {
 		return fail(err)
+	}
+	if err := v.adoptTunSourceBind(l.Instance); err != nil {
+		return fail(fmt.Errorf("vmm: adopt %s: TUN source bind: %w", l.Instance, err))
 	}
 	if !l.IsBuilder {
 		if err := v.trackCgroupFence(l); err != nil {
@@ -191,6 +198,27 @@ func (v *JailerVMM) adoptGuestBinds(instance string, binds []resourceAsset) erro
 			_ = f.Close()
 		}
 	}
+	return nil
+}
+
+// adoptTunSourceBind registers the TUN source bind (bindTunSourceForOwner)
+// for teardown when it is still mounted in this vmmd's namespace. The bind
+// is not journaled. Under systemd (ProtectSystem gives each start its own
+// mount namespace) it went with the previous vmmd's namespace; where vmmd
+// shares the host's namespace, as in the e2e harness, it outlives the
+// previous vmmd, and an unregistered one fails the jail removal.
+func (v *JailerVMM) adoptTunSourceBind(instance string) error {
+	target := filepath.Join(v.chrootRoot(instance), nativeTunTargetName)
+	present, err := hostMountPresent(target)
+	if err != nil || !present {
+		return err
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.bindMounts == nil {
+		v.bindMounts = make(map[string][]ephemeralBind)
+	}
+	v.bindMounts[instance] = append(v.bindMounts[instance], ephemeralBind{source: "/dev/net/tun", mountpoint: target})
 	return nil
 }
 

@@ -334,6 +334,13 @@ does the following.
     namespace. Then it retires the bind assets.
   - It restores source modes through the rebuilt refcounts.
   - Jail tree removal keeps ADR-475's "no remaining host-visible mount" check.
+  - The TUN source bind (`<jail>/root/faas-host-tun`) is not journaled.
+    Under systemd, `ProtectSystem=strict` gives each vmmd start its own mount
+    namespace, so the bind goes with the old one. Where vmmd shares the host's
+    namespace (the e2e harness), the bind outlives the old vmmd; the
+    successor registers it at adoption when it is still mounted, so teardown
+    unmounts it before the jail-removal check. Found 2026-10-23: every
+    passing harness run had left the adopted guest's jail behind.
 - **Loops.**
   - Restart liveness and readiness loops from the recorded probe JSON. The
     liveness failure count starts fresh, with one probe period of grace.

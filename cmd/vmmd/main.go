@@ -2089,7 +2089,8 @@ heartbeat:
 	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if cfg.AdoptRunningVMs && adoptionReport != nil {
-		announceRestart(store, adoptionReport.NodeID, log)
+		// The caller ctx is already done; the notice is shutdown work.
+		announceRestart(context.WithoutCancel(ctx), store, adoptionReport.NodeID, log)
 	}
 	stopGRPC(gsrv, cfg.AdoptRunningVMs, log)
 	// The successor adopts from the journal: write what the last RPCs changed.

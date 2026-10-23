@@ -153,7 +153,7 @@ func TestPlannedRestartNoticeSetOnStopAndClearedWhenServing(t *testing.T) {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	announceRestart(store, node.ID, log)
+	announceRestart(t.Context(), store, node.ID, log)
 	if m, err := store.ListComputeNodeVMMDRestartNotices(ctx); err != nil || m[node.ID].IsZero() {
 		t.Fatalf("notice after stop = %v, %v", m, err)
 	}
@@ -161,5 +161,5 @@ func TestPlannedRestartNoticeSetOnStopAndClearedWhenServing(t *testing.T) {
 	if m, err := store.ListComputeNodeVMMDRestartNotices(ctx); err != nil || len(m) != 0 {
 		t.Fatalf("notice after serving = %v, %v", m, err)
 	}
-	announceRestart(nil, node.ID, log) // A storeless vmmd sets nothing.
+	announceRestart(t.Context(), nil, node.ID, log) // A storeless vmmd sets nothing.
 }
