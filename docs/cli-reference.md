@@ -33,7 +33,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`approvals`](#approvals) | Make production releases wait in their canary for approval |
 | [`scheduled-releases`](#scheduled-releases) | Build production releases now and start them at a set time |
 | [`freeze`](#freeze) | Pause production releases for a window, weekly, or after rollbacks |
-| [`release-gates`](#release-gates) | Stop rollouts on SLO, error or metric regressions and roll back |
+| [`release-gates`](#release-gates) | Stop rollouts on SLO, error, metric or AI regressions and roll back |
 | [`canary`](#canary) | Advance canary stages, check their gates, or simulate a preset |
 | [`build`](#build) | Inspect builds, their provenance and SBOMs |
 | [`connect`](#connect) | Connect your GitHub account or start the repository wizard |
@@ -2801,6 +2801,12 @@ gregale ai logs <integration-id> --limit 20
 gregale ai tags <integration-id> --key feature
 gregale ai tags export <integration-id> --from 2026-10-01 --to 2026-10-31 --key customer > ai-tags.csv
 gregale ai tag-limits <integration-id> --set feature=search:20
+gregale ai traces <integration-id> --limit 20
+gregale ai traces <integration-id> <trace-id>
+gregale ai policy <integration-id> --trace-max-calls 50 --trace-max-cost 2 --trace-max-repeated-tool-calls 3
+gregale ai policy <integration-id> --request-log-content on --online-eval-percent 5 --online-eval-judge <openai-id> --online-eval-model gpt-5-mini --quality-alerts on
+gregale ai feedback <integration-id> <call-id> --bad --label wrong_answer
+gregale ai quality-alerts <integration-id>
 gregale ai logs show <integration-id> <request-id>
 gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'
 gregale ai content-policy <integration-id> --response-email redact --response-secrets block --response-terms block --response-moderation flag
@@ -2813,7 +2819,7 @@ gregale ai tokens create --app my-api --name laptop --expires-in-hours 24
 
 Set the AI provider and token or cost limits
 
-`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <USD>] [--monthly-cost <USD>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <USD>] [--log-export <on|off>] [--allow-unmetered <on|off>] [--prompt-cache <on|off>] <integration-id>`
+`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <USD>] [--monthly-cost <USD>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <USD>] [--log-export <on|off>] [--allow-unmetered <on|off>] [--prompt-cache <on|off>] [--trace-max-calls <N>] [--trace-max-cost <USD>] [--trace-max-repeated-tool-calls <N>] [--online-eval-percent <N>] [--online-eval-judge <ID>] [--online-eval-model <MODEL>] [--online-eval-rubric <TEXT>] [--quality-alerts <on|off>] <integration-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2828,6 +2834,14 @@ Set the AI provider and token or cost limits
 | `--log-export <on|off>` | send each app call&#39;s metadata to the app&#39;s log drains | one of `on` · `off` |
 | `--allow-unmetered <on|off>` | let through calls the gateway cannot meter (realtime client secrets, vector stores, fine-tuning), outside the caps | one of `on` · `off` |
 | `--prompt-cache <on|off>` | add prompt-cache breakpoints to Claude requests that carry none: after a repeated system prompt or tools, and after a continuing conversation | one of `on` · `off` |
+| `--trace-max-calls <N>` | calls each AI trace (X-Gregale-AI-Trace or traceparent) may make, or none |  |
+| `--trace-max-cost <USD>` | cost each AI trace may reach in USD, or none |  |
+| `--trace-max-repeated-tool-calls <N>` | consecutive calls of a trace that may request the same tools with the same arguments, or none |  |
+| `--online-eval-percent <N>` | share of answered app calls a judge model scores from 1 to 5 (needs --request-log-content on), or none |  |
+| `--online-eval-judge <ID>` | the AI integration that runs the judge model |  |
+| `--online-eval-model <MODEL>` | the judge model |  |
+| `--online-eval-rubric <TEXT>` | what a good answer does for this app, up to 1,000 bytes, or none |  |
+| `--quality-alerts <on|off>` | alert bound apps when a model&#39;s quality drifts from its previous 7 days | one of `on` · `off` |
 
 Flags you omit keep their values.
 
@@ -2876,6 +2890,50 @@ Show one UTC day&#39;s AI usage by tag, or export a day range
 | `--format <FORMAT>` | export: csv (default) or ndjson | one of `csv` · `ndjson` |
 
 Tags come from the X-Gregale-AI-Tags header, each with its limit. Export with: tags export &lt;integration-id&gt;.
+
+### ai traces
+
+List an integration&#39;s AI traces, newest first, or show one trace&#39;s calls: traces &lt;integration-id&gt; &lt;trace-id&gt;
+
+`gregale ai traces [--app <ID>] [--user <ID>] [--limit <N>] <integration-id> [trace-id]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <ID>` | only traces whose first call came from this app (UUID) |  |
+| `--user <ID>` | only traces whose first call named this end user |  |
+| `--limit <N>` | traces to show, 1 to 200 |  |
+
+### ai feedback
+
+Rate a logged AI call by its X-Gregale-AI-Call ID
+
+`gregale ai feedback [--good] [--bad] [--label <LABEL>] <integration-id> <call-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--good` | rate the call good |  |
+| `--bad` | rate the call bad |  |
+| `--label <LABEL>` | a short label such as wrong_answer |  |
+
+### ai quality-alerts
+
+List an integration&#39;s AI quality drift alerts, newest first
+
+`gregale ai quality-alerts [--limit <N>] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | alerts to show, 1 to 100 |  |
+
+### ai deployments
+
+List an app&#39;s AI gateway calls, errors, flagged answers and cost per call by deployment (last 14 days)
+
+`gregale ai deployments [--app <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project app) |  |
 
 ### ai tag-limits
 
@@ -5841,7 +5899,7 @@ Show whether production releases of an app are frozen now
 
 ## release-gates
 
-Stop rollouts on SLO, error or metric regressions and roll back
+Stop rollouts on SLO, error, metric or AI regressions and roll back
 
 `gregale release-gates [<subcommand>]`
 
@@ -5851,6 +5909,7 @@ Examples:
 gregale release-gates add --app my-api --name checkout-slo --slo checkout --max-burn-rate 10
 gregale release-gates add --app my-api --name no-new-errors --new-errors --min-events 3
 gregale release-gates add --app my-api --name orders --metric orders_per_minute --below 5
+gregale release-gates add --app my-api --name ai-cost --ai cost_per_call --max-increase 30
 gregale release-gates list --app my-api
 ```
 
@@ -5868,7 +5927,7 @@ List an app&#39;s release gates
 
 Add a release gate
 
-`gregale release-gates add [--app <slug>] --name <NAME> [--slo <NAME>] [--max-burn-rate <N>] [--new-errors] [--max-new-groups <N>] [--min-events <N>] [--metric <NAME>] [--below <VALUE>] [--above <VALUE>] [--min-samples <N>]`
+`gregale release-gates add [--app <slug>] --name <NAME> [--slo <NAME>] [--max-burn-rate <N>] [--new-errors] [--max-new-groups <N>] [--min-events <N>] [--metric <NAME>] [--below <VALUE>] [--above <VALUE>] [--ai <METRIC>] [--max-increase <PCT>] [--min-samples <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5882,7 +5941,9 @@ Add a release gate
 | `--metric <NAME>` | fail when this custom metric crosses a bound |  |
 | `--below <VALUE>` | fail when the metric averages below this |  |
 | `--above <VALUE>` | fail when the metric averages above this |  |
-| `--min-samples <N>` | requests or metric values before the gate is judged (default 20) |  |
+| `--ai <METRIC>` | fail when this AI gateway metric gets worse than the previous release&#39;s: error_rate, flagged_rate, cost_per_call or ttfb_ms |  |
+| `--max-increase <PCT>` | percent over the previous release that fails an --ai gate (default 50) |  |
+| `--min-samples <N>` | requests, metric values or AI calls before the gate is judged (default 20) |  |
 
 ### release-gates rm
 

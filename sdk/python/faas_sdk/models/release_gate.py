@@ -21,7 +21,7 @@ class ReleaseGate:
     name: str
     kind: ReleaseGateKind
     min_samples: int
-    """Requests or metric values a release needs before the gate is judged."""
+    """Requests, metric values or AI calls (on each side, for ai gates) needed before the gate is judged."""
     created_by: str
     created_at: datetime.datetime
     slo: str | Unset = UNSET
@@ -33,11 +33,13 @@ class ReleaseGate:
     min_events: int | Unset = UNSET
     """new_errors gates: events before a group counts."""
     metric: str | Unset = UNSET
-    """custom_metric gates: the custom metric."""
+    """custom_metric gates: the custom metric. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms."""
     comparison: ReleaseGateComparison | Unset = UNSET
     """custom_metric gates: which side of the threshold fails."""
     threshold: float | Unset = UNSET
     """custom_metric gates: the bound on the metric's average."""
+    max_increase_percent: int | Unset = UNSET
+    """ai gates: the largest increase over the baseline, in percent."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -67,6 +69,8 @@ class ReleaseGate:
 
         threshold = self.threshold
 
+        max_increase_percent = self.max_increase_percent
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -92,6 +96,8 @@ class ReleaseGate:
             field_dict["comparison"] = comparison
         if threshold is not UNSET:
             field_dict["threshold"] = threshold
+        if max_increase_percent is not UNSET:
+            field_dict["max_increase_percent"] = max_increase_percent
 
         return field_dict
 
@@ -127,6 +133,8 @@ class ReleaseGate:
 
         threshold = d.pop("threshold", UNSET)
 
+        max_increase_percent = d.pop("max_increase_percent", UNSET)
+
         release_gate = cls(
             name=name,
             kind=kind,
@@ -140,6 +148,7 @@ class ReleaseGate:
             metric=metric,
             comparison=comparison,
             threshold=threshold,
+            max_increase_percent=max_increase_percent,
         )
 
         release_gate.additional_properties = d

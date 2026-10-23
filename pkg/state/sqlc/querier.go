@@ -5434,6 +5434,9 @@ type Querier interface {
 	ReleaseEnvironmentGitSourceOwners(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	ReleaseEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	ReleaseGateCustomMetricWindow(ctx context.Context, db DBTX, arg ReleaseGateCustomMetricWindowParams) (ReleaseGateCustomMetricWindowRow, error)
+	// ADR 20261022153155: a deployment's AI calls in the UTC minutes of
+	// [since, until).
+	ReleaseGateDeploymentAI(ctx context.Context, db DBTX, arg ReleaseGateDeploymentAIParams) (ReleaseGateDeploymentAIRow, error)
 	// A deployment's organic requests in [since, until): all, 5xx, and those
 	// slower than latency_threshold_ms (0 counts none as slow).
 	ReleaseGateDeploymentSLI(ctx context.Context, db DBTX, arg ReleaseGateDeploymentSLIParams) (ReleaseGateDeploymentSLIRow, error)
