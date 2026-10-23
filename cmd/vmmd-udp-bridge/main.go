@@ -11,11 +11,13 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/onebox-faas/faas/pkg/bridgeproc"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/udpwire"
 )
 
 func main() {
+	bridgeproc.MustHarden()
 	if len(os.Args) != 3 {
 		fmt.Fprintln(os.Stderr, "usage: vmmd-udp-bridge <guest-ip> <port>")
 		os.Exit(2)

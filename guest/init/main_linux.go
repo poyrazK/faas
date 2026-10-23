@@ -2713,10 +2713,11 @@ func runCharacterizationForSup(sup *Supervisor, manifest api.AppManifest) {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	args := RunArgs{
-		Manifest:     manifest,
-		ProvenWorker: bootProvenWorker(),
-		AppPID:       func() int { return sup.LastAppPID() },
-		ExitStatus:   func() (int, bool) { return sup.LastExitStatus() },
+		Manifest:       manifest,
+		ProvenWorker:   bootProvenWorker(),
+		FunctionRunner: bootFunctionRunner(),
+		AppPID:         func() int { return sup.LastAppPID() },
+		ExitStatus:     func() (int, bool) { return sup.LastExitStatus() },
 		RingBufferTail: func() string {
 			// Populated from the supervisor's ring buffer (Slice A
 			// PR-B). The buffer is allocated lazily on the first

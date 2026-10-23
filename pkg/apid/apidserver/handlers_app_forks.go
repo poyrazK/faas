@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -73,8 +74,12 @@ func (s *server) createAppForkFrom(w http.ResponseWriter, r *http.Request, acct 
 		"ttl_seconds": fork.TTLSeconds, "requested_by": fork.RequestedBy, "crash_capture_id": stringOrEmpty(fork.CrashCaptureID), "live": target.live,
 	})
 	resp := appForkResponse(fork)
-	// The token is shown once; only its hash is stored.
+	// The token is shown once; only its hash is stored. So the response is
+	// never cached, nor kept as an Idempotency-Key receipt that would hold the
+	// plaintext token and hand it to every retry; a retry runs again.
 	resp.AccessToken = token
+	w.Header().Set("Cache-Control", "no-store")
+	httpkit.SkipIdempotentReplay(w)
 	writeJSON(w, http.StatusAccepted, resp)
 }
 

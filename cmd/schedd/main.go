@@ -634,6 +634,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		return fmt.Errorf("schedd: init engine: %w", err)
 	}
+	// vmmd restart adoption ADR §3: creates retry through a planned vmmd
+	// restart instead of failing.
+	vmmRouter.WithRestartNotices(engine.RestartNotices())
 	validatorArtifacts, artifactErr := validatorbundle.OpenArtifacts(os.Getenv)
 	if artifactErr != nil {
 		return artifactErr
@@ -1600,6 +1603,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// interval through runDeps.heartbeatInterval.
 	hb := sched.NewHeartbeat(store, sched.HeartbeatDialerFunc(deps.dialVMM), vmmTLS, log).
 		WithOwnerNodeID(ownerNodeID).
+		WithRestartNotices(engine.RestartNotices()).
 		WithStalePeerObserver(ownerNodeID != "").
 		WithStoreOutageAtStartup(storeOutageAtStartup).
 		WithNodeRegistry(nodeRegistry).
@@ -1952,6 +1956,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	log.Info("schedd: instance divergence sweep wired",
 		"interval_s", api.InstanceDivergenceIntervalSeconds,
 		"enforce", sched.DivergenceEnforceEnabled())
+	// vmmd restart adoption ADR §3: after a vmmd restart, fail the rows
+	// whose guests the new vmmd did not adopt. A node whose vmmd does not
+	// adopt never claims an epoch, so this stays idle there.
+	adoptionReports := sched.NewAdoptionReportReconciler(engine, log)
+	loop.WithAdoptionReports(sched.NewDeadNodeReconciler(
+		adoptionReports.Reconcile,
+		time.Duration(api.AdoptionReportIntervalSeconds)*time.Second,
+		log))
 	// Issue #171: share a single HTTPPromScraper between the gateway
 	// scrape path for the RPS scale-up trigger and the aggressive-
 	// reaper signal mirror.

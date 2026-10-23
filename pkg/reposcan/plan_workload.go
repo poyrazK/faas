@@ -10,7 +10,7 @@ import (
 func PlanWorkload(w Workload) api.PlanWorkload {
 	policy := api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective()
 	if w.ServiceBindingPolicy == "" {
-		policy = api.ServiceBindingPolicyDeclared
+		policy = api.ServiceBindingPolicyProject
 	}
 	return api.PlanWorkload{
 		Name:                w.Name,

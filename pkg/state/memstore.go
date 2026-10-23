@@ -297,43 +297,52 @@ type MemStore struct {
 	instanceApplicationStandardPromotions      map[string]instanceStandardPromotion
 	instanceApplicationStandardPromotionTokens map[string]string
 	computeNodeRuntimeHistory                  map[string]runtimeadmission.Identity
-	computeNodeRuntimeIncarnations             map[string]string
-	computeNodeRuntimeProtocols                map[string]uint32
-	appEgressRevisions                         map[string]int64
-	applicationStandardVersions                map[string][]ApplicationStandardVersion
-	applicationStandardLogDestinations         map[string]ApplicationStandardLogDestination
-	applicationStandardPublishers              map[string]api.ApplicationStandardPublisher
-	applicationStandardAssignments             map[string]applicationStandardAssignmentRecord
-	applicationStandardEnrollments             map[string]ApplicationStandardEnrollment
-	applicationStandardExceptions              map[string]ApplicationStandardException
-	applicationStandardLogDeliveries           map[string]ApplicationStandardLogDeliveryObservation
-	applicationStandardLogConsumers            map[string]ApplicationStandardLogConsumerSession
-	applicationStandardLogConsumerSessions     map[string]ApplicationStandardLogConsumerSession
-	applicationStandardLogConsumerClosures     map[string]ApplicationStandardLogConsumerClosure
-	applicationStandardLogInventories          map[string]ApplicationStandardLogInventoryObservation
-	applicationStandardLogHealth               map[string]ApplicationStandardLogHealthObservation
-	applicationStandardEgressObservations      map[string]ApplicationStandardEgressObservation
-	applicationStandardReviewPlans             map[string]ApplicationStandardReviewPlan
-	applicationStandardOperations              map[string]ApplicationStandardOperation
-	applicationStandardWorkerClaims            map[string]ApplicationStandardWorkerClaim
-	applicationStandardEnrollmentClaims        map[string]ApplicationStandardEnrollmentClaim
-	standardObservationChecks                  map[string]standardAutomaticObservationCheck
-	standardRuntimeRefreshRequests             map[string]ApplicationStandardRuntimeRefreshRequest
-	applicationStandardControlBindings         map[string]standardControlBinding
-	applicationStandardControlBackups          map[string]standardControlBackup
-	financialBudgetEvaluations                 map[string]financialBudgetMemoryEvaluation
-	financialBudgetAlerts                      map[string]FinancialBudgetAlertDelivery
-	financialBudgetStops                       map[string]FinancialBudgetStop
-	financialBudgetChannels                    map[string][]string                            // policy id → channel ids (ADR-20261019193500)
-	financialBudgetChannelDeliveries           map[string]FinancialBudgetAlertChannelDelivery // alert id + "\n" + channel id
-	financialBudgetProjections                 map[string]FinancialBudgetAlertDelivery        // projection alert id (ADR-20261019193500)
-	financialObjectStorageEstimates            map[string]FinancialObjectStorageEstimate      // account + "\n" + period (ADR-20261020160000)
-	financialPreviewCommands                   map[string]FinancialPreviewCommandRuntime
-	financialComputeBooks                      map[string]financialComputeBook
-	financialComputeLeases                     map[string]financialComputeLease
-	financialComputeHolds                      map[string][]financialComputeHold
-	financialComputeOwners                     map[string]financialComputeOwner
-	financialComputeJobAttempts                map[string]financialComputeJobAttempt
+	// computeNodeRuntimeOrder is each node incarnation's registration order,
+	// as application_standard_native_incarnations.registered_at orders them.
+	computeNodeRuntimeOrder map[string]uint64
+	computeNodeRuntimeSeq   uint64
+	// instanceApplicationStandardRebinds are each instance's admission
+	// re-binds, oldest first (ADR-595 extension).
+	instanceApplicationStandardRebinds     map[string][]ApplicationStandardRebind
+	computeNodeVMMDEpochs                  map[string]VMMDEpoch
+	computeNodeVMMDNotices                 map[string]time.Time
+	computeNodeRuntimeIncarnations         map[string]string
+	computeNodeRuntimeProtocols            map[string]uint32
+	appEgressRevisions                     map[string]int64
+	applicationStandardVersions            map[string][]ApplicationStandardVersion
+	applicationStandardLogDestinations     map[string]ApplicationStandardLogDestination
+	applicationStandardPublishers          map[string]api.ApplicationStandardPublisher
+	applicationStandardAssignments         map[string]applicationStandardAssignmentRecord
+	applicationStandardEnrollments         map[string]ApplicationStandardEnrollment
+	applicationStandardExceptions          map[string]ApplicationStandardException
+	applicationStandardLogDeliveries       map[string]ApplicationStandardLogDeliveryObservation
+	applicationStandardLogConsumers        map[string]ApplicationStandardLogConsumerSession
+	applicationStandardLogConsumerSessions map[string]ApplicationStandardLogConsumerSession
+	applicationStandardLogConsumerClosures map[string]ApplicationStandardLogConsumerClosure
+	applicationStandardLogInventories      map[string]ApplicationStandardLogInventoryObservation
+	applicationStandardLogHealth           map[string]ApplicationStandardLogHealthObservation
+	applicationStandardEgressObservations  map[string]ApplicationStandardEgressObservation
+	applicationStandardReviewPlans         map[string]ApplicationStandardReviewPlan
+	applicationStandardOperations          map[string]ApplicationStandardOperation
+	applicationStandardWorkerClaims        map[string]ApplicationStandardWorkerClaim
+	applicationStandardEnrollmentClaims    map[string]ApplicationStandardEnrollmentClaim
+	standardObservationChecks              map[string]standardAutomaticObservationCheck
+	standardRuntimeRefreshRequests         map[string]ApplicationStandardRuntimeRefreshRequest
+	applicationStandardControlBindings     map[string]standardControlBinding
+	applicationStandardControlBackups      map[string]standardControlBackup
+	financialBudgetEvaluations             map[string]financialBudgetMemoryEvaluation
+	financialBudgetAlerts                  map[string]FinancialBudgetAlertDelivery
+	financialBudgetStops                   map[string]FinancialBudgetStop
+	financialBudgetChannels                map[string][]string                            // policy id → channel ids (ADR-20261019193500)
+	financialBudgetChannelDeliveries       map[string]FinancialBudgetAlertChannelDelivery // alert id + "\n" + channel id
+	financialBudgetProjections             map[string]FinancialBudgetAlertDelivery        // projection alert id (ADR-20261019193500)
+	financialObjectStorageEstimates        map[string]FinancialObjectStorageEstimate      // account + "\n" + period (ADR-20261020160000)
+	financialPreviewCommands               map[string]FinancialPreviewCommandRuntime
+	financialComputeBooks                  map[string]financialComputeBook
+	financialComputeLeases                 map[string]financialComputeLease
+	financialComputeHolds                  map[string][]financialComputeHold
+	financialComputeOwners                 map[string]financialComputeOwner
+	financialComputeJobAttempts            map[string]financialComputeJobAttempt
 
 	eventCircuitBreakers              map[string]*eventCircuitRecord
 	eventSubscriptionControls         map[string]*memEventSubscriptionControl
@@ -17852,10 +17861,13 @@ func (m *MemStore) DeleteComputeNode(_ context.Context, id string) error {
 	}
 	delete(m.computeNodes, id)
 	delete(m.computeNodeRuntimeIncarnations, id)
+	delete(m.computeNodeVMMDEpochs, id)
+	delete(m.computeNodeVMMDNotices, id)
 	delete(m.computeNodeRuntimeProtocols, id)
 	m.eraseStandardLogConsumerNodeLocked(id)
 	m.eraseStandardEgressLocked("", id)
 	m.eraseNativeRuntimeHistoryLocked(id)
+	m.eraseStandardRebindsForNodeLocked(id)
 	// CP-1: cascade the heartbeat history. Mirrors the FK ON DELETE
 	// CASCADE on compute_node_heartbeats.node_id; the endpoint
 	// resolves the parent by name first, so a missing history rows
@@ -20694,15 +20706,27 @@ func (m *MemStore) GetIdempotent(_ context.Context, accountID, key string) (int,
 }
 
 // ReserveIdempotent mirrors PgStore.ReserveIdempotent.
-func (m *MemStore) ReserveIdempotent(_ context.Context, accountID, key string, abandonAfter time.Duration) (IdempotencyReservation, error) {
+func (m *MemStore) ReserveIdempotent(ctx context.Context, accountID, key string, abandonAfter time.Duration) (IdempotencyReservation, error) {
+	return m.ReserveIdempotentRequest(ctx, accountID, key, nil, abandonAfter)
+}
+
+// ReserveIdempotentRequest mirrors PgStore.ReserveIdempotentRequest.
+func (m *MemStore) ReserveIdempotentRequest(_ context.Context, accountID, key string, fingerprint []byte, abandonAfter time.Duration) (IdempotencyReservation, error) {
+	if fingerprint != nil && len(fingerprint) != IdempotencyFingerprintSize {
+		return IdempotencyReservation{}, errors.New("state: idempotency request fingerprint must be 32 bytes")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	id := accountID + "\x00" + key
 	e, ok := m.idem[id]
 	age := time.Since(e.created)
-	if !ok || age > 24*time.Hour || (e.status == 0 && age >= abandonAfter) {
-		m.idem[id] = idemEntry{created: time.Now()}
+	conflict := idempotencyFingerprintsConflict(e.requestDigest, fingerprint)
+	if !ok || age > 24*time.Hour || (e.status == 0 && age >= abandonAfter && !conflict) {
+		m.idem[id] = idemEntry{created: time.Now(), requestDigest: append([]byte(nil), fingerprint...)}
 		return IdempotencyReservation{Reserved: true}, nil
+	}
+	if conflict {
+		return IdempotencyReservation{Conflict: true}, nil
 	}
 	if e.status == 0 {
 		return IdempotencyReservation{InFlight: true}, nil
@@ -27878,6 +27902,13 @@ func unifiedDeadLetterEventID(source, sourceID string) string {
 	return uuid.NewSHA1(uuid.Nil, []byte(source+":"+sourceID)).String()
 }
 
+// queueReceiptDeadLetterOrigin mirrors production_dead_letter_events
+// (ADR-20261022203653): a queue message's push receipt is audit evidence, and
+// its invocation is the message's one unified dead-letter entry.
+func queueReceiptDeadLetterOrigin(source, origin string) bool {
+	return source == "trigger_record" && origin == "queue"
+}
+
 func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 	out := make([]DeadLetterEvent, 0)
 	for _, inv := range m.invocations {
@@ -27922,7 +27953,7 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 			continue
 		}
 		trigger, ok := m.triggers[dl.TriggerID.String()]
-		if !ok || !sameMemUUID(trigger.AppID.String(), appID) {
+		if !ok || !sameMemUUID(trigger.AppID.String(), appID) || queueReceiptDeadLetterOrigin("trigger_record", trigger.Kind) {
 			continue
 		}
 		createdAt := time.Time{}
@@ -28049,7 +28080,7 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 		seen[ev.ID] = struct{}{}
 	}
 	for id, ev := range m.deadLetterSnapshots {
-		if _, purged := m.deadLetterPurged[id]; purged {
+		if _, purged := m.deadLetterPurged[id]; purged || queueReceiptDeadLetterOrigin(ev.Source, ev.Origin) {
 			continue
 		}
 		if ev.Source == "invocation" {

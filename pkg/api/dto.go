@@ -5182,6 +5182,14 @@ func ValidateAppConfig(l Limits, ramMB, maxConcurrency int, guestVCPU ...int) *P
 	if ramMB > l.RAMMB {
 		return ErrPlanLimitRAM(l, ramMB)
 	}
+	// apps.max_concurrency has CHECK (max_concurrency >= 1). An update
+	// with 0 or less reached the store and came back as a 503 "Briefly at
+	// capacity" (Hunt 11 H11-41), so clients retried a request that can
+	// never succeed. Create maps an omitted 0 to 1 before it gets here.
+	if maxConcurrency < 1 {
+		return ErrValidation(fmt.Sprintf("max_concurrency must be 1..%d on the %s plan; got %d", l.MaxConcurrency, l.Plan, maxConcurrency)).
+			WithLimit(int64(l.MaxConcurrency), int64(maxConcurrency))
+	}
 	if maxConcurrency > l.MaxConcurrency {
 		return NewProblem(403, CodePlanLimitConcur,
 			"Concurrency over plan limit",
@@ -6576,6 +6584,10 @@ type PreAuthPolicyObservation struct {
 // All percentage fields are clamped to [0, 100]; all latency
 // fields are milliseconds ≥ 0. NaN/Inf come back as zero — see
 // the server handler for the guard order.
+// FleetWakeP95MinSamples is the fewest wakes a fleet wake p95 is quoted
+// from; the public status page's wake query uses the same floor.
+const FleetWakeP95MinSamples = 20
+
 type AppMetricsResponse struct {
 	AppID  string `json:"app_id"`
 	Range  string `json:"range"`  // echoed window, e.g. "5m"
@@ -6606,6 +6618,11 @@ type AppMetricsResponse struct {
 	// as such in the UI; here it's named plainly because the
 	// dashboard copy does the labelling.
 	WakeP95MS float64 `json:"wake_p95_ms"`
+	// WakeSamples is the number of fleet wakes WakeP95MS was computed from.
+	// Below FleetWakeP95MinSamples the p95 is not meaningful (one slow wake
+	// in four made it 18 s) and clients show it as unavailable, as the
+	// status page does (Hunt 12 H12-40). Nil when the count is unknown.
+	WakeSamples *int64 `json:"wake_samples,omitempty"`
 	// QueueDepth (issue #1233 / ADR-123) is the current waiters
 	// in the per-app wake gate queue, sourced from
 	// gateway_queue_depth{app}. Bounded by per-plan MaxQueueDepth

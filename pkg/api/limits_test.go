@@ -601,9 +601,10 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Cron: Pro gets 20 per-app and 50 per-account.
 			CronLimitPerApp: 20, CronLimitPerAccount: 50,
 			// M-2 / ADR-137+138: Pro doubles Hobby (60 s grace,
-			// 60 s deadline, 10 retries). 3 workers, 5 service
+			// 10 retries); the startup deadline is the 30 s cold-boot
+			// window (ADR-138 amendment). 3 workers, 5 service
 			// replicas, 30-min job runtime.
-			DefaultStopGracePeriodS: 60, DefaultStartupDeadlineS: 60, DefaultMaxRetries: 10,
+			DefaultStopGracePeriodS: 60, DefaultStartupDeadlineS: 30, DefaultMaxRetries: 10,
 			WorkerReplicasMax: 3, ServiceReplicasMax: 5, JobMaxRuntimeS: 1800,
 			// Issue #475: Pro gets 2 reserved-tier apps.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 2,
@@ -767,9 +768,10 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Cron: Scale gets 100 per-app and 500 per-account.
 			CronLimitPerApp: 100, CronLimitPerAccount: 500,
 			// M-2 / ADR-137+138: Scale doubles Pro (120 s grace,
-			// 120 s deadline, 20 retries). 10 workers, 20
-			// service replicas, 1-h job runtime.
-			DefaultStopGracePeriodS: 120, DefaultStartupDeadlineS: 120, DefaultMaxRetries: 20,
+			// 20 retries); the startup deadline is the 30 s cold-boot
+			// window (ADR-138 amendment). 10 workers, 20 service
+			// replicas, 1-h job runtime.
+			DefaultStopGracePeriodS: 120, DefaultStartupDeadlineS: 30, DefaultMaxRetries: 20,
 			WorkerReplicasMax: 10, ServiceReplicasMax: 20, JobMaxRuntimeS: 3600,
 			// Issue #475: Scale gets 4 reserved-tier apps.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 4,

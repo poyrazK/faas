@@ -65,10 +65,12 @@
     redacted in memory. Gregale therefore treats creating a fork as reading
     secrets:
     - The API requires the secrets-read scope and MFA, like secret export.
-    - Every create, access and delete writes an audit event.
-    - The restore removes `secrets.env` from the fork's private drive1 copy
-      before resume, so a later process start inside the fork cannot reload
-      them; values already in process memory remain.
+    - Every create, cancel and exec writes an audit event. Requests through
+      the access route are not audited (see the 2026-10-23 amendment).
+    - The restore removes `secrets.env`, the secret reload projection and
+      each sidecar's `workloads/<name>/env.json` from the fork's private
+      drive1 copy before resume, so a later process start inside the fork
+      cannot reload them; values already in process memory remain.
     - Quarantine makes credentials in memory unusable from the fork.
   - **Entitlement and limits.** Pro and Scale only. Default TTL 1 h, maximum
     4 h; at most one active fork per app and two per account. All of these
@@ -137,6 +139,26 @@
   (≤600) and `max_output_bytes` (≤1 MiB, tail kept). Commands of a fork
   that ends, or that run past their timeout plus a minute, are failed.
   Interactive sessions (a PTY) are out of scope.
+- **Amendment (2026-10-23): hardening.**
+  - **Access token.** The create response carries the only copy of the
+    token, so it is sent with `Cache-Control: no-store` and never kept as an
+    Idempotency-Key receipt (`httpkit.SkipIdempotentReplay`). Before this the
+    receipt held the plaintext token for 24 h and replayed it to a retry. A
+    keyed retry now runs again.
+  - **Sidecar secrets.** vmmd writes each sidecar's unsealed env and app
+    secrets to `upper/etc/faas/workloads/<name>/env.json` on the main
+    drive1. The restore scrub now removes those too, keeping the sidecar's
+    non-secret `workload.json`.
+  - **Exec output retention.** Output of fork commands comes from inside a
+    copy of production memory. The fork coordinator empties `stdout` and
+    `stderr` once the fork has been over for `AppForkExecOutputRetention`
+    (24 h, `pkg/api/limits.go`); the command record, exit code and audit
+    event stay.
+  - **Access is not audited.** The decision above said every access writes
+    an audit event; the access route never did. A fork is short-lived and
+    its token is a bearer credential held only by whoever created it, so
+    per-request events would add volume without a decision behind them.
+    Creation, cancellation and each exec are the audited acts.
 - **Rejected alternatives:**
   - **Networkless restore.** `SnapshotRef.networkless` removes the NIC, but
     Firecracker must restore the device set the snapshot was taken with, and

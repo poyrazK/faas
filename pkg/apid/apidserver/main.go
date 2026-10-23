@@ -1871,6 +1871,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// same-box install doesn't brick the per-route surface just
 	// because the operator never exported the env var.
 	srv.WithGatewaydControlURL(resolveGatewaydControlURL(deps.getenv))
+	srv.WithGatewaydControlFromRegistry(deps.getenv(gatewayControlFromRegistryEnv) == "1")
 	// ADR-156: same-box installs mirror durable realtime endpoint writes onto
 	// the local realtimed owner. Fleet installs replace it with the leased
 	// cross-node registrar below; the background reconciler repairs missed

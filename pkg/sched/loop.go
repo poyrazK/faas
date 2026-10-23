@@ -144,6 +144,7 @@ type Loop struct {
 	migratingWatchdog           *MigratingWatchdog                      // Tier A6 / ADR-067 wedged-migration self-healer; nil opts out
 	deadNodeReconciler          *DeadNodeReconciler                     // dead-node billing-leak self-healer; nil opts out (no ticker arm)
 	instanceDivergence          *DeadNodeReconciler                     // ADR-191 vmmd-vs-row divergence sweep; nil opts out (no ticker arm)
+	adoptionReports             *DeadNodeReconciler                     // vmmd restart adoption reports (adoption ADR §3); nil opts out
 	instStats                   InstanceStatsPoller                     // issue #170 / PR-A per-{app,node} metrics poller; nil opts out
 	instanceActivity            InstanceActivityReader                  // fresh per-instance request activity used by scale-in; nil opts out
 	scaleup                     *scaleup.Trigger                        // issue #169 / #172 reactive scale-up trigger; nil opts out
@@ -780,6 +781,14 @@ func (l *Loop) WithInstanceDivergence(r *DeadNodeReconciler) *Loop {
 	return l
 }
 
+// WithAdoptionReports attaches the pass that applies restarted vmmds'
+// adoption reports (vmmd restart adoption ADR §3). nil opts out. Each tick
+// runs off the loop: a pass may wait on vmmd cleanup calls.
+func (l *Loop) WithAdoptionReports(r *DeadNodeReconciler) *Loop {
+	l.adoptionReports = r
+	return l
+}
+
 // Run blocks until ctx is cancelled. It owns three event sources: the LISTEN
 // subscriber, the reaper tick, and the cron tick.
 func (l *Loop) Run(ctx context.Context) error {
@@ -1113,6 +1122,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		instanceDivergenceT = time.NewTicker(l.instanceDivergence.interval)
 		defer instanceDivergenceT.Stop()
 	}
+	var adoptionReportsT *time.Ticker
+	if l.adoptionReports != nil {
+		adoptionReportsT = time.NewTicker(l.adoptionReports.interval)
+		defer adoptionReportsT.Stop()
+	}
 	// Jobs dispatch + stuck-job reaper tickers (Mega-1, issue
 	// #1184 Workstream A). Both gated on jobsDispatched so a
 	// FAAS_JOBS_DISPATCH=0 cluster never ticks. 1s matches the
@@ -1261,6 +1275,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runDeadNodeReconcile(ctx)
 		case <-deadNodeTick(instanceDivergenceT):
 			l.runInstanceDivergence(ctx)
+		case <-deadNodeTick(adoptionReportsT):
+			l.submitWork(workAdoptionReport, "tick", func() { l.runAdoptionReports(ctx) })
 		case <-jobsTick(jobsDispatchT):
 			l.runJobsDispatchTick(ctx)
 		case <-jobsTick(jobsReaperT):
@@ -1789,6 +1805,17 @@ func (l *Loop) runInstanceDivergence(ctx context.Context) {
 	}
 	if _, err := l.instanceDivergence.handle(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		l.log.Warn("instance divergence: tick failed", "err", err)
+	}
+}
+
+// runAdoptionReports applies any new adoption report. Same swallow-on-cancel
+// rule as runInstanceDivergence.
+func (l *Loop) runAdoptionReports(ctx context.Context) {
+	if l.adoptionReports == nil {
+		return
+	}
+	if _, err := l.adoptionReports.handle(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		l.log.Warn("adoption reports: tick failed", "err", err)
 	}
 }
 

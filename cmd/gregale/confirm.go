@@ -48,6 +48,13 @@ import (
 // Returns true → caller proceeds with the destructive action.
 // Returns false → caller MUST abort (typically `return 1`).
 func requireTyped(expected string) bool {
+	return requireTypedOr(expected, "--quiet")
+}
+
+// requireTypedOr is requireTyped for a command whose confirmation bypass
+// is not --quiet: `env rollback` takes only --yes, and the hint sent
+// scripts to a flag it rejects (Hunt 12 H12-56).
+func requireTypedOr(expected, bypassFlag string) bool {
 	if nonInteractive {
 		printErr("Confirmation required", errors.New("use an explicit confirmation flag in non-interactive mode"))
 		return false
@@ -56,7 +63,7 @@ func requireTyped(expected string) bool {
 	// until its timeout, with nothing in its log saying why. Piped input
 	// still works; the hint names the bypass.
 	if f, ok := osStdin.(*os.File); ok && !term.IsTerminal(int(f.Fd())) {
-		_, _ = fmt.Fprintf(osStderr, "stdin is not a terminal: pipe %q in, or pass --quiet to skip this confirmation.\n", expected)
+		_, _ = fmt.Fprintf(osStderr, "stdin is not a terminal: pipe %q in, or pass %s to skip this confirmation.\n", expected, bypassFlag)
 	}
 	_, _ = fmt.Fprintf(osStderr, "Type %q to confirm: ", expected)
 	line, err := readConfirmationLine(osStdin)

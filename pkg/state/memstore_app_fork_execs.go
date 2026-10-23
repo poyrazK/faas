@@ -140,6 +140,33 @@ func (m *MemStore) finishForkExecLocked(e *AppForkExec, p FinishAppForkExecParam
 	m.appForkExecs[e.ID] = *e
 }
 
+func (m *MemStore) ClearExpiredAppForkExecOutput(_ context.Context, retention time.Duration, now time.Time, limit int) (int, error) {
+	if limit < 1 {
+		return 0, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cutoff := now.Add(-retention)
+	cleared := 0
+	for id, e := range m.appForkExecs {
+		if cleared >= limit {
+			break
+		}
+		fork, ok := m.appForks[e.ForkID]
+		if !ok || !e.Status.Terminal() || fork.FinishedAt == nil || fork.FinishedAt.After(cutoff) ||
+			(len(e.Stdout) == 0 && len(e.Stderr) == 0) {
+			continue
+		}
+		e.Stdout, e.Stderr = []byte{}, []byte{}
+		if now.After(e.UpdatedAt) {
+			e.UpdatedAt = now
+		}
+		m.appForkExecs[id] = e
+		cleared++
+	}
+	return cleared, nil
+}
+
 func (m *MemStore) FailOrphanedAppForkExecs(_ context.Context, grace time.Duration, now time.Time) ([]AppForkExec, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

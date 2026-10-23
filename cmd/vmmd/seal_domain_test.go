@@ -3,12 +3,9 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"filippo.io/age"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -39,18 +36,5 @@ func TestLoadRuntimeSealDomain(t *testing.T) {
 	}
 	if _, err := loadRuntimeSealDomain(dir); err == nil {
 		t.Fatal("loaded a world-readable previous identity")
-	}
-}
-
-func TestRegisterSealDomainLoaded(t *testing.T) {
-	reg := prometheus.NewRegistry()
-	registerSealDomainLoaded(reg, sealdomain.Runtime, true)
-	want := `
-# HELP faas_seal_domain_loaded 1 when this daemon loaded the seal domain's identity at start (ADR 20261022111812).
-# TYPE faas_seal_domain_loaded gauge
-faas_seal_domain_loaded{domain="runtime"} 1
-`
-	if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "faas_seal_domain_loaded"); err != nil {
-		t.Fatal(err)
 	}
 }

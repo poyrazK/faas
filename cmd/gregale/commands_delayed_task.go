@@ -355,19 +355,29 @@ func cmdDelayedTaskGet(args []string) int {
 	if err != nil {
 		return printErr("Could not fetch delayed-task", err)
 	}
-	if *app != "" {
-		owner, err := client.GetApp(ctx, *app)
-		if err != nil {
-			return printErr("Could not fetch app", err)
-		}
-		if owner.ID != resp.AppID {
-			return printErr("Delayed task not found", fmt.Errorf("delayed task %s does not belong to app %q", id, *app))
-		}
+	if code := requireDelayedTaskOwner(ctx, client, resp, *app); code != 0 {
+		return code
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
 	renderDelayedTask(resp)
+	return 0
+}
+
+// requireDelayedTaskOwner returns 0 when app is empty or owns task, and the
+// printed error's exit code otherwise.
+func requireDelayedTaskOwner(ctx context.Context, client *Client, task api.DelayedTaskResponse, app string) int {
+	if app == "" {
+		return 0
+	}
+	owner, err := client.GetApp(ctx, app)
+	if err != nil {
+		return printErr("Could not fetch app", err)
+	}
+	if owner.ID != task.AppID {
+		return printErr("Delayed task not found", fmt.Errorf("delayed task %s does not belong to app %q", task.ID, app))
+	}
 	return 0
 }
 
@@ -406,11 +416,19 @@ func renderDelayedTask(resp api.DelayedTaskResponse) {
 // a no-op 200 on the server. The returned state is authoritative:
 // only "cancelled" means execution was prevented.
 func cmdDelayedTaskCancel(args []string) int {
-	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale delayed-task cancel <id>", "delayed-task")
+	// add, list and get take --app, so `cancel <id> --app <slug>` was refused
+	// with a bare usage line (Hunt 11 H11-18). As for get, --app only checks
+	// that the account-scoped task belongs to that app before cancelling it.
+	fs := newFlagSet("delayed-task cancel", flag.ContinueOnError)
+	app := fs.String("app", "", "require the task to belong to this app")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	id := args[0]
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale delayed-task cancel <id> [--app <slug>]", "delayed-task")
+		return 1
+	}
+	id := fs.Arg(0)
 	if !delayedTaskIDPattern.MatchString(id) {
 		return printErr("Invalid delayed-task id", fmt.Errorf("must be a 32-hex-char UUID; got %q", id))
 	}
@@ -418,7 +436,17 @@ func cmdDelayedTaskCancel(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.CancelDelayedTask(context.Background(), id)
+	ctx := context.Background()
+	if *app != "" {
+		task, err := client.GetDelayedTask(ctx, id)
+		if err != nil {
+			return printErr("Could not fetch delayed-task", err)
+		}
+		if code := requireDelayedTaskOwner(ctx, client, task, *app); code != 0 {
+			return code
+		}
+	}
+	resp, err := client.CancelDelayedTask(ctx, id)
 	if err != nil {
 		return printErr("Cancel failed", err)
 	}

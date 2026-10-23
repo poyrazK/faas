@@ -5258,7 +5258,9 @@ var planLimits = map[Plan]Limits{
 		// scale to a meaningful production fan-out (3 workers,
 		// 5 service replicas, 30 min job runtimes).
 		DefaultStopGracePeriodS: 60,
-		DefaultStartupDeadlineS: 60,
+		// ADR-138 amendment (2026-10-22): capped at the cold-boot
+		// window, ColdBootReadyWindowS.
+		DefaultStartupDeadlineS: ColdBootReadyWindowS,
 		DefaultMaxRetries:       10,
 		WorkerReplicasMax:       3,
 		ServiceReplicasMax:      5,
@@ -5660,7 +5662,9 @@ var planLimits = map[Plan]Limits{
 		// a single Scale customer can host a small SaaS
 		// (10 workers, 20 service replicas, 1 h jobs).
 		DefaultStopGracePeriodS: 120,
-		DefaultStartupDeadlineS: 120,
+		// ADR-138 amendment (2026-10-22): capped at the cold-boot
+		// window, ColdBootReadyWindowS.
+		DefaultStartupDeadlineS: ColdBootReadyWindowS,
 		DefaultMaxRetries:       20,
 		WorkerReplicasMax:       10,
 		ServiceReplicasMax:      20,
@@ -6131,12 +6135,16 @@ const (
 	// Fork exec (ADR-732): commands run inside a running fork. At most
 	// AppForkExecMaxPending are queued or running per fork; each runs for at
 	// most AppForkExecMaxTimeout and keeps at most AppForkExecMaxOutputBytes
-	// of combined stdout/stderr (the tail beyond that is dropped).
+	// of combined stdout/stderr (the tail beyond that is dropped). The output
+	// comes from inside a copy of production memory, so it is cleared
+	// AppForkExecOutputRetention after the fork ends; the command record
+	// stays.
 	AppForkExecMaxPending         = 4
 	AppForkExecDefaultTimeout     = time.Minute
 	AppForkExecMaxTimeout         = 10 * time.Minute
 	AppForkExecDefaultOutputBytes = 64 << 10
 	AppForkExecMaxOutputBytes     = 1 << 20
+	AppForkExecOutputRetention    = 24 * time.Hour
 
 	// Crash snapshots (ADR-733). A capture is kept for CrashCaptureRetention
 	// and then deleted. An app gets at most one capture in flight and no
@@ -6803,11 +6811,19 @@ const (
 	// point of use.
 	MaxAppManifestStopGracePeriod = 5 * time.Minute
 
+	// ColdBootReadyWindowS is how long an app may take to become ready
+	// on any cold boot: the spec §6.1 COLD_BOOTING budget the scheduler's
+	// watchdog enforces on every wake (sched.ColdBootSweepBudget).
+	ColdBootReadyWindowS = 30
+
 	// MaxAppManifestStartupDeadlineS is the gross upper bound on
 	// AppManifest.StartupDeadlineS (issue #1186 §D.2, ADR-137/138).
-	// Per-plan tightening replaces this in commit 10 of M-2 with
-	// per-plan tiers on the Limits struct.
-	MaxAppManifestStartupDeadlineS = 300
+	// ADR-138 amendment (2026-10-22, Hunt 12 H12-10): no app may take
+	// longer to start than a cold boot allows. A deploy prime accepted up
+	// to 120 s on Scale while every later cold boot (after a release, a
+	// secret change, a fresh restart or a snapshot miss) was killed at
+	// 30 s, so such an app deployed fine and then never came back.
+	MaxAppManifestStartupDeadlineS = ColdBootReadyWindowS
 
 	// MaxAppManifestMaxRetries is the gross upper bound on
 	// AppManifest.MaxRetries (issue #1186 §D.3, ADR-137/138). Per-plan
@@ -7398,6 +7414,28 @@ const (
 	// once is an event to surface, not to repair in one transaction
 	// storm.
 	InstanceDivergenceTickLimit = 50
+
+	// AdoptionReportIntervalSeconds is how often schedd checks its nodes'
+	// vmmd ownership epochs for a restart whose adoption report it has not
+	// applied (vmmd restart adoption ADR §3). Guests the new vmmd refused
+	// keep their RUNNING rows until then, so this bounds how long requests
+	// can reach them after a restart.
+	AdoptionReportIntervalSeconds = 5
+
+	// VMMDRestartNoticeSeconds is how long a vmmd stopping for a planned,
+	// adopting restart tells schedd it is restarting (vmmd restart adoption
+	// ADR §3): wakes on the node are retried instead of failed and its
+	// failed heartbeats are not counted. The successor clears it once it
+	// serves, normally within seconds; a vmmd that never comes back loses
+	// the notice after this long and is treated as before.
+	VMMDRestartNoticeSeconds = 60
+
+	// GatewayVMMDRestartHoldSeconds bounds how long a gateway forward waits
+	// for a node's vmmd to come back under its planned-restart notice
+	// instead of answering 503 (vmmd restart adoption ADR, "Boundaries").
+	// The successor normally serves within a second; this matches the wake
+	// queue's hold (WakeQueueTTLSeconds).
+	GatewayVMMDRestartHoldSeconds = WakeQueueTTLSeconds
 
 	// Tier A9 (capacity-pressure-triggered cross-node app rebalance,
 	// ADR-087 — sibling to the dead-node rebalancer of ADR-064).

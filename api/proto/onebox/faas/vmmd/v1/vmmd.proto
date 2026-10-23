@@ -227,6 +227,17 @@ service Vmmd {
   // ADR-1525: one journal-authorized capture/stop of the original VM generation.
   rpc ExecuteOperatorPark(ExecuteOperatorParkRequest) returns (ExecuteOperatorParkResponse);
 
+  // AdoptionReport is the node inventory this vmmd took over at startup
+  // (vmmd restart adoption ADR §3). UNIMPLEMENTED when adopt_running_vms is
+  // off; UNAVAILABLE when this start claimed no ownership epoch.
+  rpc AdoptionReport(AdoptionReportRequest) returns (AdoptionReportResponse);
+  // AdoptionInventory hands a candidate vmmd binary this vmmd's journal
+  // records and the live adoption proof for each, so the candidate can say
+  // before a release restarts vmmd whether it would adopt every guest (vmmd
+  // restart adoption ADR §4). Served on vmmd's root-only admin socket;
+  // PERMISSION_DENIED elsewhere.
+  rpc AdoptionInventory(AdoptionInventoryRequest) returns (AdoptionInventoryResponse);
+
   // StopInstance is the M-2 / ADR-138 graceful stop sequence: send
   // `signal` to the guest's PID 1, wait up to `grace_period_s`
   // seconds for it to exit cleanly, then SIGKILL on deadline.
@@ -2950,6 +2961,72 @@ message UpdateAppEgressPolicyRequest {
 }
 
 message UpdateAppEgressPolicyAck { int64 revision = 1; }
+
+message AdoptionReportRequest {}
+message AdoptionReportResponse {
+  string node_id = 1;
+  // epoch is the ownership epoch this vmmd claimed; schedd ignores a report
+  // below the compute_nodes row's epoch.
+  uint64 epoch = 2;
+  string incarnation = 3;
+  string predecessor_incarnation = 4;
+  // fenced: the epoch was advanced outside this node's claims, so nothing
+  // was adopted and every survivor stayed quarantined.
+  bool fenced = 5;
+  repeated AdoptionReportInstance adopted = 6;
+  repeated AdoptionReportInstance refused = 7;
+  // leased_since_start is every instance this vmmd gave a slot after
+  // startup. A live row on this node in neither it nor adopted ran under the
+  // predecessor and is gone.
+  repeated string leased_since_start = 8;
+  // complete is false once leased_since_start overflowed; schedd then acts
+  // on nothing in the report.
+  bool complete = 9;
+}
+message AdoptionInventoryRequest {}
+message AdoptionInventoryResponse {
+  repeated AdoptionInventoryRecord records = 1;
+}
+message AdoptionInventoryRecord {
+  // record is the journal record's JSON, as the running vmmd holds it.
+  bytes record = 1;
+  // proof_ok reports that proof steps 2-6 (boot, process, cgroup, network,
+  // Firecracker API) hold for the live guest; otherwise reason and detail
+  // name the first failure.
+  bool proof_ok = 2;
+  string proof_reason = 3;
+  string proof_detail = 4;
+}
+message AdoptionReportInstance {
+  string instance = 1;
+  string app_id = 2;
+  // reason and detail name the first failed proof step of a refused guest.
+  string reason = 3;
+  string detail = 4;
+  // resolved is the outcome of the operation in flight at the restart,
+  // settled before the report. "thawed" (adopted): a freeze or thaw was cut
+  // short and the guest now runs. "resumed" (adopted): a migration prepare
+  // was cut short before it answered, so the source runs again. "stopped" (in
+  // refused, with no reason): a stop, destroy, park or warm snapshot was cut
+  // short and the successor finished the teardown.
+  string resolved = 5;
+  // admission is set for an adopted guest booted under an ADR-595 receipt:
+  // what the successor holds, for schedd's re-bind of that admission.
+  AdoptionReportAdmission admission = 6;
+}
+
+// AdoptionReportAdmission is the serving receipt an adopted guest carries
+// and the residency the successor observed (ADR-595 extension). It must
+// equal the instance's stored receipt for schedd's re-bind to be accepted.
+message AdoptionReportAdmission {
+  string token = 1;
+  string issuing_incarnation = 2;
+  int64 completed_at_unix_nano = 3;
+  string netns = 4;
+  string host_ip = 5;
+  int32 lease_uid = 6;
+  bool paused = 7;
+}
 
 // Process identity is produced by the native manager, not echoed from callers.
 message RuntimeAdmissionIdentityRequest {}
