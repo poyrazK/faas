@@ -248,52 +248,9 @@ func executeConnectedRepoScan(opts connectedRepoScanOptions) int {
 // returns the same plan that a project apply would use, without creating an
 // app, deployment, or binding.
 func executeConnectedRepoPreview(ctx context.Context, opts connectedRepoScanOptions, emitJSON, strict, noTriggers bool) int {
-	if opts.tarball != "" || opts.path != "" {
-		return printErr("Could not resolve source", errors.New("--tarball, --path, and --repo are mutually exclusive"))
-	}
-	if err := validateRepoSlug(opts.repo); err != nil {
-		return printErr("Could not resolve source", fmt.Errorf("invalid --repo: %w", err))
-	}
-	if err := validateGitHubRef(opts.ref); err != nil {
-		return printErr("Could not resolve source", fmt.Errorf("invalid --ref: %w", err))
-	}
-	if !api.ValidProjectSlug(opts.projectSlug) {
-		return printErr("Invalid --project-slug", projectSlugValidationError(opts.projectSlug))
-	}
-	if opts.bindingRepo == "" {
-		opts.bindingRepo = opts.repo
-	}
-	if err := validateRepoSlug(opts.bindingRepo); err != nil {
-		return printErr("Invalid --repository", err)
-	}
-	if opts.productionBranch == "" {
-		opts.productionBranch = "main"
-	}
-	if err := validateGitHubRef(opts.productionBranch); err != nil {
-		return printErr("Invalid --production-branch", err)
-	}
-	if opts.installID < 0 {
-		return printErr("Invalid --install-id", errors.New("must be zero or a positive integer"))
-	}
-	if err := validateProjectEnvironmentFlag(opts.environment); err != nil {
-		return printErr("Invalid --environment", err)
-	}
-	onlyList, excludeList := splitCSV(opts.only), splitCSV(opts.exclude)
-	if ok, clash := intersect(onlyList, excludeList); ok {
-		return printErr("Invalid flags", fmt.Errorf("--only and --exclude share workload(s): %s", strings.Join(clash, ", ")))
-	}
-	client, err := authedClientWithDeployTimeout(2 * time.Minute)
-	if err != nil {
-		return printErr("Not logged in", err)
-	}
-	plan, err := client.ScanProjectSourceRef(ctx, api.ProjectSourceRefScanRequest{
-		Repo: opts.repo, Ref: opts.ref, ProjectSlug: opts.projectSlug,
-		RepoFullName: opts.bindingRepo, ProductionBranch: opts.productionBranch,
-		InstallID: opts.installID, Only: onlyList, Exclude: excludeList,
-		Environment: opts.environment, NoTriggers: noTriggers,
-	})
-	if err != nil {
-		return printErr("Scan failed", err)
+	_, plan, _, excludeList, code := connectedRepoPlan(ctx, opts, noTriggers)
+	if code != 0 {
+		return code
 	}
 	if emitJSON {
 		if code := jsonOut(writeJSON(plan)); code != 0 {
@@ -304,7 +261,7 @@ func executeConnectedRepoPreview(ctx context.Context, opts connectedRepoScanOpti
 		}
 		return 0
 	}
-	code := printPlanTextWithExplain(osStdout, plan, excludeList, opts.showAffected, opts.explain)
+	code = printPlanTextWithExplain(osStdout, plan, excludeList, opts.showAffected, opts.explain)
 	if code != 0 {
 		return code
 	}
@@ -312,6 +269,63 @@ func executeConnectedRepoPreview(ctx context.Context, opts connectedRepoScanOpti
 		return printErr("Project plan cannot be applied", planBlockedError(plan))
 	}
 	return 0
+}
+
+// connectedRepoPlan validates the connected-repository options and has the
+// control plane scan the requested ref. A non-zero code means the failure was
+// already reported.
+func connectedRepoPlan(ctx context.Context, opts connectedRepoScanOptions, noTriggers bool) (*Client, api.PlanResponse, []string, []string, int) {
+	fail := func(code int) (*Client, api.PlanResponse, []string, []string, int) {
+		return nil, api.PlanResponse{}, nil, nil, code
+	}
+	if opts.tarball != "" || opts.path != "" {
+		return fail(printErr("Could not resolve source", errors.New("--tarball, --path, and --repo are mutually exclusive")))
+	}
+	if err := validateRepoSlug(opts.repo); err != nil {
+		return fail(printErr("Could not resolve source", fmt.Errorf("invalid --repo: %w", err)))
+	}
+	if err := validateGitHubRef(opts.ref); err != nil {
+		return fail(printErr("Could not resolve source", fmt.Errorf("invalid --ref: %w", err)))
+	}
+	if !api.ValidProjectSlug(opts.projectSlug) {
+		return fail(printErr("Invalid --project-slug", projectSlugValidationError(opts.projectSlug)))
+	}
+	if opts.bindingRepo == "" {
+		opts.bindingRepo = opts.repo
+	}
+	if err := validateRepoSlug(opts.bindingRepo); err != nil {
+		return fail(printErr("Invalid --repository", err))
+	}
+	if opts.productionBranch == "" {
+		opts.productionBranch = "main"
+	}
+	if err := validateGitHubRef(opts.productionBranch); err != nil {
+		return fail(printErr("Invalid --production-branch", err))
+	}
+	if opts.installID < 0 {
+		return fail(printErr("Invalid --install-id", errors.New("must be zero or a positive integer")))
+	}
+	if err := validateProjectEnvironmentFlag(opts.environment); err != nil {
+		return fail(printErr("Invalid --environment", err))
+	}
+	onlyList, excludeList := splitCSV(opts.only), splitCSV(opts.exclude)
+	if ok, clash := intersect(onlyList, excludeList); ok {
+		return fail(printErr("Invalid flags", fmt.Errorf("--only and --exclude share workload(s): %s", strings.Join(clash, ", "))))
+	}
+	client, err := authedClientWithDeployTimeout(2 * time.Minute)
+	if err != nil {
+		return fail(printErr("Not logged in", err))
+	}
+	plan, err := client.ScanProjectSourceRef(ctx, api.ProjectSourceRefScanRequest{
+		Repo: opts.repo, Ref: opts.ref, ProjectSlug: opts.projectSlug,
+		RepoFullName: opts.bindingRepo, ProductionBranch: opts.productionBranch,
+		InstallID: opts.installID, Only: onlyList, Exclude: excludeList,
+		Environment: opts.environment, NoTriggers: noTriggers,
+	})
+	if err != nil {
+		return fail(printErr("Scan failed", err))
+	}
+	return client, plan, onlyList, excludeList, 0
 }
 
 // runProjectDeployPreviewWithMode is the read-only preview path for
@@ -708,13 +722,17 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			if wl.Image != "" {
 				imageSuffix = "  image=" + wl.Image
 			}
+			visibilitySuffix := ""
+			if wl.Visibility == api.AppVisibilityInternal {
+				visibilitySuffix = "  visibility=internal"
+			}
 			// plan.Workloads is the post-filter set: the scan
 			// service drops --only/--exclude slugs before populating
 			// it (scan_service.go:564-577). So no excluded row ever
 			// appears in this loop, and no "(excluded)" tag is
 			// needed here. The show-affected branch (printAffectedText)
 			// renders the partition including Skipped.
-			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix, imageSuffix)
+			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix, visibilitySuffix, imageSuffix)
 			if explain {
 				printWorkloadDetectionTrace(w, wl)
 			}

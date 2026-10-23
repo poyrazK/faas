@@ -537,6 +537,22 @@ func runtimeSuggestionFor(fw framework, ver string) string {
 // which already handles them via the workspaces_extra_test.go
 // "monorepo" fixture. The CLI hint is just a pointer at the next
 // step.
+// multiServiceSource explains why srcDir is a multi-service project rather
+// than one app: its root has no app shape, and it holds a Compose file or
+// service roots in subdirectories. Empty means it is not one.
+func multiServiceSource(srcDir string) string {
+	if detectShape(srcDir) != shapeUnknown {
+		return ""
+	}
+	if compose := composeFileIn(srcDir); compose != "" {
+		return compose + " defines a Compose project"
+	}
+	if detectNestedMarkerHint(srcDir) {
+		return filepath.Base(srcDir) + " holds several services"
+	}
+	return ""
+}
+
 func detectNestedMarkerHint(srcDir string) bool {
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
@@ -1114,7 +1130,7 @@ func resolveDeployShape(srcDir string, explicitFunction, explicitApp, jsonOutput
 		if compose := composeFileIn(srcDir); compose != "" {
 			return shapeUnknown, "", "", &NestedMarkerHintError{
 				Dir:  filepath.Base(srcDir),
-				Hint: fmt.Sprintf("Hint: %s is a Compose project. Deploy it with `gregale deploy --project`.", compose),
+				Hint: fmt.Sprintf("Hint: %s is a Compose project. Deploy all its services with `gregale deploy --project`.", compose),
 				Err:  baseErr,
 			}
 		}
@@ -1130,7 +1146,7 @@ func resolveDeployShape(srcDir string, explicitFunction, explicitApp, jsonOutput
 				Dir: filepath.Base(srcDir),
 				Hint: fmt.Sprintf(
 					"Hint: found app markers under subdirectories of %s — this looks like a workspace (monorepo). "+
-						"Run `gregale scan --path .` to decompose it into per-app plans, then apply them individually.",
+						"Deploy all its services as one project with `gregale deploy --project`.",
 					filepath.Base(srcDir)),
 				Err: baseErr,
 			}

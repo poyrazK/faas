@@ -251,6 +251,12 @@ func appTaskAPIEnabledFromEnv(getenv func(string) string) bool {
 	return strings.TrimSpace(getenv("FAAS_APP_TASK_API_ENABLED")) == "1"
 }
 
+// appForksEnabledFromEnv is the fail-closed operator gate for production
+// forks (ADR-732). It stays off until schedd can restore quarantined forks.
+func appForksEnabledFromEnv(getenv func(string) string) bool {
+	return strings.TrimSpace(getenv("FAAS_APP_FORKS")) == "1"
+}
+
 func githubDeploysAvailabilityProbe(getenv func(string) string, bridgeSock string) func(context.Context) bool {
 	// production-us hunt #8: push-to-deploy needs githubd to reach this
 	// apid's build-enqueue bridge. With no bridge socket configured githubd
@@ -882,16 +888,20 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// that the apid gRPC receiver (Stage 4) already honors.
 		startDebugRegressionCron(ctx, srv, log, deps.getenv)
 		startProfileDeploymentChecks(ctx, srv, log)
-		// API monetization workers pause while its runtime setting is off
-		// (ADR-20261018090210).
-		srv.billingRuns.Enabled = srv.apiMonetizationEnabled
-		srv.statementInvoices.Enabled = srv.apiMonetizationEnabled
-		srv.consumerCredits.Enabled = srv.apiMonetizationEnabled
-		srv.consumerControls.Enabled = srv.apiMonetizationEnabled
+		// API monetization workers pause while no account has it
+		// (ADR-20261018090210) and skip accounts it is not released to
+		// (ADR-20261020170649).
+		monetizationOn := func() bool { return !srv.apiMonetizationOff() }
+		srv.billingRuns.Enabled, srv.billingRuns.Released = monetizationOn, srv.apiMonetizationFor
+		srv.statementInvoices.Enabled, srv.statementInvoices.Released = monetizationOn, srv.apiMonetizationFor
+		srv.consumerCredits.Enabled, srv.consumerCredits.Released = monetizationOn, srv.apiMonetizationFor
+		srv.consumerControls.Enabled, srv.consumerControls.Released = monetizationOn, srv.apiMonetizationFor
+		srv.consumerSignup.Enabled = monetizationOn
 		srv.billingRuns.Start(ctx, log)                // ADR-1503
 		srv.statementInvoices.Start(ctx, log)          // ADR-1504
 		srv.consumerCredits.Start(ctx, log)            // ADR-1306
 		srv.consumerControls.Start(ctx, log)           // ADR-1315
+		srv.consumerSignup.Start(ctx, log)             // ADR-20261021143000
 		srv.productControl.StartOverdueHolds(ctx, log) // ADR-20261018212918
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		startPlatformFlagRamps(ctx, srv, log) // ADR 20261021080640
@@ -1529,6 +1539,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithAppForksEnabled(appForksEnabledFromEnv(deps.getenv)).
+		WithCrashSnapshotsEnabled(strings.TrimSpace(deps.getenv("FAAS_CRASH_SNAPSHOTS")) == "1").
 		WithAtomicWorkerReleaseEnabled(deps.getenv("FAAS_ATOMIC_WORKER_RELEASES_ENABLED") == "1").
 		WithProjectCanariesEnabled(deps.getenv("FAAS_PROJECT_CANARIES_ENABLED") == "1").
 		WithPromotionHealthEnabled(deps.getenv("FAAS_PROMOTION_HEALTH_ENABLED") == "1").

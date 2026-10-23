@@ -123,6 +123,15 @@ if it fails, the instance is discarded and the request restores from the
 snapshot instead. With session affinity (`session_affinity`) on, a session
 resumes the instance it was pinned to when that one is frozen.
 
+On nodes with early freeze enabled, a `between_requests` workload (every
+function by default, and any app that sets `pause: between_requests`) is
+frozen a few seconds after its last request instead of at its idle timeout,
+so it stops accruing usage almost as soon as it finishes serving. Nothing else
+changes for the app: its timers already stop between requests, and the next
+request thaws it in a few milliseconds. `when_idle` apps keep running through
+their idle timeout as declared. Apps with `--min` instances are not frozen
+early.
+
 Functions and request-mode apps can be frozen; workers, services, jobs and
 apps in a private network are not. Your app declares what it tolerates in
 `gregale.yaml`:

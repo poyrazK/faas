@@ -658,9 +658,11 @@ project source instead. Binding declarations do not expose services publicly.
 
 Bound services can also be called through the short private alias
 `http://billing.internal:10081`. Gregale's node-local DNS answers that name
-only for a VM whose app declares a `billing` binding. A direct request to the
-service proxy with `Host: billing.internal` is checked against the same binding
-inventory, so bypassing DNS cannot grant access. The existing same-account,
+only for a VM whose app declares a `billing` binding, or, under the `project`
+service policy, whose project has a `billing` service
+([ADR-20261022160248](adr/20261022160248-project-internal-aliases.md)). A
+direct request to the service proxy with `Host: billing.internal` gets the same
+check, so bypassing DNS cannot grant access. The existing same-account,
 target allowlist, and preview checks still run before any target is woken.
 Unbound `.internal` names are passed to the configured upstream DNS resolver;
 Gregale does not claim the customer's entire private namespace. The existing
@@ -1197,6 +1199,12 @@ time (`visibility: "internal"`) or update an existing app:
 gregale app APP_ID --visibility internal
 gregale app APP_ID --visibility public
 ```
+
+A Compose project sets this for you: a new app for a service without `ports:`
+is created internal, as Docker publishes nothing for it (ADR-20261022131852).
+The plan shows `visibility=internal`. The choice is made once, when the app is
+created; later syncs keep whatever visibility the app has, so publish such a
+service with `--visibility public`. PR previews inherit their app's visibility.
 
 Internal apps do not receive a public platform-subdomain or verified custom
 domain route. Service discovery continues to resolve them through

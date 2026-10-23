@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -959,7 +960,10 @@ type Handler struct {
 	// apiMonetization is the API monetization release gate
 	// (ADR-20261018090210); nil keeps monetization off.
 	apiMonetization func() bool
-	gate            *WakeGate
+	// apiMonetizationFlags is the api_monetization platform flag: it
+	// releases monetization to the accounts it admits (ADR-20261020170649).
+	apiMonetizationFlags *platformflags.Set
+	gate                 *WakeGate
 	// admissionQueue protects the control plane from a simultaneous cold
 	// burst across many apps. It is intentionally separate from gate:
 	// gate coalesces waiters for one app, while admissionQueue orders the
@@ -1069,6 +1073,8 @@ type Handler struct {
 	// func(Target) http.Handler — the wire defaulting at vmmd
 	// keeps pre-PR-C targets (Port=0) reaching 8080.
 	proxyByNode func(t Target) http.Handler
+	// crashThrottle limits ADR-733 crash capture requests per app.
+	crashThrottle crashCaptureThrottle
 	// rawByNode (issue #676 / ADR-080) is the Upgrade-traffic
 	// counterpart of proxyByNode. When non-nil, the handler
 	// dispatches inbound Connection: Upgrade + Upgrade: <token>
@@ -5595,6 +5601,22 @@ func (h *Handler) apiMonetizationEnabled() bool {
 	return h.apiMonetization != nil && h.apiMonetization()
 }
 
+// WithAPIMonetizationFlags installs the api_monetization platform flag
+// (ADR-20261020170649), which releases monetization to the accounts it admits
+// while the runtime switch is off.
+func (h *Handler) WithAPIMonetizationFlags(flags *platformflags.Set) *Handler {
+	h.apiMonetizationFlags = flags
+	return h
+}
+
+// APIMonetizationEnabledFor reports whether monetization applies to an
+// account's traffic: released to every account, or to this one by the flag.
+// The flag is decided by account only, so plan rules never match.
+func (h *Handler) APIMonetizationEnabledFor(accountID string) bool {
+	return h.apiMonetizationEnabled() ||
+		h.apiMonetizationFlags.Enabled(platformflags.APIMonetization, platformflags.Subject{AccountID: accountID})
+}
+
 // WithRequestAudit enables exact completed-request evidence in the fsynced
 // usage envelope. Enable only after apid supports the audit receipt field.
 func (h *Handler) WithRequestAudit(enabled bool) { h.requestAuditEnabled = enabled }
@@ -5887,6 +5909,12 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	// ADR-732: a request addressed to a production fork never takes the
+	// serving path (no wake, no picker, no cache or edge rules).
+	if forkRequested(r) {
+		h.serveFork(w, r, app)
+		return
+	}
 	// Edge-rule matching from here on ignores rules another account
 	// wrote (OwnedEdgeRules): match_host is free-form, so a foreign rule
 	// could otherwise shadow this app's own gates.
@@ -6002,6 +6030,9 @@ haveApp:
 			}
 		}
 		r = withAppAndAccount(r, accountUUID, appUUID)
+		if h.APIMonetizationEnabledFor(app.AccountID) {
+			ownUsageHeader(r)
+		}
 	}
 	if h.requestAuditEnabled {
 		// Snapshot the public gateway's single verified XFF value before
@@ -7671,6 +7702,10 @@ haveApp:
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
 			}, app)
 	}
+	// ADR-733: a serving instance that answered 5xx may be captured for a
+	// crash snapshot. Asynchronous and throttled; never affects this
+	// response.
+	h.maybeRequestCrashCapture(r, app, target, rec.status)
 	// Issue #471 / ADR-047 PR-A buffered-fallback AC. The
 	// per-app streaming_enabled flag (ap.StreamingEnabled,
 	// propagated through pgRouter.toApp) is the load-bearing

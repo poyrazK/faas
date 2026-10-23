@@ -61,6 +61,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APPS_DOMAIN` | apid, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, shared | `envfile` |  |  | `` |  |
 | `FAAS_APPS_ROOT` | imaged, shared | `default` |  |  | `` |  |
 | `FAAS_APP_ERRORS_ENABLED` | apid, gatewayd-internal | `runtime-config` |  |  | `` |  |
+| `FAAS_APP_FORKS` | apid, schedd | `default` |  |  | `` | exact opt-in for ADR-732 production forks; apid admits fork intent and schedd restores quarantined forks only when both are 1; default off until the quarantine metal test is qualified |
 | `FAAS_APP_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_APP_TASK_API_ENABLED` | apid | `unit` |  |  | `` | explicit 0 until deployment-attached task admission and the ADR-230 metal isolation path are qualified together |
 | `FAAS_APP_TASK_DISPATCH` | schedd | `default` |  |  | `` | exact opt-in for deployment-attached one-off command dispatch; default off provides a production-safe rollout gate |
@@ -128,6 +129,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_COMPUTE_VCPUS` | vmmd | `dropin` |  |  | `` | host vCPU count reported by node_join |
 | `FAAS_CONSUMER_USAGE_OUTBOX_ROOT` | gatewayd-internal | `default` |  |  | `` | optional durable financial usage spool override; defaults to /var/lib/faas/consumer-usage |
 | `FAAS_CONTROL_PLANE_API_TARGET` | gatewayd-public, shared | `unit` |  |  | `` |  |
+| `FAAS_CRASH_SNAPSHOTS` | apid, gatewayd-internal, schedd, vmmd | `default` |  |  | `` | exact opt-in for ADR-733 crash snapshots; apid serves the routes, gatewayd-internal requests 5xx captures, schedd captures and vmmd serves the guest SDK capture receiver only when 1; default off |
 | `FAAS_CUSTOM_DOMAIN_ADDRESSES` | apid, shared | `dropin` |  |  | `` | ADR-520; comma-separated public edge addresses offered for apex A/AAAA records and accepted by the routing probe; invalid entries fail apid at boot |
 | `FAAS_CUSTOM_DOMAIN_TARGET` | apid, shared | `dropin` |  |  | `` | ADR-520; hostname customers CNAME a custom domain to; must resolve straight to the public edge. Unset = the apps-domain apex |
 | `FAAS_CUSTOM_DOMAIN_TLS` | apid, gatewayd-public, shared | `dropin` |  |  | `` | ADR-520; on_demand = the public edge issues customer certificates after asking gatewayd-public, apid owns custom-domain certificate status. Unset = no self-hosted customer certificates |
@@ -288,6 +290,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_FROZEN_FAST_PATH` | schedd | `default` |  |  | `` | optional boolean switch for the ADR-1740 frozen fast path (thaw from a ticket recorded at freeze); needs FAAS_FROZEN_TIER; production default is off |
 | `FAAS_FROZEN_TIER` | schedd | `default` |  |  | `` | optional boolean switch for the ADR-1151 frozen tier; production default is off |
 | `FAAS_FROZEN_TIER_APPS` | schedd | `default` |  |  | `` | optional boolean switch extending the ADR-1151 frozen tier to request-mode apps; needs FAAS_FROZEN_TIER; production default is off |
+| `FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S` | schedd | `default` |  |  | `` | optional seconds (0 or 2-300) after which a quiet between_requests instance is frozen instead of waiting for its idle timeout (ADR-20261021215353); needs FAAS_FROZEN_TIER; production default is off |
 | `FAAS_FROZEN_TIER_WORKERS` | schedd | `default` |  |  | `` | optional boolean switch letting worker pools freeze surplus workers and thaw them before booting new ones (ADR-20261019103000); needs FAAS_FROZEN_TIER; production default is off |
 | `FAAS_FUNCTION_CONCURRENCY` | guest, shared | `guest` |  |  | `` | stamped by imaged on function deployments whose function_concurrency is above one (ADR-1342) |
 | `FAAS_FUNCTION_RUNNER_GO124` | imaged | `unit` | yes |  | `path-exists` |  |

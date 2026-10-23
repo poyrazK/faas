@@ -80,7 +80,7 @@ func (s *server) authVerifiedLimited(next accountHandler) http.HandlerFunc {
 // The handler account remains the storage/quota subject, while the request
 // principal remains the actor for scope, MFA, verification and audit checks.
 func (s *server) authorizeAppResource(next accountHandler) accountHandler {
-	return accountHandler(appaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), projectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), postgresaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), func() *managedpostgres.Service { return s.managedPostgres }, objectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), queueaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), middleware.AccountHandler(next)))))))
+	return accountHandler(appaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), projectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), postgresaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), func() *managedpostgres.Service { return s.managedPostgres }, objectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), queueaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), middleware.AccountHandler(s.monetizationAccount(next))))))))
 }
 
 func (s *server) authorizeDashboardProject(next http.Handler, w http.ResponseWriter, r *http.Request, actor state.Account) {

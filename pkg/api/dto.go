@@ -7347,6 +7347,10 @@ type PlanWorkload struct {
 	AllowedServiceCallers     *[]string                           `json:"allowed_service_callers,omitempty"`
 	AllowedServiceCallScopes  *ServiceCallerScopes                `json:"allowed_service_call_scopes,omitempty"`
 	PlatformTenantRequired    *bool                               `json:"platform_tenant_required,omitempty"`
+	// Visibility is "internal" when the app is or will be hidden from the
+	// public edge: an existing internal app, or a new Compose service without
+	// `ports:` (ADR-20261022131852). Omitted means public.
+	Visibility AppVisibility `json:"visibility,omitempty"`
 
 	Class           string   `json:"class,omitempty"`
 	Schedule        string   `json:"schedule,omitempty"`
@@ -8666,7 +8670,16 @@ func ApplyEdgeRuleRewritePath(requestPath, from, to string) (rewrittenPath strin
 	if !strings.HasPrefix(requestPath, from) {
 		return requestPath, false
 	}
-	return NormalizeEdgeRuleRewriteTarget(to) + requestPath[len(from):], true
+	rest := requestPath[len(from):]
+	if target := NormalizeEdgeRuleRewriteTarget(to); target != "/" {
+		return target + rest, true
+	}
+	// Stripping a prefix to the root (ADR-20261021223225): /api/items with
+	// From=/api becomes /items, and /api itself becomes /, never //items.
+	if !strings.HasPrefix(rest, "/") {
+		rest = "/" + rest
+	}
+	return rest, true
 }
 
 // NormalizeEdgeRuleRewriteTarget canonicalizes a configured rewrite prefix to

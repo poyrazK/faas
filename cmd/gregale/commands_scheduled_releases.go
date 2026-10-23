@@ -114,7 +114,7 @@ func scheduledReleaseClient(app, ref string) (*Client, string, int) {
 func scheduledReleasesList(args []string) int {
 	fs := newFlagSet("scheduled-releases list", flag.ContinueOnError)
 	app := fs.String("app", "", "only this app's schedules")
-	if err := parseInterspersed(fs, args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil || rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	client, err := authedClient()

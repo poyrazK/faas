@@ -28,6 +28,10 @@ export type PlanWorkload = {
    */
   platform_tenant_required?: boolean;
   /**
+   * Present when the app is or will be internal (no public route): an existing internal app, or a new Compose service without `ports:` (ADR-20261022131852). Omitted means public.
+   */
+  visibility?: 'internal';
+  /**
    * Effective build context inside the uploaded repository archive. Workspace manifests and sibling packages remain available outside this directory.
    */
   root_dir: string;
