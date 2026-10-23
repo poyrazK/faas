@@ -41,13 +41,19 @@ func TestBreakGlassPostgres(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	// pgtest hands out a private clone; ConnString still names the base
-	// database, so point the commands at the clone.
+	// pgtest hands out a private clone database, or an isolated schema on
+	// the search_path; ConnString names neither, so carry both into the
+	// commands' DSN.
 	u, err := url.Parse(pool.Config().ConnString())
 	if err != nil {
 		t.Fatal(err)
 	}
 	u.Path = "/" + pool.Config().ConnConfig.Database
+	if sp := pool.Config().ConnConfig.RuntimeParams["search_path"]; sp != "" {
+		q := u.Query()
+		q.Set("search_path", sp)
+		u.RawQuery = q.Encode()
+	}
 	dsn := u.String()
 	store := state.NewPgStore(pool)
 	acct, err := store.CreateAccount(ctx, "break-glass-"+uuid.NewString()+"@example.com", api.PlanPro)
