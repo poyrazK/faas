@@ -338,5 +338,10 @@ only:
 Unit: `sdk/go/tracing` (no-op without the stamp, gateway trace continuation,
 client span and header, panics as 500s, sampler, `database/sql` context,
 skip and legacy paths, argument checking kept, golden export) with `-race`;
-`pkg/gateway` decodes the golden export. Metal: `TestGuestTracingGoHelperMetal`
-deploys a fixture built only on the package; see the PR for the n2 run.
+`pkg/gateway` decodes the golden export. Metal (2026-10-23,
+`gregale-internal-test-1`, nested KVM): `TestGuestTracingGoHelperMetal`
+passed. A scratch image built only on the package, deployed with
+`tracing.enabled` and woken from its init snapshot by one request with an
+unsampled `traceparent`, put its `SELECT orders` (`postgresql`) and loopback
+`http` client spans on the request evidence as `app_dependency`. The run left
+no VM resources behind.
