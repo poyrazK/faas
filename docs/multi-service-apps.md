@@ -118,11 +118,14 @@ services:
       BILLING_URL: http://billing:8080   # not imported: Docker address
 ```
 
-The plan lists imported names under **Imported from compose.yaml**. Gregale
-never overwrites a value already set on the app, never imports secret-looking
-values, Docker service addresses, `${…}` interpolation or `env_file` values,
-and never shows values in the plan. Values in `compose.override.yaml` are
-imported too, so keep local-only settings out of an opted-in project.
+The plan lists imported names under **Imported from Compose** and gives the
+reason beside each value it skips. Gregale never overwrites a value already set
+on the app, never imports secret-looking values, Docker service addresses,
+`${…}` interpolation or `env_file` values, and never shows values in the plan.
+Imports happen on reviewed deploys (`gregale deploy`, the dashboard,
+`--repo … --project`); a GitHub push deploy imports nothing. Values in
+`compose.override.yaml` are imported too, so keep local-only settings out of an
+opted-in project.
 See [ADR-20261023085230](adr/20261023085230-compose-env-import.md).
 
 ## Pull request previews
