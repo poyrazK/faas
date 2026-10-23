@@ -38,7 +38,9 @@ func main() {
 	client := &http.Client{Transport: tracing.Transport(nil)}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	// Both patterns name the method: ServeMux panics on "GET /" beside a
+	// method-less "/healthz" (neither is more specific).
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		rows, err := db.QueryContext(r.Context(), "SELECT id FROM orders WHERE id = $1", 42)
 		if err != nil {
