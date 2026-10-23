@@ -103,7 +103,19 @@ type WAFInlineResult struct {
 	Categories []string
 	Score      int
 	Seconds    float64
+	// SkipReason says why a WAFInlineSkipped check did not run.
+	SkipReason string
 }
+
+// Why an in-path check was skipped (gateway_waf_inline_skips_total, ADR-831
+// amendment 11).
+const (
+	// WAFInlineSkipBudget: the app had used its inline budget.
+	WAFInlineSkipBudget = "budget"
+	// WAFInlineSkipBusy: every check slot on the node stayed busy through
+	// the slot wait.
+	WAFInlineSkipBusy = "busy"
+)
 
 // WAFInlineChecker scores a sample's headers and URI on the request
 // goroutine for warn and block rules. It must return promptly: a check it
@@ -237,6 +249,9 @@ func (h *Handler) checkEdgeRuleWAFInline(rule *EdgeRuleWAFResolved, sample WAFSa
 		h.recordWAFEvent(sample, event, res)
 	}
 	h.metrics.ObserveWAFInline(sample.AppID, outcome, res.Seconds)
+	if res.Outcome == WAFInlineSkipped {
+		h.metrics.ObserveWAFInlineSkip(sample.AppID, res.SkipReason)
+	}
 	return res.Outcome
 }
 

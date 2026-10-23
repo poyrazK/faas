@@ -68,3 +68,13 @@ func TestEdgeRuleEventWAFSummary(t *testing.T) {
 		t.Errorf("summary = %q, want %q", got, want)
 	}
 }
+
+// adr: 831 amendment 11 — one in-path check slot per processor but one,
+// never fewer than two or more than sixteen.
+func TestEdgeWAFInlineSlots(t *testing.T) {
+	for procs, want := range map[int]int{0: 2, 1: 2, 2: 2, 3: 2, 4: 3, 8: 7, 17: 16, 64: 16} {
+		if got := EdgeWAFInlineSlots(procs); got != want {
+			t.Errorf("EdgeWAFInlineSlots(%d) = %d, want %d", procs, got, want)
+		}
+	}
+}
