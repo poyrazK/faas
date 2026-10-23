@@ -1025,6 +1025,10 @@ from .dashboard_replay_app_debug_request_body import DashboardReplayAppDebugRequ
 from .dashboard_replay_failed_event_body import DashboardReplayFailedEventBody
 from .data_api_access_config import DataAPIAccessConfig
 from .data_api_access_config_version import DataAPIAccessConfigVersion
+from .data_api_change_event import DataAPIChangeEvent
+from .data_api_change_event_batch import DataAPIChangeEventBatch
+from .data_api_change_event_batch_response import DataAPIChangeEventBatchResponse
+from .data_api_change_event_batch_version import DataAPIChangeEventBatchVersion
 from .data_api_connection_budgets import DataAPIConnectionBudgets
 from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
 from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
@@ -7029,6 +7033,10 @@ __all__ = (
     "DashboardReplayFailedEventBody",
     "DataAPIAccessConfig",
     "DataAPIAccessConfigVersion",
+    "DataAPIChangeEvent",
+    "DataAPIChangeEventBatch",
+    "DataAPIChangeEventBatchResponse",
+    "DataAPIChangeEventBatchVersion",
     "DataAPIConnectionBudgets",
     "DataAPIConnectionBudgetsState",
     "DataAPIConnectionBudgetsVersion",
