@@ -1,8 +1,9 @@
 # ADR-831: Edge WAF signatures, bot challenge, and client certificates
 
-- **Status:** accepted (2026-10-22, amendment 9). `kind=waf` `observe` at
-  paranoia level 1 is generally available; `warn`, `block`, paranoia
-  level 2 and `kind=challenge` remain in preview.
+- **Status:** accepted (2026-10-22, amendment 9). `kind=waf` `observe`,
+  `warn` and `block` at paranoia level 1 and `kind=challenge` are generally
+  available (2026-10-23, amendment 11); paranoia level 2 stays in preview,
+  in `observe` only.
 - **Date:** 2026-10-09
 - **Related:** ADR-091 (edge rules), ADR-104 (throttle keying), ADR-520
   (self-hosted custom-domain TLS), ADR-829 (pre-auth observe default),
@@ -986,3 +987,31 @@ owner's decision. The largest remaining regex cost is rule 932237's list of
 unix commands in request headers, which has no literal or punctuation every
 match must contain; a sound keyword index for such lists is the next step
 if more headroom is wanted. Dropping rules is not needed for the gate.
+
+## Amendment 11 (2026-10-23): `warn`, `block` and `kind=challenge` are generally available
+
+The product owner's decision, on amendment 10's production measurement:
+`kind=waf` `warn` and `block` at paranoia level 1 and `kind=challenge`
+(with amendment 8's escalation) leave preview. Paranoia level 2 stays in
+preview, in `observe` only, as amendment 6 left it.
+
+- **The gate is met.** With `@grx` the in-path check's p95 was 1.49-2.00 ms
+  at 100-500 requests per second on a production compute node.
+- **Known limits, accepted for GA and documented in `docs/security.md`:**
+  - The WAF fails open. A check over the app's budget or without a free
+    slot lets the request through unchecked and counts it as
+    `inline_skipped`; at 250-500 requests per second a node skipped 2.5-8%
+    of checks. Sizing the check slots to the node's cores is the follow-up.
+  - Verdicts are validated on the CRS regression corpus and the benign
+    corpus, not yet on production traffic, which has been too thin for the
+    false-positive review amendment 4 asked for. The detection events of
+    amendment 5 are the review's input as traffic arrives.
+  - The challenge needs JavaScript (amendment 8).
+- **Launch.** In production the features go live through the platform flags
+  of ADR-20261023113721, `edge_waf_blocking` and `edge_challenge`, after the
+  release carrying `@grx` (#5172) is deployed, so no account runs blocking
+  checks on the slower stock engine: `flags enable`, then `default` for
+  every account. The flags stay as kill switches until they retire, by
+  2027-03-31.
+- **Not part of this:** rule penalties (`edge_penalty_box`) keep their own
+  launch decision, and attack mode and AI crawler controls are not merged.

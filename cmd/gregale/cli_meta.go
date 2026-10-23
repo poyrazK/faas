@@ -913,6 +913,12 @@ var cliCommands = []cliCommand{
 			"gregale ai tags <integration-id> --key feature",
 			"gregale ai tags export <integration-id> --from 2026-10-01 --to 2026-10-31 --key customer > ai-tags.csv",
 			"gregale ai tag-limits <integration-id> --set feature=search:20",
+			"gregale ai traces <integration-id> --limit 20",
+			"gregale ai traces <integration-id> <trace-id>",
+			"gregale ai policy <integration-id> --trace-max-calls 50 --trace-max-cost 2 --trace-max-repeated-tool-calls 3",
+			"gregale ai policy <integration-id> --request-log-content on --online-eval-percent 5 --online-eval-judge <openai-id> --online-eval-model gpt-5-mini --quality-alerts on",
+			"gregale ai feedback <integration-id> <call-id> --bad --label wrong_answer",
+			"gregale ai quality-alerts <integration-id>",
 			"gregale ai logs show <integration-id> <request-id>",
 			"gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'",
 			"gregale ai content-policy <integration-id> --response-email redact --response-secrets block --response-terms block --response-moderation flag",
@@ -933,6 +939,14 @@ var cliCommands = []cliCommand{
 				{Name: "log-export", Short: "send each app call's metadata to the app's log drains", Value: "on|off", ClosedSet: []string{"on", "off"}},
 				{Name: "allow-unmetered", Short: "let through calls the gateway cannot meter (realtime client secrets, vector stores, fine-tuning), outside the caps", Value: "on|off", ClosedSet: []string{"on", "off"}},
 				{Name: "prompt-cache", Short: "add prompt-cache breakpoints to Claude requests that carry none: after a repeated system prompt or tools, and after a continuing conversation", Value: "on|off", ClosedSet: []string{"on", "off"}},
+				{Name: "trace-max-calls", Short: "calls each AI trace (X-Gregale-AI-Trace or traceparent) may make, or none", Value: "N"},
+				{Name: "trace-max-cost", Short: "cost each AI trace may reach in USD, or none", Value: "USD"},
+				{Name: "trace-max-repeated-tool-calls", Short: "consecutive calls of a trace that may request the same tools with the same arguments, or none", Value: "N"},
+				{Name: "online-eval-percent", Short: "share of answered app calls a judge model scores from 1 to 5 (needs --request-log-content on), or none", Value: "N"},
+				{Name: "online-eval-judge", Short: "the AI integration that runs the judge model", Value: "ID"},
+				{Name: "online-eval-model", Short: "the judge model", Value: "MODEL"},
+				{Name: "online-eval-rubric", Short: "what a good answer does for this app, up to 1,000 bytes, or none", Value: "TEXT"},
+				{Name: "quality-alerts", Short: "alert bound apps when a model's quality drifts from its previous 7 days", Value: "on|off", ClosedSet: []string{"on", "off"}},
 			}},
 			{Name: "content-policy", Short: "Show or set content guardrails for requests and responses", Notes: []string{"Redacts or blocks e-mail, cards, IBANs and secrets, and blocks terms. Flags you omit keep their values."}, Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "email", Short: "e-mail addresses", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
@@ -961,6 +975,22 @@ var cliCommands = []cliCommand{
 				{Name: "from", Short: "export: first UTC day within the last 31 days (default today)", Value: "YYYY-MM-DD"},
 				{Name: "to", Short: "export: last UTC day (default today)", Value: "YYYY-MM-DD"},
 				{Name: "format", Short: "export: csv (default) or ndjson", Value: "FORMAT", ClosedSet: []string{"csv", "ndjson"}},
+			}},
+			{Name: "traces", Short: "List an integration's AI traces, newest first, or show one trace's calls: traces <integration-id> <trace-id>", Positionals: []string{"<integration-id>", "[trace-id]"}, Flags: []cliFlag{
+				{Name: "app", Short: "only traces whose first call came from this app (UUID)", Value: "ID"},
+				{Name: "user", Short: "only traces whose first call named this end user", Value: "ID"},
+				{Name: "limit", Short: "traces to show, 1 to 200", Value: "N"},
+			}},
+			{Name: "feedback", Short: "Rate a logged AI call by its X-Gregale-AI-Call ID", Positionals: []string{"<integration-id>", "<call-id>"}, Flags: []cliFlag{
+				{Name: "good", Short: "rate the call good", Bool: true},
+				{Name: "bad", Short: "rate the call bad", Bool: true},
+				{Name: "label", Short: "a short label such as wrong_answer", Value: "LABEL"},
+			}},
+			{Name: "quality-alerts", Short: "List an integration's AI quality drift alerts, newest first", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+				{Name: "limit", Short: "alerts to show, 1 to 100", Value: "N"},
+			}},
+			{Name: "deployments", Short: "List an app's AI gateway calls, errors, flagged answers and cost per call by deployment (last 14 days)", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
 			}},
 			{Name: "tag-limits", Short: "Show or change per-tag daily cost limits (unchanged limits are kept)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "set", Short: "cap a tag's UTC-day cost: key=value:USD (repeat)", Value: "SPEC"},
@@ -1894,11 +1924,12 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "release-gates",
 		DocSlug: "release-gates",
-		Short:   "Stop rollouts on SLO, error or metric regressions and roll back",
+		Short:   "Stop rollouts on SLO, error, metric or AI regressions and roll back",
 		Examples: []string{
 			"gregale release-gates add --app my-api --name checkout-slo --slo checkout --max-burn-rate 10",
 			"gregale release-gates add --app my-api --name no-new-errors --new-errors --min-events 3",
 			"gregale release-gates add --app my-api --name orders --metric orders_per_minute --below 5",
+			"gregale release-gates add --app my-api --name ai-cost --ai cost_per_call --max-increase 30",
 			"gregale release-gates list --app my-api",
 		},
 		Subcommands: []cliSub{
@@ -1916,7 +1947,9 @@ var cliCommands = []cliCommand{
 				{Name: "metric", Short: "fail when this custom metric crosses a bound", Value: "NAME"},
 				{Name: "below", Short: "fail when the metric averages below this", Value: "VALUE"},
 				{Name: "above", Short: "fail when the metric averages above this", Value: "VALUE"},
-				{Name: "min-samples", Short: "requests or metric values before the gate is judged (default 20)", Value: "N"},
+				{Name: "ai", Short: "fail when this AI gateway metric gets worse than the previous release's: error_rate, flagged_rate, cost_per_call or ttfb_ms", Value: "METRIC"},
+				{Name: "max-increase", Short: "percent over the previous release that fails an --ai gate (default 50)", Value: "PCT"},
+				{Name: "min-samples", Short: "requests, metric values or AI calls before the gate is judged (default 20)", Value: "N"},
 			}},
 			{Name: "rm", Short: "Remove a release gate", Aliases: []string{"delete"}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
@@ -4529,7 +4562,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			debugRequestsCLISubcommand(),
 			{Name: "profiles", Short: "Sampled CPU or heap functions and deployment comparison", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "type", Value: "KIND", Short: "cpu (default) or heap"}, {Name: "deployment-id", Value: "UUID", Short: "candidate deployment"}, {Name: "runtime", Value: "NAME", Short: "runtime name"}, {Name: "start", Value: "RFC3339", Short: "capture start"}, {Name: "end", Value: "RFC3339", Short: "capture end"}, {Name: "baseline-id", Value: "UUID", Short: "baseline deployment"}, {Name: "baseline-start", Value: "RFC3339", Short: "baseline capture start"}, {Name: "baseline-end", Value: "RFC3339", Short: "baseline capture end"}}},
-			{Name: "capture", Short: "Capture CPU, heap, stack or lock-contention profiles from a running instance now", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "type", Value: "KINDS", Short: "cpu, heap, stacks, block, mutex, comma-separated (default cpu)"}, {Name: "duration", Value: "DURATION", Short: "capture window, 1s..60s (default 10s)"}, {Name: "instance", Value: "UUID", Short: "running instance; default the earliest"}, {Name: "output", Value: "DIR", Short: "write merged .pb.gz pprof files"}, {Name: "top", Value: "N", Short: "functions to print per kind"}, {Name: "no-wait", Short: "queue the capture and print its id"}}},
+			{Name: "capture", Short: "Capture CPU, heap, stack or lock profiles from a running instance", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "type", Value: "KINDS", Short: "cpu, heap, stacks, block, mutex, comma-separated (default cpu)"}, {Name: "duration", Value: "DURATION", Short: "capture window, 1s..60s (default 10s)"}, {Name: "instance", Value: "UUID", Short: "running instance; default the earliest"}, {Name: "output", Value: "DIR", Short: "write merged .pb.gz pprof files"}, {Name: "top", Value: "N", Short: "functions to print per kind"}, {Name: "no-wait", Short: "queue the capture and print its id"}}},
 			{Name: "captures", Short: "List or show on-demand profile captures", Positionals: []string{"<slug>", "[<capture-id>]"}, Flags: []cliFlag{{Name: "output", Value: "DIR", Short: "write merged .pb.gz pprof files"}, {Name: "top", Value: "N", Short: "functions to print per kind"}}},
 			{Name: "capture-diff", Short: "Compare a profile capture with an earlier one to see what grew", Positionals: []string{"<slug>", "<capture-id>"}, Flags: []cliFlag{{Name: "base", Value: "ID", Short: "baseline capture id of the same app"}, {Name: "type", Value: "KIND", Short: "cpu, heap, stacks, block or mutex (default: shared kind, heap first)"}, {Name: "top", Value: "N", Short: "functions to print"}}},
 			{Name: "dependencies", Short: "Show observed dependency latency and regressions", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "since", Short: "lookback window", Value: "DURATION"}}},

@@ -1373,6 +1373,10 @@ type Querier interface {
 	// imaged, after deleting every object: the sealed key goes with them.
 	ExpireCrashCapture(ctx context.Context, db DBTX, arg ExpireCrashCaptureParams) (CrashCapture, error)
 	ExpireOrgInvitations(ctx context.Context, db DBTX, expiresAt pgtype.Timestamptz) (int64, error)
+	// ADR-20261022105723: a pending queue message past its plan's retention
+	// moves to the dead letter. A message a worker holds (dispatching) is not
+	// touched. The plan resolves as StampDefaultInvocationRetention's does.
+	ExpirePendingQueueMessages(ctx context.Context, db DBTX, arg ExpirePendingQueueMessagesParams) ([]ExpirePendingQueueMessagesRow, error)
 	ExpireProfileCanaryChecks(ctx context.Context, db DBTX, arg ExpireProfileCanaryChecksParams) error
 	ExpireProfileDeploymentChecks(ctx context.Context, db DBTX, arg ExpireProfileDeploymentChecksParams) error
 	// Admission locks apps before deployments. A fresh READ COMMITTED snapshot
@@ -4526,6 +4530,9 @@ type Querier interface {
 	ProductBillingScopeExists(ctx context.Context, db DBTX, arg ProductBillingScopeExistsParams) (bool, error)
 	ProductBillingStatement(ctx context.Context, db DBTX, arg ProductBillingStatementParams) (ProductControlBillingDocument, error)
 	ProductBillingWaive(ctx context.Context, db DBTX, arg ProductBillingWaiveParams) error
+	// The fallback assignment takes effect at the trial's end, so no fee minute
+	// after the trial is priced on the paid plan (ADR-20261022180921).
+	ProductControlAppendTrialFallback(ctx context.Context, db DBTX, arg ProductControlAppendTrialFallbackParams) error
 	ProductControlCountStarts(ctx context.Context, db DBTX, arg ProductControlCountStartsParams) (int64, error)
 	// A feature's starts admitted during the customer's trial, which count toward
 	// no included starts (ADR-20261021195901).
@@ -4546,17 +4553,28 @@ type Querier interface {
 	ProductControlMonthPlans(ctx context.Context, db DBTX, arg ProductControlMonthPlansParams) ([]ProductControlMonthPlansRow, error)
 	ProductControlOwnedApp(ctx context.Context, db DBTX, arg ProductControlOwnedAppParams) (pgtype.UUID, error)
 	ProductControlPutRevision(ctx context.Context, db DBTX, arg ProductControlPutRevisionParams) error
+	// Marks a customer's ended trial resolved, moving them to fallback_plan when
+	// given (ADR-20261022180921).
+	ProductControlResolveTrial(ctx context.Context, db DBTX, arg ProductControlResolveTrialParams) error
 	// A change of revision or plan is appended to the plan history in the same
 	// statement, so every writer records it (ADR-20261021154511). A customer
 	// without a trial starts one when assigned a plan offering it, and keeps
 	// any trial they had (ADR-20261021195901).
 	ProductControlSetCustomer(ctx context.Context, db DBTX, arg ProductControlSetCustomerParams) error
 	ProductControlSetHead(ctx context.Context, db DBTX, arg ProductControlSetHeadParams) error
+	// Records since when a payment method has been on file, or clears it
+	// (ADR-20261022180921); the caller decided under the row lock.
+	ProductControlSetPaymentMethod(ctx context.Context, db DBTX, arg ProductControlSetPaymentMethodParams) error
 	// Moves a running trial's end (ADR-20261021195901); the caller checked it
 	// under the row lock.
 	ProductControlSetTrialEnd(ctx context.Context, db DBTX, arg ProductControlSetTrialEndParams) error
 	ProductControlSettleReceipt(ctx context.Context, db DBTX, arg ProductControlSettleReceiptParams) error
 	ProductControlTrialStartsByFeature(ctx context.Context, db DBTX, arg ProductControlTrialStartsByFeatureParams) ([]ProductControlTrialStartsByFeatureRow, error)
+	// Ended trials not resolved yet, oldest first, each with what its plan
+	// requires in the customer's own revision and whether the customer was
+	// assigned another plan after the trial ended (ADR-20261022180921). The
+	// customers are locked; a concurrent step skips them.
+	ProductControlUnresolvedTrials(ctx context.Context, db DBTX, arg ProductControlUnresolvedTrialsParams) ([]ProductControlUnresolvedTrialsRow, error)
 	ProductControlUsage(ctx context.Context, db DBTX, arg ProductControlUsageParams) ([]ProductControlUsageRow, error)
 	// One statement observes all sources with one PostgreSQL snapshot. No customer
 	// Operations or Auth journals are read; no signed reviews, inputs or result payloads are returned.
@@ -5424,6 +5442,9 @@ type Querier interface {
 	ReleaseEnvironmentGitSourceOwners(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	ReleaseEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	ReleaseGateCustomMetricWindow(ctx context.Context, db DBTX, arg ReleaseGateCustomMetricWindowParams) (ReleaseGateCustomMetricWindowRow, error)
+	// ADR 20261022153155: a deployment's AI calls in the UTC minutes of
+	// [since, until).
+	ReleaseGateDeploymentAI(ctx context.Context, db DBTX, arg ReleaseGateDeploymentAIParams) (ReleaseGateDeploymentAIRow, error)
 	// A deployment's organic requests in [since, until): all, 5xx, and those
 	// slower than latency_threshold_ms (0 counts none as slow).
 	ReleaseGateDeploymentSLI(ctx context.Context, db DBTX, arg ReleaseGateDeploymentSLIParams) (ReleaseGateDeploymentSLIRow, error)
@@ -6070,6 +6091,11 @@ type Querier interface {
 	StopOperatorRestartInstance(ctx context.Context, db DBTX, arg StopOperatorRestartInstanceParams) (int64, error)
 	StopUncertainCustomerOperationWorkflow(ctx context.Context, db DBTX, id pgtype.UUID) error
 	SumAccountCreditRefundReversal(ctx context.Context, db DBTX, arg SumAccountCreditRefundReversalParams) (int64, error)
+	SumAccountQueueBacklogBytes(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	// ADR-20261022105723: every pending and dispatching row of the app and
+	// source, production or not, so the sum bounds the production backlog from
+	// above.
+	SumInvocationBacklogPending(ctx context.Context, db DBTX, arg SumInvocationBacklogPendingParams) (int64, error)
 	// Per-account open-spool budget check (4 × SourceTarballMaxMB cap
 	// per plan). The handler sums the declared total_size across all
 	// open sessions for the account, adds the new total_size, and

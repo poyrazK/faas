@@ -549,6 +549,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PADDLE_WEBHOOK_TOLERANCE_SECONDS` | shared | `default` |  |  | `` |  |
 | `FAAS_PERSISTENT_PROTOCOL_V1` | guest | `guest` |  |  | `` |  |
 | `FAAS_PERSISTENT_WORKER` | shared | `internal` |  |  | `` | set by the builder path for its own worker process |
+| `FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs, or *, that may set scaling_policy.per_instance_concurrency (ADR-20261022203523); unset admits none, and a stored value keeps applying until it is set to 0 |
 | `FAAS_PGTEST_TEMPLATE_DATABASE` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_PLAN_CACHE_ROOT` | apid | `default` |  |  | `` |  |
 | `FAAS_PMEM_BASE_DIR` | vmmd | `default` |  | auto | `` | per-account pmem base copies (ADR-908); default auto keeps each copy on the mount of its base; empty or off keeps every base on virtio-blk; a path must be on the same reflink-capable mount as the cached bases |
@@ -692,6 +693,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ROUTE_PROBE_URL` | apid | `dropin` |  |  | `url` | public origin for ADR-847 synthetic route probes; unset disables probes |
 | `FAAS_RUNTIME_KIND` | guest | `guest` |  |  | `` |  |
+| `FAAS_RUNTIME_SECRET_BINDING` | apid | `dropin` |  | off | `` | ADR-20261023173624; off or account. account binds each new runtime secret envelope to its account so vmmd opens it only for that account; enable only after every vmmd checks bindings (seal_domains role) |
 | `FAAS_RUNTIME_UPGRADE_DRAIN_CONFIRMATION` | gatewayd-internal | `default` |  |  | `` | default-off private forwarding drain receipt; requires reviewed runtime routing confirmation (ADR-697) |
 | `FAAS_RUNTIME_UPGRADE_GATEWAY_SLOT_ID` | gatewayd-internal | `default` |  |  | `` | reviewed private gateway slot identity; required only when runtime routing confirmation is enabled (ADR-695) |
 | `FAAS_RUNTIME_UPGRADE_INGRESS_CONFIRMATION` | gatewayd-internal, gatewayd-public | `default` |  |  | `` | default-off private ingress identity proof; requires reviewed routing and drain confirmations (ADR-698) |
@@ -726,6 +728,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCHEDD_RECONCILE_ENFORCE` | schedd, shared | `default` |  |  | `` | ADR-191; "1" lets the instance-divergence sweep write. Default off ships the sweep report-only: it counts and logs what it would repair and touches no row |
 | `FAAS_SCHEDD_ROLE` | schedd, shared | `dropin` |  |  | `` |  |
 | `FAAS_SCHEDD_SOCKET` | gatewayd-internal | `dropin` |  |  | `` |  |
+| `FAAS_SEAL_DOMAIN_BUILD_IDENTITY_PATH` | imaged | `dropin` |  |  | `` | build seal-domain identity (ADR 20261022111812) via LoadCredential=faas_seal_domain_build in the seal_domains role's imaged drop-in; imaged opens app and job private-registry passwords with it ahead of the fleet and host identities; unset keeps them on the fleet identity |
+| `FAAS_SEAL_DOMAIN_BUILD_RECIPIENT_PATH` | apid | `dropin` |  |  | `` | build seal-domain recipient (ADR 20261022111812) via LoadCredential=faas_seal_domain_build_recipient in the seal_domains role's apid drop-in; apid seals private-registry passwords to it and cannot open them; unset seals to the fleet recipient alone |
+| `FAAS_SEAL_DOMAIN_BUILD_WRITES` | apid | `dropin` |  |  | `` | build seal-domain write mode (ADR 20261022111812): empty seals private-registry passwords to the domain and fleet recipients once the domain recipient is staged; fleet keeps the fleet recipient alone; domain seals to the domain alone and is set by the seal_domains role only after every imaged reports faas_seal_domain_loaded{domain="build"} 1 and the previous release left the rollback window |
 | `FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH` | outboundd | `dropin` |  |  | `` | outbound seal-domain identity (ADR 20261022111812) via LoadCredential=faas_seal_domain_outbound in the seal_domains role's 60-faas-seal-domain-outbound.conf; outboundd also keeps the fleet identity until the domain re-seal completes; unset leaves customer credentials on the fleet identity |
 | `FAAS_SEAL_DOMAIN_OUTBOUND_RECIPIENT_PATH` | apid | `dropin` |  |  | `` | outbound seal-domain recipient (ADR 20261022111812) via LoadCredential=faas_seal_domain_outbound_recipient in the seal_domains role's apid drop-in; apid seals customer outbound credentials to it and cannot open them; unset seals to the fleet recipient alone |
 | `FAAS_SEAL_DOMAIN_OUTBOUND_WRITES` | apid | `dropin` |  |  | `` | outbound seal-domain write mode (ADR 20261022111812): empty seals to the domain and fleet recipients once the domain recipient is staged; fleet keeps the fleet recipient alone; domain seals to the domain alone and is set by the seal_domains role only after every outboundd verified the domain and the previous release left the rollback window |

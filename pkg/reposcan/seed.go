@@ -115,6 +115,8 @@ type workloadSeed struct {
 	image               string
 	healthcheck         *api.ComposeHealthcheck
 	imageProcess        *api.ComposeProcess
+	secretFiles         []api.SecretFile
+	resources           *api.ComposeResources
 	imageSet            bool // explicit image strategy, including a Compose source build
 	command             []string
 	commandShell        bool

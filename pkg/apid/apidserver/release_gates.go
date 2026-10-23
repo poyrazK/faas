@@ -34,6 +34,8 @@ func releaseGateView(g state.ReleaseGate, sloNames map[string]string) api.Releas
 	case state.ReleaseGateCustomMetric:
 		threshold := g.Threshold
 		out.Metric, out.Comparison, out.Threshold = g.MetricName, g.Comparison, &threshold
+	case state.ReleaseGateAI:
+		out.Metric, out.MaxIncreasePercent = g.MetricName, int(g.Threshold)
 	}
 	return out
 }

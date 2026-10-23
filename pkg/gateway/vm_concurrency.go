@@ -32,14 +32,34 @@ func effectiveAppConcurrencyLimit(app App, planLimit int) int {
 	return app.MaxConcurrency
 }
 
-// effectiveVMConcurrencyLimit is the listener-level concurrency contract
-// published as concurrency_per_vm. Generated function runners keep their
-// smaller interpreter pool as an internal execution queue; it must not become
-// a second, undocumented gateway limit. Doing so made a Scale function that
-// advertised 80 requests per VM block its fifth request in the gateway and
-// intermittently exhaust the request budget during ordinary 20-way bursts.
-func effectiveVMConcurrencyLimit(_ App, planLimit int) int {
-	return planLimit
+// effectiveVMConcurrencyLimit is how many requests the gateway admits to one
+// instance of app: its declared per_instance_concurrency, or the plan's
+// published concurrency_per_vm when it declares none (ADR-20261022203523).
+// The same number is burst admission's denominator, so the request after an
+// instance fills asks schedd for a sibling instead of queueing in the guest.
+//
+// Generated function runners keep their smaller interpreter pool as an
+// internal execution queue; it must not become a second, undocumented gateway
+// limit. Doing so made a Scale function that advertised 80 requests per VM
+// block its fifth request in the gateway and intermittently exhaust the
+// request budget during ordinary 20-way bursts. Only the customer's own
+// declaration lowers the limit.
+func effectiveVMConcurrencyLimit(app App, limits api.Limits) int {
+	return limits.PerInstanceConcurrency(app.PerInstanceConcurrency)
+}
+
+// concurrencyAdmissionPolicy is the warm-queue policy for app. An app that
+// declares per_instance_concurrency waits the longer per-instance default
+// unless it set max_queue_wait_ms itself (ADR-20261022203523): a full
+// instance is its normal operation, and those requests used to wait in the
+// guest's backlog rather than fail after the short saturation default. A
+// drop policy never waits, so its Retry-After keeps the plan default.
+func concurrencyAdmissionPolicy(app App) WakeAdmissionPolicy {
+	policy := ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth)
+	if app.MaxQueueWaitMS <= 0 && app.ConcurrencyOverflow != api.ConcurrencyOverflowDrop {
+		policy.MaxWait = api.ConcurrencyQueueDefaultWaitFor(app.Plan, app.PerInstanceConcurrency)
+	}
+	return policy
 }
 
 // vmConcurrencyManager owns the request slots for routable instances. The
@@ -534,7 +554,7 @@ func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult,
 	if candidate, release, ok := tryReadyTarget(); ok {
 		return candidate, release, false, nil
 	}
-	policy := ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth)
+	policy := concurrencyAdmissionPolicy(app)
 	if app.ConcurrencyOverflow == api.ConcurrencyOverflowDrop {
 		return pick, nil, true, &WakeConcurrencyDropError{RetryAfter: policy.MaxWait}
 	}

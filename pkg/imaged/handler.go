@@ -298,6 +298,10 @@ type Handler struct {
 	// stay anonymous (matches the Free plan / no-credential case).
 	secretboxIdentity   *age.X25519Identity
 	secretboxIdentities []*age.X25519Identity
+	// registryIdentities, when set, open private-registry passwords in
+	// place of the secretbox identities: the build seal-domain identity
+	// first, then the fleet and host identities (ADR 20261022111812).
+	registryIdentities []*age.X25519Identity
 	// baseConvergence (ADR-567) tracks the bases this daemon staged so the
 	// convergence loop can keep each local copy byte-identical to the
 	// shared publication.
@@ -845,6 +849,27 @@ func (h *Handler) WithSecretboxIdentity(ident *age.X25519Identity) *Handler {
 		h.secretboxIdentities = []*age.X25519Identity{ident}
 	}
 	return h
+}
+
+// WithRegistryIdentities sets the identities that open private-registry
+// passwords. Crash captures keep the secretbox identities.
+func (h *Handler) WithRegistryIdentities(identities []*age.X25519Identity) *Handler {
+	h.registryIdentities = identities
+	return h
+}
+
+// registryCredentialIdentities returns the identities that open a
+// private-registry password; nil leaves pulls anonymous.
+func (h *Handler) registryCredentialIdentities() []*age.X25519Identity {
+	switch {
+	case len(h.registryIdentities) > 0:
+		return h.registryIdentities
+	case len(h.secretboxIdentities) > 0:
+		return h.secretboxIdentities
+	case h.secretboxIdentity != nil:
+		return []*age.X25519Identity{h.secretboxIdentity}
+	}
+	return nil
 }
 
 // WithSecretboxIdentities wires the fleet-first identity set while retaining
@@ -2205,7 +2230,8 @@ func (h *Handler) handleAppTaskChanged(ctx context.Context, payload db.AppTaskCh
 // parsed ref ensures a customer can never accidentally widen the
 // credential to a different registry by manipulating a request body.
 func (h *Handler) resolveRegistryAuth(ctx context.Context, app state.App, host string) (*oci.BasicAuth, error) {
-	if h.secretboxIdentity == nil {
+	identities := h.registryCredentialIdentities()
+	if len(identities) == 0 {
 		return nil, nil
 	}
 	if host == "" {
@@ -2225,10 +2251,6 @@ func (h *Handler) resolveRegistryAuth(ctx context.Context, app state.App, host s
 	// app_secret namespace check). A namespace mismatch
 	// means the envelope was sealed for a different
 	// secretbox slot — refuse rather than passing through.
-	identities := h.secretboxIdentities
-	if len(identities) == 0 && h.secretboxIdentity != nil {
-		identities = []*age.X25519Identity{h.secretboxIdentity}
-	}
 	ns, plaintext, err := secretbox.OpenBytesMulti(identities, cred.PasswordEncrypted)
 	if err != nil {
 		// Don't echo the unseal error verbatim — it can include

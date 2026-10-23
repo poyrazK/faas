@@ -10,10 +10,12 @@ Turns on what [ADR 20261022111812](../adr/20261022111812-seal-domains-per-reader
 3. rehearse the break-glass release pause and credential revocation;
 4. move customer runtime secrets (env vars and secrets) to the `runtime` seal
    domain;
-5. move GitHub install tokens and webhook secrets to the `source` seal domain.
+5. move GitHub install tokens and webhook secrets to the `source` seal domain;
+6. move private-registry passwords to the `build` seal domain.
 
 Do each stage in staging first, then production. Stages 1 and 3 stand alone.
-The steps of stages 2, 4 and 5 run in order, and each has its own rollback.
+The steps of stages 2, 4, 5 and 6 run in order, and each has its own
+rollback.
 Record in the change ticket who ran each step, when, and each domain's
 recipient (recipients are public).
 
@@ -33,6 +35,36 @@ domain identity.
   `gregalectl` of the release deployed there. `seal-domain migrate` applies
   pending migrations before it re-seals. A newer binary would apply them
   before their data release.
+
+## Where the keys and settings live
+
+Each stage below shows a converge from your machine with a local variables
+file. That works anywhere. Production should use CD instead: CD then also
+stages the keys on every host it joins or rebuilds.
+
+- **Keys:** after `gregalectl seal-domain init --domain <domain>`, store the
+  pair as GitHub environment secrets:
+  - `SEAL_DOMAIN_<DOMAIN>_AGE_KEY`: the contents of `<domain>.age`;
+  - `SEAL_DOMAIN_<DOMAIN>_AGE_RECIPIENT`: the contents of `<domain>.age.pub`.
+
+  The control-plane CD then stages the `outbound` and `source` identities
+  and every domain's recipient. The compute join stages the `runtime` and
+  `build` identities on each node it joins, and leaves the node drained if
+  `seal-domain verify` fails there. Before apid seals to a domain, the role
+  checks that the staged recipient is the one readers published the probe
+  with, so a recipient from another pair stops the converge.
+- **Settings** (`faas_seal_domain_<domain>_writes` and
+  `faas_seal_domain_<domain>_readers_verified`) go in `CP_ANSIBLE_VARS_B64`.
+  CD re-renders the drop-ins from them on every converge, so a value set
+  only in a local file is reverted.
+- **Never** put `faas_seal_domains_managed` or a `*_src` variable in CD's
+  variables. CD sets them from the secrets and refuses a file that already
+  has them.
+
+Wherever a stage says to add `*_src` lines to the local variables file, with
+CD you set the domain's secrets instead. Wherever it says to set
+`*_writes` or `*_readers_verified`, you add them to `CP_ANSIBLE_VARS_B64` and
+run the control-plane CD.
 
 ## 1. Seal the GitHub webhook secrets
 
@@ -86,10 +118,11 @@ faas_seal_domain_outbound_identity_src: /Users/<you>/gregale-seal/<environment>/
 faas_seal_domain_outbound_recipient_src: /Users/<you>/gregale-seal/<environment>/outbound.age.pub
 ```
 
-Keep these out of `CP_ANSIBLE_VARS_B64`. The CD runner does not have the
-files, so the role would fail every control-plane release. While
-`faas_seal_domains_managed` is unset, CD's converge skips the role and leaves
-the staged files and drop-ins in place.
+With CD, set the `SEAL_DOMAIN_OUTBOUND_*` secrets instead of these lines.
+Without it, keep these lines out of `CP_ANSIBLE_VARS_B64`. The CD runner
+does not have the files, so the role would fail every control-plane
+release. While `faas_seal_domains_managed` is unset, CD's converge skips the
+role and leaves the staged files and drop-ins in place.
 
 ```bash
 gregalectl deploy converge-control-plane --roles seal_domains --manifest-file <signed manifest> --ssh-known-hosts-file <known_hosts> --ansible-vars-file <local vars file>
@@ -192,9 +225,10 @@ in this step stay domain-only. From now on:
 - Never remove `outbound.age` from outboundd.
 - Never roll the control plane back past the first release that carried the
   ADR.
-- A new or rebuilt control-plane host must run the `seal_domains` role,
-  using the local variables file, before its outboundd serves traffic. CD
-  does not stage the domain identity yet.
+- A new or rebuilt control-plane host gets `outbound.age` from CD once the
+  `SEAL_DOMAIN_OUTBOUND_*` secrets are set. Without them, run the
+  `seal_domains` role for it from the local variables file before its
+  outboundd serves traffic.
 
 ## 3. Break-glass rehearsal
 
@@ -265,8 +299,11 @@ faas_seal_domain_runtime_identity_src: /Users/<you>/gregale-seal/<environment>/r
 faas_seal_domain_runtime_recipient_src: /Users/<you>/gregale-seal/<environment>/runtime.age.pub
 ```
 
-As in 2b, keep these out of the variables CD uses (`CP_ANSIBLE_VARS_B64` and
-the compute join artifacts).
+With CD, set the `SEAL_DOMAIN_RUNTIME_*` secrets instead of these lines. The
+next control-plane CD stages the recipient, and every compute join stages
+`runtime.age`. Nodes already in service still need the compute steps below,
+or a fresh join. Without CD, as in 2b, keep these lines out of the variables
+CD uses (`CP_ANSIBLE_VARS_B64` and `COMPUTE_ANSIBLE_VARS_B64`).
 
 1. **Control plane:** converge the role alone. apid gets the recipient and
    keeps sealing to the fleet key.
@@ -310,11 +347,12 @@ Go on only when all of these hold:
 - every vmmd reports `faas_seal_domain_loaded{domain="runtime"} 1`;
 - vmmd's previous release (N-1) also carries the runtime reader, so rolling
   back one release keeps it;
-- you have a way to stage `runtime.age` on every compute node that joins
-  or is rebuilt later. CD and node join do not stage it yet. A node without
-  it fails every wake for an app with a secret once 4d has run. Join such a
-  node drained, run 4b's compute steps for it, and activate it only once
-  it reports `faas_seal_domain_loaded{domain="runtime"} 1`.
+- every compute node that joins or is rebuilt later will get `runtime.age`.
+  A node without it fails every wake for an app with a secret once 4d has
+  run. With the `SEAL_DOMAIN_RUNTIME_*` secrets set, CD's join stages and
+  verifies it, and fails the join otherwise. Without them, join such a node
+  drained, run 4b's compute steps for it, and activate it only once it
+  reports `faas_seal_domain_loaded{domain="runtime"} 1`.
 
 ### 4d. Seal to the domain only; re-seal stored secrets
 
@@ -364,6 +402,36 @@ this step stay domain-only. From now on:
   reader.
 - Never activate a compute node before it reports
   `faas_seal_domain_loaded{domain="runtime"} 1`.
+
+### 4e. Bind new runtime secrets to their account
+
+[ADR 20261023173624](../adr/20261023173624-runtime-secrets-bound-to-their-account.md)
+binds each runtime secret to its account, so vmmd opens it only for that
+account's workloads. This step is independent of 4a–4d: it works whether
+runtime secrets are sealed to the fleet key or the domain.
+
+A vmmd from before the binding refuses a bound envelope, and so do
+gregalectl and apid from before it. Wait until every compute node, every
+control-plane node and the operator machines run the release that carries
+the binding check, and that release's predecessor has left the rollback
+window. Then add to the local variables file and converge the control plane:
+
+```yaml
+faas_seal_domain_runtime_binding_readers_verified: true
+faas_seal_domain_runtime_binding: account
+```
+
+apid logs `"runtime seal domain"` with `"account_binding":true`. Set a
+secret on a test app and confirm it wakes and reads the value. A wake that
+fails with `envelope is bound to another account` means a secret row was
+copied to an app of another account; do not re-seal it. Find how it got
+there.
+
+Rollback: set `faas_seal_domain_runtime_binding: off` and converge. New
+secrets are written unbound again. Secrets written while binding was on stay
+bound, so never roll a reader back past the release that carries the check.
+Secrets stored before this step stay unbound until a later binding pass of
+`seal-domain migrate`.
 
 ## 5. Source seal domain
 
@@ -464,4 +532,102 @@ this step stay domain-only, so:
 
 - never remove `source.age` from githubd;
 - never roll githubd back past the first release that carried the source
+  reader.
+
+## 6. Build seal domain
+
+imaged on compute hosts is the only reader of app and job private-registry
+passwords; apid seals them. At the end of this stage only `build.age` opens
+them, and only imaged holds it.
+
+### 6a. Create the identity (operator machine)
+
+```bash
+gregalectl seal-domain init --domain build --dir ~/gregale-seal/<environment>
+```
+
+Store `build.age` with the other domain identities. If it is lost after 6d,
+customers must set their registry credentials again.
+
+### 6b. Stage the readers; seal to both keys
+
+Add to the local variables file:
+
+```yaml
+faas_seal_domain_build_identity_src: /Users/<you>/gregale-seal/<environment>/build.age
+faas_seal_domain_build_recipient_src: /Users/<you>/gregale-seal/<environment>/build.age.pub
+```
+
+1. **Each compute host:**
+   `ANSIBLE_LIMIT=<host> make ANSIBLE_INVENTORY=<inventory> bootstrap-compute`.
+   The role:
+   - installs `build.age`;
+   - restarts imaged (so an image preparation in flight on that host fails
+     and is retried);
+   - proves the probe, publishing it on the first host.
+
+   Converge one host at a time.
+2. **Control plane:** converge the role alone. With
+   `faas_seal_domain_build_writes` left empty, apid seals new passwords to
+   both the domain and the fleet key, so this step and step 1 can run in
+   either order.
+
+   ```bash
+   gregalectl deploy converge-control-plane --roles seal_domains --manifest-file <signed manifest> --ssh-known-hosts-file <known_hosts> --ansible-vars-file <local vars file>
+   ```
+
+Check:
+
+- Every compute host's `faas_seal_domain_build.prom` shows
+  `faas_seal_domain_ready{domain="build"} 1`.
+- In Prometheus, `faas_seal_domain_loaded{domain="build"}` is 1 on every
+  imaged, and FaasSealDomainIdentityMissing does not fire.
+- imaged logs `"build seal domain"` with `"domain_identity":true`.
+- apid logs `"build seal domain"` with `"recipients":2`.
+- Deploy a test app that pulls from a private registry, with a credential
+  set after the converge.
+
+Rollback: set `faas_seal_domain_build_writes: fleet` and converge the control
+plane. Passwords saved in the meantime also carry the fleet key.
+
+### 6c. Wait out the rollback window
+
+Go on only when every imaged reports `faas_seal_domain_loaded{domain="build"} 1`
+and imaged's previous release (N-1) also carries the build reader. As with
+`runtime.age`, a compute node that joins later needs `build.age` before it
+prepares images. With the `SEAL_DOMAIN_BUILD_*` secrets set, CD's join stages
+and verifies it; without them, stage it by hand before activating the
+node.
+
+### 6d. Seal to the domain only; re-seal stored passwords
+
+Add to the local variables file, and converge the control plane:
+
+```yaml
+faas_seal_domain_build_readers_verified: true
+faas_seal_domain_build_writes: domain
+```
+
+apid then logs `"write_mode":"domain"`. Re-seal on a compute host, which
+holds `build.age` (its `gregalectl` must not be newer than the data
+release):
+
+```bash
+sudo gregalectl seal-domain migrate --domain build --readers-verified --db-env /etc/faas/compute-db.env
+```
+
+- Expect `0 failed`.
+- If `changed concurrently` is not 0, a customer changed that credential
+  during the run; run the migration again.
+- A second run reports every row `current`.
+- If `failed` is not 0, imaged cannot open those passwords today either;
+  their owners must set them again.
+
+Deploy the test app again.
+
+Rollback: set `faas_seal_domain_build_writes` back to empty and converge.
+Passwords re-sealed in this step stay domain-only, so:
+
+- never remove `build.age` from a compute host;
+- never roll imaged back past the first release that carried the build
   reader.

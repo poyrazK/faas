@@ -1775,6 +1775,11 @@ type ScalingPolicy struct {
 	// WakeMaxQueueWaitSeconds overrides the per-app cold-wake wait budget. Zero
 	// uses the plan default; positive values are capped at 60 seconds.
 	WakeMaxQueueWaitSeconds int `json:"wake_max_queue_wait_seconds,omitempty"`
+	// PerInstanceConcurrency is how many requests one instance of the app
+	// serves at once (ADR-20261022203523). The gateway admits at most this
+	// many to an instance and scales out on the next one. Zero uses the
+	// plan's concurrency_per_vm; the handler bounds positive values to it.
+	PerInstanceConcurrency int `json:"per_instance_concurrency,omitempty"`
 	// Timezone is the IANA zone every schedule's cron is evaluated in
 	// (ADR-195). Empty means UTC.
 	Timezone string `json:"timezone,omitempty"`
@@ -1865,6 +1870,7 @@ func (s *ScalingPolicy) UnmarshalJSON(data []byte) error {
 		"max_queue_depth":             {},
 		"wake_max_queue_depth":        {},
 		"wake_max_queue_wait_seconds": {},
+		"per_instance_concurrency":    {},
 		"timezone":                    {},
 		"schedules":                   {},
 	}
@@ -7358,8 +7364,14 @@ type PlanWorkload struct {
 	ImageProcess     *ComposeProcess     `json:"image_process,omitempty"`
 	// BuildTarget and BuildArgs show a source-built service's Compose build
 	// options (ADR-20261019142544); argument values stay out of plans.
-	BuildTarget         string            `json:"build_target,omitempty"`
-	BuildArgs           []string          `json:"build_args,omitempty"`
+	BuildTarget string   `json:"build_target,omitempty"`
+	BuildArgs   []string `json:"build_args,omitempty"`
+	// SecretFiles are the Compose secrets written to /run/secrets
+	// (ADR-20261023090000); they name app secrets, never values.
+	SecretFiles []SecretFile `json:"secret_files,omitempty"`
+	// Resources are the Compose deploy.replicas and resource limits the
+	// service declares (ADR-20261023120000).
+	Resources           *ComposeResources `json:"resources,omitempty"`
 	Command             []string          `json:"command"`
 	DependsOn           []string          `json:"depends_on,omitempty"`
 	DependsOnConditions map[string]string `json:"depends_on_conditions,omitempty"`

@@ -70,7 +70,7 @@ func resealRuntimeDocument(ctx context.Context, store RuntimeStore, doc state.Se
 		if e.Kid == kid {
 			return e, nil
 		}
-		values, err := secretbox.OpenMulti(legacy, e.Ciphertext)
+		values, binding, err := secretbox.OpenMultiBound(legacy, e.Ciphertext)
 		if err != nil {
 			// Sealed to the domain under another label: fix the label only.
 			if _, domainErr := secretbox.Open(domain, e.Ciphertext); domainErr == nil {
@@ -83,7 +83,8 @@ func resealRuntimeDocument(ctx context.Context, store RuntimeStore, doc state.Se
 		if values[e.Key] == "" {
 			return e, errUnopenable
 		}
-		sealed, err := secretbox.Seal(recipient, values)
+		// Keep the envelope's account binding (ADR-20261023173624).
+		sealed, err := secretbox.SealBound([]*age.X25519Recipient{recipient}, binding, values)
 		if err != nil {
 			return e, fmt.Errorf("sealmigrate: reseal %s %s: %w", doc.Kind, doc.ID, err)
 		}

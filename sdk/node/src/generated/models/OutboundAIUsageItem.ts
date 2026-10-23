@@ -76,5 +76,45 @@ export type OutboundAIUsageItem = {
    * Audio part of output_tokens, priced at the audio output price.
    */
   output_audio_tokens: number;
+  /**
+   * Answered calls that stopped at the output-token limit (ADR 20261021171712).
+   */
+  truncated_requests: number;
+  /**
+   * Answered calls the provider refused or filtered.
+   */
+  refused_requests: number;
+  /**
+   * Answered calls with no text and no requested tools.
+   */
+  empty_requests: number;
+  /**
+   * Answered calls whose requested JSON, or tool-call arguments, did not parse.
+   */
+  invalid_json_requests: number;
+  /**
+   * Calls whose newest turn reported a failed tool.
+   */
+  tool_error_requests: number;
+  /**
+   * Calls rated good (ADR 20261021171712).
+   */
+  good_feedback: number;
+  /**
+   * Calls rated bad.
+   */
+  bad_feedback: number;
+  /**
+   * Calls an online evaluation scored.
+   */
+  evaluated_requests: number;
+  /**
+   * Sum of their scores from 1 to 5; divide by evaluated_requests for the mean.
+   */
+  evaluation_score_sum: number;
+  /**
+   * Sampled calls the judge could not score.
+   */
+  evaluation_errors: number;
 };
 

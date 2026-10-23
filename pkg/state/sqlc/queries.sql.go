@@ -19418,6 +19418,73 @@ func (q *Queries) ExpireOrgInvitations(ctx context.Context, db DBTX, expiresAt p
 	return result.RowsAffected(), nil
 }
 
+const expirePendingQueueMessages = `-- name: ExpirePendingQueueMessages :many
+WITH plan_retention AS (
+    SELECT unnest($1::text[]) AS plan, unnest($2::bigint[]) AS seconds
+), batch AS (
+    SELECT i.id
+    FROM invocations i
+    LEFT JOIN accounts a ON a.id = i.account_id
+    LEFT JOIN orgs o ON o.id = i.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+    JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
+    WHERE i.source = 'queue' AND i.state = 'pending' AND r.seconds > 0
+      AND i.created_at < $3::timestamptz - make_interval(secs => $4::bigint)
+      AND i.created_at < $3::timestamptz - make_interval(secs => r.seconds)
+    ORDER BY i.created_at
+    LIMIT $5::integer
+    FOR UPDATE OF i SKIP LOCKED
+)
+UPDATE invocations i
+SET state = 'dead_letter', outcome = 'dead_letter', completed_at = now(),
+    last_error = 'queue message expired: it waited longer than the plan retention',
+    outcome_code = 'queue_message_expired'
+FROM batch
+WHERE i.id = batch.id AND i.state = 'pending'
+RETURNING i.id::text AS id, i.app_id::text AS app_id
+`
+
+type ExpirePendingQueueMessagesParams struct {
+	Plans               []string
+	RetentionSeconds    []int64
+	NowAt               pgtype.Timestamptz
+	MinRetentionSeconds int64
+	BatchLimit          int32
+}
+
+type ExpirePendingQueueMessagesRow struct {
+	ID    string
+	AppID string
+}
+
+// ADR-20261022105723: a pending queue message past its plan's retention
+// moves to the dead letter. A message a worker holds (dispatching) is not
+// touched. The plan resolves as StampDefaultInvocationRetention's does.
+func (q *Queries) ExpirePendingQueueMessages(ctx context.Context, db DBTX, arg ExpirePendingQueueMessagesParams) ([]ExpirePendingQueueMessagesRow, error) {
+	rows, err := db.Query(ctx, expirePendingQueueMessages,
+		arg.Plans,
+		arg.RetentionSeconds,
+		arg.NowAt,
+		arg.MinRetentionSeconds,
+		arg.BatchLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExpirePendingQueueMessagesRow{}
+	for rows.Next() {
+		var i ExpirePendingQueueMessagesRow
+		if err := rows.Scan(&i.ID, &i.AppID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const expireRetainedDeploymentRevisionPins = `-- name: ExpireRetainedDeploymentRevisionPins :execrows
 
 WITH locked_deployments AS MATERIALIZED (
@@ -93336,6 +93403,38 @@ func (q *Queries) SumAccountCreditRefundReversal(ctx context.Context, db DBTX, a
 	var reversed_cents int64
 	err := row.Scan(&reversed_cents)
 	return reversed_cents, err
+}
+
+const sumAccountQueueBacklogBytes = `-- name: SumAccountQueueBacklogBytes :one
+SELECT coalesce(sum(bytes), 0)::bigint FROM invocation_backlog_counters
+WHERE account_id=$1::uuid AND source='queue'
+`
+
+func (q *Queries) SumAccountQueueBacklogBytes(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, sumAccountQueueBacklogBytes, accountID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const sumInvocationBacklogPending = `-- name: SumInvocationBacklogPending :one
+SELECT coalesce(sum(pending), 0)::bigint FROM invocation_backlog_counters
+WHERE app_id=$1::uuid AND source=$2::text
+`
+
+type SumInvocationBacklogPendingParams struct {
+	AppID  pgtype.UUID
+	Source string
+}
+
+// ADR-20261022105723: every pending and dispatching row of the app and
+// source, production or not, so the sum bounds the production backlog from
+// above.
+func (q *Queries) SumInvocationBacklogPending(ctx context.Context, db DBTX, arg SumInvocationBacklogPendingParams) (int64, error) {
+	row := db.QueryRow(ctx, sumInvocationBacklogPending, arg.AppID, arg.Source)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const sumOpenUploadSessionBytesByAccount = `-- name: SumOpenUploadSessionBytesByAccount :one

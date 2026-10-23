@@ -17,7 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const aiUsageText = "usage: gregale ai <policy|content-policy|app-limit|guardrails|prices|catalog|usage|users|tags|tag-limits|routes|keys|alerts|logs|replay|evaluate|tokens> ..."
+const aiUsageText = "usage: gregale ai <policy|content-policy|app-limit|guardrails|prices|catalog|usage|users|tags|tag-limits|traces|feedback|quality-alerts|deployments|routes|keys|alerts|logs|replay|evaluate|tokens> ..."
 
 func cmdAI(args []string) int {
 	parent, _ := lookupCliCommand("ai")
@@ -44,6 +44,14 @@ func cmdAI(args []string) int {
 		return cmdAITags(args[1:])
 	case "tag-limits":
 		return cmdAITagLimits(args[1:])
+	case "traces":
+		return cmdAITraces(args[1:])
+	case "feedback":
+		return cmdAIFeedback(args[1:])
+	case "quality-alerts":
+		return cmdAIQualityAlerts(args[1:])
+	case "deployments":
+		return cmdAIDeployments(args[1:])
 	case "routes":
 		return cmdAIRoutes(args[1:])
 	case "guardrails":
@@ -138,7 +146,9 @@ func findOutboundIntegration(client *api.Client, integrationID string) (api.Outb
 const aiPolicyUsage = "usage: gregale ai policy <integration-id> [--provider openai|anthropic|gemini|azure_openai|bedrock|vertex|off] " +
 	"[--daily-tokens N|none] [--daily-cost USD|none] [--monthly-cost USD|none] [--request-log on|off] " +
 	"[--request-log-content on|off] [--user-daily-tokens N|none] [--user-daily-cost USD|none] [--log-export on|off] " +
-	"[--allow-unmetered on|off] [--prompt-cache on|off]"
+	"[--allow-unmetered on|off] [--prompt-cache on|off] [--trace-max-calls N|none] [--trace-max-cost USD|none] " +
+	"[--trace-max-repeated-tool-calls N|none] [--online-eval-percent N|none] [--online-eval-judge INTEGRATION-ID] " +
+	"[--online-eval-model MODEL] [--online-eval-rubric TEXT|none] [--quality-alerts on|off]"
 
 func cmdAIPolicy(args []string) int {
 	fs := newFlagSet("ai policy", flag.ContinueOnError)
@@ -153,6 +163,14 @@ func cmdAIPolicy(args []string) int {
 	logExport := fs.String("log-export", "", "send each app call's metadata to the app's log drains: on or off")
 	allowUnmetered := fs.String("allow-unmetered", "", "let through calls the gateway cannot meter, outside the caps: on or off")
 	promptCache := fs.String("prompt-cache", "", "add prompt-cache breakpoints to Claude requests that carry none: on or off")
+	traceCalls := fs.String("trace-max-calls", "", "calls each AI trace may make, or none")
+	traceCost := fs.String("trace-max-cost", "", "cost each AI trace may reach in USD, or none")
+	traceRepeats := fs.String("trace-max-repeated-tool-calls", "", "consecutive identical tool requests a trace may make, or none")
+	evalPercent := fs.String("online-eval-percent", "", "share of answered app calls a judge model scores, 1 to 100, or none")
+	evalJudge := fs.String("online-eval-judge", "", "the AI integration that runs the judge model")
+	evalModel := fs.String("online-eval-model", "", "the judge model")
+	evalRubric := fs.String("online-eval-rubric", "", "what a good answer does for this app, or none")
+	qualityAlerts := fs.String("quality-alerts", "", "alert when a model's quality drifts from its previous 7 days: on or off")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 {
 		return printErr("Invalid ai policy arguments", errors.New(aiPolicyUsage))
 	}
@@ -168,7 +186,10 @@ func cmdAIPolicy(args []string) int {
 		DailyCostLimitMillicents: current.AIDailyCostLimitMillicents, MonthlyCostLimitMillicents: current.AIMonthlyCostLimitMillicents,
 		RequestLogEnabled: current.AIRequestLogEnabled, UserDailyTokenLimit: current.AIUserDailyTokenLimit,
 		UserDailyCostLimitMillicents: current.AIUserDailyCostLimitMillicents, RequestLogContent: current.AIRequestLogContent,
-		LogExport: current.AILogExport, AllowUnmetered: current.AIAllowUnmetered, AutoPromptCache: current.AIAutoPromptCache}
+		LogExport: current.AILogExport, AllowUnmetered: current.AIAllowUnmetered, AutoPromptCache: current.AIAutoPromptCache,
+		TraceMaxCalls: current.AITraceMaxCalls, TraceMaxCostMillicents: current.AITraceMaxCostMillicents,
+		TraceMaxRepeatedToolCalls: current.AITraceMaxRepeatedToolCalls, OnlineEvaluation: current.AIOnlineEvaluation,
+		QualityAlerts: current.AIQualityAlerts}
 	switch *provider {
 	case "":
 	case "off":
@@ -231,8 +252,14 @@ func cmdAIPolicy(args []string) int {
 			req.UserDailyCostLimitMillicents, err = optionalLimit(*userDailyCost, req.UserDailyCostLimitMillicents, parseUSDMillicents)
 		}
 	}
+	if err == nil {
+		err = applyTraceLimits(&req, *traceCalls, *traceCost, *traceRepeats)
+	}
+	if err == nil {
+		err = applyQualityPolicy(&req, *evalPercent, *evalJudge, *evalModel, *evalRubric, *qualityAlerts)
+	}
 	if err != nil || !req.Valid() {
-		return printErr("Invalid AI policy", errors.Join(err, errors.New("limits, log export, allow-unmetered and prompt-cache need a provider; tokens 1..1e11, costs up to USD 10,000,000; content capture needs the request log")))
+		return printErr("Invalid AI policy", errors.Join(err, errors.New("limits, log export, allow-unmetered and prompt-cache need a provider; tokens 1..1e11, costs up to USD 10,000,000; trace calls 1..1,000,000 and repeated tool calls 1..1,000; content capture needs the request log; online evaluations need content capture, a judge integration and model")))
 	}
 	if err := client.SetOutboundIntegrationAIPolicy(context.Background(), fs.Arg(0), req); err != nil {
 		return printErr("Could not update AI policy", err)
@@ -346,14 +373,14 @@ func cmdAIUsage(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Cost today: %s / %s   %s month to date: %s / %s\n", financialMoney(usage.DailyCostMillicents),
 		formatOptionalMoney(usage.DailyCostLimitMillicents), usage.Month, financialMoney(usage.MonthlyCostMillicents), formatOptionalMoney(usage.MonthlyCostLimitMillicents))
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "CALLER\tMODEL\tREQUESTS\tCACHE HITS\tERRORS\tINPUT\tCACHED\tOUTPUT\tMEDIA\tCOST\tSAVED")
+	_, _ = fmt.Fprintln(tw, "CALLER\tMODEL\tREQUESTS\tCACHE HITS\tERRORS\tINPUT\tCACHED\tOUTPUT\tMEDIA\tCOST\tSAVED\tQUALITY\tSCORE")
 	var saved int64
 	for _, item := range usage.Items {
 		itemSaved := item.CacheSavedMillicents + item.PromptCacheSavedMillicents
 		saved += itemSaved
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n", item.Caller, item.Model, item.Requests, item.CachedRequests,
-			item.ErrorRequests, item.InputTokens, item.CachedInputTokens, item.OutputTokens, formatMediaUsage(item),
-			financialMoney(item.CostMillicents), formatSaved(itemSaved))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n", item.Caller, item.Model, item.Requests,
+			item.CachedRequests, item.ErrorRequests, item.InputTokens, item.CachedInputTokens, item.OutputTokens, formatMediaUsage(item),
+			financialMoney(item.CostMillicents), formatSaved(itemSaved), formatQuality(item), formatScore(item))
 	}
 	_ = tw.Flush()
 	if saved != 0 {

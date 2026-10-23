@@ -355,6 +355,7 @@ scaling:
   concurrency_overflow: drop
   max_queue_depth: 11
   max_queue_wait_ms: 1250
+  per_instance_concurrency: 2
 `), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -369,7 +370,8 @@ scaling:
 	if policy.MinInstances != 1 || policy.MaxInstances != 4 || policy.Target == nil ||
 		policy.Target.Metric != "concurrent_requests" || policy.Target.Value != 2 ||
 		policy.ScaleOutCooldownS != defaultScaleOutCooldownS || policy.ScaleInCooldownS != 90 ||
-		policy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop || policy.MaxQueueDepth != 11 || policy.MaxQueueWaitMS != 1250 {
+		policy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop || policy.MaxQueueDepth != 11 || policy.MaxQueueWaitMS != 1250 ||
+		policy.PerInstanceConcurrency != 2 {
 		t.Fatalf("policy = %+v, want manifest values plus default scale-out cooldown", policy)
 	}
 }
@@ -390,6 +392,8 @@ func TestScalingConfigValidation(t *testing.T) {
 		{"bad cooldown", &ScalingConfig{ScaleOutCooldownS: &cooldown}, "scale_out_cooldown_s"},
 		{"bad overflow", &ScalingConfig{ConcurrencyOverflow: "reject"}, "concurrency_overflow"},
 		{"bad queue depth", &ScalingConfig{MaxQueueDepth: -1}, "max_queue_depth"},
+		// adr: 20261022203523 — the API applies the plan's upper bound.
+		{"negative per-instance concurrency", &ScalingConfig{PerInstanceConcurrency: -1}, "per_instance_concurrency"},
 		{"bad queue wait", &ScalingConfig{MaxQueueWaitMS: api.MaxConcurrencyQueueWaitMS + 1}, "max_queue_wait_ms"},
 		{"zero queue target", &ScalingConfig{Target: &ScalingTarget{Metric: "queue_depth"}}, "target.value"},
 		// adr: 194 — p99_latency_ms validated for releases with no source

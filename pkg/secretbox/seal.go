@@ -74,6 +74,19 @@ func SealTo(recipients []*age.X25519Recipient, env Envelope) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("secretbox: marshal envelope: %w", err)
 	}
+	return encryptPlaintext(stanzas, plaintext)
+}
+
+// sealPlaintext encrypts already-encoded envelope plaintext to recipients.
+func sealPlaintext(recipients []*age.X25519Recipient, plaintext []byte) ([]byte, error) {
+	stanzas, err := dedupeRecipients(recipients)
+	if err != nil {
+		return nil, err
+	}
+	return encryptPlaintext(stanzas, plaintext)
+}
+
+func encryptPlaintext(stanzas []age.Recipient, plaintext []byte) ([]byte, error) {
 	var out bytes.Buffer
 	w, err := age.Encrypt(&out, stanzas...)
 	if err != nil {
@@ -123,7 +136,16 @@ func Open(identity *age.X25519Identity, blob []byte) (Envelope, error) {
 // Returns an error if the blob is tampered, NO supplied identity
 // matches (every recipient stanza was tried and none decrypted), or
 // the plaintext isn't a valid Envelope (Validate() rejected).
+//
+// Bound envelopes (ADR-20261023173624) open too; their binding is dropped.
+// A caller that decrypts for a workload uses OpenMultiBound and checks it.
 func OpenMulti(identities []*age.X25519Identity, blob []byte) (Envelope, error) {
+	env, _, err := OpenMultiBound(identities, blob)
+	return env, err
+}
+
+// openPlaintext decrypts blob under any of identities.
+func openPlaintext(identities []*age.X25519Identity, blob []byte) ([]byte, error) {
 	if len(identities) == 0 {
 		return nil, errors.New("secretbox: no identities supplied")
 	}
@@ -156,14 +178,7 @@ func OpenMulti(identities []*age.X25519Identity, blob []byte) (Envelope, error) 
 	if err != nil {
 		return nil, fmt.Errorf("secretbox: read plaintext: %w", err)
 	}
-	var env Envelope
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, fmt.Errorf("secretbox: unmarshal envelope: %w", err)
-	}
-	if err := env.Validate(); err != nil {
-		return nil, err
-	}
-	return env, nil
+	return raw, nil
 }
 
 // SealOne seals a single (key, value) pair. Convenience wrapper for apid's

@@ -898,12 +898,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.consumerCredits.Enabled, srv.consumerCredits.Released = monetizationOn, srv.apiMonetizationFor
 		srv.consumerControls.Enabled, srv.consumerControls.Released = monetizationOn, srv.apiMonetizationFor
 		srv.consumerSignup.Enabled = monetizationOn
-		srv.billingRuns.Start(ctx, log)                // ADR-1503
-		srv.statementInvoices.Start(ctx, log)          // ADR-1504
-		srv.consumerCredits.Start(ctx, log)            // ADR-1306
-		srv.consumerControls.Start(ctx, log)           // ADR-1315
-		srv.consumerSignup.Start(ctx, log)             // ADR-20261021143000
-		srv.productControl.StartOverdueHolds(ctx, log) // ADR-20261018212918
+		srv.billingRuns.Start(ctx, log)                   // ADR-1503
+		srv.statementInvoices.Start(ctx, log)             // ADR-1504
+		srv.consumerCredits.Start(ctx, log)               // ADR-1306
+		srv.consumerControls.Start(ctx, log)              // ADR-1315
+		srv.consumerSignup.Start(ctx, log)                // ADR-20261021143000
+		srv.productControl.StartOverdueHolds(ctx, log)    // ADR-20261018212918
+		srv.productControl.StartTrialResolution(ctx, log) // ADR-20261022180921
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		startPlatformFlagRamps(ctx, srv, log) // ADR 20261021080640
 		srv.startIssuesMaintenance(ctx)

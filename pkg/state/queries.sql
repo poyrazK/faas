@@ -7547,6 +7547,44 @@ WHERE i.id=$1 AND i.source='queue';
 -- name: CountProductionPendingInvocations :one
 SELECT count(*) FROM production_invocation_work WHERE app_id=$1 AND source=$2 AND state IN ('pending','dispatching');
 
+-- name: SumInvocationBacklogPending :one
+-- ADR-20261022105723: every pending and dispatching row of the app and
+-- source, production or not, so the sum bounds the production backlog from
+-- above.
+SELECT coalesce(sum(pending), 0)::bigint FROM invocation_backlog_counters
+WHERE app_id=sqlc.arg(app_id)::uuid AND source=sqlc.arg(source)::text;
+
+-- name: SumAccountQueueBacklogBytes :one
+SELECT coalesce(sum(bytes), 0)::bigint FROM invocation_backlog_counters
+WHERE account_id=sqlc.arg(account_id)::uuid AND source='queue';
+
+-- name: ExpirePendingQueueMessages :many
+-- ADR-20261022105723: a pending queue message past its plan's retention
+-- moves to the dead letter. A message a worker holds (dispatching) is not
+-- touched. The plan resolves as StampDefaultInvocationRetention's does.
+WITH plan_retention AS (
+    SELECT unnest(sqlc.arg(plans)::text[]) AS plan, unnest(sqlc.arg(retention_seconds)::bigint[]) AS seconds
+), batch AS (
+    SELECT i.id
+    FROM invocations i
+    LEFT JOIN accounts a ON a.id = i.account_id
+    LEFT JOIN orgs o ON o.id = i.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+    JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
+    WHERE i.source = 'queue' AND i.state = 'pending' AND r.seconds > 0
+      AND i.created_at < sqlc.arg(now_at)::timestamptz - make_interval(secs => sqlc.arg(min_retention_seconds)::bigint)
+      AND i.created_at < sqlc.arg(now_at)::timestamptz - make_interval(secs => r.seconds)
+    ORDER BY i.created_at
+    LIMIT sqlc.arg(batch_limit)::integer
+    FOR UPDATE OF i SKIP LOCKED
+)
+UPDATE invocations i
+SET state = 'dead_letter', outcome = 'dead_letter', completed_at = now(),
+    last_error = 'queue message expired: it waited longer than the plan retention',
+    outcome_code = 'queue_message_expired'
+FROM batch
+WHERE i.id = batch.id AND i.state = 'pending'
+RETURNING i.id::text AS id, i.app_id::text AS app_id;
+
 -- name: StampDefaultInvocationRetention :execrows
 -- ADR 20261019104819: finished rows whose producer set no horizon get the
 -- plan default from pkg/api/limits.go. Failed and dead-lettered rows keep at

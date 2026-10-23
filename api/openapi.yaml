@@ -5940,6 +5940,154 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/integrations/{integration}/ai-traces:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration whose AI traces are read.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: listOutboundAITraces
+      summary: Page an integration's AI traces.
+      description: >-
+        Requires MFA and read scope (ADR 20261020202035). A trace groups the calls of one agent task, named by
+        X-Gregale-AI-Trace or the trace ID of a W3C traceparent header. Traces are recorded while the integration keeps a
+        request log or has trace limits, and are kept for 7 days. Newest last call first.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Traces per page, 1 to 200 (default 200).
+          schema: { type: integer, minimum: 1, maximum: 200 }
+        - name: before
+          in: query
+          required: false
+          description: The previous page's next_before, to read traces last called earlier.
+          schema: { type: string, format: date-time }
+        - name: app_id
+          in: query
+          required: false
+          description: Only traces whose first call came from this app.
+          schema: { type: string, format: uuid }
+        - name: end_user
+          in: query
+          required: false
+          description: Only traces whose first call named this X-Gregale-AI-User.
+          schema: { type: string, maxLength: 64 }
+      responses:
+        '200':
+          description: One page of traces.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAITraceList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-traces/{trace}:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration that recorded the trace.
+        schema: { type: string, format: uuid }
+      - name: trace
+        in: path
+        required: true
+        description: The trace ID, path-escaped.
+        schema: { type: string, maxLength: 64 }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAITrace
+      summary: Read an AI trace with its logged calls.
+      description: >-
+        Requires MFA and read scope (ADR 20261020202035). Calls are the trace's request-log entries, oldest first, at most
+        500; calls_truncated marks a longer trace.
+      responses:
+        '200':
+          description: The trace.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAITraceResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-quality-alerts:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration whose alerts are listed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: listOutboundAIQualityAlerts
+      summary: List an integration's AI quality drift alerts.
+      description: >-
+        Requires MFA and read scope (ADR 20261021171712). Alerts are newest first and kept for 31 days; each fires once per
+        model, metric and UTC day.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Alerts to return, 1 to 100 (default 50).
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        '200':
+          description: The alerts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIQualityAlertList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-requests/{request}/feedback:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration that logged the call.
+        schema: { type: string, format: uuid }
+      - name: request
+        in: path
+        required: true
+        description: ID of the request-log entry, the value X-Gregale-AI-Call returned.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: putOutboundAIRequestFeedback
+      summary: Rate a logged AI call.
+      description: >-
+        Requires MFA and deploy-write scope (ADR 20261021171712). Apps rate their own calls through the gateway at
+        /i/{integration}/_gregale/feedback; this rates any logged call on a person's behalf. A later rating replaces the
+        earlier one, and the call's daily usage counts the change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundAIFeedbackRequest' }
+      responses:
+        '204': { description: The rating was stored. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/outbound/integrations/{integration}/ai-requests/{request}/replays:
     parameters:
       - name: integration
@@ -6045,7 +6193,7 @@ paths:
       - name: integration
         in: path
         required: true
-        description: UUID of the integration that logged the call.
+        description: UUID of the integration whose logged call is rated.
         schema: { type: string, format: uuid }
       - name: request
         in: path
@@ -6658,6 +6806,33 @@ paths:
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/ai-deployments:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose deployments to list.
+        schema: { type: string }
+    get:
+      tags: [outbound]
+      operationId: listAIDeployments
+      summary: List an app's AI gateway calls by deployment.
+      description: >-
+        Requires MFA and read scope. Each deployment with AI gateway calls in the last 14 days, latest call first, at most
+        50: its calls, provider errors, flagged answers, cost, tokens and mean time to first byte. Only calls made from
+        the app's instances count; access tokens, Runs, replays and cached responses do not (ADR 20261022153155).
+      responses:
+        '200':
+          description: The app's deployments.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AIDeploymentUsageList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/apps/{slug}/ai-access-tokens:
     parameters:
       - name: slug
@@ -30152,7 +30327,7 @@ paths:
       tags: [deployments]
       operationId: createReleaseGate
       summary: Add a release gate (ADR-20261019071734).
-      description: "An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced first; a custom_metric gate bounds a custom metric's average. Omitted numbers take Gregale's defaults."
+      description: "An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced first; a custom_metric gate bounds a custom metric's average; an ai gate fails a release whose AI gateway calls got worse than its baseline's (ADR 20261022153155). Omitted numbers take Gregale's defaults."
       requestBody:
         required: true
         content:
@@ -79262,6 +79437,26 @@ components:
         ai_auto_prompt_cache:
           type: boolean
           description: Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none (ADR-1437).
+        ai_trace_max_calls:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000
+          description: Calls each AI trace may make, settled and in flight (ADR 20261020202035). Absent when unlimited.
+        ai_trace_max_cost_millicents:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000000000
+          description: Cost each AI trace may reach, with live reservations (ADR 20261020202035). Absent when unlimited.
+        ai_trace_max_repeated_tool_calls:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000
+          description: >-
+            Consecutive calls of a trace whose responses may request the same tools with the same arguments
+            (ADR 20261020202035). Absent when unlimited.
         ai_user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -79274,6 +79469,13 @@ components:
           minimum: 1
           maximum: 1000000000000
           description: UTC-day cost limit for each end user named by X-Gregale-AI-User (ADR-994).
+        ai_online_evaluation:
+          allOf:
+            - $ref: '#/components/schemas/OutboundAIOnlineEvaluation'
+          description: The sample of answered app calls a judge model scores (ADR 20261021171712).
+        ai_quality_alerts:
+          type: boolean
+          description: Drift alerts on the integration's quality signals are on (ADR 20261021171712).
     CreateOutboundIntegrationRequest:
       type: object
       description: A fixed public HTTPS destination, maximum HTTP route policy, and optional admission policy and daily admitted-request limit.
@@ -79358,6 +79560,31 @@ components:
             none: after a system prompt or tool list seen again within five minutes, and after the last message of a
             conversation that carries earlier turns or names X-Gregale-AI-Session. Prompts under about 1,024 tokens are not
             marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache (ADR-1437). Requires ai_provider.
+        trace_max_calls:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000
+          description: >-
+            Refuse a trace's call once the trace made this many calls, settled and in flight, with 429
+            outbound_budget_exhausted and X-Gregale-Outbound-Rejection trace_call_limit (ADR 20261020202035). Requires
+            ai_provider.
+        trace_max_cost_millicents:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000000000
+          description: >-
+            Refuse a trace's call that would take the trace's cost past this, with trace_cost_limit (ADR 20261020202035).
+            Requires ai_provider.
+        trace_max_repeated_tool_calls:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000
+          description: >-
+            Refuse a trace's call once this many consecutive calls requested the same tools with the same arguments, with
+            trace_tool_loop: the agent is looping (ADR 20261020202035). Requires ai_provider.
         user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -79370,10 +79597,21 @@ components:
           minimum: 1
           maximum: 1000000000000
           description: Per-end-user UTC-day cost limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
+        online_evaluation:
+          allOf:
+            - $ref: '#/components/schemas/OutboundAIOnlineEvaluation'
+          description: >-
+            Score a sample of answered app calls with a judge model (ADR 20261021171712). Requires ai_provider and
+            request_log_content.
+        quality_alerts:
+          type: boolean
+          description: >-
+            Alert bound apps with outbound.ai_quality.drift when a model's quality signals move away from its previous 7 days
+            (ADR 20261021171712). Requires ai_provider.
     OutboundAIUsageItem:
       type: object
       description: One UTC-day rollup for a caller and model. input_tokens includes cached reads and cache writes, which are also reported separately.
-      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb, cached_requests, cache_saved_millicents, prompt_cache_saved_millicents, input_audio_tokens, output_audio_tokens]
+      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb, cached_requests, cache_saved_millicents, prompt_cache_saved_millicents, input_audio_tokens, output_audio_tokens, truncated_requests, refused_requests, empty_requests, invalid_json_requests, tool_error_requests, good_feedback, bad_feedback, evaluated_requests, evaluation_score_sum, evaluation_errors]
       properties:
         caller: { type: string, description: 'App UUID, "runs" for stateless Runs, or "replay" for replayed calls (ADR-997).' }
         model: { type: string, maxLength: 128, description: 'Provider-reported model; "other" collects models beyond the daily distinct-model cap and "unknown" covers responses without one.' }
@@ -79397,6 +79635,16 @@ components:
         prompt_cache_saved_millicents: { type: integer, format: int64, description: 'What provider prompt caching saved against plain input prices; negative when cache writes outweighed reads.' }
         input_audio_tokens: { type: integer, format: int64, minimum: 0, description: 'Audio part of input_tokens, priced at the audio input price (ADR 20261019072722).' }
         output_audio_tokens: { type: integer, format: int64, minimum: 0, description: 'Audio part of output_tokens, priced at the audio output price.' }
+        truncated_requests: { type: integer, format: int64, minimum: 0, description: 'Answered calls that stopped at the output-token limit (ADR 20261021171712).' }
+        refused_requests: { type: integer, format: int64, minimum: 0, description: 'Answered calls the provider refused or filtered.' }
+        empty_requests: { type: integer, format: int64, minimum: 0, description: 'Answered calls with no text and no requested tools.' }
+        invalid_json_requests: { type: integer, format: int64, minimum: 0, description: 'Answered calls whose requested JSON, or tool-call arguments, did not parse.' }
+        tool_error_requests: { type: integer, format: int64, minimum: 0, description: 'Calls whose newest turn reported a failed tool.' }
+        good_feedback: { type: integer, format: int64, minimum: 0, description: 'Calls rated good (ADR 20261021171712).' }
+        bad_feedback: { type: integer, format: int64, minimum: 0, description: 'Calls rated bad.' }
+        evaluated_requests: { type: integer, format: int64, minimum: 0, description: 'Calls an online evaluation scored.' }
+        evaluation_score_sum: { type: integer, format: int64, minimum: 0, description: 'Sum of their scores from 1 to 5; divide by evaluated_requests for the mean.' }
+        evaluation_errors: { type: integer, format: int64, minimum: 0, description: 'Sampled calls the judge could not score.' }
     OutboundAIUsageResponse:
       type: object
       description: One UTC day of AI gateway usage for an integration.
@@ -79992,6 +80240,33 @@ components:
         created_at: { type: string, format: date-time }
         last_used_at: { type: [string, 'null'], format: date-time }
         revoked_at: { type: [string, 'null'], format: date-time }
+    AIDeploymentUsage:
+      type: object
+      description: One deployment's AI gateway calls over the last 14 days (ADR 20261022153155).
+      required: [deployment_id, first_call_at, last_call_at, calls, error_calls, flagged_calls, cost_millicents, input_tokens, output_tokens, error_rate, flagged_rate, cost_per_call_millicents]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        first_call_at: { type: string, format: date-time, description: The UTC minute of its first call in the window. }
+        last_call_at: { type: string, format: date-time, description: The UTC minute of its latest call. }
+        calls: { type: integer, format: int64, minimum: 0 }
+        error_calls: { type: integer, format: int64, minimum: 0, description: Calls the provider failed. }
+        flagged_calls: { type: integer, format: int64, minimum: 0, description: Calls whose answer had a quality flag. }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        error_rate: { type: number, minimum: 0, maximum: 1 }
+        flagged_rate: { type: number, minimum: 0, maximum: 1 }
+        cost_per_call_millicents: { type: integer, format: int64, minimum: 0 }
+        mean_ttfb_ms: { type: integer, format: int64, minimum: 0, description: Mean time to first byte; omitted when no call had one. }
+    AIDeploymentUsageList:
+      type: object
+      description: An app's deployments with AI gateway calls, latest call first.
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/AIDeploymentUsage' }
     OutboundAIAccessTokenList:
       type: object
       description: An app's access tokens, newest first.
@@ -80128,6 +80403,14 @@ components:
       description: One settled AI call's metadata (ADR-991). Its bodies are kept only when the integration captures content (ADR-996).
       required: [id, created_at, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user, content_captured, tags]
       properties:
+        quality_flags:
+          type: array
+          maxItems: 5
+          items: { type: string, enum: [truncated, refused, empty, invalid_json, tool_error] }
+          description: What went wrong with the answer (ADR 20261021171712).
+        feedback: { type: string, enum: [good, bad], description: The call's rating (ADR 20261021171712). }
+        feedback_label: { type: string, maxLength: 32, pattern: '^[a-z][a-z0-9_.-]{0,31}$', description: The rating's label. }
+        evaluation_score: { type: integer, format: int32, minimum: 1, maximum: 5, description: The online evaluation's score. }
         id: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
         caller: { type: string, description: 'App UUID, or "runs".' }
@@ -80150,6 +80433,15 @@ components:
           maxItems: 5
           description: The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1436).
           items: { type: string, maxLength: 97 }
+        trace_id:
+          type: string
+          maxLength: 64
+          description: The call's AI trace, when the integration records traces (ADR 20261020202035).
+        tool_calls:
+          type: array
+          maxItems: 16
+          description: The names of the tools the call's response requested, in order (ADR 20261020202035).
+          items: { type: string, maxLength: 64 }
     OutboundAIContentBody:
       type: object
       description: The start of one captured body.
@@ -80300,6 +80592,124 @@ components:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIRequestLogEntry' }
         next_before: { type: [string, 'null'], format: date-time, description: Pass as before to read the next page; null on the last page. }
+    OutboundAITrace:
+      type: object
+      description: >-
+        One AI trace's totals (ADR 20261020202035). app_id and end_user are its first call's; repeated_tool_calls is its
+        current streak of calls that requested the same tools with the same arguments.
+      required: [trace_id, app_id, end_user, first_at, last_at, calls, error_calls, usage_unknown_calls, input_tokens, output_tokens, cost_millicents, tool_calls, repeated_tool_calls, models]
+      properties:
+        trace_id: { type: string, maxLength: 64 }
+        app_id: { type: [string, 'null'], format: uuid }
+        end_user: { type: [string, 'null'], maxLength: 64 }
+        first_at: { type: string, format: date-time }
+        last_at: { type: string, format: date-time }
+        calls: { type: integer, format: int64, minimum: 0 }
+        error_calls: { type: integer, format: int64, minimum: 0 }
+        usage_unknown_calls: { type: integer, format: int64, minimum: 0 }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        tool_calls:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Tool calls the trace's responses requested.
+        repeated_tool_calls: { type: integer, format: int64, minimum: 0 }
+        models:
+          type: array
+          maxItems: 8
+          items: { type: string }
+    OutboundAIOnlineEvaluation:
+      type: object
+      description: >-
+        Score sample_percent of answered app calls from 1 to 5 with judge_model through judge_integration_id, one of the
+        account's AI integrations, metered under the caller evaluation (ADR 20261021171712).
+      required: [sample_percent, judge_integration_id, judge_model]
+      properties:
+        sample_percent: { type: integer, format: int32, minimum: 1, maximum: 100 }
+        judge_integration_id: { type: string, format: uuid }
+        judge_model: { type: string, minLength: 1, maxLength: 200 }
+        rubric: { type: string, maxLength: 1000, description: What a good answer does for this app, given to the judge. }
+    PutOutboundAIFeedbackRequest:
+      type: object
+      description: A rating of one logged call (ADR 20261021171712). A later rating replaces the earlier one.
+      required: [rating]
+      properties:
+        rating: { type: string, enum: [good, bad] }
+        label: { type: string, maxLength: 32, pattern: '^[a-z][a-z0-9_.-]{0,31}$' }
+    OutboundAIQualityAlert:
+      type: object
+      description: >-
+        One drift the check found: a model's metric today against its previous 7 days (ADR 20261021171712). Rates are basis
+        points of answered calls (of rated calls for bad_feedback); evaluation_score is the mean score in hundredths.
+      required: [id, integration_id, usage_date, model, metric, current_value, baseline_value, current_count, baseline_count, detected_at]
+      properties:
+        id: { type: string, format: uuid }
+        integration_id: { type: string, format: uuid }
+        usage_date: { type: string, format: date }
+        model: { type: string, maxLength: 200 }
+        metric: { type: string, enum: [truncated, refused, empty, invalid_json, tool_error, bad_feedback, evaluation_score] }
+        current_value: { type: integer, format: int64, minimum: 0 }
+        baseline_value: { type: integer, format: int64, minimum: 0 }
+        current_count: { type: integer, format: int64, minimum: 0 }
+        baseline_count: { type: integer, format: int64, minimum: 0 }
+        detected_at: { type: string, format: date-time }
+    OutboundAIQualityAlertList:
+      type: object
+      description: A page of an integration's AI quality drift alerts, newest first.
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/OutboundAIQualityAlert' }
+    OutboundAITraceList:
+      type: object
+      description: One page of AI traces, newest last call first.
+      required: [items, next_before]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAITrace' }
+        next_before:
+          type: [string, 'null']
+          format: date-time
+          description: The last page item's last call, to pass as before for older traces; null on the last page.
+    OutboundAITraceCall:
+      type: object
+      description: One logged call of an AI trace.
+      required: [id, created_at, caller, model, status, outcome, input_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, tool_calls]
+      properties:
+        id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        caller: { type: string }
+        model: { type: string }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        outcome: { type: string, enum: [known, unknown, error] }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
+        tool_calls:
+          type: array
+          maxItems: 16
+          description: The names of the tools the call's response requested.
+          items: { type: string, maxLength: 64 }
+    OutboundAITraceResponse:
+      type: object
+      description: One AI trace with its logged calls, oldest first.
+      required: [trace, calls, calls_truncated]
+      properties:
+        trace: { $ref: '#/components/schemas/OutboundAITrace' }
+        calls:
+          type: array
+          maxItems: 500
+          items: { $ref: '#/components/schemas/OutboundAITraceCall' }
+        calls_truncated:
+          type: boolean
+          description: Whether the trace logged more calls than were returned.
     UpdateOutboundBindingPolicyRequest:
       type: object
       description: Explicit nonempty method and path subsets for a bound app.
@@ -84784,7 +85194,7 @@ components:
         plan_cpu_max_millicores: { type: integer, description: "Largest sustained CPU allowance the current plan permits, in millicores." }
         cpu_weight: { type: integer, description: "Relative cgroup CPU scheduling weight applied when the host is contended." }
         max_instances: { type: integer, description: "Effective per-app live-instance ceiling after applying the scaling policy." }
-        concurrency_per_instance: { type: integer, description: "Maximum in-flight requests accepted by one instance. Handler-level concurrency remains the application's responsibility." }
+        concurrency_per_instance: { type: integer, description: "Maximum in-flight requests accepted by one instance: the app's scaling_policy.per_instance_concurrency when set, otherwise the plan's concurrency_per_vm." }
         concurrency_queue_depth: { type: integer, description: "Effective maximum number of requests allowed to wait for warm instance capacity." }
         concurrency_queue_wait_ms: { type: integer, format: int64, description: "Effective maximum warm saturation wait in milliseconds." }
         app_request_rate_rps: { type: integer, description: "Effective per-app edge token-bucket refill rate, in requests per second, after any app-level runtime override." }
@@ -89551,6 +89961,11 @@ components:
           minimum: 0
           maximum: 60
           example: 30
+        per_instance_concurrency:
+          description: "Requests one instance serves at once (ADR-20261022203523). The gateway admits at most this many to an instance and scales out on the next request; requests over every instance's limit wait in the warm queue (30 s unless max_queue_wait_ms is set). 0 uses the plan's concurrency_per_vm, which is also the upper bound."
+          type: integer
+          minimum: 0
+          example: 2
         timezone:
           description: "IANA timezone every schedule's cron expression is evaluated in (ADR-195). Empty means UTC. One zone per app rather than one per schedule: a business has a working day, not a working day per rule."
           type: string
@@ -90084,6 +90499,11 @@ components:
           type: boolean
           default: false
           description: "Wait for the workload to publish FAAS_SECRETS_RELOAD_READY_FILE before sending a secret reload signal. Requires secret_reload_signal. Main and sidecar workloads opt in independently (ADR-506)."
+        secret_files:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecretFile'
+          description: "App secrets guest-init writes to /run/secrets for the main workload (ADR-20261023090000). Set from the app's Compose service secrets."
         stop_grace_period:
           type: [string, "null"]
           description: "OCI StopGracePeriod as a Go duration string (e.g. \"30s\"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s) enforced by Validate() — ADR-138 §Decision 4."
@@ -104420,6 +104840,39 @@ components:
           type: integer
           minimum: 1
           description: "Seconds between the stop signal and SIGKILL, capped by the plan."
+    SecretFile:
+      type: object
+      description: "An app secret guest-init writes to /run/secrets/<name> in the main workload (ADR-20261023090000), from a Compose service's secrets. Names the secret; its value is never returned."
+      required: [secret, name]
+      properties:
+        secret:
+          type: string
+          description: "App secret whose value the file holds."
+        name:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
+          description: "File name in /run/secrets."
+        mode:
+          type: integer
+          minimum: 0
+          maximum: 511
+          description: "Permission bits; omitted means 0444."
+    ComposeResources:
+      type: object
+      description: "A Compose service's deploy.replicas and deploy.resources.limits, converted to app settings (ADR-20261023120000). Omitted fields are undeclared and keep the app's own settings."
+      properties:
+        replicas:
+          type: integer
+          minimum: 1
+          description: "Caps a request-mode app's instances (max_concurrency) and fixes a worker's or service's replica count."
+        memory_mb:
+          type: integer
+          minimum: 1
+          description: "App RAM in MB, rounded up from the declared size."
+        cpu_millicores:
+          type: integer
+          enum: [250, 500, 1000]
+          description: "App CPU share."
     PlanWorkload:
       description: "One discovered unit of work. Mirrors reposcan.Workload."
       type: object
@@ -104461,6 +104914,13 @@ components:
           type: array
           items: { type: string }
           description: "Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."
+        secret_files:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecretFile'
+          description: "Compose secrets written to /run/secrets (ADR-20261023090000)."
+        resources:
+          $ref: '#/components/schemas/ComposeResources'
         command:
           type: array
           items: { type: string }
@@ -108625,15 +109085,16 @@ components:
       required: [name, kind, min_samples, created_by, created_at]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
-        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
         slo: { type: string, description: "slo gates: the SLO judged." }
         max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: the burn rate that fails the gate." }
         max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: new error groups allowed." }
         min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: events before a group counts." }
-        metric: { type: string, description: "custom_metric gates: the custom metric." }
+        metric: { type: string, description: "custom_metric gates: the custom metric. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
         comparison: { type: string, enum: [below, above], description: "custom_metric gates: which side of the threshold fails." }
         threshold: { type: number, description: "custom_metric gates: the bound on the metric's average." }
-        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Requests or metric values a release needs before the gate is judged." }
+        max_increase_percent: { type: integer, minimum: 1, maximum: 1000, description: "ai gates: the largest increase over the baseline, in percent." }
+        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Requests, metric values or AI calls (on each side, for ai gates) needed before the gate is judged." }
         created_by: { type: string }
         created_at: { type: string, format: date-time }
     CreateReleaseGateRequest:
@@ -108642,14 +109103,15 @@ components:
       required: [name, kind]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
-        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
         slo: { type: string, description: "slo gates: the name of one of the app's SLOs." }
         max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: default 10." }
         max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: default 0." }
         min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: default 3." }
-        metric: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$', description: "custom_metric gates: the custom metric's name." }
+        metric: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$', description: "custom_metric gates: the custom metric's name. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
         comparison: { type: string, enum: [below, above], description: "custom_metric gates: fail when the average is below or above the threshold." }
         threshold: { type: number, description: "custom_metric gates: the bound." }
+        max_increase_percent: { type: integer, minimum: 1, maximum: 1000, description: "ai gates: fail when the release's metric is this many percent above its baseline's, and above a floor (1 percentage point, 50 ms or 1 millicent). Default 50." }
         min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Default 20." }
     ListReleaseGatesResponse:
       description: "An app's release gates, by name."
@@ -108911,11 +109373,11 @@ components:
       required: [name, kind, passed, summary, observed, bound, samples]
       properties:
         name: { type: string }
-        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
         passed: { type: boolean }
-        observed: { type: number, description: "The burn rate, new error groups, or metric average." }
+        observed: { type: number, description: "The burn rate, new error groups, metric average, or the release's AI metric." }
         bound: { type: number, description: "The value that fails the gate." }
-        samples: { type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, or metric values." }
+        samples: { type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, metric values or AI calls." }
         baseline_bad_fraction: { type: number, description: "slo gates: the predecessor's bad fraction." }
         error_classes: { type: array, maxItems: 5, items: { type: string }, description: "new_errors gates: the new groups' error classes." }
         summary: { type: string, description: "What the gate measured, in one line." }
@@ -116031,6 +116493,24 @@ components:
         used: { type: integer, format: int64, minimum: 0 }
         crossed_at: { type: string, format: date-time }
         tag: { type: [string, 'null'], maxLength: 97, description: The tag whose daily cost limit crossed the threshold (ADR-1438). }
+    OutboundAIQualityDriftWebhookPayload:
+      type: object
+      description: >-
+        Data delivered with outbound.ai_quality.drift to every app bound to the integration when a model's quality signal
+        moves away from its previous 7 days (ADR 20261021171712). alert_id is stable across retries.
+      required: [alert_id, integration_id, integration_name, usage_date, model, metric, current_value, baseline_value, current_count, baseline_count, detected_at]
+      properties:
+        alert_id: { type: string, format: uuid }
+        integration_id: { type: string, format: uuid }
+        integration_name: { type: string }
+        usage_date: { type: string, format: date }
+        model: { type: string, maxLength: 200 }
+        metric: { type: string, enum: [truncated, refused, empty, invalid_json, tool_error, bad_feedback, evaluation_score] }
+        current_value: { type: integer, format: int64, minimum: 0, description: 'Basis points of answered (or rated) calls; hundredths of a point for evaluation_score.' }
+        baseline_value: { type: integer, format: int64, minimum: 0 }
+        current_count: { type: integer, format: int64, minimum: 0, description: Calls the current value was taken over. }
+        baseline_count: { type: integer, format: int64, minimum: 0 }
+        detected_at: { type: string, format: date-time }
     ManagedRealtimeBatchMessageRequest:
       type: object
       required:
@@ -116964,6 +117444,7 @@ components:
               - consumer.plan_changed
               - consumer.closed
               - outbound.ai_budget.threshold
+              - outbound.ai_quality.drift
               - issue.created
               - issue.assigned
               - issue.resolved
@@ -118024,6 +118505,7 @@ components:
               - consumer.plan_changed
               - consumer.closed
               - outbound.ai_budget.threshold
+              - outbound.ai_quality.drift
               - issue.created
               - issue.assigned
               - issue.resolved
@@ -118210,6 +118692,7 @@ components:
               - consumer.plan_changed
               - consumer.closed
               - outbound.ai_budget.threshold
+              - outbound.ai_quality.drift
               - issue.created
               - issue.assigned
               - issue.resolved

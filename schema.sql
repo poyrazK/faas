@@ -18771,6 +18771,43 @@ $$;
 
 
 --
+-- Name: invocation_backlog_bytes(text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.invocation_backlog_bytes(source text, payload jsonb) RETURNS bigint
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT CASE WHEN source = 'queue' THEN octet_length(payload::text)::bigint ELSE 0 END
+$$;
+
+
+--
+-- Name: invocation_backlog_count(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.invocation_backlog_count() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP IN ('UPDATE', 'DELETE') AND OLD.state IN ('pending', 'dispatching') THEN
+        UPDATE invocation_backlog_counters
+        SET pending = pending - 1, bytes = bytes - invocation_backlog_bytes(OLD.source, OLD.payload)
+        WHERE app_id = OLD.app_id AND source = OLD.source AND account_id = OLD.account_id
+            AND slot = (hashtext(OLD.id::text) & 7);
+    END IF;
+    IF TG_OP IN ('INSERT', 'UPDATE') AND NEW.state IN ('pending', 'dispatching') THEN
+        INSERT INTO invocation_backlog_counters AS c (account_id, app_id, source, slot, pending, bytes)
+        VALUES (NEW.account_id, NEW.app_id, NEW.source, hashtext(NEW.id::text) & 7, 1,
+            invocation_backlog_bytes(NEW.source, NEW.payload))
+        ON CONFLICT (app_id, source, account_id, slot)
+        DO UPDATE SET pending = c.pending + 1, bytes = c.bytes + excluded.bytes;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: invocation_done_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -26624,6 +26661,22 @@ END $$;
 
 
 --
+-- Name: stamp_invocation_instance(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stamp_invocation_instance(target_invocation uuid, target_instance text) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM set_config('synchronous_commit', 'off', true);
+    UPDATE invocations SET instance_id = target_instance
+    WHERE id = target_invocation AND state = 'dispatching';
+    RETURN FOUND;
+END;
+$$;
+
+
+--
 -- Name: stamp_object_storage_issuer(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -29460,12 +29513,13 @@ CREATE TABLE public.app_release_gates (
     min_samples integer NOT NULL,
     created_by text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_release_gates_ai_check CHECK (((kind <> 'ai'::text) OR ((metric_name = ANY (ARRAY['error_rate'::text, 'flagged_rate'::text, 'cost_per_call'::text, 'ttfb_ms'::text])) AND (threshold IS NOT NULL) AND ((threshold >= (1)::double precision) AND (threshold <= (1000)::double precision)) AND (comparison IS NULL) AND (slo_id IS NULL) AND (max_burn_rate IS NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL)))),
     CONSTRAINT app_release_gates_check CHECK (((kind <> 'slo'::text) OR ((slo_id IS NOT NULL) AND (max_burn_rate IS NOT NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL) AND (metric_name IS NULL) AND (comparison IS NULL) AND (threshold IS NULL)))),
     CONSTRAINT app_release_gates_check1 CHECK (((kind <> 'new_errors'::text) OR ((max_new_groups IS NOT NULL) AND (min_events IS NOT NULL) AND (slo_id IS NULL) AND (max_burn_rate IS NULL) AND (metric_name IS NULL) AND (comparison IS NULL) AND (threshold IS NULL)))),
     CONSTRAINT app_release_gates_check2 CHECK (((kind <> 'custom_metric'::text) OR ((metric_name IS NOT NULL) AND (comparison IS NOT NULL) AND (threshold IS NOT NULL) AND (slo_id IS NULL) AND (max_burn_rate IS NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL)))),
     CONSTRAINT app_release_gates_comparison_check CHECK (((comparison IS NULL) OR (comparison = ANY (ARRAY['below'::text, 'above'::text])))),
     CONSTRAINT app_release_gates_created_by_check CHECK (((length(created_by) >= 1) AND (length(created_by) <= 320))),
-    CONSTRAINT app_release_gates_kind_check CHECK ((kind = ANY (ARRAY['slo'::text, 'new_errors'::text, 'custom_metric'::text]))),
+    CONSTRAINT app_release_gates_kind_check CHECK ((kind = ANY (ARRAY['slo'::text, 'new_errors'::text, 'custom_metric'::text, 'ai'::text]))),
     CONSTRAINT app_release_gates_max_burn_rate_check CHECK (((max_burn_rate IS NULL) OR ((max_burn_rate >= 1) AND (max_burn_rate <= 1000)))),
     CONSTRAINT app_release_gates_max_new_groups_check CHECK (((max_new_groups IS NULL) OR ((max_new_groups >= 0) AND (max_new_groups <= 100)))),
     CONSTRAINT app_release_gates_metric_name_check CHECK (((metric_name IS NULL) OR (metric_name ~ '^[a-z][a-z0-9_]{0,62}$'::text))),
@@ -29973,7 +30027,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['issue.compound_threshold_reached'::text, 'usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'event_recovery.execution_attention'::text) OR (event = 'automation.recovery_review_ready'::text) OR (event = 'automation.recovery_review_finished'::text) OR (event = 'automation.recovery_policy_paused'::text) OR (event = 'automation.recovery_queue_blocked'::text) OR (event = ANY (ARRAY['automation.recovery_health_alert'::text, 'automation.recovery_health_recovered'::text])) OR (event = 'outbound.ai_budget.threshold'::text) OR (event = 'realtime.channel.published'::text) OR (event = 'realtime.channel.acknowledged'::text) OR (event = 'realtime.consumer_group.dead_lettered'::text) OR (event = ANY (ARRAY['realtime.consumer_group.lag_exceeded'::text, 'realtime.consumer_group.lag_recovered'::text])) OR (event = 'realtime.consumer_group.dead_letter_expiring'::text) OR (event = 'realtime.consumer_group.delivery_expired'::text) OR (event = ANY (ARRAY['realtime.consumer_group.worker_lost'::text, 'realtime.consumer_group.worker_recovered'::text])) OR (event = ANY (ARRAY['realtime.consumer_group.circuit_opened'::text, 'realtime.consumer_group.circuit_half_open'::text, 'realtime.consumer_group.circuit_closed'::text])) OR (event = ANY (ARRAY['realtime.replay_job.completed'::text, 'realtime.replay_job.cancelled'::text, 'realtime.replay_job.processing_failed'::text])) OR (event = 'automation.recovery_polling_status'::text) OR (event = ANY (ARRAY['issue.tracker_sync.attention'::text, 'issue.tracker_sync.recovered'::text])) OR (event = 'issue.frequency_threshold_reached'::text) OR (event = ANY (ARRAY['consumer.usage_threshold'::text, 'consumer.signed_up'::text, 'consumer.plan_changed'::text, 'consumer.closed'::text])) OR (event = 'profile.capture_ready'::text) OR (event = 'profile.capture_oom_linked'::text))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['issue.compound_threshold_reached'::text, 'usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'event_recovery.execution_attention'::text) OR (event = 'automation.recovery_review_ready'::text) OR (event = 'automation.recovery_review_finished'::text) OR (event = 'automation.recovery_policy_paused'::text) OR (event = 'automation.recovery_queue_blocked'::text) OR (event = ANY (ARRAY['automation.recovery_health_alert'::text, 'automation.recovery_health_recovered'::text])) OR (event = 'outbound.ai_budget.threshold'::text) OR (event = 'realtime.channel.published'::text) OR (event = 'realtime.channel.acknowledged'::text) OR (event = 'realtime.consumer_group.dead_lettered'::text) OR (event = ANY (ARRAY['realtime.consumer_group.lag_exceeded'::text, 'realtime.consumer_group.lag_recovered'::text])) OR (event = 'realtime.consumer_group.dead_letter_expiring'::text) OR (event = 'realtime.consumer_group.delivery_expired'::text) OR (event = ANY (ARRAY['realtime.consumer_group.worker_lost'::text, 'realtime.consumer_group.worker_recovered'::text])) OR (event = ANY (ARRAY['realtime.consumer_group.circuit_opened'::text, 'realtime.consumer_group.circuit_half_open'::text, 'realtime.consumer_group.circuit_closed'::text])) OR (event = ANY (ARRAY['realtime.replay_job.completed'::text, 'realtime.replay_job.cancelled'::text, 'realtime.replay_job.processing_failed'::text])) OR (event = 'automation.recovery_polling_status'::text) OR (event = ANY (ARRAY['issue.tracker_sync.attention'::text, 'issue.tracker_sync.recovered'::text])) OR (event = 'issue.frequency_threshold_reached'::text) OR (event = ANY (ARRAY['consumer.usage_threshold'::text, 'consumer.signed_up'::text, 'consumer.plan_changed'::text, 'consumer.closed'::text])) OR (event = 'profile.capture_ready'::text) OR (event = 'profile.capture_oom_linked'::text) OR (event = 'outbound.ai_quality.drift'::text))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -39196,6 +39250,22 @@ ALTER TABLE public.invocation_attempt_history ALTER COLUMN id ADD GENERATED ALWA
 
 
 --
+-- Name: invocation_backlog_counters; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_backlog_counters (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    source text NOT NULL,
+    slot smallint NOT NULL,
+    pending bigint DEFAULT 0 NOT NULL,
+    bytes bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT invocation_backlog_counters_slot_check CHECK (((slot >= 0) AND (slot <= 7))),
+    CONSTRAINT invocation_backlog_counters_source_check CHECK (((source <> ''::text) AND (octet_length(source) <= 64)))
+);
+
+
+--
 -- Name: invocation_environment_queue_admissions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -45338,9 +45408,11 @@ CREATE TABLE public.outbound_admission_leases (
     ai_reserved_cost_millicents bigint DEFAULT 0 NOT NULL,
     ai_end_user text,
     ai_tags text[],
+    ai_trace_id text,
     CONSTRAINT outbound_admission_leases_ai_end_user_chk CHECK (((ai_end_user IS NULL) OR (ai_end_user ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text))),
     CONSTRAINT outbound_admission_leases_ai_reservation_chk CHECK (((ai_reserved_tokens >= 0) AND (ai_reserved_cost_millicents >= 0))),
-    CONSTRAINT outbound_admission_leases_ai_tags_chk CHECK (((ai_tags IS NULL) OR (array_to_string(ai_tags, ','::text) ~ '^[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}(,[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}){0,4}$'::text)))
+    CONSTRAINT outbound_admission_leases_ai_tags_chk CHECK (((ai_tags IS NULL) OR (array_to_string(ai_tags, ','::text) ~ '^[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}(,[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}){0,4}$'::text))),
+    CONSTRAINT outbound_admission_leases_ai_trace_id_chk CHECK (((ai_trace_id IS NULL) OR (ai_trace_id ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text)))
 );
 
 
@@ -45459,6 +45531,26 @@ CREATE TABLE public.outbound_ai_budget_alerts (
 
 
 --
+-- Name: outbound_ai_deployment_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_deployment_minutes (
+    deployment_id uuid NOT NULL,
+    minute timestamp with time zone NOT NULL,
+    app_id uuid NOT NULL,
+    calls bigint DEFAULT 0 NOT NULL,
+    error_calls bigint DEFAULT 0 NOT NULL,
+    flagged_calls bigint DEFAULT 0 NOT NULL,
+    cost_millicents bigint DEFAULT 0 NOT NULL,
+    input_tokens bigint DEFAULT 0 NOT NULL,
+    output_tokens bigint DEFAULT 0 NOT NULL,
+    ttfb_calls bigint DEFAULT 0 NOT NULL,
+    ttfb_ms_total bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT outbound_ai_deployment_minutes_values_chk CHECK (((calls >= 0) AND ((error_calls >= 0) AND (error_calls <= calls)) AND ((flagged_calls >= 0) AND (flagged_calls <= calls)) AND (cost_millicents >= 0) AND (input_tokens >= 0) AND (output_tokens >= 0) AND ((ttfb_calls >= 0) AND (ttfb_calls <= calls)) AND (ttfb_ms_total >= 0)))
+);
+
+
+--
 -- Name: outbound_ai_evaluation_items; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -45548,6 +45640,18 @@ ALTER TABLE public.outbound_ai_log_exports ALTER COLUMN id ADD GENERATED ALWAYS 
 
 
 --
+-- Name: outbound_ai_online_evaluation_days; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_online_evaluation_days (
+    integration_id uuid NOT NULL,
+    usage_date date NOT NULL,
+    evaluations bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT outbound_ai_online_evaluation_days_count_chk CHECK ((evaluations >= 0))
+);
+
+
+--
 -- Name: outbound_ai_price_entries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -45602,6 +45706,28 @@ CREATE TABLE public.outbound_ai_prompt_prefixes (
     previous_seen_at timestamp with time zone,
     CONSTRAINT outbound_ai_prompt_prefixes_hash_chk CHECK ((octet_length(prefix_hash) = 32)),
     CONSTRAINT outbound_ai_prompt_prefixes_seen_chk CHECK (((previous_seen_at IS NULL) OR (previous_seen_at <= seen_at)))
+);
+
+
+--
+-- Name: outbound_ai_quality_alerts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_quality_alerts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    integration_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    usage_date date NOT NULL,
+    model text NOT NULL,
+    metric text NOT NULL,
+    current_value bigint NOT NULL,
+    baseline_value bigint NOT NULL,
+    current_count bigint NOT NULL,
+    baseline_count bigint NOT NULL,
+    detected_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT outbound_ai_quality_alerts_metric_chk CHECK ((metric = ANY (ARRAY['truncated'::text, 'refused'::text, 'empty'::text, 'invalid_json'::text, 'tool_error'::text, 'bad_feedback'::text, 'evaluation_score'::text]))),
+    CONSTRAINT outbound_ai_quality_alerts_model_chk CHECK (((length(model) >= 1) AND (length(model) <= 200))),
+    CONSTRAINT outbound_ai_quality_alerts_values_chk CHECK (((current_value >= 0) AND (baseline_value >= 0) AND (current_count >= 0) AND (baseline_count >= 0)))
 );
 
 
@@ -45703,12 +45829,23 @@ CREATE TABLE public.outbound_ai_request_log (
     attempts smallint NOT NULL,
     end_user text,
     tags text[],
+    trace_id text,
+    tool_calls text[],
+    quality_flags text[],
+    feedback text,
+    feedback_label text,
+    feedback_at timestamp with time zone,
+    evaluation_state text,
+    evaluation_claimed_at timestamp with time zone,
+    evaluation_score smallint,
     CONSTRAINT outbound_ai_request_log_caller_chk CHECK (((length(caller) >= 1) AND (length(caller) <= 64))),
     CONSTRAINT outbound_ai_request_log_end_user_chk CHECK (((end_user IS NULL) OR (end_user ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text))),
     CONSTRAINT outbound_ai_request_log_model_chk CHECK ((((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text))),
     CONSTRAINT outbound_ai_request_log_outcome_chk CHECK ((outcome = ANY (ARRAY['known'::text, 'unknown'::text, 'error'::text]))),
+    CONSTRAINT outbound_ai_request_log_quality_chk CHECK ((((quality_flags IS NULL) OR ((cardinality(quality_flags) <= 5) AND (quality_flags <@ ARRAY['truncated'::text, 'refused'::text, 'empty'::text, 'invalid_json'::text, 'tool_error'::text]))) AND ((feedback IS NULL) OR (feedback = ANY (ARRAY['good'::text, 'bad'::text]))) AND ((feedback_label IS NULL) OR ((feedback IS NOT NULL) AND (feedback_label ~ '^[a-z][a-z0-9_.-]{0,31}$'::text))) AND ((feedback IS NULL) = (feedback_at IS NULL)) AND ((evaluation_state IS NULL) OR (evaluation_state = ANY (ARRAY['pending'::text, 'running'::text, 'done'::text, 'error'::text]))) AND ((evaluation_state = 'running'::text) = (evaluation_claimed_at IS NOT NULL)) AND ((evaluation_score IS NULL) OR ((evaluation_state = 'done'::text) AND ((evaluation_score >= 1) AND (evaluation_score <= 5)))))),
     CONSTRAINT outbound_ai_request_log_status_chk CHECK (((status >= 100) AND (status <= 599))),
     CONSTRAINT outbound_ai_request_log_tags_chk CHECK (((tags IS NULL) OR (array_to_string(tags, ','::text) ~ '^[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}(,[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}){0,4}$'::text))),
+    CONSTRAINT outbound_ai_request_log_trace_chk CHECK ((((trace_id IS NULL) OR (trace_id ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text)) AND ((tool_calls IS NULL) OR (cardinality(tool_calls) <= 16)))),
     CONSTRAINT outbound_ai_request_log_values_chk CHECK (((input_tokens >= 0) AND (cached_input_tokens >= 0) AND (cache_write_tokens >= 0) AND (output_tokens >= 0) AND (cost_millicents >= 0) AND (duration_ms >= 0) AND ((ttfb_ms IS NULL) OR (ttfb_ms >= 0)) AND ((attempts >= 0) AND (attempts <= 100))))
 );
 
@@ -45831,6 +45968,48 @@ CREATE TABLE public.outbound_ai_tag_usage_daily (
 
 
 --
+-- Name: outbound_ai_trace_days; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_trace_days (
+    integration_id uuid NOT NULL,
+    usage_date date NOT NULL,
+    traces bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT outbound_ai_trace_days_traces_chk CHECK ((traces >= 0))
+);
+
+
+--
+-- Name: outbound_ai_traces; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_traces (
+    integration_id uuid NOT NULL,
+    trace_id text NOT NULL,
+    caller text NOT NULL,
+    end_user text,
+    first_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_at timestamp with time zone DEFAULT now() NOT NULL,
+    calls bigint DEFAULT 0 NOT NULL,
+    error_calls bigint DEFAULT 0 NOT NULL,
+    usage_unknown_calls bigint DEFAULT 0 NOT NULL,
+    input_tokens bigint DEFAULT 0 NOT NULL,
+    output_tokens bigint DEFAULT 0 NOT NULL,
+    cost_millicents bigint DEFAULT 0 NOT NULL,
+    tool_calls bigint DEFAULT 0 NOT NULL,
+    tool_signature bytea,
+    repeated_tool_calls bigint DEFAULT 0 NOT NULL,
+    models text[] DEFAULT '{}'::text[] NOT NULL,
+    CONSTRAINT outbound_ai_traces_caller_chk CHECK (((length(caller) >= 1) AND (length(caller) <= 64))),
+    CONSTRAINT outbound_ai_traces_end_user_chk CHECK (((end_user IS NULL) OR (end_user ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text))),
+    CONSTRAINT outbound_ai_traces_models_chk CHECK ((cardinality(models) <= 8)),
+    CONSTRAINT outbound_ai_traces_tool_signature_chk CHECK (((tool_signature IS NULL) OR (octet_length(tool_signature) = 16))),
+    CONSTRAINT outbound_ai_traces_trace_id_chk CHECK ((trace_id ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text)),
+    CONSTRAINT outbound_ai_traces_values_chk CHECK (((calls >= 0) AND ((error_calls >= 0) AND (error_calls <= calls)) AND ((usage_unknown_calls >= 0) AND (usage_unknown_calls <= calls)) AND (input_tokens >= 0) AND (output_tokens >= 0) AND (cost_millicents >= 0) AND (tool_calls >= 0) AND ((repeated_tool_calls >= 0) AND (repeated_tool_calls <= calls)) AND (first_at <= last_at)))
+);
+
+
+--
 -- Name: outbound_ai_usage_daily; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -45860,6 +46039,16 @@ CREATE TABLE public.outbound_ai_usage_daily (
     prompt_cache_saved_millicents bigint DEFAULT 0 NOT NULL,
     input_audio_tokens bigint DEFAULT 0 NOT NULL,
     output_audio_tokens bigint DEFAULT 0 NOT NULL,
+    truncated_requests bigint DEFAULT 0 NOT NULL,
+    refused_requests bigint DEFAULT 0 NOT NULL,
+    empty_requests bigint DEFAULT 0 NOT NULL,
+    invalid_json_requests bigint DEFAULT 0 NOT NULL,
+    tool_error_requests bigint DEFAULT 0 NOT NULL,
+    good_feedback bigint DEFAULT 0 NOT NULL,
+    bad_feedback bigint DEFAULT 0 NOT NULL,
+    evaluated_requests bigint DEFAULT 0 NOT NULL,
+    evaluation_score_sum bigint DEFAULT 0 NOT NULL,
+    evaluation_errors bigint DEFAULT 0 NOT NULL,
     CONSTRAINT outbound_ai_usage_daily_audio_chk CHECK ((((input_audio_tokens >= 0) AND (input_audio_tokens <= input_tokens)) AND ((output_audio_tokens >= 0) AND (output_audio_tokens <= output_tokens)))),
     CONSTRAINT outbound_ai_usage_daily_cache_chk CHECK ((((cached_requests >= 0) AND (cached_requests <= requests)) AND (cache_saved_millicents >= 0))),
     CONSTRAINT outbound_ai_usage_daily_caller_chk CHECK (((caller = ANY (ARRAY['runs'::text, 'replay'::text, 'moderation'::text, 'evaluation'::text])) OR (caller ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text))),
@@ -45867,6 +46056,7 @@ CREATE TABLE public.outbound_ai_usage_daily (
     CONSTRAINT outbound_ai_usage_daily_counts_chk CHECK (((requests >= 0) AND (error_requests >= 0) AND (usage_unknown_requests >= 0) AND ((error_requests + usage_unknown_requests) <= requests) AND (input_tokens >= 0) AND (cached_input_tokens >= 0) AND (cache_write_tokens >= 0) AND (output_tokens >= 0))),
     CONSTRAINT outbound_ai_usage_daily_media_chk CHECK (((images >= 0) AND (audio_seconds >= 0) AND (characters >= 0))),
     CONSTRAINT outbound_ai_usage_daily_model_chk CHECK ((((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text))),
+    CONSTRAINT outbound_ai_usage_daily_quality_chk CHECK (((truncated_requests >= 0) AND (refused_requests >= 0) AND (empty_requests >= 0) AND (invalid_json_requests >= 0) AND (tool_error_requests >= 0) AND (good_feedback >= 0) AND (bad_feedback >= 0) AND (evaluated_requests >= 0) AND ((evaluation_score_sum >= evaluated_requests) AND (evaluation_score_sum <= (5 * evaluated_requests))) AND (evaluation_errors >= 0))),
     CONSTRAINT outbound_ai_usage_daily_tools_chk CHECK (((web_searches >= 0) AND (file_searches >= 0) AND (code_session_gb >= 0))),
     CONSTRAINT outbound_ai_usage_daily_video_chk CHECK ((video_seconds >= 0))
 );
@@ -46047,6 +46237,14 @@ CREATE TABLE public.outbound_integrations (
     ai_response_blocked_terms text DEFAULT 'off'::text NOT NULL,
     ai_response_moderation text DEFAULT 'off'::text NOT NULL,
     ai_auto_prompt_cache boolean DEFAULT false NOT NULL,
+    ai_trace_max_calls bigint,
+    ai_trace_max_cost_millicents bigint,
+    ai_trace_max_repeated_tool_calls bigint,
+    ai_online_eval_percent smallint,
+    ai_online_eval_judge_integration_id uuid,
+    ai_online_eval_model text,
+    ai_online_eval_rubric text,
+    ai_quality_alerts boolean DEFAULT false NOT NULL,
     CONSTRAINT outbound_customer_integration_policy_chk CHECK (((owner_kind <> 'customer'::text) OR ((provider_auth_mode = 'managed'::text) AND (credential_source = 'customer_sealed'::text) AND ((cardinality(allowed_methods) >= 1) AND (cardinality(allowed_methods) <= 6)) AND ((cardinality(allowed_path_prefixes) >= 1) AND (cardinality(allowed_path_prefixes) <= 32))))),
     CONSTRAINT outbound_integrations_ai_allow_unmetered_chk CHECK (((NOT ai_allow_unmetered) OR (ai_provider IS NOT NULL))),
     CONSTRAINT outbound_integrations_ai_auto_prompt_cache_chk CHECK (((NOT ai_auto_prompt_cache) OR (ai_provider IS NOT NULL))),
@@ -46056,9 +46254,11 @@ CREATE TABLE public.outbound_integrations (
     CONSTRAINT outbound_integrations_ai_log_export_chk CHECK (((NOT ai_log_export) OR (ai_provider IS NOT NULL))),
     CONSTRAINT outbound_integrations_ai_moderation_chk CHECK (((ai_moderation_action = ANY (ARRAY['off'::text, 'flag'::text, 'block'::text])) AND (ai_moderation_on_error = ANY (ARRAY['allow'::text, 'block'::text])) AND ((ai_moderation_kind IS NULL) OR (ai_moderation_kind = ANY (ARRAY['openai_moderation'::text, 'classifier'::text]))) AND ((ai_moderation_model IS NULL) OR (((length(ai_moderation_model) >= 1) AND (length(ai_moderation_model) <= 128)) AND (ai_moderation_model ~ '^[ -~]+$'::text))) AND (ai_moderation_categories <@ ARRAY['prompt_injection'::text, 'harassment'::text, 'hate'::text, 'self_harm'::text, 'sexual'::text, 'violence'::text, 'illicit'::text]) AND ((ai_moderation_action = 'off'::text) OR ((ai_provider IS NOT NULL) AND (ai_moderation_kind IS NOT NULL) AND ((cardinality(ai_moderation_categories) >= 1) AND (cardinality(ai_moderation_categories) <= 7)) AND ((ai_moderation_kind = 'openai_moderation'::text) OR (ai_moderation_model IS NOT NULL)) AND ((ai_moderation_kind = 'classifier'::text) OR (NOT ('prompt_injection'::text = ANY (ai_moderation_categories)))))))),
     CONSTRAINT outbound_integrations_ai_provider_chk CHECK (((ai_provider IS NULL) OR (ai_provider = ANY (ARRAY['openai'::text, 'anthropic'::text, 'gemini'::text, 'azure_openai'::text, 'bedrock'::text, 'vertex'::text])))),
+    CONSTRAINT outbound_integrations_ai_quality_chk CHECK (((((ai_online_eval_percent IS NULL) AND (ai_online_eval_judge_integration_id IS NULL) AND (ai_online_eval_model IS NULL) AND (ai_online_eval_rubric IS NULL)) OR ((ai_provider IS NOT NULL) AND ((ai_online_eval_percent >= 1) AND (ai_online_eval_percent <= 100)) AND (ai_online_eval_judge_integration_id IS NOT NULL) AND ((length(ai_online_eval_model) >= 1) AND (length(ai_online_eval_model) <= 200)) AND ((ai_online_eval_rubric IS NULL) OR ((octet_length(ai_online_eval_rubric) >= 1) AND (octet_length(ai_online_eval_rubric) <= 1000))))) AND ((NOT ai_quality_alerts) OR (ai_provider IS NOT NULL)))),
     CONSTRAINT outbound_integrations_ai_request_log_chk CHECK (((NOT ai_request_log_enabled) OR (ai_provider IS NOT NULL))),
     CONSTRAINT outbound_integrations_ai_request_log_content_chk CHECK (((NOT ai_request_log_content) OR ai_request_log_enabled)),
     CONSTRAINT outbound_integrations_ai_response_policy_chk CHECK (((ai_response_email = ANY (ARRAY['off'::text, 'redact'::text, 'block'::text])) AND (ai_response_payment_card = ANY (ARRAY['off'::text, 'redact'::text, 'block'::text])) AND (ai_response_iban = ANY (ARRAY['off'::text, 'redact'::text, 'block'::text])) AND (ai_response_secret = ANY (ARRAY['off'::text, 'redact'::text, 'block'::text])) AND (ai_response_blocked_terms = ANY (ARRAY['off'::text, 'block'::text])) AND (ai_response_moderation = ANY (ARRAY['off'::text, 'flag'::text, 'block'::text])) AND ((ai_provider IS NOT NULL) OR ((ai_response_email = 'off'::text) AND (ai_response_payment_card = 'off'::text) AND (ai_response_iban = 'off'::text) AND (ai_response_secret = 'off'::text) AND (ai_response_blocked_terms = 'off'::text) AND (ai_response_moderation = 'off'::text))) AND ((ai_response_moderation = 'off'::text) OR ((ai_moderation_kind IS NOT NULL) AND (cardinality(ai_moderation_categories) >= 1) AND (NOT (ai_moderation_categories <@ ARRAY['prompt_injection'::text])) AND ((ai_moderation_kind = 'openai_moderation'::text) OR (ai_moderation_model IS NOT NULL)))))),
+    CONSTRAINT outbound_integrations_ai_trace_limits_chk CHECK ((((ai_trace_max_calls IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_trace_max_calls >= 1) AND (ai_trace_max_calls <= 1000000)))) AND ((ai_trace_max_cost_millicents IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_trace_max_cost_millicents >= 1) AND (ai_trace_max_cost_millicents <= '1000000000000'::bigint)))) AND ((ai_trace_max_repeated_tool_calls IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_trace_max_repeated_tool_calls >= 1) AND (ai_trace_max_repeated_tool_calls <= 1000)))))),
     CONSTRAINT outbound_integrations_ai_user_limits_chk CHECK ((((ai_user_daily_token_limit IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_user_daily_token_limit >= 1) AND (ai_user_daily_token_limit <= '100000000000'::bigint)))) AND ((ai_user_daily_cost_limit_millicents IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_user_daily_cost_limit_millicents >= 1) AND (ai_user_daily_cost_limit_millicents <= '1000000000000'::bigint)))))),
     CONSTRAINT outbound_integrations_allowed_methods_count_chk CHECK ((cardinality(allowed_methods) <= 6)),
     CONSTRAINT outbound_integrations_allowed_path_prefixes_count_chk CHECK ((cardinality(allowed_path_prefixes) <= 32)),
@@ -47174,7 +47374,10 @@ CREATE TABLE public.product_control_customers (
     auth_organization_id uuid,
     trial_starts_at timestamp with time zone,
     trial_ends_at timestamp with time zone,
+    payment_method_at timestamp with time zone,
+    trial_resolved_at timestamp with time zone,
     CONSTRAINT product_control_customers_auth_organization_id_check CHECK (((auth_organization_id IS NULL) OR (auth_organization_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT product_control_customers_conversion_chk CHECK ((((trial_resolved_at IS NULL) OR (trial_ends_at IS NOT NULL)) AND ((payment_method_at IS NULL) OR isfinite(payment_method_at)))),
     CONSTRAINT product_control_customers_trial_chk CHECK ((((trial_starts_at IS NULL) = (trial_ends_at IS NULL)) AND ((trial_ends_at IS NULL) OR (trial_ends_at > trial_starts_at))))
 );
 
@@ -59954,6 +60157,14 @@ ALTER TABLE ONLY public.invocation_attempt_history
 
 
 --
+-- Name: invocation_backlog_counters invocation_backlog_counters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_backlog_counters
+    ADD CONSTRAINT invocation_backlog_counters_pkey PRIMARY KEY (app_id, source, account_id, slot);
+
+
+--
 -- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -62386,6 +62597,14 @@ ALTER TABLE ONLY public.outbound_ai_budget_alerts
 
 
 --
+-- Name: outbound_ai_deployment_minutes outbound_ai_deployment_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_deployment_minutes
+    ADD CONSTRAINT outbound_ai_deployment_minutes_pkey PRIMARY KEY (deployment_id, minute);
+
+
+--
 -- Name: outbound_ai_evaluation_items outbound_ai_evaluation_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -62410,6 +62629,14 @@ ALTER TABLE ONLY public.outbound_ai_log_exports
 
 
 --
+-- Name: outbound_ai_online_evaluation_days outbound_ai_online_evaluation_days_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_online_evaluation_days
+    ADD CONSTRAINT outbound_ai_online_evaluation_days_pkey PRIMARY KEY (integration_id, usage_date);
+
+
+--
 -- Name: outbound_ai_price_entries outbound_ai_price_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -62431,6 +62658,14 @@ ALTER TABLE ONLY public.outbound_ai_price_lists
 
 ALTER TABLE ONLY public.outbound_ai_prompt_prefixes
     ADD CONSTRAINT outbound_ai_prompt_prefixes_pkey PRIMARY KEY (integration_id, prefix_hash);
+
+
+--
+-- Name: outbound_ai_quality_alerts outbound_ai_quality_alerts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_quality_alerts
+    ADD CONSTRAINT outbound_ai_quality_alerts_pkey PRIMARY KEY (id);
 
 
 --
@@ -62527,6 +62762,22 @@ ALTER TABLE ONLY public.outbound_ai_tag_limits
 
 ALTER TABLE ONLY public.outbound_ai_tag_usage_daily
     ADD CONSTRAINT outbound_ai_tag_usage_daily_pkey PRIMARY KEY (integration_id, usage_date, tag);
+
+
+--
+-- Name: outbound_ai_trace_days outbound_ai_trace_days_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_trace_days
+    ADD CONSTRAINT outbound_ai_trace_days_pkey PRIMARY KEY (integration_id, usage_date);
+
+
+--
+-- Name: outbound_ai_traces outbound_ai_traces_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_traces
+    ADD CONSTRAINT outbound_ai_traces_pkey PRIMARY KEY (integration_id, trace_id);
 
 
 --
@@ -70931,6 +71182,13 @@ CREATE INDEX invocation_attempt_history_root_idx ON public.invocation_attempt_hi
 
 
 --
+-- Name: invocation_backlog_counters_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocation_backlog_counters_account_idx ON public.invocation_backlog_counters USING btree (account_id, source);
+
+
+--
 -- Name: invocation_environment_queue_domain_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -71029,6 +71287,13 @@ CREATE INDEX invocations_delayed_idx ON public.invocations USING btree (app_id, 
 
 
 --
+-- Name: invocations_dispatching_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_dispatching_due_idx ON public.invocations USING btree (due_at) WHERE (state = 'dispatching'::text);
+
+
+--
 -- Name: invocations_due_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -71057,13 +71322,6 @@ CREATE INDEX invocations_failure_destination_idx ON public.invocations USING btr
 
 
 --
--- Name: invocations_instance_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX invocations_instance_idx ON public.invocations USING btree (instance_id, due_at) WHERE (state = 'dispatching'::text);
-
-
---
 -- Name: invocations_org_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -71082,6 +71340,13 @@ CREATE INDEX invocations_platform_tenant_idx ON public.invocations USING btree (
 --
 
 CREATE INDEX invocations_queue_binding_scope_idx ON public.invocations USING btree (app_id, queue_binding_id, deployment_scope, state, created_at) WHERE ((source = 'queue'::text) AND (state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'dead_letter'::text])));
+
+
+--
+-- Name: invocations_queue_pending_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_queue_pending_created_idx ON public.invocations USING btree (created_at) WHERE ((source = 'queue'::text) AND (state = 'pending'::text));
 
 
 --
@@ -73164,6 +73429,20 @@ CREATE INDEX outbound_ai_budget_alerts_recent_idx ON public.outbound_ai_budget_a
 
 
 --
+-- Name: outbound_ai_deployment_minutes_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_deployment_minutes_app ON public.outbound_ai_deployment_minutes USING btree (app_id, minute);
+
+
+--
+-- Name: outbound_ai_deployment_minutes_minute; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_deployment_minutes_minute ON public.outbound_ai_deployment_minutes USING btree (minute);
+
+
+--
 -- Name: outbound_ai_evaluations_claim_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -73206,6 +73485,27 @@ CREATE INDEX outbound_ai_prompt_prefixes_seen_at_idx ON public.outbound_ai_promp
 
 
 --
+-- Name: outbound_ai_quality_alerts_once_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX outbound_ai_quality_alerts_once_idx ON public.outbound_ai_quality_alerts USING btree (integration_id, usage_date, model, metric);
+
+
+--
+-- Name: outbound_ai_quality_alerts_prune_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_quality_alerts_prune_idx ON public.outbound_ai_quality_alerts USING btree (detected_at);
+
+
+--
+-- Name: outbound_ai_quality_alerts_recent_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_quality_alerts_recent_idx ON public.outbound_ai_quality_alerts USING btree (integration_id, detected_at DESC);
+
+
+--
 -- Name: outbound_ai_replays_daily_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -73234,6 +73534,13 @@ CREATE INDEX outbound_ai_request_content_prune_idx ON public.outbound_ai_request
 
 
 --
+-- Name: outbound_ai_request_log_evaluation_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_request_log_evaluation_pending_idx ON public.outbound_ai_request_log USING btree (created_at) WHERE (evaluation_state = ANY (ARRAY['pending'::text, 'running'::text]));
+
+
+--
 -- Name: outbound_ai_request_log_prune_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -73245,6 +73552,13 @@ CREATE INDEX outbound_ai_request_log_prune_idx ON public.outbound_ai_request_log
 --
 
 CREATE INDEX outbound_ai_request_log_recent_idx ON public.outbound_ai_request_log USING btree (integration_id, created_at DESC, id DESC);
+
+
+--
+-- Name: outbound_ai_request_log_trace_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_request_log_trace_idx ON public.outbound_ai_request_log USING btree (integration_id, trace_id, created_at) WHERE (trace_id IS NOT NULL);
 
 
 --
@@ -73273,6 +73587,20 @@ CREATE INDEX outbound_ai_settlements_settled_at_idx ON public.outbound_ai_settle
 --
 
 CREATE INDEX outbound_ai_tag_usage_daily_prune_idx ON public.outbound_ai_tag_usage_daily USING btree (usage_date);
+
+
+--
+-- Name: outbound_ai_traces_prune_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_traces_prune_idx ON public.outbound_ai_traces USING btree (last_at);
+
+
+--
+-- Name: outbound_ai_traces_recent_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_traces_recent_idx ON public.outbound_ai_traces USING btree (integration_id, last_at DESC);
 
 
 --
@@ -73735,6 +74063,13 @@ CREATE INDEX product_control_credit_operation ON public.product_control_billing_
 --
 
 CREATE UNIQUE INDEX product_control_customer_auth_organization ON public.product_control_customers USING btree (app_id, auth_organization_id) WHERE (auth_organization_id IS NOT NULL);
+
+
+--
+-- Name: product_control_customers_unresolved_trials_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_customers_unresolved_trials_idx ON public.product_control_customers USING btree (trial_ends_at) WHERE ((trial_ends_at IS NOT NULL) AND (trial_resolved_at IS NULL));
 
 
 --
@@ -79804,6 +80139,34 @@ CREATE TRIGGER invocation_async_subject BEFORE INSERT OR UPDATE ON public.invoca
 --
 
 CREATE TRIGGER invocation_attempt_history_transition AFTER UPDATE OF state, attempts, replay_generation ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.record_invocation_attempt_history();
+
+
+--
+-- Name: invocations invocation_backlog_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER invocation_backlog_delete AFTER DELETE ON public.invocations FOR EACH ROW WHEN ((old.state = ANY (ARRAY['pending'::text, 'dispatching'::text]))) EXECUTE FUNCTION public.invocation_backlog_count();
+
+
+--
+-- Name: invocations invocation_backlog_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER invocation_backlog_insert AFTER INSERT ON public.invocations FOR EACH ROW WHEN ((new.state = ANY (ARRAY['pending'::text, 'dispatching'::text]))) EXECUTE FUNCTION public.invocation_backlog_count();
+
+
+--
+-- Name: invocations invocation_backlog_payload; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER invocation_backlog_payload AFTER UPDATE OF payload ON public.invocations FOR EACH ROW WHEN (((old.state = ANY (ARRAY['pending'::text, 'dispatching'::text])) AND (new.state = ANY (ARRAY['pending'::text, 'dispatching'::text])) AND (NOT (old.source IS DISTINCT FROM new.source)) AND (NOT (old.app_id IS DISTINCT FROM new.app_id)) AND (NOT (old.account_id IS DISTINCT FROM new.account_id)) AND (old.payload IS DISTINCT FROM new.payload))) EXECUTE FUNCTION public.invocation_backlog_count();
+
+
+--
+-- Name: invocations invocation_backlog_state; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER invocation_backlog_state AFTER UPDATE OF state, source, app_id, account_id ON public.invocations FOR EACH ROW WHEN ((((old.state = ANY (ARRAY['pending'::text, 'dispatching'::text])) IS DISTINCT FROM (new.state = ANY (ARRAY['pending'::text, 'dispatching'::text]))) OR ((old.state = ANY (ARRAY['pending'::text, 'dispatching'::text])) AND ((old.source IS DISTINCT FROM new.source) OR (old.app_id IS DISTINCT FROM new.app_id) OR (old.account_id IS DISTINCT FROM new.account_id))))) EXECUTE FUNCTION public.invocation_backlog_count();
 
 
 --
@@ -89662,6 +90025,14 @@ ALTER TABLE ONLY public.invocation_attempt_history
 
 
 --
+-- Name: invocation_backlog_counters invocation_backlog_counters_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_backlog_counters
+    ADD CONSTRAINT invocation_backlog_counters_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -92670,6 +93041,14 @@ ALTER TABLE ONLY public.outbound_ai_evaluations
 
 
 --
+-- Name: outbound_ai_online_evaluation_days outbound_ai_online_evaluation_days_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_online_evaluation_days
+    ADD CONSTRAINT outbound_ai_online_evaluation_days_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: outbound_ai_price_entries outbound_ai_price_entries_price_list_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -92691,6 +93070,22 @@ ALTER TABLE ONLY public.outbound_ai_price_lists
 
 ALTER TABLE ONLY public.outbound_ai_prompt_prefixes
     ADD CONSTRAINT outbound_ai_prompt_prefixes_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_quality_alerts outbound_ai_quality_alerts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_quality_alerts
+    ADD CONSTRAINT outbound_ai_quality_alerts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_quality_alerts outbound_ai_quality_alerts_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_quality_alerts
+    ADD CONSTRAINT outbound_ai_quality_alerts_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
 
 
 --
@@ -92803,6 +93198,22 @@ ALTER TABLE ONLY public.outbound_ai_tag_limits
 
 ALTER TABLE ONLY public.outbound_ai_tag_usage_daily
     ADD CONSTRAINT outbound_ai_tag_usage_daily_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_trace_days outbound_ai_trace_days_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_trace_days
+    ADD CONSTRAINT outbound_ai_trace_days_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_traces outbound_ai_traces_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_traces
+    ADD CONSTRAINT outbound_ai_traces_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
 
 
 --

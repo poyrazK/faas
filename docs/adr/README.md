@@ -1,10 +1,16 @@
 # Architecture Decision Records
 
+- [Compose deploy resources and replicas set app settings](20261023120000-compose-deploy-resources.md)
+- [Compose service secrets as files in /run/secrets](20261023090000-compose-runtime-secret-files.md)
+- [ADR-20261023113721: Platform flags for edge rule features](20261023113721-edge-feature-platform-flags.md)
+- [ADR-20261022203523: Per-instance request concurrency](20261022203523-per-instance-request-concurrency.md) — proposed; `scaling.per_instance_concurrency` caps the gateway's per-VM gate and drives scale-out (H12-4)
 - [ADR-20261022204036: An Idempotency-Key is bound to its request](20261022204036-idempotency-key-bound-to-request.md) — another request with a used key gets `422 idempotency_key_reused`, not a replay (Proposed)
 - [ADR-20261022203653: One dead-letter entry per queue message](20261022203653-one-dead-letter-entry-per-queue-message.md) — Proposed; amends ADR-179: a push receipt is captured but not listed
 - [ADR-20261022105846: Penalty box for edge rules](20261022105846-edge-rule-penalty-box.md)
 - [Compose build secrets for Dockerfile builds](20261022185329-compose-build-secrets.md)
+- [ADR-20261023173624: Runtime secrets are bound to their account](20261023173624-runtime-secrets-bound-to-their-account.md) — vmmd opens a bound envelope only for its account; writers opt in with FAAS_RUNTIME_SECRET_BINDING
 - [ADR-20261023104734: Daemons log in as runtime roles, not the schema owner](20261023104734-database-runtime-roles.md) — faas_runtime group, per-daemon roles, opt-in FAAS_DB_ROLE
+- [Product Control trial-to-paid conversion](20261022180921-product-control-trial-conversion.md)
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
 - [Compose process overrides on source-built services](20261022160000-compose-process-on-built-services.md)
 - [ADR-20261022140000: Break-glass controls for a compromised secret store](20261022140000-break-glass-controls.md)
@@ -184,6 +190,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 20261022105723 | [Worker plan decisions: queue backlog and retention, CPU pricing, worker sizes](20261022105723-worker-queue-limits-cpu-pricing-sizes.md) | accepted | Queue backlogs grow to 10k / 100k / 1M messages per app with a 100 MiB / 1 GiB / 10 GiB account byte cap and 1 / 4 / 14-day expiry; CPU stays bundled into GB-RAM-hours; workers keep plan sizes |
 | 20261019103000 | [Frozen worker pools](20261019103000-frozen-worker-pools.md) | accepted; behind `frozen_tier_workers` | A pool scaling in freezes a surplus worker that holds no lease and thaws it before booting new ones; a frozen worker stops instead of parking and gives up its account slot when another pool needs it |
 | 20261018101500 | [Worker pools scale out off the scheduler loop, with brief characterization for proven workers](20261018101500-worker-pool-scale-out-off-loop.md) | accepted | The targets trigger reconciles worker apps in background runs, one per account at a time; a declared worker whose deployment passed the full window on the node boots with `faas.worker=proven` and is characterized in 1 s |
 | 1728 | [Owner-authorized deployment response checks](1728-owner-authorized-deployment-response-checks.md) | accepted; native deployment validation pending | Exact-deployment GET checks through the trusted gateway, with bounded HTTP evidence and no forwarded account credentials |
