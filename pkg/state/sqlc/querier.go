@@ -5735,6 +5735,12 @@ type Querier interface {
 	// auth rejection (ADR-847; probe observations are pruned after a day), and
 	// scheduled prewarms that admitted instances.
 	RouteAwakeSourceMinutes(ctx context.Context, db DBTX, arg RouteAwakeSourceMinutesParams) ([]RouteAwakeSourceMinutesRow, error)
+	// Deliveries schedd made to the app (ADR-20261022184757), per minute and
+	// source: how many were running and how many started. Cron firings are keyed
+	// by cron job and queue deliveries by queue. A delivery runs from received_at
+	// to completed_at; one still running ends at until_at, and none counts for
+	// more than max_minutes.
+	RouteAwakeWorkMinutes(ctx context.Context, db DBTX, arg RouteAwakeWorkMinutesParams) ([]RouteAwakeWorkMinutesRow, error)
 	// Advisory identity cohorts use the same exact routes, deployment pair and
 	// closed windows as aggregate health. Rank before bounding output and sorting
 	// weighted latency. Request-time attribution never follows today's tenant link.

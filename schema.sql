@@ -71265,6 +71265,13 @@ CREATE INDEX invocations_app_queue_pending_idx ON public.invocations USING btree
 
 
 --
+-- Name: invocations_app_received_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_app_received_idx ON public.invocations USING btree (app_id, received_at) WHERE (received_at IS NOT NULL);
+
+
+--
 -- Name: invocations_async_account_history_idx; Type: INDEX; Schema: public; Owner: -
 --
 
