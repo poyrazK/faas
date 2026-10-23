@@ -158,7 +158,7 @@ func (e *Evaluator) findings(ctx context.Context, acct state.Account, app state.
 	}
 	out := KeptAwake(routeawake.Analyze(routeawake.Inputs{
 		App: app.Slug, From: since, Until: now,
-		IdleTimeoutS: limits.EffectiveIdleTimeoutS(string(app.Type), app.IdleTimeoutS), RAMMB: app.RAMMB,
+		IdleTimeoutS: limits.EffectiveIdleTimeoutS(string(app.Type), app.IdleTimeoutS), TailTimeoutS: limits.WaitUntilTimeoutS(), RAMMB: app.RAMMB,
 		Awake: data.Awake, Routes: data.Routes, Sources: data.Sources,
 	}))
 	stats, err := e.Store.RouteAdviceRouteStats(ctx, sqlc.RouteAdviceRouteStatsParams{
