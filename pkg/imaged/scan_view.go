@@ -6,11 +6,51 @@ package imaged
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/scanview"
 )
+
+// errScanDirInvisible marks a scan directory the scanner would not catalog.
+var errScanDirInvisible = errors.New("imaged: scan directory is invisible to the scanner")
+
+// scannerSkippedDirs are the directories Grype's cataloger (syft's path
+// skipper, syft/internal/fileresolver/path_skipper.go) ignores when they are
+// tmpfs, which on a Linux host they are; proc, sysfs and devtmpfs mounts,
+// skipped wherever they are, cannot hold a scan directory. A scan rooted in
+// one catalogs no packages and reports no findings, so a TMPDIR under
+// /dev/shm turned every scan into a false clean. A variable so tests can
+// mark their own directory.
+var scannerSkippedDirs = []string{"/run", "/dev", "/var/run", "/var/lock", "/sys", "/proc"}
+
+// checkScannerVisible refuses a scan directory whose real path lies inside
+// a directory the scanner skips, so the scan fails closed instead.
+func checkScannerVisible(dir string) error {
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return fmt.Errorf("imaged: resolve scan directory: %w", err)
+	}
+	if skipped, ok := scannerSkippedRoot(real); ok {
+		return fmt.Errorf("%w: %s is inside %s; point TMPDIR and the artifact storage root at a disk-backed directory", errScanDirInvisible, real, skipped)
+	}
+	return nil
+}
+
+// scannerSkippedRoot reports the skipped directory that contains real, with
+// syft's containment rule (equal, or a prefix followed by a separator).
+func scannerSkippedRoot(real string) (string, bool) {
+	real = filepath.Clean(real)
+	for _, dir := range scannerSkippedDirs {
+		dir = filepath.Clean(dir)
+		if real == dir || strings.HasPrefix(real, dir+string(filepath.Separator)) {
+			return dir, true
+		}
+	}
+	return "", false
+}
 
 func stageBoundedGrypeView(ctx context.Context, source string) (string, scanview.Tree, func() error, error) {
 	view, err := scanview.Snapshot(ctx, source)
@@ -22,6 +62,11 @@ func stageBoundedGrypeView(ctx context.Context, source string) (string, scanview
 		return "", scanview.Tree{}, func() error { return nil }, err
 	}
 	cleanup := func() error { return os.RemoveAll(target) }
+	// Before the copy: a view the scanner cannot see is refused, and a
+	// rootfs is never copied into a RAM-backed tmpfs only to be discarded.
+	if err := checkScannerVisible(target); err != nil {
+		return "", scanview.Tree{}, func() error { return nil }, errors.Join(err, cleanup())
+	}
 	actual, err := scanview.Copy(ctx, source, target, view)
 	if err != nil {
 		return "", scanview.Tree{}, func() error { return nil }, errors.Join(err, cleanup())

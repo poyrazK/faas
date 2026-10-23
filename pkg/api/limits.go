@@ -7391,6 +7391,28 @@ const (
 	// storm.
 	InstanceDivergenceTickLimit = 50
 
+	// AdoptionReportIntervalSeconds is how often schedd checks its nodes'
+	// vmmd ownership epochs for a restart whose adoption report it has not
+	// applied (vmmd restart adoption ADR §3). Guests the new vmmd refused
+	// keep their RUNNING rows until then, so this bounds how long requests
+	// can reach them after a restart.
+	AdoptionReportIntervalSeconds = 5
+
+	// VMMDRestartNoticeSeconds is how long a vmmd stopping for a planned,
+	// adopting restart tells schedd it is restarting (vmmd restart adoption
+	// ADR §3): wakes on the node are retried instead of failed and its
+	// failed heartbeats are not counted. The successor clears it once it
+	// serves, normally within seconds; a vmmd that never comes back loses
+	// the notice after this long and is treated as before.
+	VMMDRestartNoticeSeconds = 60
+
+	// GatewayVMMDRestartHoldSeconds bounds how long a gateway forward waits
+	// for a node's vmmd to come back under its planned-restart notice
+	// instead of answering 503 (vmmd restart adoption ADR, "Boundaries").
+	// The successor normally serves within a second; this matches the wake
+	// queue's hold (WakeQueueTTLSeconds).
+	GatewayVMMDRestartHoldSeconds = WakeQueueTTLSeconds
+
 	// Tier A9 (capacity-pressure-triggered cross-node app rebalance,
 	// ADR-087 — sibling to the dead-node rebalancer of ADR-064).
 	// Today apps are durably pinned to a single compute_node via
