@@ -1046,9 +1046,10 @@ type runDeps struct {
 	// (ADR-20261018090210), following the api_monetization_enabled runtime
 	// setting. Nil keeps monetization off.
 	apiMonetization func() bool
-	// apiMonetizationFlags is the api_monetization platform flag
-	// (ADR-20261020170649), kept current by the runtime-config watcher.
-	apiMonetizationFlags *platformflags.Set
+	// platformFlags is every platform flag gatewayd-internal decides (the
+	// api_monetization flag, ADR-20261020170649, and the edge feature flags,
+	// ADR-20261023113721), kept current by the runtime-config watcher.
+	platformFlags *platformflags.Set
 	// Private identity is built only with the process-wide drain tracker.
 	runtimeIngressIdentity http.Handler
 	listen                 func(network, addr string) (net.Listener, error)
@@ -1539,7 +1540,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	tenantSurfacesFlag := runtimeconfig.NewBoolFlag(api.TenantSurfacesEnabled())
 	apiMonetizationFlag := runtimeconfig.NewBoolFlag(api.APIMonetizationEnabled())
 	deps.apiMonetization = apiMonetizationFlag.Load
-	deps.apiMonetizationFlags = platformflags.NewSet(nil)
+	deps.platformFlags = platformflags.NewSet(nil)
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(osGetenv))
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
 	router := pgRouter{
@@ -2198,7 +2199,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 					httpsec.SetHSTSEnabled(enabled)
 				}
 				return nil
-			}, deps.apiMonetizationFlags)
+			}, deps.platformFlags)
 		watcher := runtimeconfig.New(pgStore, pool, keys, apply, log)
 		watcher.Daemon = "gatewayd-internal" // ADR-1700 apply receipts
 		if err := watcher.Reconcile(runtimeCtx); err != nil {
@@ -2894,7 +2895,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
 	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
 	handler.WithAPIMonetization(deps.apiMonetization)
-	handler.WithAPIMonetizationFlags(deps.apiMonetizationFlags)
+	handler.WithAPIMonetizationFlags(deps.platformFlags)
+	handler.WithEdgeFeatureFlags(deps.platformFlags)
 	// ADR-978: order the warm-capacity queue by route priority. Rules are
 	// read only for requests that have to queue, through a 30 s cache.
 	if pgStore := deps.pgStore; pgStore != nil {

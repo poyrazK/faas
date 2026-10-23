@@ -290,6 +290,10 @@ OWASP Core Rule Set for SQL injection, cross-site scripting, path traversal,
 command injection, scanners, and header injection. It works the same on
 `*.gregale.dev` and on your custom domains. `observe` at paranoia level 1 is
 generally available; `warn`, `block` and paranoia level 2 are in preview.
+Warn and block are released account by account: until your account is
+included, creating a rule in either mode, or switching one to it, returns
+`422` with code `edge_feature_unavailable`, and existing warn and block
+rules only observe.
 The rule's `mode` decides what happens to a detection:
 
 | Mode | Headers and URL | Request body |
@@ -353,7 +357,11 @@ requests also count toward `edge_rejection_pressure`.
 ## Browser challenge (preview)
 
 A `kind=challenge` edge rule keeps scripts and scrapers off browser pages.
-An app can have 3 on Hobby, 10 on Pro and 25 on Scale; Free has none. A matched request without a valid pass never reaches your app:
+An app can have 3 on Hobby, 10 on Pro and 25 on Scale; Free has none.
+Challenge rules are released account by account: until your account is
+included, creating one or switching one on returns `422` with code
+`edge_feature_unavailable`, and existing challenge rules challenge nobody.
+A matched request without a valid pass never reaches your app:
 
 - A page load gets a short page that does a small calculation in the
   browser (a proof of work, tens to a few hundred milliseconds by default),
@@ -424,7 +432,10 @@ is refused for a while, whatever path it asks for.
 
 Penalties work on rules that refuse clients: `ip` and `geo` rules,
 `throttle` rules (a client that keeps hitting the limit) and `waf` rules in
-block mode.
+block mode. They are released account by account: until your account is
+included, adding a penalty, or switching on a rule that has one, returns
+`422` with code `edge_feature_unavailable`, and existing penalties box
+nobody while the rules themselves keep refusing.
 
 ```sh
 # Block anyone who probes a scanner path from the whole app for 30 minutes.

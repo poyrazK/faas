@@ -139,6 +139,9 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 	if prob := ValidateEdgeRuleBody(&req, acct.Plan); prob != nil {
 		return m, prob
 	}
+	if prob := s.createReleaseProblem(acct, req); prob != nil {
+		return m, prob
+	}
 	if prob := s.validateEdgeRuleMatchLists(ctx, acct.ID, req.Match); prob != nil {
 		return m, prob
 	}
@@ -291,6 +294,9 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		}
 	}
 	if prob := validatePenaltyUpdate(row, req); prob != nil {
+		return m, prob
+	}
+	if prob := s.updateReleaseProblem(acct, row, req); prob != nil {
 		return m, prob
 	}
 	matchPath := row.MatchPath
