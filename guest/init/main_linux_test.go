@@ -613,6 +613,43 @@ func TestPrepareRailpackConfig_CreatesAndRemovesPlatformConfig(t *testing.T) {
 	}
 }
 
+// Issue #2641: Railpack applies railpack.json packages after it reads go.mod,
+// so this pin chooses the compiler for every Go function. A function whose
+// go.mod names an older Go must still build on a supported, patched release.
+func TestPrepareRailpackConfig_GoFunctionsUseSupportedToolchain(t *testing.T) {
+	for _, runtime := range []string{"go124", "go124-alpine"} {
+		t.Run(runtime, func(t *testing.T) {
+			workdir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(workdir, "go.mod"), []byte("module example.com/fn\n\ngo 1.24\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			restore, err := prepareRailpackConfig(api.BuildManifest{
+				Framework:      api.FrameworkRailpackGo,
+				Runtime:        runtime,
+				RuntimeBaseRef: "ghcr.io/poyrazk/runner-" + runtime + "@sha256:" + strings.Repeat("c", 64),
+				Workdir:        workdir,
+			})
+			if err != nil {
+				t.Fatalf("prepareRailpackConfig: %v", err)
+			}
+			data, err := os.ReadFile(filepath.Join(workdir, "railpack.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var config map[string]any
+			if err := json.Unmarshal(data, &config); err != nil {
+				t.Fatal(err)
+			}
+			if got := config["packages"].(map[string]any)["go"]; got != api.GoBuildToolchain {
+				t.Fatalf("Go function toolchain = %v, want %s", got, api.GoBuildToolchain)
+			}
+			if err := restore(); err != nil {
+				t.Fatalf("restore: %v", err)
+			}
+		})
+	}
+}
+
 func TestPrepareRailpackConfig_MinimalBaseDefaultsAptPackagesEmpty(t *testing.T) {
 	workdir := t.TempDir()
 	restore, err := prepareRailpackConfig(api.BuildManifest{

@@ -10,10 +10,12 @@ Turns on what [ADR 20261022111812](../adr/20261022111812-seal-domains-per-reader
 3. rehearse the break-glass release pause and credential revocation;
 4. move customer runtime secrets (env vars and secrets) to the `runtime` seal
    domain;
-5. move GitHub install tokens and webhook secrets to the `source` seal domain.
+5. move GitHub install tokens and webhook secrets to the `source` seal domain;
+6. move private-registry passwords to the `build` seal domain.
 
 Do each stage in staging first, then production. Stages 1 and 3 stand alone.
-The steps of stages 2, 4 and 5 run in order, and each has its own rollback.
+The steps of stages 2, 4, 5 and 6 run in order, and each has its own
+rollback.
 Record in the change ticket who ran each step, when, and each domain's
 recipient (recipients are public).
 
@@ -494,4 +496,100 @@ this step stay domain-only, so:
 
 - never remove `source.age` from githubd;
 - never roll githubd back past the first release that carried the source
+  reader.
+
+## 6. Build seal domain
+
+imaged on compute hosts is the only reader of app and job private-registry
+passwords; apid seals them. At the end of this stage only `build.age` opens
+them, and only imaged holds it.
+
+### 6a. Create the identity (operator machine)
+
+```bash
+gregalectl seal-domain init --domain build --dir ~/gregale-seal/<environment>
+```
+
+Store `build.age` with the other domain identities. If it is lost after 6d,
+customers must set their registry credentials again.
+
+### 6b. Stage the readers; seal to both keys
+
+Add to the local variables file:
+
+```yaml
+faas_seal_domain_build_identity_src: /Users/<you>/gregale-seal/<environment>/build.age
+faas_seal_domain_build_recipient_src: /Users/<you>/gregale-seal/<environment>/build.age.pub
+```
+
+1. **Each compute host:**
+   `ANSIBLE_LIMIT=<host> make ANSIBLE_INVENTORY=<inventory> bootstrap-compute`.
+   The role:
+   - installs `build.age`;
+   - restarts imaged (so an image preparation in flight on that host fails
+     and is retried);
+   - proves the probe, publishing it on the first host.
+
+   Converge one host at a time.
+2. **Control plane:** converge the role alone. With
+   `faas_seal_domain_build_writes` left empty, apid seals new passwords to
+   both the domain and the fleet key, so this step and step 1 can run in
+   either order.
+
+   ```bash
+   gregalectl deploy converge-control-plane --roles seal_domains --manifest-file <signed manifest> --ssh-known-hosts-file <known_hosts> --ansible-vars-file <local vars file>
+   ```
+
+Check:
+
+- Every compute host's `faas_seal_domain_build.prom` shows
+  `faas_seal_domain_ready{domain="build"} 1`.
+- In Prometheus, `faas_seal_domain_loaded{domain="build"}` is 1 on every
+  imaged, and FaasSealDomainIdentityMissing does not fire.
+- imaged logs `"build seal domain"` with `"domain_identity":true`.
+- apid logs `"build seal domain"` with `"recipients":2`.
+- Deploy a test app that pulls from a private registry, with a credential
+  set after the converge.
+
+Rollback: set `faas_seal_domain_build_writes: fleet` and converge the control
+plane. Passwords saved in the meantime also carry the fleet key.
+
+### 6c. Wait out the rollback window
+
+Go on only when every imaged reports `faas_seal_domain_loaded{domain="build"} 1`
+and imaged's previous release (N-1) also carries the build reader. As with
+`runtime.age`, a compute node that joins later needs `build.age` before it
+prepares images: CD and node join do not stage it yet.
+
+### 6d. Seal to the domain only; re-seal stored passwords
+
+Add to the local variables file, and converge the control plane:
+
+```yaml
+faas_seal_domain_build_readers_verified: true
+faas_seal_domain_build_writes: domain
+```
+
+apid then logs `"write_mode":"domain"`. Re-seal on a compute host, which
+holds `build.age` (its `gregalectl` must not be newer than the data
+release):
+
+```bash
+sudo gregalectl seal-domain migrate --domain build --readers-verified --db-env /etc/faas/compute-db.env
+```
+
+- Expect `0 failed`.
+- If `changed concurrently` is not 0, a customer changed that credential
+  during the run; run the migration again.
+- A second run reports every row `current`.
+- If `failed` is not 0, imaged cannot open those passwords today either;
+  their owners must set them again.
+
+Deploy the test app again.
+
+Rollback: set `faas_seal_domain_build_writes` back to empty and converge.
+Passwords re-sealed in this step stay domain-only, so:
+
+- never remove `build.age` from a compute host;
+- never roll imaged back past the first release that carried the build
   reader.

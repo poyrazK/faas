@@ -1741,7 +1741,7 @@ func railpackRuntimePackage(runtime string) (string, string) {
 	case "python313":
 		return "python", "3.13"
 	case "go124", "go124-alpine":
-		return "go", "1.24"
+		return "go", api.GoBuildToolchain
 	default:
 		return "", ""
 	}

@@ -21,8 +21,56 @@ import (
 const (
 	outboundNamespace = "outbound_authorization"
 	outboundMaxBytes  = 8192
+	registryNamespace = "registry_creds"
 	migrateBatch      = 200
 )
+
+// resealOutcome is what resealBlob decided for one envelope.
+type resealOutcome int
+
+const (
+	// resealWrite: the envelope was re-sealed to the domain; write it.
+	resealWrite resealOutcome = iota
+	// resealCurrent: only the domain opens the envelope already.
+	resealCurrent
+	// resealFailed: no identity opens it, or it is under another namespace.
+	resealFailed
+)
+
+// resealBlob opens a SealBytes envelope with the legacy identities and
+// re-seals it under namespace to the domain alone.
+func resealBlob(blob []byte, namespace string, maxBytes int, domain *age.X25519Identity, legacy []*age.X25519Identity) ([]byte, resealOutcome, error) {
+	ns, plaintext, err := secretbox.OpenBytesMulti(legacy, blob)
+	if err != nil {
+		if _, _, domainErr := secretbox.OpenBytesMulti([]*age.X25519Identity{domain}, blob); domainErr == nil {
+			return nil, resealCurrent, nil
+		}
+		return nil, resealFailed, nil
+	}
+	defer clear(plaintext)
+	if ns != namespace {
+		return nil, resealFailed, nil
+	}
+	sealed, err := secretbox.SealBytesTo([]*age.X25519Recipient{domain.Recipient()}, namespace, plaintext, maxBytes)
+	if err != nil {
+		return nil, resealFailed, err
+	}
+	return sealed, resealWrite, nil
+}
+
+// count records one envelope's outcome; replaced says whether a write landed.
+func (r *MigrationReport) count(outcome resealOutcome, replaced bool) {
+	switch {
+	case outcome == resealCurrent:
+		r.Current++
+	case outcome == resealFailed:
+		r.Failed++
+	case replaced:
+		r.Resealed++
+	default:
+		r.Changed++
+	}
+}
 
 // MigrationReport counts one migrate run. Resealed rows changed; Current
 // rows were already sealed as the target asks; Changed rows were rotated
@@ -54,8 +102,7 @@ func MigrateOutbound(ctx context.Context, store OutboundStore, domain *age.X2551
 	if store == nil || domain == nil || len(legacy) == 0 {
 		return MigrationReport{}, errors.New("sealmigrate: outbound migration needs the store, the domain identity and the legacy identities")
 	}
-	recipient := domain.Recipient()
-	report := MigrationReport{Domain: sealdomain.Outbound, Target: recipient.String()}
+	report := MigrationReport{Domain: sealdomain.Outbound, Target: domain.Recipient().String()}
 	afterKind, afterID := "", ""
 	for {
 		page, err := store.ListOutboundSealedCredentials(ctx, afterKind, afterID, migrateBatch)
@@ -65,34 +112,17 @@ func MigrateOutbound(ctx context.Context, store OutboundStore, domain *age.X2551
 		for _, c := range page {
 			report.Scanned++
 			afterKind, afterID = c.Kind, c.ID
-			ns, plaintext, err := secretbox.OpenBytesMulti(legacy, c.Sealed)
-			if err != nil {
-				if _, _, domainErr := secretbox.OpenBytesMulti([]*age.X25519Identity{domain}, c.Sealed); domainErr == nil {
-					report.Current++
-				} else {
-					report.Failed++
-				}
-				continue
-			}
-			if ns != outboundNamespace {
-				clear(plaintext)
-				report.Failed++
-				continue
-			}
-			sealed, err := secretbox.SealBytesTo([]*age.X25519Recipient{recipient}, outboundNamespace, plaintext, outboundMaxBytes)
-			clear(plaintext)
+			sealed, outcome, err := resealBlob(c.Sealed, outboundNamespace, outboundMaxBytes, domain, legacy)
 			if err != nil {
 				return report, fmt.Errorf("sealmigrate: reseal outbound %s %s: %w", c.Kind, c.ID, err)
 			}
-			replaced, err := store.ResealOutboundCredential(ctx, c, sealed)
-			if err != nil {
-				return report, err
+			replaced := false
+			if outcome == resealWrite {
+				if replaced, err = store.ResealOutboundCredential(ctx, c, sealed); err != nil {
+					return report, err
+				}
 			}
-			if replaced {
-				report.Resealed++
-			} else {
-				report.Changed++
-			}
+			report.count(outcome, replaced)
 		}
 		if len(page) < migrateBatch {
 			return report, nil

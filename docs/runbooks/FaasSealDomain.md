@@ -29,7 +29,8 @@ Impact depends on the write mode:
   `seal-domain migrate --domain runtime` has run. For `outbound`, that
   host's outboundd cannot use customer AI provider credentials. For
   `source`, that host's githubd cannot verify GitHub webhooks or fetch
-  source.
+  source. For `build`, that host's imaged cannot pull from customers'
+  private registries.
 
 ## Check
 

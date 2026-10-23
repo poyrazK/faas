@@ -22,6 +22,8 @@ const (
 	envSealDomainRuntimeWrites     = "FAAS_SEAL_DOMAIN_RUNTIME_WRITES"
 	envSealDomainSourceRecipient   = "FAAS_SEAL_DOMAIN_SOURCE_RECIPIENT_PATH"
 	envSealDomainSourceWrites      = "FAAS_SEAL_DOMAIN_SOURCE_WRITES"
+	envSealDomainBuildRecipient    = "FAAS_SEAL_DOMAIN_BUILD_RECIPIENT_PATH"
+	envSealDomainBuildWrites       = "FAAS_SEAL_DOMAIN_BUILD_WRITES"
 	// envRuntimeSecretBinding turns on account-bound runtime envelopes
 	// (ADR-20261023173624): off (the default) or account. Unit
 	// configuration, like the write modes: a database writer must not be
@@ -70,6 +72,14 @@ var sourceDomainRecipient func() *age.X25519Recipient
 // copy. githubd, which opens it, seals install tokens under the same mode.
 var sourceWriteMode sealdomain.WriteMode
 
+// buildDomainRecipient is the build domain's recipient once the
+// seal_domains role stages it; nil until then.
+var buildDomainRecipient func() *age.X25519Recipient
+
+// buildWriteMode picks the recipients of app and job private-registry
+// passwords, which imaged opens.
+var buildWriteMode sealdomain.WriteMode
+
 // runtimeDomainRecipient is the runtime domain's recipient once the
 // seal_domains role stages it; nil until then.
 var runtimeDomainRecipient func() *age.X25519Recipient
@@ -102,6 +112,15 @@ func loadSealDomains(getenv func(string) string, log *slog.Logger) error {
 		return fmt.Errorf("apid: source seal domain: %w", err)
 	}
 	log.Info("source seal domain", "write_mode", string(sourceWriteMode), "domain_recipient_staged", sourceDomainRecipient != nil, "recipients", len(sourceRecipients))
+
+	if buildDomainRecipient, buildWriteMode, err = loadDomainWriter(getenv, envSealDomainBuildRecipient, envSealDomainBuildWrites); err != nil {
+		return err
+	}
+	buildRecipients, err := registryCredentialRecipients()
+	if err != nil && buildWriteMode != sealdomain.WriteAuto && buildWriteMode != sealdomain.WriteFleet {
+		return fmt.Errorf("apid: build seal domain: %w", err)
+	}
+	log.Info("build seal domain", "write_mode", string(buildWriteMode), "domain_recipient_staged", buildDomainRecipient != nil, "recipients", len(buildRecipients))
 
 	if runtimeDomainRecipient, runtimeWriteMode, err = loadDomainWriter(getenv, envSealDomainRuntimeRecipient, envSealDomainRuntimeWrites); err != nil {
 		return err
@@ -149,6 +168,13 @@ func outboundCredentialRecipients() ([]*age.X25519Recipient, error) {
 // staged, then the domain and the fleet recipient, then the domain alone.
 func githubWebhookSecretRecipients() ([]*age.X25519Recipient, error) {
 	return sealdomain.Recipients(sourceWriteMode, recipientOrNil(sourceDomainRecipient), hostSecretRecipient())
+}
+
+// registryCredentialRecipients returns who an app or job private-registry
+// password is sealed to: the fleet recipient alone until the build domain is
+// staged, then the domain and the fleet recipient, then the domain alone.
+func registryCredentialRecipients() ([]*age.X25519Recipient, error) {
+	return sealdomain.Recipients(buildWriteMode, recipientOrNil(buildDomainRecipient), hostSecretRecipient())
 }
 
 // runtimeSecretRecipient is who app, project, release and binding secrets,
