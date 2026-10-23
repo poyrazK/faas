@@ -47609,7 +47609,7 @@ CREATE VIEW public.production_dead_letter_events AS
     created_at,
     environment_owned
    FROM public.dead_letter_events e
-  WHERE ((NOT environment_owned) AND ((source <> 'invocation'::text) OR ((NOT public.faas_invocation_headers_own_stage(app_id, headers)) AND (NOT (EXISTS ( SELECT 1
+  WHERE ((NOT environment_owned) AND (NOT ((source = 'trigger_record'::text) AND (origin = 'queue'::text))) AND ((source <> 'invocation'::text) OR ((NOT public.faas_invocation_headers_own_stage(app_id, headers)) AND (NOT (EXISTS ( SELECT 1
            FROM public.invocations i
           WHERE ((i.id = e.source_id) AND (NOT (EXISTS ( SELECT 1
                    FROM public.production_invocation_work p
