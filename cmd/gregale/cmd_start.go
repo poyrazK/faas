@@ -489,6 +489,12 @@ func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
 			}
 		},
 		onQueued: func(dep api.DeploymentResponse) {
+			// An upload accepted behind a lost reply is known by ID alone. Keep
+			// the submission pending; recovery reads the deployment back and
+			// verifies its app and environment before the session adopts it.
+			if dep.AppID == "" {
+				return
+			}
 			expectedAppID := r.session.AppID
 			r.session.DeploymentID, r.session.AppID, r.session.Status = dep.ID, dep.AppID, dep.Status
 			r.session.Revision, r.lastRequest = dep.Revision, nil
