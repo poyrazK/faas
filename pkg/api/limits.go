@@ -651,6 +651,14 @@ const (
 	ProductOverdueHeldSyncInterval = ConsumerOverdueHeldSyncInterval
 )
 
+// Product Control trial resolution (ADR-20261022180921): every interval, at
+// most a batch of ended trials is resolved; a customer awaiting a payment
+// method is refused new starts until then.
+const (
+	ProductControlTrialResolutionInterval = time.Minute
+	ProductControlTrialResolutionBatch    = 100
+)
+
 // PlatformTenantPlansMax bounds the tenant plans one account keeps
 // (ADR-1307).
 const PlatformTenantPlansMax = 100

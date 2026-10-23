@@ -12669,11 +12669,13 @@
       "account_id",
       "app_id",
       "auth_organization_id",
+      "payment_method_at",
       "plan",
       "revision",
       "suspended",
       "tenant_id",
       "trial_ends_at",
+      "trial_resolved_at",
       "trial_starts_at"
     ],
     "kind": "configuration"

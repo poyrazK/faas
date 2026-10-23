@@ -46662,7 +46662,10 @@ CREATE TABLE public.product_control_customers (
     auth_organization_id uuid,
     trial_starts_at timestamp with time zone,
     trial_ends_at timestamp with time zone,
+    payment_method_at timestamp with time zone,
+    trial_resolved_at timestamp with time zone,
     CONSTRAINT product_control_customers_auth_organization_id_check CHECK (((auth_organization_id IS NULL) OR (auth_organization_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT product_control_customers_conversion_chk CHECK ((((trial_resolved_at IS NULL) OR (trial_ends_at IS NOT NULL)) AND ((payment_method_at IS NULL) OR isfinite(payment_method_at)))),
     CONSTRAINT product_control_customers_trial_chk CHECK ((((trial_starts_at IS NULL) = (trial_ends_at IS NULL)) AND ((trial_ends_at IS NULL) OR (trial_ends_at > trial_starts_at))))
 );
 
@@ -72899,6 +72902,13 @@ CREATE INDEX product_control_credit_operation ON public.product_control_billing_
 --
 
 CREATE UNIQUE INDEX product_control_customer_auth_organization ON public.product_control_customers USING btree (app_id, auth_organization_id) WHERE (auth_organization_id IS NOT NULL);
+
+
+--
+-- Name: product_control_customers_unresolved_trials_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_customers_unresolved_trials_idx ON public.product_control_customers USING btree (trial_ends_at) WHERE ((trial_ends_at IS NOT NULL) AND (trial_resolved_at IS NULL));
 
 
 --
