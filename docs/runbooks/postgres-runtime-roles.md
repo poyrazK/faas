@@ -2,8 +2,8 @@
 
 Daemons can log in as their own member of `faas_runtime` instead of the schema
 owner `faas` ([ADR 20261023104734](../adr/20261023104734-database-runtime-roles.md)).
-A runtime role reads and writes rows but cannot alter, drop, truncate or
-re-grant anything, and cannot write the migration ledger.
+A runtime role reads and writes rows. It cannot change, remove or empty a
+table in one statement, pass a privilege on, or write the migration ledger.
 
 ## What converges automatically
 
