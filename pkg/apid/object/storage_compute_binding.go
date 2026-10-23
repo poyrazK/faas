@@ -260,7 +260,7 @@ func (s *Service) SealObjectStorageBindingValues(acct state.Account, app state.A
 				"Gregale could not securely store these credentials.",
 				"Retry in a few seconds; if it still fails, contact support.", err)
 		}
-		ciphertext, err := secretbox.SealOne(recipient, item.key, item.value, limits.SecretValueMaxBytes)
+		ciphertext, err := secretbox.SealOneBound(recipient, s.Host.RuntimeSecretBinding(app.AccountID), item.key, item.value, limits.SecretValueMaxBytes)
 		if err != nil {
 			if prob := api.AsProblem(err); prob != nil {
 				return nil, prob

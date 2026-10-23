@@ -6,3 +6,6 @@
 LoadCredential=faas_seal_domain_runtime_recipient:/etc/faas/secrets/domains/runtime.age.pub
 Environment=FAAS_SEAL_DOMAIN_RUNTIME_RECIPIENT_PATH=%d/faas_seal_domain_runtime_recipient
 Environment=FAAS_SEAL_DOMAIN_RUNTIME_WRITES={{ faas_seal_domain_runtime_writes }}
+# ADR-20261023173624: off or account. account binds each new runtime secret to
+# its account, so vmmd opens it only for that account's workloads.
+Environment=FAAS_RUNTIME_SECRET_BINDING={{ faas_seal_domain_runtime_binding }}

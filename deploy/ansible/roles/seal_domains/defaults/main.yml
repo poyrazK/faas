@@ -37,6 +37,16 @@ faas_seal_domain_runtime_writes: ""
 # the rollback window. Required for writes=domain.
 faas_seal_domain_runtime_readers_verified: false
 
+# ADR-20261023173624: off (default) or account. account binds every new
+# runtime secret to its account; a vmmd from before the binding refuses such
+# an envelope, so it needs faas_seal_domain_runtime_binding_readers_verified.
+faas_seal_domain_runtime_binding: "off"
+
+# Set true only after every vmmd and gregalectl run a release that checks
+# bindings (ADR-20261023173624) and the previous release left the rollback
+# window. Required for binding=account.
+faas_seal_domain_runtime_binding_readers_verified: false
+
 # Operator-local files from `gregalectl seal-domain init --domain source`.
 # Control-plane hosts stage both: githubd reads the identity, apid seals to
 # the recipient.

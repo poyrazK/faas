@@ -6,6 +6,7 @@
 - [ADR-20261022203653: One dead-letter entry per queue message](20261022203653-one-dead-letter-entry-per-queue-message.md) — Proposed; amends ADR-179: a push receipt is captured but not listed
 - [ADR-20261022105846: Penalty box for edge rules](20261022105846-edge-rule-penalty-box.md)
 - [Compose build secrets for Dockerfile builds](20261022185329-compose-build-secrets.md)
+- [ADR-20261023173624: Runtime secrets are bound to their account](20261023173624-runtime-secrets-bound-to-their-account.md) — vmmd opens a bound envelope only for its account; writers opt in with FAAS_RUNTIME_SECRET_BINDING
 - [ADR-20261023104734: Daemons log in as runtime roles, not the schema owner](20261023104734-database-runtime-roles.md) — faas_runtime group, per-daemon roles, opt-in FAAS_DB_ROLE
 - [Product Control trial-to-paid conversion](20261022180921-product-control-trial-conversion.md)
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)

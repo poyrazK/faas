@@ -22,7 +22,38 @@ const (
 	envSealDomainRuntimeWrites     = "FAAS_SEAL_DOMAIN_RUNTIME_WRITES"
 	envSealDomainSourceRecipient   = "FAAS_SEAL_DOMAIN_SOURCE_RECIPIENT_PATH"
 	envSealDomainSourceWrites      = "FAAS_SEAL_DOMAIN_SOURCE_WRITES"
+	// envRuntimeSecretBinding turns on account-bound runtime envelopes
+	// (ADR-20261023173624): off (the default) or account. Unit
+	// configuration, like the write modes: a database writer must not be
+	// able to switch the binding off.
+	envRuntimeSecretBinding = "FAAS_RUNTIME_SECRET_BINDING"
 )
+
+// runtimeSecretsBound seals new runtime secrets bound to their account. Only
+// after every reader runs a release that checks bindings and the previous
+// release has left the rollback window: an older reader refuses them.
+var runtimeSecretsBound bool
+
+// runtimeSecretBinding is the binding a runtime secret of accountID is
+// sealed with: the account once binding is on, none before. An empty
+// accountID with binding on fails the seal rather than writing it unbound.
+func runtimeSecretBinding(accountID string) secretbox.Binding {
+	if !runtimeSecretsBound {
+		return secretbox.Binding{}
+	}
+	return secretbox.Binding{AccountID: accountID}
+}
+
+func loadRuntimeSecretBinding(getenv func(string) string) (bool, error) {
+	switch v := getenv(envRuntimeSecretBinding); v {
+	case "", "off":
+		return false, nil
+	case "account":
+		return true, nil
+	default:
+		return false, fmt.Errorf("apid: %s=%q is not one of off, account", envRuntimeSecretBinding, v)
+	}
+}
 
 // outboundDomainRecipient is the outbound domain's recipient once the
 // seal_domains role stages it; nil until then.
@@ -83,7 +114,10 @@ func loadSealDomains(getenv func(string) string, log *slog.Logger) error {
 			return fmt.Errorf("apid: %s=domain needs %s", envSealDomainRuntimeWrites, envSealDomainRuntimeRecipient)
 		}
 	}
-	log.Info("runtime seal domain", "write_mode", string(runtimeWriteMode), "domain_recipient_staged", runtimeDomainRecipient != nil)
+	if runtimeSecretsBound, err = loadRuntimeSecretBinding(getenv); err != nil {
+		return err
+	}
+	log.Info("runtime seal domain", "write_mode", string(runtimeWriteMode), "domain_recipient_staged", runtimeDomainRecipient != nil, "account_binding", runtimeSecretsBound)
 	return nil
 }
 

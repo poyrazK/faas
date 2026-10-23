@@ -21,8 +21,8 @@ func (h projectSecretsHost) EmitAudit(ctx context.Context, kind string, accountI
 	h.s.audit.Emit(ctx, kind, accountID, data)
 }
 
-func (h projectSecretsHost) Seal(key, value string, maxBytes int) (projectsecrets.Sealed, *api.Problem) {
-	ciphertext, kid, valueHash, problem := h.s.sealSecretValue("project secret", key, value, maxBytes)
+func (h projectSecretsHost) Seal(accountID, key, value string, maxBytes int) (projectsecrets.Sealed, *api.Problem) {
+	ciphertext, kid, valueHash, problem := h.s.sealSecretValue("project secret", accountID, key, value, maxBytes)
 	return projectsecrets.Sealed{Ciphertext: ciphertext, Kid: kid, ValueHash: valueHash}, problem
 }
 
