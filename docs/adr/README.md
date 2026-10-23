@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261023214253: Operators need MFA, and a session to read customer data](20261023214253-operators-need-mfa-and-sessions-for-customer-data.md) — proposed; operator sign-ins start mfa_pending; operator keys read fleet telemetry only (FAAS_OPERATOR_BEARER_READS grace)
 - [Compose deploy resources and replicas set app settings](20261023120000-compose-deploy-resources.md)
 - [Compose service secrets as files in /run/secrets](20261023090000-compose-runtime-secret-files.md)
 - [ADR-20261023113721: Platform flags for edge rule features](20261023113721-edge-feature-platform-flags.md)

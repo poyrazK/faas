@@ -96,7 +96,7 @@ func TestPlatformFlagsAdminLifecycle(t *testing.T) {
 	if !got.Enabled || got.Reason != "rule_match" || got.RuleID != "partners" || got.Entitled == nil || !*got.Entitled || !got.Available || got.Version != 1 {
 		t.Fatalf("decision = %+v", got)
 	}
-	view := e.Do(t, http.MethodGet, "/v1/admin/accounts/"+account+"/flags", nil, nil)
+	view := e.DoOperator(t, http.MethodGet, "/v1/admin/accounts/"+account+"/flags", nil, nil)
 	accountFlags := decodeBody[api.OperatorAccountPlatformFlags](t, view.Code, view.Body.Bytes(), http.StatusOK)
 	if accountFlags.Plan != string(api.PlanPro) || len(accountFlags.Items) != len(platformflags.Catalog()) {
 		t.Fatalf("account view = %+v", accountFlags)
@@ -125,7 +125,7 @@ func TestPlatformFlagsAdminLifecycle(t *testing.T) {
 		"/v1/admin/flags/ai_gateway/decision?account_id=" + uuid.NewString(): http.StatusNotFound,
 		"/v1/admin/accounts/" + uuid.NewString() + "/flags":                  http.StatusNotFound,
 	} {
-		if res := e.Do(t, http.MethodGet, path, nil, nil); res.Code != want {
+		if res := e.DoOperator(t, http.MethodGet, path, nil, nil); res.Code != want {
 			t.Errorf("GET %s = %d, want %d", path, res.Code, want)
 		}
 	}

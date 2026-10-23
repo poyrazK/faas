@@ -94,6 +94,25 @@ func (e testEnv) doAdmin(t *testing.T, method, path string, body any, hdrs map[s
 	return rec
 }
 
+// doOperator dispatches a read as an MFA-completed operator session. Provider
+// reads of customer data refuse bearer keys (ADR 20261023214253).
+func (e testEnv) doOperator(t *testing.T, method, path string, body any, hdrs map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	var r io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		r = bytes.NewReader(b)
+	}
+	req := httptest.NewRequest(method, path, r)
+	e.addAdminSession(t, req)
+	for k, v := range hdrs {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	return rec
+}
+
 // addAdminSession mints a short-lived session carrying a fresh step-up stamp
 // so a test can exercise the same authentication path as the operations UI.
 // It is intentionally not used by do: bearer requests remain available for
@@ -103,6 +122,7 @@ func (e testEnv) addAdminSession(t *testing.T, req *http.Request) {
 	if e.s == nil || e.s.sessions == nil || e.store == nil {
 		t.Fatal("admin session helper requires a server, session manager, and store")
 	}
+	enrollOperatorForTest(t, e.store, e.acct.ID)
 	sid := uuid.NewString()
 	if _, err := e.store.CreateSession(req.Context(), sid, e.acct.ID, "192.0.2.10", "admin-test-ua"); err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -112,6 +132,34 @@ func (e testEnv) addAdminSession(t *testing.T, req *http.Request) {
 		t.Fatalf("IssueWithSessionAndBindingHashAndStepUp: %v", err)
 	}
 	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+}
+
+// operatorEnroller is the slice of the store enrollOperatorForTest writes.
+type operatorEnroller interface {
+	AccountByID(ctx context.Context, id string) (state.Account, error)
+	SetMFASecret(ctx context.Context, id string, encrypted []byte, recoveryHashes [][]byte) error
+	MarkMFAEnrolled(ctx context.Context, id string) error
+}
+
+// enrollOperatorForTest gives a test operator a confirmed authenticator:
+// operator sessions must belong to an enrolled operator (ADR
+// 20261023214253). An account that is already enrolled keeps its secret.
+func enrollOperatorForTest(t *testing.T, store operatorEnroller, accountID string) {
+	t.Helper()
+	ctx := context.Background()
+	acct, err := store.AccountByID(ctx, accountID)
+	if err != nil {
+		t.Fatalf("AccountByID: %v", err)
+	}
+	if acct.MFAEnrolled() {
+		return
+	}
+	if err := store.SetMFASecret(ctx, accountID, []byte("test-operator-mfa-secret"), nil); err != nil {
+		t.Fatalf("SetMFASecret: %v", err)
+	}
+	if err := store.MarkMFAEnrolled(ctx, accountID); err != nil {
+		t.Fatalf("MarkMFAEnrolled: %v", err)
+	}
 }
 
 // setupWithNotifier is the Move 2 sibling of setup: lets handlers_ext_test
