@@ -176,7 +176,12 @@ func parseCustomerOperationCommand(args []string) (customerOperationCommand, err
 		expected = 0
 	}
 	if len(positionals) != expected || fs.NArg() != 0 || (!c.self && strings.TrimSpace(c.app) == "") || c.timeout < 0 {
-		return c, fmt.Errorf("%s requires --app and %d operation ID positional argument(s)", c.verb, expected)
+		// "list requires --app and 0 operation ID positional argument(s)"
+		// read badly (Hunt 12 H12-48).
+		if expected == 0 {
+			return c, fmt.Errorf("%s requires --app and takes no operation ID", c.verb)
+		}
+		return c, fmt.Errorf("%s requires --app and one operation ID", c.verb)
 	}
 	if c.self {
 		switch c.verb {

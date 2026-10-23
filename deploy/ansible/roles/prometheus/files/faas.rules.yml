@@ -749,6 +749,39 @@ groups:
           description: "More than one cluster signing kid is reported by verified fleet nodes. Internal-service JWTs can fail across nodes until every node verifies the current singleton key."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFleetSealDomain.md"
 
+  # ADR 20261022111812: per-reader seal domains. `gregalectl seal-domain
+  # verify` (run by the seal_domains role) writes faas_seal_domain_ready to the
+  # node's textfile collector; a reader daemon exports faas_seal_domain_loaded
+  # from its start. Neither series exists until the domain is staged, so both
+  # alerts stay quiet before a rollout.
+  - name: seal_domains
+    interval: 30s
+    rules:
+      - alert: FaasSealDomainUnverified
+        expr: faas_seal_domain_ready == 0
+        for: 5m
+        labels:
+          severity: warn
+          family: seal_domains
+        annotations:
+          summary: "{{ $labels.instance }} could not prove the {{ $labels.domain }} seal domain"
+          description: "gregalectl seal-domain verify failed on {{ $labels.instance }}: the staged {{ $labels.domain }} identity is missing, or it does not open the domain probe. Once writers seal to the domain alone, the reader on this host cannot open that domain's secrets."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSealDomain.md"
+
+      - alert: FaasSealDomainIdentityMissing
+        expr: |
+          faas_seal_domain_loaded == 0
+          and on(domain)
+          (max by (domain) (faas_seal_domain_loaded) == 1)
+        for: 10m
+        labels:
+          severity: warn
+          family: seal_domains
+        annotations:
+          summary: "{{ $labels.job }} on {{ $labels.instance }} started without the {{ $labels.domain }} seal-domain identity"
+          description: "Other {{ $labels.job }} instances hold the {{ $labels.domain }} identity, but this one started without it. Once writers seal to the domain alone, it cannot open those secrets: for runtime, wakes on this node fail for every app with a secret sealed to the domain, which is every app once the re-seal has run. Stage the identity and restart the daemon before it takes traffic."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSealDomain.md"
+
   - name: gcp_ops_agent
     interval: 30s
     rules:
@@ -3464,6 +3497,23 @@ groups:
           summary: "vmmd cold-boot fallback > 30 % for 10m"
           description: "Cold-boot fallback rate has exceeded 30 % of all wakes for 10m. The §6.2 budget is approaching saturation on the wake-economics curve — sustained cold-boot at this rate is ~3x the wake-side I/O of a healthy fleet and stresses lv-fc (pkg/fcvm/lvfc.go). Catching this trend before snapshot_fleet_avg exceeds 160 MB gives ~24 h headroom. Drill-down: `rate(vmmd_wake_failure_total{reason=\"disk_full\"}[5m])` (storage pressure), `fcvm_snapshot_fleet_avg_bytes` (growth signal). Recover: see docs/runbooks/FaasColdBootRatioHigh.md."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasColdBootRatioHigh.md"
+
+      # Hunt 12 H12-1: vmmd's base scan gate (issue #299) refused every boot
+      # of the python313 runner base on prod after a node-side Grype scan
+      # found two fixable CRITICAL findings, and nothing alerted. Ten
+      # minutes of refusals rides out the short sidecar-missing window
+      # after a release roll (H11-33) but catches a base that stays refused.
+      - alert: FaasBaseScanRefusingBoots
+        expr: sum by (node, base, reason) (increase(vmmd_base_scan_refusals_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: page
+          component: vmmd
+          family: base_scan_gate
+        annotations:
+          summary: "vmmd refuses to boot {{ $labels.base }} ({{ $labels.reason }}) on {{ $labels.node }}"
+          description: "vmmd's base scan gate has refused boots on {{ $labels.base }} for ten minutes with reason {{ $labels.reason }}. No instance on that base can cold boot or restore, so every app on its runtime fails to deploy and to wake. critical means the node-side Grype scan found a fixable CRITICAL vulnerability: publish a patched base. sidecar_missing, incomplete and generation_* mean the scan record is absent or stale: rerun the base stage."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
 
       # ─────────────────────────────────────────────────────────────────
       # ADR-127 PR-B production debugger alerts. Mirrors the

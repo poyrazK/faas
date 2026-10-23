@@ -541,6 +541,10 @@ func TestValidateAppConfig(t *testing.T) {
 		{name: "concur over cap (hobby: 2)", plan: PlanHobby, ramMB: 128, maxConc: 5, wantCode: CodePlanLimitConcur},
 		// RAM is checked first, so over-cap RAM + over-cap concurrency returns the RAM error.
 		{name: "both over — RAM wins", plan: PlanHobby, ramMB: 9999, maxConc: 9999, wantCode: CodePlanLimitRAM},
+		// The store's CHECK (max_concurrency >= 1) turned these into a 503 (H11-41).
+		{name: "zero concurrency is a validation error", plan: PlanScale, ramMB: 512, maxConc: 0, wantCode: CodeValidation},
+		{name: "negative concurrency is a validation error", plan: PlanScale, ramMB: 512, maxConc: -1, wantCode: CodeValidation},
+		{name: "one is the floor", plan: PlanScale, ramMB: 512, maxConc: 1, wantNil: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

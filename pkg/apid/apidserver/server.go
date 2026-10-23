@@ -292,6 +292,11 @@ type server struct {
 	// distinguishes "gatewayd not reachable" from "no traffic
 	// yet". Set via env FAAS_GATEWAYD_CONTROL_URL at boot.
 	gatewaydControlURL string
+	// gatewaydControlFromRegistry resolves the control URL per request from
+	// the compute-node registry (ADR-20261022004500); gatewayControlNext
+	// rotates through the active nodes.
+	gatewaydControlFromRegistry bool
+	gatewayControlNext          atomic.Uint64
 	// realtimeClient is retained so the leased fleet adapter can use the local
 	// Unix owner for endpoint registration and connection discovery.
 	realtimeClient *realtime.Client
@@ -400,10 +405,11 @@ type server struct {
 	// preflight handler (GET /v1/preflight). It is built on first use so the
 	// egress-guarded HTTP client and verdict cache are not allocated on
 	// deployments that never receive a check.
-	preflightOnce    sync.Once
-	preflightHandler *preflight.Handler
-	statusMetrics    *statusMetrics
-	devLoopMetrics   *devloop.Metrics
+	preflightOnce      sync.Once
+	preflightHandler   *preflight.Handler
+	statusMetrics      *statusMetrics
+	idempotencyMetrics *idempotencyMetrics
+	devLoopMetrics     *devloop.Metrics
 	// promqlClient is the Prometheus HTTP client shared by the
 	// statusCache and the per-app metrics endpoint (issue #273 /
 	// ADR-042). Owned here so the GET /v1/apps/{slug}/metrics handler
@@ -689,6 +695,11 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 	}
 	if ops != nil && (s.statusMetrics == nil || s.statusMetrics.registry != ops.Registry()) {
 		s.statusMetrics = newStatusMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops == nil {
+		s.idempotencyMetrics = nil
+	} else if s.idempotencyMetrics == nil || s.idempotencyMetrics.registry != ops.Registry() {
+		s.idempotencyMetrics = newIdempotencyMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops != nil && (s.durable.Metrics == nil || s.durable.Metrics.Registry() != ops.Registry()) {
 		s.durable.Metrics = durable.NewMetrics(ops.Registry(), ops.MetricPrefix())
@@ -1084,11 +1095,9 @@ func (s *server) WithHostHashFunc(fn func(host string) (string, error)) *server 
 // (/v1/internal/apps/{slug}/routes and /streaming-cap). Default
 // http://127.0.0.1:9090 matches gatewayd-internal's default
 // control bind (see pkg/gateway/control.go ControlAddr);
-// production overrides via FAAS_GATEWAYD_CONTROL_URL when the
-// daemons are split across nodes (cross-box deployments will
-// need the public-facing reverse-proxy to terminate mTLS before
-// reaching gatewayd-internal's control mux — out of scope for
-// this PR; same-box is the only supported posture today).
+// a split control plane instead sets FAAS_GATEWAYD_CONTROL_FROM_REGISTRY
+// and reaches a compute node's private control listener
+// (ADR-20261022004500, gatewayControlURL).
 func (s *server) WithGatewaydControlURL(url string) *server {
 	s.gatewaydControlURL = url
 	return s
@@ -5636,32 +5645,44 @@ func (s *server) domainCreateLimited(next http.Handler) http.Handler {
 }
 
 func (s *server) idempotent(next accountHandler) accountHandler {
-	return s.idempotentWith(next, nil)
+	return s.idempotentWithInEnvironment("", next, nil, true)
 }
 
 // The legacy method/path identity is preserved for production. An owned
 // environment ID separates stage receipts, including after slug recreation.
 func (s *server) idempotentInEnvironment(environmentID string, next accountHandler) accountHandler {
-	return s.idempotentWithInEnvironment(environmentID, next, nil)
+	return s.idempotentWithInEnvironment(environmentID, next, nil, true)
 }
 
 // idempotentDeploy is idempotent for routes that create a deployment. A
 // stored response naming a deployment that has since failed, been
 // cancelled, or been superseded is not replayed; the request runs again.
-// See deployReplayIsStale.
+// See deployReplayIsStale. Its keys name a deploy intent, not one request
+// (see idempotentIntent).
 func (s *server) idempotentDeploy(next accountHandler) accountHandler {
-	return s.idempotentWith(next, s.deployReplayIsStale)
+	return s.idempotentWithInEnvironment("", next, s.deployReplayIsStale, false)
+}
+
+// idempotentIntent is idempotent for routes whose keys name an intent rather
+// than one request, so they are not bound to a request fingerprint
+// (ADR-20261022204036). The CLI derives project apply keys from the source
+// digest and flags, while a re-run carries a fresh plan token and the current
+// commit; meterd's safe-deploy workers retry a deterministic recovery key
+// with the reason and evidence of their latest tick. Both must replay.
+func (s *server) idempotentIntent(next accountHandler) accountHandler {
+	return s.idempotentWithInEnvironment("", next, nil, false)
 }
 
 // replayStaleFunc reports whether a stored response no longer describes the
 // operation's outcome, so replaying it would mislead the client.
 type replayStaleFunc func(ctx context.Context, acct state.Account, status int, body []byte) bool
 
-func (s *server) idempotentWith(next accountHandler, stale replayStaleFunc) accountHandler {
-	return s.idempotentWithInEnvironment("", next, stale)
-}
-
-func (s *server) idempotentWithInEnvironment(environmentID string, next accountHandler, stale replayStaleFunc) accountHandler {
+// idempotentWithInEnvironment replays a keyed request's stored response.
+// With bindRequest, the key is bound to the request's fingerprint
+// (ADR-20261022204036): the same key sent with a different request is
+// refused with idempotency_key_reused instead of replaying a response that
+// belongs to another request.
+func (s *server) idempotentWithInEnvironment(environmentID string, next accountHandler, stale replayStaleFunc, bindRequest bool) accountHandler {
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		key := r.Header.Get("Idempotency-Key")
 		if key == "" {
@@ -5690,7 +5711,11 @@ func (s *server) idempotentWithInEnvironment(environmentID string, next accountH
 			key = "environment " + environmentID + "\n" + key
 		}
 		if reserver, ok := s.store.(idempotencyReserver); ok {
-			s.idempotentReserved(w, r, acct, reserver, key, next, stale)
+			var fingerprint []byte
+			if bindRequest {
+				fingerprint = httpkit.IdempotencyFingerprint(r, hostHMACKeyBytes())
+			}
+			s.idempotentReserved(w, r, acct, reserver, key, fingerprint, next, stale)
 			return
 		}
 		if status, body, err := s.store.GetIdempotent(r.Context(), acct.ID, key); err == nil {
@@ -5756,7 +5781,7 @@ func idempotencyResponseReplayable(status int, body []byte) bool {
 const idempotencyAbandonAfter = 15 * time.Minute
 
 type idempotencyReserver interface {
-	ReserveIdempotent(ctx context.Context, accountID, key string, abandonAfter time.Duration) (state.IdempotencyReservation, error)
+	ReserveIdempotentRequest(ctx context.Context, accountID, key string, fingerprint []byte, abandonAfter time.Duration) (state.IdempotencyReservation, error)
 	ReleaseIdempotent(ctx context.Context, accountID, key string) error
 }
 
@@ -5802,10 +5827,11 @@ func (s *server) deployReplayIsStale(ctx context.Context, acct state.Account, st
 // idempotentReserved claims the key before running next. Checking for a
 // cached response and storing one afterwards let two concurrent requests
 // with one key — a client retrying after a timeout while the first is
-// still running — both execute the operation.
-func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct state.Account, reserver idempotencyReserver, key string, next accountHandler, stale replayStaleFunc) {
-	res, err := reserver.ReserveIdempotent(r.Context(), acct.ID, key, idempotencyAbandonAfter)
-	if err == nil && !res.Reserved && !res.InFlight && stale != nil && stale(r.Context(), acct, res.Status, res.Body) {
+// still running — both execute the operation. A non-nil fingerprint binds
+// the key to this request (ADR-20261022204036).
+func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct state.Account, reserver idempotencyReserver, key string, fingerprint []byte, next accountHandler, stale replayStaleFunc) {
+	res, err := reserver.ReserveIdempotentRequest(r.Context(), acct.ID, key, fingerprint, idempotencyAbandonAfter)
+	if err == nil && !res.Reserved && !res.InFlight && !res.Conflict && stale != nil && stale(r.Context(), acct, res.Status, res.Body) {
 		if reclaimer, ok := reserver.(idempotencyReclaimer); ok {
 			reclaimed, reclaimErr := reclaimer.ReclaimIdempotent(r.Context(), acct.ID, key, res.Status, res.Body)
 			switch {
@@ -5813,7 +5839,7 @@ func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct
 				res = state.IdempotencyReservation{Reserved: true}
 			case reclaimErr == nil:
 				// A concurrent retry reclaimed it first; report its state.
-				res, err = reserver.ReserveIdempotent(r.Context(), acct.ID, key, idempotencyAbandonAfter)
+				res, err = reserver.ReserveIdempotentRequest(r.Context(), acct.ID, key, fingerprint, idempotencyAbandonAfter)
 			}
 		}
 	}
@@ -5822,6 +5848,15 @@ func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct
 		// Fail open, as the replay lookup always has: an idempotency
 		// store error must not turn every keyed request into an outage.
 		next(w, r, acct)
+	case res.Conflict:
+		// Nothing ran, and the key keeps its first request's outcome: the
+		// response is not stored, so retrying that request still replays.
+		s.idempotencyMetrics.observeKeyReused(r)
+		if s.log != nil {
+			s.log.InfoContext(r.Context(), "idempotency key reused with a different request",
+				"account_id", acct.ID, "method", r.Method, "route", r.Pattern)
+		}
+		api.WriteProblem(w, api.ErrIdempotencyKeyReused())
 	case res.InFlight:
 		code := api.CodeConflict
 		if attempted, _ := r.Context().Value(deploymentSubmissionRequestKey{}).(bool); attempted {

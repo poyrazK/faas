@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -103,7 +104,7 @@ func normalizeAnalyticsArgs(args []string) []string {
 func renderRequestAnalytics(w io.Writer, response api.RequestAnalyticsResponse) {
 	_, _ = fmt.Fprintf(w, "App:        %s\n", response.Slug)
 	_, _ = fmt.Fprintf(w, "Group by:   %s\n", response.GroupBy)
-	_, _ = fmt.Fprintf(w, "Window:     %s (%s to %s)\n", response.Since, response.From, response.Until)
+	_, _ = fmt.Fprintf(w, "Window:     %s (%s to %s)\n", response.Since, analyticsWindowTime(response.From), analyticsWindowTime(response.Until))
 	_, _ = fmt.Fprintf(w, "Requests:   %d\n", response.Requests)
 	_, _ = fmt.Fprintf(w, "Errors:     %d (%.2f%%)\n", response.ErrorRequests, response.ErrorRatePct)
 	_, _ = fmt.Fprintf(w, "Cold boots: %d\n", response.ColdBoots)
@@ -124,4 +125,15 @@ func renderRequestAnalytics(w io.Writer, response api.RequestAnalyticsResponse) 
 	if response.WindowClamped {
 		_, _ = fmt.Fprintln(w, "Note: requested window was clamped to plan telemetry retention.")
 	}
+}
+
+// analyticsWindowTime prints a window bound to the second in UTC; the API
+// sends RFC 3339 with nanoseconds, which read as noise in a header (Hunt 12
+// H12-23). An unparseable value prints as sent.
+func analyticsWindowTime(v string) string {
+	t, err := time.Parse(time.RFC3339Nano, v)
+	if err != nil {
+		return v
+	}
+	return t.UTC().Format("2006-01-02 15:04:05 UTC")
 }

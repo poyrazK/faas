@@ -68,7 +68,11 @@ func (s *Server) ForwardTCPStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 		return err
 	}
 
-	cmd, stdinW, stdoutR, readyR, stderr, err := tcpBridgeSpawn(ctx, pid, port)
+	bridgeID, err := s.forwardBridgeIdentity(ctx, instance)
+	if err != nil {
+		return sendTCPInitError(stream, err)
+	}
+	cmd, stdinW, stdoutR, readyR, stderr, err := tcpBridgeSpawn(ctx, bridgeID, pid, port)
 	if err != nil {
 		return sendTCPInitError(stream, err)
 	}
@@ -103,11 +107,11 @@ func sendTCPInitError(stream grpc.BidiStreamingServer[vmmdpb.ForwardTCPRequest, 
 	return err
 }
 
-func tcpBridgeSpawn(ctx context.Context, instancePID int, port uint32) (*exec.Cmd, *os.File, *os.File, *os.File, *bytes.Buffer, error) {
-	return namespaceBridgeSpawn(ctx, instancePID, port, tcpBridgePathEnv, vmmdTCPBridgePath)
+func tcpBridgeSpawn(ctx context.Context, id bridgeIdentity, instancePID int, port uint32) (*exec.Cmd, *os.File, *os.File, *os.File, *bytes.Buffer, error) {
+	return namespaceBridgeSpawn(ctx, id, instancePID, port, tcpBridgePathEnv, vmmdTCPBridgePath)
 }
 
-func namespaceBridgeSpawn(ctx context.Context, instancePID int, port uint32, pathEnv, defaultPath string) (*exec.Cmd, *os.File, *os.File, *os.File, *bytes.Buffer, error) {
+func namespaceBridgeSpawn(ctx context.Context, id bridgeIdentity, instancePID int, port uint32, pathEnv, defaultPath string) (*exec.Cmd, *os.File, *os.File, *os.File, *bytes.Buffer, error) {
 	bridgePath := os.Getenv(pathEnv)
 	if bridgePath == "" {
 		bridgePath = defaultPath
@@ -138,7 +142,7 @@ func namespaceBridgeSpawn(ctx context.Context, instancePID int, port uint32, pat
 		return nil, nil, nil, nil, nil, status.Errorf(codes.Internal, "namespace bridge readiness pipe: %v", err)
 	}
 
-	cmd := namespaceOrPublicCommand(ctx, instancePID, bridgePath, port)
+	cmd := namespaceOrPublicCommand(ctx, id, instancePID, bridgePath, port)
 	cmd.Stdin = stdinR
 	cmd.Stdout = stdoutW
 	cmd.ExtraFiles = []*os.File{readyW}

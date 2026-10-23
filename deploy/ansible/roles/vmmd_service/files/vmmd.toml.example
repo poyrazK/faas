@@ -17,6 +17,30 @@
 # Default: "" (disabled)
 # native_snapshot_publication_root = "/var/lib/faas/vmmd-publications"
 
+# adoption_record: write version-7 adoption blocks into the resource journal
+# (vmmd restart adoption ADR, slice 1). Shadow only: nothing adopts yet, and
+# startup classifies records in a dry run either way. vmmd binaries without a
+# version-7 reader refuse the journal, so enable this only once every compute
+# node and any rollback target can read it. Ignored with
+# native_process_recovery.
+# Default: false
+# adoption_record = true
+
+# adopt_running_vms: EXPERIMENTAL. At startup, adopt running guests whose
+# adoption records prove ownership instead of quarantining them, so a vmmd
+# restart keeps them (vmmd restart adoption ADR, slice 2). Anything not
+# proven, or outside what this release rebuilds, stays quarantined as
+# before. Requires adoption_record = true; not with native_process_recovery.
+# Default: false
+# adopt_running_vms = true
+
+# adopt_admitted_runtimes: EXPERIMENTAL. Also adopt guests booted under an
+# application standard's runtime-admission receipt; schedd re-binds their
+# admission to the new vmmd (ADR-595 extension). Off, they are refused at
+# adoption and re-admitted fresh. Requires adopt_running_vms = true.
+# Default: false
+# adopt_admitted_runtimes = true
+
 # socket_path: unix-domain socket path. Mode 0660, group 'faas' (ADR-015).
 # Default: /run/faas/vmmd.sock
 # socket_path = "/run/faas/vmmd.sock"

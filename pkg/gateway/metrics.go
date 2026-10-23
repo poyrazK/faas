@@ -1503,14 +1503,14 @@ func NewMetrics() *Metrics {
 			Name: "gateway_request_duration_seconds",
 			Help: "Per-app full request duration (request received to handler return), labelled by HTTP status class (2xx/3xx/4xx/5xx). Issue #273 / ADR-042.",
 			Buckets: []float64{
-				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10,
+				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, api.RequestDurationTopBucketSeconds,
 			},
 		}, []string{"app", "class"}),
 		requestDurationByDeployment: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "gateway_request_duration_by_deployment_seconds",
 			Help: "Per-deployment request duration drill-down with bounded deployment admission (ADR-127).",
 			Buckets: []float64{
-				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10,
+				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, api.RequestDurationTopBucketSeconds,
 			},
 		}, []string{"app", "class", "deployment"}),
 		// Issue #273 / ADR-042. Renamed outright from gateway_cold_wake_total.

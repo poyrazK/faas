@@ -6951,11 +6951,13 @@ type CustomerEventLister interface {
 
 // IdempotencyReservation is the outcome of ReserveIdempotent. Exactly one of
 // Reserved (the caller owns the key and must complete it with
-// PutIdempotent), InFlight (another request holds the key), or a completed
-// response (Status/Body to replay) applies.
+// PutIdempotent), InFlight (another request holds the key), Conflict (the key
+// is bound to a different request fingerprint, ADR-20261022204036), or a
+// completed response (Status/Body to replay) applies.
 type IdempotencyReservation struct {
 	Reserved bool
 	InFlight bool
+	Conflict bool
 	Status   int
 	Body     []byte
 }

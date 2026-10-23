@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/bridgeproc"
 	"github.com/onebox-faas/faas/pkg/netns"
 )
 
@@ -27,6 +28,7 @@ const (
 )
 
 func main() {
+	bridgeproc.MustHarden()
 	if len(os.Args) != 3 {
 		fmt.Fprintln(os.Stderr, "usage: vmmd-tcp-bridge <guest-ip> <port>")
 		os.Exit(2)

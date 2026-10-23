@@ -37,5 +37,24 @@ faas_seal_domain_runtime_writes: ""
 # the rollback window. Required for writes=domain.
 faas_seal_domain_runtime_readers_verified: false
 
+# Operator-local files from `gregalectl seal-domain init --domain source`.
+# Control-plane hosts stage both: githubd reads the identity, apid seals to
+# the recipient.
+faas_seal_domain_source_identity_src: ""
+faas_seal_domain_source_recipient_src: ""
+
+# Who apid seals GitHub webhook secret copies to, and githubd install tokens:
+#   ""      the domain and the fleet recipient (safe beside the previous
+#           release, whose githubd holds only the fleet identity)
+#   fleet   the fleet recipient alone (opt out)
+#   domain  the domain recipient alone; needs
+#           faas_seal_domain_source_readers_verified
+faas_seal_domain_source_writes: ""
+
+# Set true only after `gregalectl seal-domain verify --domain source` passed
+# on every node that runs githubd and the previous release left the
+# rollback window. Required for writes=domain.
+faas_seal_domain_source_readers_verified: false
+
 faas_seal_domain_db_env: /etc/faas/compute-db.env
 faas_seal_domain_textfile_dir: /var/lib/node_exporter/textfile_collector
