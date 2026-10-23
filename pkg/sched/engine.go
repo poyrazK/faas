@@ -10272,6 +10272,18 @@ func effectiveMaxConcurrency(app state.App, limits api.Limits) int {
 	return app.MaxConcurrency
 }
 
+// effectivePerInstanceConcurrency is how many requests one instance of app
+// absorbs: its declared scaling_policy.per_instance_concurrency, or the
+// plan's concurrency_per_vm (ADR-20261022203523). Wake fan-out and the
+// in-flight scale-in floor divide demand by it, matching the gateway's gate.
+func effectivePerInstanceConcurrency(app state.App, limits api.Limits) int {
+	requested := 0
+	if app.ScalingPolicy != nil {
+		requested = app.ScalingPolicy.PerInstanceConcurrency
+	}
+	return limits.PerInstanceConcurrency(requested)
+}
+
 // rolloutGrantAppliesForEnvironment permits a new revision alongside serving
 // replicas of the same original environment. Sibling stages cannot grant it.
 // Legacy unpinned production participates in its pinned production rollout.

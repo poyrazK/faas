@@ -4538,6 +4538,7 @@ func testScalingPolicyRoundTrip(t *testing.T, fx *Fixture) {
 		MaxQueueDepth:           17,
 		WakeMaxQueueDepth:       31,
 		WakeMaxQueueWaitSeconds: 41,
+		PerInstanceConcurrency:  2,
 		Timezone:                "Europe/Istanbul",
 		Schedules: []state.ScalingSchedule{
 			{Cron: "0 8 * * 1-5", DurationS: 12 * 3600, MinInstances: 3},

@@ -2202,6 +2202,7 @@
       "memory_key",
       "node_id",
       "parent_token",
+      "producer_incarnation",
       "received_at",
       "token"
     ],
@@ -3321,7 +3322,11 @@
       "target_url",
       "vcpu_budget",
       "vmmd_admission_protocol",
+      "vmmd_epoch",
+      "vmmd_epoch_incarnation",
       "vmmd_incarnation",
+      "vmmd_predecessor_incarnation",
+      "vmmd_restart_notice_until",
       "vpcpus",
       "zone"
     ],
@@ -7099,6 +7104,19 @@
       "instance_id",
       "native_input_hash",
       "node_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "instance_application_standard_rebinds",
+    "columns": [
+      "created_at",
+      "from_incarnation",
+      "instance_id",
+      "node_id",
+      "observed",
+      "to_incarnation",
+      "vmmd_epoch"
     ],
     "kind": "operational"
   },
