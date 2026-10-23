@@ -498,10 +498,9 @@ func TestCmdScan_OnlyFiltering(t *testing.T) {
 // from the plan: --repo (the dashboard browser flow) cannot combine
 // with --only or --project-slug. Mixing them is almost always a
 // mistake on the customer's side; the CLI rejects explicitly.
-func TestCmdDeployTarball_RejectsOnlyWithRepo(t *testing.T) {
-	// We don't even need a server here — the rejection should happen
-	// before any HTTP call. Hook a server that records calls so a
-	// regression that reaches the wire is caught.
+// --repo with --only plans the connected repository as a project; a
+// single-app rollout flag it cannot honour is refused before any HTTP call.
+func TestCmdDeployTarball_RepoProjectRejectsSingleAppRolloutBeforeHTTP(t *testing.T) {
 	sink := &decomposeSink{}
 	srv := httptest.NewServer(sink)
 	defer srv.Close()
@@ -514,25 +513,19 @@ func TestCmdDeployTarball_RejectsOnlyWithRepo(t *testing.T) {
 	defer restoreErr()
 	code := main.CmdDeployTarball([]string{
 		"--repo", "owner/name",
-		// --ref is required for the headless source-ref path
-		// (issue #739 / ADR-092). Pass a valid 40-char SHA so the
-		// combo-rejection check below is exercised, not the
-		// missing-ref guard. The combo-rejection (--repo + --only)
-		// must short-circuit before any HTTP call.
 		"--ref", "0123456789abcdef0123456789abcdef01234567",
 		"--only", "api",
+		"--traffic-percent", "10",
 	})
-	if code != 1 {
-		t.Errorf("cmdDeployTarball --repo --only exit = %d, want 1", code)
+	if code == 0 {
+		t.Errorf("cmdDeployTarball --repo --only --traffic-percent exit = 0, want a refusal")
 	}
-	if !strings.Contains(stderr.String(), "--repo cannot be combined") {
+	if !strings.Contains(stderr.String(), "--traffic-percent") {
 		t.Errorf("expected rejection message, got %q", stderr.String())
 	}
 	if sink.scanCalls != 0 || sink.applyCalls != 0 {
 		t.Errorf("rejected call still reached the server: scan=%d apply=%d", sink.scanCalls, sink.applyCalls)
 	}
-	// stdout is part of the success surface; the good path shouldn't
-	// have printed the plan.
 	if strings.Contains(stdout.String(), "can_apply") {
 		t.Errorf("output should not render a plan on rejected combo: %q", stdout.String())
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"strings"
 )
 
 // CreateCustomer creates a customer in the account's Stripe for a self-serve
@@ -21,40 +20,6 @@ func (c *Client) CreateCustomer(ctx context.Context, key, idempotencyKey, email,
 		ID string `json:"id"`
 	}
 	return out.ID, c.do(ctx, key, http.MethodPost, "/v1/customers", idempotencyKey, form, &out)
-}
-
-// CheckoutSession is a Stripe-hosted Checkout Session.
-type CheckoutSession struct {
-	ID       string `json:"id"`
-	URL      string `json:"url"`
-	Mode     string `json:"mode"`
-	Status   string `json:"status"`
-	Customer string `json:"customer"`
-	// SetupIntent is expanded by GetCheckoutSession.
-	SetupIntent *struct {
-		Status        string `json:"status"`
-		PaymentMethod string `json:"payment_method"`
-	} `json:"setup_intent"`
-}
-
-// CreateSetupCheckout opens a Stripe-hosted Checkout Session in setup mode
-// that saves a payment method to customer without charging it
-// (ADR-20261022100735). successURL may contain {CHECKOUT_SESSION_ID}.
-func (c *Client) CreateSetupCheckout(ctx context.Context, key, idempotencyKey, customer, currency, successURL, cancelURL string) (CheckoutSession, error) {
-	form := url.Values{}
-	form.Set("mode", "setup")
-	form.Set("customer", customer)
-	form.Set("currency", strings.ToLower(currency))
-	form.Set("success_url", successURL)
-	form.Set("cancel_url", cancelURL)
-	var out CheckoutSession
-	return out, c.do(ctx, key, http.MethodPost, "/v1/checkout/sessions", idempotencyKey, form, &out)
-}
-
-// GetCheckoutSession reads a Checkout Session with its SetupIntent.
-func (c *Client) GetCheckoutSession(ctx context.Context, key, id string) (CheckoutSession, error) {
-	var out CheckoutSession
-	return out, c.do(ctx, key, http.MethodGet, "/v1/checkout/sessions/"+url.PathEscape(id)+"?expand%5B%5D=setup_intent", "", nil, &out)
 }
 
 // SetDefaultPaymentMethod makes paymentMethod the customer's default for
