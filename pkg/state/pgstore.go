@@ -17037,15 +17037,16 @@ func (s *PgStore) CountInstanceInvocationsInMinute(ctx context.Context, instance
 // (Fail allows the retry path) but the instance_id stamp must
 // only land while the row is dispatching — after that the row is
 // either terminal or back in pending with no instance binding.
+//
+// The stamp commits without waiting for its WAL flush
+// (stamp_invocation_instance): a crash can lose only the last stamps, which
+// feed the meter's fallback count, and the rows they were on are requeued.
 func (s *PgStore) StampInstanceInvocation(ctx context.Context, id, instanceID string) error {
-	tag, err := s.pool.Exec(ctx, `
-		update invocations
-		   set instance_id = $2
-		 where id = $1 and state = 'dispatching'`, id, instanceID)
-	if err != nil {
+	var stamped bool
+	if err := s.pool.QueryRow(ctx, `select stamp_invocation_instance($1, $2)`, id, instanceID).Scan(&stamped); err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if !stamped {
 		return ErrNotFound
 	}
 	return nil

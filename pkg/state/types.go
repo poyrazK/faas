@@ -2217,6 +2217,11 @@ type ScalingPolicy struct {
 	// WakeMaxQueueWaitSeconds is an optional per-app cold-wake wait budget.
 	// Zero means the gateway uses the plan-derived default.
 	WakeMaxQueueWaitSeconds int
+	// PerInstanceConcurrency is how many requests one instance serves at
+	// once (ADR-20261022203523). Zero means the plan's concurrency_per_vm;
+	// readers resolve it through api.Limits.PerInstanceConcurrency, which
+	// also clamps a value a plan downgrade left above the bound.
+	PerInstanceConcurrency int
 	// Timezone is the IANA zone every schedule's cron is evaluated in
 	// (ADR-198). Empty means UTC. One zone per app rather than one per
 	// schedule: a business has a working day, not a working day per rule.
@@ -2345,6 +2350,7 @@ func (p ScalingPolicy) MarshalJSON() ([]byte, error) {
 		MaxQueueDepth           int               `json:"max_queue_depth,omitempty"`
 		WakeMaxQueueDepth       int               `json:"wake_max_queue_depth,omitempty"`
 		WakeMaxQueueWaitSeconds int               `json:"wake_max_queue_wait_seconds,omitempty"`
+		PerInstanceConcurrency  int               `json:"per_instance_concurrency,omitempty"`
 		Timezone                string            `json:"timezone,omitempty"`
 		Schedules               []ScalingSchedule `json:"schedules,omitempty"`
 	}
@@ -2372,6 +2378,7 @@ func (p *ScalingPolicy) UnmarshalJSON(data []byte) error {
 		MaxQueueDepth           int               `json:"max_queue_depth,omitempty"`
 		WakeMaxQueueDepth       int               `json:"wake_max_queue_depth,omitempty"`
 		WakeMaxQueueWaitSeconds int               `json:"wake_max_queue_wait_seconds,omitempty"`
+		PerInstanceConcurrency  int               `json:"per_instance_concurrency,omitempty"`
 		Timezone                string            `json:"timezone,omitempty"`
 		Schedules               []ScalingSchedule `json:"schedules,omitempty"`
 	}

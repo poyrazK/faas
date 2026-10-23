@@ -3096,7 +3096,7 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 		if !observed {
 			continue
 		}
-		if demand := l.inflightDemandReplicas(a.ID, planByApp[a.ID], vmmdInflightByApp[a.ID], now); demand > desired {
+		if demand := l.inflightDemandReplicas(a, planByApp[a.ID], vmmdInflightByApp[a.ID], now); demand > desired {
 			desired = demand
 		}
 		// H4-70: the local gateway and vmmd see only this node's share.
@@ -3244,7 +3244,8 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 }
 
 // inflightDemandReplicas returns how many instances the app's in-flight
-// requests need at the plan's per-instance concurrency bound. Scale-in takes
+// requests need at its per-instance concurrency (the declared
+// per_instance_concurrency, else the plan bound; ADR-20261022203523). Scale-in takes
 // the larger of this and the rate-derived count. The rates are completions
 // (gateway) and request starts (vmmd), and both fall toward zero when an
 // overloaded or stalled app stops making progress while its clients wait. On
@@ -3253,9 +3254,9 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 // high in that state. The gateway's count covers only the local gateway and
 // vmmd's covers only forwarded requests, so the larger of the two is still a
 // lower bound on demand.
-func (l *Loop) inflightDemandReplicas(appID string, plan api.Plan, vmmdInflight int64, now time.Time) int {
+func (l *Loop) inflightDemandReplicas(app state.App, plan api.Plan, vmmdInflight int64, now time.Time) int {
 	inflight := vmmdInflight
-	if gateway, ok := l.recentLoad.RecentInflight(appID, now); ok && gateway > inflight {
+	if gateway, ok := l.recentLoad.RecentInflight(app.ID, now); ok && gateway > inflight {
 		inflight = gateway
 	}
 	if inflight <= 0 {
@@ -3263,7 +3264,7 @@ func (l *Loop) inflightDemandReplicas(appID string, plan api.Plan, vmmdInflight 
 	}
 	perVM := 1
 	if limits, ok := api.LimitsFor(plan); ok && limits.ConcurrencyPerVMBound > 0 {
-		perVM = limits.ConcurrencyPerVMBound
+		perVM = effectivePerInstanceConcurrency(app, limits)
 	}
 	return int((inflight + int64(perVM) - 1) / int64(perVM))
 }
