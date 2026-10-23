@@ -682,3 +682,17 @@ func QueueRetryGroups(items []string, statusByID map[string]TriggerDispatchResul
 // WarmCaptureInstanceGatesOpen exposes the warm-capture gates shared by the
 // capture and the freeze decision (Hunt 12 H12-52).
 var WarmCaptureInstanceGatesOpen = warmCaptureInstanceGatesOpen
+
+// SettleTriggerDeadLetters runs the per-record DLQ settlement; queue selects
+// the queue poller's Nack-first order (ADR-20261022203653).
+func (r *Loop) SettleTriggerDeadLetters(ctx context.Context, t sqlc.Trigger, poller triggerSource, store storeLike, queue bool,
+	recordIDs, items, reasons, lastErrors []string, attempts []int32) {
+	claimed := make(map[string]sqlc.TriggerRecord, len(recordIDs))
+	for _, id := range recordIDs {
+		var record sqlc.TriggerRecord
+		_ = record.ID.Scan(id)
+		claimed[id] = record
+	}
+	r.settleTriggerDeadLetters(ctx, t, poller, store, queue, claimed, terminalTriggerResults{
+		recordIDs: recordIDs, items: items, reasons: reasons, errors: lastErrors, attempts: attempts})
+}

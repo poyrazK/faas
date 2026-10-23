@@ -1392,6 +1392,27 @@ type NodeClientCache struct {
 
 	dial func(ctx context.Context, target string) (*grpc.ClientConn, error)
 	log  *slog.Logger
+	// restartNotices, when set, holds stream opens through a node's planned
+	// vmmd restart (vmmd_restart_hold.go).
+	restartNotices *restartNotices
+}
+
+// WithRestartNotices makes forwards to a node whose vmmd is restarting under
+// a planned notice wait for the successor instead of failing. Startup only.
+func (c *NodeClientCache) WithRestartNotices(store RestartNoticeReader) *NodeClientCache {
+	if c != nil && store != nil {
+		c.restartNotices = &restartNotices{store: store, now: time.Now}
+	}
+	return c
+}
+
+// client is the VmmdClient a lease of conn hands out.
+func (c *NodeClientCache) client(nodeID string, conn *grpc.ClientConn) vmmdpb.VmmdClient {
+	cli := vmmdpb.NewVmmdClient(conn)
+	if c.restartNotices == nil {
+		return cli
+	}
+	return restartHoldClient{VmmdClient: cli, conn: conn, node: nodeID, notices: c.restartNotices, log: c.log}
 }
 
 type nodeDialCall struct {
@@ -1439,7 +1460,7 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 	if ok {
 		c.refs[nodeID]++
 		c.mu.Unlock()
-		return vmmdpb.NewVmmdClient(conn), leaseCloser{c: c, nodeID: nodeID}, true
+		return c.client(nodeID, conn), leaseCloser{c: c, nodeID: nodeID}, true
 	}
 	if c.dialing == nil {
 		c.dialing = map[string]*nodeDialCall{}
@@ -1457,7 +1478,7 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 			if !ok {
 				return nil, nil, false
 			}
-			return vmmdpb.NewVmmdClient(conn), leaseCloser{c: c, nodeID: nodeID}, true
+			return c.client(nodeID, conn), leaseCloser{c: c, nodeID: nodeID}, true
 		case <-ctx.Done():
 			return nil, nil, false
 		}
@@ -1495,7 +1516,7 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 		}
 		return nil, nil, false
 	}
-	return vmmdpb.NewVmmdClient(conn), leaseCloser{c: c, nodeID: nodeID}, true
+	return c.client(nodeID, conn), leaseCloser{c: c, nodeID: nodeID}, true
 }
 
 // finishNodeDial publishes a successful connection and wakes all waiters.

@@ -342,6 +342,24 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	if guestFD != nil {
 		defer func() { _ = guestFD.Close() }()
 	}
+	if publicTarget(ctx) == nil {
+		// A namespace bridge runs as the instance's bridge uid when
+		// unprivileged bridges are on (connection-survival ADR, slice 1a);
+		// a public-target bridge keeps main's host-namespace launch.
+		bridgeID, err := s.bridgeIdentityFor(reqInit.GetInstance())
+		if err != nil {
+			_ = stdoutW.Close()
+			return err
+		}
+		if bridgeID.unprivileged() {
+			// Same drop as the v2 bridge: nsenter enters the netns, then runs
+			// bash as the instance's bridge uid. Bash's /dev/tcp needs no
+			// privilege.
+			args := append(bridgeID.nsenterArgs("--net="+filepath.Join("/run/netns", netnsName)), "bash", "-c", buildStreamingBridgeScript(reqInit, respTimeout))
+			cmd = exec.CommandContext(ctx, args[0], args[1:]...)
+		}
+		cmd.Env = netns.PublicForwardEnv(bridgeID.env(), nil)
+	}
 	cmd.Stdin = stdinR
 	cmd.Stdout = stdoutW
 	var stderr bytes.Buffer
@@ -802,7 +820,11 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	if err != nil {
 		return err
 	}
-	cmd, stdinR, stdinW, stdoutR, stderr, err := rawBridgeSpawn(ctx, instancePID, dialPort)
+	bridgeID, err := s.forwardBridgeIdentity(ctx, reqInit.GetInstance())
+	if err != nil {
+		return err
+	}
+	cmd, stdinR, stdinW, stdoutR, stderr, err := rawBridgeSpawn(ctx, bridgeID, instancePID, dialPort)
 	if err != nil {
 		return err
 	}
@@ -877,7 +899,7 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 // the legacy shell bridge's `sh -c <inline-script>` TOCTOU-free
 // property is preserved — the resolved file is opened by
 // execve(2) before the kernel unlinks its inode can race us.
-func rawBridgeSpawn(ctx context.Context, instancePID int, dialPort uint32) (*exec.Cmd, *os.File, *os.File, *os.File, *bytes.Buffer, error) {
+func rawBridgeSpawn(ctx context.Context, id bridgeIdentity, instancePID int, dialPort uint32) (*exec.Cmd, *os.File, *os.File, *os.File, *bytes.Buffer, error) {
 	bridgePath, err := resolveRawBridgePath()
 	if err != nil {
 		return nil, nil, nil, nil, nil, status.Errorf(codes.FailedPrecondition, "raw bridge path: %v", err)
@@ -898,7 +920,7 @@ func rawBridgeSpawn(ctx context.Context, instancePID int, dialPort uint32) (*exe
 		return nil, nil, nil, nil, nil, status.Errorf(codes.Internal, "stdout pipe: %v", err)
 	}
 
-	cmd := rawBridgeCommand(ctx, instancePID, bridgePath, dialPort)
+	cmd := rawBridgeCommand(ctx, id, instancePID, bridgePath, dialPort)
 	cmd.Stdin = stdinR
 	cmd.Stdout = stdoutW
 	var stderr bytes.Buffer
@@ -917,8 +939,8 @@ func rawBridgeSpawn(ctx context.Context, instancePID int, dialPort uint32) (*exe
 	return cmd, stdinR, stdinW, stdoutR, &stderr, nil
 }
 
-func rawBridgeCommand(ctx context.Context, instancePID int, bridgePath string, dialPort uint32) *exec.Cmd {
-	return namespaceOrPublicCommand(ctx, instancePID, bridgePath, dialPort)
+func rawBridgeCommand(ctx context.Context, id bridgeIdentity, instancePID int, bridgePath string, dialPort uint32) *exec.Cmd {
+	return namespaceOrPublicCommand(ctx, id, instancePID, bridgePath, dialPort)
 }
 
 // rawBridgeBodyLoop copies inbound body_chunks → bridge stdin.
@@ -1589,19 +1611,22 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 	}
 	persistent := persistentStreamBridgeEnabled()
 	requestBridgeProtocol := streamBridgeProtocol(reqInit)
+	bridgeID, err := s.forwardBridgeIdentity(ctx, reqInit.GetInstance())
+	if err != nil {
+		return err
+	}
 	var (
 		bridgeLease  *streamBridgeLease
 		client       *http.Client
 		cmd          *exec.Cmd
 		stderr       *bytes.Buffer
 		bridgeWaited bool
-		err          error
 	)
 	if persistent {
 		if s.streamBridges == nil {
 			s.streamBridges = newStreamBridgeManager(s.log)
 		}
-		bridgeLease, err = s.streamBridges.acquire(ctx, reqInit, netnsName)
+		bridgeLease, err = s.streamBridges.acquire(ctx, reqInit, netnsName, bridgeID)
 		if err != nil {
 			s.log.Warn("vmmd: persistent stream bridge unavailable",
 				"instance", reqInit.GetInstance(), "netns", netnsName, "err", err)
@@ -1620,12 +1645,15 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 				"stream bridge binary missing at %s (ship via the immutable bundle, see cmd/vmmd-stream-bridge): %v",
 				bridgePath, statErr)
 		}
-		sockPath := streamBridgeSockPathForRequest(reqInit.GetInstance())
+		sockPath := streamBridgeSockPathForRequest(reqInit.GetInstance(), bridgeID)
 		sessionDeadline := time.Now().Add(streamBridgeSessionDeadline).UTC().Format(time.RFC3339)
 		bridgeEnv := netns.PublicForwardEnv(streamBridgeEnv(reqInit), publicTarget(ctx))
-		defer func() { _ = os.Remove(sockPath) }()
+		if err := bridgeID.prepareSocketDir(sockPath); err != nil {
+			return status.Errorf(codes.Unavailable, "stream bridge socket: %v", err)
+		}
+		defer bridgeID.removeSocket(sockPath)
 		spawnNetns, guestIP := streamBridgeTarget(ctx, netnsName)
-		cmd, stderr, err = streamBridgeSpawn(ctx, bridgePath, spawnNetns, sockPath, guestIP, dialPort, sessionDeadline, bridgeEnv)
+		cmd, stderr, err = streamBridgeSpawn(ctx, bridgePath, spawnNetns, bridgeID, sockPath, guestIP, dialPort, sessionDeadline, bridgeEnv)
 		if err != nil {
 			s.log.Warn("vmmd: stream bridge spawn failed",
 				"instance", reqInit.GetInstance(), "netns", netnsName,
@@ -1643,7 +1671,7 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 				"socket", sockPath, "stderr", stderr.String(), "err", err.Error())
 			return status.Errorf(codes.Unavailable, "stream bridge socket not ready: %v (stderr: %s)", err, stderr.String())
 		}
-		transport := newStreamBridgeH2CTransport(sockPath)
+		transport := newStreamBridgeH2CTransport(sockPath, bridgeID)
 		defer transport.CloseIdleConnections()
 		client = newGuestHTTPClient(instrumentGuestTransport(transport, reqInit, requestBridgeProtocol, dialPort))
 	}
@@ -1992,7 +2020,9 @@ func resolveStreamBridgePath() (string, error) {
 }
 
 // streamBridgeSpawn is the package-level spawn hook. Production
-// uses streamBridgeSpawnReal which runs `ip netns exec <netns> <bin> …`.
+// uses streamBridgeSpawnReal, which runs `ip netns exec <netns> <bin> …`
+// for a root bridge and `nsenter --net=… --setuid … -- <bin> …` for an
+// unprivileged one.
 // Tests override to inject a fake bridge that listens on a unix
 // socket and serves H2C. The signature mirrors the live spawn's
 // observable surface; the fake receives the same argv/env plus
@@ -2001,13 +2031,12 @@ func resolveStreamBridgePath() (string, error) {
 
 var streamBridgeSpawn = streamBridgeSpawnReal
 
-func streamBridgeSpawnReal(ctx context.Context, bridgePath, netnsName, sockPath, guestIP string, guestPort uint32, sessionDeadline string, env []string) (*exec.Cmd, *bytes.Buffer, error) {
-	args := []string{sockPath, guestIP, strconv.FormatUint(uint64(guestPort), 10), sessionDeadline}
-	cmd := exec.CommandContext(ctx, bridgePath, args...)
-	if netnsName != "" {
-		cmd = exec.CommandContext(ctx, "ip", append([]string{"netns", "exec", netnsName, bridgePath}, args...)...)
-	}
-	cmd.Env = env
+func streamBridgeSpawnReal(ctx context.Context, bridgePath, netnsName string, id bridgeIdentity, sockPath, guestIP string, guestPort uint32, sessionDeadline string, env []string) (*exec.Cmd, *bytes.Buffer, error) {
+	args := streamBridgeArgs(bridgePath, netnsName, id, sockPath, guestIP, guestPort, sessionDeadline)
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	// The uid change in nsenter clears the parent-death signal set below;
+	// the bridge re-arms it from the environment (pkg/bridgeproc).
+	cmd.Env = append(id.env(), env...)
 	// Pdeathsig: if vmmd is SIGKILLed (OOM-killer, orchestrator
 	// restart, kernel panic reboot path that bypasses our deferred
 	// SIGTERM), the bridge child must NOT be orphaned — unlike v1's
@@ -2036,12 +2065,29 @@ func streamBridgeSpawnReal(ctx context.Context, bridgePath, netnsName, sockPath,
 	return cmd, &stderr, nil
 }
 
+// streamBridgeArgs is the stream bridge's argv. A root bridge keeps the
+// `ip netns exec` form; an unprivileged one needs nsenter, which can drop
+// the uid after it enters the namespace.
+func streamBridgeArgs(bridgePath, netnsName string, id bridgeIdentity, sockPath, guestIP string, guestPort uint32, sessionDeadline string) []string {
+	bridgeArgs := []string{bridgePath, sockPath, guestIP, strconv.FormatUint(uint64(guestPort), 10), sessionDeadline}
+	if netnsName == "" {
+		// A public-target bridge runs in the host namespace (ADR-1749);
+		// forwardBridgeIdentity gives it the root identity.
+		return bridgeArgs
+	}
+	if id.unprivileged() {
+		return append(id.nsenterArgs("--net="+filepath.Join("/run/netns", netnsName)), bridgeArgs...)
+	}
+	return append([]string{"ip", "netns", "exec", netnsName}, bridgeArgs...)
+}
+
 // streamBridgeSockPath is the host-side unix socket path for the
-// instance's stream bridge. Lives under /var/run/faas/stream/ —
-// host-side, mode 0700 (per the tmpfiles.d entry). The bridge
-// binary chmods the socket 0600 after bind.
-func streamBridgeSockPath(instance string) string {
-	return "/var/run/faas/stream/" + instance + ".sock"
+// instance's stream bridge. A root bridge's socket lives under
+// /var/run/faas/stream/ (root:faas 0770, per the tmpfiles.d entry); an
+// unprivileged bridge's lives in its own directory (bridgeIdentity). The
+// bridge binary chmods the socket 0600 after bind.
+func streamBridgeSockPath(instance string, id bridgeIdentity) string {
+	return id.streamBridgeSocket(instance)
 }
 
 // streamBridgeRequestSeq makes each ForwardHTTPStreamV2 RPC own a distinct
@@ -2050,9 +2096,9 @@ func streamBridgeSockPath(instance string) string {
 // second request unlink and replace the first request's listener.
 var streamBridgeRequestSeq atomic.Uint64
 
-func streamBridgeSockPathForRequest(instance string) string {
+func streamBridgeSockPathForRequest(instance string, id bridgeIdentity) string {
 	seq := streamBridgeRequestSeq.Add(1)
-	return fmt.Sprintf("/var/run/faas/stream/%s-%d-%d.sock", instance, os.Getpid(), seq)
+	return id.streamBridgeSocket(fmt.Sprintf("%s-%d-%d", instance, os.Getpid(), seq))
 }
 
 // streamBridgeEnv builds the env-var list set on the spawned
@@ -2222,12 +2268,20 @@ func sanitizeHeaderValue(s string) string {
 // h2c-transport-over-unix-socket lines 10-12). x/net/http2 with
 // AllowHTTP=true is the canonical Go client for H2C over a
 // non-TLS dialer.
-func newStreamBridgeH2CTransport(sockPath string) *http2.Transport {
+func newStreamBridgeH2CTransport(sockPath string, id bridgeIdentity) *http2.Transport {
 	return &http2.Transport{
 		AllowHTTP: true,
 		DialTLSContext: func(ctx context.Context, _, _ string, _ *tls.Config) (net.Conn, error) {
 			var d net.Dialer
-			return d.DialContext(ctx, "unix", sockPath)
+			conn, err := d.DialContext(ctx, "unix", sockPath)
+			if err != nil {
+				return nil, err
+			}
+			if err := id.verifyBridgePeer(conn); err != nil {
+				_ = conn.Close()
+				return nil, err
+			}
+			return conn, nil
 		},
 		IdleConnTimeout: 5 * time.Minute,
 		ReadIdleTimeout: 30 * time.Second,

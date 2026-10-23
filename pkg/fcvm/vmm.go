@@ -121,6 +121,15 @@ type JailerVMM struct {
 	// listeners here closes the race where a fast guest sends its characterization
 	// or job-exit frame before the corresponding wait RPC starts.
 	guestVsockListeners map[guestVsockListenerKey]*net.UnixListener
+	// jobExits are the receivers on job-exit listeners, kept after the
+	// payload arrives so WaitJobExit can be called again.
+	jobExits    map[string]*jobExitReceiver
+	jobExitSink func(instance string, payload JobExitPayload)
+	// fdStoreMu orders the listener store's messages with storedJobExits:
+	// the job-exit listeners currently in the store, by instance.
+	fdStoreMu      sync.Mutex
+	listenerStore  ListenerStore
+	storedJobExits map[string]*net.UnixListener
 	// Private restored channels have their own callbacks and live producer
 	// authority. They never borrow daemon serving handlers or the CID index.
 	nativeRestoreChannels map[string]*nativeQualificationRestoreChannels
@@ -203,6 +212,9 @@ type JailerVMM struct {
 	// over a path while a running VM still holds the old inode, and the next
 	// boot must bind the new file rather than fail.
 	bindSourceModes map[bindSourceKey]bindSourceMode
+	// fileConsole launches guests with their console file as stdout and
+	// stderr (console_file.go). Guarded by mu.
+	fileConsole bool
 	// wakePhaseMetrics is the vmmd wake registry (ADR-098 C11), shared with
 	// the Manager. Optional; every observation site is nil-safe.
 	wakePhaseMetrics *WakePhaseMetrics
@@ -240,6 +252,9 @@ type ephemeralBind struct {
 	target     *resourceFileIdentity // Placeholder behind the bind, before mounting.
 	tracked    bool                  // Image bind intent; TUN in the child namespace is separate.
 	released   bool                  // Permission reference released; journal retirement may still fail.
+	// adopted marks a bind a previous vmmd made (adoption ADR §2): it lives
+	// only in that vmmd's mount namespace, invisible here.
+	adopted bool
 }
 
 // bindSourceKey names one bound source file: its path and the inode that was
@@ -389,6 +404,9 @@ type instanceRecord struct {
 	exited      bool          // set by the watchdog when cmd.Wait completes
 	exitCode    int           // captured from cmd.Wait's ProcessState.ExitCode()
 	done        chan struct{} // closed by the watchdog; readers <-done to wake
+	// fileConsole marks a guest whose stdout and stderr are its console
+	// file, not a pipe into vmmd (console_file.go).
+	fileConsole bool
 }
 
 // ringWriter is a thin io.Writer that forwards every Write call to the
@@ -2736,6 +2754,7 @@ func (v *JailerVMM) closeGuestVsockListeners(instance string) {
 		}
 	}
 	delete(v.characterizationReceipts, instance)
+	delete(v.jobExits, instance)
 	v.mu.Unlock()
 	for port, ln := range listeners {
 		if ln != nil {
@@ -5511,6 +5530,9 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	ring := v.ringFor(l.Instance)
 	consolePath := v.consoleLogPath(l.Instance)
 	consoleFile := v.takeConsoleFile(l.Instance)
+	// Adoption ADR §2: a file console is Firecracker's own stdout, so the
+	// guest's console does not depend on this vmmd staying alive.
+	fileConsole := v.fileConsoleEnabled() && consoleFile != nil
 	stdout := io.Discard
 	var consoleWriter *customerConsoleWriter
 	if ring != nil {
@@ -5521,7 +5543,10 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 		consoleWriter = &customerConsoleWriter{ring: ring}
 		stdout = consoleWriter
 	}
-	if consoleFile != nil {
+	if fileConsole {
+		// Firecracker writes the file itself; tailConsole feeds the ring.
+		stdout = consoleFile
+	} else if consoleFile != nil {
 		stdout = io.MultiWriter(stdout, consoleFile)
 	}
 	cmd.Stdout = stdout
@@ -5556,9 +5581,18 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	}
 	v.mu.Lock()
 	v.proc[l.Instance] = cmd
-	rec := &instanceRecord{cmd: cmd, consolePath: consolePath, isBuilder: l.IsBuilder, done: make(chan struct{})}
+	rec := &instanceRecord{cmd: cmd, consolePath: consolePath, isBuilder: l.IsBuilder, done: make(chan struct{}), fileConsole: fileConsole}
 	v.recs[l.Instance] = rec
 	v.mu.Unlock()
+	if fileConsole {
+		// The child holds its own descriptor; vmmd's copy is not needed.
+		_ = consoleFile.Close()
+		consoleFile = nil
+		if consoleWriter != nil {
+			go tailConsole(consolePath, 0, consoleWriter, consoleWriter.Flush, rec.done)
+			consoleWriter = nil // the tail flushes it once the process exits
+		}
+	}
 	if rec.isBuilder {
 		go watchBuilderGuestHalt(rec.consolePath, rec.done, 250*time.Millisecond, func() {
 			v.killProcess(l.Instance)
@@ -6312,6 +6346,17 @@ func (v *JailerVMM) unmountBindMounts(instance string) error {
 	v.mu.Unlock()
 	for i := len(binds) - 1; i >= 0; i-- {
 		b := binds[i]
+		if b.adopted && b.mount != nil {
+			// The mount lives on in any process still in the namespace that
+			// made it; the source keeps its widened mode until none remains.
+			held, err := mountNamespaceHeld("/proc", b.mount.Namespace)
+			if err != nil {
+				return err
+			}
+			if held {
+				return errors.New("adopted bind is still mounted in the previous vmmd's namespace; retaining ownership")
+			}
+		}
 		if b.tracked {
 			current, err := resourceMountAt(b.mountpoint)
 			if err != nil {
@@ -7762,9 +7807,7 @@ func (v *JailerVMM) stageWritableAsForOwner(ctx context.Context, owner nativeLau
 	if instance == "" {
 		return stageWritableAs(root, src, name, uid, gid)
 	}
-	clone, cloned, err := reflinkCloneTempWithCreator(src, instance, func(dir, pattern string) (*os.File, error) {
-		return v.newMaterialisedFile(instance, dir, pattern, "clone")
-	}, v.removeMaterialisedFile)
+	clone, cloned, err := v.reflinkWritableClone(src, instance)
 	if err != nil {
 		return "", fmt.Errorf("reflink writable %s: %w", src, err)
 	}
@@ -8206,6 +8249,42 @@ func (v *JailerVMM) trackMaterialised(instanceID, tmpPath string) {
 	v.mu.Lock()
 	v.materialisedTmp[instanceID] = append(v.materialisedTmp[instanceID], tmpPath)
 	v.mu.Unlock()
+}
+
+// reflinkWritableClone takes the journaled CoW clone of src for instance, or
+// reports false when the filesystem cannot reflink. The probe file is then
+// released in full, asset included: a record that names a file which is
+// gone makes a restarted vmmd refuse the guest at adoption.
+func (v *JailerVMM) reflinkWritableClone(src, instance string) (string, bool, error) {
+	return reflinkCloneTempWithCreator(src, instance, func(dir, pattern string) (*os.File, error) {
+		return v.newMaterialisedFile(instance, dir, pattern, "clone")
+	}, func(path string) error { return v.releaseMaterialisedFile(instance, path) })
+}
+
+// releaseMaterialisedFile removes one owned staged file now, as teardown's
+// sweep would: the file, its journal asset and its tracking.
+func (v *JailerVMM) releaseMaterialisedFile(instanceID, path string) error {
+	if err := v.removeMaterialisedFile(path); err != nil {
+		return err
+	}
+	if err := v.retireResourceAsset(instanceID, path); err != nil {
+		return err
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	delete(v.materialisedIdentity, path)
+	kept := v.materialisedTmp[instanceID][:0]
+	for _, p := range v.materialisedTmp[instanceID] {
+		if p != path {
+			kept = append(kept, p)
+		}
+	}
+	if len(kept) == 0 {
+		delete(v.materialisedTmp, instanceID)
+	} else {
+		v.materialisedTmp[instanceID] = kept
+	}
+	return nil
 }
 
 // sweepMaterialised retains paths that could not be removed for teardown retry.

@@ -75,4 +75,12 @@ func (*fakeVmmdClient) RetireMigrationAdoption(context.Context, *vmmdpb.RetireMi
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not retire migration adoptions")
 }
 
+func (*fakeVmmdClient) AdoptionReport(context.Context, *vmmdpb.AdoptionReportRequest, ...grpc.CallOption) (*vmmdpb.AdoptionReportResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not report vmmd restart adoption")
+}
+
+func (*fakeVmmdClient) AdoptionInventory(context.Context, *vmmdpb.AdoptionInventoryRequest, ...grpc.CallOption) (*vmmdpb.AdoptionInventoryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not list adoption inventory")
+}
+
 var _ vmmdpb.VmmdClient = (*fakeVmmdClient)(nil)
