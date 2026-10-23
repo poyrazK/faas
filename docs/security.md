@@ -288,12 +288,12 @@ policy keep it until it expires (up to a year after their last visit).
 A `kind=waf` edge rule (Pro and above) checks matched requests against the
 OWASP Core Rule Set for SQL injection, cross-site scripting, path traversal,
 command injection, scanners, and header injection. It works the same on
-`*.gregale.dev` and on your custom domains. `observe` at paranoia level 1 is
-generally available; `warn`, `block` and paranoia level 2 are in preview.
-Warn and block are released account by account: until your account is
-included, creating a rule in either mode, or switching one to it, returns
-`422` with code `edge_feature_unavailable`, and existing warn and block
-rules only observe.
+`*.gregale.dev` and on your custom domains. `observe`, `warn` and `block` at
+paranoia level 1 are generally available; paranoia level 2 is in preview and
+runs in `observe` only. Warn and block reach accounts one by one as they
+launch: until they reach yours, creating a rule in either mode, or switching
+one to it, returns `422` with code `edge_feature_unavailable`, and existing
+warn and block rules only observe.
 The rule's `mode` decides what happens to a detection:
 
 | Mode | Headers and URL | Request body |
@@ -354,12 +354,12 @@ produces more false positives; it is available in `observe` only. The
 `edge_waf_detections` alert preset notifies you of bursts, and blocked
 requests also count toward `edge_rejection_pressure`.
 
-## Browser challenge (preview)
+## Browser challenge
 
 A `kind=challenge` edge rule keeps scripts and scrapers off browser pages.
 An app can have 3 on Hobby, 10 on Pro and 25 on Scale; Free has none.
-Challenge rules are released account by account: until your account is
-included, creating one or switching one on returns `422` with code
+Challenge rules reach accounts one by one as they launch: until they reach
+yours, creating one or switching one on returns `422` with code
 `edge_feature_unavailable`, and existing challenge rules challenge nobody.
 A matched request without a valid pass never reaches your app:
 
