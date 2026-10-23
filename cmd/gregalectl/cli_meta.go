@@ -161,7 +161,7 @@ var cliCommands = []cliCommand{
 		Short:   "Manage the MFA-stepped-up session used for provider mutations",
 		Subcommands: []cliSub{
 			{Name: "login", Short: "Sign in and verify TOTP", Flags: []cliFlag{{Name: "email", Short: "FAAS_ADMIN_EMAILS-allowlisted operator email", Req: true}}},
-			{Name: "step-up", Short: "Refresh the five-minute TOTP step-up window"},
+			{Name: "step-up", Short: "Refresh the five-minute TOTP step-up window", Flags: []cliFlag{{Name: "force", Short: "verify a new code even when the last step-up is under a minute old"}}},
 			{Name: "status", Short: "Validate and describe the current operator session"},
 			{Name: "logout", Short: "Revoke and remove the current operator session"},
 		},
