@@ -15,6 +15,7 @@ import (
 
 func TestAccountDeletionGuardError(t *testing.T) {
 	plain := errors.New("connection reset")
+	unrelated := &pgconn.PgError{Code: "23514", ConstraintName: "instances_state_check"}
 	databases := func(detail string) error {
 		return fmt.Errorf("schedule: %w", &pgconn.PgError{Code: "23514", ConstraintName: "account_has_managed_postgres_databases", Detail: detail})
 	}
@@ -30,20 +31,20 @@ func TestAccountDeletionGuardError(t *testing.T) {
 		{name: "databases with count", in: databases("3"), live: 3, is: state.ErrAccountManagedPostgresDatabases},
 		{name: "databases from an older guard", in: databases(""), live: 0, is: state.ErrAccountManagedPostgresDatabases},
 		{name: "databases with unreadable count", in: databases("many"), live: 0, is: state.ErrAccountManagedPostgresDatabases},
-		{name: "unrelated check", in: &pgconn.PgError{Code: "23514", ConstraintName: "instances_state_check"}, live: -1},
+		{name: "unrelated check", in: unrelated, live: -1, is: unrelated},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := state.AccountDeletionGuardError(tt.in)
+			if tt.in == nil && got != nil {
+				t.Fatalf("nil became %v", got)
+			}
 			if tt.is != nil && !errors.Is(got, tt.is) {
 				t.Fatalf("got %v, want %v", got, tt.is)
 			}
 			var blocked *state.AccountManagedPostgresDatabasesError
 			if found := errors.As(got, &blocked); found != (tt.live >= 0) || found && blocked.Live != tt.live {
 				t.Fatalf("got %#v, want live %d", got, tt.live)
-			}
-			if tt.is == nil && tt.live < 0 && got != tt.in {
-				t.Fatalf("unrelated error changed: %v", got)
 			}
 		})
 	}
