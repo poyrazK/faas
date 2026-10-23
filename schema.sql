@@ -26038,6 +26038,35 @@ $$;
 
 
 --
+-- Name: set_full_clone_configuration_fences(boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.set_full_clone_configuration_fences(enabled boolean) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    fence record;
+    changed integer := 0;
+BEGIN
+    FOR fence IN
+        SELECT c.relname
+        FROM pg_trigger t
+        JOIN pg_class c ON c.oid = t.tgrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE t.tgname = 'clone_configuration_write_fence' AND NOT t.tgisinternal
+          AND n.nspname = 'public' AND c.relname <> 'object_version_protection'
+        ORDER BY c.relname
+    LOOP
+        EXECUTE format('ALTER TABLE public.%I %s TRIGGER clone_configuration_write_fence',
+            fence.relname, CASE WHEN enabled THEN 'ENABLE' ELSE 'DISABLE' END);
+        changed := changed + 1;
+    END LOOP;
+    RETURN changed;
+END
+$$;
+
+
+--
 -- Name: set_service_capacity_protection(boolean); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -77494,12 +77523,16 @@ CREATE TRIGGER clone_checkpoint_scheduler_fence_truncate BEFORE TRUNCATE ON publ
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_secret_ref_suppressions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.app_environment_secret_ref_suppressions DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: app_environment_secret_refs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_secret_refs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.app_environment_secret_refs DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -77508,12 +77541,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_workload_intents FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.app_environment_workload_intents DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: app_envs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.app_envs DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -77522,12 +77559,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.app_secrets DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: app_work_policies clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_work_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.app_work_policies DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -77536,12 +77577,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.apps DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: deployment_sidecar_layers clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
+
+ALTER TABLE public.deployment_sidecar_layers DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -77550,12 +77595,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_secret_reload_signals FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
 
+ALTER TABLE public.deployment_sidecar_secret_reload_signals DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: deployments clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.deployments DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -77564,12 +77613,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.environment_git_sources DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: event_subscription_work_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.event_subscription_work_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.event_subscription_work_bindings DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -77578,12 +77631,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.feature_flag_versions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.feature_flag_versions DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: managed_postgres_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.managed_postgres_bindings DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -77592,12 +77649,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('database', 'id');
 
+ALTER TABLE public.managed_postgres_databases DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: object_bucket_encryption clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_encryption FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+ALTER TABLE public.object_bucket_encryption DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -77606,12 +77667,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_lifecycle FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
 
+ALTER TABLE public.object_bucket_lifecycle DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: object_bucket_object_lock clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_object_lock FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+ALTER TABLE public.object_bucket_object_lock DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -77620,6 +77685,8 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_versioning FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
 
+ALTER TABLE public.object_bucket_versioning DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: object_buckets clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
@@ -77627,12 +77694,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.object_buckets DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: object_storage_s3_credentials clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_storage_s3_credentials FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+ALTER TABLE public.object_storage_s3_credentials DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -77648,12 +77719,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_config_versions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.project_environment_config_versions DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: project_environment_edge_policies clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_edge_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+ALTER TABLE public.project_environment_edge_policies DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -77662,12 +77737,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_route_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.project_environment_route_policies DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: project_environment_workload_deployment_specs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_deployment_specs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
+
+ALTER TABLE public.project_environment_workload_deployment_specs DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -77676,12 +77755,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_heads FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.project_environment_workload_heads DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: project_environment_workload_specs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_specs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.project_environment_workload_specs DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -77690,12 +77773,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environments FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.project_environments DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: project_release_members clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.project_release_members DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -77704,12 +77791,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.project_release_sets DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: projects clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE DELETE OR UPDATE ON public.projects FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'id');
+
+ALTER TABLE public.projects DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -77718,12 +77809,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE DELETE OR UPDATE ON public
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.queue_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.queue_bindings DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: trigger_work_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.trigger_work_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.trigger_work_bindings DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
