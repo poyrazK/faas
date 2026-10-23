@@ -288,7 +288,14 @@ Rollout checklist: [Seal domains rollout](../runbooks/seal-domains-rollout.md).
   cannot open domain rows). `gregalectl fleet-seal migrate` skips rows whose
   `kid` names a recipient it holds no identity for.
 - **Re-seal:** `gregalectl seal-domain migrate --domain runtime
-  --readers-verified` re-seals `app_secrets` with compare-and-swap writes.
+  --readers-verified` re-seals every stored runtime secret through the
+  release-secret rekey documents (ADR-1139): app and project environment
+  secrets, staged release bundles, deployment snapshots, and release and
+  promotion captures. Each document is written back with a compare-and-swap
+  that changes only `kid` and ciphertext, so no runtime-change trigger fires
+  and value fingerprints and versions stay as they were. The store lists only
+  documents with an envelope labelled for another key, so a complete
+  migration lists nothing.
 - **Staging:** the `seal_domains` role stages the identity on compute and
   single-box hosts and verifies the runtime probe there. It stages the
   recipient and the apid drop-in on control-plane hosts. bootstrap runs the
@@ -296,8 +303,9 @@ Rollout checklist: [Seal domains rollout](../runbooks/seal-domains-rollout.md).
 
 Later slices:
 - the other domains, in the order above;
-- re-sealing `project_environment_secrets` and the release secret
-  snapshots and bundles to the runtime domain;
+- re-sealing the short-lived copies in `app_config_guard_secrets` and
+  `managed_postgres_cutover_credentials`, which the rekey documents do not
+  cover;
 - the contract steps;
 - meterd sending test alerts;
 - role-scoped staging in node join;
