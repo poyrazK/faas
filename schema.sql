@@ -766,18 +766,21 @@ $$;
 --
 
 CREATE FUNCTION public.app_workflow_definitions(target_app uuid, manifest jsonb) RETURNS jsonb
-    LANGUAGE sql STABLE
+    LANGUAGE plpgsql STABLE
     AS $$
- SELECT coalesce(jsonb_agg(CASE WHEN definition->'trigger'->>'type' IN ('schedule','event') AND EXISTS(SELECT 1 FROM workflow_automation_failure_guards g WHERE g.app_id=target_app AND g.name=definition->>'name' AND g.paused_at IS NOT NULL) THEN jsonb_set(definition,'{trigger,enabled}','false'::jsonb,true) ELSE definition END ORDER BY definition->>'name'),'[]'::jsonb)
- FROM (
-  SELECT definition FROM jsonb_array_elements(CASE WHEN jsonb_typeof(manifest)='array' THEN manifest ELSE '[]'::jsonb END) definition
-  WHERE NOT EXISTS(SELECT 1 FROM workflow_automation_definitions w WHERE w.app_id=target_app
-    AND w.name=definition->>'name' AND w.published IS NOT NULL)
-  UNION ALL
-  SELECT CASE WHEN published->'trigger'->>'type' IN ('schedule','event')
-   THEN jsonb_set(published, '{trigger,enabled}', to_jsonb(enabled), true) ELSE published END
-  FROM workflow_automation_definitions WHERE app_id=target_app AND published IS NOT NULL
- ) effective;
+BEGIN
+    RETURN (
+        SELECT coalesce(jsonb_agg(CASE WHEN definition->'trigger'->>'type' IN ('schedule','event') AND EXISTS(SELECT 1 FROM workflow_automation_failure_guards g WHERE g.app_id=target_app AND g.name=definition->>'name' AND g.paused_at IS NOT NULL) THEN jsonb_set(definition,'{trigger,enabled}','false'::jsonb,true) ELSE definition END ORDER BY definition->>'name'),'[]'::jsonb)
+        FROM (
+            SELECT definition FROM jsonb_array_elements(CASE WHEN jsonb_typeof(manifest)='array' THEN manifest ELSE '[]'::jsonb END) definition
+            WHERE NOT EXISTS(SELECT 1 FROM workflow_automation_definitions w WHERE w.app_id=target_app
+              AND w.name=definition->>'name' AND w.published IS NOT NULL)
+            UNION ALL
+            SELECT CASE WHEN published->'trigger'->>'type' IN ('schedule','event')
+             THEN jsonb_set(published, '{trigger,enabled}', to_jsonb(enabled), true) ELSE published END
+            FROM workflow_automation_definitions WHERE app_id=target_app AND published IS NOT NULL
+        ) effective);
+END;
 $$;
 
 
@@ -5861,7 +5864,9 @@ BEGIN
     INTO snapshot
     FROM jsonb_array_elements(NEW.recipient_snapshot) WITH ORDINALITY AS item(recipient, position);
 
-    UPDATE event_fanout_outbox SET recipient_snapshot = snapshot WHERE id = NEW.id;
+    IF snapshot IS DISTINCT FROM NEW.recipient_snapshot THEN
+        UPDATE event_fanout_outbox SET recipient_snapshot = snapshot WHERE id = NEW.id;
+    END IF;
     RETURN NEW;
 END;
 $$;
@@ -12618,14 +12623,19 @@ $$;
 --
 
 CREATE FUNCTION public.financial_compute_deployment_environment(target_deployment uuid) RETURNS uuid
-    LANGUAGE sql STABLE
+    LANGUAGE plpgsql STABLE STRICT
     AS $$
- SELECT COALESCE(owner.environment_id, named.id)
- FROM deployments d JOIN apps a ON a.id=d.app_id
- LEFT JOIN deployment_runtime_environment_owners owner ON owner.deployment_id=d.id
- LEFT JOIN project_environments named ON owner.deployment_id IS NULL AND named.project_id=a.project_id
-  AND named.slug=CASE WHEN COALESCE(NULLIF(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END
- WHERE d.id=target_deployment
+DECLARE
+    environment uuid;
+BEGIN
+    SELECT COALESCE(owner.environment_id, named.id) INTO environment
+    FROM deployments d JOIN apps a ON a.id=d.app_id
+    LEFT JOIN deployment_runtime_environment_owners owner ON owner.deployment_id=d.id
+    LEFT JOIN project_environments named ON owner.deployment_id IS NULL AND named.project_id=a.project_id
+     AND named.slug=CASE WHEN COALESCE(NULLIF(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END
+    WHERE d.id=target_deployment;
+    RETURN environment;
+END;
 $$;
 
 
@@ -18604,11 +18614,16 @@ END $$;
 --
 
 CREATE FUNCTION public.invocation_async_subject(app uuid, namespace uuid) RETURNS uuid
-    LANGUAGE sql STABLE
+    LANGUAGE plpgsql STABLE STRICT
     AS $$
- SELECT CASE WHEN o.id IS NOT NULL AND NOT o.personal_org AND o.resource_ownership_enabled
-             AND o.async_quota_pooled_at IS NOT NULL THEN o.id ELSE a.account_id END
- FROM apps a LEFT JOIN orgs o ON o.id=a.org_id WHERE a.id=app AND a.account_id=namespace;
+DECLARE
+    subject uuid;
+BEGIN
+    SELECT CASE WHEN o.id IS NOT NULL AND NOT o.personal_org AND o.resource_ownership_enabled
+                AND o.async_quota_pooled_at IS NOT NULL THEN o.id ELSE a.account_id END INTO subject
+    FROM apps a LEFT JOIN orgs o ON o.id=a.org_id WHERE a.id=app AND a.account_id=namespace;
+    RETURN subject;
+END;
 $$;
 
 
@@ -27222,7 +27237,10 @@ CREATE FUNCTION public.workflow_event_recipients(target_account uuid, event_sour
    WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = 'default'
    ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
  ) d ON true
- CROSS JOIN LATERAL jsonb_array_elements(app_workflow_definitions(a.id,d.workflows)) definition
+ CROSS JOIN LATERAL jsonb_array_elements(CASE
+   WHEN jsonb_typeof(d.workflows)='array' AND d.workflows <> '[]'::jsonb
+     OR EXISTS(SELECT 1 FROM workflow_automation_definitions w WHERE w.app_id=a.id AND w.published IS NOT NULL)
+   THEN app_workflow_definitions(a.id,d.workflows) ELSE '[]'::jsonb END) definition
  WHERE a.account_id = target_account AND a.status <> 'deleted'
    AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
    AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND ac.plan <> 'free'
