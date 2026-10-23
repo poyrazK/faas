@@ -7,6 +7,23 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP route-budget action history — 2026-10-23 (branch, not released)
+
+App/environment action listing and detail now include reviewed budget overrides
+and inheritance resets, with recorded attempts, unknown outcomes and committed
+policy revisions. History excludes policy payloads and native request keys;
+explicit observation selects current budgets without claiming better performance.
+An additive journal shares atomic replay/history persistence and the 256-record
+connection bound. Catalog remains 53 read/planning tools, 62 with writes enabled.
+Full MCP race checks and pinned real Codex 0.159.0-alpha.3 acceptance pass,
+including the same budget plan across restart/refresh/revocation in three
+read-only client profiles with zero model requests and native writes. Recovery
+checks cover expiry, consent, both policy revision conflicts, malformed cached
+receipts and storage failures before/after native mutation. Scoped Go lint and
+the spec/documentation gate pass without generated drift. See
+[ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
+Native/provider deployment qualification remains separate.
+
 ## Management MCP environment action history — 2026-10-22 (branch, not released)
 
 Project/environment listing and detail now cover promotion/rollback plans,

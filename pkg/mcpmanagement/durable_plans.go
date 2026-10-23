@@ -52,7 +52,7 @@ func (m *management) restorePlans() error {
 			if p.Budgets == nil || routemonitor.ValidateEnvironmentBudgets(p.Budgets.Proposed) != nil || validateBudgetResponse(p.Budgets.Before, p.AppID, p.Scope, p.ProjectID, p.EnvironmentID) != nil || p.Budgets.Proposed.AppID != p.AppID || p.Budgets.Proposed.ProjectID != p.ProjectID || p.Budgets.Proposed.EnvironmentID != p.EnvironmentID || *p.Budgets.Proposed.ExpectedRevision != p.Budgets.Before.Revision || *p.Budgets.Proposed.ExpectedAppRevision != p.Budgets.Before.AppRevision {
 				return errors.New("stored route budget plan binding mismatch")
 			}
-			if record.BudgetResult != nil && validateBudgetResponse(*record.BudgetResult, p.AppID, p.Scope, p.ProjectID, p.EnvironmentID) != nil {
+			if record.BudgetResult != nil && (!record.Attempted || validateBudgetReceipt(&p, *record.BudgetResult) != nil) {
 				return errors.New("stored route budget receipt binding mismatch")
 			}
 		}
@@ -94,10 +94,12 @@ func (m *management) persistPlans() error {
 		}
 		records[id] = storedPlan{RegressionResult: p.regressionResult, BudgetResult: p.budgetResult, Plan: *p, AppHash: p.appHash, LatestID: p.latestID, Attempted: p.attempted, Result: p.result, Promoted: p.promoted, PromotionAttempted: p.promotionAttempted, Review: p.review}
 	}
-	legacy, workloads := make(map[string]actionRecord), make(map[string]actionRecord)
+	legacy, workloads, budgets := make(map[string]actionRecord), make(map[string]actionRecord), make(map[string]actionRecord)
 	for id, entry := range m.actions {
 		if workloadHistoryAction(entry.Action) {
 			workloads[id] = entry
+		} else if entry.Action == "route_budgets" {
+			budgets[id] = entry
 		} else {
 			legacy[id] = entry
 		}
@@ -108,5 +110,6 @@ func (m *management) persistPlans() error {
 		"plans/" + m.opts.planNamespace:                    records,
 		"actions/" + m.opts.planNamespace:                  actionHistorySnapshot{Version: 1, Items: legacy},
 		workloadActionsNamespace + m.opts.planNamespace:    actionHistorySnapshot{Version: 1, Items: workloads},
+		budgetActionsNamespace + m.opts.planNamespace:      actionHistorySnapshot{Version: 1, Items: budgets},
 	})
 }

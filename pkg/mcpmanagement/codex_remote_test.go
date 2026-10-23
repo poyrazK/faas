@@ -2,6 +2,7 @@
 // adr: 20261022161757
 // adr: 20261022183756
 // adr: 20261022192200
+// adr: 20261023130958
 package mcpmanagement
 
 import (
@@ -353,6 +354,17 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	f.mu.Lock()
 	previousHook := f.apiHook
 	f.apiHook = func(w http.ResponseWriter, req *http.Request, account string) bool {
+		// Route-budget requests require UUIDs; retain the older alpha fixture's
+		// identities and give budget planning its own consented app.
+		const budgetAppID = "22222222-2222-4222-8222-222222222222"
+		if req.Method == http.MethodGet && req.URL.Path == "/v1/apps/budget-history" {
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: budgetAppID, Slug: "budget-history", Type: "app"})
+			return true
+		}
+		if req.Method == http.MethodGet && req.URL.Path == "/v1/apps/budget-history/route-budgets" && req.URL.Query().Get("scope") == "default" {
+			_ = json.NewEncoder(w).Encode(api.EnvironmentRouteBudgets{AppID: budgetAppID, Scope: "default", BudgetSource: "app_policy", Config: api.RouteMonitorConfig{AppID: budgetAppID, Routes: []api.RouteMonitorRoute{}}})
+			return true
+		}
 		if req.Method == http.MethodGet && req.URL.Path == "/v1/projects/shop/environments/production/promotion-preview" {
 			_ = json.NewEncoder(w).Encode(api.ProjectEnvironmentPromotionPreviewResponse{ProjectSlug: "shop", FromEnvironment: "staging", ToEnvironment: "production", CanPromote: true, ApprovalRequired: true, PromotionHash: strings.Repeat("a", 64), PromotionToken: "PRIVATE_ENV_PREVIEW"})
 			return true
@@ -567,7 +579,7 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	if json.Unmarshal(output, &report) != nil || report["revocation"] != "passed" || report["refresh"] != "passed" || report["restart"] != "passed" {
 		t.Fatal("incomplete real-client evidence")
 	}
-	if report["action_history"] != "passed" || report["workload_action_history"] != "passed" || report["environment_action_history"] != "passed" {
+	if report["action_history"] != "passed" || report["workload_action_history"] != "passed" || report["environment_action_history"] != "passed" || report["budget_action_history"] != "passed" {
 		t.Fatal("incomplete real-client action history restart/refresh evidence")
 	}
 	if requestMode != "" && (report["request_diagnostics"] != requestMode || report["request_discovery"] != "passed" || nativeWrites.Load() != 0 || requestReads.Load() != map[string]int32{"denied": 0, "approved": 32}[requestMode]) {

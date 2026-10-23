@@ -3073,7 +3073,7 @@ migration/process-death/leak behavior before deployment. See
 ## Management MCP action history (ADR-20261022161757)
 
 The management bridge exposes read-only, connection-local listing and inspection
-of reviewed deploy/rollback, service/worker rollout, service abort and
+of reviewed deploy/rollback, service/worker rollout, service abort, route-budget and
 regression-triage attempts and redacted receipts.
 History and replay payloads commit in the same encrypted, fsynced snapshot before
 native mutation and after its receipt. Acceptance is distinct from completion;
@@ -3106,3 +3106,13 @@ review links and workload payloads are excluded. All replay/history namespaces
 commit atomically and share the 256-record bound. Reads never approve, apply or
 observe native completion. See
 [ADR-20261022192200](adr/20261022192200-management-mcp-environment-action-history.md).
+
+Route-budget history extends the app/environment listing and detail with reviewed
+overrides and inheritance resets. Redacted metadata binds both policy revisions;
+validated committed receipts expose the resulting revision and source, including
+zero parent revisions. Same-plan retry retains native CAS/idempotency and current
+consent/expiry guards. Exact observation arguments select current policy without
+claiming improved performance or completed windows. An additive budget journal
+shares atomic persistence, retention, the connection bound and OAuth cleanup;
+no native API, schema or catalog count changes. See
+[ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).

@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261023130958: Management MCP route-budget action history](20261023130958-management-mcp-route-budget-action-history.md)
 - [ADR-20261022192200: Management MCP environment promotion and rollback history](20261022192200-management-mcp-environment-action-history.md)
 - [ADR-20261022183756: Management MCP workload rollout and service abort history](20261022183756-management-mcp-workload-action-history.md)
 - [ADR-20261022161757: Connection-local management MCP action history and recovery](20261022161757-management-mcp-action-history.md)

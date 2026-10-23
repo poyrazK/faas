@@ -1556,8 +1556,8 @@ or platform writes, and do not plan/apply configuration changes.
 
 Use `gregale_list_actions` with `app` and optional `project`/`environment` to find
 this connection's recorded image/source deploy, rollback, service/worker rollout,
-service abort and regression-triage plans. Use `gregale_get_action` with the same
-selector and an exact `plan_id` to inspect its apply phase and, for request deploys,
+service abort, route-budget and regression-triage plans. Use `gregale_get_action`
+with the same selector and an exact `plan_id` to inspect its apply phase and, for request deploys,
 separate promotion phase.
 These tools are read-only and remain available when writes are disabled.
 The catalog contains 53 read/planning tools, or 62 with writes enabled.
@@ -1570,7 +1570,7 @@ For a lost apply response:
    If the original plan is available and writes are enabled, retry the indicated
    existing apply/promotion tool with that **same plan ID**. Normal expiry,
    current authority, consent and immutable identity checks still run.
-4. If the plan expired, inspect native deployment/rollback state before planning
+4. If the plan expired, inspect the relevant native state before planning
    anything new. Historical metadata cannot recreate a replay payload or extend
    expiry. A missing record is not proof that no write occurred.
 
@@ -1601,6 +1601,23 @@ or `gregale_apply_service_abort` with the original unexpired plan and current
 consent. Accepted service aborts may still await routing acknowledgements and
 draining; accepted worker rollouts do not prove queue acknowledgement or delivery.
 
+Route-budget records include `budget.change` (`set_override` or
+`inherit_app_policy`) and the reviewed `expected_revision` and
+`expected_app_revision`. A `committed` receipt reports `budget_revision`,
+`app_policy_revision` (including zero) and `budget_source`. This records policy
+persistence; it does not establish improved performance or fresh completed
+observation windows. Routes, thresholds, enabled/configuration payloads, reasons
+and native request keys are excluded.
+
+Budget `observation` selects `gregale_get_route_budgets` with the exact
+app/project/environment arguments. Invoke it to inspect **current** policy,
+which may have advanced beyond the historical revision. History does not perform
+this read or infer native completion. Retry an ambiguous budget attempt only
+through `gregale_apply_route_budgets` with the original available plan and current
+write consent. Expired metadata never recreates that plan. Budget history needs
+app/environment read consent, independently of request-diagnostic consent.
+See [ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
+
 History retains at most 256 records shared across app/workload and environment
 actions per connection, through 24 hours after each
 plan's original expiry. Live supported plans take priority over archived records.
@@ -1621,8 +1638,7 @@ Reads recheck current account, app and named-environment identities before
 releasing data. Regression records additionally require current diagnostic
 consent; lists omit them without it. Reasons, routes, source/configuration
 payloads, secrets, native error prose, approval tokens and replay keys are excluded.
-This is bounded connection history, not a complete account audit log. Route-budget
-actions remain outside this profile.
+This is bounded connection history, not a complete account audit log.
 Existing unexpired supported plans are imported on upgrade; previously
 expired/discarded plans cannot be recovered. Older bridges ignore the additive
 history namespaces, so their later actions may be absent after their plan expires.

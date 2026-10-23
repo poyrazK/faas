@@ -19,6 +19,9 @@ type actionReceipt struct {
 	RegressionVersion   string `json:"regression_version,omitempty"`
 	TriageAction        string `json:"triage_action,omitempty"`
 	TriageState         string `json:"triage_state,omitempty"`
+	BudgetRevision      *int64 `json:"budget_revision,omitempty"`
+	AppPolicyRevision   *int64 `json:"app_policy_revision,omitempty"`
+	BudgetSource        string `json:"budget_source,omitempty"`
 }
 
 type actionPhase struct {
@@ -44,6 +47,7 @@ type actionRecord struct {
 	Apply         actionPhase     `json:"apply"`
 	Promotion     *actionPhase    `json:"promotion,omitempty"`
 	Workload      *actionWorkload `json:"workload,omitempty"`
+	Budget        *actionBudget   `json:"budget,omitempty"`
 }
 
 type actionHistorySnapshot struct {
@@ -57,12 +61,12 @@ func validActionID(id string) bool {
 }
 
 func supportedHistoryAction(action string) bool {
-	return action == "deploy" || action == "rollback" || action == "regression_action" || workloadHistoryAction(action)
+	return action == "deploy" || action == "rollback" || action == "regression_action" || workloadHistoryAction(action) || action == "route_budgets"
 }
 
 func (m *management) restoreActionHistory() error {
 	m.actions = make(map[string]actionRecord)
-	for _, namespace := range []string{"actions/", workloadActionsNamespace} {
+	for _, namespace := range []string{"actions/", workloadActionsNamespace, budgetActionsNamespace} {
 		var saved actionHistorySnapshot
 		if err := m.opts.planStore.read(namespace+m.opts.planNamespace, &saved); err != nil {
 			return err
@@ -71,7 +75,7 @@ func (m *management) restoreActionHistory() error {
 			return errors.New("invalid management action history format or capacity")
 		}
 		for id, entry := range saved.Items {
-			if id != entry.PlanID || validateActionRecord(entry) != nil || workloadHistoryAction(entry.Action) != (namespace == workloadActionsNamespace) || entry.APIBase != m.opts.APIBase || m.opts.accountID != "" && entry.AccountID != m.opts.accountID {
+			if id != entry.PlanID || validateActionRecord(entry) != nil || workloadHistoryAction(entry.Action) != (namespace == workloadActionsNamespace) || (entry.Action == "route_budgets") != (namespace == budgetActionsNamespace) || entry.APIBase != m.opts.APIBase || m.opts.accountID != "" && entry.AccountID != m.opts.accountID {
 				return errors.New("invalid management action history binding")
 			}
 			if _, duplicate := m.actions[id]; duplicate {
@@ -147,6 +151,9 @@ func recordAction(p *releasePlan) actionRecord {
 		}
 		entry.Apply = workloadActionPhase(p)
 	}
+	if p.Action == "route_budgets" {
+		entry.Budget, entry.Apply = budgetActionPhase(p)
+	}
 	if p.Action == "deploy" {
 		phase := deploymentActionPhase(p, p.promotionAttempted, p.promoted)
 		entry.Promotion = &phase
@@ -191,6 +198,12 @@ func validateActionRecord(entry actionRecord) error {
 				return errors.New("unexpected action receipt")
 			}
 		case "accepted", "committed":
+			if entry.Action == "route_budgets" {
+				if phase.Receipt == nil {
+					return errors.New("missing action budget receipt")
+				}
+				continue
+			}
 			r := phase.Receipt
 			if r == nil || validateSegment(r.DeploymentID, "deployment_id") != nil || r.RollbackOperationID != "" && validateSegment(r.RollbackOperationID, "operation_id") != nil {
 				return errors.New("invalid action receipt")
@@ -206,6 +219,9 @@ func validateActionRecord(entry actionRecord) error {
 		default:
 			return errors.New("invalid action phase")
 		}
+	}
+	if err := validateBudgetAction(entry); err != nil {
+		return err
 	}
 	return validateWorkloadAction(entry)
 }

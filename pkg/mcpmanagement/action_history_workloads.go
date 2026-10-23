@@ -18,8 +18,15 @@ type actionWorkload struct {
 }
 
 type actionObservation struct {
-	Tool      string   `json:"tool"`
-	Arguments waitArgs `json:"arguments"`
+	Tool      string                `json:"tool"`
+	Arguments actionObservationArgs `json:"arguments"`
+}
+
+type actionObservationArgs struct {
+	App          string `json:"app"`
+	DeploymentID string `json:"deployment_id,omitempty"`
+	Project      string `json:"project,omitempty"`
+	Environment  string `json:"environment,omitempty"`
 }
 
 func workloadHistoryAction(action string) bool {
@@ -111,5 +118,5 @@ func workloadActionObservation(entry actionRecord) *actionObservation {
 	if environment == api.DefaultEnvScope {
 		environment = ""
 	}
-	return &actionObservation{Tool: "gregale_get_rollout", Arguments: waitArgs{App: entry.App, DeploymentID: id, Project: entry.Project, Environment: environment}}
+	return &actionObservation{Tool: "gregale_get_rollout", Arguments: actionObservationArgs{App: entry.App, DeploymentID: id, Project: entry.Project, Environment: environment}}
 }
