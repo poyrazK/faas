@@ -1,6 +1,6 @@
 # ADR 20261023220532 · Move the Debian-based runtime bases to Debian 13
 
-- **Status:** proposed
+- **Status:** accepted (2026-10-24)
 - **Date:** 2026-10-23
 - **Related:** ADR-131 (CVE monitor), ADR-053 (runtimes staged over the Debian
   parent), ADR-510 (snapshot backing identity), ADR-567 and ADR-632 (base
@@ -75,13 +75,14 @@ move together.
    runtime stages its full chain). `runner-python313` already is the
    hardened Python lane, so this is not needed to close #5206.
 
-## Decision (proposed)
+## Decision
 
 1. **`base-minimal` declares what it copies.** Its build stage writes a
-   `/var/lib/dpkg/status` holding only the packages whose files it copies
-   (glibc, `bash` and its libraries, `ca-certificates`), so Grype sees them.
-   This lands first, on Debian 12, and adds the hidden glibc critical to
-   #5206.
+   `/var/lib/dpkg/status` holding only the packages that own a file under the
+   copied library trees or `/bin/bash`, plus `ca-certificates` (51 of the 88
+   packages on the current Debian 12 image), and `/etc/os-release`, so Grype
+   sees them. The stage also upgrades its packages before copying. This
+   lands first, on Debian 12, and adds the hidden glibc critical to #5206.
 2. **The Debian parent and its two runtimes move together** to
    `debian:13-slim`, `node:24-trixie-slim` and `python:3.12-slim-trixie` in
    one change. `scripts/ci/check_parent_base_chain.py` (images.yml) proves the
