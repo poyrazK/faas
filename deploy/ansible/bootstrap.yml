@@ -148,6 +148,10 @@
         - faas_cp_converge_roles | default(none) is none or 'cp_state_backup' in faas_cp_converge_roles
     - role: control_plane_service
       when: faas_cp_converge_roles | default(none) is none or 'control_plane_service' in faas_cp_converge_roles
+    - role: seal_domains
+      when:
+        - faas_seal_domains_managed | default(false) | bool
+        - faas_cp_converge_roles | default(none) is none or 'seal_domains' in faas_cp_converge_roles
     - role: internal_mail_service
       when:
         - faas_internal_mail_managed | default(false) | bool
@@ -228,6 +232,10 @@
     - role: internal_pki_renewal
     - role: canary_artifact_retention
     # Compute-only:
+    # ADR 20261022111812: stage the runtime seal-domain identity before
+    # vmmd_service so a vmmd (re)start in this run loads it.
+    - role: seal_domains
+      when: faas_seal_domains_managed | default(false) | bool
     - role: vmmd_service
     # M9: every compute node owns a node-local schedd for heartbeat and
     # recovery decisions. The shared database is remote on this host.

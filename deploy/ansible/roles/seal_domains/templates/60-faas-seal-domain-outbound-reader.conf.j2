@@ -1,0 +1,6 @@
+# Managed by the seal_domains role (ADR 20261022111812): outboundd opens
+# customer outbound credentials with the outbound seal-domain identity. The
+# fleet identity stays in the base unit until the domain re-seal completes.
+[Service]
+LoadCredential=faas_seal_domain_outbound:/etc/faas/secrets/domains/outbound.age
+Environment=FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH=%d/faas_seal_domain_outbound

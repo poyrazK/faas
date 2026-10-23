@@ -15,7 +15,7 @@ import (
 // account. A closed account sees the routes as absent.
 func (s *Service) scheduleStore(w http.ResponseWriter, acct state.Account) (state.OperationScheduleStore, bool) {
 	w.Header().Set("Cache-Control", "no-store")
-	if !api.OperationSchedulesEnabled(acct.ID) {
+	if !s.schedulesOpen(acct.ID) {
 		httpkit.NoSuchRoute(w)
 		return nil, false
 	}

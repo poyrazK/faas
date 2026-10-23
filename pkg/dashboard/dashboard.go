@@ -1016,6 +1016,11 @@ type EdgeRuleHostCoverage struct {
 	Host   string
 	Custom bool
 	Rules  int
+	// Selector names the companion, or the public listener when PublicPort
+	// is set, that this <app>--<name> hostname reaches instead of the main
+	// workload (ADR-069, ADR-176).
+	Selector   string
+	PublicPort bool
 }
 
 // EdgeRuleRecipeView is one protection recipe on the edge-rules page.
@@ -1498,6 +1503,9 @@ type AppCostOverviewRow struct {
 
 // AppDetailData combines the bits the app detail page renders.
 type AppDetailData struct {
+	// AnnouncedCaptures is the banner for profile captures the platform
+	// took on its own or that an OOM kill followed (ADR-1155); nil hides it.
+	AnnouncedCaptures  *AnnouncedProfileCapturesView
 	ProductControlURL  string
 	ProfilingAvailable bool
 	// ApplicationAuth shows the application Auth screens' link, a dark
@@ -1757,6 +1765,9 @@ type WorkflowStepItem struct {
 // button. Alive=false still carries a non-nil pointer with
 // Host="" — the same shape api.DeploymentPreviewURL returns.
 type DeploymentDetailData struct {
+	// OOMCaptureURL links an OOM-failed deployment to the heap capture taken
+	// before the kill (ADR-1155); empty when none exists.
+	OOMCaptureURL               string
 	ProfileCheck                *api.ProfileDeploymentCheck
 	CanaryProfileSignal         *api.CanaryProfileSignal
 	CanaryProfileTraffic        *ProfileTrafficView
@@ -2291,6 +2302,7 @@ type AppMetricsView struct {
 	CacheHitRateAvailable bool
 	ErrorBudgetPct        float64
 	ErrorBudgetAvailable  bool
+	WakeP95Unavailable    bool // too few fleet wakes for a p95 (Hunt 12 H12-40)
 }
 
 // RequestAnalyticsView is the dashboard-facing projection of the customer
@@ -2768,6 +2780,9 @@ type DebugRequestDetailView struct {
 	Findings                   []DebugEvidenceFindingView
 	Recommendations            []DebugEvidenceRecommendationView
 	GeneratedAt                string
+	// ProfileCaptureURL links the stack snapshot taken while the request was
+	// in flight (ADR-1155 slow_request capture), when one exists.
+	ProfileCaptureURL string
 }
 
 // DebugCriticalPathView is the template-safe projection of the selected

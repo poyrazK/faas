@@ -66,7 +66,13 @@ func sealCheckpointPgAppSecret(member state.ProjectEnvironmentCloneCheckpointPgA
 	if err != nil {
 		return out, errCloneCheckpointUnavailable
 	}
-	cipher, err := secretbox.SealOne(recipient, c.EnvironmentKey, string(value), api.PostgresCheckpointConnectionCiphertextMaxBytes)
+	// The checkpoint material above is apid's to open; the app secret is
+	// vmmd's, so it is sealed to the runtime recipient (ADR 20261022111812).
+	appRecipient := runtimeSecretRecipient()
+	if appRecipient == nil {
+		return out, errCloneCheckpointUnavailable
+	}
+	cipher, err := secretbox.SealOne(appRecipient, c.EnvironmentKey, string(value), api.PostgresCheckpointConnectionCiphertextMaxBytes)
 	if err != nil || len(cipher) > api.PostgresCheckpointConnectionCiphertextMaxBytes {
 		return out, errCloneCheckpointUnavailable
 	}
@@ -74,5 +80,5 @@ func sealCheckpointPgAppSecret(member state.ProjectEnvironmentCloneCheckpointPgA
 	if err != nil {
 		return out, errCloneCheckpointUnavailable
 	}
-	return state.AppSecret{AccountID: c.Runtime.Verification.Isolation.AccountID, AppID: c.AppID, Scope: c.Scope, Key: c.EnvironmentKey, Ciphertext: cipher, Kid: recipient.String(), ValueHash: fingerprint, SecretClass: state.SecretClassPersistent, SecretVersion: 1, ManagedPostgresBindingID: c.TargetBindingID, ManagedPostgresAccess: c.Access, ManagedCredentialRef: ref, ManagedCredentialGeneration: 1}, nil
+	return state.AppSecret{AccountID: c.Runtime.Verification.Isolation.AccountID, AppID: c.AppID, Scope: c.Scope, Key: c.EnvironmentKey, Ciphertext: cipher, Kid: appRecipient.String(), ValueHash: fingerprint, SecretClass: state.SecretClassPersistent, SecretVersion: 1, ManagedPostgresBindingID: c.TargetBindingID, ManagedPostgresAccess: c.Access, ManagedCredentialRef: ref, ManagedCredentialGeneration: 1}, nil
 }

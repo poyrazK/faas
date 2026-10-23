@@ -34,10 +34,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -634,22 +636,231 @@ func (v *JailerVMM) jobExitUDSSock(instance string) string {
 	return v.guestVsockUDSSock(instance, VsockJobExitPort)
 }
 
-// prepareJobExitListener binds the host endpoint before Firecracker starts.
-// Short-lived jobs can otherwise finish all retries before schedd issues its
-// WaitJobExit RPC. The socket is owned by the jailer identity because the
-// unprivileged Firecracker process is the connecting peer.
+// ListenerStore keeps job-exit listeners across a vmmd restart: systemd's
+// file descriptor store on a node (daemonunit.FDStore; vmmd restart adoption
+// ADR, guest channels). A guest that connects while no vmmd runs then waits
+// in the listener's backlog, and the successor reads its frame.
+type ListenerStore interface {
+	Store(name string, ln *net.UnixListener) error
+	Remove(name string) error
+	// Take returns, once, a listener the predecessor stored.
+	Take(name string) *net.UnixListener
+}
+
+// WithListenerStore keeps every job-exit listener in store from its bind to
+// its release.
+func (v *JailerVMM) WithListenerStore(store ListenerStore) *JailerVMM {
+	v.fdStoreMu.Lock()
+	v.listenerStore = store
+	v.fdStoreMu.Unlock()
+	return v
+}
+
+// jobExitStoreName is the listener's FDNAME. systemd rejects ':' in it.
+func jobExitStoreName(instance string) string {
+	return "gvsock-" + instance + "-" + strconv.Itoa(VsockJobExitPort)
+}
+
+// storeJobExitListener puts a freshly bound listener in the store. A failure
+// only costs the restart window: the successor re-binds instead.
+func (v *JailerVMM) storeJobExitListener(instance string, ln *net.UnixListener) {
+	v.fdStoreMu.Lock()
+	defer v.fdStoreMu.Unlock()
+	if v.listenerStore == nil {
+		return
+	}
+	if err := v.listenerStore.Store(jobExitStoreName(instance), ln); err != nil {
+		slog.Warn("vmm: job-exit listener not stored for restart", "instance", instance, "err", err)
+		return
+	}
+	if v.storedJobExits == nil {
+		v.storedJobExits = make(map[string]*net.UnixListener)
+	}
+	v.storedJobExits[instance] = ln
+}
+
+// unstoreJobExitListener removes ln from the store once its receiver is done.
+// A newer listener stored for the same instance is left alone.
+func (v *JailerVMM) unstoreJobExitListener(instance string, ln *net.UnixListener) {
+	v.fdStoreMu.Lock()
+	defer v.fdStoreMu.Unlock()
+	if v.listenerStore == nil || v.storedJobExits[instance] != ln {
+		return
+	}
+	delete(v.storedJobExits, instance)
+	_ = v.listenerStore.Remove(jobExitStoreName(instance))
+}
+
+// adoptJobExitListener gives an adopted job its exit receiver back: on the
+// listener the predecessor stored, whose backlog holds any frame sent while
+// no vmmd ran, or else on a re-bound one, which a guest retrying its frame
+// reaches.
+func (v *JailerVMM) adoptJobExitListener(l Lease) error {
+	ln := v.takeStoredJobExitListener(l.Instance)
+	if ln == nil {
+		return v.prepareJobExitListener(l)
+	}
+	v.mu.Lock()
+	if v.guestVsockListeners == nil {
+		v.guestVsockListeners = make(map[guestVsockListenerKey]*net.UnixListener)
+	}
+	v.guestVsockListeners[guestVsockListenerKey{instance: l.Instance, port: VsockJobExitPort}] = ln
+	v.mu.Unlock()
+	v.startJobExitReceiver(l.Instance, ln)
+	return nil
+}
+
+// takeStoredJobExitListener returns the stored listener when it is still
+// bound at the instance's path. One whose path is gone can never be reached
+// again, so it is closed and removed from the store.
+func (v *JailerVMM) takeStoredJobExitListener(instance string) *net.UnixListener {
+	v.fdStoreMu.Lock()
+	defer v.fdStoreMu.Unlock()
+	if v.listenerStore == nil {
+		return nil
+	}
+	name := jobExitStoreName(instance)
+	ln := v.listenerStore.Take(name)
+	if ln == nil {
+		return nil
+	}
+	path := v.jobExitUDSSock(instance)
+	addr, ok := ln.Addr().(*net.UnixAddr)
+	info, err := os.Lstat(path)
+	if !ok || addr.Name != path || err != nil || info.Mode()&os.ModeSocket == 0 {
+		_ = ln.Close()
+		_ = v.listenerStore.Remove(name)
+		return nil
+	}
+	ln.SetUnlinkOnClose(true)
+	if v.storedJobExits == nil {
+		v.storedJobExits = make(map[string]*net.UnixListener)
+	}
+	v.storedJobExits[instance] = ln
+	return ln
+}
+
+// prepareJobExitListener binds the host endpoint before Firecracker starts
+// and starts its receiver. Short-lived jobs can otherwise finish all retries
+// before schedd issues its WaitJobExit RPC. The socket is owned by the jailer
+// identity because the unprivileged Firecracker process is the connecting
+// peer.
 func (v *JailerVMM) prepareJobExitListener(l Lease) error {
-	return v.prepareGuestVsockListener(l, VsockJobExitPort)
+	if err := v.prepareGuestVsockListener(l, VsockJobExitPort); err != nil {
+		return err
+	}
+	ln := v.guestVsockListener(l.Instance, VsockJobExitPort)
+	if ln == nil {
+		return fmt.Errorf("vmm: job-exit listener for %s is missing", l.Instance)
+	}
+	v.storeJobExitListener(l.Instance, ln)
+	v.startJobExitReceiver(l.Instance, ln)
+	return nil
 }
 
 func (v *JailerVMM) closeJobExitListener(instance string) {
 	v.closeGuestVsockListener(instance, VsockJobExitPort)
 }
 
-// WaitJobExit accepts the first valid guest-initiated STREAM on the listener
-// prepared during cold boot. Invalid frames are rejected with a bounded retry
-// budget so untrusted guest bytes cannot allocate unbounded memory or spin a
-// host goroutine forever.
+// jobExitFrameTimeout bounds one connection's frame read. guest-init writes
+// the frame in one go right after connecting.
+const jobExitFrameTimeout = 5 * time.Second
+
+// jobExitReceiver is vmmd's own accept loop on one job's exit listener (vmmd
+// restart adoption ADR, workload kinds). It accepts as soon as the listener
+// exists, independent of any WaitJobExit call, so a restart that ends the
+// RPC loses nothing: the sink records the payload before the guest is
+// acknowledged, and a later WaitJobExit, on this vmmd or on its successor,
+// returns it.
+type jobExitReceiver struct {
+	done    chan struct{} // closed once payload or err is set
+	payload JobExitPayload
+	err     error
+}
+
+// WithJobExitSink installs the callback that records a job's exit before the
+// guest is acknowledged. It is read when a frame arrives, so receivers
+// started before it is installed use it too.
+func (v *JailerVMM) WithJobExitSink(cb func(instance string, payload JobExitPayload)) *JailerVMM {
+	v.mu.Lock()
+	v.jobExitSink = cb
+	v.mu.Unlock()
+	return v
+}
+
+func (v *JailerVMM) startJobExitReceiver(instance string, ln *net.UnixListener) {
+	r := &jobExitReceiver{done: make(chan struct{})}
+	v.mu.Lock()
+	if v.jobExits == nil {
+		v.jobExits = make(map[string]*jobExitReceiver)
+	}
+	v.jobExits[instance] = r
+	v.mu.Unlock()
+	go v.receiveJobExit(instance, ln, r)
+}
+
+// receiveJobExit accepts until one valid frame arrives and records it. It
+// then keeps acknowledging retries of that frame until teardown closes the
+// listener: a frame that waited in the backlog while no vmmd ran is read
+// after the guest gave up on its ack, and without an answer to its next try
+// the guest would retry for jobExitShipBudget before powering off. Invalid
+// frames are rejected with a bounded budget so untrusted guest bytes cannot
+// allocate unbounded memory or spin a host goroutine forever.
+func (v *JailerVMM) receiveJobExit(instance string, ln *net.UnixListener, r *jobExitReceiver) {
+	defer v.releaseGuestVsockListener(instance, VsockJobExitPort, ln)
+	settled := false
+	settle := func(payload JobExitPayload, err error) {
+		r.payload, r.err, settled = payload, err, true
+		close(r.done)
+		// The exit is in the adoption block now; a successor needs no
+		// listener for it.
+		v.unstoreJobExitListener(instance, ln)
+	}
+	const maxInvalidFrames = 8
+	var lastErr error
+	for invalid := 0; ; {
+		conn, err := ln.AcceptUnix()
+		if err != nil {
+			if !settled {
+				settle(JobExitPayload{}, fmt.Errorf("vmm: job exit %s: accept: %w", instance, err))
+			}
+			return
+		}
+		_ = conn.SetDeadline(time.Now().Add(jobExitFrameTimeout))
+		payload, readErr := readJobExitEnvelope(conn)
+		if readErr != nil {
+			_, _ = conn.Write([]byte{1})
+			_ = conn.Close()
+			if lastErr, invalid = readErr, invalid+1; invalid >= maxInvalidFrames {
+				if !settled {
+					settle(JobExitPayload{}, fmt.Errorf("vmm: job exit %s: too many invalid frames: %w", instance, lastErr))
+				}
+				return
+			}
+			continue
+		}
+		if !settled {
+			v.mu.Lock()
+			sink := v.jobExitSink
+			v.mu.Unlock()
+			if sink != nil {
+				sink(instance, payload)
+			}
+		}
+		// Receipt is durable at the scheduler boundary, not here. The ack only
+		// tells guest-init that vmmd parsed and recorded a complete, valid
+		// frame; a failed ack must not discard a result already recorded.
+		_, _ = conn.Write([]byte{0})
+		_ = conn.Close()
+		if !settled {
+			settle(payload, nil)
+		}
+	}
+}
+
+// WaitJobExit returns the job's exit once its receiver has it. Returning on
+// ctx or the deadline leaves the receiver running, so the call can be made
+// again, which the scheduler does across a vmmd restart.
 func (v *JailerVMM) WaitJobExit(ctx context.Context, l Lease, deadline time.Duration) (JobExitPayload, error) {
 	var zero JobExitPayload
 	if v == nil {
@@ -664,64 +875,25 @@ func (v *JailerVMM) WaitJobExit(ctx context.Context, l Lease, deadline time.Dura
 	if deadline <= 0 {
 		return zero, fmt.Errorf("vmm: WaitJobExit: deadline must be positive")
 	}
-	ln := v.guestVsockListener(l.Instance, VsockJobExitPort)
-	if ln == nil {
+	v.mu.Lock()
+	r := v.jobExits[l.Instance]
+	v.mu.Unlock()
+	if r == nil {
 		return zero, fmt.Errorf("vmm: WaitJobExit: listener for %s was not prepared", l.Instance)
 	}
-	defer v.releaseGuestVsockListener(l.Instance, VsockJobExitPort, ln)
-
-	end := time.Now().Add(deadline)
-	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(end) {
-		end = ctxDeadline
+	timer := time.NewTimer(deadline)
+	defer timer.Stop()
+	select {
+	case <-r.done:
+		if r.err != nil {
+			return zero, r.err
+		}
+		return r.payload, nil
+	case <-ctx.Done():
+		return zero, ctx.Err()
+	case <-timer.C:
+		return zero, context.DeadlineExceeded
 	}
-	const maxInvalidFrames = 8
-	var lastErr error
-	for invalid := 0; invalid < maxInvalidFrames; {
-		if err := ctx.Err(); err != nil {
-			return zero, err
-		}
-		now := time.Now()
-		if !now.Before(end) {
-			if lastErr != nil {
-				return zero, fmt.Errorf("vmm: WaitJobExit: deadline after invalid frame: %w", lastErr)
-			}
-			return zero, context.DeadlineExceeded
-		}
-		pollDeadline := now.Add(200 * time.Millisecond)
-		if end.Before(pollDeadline) {
-			pollDeadline = end
-		}
-		if err := ln.SetDeadline(pollDeadline); err != nil {
-			return zero, fmt.Errorf("vmm: WaitJobExit: set accept deadline: %w", err)
-		}
-		conn, err := ln.AcceptUnix()
-		if err != nil {
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Timeout() {
-				continue
-			}
-			if ctx.Err() != nil {
-				return zero, ctx.Err()
-			}
-			return zero, fmt.Errorf("vmm: WaitJobExit: accept: %w", err)
-		}
-		_ = conn.SetDeadline(end)
-		payload, readErr := readJobExitEnvelope(conn)
-		if readErr != nil {
-			lastErr = readErr
-			invalid++
-			_, _ = conn.Write([]byte{1})
-			_ = conn.Close()
-			continue
-		}
-		// Receipt is durable at the scheduler boundary, not here. The ack only
-		// tells guest-init that vmmd parsed a complete, valid frame; a failed ack
-		// must not discard a terminal result that is already in memory.
-		_, _ = conn.Write([]byte{0})
-		_ = conn.Close()
-		return payload, nil
-	}
-	return zero, fmt.Errorf("vmm: WaitJobExit: too many invalid frames: %w", lastErr)
 }
 
 func readJobExitEnvelope(conn io.Reader) (JobExitPayload, error) {

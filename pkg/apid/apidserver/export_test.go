@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
+	"github.com/onebox-faas/faas/pkg/apid/consumersignup"
 	"github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
@@ -62,6 +63,8 @@ import (
 )
 
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
+
+var BuildDebugRequestCorrelation = buildDebugRequestCorrelation
 
 // Package-level types
 type AffectedPartition = affectedPartition
@@ -227,6 +230,7 @@ const RuntimeConfigDomainDoctor = runtimeConfigDomainDoctor
 const RuntimeConfigDomainDoctorTTL = runtimeConfigDomainDoctorTTL
 const RuntimeConfigHSTS = runtimeConfigHSTS
 const RuntimeConfigS3 = runtimeConfigS3
+const RuntimeConfigPlatformReleasePause = runtimeConfigPlatformReleasePause
 const SafeReleaseEmergencyGrace = safeReleaseEmergencyGrace
 const ScanSpoolRootEnv = scanSpoolRootEnv
 const ScheddMetricsDiscoveryPath = scheddMetricsDiscoveryPath
@@ -268,6 +272,12 @@ var MfaRecipient = &mfaRecipient
 var ObsJailInternalMarkers = &obsJailInternalMarkers
 var ObsSealedBlobMarkers = &obsSealedBlobMarkers
 var OutboundCredentialRecipient = &outboundCredentialRecipient
+var OutboundDomainRecipient = &outboundDomainRecipient
+var OutboundWriteMode = &outboundWriteMode
+var RuntimeDomainRecipient = &runtimeDomainRecipient
+var RuntimeWriteMode = &runtimeWriteMode
+var RuntimeSecretRecipient = runtimeSecretRecipient
+var RuntimeSealDomainBlocksRekey = runtimeSealDomainBlocksRekey
 var PgBackupStateRoot = &pgBackupStateRoot
 var PlanCache = &planCache
 var PlanCacheRoot = &planCacheRoot
@@ -276,11 +286,15 @@ var PlanCacheRootOnce = &planCacheRootOnce
 var PlanSourceCache = &planSourceCache
 var RouteProbeChallengeDelay = &routeProbeChallengeDelay
 var SetSecretRecipient = &setSecretRecipient
+var SourceDomainRecipient = &sourceDomainRecipient
+var SourceWriteMode = &sourceWriteMode
 var SseChannels = &sseChannels
 var TimeNow = &timeNow
 var TxtLookupFunc = &txtLookupFunc
 
 // Package-level funcs
+var LoadSealDomains = loadSealDomains
+var SealOutboundCredential = sealOutboundCredential
 var AccountAbuseHoldView = accountAbuseHoldView
 var ActivatedAPIDListener = activatedAPIDListener
 var AggregateWakeTimeline = aggregateWakeTimeline
@@ -912,6 +926,7 @@ func (r *server) BillingRuns() *billingruns.Service             { return &r.bill
 func (r *server) ConsumerBilling() *consumerbilling.Service     { return &r.consumerBilling }
 func (r *server) ConsumerCredits() *consumercredits.Service     { return &r.consumerCredits }
 func (r *server) ConsumerControls() *consumercontrols.Service   { return &r.consumerControls }
+func (r *server) ConsumerSignup() *consumersignup.Service       { return &r.consumerSignup }
 func (r *server) TenantPlans() *tenantplans.Service             { return &r.tenantPlans }
 func (r *server) Store() *state.Store                           { return &r.store }
 func (r *server) StripeWebhookSecret() *string                  { return &r.stripeWebhookSecret }
@@ -1113,7 +1128,9 @@ func (r *server) GitOpsPreviewArchiveForTest(t *testing.T, definition, resolvedS
 	r.githubd = &environmentGitOpsClient{repositories: []Repo{{ID: 123, FullName: "example/shop"}},
 		archive: environmentGitOpsArchiveDefinition(t, definition), resolvedSHA: resolvedSHA}
 }
-func (r *server) Idempotent(p0 accountHandler) accountHandler { return r.idempotent(p0) }
+func (r *server) Idempotent(p0 accountHandler) accountHandler       { return r.idempotent(p0) }
+func (r *server) IdempotentDeploy(p0 accountHandler) accountHandler { return r.idempotentDeploy(p0) }
+func (r *server) IdempotentIntent(p0 accountHandler) accountHandler { return r.idempotentIntent(p0) }
 func (r *server) ImagedMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.imagedMetricsDiscovery(p0, p1)
 }
@@ -1283,6 +1300,7 @@ func (r *server) RotateManagedPostgresBinding(p0 http.ResponseWriter, p1 *http.R
 func (r *server) RuleDestinations(p0 context.Context, p1 state.AlertRule) string {
 	return r.ruleDestinations(p0, p1)
 }
+func (r *server) RunVerifyOnce(p0 context.Context, p1 *slog.Logger) { r.runVerifyOnce(p0, p1) }
 func (r *server) CreateManagedPostgresBinding(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.createManagedPostgresBinding(p0, p1, p2)
 }
@@ -1567,4 +1585,51 @@ func (s *server) ConfigureLiveQueriesForTest(getenv func(string) string) error {
 // get none before the store is read.
 func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error) {
 	return s.liveRoutes(ctx, nil, accountID, appID)
+}
+
+// GatewayControlURL exposes gatewayControlURL (ADR-20261022004500).
+func (s *server) GatewayControlURL(ctx context.Context) string { return s.gatewayControlURL(ctx) }
+
+// ApplyManifestPathRoutesForTest reconciles manifest routes on app
+// (ADR-20261021223225). rollback undoes the changes it recorded.
+func (s *server) ApplyManifestPathRoutesForTest(ctx context.Context, acct state.Account, app state.App, routes []gregalemanifest.PathRoute) (rollback func() error, problem *api.Problem) {
+	staged := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
+	problem = s.applySourceRefManifestPathRoutes(ctx, acct, app, routes, &staged)
+	return func() error { return s.rollbackSourceRefManifest(ctx, staged) }, problem
+}
+
+var ManifestPathRouteKeyPrefix = manifestPathRouteKeyPrefix
+var ProjectPathRoutesForApp = projectPathRoutesForApp
+var ProjectPathRoutePlanWarning = projectPathRoutePlanWarning
+var ValidateProjectManifestPathRoutes = validateProjectManifestPathRoutes
+
+// VerifyCandidatePostgresCredentialsForTest runs the GitOps backend's
+// pre-activation credential step (ADR-20261019072523) with an injected verifier.
+func VerifyCandidatePostgresCredentialsForTest(ctx context.Context, intent state.EnvironmentGitOpsIntentStore, graphID string,
+	verify func(context.Context, state.EnvironmentQualificationPostgresCheck) error) error {
+	b := &environmentGitOpsBackend{server: &server{candidatePostgresVerifier: verify}, intent: intent}
+	return b.verifyCandidatePostgresCredentials(ctx, graphID)
+}
+
+// VerifyCandidatePostgresCredentialForTest runs the production verifier's
+// sealed-credential checks with explicit host material and probe.
+func VerifyCandidatePostgresCredentialForTest(ctx context.Context, c state.EnvironmentQualificationPostgresCheck, identities []*age.X25519Identity,
+	hmacKey []byte, probe func(context.Context, string, managedpostgres.CredentialAccess, int) error) error {
+	sink := &appSecretCredentialSink{hmacKey: func() []byte { return hmacKey }, identities: func() []*age.X25519Identity { return identities }, probe: probe}
+	return verifyCandidatePostgresCredentialWith(ctx, sink, c)
+}
+
+// VerifyCandidateObjectStorageCredentialsForTest runs the GitOps backend's
+// pre-activation bucket credential step (ADR-20261019121546) with an injected verifier.
+func VerifyCandidateObjectStorageCredentialsForTest(ctx context.Context, intent state.EnvironmentGitOpsIntentStore, graphID string,
+	verify func(context.Context, state.EnvironmentQualificationObjectStorageCheck) error) error {
+	b := &environmentGitOpsBackend{server: &server{candidateObjectStorageVerifier: verify}, intent: intent}
+	return b.verifyCandidateObjectStorageCredentials(ctx, graphID)
+}
+
+// VerifyCandidateObjectStorageCredentialForTest runs the production verifier
+// with explicit host material and an injected bucket canary.
+func VerifyCandidateObjectStorageCredentialForTest(ctx context.Context, c state.EnvironmentQualificationObjectStorageCheck, identities []*age.X25519Identity,
+	hmacKey []byte, canary func(context.Context, string, string, func(string) string) api.ObjectStorageBindingProbeReport) error {
+	return verifyCandidateObjectStorageCredentialWith(ctx, identities, hmacKey, canary, c)
 }

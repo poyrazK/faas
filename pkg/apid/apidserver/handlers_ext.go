@@ -1086,7 +1086,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("CPU profiling is unavailable on this installation"))
 		return
 	}
-	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingEnabled {
+	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingFor(acct) {
 		api.WriteProblem(w, api.ErrCapacity("request tracing is unavailable on this installation"))
 		return
 	}
@@ -3126,6 +3126,24 @@ func (s *server) listInstances(w http.ResponseWriter, r *http.Request, acct stat
 
 // --- custom domains --------------------------------------------------------
 
+// domainOutsideForeignWildcard refuses a domain below another account's
+// verified wildcard (state.ForeignVerifiedWildcard) and reports whether the
+// create may continue.
+func (s *server) domainOutsideForeignWildcard(ctx context.Context, w http.ResponseWriter, domain, accountID string) bool {
+	wildcard, err := state.ForeignVerifiedWildcard(ctx, s.store, domain, accountID)
+	if err != nil {
+		s.log.Warn("create domain: wildcard ownership check failed", "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not check wildcard-domain ownership"))
+		return false
+	}
+	if wildcard != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Domain taken",
+			fmt.Sprintf("%s is below the verified wildcard domain %s, which belongs to another account", domain, wildcard)))
+		return false
+	}
+	return true
+}
+
 func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateCustomDomainRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -3151,6 +3169,9 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 	}
 	if err != nil || app.AccountID != acct.ID {
 		s.notFound(w, "no such app")
+		return
+	}
+	if !s.domainOutsideForeignWildcard(r.Context(), w, domain, acct.ID) {
 		return
 	}
 	environmentID := ""
@@ -3239,6 +3260,14 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 	} else {
 		d, err = createDomain(r.Context())
 	}
+	if errors.Is(err, state.ErrConflict) {
+		// Another account's unverified claim yields to DNS proof
+		// (ADR-20261020090500). The takeover records its activity below,
+		// outside the create's activity transaction.
+		if d, err = s.takeOverDomainClaim(r.Context(), acct, app, domain, environmentID, perApp, perAccount, err); err == nil {
+			activityOutboxID, activityMutationAtomic = 0, false
+		}
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrCustomDomainQuotaExceeded) {
 			api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeQuotaExhausted, "Custom domain quota reached", err.Error()))
@@ -3249,8 +3278,12 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 			return
 		}
 		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
-				"Domain taken", err.Error()))
+			problem := api.NewProblem(http.StatusConflict, api.CodeValidation, "Domain taken", err.Error())
+			var pending *claimPendingError
+			if errors.As(err, &pending) {
+				problem.Hint = pending.hint()
+			}
+			api.WriteProblem(w, problem)
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not create domain"))

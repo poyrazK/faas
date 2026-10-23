@@ -1,7 +1,24 @@
 # Architecture Decision Records
 
+- [ADR-20261022204036: An Idempotency-Key is bound to its request](20261022204036-idempotency-key-bound-to-request.md) — another request with a used key gets `422 idempotency_key_reused`, not a replay (Proposed)
+- [ADR-20261022203653: One dead-letter entry per queue message](20261022203653-one-dead-letter-entry-per-queue-message.md) — Proposed; amends ADR-179: a push receipt is captured but not listed
+- [ADR-20261022105846: Penalty box for edge rules](20261022105846-edge-rule-penalty-box.md)
+- [Compose build secrets for Dockerfile builds](20261022185329-compose-build-secrets.md)
+- [ADR-20261023104734: Daemons log in as runtime roles, not the schema owner](20261023104734-database-runtime-roles.md) — faas_runtime group, per-daemon roles, opt-in FAAS_DB_ROLE
+- [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
+- [Compose process overrides on source-built services](20261022160000-compose-process-on-built-services.md)
+- [ADR-20261022140000: Break-glass controls for a compromised secret store](20261022140000-break-glass-controls.md)
+- [ADR-20261022111812: Seal domains: a sealed value opens only where it is read](20261022111812-seal-domains-per-reader.md)
+- [Product Control self-serve signup and card on file](20261022100735-product-control-self-serve-signup.md)
+- [ADR-20261022082721: Rehearsal reads of captured work, inbox and async invoke](20261022082721-rehearsal-captured-reads-inbox-async-invoke.md)
+- [gatewayd-internal private control listener for apid](20261022004500-gatewayd-private-control-listener.md)
+- [ADR-20261021223225: Path routes in gregale.yaml](20261021223225-manifest-routes.md) — manifest-owned kind=route (+ rewrite for strip_prefix) edge rules on the target app; rewrite to the root strips cleanly
+- [ADR-20261021215353: Early freeze — stop billing shortly after the last request](20261021215353-early-freeze.md) — schedd `frozen_tier_early_freeze_after_s` (amends ADR-1151)
+- [ADR-20261021204307: Code-first workflows](20261021204307-code-first-workflows.md) — one entry handler replays the run's journal; Node, Python and Go SDKs
+- [Platform flags: company targeting, full coverage, scheduled and automatic rollouts, self-serve previews](20261021080640-platform-flag-extensions.md)
 - [Product Control free trials](20261021195901-product-control-free-trials.md)
 - [ADR-20261021210000: Enrolled apps receive no account events](20261021210000-rehearsal-event-fanout-exclusion.md)
+- [Data API engine pool size and server-key limits](20261021180534-data-api-engine-pool-and-server-key-limits.md)
 - [ADR-20261021180000: Rehearsal capture of realtime publishes and signals](20261021180000-rehearsal-realtime-capture.md)
 - [ADR-20261021150000: Rehearsal capture of workflow starts and events](20261021150000-rehearsal-workflow-capture.md)
 - [ADR-20261021120000: Rehearsal capture of public-API event publishes](20261021120000-rehearsal-public-api-event-capture.md)
@@ -12,12 +29,17 @@
 - [ADR-20261020090000: Rehearsal event capture](20261020090000-rehearsal-event-capture.md)
 - [ADR-20261019180000: Rehearsal side effects stay inside the run](20261019180000-rehearsal-side-effects-stay-inside-the-run.md)
 - [ADR-20261019120000: Rehearsal runtime hooks stay off ordinary hot paths](20261019120000-rehearsal-runtime-hot-path-isolation.md)
+- [Source archives are capped by their expanded size](20261020160500-source-archive-expanded-size-cap.md)
+- [Guests reach only the bridge services and the public edge on the host](20261020123000-tenant-bridge-host-input-narrowed.md)
+- [DNS proof takes over another account's pending hostname claim](20261020090500-dns-proof-takes-over-pending-claims.md)
+- [Compose healthchecks on source-built services](20261019195000-compose-healthcheck-on-built-services.md)
 - [Product Control plan fees, included starts and overage](20261021154511-product-control-plan-fees-and-overage.md)
 - [Data API file storage](20261021101510-data-api-file-storage.md)
 - [Keep the edge lane off the store type: edge store](20261021092138-edge-store-blast-radius.md)
 - [Product Control billing records survive app purge](20261020090607-product-control-billing-records-survive-app-purge.md)
 - [Product Control customers keep their billing details in the owner's Paddle](20261020120000-product-control-customer-billing-details.md)
 - [Safety rails for automatic per-unit deploys](20261020214632-automatic-unit-deploy-safety-rails.md)
+- [Push-bound workers may listen for their deliveries](20261021153953-push-bound-worker-delivery-listener.md)
 - [What a fix restarts: daemon blast radius](20261020160744-daemon-blast-radius.md)
 - [Object storage in budgets](20261020160000-object-storage-in-budgets.md)
 - [Budget alerts on notification channels, and projected overruns](20261019193500-budget-alert-channels.md)
@@ -315,6 +337,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 826 | [Periodic route profiling for running deployments](826-periodic-route-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 827 | [Route-specific profiling code evidence](827-route-specific-profile-code-evidence.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 828 | [Opt-in profiling gates for canary deployment stages](828-profile-canary-deployment-gates.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 1155 | [On-demand CPU and heap profiling](1155-on-demand-cpu-and-heap-profiling.md) | accepted for internal implementation; native acceptance pending | Dormant guest collectors armed per instance through a Postgres queue; continuous heap profiles; automatic heap capture on memory pressure |
 | 949 | [App consumer statement revisions and unbilled platform failures](949-app-consumer-statement-revisions-and-platform-failure-billing.md) | accepted | Late usage becomes additive app-local statement revisions; gateway-generated 5xx carry zero billable units |
 | 950 | [Monthly included units on app consumer rate cards](950-api-consumer-monthly-allowances.md) | accepted | Free requests per consumer per UTC month, consumed in minute order; adjustments bill allowance lost to late usage |
 | 951 | [Graduated tiers on app consumer rate cards](951-api-consumer-graduated-tiers.md) | accepted | Per-consumer monthly price ladders with exact re-rating; tiered statements cover whole UTC months |
@@ -377,6 +400,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 20261019100332 | [Prorated monthly fees across card changes and revocation](20261019100332-prorated-fees-across-card-changes.md) | accepted | Prorating cards charge fees and minimums for the share of the month they are in force, and until a revocation unless the month was already finalized |
 | 20261019100333 | [Paddle invoices sent by Paddle](20261019100333-paddle-send-collection.md) | accepted | Paddle connections can collect with `send`: exports bill the draft transaction with the customer's newest address so Paddle emails it |
 | 20261019180000 | [One export attempt at a time, retargetable refusals, floored minimums and fresh overdue holds](20261019180000-monetization-review-fixes.md) | accepted | Exports claim their statement so concurrent attempts get a 409; a provider refusal before creation can be retried with another customer; finalized minimums fall only by new usage; holds need a payment status read within 24 h |
+| 20261020170649 | [API monetization released per account](20261020170649-api-monetization-per-account-release.md) | accepted | The `api_monetization` platform flag releases monetization to chosen accounts beside the all-or-nothing switch; routes 404 after authentication for others, workers and gateways decide per account; `make monetization-sandbox` qualifies the providers |
+| 20261020211500 | [Handoff reservations, usage-only credit in spend caps, reprice on change, credit on self-service statements](20261020211500-monetization-hardening.md) | accepted | Exports reserve their handoff before calling the provider; credit that paid fees no longer lifts a spend cap; spend checks reprice only on new usage or every 15 minutes; consumer statements show credit and amount due |
+| 20261021143000 | [Customers sign up for an API themselves, with Stripe Checkout](20261021143000-consumer-self-signup.md) | accepted | A hosted page and public API let an app's customers pick a plan, save a card in the owner's Stripe and get a consumer key; claim tokens, per-address and daily limits |
+| 20261021183000 | [Customers manage their own account, and owners hear about it by webhook](20261021183000-customer-self-service-and-webhooks.md) | accepted | A billing-scope key lists plans, switches between offered plans, opens Stripe's customer portal or closes the account, as the owner allows; consumer.signed_up, consumer.plan_changed and consumer.closed webhooks |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 1446 | [Safe releases by default](1446-safe-releases-by-default.md) | accepted; n2 drills passed | Default balanced canary and 5xx rollback for production releases, bounded low-traffic hold, crash-loop gate, unfenced plain rollback, verified rollback outcomes |

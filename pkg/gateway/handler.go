@@ -15,6 +15,7 @@ import (
 	"net/http/httputil"
 	"net/netip"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,6 +34,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -959,7 +961,10 @@ type Handler struct {
 	// apiMonetization is the API monetization release gate
 	// (ADR-20261018090210); nil keeps monetization off.
 	apiMonetization func() bool
-	gate            *WakeGate
+	// apiMonetizationFlags is the api_monetization platform flag: it
+	// releases monetization to the accounts it admits (ADR-20261020170649).
+	apiMonetizationFlags *platformflags.Set
+	gate                 *WakeGate
 	// admissionQueue protects the control plane from a simultaneous cold
 	// burst across many apps. It is intentionally separate from gate:
 	// gate coalesces waiters for one app, while admissionQueue orders the
@@ -1039,6 +1044,10 @@ type Handler struct {
 	// constraint implicitly by being keys in the routing cache — see
 	// WithAppsSuffix docs.
 	appsSuffix string
+	// selectorSuffixes are the platform hostname suffixes under which the
+	// "--" companion and public-port selector applies (WithSelectorSuffixes).
+	// Empty keeps the legacy split on every host.
+	selectorSuffixes []string
 	// egressSink records per-instance HTTP response body bytes for
 	// ADR-046 (per-instance egress metering, telemetry only).
 	// Set via WithEgressSink from cmd/gatewayd-internal/main.go; nil in
@@ -1069,6 +1078,8 @@ type Handler struct {
 	// func(Target) http.Handler — the wire defaulting at vmmd
 	// keeps pre-PR-C targets (Port=0) reaching 8080.
 	proxyByNode func(t Target) http.Handler
+	// crashThrottle limits ADR-733 crash capture requests per app.
+	crashThrottle crashCaptureThrottle
 	// rawByNode (issue #676 / ADR-080) is the Upgrade-traffic
 	// counterpart of proxyByNode. When non-nil, the handler
 	// dispatches inbound Connection: Upgrade + Upgrade: <token>
@@ -1106,7 +1117,10 @@ type Handler struct {
 	// call paths. observe nil-checks before enqueueing. The recorder
 	// never opens a Postgres connection itself — the publisher
 	// (request_telemetry_publisher.go) ships drained rows to apid.
-	requestTelemetry    *requestTelemetryRecorder
+	requestTelemetry *requestTelemetryRecorder
+	// slowRequests reports requests in flight too long for an automatic
+	// stack capture (ADR-1155); nil disables tracking.
+	slowRequests        *SlowRequestWatcher
 	requestIDJournal    RequestIDJournalWriter
 	usageOutbox         *usageoutbox.Outbox
 	requestAuditEnabled bool
@@ -1285,7 +1299,10 @@ type Handler struct {
 	challengeKey []byte
 	// challengeNow is the challenge clock; nil means time.Now.
 	challengeNow func() time.Time
-	operations   OperationRouteEnqueuer
+	// challengeLoad tracks challenge pages per rule for raising the
+	// difficulty under attack (ADR-831 amendment 8).
+	challengeLoad challengeLoads
+	operations    OperationRouteEnqueuer
 	// geoReader is the country lookup used by applyEdgeRuleGeo and
 	// country-keyed throttles (ADR-091 D21). A nil reader is allowed
 	// at boot, but a matched policy that needs geography fails closed.
@@ -1296,6 +1313,9 @@ type Handler struct {
 	asnReader ASNReader
 	// botVerifier resolves the verified_bot match field (ADR-973); nil = absent.
 	botVerifier *BotVerifier
+	// penaltyBox holds clients rule penalties boxed (ADR-20261022105846);
+	// nil leaves penalties unenforced.
+	penaltyBox *PenaltyBox
 	// edgeRuleHits counts per-rule matches (ADR-960); nil disables counting.
 	edgeRuleHits EdgeRuleHitRecorder
 	// resolveTargetApp is the closure the matcher uses to
@@ -1488,6 +1508,25 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	h.proxyFor = defaultProxy
 	// Route priorities also order the cold-wake queue (ADR-20261018181846).
 	h.gate.classifier = h
+	return h
+}
+
+// WithSelectorSuffixes limits the "--" selector split to hosts under the
+// given platform suffixes (for example ".gregale.dev"). Custom domains then
+// route whole even when they contain "--", as every internationalized domain
+// does. Call before serving.
+func (h *Handler) WithSelectorSuffixes(suffixes ...string) *Handler {
+	h.selectorSuffixes = h.selectorSuffixes[:0]
+	for _, suffix := range suffixes {
+		suffix = strings.ToLower(strings.TrimSpace(suffix))
+		if suffix == "" || slices.Contains(h.selectorSuffixes, suffix) {
+			continue
+		}
+		if suffix[0] != '.' {
+			suffix = "." + suffix
+		}
+		h.selectorSuffixes = append(h.selectorSuffixes, suffix)
+	}
 	return h
 }
 
@@ -3172,9 +3211,12 @@ func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app Ap
 	}
 	for _, denyNet := range rule.Deny {
 		if denyNet.Contains(clientIP) {
+			// ip_denied, not the API-key code insufficient_scope (Hunt 12
+			// H12-39).
 			api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
-				api.CodeForbidden, "IP denied",
+				api.CodeIPDenied, "IP denied",
 				"client IP matches a deny CIDR on this edge rule"))
+			h.penalizeEdgeRuleRejection(r, app, rule.ID)
 			if h.edgeRuleAudit != nil {
 				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.ip_blocked", nil, map[string]any{
 					"rule_id":   rule.ID,
@@ -3209,8 +3251,9 @@ func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app Ap
 		}
 		if !allowed {
 			api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
-				api.CodeForbidden, "IP not allowed",
+				api.CodeIPDenied, "IP not allowed",
 				"client IP does not match any allow CIDR on this edge rule"))
+			h.penalizeEdgeRuleRejection(r, app, rule.ID)
 			if h.edgeRuleAudit != nil {
 				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.ip_blocked", nil, map[string]any{
 					"rule_id":   rule.ID,
@@ -4230,8 +4273,9 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 	// Deny walks first.
 	if _, denied := rule.Deny[country]; denied {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
-			api.CodeForbidden, "Country denied",
+			api.CodeGeoDenied, "Country denied",
 			"client country matches a deny entry on this edge rule"))
+		h.penalizeEdgeRuleRejection(r, app, rule.ID)
 		if h.edgeRuleAudit != nil {
 			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.geo_blocked", nil, map[string]any{
 				"rule_id":   rule.ID,
@@ -4249,8 +4293,9 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 	if len(rule.Allow) > 0 {
 		if _, allowed := rule.Allow[country]; !allowed {
 			api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
-				api.CodeForbidden, "Country not allowed",
+				api.CodeGeoDenied, "Country not allowed",
 				"client country does not match any allow entry on this edge rule"))
+			h.penalizeEdgeRuleRejection(r, app, rule.ID)
 			if h.edgeRuleAudit != nil {
 				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.geo_blocked", nil, map[string]any{
 					"rule_id":   rule.ID,
@@ -4488,6 +4533,7 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		writeRateLimited(w, bucket, fmt.Sprintf(
 			"this route allows %s requests per second with bursts of %d; slow down and retry",
 			strconv.FormatFloat(rule.RequestsPerSecond, 'f', -1, 64), rule.Burst))
+		h.penalizeEdgeRuleRejection(r, app, rule.ID)
 		if h.edgeRuleAudit != nil {
 			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.throttle_rejected", nil, map[string]any{
 				"rule_id": rule.ID,
@@ -5350,6 +5396,13 @@ type capWriter struct {
 	written  int64
 	onCap    func()
 	disabled *atomic.Bool
+	// committed is set once the status line has been passed on. After
+	// that a problem document can no longer replace the response: written
+	// into the body it was appended to the customer's payload, which then
+	// ended cleanly under the committed 200 (Hunt 11 H11-36). onCap only
+	// runs while the response is uncommitted; afterwards Write returns
+	// errResponseCapExceeded and the caller aborts the stream.
+	committed bool
 	// HEAD's Content-Length describes the representation a GET would return,
 	// not bytes in this response, so it cannot trigger the body-size guard.
 	headResponse bool
@@ -5382,18 +5435,19 @@ func (c *capWriter) ProblemHTMLRequest() *http.Request {
 
 func (c *capWriter) Write(b []byte) (int, error) {
 	if c.disabled.Load() {
-		return 0, http.ErrHandlerTimeout
+		return 0, errResponseCapExceeded
 	}
 	if c.written+int64(len(b)) > c.cap {
 		// Fire once; idempotent under concurrent writes thanks
-		// to disabled CAS.
-		if c.disabled.CompareAndSwap(false, true) && c.onCap != nil {
+		// to disabled CAS. A committed response cannot become a
+		// problem document any more (see committed).
+		if c.disabled.CompareAndSwap(false, true) && c.onCap != nil && !c.committed {
 			c.onCap()
 		}
 		if c.exceeded.CompareAndSwap(false, true) && c.onWarn != nil {
 			c.onWarn("exceeded")
 		}
-		return 0, http.ErrHandlerTimeout
+		return 0, errResponseCapExceeded
 	}
 	// Pre-Write warn-on-approach hook (issue #995 Phase 4 /
 	// ADR-121): fire once at 95% of cap, once at 80% (95%
@@ -5418,12 +5472,17 @@ func (c *capWriter) Write(b []byte) (int, error) {
 			}
 		}
 	}
+	c.committed = true
 	n, err := c.ResponseWriter.Write(b)
 	if n > 0 {
 		c.written += int64(n)
 	}
 	return n, err
 }
+
+// errResponseCapExceeded is what capWriter.Write returns once the body cap
+// fired. It wraps http.ErrHandlerTimeout, which earlier callers matched.
+var errResponseCapExceeded = fmt.Errorf("gateway: response exceeded its body cap: %w", http.ErrHandlerTimeout)
 
 // WriteHeader rejects an announced oversized body before its status and
 // headers reach the client. Bodyless responses are exempt: in particular,
@@ -5455,6 +5514,9 @@ func (c *capWriter) WriteHeader(statusCode int) {
 			}
 			return
 		}
+	}
+	if statusCode >= http.StatusOK {
+		c.committed = true
 	}
 	c.ResponseWriter.WriteHeader(statusCode)
 }
@@ -5590,6 +5652,22 @@ func (h *Handler) WithAPIMonetization(enabled func() bool) *Handler {
 
 func (h *Handler) apiMonetizationEnabled() bool {
 	return h.apiMonetization != nil && h.apiMonetization()
+}
+
+// WithAPIMonetizationFlags installs the api_monetization platform flag
+// (ADR-20261020170649), which releases monetization to the accounts it admits
+// while the runtime switch is off.
+func (h *Handler) WithAPIMonetizationFlags(flags *platformflags.Set) *Handler {
+	h.apiMonetizationFlags = flags
+	return h
+}
+
+// APIMonetizationEnabledFor reports whether monetization applies to an
+// account's traffic: released to every account, or to this one by the flag.
+// The flag is decided by account only, so plan rules never match.
+func (h *Handler) APIMonetizationEnabledFor(accountID string) bool {
+	return h.apiMonetizationEnabled() ||
+		h.apiMonetizationFlags.Enabled(platformflags.APIMonetization, platformflags.Subject{AccountID: accountID})
 }
 
 // WithRequestAudit enables exact completed-request evidence in the fsynced
@@ -5816,7 +5894,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// runs BEFORE the appsSuffix check so the suffix gate
 	// sees the appHost (the inner host), not the full
 	// selector hostname.
-	appHost, sidecarName := SplitHostSelectorWithSuffix(host, h.appsSuffix)
+	appHost, sidecarName := SplitHostSelectorUnder(host, h.appsSuffix, h.selectorSuffixes)
 	// Host allowlist suffix check (spec §4.1 wildcard contract). Closes the
 	// door on stale DNS records that land on the edge post-TLS by rejecting
 	// anything not matching the configured suffix before the cache is touched.
@@ -5882,6 +5960,12 @@ haveApp:
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"Environment is not ready", "the stage clone has not published all of its workloads and resources"))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
+	// ADR-732: a request addressed to a production fork never takes the
+	// serving path (no wake, no picker, no cache or edge rules).
+	if forkRequested(r) {
+		h.serveFork(w, r, app)
 		return
 	}
 	// Edge-rule matching from here on ignores rules another account
@@ -5999,6 +6083,9 @@ haveApp:
 			}
 		}
 		r = withAppAndAccount(r, accountUUID, appUUID)
+		if h.APIMonetizationEnabledFor(app.AccountID) {
+			ownUsageHeader(r)
+		}
 	}
 	if h.requestAuditEnabled {
 		// Snapshot the public gateway's single verified XFF value before
@@ -6123,6 +6210,13 @@ haveApp:
 	// table — a customer who flipped the whole app should never see
 	// a per-route 503 from a different Problem.code, because that
 	// would leak the existence of the fine-grained rule.
+	// ADR-20261022105846: a client a rule's penalty box holds is refused
+	// before any other gate.
+	if h.applyEdgePenaltyBox(w, r, app, deploymentSmoke) {
+		h.metrics.ObserveEdgeRejection(app.ID, "penalty", rec.status)
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
 	if h.applyAppsMaintenanceMode(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
@@ -7254,18 +7348,10 @@ haveApp:
 
 	// Stamp the per-instance identity on the request BEFORE proxying so
 	// the per-node vmmd forwarder (issue #98 / ADR-028) can attribute
-	// the HTTP bytes to this exact instance. ApplyGuestHeaders first clears
-	// customer-supplied claims, then stamps the scheduler-selected identity.
-	identity := target.PlatformIdentity(app.AccountID, requestIDFrom(r))
-	identity.PlatformTenantID = authenticatedFrom(r.Context()).PlatformTenantID
-	if identity.AppID == "" {
-		identity.AppID = app.ID
-	}
-	identity.ApplyGuestHeaders(r.Header)
-	// Keep the same scheduler-authored identity on the request context so
-	// request-scoped logs and any subsequent schedd/vmmd metadata hop cannot
-	// drift from the headers sent to the guest.
-	r = r.WithContext(wire.WithPlatformIdentity(r.Context(), identity))
+	// the HTTP bytes to this exact instance. A retry restamps for its own
+	// target inside the forward closures below.
+	var identity api.PlatformIdentity
+	r, identity = stampTargetIdentity(r, app, target)
 	requestSpan.SetAttributes(pkgtrace.PlatformIdentityAttributes(identity)...)
 
 	// Semantic bridge span. The request context is passed through the existing
@@ -7650,6 +7736,8 @@ haveApp:
 		// returned above and never reach here.
 		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
+				req, _ = stampTargetIdentity(req, app, tgt)
+				defer h.trackSlowRequest(req, app, tgt, isStreaming)()
 				h.proxyByNode(tgt).ServeHTTP(w, req)
 			}, app)
 	} else {
@@ -7665,9 +7753,15 @@ haveApp:
 		capped := h.setupBufferedCapWriter(w, r.Method, app, planCap)
 		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
+				req, _ = stampTargetIdentity(req, app, tgt)
+				defer h.trackSlowRequest(req, app, tgt, isStreaming)()
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
 			}, app)
 	}
+	// ADR-733: a serving instance that answered 5xx may be captured for a
+	// crash snapshot. Asynchronous and throttled; never affects this
+	// response.
+	h.maybeRequestCrashCapture(r, app, target, rec.status)
 	// Issue #471 / ADR-047 PR-A buffered-fallback AC. The
 	// per-app streaming_enabled flag (ap.StreamingEnabled,
 	// propagated through pgRouter.toApp) is the load-bearing
@@ -7815,7 +7909,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			plan = "-"
 		}
 		h.metrics.ObserveRequest(appID, plan, code)
-		if platformFailureUnbillable(r, status) {
+		if platformErrorForSLO(r, status) {
 			h.metrics.ObservePlatformError(appID, plan)
 		}
 		// Per-app full request duration histogram (issue #273 / ADR-042).

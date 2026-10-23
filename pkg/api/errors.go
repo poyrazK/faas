@@ -649,6 +649,10 @@ const (
 	// navigation (ADR-831 amendment 7). A browser earns the pass by loading
 	// a page on the route; other clients need a verified credential.
 	CodeChallengeRequired = "challenge_required"
+	// CodePenaltyBox is returned by gatewayd for a request from a client
+	// an edge rule's penalty box holds (ADR-20261022105846). Retry-After
+	// says when the box ends.
+	CodePenaltyBox = "penalty_box"
 	// CodePreviewProductionDependencyDenied is returned by the internal
 	// service proxy when a project preview tries to call a production
 	// dependency while its preview_service_policy is deny. The rejection
@@ -674,6 +678,10 @@ const (
 	CodeRealtimeEntityVersionConflict  = "realtime_entity_version_conflict"
 	CodeRealtimeSequenceConflict       = "realtime_sequence_conflict"
 	CodeConflict                       = "conflict"
+	// CodeIdempotencyKeyReused (422, ADR-20261022204036): the request's
+	// Idempotency-Key was used within its 24 h replay window for a different
+	// request. Nothing ran, and the first request's result is kept.
+	CodeIdempotencyKeyReused = "idempotency_key_reused"
 
 	// ADR-961: an edge-rule mutation's If-Match named a rule-set version
 	// that is no longer the app's latest.
@@ -894,6 +902,10 @@ const (
 	// app (ADR-20261019071733); the problem lists the active freezes.
 	// override_freeze with a reason releases anyway, audited.
 	CodeReleaseFrozen = "release_frozen"
+	// CodePlatformReleasePaused means an operator paused every release on the
+	// platform (ADR 20261022140000), for example while a security incident is
+	// contained. Nothing the caller sends overrides it; rollbacks still work.
+	CodePlatformReleasePaused = "platform_release_paused"
 	// CodeReleaseFreezeNotFound means the account has no such unlifted freeze.
 	CodeReleaseFreezeNotFound = "release_freeze_not_found"
 	// CodeReleaseFreezeLimit means the account already holds
@@ -2084,7 +2096,7 @@ func StatusForCode(code string) int {
 		return http.StatusServiceUnavailable
 	case CodeUnauthorized, CodeConsumerKeyRequired, CodeConsumerKeyInvalid, CodeConsumerKeyInactive:
 		return http.StatusUnauthorized
-	case CodeConsumerScopeMissing, CodePlatformTenantRequired, CodeChallengeRequired:
+	case CodeConsumerScopeMissing, CodePlatformTenantRequired, CodeChallengeRequired, CodePenaltyBox:
 		return http.StatusForbidden
 	case CodeSessionExpired, CodeSessionInvalid:
 		return http.StatusUnauthorized
@@ -2624,6 +2636,17 @@ func ErrAppLayerTooLarge(l Limits, observedBytes int64) *Problem {
 		WithDocs(docsBase + "/build/limits#app-layer")
 }
 
+// ErrAppLayerTooManyEntries is returned when an image's layers apply more tar
+// entries than one build may extract (LayerExtractionMaxEntries). It shares
+// ErrAppLayerTooLarge's stable code: the image is too large to assemble.
+func ErrAppLayerTooManyEntries(l Limits, limit int) *Problem {
+	return NewProblem(http.StatusForbidden, CodeAppLayerTooBig,
+		"App too large",
+		fmt.Sprintf("image layers contain more than %d files, directories and links in total; %s plan builds stop at that limit.", limit, l.Plan)).
+		WithLimit(int64(limit), int64(limit)+1).
+		WithDocs(docsBase + "/build/limits#app-layer")
+}
+
 // ErrPlanLimitConcurrency is returned when waking another instance would exceed
 // the app's concurrency (spec §4.3 admission, invariant §6.2-1).
 func ErrPlanLimitConcurrency(l Limits, observed int) *Problem {
@@ -2684,6 +2707,15 @@ func ErrCapacity(detail string) *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeCapacity,
 		"Briefly at capacity", detail).
 		WithDocs("https://gregale.dev/status")
+}
+
+// ErrIdempotencyKeyReused reports an Idempotency-Key sent with a request
+// other than the one it was first used for (ADR-20261022204036).
+func ErrIdempotencyKeyReused() *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeIdempotencyKeyReused,
+		"Idempotency-Key reused",
+		"this Idempotency-Key was used for a different request in the last 24 hours, whose result is kept; send a new key for a new request, or resend the original request unchanged to get its result").
+		WithDocs(docsBase + "/errors")
 }
 
 func ErrSafeReleaseUnavailable() *Problem {
@@ -4627,6 +4659,17 @@ func ErrTenantHostnameQuota(p Plan, surfaceID string, limit, observed int) *Prob
 	return NewProblem(http.StatusForbidden, CodeTenantHostnameQuota,
 		"Tenant hostname limit reached",
 		fmt.Sprintf("%s plan caps tenant hostnames at %d per surface; you have %d on surface %s. Remove one to add another.",
+			p, limit, observed, surfaceID)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#tenant-surfaces")
+}
+
+// ErrTenantHostnamePendingQuota is the tenant_hostname_quota problem for
+// the unverified-hostname cap (ADR-20261020090500).
+func ErrTenantHostnamePendingQuota(p Plan, surfaceID string, limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodeTenantHostnameQuota,
+		"Tenant hostname limit reached",
+		fmt.Sprintf("%s plan caps unverified tenant hostnames at %d per surface; you have %d pending on surface %s. Verify or remove one to add another.",
 			p, limit, observed, surfaceID)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/plans#tenant-surfaces")

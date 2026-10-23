@@ -86,6 +86,8 @@ class AppManifest:
     """Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database,
     cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own
     OTel exporter are left untouched."""
+    profiling_on_demand: bool | Unset = UNSET
+    """Dormant on-demand profile collectors stamped by imaged (ADR-1155)."""
     env: AppManifestEnv | Unset = UNSET
     env_secrets: AppManifestEnvSecrets | Unset = UNSET
     """Env override via sealed-secret refs. Each value is "secret:NAME"; the host resolver looks up NAME against
@@ -209,6 +211,8 @@ class AppManifest:
         tracing: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tracing, Unset):
             tracing = self.tracing.to_dict()
+
+        profiling_on_demand = self.profiling_on_demand
 
         env: dict[str, Any] | Unset = UNSET
         if not isinstance(self.env, Unset):
@@ -404,6 +408,8 @@ class AppManifest:
             field_dict["profiling"] = profiling
         if tracing is not UNSET:
             field_dict["tracing"] = tracing
+        if profiling_on_demand is not UNSET:
+            field_dict["profiling_on_demand"] = profiling_on_demand
         if env is not UNSET:
             field_dict["env"] = env
         if env_secrets is not UNSET:
@@ -511,6 +517,8 @@ class AppManifest:
             tracing = UNSET
         else:
             tracing = TracingConfig.from_dict(_tracing)
+
+        profiling_on_demand = d.pop("profiling_on_demand", UNSET)
 
         _env = d.pop("env", UNSET)
         env: AppManifestEnv | Unset
@@ -879,6 +887,7 @@ class AppManifest:
             entrypoint=entrypoint,
             profiling=profiling,
             tracing=tracing,
+            profiling_on_demand=profiling_on_demand,
             env=env,
             env_secrets=env_secrets,
             working_dir=working_dir,

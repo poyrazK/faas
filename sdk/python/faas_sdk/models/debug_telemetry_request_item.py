@@ -71,6 +71,8 @@ class DebugTelemetryRequestItem:
     """Immutable image/artifact digest associated with the deployment."""
     guest: DebugGuestExecutionEvidence | Unset = UNSET
     """Bounded, platform-owned runtime execution evidence. Omitted when the runner signal was unavailable."""
+    profile_capture_id: UUID | Unset = UNSET
+    """Stack snapshot taken while this request was in flight (ADR-1155 slow_request capture), when one exists."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -136,6 +138,10 @@ class DebugTelemetryRequestItem:
         if not isinstance(self.guest, Unset):
             guest = self.guest.to_dict()
 
+        profile_capture_id: str | Unset = UNSET
+        if not isinstance(self.profile_capture_id, Unset):
+            profile_capture_id = str(self.profile_capture_id)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -186,6 +192,8 @@ class DebugTelemetryRequestItem:
             field_dict["image_digest"] = image_digest
         if guest is not UNSET:
             field_dict["guest"] = guest
+        if profile_capture_id is not UNSET:
+            field_dict["profile_capture_id"] = profile_capture_id
 
         return field_dict
 
@@ -277,6 +285,13 @@ class DebugTelemetryRequestItem:
         else:
             guest = DebugGuestExecutionEvidence.from_dict(_guest)
 
+        _profile_capture_id = d.pop("profile_capture_id", UNSET)
+        profile_capture_id: UUID | Unset
+        if isinstance(_profile_capture_id, Unset):
+            profile_capture_id = UNSET
+        else:
+            profile_capture_id = UUID(_profile_capture_id)
+
         debug_telemetry_request_item = cls(
             cold_boot=cold_boot,
             received_at=received_at,
@@ -301,6 +316,7 @@ class DebugTelemetryRequestItem:
             deployment_created_at=deployment_created_at,
             image_digest=image_digest,
             guest=guest,
+            profile_capture_id=profile_capture_id,
         )
 
         debug_telemetry_request_item.additional_properties = d

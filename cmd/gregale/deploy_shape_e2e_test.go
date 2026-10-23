@@ -519,7 +519,7 @@ func TestBuildCreateRequestResourceProfile(t *testing.T) {
 // TestResolveDeployShape_NestedMarkerHint pins the customer-visible
 // behaviour of issue #744 / ADR-086: a cwd whose only deployable source
 // is a marker buried at depth 1 (the common monorepo layout
-// apps/web/package.json) must surface a `Hint: ... gregale scan --path .`
+// apps/web/package.json) must surface a `Hint: ... gregale deploy --project`
 // line so the customer knows what to do next.
 //
 // Text mode: the hint is appended to the PrintFail line on stderr.
@@ -541,8 +541,8 @@ func TestResolveDeployShape_NestedMarkerHint(t *testing.T) {
 	if !errors.As(err, &hintErr) {
 		t.Fatalf("error chain missing *NestedMarkerHintError; got %T: %v", err, err)
 	}
-	if !strings.Contains(hintErr.Hint, "gregale scan --path .") {
-		t.Errorf("hint missing 'gregale scan --path .'; got %q", hintErr.Hint)
+	if !strings.Contains(hintErr.Hint, "gregale deploy --project") {
+		t.Errorf("hint missing 'gregale deploy --project'; got %q", hintErr.Hint)
 	}
 
 	// Drive printErr (text mode) and assert the hint lands on stderr.
@@ -559,10 +559,10 @@ func TestResolveDeployShape_NestedMarkerHint(t *testing.T) {
 	if code == 0 {
 		t.Errorf("printErr returned 0; expected non-zero exit code on shape error")
 	}
-	if !strings.Contains(stderr.String(), "gregale scan --path .") {
+	if !strings.Contains(stderr.String(), "gregale deploy --project") {
 		t.Errorf("stderr missing hint; got %q", stderr.String())
 	}
-	if strings.Contains(stdout.String(), "gregale scan --path .") {
+	if strings.Contains(stdout.String(), "gregale deploy --project") {
 		t.Errorf("stdout must not contain hint in text mode; got %q", stdout.String())
 	}
 
@@ -597,8 +597,8 @@ func TestResolveDeployShape_NestedMarkerHint_JSON(t *testing.T) {
 	if !errors.As(err, &hintErr) {
 		t.Fatalf("error chain missing *NestedMarkerHintError; got %T: %v", err, err)
 	}
-	if !strings.Contains(hintErr.Hint, "gregale scan --path .") {
-		t.Errorf("hint missing 'gregale scan --path .'; got %q", hintErr.Hint)
+	if !strings.Contains(hintErr.Hint, "gregale deploy --project") {
+		t.Errorf("hint missing 'gregale deploy --project'; got %q", hintErr.Hint)
 	}
 
 	stderr, restoreErr := main.CaptureStderr(t)
@@ -613,7 +613,7 @@ func TestResolveDeployShape_NestedMarkerHint_JSON(t *testing.T) {
 		t.Errorf("printErr returned 0; expected non-zero exit code on shape error")
 	}
 	problem := main.AssertOneProblem(t, stderr.String())
-	if !strings.Contains(problem.Hint, "gregale scan --path .") {
+	if !strings.Contains(problem.Hint, "gregale deploy --project") {
 		t.Errorf("Problem missing workspace hint: %+v", problem)
 	}
 }

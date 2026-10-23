@@ -170,6 +170,20 @@ type WorkflowSpec struct {
 	MaxConcurrentRuns    int                  `json:"max_concurrent_runs,omitempty" yaml:"max_concurrent_runs,omitempty" toml:"max_concurrent_runs,omitempty"`
 	MaxConcurrentActions int                  `json:"max_concurrent_actions,omitempty" yaml:"max_concurrent_actions,omitempty" toml:"max_concurrent_actions,omitempty"`
 	Steps                []WorkflowStepSpec   `json:"steps" yaml:"steps" toml:"steps"`
+	// Code makes this a code-first workflow (ADR-20261021204307): one entry
+	// handler replays the run's journal instead of a declared step graph.
+	Code *WorkflowCodeSpec `json:"code,omitempty" yaml:"code,omitempty" toml:"code,omitempty"`
+}
+
+// MarshalJSON emits an empty step list rather than null, so a code-first
+// definition keeps the required `steps` array of the published schema.
+func (s WorkflowSpec) MarshalJSON() ([]byte, error) {
+	type plain WorkflowSpec
+	value := plain(s)
+	if value.Steps == nil {
+		value.Steps = []WorkflowStepSpec{}
+	}
+	return json.Marshal(value)
 }
 
 // WorkflowStepSpec defines an individual step in a workflow DAG. Run and
@@ -489,6 +503,10 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 	}
 	if err := ValidateWorkflowTrigger(spec.Trigger); err != nil {
 		return nil, err
+	}
+	if spec.Code != nil {
+		// A code-first workflow has no step graph to order.
+		return nil, validateWorkflowCode(spec, plan)
 	}
 	if len(spec.Steps) == 0 {
 		return nil, ErrWorkflowEmptySteps

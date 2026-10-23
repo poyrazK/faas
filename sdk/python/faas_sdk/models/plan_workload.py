@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 from ..models.plan_workload_action import PlanWorkloadAction, check_plan_workload_action
 from ..models.plan_workload_class import PlanWorkloadClass, check_plan_workload_class
 from ..models.plan_workload_tier import PlanWorkloadTier, check_plan_workload_tier
+from ..models.plan_workload_visibility import PlanWorkloadVisibility, check_plan_workload_visibility
 from ..models.preview_service_calls_policy import PreviewServiceCallsPolicy, check_preview_service_calls_policy
 from ..models.service_binding_policy import ServiceBindingPolicy, check_service_binding_policy
 from ..models.service_binding_transport import ServiceBindingTransport, check_service_binding_transport
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
     from ..models.compose_process import ComposeProcess
     from ..models.plan_detected_by import PlanDetectedBy
     from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
+    from ..models.plan_workload_unset_env_key_reasons import PlanWorkloadUnsetEnvKeyReasons
     from ..models.service_caller_scopes import ServiceCallerScopes
     from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
@@ -41,10 +43,14 @@ class PlanWorkload:
     wildcard app URLs are disabled."""
     app_slug: str | Unset = UNSET
     """Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original
-    identity. Present for migration scans and existing allocations."""
+    identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug,
+    which get the project-prefixed name (ADR-20261022120205)."""
     platform_tenant_required: bool | Unset = UNSET
     """Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override.
     Omitted preserves existing app policy; new apps default to false."""
+    visibility: PlanWorkloadVisibility | Unset = UNSET
+    """Present when the app is or will be internal (no public route): an existing internal app, or a new Compose
+    service without `ports:` (ADR-20261022131852). Omitted means public."""
     dockerfile: str | Unset = UNSET
     image: str | Unset = UNSET
     """Normalized prebuilt OCI image for a workload without build. Tags are resolved and pinned by the image worker
@@ -70,7 +76,8 @@ class PlanWorkload:
     release on the captured same-project, same-environment dependency deployment."""
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
-    reachability; `declared` permits only targets present in the caller's service bindings."""
+    reachability; `declared` permits only targets present in the caller's service bindings; `project` also permits
+    every service in the caller's own project (ADR-20261022111119)."""
     service_reliability: ServiceReliabilityPolicies | Unset = UNSET
     """Map of declared target service names to caller-owned reliability policies. Only names in this app's service
     bindings may appear."""
@@ -93,6 +100,15 @@ class PlanWorkload:
     """KEYS only — never values; spec §11 forbids logging secrets"""
     required_env_keys: list[str] | Unset = UNSET
     """Explicit names from .gregale/required-secrets.json. Detected env_keys alone do not establish requirements."""
+    unset_env_keys: list[str] | Unset = UNSET
+    """Names from env_keys and required_env_keys that will have no value in the selected environment: not
+    configured on the app and not provided by the platform. Names only, never values."""
+    unset_env_key_reasons: PlanWorkloadUnsetEnvKeyReasons | Unset = UNSET
+    """For an unset_env_keys name with a Compose value, why that value is not imported (ADR-20261023085230). Never
+    values."""
+    imported_env_keys: list[str] | Unset = UNSET
+    """Compose environment names whose plain values apply will write, because the project sets x-gregale-env-
+    import: true and they are unset (ADR-20261023085230). Names only."""
     source: str | Unset = UNSET
     """detector provenance, e.g. compose.yaml: api"""
     tier: PlanWorkloadTier | Unset = UNSET
@@ -126,6 +142,10 @@ class PlanWorkload:
         app_slug = self.app_slug
 
         platform_tenant_required = self.platform_tenant_required
+
+        visibility: str | Unset = UNSET
+        if not isinstance(self.visibility, Unset):
+            visibility = self.visibility
 
         dockerfile = self.dockerfile
 
@@ -191,6 +211,18 @@ class PlanWorkload:
         if not isinstance(self.required_env_keys, Unset):
             required_env_keys = self.required_env_keys
 
+        unset_env_keys: list[str] | Unset = UNSET
+        if not isinstance(self.unset_env_keys, Unset):
+            unset_env_keys = self.unset_env_keys
+
+        unset_env_key_reasons: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.unset_env_key_reasons, Unset):
+            unset_env_key_reasons = self.unset_env_key_reasons.to_dict()
+
+        imported_env_keys: list[str] | Unset = UNSET
+        if not isinstance(self.imported_env_keys, Unset):
+            imported_env_keys = self.imported_env_keys
+
         source = self.source
 
         tier: str | Unset = UNSET
@@ -223,6 +255,8 @@ class PlanWorkload:
             field_dict["app_slug"] = app_slug
         if platform_tenant_required is not UNSET:
             field_dict["platform_tenant_required"] = platform_tenant_required
+        if visibility is not UNSET:
+            field_dict["visibility"] = visibility
         if dockerfile is not UNSET:
             field_dict["dockerfile"] = dockerfile
         if image is not UNSET:
@@ -259,6 +293,12 @@ class PlanWorkload:
             field_dict["env_keys"] = env_keys
         if required_env_keys is not UNSET:
             field_dict["required_env_keys"] = required_env_keys
+        if unset_env_keys is not UNSET:
+            field_dict["unset_env_keys"] = unset_env_keys
+        if unset_env_key_reasons is not UNSET:
+            field_dict["unset_env_key_reasons"] = unset_env_key_reasons
+        if imported_env_keys is not UNSET:
+            field_dict["imported_env_keys"] = imported_env_keys
         if source is not UNSET:
             field_dict["source"] = source
         if tier is not UNSET:
@@ -278,6 +318,7 @@ class PlanWorkload:
         from ..models.compose_process import ComposeProcess
         from ..models.plan_detected_by import PlanDetectedBy
         from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
+        from ..models.plan_workload_unset_env_key_reasons import PlanWorkloadUnsetEnvKeyReasons
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
@@ -295,6 +336,13 @@ class PlanWorkload:
         app_slug = d.pop("app_slug", UNSET)
 
         platform_tenant_required = d.pop("platform_tenant_required", UNSET)
+
+        _visibility = d.pop("visibility", UNSET)
+        visibility: PlanWorkloadVisibility | Unset
+        if isinstance(_visibility, Unset):
+            visibility = UNSET
+        else:
+            visibility = check_plan_workload_visibility(_visibility)
 
         dockerfile = d.pop("dockerfile", UNSET)
 
@@ -377,6 +425,17 @@ class PlanWorkload:
 
         required_env_keys = cast(list[str], d.pop("required_env_keys", UNSET))
 
+        unset_env_keys = cast(list[str], d.pop("unset_env_keys", UNSET))
+
+        _unset_env_key_reasons = d.pop("unset_env_key_reasons", UNSET)
+        unset_env_key_reasons: PlanWorkloadUnsetEnvKeyReasons | Unset
+        if isinstance(_unset_env_key_reasons, Unset):
+            unset_env_key_reasons = UNSET
+        else:
+            unset_env_key_reasons = PlanWorkloadUnsetEnvKeyReasons.from_dict(_unset_env_key_reasons)
+
+        imported_env_keys = cast(list[str], d.pop("imported_env_keys", UNSET))
+
         source = d.pop("source", UNSET)
 
         _tier = d.pop("tier", UNSET)
@@ -410,6 +469,7 @@ class PlanWorkload:
             public_url=public_url,
             app_slug=app_slug,
             platform_tenant_required=platform_tenant_required,
+            visibility=visibility,
             dockerfile=dockerfile,
             image=image,
             image_healthcheck=image_healthcheck,
@@ -428,6 +488,9 @@ class PlanWorkload:
             schedule=schedule,
             env_keys=env_keys,
             required_env_keys=required_env_keys,
+            unset_env_keys=unset_env_keys,
+            unset_env_key_reasons=unset_env_key_reasons,
+            imported_env_keys=imported_env_keys,
             source=source,
             tier=tier,
             action=action,

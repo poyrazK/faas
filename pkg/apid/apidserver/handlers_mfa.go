@@ -279,9 +279,15 @@ func (s *server) mfaVerify(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if secret == "" {
 		return // readSealedSecret wrote the problem
 	}
-	if !auth.VerifyCode(secret, req.Totp) {
+	reason, err := s.acceptTOTP(r.Context(), acct.ID, secret, req.Totp)
+	if err != nil {
+		s.log.Error("mfa.verify.accept_step", "err", err.Error())
+		api.WriteProblem(w, api.ErrCapacity("could not verify the code"))
+		return
+	}
+	if reason != "" {
 		s.totp.fail(acct.ID, time.Now())
-		s.audit.Emit(r.Context(), "account.mfa_verify_failed", &acct.ID, map[string]any{"reason": "code_mismatch"})
+		s.audit.Emit(r.Context(), "account.mfa_verify_failed", &acct.ID, map[string]any{"reason": reason})
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode,
 			"Invalid code", "the TOTP code did not match"))
 		return
@@ -801,6 +807,30 @@ func (s *server) disableByRecoveryCode(w http.ResponseWriter, r *http.Request, a
 //
 // (The helper shape mirrors readAppSecret in handlers_secrets.go
 // — same idea, separate seal key/value.)
+// acceptTOTP verifies code against secret and spends its time step, so a
+// code that granted a session cannot grant another within its validity
+// window (RFC 6238 §5.2). It returns "" on success, or the failure reason
+// for the audit row: "code_mismatch" or "code_replayed". The caller answers
+// both the same way.
+func (s *server) acceptTOTP(ctx context.Context, accountID, secret, code string) (string, error) {
+	step, ok := auth.VerifyCodeStep(secret, code, time.Now())
+	if !ok {
+		return "code_mismatch", nil
+	}
+	recorder, ok := s.store.(state.TOTPStepRecorder)
+	if !ok {
+		return "", errors.New("totp step recorder unavailable")
+	}
+	accepted, err := recorder.AcceptTOTPStep(ctx, accountID, step)
+	if err != nil {
+		return "", err
+	}
+	if !accepted {
+		return "code_replayed", nil
+	}
+	return "", nil
+}
+
 func readSealedSecret(s *server, w http.ResponseWriter, r *http.Request, accountID string) string {
 	encrypted, err := s.store.ReadMFASecret(r.Context(), accountID)
 	if err != nil {

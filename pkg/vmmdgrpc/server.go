@@ -39,6 +39,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
@@ -279,6 +280,10 @@ type Server struct {
 	// diverged (ADR-740) lists instances that were served a developer live
 	// patch; their snapshot captures are refused. nil disables the guard.
 	diverged *DivergedInstances
+	// adoptionReportOn and adoptionReport serve AdoptionReport (vmmd
+	// restart adoption ADR §3); see WithAdoptionReport.
+	adoptionReportOn bool
+	adoptionReport   *AdoptionReport
 	// events (issue #517 / PR-C / ADR-064) is the wake-timeline
 	// fan-out. vmmd is the corroborating-observation source for
 	// wake.boot_observed at the gRPC server boundary and
@@ -702,11 +707,11 @@ func (s *Server) wakeWithBridgePrewarm(ctx context.Context, wr fcvm.WakeRequest,
 		s.streamBridges = newStreamBridgeManager(s.log)
 	}
 	inst, err := fastVMM.WakeWithNetworkReady(ctx, wr, func(ready fcvm.WakeNetworkReady) {
-		s.streamBridges.prewarm(withPublicTarget(ctx, ready.PublicTarget), &vmmdpb.ForwardHTTPRequestInit{
+		s.prewarmStreamBridge(withPublicTarget(ctx, ready.PublicTarget), &vmmdpb.ForwardHTTPRequestInit{
 			Instance:    ready.Instance,
 			Port:        uint32(wr.Port),
 			AppProtocol: appProtocol,
-		}, ready.Netns)
+		}, ready)
 	})
 	if err != nil {
 		s.forgetForwarding(ctx, wr.Instance)
@@ -1104,10 +1109,21 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
-	info, err := s.vmm.WarmSnapshot(ctx, req.GetInstance(), fcvm.SnapshotSpec{
+	spec := fcvm.SnapshotSpec{
 		StorageKey:        req.GetStorageKey(),
 		VMStateStorageKey: req.GetVmstateStorageKey(),
-	})
+	}
+	var sealedKey []byte
+	if captureID := req.GetSealCaptureId(); captureID != "" {
+		store, sealed, err := s.sealCaptureStorage(captureID)
+		if err != nil {
+			s.ops.Observe(op, time.Since(start), err)
+			return nil, grpcerr.ToStatus(api.NewProblem(int(codes.FailedPrecondition), api.CodeValidation,
+				"Cannot seal crash capture", err.Error()).WithDocs(wire.DocsBaseURL + "/vmmd#warm-snapshot"))
+		}
+		spec.Storage, sealedKey = store, sealed
+	}
+	info, err := s.vmm.WarmSnapshot(ctx, req.GetInstance(), spec)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
@@ -1116,8 +1132,23 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 		MemBytes:     info.MemBytes,
 		VmstateBytes: info.VMStateBytes,
 		StoredBytes:  info.StoredBytes,
+		SealedKey:    sealedKey,
 		Capture:      info.Capture.ToProto(),
 	}, nil
+}
+
+// captureSealer is the optional ADR-733 capability of the VMM: a backend
+// that publishes a crash capture only as encrypted twins.
+type captureSealer interface {
+	SealCaptureStorage(captureID string) (storage.StorageBackend, []byte, error)
+}
+
+func (s *Server) sealCaptureStorage(captureID string) (storage.StorageBackend, []byte, error) {
+	sealer, ok := s.vmm.(captureSealer)
+	if !ok {
+		return nil, nil, errors.New("this vmmd cannot encrypt crash captures")
+	}
+	return sealer.SealCaptureStorage(captureID)
 }
 
 // ResumeWarmInstance resumes a paused warm-pool VM in place. The scheduler

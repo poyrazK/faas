@@ -67,9 +67,24 @@ func TestLetsEncryptCertIssuer_LeafPathLayout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("leafPath: %v", err)
 	}
-	want := filepath.Join(dir, "certificates", "acme-v02.api.letsencrypt.org-directory", "a.example", "a.example.crt")
+	want := filepath.Join(dir, "certificates", "acme-staging-v02.api.letsencrypt.org-directory", "a.example", "a.example.crt")
 	if got != want {
 		t.Errorf("leafPath = %q, want %q", got, want)
+	}
+	// The derived key must match the key certmagic's ACME issuer stores
+	// under, for both directories.
+	for _, staging := range []bool{true, false} {
+		le, err := NewLetsEncryptCertIssuer(t.TempDir(), "ops@example.com", staging, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		derived := le.issuerKey()
+		if err := le.initConfig(); err != nil {
+			t.Fatal(err)
+		}
+		if actual := le.cfg.Issuers[0].IssuerKey(); derived != actual {
+			t.Errorf("staging=%v: derived issuer key %q, certmagic stores under %q", staging, derived, actual)
+		}
 	}
 }
 

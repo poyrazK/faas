@@ -41,6 +41,37 @@ type firstByteRecorder struct {
 	mu  sync.Mutex
 	at  time.Time
 	set bool
+	// appBudgetExpired is set when the request budget ran out after the
+	// request was handed to the guest (requestBudgetDetailForward*). The
+	// guest never answered, but the time went to the app, not the platform.
+	appBudgetExpired bool
+}
+
+// markAppBudgetExpired records that the request budget expired while the
+// guest was handling the request. A request without a recorder is ignored.
+func markAppBudgetExpired(r *http.Request) {
+	if r == nil {
+		return
+	}
+	if rec, ok := r.Context().Value(firstByteAtKey{}).(*firstByteRecorder); ok && rec != nil {
+		rec.mu.Lock()
+		rec.appBudgetExpired = true
+		rec.mu.Unlock()
+	}
+}
+
+// appBudgetExpiredFrom reports markAppBudgetExpired for r.
+func appBudgetExpiredFrom(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	rec, ok := r.Context().Value(firstByteAtKey{}).(*firstByteRecorder)
+	if !ok || rec == nil {
+		return false
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	return rec.appBudgetExpired
 }
 
 // record stamps the timestamp. Called by the trace's GotFirstResponseByte.

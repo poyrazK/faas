@@ -1146,10 +1146,49 @@
         executable: /bin/bash
       changed_when: false
 
+    # vmmd restart adoption ADR §4: an existing node skips the drain when the
+    # candidate vmmd would adopt every live guest. The candidate judges the
+    # running vmmd's journal and live proof over that vmmd's root-only admin
+    # socket: exit 0 adopt, 3 drain (a guest it cannot adopt, a running vmmd
+    # that cannot answer, a config that does not adopt). Anything else is a
+    # broken check and fails the play before a service is touched.
+    # faas_join_force_drain keeps the drain for host work and debugging.
+    - name: Ask the candidate vmmd whether it adopts every live guest
+      ansible.builtin.command:
+        argv:
+          - "/opt/faas/prestage/{{ faas_join_release_git_sha }}/vmmd"
+          - adoption-check
+          - --config
+          - /etc/faas/vmmd.toml
+      register: faas_join_adoption_check
+      changed_when: false
+      failed_when: faas_join_adoption_check.rc not in [0, 3]
+      when:
+        - (faas_join_existing_compute_node.rc | default(3)) == 0
+        - faas_join_active_vmmd.stat.exists
+        - not (faas_join_force_drain | default(false) | bool)
+
+    - name: Decide whether this rollout restarts vmmd without draining
+      ansible.builtin.set_fact:
+        faas_join_skip_drain: >-
+          {{ (faas_join_adoption_check.rc | default(3)) == 0 and
+             not (faas_join_force_drain | default(false) | bool) }}
+
+    - name: Report the no-drain decision
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Restarting without a drain: the candidate adopts every live guest.'
+             if faas_join_skip_drain | bool else
+             'Draining: faas_join_force_drain is set.'
+             if faas_join_force_drain | default(false) | bool else
+             'Draining: ' ~ ((faas_join_adoption_check.stdout | default('{}') | from_json).reason
+             | default('the candidate cannot adopt every live guest', true)) }}
+
     - name: Gracefully drain the existing node before release installation
       when: >-
+        not (faas_join_skip_drain | bool) and (
         (faas_join_rollout_phase | default('full')) == 'activate' or
-        (faas_join_existing_compute_node.rc | default(3)) == 0
+        (faas_join_existing_compute_node.rc | default(3)) == 0)
       block:
         - name: Begin graceful drain of the existing node before release installation
           ansible.builtin.command:
@@ -1219,10 +1258,14 @@
               existing node's pre-rollout active lifecycle was restored when
               applicable, and no service or release was replaced
 
+    # A no-drain rollout keeps every daemon serving through the install and
+    # restarts them once below: stopping them here would stop vmmd, and the
+    # node's gateway, for the whole install.
     - name: Stop stale compute-only services before replacing the active release
       ansible.builtin.systemd:
         name: "{{ item }}"
         state: stopped
+      when: not (faas_join_skip_drain | bool)
       loop:
         - faas-gatewayd-internal.service
         - faas-realtimed.service
@@ -1568,6 +1611,22 @@
         port: 50051
         timeout: 60
       when: faas_vmmd_target_url is match('^tcp://')
+
+    # The restarted vmmd adopted its predecessor's guests before it started
+    # serving. A report with refusals, a fenced claim or none in time fails
+    # the rollout loudly; schedd is already failing and recreating every
+    # guest the new vmmd does not hold.
+    - name: Wait for the restarted vmmd to report a clean adoption
+      ansible.builtin.command:
+        argv:
+          - /opt/faas/current/bin/vmmd
+          - adoption-report
+          - --wait
+          - 90s
+      register: faas_join_adoption_report
+      changed_when: false
+      failed_when: faas_join_adoption_report.rc != 0
+      when: faas_join_skip_drain | bool
 
     - name: Wait for the managed realtime socket
       ansible.builtin.wait_for:

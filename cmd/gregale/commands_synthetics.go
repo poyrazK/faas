@@ -152,11 +152,13 @@ func cmdSyntheticsSetEnabled(args []string, enabled bool) int {
 func cmdSyntheticsRm(args []string) int {
 	fs := newFlagSet("synthetics rm", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
+	// rm never prompts; --yes is accepted like webhooks rm (Hunt 12 H12-37).
+	fs.Bool("yes", false, "accepted for consistency; rm does not prompt")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale synthetics rm --app <slug> <check-id>", "synthetics")
+		PrintUsage(os.Stderr, "usage: gregale synthetics rm --app <slug> <check-id> [--yes]", "synthetics")
 		return 1
 	}
 	client, err := authedClient()

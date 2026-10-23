@@ -54,7 +54,7 @@ func cmdAppsRoutes(slug string, args []string) int {
 	}
 	resp, err := client.GetAppRoutes(context.Background(), slug)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list routes", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))

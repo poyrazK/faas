@@ -32,6 +32,9 @@ workflows:
           report_id: "{{steps.generate.output.report_id}}"
 ```
 
+To write the flow as ordinary async code instead of a step list, see
+[code-first workflows](code-workflows.md).
+
 Deploy the manifest with your application handlers. Gregale starts the workflow
 directly; an HTTP cron-to-workflow adapter is unnecessary. `run: generate_report`
 invokes the app's `/generate_report` handler via the existing workflow executor.
@@ -541,6 +544,11 @@ replay links are deleted: `gregale crons runs`, queue history and invocation
 lookups only show work inside the window. Duplicate detection that relies on
 a stored invocation, such as inbound webhook receipts and async route
 idempotency keys, lasts as long as that invocation is kept.
+
+A failed queue or delayed-task message is one entry in `gregale dlq <app>`: its
+invocation. When a push binding delivered it, the binding's receipt failure
+stays in `gregale triggers dlq`, and replaying the entry re-arms that receipt.
+See [ADR-20261022203653](adr/20261022203653-one-dead-letter-entry-per-queue-message.md).
 
 ## Queue limits
 

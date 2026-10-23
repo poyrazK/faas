@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/billing"
+	"github.com/onebox-faas/faas/pkg/billing/stripeinvoice"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -27,6 +28,15 @@ type Host interface {
 	Store() state.Store
 	// QuoteConsumerUsage prices usage in [since, until) like a statement.
 	QuoteConsumerUsage(ctx context.Context, accountID, appID, consumerID string, since, until time.Time) (billing.APIConsumerUsageQuote, error)
+	// Released reports whether API monetization is released to an account
+	// (ADR-20261020170649).
+	Released(accountID string) bool
+	// OfferedPlans lists the plans sign-up offers with their current prices
+	// (ADR-20261021143000).
+	OfferedPlans(ctx context.Context, app state.App, settings state.APIConsumerSignupSettings) ([]api.ConsumerSignupPlan, error)
+	// StripeKey opens the account's Stripe billing connection (ADR-1502).
+	StripeKey(ctx context.Context, accountID string) (key string, livemode bool, problem *api.Problem)
+	Audit(ctx context.Context, event, accountID string, fields map[string]any)
 }
 
 // Service serves the consumer billing endpoints. Now is the clock; nil uses
@@ -34,6 +44,9 @@ type Host interface {
 type Service struct {
 	Host Host
 	Now  func() time.Time
+	// Stripe is the customer portal client (ADR-20261021183000); nil uses
+	// the real API.
+	Stripe *stripeinvoice.Client
 
 	mu       sync.Mutex
 	limiters map[string]*rate.Limiter
@@ -111,6 +124,11 @@ func (s *Service) authenticate(w http.ResponseWriter, r *http.Request) (caller, 
 	consumer, err := s.Host.Store().GetAPIConsumerByID(ctx, app.AccountID, key.ConsumerID)
 	if err != nil || consumer.AppID != app.ID || !consumer.Active() {
 		unauthorized(w)
+		return caller{}, false
+	}
+	if !s.Host.Released(app.AccountID) {
+		// The app owner does not have API monetization: no such route.
+		httpkit.NoSuchRoute(w)
 		return caller{}, false
 	}
 	return caller{app: app, consumer: consumer}, true
@@ -290,7 +308,7 @@ func (s *Service) Statements(w http.ResponseWriter, r *http.Request) {
 	for _, st := range finalized {
 		item := api.ConsumerBillingStatement{ID: st.ID, PeriodStart: st.PeriodStart.UTC(), PeriodEnd: st.PeriodEnd.UTC(),
 			Revision: st.Revision, Currency: st.Currency, BillableUnits: st.BillableUnits, AmountMillicents: st.AmountMillicents,
-			FinalizedAt: st.FinalizedAt}
+			CreditAppliedMillicents: st.CreditAppliedMillicents, AmountDueMillicents: st.AmountDueMillicents(), FinalizedAt: st.FinalizedAt}
 		if exports != nil {
 			if e, err := exports.GetStatementInvoiceExport(r.Context(), c.app.AccountID, state.StatementSourceAppConsumer, st.ID); err == nil &&
 				e.Status == state.StatementInvoiceExportCompleted {

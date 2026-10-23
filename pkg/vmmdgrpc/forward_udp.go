@@ -51,7 +51,11 @@ func (s *Server) ForwardUDPStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	if err != nil {
 		return err
 	}
-	cmd, input, output, ready, _, err := namespaceBridgeSpawn(ctx, pid, init.Port, "FAAS_VMMD_UDP_BRIDGE_PATH", "/opt/faas/current/bin/vmmd-udp-bridge")
+	bridgeID, err := s.forwardBridgeIdentity(ctx, init.Instance)
+	if err != nil {
+		return err
+	}
+	cmd, input, output, ready, _, err := namespaceBridgeSpawn(ctx, bridgeID, pid, init.Port, "FAAS_VMMD_UDP_BRIDGE_PATH", "/opt/faas/current/bin/vmmd-udp-bridge")
 	if err != nil {
 		return err
 	}

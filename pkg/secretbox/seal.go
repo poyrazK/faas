@@ -56,6 +56,17 @@ func Seal(recipient *age.X25519Recipient, env Envelope) ([]byte, error) {
 	if recipient == nil {
 		return nil, errors.New("secretbox: nil recipient")
 	}
+	return SealTo([]*age.X25519Recipient{recipient}, env)
+}
+
+// SealTo is Seal for several recipients (ADR 20261022111812): any one of
+// the matching identities opens the result. Duplicate recipients are
+// written once.
+func SealTo(recipients []*age.X25519Recipient, env Envelope) ([]byte, error) {
+	stanzas, err := dedupeRecipients(recipients)
+	if err != nil {
+		return nil, err
+	}
 	if err := env.Validate(); err != nil {
 		return nil, err
 	}
@@ -64,7 +75,7 @@ func Seal(recipient *age.X25519Recipient, env Envelope) ([]byte, error) {
 		return nil, fmt.Errorf("secretbox: marshal envelope: %w", err)
 	}
 	var out bytes.Buffer
-	w, err := age.Encrypt(&out, recipient)
+	w, err := age.Encrypt(&out, stanzas...)
 	if err != nil {
 		return nil, fmt.Errorf("secretbox: open age writer: %w", err)
 	}
@@ -184,6 +195,19 @@ func SealBytes(recipient *age.X25519Recipient, namespace string, plaintext []byt
 	if recipient == nil {
 		return nil, errors.New("secretbox: nil recipient")
 	}
+	return SealBytesTo([]*age.X25519Recipient{recipient}, namespace, plaintext, maxValueBytes)
+}
+
+// SealBytesTo is SealBytes for several recipients (ADR 20261022111812).
+// Any one of the matching identities opens the result, which is how a seal
+// domain is introduced: writers seal to the domain and the fleet recipient
+// until every reader holds the domain identity, then to the domain alone.
+// Duplicate recipients are written once.
+func SealBytesTo(recipients []*age.X25519Recipient, namespace string, plaintext []byte, maxValueBytes int) ([]byte, error) {
+	stanzas, err := dedupeRecipients(recipients)
+	if err != nil {
+		return nil, err
+	}
 	if maxValueBytes > 0 && len(plaintext) > maxValueBytes {
 		return nil, api.ErrSecretValueTooLarge(api.Limits{SecretValueMaxBytes: maxValueBytes}, len(plaintext))
 	}
@@ -197,7 +221,7 @@ func SealBytes(recipient *age.X25519Recipient, namespace string, plaintext []byt
 		tag = namespace + "\x00"
 	}
 	var out bytes.Buffer
-	w, err := age.Encrypt(&out, recipient)
+	w, err := age.Encrypt(&out, stanzas...)
 	if err != nil {
 		return nil, fmt.Errorf("secretbox: open age writer: %w", err)
 	}
@@ -211,6 +235,26 @@ func SealBytes(recipient *age.X25519Recipient, namespace string, plaintext []byt
 		return nil, fmt.Errorf("secretbox: close age writer: %w", err)
 	}
 	return out.Bytes(), nil
+}
+
+// dedupeRecipients returns recipients as age stanzas, each written once.
+func dedupeRecipients(recipients []*age.X25519Recipient) ([]age.Recipient, error) {
+	if len(recipients) == 0 {
+		return nil, errors.New("secretbox: no recipients")
+	}
+	stanzas := make([]age.Recipient, 0, len(recipients))
+	seen := make(map[string]struct{}, len(recipients))
+	for _, r := range recipients {
+		if r == nil {
+			return nil, errors.New("secretbox: nil recipient")
+		}
+		if _, dup := seen[r.String()]; dup {
+			continue
+		}
+		seen[r.String()] = struct{}{}
+		stanzas = append(stanzas, r)
+	}
+	return stanzas, nil
 }
 
 // OpenBytes is the inverse of SealBytes. Returns the namespace +
