@@ -1117,6 +1117,10 @@ type EdgeRulePageItem struct {
 	// 6-hour totals and their sum.
 	SparkPoints string
 	Matches7d   int64
+	// Unreleased labels the gated features the rule uses that are not yet
+	// available to the account (ADR-20261023113721); the edge does not
+	// enforce them.
+	Unreleased []string
 }
 
 // CorsPresetPageItem is the read-only preset summary shown beside an app's

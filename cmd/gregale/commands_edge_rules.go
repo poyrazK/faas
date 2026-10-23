@@ -182,6 +182,10 @@ func cmdEdgeRulesList(args []string) int {
 		if it.Name != "" {
 			label = "  " + truncate(it.Name, 40)
 		}
+		// ADR-20261023113721: the edge does not enforce unreleased features.
+		if len(it.UnreleasedFeatures) > 0 {
+			label += "  (not enforced, not yet available: " + strings.Join(it.UnreleasedFeatures, ", ") + ")"
+		}
 		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-9d %-32s %s  [%s]%s\n",
 			it.ID, it.Kind, it.Priority, truncate(it.MatchHost, 32), it.MatchPath, enabled, label)
 	}

@@ -37,7 +37,7 @@ type precondition func(ctx context.Context) (etag string, prob *api.Problem)
 
 // writeRuleMutation writes a mutation outcome: the If-Match ETag or the
 // convergence state with a problem, or the rule with the rule-set ETag.
-func (s *Service) writeRuleMutation(ctx context.Context, w http.ResponseWriter, m ruleMutation, prob *api.Problem, status int) {
+func (s *Service) writeRuleMutation(ctx context.Context, w http.ResponseWriter, acct state.Account, m ruleMutation, prob *api.Problem, status int) {
 	if prob != nil {
 		if m.etag != "" {
 			w.Header().Set("ETag", m.etag)
@@ -50,7 +50,7 @@ func (s *Service) writeRuleMutation(ctx context.Context, w http.ResponseWriter, 
 	}
 	m.convergence.SetResponseState(w, "active")
 	s.setEdgeRuleSetETag(ctx, w, m.row.AppID)
-	httpkit.WriteJSON(w, status, EdgeRuleResponse(m.row))
+	httpkit.WriteJSON(w, status, s.RuleResponse(acct, m.row))
 }
 
 // CreateRule creates an edge rule for app through the same path as
@@ -63,7 +63,7 @@ func (s *Service) CreateRule(ctx context.Context, acct state.Account, app state.
 	if prob != nil {
 		return api.EdgeRuleResponse{}, prob
 	}
-	return EdgeRuleResponse(m.row), nil
+	return s.RuleResponse(acct, m.row), nil
 }
 
 // UpdateRule changes one of the account's edge rules through the same path
@@ -77,7 +77,7 @@ func (s *Service) UpdateRule(ctx context.Context, acct state.Account, ruleID str
 	if prob != nil {
 		return api.EdgeRuleResponse{}, prob
 	}
-	return EdgeRuleResponse(m.row), nil
+	return s.RuleResponse(acct, m.row), nil
 }
 
 // planKindProblem is the plan-kind gate. Hobby+ unlocks jwt and ip; Free
