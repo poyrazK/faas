@@ -161,7 +161,7 @@ apid enforces this for every account in `FAAS_ADMIN_EMAILS`
   automation keys from an MFA-completed session.
 - **Customer data needs a session.** Reads that return tenant records,
   events, audit rows, traces or client IPs refuse API keys with
-  `403 forbidden` ("operator session required"). These are tenants, tenant
+  `403 insufficient_scope` ("operator session required"). These are tenants, tenant
   360 and activity, apps, node detail, node events, overview, anomalies,
   rate limits, audit-log search, events, traces, incidents with their
   evidence, context and recurrence, egress flows, managed Postgres usage and

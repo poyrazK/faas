@@ -48,7 +48,7 @@ tenant's data with no second factor.
    helpers in `pkg/apid/apidserver/auth_facade.go`. Both require MFA on a
    session, the admin scope and the allowlist.
    - `requireOperatorSessionRead` refuses bearer keys
-     (`403 forbidden`, "operator session required"). It covers every read
+     (`403 insufficient_scope`, "operator session required"). It covers every read
      that returns customer data: account or app identifiers, emails, events,
      audit rows, traces or client IPs.
    - `requireOperatorRead` accepts an operator's bearer key. It covers fleet
