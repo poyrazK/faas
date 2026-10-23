@@ -616,6 +616,53 @@ func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, show
 	return printPlanTextWithExplain(w, plan, excludeSet, showAffected, false)
 }
 
+// printUnsetEnvKeys lists, per workload, the runtime keys that will have no
+// value, so an app does not start without configuration it names.
+//
+//nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
+func printUnsetEnvKeys(w io.Writer, workloads []api.PlanWorkload) {
+	ws := make([]api.PlanWorkload, 0, len(workloads))
+	for _, wl := range workloads {
+		if len(wl.UnsetEnvKeys) > 0 {
+			ws = append(ws, wl)
+		}
+	}
+	if len(ws) == 0 {
+		return
+	}
+	sort.Slice(ws, func(i, j int) bool { return ws[i].Name < ws[j].Name })
+	fmt.Fprintln(w, "\nNeeds a value (set before the first request):")
+	for _, wl := range ws {
+		fmt.Fprintf(w, "  - %-20s %s\n", wl.Name, strings.Join(wl.UnsetEnvKeys, ", "))
+	}
+	fmt.Fprintln(w, "  Set them with `gregale env set --app <app> KEY=VALUE` or `gregale secrets set --app <app> KEY=VALUE`,")
+	fmt.Fprintln(w, "  or pass them in a --secrets-file to gregale deploy.")
+}
+
+// withProvidedEnvKeys drops keys a --secrets-file supplies from every
+// workload's unset list; the file's values go to every selected workload.
+func withProvidedEnvKeys(plan api.PlanResponse, pairs []secretsPair) api.PlanResponse {
+	if len(pairs) == 0 {
+		return plan
+	}
+	provided := make(map[string]bool, len(pairs))
+	for _, pair := range pairs {
+		provided[pair.Key] = true
+	}
+	workloads := append([]api.PlanWorkload(nil), plan.Workloads...)
+	for i := range workloads {
+		var unset []string
+		for _, key := range workloads[i].UnsetEnvKeys {
+			if !provided[key] {
+				unset = append(unset, key)
+			}
+		}
+		workloads[i].UnsetEnvKeys = unset
+	}
+	plan.Workloads = workloads
+	return plan
+}
+
 // printPlanTextWithExplain renders the plan and, when explain is true,
 // appends a deterministic detector trace below each workload. Keeping the
 // legacy printPlanText wrapper preserves the terse output used by deploy's
@@ -681,6 +728,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 	}
 	if showAffected {
 		printAffectedText(w, plan, excludeIdx)
+		printUnsetEnvKeys(w, plan.Workloads)
 		if explain {
 			printPlanDetectionTrace(w, plan.Workloads)
 			printPlanDetectionWarnings(w, plan.DetectionWarnings)
@@ -745,6 +793,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 				m.Name, m.Kind, m.EnvHint, m.Image)
 		}
 	}
+	printUnsetEnvKeys(w, plan.Workloads)
 	if len(plan.Warnings) > 0 {
 		fmt.Fprintln(w, "\nWarnings:")
 		for _, wn := range plan.Warnings {
