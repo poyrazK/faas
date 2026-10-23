@@ -218,6 +218,11 @@ func assertBackendFallthrough(t *testing.T, status int, body []byte) {
 	if status == http.StatusServiceUnavailable && json.Unmarshal(body, &problem) == nil && problem.Code == api.CodeCapacity {
 		return
 	}
+	// A browser navigation (Accept: text/html) gets the same outcome as the
+	// HTML error page rather than a problem document.
+	if status == http.StatusServiceUnavailable && bytes.Contains(body, []byte(`<meta name="faas-error-code" content="`+api.CodeCapacity+`">`)) {
+		return
+	}
 	t.Errorf("backend fallthrough: status=%d body=%s", status, body)
 }
 
