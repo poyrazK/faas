@@ -775,6 +775,9 @@ type Engine struct {
 	// placement and fleet observers. It is seeded at startup and updated by
 	// compute_node_changed; nil keeps older unit fixtures on the store path.
 	nodeRegistry *NodeRegistry
+	// restartNotices are the nodes whose vmmd is restarting under a planned
+	// notice (vmmd restart adoption ADR §3); placement tries others first.
+	restartNotices *RestartNotices
 
 	// telemetryCache is the receiver for the batched vmmd Stats rows carried
 	// on the persistent ReportCapacity stream. The instance-stats poller
@@ -943,6 +946,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		log = slog.Default()
 	}
 	e := &Engine{
+		restartNotices:           NewRestartNotices(store),
 		store:                    store,
 		ledger:                   ledger,
 		vmm:                      vmm,
@@ -4892,9 +4896,17 @@ type placementSnapshot struct {
 	usedMB            map[string]int64
 	usedVCPU          map[string]int64
 	usedCPUMillicores map[string]int64
+	// preferred is nodes less those whose vmmd is restarting under a
+	// notice, when that leaves any (vmmd restart adoption ADR §3).
+	preferred []state.ComputeNode
 }
 
 func (s placementSnapshot) choose(r Request) (Placement, error) {
+	if len(s.preferred) > 0 {
+		if p, err := choosePlacementWithCPU(s.preferred, s.usedMB, s.usedVCPU, s.usedCPUMillicores, r); err == nil {
+			return p, nil
+		}
+	}
 	return choosePlacementWithCPU(s.nodes, s.usedMB, s.usedVCPU, s.usedCPUMillicores, r)
 }
 
@@ -4982,10 +4994,14 @@ func (e *Engine) loadPlacementSnapshotFresh(ctx context.Context, r Request) (pla
 		// active instances, as Admit does; without it these are bookings.
 		usedCPUMillicores[n.ID] = e.ledger.EffectiveCPUMillicoresForNode(n.ID, usedCPUMillicores[n.ID], cpuBudgetMillicores(n))
 	}
-	return placementSnapshot{
+	snapshot := placementSnapshot{
 		nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU,
 		usedCPUMillicores: usedCPUMillicores,
-	}, nil
+	}
+	if preferred, ok := preferUnnoticed(ctx, e.restartNotices, nodes); ok {
+		snapshot.preferred = preferred
+	}
+	return snapshot, nil
 }
 
 func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placement, error) {
@@ -10497,6 +10513,10 @@ func (e *Engine) Store() state.Store { return e.store }
 // schedd owns, or "" for the legacy single-box posture. The
 // Loop uses this to scope its per-tick reads (reaper, cron,
 // scale-up) to apps this schedd is responsible for.
+// RestartNotices are the planned vmmd restart notices this engine's
+// placement reads, for the router and heartbeat to share.
+func (e *Engine) RestartNotices() *RestartNotices { return e.restartNotices }
+
 func (e *Engine) OwnerNodeID() string {
 	if e == nil {
 		return ""
