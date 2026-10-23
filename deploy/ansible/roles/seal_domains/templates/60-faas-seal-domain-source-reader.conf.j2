@@ -1,0 +1,8 @@
+# Managed by the seal_domains role (ADR 20261022111812): githubd opens GitHub
+# install tokens and webhook secret copies with the source seal-domain
+# identity, and seals new install tokens under the domain's write mode. The
+# fleet identity stays in the base unit until the domain re-seal completes.
+[Service]
+LoadCredential=faas_seal_domain_source:/etc/faas/secrets/domains/source.age
+Environment=FAAS_SEAL_DOMAIN_SOURCE_IDENTITY_PATH=%d/faas_seal_domain_source
+Environment=FAAS_SEAL_DOMAIN_SOURCE_WRITES={{ faas_seal_domain_source_writes }}

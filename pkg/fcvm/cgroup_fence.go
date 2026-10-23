@@ -26,8 +26,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // cgroupFence is the host-side fence vmmd wrote for one live VM scope.
@@ -75,7 +73,7 @@ func newCgroupFence(l Lease) (*cgroupFence, error) {
 		cpuWeight: strconv.Itoa(vmCPUWeight(l.Plan, l.IsBuilder)),
 	}
 	if l.IsBuilder {
-		f.memoryMax = memoryMaxValue(api.BuilderMemoryMaxMB(l.MemoryMaxMiB))
+		f.memoryMax = fenceMemoryMaxFor(l)
 		f.cpuMax = builderCPUMax
 		return f, nil
 	}
@@ -83,7 +81,7 @@ func newCgroupFence(l Lease) (*cgroupFence, error) {
 	if err != nil {
 		return nil, err
 	}
-	f.memoryMax = memoryMaxValue(api.BillableRAMMB(l.MemoryMaxMiB))
+	f.memoryMax = fenceMemoryMaxFor(l)
 	f.cpuMax = cpuMax
 	if swapMaxSupported(f.scope) {
 		f.swapMax = swapClosed
@@ -235,4 +233,16 @@ func (v *JailerVMM) RepairCgroupFences(ctx context.Context) CgroupFenceRepairRep
 		}
 	}
 	return rep
+}
+
+// applyAdoptedFence rewrites an adopted guest's recorded fence where it
+// drifted (adoption ADR §2 proof step 4 and "Loops").
+func (v *JailerVMM) applyAdoptedFence(instance string) error {
+	v.fenceMu.Lock()
+	defer v.fenceMu.Unlock()
+	f := v.fences[instance]
+	if f == nil || len(f.drift()) == 0 {
+		return nil
+	}
+	return f.apply()
 }

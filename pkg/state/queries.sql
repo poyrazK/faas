@@ -23381,6 +23381,26 @@ WHERE f.id = e.fork_id AND e.status IN ('queued', 'running')
        OR (e.status = 'running' AND e.started_at + make_interval(secs => e.timeout_seconds + sqlc.arg(grace_seconds)::integer) < sqlc.arg(now)::timestamptz))
 RETURNING e.*;
 
+-- name: ClearExpiredAppForkExecOutput :execrows
+-- schedd: a fork command's output comes from inside a copy of production
+-- memory, so it is emptied once the fork has been over for the retention
+-- window (api.AppForkExecOutputRetention). The command record stays.
+UPDATE app_fork_execs e
+SET stdout = ''::bytea,
+    stderr = ''::bytea,
+    updated_at = greatest(e.updated_at, sqlc.arg(now)::timestamptz)
+WHERE e.id IN (
+    SELECT x.id FROM app_fork_execs x
+    JOIN app_forks f ON f.id = x.fork_id
+    WHERE x.finished_at IS NOT NULL
+      AND f.finished_at IS NOT NULL
+      AND f.finished_at <= sqlc.arg(cutoff)::timestamptz
+      AND (octet_length(x.stdout) > 0 OR octet_length(x.stderr) > 0)
+    ORDER BY f.finished_at, x.id
+    LIMIT sqlc.arg(batch_limit)::integer
+    FOR UPDATE OF x SKIP LOCKED
+);
+
 -- name: GetAppForkExec :one
 SELECT * FROM app_fork_execs
 WHERE id = sqlc.arg(exec_id)::uuid AND fork_id = sqlc.arg(fork_id)::uuid
@@ -24326,3 +24346,27 @@ SELECT served_at FROM environment_recovery_serving_history WHERE graph_id=sqlc.a
 -- name: EnvironmentRecoveryReleaseFirstServing :one
 SELECT min(h.served_at)::timestamptz AS served_at FROM environment_recovery_serving_history h
 WHERE h.source_id=sqlc.arg(source_id)::uuid AND h.release_set_id=sqlc.arg(release_id)::uuid;
+
+-- name: ReserveIdempotentRequest :one
+-- Claims an Idempotency-Key bound to its request fingerprint
+-- (ADR-20261022204036). A new key, a key past its 24 h replay window, or an
+-- in-flight reservation older than abandon_after_seconds is reserved. An
+-- abandoned reservation bound to another fingerprint under the same key id
+-- (its first 4 bytes) is not taken over: the key stays bound to its first
+-- request for the whole window.
+INSERT INTO idempotency_keys (key, account_id, response_status, response_body, request_digest)
+VALUES (sqlc.arg(key)::text, sqlc.arg(account_id)::text::uuid, 0, ''::bytea, sqlc.narg(request_digest)::bytea)
+ON CONFLICT (account_id, key) DO UPDATE
+   SET response_status = 0, response_body = ''::bytea, request_digest = excluded.request_digest, created_at = now()
+ WHERE idempotency_keys.created_at <= now() - interval '24 hours'
+    OR (idempotency_keys.response_status = 0
+        AND idempotency_keys.created_at <= now() - make_interval(secs => sqlc.arg(abandon_after_seconds)::double precision)
+        AND (idempotency_keys.request_digest IS NULL OR excluded.request_digest IS NULL
+             OR substring(idempotency_keys.request_digest, 1, 4) <> substring(excluded.request_digest, 1, 4)
+             OR idempotency_keys.request_digest = excluded.request_digest))
+RETURNING true::boolean AS reserved;
+
+-- name: IdempotencyReceipt :one
+SELECT response_status, response_body, request_digest
+FROM idempotency_keys
+WHERE account_id = sqlc.arg(account_id)::text::uuid AND key = sqlc.arg(key)::text;

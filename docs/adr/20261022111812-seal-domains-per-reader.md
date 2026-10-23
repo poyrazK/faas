@@ -304,6 +304,43 @@ Rollout checklist: [Seal domains rollout](../runbooks/seal-domains-rollout.md).
   recipient and the apid drop-in on control-plane hosts. bootstrap runs the
   role ahead of `vmmd_service` on compute nodes.
 
+## Implemented in the third slice: the source domain
+
+- **githubd** loads `domains/source.age` (and its `.previous`) through
+  `FAAS_SEAL_DOMAIN_SOURCE_IDENTITY_PATH`, a `LoadCredential` drop-in from
+  the `seal_domains` role. It opens install tokens and webhook secret copies
+  with it ahead of the fleet and host identities, and exports
+  `faas_seal_domain_loaded{domain="source"}`.
+- **Writers follow `FAAS_SEAL_DOMAIN_SOURCE_WRITES`** (empty, `fleet`,
+  `dual` or `domain`, as for outbound):
+  - githubd seals each install token it mints or refreshes;
+  - apid seals webhook secret copies to `FAAS_SEAL_DOMAIN_SOURCE_RECIPIENT_PATH`
+    and holds only that public recipient.
+- **Install tokens are not migrated.** A GitHub installation token expires
+  within the hour, and githubd seals its successor under the write mode, so
+  the column moves to the domain on its own.
+- **Re-seal:** `gregalectl seal-domain migrate --domain source
+  --readers-verified` moves every webhook secret copy to the domain:
+  - a copy a legacy identity opens is re-sealed from what it opens to;
+  - a row without a copy gets one;
+  - a copy only the domain opens is current.
+
+  Writes are compare-and-swap on the stored copy. Without
+  `--readers-verified`, the command still backfills missing copies to the
+  fleet recipient.
+- **Staging:** the role stages the identity, the recipient and both
+  drop-ins on control-plane and single-box hosts. It restarts githubd and
+  proves the probe before apid seals anything to the domain.
+- `secretbox.SealTo` seals an env-map envelope to several recipients, as
+  `SealBytesTo` does for byte blobs. `sealdomain.RegisterLoaded` is the
+  shared `faas_seal_domain_loaded` gauge.
+
+The webhook secret's plaintext column `secret_value` still exists, so
+sealing its copy protects nothing until that column is dropped (below).
+The install tokens are the gain now: they grant read access to customer
+repositories, and once writes are domain-only, within the hour the fleet
+identity opens none that is still valid.
+
 Later slices:
 - the other domains, in the order above;
 - re-sealing the short-lived copies in `app_config_guard_secrets` and

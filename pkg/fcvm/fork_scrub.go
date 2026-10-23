@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path/filepath"
 )
 
 // forkScrubPaths are the drive1 paths that can hold secret values from the
 // capture's original boot (ADR-732): the sealed env projection guest-init
-// loads at start, and the ADR-505 reload projection directory.
+// loads at start, and the ADR-505 reload projection directory. Sidecar env
+// overrides are removed per sidecar (scrubSidecarEnvs).
 var forkScrubPaths = []string{
 	secretsEnvPath,
 	"upper/tmp/gregale-secret-reload",
@@ -41,6 +43,42 @@ func scrubDriveSecrets(mountRoot string) error {
 		_ = root.Close()
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("remove %s: %w", path, err)
+		}
+	}
+	return scrubSidecarEnvs(mountRoot)
+}
+
+// scrubSidecarEnvs removes each sidecar's env overrides
+// (workloads/<name>/env.json). vmmd writes them to the main workload's drive1
+// with the sidecar's unsealed env and app secrets, so a restarted sidecar in
+// the fork would reload them like secrets.env. The sidecar's workload.json
+// beside them is its non-secret contract and stays. Only real directories
+// are sidecars: a link the tenant planted under workloads is skipped, and
+// os.Root keeps every path inside the drive.
+func scrubSidecarEnvs(mountRoot string) error {
+	base, err := stagedDrivePath(mountRoot, workloadEnvPath)
+	if err != nil {
+		return err
+	}
+	root, rel, err := openDriveRoot(mountRoot, base)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	entries, err := fs.ReadDir(root.FS(), rel)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", workloadEnvPath, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		env := filepath.Join(rel, entry.Name(), "env.json")
+		if err := root.RemoveAll(env); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("remove %s/%s/env.json: %w", workloadEnvPath, entry.Name(), err)
 		}
 	}
 	return nil

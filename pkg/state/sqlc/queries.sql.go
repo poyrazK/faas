@@ -7354,6 +7354,41 @@ func (q *Queries) ClearComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX
 	return result.RowsAffected(), nil
 }
 
+const clearExpiredAppForkExecOutput = `-- name: ClearExpiredAppForkExecOutput :execrows
+UPDATE app_fork_execs e
+SET stdout = ''::bytea,
+    stderr = ''::bytea,
+    updated_at = greatest(e.updated_at, $1::timestamptz)
+WHERE e.id IN (
+    SELECT x.id FROM app_fork_execs x
+    JOIN app_forks f ON f.id = x.fork_id
+    WHERE x.finished_at IS NOT NULL
+      AND f.finished_at IS NOT NULL
+      AND f.finished_at <= $2::timestamptz
+      AND (octet_length(x.stdout) > 0 OR octet_length(x.stderr) > 0)
+    ORDER BY f.finished_at, x.id
+    LIMIT $3::integer
+    FOR UPDATE OF x SKIP LOCKED
+)
+`
+
+type ClearExpiredAppForkExecOutputParams struct {
+	Now        pgtype.Timestamptz
+	Cutoff     pgtype.Timestamptz
+	BatchLimit int32
+}
+
+// schedd: a fork command's output comes from inside a copy of production
+// memory, so it is emptied once the fork has been over for the retention
+// window (api.AppForkExecOutputRetention). The command record stays.
+func (q *Queries) ClearExpiredAppForkExecOutput(ctx context.Context, db DBTX, arg ClearExpiredAppForkExecOutputParams) (int64, error) {
+	result, err := db.Exec(ctx, clearExpiredAppForkExecOutput, arg.Now, arg.Cutoff, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearInstanceRuntimeConfigReceipt = `-- name: ClearInstanceRuntimeConfigReceipt :exec
 DELETE FROM instance_runtime_config_receipts WHERE instance_id = $1::uuid
 `
@@ -27554,6 +27589,30 @@ func (q *Queries) HoldProjectEnvironmentCloneConfiguration(ctx context.Context, 
 		&i.SourceRevisionHash,
 		&i.HeldAt,
 	)
+	return i, err
+}
+
+const idempotencyReceipt = `-- name: IdempotencyReceipt :one
+SELECT response_status, response_body, request_digest
+FROM idempotency_keys
+WHERE account_id = $1::text::uuid AND key = $2::text
+`
+
+type IdempotencyReceiptParams struct {
+	AccountID string
+	Key       string
+}
+
+type IdempotencyReceiptRow struct {
+	ResponseStatus int32
+	ResponseBody   []byte
+	RequestDigest  []byte
+}
+
+func (q *Queries) IdempotencyReceipt(ctx context.Context, db DBTX, arg IdempotencyReceiptParams) (IdempotencyReceiptRow, error) {
+	row := db.QueryRow(ctx, idempotencyReceipt, arg.AccountID, arg.Key)
+	var i IdempotencyReceiptRow
+	err := row.Scan(&i.ResponseStatus, &i.ResponseBody, &i.RequestDigest)
 	return i, err
 }
 
@@ -87785,6 +87844,45 @@ func (q *Queries) ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accoun
 	var current_inflight int32
 	err := row.Scan(&current_inflight)
 	return current_inflight, err
+}
+
+const reserveIdempotentRequest = `-- name: ReserveIdempotentRequest :one
+INSERT INTO idempotency_keys (key, account_id, response_status, response_body, request_digest)
+VALUES ($1::text, $2::text::uuid, 0, ''::bytea, $3::bytea)
+ON CONFLICT (account_id, key) DO UPDATE
+   SET response_status = 0, response_body = ''::bytea, request_digest = excluded.request_digest, created_at = now()
+ WHERE idempotency_keys.created_at <= now() - interval '24 hours'
+    OR (idempotency_keys.response_status = 0
+        AND idempotency_keys.created_at <= now() - make_interval(secs => $4::double precision)
+        AND (idempotency_keys.request_digest IS NULL OR excluded.request_digest IS NULL
+             OR substring(idempotency_keys.request_digest, 1, 4) <> substring(excluded.request_digest, 1, 4)
+             OR idempotency_keys.request_digest = excluded.request_digest))
+RETURNING true::boolean AS reserved
+`
+
+type ReserveIdempotentRequestParams struct {
+	Key                 string
+	AccountID           string
+	RequestDigest       []byte
+	AbandonAfterSeconds float64
+}
+
+// Claims an Idempotency-Key bound to its request fingerprint
+// (ADR-20261022204036). A new key, a key past its 24 h replay window, or an
+// in-flight reservation older than abandon_after_seconds is reserved. An
+// abandoned reservation bound to another fingerprint under the same key id
+// (its first 4 bytes) is not taken over: the key stays bound to its first
+// request for the whole window.
+func (q *Queries) ReserveIdempotentRequest(ctx context.Context, db DBTX, arg ReserveIdempotentRequestParams) (bool, error) {
+	row := db.QueryRow(ctx, reserveIdempotentRequest,
+		arg.Key,
+		arg.AccountID,
+		arg.RequestDigest,
+		arg.AbandonAfterSeconds,
+	)
+	var reserved bool
+	err := row.Scan(&reserved)
+	return reserved, err
 }
 
 const reserveProjectSubmission = `-- name: ReserveProjectSubmission :execrows

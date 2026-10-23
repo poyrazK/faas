@@ -27,7 +27,9 @@ Impact depends on the write mode:
   secrets. For `runtime`, every wake on the node fails for an app with a
   domain-sealed secret, which is every app with a secret once
   `seal-domain migrate --domain runtime` has run. For `outbound`, that
-  host's outboundd cannot use customer AI provider credentials.
+  host's outboundd cannot use customer AI provider credentials. For
+  `source`, that host's githubd cannot verify GitHub webhooks or fetch
+  source.
 
 ## Check
 
@@ -65,8 +67,8 @@ file used for the rollout ([Seal domains rollout](seal-domains-rollout.md)).
 The `seal_domains` role installs the identity and reruns `verify`, which
 clears FaasSealDomainUnverified.
 
-1. **Control-plane host (`outbound`):** converge the role alone. It restarts
-   outboundd itself.
+1. **Control-plane host (`outbound`, `source`):** converge the role alone.
+   It restarts outboundd and githubd itself.
 
    ```bash
    gregalectl deploy converge-control-plane --roles seal_domains --manifest-file <signed manifest> --ssh-known-hosts-file <known_hosts> --ansible-vars-file <local vars file>

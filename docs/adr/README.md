@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261022204036: An Idempotency-Key is bound to its request](20261022204036-idempotency-key-bound-to-request.md) — another request with a used key gets `422 idempotency_key_reused`, not a replay (Proposed)
 - [ADR-20261022203653: One dead-letter entry per queue message](20261022203653-one-dead-letter-entry-per-queue-message.md) — Proposed; amends ADR-179: a push receipt is captured but not listed
 - [ADR-20261022105846: Penalty box for edge rules](20261022105846-edge-rule-penalty-box.md)
 - [Compose build secrets for Dockerfile builds](20261022185329-compose-build-secrets.md)

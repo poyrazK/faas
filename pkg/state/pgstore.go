@@ -23110,41 +23110,48 @@ func (s *PgStore) PutIdempotent(ctx context.Context, accountID, key string, stat
 	return err
 }
 
-// ReserveIdempotent claims an Idempotency-Key before the request runs, so
-// two concurrent requests with one key cannot both execute. A new key, a
+// ReserveIdempotent claims an Idempotency-Key that is not bound to a request
+// fingerprint. See ReserveIdempotentRequest.
+func (s *PgStore) ReserveIdempotent(ctx context.Context, accountID, key string, abandonAfter time.Duration) (IdempotencyReservation, error) {
+	return s.ReserveIdempotentRequest(ctx, accountID, key, nil, abandonAfter)
+}
+
+// ReserveIdempotentRequest claims an Idempotency-Key before the request runs,
+// so two concurrent requests with one key cannot both execute. A new key, a
 // key whose last use is older than the 24 h replay window, or an in-flight
 // reservation older than abandonAfter (its request crashed) is reserved for
 // the caller as an in-flight row (response_status 0). Otherwise the caller
 // gets the completed response to replay, or InFlight while another request
 // still holds the key.
-func (s *PgStore) ReserveIdempotent(ctx context.Context, accountID, key string, abandonAfter time.Duration) (IdempotencyReservation, error) {
-	var reserved bool
-	err := s.pool.QueryRow(ctx,
-		`insert into idempotency_keys (key, account_id, response_status, response_body)
-		 values ($1, $2, 0, ''::bytea)
-		 on conflict (account_id, key) do update
-		    set response_status = 0, response_body = ''::bytea, request_digest = NULL, created_at = now()
-		  where idempotency_keys.created_at <= now() - interval '24 hours'
-		     or (idempotency_keys.response_status = 0
-		         and idempotency_keys.created_at <= now() - make_interval(secs => $3))
-		 returning true`,
-		key, accountID, abandonAfter.Seconds()).Scan(&reserved)
+//
+// A non-nil fingerprint (ADR-20261022204036) binds the key to the request.
+// While the key is in its window, a request whose fingerprint differs from
+// the bound one gets Conflict, never a replay, a wait or a takeover. A key
+// stored without a fingerprint (by an earlier release, or for a request too
+// large to fingerprint), or with one made under another key id, never
+// conflicts.
+func (s *PgStore) ReserveIdempotentRequest(ctx context.Context, accountID, key string, fingerprint []byte, abandonAfter time.Duration) (IdempotencyReservation, error) {
+	if fingerprint != nil && len(fingerprint) != IdempotencyFingerprintSize {
+		return IdempotencyReservation{}, errors.New("state: idempotency request fingerprint must be 32 bytes")
+	}
+	q := sqlc.New()
+	_, err := q.ReserveIdempotentRequest(ctx, s.pool, sqlc.ReserveIdempotentRequestParams{
+		Key: key, AccountID: accountID, RequestDigest: fingerprint, AbandonAfterSeconds: abandonAfter.Seconds(),
+	})
 	if err == nil {
 		return IdempotencyReservation{Reserved: true}, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return IdempotencyReservation{}, err
 	}
-	var res IdempotencyReservation
-	err = s.pool.QueryRow(ctx,
-		`select response_status, response_body from idempotency_keys
-		 where account_id = $1 and key = $2`,
-		accountID, key).Scan(&res.Status, &res.Body)
+	row, err := q.IdempotencyReceipt(ctx, s.pool, sqlc.IdempotencyReceiptParams{AccountID: accountID, Key: key})
 	if err != nil {
 		return IdempotencyReservation{}, err
 	}
-	res.InFlight = res.Status == 0
-	return res, nil
+	if idempotencyFingerprintsConflict(row.RequestDigest, fingerprint) {
+		return IdempotencyReservation{Conflict: true}, nil
+	}
+	return IdempotencyReservation{InFlight: row.ResponseStatus == 0, Status: int(row.ResponseStatus), Body: row.ResponseBody}, nil
 }
 
 // ReclaimIdempotent turns a completed response back into an in-flight

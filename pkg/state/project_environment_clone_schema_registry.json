@@ -5804,6 +5804,7 @@
       "account_id",
       "app_id",
       "invocation_id",
+      "live",
       "subscription_id"
     ],
     "kind": "operational"

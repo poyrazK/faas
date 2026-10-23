@@ -334,6 +334,13 @@ does the following.
     namespace. Then it retires the bind assets.
   - It restores source modes through the rebuilt refcounts.
   - Jail tree removal keeps ADR-475's "no remaining host-visible mount" check.
+  - The TUN source bind (`<jail>/root/faas-host-tun`) is not journaled.
+    Under systemd, `ProtectSystem=strict` gives each vmmd start its own mount
+    namespace, so the bind goes with the old one. Where vmmd shares the host's
+    namespace (the e2e harness), the bind outlives the old vmmd; the
+    successor registers it at adoption when it is still mounted, so teardown
+    unmounts it before the jail-removal check. Found 2026-10-23: every
+    passing harness run had left the adopted guest's jail behind.
 - **Loops.**
   - Restart liveness and readiness loops from the recorded probe JSON. The
     liveness failure count starts fresh, with one probe period of grace.
@@ -682,6 +689,12 @@ records.
     (`function_resources`).
   - Reset: console files being pre-opened, proven-worker marks (one full
     characterization window per deployment).
+- **State main added after 2026-10-22 (split into PRs 2026-10-23).**
+  - Refused: a production fork (ADR-732, `Lease.Quarantine`, reason
+    `production_fork`). Its quarantine lives on `Instance.Net`, which the
+    block does not carry, so a re-rendered netns would drop the fork's
+    quarantine chains. Forks are short-lived; refusing one keeps today's
+    quarantine.
 
 ## Invariants (§6.2)
 

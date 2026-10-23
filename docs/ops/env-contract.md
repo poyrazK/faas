@@ -80,10 +80,13 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BILLING_PORTAL_URL` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_BILLING_PROVIDER` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_BRIDGED_ROLE` | bridged, shared | `envfile` |  |  | `` | optional control-plane relay; delivered by dev-bridge.env |
+| `FAAS_BRIDGE_EXPECT_UID` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd for an unprivileged bridge; the bridge exits unless it runs as this uid with no capability (pkg/bridgeproc) |
 | `FAAS_BRIDGE_HEADERS` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
 | `FAAS_BRIDGE_HOST` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
 | `FAAS_BRIDGE_METHOD` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
+| `FAAS_BRIDGE_PARENT_PID` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd for an unprivileged bridge; the bridge exits with that process (pkg/bridgeproc) |
 | `FAAS_BRIDGE_PROTOCOL` | vmmd-stream-bridge, shared | `default` |  |  | `` | rollback lever, see docs/ops/h2c-rollback.md |
+| `FAAS_BRIDGE_UNPRIVILEGED` | vmmd, shared | `default` |  |  | `` | 1 runs each instance's bridges as its own bridge uid with no capability (connection-survival ADR slice 1a); default off |
 | `FAAS_BRIDGE_URL` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
 | `FAAS_BROKER_EGRESS_IFNAME` | schedd | `default` |  |  | `` |  |
 | `FAAS_BROKER_EGRESS_MBIT` | schedd | `default` |  |  | `` |  |
@@ -228,6 +231,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_E2E_SERVICE_HTTPS_KEY` | shared | `dev-only` |  |  | `` | test-harness only; private server key for the isolated managed HTTPS bridge listener, held in a mode-0600 temporary file and never staged into guests or evidence; must never be set on a production host |
 | `FAAS_E2E_SERVICE_TCP` | shared | `dev-only` |  |  | `` | test-harness only; adds the gatewayd-internal private service TCP listener and service-address DNS (ADR-576) to the metal bridge config; must never be set on a production host |
 | `FAAS_E2E_TRACING_SERVER_BINARY` | shared | `dev-only` |  |  | `` | test-harness only; prebuilt ADR-958 tracing fixture for hosts without a matching Go toolchain |
+| `FAAS_E2E_VMMD_EXTRA_TOML` | shared | `dev-only` |  |  | `` | test-harness only; extra vmmd.toml lines from e2etest.OverrideVMMDConfig (e.g. the vmmd restart adoption switches); must never be set on a production host |
 | `FAAS_E2E_VMMD_SOCKET` | shared | `dev-only` |  |  | `` | test-harness only; pre-bound VMMD socket used by KVM-free general-path acceptance; must never be set on a production host |
 | `FAAS_EDGE_WAF_INLINE_DISABLED` | gatewayd-internal | `default` |  |  | `` | ADR-831 amendment 4 operator kill switch; "1" turns off in-path kind=waf checks so warn and block rules only observe |
 | `FAAS_EGRESS_ALLOW_LOOPBACK` | shared | `dev-only` |  |  | `` | must never be set on a production host |
@@ -725,6 +729,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SEAL_DOMAIN_OUTBOUND_WRITES` | apid | `dropin` |  |  | `` | outbound seal-domain write mode (ADR 20261022111812): empty seals to the domain and fleet recipients once the domain recipient is staged; fleet keeps the fleet recipient alone; domain seals to the domain alone and is set by the seal_domains role only after every outboundd verified the domain and the previous release left the rollback window |
 | `FAAS_SEAL_DOMAIN_RUNTIME_RECIPIENT_PATH` | apid | `dropin` |  |  | `` | runtime seal-domain recipient (ADR 20261022111812) via LoadCredential=faas_seal_domain_runtime_recipient in the seal_domains role's apid drop-in; used only when FAAS_SEAL_DOMAIN_RUNTIME_WRITES is domain |
 | `FAAS_SEAL_DOMAIN_RUNTIME_WRITES` | apid | `dropin` |  |  | `` | runtime seal-domain write mode (ADR 20261022111812): empty or fleet seals app, project, release and binding secrets to the fleet recipient; domain seals them to the runtime domain alone, set only after every vmmd reports faas_seal_domain_loaded{domain="runtime"} 1; dual is refused |
+| `FAAS_SEAL_DOMAIN_SOURCE_IDENTITY_PATH` | githubd | `dropin` |  |  | `` | source seal-domain identity (ADR 20261022111812) via LoadCredential=faas_seal_domain_source in the seal_domains role's githubd drop-in; githubd opens install tokens and webhook secret copies with it ahead of the fleet identity; unset keeps them on the fleet identity |
+| `FAAS_SEAL_DOMAIN_SOURCE_RECIPIENT_PATH` | apid | `dropin` |  |  | `` | source seal-domain recipient (ADR 20261022111812) via LoadCredential=faas_seal_domain_source_recipient in the seal_domains role's apid drop-in; apid seals GitHub webhook secret copies to it and cannot open them; unset seals to the fleet recipient alone |
+| `FAAS_SEAL_DOMAIN_SOURCE_WRITES` | apid, githubd | `dropin` |  |  | `` | source seal-domain write mode (ADR 20261022111812) for apid's webhook secret copies and githubd's install tokens: empty seals to the domain and fleet recipients once the domain is staged; fleet keeps the fleet recipient alone; domain seals to the domain alone and is set by the seal_domains role only after every githubd verified the domain and the previous release left the rollback window |
 | `FAAS_SECRETS_FILE` | guest | `guest` |  |  | `` | guest-init stamps the tmpfs path only for apps opted into secret reload |
 | `FAAS_SECRETS_RELOAD_ACK_ENDPOINT` | guest | `guest` |  |  | `` | guest-init stamps the local metadata endpoint only for apps opted into secret reload; app reports a closed outcome and non-sensitive secret revision |
 | `FAAS_SECRETS_RELOAD_GENERATION` | guest | `guest` |  |  | `` | guest-init injects the active per-workload process generation when launching an opted-in app, fencing acknowledgements to that execution |

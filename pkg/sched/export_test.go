@@ -378,6 +378,9 @@ func (r *Engine) WakeInstanceModeMatchesApp(p0 context.Context, p1 string, p2 st
 }
 func (r *Engine) XOwnsApp(p0 state.App) bool { return r.ownsApp(p0) }
 
+// Members of ForkCoordinator
+func (r *ForkCoordinator) Now() *func() time.Time { return &r.now }
+
 // Members of Heartbeat
 func (r *Heartbeat) Now() *func() time.Time { return &r.now }
 

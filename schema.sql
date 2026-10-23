@@ -16010,7 +16010,7 @@ BEGIN
    count(*) FILTER (WHERE s.app_id=slot.app_id AND s.subscription_id=slot.subscription_id)
  INTO account_count, app_count, consumer_count
  FROM event_delivery_slots s JOIN invocations i ON i.id=s.invocation_id
- WHERE s.account_id=slot.account_id AND i.state IN ('pending','dispatching') AND i.id<>NEW.id;
+ WHERE s.account_id=slot.account_id AND s.live AND i.state IN ('pending','dispatching') AND i.id<>NEW.id;
  SELECT CASE WHEN c.max_pending_deliveries>0 THEN least(c.max_pending_deliveries,caps.consumer_limit) ELSE caps.consumer_limit END INTO consumer_limit
  FROM event_subscription_delivery_controls c WHERE c.account_id=slot.account_id AND c.app_id=slot.app_id AND c.subscription_id::text=slot.subscription_id;
  consumer_limit := coalesce(consumer_limit,caps.consumer_limit);
@@ -26583,6 +26583,21 @@ END $$;
 
 
 --
+-- Name: stamp_event_delivery_slot_live(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stamp_event_delivery_slot_live() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.live := EXISTS (SELECT 1 FROM invocations i
+        WHERE i.id = NEW.invocation_id AND i.state IN ('pending', 'dispatching'));
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: stamp_invocation_async_subject(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -26697,6 +26712,21 @@ BEGIN
    updated_at = clock_timestamp()
  WHERE o.id = NEW.occurrence_id;
  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: sync_event_delivery_slot_live(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sync_event_delivery_slot_live() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    UPDATE event_delivery_slots SET live = NEW.state IN ('pending', 'dispatching')
+    WHERE invocation_id = NEW.id AND live IS DISTINCT FROM (NEW.state IN ('pending', 'dispatching'));
+    RETURN NULL;
 END;
 $$;
 
@@ -35961,7 +35991,8 @@ CREATE TABLE public.event_delivery_slots (
     invocation_id uuid NOT NULL,
     account_id uuid NOT NULL,
     app_id uuid NOT NULL,
-    subscription_id text NOT NULL
+    subscription_id text NOT NULL,
+    live boolean DEFAULT true NOT NULL
 );
 
 
@@ -69508,6 +69539,13 @@ CREATE INDEX event_delivery_slots_consumer ON public.event_delivery_slots USING 
 
 
 --
+-- Name: event_delivery_slots_live; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_delivery_slots_live ON public.event_delivery_slots USING btree (account_id, app_id, subscription_id) WHERE live;
+
+
+--
 -- Name: event_execution_attempt_window_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -76354,6 +76392,13 @@ ALTER INDEX public.request_telemetry_trace_idx ATTACH PARTITION public.request_t
 
 
 --
+-- Name: event_delivery_slots_account_live; Type: STATISTICS; Schema: public; Owner: -
+--
+
+CREATE STATISTICS public.event_delivery_slots_account_live (dependencies, mcv) ON account_id, live FROM public.event_delivery_slots;
+
+
+--
 -- Name: instances aa_project_migration_instance_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -79032,6 +79077,20 @@ CREATE TRIGGER event_delivery_age_subscription_ordering BEFORE UPDATE OF routing
 --
 
 CREATE TRIGGER event_delivery_replay_capacity AFTER INSERT OR UPDATE OF state ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.guard_event_delivery_replay();
+
+
+--
+-- Name: event_delivery_slots event_delivery_slot_live; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_delivery_slot_live BEFORE INSERT ON public.event_delivery_slots FOR EACH ROW EXECUTE FUNCTION public.stamp_event_delivery_slot_live();
+
+
+--
+-- Name: invocations event_delivery_slot_live_sync; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_delivery_slot_live_sync AFTER UPDATE OF state ON public.invocations FOR EACH ROW WHEN (((old.state = ANY (ARRAY['pending'::text, 'dispatching'::text])) IS DISTINCT FROM (new.state = ANY (ARRAY['pending'::text, 'dispatching'::text])))) EXECUTE FUNCTION public.sync_event_delivery_slot_live();
 
 
 --
