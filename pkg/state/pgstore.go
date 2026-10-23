@@ -15908,7 +15908,7 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 	if err != nil {
 		return Invocation{}, err
 	}
-	if info.environment.ID == "" && inv.AdmissionMaxPending <= 0 {
+	if info.environment.ID == "" && inv.AdmissionMaxPending <= 0 && inv.AdmissionMaxBacklogBytes <= 0 {
 		return enqueueInvocationRow(ctx, s.pool, inv)
 	}
 	tx, err := s.pool.Begin(ctx)

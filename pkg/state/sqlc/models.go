@@ -6365,6 +6365,15 @@ type InvocationAttemptHistory struct {
 	RetainUntil      pgtype.Timestamptz
 }
 
+type InvocationBacklogCounter struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Source    string
+	Slot      int16
+	Pending   int64
+	Bytes     int64
+}
+
 type InvocationEnvironmentQueueAdmission struct {
 	InvocationID   pgtype.UUID
 	EnvironmentID  pgtype.UUID

@@ -1,7 +1,6 @@
 # ADR-20261022105723 · Worker plan decisions: queue backlog and retention, CPU pricing, worker sizes
 
-- **Status:** accepted. Decisions 2 and 3 change nothing. Decision 1 is not
-  implemented yet; its implementation section is the plan.
+- **Status:** accepted and implemented. Decisions 2 and 3 change nothing.
 - **Date:** 2026-10-22
 - **Builds on:** ADR-1140 (worker pull leases), ADR-152 (configurable app
   CPU), ADR-1430 (plan entitlements from the October 2026 COGS report),
@@ -34,9 +33,9 @@
      queues.
      - **Pending messages per app** (`MaxQueueDepth`): Hobby 10,000, Pro
        100,000 and Scale 1,000,000.
-     - **Pending queue bytes per account:** Hobby 100 MB, Pro 1 GB and
-       Scale 10 GB. This is new; it bounds what a backlog costs the
-       control-plane database.
+     - **Pending queue bytes per account:** Hobby 100 MiB, Pro 1 GiB and
+       Scale 10 GiB (ADR-1430's binary billing units). This is new; it
+       bounds what a backlog costs the control-plane database.
      - **Expiry:** a pending queue message older than 1, 4 or 14 days, by
        plan, moves to the dead letter, measured from its enqueue. This is
        new. A message a worker holds under a lease does not expire while
@@ -50,25 +49,46 @@
   3. *Worker sizes (step 9).* Workers keep the plan caps: RAM up to the
      plan's app RAM, CPU of 250, 500 or 1000 millicores. There are no
      larger worker sizes.
-- **Implementation of decision 1 (planned):**
-  - *Counters, not counts.* Today a capped enqueue locks the app row and
-    counts the app's pending work. That is cheap at 100 rows but costs
-    O(backlog) per send at 1,000,000. An account byte cap cannot sum
-    payloads on every send either. So the plan is:
-    - Per-app pending counts per source, and per-account pending queue
-      bytes, live in counter rows.
-    - Statement-level triggers on `invocations`, using transition tables,
-      maintain them.
-    - Updates run in `app_id` order, so the drain's batched claims and the
-      producers do not deadlock.
-    - Admission reads the counters under the app lock it already takes.
-    - The migration is expand-only and backfills the counters.
-  - *Expiry.* A schedd sweep moves expired pending queue messages to
-    `dead_letter` in bounded batches. A partial index covers queue rows in
-    `pending` by `created_at`, built with `CREATE INDEX CONCURRENTLY`.
-  - *Errors.* The count cap keeps the existing queue-depth problem. The
-    byte cap gets its own stable code with the limit, the observed bytes
-    and a docs URL. Both values go in `pkg/api/limits.go` and the plan docs.
+- **Implementation of decision 1:**
+  - *Counters, not counts.* A capped enqueue used to lock the app row and
+    count the app's pending work: cheap at 100 rows, O(backlog) per send at
+    1,000,000. An account byte cap cannot sum payloads on every send either.
+    - `invocation_backlog_counters` holds pending counts per account, app
+      and source, and payload bytes for queue rows.
+    - Each key is split over eight slots by invocation id, so concurrent
+      writers rarely share a counter row.
+    - Row triggers on `invocations` keep the counters exact. A row joins
+      the counts on entering pending or dispatching and leaves them on
+      leaving both states or on deletion; a payload rewrite adjusts its
+      bytes.
+    - A claim moves a row from pending to dispatching, which changes no
+      count; the triggers' `WHEN` keeps claims off the counters, so the
+      drain does not contend with producers.
+    - Bytes are the payload's length as text, measured the same way on
+      every change.
+    - The migration creates the triggers and counts the existing pending
+      rows in one transaction. The triggers' lock keeps writers out until
+      it commits, so no row is missed or counted twice.
+  - *Admission.* The counters include environment-owned rows, so their
+    sum bounds the app's production backlog from above.
+    - Below the cap, admission admits without counting.
+    - At the cap, it counts the production backlog as before, under the
+      app lock it already holds.
+    - The byte cap sums the account's queue counters. Apps of one account
+      share no lock, so two concurrent sends to different apps may pass
+      it by their own sizes.
+  - *Expiry.* A partial index covers pending queue rows by `created_at`,
+    built with `CREATE INDEX CONCURRENTLY`.
+    - The 60 s invocation retention sweep runs up to ten batches of 1,000.
+      Each batch moves expired messages to `dead_letter`, with outcome code
+      `queue_message_expired`, before the sweep stamps their result
+      retention.
+    - A message a worker holds is dispatching, so it is not touched.
+  - *Errors.* The count cap keeps `plan_queue_depth`. The byte cap returns
+    `403 plan_queue_backlog_bytes` with the limit and the observed bytes.
+  - *Values* live in `pkg/api/limits.go` (`MaxQueueDepth`,
+    `MaxQueueBacklogBytesPerAccount`, `QueueMessageRetentionSeconds`) and
+    in `docs/event-driven.md`.
 - **Consequences:**
   - A queue can absorb a real burst.
   - A backlog with no consumer stops growing at the byte cap and drains

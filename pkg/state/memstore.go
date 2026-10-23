@@ -14053,7 +14053,7 @@ func (m *MemStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoc
 	if err := m.validateInvocationEnvironmentLocked(inv, info); err != nil {
 		return Invocation{}, err
 	}
-	if err := invocationAdmissionDepth(inv, m.pendingProductionInvocationsLocked(inv.AppID, inv.Source, nil)); err != nil {
+	if err := m.checkInvocationAdmissionLocked(inv, nil); err != nil {
 		return Invocation{}, err
 	}
 	return m.enqueueInvocationLocked(inv)

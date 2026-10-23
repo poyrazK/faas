@@ -1284,6 +1284,9 @@ const (
 	// lets the dashboard render a "move to Scale to lift the cap"
 	// hint without parsing prose.
 	CodePlanQueueDepth = "plan_queue_depth"
+	// CodePlanQueueBacklogBytes: the account's pending queue messages hold
+	// the plan's MaxQueueBacklogBytesPerAccount (ADR-20261022105723).
+	CodePlanQueueBacklogBytes = "plan_queue_backlog_bytes"
 	// CodeCustomMetricLimit: a push of a NEW ADR-202 metric name by an app
 	// already at MaxCustomMetricsPerApp. A push to an EXISTING name never
 	// produces this — it is an upsert and cannot grow the count.
@@ -2322,7 +2325,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeCliAuthUnavailable, CodeBrowserApprovalUnavailable:
 		return http.StatusGone
-	case CodePlanQueueDepth, CodePlanDelayedCap:
+	case CodePlanQueueDepth, CodePlanDelayedCap, CodePlanQueueBacklogBytes:
 		return http.StatusForbidden
 	case CodePlanSourceBytes:
 		return http.StatusRequestEntityTooLarge
@@ -6026,6 +6029,18 @@ func ErrPlanQueueDepth(limit, observed int) *Problem {
 		fmt.Sprintf("the plan caps this app at %d pending + dispatching rows; observed %d.", limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/event-driven#queue-depth")
+}
+
+// ErrPlanQueueBacklogBytes is returned on a queue send when the account's
+// pending queue messages already hold the plan's
+// MaxQueueBacklogBytesPerAccount (ADR-20261022105723). Observed is the
+// payload bytes they hold.
+func ErrPlanQueueBacklogBytes(limit, observed int64) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanQueueBacklogBytes,
+		"Account queue backlog full",
+		fmt.Sprintf("the plan caps this account's pending queue messages at %d bytes; observed %d.", limit, observed)).
+		WithLimit(limit, observed).
+		WithDocs(docsBase + "/event-driven#queue-backlog")
 }
 
 // ErrPlanSourceBytes is returned when a request body for an event-shaped

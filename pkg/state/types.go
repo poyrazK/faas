@@ -4569,6 +4569,10 @@ type Invocation struct {
 	// this Source, enforced inside the enqueue transaction (0 = uncapped).
 	// It is admission input only, never persisted or customer-authored.
 	AdmissionMaxPending int `json:"-"`
+	// AdmissionMaxBacklogBytes is the producer's per-account cap on pending
+	// queue payload bytes (ADR-20261022105723; 0 = uncapped). Like
+	// AdmissionMaxPending it is admission input only.
+	AdmissionMaxBacklogBytes int64 `json:"-"`
 	// Host-to-host operation metadata is trusted protocol state, never persisted or guest-authored.
 	OperationResultVersion     int    `json:"-"`
 	ManagedOperationID         string `json:"-"`

@@ -18300,6 +18300,43 @@ $$;
 
 
 --
+-- Name: invocation_backlog_bytes(text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.invocation_backlog_bytes(source text, payload jsonb) RETURNS bigint
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT CASE WHEN source = 'queue' THEN octet_length(payload::text)::bigint ELSE 0 END
+$$;
+
+
+--
+-- Name: invocation_backlog_count(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.invocation_backlog_count() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP IN ('UPDATE', 'DELETE') AND OLD.state IN ('pending', 'dispatching') THEN
+        UPDATE invocation_backlog_counters
+        SET pending = pending - 1, bytes = bytes - invocation_backlog_bytes(OLD.source, OLD.payload)
+        WHERE app_id = OLD.app_id AND source = OLD.source AND account_id = OLD.account_id
+            AND slot = (hashtext(OLD.id::text) & 7);
+    END IF;
+    IF TG_OP IN ('INSERT', 'UPDATE') AND NEW.state IN ('pending', 'dispatching') THEN
+        INSERT INTO invocation_backlog_counters AS c (account_id, app_id, source, slot, pending, bytes)
+        VALUES (NEW.account_id, NEW.app_id, NEW.source, hashtext(NEW.id::text) & 7, 1,
+            invocation_backlog_bytes(NEW.source, NEW.payload))
+        ON CONFLICT (app_id, source, account_id, slot)
+        DO UPDATE SET pending = c.pending + 1, bytes = c.bytes + excluded.bytes;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: invocation_done_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -38383,6 +38420,22 @@ ALTER TABLE public.invocation_attempt_history ALTER COLUMN id ADD GENERATED ALWA
     NO MINVALUE
     NO MAXVALUE
     CACHE 1
+);
+
+
+--
+-- Name: invocation_backlog_counters; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_backlog_counters (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    source text NOT NULL,
+    slot smallint NOT NULL,
+    pending bigint DEFAULT 0 NOT NULL,
+    bytes bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT invocation_backlog_counters_slot_check CHECK (((slot >= 0) AND (slot <= 7))),
+    CONSTRAINT invocation_backlog_counters_source_check CHECK (((source <> ''::text) AND (octet_length(source) <= 64)))
 );
 
 
@@ -58881,6 +58934,14 @@ ALTER TABLE ONLY public.invocation_attempt_history
 
 
 --
+-- Name: invocation_backlog_counters invocation_backlog_counters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_backlog_counters
+    ADD CONSTRAINT invocation_backlog_counters_pkey PRIMARY KEY (app_id, source, account_id, slot);
+
+
+--
 -- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69735,6 +69796,13 @@ CREATE INDEX invocation_attempt_history_root_idx ON public.invocation_attempt_hi
 
 
 --
+-- Name: invocation_backlog_counters_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocation_backlog_counters_account_idx ON public.invocation_backlog_counters USING btree (account_id, source);
+
+
+--
 -- Name: invocation_environment_queue_domain_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -69886,6 +69954,13 @@ CREATE INDEX invocations_platform_tenant_idx ON public.invocations USING btree (
 --
 
 CREATE INDEX invocations_queue_binding_scope_idx ON public.invocations USING btree (app_id, queue_binding_id, deployment_scope, state, created_at) WHERE ((source = 'queue'::text) AND (state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'dead_letter'::text])));
+
+
+--
+-- Name: invocations_queue_pending_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_queue_pending_created_idx ON public.invocations USING btree (created_at) WHERE ((source = 'queue'::text) AND (state = 'pending'::text));
 
 
 --
@@ -78475,6 +78550,34 @@ CREATE TRIGGER invocation_async_subject BEFORE INSERT OR UPDATE ON public.invoca
 --
 
 CREATE TRIGGER invocation_attempt_history_transition AFTER UPDATE OF state, attempts, replay_generation ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.record_invocation_attempt_history();
+
+
+--
+-- Name: invocations invocation_backlog_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER invocation_backlog_delete AFTER DELETE ON public.invocations FOR EACH ROW WHEN ((old.state = ANY (ARRAY['pending'::text, 'dispatching'::text]))) EXECUTE FUNCTION public.invocation_backlog_count();
+
+
+--
+-- Name: invocations invocation_backlog_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER invocation_backlog_insert AFTER INSERT ON public.invocations FOR EACH ROW WHEN ((new.state = ANY (ARRAY['pending'::text, 'dispatching'::text]))) EXECUTE FUNCTION public.invocation_backlog_count();
+
+
+--
+-- Name: invocations invocation_backlog_payload; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER invocation_backlog_payload AFTER UPDATE OF payload ON public.invocations FOR EACH ROW WHEN (((old.state = ANY (ARRAY['pending'::text, 'dispatching'::text])) AND (new.state = ANY (ARRAY['pending'::text, 'dispatching'::text])) AND (NOT (old.source IS DISTINCT FROM new.source)) AND (NOT (old.app_id IS DISTINCT FROM new.app_id)) AND (NOT (old.account_id IS DISTINCT FROM new.account_id)) AND (old.payload IS DISTINCT FROM new.payload))) EXECUTE FUNCTION public.invocation_backlog_count();
+
+
+--
+-- Name: invocations invocation_backlog_state; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER invocation_backlog_state AFTER UPDATE OF state, source, app_id, account_id ON public.invocations FOR EACH ROW WHEN ((((old.state = ANY (ARRAY['pending'::text, 'dispatching'::text])) IS DISTINCT FROM (new.state = ANY (ARRAY['pending'::text, 'dispatching'::text]))) OR ((old.state = ANY (ARRAY['pending'::text, 'dispatching'::text])) AND ((old.source IS DISTINCT FROM new.source) OR (old.app_id IS DISTINCT FROM new.app_id) OR (old.account_id IS DISTINCT FROM new.account_id))))) EXECUTE FUNCTION public.invocation_backlog_count();
 
 
 --
@@ -88146,6 +88249,14 @@ ALTER TABLE ONLY public.internal_mail_suppression_events
 
 ALTER TABLE ONLY public.invocation_attempt_history
     ADD CONSTRAINT invocation_attempt_history_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_backlog_counters invocation_backlog_counters_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_backlog_counters
+    ADD CONSTRAINT invocation_backlog_counters_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
