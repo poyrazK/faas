@@ -23942,6 +23942,177 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/profiles/heap:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppHeapProfile
+      summary: Query the continuous live heap near a window end (ADR-1155).
+      description: Requires profiling.kinds to include heap. The query is narrowed to the last collection window before end so merged snapshots are not summed. Values are live heap bytes.
+      parameters:
+        - { name: deployment_id, in: query, required: true, description: Deployment whose live heap to read., schema: { type: string, format: uuid } }
+        - { name: runtime, in: query, required: true, description: Runtime the heap snapshots were collected under., schema: { type: string } }
+        - { name: start, in: query, required: true, description: Earliest acceptable snapshot time., schema: { type: string, format: date-time } }
+        - { name: end, in: query, required: true, description: Point in time to inspect., schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Live heap functions and call paths.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileHeapResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listProfileCaptures
+      summary: List the app's on-demand profile captures, newest first.
+      responses:
+        '200':
+          description: Up to 50 captures retained for 7 days.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCaptureList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    post:
+      tags: [apps]
+      operationId: createProfileCapture
+      summary: Capture CPU and/or heap profiles from a running instance now (ADR-1155).
+      description: Queues a bounded capture on the requested or earliest-started RUNNING instance; parked apps are not woken. Poll the capture until status is ready or failed. One capture per app runs at a time; an account can start 60 per hour. Gregale also queues a heap capture automatically (trigger memory_pressure) when an instance runs low on memory, at most once per hour per app.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProfileCaptureRequest' }
+      responses:
+        '202':
+          description: Capture queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCapture' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Profile capture id., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: getProfileCapture
+      summary: Read one on-demand profile capture.
+      responses:
+        '200':
+          description: Capture status and collected profile summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCapture' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}/view:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Capture whose merged view to read., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: getProfileCaptureView
+      summary: Merged functions and call paths of one capture kind.
+      parameters:
+        - { name: kind, in: query, required: false, description: 'cpu, heap, stacks, block or mutex; defaults to the capture''s first kind.', schema: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+      responses:
+        '200':
+          description: CPU nanoseconds or live heap bytes merged across the instance's processes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCaptureView' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}/pprof:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Capture to download., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: downloadProfileCapture
+      summary: Download one capture kind as a merged gzip pprof profile.
+      parameters:
+        - { name: kind, in: query, required: false, description: 'Kind to download as pprof: cpu, heap, stacks, block or mutex; defaults to the capture''s first kind.', schema: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+      responses:
+        '200':
+          description: gzip-compressed pprof protobuf for go tool pprof, speedscope or Pyroscope.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}/diff:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Candidate capture id., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: diffProfileCaptures
+      summary: Compare one capture kind with an earlier capture of the same app.
+      description: Merges both captures and returns every call path and function with its baseline value, candidate value and difference, largest growth first. Values are not rescaled; captures of different durations or deployments carry warnings.
+      parameters:
+        - { name: base, in: query, required: true, description: Baseline capture id of the same app., schema: { type: string, format: uuid } }
+        - { name: kind, in: query, required: false, description: 'cpu, heap, stacks, block or mutex; defaults to a kind both captures collected, preferring heap.', schema: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+      responses:
+        '200':
+          description: Differential view in the kind's unit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCaptureDiff' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/debug/coverage:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -39382,6 +39553,11 @@ paths:
           required: false
           description: Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes.
           schema: { type: string, enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed] }
+        - name: request_id
+          in: query
+          required: false
+          description: Only events for this request ID, such as the reference a visitor without JavaScript sees on the challenge page (ADR-831 amendment 8).
+          schema: { type: string, maxLength: 128 }
         - name: since
           in: query
           required: false
@@ -87190,7 +87366,7 @@ components:
     EdgeProtectionResponse:
       description: Edge rejection counts for one app over a range.
       type: object
-      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge]
+      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge, penalty]
       properties:
         app_id: { type: string }
         range: { type: string, enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d] }
@@ -87218,7 +87394,7 @@ components:
             type: object
             required: [gate, status, count]
             properties:
-              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf, challenge] }
+              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf, challenge, penalty] }
               status: { type: string, enum: ['401', '403', '413', '429', '503', other] }
               count: { type: integer, format: int64, minimum: 0 }
         waf:
@@ -87262,6 +87438,31 @@ components:
             passed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a pass from an earlier solve." }
             bypassed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a verified API key, consumer key or JWT." }
             invalid: { type: integer, format: int64, minimum: 0, description: "Solutions refused: wrong work or an expired token." }
+            raised: { type: integer, format: int64, minimum: 0, description: "The part of issued served at a difficulty raised under attack (ADR-831 amendment 8)." }
+        penalty:
+          type: object
+          description: Penalty boxes (ADR-20261022105846); refusals also appear in rejections under gate penalty.
+          required: [boxed, rejected]
+          properties:
+            boxed: { type: integer, format: int64, minimum: 0, description: "Clients a rule's penalty boxed." }
+            rejected: { type: integer, format: int64, minimum: 0, description: "Requests refused from boxed clients." }
+
+    EdgeRulePenalty:
+      type: object
+      description: |
+        A rule's penalty box (ADR-20261022105846). Once the rule has refused
+        the same client `after` times within `within_seconds`, every request
+        from that client to the app is refused with 403 `penalty_box` and
+        Retry-After for `seconds`, whichever rule or path it targets. The
+        client is its IP address (an IPv6 client is its /64). Boxes are held
+        in each gateway node's memory. Allowed on ip, geo, throttle and waf
+        (block mode) rules; editing the rule's penalty away, disabling it or
+        putting it in log mode releases its clients.
+      required: [seconds]
+      properties:
+        seconds: { type: integer, minimum: 60, maximum: 86400, description: How long a boxed client is refused. }
+        after: { type: integer, minimum: 1, maximum: 1000, default: 1, description: Refusals by this rule that box the client. }
+        within_seconds: { type: integer, minimum: 1, maximum: 3600, default: 60, description: Window the refusals count in. }
 
     PreAuthEnforcementSuggestion:
       description: |
@@ -89771,6 +89972,7 @@ components:
           $ref: '#/components/schemas/ProfilingConfig'
         tracing:
           $ref: '#/components/schemas/TracingConfig'
+        profiling_on_demand: { type: boolean, description: 'Dormant on-demand profile collectors stamped by imaged (ADR-1155).' }
         entrypoint:
           type: array
           items: { type: string }
@@ -104228,6 +104430,20 @@ components:
           type: array
           items: { type: string }
           description: "Explicit names from .gregale/required-secrets.json. Detected env_keys alone do not establish requirements."
+        unset_env_keys:
+          type: array
+          items: { type: string }
+          description: "Names from env_keys and required_env_keys that will have no value in the selected environment: not configured on the app and not provided by the platform. Names only, never values."
+        unset_env_key_reasons:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [not_opted_in, secret, service_address, local_address, interpolated, host_value, empty, invalid]
+          description: "For an unset_env_keys name with a Compose value, why that value is not imported (ADR-20261023085230). Never values."
+        imported_env_keys:
+          type: array
+          items: { type: string }
+          description: "Compose environment names whose plain values apply will write, because the project sets x-gregale-env-import: true and they are unset (ADR-20261023085230). Names only."
         source:
           type: string
           description: "detector provenance, e.g. compose.yaml: api"
@@ -105539,6 +105755,7 @@ components:
         expired: { type: boolean, description: True once expires_at has passed and the rule no longer applies. }
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         mode: { type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts. }
+        penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
 
     DeploymentRoutePolicySnapshotResponse:
       description: Immutable gateway edge-rule state recorded on the deployment's first live transition.
@@ -105610,6 +105827,7 @@ components:
         expires_at: { type: string, format: date-time, description: Optional time after which the gateway stops applying the new rule. }
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         mode: { type: string, enum: [enforce, log], description: 'Start the rule enforced (default) or in log mode, where it is only matched and counted.' }
+        penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
 
     UpdateEdgeRuleRequest:
       description: 'Partial update — every field optional. Kind is not patchable.'
@@ -105663,6 +105881,8 @@ components:
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         clear_match: { type: boolean, description: Remove the match condition. }
         mode: { type: string, enum: [enforce, log], description: 'Switch the rule to enforce, or to log so it is matched and counted but never acts.' }
+        penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
+        clear_penalty: { type: boolean, description: "Remove the rule's penalty box, releasing the clients it holds." }
 
     EdgeRuleMatchExpr:
       description: |
@@ -106859,6 +107079,11 @@ components:
           maximum: 86400
           default: 3600
           description: How long a solved challenge lets the browser through.
+        max_difficulty:
+          type: integer
+          minimum: 10
+          maximum: 22
+          description: When above difficulty, the gateway raises the difficulty up to this while the rule serves far more challenge pages than usual, two bits (4x the work) per minute, and lowers it again as the load eases (ADR-831 amendment 8). Must be at least difficulty. Omitted or equal to difficulty keeps the difficulty fixed.
     EdgeRuleAsyncAction:
       description: |
         Marks the matched route for durable asynchronous execution (ADR-215).
@@ -115846,7 +116071,7 @@ components:
     ConsumerBillingStatement:
       description: "One finalized statement as its consumer sees it."
       type: object
-      required: [id, period_start, period_end, revision, currency, billable_units, amount_millicents]
+      required: [id, period_start, period_end, revision, currency, billable_units, amount_millicents, credit_applied_millicents, amount_due_millicents]
       properties:
         id: { type: string, format: uuid }
         period_start: { type: string, format: date-time }
@@ -115855,6 +116080,8 @@ components:
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         billable_units: { type: integer, format: int64, minimum: 0 }
         amount_millicents: { type: integer, format: int64 }
+        credit_applied_millicents: { type: integer, format: int64, minimum: 0, description: "Prepaid credit drawn when the statement was finalized (ADR-20261020211500)." }
+        amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "amount_millicents less credit_applied_millicents: what is left to pay." }
         finalized_at: { type: string, format: date-time }
         invoice: { $ref: '#/components/schemas/ConsumerBillingInvoice' }
 
@@ -116637,6 +116864,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -117695,6 +117924,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -117879,6 +118110,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -118432,6 +118665,163 @@ components:
       properties:
         enabled: { type: boolean }
         window_seconds: { type: integer, minimum: 1, maximum: 60, default: 10 }
+        kinds:
+          description: Continuous profile kinds (ADR-1155); defaults to cpu.
+          type: array
+          maxItems: 2
+          items: { type: string, enum: [cpu, heap] }
+        pprof_port:
+          description: Guest-local port where a Go application serves net/http/pprof (ADR-1155). The platform then collects CPU, heap and goroutine profiles from it, so the application needs no Gregale SDK. 9191 and 4318 are reserved.
+          type: integer
+          minimum: 1
+          maximum: 65535
+    CreateProfileCaptureRequest:
+      description: On-demand capture request (ADR-1155). Kinds defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every goroutine or thread is waiting, taken when the capture starts. Block and mutex are Go contention profiles (time goroutines spent blocked on channels or locks, or waiting for a mutex, during the window).
+      type: object
+      properties:
+        kinds: { type: array, maxItems: 5, items: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+        duration_seconds: { type: integer, minimum: 1, maximum: 60, default: 10 }
+        instance_id: { type: string, format: uuid, description: Running instance to profile; empty selects the earliest-started RUNNING instance. }
+    ProfileCaptureProfile:
+      description: One collector's stored profile.
+      type: object
+      required: [kind, bytes]
+      properties:
+        kind: { type: string, enum: [cpu, heap, stacks, block, mutex] }
+        process_id: { type: string }
+        bytes: { type: integer }
+    ProfileCapture:
+      description: An on-demand capture. processes counts instrumented processes that saw the capture; zero means the instance has no collector.
+      type: object
+      required: [id, app_id, status, kinds, duration_seconds, processes, profiles, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, capturing, ready, failed] }
+        kinds: { type: array, items: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+        duration_seconds: { type: integer }
+        requested_instance_id: { type: string, format: uuid }
+        trigger: { type: string, enum: [manual, memory_pressure, slow_request, cpu_saturation], description: 'Who started the capture; memory_pressure captures are queued automatically when an instance runs low on memory, slow_request captures (stacks and CPU) when a request stays in flight for 10 seconds, cpu_saturation captures (CPU) when an instance uses 90% of its CPU limit for 30 seconds.' }
+        request_id: { type: string, maxLength: 128, description: The x-faas-request-id of the in-flight request that started a slow_request capture. }
+        request_trace_id: { type: string, maxLength: 128, description: The trace id that request's telemetry is stored under. }
+        trigger_detail: { type: string }
+        instance_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        processes: { type: integer }
+        dropped: { type: integer, description: Profiles discarded by the reply bounds. }
+        reason: { type: string }
+        profiles: { type: array, maxItems: 8, items: { $ref: '#/components/schemas/ProfileCaptureProfile' } }
+        partial: { type: boolean, description: 'The capture ended early, normally because the workload was OOM-killed; heap profiles are the last checkpoints before the kill.' }
+        oom_killed_at: { type: string, format: date-time, description: Set when the captured instance was OOM-killed within 15 minutes of the capture. }
+        oom_peak_mb: { type: integer, description: Memory in use when the instance was OOM-killed. }
+        oom_plan_mb: { type: integer, description: The instance's plan memory limit. }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    ProfileCaptureList:
+      description: An app's profile captures, newest first.
+      type: object
+      required: [captures]
+      properties:
+        captures: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/ProfileCapture' } }
+    ProfileCaptureWebhookPayload:
+      description: Payload of the profile.capture_ready and profile.capture_oom_linked app webhook events (ADR-1155). Carries the capture record and its paths, never profile samples.
+      type: object
+      required: [version, capture, capture_path, api_path]
+      properties:
+        version: { type: integer, minimum: 1, maximum: 1 }
+        capture: { $ref: '#/components/schemas/ProfileCapture' }
+        capture_path: { type: string, description: Dashboard page of the capture. }
+        api_path: { type: string, description: API resource of the capture. }
+    ProfileCaptureFunction:
+      description: Self and inclusive cost of one function in the view's unit.
+      type: object
+      required: [name, self, total]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        self: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
+    ProfileCaptureStack:
+      description: One frame in a bounded call-path tree.
+      type: object
+      required: [name, value]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        value: { type: integer, format: int64 }
+        children: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureStack' } }
+    ProfileCaptureView:
+      description: One profile kind merged across processes. unit is nanoseconds for cpu, bytes for heap and count (goroutines or threads) for stacks. Node and Python heap captures report memory allocated during the window and still live at its end; Go reports the sampled live heap.
+      type: object
+      required: [capture, kind, unit, total, functions, flamegraph, empty]
+      properties:
+        capture: { $ref: '#/components/schemas/ProfileCapture' }
+        kind: { type: string, enum: [cpu, heap, stacks, block, mutex] }
+        unit: { type: string, enum: [nanoseconds, bytes, count] }
+        total: { type: integer, format: int64 }
+        functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunction' } }
+        flamegraph: { $ref: '#/components/schemas/ProfileCaptureStack' }
+        empty: { type: boolean }
+        source: { $ref: '#/components/schemas/ProfileSource' }
+    ProfileCaptureDiff:
+      description: One kind compared between two ready captures of an app (ADR-1155). Values keep the kind's unit and are not rescaled.
+      type: object
+      required: [baseline, candidate, kind, unit, baseline_total, candidate_total, delta, functions, flamegraph, warnings]
+      properties:
+        baseline: { $ref: '#/components/schemas/ProfileCapture' }
+        candidate: { $ref: '#/components/schemas/ProfileCapture' }
+        kind: { type: string, enum: [cpu, heap, stacks, block, mutex] }
+        unit: { type: string, enum: [nanoseconds, bytes, count] }
+        baseline_total: { type: integer, format: int64 }
+        candidate_total: { type: integer, format: int64 }
+        delta: { type: integer, format: int64 }
+        functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunctionDelta' } }
+        flamegraph: { $ref: '#/components/schemas/ProfileCaptureStackDelta' }
+        warnings: { type: array, items: { type: string } }
+    ProfileCaptureFunctionDelta:
+      description: One function's self cost in both captures; named functions aggregate across lines.
+      type: object
+      required: [name, baseline, candidate, delta]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        baseline: { type: integer, format: int64 }
+        candidate: { type: integer, format: int64 }
+        delta: { type: integer, format: int64 }
+    ProfileCaptureStackDelta:
+      description: One call path in both captures.
+      type: object
+      required: [name, baseline, candidate, delta]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        baseline: { type: integer, format: int64 }
+        candidate: { type: integer, format: int64 }
+        delta: { type: integer, format: int64 }
+        children: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureStackDelta' } }
+    ProfileHeapResponse:
+      description: Continuous live heap near query.end (ADR-1155).
+      type: object
+      required: [query, kind, unit, total, functions, flamegraph, empty]
+      properties:
+        query: { $ref: '#/components/schemas/ProfileQuery' }
+        capture: { $ref: '#/components/schemas/ProfileCapture' }
+        kind: { type: string, enum: [heap] }
+        unit: { type: string, enum: [bytes] }
+        total: { type: integer, format: int64 }
+        functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunction' } }
+        flamegraph: { $ref: '#/components/schemas/ProfileCaptureStack' }
+        empty: { type: boolean }
+        source: { $ref: '#/components/schemas/ProfileSource' }
     TracingConfig:
       description: "Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database, cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel exporter are left untouched."
       type: object
@@ -118810,6 +119200,7 @@ components:
         image_digest: { type: string, description: "Immutable image/artifact digest associated with the deployment." }
         guest:
           $ref: '#/components/schemas/DebugGuestExecutionEvidence'
+        profile_capture_id: { type: string, format: uuid, description: "Stack snapshot taken while this request was in flight (ADR-1155 slow_request capture), when one exists." }
 
     DebugGuestExecutionEvidence:
       type: object

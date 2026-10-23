@@ -48,6 +48,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/apid/previews"
 	"github.com/onebox-faas/faas/pkg/apid/product"
+	"github.com/onebox-faas/faas/pkg/apid/profilecapture"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/apid/queueleases"
 	"github.com/onebox-faas/faas/pkg/apid/servicemap"
@@ -153,7 +154,8 @@ type server struct {
 	// postReleaseTelemetry overrides the store's request telemetry for the
 	// post-release watch (ADR-1445); nil reads it from the store.
 	postReleaseTelemetry rollbackOn5xxTelemetry
-	outboundAI           outboundai.Service // ADR-977; Host wired in newServer
+	outboundAI           outboundai.Service     // ADR-977; Host wired in newServer
+	profileCaptures      profilecapture.Service // ADR-1155; Host wired in newServer
 	// releaseGateEvidence overrides the store's release gate evidence
 	// reader for the post-release watch (ADR-20261019071734; tests).
 	releaseGateEvidence   state.ReleaseGateEvidenceStore
@@ -1474,6 +1476,7 @@ func newServerWithDeps(
 	s.productControl.CompletePaymentMethod = s.statementInvoices.CompleteStripeSetup
 	s.dataRepair.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
+	s.profileCaptures.Host = profileCaptureHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
 	s.realtime.Host = realtimeHost{s}
 	s.realtime.AuthLimiter = s.apiAuthLimiter
@@ -3926,6 +3929,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/profiles/investigations/{id}/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.checkProfileRegression))))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppProfiles))))
 	mux.HandleFunc("POST /v1/apps/{slug}/profiles/compare", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.compareAppProfiles))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/heap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppHeapProfile))))
+	// ADR-1155: on-demand CPU/heap captures, queued for schedd via Postgres.
+	mux.HandleFunc("POST /v1/apps/{slug}/profiles/captures", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.profileCaptures.Create))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.List))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.Get))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/view", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.View))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/pprof", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.Download))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/diff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.Diff))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryListHandler))))
 	// Portable incident artifact for the customer debugger. The export uses
 	// the same retention and tenant gates as the list endpoint, but is kept on
@@ -5003,6 +5014,11 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/issues/impact-alert-policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueImpactAlertPolicyHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/ownership-rules", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueOwnershipRulesHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/deployment-policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSaveProfileDeploymentPolicy))))
+	// ADR-1155: on-demand capture form, capture page and session-authenticated pprof download.
+	mux.Handle("POST /dashboard/apps/{slug}/profiles/captures", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateProfileCapture))))
+	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardProfileCapture))))
+	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}/pprof", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDownloadProfileCapture))))
+	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}/diff", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardProfileCaptureDiff))))
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/investigations", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSaveProfileInvestigation))))
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/investigations/{id}/check", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCheckProfileRegression))))
 	mux.Handle("POST /dashboard/apps/{slug}/debug/requests/{req_id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDebugReplay))))

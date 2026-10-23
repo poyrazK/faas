@@ -5,14 +5,17 @@ import (
 	"context"
 	"errors"
 	"math/rand/v2"
+	"strconv"
 	"testing"
 
 	"filippo.io/age"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/sealdomain/sealmigrate"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -106,6 +109,114 @@ func TestPostgresGithubWebhookSecretSealing(t *testing.T) {
 	if err != nil || string(opened) != "legacy-secret-0123456789" {
 		t.Fatalf("backfilled copy opens to %q, %v", opened, err)
 	}
+}
+
+// TestPostgresMigrateRuntime re-seals an app secret and a project environment
+// secret to the runtime domain through the rekey documents' compare-and-swap
+// writes, and leaves each row's version and fingerprint as they were.
+func TestPostgresMigrateRuntime(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	fleet, domain := mustIdentity(t), mustIdentity(t)
+	suffix := strconv.FormatInt(rand.Int64N(1<<40), 36)
+	account, err := store.CreateAccount(ctx, "runtime-domain-"+suffix+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "runtime-domain-" + suffix, Type: state.AppTypeApp, Status: state.AppActive, RAMMB: 256, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := secretbox.SealOne(fleet.Recipient(), "OPENAI_API_KEY", "sk-live", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, account.ID, app.ID, state.DefaultEnvScope, "OPENAI_API_KEY", fleet.Recipient().String(), "", sealed); err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "runtime-domain-" + suffix, ProductionBranch: "main", ScanSource: state.ProjectScanSourceConvention})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+		t.Fatal(err)
+	}
+	projectSealed, err := secretbox.SealOne(fleet.Recipient(), "DATABASE_URL", "postgres://staging", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.SetProjectEnvironmentSecret(ctx, state.ProjectEnvironmentSecret{
+		AccountID: account.ID, ProjectID: project.ID, EnvironmentSlug: "staging", Key: "DATABASE_URL",
+		Ciphertext: projectSealed, Kid: fleet.Recipient().String(), ValueHash: "fp-" + suffix,
+	}, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := sealmigrate.MigrateRuntime(ctx, store, domain, []*age.X25519Identity{fleet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Resealed != 2 || report.Failed != 0 || report.Changed != 0 {
+		t.Fatalf("report = %+v, want the app and the project secret re-sealed", report)
+	}
+	again, err := sealmigrate.MigrateRuntime(ctx, store, domain, []*age.X25519Identity{fleet})
+	if err != nil || again.Scanned != 0 {
+		t.Fatalf("second run = %+v, %v; want nothing left to re-seal", again, err)
+	}
+	projectRows, err := store.ListProjectEnvironmentSecrets(ctx, account.ID, project.ID, "staging")
+	if err != nil || len(projectRows) != 1 {
+		t.Fatalf("project rows = %d, %v", len(projectRows), err)
+	}
+	if got := projectRows[0]; got.Kid != domain.Recipient().String() || got.SecretVersion != before.SecretVersion || got.ValueHash != before.ValueHash {
+		t.Fatalf("project secret = kid %s version %d hash %s, want the domain kid and version %d hash %s unchanged", got.Kid, got.SecretVersion, got.ValueHash, before.SecretVersion, before.ValueHash)
+	}
+	// Listings carry no ciphertext; read the stored envelope through the rekey
+	// documents, which every row with a kid other than the fleet's appears in.
+	projectCiphertext := storedProjectCiphertext(t, store, fleet.Recipient().String(), account.ID+"/"+project.ID+"/staging/DATABASE_URL")
+	if env, err := secretbox.Open(domain, projectCiphertext); err != nil || env["DATABASE_URL"] != "postgres://staging" {
+		t.Fatalf("project secret domain open = %v, %v", env, err)
+	}
+	if _, err := secretbox.Open(fleet, projectCiphertext); err == nil {
+		t.Fatal("the fleet identity still opens the re-sealed project secret")
+	}
+	rows, err := store.ListAppSecrets(ctx, account.ID, app.ID)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows = %d, %v", len(rows), err)
+	}
+	if rows[0].Kid != domain.Recipient().String() {
+		t.Fatalf("kid = %s, want the runtime domain", rows[0].Kid)
+	}
+	if env, err := secretbox.Open(domain, rows[0].Ciphertext); err != nil || env["OPENAI_API_KEY"] != "sk-live" {
+		t.Fatalf("domain open = %v, %v", env, err)
+	}
+	if _, err := secretbox.Open(fleet, rows[0].Ciphertext); err == nil {
+		t.Fatal("the fleet identity still opens the re-sealed runtime secret")
+	}
+}
+
+// storedProjectCiphertext returns the stored ciphertext of the project
+// environment secret document id, listed as needing a key other than kid.
+func storedProjectCiphertext(t *testing.T, store *state.PgStore, kid, id string) []byte {
+	t.Helper()
+	docs, err := store.ListSecretRekeyDocuments(context.Background(), kid, "project|", 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range docs {
+		if d.Kind != "project" || d.ID != id {
+			continue
+		}
+		var ciphertext []byte
+		if _, err := state.TransformSecretRekeyDocument(d, func(e state.SecretRekeyEnvelope) (state.SecretRekeyEnvelope, error) {
+			ciphertext = e.Ciphertext
+			return e, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return ciphertext
+	}
+	t.Fatalf("project secret document %s not listed", id)
+	return nil
 }
 
 func containsInstallation(rows []state.GithubWebhookSecretRow, id int64) bool {

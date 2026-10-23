@@ -16561,6 +16561,7 @@
       "customer",
       "days_until_due",
       "due_at",
+      "handoff_reserved",
       "hosted_invoice_url",
       "id",
       "livemode",
@@ -17244,6 +17245,32 @@
       "started_at",
       "state",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "profile_capture_data",
+    "columns": [
+      "capture_id",
+      "kind",
+      "process_id",
+      "profile",
+      "seq"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "profile_captures",
+    "columns": [
+      "account_id",
+      "app_id",
+      "capture",
+      "claimed_at",
+      "completed_at",
+      "created_at",
+      "expires_at",
+      "id",
+      "status"
     ],
     "kind": "operational"
   }

@@ -259,11 +259,60 @@ This ADR ships with:
 
 Rollout checklist: [Seal domains rollout](../runbooks/seal-domains-rollout.md).
 
-Later slices: the other domains in the order above; the contract steps;
-moving the runtime re-seal out of apid's rekey runner; meterd sending test
-alerts; role-scoped staging in node join; an alert on
-`faas_seal_domain_ready`; and dropping `github_webhook_secrets.secret_value`
-once no release reads it.
+## Implemented in the second slice: the runtime domain
+
+- **vmmd** loads `domains/runtime.age` (and its `.previous`) next to
+  `host.age` when it is staged, ahead of the fleet and host identities. It
+  reads the file directly as root, so there is no credential to add. It
+  exports `faas_seal_domain_loaded{domain="runtime"}` from its start.
+- **apid** seals every runtime secret through `runtimeSecretRecipient()`:
+  - app and project secrets (set and rotate);
+  - the clone worker's `DATABASE_URL`;
+  - object storage binding values (a new `RuntimeSecretRecipient` on the
+    object host);
+  - project release secret bundles;
+  - managed PostgreSQL credential delivery;
+  - sidecar env.
+
+  The recipient comes from `FAAS_SEAL_DOMAIN_RUNTIME_RECIPIENT_PATH` and
+  `FAAS_SEAL_DOMAIN_RUNTIME_WRITES`, delivered by an apid drop-in from the
+  `seal_domains` role.
+- **Runtime goes straight from `fleet` to `domain`, with no `dual` mode.**
+  apid refuses `dual` for runtime. Its writers span several packages that
+  each take one recipient, and dual sealing would protect nothing while the
+  fleet identity still opens every row. The switch to `domain` waits until
+  every vmmd reports the identity loaded and the previous release has left
+  the rollback window.
+- **No rows go back to the fleet key.** In domain mode, apid's rekey runner
+  no longer re-seals runtime secrets (it would undo the domain, and apid
+  cannot open domain rows). `gregalectl fleet-seal migrate` skips rows whose
+  `kid` names a recipient it holds no identity for.
+- **Re-seal:** `gregalectl seal-domain migrate --domain runtime
+  --readers-verified` re-seals every stored runtime secret through the
+  release-secret rekey documents (ADR-1139): app and project environment
+  secrets, staged release bundles, deployment snapshots, and release and
+  promotion captures. Each document is written back with a compare-and-swap
+  that changes only `kid` and ciphertext, so no runtime-change trigger fires
+  and value fingerprints and versions stay as they were. The store lists only
+  documents with an envelope labelled for another key, so a complete
+  migration lists nothing.
+- **Alerts:** `FaasSealDomainUnverified` (`faas_seal_domain_ready == 0`)
+  and `FaasSealDomainIdentityMissing` (a reader without the identity while
+  another reader of the domain holds it); runbook `FaasSealDomain`.
+- **Staging:** the `seal_domains` role stages the identity on compute and
+  single-box hosts and verifies the runtime probe there. It stages the
+  recipient and the apid drop-in on control-plane hosts. bootstrap runs the
+  role ahead of `vmmd_service` on compute nodes.
+
+Later slices:
+- the other domains, in the order above;
+- re-sealing the short-lived copies in `app_config_guard_secrets` and
+  `managed_postgres_cutover_credentials`, which the rekey documents do not
+  cover;
+- the contract steps;
+- meterd sending test alerts;
+- role-scoped staging in node join;
+- dropping `github_webhook_secrets.secret_value` once no release reads it.
 
 ## Consequences
 

@@ -2185,7 +2185,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// missing identity path.
 		srv.MarkRekeyRunnerOptedIn()
 		identities := mfaIdentities()
-		if len(identities) == 0 {
+		if blocked := runtimeSealDomainBlocksRekey(); blocked != nil {
+			log.Warn("FAAS_REKEY_ENABLED=true ignored: background re-seal disabled", "reason", blocked.Error())
+		} else if len(identities) == 0 {
 			log.Warn("FAAS_REKEY_ENABLED=true but no host age identities loaded — background re-seal disabled")
 		} else {
 			rekeyAudit := audit.New(store, log, nil, "rekey")

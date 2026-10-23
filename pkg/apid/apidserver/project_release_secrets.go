@@ -57,7 +57,7 @@ func (s *server) stageProjectReleaseSecrets(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	limits := api.MustLimitsFor(acct.Plan)
-	recipient := setSecretRecipient()
+	recipient := runtimeSecretRecipient()
 	if recipient == nil {
 		api.WriteProblem(w, api.ErrCapacity("release secret encryption unavailable"))
 		return

@@ -23,5 +23,9 @@ export type EdgeRuleChallengeAction = {
    * How long a solved challenge lets the browser through.
    */
   pass_ttl_seconds?: number;
+  /**
+   * When above difficulty, the gateway raises the difficulty up to this while the rule serves far more challenge pages than usual, two bits (4x the work) per minute, and lowers it again as the load eases (ADR-831 amendment 8). Must be at least difficulty. Omitted or equal to difficulty keeps the difficulty fixed.
+   */
+  max_difficulty?: number;
 };
 

@@ -564,7 +564,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest overrides: %w", err)
 	}
-	manifest = applyAppLifecycle(manifest, app)
+	manifest = h.stampProfiling(applyAppLifecycle(manifest, app), acct)
 	if err := manifest.Validate(); err != nil {
 		return fmt.Errorf("imaged: built OCI manifest invalid: %w", err)
 	}

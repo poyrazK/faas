@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261022105846: Penalty box for edge rules](20261022105846-edge-rule-penalty-box.md)
 - [Compose build secrets for Dockerfile builds](20261022185329-compose-build-secrets.md)
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
 - [Compose process overrides on source-built services](20261022160000-compose-process-on-built-services.md)
@@ -331,6 +332,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 826 | [Periodic route profiling for running deployments](826-periodic-route-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 827 | [Route-specific profiling code evidence](827-route-specific-profile-code-evidence.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 828 | [Opt-in profiling gates for canary deployment stages](828-profile-canary-deployment-gates.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 1155 | [On-demand CPU and heap profiling](1155-on-demand-cpu-and-heap-profiling.md) | accepted for internal implementation; native acceptance pending | Dormant guest collectors armed per instance through a Postgres queue; continuous heap profiles; automatic heap capture on memory pressure |
 | 949 | [App consumer statement revisions and unbilled platform failures](949-app-consumer-statement-revisions-and-platform-failure-billing.md) | accepted | Late usage becomes additive app-local statement revisions; gateway-generated 5xx carry zero billable units |
 | 950 | [Monthly included units on app consumer rate cards](950-api-consumer-monthly-allowances.md) | accepted | Free requests per consumer per UTC month, consumed in minute order; adjustments bill allowance lost to late usage |
 | 951 | [Graduated tiers on app consumer rate cards](951-api-consumer-graduated-tiers.md) | accepted | Per-consumer monthly price ladders with exact re-rating; tiered statements cover whole UTC months |
@@ -394,6 +396,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 20261019100333 | [Paddle invoices sent by Paddle](20261019100333-paddle-send-collection.md) | accepted | Paddle connections can collect with `send`: exports bill the draft transaction with the customer's newest address so Paddle emails it |
 | 20261019180000 | [One export attempt at a time, retargetable refusals, floored minimums and fresh overdue holds](20261019180000-monetization-review-fixes.md) | accepted | Exports claim their statement so concurrent attempts get a 409; a provider refusal before creation can be retried with another customer; finalized minimums fall only by new usage; holds need a payment status read within 24 h |
 | 20261020170649 | [API monetization released per account](20261020170649-api-monetization-per-account-release.md) | accepted | The `api_monetization` platform flag releases monetization to chosen accounts beside the all-or-nothing switch; routes 404 after authentication for others, workers and gateways decide per account; `make monetization-sandbox` qualifies the providers |
+| 20261020211500 | [Handoff reservations, usage-only credit in spend caps, reprice on change, credit on self-service statements](20261020211500-monetization-hardening.md) | accepted | Exports reserve their handoff before calling the provider; credit that paid fees no longer lifts a spend cap; spend checks reprice only on new usage or every 15 minutes; consumer statements show credit and amount due |
 | 20261021143000 | [Customers sign up for an API themselves, with Stripe Checkout](20261021143000-consumer-self-signup.md) | accepted | A hosted page and public API let an app's customers pick a plan, save a card in the owner's Stripe and get a consumer key; claim tokens, per-address and daily limits |
 | 20261021183000 | [Customers manage their own account, and owners hear about it by webhook](20261021183000-customer-self-service-and-webhooks.md) | accepted | A billing-scope key lists plans, switches between offered plans, opens Stripe's customer portal or closes the account, as the owner allows; consumer.signed_up, consumer.plan_changed and consumer.closed webhooks |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |

@@ -84,6 +84,10 @@ func (h objectHost) SecretRecipient() *age.X25519Recipient {
 	return hostSecretRecipient()
 }
 
+func (h objectHost) RuntimeSecretRecipient() *age.X25519Recipient {
+	return runtimeSecretRecipient()
+}
+
 func (h objectHost) HostHMACKey() []byte {
 	if hostHMACKey == nil {
 		return nil
