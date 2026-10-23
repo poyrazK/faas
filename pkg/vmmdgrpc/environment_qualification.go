@@ -3,6 +3,7 @@ package vmmdgrpc
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -196,6 +197,9 @@ func qualificationStatus(err error) error {
 	case errors.Is(err, state.ErrConflict):
 		return grpcerr.ToStatus(api.NewProblem(409, api.CodeEnvironmentQualificationUnconfirmed, "Qualification unconfirmed", "original ownership or complete native retirement is unconfirmed"))
 	default:
+		// The caller learns nothing, but an unexpected native failure must be
+		// diagnosable on the host that hit it (ADR 20261023093000).
+		slog.Default().Warn("vmmd: native qualification operation failed", "err", err)
 		return grpcerr.ToStatus(api.NewProblem(500, api.CodeInternal, "Qualification failed", "the native operation could not be confirmed"))
 	}
 }
