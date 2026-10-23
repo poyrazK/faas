@@ -196,7 +196,7 @@ func runSealDomainVerify(args []string) error {
 func runSealDomainMigrate(args []string) error {
 	fs := flag.NewFlagSet("seal-domain migrate", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	domainName := fs.String("domain", "", "seal domain to migrate (outbound, runtime or source)")
+	domainName := fs.String("domain", "", "seal domain to migrate (outbound, runtime, source or build)")
 	dir := fs.String("dir", sealdomain.DefaultDir, "directory holding <domain>.age")
 	fleetKey := fs.String("fleet-key", secretbox.DefaultFleetKeyPath, "fleet.age identity (its .previous twin is loaded when present)")
 	hostKey := fs.String("host-key", secretbox.DefaultHostKeyPath, "host.age identity for legacy rows (optional)")
@@ -211,8 +211,10 @@ func runSealDomainMigrate(args []string) error {
 	if err != nil {
 		return err
 	}
-	if d != sealdomain.Outbound && d != sealdomain.Source && d != sealdomain.Runtime {
-		return fmt.Errorf("domain %s is not wired in this release; only outbound, runtime and source migrate", d)
+	switch d {
+	case sealdomain.Outbound, sealdomain.Runtime, sealdomain.Source, sealdomain.Build:
+	default:
+		return fmt.Errorf("domain %s is not wired in this release; only outbound, runtime, source and build migrate", d)
 	}
 	fleet, err := secretbox.LoadHostKey(*fleetKey)
 	if err != nil {
@@ -231,6 +233,11 @@ func runSealDomainMigrate(args []string) error {
 	store := state.NewPgStore(pool)
 	var report sealmigrate.MigrationReport
 	switch d {
+	case sealdomain.Build:
+		if !*readersVerified {
+			return errors.New("re-sealed registry passwords no longer open with the fleet identity; pass --readers-verified once every imaged reports faas_seal_domain_loaded{domain=\"build\"} 1 and the previous release left the rollback window")
+		}
+		report, err = migrateDomain(ctx, store, d, *dir, *fleetKey, *hostKey)
 	case sealdomain.Source:
 		if !*readersVerified {
 			// Before every githubd holds the source identity, a missing
@@ -287,6 +294,8 @@ func migrateDomain(ctx context.Context, store *state.PgStore, d sealdomain.Domai
 		return sealmigrate.MigrateRuntime(ctx, store, domain, legacy)
 	case sealdomain.Source:
 		return sealmigrate.MigrateSource(ctx, store, domain, legacy)
+	case sealdomain.Build:
+		return sealmigrate.MigrateBuild(ctx, store, domain, legacy)
 	}
 	return sealmigrate.MigrateOutbound(ctx, store, domain, legacy)
 }
