@@ -58,6 +58,11 @@ func TestAdoptGuestProcessSignalsAndWatchesThroughPidfds(t *testing.T) {
 	if err := killAndConfirmExit(cmd, recordDone(rec), 5*time.Second); err != nil {
 		t.Fatalf("kill an adopted process: %v", err)
 	}
+	// The watchdog closes done under the lock and calls the sink after
+	// releasing it, so the call can trail the exit receipt.
+	for deadline := time.Now().Add(5 * time.Second); exits.Load() == 0 && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
 	if exits.Load() != 1 || code.Load() != -1 {
 		t.Fatalf("exit sink calls %d code %d, want one call with -1", exits.Load(), code.Load())
 	}

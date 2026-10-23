@@ -7643,6 +7643,18 @@
     "kind": "operational"
   },
   {
+    "table": "invocation_backlog_counters",
+    "columns": [
+      "account_id",
+      "app_id",
+      "bytes",
+      "pending",
+      "slot",
+      "source"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "invocation_environment_queue_admissions",
     "columns": [
       "account_id",
