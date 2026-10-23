@@ -41,6 +41,11 @@ type Config struct {
 	// directory for native image and snapshot output claims. Configure it
 	// before native recovery; it does not enable qualification capture.
 	NativeImageStagingRoot string `toml:"native_image_staging_root"`
+	// NativeQualificationCapture opens GitOps qualification capture, restore
+	// and retirement on this host (ADR 20261023093000). It requires native
+	// process recovery and both private roots above, and stays off on a host
+	// whose native qualification acceptance has not passed.
+	NativeQualificationCapture bool `toml:"native_qualification_capture"`
 	// ResourceJournalDir persists lease intent and process incarnations before
 	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
 	ResourceJournalDir string `toml:"resource_journal_dir"`
@@ -610,6 +615,9 @@ func LoadConfig(path string) (*Config, error) {
 	if err := validateNativeImageStagingConfig(c.NativeProcessRecovery, c.NativeImageStagingRoot); err != nil {
 		return nil, err
 	}
+	if err := validateNativeQualificationCaptureConfig(c); err != nil {
+		return nil, err
+	}
 	// Gate-B: resolve Role AFTER toml.Unmarshal so the post-decode
 	// c.Role is consulted against FAAS_VMMD_ROLE. Setting Role in
 	// the defaults-struct literal lets toml.Unmarshal overwrite it,
@@ -930,6 +938,19 @@ func validateAdoptionConfig(record, adopt, nativeRecovery bool) error {
 
 func validateNativeSnapshotPublicationConfig(nativeRecovery bool, root string) error {
 	return validateNativePrivateRootConfig(nativeRecovery, root, "native_snapshot_publication_root")
+}
+
+// Qualification capture publishes through the native producer and restores
+// through the journal-backed lifecycle; without them every attempt would be
+// refused after a candidate had already booted.
+func validateNativeQualificationCaptureConfig(c *Config) error {
+	if !c.NativeQualificationCapture {
+		return nil
+	}
+	if !c.NativeProcessRecovery || c.NativeSnapshotPublicationRoot == "" || c.NativeImageStagingRoot == "" {
+		return fmt.Errorf("vmmd: native_qualification_capture requires native_process_recovery = true, native_snapshot_publication_root and native_image_staging_root")
+	}
+	return nil
 }
 
 func validateNativeImageStagingConfig(nativeRecovery bool, root string) error {

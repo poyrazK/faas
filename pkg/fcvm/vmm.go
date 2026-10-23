@@ -59,9 +59,12 @@ type JailerVMM struct {
 	nativeRecovery                *nativeProcessRecoveryRuntime // opt-in, configured before admission
 	nativeImageStagingRoot        string                        // opt-in persistent disk claims; configure before native recovery
 	nativeSnapshotPublicationRoot string                        // opt-in immutable capture intent; configure before native recovery
-	chrootBase                    string                        // /srv/fc/jail
-	fcName                        string                        // chroot dir name jailer derives from the exec-file basename
-	readyTimeout                  time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
+	// environmentQualificationCapture opens qualification capture (ADR
+	// 20261023093000); it also needs native recovery and both roots above.
+	environmentQualificationCapture bool
+	chrootBase                      string        // /srv/fc/jail
+	fcName                          string        // chroot dir name jailer derives from the exec-file basename
+	readyTimeout                    time.Duration // WAKING/cold-boot readiness budget (spec §6)
 	// tcpReadinessDial substitutes a deterministic probe in pure-Go tests.
 	// nil uses net.DialTimeout; configure only before the VMM is used.
 	tcpReadinessDial func(string, string, time.Duration) (net.Conn, error)

@@ -202,6 +202,29 @@ func TestNativeQualificationSnapshotRealBackendRemainsUnavailableBeforeEffects(t
 	}
 }
 
+// ADR 20261023093000: the gate opens only on an explicit host opt-in with native
+// recovery and both private roots; any missing prerequisite keeps it closed.
+func TestNativeQualificationCaptureGateNeedsOptInAndCompleteNativeHost(t *testing.T) {
+	complete := func() *JailerVMM {
+		v := &JailerVMM{nativeRecovery: &nativeProcessRecoveryRuntime{}, nativeSnapshotPublicationRoot: "/p", nativeImageStagingRoot: "/i"}
+		return v.WithEnvironmentQualificationCapture()
+	}
+	if err := complete().checkEnvironmentQualificationSnapshotSupport(); err != nil {
+		t.Fatalf("complete opted-in host stayed closed: %v", err)
+	}
+	for name, v := range map[string]*JailerVMM{
+		"default":               {},
+		"no opt-in":             {nativeRecovery: &nativeProcessRecoveryRuntime{}, nativeSnapshotPublicationRoot: "/p", nativeImageStagingRoot: "/i"},
+		"no native recovery":    func() *JailerVMM { v := complete(); v.nativeRecovery = nil; return v }(),
+		"no publication root":   func() *JailerVMM { v := complete(); v.nativeSnapshotPublicationRoot = ""; return v }(),
+		"no image staging root": func() *JailerVMM { v := complete(); v.nativeImageStagingRoot = ""; return v }(),
+	} {
+		if err := v.checkEnvironmentQualificationSnapshotSupport(); !errors.Is(err, state.ErrConflict) {
+			t.Errorf("%s: gate = %v, want closed", name, err)
+		}
+	}
+}
+
 func TestNativeQualificationSnapshotCohortOwnsResumeAndBackingPublication(t *testing.T) {
 	for _, outcome := range []string{"complete", "uncertain"} {
 		t.Run(outcome, func(t *testing.T) {

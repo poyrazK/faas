@@ -345,6 +345,11 @@ failure_report_dir = %q
 				}
 			}
 			cfg += fmt.Sprintf("native_process_recovery = true\nprepared_networks = 0\nnative_image_staging_root = %q\nnative_snapshot_publication_root = %q\n", images, publications)
+			if os.Getenv("GREGALE_GITOPS_NATIVE_ACCEPTANCE") == "1" {
+				// The native GitOps journey is the qualification capture
+				// acceptance (ADR 20261023093000).
+				cfg += "native_qualification_capture = true\n"
+			}
 		}
 		if which&VMMDMetrics != 0 {
 			addr := freeTCPAddr(t)
