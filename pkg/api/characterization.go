@@ -7,6 +7,13 @@ package api
 // (ADR-20261018101500).
 const ProvenWorkerBootArg = "faas.worker=proven"
 
+// FunctionRunnerBootArg is the kernel command-line flag vmmd adds to a cold
+// boot of a function (an app with a runner runtime such as node22 or
+// binary). Characterization's L7 probes would reach the customer's handler
+// through the runner and run it with probe input, so guest-init skips them;
+// a function's class is known from its type (Hunt 12 H12-6).
+const FunctionRunnerBootArg = "faas.runner=function"
+
 // CharacterizationReport is the payload guest-init ships to the host
 // over AF_VSOCK STREAM at port 1026 / msgtype 3 (ADR-051 §"Wire
 // constants") during the FIRST cold boot of a new deployment. The

@@ -20,6 +20,7 @@ the caller supplies an occurrence URI.
 | `capacity_unavailable` | The platform cannot admit work now | Retry with backoff; the response includes `Retry-After` where applicable. |
 | `idempotency_key_reused` (422) | The request's `Idempotency-Key` was used in the last 24 hours for a different request (another body, query, or precondition header); nothing ran, and the first request's result is kept ([ADR-20261022204036](adr/20261022204036-idempotency-key-bound-to-request.md)) | Send a new key for a new request. To get the first request's result, resend it unchanged with the same key. |
 | `auth_rate_limited` (429) | Too many failed authentication attempts came from this address | Wait for `Retry-After`, then retry with valid credentials. |
+| `ip_denied`, `geo_denied` (403) | An app edge rule refused the client's IP address or country | Check the rule with `gregale edge-rules list --app APP` and any list it references with `gregale edge-rule-lists get NAME`. |
 | `unauthorized` (401) | The dashboard session or API credential is missing or expired | Sign in again or refresh the API credential, then retry. |
 | `oauth_provider_unavailable` (503) | A third-party sign-in or GitHub connection provider is unavailable on this Gregale installation | Use another sign-in method if available, retry later, or contact support to enable the provider. |
 | `event_publish_batch_too_large` (413) | Batch publication exceeds its 1 MiB body limit; no items accepted | Reduce the batch size, preserving each event's source and id. |

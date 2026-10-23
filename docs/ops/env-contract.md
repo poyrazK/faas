@@ -306,6 +306,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_FUNCTION_RUNNER_PYTHON312` | imaged | `unit` | yes |  | `path-exists` |  |
 | `FAAS_FUNCTION_RUNNER_PYTHON313` | imaged | `unit` | yes |  | `path-exists` |  |
 | `FAAS_GATEWAYD_CONFIG` | gatewayd-internal | `dropin` |  |  | `` |  |
+| `FAAS_GATEWAYD_CONTROL_FROM_REGISTRY` | apid | `dropin` |  |  | `` | 1 on a split control plane: apid calls gatewayd-internal's private control listener on an active compute node instead of FAAS_GATEWAYD_CONTROL_URL (ADR-20261022004500) |
 | `FAAS_GATEWAYD_CONTROL_URL` | apid | `default` |  |  | `` |  |
 | `FAAS_GATEWAYD_PUBLIC_ROLE` | gatewayd-public, shared | `dropin` |  |  | `` |  |
 | `FAAS_GATEWAYD_ROLE` | gatewayd-internal, shared | `dropin` |  |  | `` |  |
@@ -315,6 +316,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GATEWAY_EGRESS_SOCKET` | shared | `default` |  |  | `` |  |
 | `FAAS_GATEWAY_LISTEN` | gatewayd-internal, shared | `unit` |  |  | `` |  |
 | `FAAS_GATEWAY_METRICS_URL` | schedd | `dropin` |  |  | `` |  |
+| `FAAS_GATEWAY_PRIVATE_CONTROL_LISTEN` | gatewayd-internal | `dropin` |  |  | `` | compute-only private control listener for apid (route observations, streaming caps, MCP replica probes, response checks), 0.0.0.0:9097 behind the control-plane nftables rule; empty disables (ADR-20261022004500) |
 | `FAAS_GATEWAY_RAW_STREAM_ENABLED` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_GATEWAY_RESPONSE_CACHE_REDIS_URL` | gatewayd-internal | `secrets-env` |  |  | `url` | optional distributed response-cache endpoint; delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env |
 | `FAAS_GATEWAY_RETRY` | gatewayd-internal | `dropin` |  |  | `` | ADR-201 §1; on in the drop-in since H4-68. A matched kind=retry rule is still required, so this is a fleet-wide kill switch rather than a behaviour change |

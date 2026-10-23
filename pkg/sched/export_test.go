@@ -672,6 +672,20 @@ func CreateRuntimeWithRehearsalRun(ctx context.Context, vmm RoutedVMM, spec AppS
 func (r *workPool) Drain()                                          { r.drain() }
 func (r *workPool) Submit(p0 workKind, p1 string, p2 func()) string { return r.submit(p0, p1, p2) }
 
+// QueueRetryGroups exposes the queue retry last_error grouping (Hunt 12
+// H12-34).
+func QueueRetryGroups(items []string, statusByID map[string]TriggerDispatchResult) map[string][]string {
+	out := map[string][]string{}
+	for _, group := range queueRetryGroups(items, statusByID) {
+		out[group.reason] = group.items
+	}
+	return out
+}
+
+// WarmCaptureInstanceGatesOpen exposes the warm-capture gates shared by the
+// capture and the freeze decision (Hunt 12 H12-52).
+var WarmCaptureInstanceGatesOpen = warmCaptureInstanceGatesOpen
+
 // SettleTriggerDeadLetters runs the per-record DLQ settlement; queue selects
 // the queue poller's Nack-first order (ADR-20261022203653).
 func (r *Loop) SettleTriggerDeadLetters(ctx context.Context, t sqlc.Trigger, poller triggerSource, store storeLike, queue bool,

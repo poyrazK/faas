@@ -643,6 +643,11 @@ func firecrackerControlLine(line []byte) bool {
 		"api request took",
 		"snapshot/load",
 		"snapshot load",
+		// Firecracker 1.17 net device before the guest driver binds it:
+		// "Net: The device is not yet activated. Spurious event received: 3".
+		// It reached every job task's customer log on production-us
+		// (Hunt 12).
+		"spurious event received",
 	} {
 		if strings.Contains(body, marker) {
 			return true

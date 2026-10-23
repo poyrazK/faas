@@ -4795,6 +4795,22 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	if activeBuckets != 0 {
 		return ErrConflict
 	}
+	// A live managed PostgreSQL binding still owns provider credentials, and
+	// a dispatched, unsettled multipart part writer is an uncertain backend
+	// write that ADR-590 retains. Both keep the app until they finish; their finished
+	// rows (deleted bindings, settled writers) are removed below. Without
+	// that, the RESTRICT keys failed every purge and the grace sweep retried
+	// the same apps every minute forever (Hunt 11 H11-21).
+	var retained int
+	if err := tx.QueryRow(ctx,
+		`select (select count(*) from managed_postgres_bindings where app_id = $1 and state <> 'deleted')
+		      + (select count(*) from object_multipart_part_writers w join object_buckets b on b.id = w.bucket_id
+		          where b.app_id = $1 and w.dispatched and not w.settled)`, id).Scan(&retained); err != nil {
+		return fmt.Errorf("state: count app retained resources: %w", err)
+	}
+	if retained != 0 {
+		return ErrConflict
+	}
 	var exists int
 	if err := tx.QueryRow(ctx,
 		`select 1 from apps where id = $1 and status = 'deleted' and delete_grace_until <= now() and purge_claimed_at is not null for update`, id).Scan(&exists); err != nil {
@@ -4812,6 +4828,12 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 		sql  string
 	}{
 		{"object_storage_access_grants", `delete from object_storage_access_grants where bucket_id in (select id from object_buckets where app_id = $1)`},
+		// Settled or never-dispatched multipart writers (the uncertain ones
+		// refused the purge above) and the mutations naming them; the bucket
+		// delete would cascade those mutations, but the writers' RESTRICT key
+		// on the bucket comes first.
+		{"object_bucket_mutations", `delete from object_bucket_mutations where multipart_part_writer_id in (select w.id from object_multipart_part_writers w join object_buckets b on b.id = w.bucket_id where b.app_id = $1)`},
+		{"object_multipart_part_writers", `delete from object_multipart_part_writers where bucket_id in (select id from object_buckets where app_id = $1)`},
 		{"object_buckets", `delete from object_buckets where app_id = $1`},
 		{"invocations", `delete from invocations where app_id = $1`},
 		{"crons", `delete from crons where app_id = $1`},
@@ -4842,6 +4864,10 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 		{"snapshots", `delete from snapshots where deployment_id in (select id from deployments where app_id = $1)`},
 		{"builds", `delete from builds where deployment_id in (select id from deployments where app_id = $1)`},
 		{"deployments", `delete from deployments where app_id = $1`},
+		// Deleted managed PostgreSQL binding tombstones (only those remain, see
+		// above), as account deletion removes them; their app secrets went
+		// with app_secrets.
+		{"managed_postgres_bindings", `delete from managed_postgres_bindings where app_id = $1 and state = 'deleted'`},
 	}
 	for _, step := range steps {
 		if _, err := tx.Exec(ctx, step.sql, id); err != nil {
@@ -20490,10 +20516,14 @@ func (s *PgStore) ListCustomerEvents(ctx context.Context, filter CustomerEventFi
 //
 // Resolve the app first, then build a bounded candidate set from the event
 // identity keys (app, deployment, build, and the two instance aliases). Each
-// branch is driven by an expression index on the event payload and compares
-// relationship columns as UUIDs (rather than casting indexed UUID columns to
-// text). UNION removes the rare duplicate where an event carries more than
-// one app identity. The account/anonymous subject policy and user filters
+// branch starts from the app's own deployments, builds or instances and looks
+// events up through the expression index on that payload key with the
+// related id in canonical text form. Driving from events instead (casting
+// each payload value to uuid) scanned every event carrying the key: 220k
+// instance_id events on production-us, past the request deadline, so the
+// filter always answered "Briefly at capacity" (Hunt 12 H12-44). UNION
+// removes the rare duplicate where an event carries more than one app
+// identity. The account/anonymous subject policy and user filters
 // remain identical to ListCustomerEvents.
 func (s *PgStore) listCustomerEventsByApp(ctx context.Context, filter CustomerEventFilter) ([]Event, error) {
 	appID, err := uuid.Parse(strings.TrimSpace(filter.AppID))
@@ -20519,49 +20549,33 @@ func (s *PgStore) listCustomerEventsByApp(ctx context.Context, filter CustomerEv
 			   AND e.data->>'app_id' = $1::text
 			UNION
 			SELECT e.id, e.at, e.actor, e.kind, e.subject, e.data
-			  FROM events e
-			  JOIN deployments d
-			    ON d.id = CASE
-					 WHEN e.data->>'deployment_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-					 THEN (e.data->>'deployment_id')::uuid
-					 ELSE NULL
-				   END
-			  JOIN owned_app a ON a.id = d.app_id
-			 WHERE e.data ? 'deployment_id'
+			  FROM owned_app a
+			  JOIN deployments d ON d.app_id = a.id
+			  JOIN events e
+			    ON e.data ? 'deployment_id'
+			   AND e.data->>'deployment_id' = d.id::text
 			UNION
 			SELECT e.id, e.at, e.actor, e.kind, e.subject, e.data
-			  FROM events e
-			  JOIN builds b
-			    ON b.id = CASE
-					 WHEN e.data->>'build_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-					 THEN (e.data->>'build_id')::uuid
-					 ELSE NULL
-				   END
-			  JOIN deployments d ON d.id = b.deployment_id
-			  JOIN owned_app a ON a.id = d.app_id
-			 WHERE e.data ? 'build_id'
+			  FROM owned_app a
+			  JOIN deployments d ON d.app_id = a.id
+			  JOIN builds b ON b.deployment_id = d.id
+			  JOIN events e
+			    ON e.data ? 'build_id'
+			   AND e.data->>'build_id' = b.id::text
 			UNION
 			SELECT e.id, e.at, e.actor, e.kind, e.subject, e.data
-			  FROM events e
-			  JOIN instances i
-			    ON i.id = CASE
-					 WHEN e.data->>'instance_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-					 THEN (e.data->>'instance_id')::uuid
-					 ELSE NULL
-				   END
-			  JOIN owned_app a ON a.id = i.app_id
-			 WHERE e.data ? 'instance_id'
+			  FROM owned_app a
+			  JOIN instances i ON i.app_id = a.id
+			  JOIN events e
+			    ON e.data ? 'instance_id'
+			   AND e.data->>'instance_id' = i.id::text
 			UNION
 			SELECT e.id, e.at, e.actor, e.kind, e.subject, e.data
-			  FROM events e
-			  JOIN instances i
-			    ON i.id = CASE
-					 WHEN e.data->>'instance' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-					 THEN (e.data->>'instance')::uuid
-					 ELSE NULL
-				   END
-			  JOIN owned_app a ON a.id = i.app_id
-			 WHERE e.data ? 'instance'
+			  FROM owned_app a
+			  JOIN instances i ON i.app_id = a.id
+			  JOIN events e
+			    ON e.data ? 'instance'
+			   AND e.data->>'instance' = i.id::text
 		)
 		SELECT id, at, actor, kind, subject, data
 		  FROM candidates

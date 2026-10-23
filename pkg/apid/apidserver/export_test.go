@@ -64,6 +64,8 @@ import (
 
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
 
+var BuildDebugRequestCorrelation = buildDebugRequestCorrelation
+
 // Package-level types
 type AffectedPartition = affectedPartition
 type AnnotationForm = annotationForm
@@ -1584,6 +1586,9 @@ func (s *server) ConfigureLiveQueriesForTest(getenv func(string) string) error {
 func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error) {
 	return s.liveRoutes(ctx, nil, accountID, appID)
 }
+
+// GatewayControlURL exposes gatewayControlURL (ADR-20261022004500).
+func (s *server) GatewayControlURL(ctx context.Context) string { return s.gatewayControlURL(ctx) }
 
 // ApplyManifestPathRoutesForTest reconciles manifest routes on app
 // (ADR-20261021223225). rollback undoes the changes it recorded.

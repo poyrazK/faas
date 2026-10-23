@@ -2032,7 +2032,13 @@ func buildDebugRequestCorrelation(request api.DebugTelemetryRequestItem, timelin
 	edge.DurationMS = int64(request.LatencyMS)
 	edge.EvidenceCount = countCorrelationKinds(timeline, "request.received", "request.completed")
 	edge.Approximate = true
-	edge.Reason = "estimated from collapsed request telemetry; linked wake markers anchor impossible ordering"
+	// The anchoring note applies only to a request with a wake: a warm
+	// request printed it beside "request did not record a wake" (Hunt 12
+	// H12-24).
+	edge.Reason = "estimated from collapsed request telemetry"
+	if request.WakeID != "" {
+		edge.Reason += "; request markers are kept in order around the linked wake"
+	}
 
 	if request.WakeID == "" {
 		stages[1] = api.DebugRequestCorrelationStage{

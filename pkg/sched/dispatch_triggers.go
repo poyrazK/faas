@@ -147,6 +147,63 @@ type triggerDispatchResponse struct {
 }
 
 // triggerDispatchResult mirrors one batch record's outcome.
+// queueRetryGroup is a set of retried queue items that share a last_error.
+type queueRetryGroup struct {
+	reason string
+	items  []string
+}
+
+// queueRetryMaxLastErrorBytes bounds the gateway text a retried invocation
+// keeps as its last_error.
+const queueRetryMaxLastErrorBytes = 512
+
+// queueRetryGroups groups retried queue items by what failed. The queue
+// poller stores the Nack reason as the invocation's last_error, and every
+// retry said broker_error, even when the customer's handler threw
+// (Hunt 12 H12-34).
+func queueRetryGroups(items []string, statusByID map[string]triggerDispatchResult) []queueRetryGroup {
+	var groups []queueRetryGroup
+	index := map[string]int{}
+	for _, item := range items {
+		result, found := statusByID[item]
+		reason := queueRetryLastError(result, found)
+		i, ok := index[reason]
+		if !ok {
+			i = len(groups)
+			index[reason] = i
+			groups = append(groups, queueRetryGroup{reason: reason})
+		}
+		groups[i].items = append(groups[i].items, item)
+	}
+	return groups
+}
+
+// queueRetryLastError is the gateway's code and error for one retried item.
+// It never equals a terminal reason, which would dead-letter the item.
+func queueRetryLastError(result triggerDispatchResult, found bool) string {
+	if !found {
+		return "missing dispatch result"
+	}
+	code, msg := strings.TrimSpace(result.Code), strings.TrimSpace(result.Error)
+	out := code
+	switch {
+	case code != "" && msg != "":
+		out = code + ": " + msg
+	case msg != "":
+		out = msg
+	case code == "":
+		return triggerReasonBrokerError
+	}
+	switch out {
+	case triggerReasonPoisonRecord, triggerReasonMaxAttempts, triggerReasonPayloadTooLarge, triggerReasonRateLimited:
+		return triggerReasonBrokerError
+	}
+	if len(out) > queueRetryMaxLastErrorBytes {
+		out = strings.ToValidUTF8(out[:queueRetryMaxLastErrorBytes], "")
+	}
+	return out
+}
+
 type triggerDispatchResult struct {
 	ItemIdentifier string `json:"item_identifier"`
 	Status         string `json:"status"`
@@ -1037,9 +1094,15 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			)
 		}
 		if len(brokerNackItems) > 0 {
-			if err := poller.Nack(ctx, t, brokerNackItems, triggerReasonBrokerError); err != nil {
-				l.log.Warn("sched trigger tick: poller nack",
-					"trigger_id", t.ID.String(), "err", err)
+			nacks := []queueRetryGroup{{reason: triggerReasonBrokerError, items: brokerNackItems}}
+			if isQueuePoller {
+				nacks = queueRetryGroups(brokerNackItems, statusByID)
+			}
+			for _, nack := range nacks {
+				if err := poller.Nack(ctx, t, nack.items, nack.reason); err != nil {
+					l.log.Warn("sched trigger tick: poller nack",
+						"trigger_id", t.ID.String(), "err", err)
+				}
 			}
 		}
 	}

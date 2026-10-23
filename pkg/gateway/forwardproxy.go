@@ -685,6 +685,18 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		}
 		if chunk := frame.GetBodyChunk(); len(chunk) > 0 {
 			if _, werr := w.Write(chunk); werr != nil {
+				if wroteHeader && errors.Is(werr, errResponseCapExceeded) {
+					// The body passed the plan's response cap after the
+					// status went out. Returning would end the chunked body
+					// cleanly and the client would take the truncated
+					// payload for the whole one (Hunt 11 H11-36); abort so
+					// it sees a transport error instead.
+					cancel()
+					<-bodyErrCh
+					log.Warn("gateway: streamed response exceeded its body cap after commit; aborting",
+						"node", t.NodeID, "instance", t.InstanceID)
+					panic(http.ErrAbortHandler)
+				}
 				// Client disconnect mid-stream. The
 				// receiver stops reading frames. The
 				// body-copy goroutine is cancelled via

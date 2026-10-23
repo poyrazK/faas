@@ -1899,12 +1899,18 @@ func cmdTailContext(ctx context.Context, args []string) int {
 	fs := newFlagSet("tail", flag.ContinueOnError)
 	onlySlug := fs.String("app", "", "filter to a single app slug (optional)")
 	includeStateless := fs.Bool("include-stateless", false, "also print stateless.advisory frames (default: hide)")
-	if err := fs.Parse(args); err != nil {
+	// `tail <slug>` failed with a usage error although logs, ps and invoke
+	// take the slug positionally (Hunt 12 H12-45).
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale tail [--app <slug>] [--include-stateless]", "tail")
+	slugArg, rest := peelLeadingSlug(fs.Args())
+	if len(rest) != 0 {
+		PrintUsage(os.Stderr, "usage: gregale tail [<slug> | --app <slug>] [--include-stateless]", "tail")
 		return 1
+	}
+	if err := mergeLeadingSlug(onlySlug, slugArg); err != nil {
+		return printErr("Invalid tail arguments", err)
 	}
 	resolvedApp, resolveErr := resolveAppFlagOrContext(*onlySlug)
 	if resolveErr == nil {

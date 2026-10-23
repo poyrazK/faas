@@ -3498,6 +3498,23 @@ groups:
           description: "Cold-boot fallback rate has exceeded 30 % of all wakes for 10m. The §6.2 budget is approaching saturation on the wake-economics curve — sustained cold-boot at this rate is ~3x the wake-side I/O of a healthy fleet and stresses lv-fc (pkg/fcvm/lvfc.go). Catching this trend before snapshot_fleet_avg exceeds 160 MB gives ~24 h headroom. Drill-down: `rate(vmmd_wake_failure_total{reason=\"disk_full\"}[5m])` (storage pressure), `fcvm_snapshot_fleet_avg_bytes` (growth signal). Recover: see docs/runbooks/FaasColdBootRatioHigh.md."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasColdBootRatioHigh.md"
 
+      # Hunt 12 H12-1: vmmd's base scan gate (issue #299) refused every boot
+      # of the python313 runner base on prod after a node-side Grype scan
+      # found two fixable CRITICAL findings, and nothing alerted. Ten
+      # minutes of refusals rides out the short sidecar-missing window
+      # after a release roll (H11-33) but catches a base that stays refused.
+      - alert: FaasBaseScanRefusingBoots
+        expr: sum by (node, base, reason) (increase(vmmd_base_scan_refusals_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: page
+          component: vmmd
+          family: base_scan_gate
+        annotations:
+          summary: "vmmd refuses to boot {{ $labels.base }} ({{ $labels.reason }}) on {{ $labels.node }}"
+          description: "vmmd's base scan gate has refused boots on {{ $labels.base }} for ten minutes with reason {{ $labels.reason }}. No instance on that base can cold boot or restore, so every app on its runtime fails to deploy and to wake. critical means the node-side Grype scan found a fixable CRITICAL vulnerability: publish a patched base. sidecar_missing, incomplete and generation_* mean the scan record is absent or stale: rerun the base stage."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
+
       # ─────────────────────────────────────────────────────────────────
       # ADR-127 PR-B production debugger alerts. Mirrors the
       # FaasDomainDoctorStalled / FaasAuditRetentionLoopStalled

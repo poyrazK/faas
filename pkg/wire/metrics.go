@@ -1682,6 +1682,12 @@ type OpsMetrics struct {
 	// base-stage time (pkg/imaged/base_stage.go) and re-read on
 	// every cold-boot by vmmd.
 	imageScanVulns *prometheus.CounterVec
+	// baseScanRefusals counts boots vmmd's scan gate refused, by base
+	// key and reason (BaseScanRefusalReasons). imageScanVulns only moves
+	// when a boot passes the gate, so before this counter a runtime base
+	// whose scan found a fixable CRITICAL refused every boot on it with
+	// no metric and no alert (Hunt 12 H12-1).
+	baseScanRefusals *prometheus.CounterVec
 	// liveMigrationDecisions: Tier A5 / ADR-066 cross-node
 	// live-instance migration observability. Counter labelled by
 	// outcome ∈ {migrated, conflict, no_headroom, no_eligibility,
@@ -4118,6 +4124,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Per-image Grype finding counts, labelled by image (the OCI ref of the staged base ext4) and severity ∈ {CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN} (issue #299). The CRITICAL count is the vmmd admission gate's read side — a non-zero rate means vmmd refused to bring up an instance whose staged ext4 had a CRITICAL finding. The counter is incremented once per Grype scan at imaged base-stage time.",
 	}, []string{"image", "severity"})
 	commonCollectors = append(commonCollectors, imageScanVulns)
+	baseScanRefusals := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_base_scan_refusals_total",
+		Help: "Instance boots vmmd's base scan gate refused (issue #299), labelled by base (the storage key of the staged base ext4) and reason (critical, sidecar_missing, generation_mismatch, generation_unavailable, incomplete). Any increase means no instance on that base can start until the base is rebuilt or rescanned.",
+	}, []string{"base", "reason"})
+	commonCollectors = append(commonCollectors, baseScanRefusals)
 	// ADR-055: per-deploy grype scan metrics. Labelled by
 	// severity (the Grype closed set) — the same vocabulary
 	// imageScanVulns uses, so anyone familiar with the base-ext4
@@ -5663,6 +5674,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		passwdEntries:                        passwdEntries,
 		provenanceWrites:                     provenanceWrites,
 		imageScanVulns:                       imageScanVulns,
+		baseScanRefusals:                     baseScanRefusals,
 		deployScanDuration:                   deployScanDuration,
 		deployStageDuration:                  deployStageDuration,
 		apiHostingPhaseTotal:                 apiHostingPhaseTotal,
@@ -8467,6 +8479,19 @@ func (m *OpsMetrics) ObserveImageScanVuln(image, severity string, count int) {
 		return
 	}
 	m.imageScanVulns.WithLabelValues(image, severity).Add(float64(count))
+}
+
+// BaseScanRefusalReasons is the closed reason set of
+// <daemon>_base_scan_refusals_total.
+var BaseScanRefusalReasons = []string{"critical", "sidecar_missing", "generation_mismatch", "generation_unavailable", "incomplete"}
+
+// ObserveBaseScanRefusal counts one boot refused by vmmd's base scan gate.
+// Safe on a nil receiver.
+func (m *OpsMetrics) ObserveBaseScanRefusal(base, reason string) {
+	if m == nil {
+		return
+	}
+	m.baseScanRefusals.WithLabelValues(base, reason).Inc()
 }
 
 // ObserveDeployScanDuration records one per-deploy grype scan's

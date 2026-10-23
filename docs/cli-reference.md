@@ -3155,11 +3155,12 @@ Show an SLO&#39;s attainment, budget remaining and burn rate
 
 Delete one SLO
 
-`gregale slos rm --app <slug> <slo-id>`
+`gregale slos rm --app <slug> [--yes] <slo-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
+| `--yes` | accepted for consistency; rm does not prompt |  |
 
 
 ## synthetics
@@ -3228,11 +3229,12 @@ Resume a paused check
 
 Delete a check and its history
 
-`gregale synthetics rm --app <slug> <check-id>`
+`gregale synthetics rm --app <slug> [--yes] <check-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
+| `--yes` | accepted for consistency; rm does not prompt |  |
 
 
 ## alerts
@@ -3367,11 +3369,12 @@ gregale alerts update --app my-api --interactive
 
 Delete one alert rule
 
-`gregale alerts rm --app <slug> <alert-id>`
+`gregale alerts rm --app <slug> [--yes] <alert-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
+| `--yes` | accepted for consistency; rm does not prompt |  |
 
 ### alerts rotate-secret
 
@@ -5885,11 +5888,12 @@ Add a release gate
 
 Remove a release gate
 
-`gregale release-gates rm [--app <slug>] <name>`
+`gregale release-gates rm [--app <slug>] [--yes] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug (defaults to linked project app) |  |
+| `--yes` | accepted for consistency; rm does not prompt |  |
 
 
 ## canary
@@ -8351,7 +8355,7 @@ Wait for an exact or latest workflow run to succeed
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app for latest (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 | `--timeout <DURATION>` | maximum wait (default 5m; positive) |  |
 | `--poll-interval <DURATION>` | read interval (default 2s; 1s to 1h) |  |
 
@@ -8375,7 +8379,7 @@ Show details of a workflow run
 | `--check` | exit 0 only for a succeeded, non-cancelled run (explicit read only) |  |
 | `--interactive` | choose a run for inspection |  |
 | `--app <slug>` | app for latest or interactive selection (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 
 Examples:
 
@@ -8396,7 +8400,7 @@ Inspect queue reasons and preview recovery without changing the run
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug for latest (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 
 Examples:
 
@@ -8416,7 +8420,7 @@ List steps for an exact or latest workflow run
 |---|---|---|
 | `--failed-only` | show only failed steps with inspection commands |  |
 | `--app <SLUG>` | app slug for latest (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 
 Examples:
 
@@ -8435,7 +8439,7 @@ List a step&#39;s retry attempts and managed effect delivery
 |---|---|---|
 | `--failed-only` | show only failed attempts |  |
 | `--app <SLUG>` | app for latest (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 
 Examples:
 
@@ -8495,7 +8499,7 @@ List continuation history for an exact or latest workflow run
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app for latest (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 
 Examples:
 
@@ -8683,7 +8687,11 @@ Alias for get
 
 Cancel a delayed task
 
-`gregale delayed-task cancel <id>`
+`gregale delayed-task cancel [--app <SLUG>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | require the task to belong to this app |  |
 
 
 ## deployments
@@ -12475,13 +12483,13 @@ gregale issues assign --app my-api --interactive
 
 Resolve in a deployment
 
-`gregale issues resolve --app <SLUG> [--interactive] [--deployment <UUID>] [<issue-id>]`
+`gregale issues resolve --app <SLUG> [--interactive] [--deployment <UUID|vN>] [<issue-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
 | `--interactive` | choose an open issue and fixing release, then confirm resolution |  |
-| `--deployment <UUID>` | fixing deployment UUID (required unless interactive) |  |
+| `--deployment <UUID|vN>` | fixing deployment UUID or vN revision (required unless interactive) |  |
 
 Examples:
 
@@ -17826,7 +17834,7 @@ Watch invocations finish across your account in real time
 
 See also: [`logs`](#logs).
 
-`gregale tail [--app <slug>] [--include-stateless]`
+`gregale tail [<slug>] [--app <slug>] [--include-stateless]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -18293,10 +18301,11 @@ Cache HEAD responses for a route
 
 Purge cached responses for one app
 
-`gregale cache purge [--path <GLOB>] [--tag <TAG>] <slug>`
+`gregale cache purge [--app <SLUG>] [--path <GLOB>] [--tag <TAG>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app slug (defaults to linked project context) |  |
 | `--path <GLOB>` | optional normalized request path glob |  |
 | `--tag <TAG>` | optional cache tag |  |
 
@@ -18385,11 +18394,12 @@ Update one webhook
 
 Delete one webhook
 
-`gregale webhooks rm --app <slug> <id>`
+`gregale webhooks rm --app <slug> [--yes] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
+| `--yes` | accepted for consistency; rm does not prompt |  |
 
 ### webhooks deliveries
 
