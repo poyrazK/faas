@@ -352,6 +352,7 @@
       "mfa_required",
       "mfa_revision",
       "mfa_secret_encrypted",
+      "mfa_totp_last_step",
       "overage_cap_cents",
       "password_reset_revision",
       "past_due_at",
@@ -662,6 +663,50 @@
       "ends_at",
       "starts_at",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_signup_settings",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "customer_closing",
+      "customer_plan_changes",
+      "daily_limit",
+      "display_name",
+      "enabled",
+      "key_scopes",
+      "plan_ids",
+      "provider",
+      "return_url",
+      "terms_url",
+      "trial_days",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "api_consumer_signups",
+    "columns": [
+      "account_id",
+      "app_id",
+      "checkout_session_id",
+      "claim_hash",
+      "completed_at",
+      "consumer_id",
+      "created_at",
+      "email",
+      "expires_at",
+      "id",
+      "key_id",
+      "livemode",
+      "name",
+      "plan_id",
+      "provider",
+      "provider_customer_id",
+      "status"
     ],
     "kind": "operational"
   },
@@ -1093,6 +1138,60 @@
       "request_count",
       "route",
       "sample_message"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_fork_execs",
+    "columns": [
+      "account_id",
+      "app_id",
+      "command",
+      "command_shell",
+      "created_at",
+      "exit_code",
+      "failure_code",
+      "failure_message",
+      "finished_at",
+      "fork_id",
+      "id",
+      "max_output_bytes",
+      "output_truncated",
+      "requested_by",
+      "started_at",
+      "status",
+      "stderr",
+      "stdout",
+      "timeout_seconds",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_forks",
+    "columns": [
+      "access_token_hash",
+      "account_id",
+      "app_id",
+      "cancel_requested_at",
+      "crash_capture_id",
+      "created_at",
+      "deployment_id",
+      "expires_at",
+      "failure_code",
+      "failure_message",
+      "finished_at",
+      "id",
+      "instance_id",
+      "lease_expires_at",
+      "lease_owner",
+      "lease_token",
+      "requested_by",
+      "snapshot_id",
+      "started_at",
+      "status",
+      "ttl_seconds",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -3298,6 +3397,46 @@
       "id",
       "max_age_seconds",
       "name",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "crash_captures",
+    "columns": [
+      "account_id",
+      "app_id",
+      "captured_at",
+      "deployment_id",
+      "encrypted_at",
+      "expires_at",
+      "failure_code",
+      "failure_message",
+      "fc_version",
+      "finished_at",
+      "id",
+      "instance_id",
+      "mem_bytes",
+      "plaintext_state",
+      "reason",
+      "requested_at",
+      "route",
+      "sealed_key",
+      "status",
+      "status_code",
+      "storage_key",
+      "trigger",
+      "updated_at",
+      "vmstate_storage_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "crash_snapshot_settings",
+    "columns": [
+      "account_id",
+      "app_id",
+      "enabled",
       "updated_at"
     ],
     "kind": "configuration"
@@ -15645,6 +15784,7 @@
       "queue_name",
       "run_id",
       "schedule",
+      "scheduled_at",
       "target"
     ],
     "kind": "operational"
@@ -16421,6 +16561,7 @@
       "customer",
       "days_until_due",
       "due_at",
+      "handoff_reserved",
       "hosted_invoice_url",
       "id",
       "livemode",

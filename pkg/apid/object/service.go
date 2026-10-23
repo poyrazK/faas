@@ -48,6 +48,9 @@ type Host interface {
 	// SecretRecipient, HostHMACKey and MFAIdentities return empty values when
 	// the host secrets are not installed.
 	SecretRecipient() *age.X25519Recipient
+	// RuntimeSecretRecipient seals the app secrets a binding hands to the
+	// workload, which vmmd opens (ADR 20261022111812).
+	RuntimeSecretRecipient() *age.X25519Recipient
 	HostHMACKey() []byte
 	MFAIdentities() []*age.X25519Identity
 }

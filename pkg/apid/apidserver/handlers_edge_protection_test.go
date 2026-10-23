@@ -60,6 +60,9 @@ func TestAppEdgeProtectionSummarizesPerAppCounters(t *testing.T) {
 				{"metric":{"outcome":"bypassed"},"value":[0,"5"]},
 				{"metric":{"outcome":"invalid"},"value":[0,"2"]},
 				{"metric":{"outcome":"expired"},"value":[0,"1"]}]}}`
+		case strings.Contains(query, "gateway_edge_challenge_raised_total"):
+			return `{"status":"success","data":{"resultType":"vector","result":[
+				{"metric":{"app":"app-1"},"value":[0,"4"]}]}}`
 		case strings.Contains(query, "gateway_validate_failures_total"):
 			return `{"status":"success","data":{"resultType":"vector","result":[
 				{"metric":{"mode":"observe"},"value":[0,"4"]},
@@ -97,8 +100,9 @@ func TestAppEdgeProtectionSummarizesPerAppCounters(t *testing.T) {
 		len(out.WAF.TopRules) != 2 || out.WAF.TopRules[0] != (api.EdgeProtectionCount{Name: "942100", Count: 5}) {
 		t.Fatalf("waf breakdown = %+v, want largest first", out.WAF)
 	}
-	// adr: 831 — amendment 7: challenge outcomes, expired solutions counted as invalid.
-	if want := (api.EdgeProtectionChallenge{Issued: 12, Solved: 9, Rejected: 30, Passed: 40, Bypassed: 5, Invalid: 3}); out.Challenge != want {
+	// adr: 831 — amendment 7: challenge outcomes, expired solutions counted as invalid;
+	// amendment 8: pages served at a raised difficulty.
+	if want := (api.EdgeProtectionChallenge{Issued: 12, Solved: 9, Rejected: 30, Passed: 40, Bypassed: 5, Invalid: 3, Raised: 4}); out.Challenge != want {
 		t.Fatalf("challenge = %+v, want %+v", out.Challenge, want)
 	}
 	if rec := e.Do(t, "GET", "/v1/apps/shielded/edge-protection?range=30d", nil, nil); rec.Code != http.StatusBadRequest {

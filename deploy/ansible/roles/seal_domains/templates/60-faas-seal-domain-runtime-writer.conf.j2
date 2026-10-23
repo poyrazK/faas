@@ -1,0 +1,8 @@
+# Managed by the seal_domains role (ADR 20261022111812): apid seals runtime
+# secrets (app, project, release and binding secrets) to the runtime seal
+# domain once FAAS_SEAL_DOMAIN_RUNTIME_WRITES is domain. It holds the public
+# recipient only and cannot open what it seals.
+[Service]
+LoadCredential=faas_seal_domain_runtime_recipient:/etc/faas/secrets/domains/runtime.age.pub
+Environment=FAAS_SEAL_DOMAIN_RUNTIME_RECIPIENT_PATH=%d/faas_seal_domain_runtime_recipient
+Environment=FAAS_SEAL_DOMAIN_RUNTIME_WRITES={{ faas_seal_domain_runtime_writes }}

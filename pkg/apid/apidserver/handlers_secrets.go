@@ -440,7 +440,7 @@ func (s *server) sealSecretValue(noun, key, value string, maxBytes int) ([]byte,
 			"Gregale could not securely store this value.",
 			"Retry in a few seconds; if it still fails, contact support.", err)
 	}
-	recipient := hostSecretRecipient()
+	recipient := runtimeSecretRecipient()
 	if recipient == nil {
 		return nil, "", "", unavailable("store "+noun, nil)
 	}

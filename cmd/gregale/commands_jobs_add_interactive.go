@@ -154,7 +154,7 @@ func cmdJobsAddInteractive() int {
 	defer cancel()
 	job, err := client.CreateJob(writeCtx, req)
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create job", err)
 	}
 	if job.Name != req.Name || !jobRunIDPattern.MatchString(job.ID) {
 		return printErr("Invalid creation receipt", errors.New("server returned another Job; inspect Jobs before creating again"))

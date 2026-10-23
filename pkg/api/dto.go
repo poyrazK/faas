@@ -8670,7 +8670,16 @@ func ApplyEdgeRuleRewritePath(requestPath, from, to string) (rewrittenPath strin
 	if !strings.HasPrefix(requestPath, from) {
 		return requestPath, false
 	}
-	return NormalizeEdgeRuleRewriteTarget(to) + requestPath[len(from):], true
+	rest := requestPath[len(from):]
+	if target := NormalizeEdgeRuleRewriteTarget(to); target != "/" {
+		return target + rest, true
+	}
+	// Stripping a prefix to the root (ADR-20261021223225): /api/items with
+	// From=/api becomes /items, and /api itself becomes /, never //items.
+	if !strings.HasPrefix(rest, "/") {
+		rest = "/" + rest
+	}
+	return rest, true
 }
 
 // NormalizeEdgeRuleRewriteTarget canonicalizes a configured rewrite prefix to
@@ -10576,11 +10585,12 @@ type EdgeRuleEventsResponse struct {
 // EdgeRuleEventsQuery filters GET /v1/apps/{slug}/edge-rules/events. Since
 // is a duration such as 1h, 24h or 7d (default 24h).
 type EdgeRuleEventsQuery struct {
-	RuleID  string
-	Outcome string
-	Since   string
-	Limit   int
-	Cursor  string
+	RuleID    string
+	Outcome   string
+	RequestID string
+	Since     string
+	Limit     int
+	Cursor    string
 }
 
 // EdgeRuleListResponse (ADR-963) is one account-level list. Items is

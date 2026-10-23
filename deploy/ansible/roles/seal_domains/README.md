@@ -20,3 +20,21 @@ credentials, opened only by outboundd.
    bound to it, so pending promotion approvals for them must be renewed.
 4. The contract step (removing the fleet identity from outboundd) ships in a
    later release.
+
+The `runtime` domain covers app, project, release and binding secrets, which
+vmmd opens at wake:
+
+1. `gregalectl seal-domain init --domain runtime --dir <dir>`.
+2. Set `faas_seal_domain_runtime_identity_src` (compute and single-box hosts
+   stage it for vmmd and verify the runtime probe) and
+   `faas_seal_domain_runtime_recipient_src` (control-plane hosts give it to
+   apid), then converge. vmmd loads the identity at its next start and
+   reports `faas_seal_domain_loaded{domain="runtime"} 1`. apid keeps sealing
+   to the fleet recipient.
+3. Once every vmmd reports 1 and the previous release left the rollback
+   window, set `faas_seal_domain_runtime_readers_verified: true` and
+   `faas_seal_domain_runtime_writes: domain`, converge, and run
+   `gregalectl seal-domain migrate --domain runtime --readers-verified`.
+
+The outbound checklist, with checks and rollbacks for each step, is
+[docs/runbooks/seal-domains-rollout.md](../../../../docs/runbooks/seal-domains-rollout.md).

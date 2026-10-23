@@ -138,7 +138,7 @@ func cmdAccountDelete(args []string) int {
 	key := "cli-delete-" + hex.EncodeToString(nonce)
 	resp, err := client.DeleteAccount(context.Background(), key)
 	if err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete account", err)
 	}
 	PrintOK(osStdout, "Account scheduled for deletion")
 	fmt.Printf("  status:       %s\n", resp.Status)

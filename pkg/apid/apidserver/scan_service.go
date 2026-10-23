@@ -1754,6 +1754,9 @@ func (s *server) scanService(
 	if routeWarning := projectAsyncRoutePlanWarning(resolvedManifest.AsyncRoutes, resolvedManifest.AsyncRoutesPresent, req.NoTriggers); routeWarning != "" {
 		warnings = append(warnings, routeWarning)
 	}
+	if routeWarning := projectPathRoutePlanWarning(resolvedManifest.Routes, resolvedManifest.RoutesPresent, req.NoTriggers); routeWarning != "" {
+		warnings = append(warnings, routeWarning)
+	}
 	if req.NoTriggers {
 		if len(crons) > 0 {
 			warnings = append(warnings, "triggers skipped by request (--no-triggers); existing trigger state left unchanged")
@@ -1805,6 +1808,11 @@ func (s *server) scanService(
 			return nil, state.Project{}, nil, nil, nil, nil, problem
 		}
 		if problem := projectAsyncRoutesPlanProblem(acct.Plan, resolvedManifest.AsyncRoutes, filteredW, projectApps); problem != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, problem
+		}
+	}
+	if resolvedManifest.RoutesPresent && !req.NoTriggers {
+		if problem := validateProjectManifestPathRoutes(resolvedManifest.Routes, result.Workloads, filteredW, projectApps, req.Exclude); problem != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}
@@ -2405,7 +2413,7 @@ func (s *server) scanService(
 			removedSlugs = append(removedSlugs, slug)
 		}
 	}
-	needsProjectApps := len(req.RetryTargets) > 0 || (!req.NoTriggers && reconcileProductionEnvironment(req.Environment)) || len(req.Secrets) > 0 || len(resolvedManifest.PostgresBindings) > 0 || (resolvedManifest.AsyncRoutesPresent && !req.NoTriggers)
+	needsProjectApps := len(req.RetryTargets) > 0 || (!req.NoTriggers && reconcileProductionEnvironment(req.Environment)) || len(req.Secrets) > 0 || len(resolvedManifest.PostgresBindings) > 0 || (resolvedManifest.AsyncRoutesPresent && !req.NoTriggers) || (resolvedManifest.RoutesPresent && !req.NoTriggers)
 	var currentProjectApps []state.App
 	if needsProjectApps {
 		// Reconcile has already committed the project/app rows. A binding
@@ -2430,6 +2438,12 @@ func (s *server) scanService(
 	if resolvedManifest.AsyncRoutesPresent && !req.NoTriggers {
 		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
 		if prob := s.applyProjectManifestAsyncRoutes(r.Context(), acct, resolvedManifest.AsyncRoutes, true, false, selectedApps); prob != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+	}
+	if resolvedManifest.RoutesPresent && !req.NoTriggers {
+		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
+		if prob := s.applyProjectManifestPathRoutes(r.Context(), acct, resolvedManifest.Routes, true, false, selectedApps); prob != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
 	}

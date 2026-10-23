@@ -99,7 +99,7 @@ func (s *server) createPlatformTenantWebhook(w http.ResponseWriter, r *http.Requ
 	}
 	// While API monetization is off its statement event is not offered, so
 	// the default subscription is refused too and a filter is required.
-	if !state.ValidPlatformTenantWebhookFilter(eventFilter) || s.hiddenTenantWebhookEvent(eventFilter) {
+	if !state.ValidPlatformTenantWebhookFilter(eventFilter) || s.hiddenTenantWebhookEvent(acct.ID, eventFilter) {
 		api.WriteProblem(w, api.ErrAppWebhookInvalid("event_filter must contain one or more supported platform tenant events without duplicates"))
 		return
 	}

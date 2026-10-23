@@ -603,6 +603,9 @@ func (o *WorkflowOrchestrator) advanceWorkflowRunOnce(ctx context.Context, runID
 	if err := json.Unmarshal(run.DefinitionSnapshot, &spec); err != nil {
 		return false, err
 	}
+	if spec.Code != nil {
+		return o.advanceCodeWorkflowRunOnce(ctx, run, spec)
+	}
 
 	steps, err := o.store.GetWorkflowSteps(ctx, runID)
 	if err != nil {

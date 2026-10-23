@@ -7069,6 +7069,316 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/consumer-billing/{slug}/plans:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose plans the consumer reads.
+        schema: { type: string }
+    get:
+      tags: [consumers]
+      operationId: listConsumerBillingPlans
+      summary: List the plans you can switch to with your consumer key (ADR-20261021183000).
+      security:
+        - consumerKey: []
+      responses:
+        '200':
+          description: Your current plan, the offered plans and what you may do on your own.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingPlansResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The consumer key lacks the billing scope to list plans.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Plan reads for this key are rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-billing/{slug}/plan:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose plan the consumer changes.
+        schema: { type: string }
+    put:
+      tags: [consumers]
+      operationId: changeConsumerBillingPlan
+      summary: Switch to another offered plan from the next minute with your consumer key.
+      description: |
+        Only when the app owner lets customers change plans. The app owner
+        gets a consumer.plan_changed webhook.
+      security:
+        - consumerKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangeConsumerBillingPlanRequest' }
+      responses:
+        '200':
+          description: The scheduled plan change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingPlanChangeResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The consumer key lacks the billing scope to change plans.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Plan changes are not offered (`consumer_self_service_unavailable`), you are already on the plan, or a change is pending.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: The plan is not one of the offered plans.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Plan changes for this key are rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-billing/{slug}/portal:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose billing portal the consumer opens.
+        schema: { type: string }
+    post:
+      tags: [consumers]
+      operationId: createConsumerBillingPortalSession
+      summary: Open Stripe's customer portal to update your card and see invoices.
+      description: |
+        For consumers billed through the app owner's Stripe (external_ref
+        cus_...). The URL is short-lived; return_url defaults to the app's
+        sign-up return URL.
+      security:
+        - consumerKey: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateConsumerBillingPortalRequest' }
+      responses:
+        '200':
+          description: The portal URL to send the customer to.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingPortalResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The consumer key lacks the billing scope to open the portal.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: The account is not billed through Stripe, or the owner's Stripe portal is not set up (`consumer_self_service_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: return_url is not an https URL.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Portal sessions for this key are rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not be reached for the portal (`billing_provider_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-billing/{slug}/close:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose account the consumer closes.
+        schema: { type: string }
+    post:
+      tags: [consumers]
+      operationId: closeConsumerBillingAccount
+      summary: Close your account with your consumer key.
+      description: |
+        Only when the app owner lets customers close their account. Your
+        keys stop working at once; usage until then is still billed. The app
+        owner gets a consumer.closed webhook.
+      security:
+        - consumerKey: []
+      responses:
+        '200':
+          description: The closed account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingCloseResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The consumer key lacks the billing scope to close the account.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Closing is not offered (`consumer_self_service_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Account closing for this key is rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-signup/{slug}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app customers sign up for.
+        schema: { type: string }
+    get:
+      tags: [consumers]
+      operationId: getConsumerSignupForm
+      summary: Read an app's public sign-up form (ADR-20261021143000).
+      description: For an app's prospective customers; needs no credential.
+      security: []
+      responses:
+        '200':
+          description: The app's display name, offered plans and their current prices.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerSignupFormResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: Too many requests from this address (`consumer_signup_rate_limited`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      tags: [consumers]
+      operationId: createConsumerSignup
+      summary: Start a sign-up and get a Stripe Checkout URL to save a card.
+      description: |
+        Needs no credential. Creates a Stripe customer in the app owner's
+        Stripe account and a setup-mode Checkout Session; nothing is charged.
+        The claim token is returned only here and completes the sign-up
+        within 24 hours.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateConsumerSignupRequest' }
+      responses:
+        '201':
+          description: The sign-up, its Checkout URL and claim token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreateConsumerSignupResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: An invalid email or name, or a plan that is not offered.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Too many sign-ups from this address (`consumer_signup_rate_limited`) or for the app today (`consumer_signup_daily_limit`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not be reached (`billing_provider_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: The app's billing setup cannot take sign-ups (`consumer_signup_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-signup/{slug}/signups/{signup}/complete:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app the sign-up is for.
+        schema: { type: string }
+      - name: signup
+        in: path
+        required: true
+        description: The sign-up to complete.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [consumers]
+      operationId: completeConsumerSignup
+      summary: Complete a sign-up once the card is saved and get a consumer key.
+      description: |
+        Needs no credential: the claim token proves the sign-up. Each call
+        returns a new key and revokes the one the sign-up issued before.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompleteConsumerSignupRequest' }
+      responses:
+        '200':
+          description: The customer's consumer and its new key, shown only here.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompleteConsumerSignupResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403':
+          description: The app owner revoked this customer.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The card is not saved yet (`consumer_signup_checkout_incomplete`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '410':
+          description: The sign-up is more than 24 hours old (`consumer_signup_expired`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Too many completions from this address (`consumer_signup_rate_limited`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not be reached to confirm the card (`billing_provider_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: The app's billing setup cannot complete sign-ups (`consumer_signup_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/preflight:
     get:
       tags: [status]
@@ -11176,6 +11486,360 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/crash-snapshots/settings:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getCrashSnapshotSettings
+      summary: Read whether 5xx crash snapshots are on for an app.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The app's crash snapshot setting.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashSnapshotSettingsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    put:
+      tags: [apps]
+      operationId: putCrashSnapshotSettings
+      summary: Turn 5xx crash snapshots on or off for an app.
+      description: |
+        When on, the first 5xx answered by one of the app's instances
+        captures that instance's memory (ADR-733), at most one in flight and
+        none within 10 minutes of the last. Pro and Scale only. Answers 501
+        `crash_snapshots_not_enabled` until the operator enables the feature.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CrashSnapshotSettingsRequest' }
+      responses:
+        '200':
+          description: The saved setting.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashSnapshotSettingsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/crash-snapshots:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listCrashSnapshots
+      summary: List an app's crash snapshots, newest first.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The app's crash snapshots.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashCaptureListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [apps]
+      operationId: createCrashSnapshot
+      summary: Capture the app's newest running instance now.
+      description: |
+        Requests a crash snapshot of the app's newest running instance,
+        whether or not 5xx captures are on. Refused with 409
+        `crash_capture_refused` while another capture is in flight, within
+        10 minutes of the last, or when no instance is running.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Capture requested.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashCaptureResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/crash-snapshots/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/CrashCaptureID'
+    get:
+      tags: [apps]
+      operationId: getCrashSnapshot
+      summary: Read one crash snapshot.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The crash snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashCaptureResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/crash-snapshots/{id}/fork:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/CrashCaptureID'
+    post:
+      tags: [apps]
+      operationId: forkCrashSnapshot
+      summary: Open a ready crash snapshot as a production fork.
+      description: |
+        Creates an ADR-732 fork restored from this capture instead of the
+        deployment's newest snapshot. Same rules as `POST /v1/apps/{slug}/forks`:
+        the key needs `deploy:write` and `secrets:read`, the response carries
+        the one-time `access_token`, and the fork counts against the fork
+        limits. 409 `crash_capture_not_ready` unless the capture is ready and
+        unexpired.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppForkRequest' }
+      responses:
+        '202':
+          description: Fork of the crash snapshot admitted and queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/forks:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listAppForks
+      summary: List production forks for an app.
+      description: |
+        Returns the app's production forks, newest first (ADR-732). Answers
+        501 `app_forks_not_enabled` until the operator enables forks.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+          description: Maximum number of forks to return.
+      responses:
+        '200':
+          description: The app's forks, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [apps]
+      operationId: createAppFork
+      summary: Fork the app's live deployment into a quarantined debug copy.
+      description: |
+        Queues a production fork (ADR-732): a restore of the app's newest
+        capture of its live deployment into an instance that never serves
+        traffic, cannot reach the network, and is destroyed at its TTL.
+        The fork holds a copy of production memory, secrets included, so
+        the key needs `secrets:read` as well as `deploy:write`, and every
+        create is audited. Pro and Scale only; one active fork per app and
+        two per account. Answers 501 `app_forks_not_enabled` until the
+        operator enables forks.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppForkRequest' }
+      responses:
+        '202':
+          description: Fork admitted and queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: An active-fork limit is full (`app_fork_limit`, with `limit` and `observed`), or the app has no live deployment (`app_fork_unavailable`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/forks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppForkID'
+    get:
+      tags: [apps]
+      operationId: getAppFork
+      summary: Read one production fork.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The fork.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    delete:
+      tags: [apps]
+      operationId: cancelAppFork
+      summary: Cancel a production fork.
+      description: |
+        Cancels a queued fork immediately. For a restoring or running fork
+        it records the request; the scheduler destroys the instance. A fork
+        that has already ended is returned unchanged.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Cancellation recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/forks/{id}/execs:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppForkID'
+    get:
+      tags: [apps]
+      operationId: listAppForkExecs
+      summary: List the commands run in a production fork.
+      description: Newest first. Output can contain production data, so this needs `secrets:read` as well as `deploy:write`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of commands to return (default 100).
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        '200':
+          description: The fork's commands.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkExecListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [apps]
+      operationId: createAppForkExec
+      summary: Run a command inside a running production fork.
+      description: |
+        Queues one command to run inside the running fork (ADR-732), in the
+        app's working directory and user, with its manifest environment and
+        no secrets. The fork cannot reach the network. Poll the returned
+        command for its exit code and the tail of its output. A command never
+        runs in a serving instance. Needs `secrets:read` as well as
+        `deploy:write`; every request is audited (without its arguments).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppForkExecRequest' }
+      responses:
+        '202':
+          description: Command queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkExecResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The fork is not running, or already has 4 commands pending (`app_fork_exec_refused`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/forks/{id}/execs/{exec_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppForkID'
+      - name: exec_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Canonical UUID for a fork command.
+    get:
+      tags: [apps]
+      operationId: getAppForkExec
+      summary: Read one command run in a production fork, with its result.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The command.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkExecResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
 
   /v1/apps/{slug}/tasks:
     parameters:
@@ -18714,6 +19378,81 @@ paths:
       summary: Remove the app's overdue rule; holds lift at the next check.
       responses:
         '204': { description: The overdue rule was removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumer-signup:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: getConsumerSignup
+      summary: Read the app's self-service sign-up settings (ADR-20261021143000).
+      responses:
+        '200':
+          description: The app's sign-up settings and hosted page URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerSignupSettingsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [consumers]
+      operationId: putConsumerSignup
+      summary: Let the app's customers sign up themselves and save a card with Stripe Checkout.
+      description: |
+        Customers sign up on the hosted page (page_url) or through the public
+        sign-up API: they pick one of plan_ids (none offers the default
+        plan), save a card in the account's own Stripe account, and get a
+        consumer key with key_scopes. Needs the account's Stripe billing
+        connection. A restricted Stripe key needs write access to Customers
+        and Checkout Sessions and read access to SetupIntents.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutConsumerSignupRequest' }
+      responses:
+        '200':
+          description: The stored settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerSignupSettingsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Stripe is not connected.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: A provider other than Stripe, an unknown plan, an invalid scope or URL, or a value out of range.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [consumers]
+      operationId: deleteConsumerSignup
+      summary: Turn sign-up off; pending sign-ups can no longer complete.
+      responses:
+        '204': { description: Sign-up was turned off. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumer-signups:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: listConsumerSignups
+      summary: List the app's latest 100 sign-ups, newest first.
+      responses:
+        '200':
+          description: The app's sign-ups.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerSignupListResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -38643,6 +39382,11 @@ paths:
           required: false
           description: Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes.
           schema: { type: string, enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed] }
+        - name: request_id
+          in: query
+          required: false
+          description: Only events for this request ID, such as the reference a visitor without JavaScript sees on the challenge page (ADR-831 amendment 8).
+          schema: { type: string, maxLength: 128 }
         - name: since
           in: query
           required: false
@@ -54581,8 +55325,12 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
           description: |
-            `403 Forbidden` — the org is at the member cap. Stable
-            code `org_member_cap_exceeded`.
+            `403 Forbidden` — the org is at the member cap (stable code
+            `org_member_cap_exceeded`), the caller has no fresh step-up
+            (`step_up_required`), or the accepting account has not
+            verified its email address (`email_verification_required`).
+            The invitation's email match binds acceptance to the invitee
+            only for a verified address.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '409':
           description: |
@@ -64854,6 +65602,18 @@ components:
       required: true
       schema: { type: string, format: uuid }
       description: Canonical UUID for a deployment-attached app task.
+    CrashCaptureID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Canonical UUID for a crash snapshot.
+    AppForkID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Canonical UUID for a production fork.
     ManagedPostgresID:
       name: id
       in: path
@@ -86507,6 +87267,7 @@ components:
             passed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a pass from an earlier solve." }
             bypassed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a verified API key, consumer key or JWT." }
             invalid: { type: integer, format: int64, minimum: 0, description: "Solutions refused: wrong work or an expired token." }
+            raised: { type: integer, format: int64, minimum: 0, description: "The part of issued served at a difficulty raised under attack (ADR-831 amendment 8)." }
 
     PreAuthEnforcementSuggestion:
       description: |
@@ -93804,6 +94565,24 @@ components:
         overlap: { type: string, enum: [skip, allow], description: Omitted uses the published overlap behavior or skip. }
         enabled: { type: boolean, default: true, description: Whether this tenant's schedule is active. }
 
+    WorkflowCodeSpec:
+      description: "A code-first workflow's entry handler (ADR-20261021204307). Exactly one of run or path. Gregale POSTs the run's journal to it at every durable boundary; the SDKs (@gregale/sdk-node/workflows, faas_sdk.workflows) answer with the operations the code reaches next. A code workflow has an empty steps list."
+      type: object
+      additionalProperties: false
+      properties:
+        run:
+          type: string
+          description: "Handler name; the entry path is /<run>."
+        path:
+          type: string
+          description: "Explicit entry path starting with '/'."
+        timeout:
+          type: string
+          description: "Per-call timeout as a duration string; at most the plan's step timeout. Default 30s."
+          example: "60s"
+        retry:
+          $ref: '#/components/schemas/WorkflowRetrySpec'
+
     WorkflowRetrySpec:
       description: "Retry policy for one workflow step."
       type: object
@@ -94112,6 +94891,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WorkflowStepSpec'
+        code:
+          $ref: '#/components/schemas/WorkflowCodeSpec'
 
     PreviewEventRequest:
       description: Event fields to evaluate without persisting or delivering the event.
@@ -98600,7 +99381,7 @@ components:
       properties:
         code:
           type: string
-          enum: [run_not_failed, resume_limit_reached, cancelled, invalid_definition, incomplete_step_state, active_step, handler_executed, failed_control_step, failure_before_dispatch, unsafe_mutation, no_failed_actions, active_attempt, account_inactive, plan_not_allowed, app_deleted, maintenance, tenant_required, tenant_unavailable, deployment_unavailable, pinned_deployment_unavailable, integration_unavailable, active_run_quota, runtime_disabled]
+          enum: [run_not_failed, resume_limit_reached, cancelled, invalid_definition, code_workflow, incomplete_step_state, active_step, handler_executed, failed_control_step, failure_before_dispatch, unsafe_mutation, no_failed_actions, active_attempt, account_inactive, plan_not_allowed, app_deleted, maintenance, tenant_required, tenant_unavailable, deployment_unavailable, pinned_deployment_unavailable, integration_unavailable, active_run_quota, runtime_disabled]
         message: { type: string, description: Fixed explanation without private values. }
         step_name: { type: string, description: Affected step when the planner blocker is step-specific. }
 
@@ -106084,6 +106865,11 @@ components:
           maximum: 86400
           default: 3600
           description: How long a solved challenge lets the browser through.
+        max_difficulty:
+          type: integer
+          minimum: 10
+          maximum: 22
+          description: When above difficulty, the gateway raises the difficulty up to this while the rule serves far more challenge pages than usual, two bits (4x the work) per minute, and lowers it again as the load eases (ADR-831 amendment 8). Must be at least difficulty. Omitted or equal to difficulty keeps the difficulty fixed.
     EdgeRuleAsyncAction:
       description: |
         Marks the matched route for durable asynchronous execution (ADR-215).
@@ -111667,6 +112453,183 @@ components:
         code: { type: string, maxLength: 64 }
         message: { type: string, maxLength: 4096 }
 
+    CrashSnapshotSettingsRequest:
+      description: Body of `PUT /v1/apps/{slug}/crash-snapshots/settings`.
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+    CrashSnapshotSettingsResponse:
+      description: Whether 5xx crash snapshots are on for the app.
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        updated_at: { type: string, format: date-time }
+    CrashCaptureResponse:
+      description: |
+        One crash snapshot (ADR-733). `status` moves from `requested` through
+        `capturing` to `ready`, then `expired`, or ends as `failed`. Storage
+        locations are never returned; open a ready capture as a fork.
+      type: object
+      required: [id, app_id, deployment_id, trigger, status, requested_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        trigger:
+          type: string
+          enum: [http_5xx, manual, sdk, live_fork]
+          description: |
+            `http_5xx` after a 5xx response, `manual` from this API, `sdk` from the
+            app itself through the guest metadata endpoint
+            (`POST http://169.254.169.254/v1/crash-snapshots:capture`), `live_fork`
+            for the capture a live fork took (kept only as long as a fork can live).
+        status_code: { type: integer, minimum: 500, maximum: 599 }
+        route: { type: string, description: Request path of the failing request (http_5xx, or sdk when the app passes one). }
+        reason: { type: string, maxLength: 256, description: The app's label for an sdk capture. }
+        status: { type: string, enum: [requested, capturing, ready, failed, expired] }
+        mem_bytes: { type: integer, format: int64 }
+        failure:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+        requested_at: { type: string, format: date-time }
+        captured_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time, description: When the capture is deleted. }
+    CrashCaptureListResponse:
+      description: An app's crash snapshots, newest first.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CrashCaptureResponse' }
+    CreateAppForkExecRequest:
+      description: Body of `POST /v1/apps/{slug}/forks/{id}/execs`.
+      type: object
+      additionalProperties: false
+      required: [command]
+      properties:
+        command:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { type: string, maxLength: 4096 }
+          description: The argv to run. With `shell`, exactly one string run by the app's shell.
+        shell: { type: boolean, description: Run the single command string through the app's shell. }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 600, description: "Default 60." }
+        max_output_bytes: { type: integer, minimum: 1024, maximum: 1048576, description: "Combined stdout/stderr kept (the tail). Default 65536." }
+    AppForkExecResponse:
+      description: One command run inside a production fork (ADR-732) and, once finished, its result.
+      type: object
+      required: [id, fork_id, command, timeout_seconds, max_output_bytes, status, output_truncated, stdout, stderr, requested_by, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        fork_id: { type: string, format: uuid }
+        command: { type: array, items: { type: string } }
+        shell: { type: boolean }
+        timeout_seconds: { type: integer }
+        max_output_bytes: { type: integer }
+        status: { type: string, enum: [queued, running, succeeded, failed, timed_out] }
+        exit_code: { type: integer }
+        output_truncated: { type: boolean }
+        stdout: { type: string, description: Tail of standard output. }
+        stderr: { type: string, description: Tail of standard error. }
+        failure:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+        requested_by: { type: string }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+    AppForkExecListResponse:
+      description: A fork's commands, newest first.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AppForkExecResponse' }
+    CreateAppForkRequest:
+      description: Body of `POST /v1/apps/{slug}/forks`. Every field is optional.
+      type: object
+      additionalProperties: false
+      properties:
+        ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 14400
+          description: "How long the fork lives. Default 3600 (1 h), maximum 14400 (4 h)."
+        live:
+          type: boolean
+          description: |
+            Capture the app's newest running instance now and fork that
+            capture, instead of the deployment's last snapshot. The capture
+            pauses the instance briefly. Refused (409 `live_fork_refused`)
+            when no instance is running, a capture is in flight, or one was
+            taken in the last minute.
+    AppForkResponse:
+      description: |
+        One production fork (ADR-732). `status` moves from `queued` through
+        `restoring` to `running`, and ends as `expired`, `cancelled` or
+        `failed`. Scheduler leases and instance identifiers are never
+        returned.
+      type: object
+      required: [id, app_id, deployment_id, status, ttl_seconds, expires_at, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        access_token:
+          type: string
+          description: |
+            Returned only by `POST /v1/apps/{slug}/forks`, never again. To
+            reach the running fork, send a request to the app's hostname with
+            `X-Gregale-Fork: <id>` and `X-Gregale-Fork-Token: <access_token>`.
+            The gateway routes it to the fork, strips both headers, and never
+            wakes the app for it.
+        deployment_id:
+          type: string
+          format: uuid
+          description: The live deployment pinned when the fork was requested.
+        crash_capture_id:
+          type: string
+          format: uuid
+          description: The capture the fork restores, for a crash snapshot fork or a live fork.
+        status:
+          type: string
+          enum: [queued, restoring, running, expired, cancelled, failed]
+        ttl_seconds: { type: integer }
+        expires_at:
+          type: string
+          format: date-time
+          description: When the fork is destroyed (created_at + ttl_seconds).
+        cancel_requested_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        failure:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AppForkListResponse:
+      description: An app's production forks, newest first.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AppForkResponse' }
+
     AppTaskResponse:
       description: |
         App-scoped receipt for a deployment-attached command. Scheduler lease
@@ -114894,7 +115857,7 @@ components:
     ConsumerBillingStatement:
       description: "One finalized statement as its consumer sees it."
       type: object
-      required: [id, period_start, period_end, revision, currency, billable_units, amount_millicents]
+      required: [id, period_start, period_end, revision, currency, billable_units, amount_millicents, credit_applied_millicents, amount_due_millicents]
       properties:
         id: { type: string, format: uuid }
         period_start: { type: string, format: date-time }
@@ -114903,6 +115866,8 @@ components:
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         billable_units: { type: integer, format: int64, minimum: 0 }
         amount_millicents: { type: integer, format: int64 }
+        credit_applied_millicents: { type: integer, format: int64, minimum: 0, description: "Prepaid credit drawn when the statement was finalized (ADR-20261020211500)." }
+        amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "amount_millicents less credit_applied_millicents: what is left to pay." }
         finalized_at: { type: string, format: date-time }
         invoice: { $ref: '#/components/schemas/ConsumerBillingInvoice' }
 
@@ -114914,6 +115879,252 @@ components:
         statements:
           type: array
           items: { $ref: '#/components/schemas/ConsumerBillingStatement' }
+
+    PutConsumerSignupRequest:
+      description: "Self-service sign-up settings (ADR-20261021143000). Omitted fields take their defaults."
+      type: object
+      required: [display_name]
+      properties:
+        enabled: { type: boolean, description: "Whether customers can start sign-ups (default true)." }
+        provider: { type: string, enum: [stripe], description: "Where cards are saved (default stripe)." }
+        plan_ids:
+          type: array
+          maxItems: 20
+          description: "Consumer plans customers choose from; none offers the app's default plan."
+          items: { type: string, format: uuid }
+        key_scopes:
+          type: array
+          minItems: 1
+          maxItems: 4
+          description: "Scopes of the key a customer gets (default write and billing)."
+          items: { type: string, enum: [read, write, admin, billing] }
+        display_name: { type: string, minLength: 1, maxLength: 80 }
+        terms_url: { type: string, format: uri, maxLength: 2048, description: "https URL customers accept before signing up." }
+        return_url: { type: string, format: uri, maxLength: 2048, description: "https URL shown after the key; it never carries the key." }
+        trial_days: { type: integer, minimum: 0, maximum: 365 }
+        daily_limit: { type: integer, minimum: 1, maximum: 1000, description: "Sign-ups per UTC day (default 100)." }
+        customer_plan_changes: { type: boolean, description: "Let customers switch between plan_ids with their own key (ADR-20261021183000)." }
+        customer_closing: { type: boolean, description: "Let customers close their account with their own key (ADR-20261021183000)." }
+
+    ConsumerSignupSettingsResponse:
+      description: "An app's sign-up settings."
+      type: object
+      required: [app, enabled, provider, plan_ids, key_scopes, display_name, daily_limit, page_url, customer_plan_changes, customer_closing, created_at, updated_at]
+      properties:
+        app: { type: string }
+        enabled: { type: boolean }
+        provider: { type: string, enum: [stripe] }
+        plan_ids:
+          type: array
+          items: { type: string, format: uuid }
+        key_scopes:
+          type: array
+          items: { type: string }
+        display_name: { type: string }
+        terms_url: { type: string }
+        return_url: { type: string }
+        trial_days: { type: integer }
+        daily_limit: { type: integer }
+        page_url: { type: string, format: uri, description: "The hosted sign-up page to link customers to." }
+        customer_plan_changes: { type: boolean }
+        customer_closing: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ConsumerSignupResponse:
+      description: "One sign-up as the app owner sees it."
+      type: object
+      required: [id, email, name, status, livemode, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        name: { type: string }
+        plan_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, completed] }
+        livemode: { type: boolean }
+        provider_customer_id: { type: string, description: "The Stripe customer, also the consumer's external_ref." }
+        consumer_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+
+    ConsumerSignupListResponse:
+      description: "An app's latest sign-ups, newest first."
+      type: object
+      required: [signups]
+      properties:
+        signups:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerSignupResponse' }
+
+    ConsumerSignupPrice:
+      description: "One unit's current price on a plan."
+      type: object
+      required: [unit, currency, price_millicents_per_unit]
+      properties:
+        unit: { type: string }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        price_millicents_per_unit: { type: integer, format: int64 }
+        included_units_per_month: { type: integer, format: int64 }
+        tiered: { type: boolean }
+        base_fee_millicents_per_month: { type: integer, format: int64 }
+        minimum_millicents_per_month: { type: integer, format: int64 }
+
+    ConsumerSignupPlan:
+      description: "A plan customers can sign up for; no id is the app's default plan."
+      type: object
+      required: [name, prices]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        max_requests_per_minute: { type: integer, format: int64 }
+        max_units_per_month: { type: integer, format: int64 }
+        prices:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerSignupPrice' }
+
+    ConsumerSignupFormResponse:
+      description: "What the sign-up page shows."
+      type: object
+      required: [app, display_name, livemode, plans]
+      properties:
+        app: { type: string }
+        display_name: { type: string }
+        terms_url: { type: string }
+        livemode: { type: boolean, description: "False while the owner's Stripe key is a test key." }
+        trial_days: { type: integer }
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerSignupPlan' }
+
+    CreateConsumerSignupRequest:
+      description: "A customer's sign-up."
+      type: object
+      required: [email, name]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        name: { type: string, minLength: 1, maxLength: 128 }
+        plan_id: { type: string, format: uuid, description: "One of the offered plans; may be omitted when one plan is offered." }
+
+    CreateConsumerSignupResponse:
+      description: "A started sign-up. Send the customer to checkout_url; keep claim_token to complete it."
+      type: object
+      required: [id, checkout_url, claim_token, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        checkout_url: { type: string, format: uri }
+        claim_token: { type: string }
+        expires_at: { type: string, format: date-time }
+
+    CompleteConsumerSignupRequest:
+      description: "Completes a sign-up."
+      type: object
+      required: [claim_token]
+      properties:
+        claim_token: { type: string }
+
+    CompleteConsumerSignupResponse:
+      description: "The customer's consumer and new key, shown only here."
+      type: object
+      required: [consumer_id, key, key_prefix, scopes]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        key: { type: string }
+        key_prefix: { type: string }
+        scopes:
+          type: array
+          items: { type: string }
+        plan_id: { type: string, format: uuid }
+        trial_ends_at: { type: string, format: date-time }
+        return_url: { type: string }
+
+    ConsumerBillingPlansResponse:
+      description: "The plans a consumer can switch between (ADR-20261021183000)."
+      type: object
+      required: [can_change, can_close, plans]
+      properties:
+        current_plan_id: { type: string, format: uuid, description: "Omitted on the app's default plan." }
+        can_change: { type: boolean }
+        can_close: { type: boolean }
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerSignupPlan' }
+
+    ChangeConsumerBillingPlanRequest:
+      description: "Switches to one of the offered plans from the next minute."
+      type: object
+      required: [plan_id]
+      properties:
+        plan_id: { type: string, format: uuid }
+
+    ConsumerBillingPlanChangeResponse:
+      description: "A scheduled plan change."
+      type: object
+      required: [plan_id, effective_from]
+      properties:
+        plan_id: { type: string, format: uuid }
+        effective_from: { type: string, format: date-time }
+
+    CreateConsumerBillingPortalRequest:
+      description: "Opens the payment provider's customer portal."
+      type: object
+      properties:
+        return_url: { type: string, format: uri, maxLength: 2048 }
+
+    ConsumerBillingPortalResponse:
+      description: "A short-lived customer portal URL."
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, format: uri }
+
+    ConsumerBillingCloseResponse:
+      description: "A closed consumer account."
+      type: object
+      required: [consumer_id, closed_at]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        closed_at: { type: string, format: date-time }
+
+    APIConsumerSignedUpWebhookPayload:
+      type: object
+      description: Data delivered with consumer.signed_up once a customer's sign-up created their consumer (ADR-20261021183000). signup_id is stable across retries.
+      required: [signup_id, app_id, consumer_id, external_ref, name, email, livemode, signed_up_at]
+      properties:
+        signup_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string, description: "The customer's Stripe customer." }
+        name: { type: string }
+        email: { type: string }
+        plan_id: { type: string, format: uuid }
+        trial_ends_at: { type: string, format: date-time }
+        livemode: { type: boolean }
+        signed_up_at: { type: string, format: date-time }
+
+    APIConsumerPlanChangedWebhookPayload:
+      type: object
+      description: Data delivered with consumer.plan_changed when a customer switched plans with their own key. assignment_id is stable across retries; an omitted plan is the app's default plan.
+      required: [assignment_id, app_id, consumer_id, external_ref, effective_from, changed_at]
+      properties:
+        assignment_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        from_plan_id: { type: string, format: uuid }
+        to_plan_id: { type: string, format: uuid }
+        effective_from: { type: string, format: date-time }
+        changed_at: { type: string, format: date-time }
+
+    APIConsumerClosedWebhookPayload:
+      type: object
+      description: Data delivered with consumer.closed when a customer closed their account with their own key.
+      required: [app_id, consumer_id, external_ref, closed_at]
+      properties:
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        closed_at: { type: string, format: date-time }
 
     CreateBillingRunRequest:
       description: "A month-end billing run (ADR-1503). Omitted options bill both sources, finalize, do not export, and hold consumers with completeness gaps."
@@ -115391,6 +116602,9 @@ components:
               - operation.finished
               - usage_statement.finalized
               - consumer.usage_threshold
+              - consumer.signed_up
+              - consumer.plan_changed
+              - consumer.closed
               - outbound.ai_budget.threshold
               - issue.created
               - issue.assigned
@@ -116446,6 +117660,9 @@ components:
               - operation.finished
               - usage_statement.finalized
               - consumer.usage_threshold
+              - consumer.signed_up
+              - consumer.plan_changed
+              - consumer.closed
               - outbound.ai_budget.threshold
               - issue.created
               - issue.assigned
@@ -116627,6 +117844,9 @@ components:
               - operation.finished
               - usage_statement.finalized
               - consumer.usage_threshold
+              - consumer.signed_up
+              - consumer.plan_changed
+              - consumer.closed
               - outbound.ai_budget.threshold
               - issue.created
               - issue.assigned

@@ -195,6 +195,13 @@ func run(args []string) (status int) {
 			}
 		}
 	}
+	// A command that names its app only with --app also takes the app as the
+	// first argument after its verb.
+	rewritten, err := appArgumentAsFlag(args)
+	if err != nil {
+		return printErr("Invalid app target", err)
+	}
+	args = rewritten
 	// Help and version must remain available when saved configuration is broken.
 	switch args[0] {
 	case "version", "--version", "-v":
@@ -1002,6 +1009,10 @@ func printLocalPathHelp(w io.Writer, command cliCommand, sub cliSub, names []str
 	if len(sub.Examples) > 0 {
 		_, _ = fmt.Fprintln(w, "\nExamples:")
 		printCLIExamples(w, sub.Examples)
+	}
+	printHelpNotes(w, sub.Notes)
+	if takesAppArgument(sub.Flags, sub.Positionals, sub.Subcommands) {
+		_, _ = fmt.Fprintf(w, "\nThe app can also be the first argument: %s my-api\n", localHelpSubcommandPath(command, names))
 	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
 }

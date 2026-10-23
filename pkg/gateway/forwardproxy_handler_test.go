@@ -161,6 +161,9 @@ func (s *stubVmmdClient) RestoreAppTask(context.Context, *vmmdpb.RestoreAppTaskR
 func (s *stubVmmdClient) ExecuteAppTask(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (*vmmdpb.ExecuteAppTaskResponse, error) {
 	panic("ExecuteAppTask: not stubbed in handler integration test")
 }
+func (s *stubVmmdClient) ExecForkCommand(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (*vmmdpb.ExecuteAppTaskResponse, error) {
+	panic("ExecForkCommand: not stubbed in handler integration test")
+}
 func (s *stubVmmdClient) ExecuteAppTaskStream(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteAppTaskEvent], error) {
 	panic("ExecuteAppTaskStream: not stubbed in handler integration test")
 }

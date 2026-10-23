@@ -516,6 +516,7 @@ func cmdEdgeRulesCreate(args []string) int {
 		WAFInspectBodyBytes:               *wafFlags.inspectBodyBytes,
 		ChallengeDifficulty:               *challengeFlags.difficulty,
 		ChallengePassTTLSeconds:           *challengeFlags.passTTLSeconds,
+		ChallengeMaxDifficulty:            *challengeFlags.maxDifficulty,
 		MaintenanceRetryAfter:             *maintenanceRetryAfter,
 		MaintenanceMessage:                *maintenanceMessage,
 		RespondStatus:                     *respondStatus,
@@ -573,7 +574,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	}
 	out, err := client.CreateEdgeRule(context.Background(), *slug, req)
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create edge rule", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
@@ -995,6 +996,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 			WAFInspectBodyBytes:               *wafFlags.inspectBodyBytes,
 			ChallengeDifficulty:               *challengeFlags.difficulty,
 			ChallengePassTTLSeconds:           *challengeFlags.passTTLSeconds,
+			ChallengeMaxDifficulty:            *challengeFlags.maxDifficulty,
 			MaintenanceRetryAfter:             *maintenanceRetryAfter,
 			MaintenanceMessage:                *maintenanceMessage,
 			RespondStatus:                     *respondStatus,
@@ -1026,7 +1028,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	}
 	out, err := client.UpdateEdgeRule(context.Background(), id, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update edge rule", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
@@ -1076,7 +1078,7 @@ func cmdEdgeRulesRm(args []string) int {
 		}
 	}
 	if err := client.DeleteEdgeRule(context.Background(), id); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete edge rule", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]string{"id": id, "status": "deleted"}))
@@ -1121,10 +1123,11 @@ type edgeRuleActionInputs struct {
 	WAFAnomalyThreshold int
 	WAFExcludeRules     string
 	WAFInspectBodyBytes int
-	// challenge (ADR-831 amendment 7). Both optional; zero applies the
-	// default.
+	// challenge (ADR-831 amendments 7 and 8). All optional; zero applies
+	// the default (a fixed difficulty for ChallengeMaxDifficulty).
 	ChallengeDifficulty     int
 	ChallengePassTTLSeconds int
+	ChallengeMaxDifficulty  int
 	// rewrite
 	RewriteFrom, RewriteTo string
 	// redirect
@@ -1855,7 +1858,7 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		"async-max-attempts", "async-retry-base-seconds", "async-retry-max-seconds",
 		"async-retry-jitter-seconds", "async-max-age-seconds",
 		"waf-mode", "waf-paranoia-level", "waf-anomaly-threshold", "waf-exclude-rules", "waf-inspect-body-bytes",
-		"challenge-difficulty", "challenge-pass-ttl",
+		"challenge-difficulty", "challenge-pass-ttl", "challenge-max-difficulty",
 		"rewrite-from", "rewrite-to",
 		"redirect-status", "redirect-to", "redirect-header", "template",
 		"headers-request-add", "headers-request-set", "headers-request-remove",
