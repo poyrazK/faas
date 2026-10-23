@@ -121,7 +121,7 @@ func (s *PgStore) ReleaseGateNewErrorGroups(ctx context.Context, appID, deployme
 // ReleaseGateDeploymentAI sums a deployment's AI minute rows in [since,
 // until) for an ai gate (ADR 20261022153155).
 func (s *PgStore) ReleaseGateDeploymentAI(ctx context.Context, appID, deploymentID string, since, until time.Time) (ReleaseGateAIWindow, error) {
-	if _, err := uuid.Parse(deploymentID); err != nil {
+	if !validUUID(deploymentID) {
 		return ReleaseGateAIWindow{}, nil
 	}
 	row, err := sqlc.New().ReleaseGateDeploymentAI(ctx, s.pool, sqlc.ReleaseGateDeploymentAIParams{
