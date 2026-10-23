@@ -336,7 +336,18 @@ Rollout checklist: [Seal domains rollout](../runbooks/seal-domains-rollout.md).
   shared `faas_seal_domain_loaded` gauge.
 
 The webhook secret's plaintext column `secret_value` still exists, so
-sealing its copy protects nothing until that column is dropped (below).
+sealing its copy protects little until that column is gone. Retiring it
+takes two releases:
+
+1. Migration `20261023201337575_github_webhook_secret_plaintext_optional`
+   makes the column nullable and adds a `NOT VALID` check that a row keeps
+   at least one copy. apid stops writing the plaintext, and stores only the
+   sealed copy. githubd has preferred the sealed copy since the release that
+   added it, which is already the previous release, and still falls back to
+   the plaintext for older rows.
+2. The next release drops `secret_value`. Before it ships, every
+   environment must have run `gregalectl seal-domain migrate --domain
+   source`, so that no row depends on the plaintext.
 The install tokens are the gain now: they grant read access to customer
 repositories, and once writes are domain-only, within the hour the fleet
 identity opens none that is still valid.
@@ -394,7 +405,8 @@ Later slices:
   cover;
 - the contract steps;
 - meterd sending test alerts;
-- dropping `github_webhook_secrets.secret_value` once no release reads it.
+- dropping `github_webhook_secrets.secret_value` (step 2 above), after the
+  source backfill has run everywhere.
 
 ## Consequences
 

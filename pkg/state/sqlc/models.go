@@ -5851,9 +5851,10 @@ type GithubWebhookDelivery struct {
 
 type GithubWebhookSecret struct {
 	InstallationID int64
-	SecretValue    []byte
-	UpgradedAt     pgtype.Timestamptz
-	UpgradedBy     string
+	// Plaintext webhook secret, no longer written (ADR 20261022111812). Read only as a fallback for rows without secret_sealed; dropped in a later release.
+	SecretValue []byte
+	UpgradedAt  pgtype.Timestamptz
+	UpgradedBy  string
 	// The webhook secret sealed to the source domain write recipients (ADR 20261022111812); githubd prefers it over secret_value.
 	SecretSealed []byte
 }
