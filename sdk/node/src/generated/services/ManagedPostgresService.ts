@@ -5,6 +5,8 @@
 import type { ChangeManagedPostgresComputePolicyRequest } from '../models/ChangeManagedPostgresComputePolicyRequest.js';
 import type { CreateManagedPostgresBindingRequest } from '../models/CreateManagedPostgresBindingRequest.js';
 import type { CreateManagedPostgresDatabaseRequest } from '../models/CreateManagedPostgresDatabaseRequest.js';
+import type { DataAPIChangeEventBatch } from '../models/DataAPIChangeEventBatch.js';
+import type { DataAPIChangeEventBatchResponse } from '../models/DataAPIChangeEventBatchResponse.js';
 import type { DataAPIConnectionBudgets } from '../models/DataAPIConnectionBudgets.js';
 import type { DataAPIRuntimeConnectionReport } from '../models/DataAPIRuntimeConnectionReport.js';
 import type { DataAPIUsage } from '../models/DataAPIUsage.js';
@@ -777,6 +779,33 @@ export class ManagedPostgresService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Publish recorded Data API row changes
+   * Private runtime surface for change hooks (ADR-20261022121642). Requires a short-lived gregale:data-api:events workload assertion from a live instance of an active app; account and app come from it, never from the body. Each event publishes as an app-scoped producer-key event under the app's own source with key data-api.change.ID, so a republished change deduplicates while its receipt is retained. Events publish in order; publication stops at the first event that may succeed later, and later events are reported as retryable without being attempted. Owner API keys and application JWTs are not accepted.
+   * @returns DataAPIChangeEventBatchResponse Per-event outcomes in input order.
+   * @throws ApiError
+   */
+  public static publishDataApiChangeEvents({
+    requestBody,
+  }: {
+    requestBody: DataAPIChangeEventBatch,
+  }): CancelablePromise<DataAPIChangeEventBatchResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/runtime/data-api/events',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        413: `The publication exceeds 1 MiB.`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).

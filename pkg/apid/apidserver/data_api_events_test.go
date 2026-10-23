@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -66,7 +68,7 @@ func TestDataAPIChangeEventsPublishUnderTheAppSource(t *testing.T) {
 	}
 
 	out := publish(change(first, "paid"), change(second, "shipped"))
-	if out.Source != "app."+app.ID || out.Results[0].Status != "accepted" || out.Results[1].Status != "accepted" || out.Results[0].Receipt == nil {
+	if out.Source != "app."+uuid.MustParse(app.ID).String() || out.Results[0].Status != "accepted" || out.Results[1].Status != "accepted" || out.Results[0].Receipt == nil {
 		t.Fatalf("first publication %+v", out)
 	}
 	// A relay that lost its settlement republishes the same changes.

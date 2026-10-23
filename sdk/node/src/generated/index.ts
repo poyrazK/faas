@@ -524,6 +524,9 @@ export type { DailyUsageListResponse } from './models/DailyUsageListResponse.js'
 export type { DailyUsagePoint } from './models/DailyUsagePoint.js';
 export type { DailyUsageResponse } from './models/DailyUsageResponse.js';
 export type { DataAPIAccessConfig } from './models/DataAPIAccessConfig.js';
+export type { DataAPIChangeEvent } from './models/DataAPIChangeEvent.js';
+export type { DataAPIChangeEventBatch } from './models/DataAPIChangeEventBatch.js';
+export type { DataAPIChangeEventBatchResponse } from './models/DataAPIChangeEventBatchResponse.js';
 export type { DataAPIConnectionBudgets } from './models/DataAPIConnectionBudgets.js';
 export type { DataAPIRuntimeConnectionReport } from './models/DataAPIRuntimeConnectionReport.js';
 export type { DataAPIServerKey } from './models/DataAPIServerKey.js';
