@@ -275,7 +275,7 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := validateWebhookEventFilter(req.EventFilter, s.appWebhookEvents()); prob != nil {
+	if prob := validateWebhookEventFilter(req.EventFilter, s.appWebhookEvents(acct.ID)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -525,7 +525,7 @@ func (s *server) updateAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		params.TargetURL = req.TargetURL
 	}
 	if req.EventFilter != nil {
-		if prob := validateWebhookEventFilter(*req.EventFilter, s.appWebhookEvents()); prob != nil {
+		if prob := validateWebhookEventFilter(*req.EventFilter, s.appWebhookEvents(acct.ID)); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}

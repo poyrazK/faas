@@ -411,6 +411,9 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		RequireAuthn:           plan.RequireAuthnDefault(),
 		PublicAuthMode:         plan.PublicAuthModeDefault(),
 		PlatformTenantRequired: w.PlatformTenantRequired != nil && *w.PlatformTenantRequired,
+		// Create-only, like the auth defaults: an existing app keeps the
+		// visibility its owner set.
+		Visibility: reposcan.NewWorkloadVisibility(w),
 	}
 	applyProjectImage(&app.Manifest, w)
 	return app
@@ -449,16 +452,18 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	manifest.ProjectImage = w.Image
 	manifest.ProjectImageCommand = nil
 	manifest.ProjectImagePort = 0
-	manifest.ProjectImageHealthcheck = nil
 	manifest.ProjectImageProcess = nil
 	if manifest.ExecutionMode == "" {
 		manifest.ExecutionMode = scanExecutionMode(w)
 	}
+	// A Compose healthcheck applies to built images too (ADR-20261019195000),
+	// and so do the process overrides other than entrypoint, which the scan
+	// folds into a built service's command (ADR-20261022160000).
+	manifest.ProjectImageHealthcheck = w.ImageHealthcheck.Clone()
+	manifest.ProjectImageProcess = w.ImageProcess.Clone()
 	if w.Image == "" {
 		return
 	}
-	manifest.ProjectImageHealthcheck = w.ImageHealthcheck.Clone()
-	manifest.ProjectImageProcess = w.ImageProcess.Clone()
 	manifest.ProjectImageCommand = append([]string(nil), w.Command...)
 	if w.CommandShell && len(w.Command) > 0 {
 		manifest.ProjectImageCommand = []string{"/bin/sh", "-c", w.Command[0]}

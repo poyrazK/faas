@@ -87,6 +87,7 @@ func (c *Client) RegisterEndpoint(ctx context.Context, endpoint Endpoint) error 
 		MaxConnectionAgeSeconds:    int64(endpoint.MaxConnectionAge / time.Second),
 		AccountMaxConnections:      endpoint.AccountMaxConnections,
 		LiveRoutes:                 append([]LiveRoute(nil), endpoint.LiveRoutes...),
+		Previews:                   clonePreviews(endpoint.Previews),
 	}
 	return c.do(ctx, http.MethodPost, "/internal/endpoints", request, nil)
 }

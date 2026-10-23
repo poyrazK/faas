@@ -184,9 +184,12 @@ apply within the startup deadline. A failed or missing result blocks promotion;
 boot, restore, and warm-pool resume cannot reuse a previous pass. `NONE` and
 absent checks retain ordinary readiness. Previously assembled deployments need
 reassembly or redeployment to gain this gate. Native boot/restore qualification
-remains pending. Compose dependency release gates are described above. Compose
-healthcheck overrides on source-built services are not applied and produce a
-scan warning.
+remains pending. Compose dependency release gates are described above. A Compose
+healthcheck on a source-built service is merged onto the built image's
+HEALTHCHECK and enforced the same way
+([ADR-20261019195000](adr/20261019195000-compose-healthcheck-on-built-services.md));
+a source build without one keeps ordinary readiness, even when its Dockerfile
+declares a HEALTHCHECK.
 See [ADR-682](adr/682-compose-image-healthchecks.md) and
 [ADR-683](adr/683-image-healthcheck-readiness.md).
 
@@ -236,8 +239,11 @@ optional `:group`, resolved against the image's `/etc/passwd` and `/etc/group`.
 guest-init delivers (SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2), and
 `stop_grace_period` is capped by the plan. Like commands, these overrides are
 captured per deployment, so queued deployments and rollbacks keep them.
-Source-built services set the same things in their Dockerfile; Compose
-overrides on them produce a scan warning.
+Source-built services take the same overrides
+([ADR-20261022160000](adr/20261022160000-compose-process-on-built-services.md)):
+an `entrypoint` is folded into the service's start command (the entrypoint,
+then the command), and `user`, `working_dir` and the stop contract are applied
+to the built image as a Dockerfile's USER, WORKDIR and STOPSIGNAL would be.
 
 `env_file` contributes variable names only. The scan lists them as required
 environment keys, exactly like `environment:`; values never leave the source,
@@ -280,6 +286,29 @@ same name as an argument wins. Build arguments end up in the image history, so
 keep secrets out of them and set those with `gregale secrets set`. Plans show the
 target and the argument names, not their values.
 
+Build-time secrets use `build.secrets`
+([ADR-20261022185329](adr/20261022185329-compose-build-secrets.md)):
+
+```yaml
+services:
+  api:
+    build:
+      context: ./api
+      secrets: [npm_token]          # RUN --mount=type=secret,id=npm_token ...
+secrets:
+  npm_token:
+    environment: NPM_TOKEN          # gregale secrets set NPM_TOKEN
+```
+
+Each entry names a top-level secret declared with `environment: NAME`; the
+build mounts the app secret `NAME` from the deployment's scope, under the id
+the entry gives (`{source, target}` sets the id to `target`). `file:` and
+external secrets are not uploaded and are left out with a warning. The value is
+opened only inside the builder VM, mounted with BuildKit's secret mount, and
+never stored in the image, its cache or Gregale's records; a build whose
+secret is not set fails with its name. Builds with secrets run on a fresh
+builder. At most 16 secrets per build (`DockerfileBuildSecretsMax`).
+
 `extends` and top-level `include` are resolved as Compose resolves them
 ([ADR-20261019190527](adr/20261019190527-compose-extends-and-include.md)):
 
@@ -306,7 +335,7 @@ The scan reports every other Compose key instead of dropping it silently:
 
 | Keys | Result |
 |---|---|
-| `build` (`context`, `dockerfile`, `args`, `target`), `command`, `depends_on`, `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `ports`, `profiles`, `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied (process keys and `healthcheck` only on prebuilt images). |
+| `build` (`context`, `dockerfile`, `args`, `target`, `secrets`), `command`, `depends_on`, `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `ports`, `profiles`, `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied. |
 | `container_name`, `init`, `stdin_open`, `tty`, `platform: linux/amd64`, `x-*` extensions | Ignored without a warning; they have no effect on a microVM service. |
 | `volumes`, `tmpfs` | Warning: no persistent volumes or bind mounts; each start gets a fresh filesystem. |
 | `deploy`, `scale`, `cpus`, `mem_limit` and other resource keys | Warning: CPU, memory and replicas come from the plan and app scaling. |
@@ -316,7 +345,7 @@ The scan reports every other Compose key instead of dropping it silently:
 | `cap_add`, `privileged`, `devices`, `security_opt`, `ulimits` and other kernel controls | Warning: each service runs in its own microVM. |
 | `dns`, `extra_hosts`, `hostname` and other guest networking keys | Warning: guest networking is managed by the platform. |
 | `labels`, `logging`, `pull_policy`, any other `platform` | Warning. |
-| `build.secrets`, `build.ssh`, `build.dockerfile_inline`, other `build.*` keys | Warning: the builder uses only `build.context`, `build.dockerfile`, `build.args` and `build.target`. |
+| `build.ssh`, `build.dockerfile_inline`, other `build.*` keys | Warning: the builder uses only `build.context`, `build.dockerfile`, `build.args`, `build.target` and `build.secrets`. |
 | Any other service key | Warning: not supported. |
 
 Managed database and cache services (for example `postgres`) do not report

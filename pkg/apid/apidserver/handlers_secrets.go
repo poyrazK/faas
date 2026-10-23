@@ -400,8 +400,8 @@ func (s *server) setAppSecret(r *http.Request, acct state.Account, app state.App
 // is the only one that produces the "same hash across scopes =
 // same plaintext" property the env-diff endpoint relies on.
 //
-// The kid is computed from mfaIdentities()[0] (the current host
-// identity). If identities are not loaded we refuse to seal (same
+// The kid is the string form of the recipient the value is sealed to
+// (ADR 20261022111812); without a recipient we refuse to seal (same
 // posture as the rotate handler — a typo'd env var shouldn't
 // silently degrade to "no kid, no problem"). Same refuses-to-start
 // posture for the host HMAC key — apid boots without one ONLY in
@@ -453,28 +453,9 @@ func (s *server) sealSecretValue(noun, key, value string, maxBytes int) ([]byte,
 		// able to silently write a row with value_hash = ''.
 		return nil, "", "", unavailable("store "+noun, nil)
 	}
-	// mfaIdentities is nil in unit-test harnesses that only install
-	// the single-key package level (see withTestRecipient in
-	// handlers_secrets_test.go); the same nil-guard pattern lives in
-	// handlers_mfa.go:600-602. We fall back to mfaIdentity so tests
-	// that haven't migrated to the rotation-aware accessor stamp a
-	// kid without a separate setup helper.
-	var idents []*age.X25519Identity
-	if mfaIdentities != nil {
-		idents = mfaIdentities()
-	}
-	if len(idents) == 0 && mfaIdentity != nil {
-		if single := mfaIdentity(); single != nil {
-			idents = []*age.X25519Identity{single}
-		}
-	}
-	if len(idents) == 0 {
-		return nil, "", "", unavailable("store "+noun, nil)
-	}
-	kid, err := secretbox.IdentityFingerprint(idents)
-	if err != nil {
-		return nil, "", "", unavailable("fingerprint "+noun+" identity", err)
-	}
+	// The kid names the recipient the value is sealed to (ADR 20261022111812):
+	// it is a property of the public key, so sealing needs no private identity.
+	kid := recipient.String()
 	valueHash, err := secretbox.ValueFingerprint([]byte(value), hmacKey)
 	if err != nil {
 		// Empty plaintext is a 400 from the handler chain (limits /

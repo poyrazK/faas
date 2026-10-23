@@ -32,7 +32,7 @@ func cmdWorkflowsDiagnose(args []string) int {
 	}
 	result, err := client.GetWorkflowRunDiagnostics(ctx, runID)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not diagnose workflow run", err)
 	}
 	if target.Ref == "latest" && result.RunID != runID {
 		return printErr("Could not diagnose selected workflow run", fmt.Errorf("diagnostics response did not identify the selected run %s", runID))

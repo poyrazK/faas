@@ -344,7 +344,10 @@ func TestScanExclude_MultiSlug(t *testing.T) {
 		t.Fatalf("scan status = %d, want 200 (body=%s)", status, body)
 	}
 
-	want := map[string]bool{"api": true, "web": true, "worker": true}
+	// The reserved name "api" is allocated the project-prefixed slug
+	// (ADR-20261022120205); both api workloads share it.
+	const api = "exclude-multi-slug-api"
+	want := map[string]bool{api: true, "web": true, "worker": true}
 	got := make(map[string]bool, len(plan.Skipped))
 	for _, s := range plan.Skipped {
 		if want[s.Slug] {
@@ -378,8 +381,8 @@ func TestScanExclude_MultiSlug(t *testing.T) {
 	for _, w := range plan.WillDeploy {
 		willCounts[w.Slug]++
 	}
-	if willCounts["api"] != 1 || willCounts["worker"] != 2 || willCounts["web"] != 0 {
-		t.Errorf("WillDeploy duplicate-name projection = %#v, want api=1 worker=2 web=0", willCounts)
+	if willCounts[api] != 1 || willCounts["worker"] != 2 || willCounts["web"] != 0 {
+		t.Errorf("WillDeploy duplicate-name projection = %#v, want %s=1 worker=2 web=0", willCounts, api)
 	}
 }
 

@@ -12,20 +12,22 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// composeDockerfileBuild reads a source-built service's build.args and
-// build.target (ADR-20261019142544). build is the interpolated build
-// declaration and rawBuild the same mapping before interpolation; env is the
-// source's .env, which also supplies arguments declared without a value.
-// Options are nil when the service declares none, or when its build context
-// has no Dockerfile and therefore builds with Railpack.
-func composeDockerfileBuild(fsys fs.FS, build any, rawBuild map[string]any, env map[string]string, context, dockerfile string) (*api.DockerfileBuildOptions, []string, error) {
+// composeDockerfileBuild reads a source-built service's build.args,
+// build.target (ADR-20261019142544) and build.secrets (ADR-20261022185329).
+// build is the interpolated build declaration and rawBuild the same mapping
+// before interpolation; env is the source's .env, which also supplies
+// arguments declared without a value; secrets are the top-level secret
+// definitions. Options are nil when the service declares none, or when its
+// build context has no Dockerfile and therefore builds with Railpack.
+func composeDockerfileBuild(fsys fs.FS, build any, rawBuild map[string]any, env map[string]string, secrets map[string]any, context, dockerfile string) (*api.DockerfileBuildOptions, []string, error) {
 	declared, ok := build.(map[string]any)
 	if !ok {
 		return nil, nil, nil
 	}
 	_, hasArgs := declared["args"]
 	_, hasTarget := declared["target"]
-	if !hasArgs && !hasTarget {
+	_, hasSecrets := declared["secrets"]
+	if !hasArgs && !hasTarget && !hasSecrets {
 		return nil, nil, nil
 	}
 	args, warnings, err := composeBuildArgs(declared["args"], env)
@@ -33,7 +35,12 @@ func composeDockerfileBuild(fsys fs.FS, build any, rawBuild map[string]any, env 
 		return nil, nil, err
 	}
 	warnings = append(warnings, composeBuildArgLiteralWarnings(rawBuild["args"])...)
-	options := &api.DockerfileBuildOptions{Args: args}
+	buildSecrets, secretWarnings, err := composeBuildSecrets(declared["secrets"], secrets)
+	if err != nil {
+		return nil, nil, err
+	}
+	warnings = append(warnings, secretWarnings...)
+	options := &api.DockerfileBuildOptions{Args: args, Secrets: buildSecrets}
 	if raw, ok := declared["target"]; ok && raw != nil {
 		target, isString := raw.(string)
 		if !isString {
@@ -52,7 +59,7 @@ func composeDockerfileBuild(fsys fs.FS, build any, rawBuild map[string]any, env 
 		return nil, nil, err
 	}
 	if !found {
-		return nil, append(warnings, "build.args and build.target ignored: the build context has no Dockerfile, so it builds with Railpack"), nil
+		return nil, append(warnings, "build.args, build.target and build.secrets ignored: the build context has no Dockerfile, so it builds with Railpack"), nil
 	}
 	if options.Target != "" {
 		body, err := readValidFile(fsys, dockerfilePath)
@@ -240,4 +247,55 @@ func dockerfileStages(body string) []string {
 		}
 	}
 	return stages
+}
+
+// composeBuildSecrets reads build.secrets: a secret name, or {source, target}
+// where target is the id the Dockerfile mounts. Each source must be a
+// top-level secret; one declared with environment: NAME mounts the app secret
+// NAME (ADR-20261022185329). File and external secrets are not uploaded, so
+// they are left out with a warning.
+func composeBuildSecrets(raw any, definitions map[string]any) ([]api.DockerfileBuildSecret, []string, error) {
+	if raw == nil {
+		return nil, nil, nil
+	}
+	entries, ok := raw.([]any)
+	if !ok {
+		return nil, nil, fmt.Errorf("build.secrets must be a list")
+	}
+	var out []api.DockerfileBuildSecret
+	var warnings []string
+	for _, entry := range entries {
+		var source, id string
+		switch typed := entry.(type) {
+		case string:
+			source = strings.TrimSpace(typed)
+			id = source
+		case map[string]any:
+			source, _ = typed["source"].(string)
+			source = strings.TrimSpace(source)
+			target, _ := typed["target"].(string)
+			id = strings.TrimSpace(target)
+			if id == "" {
+				id = source
+			}
+		default:
+			return nil, nil, fmt.Errorf("build.secrets entries must be a secret name or {source, target}")
+		}
+		if source == "" {
+			return nil, nil, fmt.Errorf("build.secrets entries must name a secret")
+		}
+		definition, declared := definitions[source]
+		if !declared {
+			return nil, nil, fmt.Errorf("build secret %q is not declared under the top-level secrets", source)
+		}
+		fields, _ := definition.(map[string]any)
+		name, _ := fields["environment"].(string)
+		if name = strings.TrimSpace(name); name == "" {
+			warnings = append(warnings, fmt.Sprintf("build secret %q ignored: only secrets declared with environment: NAME are available to builds; "+
+				"declare it that way and set the value with `gregale secrets set NAME`", source))
+			continue
+		}
+		out = append(out, api.DockerfileBuildSecret{ID: id, Secret: name})
+	}
+	return out, warnings, nil
 }

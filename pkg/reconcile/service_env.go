@@ -121,6 +121,11 @@ func serviceBindingPolicyForNewWorkload(w reposcan.Workload) api.ServiceBindingP
 
 func serviceBindingPolicyForExistingWorkload(w reposcan.Workload, existing api.ServiceBindingPolicy) api.ServiceBindingPolicy {
 	if w.ServiceBindingPolicy == "" {
+		if existing != "" && existing.Effective() != existing {
+			// A newer control plane stored a policy this release does not
+			// know. Keep it: rewriting it as declared would outlive a rollback.
+			return existing
+		}
 		return existing.Effective()
 	}
 	return api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective()

@@ -898,6 +898,10 @@ const (
 	// app (ADR-20261019071733); the problem lists the active freezes.
 	// override_freeze with a reason releases anyway, audited.
 	CodeReleaseFrozen = "release_frozen"
+	// CodePlatformReleasePaused means an operator paused every release on the
+	// platform (ADR 20261022140000), for example while a security incident is
+	// contained. Nothing the caller sends overrides it; rollbacks still work.
+	CodePlatformReleasePaused = "platform_release_paused"
 	// CodeReleaseFreezeNotFound means the account has no such unlifted freeze.
 	CodeReleaseFreezeNotFound = "release_freeze_not_found"
 	// CodeReleaseFreezeLimit means the account already holds

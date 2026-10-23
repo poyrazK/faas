@@ -3,7 +3,7 @@
 A minimal Go HTTP app for Gregale, using only the standard library. `GET /`
 returns a JSON greeting and `GET /healthz` returns `{"ok":true}`.
 
-The template includes a minimal `go.mod` with `go 1.26.9`.
+The template includes a minimal `go.mod` with `go 1.26.10`.
 
 ## Deploy
 
@@ -15,7 +15,7 @@ gregale start
 
 Start signs you in if needed, shows the app name and settings for review,
 deploys after you confirm, and tests the first response. Gregale detects
-`main.go` and builds with Go 1.26.9.
+`main.go` and builds with Go 1.26.10.
 
 ## Edit and re-deploy
 

@@ -71,7 +71,7 @@ func cmdAppsStreamingCap(slug string, args []string) int {
 	}
 	resp, err := client.GetAppStreamingStatus(context.Background(), slug)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not read streaming status", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))

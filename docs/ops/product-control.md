@@ -763,6 +763,58 @@ A plan can offer a free trial
   `product_control_plan_pricing_enabled` setting, because an earlier apid would
   charge the trial's runs and fee.
 
+### Self-serve signup and card on file
+
+A catalog can let new customers sign up through the portal
+([ADR-20261022100735](../adr/20261022100735-product-control-self-serve-signup.md)):
+
+```json
+"signup": {"plans": ["starter", "pro"], "provider": "stripe"}
+```
+
+- **Turning it on.** Signup needs the catalog's `signup` policy, an `auth_app`, and
+  the operator's `product_control_signup_enabled` runtime setting (off by
+  default). Turning the setting off hides every offer and refuses new signups at
+  once; existing workspaces keep working. `plans` are the plans offered at
+  signup. `provider` (`stripe`, `paddle` or omitted) is where each signup's
+  customer is created.
+- **Auth app.** Enable sign-up in the Auth app and allow
+  `https://<platform domain>/v1/product-control/portal?app=<product>` as a
+  redirect URL. The Auth app's own sign-up controls (domain rules, invitation or
+  waitlist mode, CAPTCHA) decide who can create an account; Gregale never creates
+  Auth users.
+- **Visitor flow.** The portal's "New here?" button shows the offered plans from
+  the public `GET /v1/product-control/customer/{product}/offer` and links to the
+  Auth app's sign-up page. After confirming their email the visitor signs in. A
+  user without a workspace then names one and picks a plan, and
+  `POST /v1/product-control/customer/{product}/signup` creates it:
+  1. the Auth organization, with the user's own session;
+  2. the provider customer: a Stripe customer, or the Paddle customer for the
+     user's email;
+  3. the guided onboarding, which creates the platform tenant with that customer
+     as its `external_ref`, links the organization, assigns the plan and starts
+     any trial.
+  A retry with the same request ID returns the same workspace. Signups are
+  audited as `product.customer.signed_up`.
+- **Limits.** A user owns at most 3 workspaces per product (409
+  `product_signup_limit`). The account's platform tenant quota applies as for
+  any onboarding. Paddle keeps one customer per email, so a second Paddle signup
+  with the same email is refused rather than taking over the first workspace's
+  customer.
+- **Card on file (Stripe).** A billing manager of a workspace billed through
+  Stripe sees "Payment method" in the portal. Adding a card requires ticking
+  consent to future charges by the product team. It opens Stripe Checkout in
+  setup mode on Stripe's own page. Returning to the portal makes the saved card
+  the customer's default for invoices; with Stripe collection `charge`
+  (ADR-1311), exported statements and fees are then charged to it. Gregale shows
+  only the brand, last four digits and expiry, and audits
+  `product.customer.payment_method_consented` and
+  `product.customer.payment_method_saved`. Paddle signups pay each emailed
+  invoice.
+- **Provider keys.** A Stripe restricted key needs write access to Customers and
+  Checkout Sessions and read access to SetupIntents and PaymentMethods. A Paddle
+  key needs customer read and write.
+
 ## Deployment bindings
 
 A feature selects exactly one binding form:

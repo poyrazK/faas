@@ -57,6 +57,12 @@ from .ai_gateway import (
 )
 from .client import AuthenticatedClient, Client
 from .commit import CommitEventRouting, ainsert_commit_event, insert_commit_event
+from .crash_snapshots import (
+    CRASH_SNAPSHOT_ENDPOINT,
+    CrashSnapshotResult,
+    acapture_crash_snapshot,
+    capture_crash_snapshot,
+)
 from .customer_operations import (
     CustomerOperationConflictError,
     CustomerOperationPublicationError,
@@ -186,6 +192,10 @@ __all__ = (
     "AsyncGregaleReleaseTransport",
     "current_gregale_release",
     "with_gregale_release",
+    "CRASH_SNAPSHOT_ENDPOINT",
+    "CrashSnapshotResult",
+    "capture_crash_snapshot",
+    "acapture_crash_snapshot",
     "verify_webhook",
     "VerifiedWebhook",
     "WebhookVerificationError",

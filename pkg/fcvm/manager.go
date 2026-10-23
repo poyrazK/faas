@@ -3600,6 +3600,10 @@ type WakeRequest struct {
 	// ExecutionMode is the declared lifecycle mode used to constrain the
 	// cold-boot characterization result. Empty preserves legacy inference.
 	ExecutionMode string
+	// WorkerPushDelivery marks a worker-mode app with a push queue binding.
+	// Push deliveries reach it over private HTTP, so a bound server at
+	// startup is that delivery listener, not an execution-mode conflict.
+	WorkerPushDelivery bool
 	// LivenessProbe (issue #554 / ADR-078) is the per-deployment
 	// override JSON (api.DeploymentLivenessProbe). The engine resolves
 	// this from deployments.override_liveness_probe at Wake time and
@@ -3685,6 +3689,11 @@ type WakeRequest struct {
 	// on the workload's private side-link.
 	PrivateNetworkID      string
 	PrivateNetworkAddress string
+	// Quarantine (ADR-732) wakes a production fork: the netns renders the
+	// quarantine base chains, and wake drops every connectivity input
+	// (allowlist, private network, static egress IP, operator bundle) so
+	// no other path can add reachability.
+	Quarantine bool
 	// StaticEgressIP (ADR-119) is the customer-supplied IPv4
 	// (BYOIP, Scale-only) the host MASQUERADE-sibling rule
 	// rewrites tenant source traffic to. Empty string = no
@@ -3893,6 +3902,9 @@ type ColdBootRequest struct {
 	PrivateNetworkAddress       string
 	PrivateNetworkAllowedCIDRs  []string
 	PrivateNetworkFirewallRules []api.PrivateNetworkFirewallRule
+	// Quarantine (ADR-732) — same as WakeRequest. A fork whose capture is
+	// unusable cold-boots; it must stay quarantined.
+	Quarantine bool
 	// Port (issue #460 / ADR-053, PR-C) — the per-deployment override
 	// port forwarded verbatim to WakeRequest.Port. Production wiring
 	// uses WakeRequest directly via the vmmdgrpc adapters
@@ -3968,6 +3980,7 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		PrivateNetworkCIDRs:         req.PrivateNetworkCIDRs,
 		PrivateNetworkAllowedCIDRs:  req.PrivateNetworkAllowedCIDRs,
 		PrivateNetworkFirewallRules: req.PrivateNetworkFirewallRules,
+		Quarantine:                  req.Quarantine,
 		PrivateNetworkID:            req.PrivateNetworkID,
 		PrivateNetworkAddress:       req.PrivateNetworkAddress,
 		Plan:                        req.Plan,
@@ -4347,6 +4360,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		}
 		qualificationOnly = true
 	}
+	req = quarantineWakeRequest(req)
 	if m.nativeVMM() != nil && !req.Plan.Valid() {
 		return nil, fmt.Errorf("wake %s: invalid plan %q", req.Instance, req.Plan)
 	}
@@ -4475,6 +4489,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.Plan = req.Plan
 	lease.AccountID = req.AccountID
 	lease.Networkless = req.ExecutionOnly
+	lease.Quarantine = req.Quarantine && !req.ExecutionOnly
 	lease.IsBuilder = req.ExportDir != ""
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
 	if lease.IsBuilder && lease.BuildTimeoutSec <= 0 {
@@ -4531,6 +4546,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	nc.TapUID = lease.UID
 	nc.EgressMbit = req.EgressMbit
 	nc.GuestAppPort = req.Port
+	// ADR-732: set before anything compares or renders nc, so a prepared
+	// non-quarantined namespace is never reused for a fork.
+	nc.Quarantine = req.Quarantine && !req.ExecutionOnly
 	if req.PrivateNetworkID != "" && req.PrivateNetworkAddress != "" && !req.ExecutionOnly {
 		if req.AccountID == "" {
 			return nil, fmt.Errorf("wake %s: private network: account_id is required for Gregale fabric attachment", req.Instance)
@@ -4762,7 +4780,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// merge dedups across per-app + operator (an entry that's
 	// already in the per-app set doesn't get a duplicate row
 	// in the rendered anonymous daddr-set).
-	if !qualificationOnly {
+	// ADR-732: a fork gets no operator exceptions either. The quarantine
+	// chains would drop them anyway; rendering none keeps the ruleset
+	// honest about what the fork can reach.
+	if !qualificationOnly && !req.Quarantine {
 		nc.EgressAllowlist = m.mergeOperatorBundle(nc.EgressAllowlist)
 	}
 
@@ -5326,6 +5347,14 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	if scanErr != nil {
 		return WakeColdBoot, scanErr
 	}
+	// ADR-733: a sealed crash capture restores or fails. Cold booting would
+	// hand the caller a fresh instance that is not the capture.
+	sealed := req.Snapshot != nil && len(req.Snapshot.SealedKey) > 0
+	if sealed {
+		if err := m.openSealedSnapshot(req.Snapshot); err != nil {
+			return WakeRestore, fmt.Errorf("sealed crash capture: %w", err)
+		}
+	}
 	restorable := (len(req.ArtifactSources) == 0 || req.SnapshotRestore != nil) && PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req)
 	// A paused wake is a restore contract, not an ordinary wake preference.
 	// If the snapshot is stale, version-mismatched, incomplete, or has a
@@ -5342,6 +5371,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// VM process starts, so there is nothing to kill; the wake cold-boots
 		// and schedd marks the snapshot stale.
 		if refusal := m.verifySnapshotBacking(ctx, req.Snapshot, req.BaseKey); refusal != nil {
+			if sealed {
+				return WakeRestore, fmt.Errorf("sealed crash capture: %w", refusal)
+			}
 			if req.KeepPaused || req.functionMigrationDestination != nil {
 				return WakeRestore, fmt.Errorf("warm-pool paused restore: %w", refusal)
 			}
@@ -5357,6 +5389,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			restorable = false
 		}
 	}
+	if sealed && !restorable {
+		return WakeRestore, fmt.Errorf("sealed crash capture %s is not restorable on this node (fc_version %s)", req.Snapshot.CaptureID, m.fcVersion)
+	}
 	if restorable {
 		rs := RestoreSpec{
 			VMStatePath: req.Snapshot.VMStatePath,
@@ -5370,6 +5405,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// the VMM falls back to RestoreSpec.VMStatePath above,
 			// preserving the legacy host-path branch.
 			VMStateStorageKey: req.Snapshot.VMStateStorageKey,
+			Storage:           req.Snapshot.Storage,
 			Tap:               nc.Tap,
 			// The restored VM re-reads kernel + drives under the chroot
 			// basenames; Park→Kill erased the previous chroot, so hand the
@@ -5427,6 +5463,10 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			m.rememberInstanceBacking(req.Instance, req.BaseKey)
 			return WakeRestore, nil
 		} else {
+			if sealed {
+				// ADR-733: a cold-booted instance would not be the capture.
+				return WakeRestore, fmt.Errorf("sealed crash capture restore: %w", rErr)
+			}
 			if req.KeepPaused || req.functionMigrationDestination != nil {
 				// A paused warm-pool entry must never silently turn into a
 				// running cold boot. The scheduler can retry reconciliation;
@@ -5872,7 +5912,11 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	if err != nil {
 		return SnapshotInfo{}, err
 	}
-	m.writeSnapshotBacking(ctx, instance, spec.StorageKey)
+	store := m.storage
+	if spec.Storage != nil {
+		store = spec.Storage
+	}
+	m.writeSnapshotBackingTo(ctx, store, instance, spec.StorageKey)
 	m.log.Info("warm_snapshot", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
 }
