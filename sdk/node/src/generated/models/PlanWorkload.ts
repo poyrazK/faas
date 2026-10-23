@@ -104,6 +104,18 @@ export type PlanWorkload = {
    */
   required_env_keys?: Array<string>;
   /**
+   * Names from env_keys and required_env_keys that will have no value in the selected environment: not configured on the app and not provided by the platform. Names only, never values.
+   */
+  unset_env_keys?: Array<string>;
+  /**
+   * For an unset_env_keys name with a Compose value, why that value is not imported (ADR-20261023085230). Never values.
+   */
+  unset_env_key_reasons?: Record<string, 'not_opted_in' | 'secret' | 'service_address' | 'local_address' | 'interpolated' | 'host_value' | 'empty' | 'invalid'>;
+  /**
+   * Compose environment names whose plain values apply will write, because the project sets x-gregale-env-import: true and they are unset (ADR-20261023085230). Names only.
+   */
+  imported_env_keys?: Array<string>;
+  /**
    * detector provenance, e.g. compose.yaml: api
    */
   source?: string;
