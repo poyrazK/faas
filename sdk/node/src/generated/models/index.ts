@@ -385,6 +385,7 @@ export type { CompleteObjectMultipartUploadRequest } from './CompleteObjectMulti
 export type { CompleteWorkflowCallbackResponse } from './CompleteWorkflowCallbackResponse.js';
 export type { ComposeHealthcheck } from './ComposeHealthcheck.js';
 export type { ComposeProcess } from './ComposeProcess.js';
+export type { ComposeResources } from './ComposeResources.js';
 export type { ConfigChangeReceipt } from './ConfigChangeReceipt.js';
 export type { ConfigGuard } from './ConfigGuard.js';
 export type { ConfigGuardDecision } from './ConfigGuardDecision.js';
@@ -2809,6 +2810,7 @@ export type { ScopedRouteBudgetReport } from './ScopedRouteBudgetReport.js';
 export type { SealScenarioObjectsRequest } from './SealScenarioObjectsRequest.js';
 export type { SealScenarioPostgresRequest } from './SealScenarioPostgresRequest.js';
 export type { SeatUsageResponse } from './SeatUsageResponse.js';
+export type { SecretFile } from './SecretFile.js';
 export type { SecretFinding } from './SecretFinding.js';
 export type { SecretKey } from './SecretKey.js';
 export type { SecretReferenceEnvironment } from './SecretReferenceEnvironment.js';

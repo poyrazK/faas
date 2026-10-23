@@ -18,9 +18,11 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.compose_healthcheck import ComposeHealthcheck
     from ..models.compose_process import ComposeProcess
+    from ..models.compose_resources import ComposeResources
     from ..models.plan_detected_by import PlanDetectedBy
     from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
     from ..models.plan_workload_unset_env_key_reasons import PlanWorkloadUnsetEnvKeyReasons
+    from ..models.secret_file import SecretFile
     from ..models.service_caller_scopes import ServiceCallerScopes
     from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
@@ -68,6 +70,11 @@ class PlanWorkload:
     the final stage."""
     build_args: list[str] | Unset = UNSET
     """Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."""
+    secret_files: list[SecretFile] | Unset = UNSET
+    """Compose secrets written to /run/secrets (ADR-20261023090000)."""
+    resources: ComposeResources | Unset = UNSET
+    """A Compose service's deploy.replicas and deploy.resources.limits, converted to app settings
+    (ADR-20261023120000). Omitted fields are undeclared and keep the app's own settings."""
     depends_on: list[str] | Unset = UNSET
     """Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects
     GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies."""
@@ -164,6 +171,17 @@ class PlanWorkload:
         build_args: list[str] | Unset = UNSET
         if not isinstance(self.build_args, Unset):
             build_args = self.build_args
+
+        secret_files: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.secret_files, Unset):
+            secret_files = []
+            for secret_files_item_data in self.secret_files:
+                secret_files_item = secret_files_item_data.to_dict()
+                secret_files.append(secret_files_item)
+
+        resources: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.resources, Unset):
+            resources = self.resources.to_dict()
 
         depends_on: list[str] | Unset = UNSET
         if not isinstance(self.depends_on, Unset):
@@ -269,6 +287,10 @@ class PlanWorkload:
             field_dict["build_target"] = build_target
         if build_args is not UNSET:
             field_dict["build_args"] = build_args
+        if secret_files is not UNSET:
+            field_dict["secret_files"] = secret_files
+        if resources is not UNSET:
+            field_dict["resources"] = resources
         if depends_on is not UNSET:
             field_dict["depends_on"] = depends_on
         if depends_on_conditions is not UNSET:
@@ -316,9 +338,11 @@ class PlanWorkload:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.compose_healthcheck import ComposeHealthcheck
         from ..models.compose_process import ComposeProcess
+        from ..models.compose_resources import ComposeResources
         from ..models.plan_detected_by import PlanDetectedBy
         from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
         from ..models.plan_workload_unset_env_key_reasons import PlanWorkloadUnsetEnvKeyReasons
+        from ..models.secret_file import SecretFile
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
@@ -365,6 +389,22 @@ class PlanWorkload:
         build_target = d.pop("build_target", UNSET)
 
         build_args = cast(list[str], d.pop("build_args", UNSET))
+
+        _secret_files = d.pop("secret_files", UNSET)
+        secret_files: list[SecretFile] | Unset = UNSET
+        if _secret_files is not UNSET:
+            secret_files = []
+            for secret_files_item_data in _secret_files:
+                secret_files_item = SecretFile.from_dict(secret_files_item_data)
+
+                secret_files.append(secret_files_item)
+
+        _resources = d.pop("resources", UNSET)
+        resources: ComposeResources | Unset
+        if isinstance(_resources, Unset):
+            resources = UNSET
+        else:
+            resources = ComposeResources.from_dict(_resources)
 
         depends_on = cast(list[str], d.pop("depends_on", UNSET))
 
@@ -476,6 +516,8 @@ class PlanWorkload:
             image_process=image_process,
             build_target=build_target,
             build_args=build_args,
+            secret_files=secret_files,
+            resources=resources,
             depends_on=depends_on,
             depends_on_conditions=depends_on_conditions,
             service_binding_policy=service_binding_policy,

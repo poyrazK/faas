@@ -739,6 +739,8 @@ from .complete_workflow_callback_response_status import CompleteWorkflowCallback
 from .compose_healthcheck import ComposeHealthcheck
 from .compose_process import ComposeProcess
 from .compose_process_stop_signal import ComposeProcessStopSignal
+from .compose_resources import ComposeResources
+from .compose_resources_cpu_millicores import ComposeResourcesCpuMillicores
 from .config_change_receipt import ConfigChangeReceipt
 from .config_guard import ConfigGuard
 from .config_guard_decision import ConfigGuardDecision
@@ -5420,6 +5422,7 @@ from .seal_scenario_objects_request import SealScenarioObjectsRequest
 from .seal_scenario_postgres_request import SealScenarioPostgresRequest
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
+from .secret_file import SecretFile
 from .secret_finding import SecretFinding
 from .secret_finding_severity import SecretFindingSeverity
 from .secret_revocation_target import SecretRevocationTarget
@@ -6837,6 +6840,8 @@ __all__ = (
     "ComposeHealthcheck",
     "ComposeProcess",
     "ComposeProcessStopSignal",
+    "ComposeResources",
+    "ComposeResourcesCpuMillicores",
     "ConfigChangeReceipt",
     "ConfigGuard",
     "ConfigGuardDecision",
@@ -11214,6 +11219,7 @@ __all__ = (
     "SealScenarioPostgresRequest",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
+    "SecretFile",
     "SecretFinding",
     "SecretFindingSeverity",
     "SecretRevocationTarget",
