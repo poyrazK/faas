@@ -28715,12 +28715,13 @@ CREATE TABLE public.app_release_gates (
     min_samples integer NOT NULL,
     created_by text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_release_gates_ai_check CHECK (((kind <> 'ai'::text) OR ((metric_name = ANY (ARRAY['error_rate'::text, 'flagged_rate'::text, 'cost_per_call'::text, 'ttfb_ms'::text])) AND (threshold IS NOT NULL) AND ((threshold >= (1)::double precision) AND (threshold <= (1000)::double precision)) AND (comparison IS NULL) AND (slo_id IS NULL) AND (max_burn_rate IS NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL)))),
     CONSTRAINT app_release_gates_check CHECK (((kind <> 'slo'::text) OR ((slo_id IS NOT NULL) AND (max_burn_rate IS NOT NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL) AND (metric_name IS NULL) AND (comparison IS NULL) AND (threshold IS NULL)))),
     CONSTRAINT app_release_gates_check1 CHECK (((kind <> 'new_errors'::text) OR ((max_new_groups IS NOT NULL) AND (min_events IS NOT NULL) AND (slo_id IS NULL) AND (max_burn_rate IS NULL) AND (metric_name IS NULL) AND (comparison IS NULL) AND (threshold IS NULL)))),
     CONSTRAINT app_release_gates_check2 CHECK (((kind <> 'custom_metric'::text) OR ((metric_name IS NOT NULL) AND (comparison IS NOT NULL) AND (threshold IS NOT NULL) AND (slo_id IS NULL) AND (max_burn_rate IS NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL)))),
     CONSTRAINT app_release_gates_comparison_check CHECK (((comparison IS NULL) OR (comparison = ANY (ARRAY['below'::text, 'above'::text])))),
     CONSTRAINT app_release_gates_created_by_check CHECK (((length(created_by) >= 1) AND (length(created_by) <= 320))),
-    CONSTRAINT app_release_gates_kind_check CHECK ((kind = ANY (ARRAY['slo'::text, 'new_errors'::text, 'custom_metric'::text]))),
+    CONSTRAINT app_release_gates_kind_check CHECK ((kind = ANY (ARRAY['slo'::text, 'new_errors'::text, 'custom_metric'::text, 'ai'::text]))),
     CONSTRAINT app_release_gates_max_burn_rate_check CHECK (((max_burn_rate IS NULL) OR ((max_burn_rate >= 1) AND (max_burn_rate <= 1000)))),
     CONSTRAINT app_release_gates_max_new_groups_check CHECK (((max_new_groups IS NULL) OR ((max_new_groups >= 0) AND (max_new_groups <= 100)))),
     CONSTRAINT app_release_gates_metric_name_check CHECK (((metric_name IS NULL) OR (metric_name ~ '^[a-z][a-z0-9_]{0,62}$'::text))),
@@ -44332,6 +44333,26 @@ CREATE TABLE public.outbound_ai_budget_alerts (
     CONSTRAINT outbound_ai_budget_alerts_tag_chk CHECK ((((budget = 'tag_daily_cost'::text) = (tag IS NOT NULL)) AND ((tag IS NULL) OR (tag ~ '^[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}$'::text)))),
     CONSTRAINT outbound_ai_budget_alerts_threshold_chk CHECK ((threshold_percent = ANY (ARRAY[80, 100]))),
     CONSTRAINT outbound_ai_budget_alerts_values_chk CHECK (((limit_value >= 1) AND (used_value >= 0)))
+);
+
+
+--
+-- Name: outbound_ai_deployment_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_deployment_minutes (
+    deployment_id uuid NOT NULL,
+    minute timestamp with time zone NOT NULL,
+    app_id uuid NOT NULL,
+    calls bigint DEFAULT 0 NOT NULL,
+    error_calls bigint DEFAULT 0 NOT NULL,
+    flagged_calls bigint DEFAULT 0 NOT NULL,
+    cost_millicents bigint DEFAULT 0 NOT NULL,
+    input_tokens bigint DEFAULT 0 NOT NULL,
+    output_tokens bigint DEFAULT 0 NOT NULL,
+    ttfb_calls bigint DEFAULT 0 NOT NULL,
+    ttfb_ms_total bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT outbound_ai_deployment_minutes_values_chk CHECK (((calls >= 0) AND ((error_calls >= 0) AND (error_calls <= calls)) AND ((flagged_calls >= 0) AND (flagged_calls <= calls)) AND (cost_millicents >= 0) AND (input_tokens >= 0) AND (output_tokens >= 0) AND ((ttfb_calls >= 0) AND (ttfb_calls <= calls)) AND (ttfb_ms_total >= 0)))
 );
 
 
@@ -60801,6 +60822,14 @@ ALTER TABLE ONLY public.outbound_ai_budget_alerts
 
 
 --
+-- Name: outbound_ai_deployment_minutes outbound_ai_deployment_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_deployment_minutes
+    ADD CONSTRAINT outbound_ai_deployment_minutes_pkey PRIMARY KEY (deployment_id, minute);
+
+
+--
 -- Name: outbound_ai_evaluation_items outbound_ai_evaluation_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -71359,6 +71388,20 @@ CREATE UNIQUE INDEX outbound_ai_budget_alerts_once_idx ON public.outbound_ai_bud
 --
 
 CREATE INDEX outbound_ai_budget_alerts_recent_idx ON public.outbound_ai_budget_alerts USING btree (integration_id, crossed_at DESC);
+
+
+--
+-- Name: outbound_ai_deployment_minutes_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_deployment_minutes_app ON public.outbound_ai_deployment_minutes USING btree (app_id, minute);
+
+
+--
+-- Name: outbound_ai_deployment_minutes_minute; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_deployment_minutes_minute ON public.outbound_ai_deployment_minutes USING btree (minute);
 
 
 --

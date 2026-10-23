@@ -103,6 +103,12 @@ type AIUsageRecord struct {
 	// EvaluationSampled marks a logged, captured call the settlement may
 	// queue for the online evaluation worker (ADR 20261021171712).
 	EvaluationSampled bool
+	// InstanceID is the calling app instance a verified workload identity
+	// names; the settlement adds the call, with its time to first byte in
+	// TTFBMS (nil when no byte arrived), to that instance's deployment
+	// (ADR 20261022153155). Empty for every other caller.
+	InstanceID string
+	TTFBMS     *int64
 	// LeaseID is the call's admission lease. It keys the settlement, so a
 	// retried settlement counts the call once, and the settlement deletes
 	// the lease (ADR-1120). Empty settles without a key.

@@ -30,7 +30,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`app`](#app) | Inspect an app, change settings, or manage its runtime |
 | [`billing`](#billing) | Manage billing (portal, invoices, subscription, card on file) |
 | [`freeze`](#freeze) | Freeze production releases for a window, every week, or after automatic rollbacks |
-| [`release-gates`](#release-gates) | Abort rollouts and roll back releases on your SLOs, new error groups, or custom metrics |
+| [`release-gates`](#release-gates) | Abort rollouts and roll back releases on your SLOs, new error groups, custom metrics, or AI gateway calls |
 | [`canary`](#canary) | Inspect profiling gates, advance canary stages, or simulate a preset |
 | [`build`](#build) | Inspect builds (build status\|list\|provenance\|sbom) |
 | [`connect`](#connect) | Connect a third-party service (github \| repo OWNER/NAME) |
@@ -2905,6 +2905,16 @@ List an integration&#39;s AI quality drift alerts, newest first
 | Flag | Meaning | |
 |---|---|---|
 | `--limit <N>` | alerts to show, 1 to 100 |  |
+
+### ai deployments
+
+List an app&#39;s AI gateway calls, errors, flagged answers and cost per call by deployment (last 14 days)
+
+`gregale ai deployments [--app <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project app) |  |
 
 ### ai tag-limits
 
@@ -5817,7 +5827,7 @@ Show whether production releases of an app are frozen now
 
 ## release-gates
 
-Abort rollouts and roll back releases on your SLOs, new error groups, or custom metrics
+Abort rollouts and roll back releases on your SLOs, new error groups, custom metrics, or AI gateway calls
 
 `gregale release-gates [<subcommand>]`
 
@@ -5827,6 +5837,7 @@ Examples:
 gregale release-gates add --app my-api --name checkout-slo --slo checkout --max-burn-rate 10
 gregale release-gates add --app my-api --name no-new-errors --new-errors --min-events 3
 gregale release-gates add --app my-api --name orders --metric orders_per_minute --below 5
+gregale release-gates add --app my-api --name ai-cost --ai cost_per_call --max-increase 30
 gregale release-gates list --app my-api
 ```
 
@@ -5844,7 +5855,7 @@ List an app&#39;s release gates (ADR-20261019071734)
 
 Add a release gate
 
-`gregale release-gates add [--app <slug>] --name <NAME> [--slo <NAME>] [--max-burn-rate <N>] [--new-errors] [--max-new-groups <N>] [--min-events <N>] [--metric <NAME>] [--below <VALUE>] [--above <VALUE>] [--min-samples <N>]`
+`gregale release-gates add [--app <slug>] --name <NAME> [--slo <NAME>] [--max-burn-rate <N>] [--new-errors] [--max-new-groups <N>] [--min-events <N>] [--metric <NAME>] [--below <VALUE>] [--above <VALUE>] [--ai <METRIC>] [--max-increase <PCT>] [--min-samples <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5858,7 +5869,9 @@ Add a release gate
 | `--metric <NAME>` | fail when this custom metric crosses a bound |  |
 | `--below <VALUE>` | fail when the metric averages below this |  |
 | `--above <VALUE>` | fail when the metric averages above this |  |
-| `--min-samples <N>` | requests or metric values before the gate is judged (default 20) |  |
+| `--ai <METRIC>` | fail when this AI gateway metric gets worse than the previous release&#39;s: error_rate, flagged_rate, cost_per_call or ttfb_ms |  |
+| `--max-increase <PCT>` | percent over the previous release that fails an --ai gate (default 50) |  |
+| `--min-samples <N>` | requests, metric values or AI calls before the gate is judged (default 20) |  |
 
 ### release-gates rm
 

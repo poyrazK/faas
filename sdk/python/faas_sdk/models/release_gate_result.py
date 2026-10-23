@@ -20,11 +20,11 @@ class ReleaseGateResult:
     kind: ReleaseGateResultKind
     passed: bool
     observed: float
-    """The burn rate, new error groups, or metric average."""
+    """The burn rate, new error groups, metric average, or the release's AI metric."""
     bound: float
     """The value that fails the gate."""
     samples: int
-    """The release's requests, new-error events, or metric values."""
+    """The release's requests, new-error events, metric values or AI calls."""
     summary: str
     """What the gate measured, in one line."""
     baseline_bad_fraction: float | Unset = UNSET

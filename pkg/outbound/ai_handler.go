@@ -155,6 +155,9 @@ type aiSettlement struct {
 	// its request-log entry ID (ADR 20261021171712); empty lets the store
 	// choose one.
 	callID string
+	// instanceID is the calling app instance, when a verified workload
+	// identity names it (ADR 20261022153155).
+	instanceID string
 	// route places a route attempt in its route, and moderation is the
 	// call's moderation result (ADR-1340).
 	route      routeAttempt
@@ -328,12 +331,20 @@ func (h *Handler) recordSettledAIUsage(ctx context.Context, integration Integrat
 	case caller == "":
 		caller = AIUsageCallerRuns
 	}
+	instanceID := ""
+	if caller == appID {
+		instanceID = settlement.instanceID
+	}
 	record := AIUsageRecord{
 		IntegrationID: integration.ID, Caller: caller, Outcome: outcome, Usage: usage, CostMillicents: cost,
 		EndUser: settlement.endUser, Tags: settlement.tags, LeaseID: settlement.leaseID,
 		PromptCacheSavedMillicents: promptCacheSavedMillicents(integration, usage, cost),
 		TraceID:                    settlement.traceID, ToolCalls: settled.toolCalls, ToolSignature: settled.toolSignature,
-		CallID: settlement.callID, QualityFlags: settled.qualityFlags,
+		CallID: settlement.callID, QualityFlags: settled.qualityFlags, InstanceID: instanceID,
+	}
+	if timeToFirstByte > 0 {
+		ttfb := timeToFirstByte.Milliseconds()
+		record.TTFBMS = &ttfb
 	}
 	for _, flag := range settled.qualityFlags {
 		h.Metrics.ObserveAIQualityFlag(metricIntegrationID, flag)

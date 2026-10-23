@@ -1051,6 +1051,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/outbound/ai-evaluations/{evaluation}":                                     "GetOutboundAIEvaluation",
 	"POST /v1/apps/{slug}/ai-access-tokens":                                            "CreateOutboundAIAccessToken",
 	"GET /v1/apps/{slug}/ai-access-tokens":                                             "ListOutboundAIAccessTokens",
+	"GET /v1/apps/{slug}/ai-deployments":                                               "ListAIDeployments",
 	"DELETE /v1/apps/{slug}/ai-access-tokens/{token}":                                  "RevokeOutboundAIAccessToken",
 	"POST /v1/outbound/ai-routes":                                                      "CreateOutboundAIRoute",
 	"GET /v1/outbound/ai-routes/{route}":                                               "GetOutboundAIRoute",

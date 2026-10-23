@@ -829,6 +829,14 @@ const ReleaseGateDefaultMinEvents = 3
 const ReleaseGateDefaultMinSamples = 20
 const ReleaseGateErrorClassesMax = 5
 
+// AI release gates (ADR 20261022153155) fail when a release's AI metric is
+// more than a threshold percent above its baseline's: between
+// ReleaseGateAIMaxIncreaseMin and ReleaseGateAIMaxIncreaseMax percent,
+// ReleaseGateAIDefaultMaxIncrease by default. Plan-independent.
+const ReleaseGateAIMaxIncreaseMin = 1
+const ReleaseGateAIMaxIncreaseMax = 1000
+const ReleaseGateAIDefaultMaxIncrease = 50
+
 // Verified rollback outcomes (ADR-1446). apid resolves each plain rollback
 // every RollbackOutcomeCheckInterval: complete once the target serves,
 // failed when it leaves activation without serving or when
@@ -1536,6 +1544,10 @@ const (
 	// error rate are taken over.
 	OutboundAICallStatsCallsMax    = 5_000
 	OutboundAICallStatsWindowHours = 24
+	// AI calls per deployment (ADR 20261022153155): the days a deployment's
+	// minute rows are kept, and the deployments one listing returns.
+	OutboundAIDeploymentStatsRetentionDays = 14
+	OutboundAIDeploymentsListMax           = 50
 	// Automatic prompt caching (ADR-1437): the estimated prompt or prefix
 	// tokens below which no breakpoint is added, and the cache lifetime a
 	// repeated prefix must recur within.

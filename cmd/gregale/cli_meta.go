@@ -999,6 +999,9 @@ var cliCommands = []cliCommand{
 			{Name: "quality-alerts", Short: "List an integration's AI quality drift alerts, newest first", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "limit", Short: "alerts to show, 1 to 100", Value: "N"},
 			}},
+			{Name: "deployments", Short: "List an app's AI gateway calls, errors, flagged answers and cost per call by deployment (last 14 days)", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
 			{Name: "tag-limits", Short: "Show or change per-tag daily cost limits (unchanged limits are kept)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "set", Short: "cap a tag's UTC-day cost: key=value:USD (repeat)", Value: "SPEC"},
 				{Name: "remove", Short: "remove a tag's limit (repeat)", Value: "TAG"},
@@ -1847,11 +1850,12 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "release-gates",
 		DocSlug: "release-gates",
-		Short:   "Abort rollouts and roll back releases on your SLOs, new error groups, or custom metrics",
+		Short:   "Abort rollouts and roll back releases on your SLOs, new error groups, custom metrics, or AI gateway calls",
 		Examples: []string{
 			"gregale release-gates add --app my-api --name checkout-slo --slo checkout --max-burn-rate 10",
 			"gregale release-gates add --app my-api --name no-new-errors --new-errors --min-events 3",
 			"gregale release-gates add --app my-api --name orders --metric orders_per_minute --below 5",
+			"gregale release-gates add --app my-api --name ai-cost --ai cost_per_call --max-increase 30",
 			"gregale release-gates list --app my-api",
 		},
 		Subcommands: []cliSub{
@@ -1869,7 +1873,9 @@ var cliCommands = []cliCommand{
 				{Name: "metric", Short: "fail when this custom metric crosses a bound", Value: "NAME"},
 				{Name: "below", Short: "fail when the metric averages below this", Value: "VALUE"},
 				{Name: "above", Short: "fail when the metric averages above this", Value: "VALUE"},
-				{Name: "min-samples", Short: "requests or metric values before the gate is judged (default 20)", Value: "N"},
+				{Name: "ai", Short: "fail when this AI gateway metric gets worse than the previous release's: error_rate, flagged_rate, cost_per_call or ttfb_ms", Value: "METRIC"},
+				{Name: "max-increase", Short: "percent over the previous release that fails an --ai gate (default 50)", Value: "PCT"},
+				{Name: "min-samples", Short: "requests, metric values or AI calls before the gate is judged (default 20)", Value: "N"},
 			}},
 			{Name: "rm", Short: "Remove a release gate", Aliases: []string{"delete"}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},

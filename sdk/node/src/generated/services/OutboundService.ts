@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AIDeploymentUsageList } from '../models/AIDeploymentUsageList.js';
 import type { CreatedOutboundAIAccessToken } from '../models/CreatedOutboundAIAccessToken.js';
 import type { CreateOutboundAIAccessTokenRequest } from '../models/CreateOutboundAIAccessTokenRequest.js';
 import type { CreateOutboundAIEvaluationRequest } from '../models/CreateOutboundAIEvaluationRequest.js';
@@ -1840,6 +1841,39 @@ export class OutboundService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List an app's AI gateway calls by deployment.
+   * Requires MFA and read scope. Each deployment with AI gateway calls in the last 14 days, latest call first, at most 50: its calls, provider errors, flagged answers, cost, tokens and mean time to first byte. Only calls made from the app's instances count; access tokens, Runs, replays and cached responses do not (ADR 20261022153155).
+   * @returns AIDeploymentUsageList The app's deployments.
+   * @throws ApiError
+   */
+  public static listAiDeployments({
+    slug,
+  }: {
+    /**
+     * The app whose deployments to list.
+     */
+    slug: string,
+  }): CancelablePromise<AIDeploymentUsageList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/ai-deployments',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above (ADR-998).`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout (ADR-998).`,
         404: `code: not_found`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT

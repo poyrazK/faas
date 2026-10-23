@@ -1008,6 +1008,25 @@ resets, so start a new one.
 - With trace limits set, a call of a new trace past the day's 100,000 is
   refused with `trace_untracked`, since it could not be limited.
 
+## AI calls by deployment
+
+Settlement adds an app instance's call to its deployment's row for the
+current UTC minute in `outbound_ai_deployment_minutes` (ADR 20261022153155).
+The deployment is read from `instances` in the same statement, by the
+verified workload identity's instance and app; a call whose instance row is
+gone is not attributed. Rows have no foreign keys and are pruned after
+`OutboundAIDeploymentStatsRetentionDays` (14) with the other AI rollups.
+
+| Reader | Reads |
+| --- | --- |
+| `ai` release gates | The release's and the baseline's rows in the gate's windows, through the primary key. |
+| `GET /v1/apps/{slug}/ai-deployments` | The app's rows of the last 14 days through `(app_id, minute)`, summed by deployment, at most 50. |
+
+An `ai` gate is skipped by meterd and apid N-1, and an N-1 apid refuses a
+rollout decision carrying an `ai` result; roll apid back only after removing
+`ai` gates (`DELETE FROM app_release_gates WHERE kind = 'ai'` is what the
+down migration does).
+
 ## AI gateway dashboard
 
 The dashboard's AI pages read what the API serves (ADR 20261022145950). The

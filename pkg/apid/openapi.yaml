@@ -6803,6 +6803,33 @@ paths:
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/ai-deployments:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose deployments to list.
+        schema: { type: string }
+    get:
+      tags: [outbound]
+      operationId: listAIDeployments
+      summary: List an app's AI gateway calls by deployment.
+      description: >-
+        Requires MFA and read scope. Each deployment with AI gateway calls in the last 14 days, latest call first, at most
+        50: its calls, provider errors, flagged answers, cost, tokens and mean time to first byte. Only calls made from
+        the app's instances count; access tokens, Runs, replays and cached responses do not (ADR 20261022153155).
+      responses:
+        '200':
+          description: The app's deployments.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AIDeploymentUsageList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/apps/{slug}/ai-access-tokens:
     parameters:
       - name: slug
@@ -29229,7 +29256,7 @@ paths:
       tags: [deployments]
       operationId: createReleaseGate
       summary: Add a release gate (ADR-20261019071734).
-      description: "An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced first; a custom_metric gate bounds a custom metric's average. Omitted numbers take Gregale's defaults."
+      description: "An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced first; a custom_metric gate bounds a custom metric's average; an ai gate fails a release whose AI gateway calls got worse than its baseline's (ADR 20261022153155). Omitted numbers take Gregale's defaults."
       requestBody:
         required: true
         content:
@@ -78547,6 +78574,33 @@ components:
         created_at: { type: string, format: date-time }
         last_used_at: { type: [string, 'null'], format: date-time }
         revoked_at: { type: [string, 'null'], format: date-time }
+    AIDeploymentUsage:
+      type: object
+      description: One deployment's AI gateway calls over the last 14 days (ADR 20261022153155).
+      required: [deployment_id, first_call_at, last_call_at, calls, error_calls, flagged_calls, cost_millicents, input_tokens, output_tokens, error_rate, flagged_rate, cost_per_call_millicents]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        first_call_at: { type: string, format: date-time, description: The UTC minute of its first call in the window. }
+        last_call_at: { type: string, format: date-time, description: The UTC minute of its latest call. }
+        calls: { type: integer, format: int64, minimum: 0 }
+        error_calls: { type: integer, format: int64, minimum: 0, description: Calls the provider failed. }
+        flagged_calls: { type: integer, format: int64, minimum: 0, description: Calls whose answer had a quality flag. }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        error_rate: { type: number, minimum: 0, maximum: 1 }
+        flagged_rate: { type: number, minimum: 0, maximum: 1 }
+        cost_per_call_millicents: { type: integer, format: int64, minimum: 0 }
+        mean_ttfb_ms: { type: integer, format: int64, minimum: 0, description: Mean time to first byte; omitted when no call had one. }
+    AIDeploymentUsageList:
+      type: object
+      description: An app's deployments with AI gateway calls, latest call first.
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/AIDeploymentUsage' }
     OutboundAIAccessTokenList:
       type: object
       description: An app's access tokens, newest first.
@@ -106999,15 +107053,16 @@ components:
       required: [name, kind, min_samples, created_by, created_at]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
-        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
         slo: { type: string, description: "slo gates: the SLO judged." }
         max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: the burn rate that fails the gate." }
         max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: new error groups allowed." }
         min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: events before a group counts." }
-        metric: { type: string, description: "custom_metric gates: the custom metric." }
+        metric: { type: string, description: "custom_metric gates: the custom metric. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
         comparison: { type: string, enum: [below, above], description: "custom_metric gates: which side of the threshold fails." }
         threshold: { type: number, description: "custom_metric gates: the bound on the metric's average." }
-        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Requests or metric values a release needs before the gate is judged." }
+        max_increase_percent: { type: integer, minimum: 1, maximum: 1000, description: "ai gates: the largest increase over the baseline, in percent." }
+        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Requests, metric values or AI calls (on each side, for ai gates) needed before the gate is judged." }
         created_by: { type: string }
         created_at: { type: string, format: date-time }
     CreateReleaseGateRequest:
@@ -107016,14 +107071,15 @@ components:
       required: [name, kind]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
-        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
         slo: { type: string, description: "slo gates: the name of one of the app's SLOs." }
         max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: default 10." }
         max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: default 0." }
         min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: default 3." }
-        metric: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$', description: "custom_metric gates: the custom metric's name." }
+        metric: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$', description: "custom_metric gates: the custom metric's name. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
         comparison: { type: string, enum: [below, above], description: "custom_metric gates: fail when the average is below or above the threshold." }
         threshold: { type: number, description: "custom_metric gates: the bound." }
+        max_increase_percent: { type: integer, minimum: 1, maximum: 1000, description: "ai gates: fail when the release's metric is this many percent above its baseline's, and above a floor (1 percentage point, 50 ms or 1 millicent). Default 50." }
         min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Default 20." }
     ListReleaseGatesResponse:
       description: "An app's release gates, by name."
@@ -107037,11 +107093,11 @@ components:
       required: [name, kind, passed, summary, observed, bound, samples]
       properties:
         name: { type: string }
-        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
         passed: { type: boolean }
-        observed: { type: number, description: "The burn rate, new error groups, or metric average." }
+        observed: { type: number, description: "The burn rate, new error groups, metric average, or the release's AI metric." }
         bound: { type: number, description: "The value that fails the gate." }
-        samples: { type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, or metric values." }
+        samples: { type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, metric values or AI calls." }
         baseline_bad_fraction: { type: number, description: "slo gates: the predecessor's bad fraction." }
         error_classes: { type: array, maxItems: 5, items: { type: string }, description: "new_errors gates: the new groups' error classes." }
         summary: { type: string, description: "What the gate measured, in one line." }

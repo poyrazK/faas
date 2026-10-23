@@ -664,6 +664,7 @@ var CliPreAuthPatch = cliPreAuthPatch
 var CliRevisionPinTTLSeconds = cliRevisionPinTTLSeconds
 var CliSessionMetadataPath = cliSessionMetadataPath
 var CmdAI = cmdAI
+var CmdReleaseGates = cmdReleaseGates
 var CmdAITokens = cmdAITokens
 var CmdAccount = cmdAccount
 var CmdAccountDelete = cmdAccountDelete
@@ -1083,6 +1084,13 @@ var CmdWorkflowsRun = cmdWorkflowsRun
 var CmdWorkflowsStatus = cmdWorkflowsStatus
 var CmdWorkflowsSteps = cmdWorkflowsSteps
 var CollectEventDeliveryPages = collectEventDeliveryPages
+
+// ReleaseGateRequest builds a release-gates add request from its flags.
+func ReleaseGateRequest(name, slo string, maxBurn int, newErrors bool, maxGroups, minEvents int, metric, below, above, aiMetric string,
+	maxIncrease, minSamples int) (api.CreateReleaseGateRequest, error) {
+	return releaseGateRequest(releaseGateFlags{name: name, slo: slo, maxBurn: maxBurn, newErrors: newErrors, maxGroups: maxGroups,
+		minEvents: minEvents, metric: metric, below: below, above: above, aiMetric: aiMetric, maxIncrease: maxIncrease, minSamples: minSamples})
+}
 
 func CollectListPages[T any](p0 context.Context, p1 string, p2 bool, p3 func(context.Context, string) ([]T, string, error)) ([]T, string, error) {
 	return collectListPages[T](p0, p1, p2, p3)
@@ -1604,7 +1612,6 @@ var RedactErrorText = redactErrorText
 var RedactTestDiagnosticText = redactTestDiagnosticText
 var RehearsalTestRepo = rehearsalTestRepo
 var RejectDevTriggerAppSelection = rejectDevTriggerAppSelection
-var ReleaseGateRequest = releaseGateRequest
 var ReleaseSummaryLine = releaseSummaryLine
 var ReleasedUsage = releasedUsage
 var RemoveTestFaultRules = removeTestFaultRules

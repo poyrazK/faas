@@ -190,6 +190,9 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 		lease:    leaseID != uuid.Nil,
 		content:  record.Log != nil && record.Log.Content != nil,
 		route:    record.Route != nil,
+		// ADR 20261022153155: an app instance's call counts toward its
+		// deployment; a cache hit settles elsewhere and never reaches here.
+		deployment: appCaller(record.Caller) && validUUID(record.Caller) && validUUID(record.InstanceID) && !record.Cached,
 	}
 	plan.evaluation = plan.content && record.EvaluationSampled
 	batch := &pgx.Batch{}
@@ -216,6 +219,9 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 	if plan.route {
 		queueAIRouteAttempt(batch, record)
 	}
+	if plan.deployment {
+		queueAIDeploymentMinute(batch, record)
+	}
 	results := tx.SendBatch(ctx, batch)
 	crossings, err := scanAIUsageRows(results, record, opened, plan)
 	if closeErr := results.Close(); err == nil {
@@ -226,7 +232,43 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 
 // aiSettlementPlan names the statements one settlement sends.
 type aiSettlementPlan struct {
-	endUser, tags, trace, counters, binding, lease, content, evaluation, route bool
+	endUser, tags, trace, counters, binding, lease, content, evaluation, route, deployment bool
+}
+
+// queueAIDeploymentMinute adds an app instance's call to its deployment's
+// row for the current UTC minute (ADR 20261022153155). The deployment is
+// the instance row's, read in the same statement; an instance that is gone,
+// or belongs to another app, writes nothing. The table has no foreign keys,
+// so a settlement never fails on it.
+func queueAIDeploymentMinute(batch *pgx.Batch, record AIUsageRecord) {
+	var errorCalls, flaggedCalls, ttfbCalls, ttfbMS int64
+	if record.Outcome == AIUsageOutcomeError {
+		errorCalls = 1
+	}
+	if len(record.QualityFlags) > 0 {
+		flaggedCalls = 1
+	}
+	if record.TTFBMS != nil {
+		ttfbCalls, ttfbMS = 1, max(*record.TTFBMS, 0)
+	}
+	batch.Queue(`
+		INSERT INTO outbound_ai_deployment_minutes AS stats
+		    (deployment_id, minute, app_id, calls, error_calls, flagged_calls, cost_millicents, input_tokens, output_tokens,
+		     ttfb_calls, ttfb_ms_total)
+		SELECT instance.deployment_id, date_trunc('minute', now()), instance.app_id, 1, $3, $4, $5, $6, $7, $8, $9
+		  FROM instances instance
+		 WHERE instance.id = $1 AND instance.app_id = $2 AND instance.deployment_id IS NOT NULL
+		ON CONFLICT (deployment_id, minute) DO UPDATE SET
+		    calls = stats.calls + 1,
+		    error_calls = stats.error_calls + EXCLUDED.error_calls,
+		    flagged_calls = stats.flagged_calls + EXCLUDED.flagged_calls,
+		    cost_millicents = stats.cost_millicents + EXCLUDED.cost_millicents,
+		    input_tokens = stats.input_tokens + EXCLUDED.input_tokens,
+		    output_tokens = stats.output_tokens + EXCLUDED.output_tokens,
+		    ttfb_calls = stats.ttfb_calls + EXCLUDED.ttfb_calls,
+		    ttfb_ms_total = stats.ttfb_ms_total + EXCLUDED.ttfb_ms_total`,
+		uuid.MustParse(record.InstanceID), uuid.MustParse(record.Caller), errorCalls, flaggedCalls, max(record.CostMillicents, 0),
+		max(record.Usage.InputTokens, 0), max(record.Usage.OutputTokens, 0), ttfbCalls, ttfbMS)
 }
 
 // queueAIRouteAttempt adds a route attempt to its target's row for the
@@ -384,6 +426,11 @@ func scanAIUsageRows(results pgx.BatchResults, record AIUsageRecord, opened open
 		}
 	}
 	if plan.route {
+		if _, err := results.Exec(); err != nil {
+			return nil, err
+		}
+	}
+	if plan.deployment {
 		if _, err := results.Exec(); err != nil {
 			return nil, err
 		}
@@ -683,6 +730,9 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		// ADR-1340: canary rows and export lines.
 		{`DELETE FROM outbound_ai_route_target_minutes WHERE minute < now() - make_interval(hours => $1::int)`, api.OutboundAIRouteStatsRetentionHours},
 		{`DELETE FROM outbound_ai_log_exports WHERE created_at < now() - make_interval(hours => $1::int)`, api.OutboundAILogExportRetentionHours},
+		// ADR 20261022153155: AI calls by deployment.
+		{`DELETE FROM outbound_ai_deployment_minutes WHERE minute < now() - make_interval(days => $1::int)`,
+			api.OutboundAIDeploymentStatsRetentionDays},
 		// ADR-1431: settled batches, evaluations with their items, and
 		// tokens that expired or were revoked.
 		{`DELETE FROM outbound_ai_batches WHERE state = 'settled' AND settled_at < now() - make_interval(days => $1::int)`, api.OutboundAIBatchRetentionDays},

@@ -129,8 +129,10 @@ type realtimeSession struct {
 	h           *Handler
 	integration Integration
 	appID       string
-	metricID    string
-	metered     bool
+	// instanceID is the calling app instance (ADR 20261022153155).
+	instanceID string
+	metricID   string
+	metered    bool
 	// spec is the upgrade's admission; each response is admitted with it
 	// and its own reservation.
 	spec    AdmissionSpec
@@ -599,7 +601,7 @@ func (s *realtimeSession) settle(ctx context.Context, response *realtimeResponse
 		return
 	}
 	settlement := aiSettlement{status: http.StatusOK, attempts: 1, started: response.started, endUser: s.endUser, tags: s.tags,
-		traceID: s.traceID, leaseID: response.leaseID, reserve: response.reserve, billable: true, media: media}
+		traceID: s.traceID, leaseID: response.leaseID, reserve: response.reserve, billable: true, media: media, instanceID: s.instanceID}
 	cost := aiCallCostMillicents(s.integration, usage)
 	if estimated, estimatedCost, ok := estimatedAIUsage(outcome, usage, settlement); ok {
 		usage, cost = estimated, estimatedCost

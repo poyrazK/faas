@@ -275,6 +275,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	appID := ""
+	// callerInstance is the calling app instance a verified workload
+	// identity names, which attributes AI calls to its deployment (ADR
+	// 20261022153155).
+	callerInstance := ""
 	principalID := ""
 	if isReplay {
 		principalID = "replay:" + replay.replayID
@@ -299,7 +303,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		appID = workflowIdentity.AppID
 		principalID = "workflow:" + workflowIdentity.RunID
 	} else {
-		appID, ok = h.callerAppID(w, r, integration)
+		appID, callerInstance, ok = h.callerAppID(w, r, integration)
 		if !ok {
 			return
 		}
@@ -601,7 +605,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if realtime != realtimeNone {
 		// The upgrade itself was admitted like a call, with no reservation;
 		// each response is admitted with its own (ADR 20261019072722).
-		h.serveRealtime(w, r, &realtimeSession{h: h, integration: integration, appID: appID, metricID: metricIntegrationID,
+		h.serveRealtime(w, r, &realtimeSession{h: h, integration: integration, appID: appID, instanceID: callerInstance, metricID: metricIntegrationID,
 			metered: realtime == realtimeMetered, spec: spec, endUser: aiEndUser, tags: aiTags, traceID: aiTrace,
 			model: realtimeURLModel(r.URL.Query()), live: livePath(integration.AIProvider, path)}, upstreamReq)
 		return
@@ -759,6 +763,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		settlement := aiSettlement{
 			status: resp.StatusCode, attempts: attempts, started: upstreamStarted, routeID: routeIDFromContext(r.Context()),
 			endUser: aiEndUser, tags: aiTags, traceID: aiTrace, leaseID: decision.LeaseID, callID: aiCallID,
+			instanceID: callerInstance,
 			route:      routeAttemptFromContext(r.Context()),
 			moderation: moderation,
 			response:   responseCheck, cacheHit: cacheHit,
@@ -816,41 +821,43 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integration Integration) (string, bool) {
+// callerAppID returns the calling app and, when a verified workload
+// identity names it, the calling instance.
+func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integration Integration) (string, string, bool) {
 	if token, ok := accessTokenFromContext(r.Context()); ok {
 		// ADR-1431: an access token acts as its app, on AI integrations only.
 		if !token.allows(integration) {
 			writeProblem(w, http.StatusForbidden, "outbound_access_token_not_allowed", "This access token cannot use this outbound integration", "")
-			return "", false
+			return "", "", false
 		}
-		return token.AppID, true
+		return token.AppID, "", true
 	}
 	if identity, ok := relayIdentityFromContext(r.Context()); ok {
 		// ADR-989: the relay connection's platform identity is the caller.
 		// Token-authenticated integrations stay unreachable through it.
 		if integration.ProviderAuthMode != ProviderAuthManaged {
 			writeProblem(w, http.StatusForbidden, "outbound_relay_not_supported", "This outbound integration is not available through the app relay", "")
-			return "", false
+			return "", "", false
 		}
-		return identity.AppID, true
+		return identity.AppID, identity.InstanceID, true
 	}
 	if integration.ProviderAuthMode == ProviderAuthManaged {
 		if h.IdentityVerifier == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_identity_unavailable", "Outbound workload identity is unavailable", "1")
-			return "", false
+			return "", "", false
 		}
 		identity, err := h.IdentityVerifier.Verify(r.Header.Get(WorkloadIdentityHeader), integration.ID)
 		if err != nil {
 			writeProblem(w, http.StatusUnauthorized, "outbound_unauthorized", "Outbound workload identity is invalid", "")
-			return "", false
+			return "", "", false
 		}
-		return identity.AppID, true
+		return identity.AppID, identity.InstanceID, true
 	}
 	if !validToken(r.Header.Get(TokenHeader), integration.TokenHash) {
 		writeProblem(w, http.StatusUnauthorized, "outbound_unauthorized", "Outbound token is invalid", "")
-		return "", false
+		return "", "", false
 	}
-	return r.Header.Get(AppHeader), true
+	return r.Header.Get(AppHeader), "", true
 }
 
 func (h *Handler) callerExecutionIdentity(w http.ResponseWriter, r *http.Request, integration Integration) (ExecutionIdentity, bool, bool) {

@@ -17,7 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const aiUsageText = "usage: gregale ai <policy|content-policy|app-limit|guardrails|prices|catalog|usage|users|tags|tag-limits|traces|feedback|quality-alerts|routes|keys|alerts|logs|replay|evaluate|tokens> ..."
+const aiUsageText = "usage: gregale ai <policy|content-policy|app-limit|guardrails|prices|catalog|usage|users|tags|tag-limits|traces|feedback|quality-alerts|deployments|routes|keys|alerts|logs|replay|evaluate|tokens> ..."
 
 func cmdAI(args []string) int {
 	parent, _ := lookupCliCommand("ai")
@@ -50,6 +50,8 @@ func cmdAI(args []string) int {
 		return cmdAIFeedback(args[1:])
 	case "quality-alerts":
 		return cmdAIQualityAlerts(args[1:])
+	case "deployments":
+		return cmdAIDeployments(args[1:])
 	case "routes":
 		return cmdAIRoutes(args[1:])
 	case "guardrails":

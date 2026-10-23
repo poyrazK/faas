@@ -49,6 +49,8 @@ export type { AdoptEnvironmentGitOpsResponse } from './models/AdoptEnvironmentGi
 export type { AdvanceAutomationLiveSuiteRequest } from './models/AdvanceAutomationLiveSuiteRequest.js';
 export type { AdvanceCanaryRequest } from './models/AdvanceCanaryRequest.js';
 export type { AfterRestoreHook } from './models/AfterRestoreHook.js';
+export type { AIDeploymentUsage } from './models/AIDeploymentUsage.js';
+export type { AIDeploymentUsageList } from './models/AIDeploymentUsageList.js';
 export type { AlertDeliveryResponse } from './models/AlertDeliveryResponse.js';
 export type { AlertPresetResponse } from './models/AlertPresetResponse.js';
 export type { AlertRollback } from './models/AlertRollback.js';

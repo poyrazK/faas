@@ -437,6 +437,7 @@ type MemStore struct {
 	outboundAIAccessTokens      map[string]OutboundAIAccessToken
 	outboundCredentialKeys      map[string][]OutboundCredentialKey
 	outboundAIBudgetAlerts      map[string][]OutboundAIBudgetAlert
+	outboundAIDeploymentStats   map[string][]OutboundAIDeploymentStats
 	outboundAIRequestLog        map[string][]OutboundAIRequestLogEntry
 	outboundAIRequestContent    map[string]OutboundAIRequestContent
 	outboundAIReplays           map[string]OutboundAIReplay

@@ -55,6 +55,9 @@ account during the preview; contact support to have it turned on for yours.
 - **Visibility.** Usage and cost by app, model and end user, budget alerts at
   80% and 100%, an opt-in request log, opt-in capture of request and response
   bodies, and replay of a captured call against other models.
+- **Deploys.** See each deployment's AI calls, errors, flagged answers and
+  cost per call with `gregale ai deployments`, and roll back a release whose
+  AI calls get worse with an `ai` release gate.
 - **Dashboard.** See each integration's cost by model, app, tag and end user,
   its latency, error rate, quality and drift alerts, and every agent trace
   as a timeline of its calls, at `/dashboard/ai`.
@@ -195,6 +198,30 @@ gregale ai evaluate <route-id> --position 2 --judge <id> --judge-model gpt-5 --c
 This replays up to 50 of your latest captured calls (turn on
 `--request-log-content` for the route's first integration) and starts the
 canary only if the new model does not do worse.
+
+### By deployment
+
+Each call from one of your app's instances counts toward the deployment that
+instance runs (ADR 20261022153155). List the last 14 days by deployment:
+
+```bash
+gregale ai deployments --app my-api
+```
+
+```
+DEPLOYMENT                            LAST CALL             CALLS  ERRORS  FLAGGED  COST           PER CALL       MEAN TTFB
+6f1c0e1e-6c1b-4c7a-9c8e-2f0b7c1d9a10  2026-10-22T15:41:00Z  4210   0.40%   1.10%    USD 4.21000    USD 0.00100    380
+2b9d4c55-1f0e-4a3b-8d6e-5a7c9e0b1f22  2026-10-21T09:12:00Z  9877   0.35%   1.05%    USD 7.90160    USD 0.00080    365
+```
+
+Calls through an access token, a Run, a replay or the response cache have no
+deployment and are not counted. An `ai` release gate stops a canary, or rolls
+back a release, whose error rate, flagged rate, cost per call or time to first
+byte rises past a bound over the previous release's:
+
+```bash
+gregale release-gates add --app my-api --name ai-cost --ai cost_per_call --max-increase 30
+```
 
 ### In the dashboard
 

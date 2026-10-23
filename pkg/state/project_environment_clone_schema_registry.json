@@ -11341,6 +11341,23 @@
     "kind": "operational"
   },
   {
+    "table": "outbound_ai_deployment_minutes",
+    "columns": [
+      "app_id",
+      "calls",
+      "cost_millicents",
+      "deployment_id",
+      "error_calls",
+      "flagged_calls",
+      "input_tokens",
+      "minute",
+      "output_tokens",
+      "ttfb_calls",
+      "ttfb_ms_total"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "outbound_ai_evaluation_items",
     "columns": [
       "baseline_cost_millicents",
