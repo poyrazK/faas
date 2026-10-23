@@ -749,6 +749,39 @@ groups:
           description: "More than one cluster signing kid is reported by verified fleet nodes. Internal-service JWTs can fail across nodes until every node verifies the current singleton key."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFleetSealDomain.md"
 
+  # ADR 20261022111812: per-reader seal domains. `gregalectl seal-domain
+  # verify` (run by the seal_domains role) writes faas_seal_domain_ready to the
+  # node's textfile collector; a reader daemon exports faas_seal_domain_loaded
+  # from its start. Neither series exists until the domain is staged, so both
+  # alerts stay quiet before a rollout.
+  - name: seal_domains
+    interval: 30s
+    rules:
+      - alert: FaasSealDomainUnverified
+        expr: faas_seal_domain_ready == 0
+        for: 5m
+        labels:
+          severity: warn
+          family: seal_domains
+        annotations:
+          summary: "{{ $labels.instance }} could not prove the {{ $labels.domain }} seal domain"
+          description: "gregalectl seal-domain verify failed on {{ $labels.instance }}: the staged {{ $labels.domain }} identity is missing, or it does not open the domain probe. Once writers seal to the domain alone, the reader on this host cannot open that domain's secrets."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSealDomain.md"
+
+      - alert: FaasSealDomainIdentityMissing
+        expr: |
+          faas_seal_domain_loaded == 0
+          and on(domain)
+          (max by (domain) (faas_seal_domain_loaded) == 1)
+        for: 10m
+        labels:
+          severity: warn
+          family: seal_domains
+        annotations:
+          summary: "{{ $labels.job }} on {{ $labels.instance }} started without the {{ $labels.domain }} seal-domain identity"
+          description: "Other {{ $labels.job }} instances hold the {{ $labels.domain }} identity, but this one started without it. Once writers seal to the domain alone, it cannot open those secrets: for runtime, wakes on this node fail for every app with a secret sealed to the domain, which is every app once the re-seal has run. Stage the identity and restart the daemon before it takes traffic."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSealDomain.md"
+
   - name: gcp_ops_agent
     interval: 30s
     rules:

@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "008b9cd2eb10436178af17015cf64faafe1f279d4e2c7183af6eb46ecf4699a6",
+      "revision": "21c3deb56a3af2ad71195c60203949dbdba1eb720b773dd0083e0cd605f71403",
       "files": [
         "faas.rules.yml"
       ],
@@ -540,6 +540,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "4babccc330de73c656e95c79e8042832d83bb45d84723632a6be1d4e7915ee15"
+          }
+        },
+        {
+          "id": "1687be4d57ea57fe6c859fba56ae31887188060b6dabb3074b61c0fbf09044cd",
+          "file_name": "faas.rules.yml",
+          "group_name": "seal_domains",
+          "rule_name": "FaasSealDomainUnverified",
+          "definition": {
+            "expression_hash": "4d32f71ef63489054a47f300f2d7e74f12bebd4a1bef4cbe07717ad3bf81831e",
+            "labels_hash": "3bcf62c21ffb682618d6e0c57d26d88be9ef13753ffa7b80d55dd09184d16137",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ebbe9d97c1863b04792e4d4f698afa60613bf16dda00b18aa3c9df02cd6b7c39"
           }
         },
         {
@@ -2451,6 +2464,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "cfc9daf99753a957b3657c6dc511c460434933a9b6ef82afdbac9503dc7f041a"
+          }
+        },
+        {
+          "id": "7511578876796cf7c7e18dec8595f6ba99262c39a2d922ae79ec0bc04fc3b3dc",
+          "file_name": "faas.rules.yml",
+          "group_name": "seal_domains",
+          "rule_name": "FaasSealDomainIdentityMissing",
+          "definition": {
+            "expression_hash": "d393a4354ca1870cebffba1a7c36c618e1c2e0008257b26e14548d00ad50037b",
+            "labels_hash": "3bcf62c21ffb682618d6e0c57d26d88be9ef13753ffa7b80d55dd09184d16137",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e7160612a860184150e9bc4ad60ca84b9ac79d47d121325afa4ef4dab093539c"
           }
         },
         {
@@ -5044,7 +5070,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "095672564aaaaff746cbcca2d3e43163fd949b235bf71e95a48dfd8f15b14863",
+      "revision": "289a1fbb893a5a080e9513dd381c9fba816bf36878f18611af69baa04d7382df",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -5610,6 +5636,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "4babccc330de73c656e95c79e8042832d83bb45d84723632a6be1d4e7915ee15"
+          }
+        },
+        {
+          "id": "1687be4d57ea57fe6c859fba56ae31887188060b6dabb3074b61c0fbf09044cd",
+          "file_name": "faas.rules.yml",
+          "group_name": "seal_domains",
+          "rule_name": "FaasSealDomainUnverified",
+          "definition": {
+            "expression_hash": "4d32f71ef63489054a47f300f2d7e74f12bebd4a1bef4cbe07717ad3bf81831e",
+            "labels_hash": "3bcf62c21ffb682618d6e0c57d26d88be9ef13753ffa7b80d55dd09184d16137",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ebbe9d97c1863b04792e4d4f698afa60613bf16dda00b18aa3c9df02cd6b7c39"
           }
         },
         {
@@ -7612,6 +7651,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "cfc9daf99753a957b3657c6dc511c460434933a9b6ef82afdbac9503dc7f041a"
+          }
+        },
+        {
+          "id": "7511578876796cf7c7e18dec8595f6ba99262c39a2d922ae79ec0bc04fc3b3dc",
+          "file_name": "faas.rules.yml",
+          "group_name": "seal_domains",
+          "rule_name": "FaasSealDomainIdentityMissing",
+          "definition": {
+            "expression_hash": "d393a4354ca1870cebffba1a7c36c618e1c2e0008257b26e14548d00ad50037b",
+            "labels_hash": "3bcf62c21ffb682618d6e0c57d26d88be9ef13753ffa7b80d55dd09184d16137",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e7160612a860184150e9bc4ad60ca84b9ac79d47d121325afa4ef4dab093539c"
           }
         },
         {
