@@ -13466,6 +13466,7 @@ type ScenarioCapturedQueueMessage struct {
 	Oversized   bool
 	CreatedAt   pgtype.Timestamptz
 	ScheduledAt pgtype.Timestamptz
+	Delivery    string
 }
 
 type ScenarioColdPreparation struct {
@@ -13601,6 +13602,7 @@ type ScenarioTestActionPolicy struct {
 	ManagedWorkFailed  bool
 	ColdStartSpec      []byte
 	SuspendResumeSpec  []byte
+	QueueDelivery      string
 }
 
 type ScenarioTestChaosMatch struct {

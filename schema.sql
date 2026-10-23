@@ -25267,7 +25267,10 @@ BEGIN
   OR NEW.command_shell OR NEW.max_output_bytes<>65536
   OR NOT (NEW.kind='manual' AND EXISTS(SELECT 1 FROM deployments WHERE id=NEW.deployment_id AND app_id=NEW.app_id AND status='live')
    OR NEW.kind='release' AND EXISTS(SELECT 1 FROM deployments d WHERE d.id=NEW.deployment_id AND d.app_id=NEW.app_id AND d.status='snapshotting'
-    AND scenario_rehearsal_release_matches(NEW.command,d.id,d.release_command,d.release_command_shell)))
+    AND scenario_rehearsal_release_matches(NEW.command,d.id,d.release_command,d.release_command_shell))
+   OR NEW.kind='cron' AND NEW.retry_max=0 AND EXISTS(SELECT 1 FROM deployments WHERE id=NEW.deployment_id AND app_id=NEW.app_id AND status='live')
+    AND EXISTS(SELECT 1 FROM crons c WHERE c.id=NEW.cron_id AND c.app_id=NEW.app_id
+     AND scenario_rehearsal_release_matches(NEW.command,NEW.deployment_id,c.command,c.command_shell)))
   OR EXISTS(SELECT 1 FROM app_task_attach_sessions WHERE task_id=NEW.id) THEN
   RAISE EXCEPTION 'contained command admission is unavailable' USING ERRCODE='23514';
  END IF;
@@ -25360,7 +25363,7 @@ CREATE FUNCTION public.scenario_rehearsal_execution_active(target_app uuid, exec
  OR EXISTS(SELECT 1 FROM app_tasks t JOIN scenario_test_action_policies p ON p.app_id=t.app_id
   WHERE t.id=execution_id AND t.app_id=target_app AND t.account_id=p.account_id
   AND (deployment IS NULL OR t.deployment_id=deployment) AND t.status IN ('restoring','running')
-  AND t.kind IN ('manual','release') AND NOT t.command_shell AND t.max_output_bytes=65536
+  AND t.kind IN ('manual','release','cron') AND NOT t.command_shell AND t.max_output_bytes=65536
   AND scenario_rehearsal_command_spec(t.command)->>'run_id'=p.run_id
   AND scenario_rehearsal_command_spec(t.command)->>'deployment_id'=t.deployment_id::text
   AND p.network_mode='contained' AND p.simulation_plan IS NOT NULL AND p.sealed_at IS NULL));
@@ -51637,11 +51640,11 @@ CREATE TABLE public.scenario_captured_platform_calls (
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT scenario_captured_platform_calls_check CHECK ((oversized = (message IS NULL))),
     CONSTRAINT scenario_captured_platform_calls_idempotency_key_check CHECK (((idempotency_key IS NULL) OR ((char_length(idempotency_key) >= 1) AND (char_length(idempotency_key) <= 255)))),
-    CONSTRAINT scenario_captured_platform_calls_kind_check_v2 CHECK ((kind = ANY (ARRAY['workflow_run'::text, 'workflow_event'::text, 'realtime_publish'::text, 'realtime_signal'::text, 'execution'::text, 'execution_cancel'::text]))),
+    CONSTRAINT scenario_captured_platform_calls_kind_check_v2 CHECK ((kind = ANY (ARRAY['workflow_run'::text, 'workflow_event'::text, 'realtime_publish'::text, 'realtime_signal'::text, 'execution'::text, 'execution_cancel'::text, 'cron_run'::text]))),
     CONSTRAINT scenario_captured_platform_calls_message_check CHECK (((message IS NULL) OR (octet_length((message)::text) <= 262144))),
     CONSTRAINT scenario_captured_platform_calls_name_check CHECK (((char_length(name) >= 1) AND (char_length(name) <= 256))),
     CONSTRAINT scenario_captured_platform_calls_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
-    CONSTRAINT scenario_captured_platform_calls_target_check_v2 CHECK (((target ~ '^(workload|app|run|endpoint|execution):'::text) AND (char_length(target) <= 512)))
+    CONSTRAINT scenario_captured_platform_calls_target_check_v2 CHECK (((target ~ '^(workload|app|run|endpoint|execution|cron):'::text) AND (char_length(target) <= 512)))
 );
 
 
@@ -51662,8 +51665,10 @@ CREATE TABLE public.scenario_captured_queue_messages (
     oversized boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     scheduled_at timestamp with time zone,
+    delivery text DEFAULT ''::text NOT NULL,
     CONSTRAINT scenario_captured_queue_messages_check CHECK ((oversized = (message IS NULL))),
     CONSTRAINT scenario_captured_queue_messages_check1 CHECK ((((kind = 'delayed_task'::text) = (schedule <> ''::text)) OR oversized)),
+    CONSTRAINT scenario_captured_queue_messages_delivery_check CHECK ((delivery = ANY (ARRAY[''::text, 'delivered'::text, 'unsupported'::text, 'overflow'::text]))),
     CONSTRAINT scenario_captured_queue_messages_kind_check_v2 CHECK ((kind = ANY (ARRAY['queue'::text, 'delayed_task'::text, 'async_invoke'::text]))),
     CONSTRAINT scenario_captured_queue_messages_message_check CHECK (((message IS NULL) OR (octet_length((message)::text) <= 262144))),
     CONSTRAINT scenario_captured_queue_messages_queue_name_check CHECK ((char_length(queue_name) <= 256)),
@@ -51871,6 +51876,7 @@ CREATE TABLE public.scenario_test_action_policies (
     managed_work_failed boolean DEFAULT false NOT NULL,
     cold_start_spec jsonb,
     suspend_resume_spec jsonb,
+    queue_delivery text DEFAULT ''::text NOT NULL,
     CONSTRAINT scenario_action_snapshot_sealed CHECK (((sealed_snapshot IS NULL) OR (sealed_at IS NOT NULL))),
     CONSTRAINT scenario_managed_work_plan_check CHECK (((managed_work_plan IS NULL) OR ((jsonb_typeof(managed_work_plan) = 'object'::text) AND ((managed_work_plan ->> 'version'::text) = '1'::text) AND (octet_length((managed_work_plan)::text) <= 16384) AND (simulation_plan IS NOT NULL) AND (network_mode = 'contained'::text)))),
     CONSTRAINT scenario_suspend_plan_check CHECK (((suspend_resume_spec IS NULL) OR (((jsonb_typeof(suspend_resume_spec) = 'object'::text) AND ((suspend_resume_spec ->> 'version'::text) = '1'::text) AND (jsonb_typeof((suspend_resume_spec -> 'workloads'::text)) = 'array'::text) AND ((jsonb_array_length((suspend_resume_spec -> 'workloads'::text)) >= 1) AND (jsonb_array_length((suspend_resume_spec -> 'workloads'::text)) <= 16)) AND ((((suspend_resume_spec ->> 'pause_ms'::text))::bigint >= 1) AND (((suspend_resume_spec ->> 'pause_ms'::text))::bigint <= 30000)) AND ((((suspend_resume_spec ->> 'within_ms'::text))::bigint >= 1) AND (((suspend_resume_spec ->> 'within_ms'::text))::bigint <= 120000)) AND (simulation_plan IS NOT NULL) AND (network_mode = 'contained'::text) AND (cold_start_spec IS NULL) AND ((managed_work_plan -> 'worker_termination'::text) IS NULL) AND ((((suspend_resume_spec ->> 'checkpoint'::text) = 'after_setup'::text) AND (NOT (suspend_resume_spec ? 'worker_checkpoint'::text))) OR (((suspend_resume_spec ->> 'checkpoint'::text) = 'managed_job'::text) AND (jsonb_array_length((suspend_resume_spec -> 'workloads'::text)) = 1) AND ((suspend_resume_spec ->> 'worker_checkpoint'::text) ~ '^[a-z][a-z0-9-]{0,62}$'::text) AND (managed_work_plan IS NOT NULL)))) IS TRUE))),
@@ -51878,6 +51884,7 @@ CREATE TABLE public.scenario_test_action_policies (
     CONSTRAINT scenario_test_action_policies_check1 CHECK (((NOT simulation_failed) OR (simulation_plan IS NOT NULL))),
     CONSTRAINT scenario_test_action_policies_check2 CHECK (((cold_start_spec IS NULL) OR ((jsonb_typeof(cold_start_spec) = 'object'::text) AND ((cold_start_spec ->> 'version'::text) = '1'::text) AND ((((cold_start_spec ->> 'within_ms'::text))::bigint >= 1) AND (((cold_start_spec ->> 'within_ms'::text))::bigint <= 120000)) AND (simulation_plan IS NOT NULL) AND (network_mode = 'contained'::text)))),
     CONSTRAINT scenario_test_action_policies_network_mode_check CHECK ((network_mode = ANY (ARRAY[''::text, 'contained'::text]))),
+    CONSTRAINT scenario_test_action_policies_queue_delivery_check CHECK (((queue_delivery = ''::text) OR ((queue_delivery = 'same_run'::text) AND (network_mode = 'contained'::text) AND (managed_work_plan IS NULL) AND (suspend_resume_spec IS NULL)))),
     CONSTRAINT scenario_test_action_policies_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
     CONSTRAINT scenario_test_action_policies_sealed_snapshot_check CHECK (((sealed_snapshot IS NULL) OR ((jsonb_typeof(sealed_snapshot) = 'object'::text) AND (octet_length((sealed_snapshot)::text) <= 2097152)))),
     CONSTRAINT scenario_test_action_policies_webhook_mode_check CHECK ((webhook_mode = 'capture'::text)),

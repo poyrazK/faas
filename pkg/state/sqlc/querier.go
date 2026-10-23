@@ -5670,7 +5670,8 @@ type Querier interface {
 	ScenarioCapturedExecutions(ctx context.Context, db DBTX, arg ScenarioCapturedExecutionsParams) ([]ScenarioCapturedExecutionsRow, error)
 	ScenarioCapturedPlatformCallByID(ctx context.Context, db DBTX, arg ScenarioCapturedPlatformCallByIDParams) (ScenarioCapturedPlatformCallByIDRow, error)
 	ScenarioCapturedPlatformCalls(ctx context.Context, db DBTX, arg ScenarioCapturedPlatformCallsParams) ([]ScenarioCapturedPlatformCallsRow, error)
-	// A capture is read back only inside its own run (ADR-20261022082721).
+	// A capture is read back only inside its own run (ADR-20261022082721); a
+	// delivered one with its invocation's state (ADR-20261023111825).
 	ScenarioCapturedQueueMessageByID(ctx context.Context, db DBTX, arg ScenarioCapturedQueueMessageByIDParams) (ScenarioCapturedQueueMessageByIDRow, error)
 	ScenarioCapturedQueueMessages(ctx context.Context, db DBTX, arg ScenarioCapturedQueueMessagesParams) ([]ScenarioCapturedQueueMessagesRow, error)
 	// A captured workflow run is named by its starter, target, workflow and
@@ -5679,6 +5680,9 @@ type Querier interface {
 	ScenarioColdInventory(ctx context.Context, db DBTX, appID string) (ScenarioColdInventoryRow, error)
 	ScenarioColdPreparation(ctx context.Context, db DBTX, appID string) (ScenarioColdPreparationRow, error)
 	ScenarioCommandCallersByHostIP(ctx context.Context, db DBTX, arg ScenarioCommandCallersByHostIPParams) ([]ScenarioCommandCallersByHostIPRow, error)
+	// A cron fire-now names the cron by ID; it must belong to the run's account
+	// (ADR-20261022194510).
+	ScenarioCronInAccount(ctx context.Context, db DBTX, arg ScenarioCronInAccountParams) (bool, error)
 	// Any enrolled app, contained or capture-only, publishes into its run's
 	// evidence instead of the account's event bus (ADR-20261020090000).
 	ScenarioEventCapturePolicy(ctx context.Context, db DBTX, appID string) (ScenarioEventCapturePolicyRow, error)
@@ -5695,6 +5699,11 @@ type Querier interface {
 	// A member of the same run is named by its workload, so sibling runs compare;
 	// any other app must exist in the caller's account, as for a real send.
 	ScenarioQueueCaptureTarget(ctx context.Context, db DBTX, arg ScenarioQueueCaptureTargetParams) (string, error)
+	// A same-run delivery candidate's receiving member: its app, the account plan
+	// and retry policy, whether a queue binding or trigger would choose its
+	// consumer, its live deployments, and the run's delivered count
+	// (ADR-20261023111825).
+	ScenarioQueueDeliveryTarget(ctx context.Context, db DBTX, arg ScenarioQueueDeliveryTargetParams) (ScenarioQueueDeliveryTargetRow, error)
 	ScenarioRealtimeConsumerGroupByID(ctx context.Context, db DBTX, arg ScenarioRealtimeConsumerGroupByIDParams) (ScenarioRealtimeConsumerGroupByIDRow, error)
 	// A consumer group's configuration for a contained worker, which is answered
 	// as an idle group and never claims (ADR-20261022183526).
@@ -5716,6 +5725,7 @@ type Querier interface {
 	ScenarioRehearsalNetworkRun(ctx context.Context, db DBTX, appID string) (string, error)
 	ScenarioRehearsalSimulationRun(ctx context.Context, db DBTX, appID string) (string, error)
 	ScenarioResumingCallersByHostIP(ctx context.Context, db DBTX, arg ScenarioResumingCallersByHostIPParams) ([]ScenarioResumingCallersByHostIPRow, error)
+	ScenarioRunQueueDelivery(ctx context.Context, db DBTX, arg ScenarioRunQueueDeliveryParams) (string, error)
 	ScenarioSimulationPolicy(ctx context.Context, db DBTX, arg ScenarioSimulationPolicyParams) (ScenarioSimulationPolicyRow, error)
 	ScenarioSimulationRunAttempts(ctx context.Context, db DBTX, arg ScenarioSimulationRunAttemptsParams) ([]ScenarioSimulationRunAttemptsRow, error)
 	// Ordinary webhook deliveries the capture fence suppressed, attributed like

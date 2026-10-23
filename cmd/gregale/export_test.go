@@ -2369,3 +2369,33 @@ var CompactUsage = compactUsage
 const UsageSynopsisLimit = usageSynopsisLimit
 
 var InvokedCommandPath = &invokedCommandPath
+
+// ContainedCronTestClient is the API a recipe's trigger_cron uses
+// (ADR-20261022194510).
+type ContainedCronTestClient interface {
+	testContainedCommandClient
+	testContainedCronClient
+}
+
+// RunContainedCron fires a recipe trigger_cron through client for run on the
+// primary app and returns each recorded stage as "stage:status".
+func RunContainedCron(ctx context.Context, client ContainedCronTestClient, runID, deploymentID, appID string, command []string, shell bool) ([]string, error) {
+	receipt := &testRunReceipt{RunID: runID, DeploymentID: deploymentID, AppSlug: "isolated", WorkloadAppIDs: map[string]string{"primary": appID}}
+	runner := testContainedCommandRunner{client: client, scenario: testScenario{Project: "primary"}, receipt: receipt}
+	err := runner.runCron(ctx, nil, testTriggerCron{Command: command, Shell: shell})
+	stages := []string{}
+	for _, c := range receipt.Commands {
+		stages = append(stages, c.Stage+":"+string(c.Status))
+	}
+	return stages, err
+}
+
+// ValidateTriggerCron validates a trigger_cron with or without contained
+// command execution.
+func ValidateTriggerCron(contained bool, command []string, shell bool, timeoutSeconds int) error {
+	s := testScenario{TriggerCron: &testTriggerCron{Command: command, Shell: shell, TimeoutSeconds: timeoutSeconds}}
+	if contained {
+		s.CommandExecution = &testCommandExecutionSpec{Version: 1, Runtime: "contained"}
+	}
+	return validateTestTriggerCron(s)
+}

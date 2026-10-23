@@ -18,6 +18,10 @@ from ..models.register_scenario_test_request_network_mode import (
     RegisterScenarioTestRequestNetworkMode,
     check_register_scenario_test_request_network_mode,
 )
+from ..models.register_scenario_test_request_queue_delivery import (
+    RegisterScenarioTestRequestQueueDelivery,
+    check_register_scenario_test_request_queue_delivery,
+)
 from ..models.register_scenario_test_request_webhook_mode import (
     RegisterScenarioTestRequestWebhookMode,
     check_register_scenario_test_request_webhook_mode,
@@ -61,6 +65,10 @@ class RegisterScenarioTestRequest:
     action_evidence_version: RegisterScenarioTestRequestActionEvidenceVersion | Unset = UNSET
     """Require support for sealed action evidence before deploying. Version 2 requires simulation fixtures. The
     server must echo this version in its acknowledgement. Requires webhook_mode capture."""
+    queue_delivery: RegisterScenarioTestRequestQueueDelivery | Unset = UNSET
+    """Deliver captured queue sends addressed to a member of the run as real invocations (ADR-20261023111825).
+    Requires network_mode contained and no managed_work or suspend_resume; the server must acknowledge
+    queue_delivery_version."""
     webhook_mode: RegisterScenarioTestRequestWebhookMode | Unset = UNSET
     """Capture managed webhook effects and suppress all other webhook deliveries from these fresh test apps.
     Requires no existing deployments or work. Does not intercept direct application HTTP calls."""
@@ -100,6 +108,10 @@ class RegisterScenarioTestRequest:
         if not isinstance(self.action_evidence_version, Unset):
             action_evidence_version = self.action_evidence_version
 
+        queue_delivery: str | Unset = UNSET
+        if not isinstance(self.queue_delivery, Unset):
+            queue_delivery = self.queue_delivery
+
         webhook_mode: str | Unset = UNSET
         if not isinstance(self.webhook_mode, Unset):
             webhook_mode = self.webhook_mode
@@ -125,6 +137,8 @@ class RegisterScenarioTestRequest:
             field_dict["network_mode"] = network_mode
         if action_evidence_version is not UNSET:
             field_dict["action_evidence_version"] = action_evidence_version
+        if queue_delivery is not UNSET:
+            field_dict["queue_delivery"] = queue_delivery
         if webhook_mode is not UNSET:
             field_dict["webhook_mode"] = webhook_mode
 
@@ -197,6 +211,13 @@ class RegisterScenarioTestRequest:
                 _action_evidence_version
             )
 
+        _queue_delivery = d.pop("queue_delivery", UNSET)
+        queue_delivery: RegisterScenarioTestRequestQueueDelivery | Unset
+        if isinstance(_queue_delivery, Unset):
+            queue_delivery = UNSET
+        else:
+            queue_delivery = check_register_scenario_test_request_queue_delivery(_queue_delivery)
+
         _webhook_mode = d.pop("webhook_mode", UNSET)
         webhook_mode: RegisterScenarioTestRequestWebhookMode | Unset
         if isinstance(_webhook_mode, Unset):
@@ -213,6 +234,7 @@ class RegisterScenarioTestRequest:
             simulation=simulation,
             network_mode=network_mode,
             action_evidence_version=action_evidence_version,
+            queue_delivery=queue_delivery,
             webhook_mode=webhook_mode,
         )
 

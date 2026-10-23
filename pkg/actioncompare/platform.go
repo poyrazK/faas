@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/behaviorcompare"
 )
 
-var platformTargetPattern = regexp.MustCompile(`^(workload|app|run|endpoint|execution):`)
+var platformTargetPattern = regexp.MustCompile(`^(workload|app|run|endpoint|execution|cron):`)
 
 // addPlatformGroups compares the workflow, realtime and Run calls an enrolled
 // app requested as a multiset per workload, kind, target and name, by
@@ -37,7 +37,7 @@ func addPlatformGroups(snapshot *api.ScenarioActionSnapshot, groups map[string]C
 		id, err := uuid.Parse(call.ID)
 		switch call.Kind {
 		case api.ScenarioPlatformKindWorkflowRun, api.ScenarioPlatformKindWorkflowEvent, api.ScenarioPlatformKindRealtimePublish, api.ScenarioPlatformKindRealtimeSignal,
-			api.ScenarioPlatformKindExecution, api.ScenarioPlatformKindExecutionCancel:
+			api.ScenarioPlatformKindExecution, api.ScenarioPlatformKindExecutionCancel, api.ScenarioPlatformKindCronRun:
 		default:
 			err = errors.New("unknown kind")
 		}

@@ -63,3 +63,45 @@ func TestCapturedQueueMessagesCompareContentScheduleAndMultiplicity(t *testing.T
 		})
 	}
 }
+
+// A same-run delivery compares by its result and the state its handler
+// reached; mismatched delivery versions are inconclusive (ADR-20261023111825).
+func TestDeliveredQueueMessagesCompareResultAndState(t *testing.T) {
+	delivered := func(state string) api.ScenarioCapturedQueueMessage {
+		m := queueMessage(`{"payload":{"order":1}}`)
+		m.QueueName, m.Delivery, m.DeliveryState = "", api.ScenarioQueueDelivered, state
+		return m
+	}
+	evidence := func(messages ...api.ScenarioCapturedQueueMessage) *Evidence {
+		e := queueEvidence(messages...)
+		e.Snapshot.QueueDeliveryVersion = api.ScenarioQueueDeliveryVersion
+		return e
+	}
+	for _, tc := range []struct {
+		name, status string
+		mutate       func(*Evidence)
+	}{
+		{"same-state", "passed", func(*Evidence) {}},
+		{"handler-failed", "failed", func(e *Evidence) { e.Snapshot.QueueMessages[0].DeliveryState = "dead_letter" }},
+		{"not-delivered", "failed", func(e *Evidence) {
+			e.Snapshot.QueueMessages[0].Delivery, e.Snapshot.QueueMessages[0].DeliveryState = api.ScenarioQueueUnsupported, ""
+		}},
+		{"delivery-version-differs", "inconclusive", func(e *Evidence) {
+			e.Snapshot.QueueDeliveryVersion = 0
+			e.Snapshot.QueueMessages[0].Delivery, e.Snapshot.QueueMessages[0].DeliveryState = "", ""
+		}},
+		{"state-without-delivery", "inconclusive", func(e *Evidence) { e.Snapshot.QueueMessages[0].Delivery = "" }},
+		{"unknown-result", "inconclusive", func(e *Evidence) { e.Snapshot.QueueMessages[0].Delivery = "lost" }},
+		{"delivered-delayed-task", "inconclusive", func(e *Evidence) {
+			e.Snapshot.QueueMessages[0].Kind, e.Snapshot.QueueMessages[0].Schedule = api.ScenarioQueueKindDelayedTask, "delay:60"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before, after := evidence(delivered("succeeded")), evidence(delivered("succeeded"))
+			tc.mutate(after)
+			if result := Compare(before, after); result.Status != tc.status {
+				t.Fatalf("comparison=%+v, want %s", result, tc.status)
+			}
+		})
+	}
+}

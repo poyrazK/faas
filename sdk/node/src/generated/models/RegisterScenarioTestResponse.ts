@@ -38,6 +38,10 @@ export type RegisterScenarioTestResponse = {
    * Present when the requested sealed action-evidence protocol is supported.
    */
   action_evidence_version?: 1 | 2;
+  /**
+   * Acknowledges same-run queue delivery.
+   */
+  queue_delivery_version?: 1;
   webhook_mode: 'capture';
   policy_version: 1;
 };

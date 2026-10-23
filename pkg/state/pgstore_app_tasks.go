@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -616,6 +617,21 @@ func (s *PgStore) CreateManualCronAppTaskForFireNow(ctx context.Context, request
 	}
 	if err != nil {
 		return AppTask{}, fmt.Errorf("state: select live deployment for manual command cron: %w", err)
+	}
+	// A contained rehearsal app fires its command cron as the run's pinned
+	// contained command, which never retries (ADR-20261022194510).
+	var runID string
+	err = tx.QueryRow(ctx, `
+		select run_id from scenario_test_action_policies
+		 where app_id = $1::uuid and network_mode = 'contained'`, appID).Scan(&runID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return AppTask{}, fmt.Errorf("state: read rehearsal policy for manual command cron: %w", err)
+	}
+	if runID != "" {
+		if command, err = rehearsalcommand.ContainedRelease(runID, deploymentID, command, commandShell); err != nil {
+			return AppTask{}, ErrAppTaskInvalid
+		}
+		commandShell, maxOutputBytes, retryMax = false, rehearsalcommand.MaxReceiptBytes, 0
 	}
 
 	task, err := scanAppTask(tx.QueryRow(ctx, `

@@ -52,7 +52,7 @@ func (s *server) registerScenarioTest(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 	if req.WebhookMode != "" {
-		writeJSON(w, http.StatusOK, api.RegisterScenarioTestResponse{SuspendResumeSHA256: scenarioSuspendResumeDigest(req), ColdStartSHA256: scenarioColdStartDigest(req), ManagedWorkSHA256: scenarioManagedWorkDigest(req), CommandVersion: req.CommandVersion, WebhookMode: req.WebhookMode, PolicyVersion: 1, ActionEvidenceVersion: req.ActionEvidenceVersion, NetworkMode: req.NetworkMode, SimulationSHA256: scenarioSimulationEnrollmentDigest(req), RecorderVersion: scenarioRecorderVersion(req)})
+		writeJSON(w, http.StatusOK, api.RegisterScenarioTestResponse{SuspendResumeSHA256: scenarioSuspendResumeDigest(req), ColdStartSHA256: scenarioColdStartDigest(req), ManagedWorkSHA256: scenarioManagedWorkDigest(req), CommandVersion: req.CommandVersion, WebhookMode: req.WebhookMode, PolicyVersion: 1, ActionEvidenceVersion: req.ActionEvidenceVersion, NetworkMode: req.NetworkMode, SimulationSHA256: scenarioSimulationEnrollmentDigest(req), RecorderVersion: scenarioRecorderVersion(req), QueueDeliveryVersion: scenarioQueueDeliveryVersion(req)})
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -69,6 +69,10 @@ func (s *server) scenarioTestPolicySupported(w http.ResponseWriter, req api.Regi
 		return false
 	}
 	if problem := rehearsal.ValidateEnrollment(req, s.rehearsalCommandsEnabled && s.appTaskAPIEnabled); problem != nil {
+		api.WriteProblem(w, problem)
+		return false
+	}
+	if problem := rehearsal.ValidateQueueDelivery(req, s.rehearsalQueueDeliveryEnabled); problem != nil {
 		api.WriteProblem(w, problem)
 		return false
 	}
@@ -111,7 +115,7 @@ func (s *server) resolveScenarioTestMembers(w http.ResponseWriter, r *http.Reque
 			s.notFound(w, "no such test developer session")
 			return nil
 		}
-		members = append(members, state.ScenarioTestMember{Workload: spec.Workload, AppID: app.ID, WebhookMode: req.WebhookMode, NetworkMode: req.NetworkMode, ColdStartJSON: coldJSON, SuspendResumeJSON: resumeJSON, SimulationJSON: simulationJSON, ManagedWorkJSON: workJSON})
+		members = append(members, state.ScenarioTestMember{Workload: spec.Workload, AppID: app.ID, WebhookMode: req.WebhookMode, NetworkMode: req.NetworkMode, ColdStartJSON: coldJSON, SuspendResumeJSON: resumeJSON, SimulationJSON: simulationJSON, ManagedWorkJSON: workJSON, QueueDelivery: req.QueueDelivery})
 	}
 	return members
 }
@@ -215,4 +219,13 @@ func (s *server) clearScenarioTestChaos(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// scenarioQueueDeliveryVersion acknowledges a delivering run
+// (ADR-20261023111825).
+func scenarioQueueDeliveryVersion(req api.RegisterScenarioTestRequest) int {
+	if req.QueueDelivery == "" {
+		return 0
+	}
+	return api.ScenarioQueueDeliveryVersion
 }

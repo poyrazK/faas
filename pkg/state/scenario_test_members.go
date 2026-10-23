@@ -36,6 +36,8 @@ type ScenarioTestMember struct {
 	AppID             string
 	NetworkMode       string
 	WebhookMode       string
+	// QueueDelivery is "" or ScenarioQueueDeliverySameRun (ADR-20261023111825).
+	QueueDelivery string
 }
 
 // ScenarioTestDNSChaosPolicy is the verified caller identity and run lease
@@ -62,11 +64,18 @@ func validScenarioTestMembers(accountID, runID string, members []ScenarioTestMem
 			(member.NetworkMode != "" && (member.NetworkMode != ScenarioNetworkContained || member.WebhookMode != ScenarioWebhookCaptureMode)) || member.NetworkMode != members[0].NetworkMode {
 			return ErrConflict
 		}
-		if member.SuspendResumeJSON != members[0].SuspendResumeJSON || member.ColdStartJSON != members[0].ColdStartJSON || member.SimulationJSON != members[0].SimulationJSON || member.ManagedWorkJSON != members[0].ManagedWorkJSON {
+		if member.SuspendResumeJSON != members[0].SuspendResumeJSON || member.ColdStartJSON != members[0].ColdStartJSON || member.SimulationJSON != members[0].SimulationJSON || member.ManagedWorkJSON != members[0].ManagedWorkJSON ||
+			member.QueueDelivery != members[0].QueueDelivery {
 			return ErrConflict
 		}
 		seenNames[member.Workload] = true
 		seenApps[member.AppID] = true
+	}
+	// Managed-work and suspend plans fence or cancel member invocations, so
+	// same-run delivery would fight them (ADR-20261023111825).
+	if d := members[0].QueueDelivery; d != "" && (d != api.ScenarioQueueDeliverySameRun || members[0].NetworkMode != ScenarioNetworkContained ||
+		members[0].ManagedWorkJSON != "" || members[0].SuspendResumeJSON != "") {
+		return ErrConflict
 	}
 	if members[0].SimulationJSON != "" {
 		if members[0].NetworkMode != ScenarioNetworkContained {
@@ -178,7 +187,7 @@ func (s *PgStore) RegisterScenarioTestMembers(ctx context.Context, accountID, ru
 					return ErrScenarioManagedBindings
 				}
 			}
-			if err := q.InsertScenarioActionPolicy(ctx, tx, sqlc.InsertScenarioActionPolicyParams{AccountID: accountID, RunID: runID, AppID: member.AppID, Workload: member.Workload, NetworkMode: member.NetworkMode, SimulationPlan: scenarioSimulationJSON(member.SimulationJSON), ColdStartSpec: scenarioSimulationJSON(member.ColdStartJSON), SuspendResumeSpec: scenarioSimulationJSON(member.SuspendResumeJSON), ManagedWorkPlan: scenarioSimulationJSON(member.ManagedWorkJSON)}); err != nil {
+			if err := q.InsertScenarioActionPolicy(ctx, tx, sqlc.InsertScenarioActionPolicyParams{AccountID: accountID, RunID: runID, AppID: member.AppID, Workload: member.Workload, NetworkMode: member.NetworkMode, SimulationPlan: scenarioSimulationJSON(member.SimulationJSON), ColdStartSpec: scenarioSimulationJSON(member.ColdStartJSON), SuspendResumeSpec: scenarioSimulationJSON(member.SuspendResumeJSON), ManagedWorkPlan: scenarioSimulationJSON(member.ManagedWorkJSON), QueueDelivery: member.QueueDelivery}); err != nil {
 				return mapErr(err)
 			}
 		}
@@ -197,7 +206,7 @@ func (s *PgStore) ScenarioTestMemberByApp(ctx context.Context, appID string) (Sc
 	if err != nil {
 		return ScenarioTestMember{}, fmt.Errorf("load scenario test member: %w", err)
 	}
-	return ScenarioTestMember{AccountID: member.AccountID, RunID: member.RunID, Workload: member.WorkloadName, AppID: member.AppID, WebhookMode: member.WebhookMode, NetworkMode: member.NetworkMode, SimulationJSON: scenarioSimulationText(member.SimulationPlan), ColdStartJSON: scenarioSimulationText(member.ColdStartSpec), SuspendResumeJSON: scenarioSimulationText(member.SuspendResumeSpec), ManagedWorkJSON: scenarioManagedWorkText(member.ManagedWorkPlan)}, nil
+	return ScenarioTestMember{AccountID: member.AccountID, RunID: member.RunID, Workload: member.WorkloadName, AppID: member.AppID, WebhookMode: member.WebhookMode, NetworkMode: member.NetworkMode, SimulationJSON: scenarioSimulationText(member.SimulationPlan), ColdStartJSON: scenarioSimulationText(member.ColdStartSpec), SuspendResumeJSON: scenarioSimulationText(member.SuspendResumeSpec), ManagedWorkJSON: scenarioManagedWorkText(member.ManagedWorkPlan), QueueDelivery: member.QueueDelivery}, nil
 }
 
 func (s *PgStore) ScenarioTestAppByWorkload(ctx context.Context, accountID, runID, workload string) (App, error) {

@@ -37,6 +37,16 @@ func ValidateTask(req api.ResolvedCreateAppTaskRequest, enabled bool) *api.Probl
 	return nil
 }
 
+// ValidateCronFire refuses a contained app's command-cron fire-now while
+// rehearsal command execution is off: schedd would pin it as a contained
+// command that no runner may execute (ADR-20261022194510).
+func ValidateCronFire(commandCron, contained, enabled bool) *api.Problem {
+	if commandCron && contained && !enabled {
+		return unavailable()
+	}
+	return nil
+}
+
 func unavailable() *api.Problem {
 	return api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Contained commands unavailable", "The operator must qualify and enable rehearsal command execution before using this runner")
 }

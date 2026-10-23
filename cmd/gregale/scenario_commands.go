@@ -207,6 +207,13 @@ func (r *testContainedCommandRunner) run(ctx context.Context, stage string, host
 	if err != nil {
 		return fmt.Errorf("admit contained command: %w", err)
 	}
+	return r.await(ctx, stage, hostEnv, row, spec, api.AppTaskKindManual)
+}
+
+// await follows an admitted contained task to its terminal receipt and
+// records it as stage evidence.
+func (r *testContainedCommandRunner) await(ctx context.Context, stage string, hostEnv []string, row api.AppTaskResponse, spec rehearsalcommand.Spec, kind api.AppTaskKind) error {
+	var err error
 	evidence := testContainedCommandReceipt{Stage: stage, TaskID: row.ID, DeploymentID: row.DeploymentID, SpecSHA256: spec.SHA256(), Status: row.Status}
 	defer func() { r.receipt.Commands = append(r.receipt.Commands, evidence) }()
 	terminal := false
@@ -218,7 +225,7 @@ func (r *testContainedCommandRunner) run(ctx context.Context, stage string, host
 		}
 	}()
 	for {
-		if row.ID != evidence.TaskID || row.DeploymentID != spec.DeploymentID || row.AppID != r.receipt.WorkloadAppIDs[r.scenario.Project] || row.CommandShell || row.Kind != api.AppTaskKindManual || row.MaxOutputBytes != rehearsalcommand.MaxReceiptBytes {
+		if row.ID != evidence.TaskID || row.DeploymentID != spec.DeploymentID || row.AppID != r.receipt.WorkloadAppIDs[r.scenario.Project] || row.CommandShell || row.Kind != kind || row.MaxOutputBytes != rehearsalcommand.MaxReceiptBytes {
 			return errors.New("contained task admission identity differs")
 		}
 		pinned, err := rehearsalcommand.Decode(row.Command)
@@ -282,6 +289,95 @@ func (r *testContainedCommandRunner) run(ctx context.Context, stage string, host
 		return errors.New("contained command failed or its output was truncated")
 	}
 	return nil
+}
+
+// testTriggerCron is a command cron the recipe fires once, as a contained
+// command, on the run's primary app (ADR-20261022194510).
+type testTriggerCron struct {
+	Command        []string `yaml:"command" json:"command"`
+	Shell          bool     `yaml:"shell,omitempty" json:"shell,omitempty"`
+	TimeoutSeconds int      `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
+}
+
+func validateTestTriggerCron(s testScenario) error {
+	c := s.TriggerCron
+	if c == nil {
+		return nil
+	}
+	if s.CommandExecution == nil {
+		return errors.New("trigger_cron requires command_execution")
+	}
+	if len(c.Command) == 0 || c.Command[0] == "" || rehearsalcommand.ReleaseArgv(c.Command, c.Shell) == nil {
+		return errors.New("trigger_cron needs a command; a shell command is one script string")
+	}
+	if c.TimeoutSeconds < 0 || c.TimeoutSeconds > 3600 {
+		return errors.New("trigger_cron timeout_seconds must be between 0 and 3600")
+	}
+	return nil
+}
+
+// testContainedCronClient creates, fires and removes a command cron.
+type testContainedCronClient interface {
+	CreateCron(context.Context, string, api.CreateCronRequest) (api.CronResponse, error)
+	FireCron(context.Context, string) (api.FireCronResponse, error)
+	GetFireCronRequest(context.Context, string) (api.FireCronRequestResponse, error)
+	DeleteCron(context.Context, string) error
+}
+
+// runCron creates the recipe's command cron on the run's app, fires it now
+// and follows the task the platform pins as the run's contained command: the
+// cron's own argv, with no env, files or retries.
+func (r *testContainedCommandRunner) runCron(ctx context.Context, hostEnv []string, c testTriggerCron) error {
+	client, ok := r.client.(testContainedCronClient)
+	if !ok {
+		return errors.New("contained cron runner unavailable")
+	}
+	spec := rehearsalcommand.Spec{Version: 1, RunID: r.receipt.RunID, DeploymentID: r.receipt.DeploymentID, Command: rehearsalcommand.ReleaseArgv(c.Command, c.Shell)}
+	enabled := true
+	cron, err := client.CreateCron(ctx, r.receipt.AppSlug, api.CreateCronRequest{AppID: r.receipt.WorkloadAppIDs[r.scenario.Project], Schedule: "0 0 1 1 *",
+		Command: c.Command, CommandShell: c.Shell, TimeoutSeconds: c.TimeoutSeconds, Enabled: &enabled})
+	if err != nil {
+		return fmt.Errorf("create contained cron: %w", err)
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = client.DeleteCron(cleanup, cron.ID)
+	}()
+	fired, err := client.FireCron(ctx, cron.ID)
+	if err != nil {
+		return fmt.Errorf("fire contained cron: %w", err)
+	}
+	for {
+		request, err := client.GetFireCronRequest(ctx, fired.RequestID)
+		if err != nil {
+			return fmt.Errorf("read contained cron fire-now: %w", err)
+		}
+		switch request.Status {
+		case "succeeded":
+			if request.TaskID == nil {
+				return errors.New("contained cron fire-now created no task")
+			}
+			row, err := r.client.GetAppTask(ctx, r.receipt.AppSlug, *request.TaskID)
+			if err != nil {
+				return fmt.Errorf("read contained cron task: %w", err)
+			}
+			return r.await(ctx, "cron", hostEnv, row, spec, api.AppTaskKindCron)
+		case "failed", "cancelled":
+			reason := request.Status
+			if request.Error != nil {
+				reason += ": " + *request.Error
+			}
+			return fmt.Errorf("contained cron fire-now %s", reason)
+		}
+		timer := time.NewTimer(200 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func writeTestContainedArtifact(name string, raw []byte) error {

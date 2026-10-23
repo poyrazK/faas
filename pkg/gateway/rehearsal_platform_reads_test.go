@@ -158,3 +158,23 @@ func TestRehearsalPlatformAPICapturesInboxAsyncInvokeAndOrgSends(t *testing.T) {
 		})
 	}
 }
+
+// A send delivered within the run reads back with its invocation's state
+// (ADR-20261023111825).
+func TestRehearsalPlatformAPIReadsDeliveredSendState(t *testing.T) {
+	const delivered, captured = "55555555-5555-4555-8555-555555555555", "66666666-6666-4666-8666-666666666666"
+	created := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
+	store := &fakeRehearsalPlatformAPIStore{run: strings.Repeat("a", 32), queueRecords: map[string]state.ScenarioCapturedQueueRecord{
+		delivered: {Kind: api.ScenarioQueueKindQueue, Target: "workload:worker", Message: json.RawMessage(`{"payload":{"order":7}}`), CreatedAt: created,
+			Delivery: api.ScenarioQueueDelivered, DeliveryState: "succeeded"},
+		captured: {Kind: api.ScenarioQueueKindQueue, Target: "workload:worker", Message: json.RawMessage(`{"payload":{}}`), CreatedAt: created,
+			Delivery: api.ScenarioQueueUnsupported},
+	}}
+	for id, want := range map[string]string{delivered: "succeeded", captured: string(state.InvocationPending)} {
+		response := getRehearsalPlatform(t, store, "/v1/invocations/"+id)
+		var inv api.Invocation
+		if err := json.NewDecoder(response.Body).Decode(&inv); err != nil || response.Code != http.StatusOK || inv.State != want {
+			t.Fatalf("read %s = %d %+v %v, want %s", id, response.Code, inv, err, want)
+		}
+	}
+}

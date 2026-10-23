@@ -999,6 +999,9 @@ func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req Reg
 	if req.ActionEvidenceVersion != 0 && ((req.ActionEvidenceVersion != ScenarioActionSnapshotVersion && req.ActionEvidenceVersion != ScenarioSimulationSnapshotVersion) || req.WebhookMode != "capture") {
 		return errors.New("sealed action evidence requires capture mode and a supported evidence version")
 	}
+	if req.QueueDelivery != "" && (req.QueueDelivery != ScenarioQueueDeliverySameRun || req.NetworkMode != "contained" || req.ManagedWork != nil || req.SuspendResume != nil) {
+		return errors.New("queue_delivery same_run requires a contained run without managed_work or suspend_resume")
+	}
 	simulationDigest := ""
 	if req.Simulation != nil {
 		if req.NetworkMode != "contained" || req.WebhookMode != "capture" || req.ActionEvidenceVersion != ScenarioSimulationSnapshotVersion {
@@ -1059,6 +1062,9 @@ func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req Reg
 	}
 	if out.PolicyVersion != 1 || out.WebhookMode != req.WebhookMode {
 		return errors.New("server did not acknowledge the requested rehearsal webhook capture policy")
+	}
+	if req.QueueDelivery != "" && out.QueueDeliveryVersion != ScenarioQueueDeliveryVersion {
+		return errors.New("server did not acknowledge same-run queue delivery")
 	}
 	if req.ActionEvidenceVersion != 0 && out.ActionEvidenceVersion != req.ActionEvidenceVersion {
 		return errors.New("server did not acknowledge the requested sealed action evidence version")

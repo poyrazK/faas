@@ -17,8 +17,8 @@ T = TypeVar("T", bound="ScenarioCapturedPlatformCall")
 
 @_attrs_define
 class ScenarioCapturedPlatformCall:
-    """A workflow, realtime or Run call an enrolled app requested through the run-local platform API. It was never
-    performed (ADR-20261021150000, ADR-20261021180000, ADR-20261022170348).
+    """A workflow, realtime, Run or cron fire-now call an enrolled app requested through the run-local platform API. It was
+    never performed (ADR-20261021150000, ADR-20261021180000, ADR-20261022170348, ADR-20261022194510).
 
     """
 
@@ -26,7 +26,8 @@ class ScenarioCapturedPlatformCall:
     workload: str
     kind: ScenarioCapturedPlatformCallKind
     target: str
-    """What the call addressed, without platform IDs the run created. A Run start addresses execution:runs."""
+    """What the call addressed, without platform IDs the run created. A Run start addresses execution:runs, and a
+    cron fire-now cron:<id>."""
     name: str
     """The workflow, event or channel name, or a Run's runtime."""
     message: Any

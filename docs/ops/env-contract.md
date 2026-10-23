@@ -663,6 +663,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REHEARSAL_POSTGRES_FAULTS` | apid | `default` |  | 0 | `` | opt-in contained PostgreSQL disconnect and recovery rehearsals; disabled pending native fault-injection qualification |
 | `FAAS_REHEARSAL_POSTGRES_FIXTURES` | apid, gatewayd-internal | `default` |  | 0 | `` | opt-in isolated rehearsal PostgreSQL fixture API and private proxy; disabled pending native containment qualification |
 | `FAAS_REHEARSAL_POSTGRES_PROXY_TARGET` | gatewayd-internal | `default` |  |  | `` | explicit loopback endpoint of the dedicated rehearsal fixture cluster; required only when PostgreSQL fixtures are enabled |
+| `FAAS_REHEARSAL_QUEUE_DELIVERY` | apid | `default` |  | 0 | `` | opt-in same-run delivery of captured rehearsal queue sends as real member invocations (ADR-20261023111825); disabled pending native execution qualification |
 | `FAAS_REHEARSAL_RUNNING_JOB_SUSPEND` | apid | `default` |  | 0 | `` | opt-in same-VM suspend/resume at a cooperative managed-job checkpoint; disabled pending native qualification |
 | `FAAS_REHEARSAL_SUSPEND_RESUME` | apid | `default` |  | 0 | `` | opt-in in-place rehearsal suspend/resume; disabled pending native lifecycle qualification |
 | `FAAS_REHEARSAL_WORKERS` | apid | `default` |  | 0 | `` | opt-in managed async rehearsal participants; disabled pending native execution qualification |

@@ -33,6 +33,17 @@ const (
 	// MaxScenarioCapturedQueueMessageBytes bounds one captured request body;
 	// a larger one is retained only as an incomplete marker.
 	MaxScenarioCapturedQueueMessageBytes = 64 << 10
+
+	// ScenarioQueueDeliveryVersion marks runs that deliver captured queue
+	// sends addressed to a member of the same run (ADR-20261023111825).
+	ScenarioQueueDeliveryVersion      = 1
+	ScenarioQueueDeliverySameRun      = "same_run"
+	MaxScenarioDeliveredQueueMessages = 64
+
+	// A delivery candidate's result.
+	ScenarioQueueDelivered   = "delivered"
+	ScenarioQueueUnsupported = "unsupported"
+	ScenarioQueueOverflow    = "overflow"
 )
 
 // ScenarioPlatformCaptureVersion marks snapshots that carry the workflow and
@@ -54,6 +65,10 @@ const (
 	ScenarioPlatformKindExecution       = "execution"
 	ScenarioPlatformKindExecutionCancel = "execution_cancel"
 	ScenarioExecutionTarget             = "execution:runs"
+
+	// A cron fire-now request, addressed by the cron as cron:<id>
+	// (ADR-20261022194510).
+	ScenarioPlatformKindCronRun = "cron_run"
 )
 
 // ScenarioCapturedPlatformCall is a workflow or realtime call an enrolled app
@@ -94,6 +109,11 @@ type ScenarioCapturedQueueMessage struct {
 	QueueName string          `json:"queue_name,omitempty"`
 	Schedule  string          `json:"schedule,omitempty"`
 	Message   json.RawMessage `json:"message"`
+	// Delivery is a same-run delivery candidate's result, and DeliveryState
+	// the delivered invocation's state when the run sealed
+	// (ADR-20261023111825).
+	Delivery      string `json:"delivery,omitempty"`
+	DeliveryState string `json:"delivery_state,omitempty"`
 }
 
 // ScenarioCapturedEvent is an event an enrolled app published. It never reached
@@ -171,6 +191,7 @@ type ScenarioActionSnapshot struct {
 	QueueCaptureVersion     int                            `json:"queue_capture_version,omitempty"`
 	QueueMessages           []ScenarioCapturedQueueMessage `json:"queue_messages,omitempty"`
 	IncompleteQueueMessages int64                          `json:"incomplete_queue_messages,omitempty"`
+	QueueDeliveryVersion    int                            `json:"queue_delivery_version,omitempty"`
 	// Platform call capture (ADR-20261021150000) is additive in the same way.
 	PlatformCaptureVersion  int                            `json:"platform_capture_version,omitempty"`
 	PlatformCalls           []ScenarioCapturedPlatformCall `json:"platform_calls,omitempty"`

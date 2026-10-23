@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/rehearsal"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -83,6 +84,18 @@ func (s *server) fireCronNow(w http.ResponseWriter, r *http.Request, acct state.
 	if !ok || limits.CronLimitPerApp == 0 {
 		api.WriteProblem(w, api.ErrPlanCronsNotAllowed(acct.Plan))
 		return
+	}
+
+	if policies, ok := s.store.(state.ScenarioRehearsalNetworkPolicyStore); ok && len(c.Command) > 0 {
+		_, contained, err := policies.ScenarioRehearsalNetworkPolicy(ctx, c.AppID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrInternal("could not load rehearsal policy"))
+			return
+		}
+		if problem := rehearsal.ValidateCronFire(true, contained, s.rehearsalCommandsEnabled); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
 
 	// Insert the durable record. Status starts at 'pending'. The

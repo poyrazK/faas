@@ -7,6 +7,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.scenario_captured_queue_message_delivery import (
+    ScenarioCapturedQueueMessageDelivery,
+    check_scenario_captured_queue_message_delivery,
+)
 from ..models.scenario_captured_queue_message_kind import (
     ScenarioCapturedQueueMessageKind,
     check_scenario_captured_queue_message_kind,
@@ -33,6 +37,11 @@ class ScenarioCapturedQueueMessage:
     queue_name: str | Unset = UNSET
     schedule: str | Unset = UNSET
     """A delayed task's requested delay, or absolute when it gave scheduled_at."""
+    delivery: ScenarioCapturedQueueMessageDelivery | Unset = UNSET
+    """In a run with queue delivery, a send addressed to a member: delivered as a real invocation, unsupported, or
+    over the delivery bound (ADR-20261023111825)."""
+    delivery_state: str | Unset = UNSET
+    """A delivered send's invocation state when the run sealed."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -50,6 +59,12 @@ class ScenarioCapturedQueueMessage:
 
         schedule = self.schedule
 
+        delivery: str | Unset = UNSET
+        if not isinstance(self.delivery, Unset):
+            delivery = self.delivery
+
+        delivery_state = self.delivery_state
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -65,6 +80,10 @@ class ScenarioCapturedQueueMessage:
             field_dict["queue_name"] = queue_name
         if schedule is not UNSET:
             field_dict["schedule"] = schedule
+        if delivery is not UNSET:
+            field_dict["delivery"] = delivery
+        if delivery_state is not UNSET:
+            field_dict["delivery_state"] = delivery_state
 
         return field_dict
 
@@ -85,6 +104,15 @@ class ScenarioCapturedQueueMessage:
 
         schedule = d.pop("schedule", UNSET)
 
+        _delivery = d.pop("delivery", UNSET)
+        delivery: ScenarioCapturedQueueMessageDelivery | Unset
+        if isinstance(_delivery, Unset):
+            delivery = UNSET
+        else:
+            delivery = check_scenario_captured_queue_message_delivery(_delivery)
+
+        delivery_state = d.pop("delivery_state", UNSET)
+
         scenario_captured_queue_message = cls(
             id=id,
             workload=workload,
@@ -93,6 +121,8 @@ class ScenarioCapturedQueueMessage:
             message=message,
             queue_name=queue_name,
             schedule=schedule,
+            delivery=delivery,
+            delivery_state=delivery_state,
         )
 
         scenario_captured_queue_message.additional_properties = d

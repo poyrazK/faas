@@ -22,5 +22,13 @@ export type ScenarioCapturedQueueMessage = {
    * The request's business content, bounded to 64 KiB.
    */
   message: any;
+  /**
+   * In a run with queue delivery, a send addressed to a member: delivered as a real invocation, unsupported, or over the delivery bound (ADR-20261023111825).
+   */
+  delivery?: 'delivered' | 'unsupported' | 'overflow';
+  /**
+   * A delivered send's invocation state when the run sealed.
+   */
+  delivery_state?: string;
 };
 

@@ -1303,7 +1303,7 @@ in both capture-only and contained rehearsals:
 - Its route-discovery events do not fan out to other apps.
 - Workflow outbound steps are refused, so they never use live provider credentials.
 - Log drains, deployment-failure mail and Kafka/NATS/Redis Streams/SQS triggers do not run for it.
-- Its crons never fire from the clock. To exercise one, send the cron's request or run its command from the recipe, so both revisions see the same work ([ADR-20261020200000](adr/20261020200000-rehearsal-crons-fire-from-the-recipe.md)).
+- Its crons never fire from the clock. To exercise one, send the cron's request or run its command from the recipe, so both revisions see the same work ([ADR-20261020200000](adr/20261020200000-rehearsal-crons-fire-from-the-recipe.md)). A contained recipe can fire a command cron with `trigger_cron: {command: [...], shell: false, timeout_seconds: 300}`: the CLI creates it on the run's app, fires it now, and the platform runs it as the run's pinned contained command, recorded as stage `cron` ([ADR-20261022194510](adr/20261022194510-rehearsal-contained-cron-fire-now.md)).
 
 Contained enrollment refuses an app that already holds real managed PostgreSQL
 or object-storage bindings; declare the isolated fixtures below instead. Builds
@@ -1360,8 +1360,23 @@ by slug otherwise. A delayed task compares by its `delay_seconds`, or only as
 Sealed snapshots carry `queue_capture_version: 1` and `queue_messages`.
 Requests compare as a multiset per workload, kind, target and queue, by
 schedule and canonical request body, so a duplicate or missing send fails the
-comparison. Captured messages are not delivered, even to a run member; drive a
-consumer from the recipe.
+comparison. Captured messages are not delivered, even to a run member, unless
+the run opts in to same-run delivery (below); otherwise drive a consumer from
+the recipe.
+
+A contained run can opt in to running that work: with
+`actions: {network: contained, webhooks: capture, queue_delivery: same_run}`, a
+queue send to the run's default queue addressed to another member is also
+enqueued as a real invocation of that member, in the same transaction, and its
+handler runs inside the run. Each such send records `delivery: delivered` and
+the invocation's state at seal; named queues, work policies, environments,
+inbox messages and members whose queue bindings would pick the consumer record
+`unsupported` and stay captured only. A run delivers at most 64 sends; more
+make the evidence incomplete. Delayed tasks, async invokes and workflows are
+never delivered. The operator enables delivery with
+`FAAS_REHEARSAL_QUEUE_DELIVERY=1`; it cannot be combined with `managed_work`
+or `suspend_resume`. Wait for queue idle before checks. See
+[ADR-20261023111825](adr/20261023111825-rehearsal-same-run-queue-delivery.md).
 
 More than 256 requests or a body over 64 KiB make the evidence incomplete.
 Requests after sealing are refused with `409`. A customer *secret* named
@@ -1451,8 +1466,11 @@ for example a database migration, runs the same way: it executes as the run's
 pinned contained command against the isolated fixtures before the deployment
 primes. This requires `FAAS_REHEARSAL_COMMAND_EXECUTION=1` on imaged and apid;
 without it, the candidate fails with `release_phase_unavailable` rather than
-waiting. Builds and other job VMs remain outside this boundary; standalone
-Runs are captured, never executed.
+waiting. A contained app's command-cron fire-now runs the same way. Builds and
+job VMs remain outside this boundary: job runs are refused with `501`, and
+standalone Runs are captured, never executed. A guest's
+`POST /v1/crons/{id}/run` is captured as a pending fire-now request, never
+fired.
 
 The receipt records `actions.network: contained`; comparisons with a different
 network policy are inconclusive. Blocked requests are not simulated or captured

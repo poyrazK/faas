@@ -72,6 +72,10 @@ export type ScenarioActionSnapshot = {
   queue_messages?: Array<ScenarioCapturedQueueMessage>;
   incomplete_queue_messages?: number;
   /**
+   * Present when the run delivered captured queue sends to its members.
+   */
+  queue_delivery_version?: 1;
+  /**
    * Present from servers that capture workflow and realtime calls.
    */
   platform_capture_version?: 1;

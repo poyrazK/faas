@@ -49,6 +49,7 @@ type testScenario struct {
 	ObjectsFixture   *testObjectSpec           `yaml:"objects_fixture,omitempty" json:"objects_fixture,omitempty"`
 	PostgresFixture  *testPostgresSpec         `yaml:"postgres_fixture,omitempty" json:"postgres_fixture,omitempty"`
 	CommandExecution *testCommandExecutionSpec `yaml:"command_execution,omitempty" json:"command_execution,omitempty"`
+	TriggerCron      *testTriggerCron          `yaml:"trigger_cron,omitempty" json:"trigger_cron,omitempty"`
 	Actions          *testActionSpec           `yaml:"actions,omitempty" json:"actions,omitempty"`
 	Behavior         *testBehaviorSpec         `yaml:"behavior,omitempty" json:"behavior,omitempty"`
 	Resilience       *testResilienceSpec       `yaml:"resilience,omitempty"`
@@ -850,7 +851,10 @@ func decodeTestManifestDocument(data []byte, absolute string, fieldsForScenario 
 		if len(scenario.Trigger) > 0 && scenario.Trigger[0] == "" {
 			return testManifest{}, "", fmt.Errorf("scenario %q has an empty trigger command", name)
 		}
-		if (scenario.WaitFor.QueueIdle || len(scenario.WaitFor.Invocations) > 0 || len(scenario.WaitFor.Objects) > 0 || len(scenario.WaitFor.Deliveries) > 0) && len(scenario.Trigger) == 0 && len(scenario.Requests) == 0 {
+		if err := validateTestTriggerCron(scenario); err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
+		if (scenario.WaitFor.QueueIdle || len(scenario.WaitFor.Invocations) > 0 || len(scenario.WaitFor.Objects) > 0 || len(scenario.WaitFor.Deliveries) > 0) && len(scenario.Trigger) == 0 && len(scenario.Requests) == 0 && scenario.TriggerCron == nil {
 			return testManifest{}, "", fmt.Errorf("scenario %q needs trigger or requests when wait_for is set", name)
 		}
 		seenTriggerKeys := map[string]bool{}
@@ -1336,6 +1340,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	if scenario.Actions != nil {
 		registration.NetworkMode = scenario.Actions.Network
 		registration.WebhookMode = scenario.Actions.Webhooks
+		registration.QueueDelivery = scenario.Actions.QueueDelivery
 		registration.ActionEvidenceVersion = api.ScenarioActionSnapshotVersion
 		registration.Simulation = scenario.Actions.Simulation
 		if registration.Simulation != nil {
@@ -1733,7 +1738,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		}
 	} else {
 		advancePhase("trigger")
-		if len(scenario.Trigger) > 0 || len(scenario.Requests) > 0 {
+		if len(scenario.Trigger) > 0 || len(scenario.Requests) > 0 || scenario.TriggerCron != nil {
 			triggerOutputPath := ""
 			if len(scenario.Trigger) > 0 && len(scenario.WaitFor.Invocations) > 0 {
 				output, err := os.CreateTemp("", "gregale-test-trigger-*.json")
@@ -1749,6 +1754,13 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			if len(scenario.Trigger) > 0 {
 				if err := runCommand(ctx, "trigger", env, scenario.Trigger); err != nil {
 					receipt.Error = fmt.Sprintf("application trigger command: %v", err)
+					receipt.captureWakeEvidence(recorder)
+					return
+				}
+			}
+			if scenario.TriggerCron != nil {
+				if err := commandRunner.runCron(ctx, env, *scenario.TriggerCron); err != nil {
+					receipt.Error = fmt.Sprintf("application cron fire-now: %v", err)
 					receipt.captureWakeEvidence(recorder)
 					return
 				}

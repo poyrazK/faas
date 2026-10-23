@@ -235,3 +235,40 @@ func TestFireCronNow_IdempotencyKey(t *testing.T) {
 		t.Errorf("second claim succeeded; want ErrFireNowRequestNotFound")
 	}
 }
+
+// adr: 20261022194510 — a contained rehearsal app's command-cron fire-now runs
+// as a contained command, so it needs rehearsal command execution.
+func TestFireCronNow_ContainedCommandCronNeedsCommandExecution(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.EnableAppTaskAPIForTest(&e)
+	run := strings.Repeat("d", 32)
+	r := e.Do(t, "PUT", "/v1/dev/sessions/cron-api", api.UpsertDevSessionRequest{WorkspaceID: run}, nil)
+	if r.Code != http.StatusCreated {
+		t.Fatalf("session: %d %s", r.Code, r.Body.String())
+	}
+	var session api.DevSessionResponse
+	if err := json.Unmarshal(r.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	s := *e.S()
+	*s.RehearsalNetworkEnabled(), *s.RehearsalSimulationEnabled(), *s.RehearsalCommandsEnabled() = true, true, true
+	plan := api.ScenarioSimulationPlan{Version: 1, Fixtures: []api.ScenarioSimulationFixture{{Workload: "primary", Name: "notify", Integration: "email", Adapter: "resend",
+		Method: "POST", Path: "/emails", Responses: []api.ScenarioSimulationResponse{{Status: 200}}}}}
+	req := api.RegisterScenarioTestRequest{CommandVersion: 1, WebhookMode: "capture", NetworkMode: "contained", ActionEvidenceVersion: 2, Simulation: &plan,
+		Members: []api.ScenarioTestWorkload{{Workload: "primary", AppSlug: session.App.Slug}}}
+	if r = e.Do(t, "PUT", "/v1/dev/test-runs/"+run, req, nil); r.Code != http.StatusOK {
+		t.Fatalf("enrollment: %d %s", r.Code, r.Body.String())
+	}
+	cron, err := (*e.Store()).CreateCronWithOptions(context.Background(), session.App.ID, "0 2 * * *", "/", true, state.CronOptions{Command: []string{"bin/sync"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	*s.RehearsalCommandsEnabled() = false
+	if r = e.Do(t, http.MethodPost, "/v1/crons/"+cron.ID+"/run", nil, nil); r.Code != http.StatusServiceUnavailable {
+		t.Fatalf("contained command cron fired without command execution: %d %s", r.Code, r.Body.String())
+	}
+	*s.RehearsalCommandsEnabled() = true
+	if r = e.Do(t, http.MethodPost, "/v1/crons/"+cron.ID+"/run", nil, nil); r.Code != http.StatusAccepted {
+		t.Fatalf("contained command cron fire-now: %d %s", r.Code, r.Body.String())
+	}
+}

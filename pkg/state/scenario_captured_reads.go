@@ -22,6 +22,9 @@ type ScenarioCapturedQueueRecord struct {
 	Oversized                         bool
 	ScheduledAt                       *time.Time
 	CreatedAt                         time.Time
+	// Delivery is a same-run delivery candidate's result; DeliveryState is
+	// the delivered invocation's current state (ADR-20261023111825).
+	Delivery, DeliveryState string
 }
 
 // ScenarioCapturedPlatformRecord is a captured workflow, realtime or Run
@@ -75,7 +78,7 @@ func (s *PgStore) ScenarioCapturedQueueMessage(ctx context.Context, accountID, r
 		return ScenarioCapturedQueueRecord{}, scenarioCaptureReadError(err, "queue work")
 	}
 	return ScenarioCapturedQueueRecord{Kind: row.Kind, Target: row.Target, QueueName: row.QueueName, Schedule: row.Schedule, Message: row.Message,
-		Oversized: row.Oversized, ScheduledAt: optionalTimestamptz(row.ScheduledAt), CreatedAt: row.CreatedAt.Time}, nil
+		Oversized: row.Oversized, ScheduledAt: optionalTimestamptz(row.ScheduledAt), CreatedAt: row.CreatedAt.Time, Delivery: row.Delivery, DeliveryState: row.DeliveryState}, nil
 }
 
 func (s *PgStore) ScenarioCapturedPlatformCall(ctx context.Context, accountID, runID, id string) (ScenarioCapturedPlatformRecord, error) {
@@ -138,8 +141,12 @@ func (m *MemStore) ScenarioCapturedQueueMessage(ctx context.Context, accountID, 
 	defer m.mu.Unlock()
 	for _, row := range m.scenarioQueueCaptures {
 		if canonicalMemUUID(row.id) == canonicalMemUUID(id) && sameScenarioAccount(row.accountID, accountID) && row.runID == runID {
-			return ScenarioCapturedQueueRecord{Kind: row.msg.Kind, Target: row.target, QueueName: row.msg.QueueName, Schedule: row.msg.Schedule,
-				Message: append(json.RawMessage(nil), row.msg.Message...), Oversized: row.msg.Oversized, ScheduledAt: row.msg.ScheduledAt, CreatedAt: row.createdAt}, nil
+			record := ScenarioCapturedQueueRecord{Kind: row.msg.Kind, Target: row.target, QueueName: row.msg.QueueName, Schedule: row.msg.Schedule,
+				Message: append(json.RawMessage(nil), row.msg.Message...), Oversized: row.msg.Oversized, ScheduledAt: row.msg.ScheduledAt, CreatedAt: row.createdAt, Delivery: row.delivery}
+			if row.delivery == api.ScenarioQueueDelivered {
+				record.DeliveryState = string(m.invocations[row.id].State)
+			}
+			return record, nil
 		}
 	}
 	return ScenarioCapturedQueueRecord{}, ErrNotFound

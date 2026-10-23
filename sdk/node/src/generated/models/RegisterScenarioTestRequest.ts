@@ -28,6 +28,10 @@ export type RegisterScenarioTestRequest = {
    */
   action_evidence_version?: 1 | 2;
   /**
+   * Deliver captured queue sends addressed to a member of the run as real invocations (ADR-20261023111825). Requires network_mode contained and no managed_work or suspend_resume; the server must acknowledge queue_delivery_version.
+   */
+  queue_delivery?: 'same_run';
+  /**
    * Capture managed webhook effects and suppress all other webhook deliveries from these fresh test apps. Requires no existing deployments or work. Does not intercept direct application HTTP calls.
    */
   webhook_mode?: 'capture';

@@ -1564,6 +1564,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.rehearsalRunningSuspendEnabled = deps.getenv("FAAS_REHEARSAL_RUNNING_JOB_SUSPEND") == "1"
 	srv.rehearsalColdStartEnabled = deps.getenv("FAAS_REHEARSAL_COLD_START") == "1"
 	srv.rehearsalCommandsEnabled = deps.getenv("FAAS_REHEARSAL_COMMAND_EXECUTION") == "1"
+	srv.rehearsalQueueDeliveryEnabled = deps.getenv("FAAS_REHEARSAL_QUEUE_DELIVERY") == "1"
 	if err := srv.configureRehearsalObjects(ctx, deps.getenv); err != nil {
 		return err
 	}

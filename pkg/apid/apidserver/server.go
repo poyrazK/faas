@@ -110,6 +110,7 @@ type server struct {
 	rehearsalSuspendResumeEnabled          bool
 	rehearsalRunningSuspendEnabled         bool
 	rehearsalCommandsEnabled               bool
+	rehearsalQueueDeliveryEnabled          bool
 	rehearsalObjectsEnabled                bool
 	rehearsalObjects                       *objruntime.Service
 	rehearsalPostgresEnabled               bool

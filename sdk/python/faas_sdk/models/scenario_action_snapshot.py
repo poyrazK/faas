@@ -19,6 +19,10 @@ from ..models.scenario_action_snapshot_queue_capture_version import (
     ScenarioActionSnapshotQueueCaptureVersion,
     check_scenario_action_snapshot_queue_capture_version,
 )
+from ..models.scenario_action_snapshot_queue_delivery_version import (
+    ScenarioActionSnapshotQueueDeliveryVersion,
+    check_scenario_action_snapshot_queue_delivery_version,
+)
 from ..models.scenario_action_snapshot_recorder_version import (
     ScenarioActionSnapshotRecorderVersion,
     check_scenario_action_snapshot_recorder_version,
@@ -103,6 +107,8 @@ class ScenarioActionSnapshot:
     """Present from servers that capture queue sends and delayed tasks."""
     queue_messages: list[ScenarioCapturedQueueMessage] | Unset = UNSET
     incomplete_queue_messages: int | Unset = UNSET
+    queue_delivery_version: ScenarioActionSnapshotQueueDeliveryVersion | Unset = UNSET
+    """Present when the run delivered captured queue sends to its members."""
     platform_capture_version: ScenarioActionSnapshotPlatformCaptureVersion | Unset = UNSET
     """Present from servers that capture workflow and realtime calls."""
     platform_calls: list[ScenarioCapturedPlatformCall] | Unset = UNSET
@@ -213,6 +219,10 @@ class ScenarioActionSnapshot:
 
         incomplete_queue_messages = self.incomplete_queue_messages
 
+        queue_delivery_version: int | Unset = UNSET
+        if not isinstance(self.queue_delivery_version, Unset):
+            queue_delivery_version = self.queue_delivery_version
+
         platform_capture_version: int | Unset = UNSET
         if not isinstance(self.platform_capture_version, Unset):
             platform_capture_version = self.platform_capture_version
@@ -285,6 +295,8 @@ class ScenarioActionSnapshot:
             field_dict["queue_messages"] = queue_messages
         if incomplete_queue_messages is not UNSET:
             field_dict["incomplete_queue_messages"] = incomplete_queue_messages
+        if queue_delivery_version is not UNSET:
+            field_dict["queue_delivery_version"] = queue_delivery_version
         if platform_capture_version is not UNSET:
             field_dict["platform_capture_version"] = platform_capture_version
         if platform_calls is not UNSET:
@@ -446,6 +458,13 @@ class ScenarioActionSnapshot:
 
         incomplete_queue_messages = d.pop("incomplete_queue_messages", UNSET)
 
+        _queue_delivery_version = d.pop("queue_delivery_version", UNSET)
+        queue_delivery_version: ScenarioActionSnapshotQueueDeliveryVersion | Unset
+        if isinstance(_queue_delivery_version, Unset):
+            queue_delivery_version = UNSET
+        else:
+            queue_delivery_version = check_scenario_action_snapshot_queue_delivery_version(_queue_delivery_version)
+
         _platform_capture_version = d.pop("platform_capture_version", UNSET)
         platform_capture_version: ScenarioActionSnapshotPlatformCaptureVersion | Unset
         if isinstance(_platform_capture_version, Unset):
@@ -499,6 +518,7 @@ class ScenarioActionSnapshot:
             queue_capture_version=queue_capture_version,
             queue_messages=queue_messages,
             incomplete_queue_messages=incomplete_queue_messages,
+            queue_delivery_version=queue_delivery_version,
             platform_capture_version=platform_capture_version,
             platform_calls=platform_calls,
             incomplete_platform_calls=incomplete_platform_calls,

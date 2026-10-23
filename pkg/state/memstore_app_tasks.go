@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -632,6 +633,19 @@ func (m *MemStore) CreateManualCronAppTaskForFireNow(_ context.Context, requestI
 		TimeoutSeconds: cron.CommandTimeoutSeconds, MaxOutputBytes: cron.CommandMaxOutputBytes,
 		RetryMax: cron.RetryMax, RetryBackoffSeconds: cron.RetryBackoffSeconds,
 		CreatedAt: firedAt, UpdatedAt: firedAt,
+	}
+	// A contained rehearsal app fires its command cron as the run's pinned
+	// contained command, admitted like PostgreSQL's trigger (ADR-20261022194510).
+	if policy, enrolled := m.scenarioActionPolicyLocked(app.ID); enrolled && policy.Member.NetworkMode == ScenarioNetworkContained {
+		command, err := rehearsalcommand.ContainedRelease(policy.Member.RunID, deployment.ID, cron.Command, cron.CommandShell)
+		if err != nil {
+			return AppTask{}, ErrAppTaskInvalid
+		}
+		task.Command, task.CommandShell, task.MaxOutputBytes, task.RetryMax = command, false, rehearsalcommand.MaxReceiptBytes, 0
+		if err := m.admitRehearsalCommandLocked(CreateAppTaskParams{AccountID: task.AccountID, AppID: task.AppID, DeploymentID: task.DeploymentID, CronID: task.CronID,
+			Kind: task.Kind, Command: task.Command, MaxOutputBytes: task.MaxOutputBytes}); err != nil {
+			return AppTask{}, err
+		}
 	}
 	m.appTasks[task.ID] = task
 	request.Status = FireNowStatusSucceeded

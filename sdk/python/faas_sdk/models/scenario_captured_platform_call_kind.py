@@ -1,10 +1,11 @@
 from typing import Literal
 
 ScenarioCapturedPlatformCallKind = Literal[
-    "execution", "execution_cancel", "realtime_publish", "realtime_signal", "workflow_event", "workflow_run"
+    "cron_run", "execution", "execution_cancel", "realtime_publish", "realtime_signal", "workflow_event", "workflow_run"
 ]
 
 SCENARIO_CAPTURED_PLATFORM_CALL_KIND_VALUES: set[ScenarioCapturedPlatformCallKind] = {
+    "cron_run",
     "execution",
     "execution_cancel",
     "realtime_publish",

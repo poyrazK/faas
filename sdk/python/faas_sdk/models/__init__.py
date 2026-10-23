@@ -4790,12 +4790,14 @@ from .register_scenario_test_request import RegisterScenarioTestRequest
 from .register_scenario_test_request_action_evidence_version import RegisterScenarioTestRequestActionEvidenceVersion
 from .register_scenario_test_request_command_version import RegisterScenarioTestRequestCommandVersion
 from .register_scenario_test_request_network_mode import RegisterScenarioTestRequestNetworkMode
+from .register_scenario_test_request_queue_delivery import RegisterScenarioTestRequestQueueDelivery
 from .register_scenario_test_request_webhook_mode import RegisterScenarioTestRequestWebhookMode
 from .register_scenario_test_response import RegisterScenarioTestResponse
 from .register_scenario_test_response_action_evidence_version import RegisterScenarioTestResponseActionEvidenceVersion
 from .register_scenario_test_response_command_version import RegisterScenarioTestResponseCommandVersion
 from .register_scenario_test_response_network_mode import RegisterScenarioTestResponseNetworkMode
 from .register_scenario_test_response_policy_version import RegisterScenarioTestResponsePolicyVersion
+from .register_scenario_test_response_queue_delivery_version import RegisterScenarioTestResponseQueueDeliveryVersion
 from .register_scenario_test_response_recorder_version import RegisterScenarioTestResponseRecorderVersion
 from .register_scenario_test_response_webhook_mode import RegisterScenarioTestResponseWebhookMode
 from .rekey_progress import RekeyProgress
@@ -5229,6 +5231,7 @@ from .scenario_action_snapshot import ScenarioActionSnapshot
 from .scenario_action_snapshot_event_capture_version import ScenarioActionSnapshotEventCaptureVersion
 from .scenario_action_snapshot_platform_capture_version import ScenarioActionSnapshotPlatformCaptureVersion
 from .scenario_action_snapshot_queue_capture_version import ScenarioActionSnapshotQueueCaptureVersion
+from .scenario_action_snapshot_queue_delivery_version import ScenarioActionSnapshotQueueDeliveryVersion
 from .scenario_action_snapshot_recorder_version import ScenarioActionSnapshotRecorderVersion
 from .scenario_action_snapshot_scope import ScenarioActionSnapshotScope
 from .scenario_action_snapshot_simulation_version import ScenarioActionSnapshotSimulationVersion
@@ -5240,6 +5243,7 @@ from .scenario_captured_event import ScenarioCapturedEvent
 from .scenario_captured_platform_call import ScenarioCapturedPlatformCall
 from .scenario_captured_platform_call_kind import ScenarioCapturedPlatformCallKind
 from .scenario_captured_queue_message import ScenarioCapturedQueueMessage
+from .scenario_captured_queue_message_delivery import ScenarioCapturedQueueMessageDelivery
 from .scenario_captured_queue_message_kind import ScenarioCapturedQueueMessageKind
 from .scenario_cold_preparation import ScenarioColdPreparation
 from .scenario_cold_preparation_method import ScenarioColdPreparationMethod
@@ -10519,12 +10523,14 @@ __all__ = (
     "RegisterScenarioTestRequestActionEvidenceVersion",
     "RegisterScenarioTestRequestCommandVersion",
     "RegisterScenarioTestRequestNetworkMode",
+    "RegisterScenarioTestRequestQueueDelivery",
     "RegisterScenarioTestRequestWebhookMode",
     "RegisterScenarioTestResponse",
     "RegisterScenarioTestResponseActionEvidenceVersion",
     "RegisterScenarioTestResponseCommandVersion",
     "RegisterScenarioTestResponseNetworkMode",
     "RegisterScenarioTestResponsePolicyVersion",
+    "RegisterScenarioTestResponseQueueDeliveryVersion",
     "RegisterScenarioTestResponseRecorderVersion",
     "RegisterScenarioTestResponseWebhookMode",
     "RekeyProgress",
@@ -10952,6 +10958,7 @@ __all__ = (
     "ScenarioActionSnapshotEventCaptureVersion",
     "ScenarioActionSnapshotPlatformCaptureVersion",
     "ScenarioActionSnapshotQueueCaptureVersion",
+    "ScenarioActionSnapshotQueueDeliveryVersion",
     "ScenarioActionSnapshotRecorderVersion",
     "ScenarioActionSnapshotScope",
     "ScenarioActionSnapshotSimulationVersion",
@@ -10963,6 +10970,7 @@ __all__ = (
     "ScenarioCapturedPlatformCall",
     "ScenarioCapturedPlatformCallKind",
     "ScenarioCapturedQueueMessage",
+    "ScenarioCapturedQueueMessageDelivery",
     "ScenarioCapturedQueueMessageKind",
     "ScenarioColdPreparation",
     "ScenarioColdPreparationMethod",

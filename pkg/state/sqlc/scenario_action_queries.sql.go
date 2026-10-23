@@ -12,8 +12,8 @@ import (
 )
 
 const insertScenarioActionPolicy = `-- name: InsertScenarioActionPolicy :exec
-INSERT INTO scenario_test_action_policies(account_id,run_id,app_id,webhook_mode,workload_name,network_mode,simulation_plan,managed_work_plan,cold_start_spec,suspend_resume_spec)
-VALUES($1::text::uuid,$2::text,$3::text::uuid,'capture',$4::text,$5::text,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb)
+INSERT INTO scenario_test_action_policies(account_id,run_id,app_id,webhook_mode,workload_name,network_mode,simulation_plan,managed_work_plan,cold_start_spec,suspend_resume_spec,queue_delivery)
+VALUES($1::text::uuid,$2::text,$3::text::uuid,'capture',$4::text,$5::text,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::text)
 `
 
 type InsertScenarioActionPolicyParams struct {
@@ -26,6 +26,7 @@ type InsertScenarioActionPolicyParams struct {
 	ManagedWorkPlan   []byte
 	ColdStartSpec     []byte
 	SuspendResumeSpec []byte
+	QueueDelivery     string
 }
 
 func (q *Queries) InsertScenarioActionPolicy(ctx context.Context, db DBTX, arg InsertScenarioActionPolicyParams) error {
@@ -39,6 +40,7 @@ func (q *Queries) InsertScenarioActionPolicy(ctx context.Context, db DBTX, arg I
 		arg.ManagedWorkPlan,
 		arg.ColdStartSpec,
 		arg.SuspendResumeSpec,
+		arg.QueueDelivery,
 	)
 	return err
 }
@@ -113,14 +115,15 @@ func (q *Queries) InsertScenarioCapturedPlatformCall(ctx context.Context, db DBT
 }
 
 const insertScenarioCapturedQueueMessage = `-- name: InsertScenarioCapturedQueueMessage :one
-INSERT INTO scenario_captured_queue_messages(account_id,run_id,app_id,kind,target,queue_name,schedule,message,oversized,scheduled_at)
-VALUES($1::text::uuid,$2::text,$3::text::uuid,$4::text,
- $5::text,$6::text,$7::text,$8::jsonb,$9::boolean,
- $10::timestamptz)
+INSERT INTO scenario_captured_queue_messages(id,account_id,run_id,app_id,kind,target,queue_name,schedule,message,oversized,scheduled_at,delivery)
+VALUES($1::text::uuid,$2::text::uuid,$3::text,$4::text::uuid,$5::text,
+ $6::text,$7::text,$8::text,$9::jsonb,$10::boolean,
+ $11::timestamptz,$12::text)
 RETURNING id::text AS id
 `
 
 type InsertScenarioCapturedQueueMessageParams struct {
+	ID          string
 	AccountID   string
 	RunID       string
 	AppID       string
@@ -131,10 +134,12 @@ type InsertScenarioCapturedQueueMessageParams struct {
 	Message     []byte
 	Oversized   bool
 	ScheduledAt pgtype.Timestamptz
+	Delivery    string
 }
 
 func (q *Queries) InsertScenarioCapturedQueueMessage(ctx context.Context, db DBTX, arg InsertScenarioCapturedQueueMessageParams) (string, error) {
 	row := db.QueryRow(ctx, insertScenarioCapturedQueueMessage,
+		arg.ID,
 		arg.AccountID,
 		arg.RunID,
 		arg.AppID,
@@ -145,6 +150,7 @@ func (q *Queries) InsertScenarioCapturedQueueMessage(ctx context.Context, db DBT
 		arg.Message,
 		arg.Oversized,
 		arg.ScheduledAt,
+		arg.Delivery,
 	)
 	var id string
 	err := row.Scan(&id)
@@ -785,7 +791,8 @@ func (q *Queries) ScenarioCapturedPlatformCalls(ctx context.Context, db DBTX, ar
 }
 
 const scenarioCapturedQueueMessageByID = `-- name: ScenarioCapturedQueueMessageByID :one
-SELECT kind,target,queue_name,schedule,message,oversized,scheduled_at,created_at
+SELECT kind,target,queue_name,schedule,message,oversized,scheduled_at,created_at,delivery,
+ coalesce((SELECT i.state FROM invocations i WHERE i.id=scenario_captured_queue_messages.id AND delivery='delivered'),'')::text AS delivery_state
 FROM scenario_captured_queue_messages
 WHERE id=$1::text::uuid AND account_id=$2::text::uuid AND run_id=$3::text
 `
@@ -797,17 +804,20 @@ type ScenarioCapturedQueueMessageByIDParams struct {
 }
 
 type ScenarioCapturedQueueMessageByIDRow struct {
-	Kind        string
-	Target      string
-	QueueName   string
-	Schedule    string
-	Message     []byte
-	Oversized   bool
-	ScheduledAt pgtype.Timestamptz
-	CreatedAt   pgtype.Timestamptz
+	Kind          string
+	Target        string
+	QueueName     string
+	Schedule      string
+	Message       []byte
+	Oversized     bool
+	ScheduledAt   pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	Delivery      string
+	DeliveryState string
 }
 
-// A capture is read back only inside its own run (ADR-20261022082721).
+// A capture is read back only inside its own run (ADR-20261022082721); a
+// delivered one with its invocation's state (ADR-20261023111825).
 func (q *Queries) ScenarioCapturedQueueMessageByID(ctx context.Context, db DBTX, arg ScenarioCapturedQueueMessageByIDParams) (ScenarioCapturedQueueMessageByIDRow, error) {
 	row := db.QueryRow(ctx, scenarioCapturedQueueMessageByID, arg.ID, arg.AccountID, arg.RunID)
 	var i ScenarioCapturedQueueMessageByIDRow
@@ -820,12 +830,15 @@ func (q *Queries) ScenarioCapturedQueueMessageByID(ctx context.Context, db DBTX,
 		&i.Oversized,
 		&i.ScheduledAt,
 		&i.CreatedAt,
+		&i.Delivery,
+		&i.DeliveryState,
 	)
 	return i, err
 }
 
 const scenarioCapturedQueueMessages = `-- name: ScenarioCapturedQueueMessages :many
-SELECT m.id::text AS id,p.workload_name AS workload,m.kind,m.target,m.queue_name,m.schedule,m.message,m.oversized
+SELECT m.id::text AS id,p.workload_name AS workload,m.kind,m.target,m.queue_name,m.schedule,m.message,m.oversized,m.delivery,
+ coalesce((SELECT i.state FROM invocations i WHERE i.id=m.id AND m.delivery='delivered'),'')::text AS delivery_state
 FROM scenario_captured_queue_messages m JOIN scenario_test_action_policies p ON p.app_id=m.app_id AND p.account_id=m.account_id AND p.run_id=m.run_id
 WHERE m.account_id=$1::text::uuid AND m.run_id=$2::text
 ORDER BY m.created_at,m.id LIMIT 257
@@ -837,14 +850,16 @@ type ScenarioCapturedQueueMessagesParams struct {
 }
 
 type ScenarioCapturedQueueMessagesRow struct {
-	ID        string
-	Workload  string
-	Kind      string
-	Target    string
-	QueueName string
-	Schedule  string
-	Message   []byte
-	Oversized bool
+	ID            string
+	Workload      string
+	Kind          string
+	Target        string
+	QueueName     string
+	Schedule      string
+	Message       []byte
+	Oversized     bool
+	Delivery      string
+	DeliveryState string
 }
 
 func (q *Queries) ScenarioCapturedQueueMessages(ctx context.Context, db DBTX, arg ScenarioCapturedQueueMessagesParams) ([]ScenarioCapturedQueueMessagesRow, error) {
@@ -865,6 +880,8 @@ func (q *Queries) ScenarioCapturedQueueMessages(ctx context.Context, db DBTX, ar
 			&i.Schedule,
 			&i.Message,
 			&i.Oversized,
+			&i.Delivery,
+			&i.DeliveryState,
 		); err != nil {
 			return nil, err
 		}
@@ -899,15 +916,35 @@ func (q *Queries) ScenarioCapturedWorkflowRunReference(ctx context.Context, db D
 	return reference, err
 }
 
+const scenarioCronInAccount = `-- name: ScenarioCronInAccount :one
+SELECT EXISTS(SELECT 1 FROM crons c JOIN apps a ON a.id=c.app_id
+ WHERE c.id=$1::text::uuid AND a.account_id=$2::text::uuid)::boolean AS present
+`
+
+type ScenarioCronInAccountParams struct {
+	ID        string
+	AccountID string
+}
+
+// A cron fire-now names the cron by ID; it must belong to the run's account
+// (ADR-20261022194510).
+func (q *Queries) ScenarioCronInAccount(ctx context.Context, db DBTX, arg ScenarioCronInAccountParams) (bool, error) {
+	row := db.QueryRow(ctx, scenarioCronInAccount, arg.ID, arg.AccountID)
+	var present bool
+	err := row.Scan(&present)
+	return present, err
+}
+
 const scenarioEventCapturePolicy = `-- name: ScenarioEventCapturePolicy :one
-SELECT account_id::text AS account_id,run_id,workload_name FROM scenario_test_action_policies
+SELECT account_id::text AS account_id,run_id,workload_name,queue_delivery FROM scenario_test_action_policies
 WHERE app_id=$1::text::uuid
 `
 
 type ScenarioEventCapturePolicyRow struct {
-	AccountID    string
-	RunID        string
-	WorkloadName string
+	AccountID     string
+	RunID         string
+	WorkloadName  string
+	QueueDelivery string
 }
 
 // Any enrolled app, contained or capture-only, publishes into its run's
@@ -915,7 +952,12 @@ type ScenarioEventCapturePolicyRow struct {
 func (q *Queries) ScenarioEventCapturePolicy(ctx context.Context, db DBTX, appID string) (ScenarioEventCapturePolicyRow, error) {
 	row := db.QueryRow(ctx, scenarioEventCapturePolicy, appID)
 	var i ScenarioEventCapturePolicyRow
-	err := row.Scan(&i.AccountID, &i.RunID, &i.WorkloadName)
+	err := row.Scan(
+		&i.AccountID,
+		&i.RunID,
+		&i.WorkloadName,
+		&i.QueueDelivery,
+	)
 	return i, err
 }
 
@@ -1082,6 +1124,49 @@ func (q *Queries) ScenarioQueueCaptureTarget(ctx context.Context, db DBTX, arg S
 	var target string
 	err := row.Scan(&target)
 	return target, err
+}
+
+const scenarioQueueDeliveryTarget = `-- name: ScenarioQueueDeliveryTarget :one
+SELECT p.app_id::text AS app_id,acc.plan,ap.retry_policy,
+ (EXISTS(SELECT 1 FROM queue_bindings b WHERE b.app_id=p.app_id)
+  OR EXISTS(SELECT 1 FROM triggers t WHERE t.app_id=p.app_id AND t.kind='queue'))::boolean AS bound,
+ (SELECT count(*) FROM deployments d WHERE d.app_id=p.app_id AND d.status='live')::bigint AS live,
+ (SELECT count(*) FROM scenario_captured_queue_messages c WHERE c.account_id=p.account_id AND c.run_id=p.run_id AND c.delivery='delivered')::bigint AS delivered
+FROM scenario_test_action_policies p JOIN apps ap ON ap.id=p.app_id JOIN accounts acc ON acc.id=p.account_id
+WHERE p.account_id=$1::text::uuid AND p.run_id=$2::text AND p.workload_name=$3::text
+`
+
+type ScenarioQueueDeliveryTargetParams struct {
+	AccountID string
+	RunID     string
+	Workload  string
+}
+
+type ScenarioQueueDeliveryTargetRow struct {
+	AppID       string
+	Plan        string
+	RetryPolicy []byte
+	Bound       bool
+	Live        int64
+	Delivered   int64
+}
+
+// A same-run delivery candidate's receiving member: its app, the account plan
+// and retry policy, whether a queue binding or trigger would choose its
+// consumer, its live deployments, and the run's delivered count
+// (ADR-20261023111825).
+func (q *Queries) ScenarioQueueDeliveryTarget(ctx context.Context, db DBTX, arg ScenarioQueueDeliveryTargetParams) (ScenarioQueueDeliveryTargetRow, error) {
+	row := db.QueryRow(ctx, scenarioQueueDeliveryTarget, arg.AccountID, arg.RunID, arg.Workload)
+	var i ScenarioQueueDeliveryTargetRow
+	err := row.Scan(
+		&i.AppID,
+		&i.Plan,
+		&i.RetryPolicy,
+		&i.Bound,
+		&i.Live,
+		&i.Delivered,
+	)
+	return i, err
 }
 
 const scenarioRealtimeConsumerGroupByID = `-- name: ScenarioRealtimeConsumerGroupByID :one
@@ -1264,6 +1349,23 @@ func (q *Queries) ScenarioRehearsalNetworkRun(ctx context.Context, db DBTX, appI
 	return run_id, err
 }
 
+const scenarioRunQueueDelivery = `-- name: ScenarioRunQueueDelivery :one
+SELECT coalesce(max(queue_delivery),'')::text AS queue_delivery FROM scenario_test_action_policies
+WHERE account_id=$1::text::uuid AND run_id=$2::text
+`
+
+type ScenarioRunQueueDeliveryParams struct {
+	AccountID string
+	RunID     string
+}
+
+func (q *Queries) ScenarioRunQueueDelivery(ctx context.Context, db DBTX, arg ScenarioRunQueueDeliveryParams) (string, error) {
+	row := db.QueryRow(ctx, scenarioRunQueueDelivery, arg.AccountID, arg.RunID)
+	var queue_delivery string
+	err := row.Scan(&queue_delivery)
+	return queue_delivery, err
+}
+
 const scenarioSuppressedWebhookEvents = `-- name: ScenarioSuppressedWebhookEvents :many
 SELECT p.workload_name AS workload,d.event,count(*)::bigint AS count
 FROM app_webhook_deliveries d LEFT JOIN app_webhooks h ON h.id=d.webhook_id
@@ -1311,7 +1413,8 @@ func (q *Queries) ScenarioSuppressedWebhookEvents(ctx context.Context, db DBTX, 
 
 const scenarioTestMemberWithPolicy = `-- name: ScenarioTestMemberWithPolicy :one
 SELECT m.account_id::text AS account_id,m.run_id,m.workload_name,m.app_id::text AS app_id,
- coalesce(p.webhook_mode,'')::text AS webhook_mode, coalesce(p.network_mode,'')::text AS network_mode, p.simulation_plan,p.managed_work_plan,p.cold_start_spec,p.suspend_resume_spec
+ coalesce(p.webhook_mode,'')::text AS webhook_mode, coalesce(p.network_mode,'')::text AS network_mode, p.simulation_plan,p.managed_work_plan,p.cold_start_spec,p.suspend_resume_spec,
+ coalesce(p.queue_delivery,'')::text AS queue_delivery
 FROM scenario_test_members m LEFT JOIN scenario_test_action_policies p ON p.app_id=m.app_id
 WHERE m.app_id=$1::text::uuid
 `
@@ -1327,6 +1430,7 @@ type ScenarioTestMemberWithPolicyRow struct {
 	ManagedWorkPlan   []byte
 	ColdStartSpec     []byte
 	SuspendResumeSpec []byte
+	QueueDelivery     string
 }
 
 func (q *Queries) ScenarioTestMemberWithPolicy(ctx context.Context, db DBTX, appID string) (ScenarioTestMemberWithPolicyRow, error) {
@@ -1343,6 +1447,7 @@ func (q *Queries) ScenarioTestMemberWithPolicy(ctx context.Context, db DBTX, app
 		&i.ManagedWorkPlan,
 		&i.ColdStartSpec,
 		&i.SuspendResumeSpec,
+		&i.QueueDelivery,
 	)
 	return i, err
 }

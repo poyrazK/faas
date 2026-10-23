@@ -108,6 +108,18 @@ func rehearsalPlatformAPIRoute(r *http.Request) (rehearsalPlatformRoute, bool) {
 	if route, ok := realtimePublisherRoute(r.URL.Path); ok {
 		return route, true
 	}
+	if rest, ok := strings.CutPrefix(r.URL.Path, "/v1/crons/"); ok {
+		if id, tail, _ := strings.Cut(rest, "/"); id != "" && tail == "run" {
+			return cronRunRoute(id), true
+		}
+		return nil, false
+	}
+	if rest, ok := strings.CutPrefix(r.URL.Path, "/v1/jobs/"); ok {
+		if name, tail, _ := strings.Cut(rest, "/"); name != "" && (tail == "runs" || tail == "operations") {
+			return jobsUnavailableRoute, true
+		}
+		return nil, false
+	}
 	switch r.URL.Path {
 	case "/v1/events/recipient-blockers":
 		return serveRehearsalRecipientBlockers, true

@@ -23,9 +23,10 @@ type ScenarioCommandStore interface {
 
 func commandTaskSpec(task AppTask, identity rehearsalrecorder.Identity) (rehearsalcommand.Spec, error) {
 	spec, err := rehearsalcommand.Decode(task.Command)
-	// A contained release task is the deployment's pinned release command;
-	// admission already proved it equals the deployment's (ADR-20261020150000).
-	if err != nil || task.AccountID != identity.AccountID || task.AppID != identity.AppID || task.ID != identity.InstanceID || task.DeploymentID != identity.DeploymentID || spec.DeploymentID != canonicalMemUUID(task.DeploymentID) || spec.RunID != identity.RunID || task.CommandShell || task.Kind != AppTaskKindManual && task.Kind != AppTaskKindRelease || task.MaxOutputBytes != rehearsalcommand.MaxReceiptBytes || task.Status != AppTaskRestoring && task.Status != AppTaskRunning {
+	// A contained release or cron task is its deployment's or cron's pinned
+	// command; admission already proved the equality (ADR-20261020150000,
+	// ADR-20261022194510).
+	if err != nil || task.AccountID != identity.AccountID || task.AppID != identity.AppID || task.ID != identity.InstanceID || task.DeploymentID != identity.DeploymentID || spec.DeploymentID != canonicalMemUUID(task.DeploymentID) || spec.RunID != identity.RunID || task.CommandShell || task.Kind != AppTaskKindManual && task.Kind != AppTaskKindRelease && task.Kind != AppTaskKindCron || task.MaxOutputBytes != rehearsalcommand.MaxReceiptBytes || task.Status != AppTaskRestoring && task.Status != AppTaskRunning {
 		return rehearsalcommand.Spec{}, ErrConflict
 	}
 	return spec, nil
@@ -119,8 +120,12 @@ func (m *MemStore) admitRehearsalCommandLocked(params CreateAppTaskParams) error
 	dep := m.deployments[params.DeploymentID]
 	// A recipe command targets the live deployment; a release command is the
 	// snapshotting deployment's own pinned release (ADR-20261020150000).
+	cron := m.crons[params.CronID]
 	kindAllowed := params.Kind == AppTaskKindManual && dep.Status == DeployLive ||
-		params.Kind == AppTaskKindRelease && dep.Status == DeploySnapshotting && rehearsalcommand.IsContainedReleaseFor(params.Command, dep.ID, dep.ReleaseCommand, dep.ReleaseCommandShell)
+		params.Kind == AppTaskKindRelease && dep.Status == DeploySnapshotting && rehearsalcommand.IsContainedReleaseFor(params.Command, dep.ID, dep.ReleaseCommand, dep.ReleaseCommandShell) ||
+		// A contained command cron is its own pinned command (ADR-20261022194510).
+		params.Kind == AppTaskKindCron && dep.Status == DeployLive && params.RetryMax == 0 && cron.AppID == params.AppID &&
+			rehearsalcommand.IsContainedReleaseFor(params.Command, dep.ID, cron.Command, cron.CommandShell)
 	if err != nil || !contained || p.Member.AccountID != params.AccountID || spec.RunID != p.Member.RunID || spec.DeploymentID != canonicalMemUUID(params.DeploymentID) || p.Member.SimulationJSON == "" || p.RecorderClosing || !p.SealedAt.IsZero() || p.SimulationFailed || !kindAllowed || params.CommandShell || params.Interactive != nil || params.MaxOutputBytes != rehearsalcommand.MaxReceiptBytes {
 		return fmt.Errorf("%w: contained command admission unavailable", ErrAppTaskInvalid)
 	}

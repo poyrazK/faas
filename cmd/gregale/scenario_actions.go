@@ -20,6 +20,9 @@ type testActionSpec struct {
 	Simulation *api.ScenarioSimulationPlan `yaml:"simulation,omitempty" json:"simulation,omitempty"`
 	Network    string                      `yaml:"network,omitempty" json:"network,omitempty"`
 	Webhooks   string                      `yaml:"webhooks" json:"webhooks"`
+	// QueueDelivery same_run delivers captured queue sends addressed to a
+	// member of the run as real invocations (ADR-20261023111825).
+	QueueDelivery string `yaml:"queue_delivery,omitempty" json:"queue_delivery,omitempty"`
 }
 
 type testActionEvidence struct {
@@ -291,6 +294,9 @@ func validateTestActions(spec *testActionSpec) error {
 	}
 	if spec != nil && spec.Webhooks != "capture" {
 		return errors.New("actions.webhooks must be capture")
+	}
+	if spec != nil && spec.QueueDelivery != "" && (spec.QueueDelivery != api.ScenarioQueueDeliverySameRun || spec.Network != "contained") {
+		return errors.New("actions.queue_delivery must be same_run and requires contained networking")
 	}
 	return nil
 }

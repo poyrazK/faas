@@ -1540,8 +1540,9 @@ func (r *server) ConfigureProductEmail(getenv func(string) string) error {
 
 func (s *server) RehearsalNetworkEnabled() *bool { return &s.rehearsalNetworkEnabled }
 
-func (s *server) RehearsalSimulationEnabled() *bool { return &s.rehearsalSimulationEnabled }
-func (s *server) RehearsalCommandsEnabled() *bool   { return &s.rehearsalCommandsEnabled }
+func (s *server) RehearsalSimulationEnabled() *bool    { return &s.rehearsalSimulationEnabled }
+func (s *server) RehearsalCommandsEnabled() *bool      { return &s.rehearsalCommandsEnabled }
+func (s *server) RehearsalQueueDeliveryEnabled() *bool { return &s.rehearsalQueueDeliveryEnabled }
 
 func (s *server) SetRehearsalPostgresForTest(service *pgruntime.Service, enabled bool) {
 	s.rehearsalPostgres, s.rehearsalPostgresEnabled = service, enabled

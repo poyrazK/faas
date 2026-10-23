@@ -91,6 +91,9 @@ func (f *fakeRehearsalPlatformAPIStore) capturedRecord(id string) (state.Scenari
 			continue
 		}
 		record := state.ScenarioCapturedPlatformRecord{Kind: call.Kind, Name: call.Name, Message: call.Message, Oversized: call.Oversized, CreatedAt: fakeCapturedAt}
+		if call.Kind == api.ScenarioPlatformKindCronRun {
+			record.Target = "cron:" + call.Address
+		}
 		for _, later := range f.calls[i+1:] {
 			if call.Kind == api.ScenarioPlatformKindExecution && later.Kind == api.ScenarioPlatformKindExecutionCancel && later.Address == id {
 				at := fakeCapturedAt.Add(time.Minute)
@@ -153,7 +156,7 @@ func (f *fakeRehearsalPlatformAPIStore) CaptureScenarioPlatformCall(_ context.Co
 	if f.err != nil {
 		return state.ScenarioPlatformCallResult{}, true, f.err
 	}
-	if call.Address == "missing" || call.Endpoint == fakeMissingEndpoint {
+	if call.Address == "missing" || call.Address == fakeMissingEndpoint || call.Endpoint == fakeMissingEndpoint {
 		return state.ScenarioPlatformCallResult{}, true, state.ErrNotFound
 	}
 	if record, ok := f.capturedRecord(call.Address); call.Kind == api.ScenarioPlatformKindExecutionCancel && (!ok || record.Kind != api.ScenarioPlatformKindExecution) {

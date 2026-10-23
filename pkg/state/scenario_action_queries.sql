@@ -41,13 +41,14 @@ VALUES(sqlc.arg(account_id)::text::uuid,sqlc.arg(run_id)::text,sqlc.arg(workload
 
 -- name: ScenarioTestMemberWithPolicy :one
 SELECT m.account_id::text AS account_id,m.run_id,m.workload_name,m.app_id::text AS app_id,
- coalesce(p.webhook_mode,'')::text AS webhook_mode, coalesce(p.network_mode,'')::text AS network_mode, p.simulation_plan,p.managed_work_plan,p.cold_start_spec,p.suspend_resume_spec
+ coalesce(p.webhook_mode,'')::text AS webhook_mode, coalesce(p.network_mode,'')::text AS network_mode, p.simulation_plan,p.managed_work_plan,p.cold_start_spec,p.suspend_resume_spec,
+ coalesce(p.queue_delivery,'')::text AS queue_delivery
 FROM scenario_test_members m LEFT JOIN scenario_test_action_policies p ON p.app_id=m.app_id
 WHERE m.app_id=sqlc.arg(app_id)::text::uuid;
 
 -- name: InsertScenarioActionPolicy :exec
-INSERT INTO scenario_test_action_policies(account_id,run_id,app_id,webhook_mode,workload_name,network_mode,simulation_plan,managed_work_plan,cold_start_spec,suspend_resume_spec)
-VALUES(sqlc.arg(account_id)::text::uuid,sqlc.arg(run_id)::text,sqlc.arg(app_id)::text::uuid,'capture',sqlc.arg(workload)::text,sqlc.arg(network_mode)::text,sqlc.narg(simulation_plan)::jsonb,sqlc.narg(managed_work_plan)::jsonb,sqlc.narg(cold_start_spec)::jsonb,sqlc.narg(suspend_resume_spec)::jsonb);
+INSERT INTO scenario_test_action_policies(account_id,run_id,app_id,webhook_mode,workload_name,network_mode,simulation_plan,managed_work_plan,cold_start_spec,suspend_resume_spec,queue_delivery)
+VALUES(sqlc.arg(account_id)::text::uuid,sqlc.arg(run_id)::text,sqlc.arg(app_id)::text::uuid,'capture',sqlc.arg(workload)::text,sqlc.arg(network_mode)::text,sqlc.narg(simulation_plan)::jsonb,sqlc.narg(managed_work_plan)::jsonb,sqlc.narg(cold_start_spec)::jsonb,sqlc.narg(suspend_resume_spec)::jsonb,sqlc.arg(queue_delivery)::text);
 
 -- name: ScenarioWebhookCapture :one
 SELECT p.run_id,
@@ -126,7 +127,7 @@ ORDER BY workload,source,id LIMIT 257;
 -- name: ScenarioEventCapturePolicy :one
 -- Any enrolled app, contained or capture-only, publishes into its run's
 -- evidence instead of the account's event bus (ADR-20261020090000).
-SELECT account_id::text AS account_id,run_id,workload_name FROM scenario_test_action_policies
+SELECT account_id::text AS account_id,run_id,workload_name,queue_delivery FROM scenario_test_action_policies
 WHERE app_id=sqlc.arg(app_id)::text::uuid;
 
 -- name: ScenarioEventCaptureState :one
@@ -177,15 +178,34 @@ SELECT coalesce((SELECT 'workload:' || p.workload_name FROM scenario_test_action
  '')::text AS target;
 
 -- name: InsertScenarioCapturedQueueMessage :one
-INSERT INTO scenario_captured_queue_messages(account_id,run_id,app_id,kind,target,queue_name,schedule,message,oversized,scheduled_at)
-VALUES(sqlc.arg(account_id)::text::uuid,sqlc.arg(run_id)::text,sqlc.arg(app_id)::text::uuid,sqlc.arg(kind)::text,
+INSERT INTO scenario_captured_queue_messages(id,account_id,run_id,app_id,kind,target,queue_name,schedule,message,oversized,scheduled_at,delivery)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(run_id)::text,sqlc.arg(app_id)::text::uuid,sqlc.arg(kind)::text,
  sqlc.arg(target)::text,sqlc.arg(queue_name)::text,sqlc.arg(schedule)::text,sqlc.narg(message)::jsonb,sqlc.arg(oversized)::boolean,
- sqlc.narg(scheduled_at)::timestamptz)
+ sqlc.narg(scheduled_at)::timestamptz,sqlc.arg(delivery)::text)
 RETURNING id::text AS id;
 
+-- name: ScenarioRunQueueDelivery :one
+SELECT coalesce(max(queue_delivery),'')::text AS queue_delivery FROM scenario_test_action_policies
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text;
+
+-- name: ScenarioQueueDeliveryTarget :one
+-- A same-run delivery candidate's receiving member: its app, the account plan
+-- and retry policy, whether a queue binding or trigger would choose its
+-- consumer, its live deployments, and the run's delivered count
+-- (ADR-20261023111825).
+SELECT p.app_id::text AS app_id,acc.plan,ap.retry_policy,
+ (EXISTS(SELECT 1 FROM queue_bindings b WHERE b.app_id=p.app_id)
+  OR EXISTS(SELECT 1 FROM triggers t WHERE t.app_id=p.app_id AND t.kind='queue'))::boolean AS bound,
+ (SELECT count(*) FROM deployments d WHERE d.app_id=p.app_id AND d.status='live')::bigint AS live,
+ (SELECT count(*) FROM scenario_captured_queue_messages c WHERE c.account_id=p.account_id AND c.run_id=p.run_id AND c.delivery='delivered')::bigint AS delivered
+FROM scenario_test_action_policies p JOIN apps ap ON ap.id=p.app_id JOIN accounts acc ON acc.id=p.account_id
+WHERE p.account_id=sqlc.arg(account_id)::text::uuid AND p.run_id=sqlc.arg(run_id)::text AND p.workload_name=sqlc.arg(workload)::text;
+
 -- name: ScenarioCapturedQueueMessageByID :one
--- A capture is read back only inside its own run (ADR-20261022082721).
-SELECT kind,target,queue_name,schedule,message,oversized,scheduled_at,created_at
+-- A capture is read back only inside its own run (ADR-20261022082721); a
+-- delivered one with its invocation's state (ADR-20261023111825).
+SELECT kind,target,queue_name,schedule,message,oversized,scheduled_at,created_at,delivery,
+ coalesce((SELECT i.state FROM invocations i WHERE i.id=scenario_captured_queue_messages.id AND delivery='delivered'),'')::text AS delivery_state
 FROM scenario_captured_queue_messages
 WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text;
 
@@ -200,7 +220,8 @@ WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::t
 ORDER BY created_at,id LIMIT 1;
 
 -- name: ScenarioCapturedQueueMessages :many
-SELECT m.id::text AS id,p.workload_name AS workload,m.kind,m.target,m.queue_name,m.schedule,m.message,m.oversized
+SELECT m.id::text AS id,p.workload_name AS workload,m.kind,m.target,m.queue_name,m.schedule,m.message,m.oversized,m.delivery,
+ coalesce((SELECT i.state FROM invocations i WHERE i.id=m.id AND m.delivery='delivered'),'')::text AS delivery_state
 FROM scenario_captured_queue_messages m JOIN scenario_test_action_policies p ON p.app_id=m.app_id AND p.account_id=m.account_id AND p.run_id=m.run_id
 WHERE m.account_id=sqlc.arg(account_id)::text::uuid AND m.run_id=sqlc.arg(run_id)::text
 ORDER BY m.created_at,m.id LIMIT 257;
@@ -271,6 +292,12 @@ SELECT g.id::text AS group_id,g.endpoint_id::text AS endpoint_id,g.channel,g.nam
  g.message_filter,g.created_at
 FROM managed_realtime_consumer_groups g JOIN managed_realtime_endpoints e ON e.id=g.endpoint_id
 WHERE e.account_id=sqlc.arg(account_id)::text::uuid AND g.id=sqlc.arg(id)::text::uuid;
+
+-- name: ScenarioCronInAccount :one
+-- A cron fire-now names the cron by ID; it must belong to the run's account
+-- (ADR-20261022194510).
+SELECT EXISTS(SELECT 1 FROM crons c JOIN apps a ON a.id=c.app_id
+ WHERE c.id=sqlc.arg(id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid)::boolean AS present;
 
 -- name: ScenarioExternalWorkflowRunInAccount :one
 SELECT EXISTS(SELECT 1 FROM workflow_runs wr JOIN apps a ON a.id=wr.app_id

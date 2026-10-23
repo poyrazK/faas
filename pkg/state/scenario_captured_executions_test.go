@@ -123,3 +123,45 @@ func TestRehearsalNetworkPolicyCarriesTheAccountPlan(t *testing.T) {
 		})
 	}
 }
+
+// A cron fire-now is captured against a cron of the run's account, named by
+// its ID (ADR-20261022194510).
+func TestScenarioCapturedCronFireNow(t *testing.T) {
+	for _, backend := range []string{"memory", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			f := state.NewEffectFixture(t, backend, state.ActionCaptureTestRun)
+			ctx := t.Context()
+			base, account, app := *f.Base(), f.Account(), f.App()
+			cron, err := base.CreateCron(ctx, app.ID, "0 0 1 1 *", "/sync", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			platform := base.(state.ScenarioPlatformCaptureStore)
+			fire := func(id, key string) (state.ScenarioPlatformCallResult, error) {
+				result, _, err := platform.CaptureScenarioPlatformCall(ctx, app.ID, state.ScenarioPlatformCallCapture{Kind: api.ScenarioPlatformKindCronRun, Address: id, Name: "run",
+					IdempotencyKey: key, Message: json.RawMessage(`{}`)})
+				return result, err
+			}
+			first, err := fire(cron.ID, "k1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if again, err := fire(cron.ID, "k1"); err != nil || again.ID != first.ID || !again.Replayed {
+				t.Fatalf("keyed fire-now replay = %+v %v", again, err)
+			}
+			for _, id := range []string{uuid.NewString(), "not-a-uuid"} {
+				if _, err := fire(id, ""); !errors.Is(err, state.ErrNotFound) {
+					t.Fatalf("fire-now of %q: %v", id, err)
+				}
+			}
+			got, err := (base.(state.ScenarioCapturedReadStore)).ScenarioCapturedPlatformCall(ctx, account.ID, state.ActionCaptureTestRun, first.ID)
+			if err != nil || got.Kind != api.ScenarioPlatformKindCronRun || got.Target != "cron:"+state.CanonicalMemUUID(cron.ID) {
+				t.Fatalf("fire-now read = %+v %v", got, err)
+			}
+			snapshot := sealTestActions(t, f)
+			if _, err := actioncompare.ValidateSnapshot(&snapshot); err != nil || snapshot.Status != "complete" || len(snapshot.PlatformCalls) != 1 {
+				t.Fatalf("sealed evidence = %+v %v", snapshot, err)
+			}
+		})
+	}
+}

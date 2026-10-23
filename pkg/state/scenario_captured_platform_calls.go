@@ -64,8 +64,14 @@ func scenarioExecutionKind(kind string) bool {
 	return kind == api.ScenarioPlatformKindExecution || kind == api.ScenarioPlatformKindExecutionCancel
 }
 
+// scenarioFirstResponseKind reports a kind whose Idempotency-Key replays the
+// first response under the key whatever the request, as apid's does.
+func scenarioFirstResponseKind(kind string) bool {
+	return scenarioExecutionKind(kind) || kind == api.ScenarioPlatformKindCronRun
+}
+
 func validScenarioPlatformCall(call ScenarioPlatformCallCapture) bool {
-	if call.Kind != api.ScenarioPlatformKindWorkflowRun && call.Kind != api.ScenarioPlatformKindWorkflowEvent && !scenarioRealtimeKind(call.Kind) && !scenarioExecutionKind(call.Kind) ||
+	if call.Kind != api.ScenarioPlatformKindWorkflowRun && call.Kind != api.ScenarioPlatformKindWorkflowEvent && !scenarioRealtimeKind(call.Kind) && !scenarioFirstResponseKind(call.Kind) ||
 		scenarioRealtimeKind(call.Kind) != (call.Endpoint != "") {
 		return false
 	}
@@ -81,7 +87,7 @@ func validScenarioPlatformCall(call ScenarioPlatformCallCapture) bool {
 func scenarioPlatformReplay(kind, name string, prior []sqlc.ScenarioPlatformCallsByIdempotencyKeyRow) (string, error) {
 	for _, row := range prior {
 		switch {
-		case scenarioExecutionKind(kind):
+		case scenarioFirstResponseKind(kind):
 			return row.ID, nil
 		case kind == api.ScenarioPlatformKindWorkflowEvent && row.Name == name:
 			return row.ID, nil
@@ -174,6 +180,19 @@ func (s *PgStore) scenarioPlatformTarget(ctx context.Context, tx pgx.Tx, account
 		return target, nil
 	}
 	switch call.Kind {
+	case api.ScenarioPlatformKindCronRun:
+		id, err := uuid.Parse(call.Address)
+		if err != nil {
+			return "", ErrNotFound
+		}
+		present, err := q.ScenarioCronInAccount(ctx, tx, sqlc.ScenarioCronInAccountParams{ID: id.String(), AccountID: accountID})
+		if err != nil {
+			return "", fmt.Errorf("resolve rehearsal cron: %w", err)
+		}
+		if !present {
+			return "", ErrNotFound
+		}
+		return "cron:" + id.String(), nil
 	case api.ScenarioPlatformKindExecution:
 		return api.ScenarioExecutionTarget, nil
 	case api.ScenarioPlatformKindExecutionCancel:
@@ -284,6 +303,17 @@ func (m *MemStore) scenarioPlatformTargetLocked(member ScenarioTestMember, call 
 		return m.scenarioRealtimeTargetLocked(member, call)
 	}
 	switch call.Kind {
+	case api.ScenarioPlatformKindCronRun:
+		id, err := uuid.Parse(call.Address)
+		if err != nil {
+			return ""
+		}
+		for key, cron := range m.crons {
+			if canonicalMemUUID(key) == id.String() && sameScenarioAccount(m.apps[cron.AppID].AccountID, member.AccountID) {
+				return "cron:" + id.String()
+			}
+		}
+		return ""
 	case api.ScenarioPlatformKindExecution:
 		return api.ScenarioExecutionTarget
 	case api.ScenarioPlatformKindExecutionCancel:

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,6 +45,7 @@ type memScenarioCapturedQueueMessage struct {
 	id, accountID, runID, appID, target string
 	msg                                 ScenarioQueueCapture
 	createdAt                           time.Time
+	delivery                            string
 }
 
 func validScenarioQueueCapture(msg ScenarioQueueCapture) bool {
@@ -100,11 +102,28 @@ func (s *PgStore) CaptureScenarioQueueMessage(ctx context.Context, appID string,
 	if st.Captured > api.MaxScenarioCapturedQueueMessages {
 		return uuid.NewString(), true, nil // the extra row already marks the inventory incomplete
 	}
-	id, err := q.InsertScenarioCapturedQueueMessage(ctx, tx, sqlc.InsertScenarioCapturedQueueMessageParams{AccountID: policy.AccountID, RunID: policy.RunID, AppID: appID,
+	// An opted-in run also delivers a send addressed to its own member, in
+	// this transaction: a capture exists if and only if its delivery does
+	// (ADR-20261023111825).
+	id, delivery, inv := uuid.NewString(), "", Invocation{}
+	if workload, ok := strings.CutPrefix(target, "workload:"); ok && policy.QueueDelivery == api.ScenarioQueueDeliverySameRun && msg.Kind == api.ScenarioQueueKindQueue {
+		deliveryTarget, err := s.scenarioQueueDeliveryTarget(ctx, tx, policy.AccountID, policy.RunID, workload)
+		if err != nil {
+			return "", true, err
+		}
+		delivery, inv = scenarioQueueDelivery(msg, deliveryTarget, policy.AccountID, time.Now().UTC())
+		inv.ID = id
+	}
+	id, err = q.InsertScenarioCapturedQueueMessage(ctx, tx, sqlc.InsertScenarioCapturedQueueMessageParams{ID: id, AccountID: policy.AccountID, RunID: policy.RunID, AppID: appID,
 		Kind: msg.Kind, Target: target, QueueName: msg.QueueName, Schedule: msg.Schedule, Message: []byte(msg.Message), Oversized: msg.Oversized,
-		ScheduledAt: standardNullablePgTime(msg.ScheduledAt)})
+		ScheduledAt: standardNullablePgTime(msg.ScheduledAt), Delivery: delivery})
 	if err != nil {
 		return "", true, fmt.Errorf("persist rehearsal queue capture: %w", err)
+	}
+	if delivery == api.ScenarioQueueDelivered {
+		if _, err := enqueueInvocationRow(ctx, tx, inv); err != nil {
+			return "", true, fmt.Errorf("deliver rehearsal queue send: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", true, fmt.Errorf("commit rehearsal queue capture: %w", err)
@@ -149,6 +168,20 @@ func (m *MemStore) CaptureScenarioQueueMessage(ctx context.Context, appID string
 	}
 	row := memScenarioCapturedQueueMessage{id: uuid.NewString(), accountID: member.AccountID, runID: member.RunID, appID: member.AppID, target: target, msg: msg,
 		createdAt: time.Now().UTC()}
+	if workload, ok := strings.CutPrefix(target, "workload:"); ok && member.QueueDelivery == api.ScenarioQueueDeliverySameRun && msg.Kind == api.ScenarioQueueKindQueue {
+		deliveryTarget, found := m.scenarioQueueDeliveryTargetLocked(member.AccountID, member.RunID, workload)
+		if !found {
+			return "", true, ErrNotFound
+		}
+		var inv Invocation
+		row.delivery, inv = scenarioQueueDelivery(msg, deliveryTarget, member.AccountID, row.createdAt)
+		if row.delivery == api.ScenarioQueueDelivered {
+			inv.ID = row.id
+			if _, err := m.enqueueInvocationLocked(inv); err != nil {
+				return "", true, fmt.Errorf("deliver rehearsal queue send: %w", err)
+			}
+		}
+	}
 	row.msg.Message = append(json.RawMessage(nil), msg.Message...)
 	if msg.Oversized {
 		row.msg.Message = nil
@@ -182,12 +215,27 @@ func (m *MemStore) scenarioQueueTargetLocked(member ScenarioTestMember, slug str
 }
 
 // applyScenarioQueueSnapshot records the run's captured queue work. Oversized
-// or overflowing inventory is never presented as complete.
-func applyScenarioQueueSnapshot(snapshot *api.ScenarioActionSnapshot, messages []api.ScenarioCapturedQueueMessage, oversized int64, overflow bool) {
+// or overflowing inventory is never presented as complete. In a run that
+// delivers same-run sends, a candidate an older gateway captured without a
+// result is unsupported, and a delivery over the bound is incomplete
+// (ADR-20261023111825).
+func applyScenarioQueueSnapshot(snapshot *api.ScenarioActionSnapshot, messages []api.ScenarioCapturedQueueMessage, oversized int64, overflow bool, delivery string) {
 	snapshot.QueueCaptureVersion = api.ScenarioQueueCaptureVersion
 	snapshot.IncompleteQueueMessages = oversized
 	if overflow {
 		snapshot.IncompleteQueueMessages++
+	}
+	if delivery == api.ScenarioQueueDeliverySameRun {
+		snapshot.QueueDeliveryVersion = api.ScenarioQueueDeliveryVersion
+		for i := range messages {
+			m := &messages[i]
+			if m.Delivery == "" && m.Kind == api.ScenarioQueueKindQueue && strings.HasPrefix(m.Target, "workload:") {
+				m.Delivery = api.ScenarioQueueUnsupported
+			}
+			if m.Delivery == api.ScenarioQueueOverflow {
+				snapshot.IncompleteQueueMessages++
+			}
+		}
 	}
 	sort.Slice(messages, func(i, j int) bool {
 		a, b := messages[i], messages[j]
@@ -209,9 +257,14 @@ func applyScenarioQueueSnapshot(snapshot *api.ScenarioActionSnapshot, messages [
 }
 
 func addScenarioQueueSnapshot(ctx context.Context, tx sqlc.DBTX, snapshot *api.ScenarioActionSnapshot, accountID, runID string) error {
-	rows, err := sqlc.New().ScenarioCapturedQueueMessages(ctx, tx, sqlc.ScenarioCapturedQueueMessagesParams{AccountID: accountID, RunID: runID})
+	q := sqlc.New()
+	rows, err := q.ScenarioCapturedQueueMessages(ctx, tx, sqlc.ScenarioCapturedQueueMessagesParams{AccountID: accountID, RunID: runID})
 	if err != nil {
 		return fmt.Errorf("read captured rehearsal queue messages: %w", err)
+	}
+	delivery, err := q.ScenarioRunQueueDelivery(ctx, tx, sqlc.ScenarioRunQueueDeliveryParams{AccountID: accountID, RunID: runID})
+	if err != nil {
+		return fmt.Errorf("read rehearsal queue delivery: %w", err)
 	}
 	var messages []api.ScenarioCapturedQueueMessage
 	var oversized int64
@@ -224,9 +277,9 @@ func addScenarioQueueSnapshot(ctx context.Context, tx sqlc.DBTX, snapshot *api.S
 			continue
 		}
 		messages = append(messages, api.ScenarioCapturedQueueMessage{ID: row.ID, Workload: row.Workload, Kind: row.Kind, Target: row.Target,
-			QueueName: row.QueueName, Schedule: row.Schedule, Message: row.Message})
+			QueueName: row.QueueName, Schedule: row.Schedule, Message: row.Message, Delivery: row.Delivery, DeliveryState: row.DeliveryState})
 	}
-	applyScenarioQueueSnapshot(snapshot, messages, oversized, len(rows) > api.MaxScenarioCapturedQueueMessages)
+	applyScenarioQueueSnapshot(snapshot, messages, oversized, len(rows) > api.MaxScenarioCapturedQueueMessages, delivery)
 	return nil
 }
 
@@ -247,8 +300,16 @@ func (m *MemStore) addScenarioQueueSnapshotLocked(snapshot *api.ScenarioActionSn
 			continue
 		}
 		member := members[canonicalMemUUID(row.appID)]
+		state := ""
+		if row.delivery == api.ScenarioQueueDelivered {
+			state = string(m.invocations[row.id].State)
+		}
 		messages = append(messages, api.ScenarioCapturedQueueMessage{ID: row.id, Workload: member.Workload, Kind: row.msg.Kind, Target: row.target,
-			QueueName: row.msg.QueueName, Schedule: row.msg.Schedule, Message: append(json.RawMessage(nil), row.msg.Message...)})
+			QueueName: row.msg.QueueName, Schedule: row.msg.Schedule, Message: append(json.RawMessage(nil), row.msg.Message...), Delivery: row.delivery, DeliveryState: state})
 	}
-	applyScenarioQueueSnapshot(snapshot, messages, oversized, total > api.MaxScenarioCapturedQueueMessages)
+	delivery := ""
+	for _, member := range members {
+		delivery = max(delivery, member.QueueDelivery)
+	}
+	applyScenarioQueueSnapshot(snapshot, messages, oversized, total > api.MaxScenarioCapturedQueueMessages, delivery)
 }

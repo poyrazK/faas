@@ -22,6 +22,10 @@ from ..models.register_scenario_test_response_policy_version import (
     RegisterScenarioTestResponsePolicyVersion,
     check_register_scenario_test_response_policy_version,
 )
+from ..models.register_scenario_test_response_queue_delivery_version import (
+    RegisterScenarioTestResponseQueueDeliveryVersion,
+    check_register_scenario_test_response_queue_delivery_version,
+)
 from ..models.register_scenario_test_response_recorder_version import (
     RegisterScenarioTestResponseRecorderVersion,
     check_register_scenario_test_response_recorder_version,
@@ -59,6 +63,8 @@ class RegisterScenarioTestResponse:
     publication."""
     action_evidence_version: RegisterScenarioTestResponseActionEvidenceVersion | Unset = UNSET
     """Present when the requested sealed action-evidence protocol is supported."""
+    queue_delivery_version: RegisterScenarioTestResponseQueueDeliveryVersion | Unset = UNSET
+    """Acknowledges same-run queue delivery."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -90,6 +96,10 @@ class RegisterScenarioTestResponse:
         if not isinstance(self.action_evidence_version, Unset):
             action_evidence_version = self.action_evidence_version
 
+        queue_delivery_version: int | Unset = UNSET
+        if not isinstance(self.queue_delivery_version, Unset):
+            queue_delivery_version = self.queue_delivery_version
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -114,6 +124,8 @@ class RegisterScenarioTestResponse:
             field_dict["network_mode"] = network_mode
         if action_evidence_version is not UNSET:
             field_dict["action_evidence_version"] = action_evidence_version
+        if queue_delivery_version is not UNSET:
+            field_dict["queue_delivery_version"] = queue_delivery_version
 
         return field_dict
 
@@ -162,6 +174,15 @@ class RegisterScenarioTestResponse:
                 _action_evidence_version
             )
 
+        _queue_delivery_version = d.pop("queue_delivery_version", UNSET)
+        queue_delivery_version: RegisterScenarioTestResponseQueueDeliveryVersion | Unset
+        if isinstance(_queue_delivery_version, Unset):
+            queue_delivery_version = UNSET
+        else:
+            queue_delivery_version = check_register_scenario_test_response_queue_delivery_version(
+                _queue_delivery_version
+            )
+
         register_scenario_test_response = cls(
             webhook_mode=webhook_mode,
             policy_version=policy_version,
@@ -173,6 +194,7 @@ class RegisterScenarioTestResponse:
             simulation_sha256=simulation_sha256,
             network_mode=network_mode,
             action_evidence_version=action_evidence_version,
+            queue_delivery_version=queue_delivery_version,
         )
 
         register_scenario_test_response.additional_properties = d

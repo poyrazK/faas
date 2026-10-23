@@ -94,7 +94,7 @@ func Compare(before, after *Evidence) *Comparison {
 		return result
 	}
 	if before.Snapshot.Version != after.Snapshot.Version || before.Snapshot.Scope != after.Snapshot.Scope || before.Snapshot.SimulationSHA256 != after.Snapshot.SimulationSHA256 ||
-		before.Snapshot.EventCaptureVersion != after.Snapshot.EventCaptureVersion || before.Snapshot.QueueCaptureVersion != after.Snapshot.QueueCaptureVersion || before.Snapshot.PlatformCaptureVersion != after.Snapshot.PlatformCaptureVersion || managedWorkDigest(before.Snapshot) != managedWorkDigest(after.Snapshot) || coldStartDigest(before.Snapshot) != coldStartDigest(after.Snapshot) || suspendResumeDigest(before.Snapshot) != suspendResumeDigest(after.Snapshot) {
+		before.Snapshot.EventCaptureVersion != after.Snapshot.EventCaptureVersion || before.Snapshot.QueueCaptureVersion != after.Snapshot.QueueCaptureVersion || before.Snapshot.QueueDeliveryVersion != after.Snapshot.QueueDeliveryVersion || before.Snapshot.PlatformCaptureVersion != after.Snapshot.PlatformCaptureVersion || managedWorkDigest(before.Snapshot) != managedWorkDigest(after.Snapshot) || coldStartDigest(before.Snapshot) != coldStartDigest(after.Snapshot) || suspendResumeDigest(before.Snapshot) != suspendResumeDigest(after.Snapshot) {
 		result.Reason = "captured action scope or simulation fixtures changed"
 		return result
 	}

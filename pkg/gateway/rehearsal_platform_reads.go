@@ -35,10 +35,11 @@ func rehearsalReadRoute(path string) (rehearsalPlatformRoute, bool) {
 		return entitiesUnavailableRoute, true
 	}
 	for prefix, serve := range map[string]func(string) rehearsalPlatformRoute{
-		"/v1/invocations/":    invocationReadRoute,
-		"/v1/delayed-tasks/":  delayedTaskReadRoute,
-		"/v1/workflows/runs/": workflowRunReadRoute,
-		"/v1/executions/":     executionReadRoute,
+		"/v1/invocations/":            invocationReadRoute,
+		"/v1/delayed-tasks/":          delayedTaskReadRoute,
+		"/v1/workflows/runs/":         workflowRunReadRoute,
+		"/v1/executions/":             executionReadRoute,
+		"/v1/cron-fire-now-requests/": cronRequestReadRoute,
 	} {
 		if id, ok := strings.CutPrefix(path, prefix); ok && id != "" && !strings.Contains(id, "/") {
 			return serve(id), true
@@ -56,6 +57,11 @@ func invocationReadRoute(id string) rehearsalPlatformRoute {
 		inv := api.Invocation{ID: id, AccountID: call.policy.AccountID, Source: record.Kind, QueueName: record.QueueName,
 			State: string(state.InvocationPending), Payload: capturedInvocationPayload(record), Headers: json.RawMessage(`{}`),
 			DueAt: record.CreatedAt, ScheduledAt: record.ScheduledAt, CreatedAt: record.CreatedAt}
+		// A send delivered within the run reports its invocation's state
+		// (ADR-20261023111825).
+		if record.Delivery == api.ScenarioQueueDelivered && record.DeliveryState != "" {
+			inv.State = record.DeliveryState
+		}
 		if record.ScheduledAt != nil {
 			inv.DueAt = *record.ScheduledAt
 		}

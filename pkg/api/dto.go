@@ -905,6 +905,10 @@ type RegisterScenarioTestRequest struct {
 	Members               []ScenarioTestWorkload  `json:"members"`
 	WebhookMode           string                  `json:"webhook_mode,omitempty"`
 	ActionEvidenceVersion int                     `json:"action_evidence_version,omitempty"`
+	// QueueDelivery opts a contained run in to delivering captured queue
+	// sends addressed to a member as real invocations: "" or "same_run"
+	// (ADR-20261023111825).
+	QueueDelivery string `json:"queue_delivery,omitempty"`
 }
 
 // RegisterScenarioTestResponse acknowledges durable capture before deployment.
@@ -920,6 +924,7 @@ type RegisterScenarioTestResponse struct {
 	WebhookMode           string `json:"webhook_mode"`
 	PolicyVersion         int    `json:"policy_version"`
 	ActionEvidenceVersion int    `json:"action_evidence_version,omitempty"`
+	QueueDeliveryVersion  int    `json:"queue_delivery_version,omitempty"`
 }
 
 type ScenarioTestWorkload struct {
