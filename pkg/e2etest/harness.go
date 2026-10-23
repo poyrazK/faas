@@ -919,7 +919,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	// the rest SILENTLY: a test could ask for imaged, get no imaged, no error,
 	// and a deployment that simply never moved. Refuse instead, so the next
 	// caller learns in one second rather than after a three-minute poll.
-	if unsupported := which &^ (APID | Schedd | Imaged | Gatewayd | GatewaydPublic | Meterd | GatewaySynthStub); unsupported != 0 {
+	if unsupported := which &^ (APID | Schedd | Imaged | Gatewayd | GatewaydPublic | Meterd | GatewaySynthStub | Realtimed); unsupported != 0 {
 		t.Fatalf("e2etest: StartWithEnv cannot start daemon mask %b (VMMD and Builderd are Start-only); "+
 			"use Start, or teach StartWithEnv to boot them", unsupported)
 	}

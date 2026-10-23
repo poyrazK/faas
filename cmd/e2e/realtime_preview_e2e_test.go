@@ -2,14 +2,19 @@ package e2e_test
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/gorilla/websocket"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -17,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/realtime"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
 // adr: 20261019102657 — the realtime preview end to end: real apid, realtimed
@@ -36,7 +42,32 @@ func TestE2E_RealtimePreviewTicketRetainedPublishAndOccupancy(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(callbacks.Close)
+	// apid seals the callback token to the host key, and its audit key must
+	// not come from a host install's /var/lib/faas.
+	ageKey, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDir := t.TempDir()
+	agePath := filepath.Join(keyDir, "host.age")
+	for _, path := range []string{agePath, filepath.Join(keyDir, "fleet.age")} {
+		if err := secretbox.WriteHostKeyAtPath(path, ageKey); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recipientPath := filepath.Join(keyDir, "host.age.pub")
+	if err := os.WriteFile(recipientPath, []byte(ageKey.Recipient().String()), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	auditKey := make([]byte, 32)
+	if _, err := rand.Read(auditKey); err != nil {
+		t.Fatal(err)
+	}
 	h := e2etest.StartWithEnv(t, pool, e2etest.APID|e2etest.Gatewayd|e2etest.GatewaydPublic|e2etest.Realtimed, []string{
+		"FAAS_HOST_AGE_IDENTITY_PATH=" + agePath,
+		"FAAS_HOST_AGE_RECIPIENT_PATH=" + recipientPath,
+		"FAAS_HOST_KEY_PATH=" + agePath,
+		"FAAS_AUDIT_HMAC_KEY=" + hex.EncodeToString(auditKey),
 		"FAAS_EGRESS_ALLOW_LOOPBACK=1",
 		"FAAS_REALTIME_PREVIEW_ACCOUNTS=*",
 		"FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1",
@@ -58,14 +89,23 @@ func TestE2E_RealtimePreviewTicketRetainedPublishAndOccupancy(t *testing.T) {
 		}
 	}
 	call(http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "rt-e2e"}, http.StatusCreated, nil)
+	// apid refuses a loopback callback at create time whatever the egress
+	// flag says, so the endpoint is created with an unresolvable host and
+	// its row then points at the local callback server, as the webhook e2e
+	// tests write their receivers. realtimed's dispatcher admits loopback
+	// under FAAS_EGRESS_ALLOW_LOOPBACK; the PATCH re-registers the endpoint.
 	var endpoint api.ManagedRealtimeEndpointResponse
 	call(http.MethodPost, "/v1/apps/rt-e2e/realtime/endpoints", api.CreateManagedRealtimeEndpointRequest{
-		CallbackURL: callbacks.URL, CallbackAuthToken: "e2e-callback-token", AuthMode: api.RealtimeAuthModeNone, Slug: "chat",
+		CallbackURL: "http://rt-e2e-callbacks.invalid", CallbackAuthToken: "e2e-callback-token", AuthMode: api.RealtimeAuthModeNone, Slug: "chat",
 	}, http.StatusCreated, &endpoint)
 	if endpoint.Slug != "chat" {
 		t.Fatalf("endpoint = %+v, want slug chat", endpoint)
 	}
+	if _, err := pool.Exec(context.Background(), `UPDATE managed_realtime_endpoints SET callback_url = $1 WHERE id = $2`, callbacks.URL, endpoint.ID); err != nil {
+		t.Fatalf("point the endpoint at the callback server: %v", err)
+	}
 	base := "/v1/apps/rt-e2e/realtime/endpoints/" + endpoint.ID
+	call(http.MethodPatch, base, map[string]any{"max_connections": 100}, http.StatusOK, nil)
 	var ticket api.RealtimeTicketResponse
 	call(http.MethodPost, base+"/tickets", api.RealtimeTicketRequest{Principal: "user-1", Channels: []string{"lobby"}, TTLSeconds: 60},
 		http.StatusCreated, &ticket)
