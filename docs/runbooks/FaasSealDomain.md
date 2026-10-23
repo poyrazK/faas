@@ -5,6 +5,8 @@ give each reading service its own age identity in
 `/etc/faas/secrets/domains/<domain>.age`. Two alerts cover them. Neither
 fires before an operator stages a domain.
 
+## Symptom
+
 - **FaasSealDomainUnverified:** `gregalectl seal-domain verify` failed on a
   host. The `seal_domains` role runs `verify` after it stages the identity,
   and writes `faas_seal_domain_ready{domain}` to the node's textfile
