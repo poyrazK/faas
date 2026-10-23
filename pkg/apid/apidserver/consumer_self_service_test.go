@@ -20,7 +20,7 @@ import (
 func TestConsumerSelfService(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
 	withBillingKeys(t) // after the webhook recipient, so the Stripe key opens with the identity that sealed it
-	stripe := &signupStripe{complete: true}
+	stripe := &consumerSignupStripe{complete: true}
 	srv := httptest.NewServer(stripe)
 	defer srv.Close()
 	client := &stripeinvoice.Client{BaseURL: srv.URL, HTTP: srv.Client()}

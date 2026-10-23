@@ -1294,6 +1294,7 @@ func (r *server) RotateManagedPostgresBinding(p0 http.ResponseWriter, p1 *http.R
 func (r *server) RuleDestinations(p0 context.Context, p1 state.AlertRule) string {
 	return r.ruleDestinations(p0, p1)
 }
+func (r *server) RunVerifyOnce(p0 context.Context, p1 *slog.Logger) { r.runVerifyOnce(p0, p1) }
 func (r *server) CreateManagedPostgresBinding(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.createManagedPostgresBinding(p0, p1, p2)
 }
@@ -1579,6 +1580,19 @@ func (s *server) ConfigureLiveQueriesForTest(getenv func(string) string) error {
 func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error) {
 	return s.liveRoutes(ctx, nil, accountID, appID)
 }
+
+// ApplyManifestPathRoutesForTest reconciles manifest routes on app
+// (ADR-20261021223225). rollback undoes the changes it recorded.
+func (s *server) ApplyManifestPathRoutesForTest(ctx context.Context, acct state.Account, app state.App, routes []gregalemanifest.PathRoute) (rollback func() error, problem *api.Problem) {
+	staged := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
+	problem = s.applySourceRefManifestPathRoutes(ctx, acct, app, routes, &staged)
+	return func() error { return s.rollbackSourceRefManifest(ctx, staged) }, problem
+}
+
+var ManifestPathRouteKeyPrefix = manifestPathRouteKeyPrefix
+var ProjectPathRoutesForApp = projectPathRoutesForApp
+var ProjectPathRoutePlanWarning = projectPathRoutePlanWarning
+var ValidateProjectManifestPathRoutes = validateProjectManifestPathRoutes
 
 // VerifyCandidatePostgresCredentialsForTest runs the GitOps backend's
 // pre-activation credential step (ADR-20261019072523) with an injected verifier.

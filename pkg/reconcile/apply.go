@@ -456,12 +456,14 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	if manifest.ExecutionMode == "" {
 		manifest.ExecutionMode = scanExecutionMode(w)
 	}
-	// A Compose healthcheck applies to built images too (ADR-20261019195000).
+	// A Compose healthcheck applies to built images too (ADR-20261019195000),
+	// and so do the process overrides other than entrypoint, which the scan
+	// folds into a built service's command (ADR-20261022160000).
 	manifest.ProjectImageHealthcheck = w.ImageHealthcheck.Clone()
+	manifest.ProjectImageProcess = w.ImageProcess.Clone()
 	if w.Image == "" {
 		return
 	}
-	manifest.ProjectImageProcess = w.ImageProcess.Clone()
 	manifest.ProjectImageCommand = append([]string(nil), w.Command...)
 	if w.CommandShell && len(w.Command) > 0 {
 		manifest.ProjectImageCommand = []string{"/bin/sh", "-c", w.Command[0]}

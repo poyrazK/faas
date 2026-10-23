@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/auth"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
@@ -59,9 +58,15 @@ func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
 	if secret == "" {
 		return // readSealedSecret wrote the problem
 	}
-	if !auth.VerifyCode(secret, strings.TrimSpace(r.PostFormValue("code"))) {
+	reason, err := s.acceptTOTP(r.Context(), acct.ID, secret, strings.TrimSpace(r.PostFormValue("code")))
+	if err != nil {
+		s.log.Error("dashboard.mfa.accept_step", "err", err.Error())
+		api.WriteProblem(w, api.ErrCapacity("could not verify the code"))
+		return
+	}
+	if reason != "" {
 		s.totp.fail(acct.ID, time.Now())
-		s.audit.Emit(r.Context(), "account.mfa_verify_failed", &acct.ID, map[string]any{"reason": "code_mismatch", "via": "dashboard"})
+		s.audit.Emit(r.Context(), "account.mfa_verify_failed", &acct.ID, map[string]any{"reason": reason, "via": "dashboard"})
 		// 401 so the dashboard auth limiter counts the guess.
 		s.renderDashboardMFA(w, r, acct, http.StatusUnauthorized, true, dashboardMFANext(r.PostFormValue("next")))
 		return

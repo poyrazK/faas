@@ -108,6 +108,11 @@ var registry = []Spec{
 		cols("managed_postgres_cutover_credentials", "ciphertext"),
 		cols("deployment_release_secret_snapshots", "values_json"),
 		cols("project_release_secret_bundles", "values_json"),
+		// ADR-733: a crash capture's per-capture age key. vmmd opens it to
+		// restore a sealed capture into a fork. imaged's at-rest pass for
+		// local captures also opens it today: a cross-domain read, to move
+		// behind vmmd like the reads in the ADR's section 3.
+		cols("crash_captures", "sealed_key"),
 	)},
 	{Domain: Outbound, Readers: []string{"outboundd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("outbound_integration_credentials", "authorization_sealed"),

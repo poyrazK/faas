@@ -1767,6 +1767,18 @@ remain open; production admission is disabled.
   deployment, merged onto the built image's HEALTHCHECK and enforced by the
   ADR-683/684 readiness gate and recovery. Unit and conformance tests pass; no
   native run.
+- **Compose build secrets.**
+  [ADR-20261022185329](adr/20261022185329-compose-build-secrets.md)
+  (2026-10-22): `build.secrets` naming `environment:` secrets mount the app's
+  secrets into Dockerfile builds. builderd passes only ciphertext; vmmd, the
+  `runtime` domain's reader, opens it into the builder VM; guest-init hands it
+  to buildctl and deletes it. Builds with secrets skip warm builders. Unit tests
+  pass; a native private-dependency build has not run.
+- **Compose process overrides on built services.**
+  [ADR-20261022160000](adr/20261022160000-compose-process-on-built-services.md)
+  (2026-10-22): a built service's `entrypoint` joins its start command, and
+  `user`, `working_dir`, `stop_signal` and `stop_grace_period` are frozen per
+  deployment and applied to the built image. Unit tests pass; no native run.
 - **No native run recorded.** The `containers` native lane has no recorded
   passing run; [container qualification](container-qualification.md) remains
   the coverage plan.
@@ -2119,6 +2131,54 @@ Cold boot, restore, warm-pool resume and migration preserve that requirement;
 older daemon/guest responses cannot acknowledge it. Existing releases need
 reassembly or redeployment to gain the gate. Native boot/restore and leak
 qualification remain pending ([ADR-683](adr/683-image-healthcheck-readiness.md)).
+
+Forks, crash snapshots and savings update (2026-10-09): production forks
+([ADR-732](adr/732-production-forks.md)), crash snapshots with encryption at
+rest ([ADR-733](adr/733-crash-snapshots.md)) and the savings report are in
+`preview` behind `FAAS_APP_FORKS` / `FAAS_CRASH_SNAPSHOTS`. On the internal
+test node (n2-highmem-2, nested KVM, Firecracker 1.7.0) one combined build
+passed `TestSavingsMetal`, `TestCrashSnapshotMetal`, `TestForkMetal`,
+`TestMetalQuarantineDataPlane` and the PgStore fork/capture tests, with
+`deploy/scripts/leakcheck.sh` reporting no new leaks across the run (the
+metal tests now idle-park their apps before the harness stops; earlier runs
+leaked the serving microVM). Nested KVM is functional evidence only: the
+native x86_64 acceptance run of the same set, with `-race`, is pending.
+Alerts for both features are in `faas_crash_snapshots`
+([runbook](runbooks/FaasCrashSnapshots.md)). A later run on the same node
+also passed `TestLiveForkMetal` (live forks see the instance's current
+memory, the serving instance keeps running) and the PgStore live-fork and
+SDK-trigger tests, again with no new leaks. `TestCrashSnapshotSDKMetal`
+first failed there because guest-init dialed vsock through `net.FileConn`,
+which does not support AF_VSOCK; after that fix it passes (refused without
+opt-in, the app captures itself mid-request, and a fork of the capture
+resumes inside the same call with `in_fork`), with no new leaks.
+Since 2026-10-10 vmmd seals every crash capture at the source (ADR-733
+amendment): only encrypted twins are stored, so captures work on the
+remote (GCS) backend production uses, and a fork decrypts into its own
+staging. On the test node `TestCrashSnapshotMetal` (no plaintext on
+storage at any point), `TestCrashSnapshotSDKMetal`, `TestLiveForkMetal`,
+`TestForkMetal` and the PgStore fork/capture tests pass on sealed
+captures, with no new leaks.
+Fork exec (ADR-732 amendment, 2026-10-14): `POST /v1/apps/{slug}/forks/{id}/execs`
+runs a command inside a running fork. On the test node, rebased onto main
+and built with Go 1.26.9 / golang.org/x/net v0.60.0 (the guest-init in the
+staged base now scans with no fix-available findings, so vmmd's scan gate
+admits cold boots), `TestForkMetal` passes including
+`exec-runs-inside-the-fork`, together with `TestCrashSnapshotMetal`,
+`TestLiveForkMetal`, `TestCrashSnapshotSDKMetal` and the PgStore
+fork/capture/exec tests, with no new leaks. The first exec run failed
+because guest-init wrapped its vsock listener with `net.FileListener`, which
+does not support AF_VSOCK; the SDK trigger failed after the rebase because
+main's outbound relay took host vsock port 1032, so the crash capture
+receiver moved to 1033.
+Re-verified 2026-10-22 after merging main (f433f78ef0 on Go 1.26.9, then
+92873a46d2 on Go 1.26.10 after #5148), built from source on the test node:
+`TestForkMetal` (all seven subtests, exec
+included), `TestCrashSnapshotMetal`, `TestLiveForkMetal`,
+`TestCrashSnapshotSDKMetal`, the PgStore fork/capture/exec tests and the
+crashcrypt, netns, fcvm, gateway, imaged, sched and guest-init unit tests
+pass, with no new leaks. The staged base-minimal (digest-pinned) scans with
+zero findings at any severity.
 
 Image runtime recovery update (2026-10-07): required primary image command
 checks now continue throughout serving VM lifetimes. Repeated fresh failures

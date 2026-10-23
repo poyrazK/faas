@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +54,53 @@ func nativePlatformWorkflow(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return body
+}
+
+// nativeJobTimeout returns the platform job's timeout-minutes for one matrix
+// group. The value is a plain number or the per-group expression
+// `${{ (matrix.group == 'a' || matrix.group == 'b') && N || M }}`: the listed
+// groups get N minutes and every other group gets M.
+func nativeJobTimeout(t *testing.T, group string) time.Duration {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "e2e-native.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Timeout string `yaml:"timeout-minutes"`
+		}
+	}
+	if err := yaml.Unmarshal(body, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	value := strings.TrimSpace(workflow.Jobs["e2e-native"].Timeout)
+	if value == "" {
+		t.Fatal("no job timeout-minutes in the workflow; a wedged run would hold the node until GitHub's 6h default")
+	}
+	minutes := value
+	if _, err := strconv.Atoi(value); err != nil {
+		expr := regexp.MustCompile(`^\$\{\{\s*\(([^()]*)\)\s*&&\s*(\d+)\s*\|\|\s*(\d+)\s*\}\}$`).FindStringSubmatch(value)
+		if expr == nil {
+			t.Fatalf("unrecognised job timeout-minutes %q", value)
+		}
+		minutes = expr[3]
+		groupRe := regexp.MustCompile(`^\s*matrix\.group\s*==\s*'([\w-]+)'\s*$`)
+		for _, condition := range strings.Split(expr[1], "||") {
+			m := groupRe.FindStringSubmatch(condition)
+			if m == nil {
+				t.Fatalf("unrecognised job timeout condition %q", condition)
+			}
+			if m[1] == group {
+				minutes = expr[2]
+			}
+		}
+	}
+	n, err := strconv.Atoi(minutes)
+	if err != nil {
+		t.Fatalf("job timeout-minutes %q: %v", minutes, err)
+	}
+	return time.Duration(n) * time.Minute
 }
 
 func phaseOuterBudgets(t *testing.T) map[string]time.Duration {
@@ -162,11 +210,6 @@ func TestSourceBuildingPhasesHaveABuildSizedBudget(t *testing.T) {
 // verdict, and the node billed until the next dispatch happened to find it.
 func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 	body := nativePlatformWorkflow(t)
-	m := regexp.MustCompile(`(?m)^\s*timeout-minutes:\s*(\d+)`).FindStringSubmatch(string(body))
-	if m == nil {
-		t.Fatal("no job timeout-minutes in the workflow; a wedged run would hold the node until GitHub's 6h default")
-	}
-	jobTimeout, _ := time.ParseDuration(m[1] + "m")
 
 	// A lane never runs in the same job as the phases (the steps are gated on
 	// inputs.lane either way), so it must not be added to their sum — but it
@@ -186,8 +229,26 @@ func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 		"financial-system":                  true, // separate sequential job on the same host
 	}
 
+	if !strings.Contains(string(body), "max-parallel: 1") || !strings.Contains(string(body), "fail-fast: false") {
+		t.Fatal("native groups must be serialized without cancelling recovery/cleanup")
+	}
+	// Staging, source transfer, log collection and the node stop itself.
+	const overhead = 20 * time.Minute
+	// Each matrix group is its own job with its own timeout, so each group's
+	// caps must fit inside that group's timeout.
+	covers := func(group, what string, caps time.Duration) {
+		jobTimeout := nativeJobTimeout(t, group)
+		if jobTimeout < caps+overhead {
+			t.Errorf("group %s job timeout-minutes=%s does not cover %s caps (%s) plus %s overhead. "+
+				"A run that uses its budgets is killed before Verdict and before the node is stopped.",
+				group, jobTimeout, what, caps, overhead)
+		}
+		// GitHub-hosted runners cap a job at 6h; a larger value is silently clamped.
+		if jobTimeout > 6*time.Hour {
+			t.Errorf("group %s job timeout-minutes=%s exceeds GitHub's 6h job ceiling and would be clamped", group, jobTimeout)
+		}
+	}
 	outer := phaseOuterBudgets(t)
-	var sum time.Duration
 	for _, group := range []string{"source", "runtime"} {
 		output, err := exec.Command("bash", "-c", `source ../../scripts/ci/native-e2e-phases.sh; native_e2e_group_phases "$1"`, "budget", group).Output()
 		if err != nil {
@@ -197,28 +258,13 @@ func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 		for _, phase := range strings.Fields(string(output)) {
 			budget += outer[phase]
 		}
-		if budget > sum {
-			sum = budget
-		}
+		covers(group, "its phase", budget)
 	}
+	// A targeted lane runs alone, as the single matrix group.
 	for phase, d := range outer {
-		if lanes[phase] && d > sum {
-			sum = d
+		if lanes[phase] {
+			covers("single", "lane "+phase, d)
 		}
-	}
-	if !strings.Contains(string(body), "max-parallel: 1") || !strings.Contains(string(body), "fail-fast: false") {
-		t.Fatal("native groups must be serialized without cancelling recovery/cleanup")
-	}
-	// Staging, source transfer, log collection and the node stop itself.
-	const overhead = 20 * time.Minute
-	if jobTimeout < sum+overhead {
-		t.Errorf("job timeout-minutes=%s does not cover the phase caps (%s) plus %s overhead. "+
-			"A run that uses its budgets is killed before Verdict and before the node is stopped.",
-			jobTimeout, sum, overhead)
-	}
-	// GitHub-hosted runners cap a job at 6h; a larger value is silently clamped.
-	if jobTimeout > 6*time.Hour {
-		t.Errorf("job timeout-minutes=%s exceeds GitHub's 6h job ceiling and would be clamped", jobTimeout)
 	}
 }
 
@@ -339,14 +385,8 @@ func TestProjectMigrationContractLaneBudgets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := regexp.MustCompile(`(?m)^\s*timeout-minutes:\s*(\d+)`).FindStringSubmatch(string(body))
-	if m == nil {
-		t.Fatal("job timeout missing")
-	}
-	job, err := time.ParseDuration(m[1] + "m")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// A targeted lane runs alone, as the single matrix group.
+	job := nativeJobTimeout(t, "single")
 	if job < outer+20*time.Minute || job > 6*time.Hour {
 		t.Fatalf("job %s cannot contain standalone contract lane %s and cleanup", job, outer)
 	}

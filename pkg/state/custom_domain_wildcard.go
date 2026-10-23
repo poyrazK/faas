@@ -113,6 +113,49 @@ func WildcardProbeHost(domain string) (string, bool) {
 	return "www." + suffix, true
 }
 
+// ForeignVerifiedWildcard returns the verified wildcard custom domain, owned
+// by an account other than accountID, that covers domain (an exact name, or
+// every name below a wildcard), or "" when there is none. A verified wildcard
+// proves control of its zone (ADR-167). A reservation below it needs no DNS
+// proof, yet while pending it shadows the wildcard's route and certificate,
+// so another account must not make one.
+func ForeignVerifiedWildcard(ctx context.Context, store interface {
+	DomainByName(context.Context, string) (CustomDomain, error)
+	AppByID(context.Context, string) (App, error)
+}, domain, accountID string) (string, error) {
+	base := strings.ToLower(strings.TrimSpace(domain))
+	if suffix, ok := WildcardDomainSuffix(base); ok {
+		base = suffix
+	}
+	for {
+		_, parent, ok := strings.Cut(base, ".")
+		if !ok || !strings.Contains(parent, ".") {
+			return "", nil
+		}
+		base = parent
+		wildcard, err := store.DomainByName(ctx, "*."+parent)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("load wildcard domain %q: %w", "*."+parent, err)
+		}
+		if !wildcard.Verified() {
+			continue
+		}
+		app, err := store.AppByID(ctx, wildcard.AppID)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("load wildcard domain app: %w", err)
+		}
+		if app.AccountID != accountID {
+			return wildcard.Domain, nil
+		}
+	}
+}
+
 var _ CustomDomainWildcardStore = (*PgStore)(nil)
 var _ CustomDomainWildcardStore = (*MemStore)(nil)
 var _ TenantSurfaceHostnameStore = (*PgStore)(nil)
