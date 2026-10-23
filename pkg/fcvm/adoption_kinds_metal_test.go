@@ -14,10 +14,10 @@ package fcvm
 //   - A guest booted under an ADR-595 admission receipt, with
 //     adopt_admitted_runtimes: a warm one is promoted under the successor
 //     with a grant naming the successor; a measured (protocol 2) running
-//     one is kept, but its capture is refused before any pause and the
-//     guest torn down, because the predecessor's pinned drive handoff does
-//     not survive the restart (docs/adr/20261018-runtime-admission-rebind.md,
-//     open question 1).
+//     one is kept and captured under the successor: the successor rebuilt
+//     its drive handoff from the recorded pins through Firecracker's own
+//     descriptors (docs/adr/20261018-runtime-admission-rebind.md, open
+//     question 1; runtime_drive_handoff_adopt.go).
 //   - A job whose command exits while no vmmd runs: both vmmds are one
 //     Type=notify unit with an fd store, restarted by Restart=on-failure, as
 //     faas-vmmd.service is. The exit frame waits in the stored listener's
@@ -29,7 +29,6 @@ package fcvm
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/netip"
 	"os"
@@ -93,9 +92,9 @@ func TestMetalAdoptionKinds(t *testing.T) {
 			t.Fatalf("admitted warm spare: %v", res)
 		}
 	})
-	t.Run("measured admitted guest kept until its capture is refused", func(t *testing.T) {
+	t.Run("measured admitted guest kept and captured under the successor", func(t *testing.T) {
 		res := runAdoptionKind(t, "admitted-measured")
-		if res["adopted"] != true || res["held"] != true || res["capture_refused"] != true || res["nothing_published"] != true || res["torn_down"] != true {
+		if res["adopted"] != true || res["held"] != true || res["captured"] != true || res["published"] != true || (res["destroyed"] != true && res["torn_down"] != true) {
 			t.Fatalf("measured admitted guest: %v", res)
 		}
 	})
@@ -663,10 +662,9 @@ func adoptAdmittedGuest(ctx context.Context, m *Manager, dir string, g adoptionE
 		res["receipt_names_successor"] = err == nil && r.Binding.Incarnation == successor.Incarnation
 		res["hold_ended"] = m.AdmissionHeldFrom(g.Instance, parent) == ""
 	case "admitted-measured":
-		// The predecessor's pinned drives did not survive the restart, so
-		// the capture is refused before any pause; vmmd then tears the
-		// guest down, as schedd's park sequence does on any capture error,
-		// and the app's next wake cold-boots (ADR-005).
+		// The successor reopened the measured drives through Firecracker's
+		// descriptors, so the capture runs as it would have under the
+		// predecessor and publishes all three files.
 		mem := state.SnapshotCaptureMemKey(parent.Binding.DeploymentID, state.SnapshotTierWarm, uuid.NewString())
 		token, _ := state.SnapshotCaptureToken(mem)
 		grant := runtimeadmission.SnapshotGrant{Version: runtimeadmission.SnapshotGrantVersion, Token: token, Parent: parent,
@@ -674,14 +672,14 @@ func adoptAdmittedGuest(ctx context.Context, m *Manager, dir string, g adoptionE
 			FCVersion: m.fcVersion, Mode: "warm", SourceStartedAtUnixNano: now.Add(-time.Minute).UnixNano(), IssuedAtUnixNano: now.UnixNano(), ExpiresAtUnixNano: now.Add(time.Minute).UnixNano()}
 		_, _, err := m.CaptureAdmitted(ctx, grant)
 		res["capture_error"] = fmt.Sprint(err)
-		res["capture_refused"] = errors.Is(err, runtimeadmission.ErrUnavailable)
-		published := false
+		res["captured"] = err == nil
+		published := true
 		for _, key := range []string{grant.MemoryKey, grant.VMStateKey, grant.PrivateDriveKey} {
-			if _, err := os.Stat(filepath.Join(adoptionAcceptanceRoot(), key)); !errors.Is(err, os.ErrNotExist) {
-				published = true
+			if _, err := os.Stat(filepath.Join(adoptionAcceptanceRoot(), key)); err != nil {
+				published = false
 			}
 		}
-		res["nothing_published"] = !published
+		res["published"] = published
 		if _, live := m.LiveInstances()[g.Instance]; !live {
 			res["torn_down"] = m.LeasedCount() == 0
 			return
