@@ -1,8 +1,11 @@
 from typing import Literal
 
-ManagedPostgresCutoverState = Literal["cancelled", "cancelling", "prepared", "preparing", "verified", "verifying"]
+ManagedPostgresCutoverState = Literal[
+    "activated", "cancelled", "cancelling", "prepared", "preparing", "verified", "verifying"
+]
 
 MANAGED_POSTGRES_CUTOVER_STATE_VALUES: set[ManagedPostgresCutoverState] = {
+    "activated",
     "cancelled",
     "cancelling",
     "prepared",

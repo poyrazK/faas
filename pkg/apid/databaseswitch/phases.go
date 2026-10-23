@@ -187,6 +187,9 @@ func (w *Worker) drain(ctx context.Context, sw state.DatabaseSwitch) state.Datab
 		}
 	}
 	if w.now().Sub(sw.PhaseStartedAt) > api.DatabaseSwitchDrainTimeout {
+		if !found {
+			return w.beginAbort(sw, codeDrainTimeout, "The scheduler did not capture the app's instances; drains need the app's node to reach the control-plane database.")
+		}
 		return w.beginAbort(sw, codeDrainTimeout, "The app's instances were not retired in time.")
 	}
 	return w.wait(sw)
