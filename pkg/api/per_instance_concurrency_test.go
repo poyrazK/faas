@@ -74,6 +74,23 @@ func TestConcurrencyQueueDefaultWaitFor(t *testing.T) {
 	}
 }
 
+// TestPerInstanceConcurrencyQueueStaysWithinTheGatewayHold pins the warm-queue
+// default for a declared per_instance_concurrency inside the gateway's request
+// hold (spec: queue cap 512 / 30 s) and the customer override ceiling.
+func TestPerInstanceConcurrencyQueueStaysWithinTheGatewayHold(t *testing.T) {
+	if PerInstanceConcurrencyQueueDefaultWait != time.Duration(WakeQueueTTLSeconds)*time.Second {
+		t.Errorf("per-instance queue wait = %v, want the %d s gateway hold", PerInstanceConcurrencyQueueDefaultWait, WakeQueueTTLSeconds)
+	}
+	if PerInstanceConcurrencyQueueDefaultWait > time.Duration(MaxConcurrencyQueueWaitMS)*time.Millisecond {
+		t.Errorf("per-instance queue wait %v exceeds the max_queue_wait_ms ceiling", PerInstanceConcurrencyQueueDefaultWait)
+	}
+	for _, plan := range []Plan{PlanFree, PlanHobby, PlanPro, PlanScale} {
+		if depth, _, _ := ConcurrencyQueueDefaultsForPlan(plan); depth > WakeQueueCap {
+			t.Errorf("%s warm-queue depth %d exceeds the gateway queue cap %d", plan, depth, WakeQueueCap)
+		}
+	}
+}
+
 func TestPerInstanceConcurrencyEnabled(t *testing.T) {
 	for _, tc := range []struct {
 		env  string

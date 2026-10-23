@@ -180,3 +180,86 @@ func TestConcurrencyAdmissionPolicyWaitForPerInstanceConcurrency(t *testing.T) {
 		})
 	}
 }
+
+// TestPerInstanceConcurrencySlotsArePerGatewayProcess pins the semantics
+// ADR-20261022203523 documents: slots and their wait queues live in one
+// gatewayd-internal process. Two gateways in front of one instance each admit
+// per_instance_concurrency, so the instance holds 2×N; the (N+1)th request
+// through either gateway still waits. schedd's vmmd-based in-flight reading,
+// which counts every gateway's forwards, is what scales that out
+// (pkg/sched/targets).
+func TestPerInstanceConcurrencySlotsArePerGatewayProcess(t *testing.T) {
+	const perInstance = 2
+	b := &fakeBackend{
+		app:  App{ID: "app-1", Plan: api.PlanScale, MaxConcurrency: 1, PerInstanceConcurrency: perInstance},
+		host: "app.example.com",
+	}
+	b.AddTarget(Target{NodeID: "node-1", InstanceID: "only-1"})
+
+	var mu sync.Mutex
+	inflight, peak := 0, 0
+	entered := make(chan struct{}, 8)
+	release := make(chan struct{})
+	forward := func(Target) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			mu.Lock()
+			inflight++
+			peak = max(peak, inflight)
+			mu.Unlock()
+			entered <- struct{}{}
+			<-release
+			mu.Lock()
+			inflight--
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+		})
+	}
+	gateways := make([]*Handler, 2)
+	for i := range gateways {
+		gateways[i] = NewHandlerWith(b, NewMetrics(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+		gateways[i].WithForwarding(forward)
+	}
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+
+	codes := make(chan int, 8)
+	send := func(h *Handler) {
+		go func() {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://app.example.com/", nil))
+			codes <- rec.Code
+		}()
+	}
+	for _, h := range gateways {
+		for range perInstance {
+			send(h)
+		}
+	}
+	for i := range len(gateways) * perInstance {
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%d of %d requests reached the instance; each gateway should admit %d", i, len(gateways)*perInstance, perInstance)
+		}
+	}
+	// A further request through either gateway finds that gateway's slots
+	// full and waits, even though the instance already holds 2×N.
+	send(gateways[0])
+	select {
+	case <-entered:
+		t.Fatal("a third request through one gateway reached the instance past its per-gateway limit")
+	case <-time.After(200 * time.Millisecond):
+	}
+	mu.Lock()
+	got := peak
+	mu.Unlock()
+	if got != len(gateways)*perInstance {
+		t.Errorf("instance peak in-flight = %d, want %d (gateways × per_instance_concurrency)", got, len(gateways)*perInstance)
+	}
+	releaseOnce.Do(func() { close(release) })
+	for range len(gateways)*perInstance + 1 {
+		if code := <-codes; code != http.StatusOK {
+			t.Errorf("request returned %d, want 200", code)
+		}
+	}
+}

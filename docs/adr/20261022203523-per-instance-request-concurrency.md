@@ -120,8 +120,9 @@ Option A.
    read, never refused at request time. `Limits.PerInstanceConcurrency` in
    `pkg/api/limits.go` is the only resolver, and gatewayd-internal, schedd and
    apid all call it.
-3. **Gateway gate.** The per-VM gate admits at most the effective value to an
-   instance. Request N+1 goes to a sibling with a free slot. When every
+3. **Gateway gate.** Each gatewayd-internal process admits at most the
+   effective value to an instance; see *Several gateways* for what that means
+   across nodes. Request N+1 goes to a sibling with a free slot. When every
    routable instance is full, the request waits in the warm queue (ADR-978
    priority order, `max_queue_depth` or the plan default), and a waiter takes
    whichever slot frees first, on any instance. The
@@ -135,40 +136,128 @@ Option A.
    instance ceiling. The third concurrent request to a two-slot app asks for a
    second instance at once, not after the 81st.
 5. **Warm-queue wait.** Requests over the limit used to wait in the guest's own
-   backlog, bounded only by the request budget. The gateway must not turn them
-   into 503s after the 1 to 2 s saturation default. An app that sets
-   `per_instance_concurrency` and leaves `max_queue_wait_ms` at 0 therefore
-   waits up to `PerInstanceConcurrencyQueueDefaultWait` (30 s, the app request
-   budget default and the paid cold-wake wait). Three rules still apply:
-   - The request budget bounds every wait.
+   backlog. The gateway must not turn them into 503s after the 1 to 2 s
+   saturation default. An app that sets `per_instance_concurrency` and leaves
+   `max_queue_wait_ms` at 0 therefore waits up to
+   `PerInstanceConcurrencyQueueDefaultWait`. That is defined as the gateway's
+   request hold, `WakeQueueTTLSeconds` (30 s; spec's queue cap 512 / 30 s), and
+   a test keeps it there. The waiter count is unchanged: the plan's warm-queue
+   depth (Free 8, Hobby 32, Pro 128, Scale 512), all within the 512 cap unless
+   the customer raises `max_queue_depth` as they already can.
+   - **The request budget starts after the wait.** The gateway stamps the
+     budget when the request reaches an instance, after `acquireVMTarget`.
+     Before, time in the guest's backlog counted against the budget. Now a
+     request can wait 30 s and then still use its whole budget: 3 s for a
+     function, 30 s for an app by default, or its `request_timeout_s`. The
+     worst-case end-to-end time is the wait plus the budget. Customers who need
+     a tighter bound set `max_queue_wait_ms`.
    - An explicit `max_queue_wait_ms` wins.
    - `concurrency_overflow: drop` still rejects at once.
 6. **schedd.** The wake coordinator's fan-out (`WakeFanout.PerVM`) and the
    aggressive reaper's in-flight floor (`inflightDemandReplicas`) use the
    effective value. A cold burst fans out at `ceil(waiters / N)`. Scale-in
    never parks an instance that the in-flight requests need at N per instance.
+   The `concurrent_requests` trigger (`pkg/sched/targets`) treats a declared
+   `per_instance_concurrency` as an implied `concurrent_requests` target of N,
+   unless the app declares that target itself. It reads vmmd's per-instance
+   in-flight count, which covers every gateway. Workers imply nothing.
 7. **Visibility.** `effective_limits.concurrency_per_instance` on
    `GET /v1/apps/{slug}` reports the effective value, and `gregale app <slug>`
    prints it. `concurrency_per_vm` stays the plan bound.
 8. **Dark launch.** Per the owner's rule for new customer features, apid accepts
    a non-zero value only for accounts listed in
    `FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS` (comma-separated UUIDs, or `*`).
-   It is unset by default, which admits no account. For any other account the
-   field gets the same `422 unknown field(s)` an N-1 apid returns. Keeping a
-   stored value or clearing it to 0 is always allowed, so delisting an account
-   never breaks its other policy writes. The gateway and schedd apply whatever
-   is stored, and apid is the only writer, so the gate is complete at write
-   time.
+   It is unset by default, which admits no account. For any other account
+   every non-zero value, negative ones included, gets the same
+   `422 unknown field(s)` an N-1 apid returns. Keeping a stored value or
+   clearing it to 0 is always allowed, so delisting an account never breaks
+   its other policy writes. The gateway and schedd apply whatever is stored,
+   and apid is the only writer, so the gate is complete at write time.
+   Until launch the customer surface stays hidden:
+   - `--per-instance-concurrency` is a hidden flag. It parses, but it is not in
+     the CLI metadata, so help, completions, man pages and
+     `docs/cli-reference.md` do not name it.
+   - The customer docs section is `docs/per-instance-concurrency.md`. That page
+     is not listed in `docs/customer-pages.json`, so it is not published.
+   - The field stays in `api/openapi.yaml` and the generated SDK models,
+     because the spec's schema-parity check requires every DTO field. An
+     unlisted caller who sends it gets the unknown-field answer.
+
+   Launch steps, all in one change:
+   1. Set the gate to `*`.
+   2. Move the docs section into `docs/scaling-policy.md`.
+   3. Add the flag to `cmd/gregale/cli_meta.go` and the usage lines, and
+      regenerate the CLI reference.
+   4. Add the template line (Decision 9).
 9. **Template, at launch.** Once the gate is `*`, `hello-python` declares
    `per_instance_concurrency: 2` next to its `gunicorn --workers 2`, so the app
    that showed the bug scales out without configuration. Until then a
    template that declares it would fail to deploy for unlisted accounts.
 
+## Several gateways
+
+Slots and their wait queues live in one gatewayd-internal process
+(`vmConcurrencyManager`, `pkg/gateway/vm_concurrency.go`). Production runs one
+`gatewayd-public` → `gatewayd-internal` pair per node, and the upstream
+balancer spreads an app's requests across nodes. Any node's gateway forwards to
+any instance through that instance's vmmd (ADR-028). With k gateways in front
+of an app, one instance can therefore hold up to k×N requests. The burst
+signal is split the same way: each gateway asks schedd for
+`ceil(local in-flight / N)` instances, so the gateways together can ask for up
+to k times too few.
+
+Options:
+
+- **(a) Per-gateway limit, fleet-wide correction (chosen).** The gate stays
+  local and fast. Two schedd-side pieces correct the fleet-wide picture:
+  - The `concurrent_requests` trigger reads vmmd's per-instance in-flight
+    count. Every gateway's forwards to an instance pass through the vmmd that
+    hosts it, so that count is the instance's true load. The trigger scales
+    on it with N as the target (Decision 6). An instance above N therefore
+    gets siblings within a trigger tick or two, up to `max_concurrency`.
+  - The trigger logs `targets: per-instance concurrency oversubscribed across
+    gateways`, with the app, in-flight count and N, at most once per app per
+    minute. Operators can see how often it happens.
+
+  The guest absorbs the transient excess in its own listen backlog, bounded
+  by (k−1)×N rather than today's plan bound of 80. Customers size N as their
+  server's real concurrency and keep a normal listen backlog. The customer
+  docs say this.
+- **(b) Route an app through its owner node's gateway.** This gives an exact
+  cap but adds a cross-node hop for every request that lands on another node.
+  It also concentrates an app's traffic on one gateway and needs a
+  gateway-to-gateway forwarding path that does not exist. Rejected.
+- **(c) Enforce in vmmd as well.** vmmd is the one place every request to an
+  instance passes through. It could hold a per-instance semaphore of N and
+  answer `ResourceExhausted`, and the gateway would re-pick or queue. That
+  gives an exact fleet-wide cap. It needs a `ForwardHTTPStream` and
+  `ForwardRawStream` field carrying N (additive, so N±1 safe) and a gateway
+  retry path for the refusal. This is the follow-up if the oversubscription
+  log shows the transient excess matters in practice. Not done here.
+
+**Reaper interaction (H4-70).** The aggressive reaper's in-flight floor takes
+the larger of the local gateway's in-flight count and vmmd's per-instance
+counts. The gateway count covers only this node's gateway. vmmd's counts
+cover every gateway, but only for instances the schedd sees. The fleet
+request-rate floor (`instances.request_count`, H4-70) remains the backstop for
+traffic served entirely through other nodes. With N declared, the floor
+divides by N instead of the plan bound, so it errs toward keeping instances.
+It never parks below what either view needs.
+
+Tests pin the semantics:
+
+- `pkg/gateway` `TestPerInstanceConcurrencySlotsArePerGatewayProcess`: two
+  gateways put 2×N on one instance, and the next request through either one
+  waits.
+- `pkg/sched/targets` `TestTrigger_PerInstanceConcurrencyScalesOnFleetInflight`:
+  a fleet-wide in-flight count above N admits an instance and logs the
+  oversubscription once.
+
 ## Invariants
 
 - **§6.2-1 (instance cap)** is unchanged. A per-instance limit changes how many
-  instances the gateway and schedd ask for. It does not change who admits
-  them. schedd's ledger still holds at most `max_concurrency(plan)` +
+  instances the gateway and schedd's triggers ask for. It does not change who
+  admits them. schedd's ledger still holds at most `max_concurrency(plan)` +
   `RolloutConcurrencyGrant` instances in {WAKING, COLD_BOOTING, RUNNING}, and
   the gateway's request is capped at the app ceiling before it reaches schedd.
   A property test drives the wake fan-out with every per-instance value from 1
@@ -230,11 +319,8 @@ The default changes nobody's bill.
   silently. The safest first case is the gunicorn start command that
   `pkg/frameworkprofile` writes itself: one sync worker, and the platform knows
   it because it wrote the command.
-- **Hiding the surface until launch.** The gate in Decision 8 stops the
-  behaviour. The docs section, the CLI flag and the OpenAPI field are still
-  visible. The OpenAPI schema-parity check requires the field in the spec as
-  long as the DTO carries it. The docs section and the CLI flag could be held
-  back until the gate is `*`. That is the owner's call.
+- **Exact fleet-wide enforcement** (*Several gateways*, option c), if the
+  oversubscription log shows the transient excess matters.
 - **Per-deployment values.** The value belongs to the app, like the rest of the
   scaling policy, and is pinned with it in project-environment workload specs.
   A canary whose server differs from the stable revision gets the app's value.

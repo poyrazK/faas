@@ -785,7 +785,7 @@ func openCustomerFile(path string) (*os.File, error) {
 
 // --- app scale / rename (called from cmdAppDispatch) ------------------------
 
-const appScaleUsage = "usage: gregale app <slug> scale [--interactive | --plan [--out PATH] | --apply PLAN.json --confirm] [--environment SLUG] [--size micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--per-instance-concurrency N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
+const appScaleUsage = "usage: gregale app <slug> scale [--interactive | --plan [--out PATH] | --apply PLAN.json --confirm] [--environment SLUG] [--size micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
 
 // cmdAppScale is the subcommand form of `gregale app <slug> scale ...`.
 // Uses the same fs.Visit pattern so 0 is distinguishable from "unset".
@@ -814,6 +814,10 @@ func cmdAppScale(slug string, args []string) int {
 	maxQueueWaitMS := fs.Int("max-queue-wait-ms", 0, "maximum queued concurrency wait in milliseconds (0 = plan default)")
 	wakeMaxQueueDepth := fs.Int("wake-max-queue-depth", 0, "per-app cold-wake waiter cap (0 = plan default)")
 	wakeMaxQueueWaitSeconds := fs.Int("wake-max-queue-wait-seconds", 0, "per-app cold-wake wait budget in seconds (0 = plan default, max 60)")
+	// ADR-20261022203523 dark launch: a hidden flag. It parses, but stays
+	// out of help, completions, man pages and the generated reference until
+	// FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS admits every account; apid
+	// answers an unlisted account as for an unknown field.
 	perInstanceConcurrency := fs.Int("per-instance-concurrency", 0, "requests one instance serves at once; the next request scales out (0 = plan's concurrency per VM)")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	requestTimeout := fs.Int("request-timeout", 0, "per-app request timeout in seconds (0 = plan default, max 30)")

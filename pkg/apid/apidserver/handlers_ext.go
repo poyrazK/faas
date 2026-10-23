@@ -161,7 +161,7 @@ func validatePerInstanceConcurrency(requested int, acct state.Account, app state
 	if app.ScalingPolicy != nil {
 		stored = app.ScalingPolicy.PerInstanceConcurrency
 	}
-	if requested > 0 && requested != stored && !api.PerInstanceConcurrencyEnabled(acct.ID) {
+	if requested != 0 && requested != stored && !api.PerInstanceConcurrencyEnabled(acct.ID) {
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"Invalid scaling policy", "unknown field(s): per_instance_concurrency")
 	}

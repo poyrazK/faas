@@ -6157,11 +6157,11 @@ const (
 	// max_queue_wait_ms at zero (ADR-20261022203523). Such an app is full at
 	// a few requests by its own declaration, so a full instance is its
 	// normal operation, not the saturation the short defaults above are for.
-	// Those requests used to wait in the guest's own backlog for as long as
-	// the request budget allowed; 30 s matches RequestBudgetAppDefault and
-	// GatewayWakeAdmissionPaidMaxWait, and the request budget still bounds
-	// every wait.
-	PerInstanceConcurrencyQueueDefaultWait = 30 * time.Second
+	// It is the gateway's 30 s request hold (WakeQueueTTLSeconds, spec §4.1)
+	// and never longer; the waiter count stays the plan's warm-queue depth.
+	// The request budget is stamped after the capacity wait, so a request
+	// may wait this long and then still use its whole budget.
+	PerInstanceConcurrencyQueueDefaultWait = WakeQueueTTLSeconds * time.Second
 
 	// MirrorMaxLifetimeSeconds (issue #72 / ADR-125) is the hard
 	// upper bound on how long a single mirror goroutine can run.

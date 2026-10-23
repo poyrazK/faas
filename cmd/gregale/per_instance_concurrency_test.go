@@ -2,9 +2,12 @@
 package main_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/cmd/gregale"
@@ -79,5 +82,32 @@ func TestPerInstanceConcurrencyFlagRejectsNegativeBeforeAnyRequest(t *testing.T)
 				t.Fatalf("exit %d after %d requests; want a non-zero exit before any request", code, requests)
 			}
 		})
+	}
+}
+
+// TestPerInstanceConcurrencyFlagIsHidden pins the dark launch: the flag parses
+// (above) but no discovery surface names it until the account gate opens.
+func TestPerInstanceConcurrencyFlagIsHidden(t *testing.T) {
+	command, ok := main.LookupCliCommand("app")
+	if !ok {
+		t.Fatal("app command missing from CLI manifest")
+	}
+	var help, man, reference bytes.Buffer
+	main.PrintLocalCommandHelpDetail(&help, command, true)
+	main.RenderManCommand(&man, command)
+	main.RenderMarkdownReference(&reference, []main.CliCommand{command})
+	surfaces := map[string]string{"help": help.String(), "man": man.String(), "reference": reference.String()}
+	for name, render := range map[string]func(io.Writer, main.CliCommand){
+		"bash": main.RenderBashCommand, "zsh": main.RenderZshCommand,
+		"fish": main.RenderFishCommand, "powershell": main.RenderPowershellCommand,
+	} {
+		var out bytes.Buffer
+		render(&out, command)
+		surfaces[name] = out.String()
+	}
+	for name, out := range surfaces {
+		if strings.Contains(strings.ReplaceAll(out, `\-`, "-"), "per-instance-concurrency") {
+			t.Errorf("%s names the dark-launched --per-instance-concurrency", name)
+		}
 	}
 }

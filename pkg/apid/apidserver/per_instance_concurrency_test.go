@@ -33,6 +33,7 @@ func TestUpdateAppPerInstanceConcurrency(t *testing.T) {
 		wantObserved int64
 	}{
 		{name: "unlisted account sees an unknown field", plan: api.PlanPro, value: 2, wantStatus: http.StatusUnprocessableEntity, wantDetail: "unknown field(s): per_instance_concurrency"},
+		{name: "unlisted negative value sees an unknown field too", plan: api.PlanPro, value: -1, wantStatus: http.StatusUnprocessableEntity, wantDetail: "unknown field(s): per_instance_concurrency"},
 		{name: "zero needs no listing", plan: api.PlanPro, value: 0, wantStatus: http.StatusOK, wantPerInst: 25, wantWaitMS: api.ConcurrencyQueuePaidDefaultWait.Milliseconds()},
 		{name: "listed account", plan: api.PlanPro, accounts: "self", value: 2, wantStatus: http.StatusOK, wantPerInst: 2, wantWaitMS: api.PerInstanceConcurrencyQueueDefaultWait.Milliseconds()},
 		{name: "every account", plan: api.PlanScale, accounts: "*", value: 2, wantStatus: http.StatusOK, wantPerInst: 2, wantWaitMS: api.PerInstanceConcurrencyQueueDefaultWait.Milliseconds()},
