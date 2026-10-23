@@ -226,6 +226,9 @@ func cmdEdgeRulesCreate(args []string) int {
 	expiresAt := fs.String("expires-at", "", "stop applying the rule at this RFC 3339 time")
 	matchCondition := fs.String("match", "", "match condition (ADR-962 JSON, @file, or -)")
 	ruleMode := fs.String("mode", "", "enforce (default) or log: a log-mode rule only counts matches (ADR-960)")
+	penaltyFor := fs.Duration("penalty-for", 0, "kind=ip|geo|throttle|waf (block): block a client this rule keeps refusing from the whole app for this long, 1m to 24h (ADR-20261022105846)")
+	penaltyAfter := fs.Int("penalty-after", 0, "with --penalty-for: refusals that box the client (default 1)")
+	penaltyWithin := fs.Duration("penalty-within", 0, "with --penalty-for: window the refusals count in (default 1m)")
 
 	// route
 	routeTarget := fs.String("route-target-slug", "", "kind=route: target app slug (required)")
@@ -568,6 +571,11 @@ func cmdEdgeRulesCreate(args []string) int {
 		return printErr("Invalid --mode", fmt.Errorf("%s", prob.Detail))
 	}
 	req.Mode = *ruleMode
+	penalty, penaltyErr := edgeRulePenaltyFromFlags(*penaltyFor, *penaltyAfter, *penaltyWithin)
+	if penaltyErr != nil {
+		return printErr("Invalid penalty", penaltyErr)
+	}
+	req.Penalty = penalty
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -659,7 +667,7 @@ func cmdEdgeRulesGet(args []string) int {
 // passed with empty value" (send zero value). The triple-state
 // enabled flag is tracked via an enabledSet boolean.
 func cmdEdgeRulesUpdate(args []string) int {
-	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields", "retry-allow-non-idempotent", "jwt-require-exp", "clear-expiry", "clear-match", "template")
+	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields", "retry-allow-non-idempotent", "jwt-require-exp", "clear-expiry", "clear-match", "clear-penalty", "template")
 	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules update", flag.ContinueOnError)
 	matchHost := fs.String("match-host", "", "new host to match")
@@ -678,6 +686,10 @@ func cmdEdgeRulesUpdate(args []string) int {
 	expiresAt := fs.String("expires-at", "", "stop applying the rule at this RFC 3339 time")
 	matchCondition := fs.String("match", "", "match condition (ADR-962 JSON, @file, or -)")
 	ruleMode := fs.String("mode", "", "enforce (default) or log: a log-mode rule only counts matches (ADR-960)")
+	penaltyFor := fs.Duration("penalty-for", 0, "kind=ip|geo|throttle|waf (block): block a client this rule keeps refusing from the whole app for this long, 1m to 24h (ADR-20261022105846)")
+	penaltyAfter := fs.Int("penalty-after", 0, "with --penalty-for: refusals that box the client (default 1)")
+	penaltyWithin := fs.Duration("penalty-within", 0, "with --penalty-for: window the refusals count in (default 1m)")
+	clearPenalty := fs.Bool("clear-penalty", false, "remove the rule's penalty box, releasing the clients it holds")
 	clearExpiry := fs.Bool("clear-expiry", false, "remove the rule's expiry")
 	clearMatch := fs.Bool("clear-match", false, "remove the rule's match condition")
 	// Per-kind action re-marshaling on PATCH. PATCHing the action
@@ -870,6 +882,14 @@ func cmdEdgeRulesUpdate(args []string) int {
 		mode := *ruleMode
 		req.Mode = &mode
 	}
+	penalty, perr := edgeRulePenaltyFromFlags(*penaltyFor, *penaltyAfter, *penaltyWithin)
+	if perr != nil {
+		return printErr("Invalid penalty", perr)
+	}
+	if penalty != nil && *clearPenalty {
+		return printErr("Invalid flags", fmt.Errorf("--clear-penalty cannot be combined with --penalty-for"))
+	}
+	req.Penalty, req.ClearPenalty = penalty, *clearPenalty
 	if visited["validate-mode"] {
 		if err := validateEdgeRuleValidateMode(*validateMode); err != nil {
 			return printErr("Invalid --validate-mode", err)
@@ -1918,4 +1938,24 @@ func parseEdgeRuleExpiry(in time.Duration, at string, now time.Time) (*time.Time
 		return &t, nil
 	}
 	return nil, nil
+}
+
+// edgeRulePenaltyFromFlags builds a rule's penalty box from --penalty-for,
+// --penalty-after and --penalty-within (ADR-20261022105846), or nil when
+// --penalty-for is unset. The server applies the defaults and bounds.
+func edgeRulePenaltyFromFlags(forDur time.Duration, after int, within time.Duration) (*api.EdgeRulePenalty, error) {
+	if forDur == 0 {
+		if after != 0 || within != 0 {
+			return nil, fmt.Errorf("--penalty-after and --penalty-within need --penalty-for")
+		}
+		return nil, nil
+	}
+	if forDur%time.Second != 0 || within%time.Second != 0 {
+		return nil, fmt.Errorf("--penalty-for and --penalty-within must be whole seconds")
+	}
+	p := &api.EdgeRulePenalty{Seconds: int(forDur / time.Second), After: after, WithinSeconds: int(within / time.Second)}
+	if prob := p.Validate(); prob != nil {
+		return nil, fmt.Errorf("%s", prob.Detail)
+	}
+	return p, nil
 }

@@ -249,7 +249,38 @@ to the built image as a Dockerfile's USER, WORKDIR and STOPSIGNAL would be.
 
 `env_file` contributes variable names only. The scan lists them as required
 environment keys, exactly like `environment:`; values never leave the source,
-so set them with `gregale env set` or secrets. An env file missing from the
+so set them with `gregale env set` or secrets. The project plan shows, per
+service, each name that will have no value in the target environment under
+**Needs a value**: names already configured on the app, supplied by
+`--secrets-file`, or set by Gregale itself (`PORT`, `GREGALE_*`) are left out.
+
+A Compose file can opt in to importing the plain values of `environment:`
+([ADR-20261023085230](adr/20261023085230-compose-env-import.md)):
+
+```yaml
+x-gregale-env-import: true
+services:
+  api:
+    build: ./api
+    environment:
+      LOG_LEVEL: info                   # imported
+      STRIPE_KEY: sk_test_example       # not imported: looks like a secret
+      BILLING_URL: http://billing:8080  # not imported: Docker service address
+```
+
+A reviewed project apply (`gregale deploy`, the dashboard, or
+`gregale deploy --repo … --project`) writes each imported value into the
+service's app, in the deploy's environment, before any build starts; a GitHub
+push deploy imports nothing. Values are written only where the key is still unset: a
+value configured on the app, as a variable or a secret, is never replaced. The
+plan lists imported names under **Imported from Compose** and gives the reason
+for each value it skips: a secret-looking key or value, an address of another
+Compose service or the local machine, `$` interpolation, an entry read from the
+host, or an empty value. Values never appear in the plan, logs or audit events.
+`env_file` values are never imported. `compose.override.yaml` is part of the
+Compose model, so its values are imported too; keep local-only settings out of
+an opted-in project. Without the opt-in the plan marks importable values as
+"plain value in Compose" and shows the line that imports them. An env file missing from the
 source (for example a git-ignored `.env`) is a warning, or silent with
 `required: false`. Quoted values, including multi-line double- or
 single-quoted ones, are read to their closing quote; a malformed line is

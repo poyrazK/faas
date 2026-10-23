@@ -17,7 +17,8 @@
 //
 // Build tag: metal. Requires /dev/kvm + root, FAAS_TEST_KERNEL and
 // FAAS_BUILDER_BASE_PATH. On hosts without a matching Go toolchain set
-// FAAS_E2E_HELLO_SERVER_BINARY and FAAS_E2E_TRACING_SERVER_BINARY; the Node
+// FAAS_E2E_HELLO_SERVER_BINARY, FAAS_E2E_TRACING_SERVER_BINARY and
+// FAAS_E2E_GO_TRACING_HELPER_BINARY; the Node
 // scenario needs FAAS_E2E_NODE_TRACING_IMAGE_DIR (a prebuilt node:22-alpine
 // image with /opt/gregale/tracing, see e2etest.PrebuiltImage).
 
@@ -60,6 +61,26 @@ func TestGuestTracingMetal(t *testing.T) {
 		},
 		respPrefix: "traced ",
 		evidenceOK: func(detail string) bool { return strings.Contains(detail, "SELECT orders") },
+	})
+}
+
+// adr: 958 — a Go app instrumented only with the SDK's tracing package (no
+// OpenTelemetry dependency) reports its database and HTTP calls as
+// app_dependency spans on the request evidence.
+func TestGuestTracingGoHelperMetal(t *testing.T) {
+	runGuestTracingScenario(t, guestTracingScenario{
+		slug: "guest-tracing-go",
+		addImage: func(registry *e2etest.FakeRegistry) string {
+			image, _ := e2etest.GoTracingHelperImage("library/guest-tracing-go")
+			return registry.AddImage("library/guest-tracing-go", image)
+		},
+		// The fixture echoes FAAS_TRACING_ENABLED: guest-init enabled the helper.
+		respPrefix: "helper 1",
+		evidenceOK: func(detail string) bool {
+			return strings.Contains(detail, "SELECT orders") &&
+				strings.Contains(detail, `"dependency_kind":"postgresql"`) &&
+				strings.Contains(detail, `"dependency_kind":"http"`)
+		},
 	})
 }
 

@@ -4020,6 +4020,8 @@ const (
 	AppWebhookEventRouteHealthResumed                      AppWebhookEvent = "routes.health.resumed"
 	AppWebhookEventProfileRouteRegressed                   AppWebhookEvent = "profile.route_regressed"
 	AppWebhookEventProfileRouteRecovered                   AppWebhookEvent = "profile.route_recovered"
+	AppWebhookEventProfileCaptureReady                     AppWebhookEvent = "profile.capture_ready"
+	AppWebhookEventProfileCaptureOOMLinked                 AppWebhookEvent = "profile.capture_oom_linked"
 	AppWebhookEventRouteRequirementsChanged                AppWebhookEvent = "routes.requirements.changed"
 	AppWebhookEventRouteRequirementsViolated               AppWebhookEvent = "routes.requirements.violated"
 	AppWebhookEventRouteRequirementsRecovered              AppWebhookEvent = "routes.requirements.recovered"
@@ -4068,6 +4070,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventRealtimeInboxAcknowledged,
 	AppWebhookEventRealtimeInboxGap,
 	AppWebhookEventProfileRouteRegressed, AppWebhookEventProfileRouteRecovered,
+	AppWebhookEventProfileCaptureReady, AppWebhookEventProfileCaptureOOMLinked,
 	AppWebhookEventCronFired,
 	AppWebhookEventCronFiredManually,
 	AppWebhookEventAppCreated,
@@ -8408,7 +8411,11 @@ type EdgeRuleAsyncAction struct {
 // gatewayd matcher only reads Kind + the kind-specific subset it
 // needs.
 type EdgeRuleAction struct {
-	Kind     EdgeRuleKind            `json:"kind"`
+	Kind EdgeRuleKind `json:"kind"`
+	// Penalty is the rule's penalty box (ADR-20261022105846). It is
+	// kind-independent, so it sits beside the kind payloads; ip, geo,
+	// throttle and waf (block) rules may carry one.
+	Penalty  *EdgeRulePenalty        `json:"penalty,omitempty"`
 	Route    *EdgeRuleRouteAction    `json:"route,omitempty"`
 	Rewrite  *EdgeRuleRewriteAction  `json:"rewrite,omitempty"`
 	Redirect *EdgeRuleRedirectAction `json:"redirect,omitempty"`
@@ -8491,6 +8498,14 @@ type EdgeRuleAction struct {
 	// Challenge carries the kind=challenge work and pass knobs (ADR-831
 	// amendment 7).
 	Challenge *EdgeRuleChallengeAction `json:"challenge,omitempty"`
+}
+
+// EdgeRulePenalty is the stored penalty box; values are the effective ones
+// api.EdgeRulePenalty.Validate wrote.
+type EdgeRulePenalty struct {
+	Seconds       int `json:"seconds"`
+	After         int `json:"after"`
+	WithinSeconds int `json:"within_seconds"`
 }
 
 // EdgeRuleChallengeAction is the stored kind=challenge payload. Values are

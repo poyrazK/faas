@@ -236,6 +236,9 @@
         {{ if .Data.Deployment.ErrorFix }}
           <p class="fix">→ {{ .Data.Deployment.ErrorFix }}</p>
         {{ end }}
+        {{ with .Data.OOMCaptureURL }}
+          <p class="profile"><a href="{{ . }}">Heap profile before the OOM kill →</a> shows which code held the memory.</p>
+        {{ end }}
         {{ if .Data.Deployment.ErrorRelevantLogs }}
           <details class="logs">
             <summary>relevant logs ({{ len .Data.Deployment.ErrorRelevantLogs }})</summary>

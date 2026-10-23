@@ -168,6 +168,7 @@
     .alert-preset-explanation .fix   { margin: 0.2rem 0; color: #374151; white-space: pre-line; }
     .alert-preset-explanation .docs  { margin: 0.3rem 0 0; font-size: 0.8rem; }
     .cost-note { color: #6b7280; font-size: 0.9rem; }
+    .announced-captures { border-left: 3px solid #b45309; background: #fffbeb; padding: 0.25rem 0.75rem; margin: 0.75rem 0; }
     .cost-month-selector { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin: 0.5rem 0; }
     .cost-month-selector input, .cost-month-selector button { padding: 0.35rem 0.5rem; font: inherit; }
     .cost-export-link { display: inline-block; margin: 0.25rem 0 0.5rem; }
@@ -229,6 +230,14 @@
         · URL: <a href="{{.Data.App.URL}}">{{.Data.App.URL}}</a>
       </p>
       {{if .Data.Operational}}{{template "app-operational-summary" .Data}}{{end}}
+      {{with .Data.AnnouncedCaptures}}
+      <section class="announced-captures" aria-label="Profile captures to review" role="status">
+        <p><strong>Profile captures to review: {{.Count}}</strong> in the last {{.Days}} days{{if .OOMKilled}}, {{.OOMKilled}} linked to an OOM kill{{end}}.
+          Latest: <a href="{{.LatestURL}}">{{.LatestTrigger}}{{if .Latest.TriggerDetail}} · {{.Latest.TriggerDetail}}{{end}}</a>
+          at <time>{{.Latest.CreatedAt.Format "2006-01-02T15:04:05Z07:00"}}</time>{{if .Latest.OOMKilledAt}}, <strong>OOM-killed after</strong>{{end}}.
+          <a href="{{.ListURL}}">All captures</a></p>
+      </section>
+      {{end}}
       {{if .Data.AppCosts}}
       <section aria-label="App cost and usage">
         <h2>Cost and usage</h2>

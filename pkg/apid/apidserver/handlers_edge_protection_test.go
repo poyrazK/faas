@@ -63,6 +63,10 @@ func TestAppEdgeProtectionSummarizesPerAppCounters(t *testing.T) {
 		case strings.Contains(query, "gateway_edge_challenge_raised_total"):
 			return `{"status":"success","data":{"resultType":"vector","result":[
 				{"metric":{"app":"app-1"},"value":[0,"4"]}]}}`
+		case strings.Contains(query, "gateway_edge_penalty_total"):
+			return `{"status":"success","data":{"resultType":"vector","result":[
+				{"metric":{"outcome":"boxed"},"value":[0,"4"]},
+				{"metric":{"outcome":"rejected"},"value":[0,"31"]}]}}`
 		case strings.Contains(query, "gateway_validate_failures_total"):
 			return `{"status":"success","data":{"resultType":"vector","result":[
 				{"metric":{"mode":"observe"},"value":[0,"4"]},
@@ -104,6 +108,10 @@ func TestAppEdgeProtectionSummarizesPerAppCounters(t *testing.T) {
 	// amendment 8: pages served at a raised difficulty.
 	if want := (api.EdgeProtectionChallenge{Issued: 12, Solved: 9, Rejected: 30, Passed: 40, Bypassed: 5, Invalid: 3, Raised: 4}); out.Challenge != want {
 		t.Fatalf("challenge = %+v, want %+v", out.Challenge, want)
+	}
+	// adr: 20261022105846 — penalty box counts.
+	if out.Penalty != (api.EdgeProtectionPenalty{Boxed: 4, Rejected: 31}) {
+		t.Fatalf("penalty = %+v", out.Penalty)
 	}
 	if rec := e.Do(t, "GET", "/v1/apps/shielded/edge-protection?range=30d", nil, nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid range = %d", rec.Code)
