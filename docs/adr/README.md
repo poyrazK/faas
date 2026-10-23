@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Compose profiles from COMPOSE_PROFILES in .env](20261022190000-compose-profiles-from-dotenv.md)
 - [Compose deploy resources and replicas set app settings](20261023120000-compose-deploy-resources.md)
 - [Compose service secrets as files in /run/secrets](20261023090000-compose-runtime-secret-files.md)
 - [ADR-20261023113721: Platform flags for edge rule features](20261023113721-edge-feature-platform-flags.md)
