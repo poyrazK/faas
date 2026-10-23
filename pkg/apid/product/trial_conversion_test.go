@@ -60,11 +60,15 @@ func TestProductTrialConversion(t *testing.T) {
 	card := &api.ProductPaymentMethod{Provider: "stripe", Brand: "visa", Last4: "4242", ExpMonth: 4, ExpYear: 2030}
 	onFile := card
 	s := &Service{Host: host, EmailOrigin: "https://gregale.example",
-		PaymentMethod: func(context.Context, state.Account, string) (*api.ProductPaymentMethod, *api.Problem) { return onFile, nil },
+		PaymentMethod: func(context.Context, state.Account, string) (*api.ProductPaymentMethod, *api.Problem) {
+			return onFile, nil
+		},
 		PaymentMethodCheckout: func(context.Context, state.Account, string, string, string, string, string) (string, *api.Problem) {
 			return "https://checkout.stripe.com/c/pay/cs_test_1", nil
 		},
-		CompletePaymentMethod: func(context.Context, state.Account, string, string) (*api.ProductPaymentMethod, *api.Problem) { return card, nil }}
+		CompletePaymentMethod: func(context.Context, state.Account, string, string) (*api.ProductPaymentMethod, *api.Problem) {
+			return card, nil
+		}}
 	call := func(handler func(http.ResponseWriter, *http.Request, state.Account), method, body string) {
 		t.Helper()
 		r := httptest.NewRequest(method, "/", strings.NewReader(body))
