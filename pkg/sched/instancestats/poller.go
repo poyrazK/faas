@@ -510,6 +510,7 @@ func (p *Poller) decodeTelemetrySnapshot(
 			InflightRequests: in.InflightRequests,
 			QuietPaused:      in.QuietPaused,
 			Frozen:           in.Frozen,
+			QuietPause:       in.QuietPause,
 			CPU:              Unknown,
 			RSS:              Unknown,
 			// Preserve the vmmd report timestamp. Using the local
@@ -781,6 +782,7 @@ func (p *Poller) decodeStatsSnapshot(
 			InflightRequests: in.InflightRequests,
 			QuietPaused:      in.QuietPaused,
 			Frozen:           in.Frozen,
+			QuietPause:       in.QuietPause,
 			CPU:              Unknown,
 			RSS:              Unknown,
 			SampledAt:        now,
