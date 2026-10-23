@@ -90,6 +90,7 @@ type Account struct {
 	QuotaMailRevision        int64
 	SubscriptionMailRevision int64
 	DeploymentMailRevision   int64
+	MfaTotpLastStep          pgtype.Int8
 }
 
 type AccountAsyncQuotum struct {

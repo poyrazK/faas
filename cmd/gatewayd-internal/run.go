@@ -2758,7 +2758,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	retryBudget.WithObserver(deps.metrics)
 	defer func() { _ = retryBudget.Close() }()
-	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
+	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget).
+		WithSelectorSuffixes(appsSuffix(deps.appsDomain), wire.DeployWildcardSuffix)
 	if deps.pgStore != nil {
 		handler.WithFinancialBudgetAdmission(newFinancialBudgetAdmission(deps.pgStore))
 	}
