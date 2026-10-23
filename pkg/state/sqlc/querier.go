@@ -3521,6 +3521,9 @@ type Querier interface {
 	LockCloneWorkloadCleanupSpecs(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]pgtype.UUID, error)
 	// Keep the historical broad lock key, also shared with refund compensation.
 	LockCreditConsumption(ctx context.Context, db DBTX, providerInvoiceID string) error
+	// An app's account_id is a resource namespace: a personal account or a company
+	// org (ADR-202610171908). Lock the namespace row, as ApplyProject does, so every
+	// cron quota check for one namespace serializes on the same row.
 	LockCronAccountForApp(ctx context.Context, db DBTX, appID string) (string, error)
 	LockCronAccountForCron(ctx context.Context, db DBTX, cronID string) (string, error)
 	LockCronActivationDeployments(ctx context.Context, db DBTX, appID string) error
