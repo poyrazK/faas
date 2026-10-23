@@ -165,32 +165,56 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 		log.Warn("dns_poller: list tenant hostnames failed", "err", err)
 		return
 	}
+	verifier, verifierOK := s.store.(state.TenantHostnameChallengeVerifier)
 	for _, h := range pendingHostnames {
-		if checkTXT(ctx, h.Hostname, h.ChallengeToken) {
-			if err := s.store.MarkTenantHostnameVerified(ctx, h.Hostname); err != nil {
-				log.Warn("dns_poller: mark tenant hostname verified failed", "hostname", h.Hostname, "err", err)
-				continue
+		if !checkTXT(ctx, h.Hostname, h.ChallengeToken) {
+			// Stamp the miss. The batch serves the least recently
+			// checked rows first, so a row never stamped stays at the
+			// head: once 50 hostnames anywhere were pending, no newer
+			// hostname was ever checked.
+			if err := s.store.MarkTenantHostnameCheckFailed(ctx, h.Hostname, tenantHostnameTXTPending); err != nil && !errors.Is(err, state.ErrNotFound) {
+				log.Warn("dns_poller: record tenant hostname check failed", "hostname", h.Hostname, "err", err)
 			}
-			// tenant_surface_changed fires on the tenant_hostnames
-			// UPDATE (the trigger at migrations/00243 fires on
-			// every relevant column change including verified_at).
-			// The gatewayd cert-remint subscriber picks it up and
-			// asks the issuer for a fresh SAN-aggregated cert.
-			//
-			// Audit row: tenant_hostname.verified is the third
-			// event of the surface lifecycle (added / removed /
-			// verified). The data carries the surface_id so the
-			// dashboard "verified at" timeline keys off it.
-			if s.audit != nil {
-				s.audit.Emit(ctx, "tenant_hostname.verified", nil, map[string]any{
-					"hostname":   h.Hostname,
-					"surface_id": h.SurfaceID,
-				})
-			}
-			log.Info("tenant hostname verified", "hostname", h.Hostname, "surface", h.SurfaceID)
+			continue
 		}
+		if !verifierOK {
+			log.Warn("dns_poller: challenge-bound tenant hostname verification unavailable", "hostname", h.Hostname)
+			continue
+		}
+		matched, err := verifier.MarkTenantHostnameVerifiedIfChallenge(ctx, h.Hostname, h.ChallengeToken)
+		if err != nil {
+			log.Warn("dns_poller: mark tenant hostname verified failed", "hostname", h.Hostname, "err", err)
+			continue
+		}
+		if !matched {
+			// Deleted and added again while DNS was in flight: the proof
+			// belongs to the old row's token, never the replacement's.
+			log.Info("dns_poller: stale tenant hostname challenge ignored", "hostname", h.Hostname)
+			continue
+		}
+		// tenant_surface_changed fires on the tenant_hostnames
+		// UPDATE (the trigger at migrations/00243 fires on
+		// every relevant column change including verified_at).
+		// The gatewayd cert-remint subscriber picks it up and
+		// asks the issuer for a fresh SAN-aggregated cert.
+		//
+		// Audit row: tenant_hostname.verified is the third
+		// event of the surface lifecycle (added / removed /
+		// verified). The data carries the surface_id so the
+		// dashboard "verified at" timeline keys off it.
+		if s.audit != nil {
+			s.audit.Emit(ctx, "tenant_hostname.verified", nil, map[string]any{
+				"hostname":   h.Hostname,
+				"surface_id": h.SurfaceID,
+			})
+		}
+		log.Info("tenant hostname verified", "hostname", h.Hostname, "surface", h.SurfaceID)
 	}
 }
+
+// tenantHostnameTXTPending is the last_error a pending tenant hostname shows
+// until its challenge TXT record resolves.
+const tenantHostnameTXTPending = "the _faas-verify TXT record is missing or does not match the challenge token"
 
 // pendingUnverifiedHostnames (ADR-100 / issue #879) returns the
 // batch of unverified tenant hostnames due for a TXT poll. The

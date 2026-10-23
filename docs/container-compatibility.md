@@ -44,8 +44,10 @@ guaranteeing that amount of free scratch space; see [ADR-158](adr/158-ephemeral-
 While an image is assembled, its layers may write at most twice the plan's
 ephemeral disk allowance in file content (`LayerExtractionBudgetMultiple`).
 Content that a later layer replaces or deletes still counts toward this
-budget. An image that exceeds it fails with `app_layer_too_large` before
-assembly finishes. A registry blob download may wait up to 60 seconds for
+budget. The layers may also apply at most 2,000,000 entries in total (files,
+directories, links and whiteouts, `LayerExtractionMaxEntries`), twice the
+1,000,000 entries the runtime scan accepts. An image that exceeds either
+limit fails with `app_layer_too_large` before assembly finishes. A registry blob download may wait up to 60 seconds for
 headers or for its next bytes, and may take up to 30 minutes in total.
 
 Direct OCI images use TCP listener readiness by default; Gregale does not

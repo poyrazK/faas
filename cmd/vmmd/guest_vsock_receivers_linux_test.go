@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -140,3 +141,42 @@ type receiverTestError struct {
 }
 
 func (e *receiverTestError) Error() string { return e.kind + ": " + e.err.Error() }
+
+type recordingSidecarEmitter struct {
+	initExits, restarts, health []string
+}
+
+func (e *recordingSidecarEmitter) EmitSidecarInitExit(_ context.Context, _, _, _, _ string, wire sidecarInitExitWire) {
+	e.initExits = append(e.initExits, wire.Sidecar)
+}
+
+func (e *recordingSidecarEmitter) EmitSidecarRestart(_ context.Context, _, _, _ string, wire sidecarRestartWire) {
+	e.restarts = append(e.restarts, wire.Sidecar)
+}
+
+func (e *recordingSidecarEmitter) EmitSidecarHealth(_ context.Context, _, _, _ string, wire sidecarHealthWire) {
+	e.health = append(e.health, wire.Sidecar)
+}
+
+// Sidecar names on the guest event stream become Prometheus label values in
+// root vmmd (vmmd_sidecar_restart_total and the health transition counter).
+// A frame naming a sidecar the instance was not booted with is dropped, so a
+// guest cannot mint unbounded series.
+// adr: 069
+func TestGuestEventStreamDropsUndeclaredSidecars(t *testing.T) {
+	mgr := fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)), nil).
+		RegisterInstanceForTest("instance-1", "deployment-1", "app-1", "account-1").
+		SetInstanceSidecarsForTest("instance-1", "worker", "migrate")
+	emitter := &recordingSidecarEmitter{}
+	receiver := &FrameworkReadyReceiver{ctx: context.Background(), log: slog.New(slog.NewTextHandler(io.Discard, nil)), mgr: mgr, emitter: emitter}
+	for _, name := range []string{"worker", "attacker-1", "main", ""} {
+		receiver.dispatchSidecarRestart("instance-1", sidecarRestartWire{Sidecar: name, Attempt: 1})
+		receiver.dispatchSidecarHealth("instance-1", sidecarHealthWire{Sidecar: name, Status: sidecarHealthHealthy})
+	}
+	for _, name := range []string{"migrate", "attacker-2"} {
+		receiver.dispatchSidecarInitExit("instance-1", sidecarInitExitWire{Sidecar: name, Status: sidecarStatusInitOK})
+	}
+	if !slices.Equal(emitter.restarts, []string{"worker"}) || !slices.Equal(emitter.health, []string{"worker"}) || !slices.Equal(emitter.initExits, []string{"migrate"}) {
+		t.Fatalf("emitted restarts=%q health=%q init=%q; want only declared sidecars", emitter.restarts, emitter.health, emitter.initExits)
+	}
+}

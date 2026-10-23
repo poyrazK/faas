@@ -2111,6 +2111,11 @@ const (
 	// developer delta reconstruction so the optimization cannot accept an
 	// archive the canonical deployment path would reject.
 	SourceArchiveMaxEntries = 10_000
+	// SourceArchiveMaxExpandedBytes caps the summed declared size of a source
+	// archive's entries. The compressed upload cap alone admits a highly
+	// compressed archive that apid would inflate, at full CPU, on every pass
+	// over it (ADR-20261020160500).
+	SourceArchiveMaxExpandedBytes int64 = 2 << 30
 	// DevSourceMetadataMaxBytes bounds base/target revision and deletion-list
 	// fields around the plan-capped source payload.
 	DevSourceMetadataMaxBytes int64 = 4 << 20
@@ -3476,6 +3481,13 @@ type Limits struct {
 	// 0 with TenantSurfacesAllowed=false (Free); non-zero with
 	// TenantSurfacesAllowed=true (Hobby/Pro/Scale).
 	TenantHostnamesPerSurface int
+	// TenantHostnamesPendingPerSurface caps how many unverified hostnames
+	// one surface may hold. A pending hostname reserves its name globally
+	// and has no verification deadline, so without this cap one surface
+	// could reserve any number of names (ADR-20261020090500). Per-plan:
+	// Free 0, Hobby 10, Pro 50, Scale 250, matching the verified cap. Read
+	// it through PendingTenantHostnamesPerSurface.
+	TenantHostnamesPendingPerSurface int
 	// TenantSurfacesAllowed toggles the `tenant_surfaces` feature
 	// (ADR-099 / issue #879) on the plan. Free stays off — the
 	// legacy `custom_domains` path (one FQDN, one cert) carries the
@@ -4135,6 +4147,15 @@ func (l Limits) EphemeralDiskMaxBytes() int64 {
 // replaces or deletes.
 const LayerExtractionBudgetMultiple = 2
 
+// LayerExtractionMaxEntries bounds the tar entries one image build may apply
+// across all of its layers. The byte budget counts only file content, so a
+// small compressed layer of empty files, directories or links could otherwise
+// create millions of inodes on the node's image staging filesystem. A
+// finished filesystem with more than ApplicationStandardRuntimeScanMaxEntries
+// entries cannot be scanned and admitted anyway; the multiple leaves the same
+// room for replaced and deleted entries as the byte budget.
+const LayerExtractionMaxEntries = ApplicationStandardRuntimeScanMaxEntries * LayerExtractionBudgetMultiple
+
 // LayerExtractionBudgetBytes is the extraction budget for one image build.
 // Zero means the limits value is unset; callers fail closed.
 func (l Limits) LayerExtractionBudgetBytes() int64 {
@@ -4397,10 +4418,11 @@ var planLimits = map[Plan]Limits{
 		// the legacy `custom_domains` path. apid's createTenantSurface
 		// handler rejects 402 CodeTenantSurfaceQuotaReached before
 		// the store is touched.
-		TenantSurfacesPerAccount:  0,
-		TenantHostnamesPerSurface: 0,
-		TenantSurfacesAllowed:     false,
-		WildcardDomainsAllowed:    false,
+		TenantSurfacesPerAccount:         0,
+		TenantHostnamesPerSurface:        0,
+		TenantHostnamesPendingPerSurface: 0,
+		TenantSurfacesAllowed:            false,
+		WildcardDomainsAllowed:           false,
 		// Data-placement hints (ADR-098 §D5): Free is gated off —
 		// the handler returns 402 CodePlanLimitDataUpstreams before
 		// any regex match. The 0 here is a defence-in-depth value
@@ -4817,10 +4839,11 @@ var planLimits = map[Plan]Limits{
 		// entry paid tier — 1 surface with up to 10 verified
 		// hostnames. The "single SaaS customer, a handful of
 		// end-customer subdomains" use case is the hobby use case.
-		TenantSurfacesPerAccount:  1,
-		TenantHostnamesPerSurface: 10,
-		TenantSurfacesAllowed:     true,
-		WildcardDomainsAllowed:    false,
+		TenantSurfacesPerAccount:         1,
+		TenantHostnamesPerSurface:        10,
+		TenantHostnamesPendingPerSurface: 10,
+		TenantSurfacesAllowed:            true,
+		WildcardDomainsAllowed:           false,
 		// Data-placement hints (ADR-098 §D5): Hobby unlocks the
 		// capture path with a 3-hint cap per app.
 		DataPlacementHintsPerApp: 3,
@@ -5231,10 +5254,11 @@ var planLimits = map[Plan]Limits{
 		// tier. Each surface still binds to one app, so 5 surfaces
 		// means 5 distinct customer-facing apps behind the same
 		// account (the multi-app variant is the deferred footgun).
-		TenantSurfacesPerAccount:  5,
-		TenantHostnamesPerSurface: 50,
-		TenantSurfacesAllowed:     true,
-		WildcardDomainsAllowed:    true,
+		TenantSurfacesPerAccount:         5,
+		TenantHostnamesPerSurface:        50,
+		TenantHostnamesPendingPerSurface: 50,
+		TenantSurfacesAllowed:            true,
+		WildcardDomainsAllowed:           true,
 		// Data-placement hints (ADR-098 §D5): Pro unlocks the
 		// capture path with a 10-hint cap per app.
 		DataPlacementHintsPerApp: 10,
@@ -5640,10 +5664,11 @@ var planLimits = map[Plan]Limits{
 		// 100-SAN-per-cert limit (`per_host_san` falls back to
 		// `per_host` above ~100 — surfaced via the cert engine, not
 		// quota).
-		TenantSurfacesPerAccount:  25,
-		TenantHostnamesPerSurface: 250,
-		TenantSurfacesAllowed:     true,
-		WildcardDomainsAllowed:    true,
+		TenantSurfacesPerAccount:         25,
+		TenantHostnamesPerSurface:        250,
+		TenantHostnamesPendingPerSurface: 250,
+		TenantSurfacesAllowed:            true,
+		WildcardDomainsAllowed:           true,
 		// Data-placement hints (ADR-098 §D5): Scale unlocks the
 		// capture path with a 50-hint cap per app — large enough
 		// for a multi-DB SaaS (primary + replicas + read-only +
@@ -14375,3 +14400,13 @@ const (
 	DataRepairPurgeTimeoutSeconds      = 10
 	DataRepairPurgeLockTimeoutMS       = 2000
 )
+
+// PendingTenantHostnamesPerSurface is the unverified-hostname cap for one
+// surface. A Limits value built without the field (zero) falls back to the
+// verified cap rather than refusing every pending hostname.
+func (l Limits) PendingTenantHostnamesPerSurface() int {
+	if l.TenantHostnamesPendingPerSurface > 0 {
+		return l.TenantHostnamesPendingPerSurface
+	}
+	return l.TenantHostnamesPerSurface
+}
