@@ -27,7 +27,7 @@ func TestApplyProjectImportsOptedInComposeEnv(t *testing.T) {
     ports: ["8080:8080"]
     environment:
       LOG_LEVEL: info
-      NODE_ENV: production
+      GREETING: imported-greeting-sentinel
       STRIPE_KEY: plain-but-named-like-a-secret
       BILLING_URL: http://billing:8080
   billing:
@@ -43,7 +43,7 @@ func TestApplyProjectImportsOptedInComposeEnv(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("apply status = %d; body=%s", rec.Code, rec.Body.String())
 		}
-		if strings.Contains(rec.Body.String(), "production") {
+		if strings.Contains(rec.Body.String(), "imported-greeting-sentinel") {
 			t.Fatal("the apply receipt carried an environment value")
 		}
 		var resp struct {
@@ -85,7 +85,7 @@ func TestApplyProjectImportsOptedInComposeEnv(t *testing.T) {
 
 	optedIn := "x-gregale-env-import: true\n" + compose
 	app, values := envOf(t, apply(t, "import-env", optedIn), "api")
-	if want := map[string]string{"LOG_LEVEL": "info", "NODE_ENV": "production"}; !maps.Equal(values, want) {
+	if want := map[string]string{"LOG_LEVEL": "info", "GREETING": "imported-greeting-sentinel"}; !maps.Equal(values, want) {
 		t.Fatalf("imported = %v, want %v", values, want)
 	}
 	if err := (*e.Store()).UpsertAppEnvInScope(context.Background(), (*e.Acct()).ID, app.ID, api.DefaultEnvScope, "LOG_LEVEL", "debug"); err != nil {
