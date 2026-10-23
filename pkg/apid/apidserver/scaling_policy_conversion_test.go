@@ -50,6 +50,7 @@ func TestPolicyRoundTrip_CarriesEveryField(t *testing.T) {
 		MaxQueueWaitMS:          1234,
 		WakeMaxQueueDepth:       31,
 		WakeMaxQueueWaitSeconds: 41,
+		PerInstanceConcurrency:  3,
 		Timezone:                "Europe/Istanbul",
 		Schedules: []api.ScalingSchedule{
 			{Cron: "0 8 * * 1-5", DurationS: 43200, MinInstances: 3},

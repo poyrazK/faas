@@ -39,7 +39,7 @@ export type AppEffectiveLimits = {
    */
   max_instances: number;
   /**
-   * Maximum in-flight requests accepted by one instance. Handler-level concurrency remains the application's responsibility.
+   * Maximum in-flight requests accepted by one instance: the app's scaling_policy.per_instance_concurrency when set, otherwise the plan's concurrency_per_vm.
    */
   concurrency_per_instance: number;
   /**

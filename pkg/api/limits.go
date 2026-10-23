@@ -6348,6 +6348,17 @@ const (
 	ConcurrencyOverflowQueue  = "queue"
 	ConcurrencyOverflowDrop   = "drop"
 
+	// PerInstanceConcurrencyQueueDefaultWait is the warm-queue wait for an
+	// app that declares scaling_policy.per_instance_concurrency and leaves
+	// max_queue_wait_ms at zero (ADR-20261022203523). Such an app is full at
+	// a few requests by its own declaration, so a full instance is its
+	// normal operation, not the saturation the short defaults above are for.
+	// It is the gateway's 30 s request hold (WakeQueueTTLSeconds, spec §4.1)
+	// and never longer; the waiter count stays the plan's warm-queue depth.
+	// The request budget is stamped after the capacity wait, so a request
+	// may wait this long and then still use its whole budget.
+	PerInstanceConcurrencyQueueDefaultWait = WakeQueueTTLSeconds * time.Second
+
 	// MirrorMaxLifetimeSeconds (issue #72 / ADR-125) is the hard
 	// upper bound on how long a single mirror goroutine can run.
 	// The gateway derives a per-request context via
@@ -8357,6 +8368,18 @@ func ConcurrencyQueueDefaultsForPlan(p Plan) (maxDepth int, maxWait time.Duratio
 	}
 }
 
+// ConcurrencyQueueDefaultWaitFor is the warm-queue wait an app gets when its
+// max_queue_wait_ms is zero. An app that declares per_instance_concurrency
+// waits PerInstanceConcurrencyQueueDefaultWait (ADR-20261022203523); every
+// other app keeps the plan's short saturation default.
+func ConcurrencyQueueDefaultWaitFor(p Plan, perInstanceConcurrency int) time.Duration {
+	if perInstanceConcurrency > 0 {
+		return PerInstanceConcurrencyQueueDefaultWait
+	}
+	_, wait, _ := ConcurrencyQueueDefaultsForPlan(p)
+	return wait
+}
+
 // ConcurrencyQueueMaxDepthForPlan is the largest customer-configurable warm
 // saturation backlog. Zero continues to mean "use the plan default".
 func ConcurrencyQueueMaxDepthForPlan(p Plan) int {
@@ -10145,6 +10168,20 @@ func (p Plan) ConcurrencyPerVMBound() int {
 		return 0
 	}
 	return l.ConcurrencyPerVMBound
+}
+
+// PerInstanceConcurrency resolves an app's declared
+// scaling_policy.per_instance_concurrency against the plan's
+// ConcurrencyPerVMBound (ADR-20261022203523). It is the one resolver the
+// gateway's per-VM gate and burst admission, schedd's wake fan-out and
+// in-flight scale-in floor, and apid's effective limits all use. Zero (the
+// default) and any value above the bound, which a plan downgrade can leave
+// behind, resolve to the bound: exactly the pre-ADR behaviour.
+func (l Limits) PerInstanceConcurrency(requested int) int {
+	if requested <= 0 || requested > l.ConcurrencyPerVMBound {
+		return l.ConcurrencyPerVMBound
+	}
+	return requested
 }
 
 // LogDeploymentFilterMax returns the per-plan cap on the

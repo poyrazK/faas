@@ -287,6 +287,18 @@ func OperationSchedulesEnabled(accountID string) bool {
 	return accountListed(os.Getenv("FAAS_OPERATION_SCHEDULES_ACCOUNTS"), accountID)
 }
 
+// PerInstanceConcurrencyEnabled reports whether accountID may set
+// scaling_policy.per_instance_concurrency (ADR-20261022203523). Default off
+// until the owner has tested it on production:
+// FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS is a comma-separated list of account
+// UUIDs, or "*" for every account. Read at every call. The gateway and schedd
+// honour whatever value is stored; apid is the only writer, so the gate is
+// complete at write time.
+func PerInstanceConcurrencyEnabled(accountID string) bool {
+	list := os.Getenv("FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS")
+	return strings.TrimSpace(list) == "*" || accountListed(list, accountID)
+}
+
 func accountListed(list, accountID string) bool {
 	for _, id := range strings.Split(list, ",") {
 		if id = strings.TrimSpace(id); id != "" && id == accountID {
