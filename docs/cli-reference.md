@@ -13504,7 +13504,7 @@ Sampled CPU or heap functions and deployment comparison
 
 ### debug capture
 
-Capture CPU, heap, stack or lock-contention profiles from a running instance now
+Capture CPU, heap, stack or lock profiles from a running instance
 
 `gregale debug capture [--type <KINDS>] [--duration <DURATION>] [--instance <UUID>] [--output <DIR>] [--top <N>] [--no-wait] <slug>`
 
