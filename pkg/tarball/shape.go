@@ -21,6 +21,7 @@ const (
 	ShapeUnsafePath ShapeErrorKind = "unsafe_path"
 	ShapeUnsafeLink ShapeErrorKind = "unsafe_link"
 	ShapeTooMany    ShapeErrorKind = "too_many_entries"
+	ShapeTooLarge   ShapeErrorKind = "expanded_too_large"
 	ShapeEmpty      ShapeErrorKind = "empty"
 )
 
@@ -49,10 +50,14 @@ func (e *ShapeError) Unwrap() error { return e.Err }
 
 // ValidateShape verifies the source archive contract without extracting or
 // executing customer content. It rejects malformed gzip/tar streams, empty
-// archives, path escapes, escaping link targets, and entry-count overflow.
+// archives, path escapes, escaping link targets, entry-count overflow, and
+// entries whose declared sizes sum past maxExpandedBytes (0 disables that
+// cap). The size check runs on each header before its data is read, so a
+// highly compressed archive is refused without being decompressed: every
+// later pass over the archive would otherwise inflate it again.
 //
 //nolint:forbidigo // callers first apply their customer-path ownership/symlink policy; the server passes a private spool file.
-func ValidateShape(path string, maxEntries int) error {
+func ValidateShape(path string, maxEntries int, maxExpandedBytes int64) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return &ShapeError{Kind: ShapeOpen, Detail: err.Error(), Err: err}
@@ -66,6 +71,7 @@ func ValidateShape(path string, maxEntries int) error {
 
 	reader := tar.NewReader(zr)
 	count := 0
+	var expanded int64
 	for {
 		header, nextErr := reader.Next()
 		if errors.Is(nextErr, io.EOF) {
@@ -88,6 +94,12 @@ func ValidateShape(path string, maxEntries int) error {
 		count++
 		if maxEntries > 0 && count > maxEntries {
 			return &ShapeError{Kind: ShapeTooMany, Detail: fmt.Sprintf("too many files (>%d)", maxEntries)}
+		}
+		if header.Size > 0 {
+			expanded += header.Size
+		}
+		if maxExpandedBytes > 0 && (header.Size > maxExpandedBytes || expanded > maxExpandedBytes) {
+			return &ShapeError{Kind: ShapeTooLarge, Detail: fmt.Sprintf("source expands past %d bytes", maxExpandedBytes)}
 		}
 	}
 }

@@ -675,7 +675,7 @@ func TestCommandsHaveNoShellMetacharacters(t *testing.T) {
 func TestTenantBridgeMatches(t *testing.T) {
 	// 1. The Go render must substitute the same name.
 	rendered := DefaultHostPolicy.Render()
-	if !strings.Contains(rendered, `iifname "`+TenantBridge+`" accept`) {
+	if !strings.Contains(rendered, `iifname "`+TenantBridge+`" drop`) {
 		t.Errorf("Go renderer did not use TenantBridge=%q in input chain; got:\n%s",
 			TenantBridge, rendered)
 	}

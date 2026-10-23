@@ -21,7 +21,9 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -123,6 +125,13 @@ func (s *server) createSurfaceUnderQuotas(
 	if !certKind.Valid() {
 		return state.TenantSurface{}, nil, api.ErrTenantSurfaceCertKindInvalid(string(certKind))
 	}
+	for _, h := range req.Hostnames {
+		if hn := strings.ToLower(strings.TrimSpace(h)); hn != "" {
+			if problem := s.tenantHostnameProblem(ctx, hn); problem != nil {
+				return state.TenantSurface{}, nil, problem
+			}
+		}
+	}
 	surf, err := s.store.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{
 		AccountID: acct.ID,
 		AppID:     app.ID,
@@ -138,21 +147,92 @@ func (s *server) createSurfaceUnderQuotas(
 		if hn == "" {
 			continue
 		}
-		created, err := s.store.CreateTenantHostnameIfUnderQuota(ctx, state.CreateTenantHostnameParams{
-			SurfaceID:      surf.ID,
-			Hostname:       hn,
-			ChallengeToken: randomToken(16),
-		}, limits)
+		created, err := s.createTenantHostname(ctx, surf, hn, limits)
 		if err != nil {
 			// Best-effort cleanup: roll back the surface so the
 			// caller doesn't see a half-created row. Soft-delete
-			// is the same path PR-A's Txn-aware caller uses.
+			// is the same path PR-A's Txn-aware caller uses. The
+			// hostnames added so far go too: on a deleted surface
+			// they would keep their names reserved with no API
+			// left to remove them.
+			for _, added := range hostnames {
+				_ = s.store.DeleteTenantHostname(ctx, added.Hostname)
+			}
 			_ = s.store.DeleteTenantSurface(ctx, surf.ID)
 			return state.TenantSurface{}, nil, hostnameCreateProblem(err, acct.Plan, surf.ID)
 		}
 		hostnames = append(hostnames, created)
 	}
 	return surf, hostnames, nil
+}
+
+// createTenantHostname attaches hostname to surf. A name another account
+// holds unverified moves to surf once surf's account has published its
+// takeover token at _faas-verify.<hostname>; until then the conflict is a
+// *claimPendingError naming that record (ADR-20261020090500).
+func (s *server) createTenantHostname(ctx context.Context, surf state.TenantSurface, hostname string, limits api.Limits) (state.TenantHostname, error) {
+	in := state.CreateTenantHostnameParams{SurfaceID: surf.ID, Hostname: hostname, ChallengeToken: randomToken(16)}
+	h, err := s.store.CreateTenantHostnameIfUnderQuota(ctx, in, limits)
+	if !errors.Is(err, state.ErrConflict) {
+		return h, err
+	}
+	takeover, ok := s.store.(state.TenantHostnameClaimTakeover)
+	if !ok {
+		return h, err
+	}
+	holderAccount := ""
+	holder, herr := s.store.GetTenantHostnameByName(ctx, hostname)
+	switch {
+	case errors.Is(herr, state.ErrNotFound):
+		// The lookup hides rows on deleted surfaces. Such a row routes
+		// nothing, and the store releases it on proof whoever held it.
+	case herr != nil || holder.Verified():
+		return h, err
+	default:
+		holderSurface, serr := s.store.GetTenantSurfaceByID(ctx, holder.SurfaceID)
+		if serr != nil || holderSurface.AccountID == surf.AccountID {
+			return h, err
+		}
+		holderAccount = holderSurface.AccountID
+	}
+	token := state.ClaimTakeoverToken(state.ClaimKindTenantHostname, surf.AccountID, hostname)
+	if !checkTXT(ctx, hostname, token) {
+		return state.TenantHostname{}, &claimPendingError{name: hostname, record: state.CustomDomainChallengeName(hostname), token: token}
+	}
+	in.ChallengeToken = token
+	if h, err = takeover.TakeOverTenantHostnameClaim(ctx, in, limits); err != nil {
+		return h, err
+	}
+	s.audit.Emit(ctx, "tenant_hostname.claim_taken_over", &surf.AccountID, map[string]any{"hostname": h.Hostname, "surface_id": surf.ID})
+	if holderAccount != "" {
+		s.audit.Emit(ctx, "tenant_hostname.claim_released", &holderAccount, map[string]any{
+			"hostname": h.Hostname, "surface_id": holder.SurfaceID, "reason": "dns_proof_by_another_account",
+		})
+	}
+	return h, nil
+}
+
+// tenantHostnameProblem refuses a hostname that cannot be a tenant hostname:
+// not a lowercase DNS name of at least two labels, or below a wildcard custom
+// domain (ADR-167). Both creation paths, a surface with hostnames and an added
+// hostname, check it; the surface path used to skip both checks.
+func (s *server) tenantHostnameProblem(ctx context.Context, hostname string) *api.Problem {
+	if !state.ValidPlatformTenantHostname(hostname) {
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid hostname",
+			fmt.Sprintf("%q is not a DNS hostname of at least two labels", hostname))
+	}
+	ws, ok := s.store.(state.CustomDomainWildcardStore)
+	if !ok {
+		return nil
+	}
+	wildcard, err := ws.WildcardDomainForHost(ctx, hostname)
+	if err == nil {
+		return api.ErrWildcardDomainTenantSurfaceOverlap(wildcard.Domain, hostname)
+	}
+	if !errors.Is(err, state.ErrNotFound) {
+		return api.ErrCapacity("could not check wildcard-domain overlap")
+	}
+	return nil
 }
 
 // surfaceCreateProblem maps a CreateTenantSurfaceIfUnderQuota
@@ -183,9 +263,16 @@ func surfaceCreateProblem(err error, plan api.Plan) *api.Problem {
 // from the per-surface quota trip.
 func hostnameCreateProblem(err error, plan api.Plan, surfaceID string) *api.Problem {
 	var qe *state.TenantHostnameQuotaError
+	var pending *claimPendingError
 	switch {
+	case errors.As(err, &qe) && qe.Pending:
+		return api.ErrTenantHostnamePendingQuota(plan, surfaceID, qe.Limit, qe.Observed)
 	case errors.As(err, &qe):
 		return api.ErrTenantHostnameQuota(plan, surfaceID, qe.Limit, qe.Observed)
+	case errors.As(err, &pending):
+		problem := api.NewProblem(http.StatusConflict, api.CodeTenantHostnameAlreadyClaimed, "Hostname claimed", pending.Error())
+		problem.Hint = pending.hint()
+		return problem
 	case errors.Is(err, state.ErrConflict):
 		return api.NewProblem(http.StatusConflict, api.CodeTenantHostnameAlreadyClaimed,
 			"Hostname claimed", "this hostname is already attached to another surface")
@@ -358,20 +445,11 @@ func (s *server) addTenantHostname(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("unknown plan"))
 		return
 	}
-	if ws, ok := s.store.(state.CustomDomainWildcardStore); ok {
-		if wildcard, werr := ws.WildcardDomainForHost(r.Context(), hostname); werr == nil {
-			api.WriteProblem(w, api.ErrWildcardDomainTenantSurfaceOverlap(wildcard.Domain, hostname))
-			return
-		} else if !errors.Is(werr, state.ErrNotFound) {
-			api.WriteProblem(w, api.ErrCapacity("could not check wildcard-domain overlap"))
-			return
-		}
+	if problem := s.tenantHostnameProblem(r.Context(), hostname); problem != nil {
+		api.WriteProblem(w, problem)
+		return
 	}
-	h, err := s.store.CreateTenantHostnameIfUnderQuota(r.Context(), state.CreateTenantHostnameParams{
-		SurfaceID:      surf.ID,
-		Hostname:       hostname,
-		ChallengeToken: randomToken(16),
-	}, limits)
+	h, err := s.createTenantHostname(r.Context(), surf, hostname, limits)
 	if err != nil {
 		api.WriteProblem(w, hostnameCreateProblem(err, acct.Plan, surf.ID))
 		return

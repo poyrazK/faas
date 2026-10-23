@@ -31,7 +31,7 @@ permissions so an agent can follow its work. Existing `apps:read` keys retain
 Runs read access, and existing `deploy:write` keys retain submit/cancel access.
 Both scopes remain account-wide; they do not bind a key to an individual run.
 
-Interactive users can enable MFA from the account settings page. A `401` means the session or token is missing/expired; a `403` means the identity is valid but lacks the required project or organization scope. Rotate a compromised token immediately and review the audit log.
+Interactive users can enable MFA from the account settings page. Each authenticator code works once: a code that already verified a session is refused if it is sent again, so wait for the next code. A `401` means the session or token is missing/expired; a `403` means the identity is valid but lacks the required project or organization scope. Rotate a compromised token immediately and review the audit log.
 
 For shared applications, the current organization role and the credential's
 scope both apply. Use an organization-bound key to work on a teammate's app;
