@@ -312,6 +312,9 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 			LayerKey:   drive1Path,                 // absolute host path; vmmd treats as direct path (abs path bypass)
 			VcpuCount:  api.BuildVMVCPU,
 			MemSizeMib: int32(api.BuildVMRAMMB),
+			// ADR-20261022185329: vmmd opens build secrets into this VM's
+			// /etc/faas/secrets.env, as it does for an app VM's secrets.
+			SealedEnv: sealedBuildSecretsToProto(req.BuildSecrets),
 		},
 		Build: &vmmdpb.BuildSpec{
 			ExportDir:  buildExportDir,

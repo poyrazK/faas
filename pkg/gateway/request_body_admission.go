@@ -77,10 +77,10 @@ func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64,
 	controller := http.NewResponseController(w)
 	defer func() { _ = controller.SetReadDeadline(time.Time{}) }()
 
+	// memory grows with the bytes received. Reserving the declared length up
+	// front let a client that stalls after its headers pin the buffer for the
+	// whole upload allowance.
 	var memory bytes.Buffer
-	if r.ContentLength > 0 && r.ContentLength <= requestBodyMemoryThreshold {
-		memory.Grow(int(r.ContentLength))
-	}
 	var spool *os.File
 	cleanupSpool := func() {
 		if spool != nil {

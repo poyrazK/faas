@@ -2715,9 +2715,7 @@ func (m *Manager) MarkInstanceTailTerminal(ctx context.Context, instance string,
 	// a 1 ms task is 1 second, a 1000 ms task is 1 second, a
 	// 1001 ms task is 2 seconds. tail_seconds is informational
 	// only; an over-count is safe (it does not enter billing).
-	if elapsedMs > 0 {
-		inst.tailSecondsAccum += (elapsedMs + 999) / 1000
-	}
+	inst.tailSecondsAccum = addTailSeconds(inst.tailSecondsAccum, elapsedMs, inst.Plan)
 	appID = inst.AppID
 	m.mu.Unlock()
 	// Mirror to SQL so schedd's reaper (PR 4) sees the same
@@ -2735,6 +2733,29 @@ func (m *Manager) MarkInstanceTailTerminal(ctx context.Context, instance string,
 	}
 	_ = outcome
 	return true, appID, nil
+}
+
+// maxTailSecondsPerTick caps one instance's tail seconds between two sampler
+// reads. usage_daily sums usage_minutes.tail_seconds into a bigint in one
+// statement for the whole fleet, so an unbounded value from one guest would
+// fail every account's rollup.
+const maxTailSecondsPerTick int64 = 1<<31 - 1
+
+// addTailSeconds adds one waitUntil task's duration, rounded up to whole
+// seconds, to accum. elapsedMs comes from the guest. The runner cancels a
+// task at the plan's TailTimeoutSeconds, so a longer report is clamped to that
+// ceiling plus one second of grace, and the sum saturates at
+// maxTailSecondsPerTick.
+func addTailSeconds(accum, elapsedMs int64, plan api.Plan) int64 {
+	if elapsedMs <= 0 {
+		return accum
+	}
+	ceilingMs := int64(plan.TailTimeoutSeconds()+1) * 1000
+	seconds := (min(elapsedMs, ceilingMs) + 999) / 1000
+	if accum >= maxTailSecondsPerTick-seconds {
+		return maxTailSecondsPerTick
+	}
+	return accum + seconds
 }
 
 // ReadAndResetTailSeconds (issue #667 / ADR-078) atomically
@@ -3051,6 +3072,27 @@ func (m *Manager) InstanceDeploymentIDAndAppID(instance string) (deploymentID, a
 	inst, ok := m.live[instance]
 	if !ok {
 		return "", "", fmt.Errorf("fcvm: InstanceDeploymentIDAndAppID %s: not live", instance)
+	}
+	return inst.DeploymentID, inst.AppID, nil
+}
+
+// ErrUndeclaredSidecar reports a guest sidecar event that names a workload the
+// instance was not booted with.
+var ErrUndeclaredSidecar = errors.New("fcvm: sidecar not declared for instance")
+
+// InstanceSidecarOwner returns the deployment and app of a live instance that
+// runs the named sidecar. Sidecar names in guest lifecycle frames are
+// guest-controlled and become metric labels and event fields, so vmmd accepts
+// only the sidecars the instance was booted with.
+func (m *Manager) InstanceSidecarOwner(instance, sidecar string) (deploymentID, appID string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok {
+		return "", "", fmt.Errorf("fcvm: InstanceSidecarOwner %s: not live", instance)
+	}
+	if sidecar == "" || sidecar == WorkloadNameMain || !hasWorkloadName(inst.WorkloadNames, sidecar) {
+		return "", "", fmt.Errorf("%w: instance %s", ErrUndeclaredSidecar, instance)
 	}
 	return inst.DeploymentID, inst.AppID, nil
 }
@@ -3689,6 +3731,11 @@ type WakeRequest struct {
 	// on the workload's private side-link.
 	PrivateNetworkID      string
 	PrivateNetworkAddress string
+	// Quarantine (ADR-732) wakes a production fork: the netns renders the
+	// quarantine base chains, and wake drops every connectivity input
+	// (allowlist, private network, static egress IP, operator bundle) so
+	// no other path can add reachability.
+	Quarantine bool
 	// StaticEgressIP (ADR-119) is the customer-supplied IPv4
 	// (BYOIP, Scale-only) the host MASQUERADE-sibling rule
 	// rewrites tenant source traffic to. Empty string = no
@@ -3897,6 +3944,9 @@ type ColdBootRequest struct {
 	PrivateNetworkAddress       string
 	PrivateNetworkAllowedCIDRs  []string
 	PrivateNetworkFirewallRules []api.PrivateNetworkFirewallRule
+	// Quarantine (ADR-732) — same as WakeRequest. A fork whose capture is
+	// unusable cold-boots; it must stay quarantined.
+	Quarantine bool
 	// Port (issue #460 / ADR-053, PR-C) — the per-deployment override
 	// port forwarded verbatim to WakeRequest.Port. Production wiring
 	// uses WakeRequest directly via the vmmdgrpc adapters
@@ -3972,6 +4022,7 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		PrivateNetworkCIDRs:         req.PrivateNetworkCIDRs,
 		PrivateNetworkAllowedCIDRs:  req.PrivateNetworkAllowedCIDRs,
 		PrivateNetworkFirewallRules: req.PrivateNetworkFirewallRules,
+		Quarantine:                  req.Quarantine,
 		PrivateNetworkID:            req.PrivateNetworkID,
 		PrivateNetworkAddress:       req.PrivateNetworkAddress,
 		Plan:                        req.Plan,
@@ -4351,6 +4402,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		}
 		qualificationOnly = true
 	}
+	req = quarantineWakeRequest(req)
 	if m.nativeVMM() != nil && !req.Plan.Valid() {
 		return nil, fmt.Errorf("wake %s: invalid plan %q", req.Instance, req.Plan)
 	}
@@ -4479,6 +4531,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.Plan = req.Plan
 	lease.AccountID = req.AccountID
 	lease.Networkless = req.ExecutionOnly
+	lease.Quarantine = req.Quarantine && !req.ExecutionOnly
 	lease.IsBuilder = req.ExportDir != ""
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
 	if lease.IsBuilder && lease.BuildTimeoutSec <= 0 {
@@ -4535,6 +4588,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	nc.TapUID = lease.UID
 	nc.EgressMbit = req.EgressMbit
 	nc.GuestAppPort = req.Port
+	// ADR-732: set before anything compares or renders nc, so a prepared
+	// non-quarantined namespace is never reused for a fork.
+	nc.Quarantine = req.Quarantine && !req.ExecutionOnly
 	if req.PrivateNetworkID != "" && req.PrivateNetworkAddress != "" && !req.ExecutionOnly {
 		if req.AccountID == "" {
 			return nil, fmt.Errorf("wake %s: private network: account_id is required for Gregale fabric attachment", req.Instance)
@@ -4766,7 +4822,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// merge dedups across per-app + operator (an entry that's
 	// already in the per-app set doesn't get a duplicate row
 	// in the rendered anonymous daddr-set).
-	if !qualificationOnly {
+	// ADR-732: a fork gets no operator exceptions either. The quarantine
+	// chains would drop them anyway; rendering none keeps the ruleset
+	// honest about what the fork can reach.
+	if !qualificationOnly && !req.Quarantine {
 		nc.EgressAllowlist = m.mergeOperatorBundle(nc.EgressAllowlist)
 	}
 
@@ -5330,6 +5389,14 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	if scanErr != nil {
 		return WakeColdBoot, scanErr
 	}
+	// ADR-733: a sealed crash capture restores or fails. Cold booting would
+	// hand the caller a fresh instance that is not the capture.
+	sealed := req.Snapshot != nil && len(req.Snapshot.SealedKey) > 0
+	if sealed {
+		if err := m.openSealedSnapshot(req.Snapshot); err != nil {
+			return WakeRestore, fmt.Errorf("sealed crash capture: %w", err)
+		}
+	}
 	restorable := (len(req.ArtifactSources) == 0 || req.SnapshotRestore != nil) && PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req)
 	// A paused wake is a restore contract, not an ordinary wake preference.
 	// If the snapshot is stale, version-mismatched, incomplete, or has a
@@ -5346,6 +5413,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// VM process starts, so there is nothing to kill; the wake cold-boots
 		// and schedd marks the snapshot stale.
 		if refusal := m.verifySnapshotBacking(ctx, req.Snapshot, req.BaseKey); refusal != nil {
+			if sealed {
+				return WakeRestore, fmt.Errorf("sealed crash capture: %w", refusal)
+			}
 			if req.KeepPaused || req.functionMigrationDestination != nil {
 				return WakeRestore, fmt.Errorf("warm-pool paused restore: %w", refusal)
 			}
@@ -5361,6 +5431,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			restorable = false
 		}
 	}
+	if sealed && !restorable {
+		return WakeRestore, fmt.Errorf("sealed crash capture %s is not restorable on this node (fc_version %s)", req.Snapshot.CaptureID, m.fcVersion)
+	}
 	if restorable {
 		rs := RestoreSpec{
 			VMStatePath: req.Snapshot.VMStatePath,
@@ -5374,6 +5447,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// the VMM falls back to RestoreSpec.VMStatePath above,
 			// preserving the legacy host-path branch.
 			VMStateStorageKey: req.Snapshot.VMStateStorageKey,
+			Storage:           req.Snapshot.Storage,
 			Tap:               nc.Tap,
 			// The restored VM re-reads kernel + drives under the chroot
 			// basenames; Park→Kill erased the previous chroot, so hand the
@@ -5431,6 +5505,10 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			m.rememberInstanceBacking(req.Instance, req.BaseKey)
 			return WakeRestore, nil
 		} else {
+			if sealed {
+				// ADR-733: a cold-booted instance would not be the capture.
+				return WakeRestore, fmt.Errorf("sealed crash capture restore: %w", rErr)
+			}
 			if req.KeepPaused || req.functionMigrationDestination != nil {
 				// A paused warm-pool entry must never silently turn into a
 				// running cold boot. The scheduler can retry reconciliation;
@@ -5882,7 +5960,12 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 		return SnapshotInfo{}, err
 	}
 	if spec.nativeRuntime == nil {
-		m.writeSnapshotBacking(ctx, instance, spec.StorageKey)
+		// The native producer already published the backing object exclusively.
+		store := m.storage
+		if spec.Storage != nil {
+			store = spec.Storage
+		}
+		m.writeSnapshotBackingTo(ctx, store, instance, spec.StorageKey)
 	}
 	m.log.Info("warm_snapshot", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
@@ -6320,6 +6403,26 @@ func (m *Manager) LastLivenessDestroyAtForDeployment(deploymentID string) time.T
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.cooldownByDeployment[deploymentID]
+}
+
+// SetInstanceSidecarsForTest is a test-only seam that records the sidecars a
+// RegisterInstanceForTest instance was booted with, so the cmd/vmmd guest
+// event receiver tests can exercise InstanceSidecarOwner. Production code
+// MUST NOT call this; Wake sets the names from the boot request.
+func (m *Manager) SetInstanceSidecarsForTest(instanceID string, sidecars ...string) *Manager {
+	if m == nil {
+		return m
+	}
+	specs := make([]WorkloadSpec, 0, len(sidecars))
+	for _, name := range sidecars {
+		specs = append(specs, WorkloadSpec{Name: name})
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst := m.live[instanceID]; inst != nil {
+		inst.WorkloadNames = workloadNamesFor(specs)
+	}
+	return m
 }
 
 // RegisterInstanceForTest is a test-only seam that injects an

@@ -310,3 +310,25 @@ func TestRenderWakeTimelinePage_PostRPCBreakdown(t *testing.T) {
 		t.Fatalf("default output shows implementation phases:\n%s", buf.String())
 	}
 }
+
+// Production-us rc.290: schedd's coordination before the vmmd RPC (~157 ms
+// per restore) had no breakdown. --verbose shows its steps; the default view
+// stays unchanged.
+func TestRenderWakeTimelinePage_PreRPCBreakdown(t *testing.T) {
+	resp := api.WakeTimelineResponse{WakeID: "wake-1", AppID: "app-1", Events: []api.WakeTimelineEvent{{
+		Kind: "wake.boot_started", Actor: "schedd", Data: map[string]any{
+			"pre_rpc_before_admission_ms": float64(12), "pre_rpc_lock_wait_ms": float64(0),
+			"pre_rpc_reads_ms": float64(31), "pre_rpc_admit_ms": float64(44), "pre_rpc_post_admit_ms": float64(18),
+		},
+	}}}
+	var buf bytes.Buffer
+	main.RenderWakeTimelinePageWithOptions(&buf, resp, true)
+	if want := "pre-rpc before_admission=12ms lock_wait=0ms reads=31ms admit=44ms post_admit=18ms"; !strings.Contains(buf.String(), want) {
+		t.Fatalf("verbose output missing %q:\n%s", want, buf.String())
+	}
+	buf.Reset()
+	main.RenderWakeTimelinePage(&buf, resp)
+	if strings.Contains(buf.String(), "pre-rpc") {
+		t.Fatalf("default output shows implementation phases:\n%s", buf.String())
+	}
+}

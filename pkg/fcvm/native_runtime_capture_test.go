@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 const runtimeCaptureBootID = "d3124d9a-657b-4f37-a9df-f5dfb2e50764"
@@ -255,7 +256,12 @@ func TestManagerRequestsNativeRuntimeCaptureOnlyForOrdinaryCaptures(t *testing.T
 	}
 	admitted := SnapshotSpec{admittedParent: runtimeadmission.Receipt{Binding: runtimeadmission.Binding{ProtocolVersion: 2}}}
 	migration := SnapshotSpec{functionMigration: &FunctionMigrationBinding{}}
-	for name, spec := range map[string]SnapshotSpec{"admitted": admitted, "migration": migration} {
+	sealedStore, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed := SnapshotSpec{Storage: sealedStore}
+	for name, spec := range map[string]SnapshotSpec{"admitted": admitted, "migration": migration, "sealed": sealed} {
 		if req := m.nativeRuntimeCapture(inst, spec); req != nil {
 			t.Fatalf("%s capture requested native runtime capture: %+v", name, req)
 		}

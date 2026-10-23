@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Compose build secrets for Dockerfile builds](20261022185329-compose-build-secrets.md)
 - [Native runtime snapshot capture for park and warm](20261022184951-native-runtime-snapshot-capture.md)
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
 - [Compose process overrides on source-built services](20261022160000-compose-process-on-built-services.md)
@@ -24,6 +25,9 @@
 - [ADR-20261020090000: Rehearsal event capture](20261020090000-rehearsal-event-capture.md)
 - [ADR-20261019180000: Rehearsal side effects stay inside the run](20261019180000-rehearsal-side-effects-stay-inside-the-run.md)
 - [ADR-20261019120000: Rehearsal runtime hooks stay off ordinary hot paths](20261019120000-rehearsal-runtime-hot-path-isolation.md)
+- [Source archives are capped by their expanded size](20261020160500-source-archive-expanded-size-cap.md)
+- [Guests reach only the bridge services and the public edge on the host](20261020123000-tenant-bridge-host-input-narrowed.md)
+- [DNS proof takes over another account's pending hostname claim](20261020090500-dns-proof-takes-over-pending-claims.md)
 - [Compose healthchecks on source-built services](20261019195000-compose-healthcheck-on-built-services.md)
 - [Product Control plan fees, included starts and overage](20261021154511-product-control-plan-fees-and-overage.md)
 - [Data API file storage](20261021101510-data-api-file-storage.md)
