@@ -304,6 +304,12 @@ multiple live instances. Store read failures return 503 rather than zero totals.
 
 ### Telemetry health
 
+Every `gregalectl obs` read authenticates with, in order: an explicit
+`--admin-token`, the MFA-completed session from `gregalectl auth login`, then
+`$FAAS_ADMIN_TOKEN`. A logged-in operator therefore reads with MFA even with
+`FAAS_ADMIN_TOKEN` exported; automation without a session keeps using the
+token. `obs incidents --ownership mine` always needs the session.
+
 Run `gregalectl obs health` to inspect each audit counter and the firing-alert
 count independently. A `healthy` zero is observed zero activity. `no_samples`,
 `stale`, and `unavailable` display an unavailable value with a reason rather
