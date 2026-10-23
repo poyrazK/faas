@@ -898,6 +898,20 @@ const (
 	// so the caller must acknowledge them; the problem lists them with
 	// restore points for managed PostgreSQL databases.
 	CodeRollbackCrossesRelease = "rollback_crosses_release"
+	// CodeRollbackTargetDatabaseRestored means a database switch restored
+	// the app's database to before the target's own release command
+	// (ADR-20261023181931). The target cannot run on that database; deploy
+	// it again so its release command runs. It cannot be acknowledged.
+	CodeRollbackTargetDatabaseRestored = "rollback_target_database_restored"
+	// CodeDatabaseSwitchUnavailable means a rollback cannot restore the
+	// database with the code (ADR-20261023181931); the detail says why.
+	CodeDatabaseSwitchUnavailable = "database_switch_unavailable"
+	// CodeDatabaseSwitchInProgress means the app already has an active
+	// database switch.
+	CodeDatabaseSwitchInProgress = "database_switch_in_progress"
+	// CodeDatabaseSwitchNotCancellable means the switch is already switching
+	// the release and its bindings, or has ended.
+	CodeDatabaseSwitchNotCancellable = "database_switch_not_cancellable"
 	// CodeReleaseFrozen means a freeze withholds production releases of the
 	// app (ADR-20261019071733); the problem lists the active freezes.
 	// override_freeze with a reason releases anyway, audited.

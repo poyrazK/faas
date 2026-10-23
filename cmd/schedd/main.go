@@ -671,6 +671,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// vmmd confirms attempt-bound native retirement.
 	startEnvironmentQualificationRecovery(ctx, engine, store, ownerNodeID, log)
 	startManagedPostgresDrainRecovery(ctx, engine, store, ownerNodeID, log)
+	startDatabaseSwitchDrainCapture(ctx, engine, store, store, ownerNodeID, log)
 	// ADR-098 PR-D: connection-aware upstream affinity. The
 	// FAAS_UPSTREAM_AFFINITY environment value is the bootstrap
 	// fallback; the durable data-placement flag can switch the

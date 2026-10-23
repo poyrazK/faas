@@ -50559,6 +50559,51 @@ CREATE TABLE public.release_bundles (
 );
 
 
+
+CREATE TABLE public.release_database_switches (
+ id uuid PRIMARY KEY,
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ scope text NOT NULL CHECK (scope ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'),
+ from_deployment_id uuid REFERENCES deployments(id) ON DELETE SET NULL,
+ target_deployment_id uuid NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+ undone_deployment_ids uuid[] NOT NULL CHECK (cardinality(undone_deployment_ids) BETWEEN 1 AND 64),
+ source_database_id uuid NOT NULL,
+ target_database_id uuid,
+ target_name text NOT NULL CHECK (length(target_name) BETWEEN 1 AND 63),
+ restore_point timestamptz NOT NULL,
+ cutover_id uuid,
+ phase text NOT NULL CHECK (phase IN ('restoring','staging','verifying','fencing','settling','draining',
+   'switching','resuming','aborting','completed','failed','cancelled')),
+ failure_code text NOT NULL DEFAULT '' CHECK (failure_code ~ '^[a-z_]{0,63}$'),
+ failure_detail text NOT NULL DEFAULT '' CHECK (length(failure_detail) <= 500),
+ requested_by text NOT NULL DEFAULT '' CHECK (length(requested_by) <= 200),
+ cancel_requested_at timestamptz,
+ fenced_at timestamptz,
+ drain_requested_at timestamptz,
+ release_switched_at timestamptz,
+ activated_at timestamptz,
+ finished_at timestamptz,
+ phase_started_at timestamptz NOT NULL,
+ drain_retired integer NOT NULL DEFAULT 0 CHECK (drain_retired >= 0),
+ drain_parked integer NOT NULL DEFAULT 0 CHECK (drain_parked >= 0),
+ drain_pending integer NOT NULL DEFAULT 0 CHECK (drain_pending >= 0),
+ drain_blocked integer NOT NULL DEFAULT 0 CHECK (drain_blocked >= 0),
+ attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count BETWEEN 0 AND 1000000),
+ last_error_code text NOT NULL DEFAULT '' CHECK (last_error_code ~ '^[a-z_]{0,63}$'),
+ lease_token text,
+ lease_until timestamptz,
+ retry_at timestamptz NOT NULL,
+ created_at timestamptz NOT NULL,
+ updated_at timestamptz NOT NULL,
+ CHECK ((lease_token IS NULL) = (lease_until IS NULL)),
+ CHECK ((phase IN ('completed','failed','cancelled')) = (finished_at IS NOT NULL)),
+ CHECK (phase NOT IN ('failed','aborting') OR failure_code <> ''),
+ CHECK (activated_at IS NULL OR phase IN ('switching','resuming','completed')),
+ CHECK (phase <> 'completed' OR (activated_at IS NOT NULL AND release_switched_at IS NOT NULL
+   AND target_database_id IS NOT NULL AND cutover_id IS NOT NULL))
+);
+
 --
 -- Name: release_freezes; Type: TABLE; Schema: public; Owner: -
 --
