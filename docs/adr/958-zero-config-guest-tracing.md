@@ -76,8 +76,8 @@ SDK default; the debugger keys spans by trace, not service name.
 Runner images for Node 22/24 and Python 3.12/3.13 contain pinned OTel SDKs and
 auto-instrumentation under `/opt/gregale/tracing`, installed from lockfiles
 like the ADR-819 profiling collectors (Node: `@opentelemetry/sdk-node`
-0.222.0 with `auto-instrumentations-node` 0.80.0; Python: SDK 1.44.0 with
-0.65b0 instrumentations for WSGI/ASGI frameworks, PostgreSQL drivers,
+0.222.0 with `auto-instrumentations-node` 0.80.0; Python: SDK 1.45.1 with
+0.66b1 instrumentations for WSGI/ASGI frameworks, PostgreSQL drivers,
 SQLAlchemy, Redis, MongoDB and HTTP clients). Instrumentation loads before the
 init snapshot, so restored instances pay no startup cost; only cold boots do.
 Custom images, Dockerfile builds and Go apps still benefit from §2: any OTel
