@@ -1585,6 +1585,7 @@ func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string)
 
 // GatewayControlURL exposes gatewayControlURL (ADR-20261022004500).
 func (s *server) GatewayControlURL(ctx context.Context) string { return s.gatewayControlURL(ctx) }
+
 // ApplyManifestPathRoutesForTest reconciles manifest routes on app
 // (ADR-20261021223225). rollback undoes the changes it recorded.
 func (s *server) ApplyManifestPathRoutesForTest(ctx context.Context, acct state.Account, app state.App, routes []gregalemanifest.PathRoute) (rollback func() error, problem *api.Problem) {
