@@ -66,6 +66,9 @@ func (e *operatorHTTPError) Error() string {
 	if e.Code == api.CodeStepUpRequired {
 		return "operator step-up required; run 'gregalectl auth step-up'"
 	}
+	if e.Code == api.CodeMFAInvalidCode && e.Detail != "" {
+		return "TOTP code rejected: " + e.Detail
+	}
 	if e.Code != "" && e.Detail != "" {
 		return fmt.Sprintf("apid returned %d (%s): %s", e.Status, e.Code, e.Detail)
 	}
@@ -460,7 +463,10 @@ func deleteOperatorSession() error {
 	return nil
 }
 
-func readOperatorSecret(prompt string) (string, error) {
+// readOperatorSecret prompts for a password or TOTP code; tests replace it.
+var readOperatorSecret = readTerminalSecret
+
+func readTerminalSecret(prompt string) (string, error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return "", errors.New("interactive terminal required")
 	}

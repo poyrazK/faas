@@ -192,7 +192,9 @@ authenticated API. Lifecycle mutations require an MFA-stepped-up operator
 session and create a durable `operator_intents` receipt retaining actor,
 reason, trace, preflight impact, and terminal outcome. Refresh the five-minute
 proof with `gregalectl auth step-up`; inspect or revoke it with `auth status` /
-`auth logout`.
+`auth logout`. `auth login` already counts as a step-up. Each authenticator code
+works once, across the CLI and the dashboard: a code that already verified a
+session is refused with "this code was already used", so wait for the next one.
 
 `retired` is terminal and excluded from placement and automatic recovery. The
 row stays available for audit; do not re-enroll replacement hardware under the
