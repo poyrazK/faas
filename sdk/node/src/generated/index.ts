@@ -568,6 +568,9 @@ export type { DataAPIUsageMonthToDate } from './models/DataAPIUsageMonthToDate.j
 export type { DataAPIUsageReport } from './models/DataAPIUsageReport.js';
 export type { DataAPIUsageReportResponse } from './models/DataAPIUsageReportResponse.js';
 export type { DataAPIUserAuth } from './models/DataAPIUserAuth.js';
+export type { DatabaseSwitch } from './models/DatabaseSwitch.js';
+export type { DatabaseSwitchDrain } from './models/DatabaseSwitchDrain.js';
+export type { DatabaseSwitchList } from './models/DatabaseSwitchList.js';
 export type { DataConnection } from './models/DataConnection.js';
 export type { DataConnectionCheck } from './models/DataConnectionCheck.js';
 export type { DataConnectionIssue } from './models/DataConnectionIssue.js';

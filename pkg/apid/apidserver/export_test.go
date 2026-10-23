@@ -1633,3 +1633,13 @@ func VerifyCandidateObjectStorageCredentialForTest(ctx context.Context, c state.
 	hmacKey []byte, canary func(context.Context, string, string, func(string) string) api.ObjectStorageBindingProbeReport) error {
 	return verifyCandidateObjectStorageCredentialWith(ctx, identities, hmacKey, canary, c)
 }
+
+// SetDatabaseSwitchDrain gives a test server's database switch worker drain
+// evidence the in-memory store lacks (ADR-20261023181931).
+func (e sourceRefTestEnv) SetDatabaseSwitchDrain(drain state.DatabaseSwitchDrainStore) {
+	e.srv.databaseSwitchDrainOverride = drain
+}
+
+// DatabaseSwitchWorkerConfigured reports whether the server can run database
+// switches.
+func (e sourceRefTestEnv) DatabaseSwitchWorkerConfigured() bool { return e.srv.databaseSwitchWorker() != nil }

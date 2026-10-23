@@ -14,6 +14,8 @@ import type { ClearObsoleteReport } from '../models/ClearObsoleteReport.js';
 import type { CreateDeploymentRequest } from '../models/CreateDeploymentRequest.js';
 import type { CreateReleaseFreezeRequest } from '../models/CreateReleaseFreezeRequest.js';
 import type { CreateReleaseGateRequest } from '../models/CreateReleaseGateRequest.js';
+import type { DatabaseSwitch } from '../models/DatabaseSwitch.js';
+import type { DatabaseSwitchList } from '../models/DatabaseSwitchList.js';
 import type { DecideReleaseApprovalRequest } from '../models/DecideReleaseApprovalRequest.js';
 import type { DeploymentAliasListResponse } from '../models/DeploymentAliasListResponse.js';
 import type { DeploymentAliasResponse } from '../models/DeploymentAliasResponse.js';
@@ -1098,6 +1100,127 @@ export class DeploymentsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List rollbacks that restore the database.
+   * An app's database switches, newest first (ADR-20261023181931).
+   * @returns DatabaseSwitchList The app's switches.
+   * @throws ApiError
+   */
+  public static listDatabaseSwitches({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<DatabaseSwitchList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/database-switches',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a rollback that restores the database.
+   * The switch's phase, restore point, databases, drain counts and outcome.
+   * @returns DatabaseSwitch The switch.
+   * @throws ApiError
+   */
+  public static getDatabaseSwitch({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Database switch UUID.
+     */
+    id: string,
+  }): CancelablePromise<DatabaseSwitch> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/database-switches/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Cancel a rollback that restores the database.
+   * Unwinds the switch; the app keeps its current release and database. Refused with database_switch_not_cancellable once the switch started switching the release and the bindings.
+   * @returns DatabaseSwitch Cancellation recorded; the worker unwinds the switch.
+   * @throws ApiError
+   */
+  public static cancelDatabaseSwitch({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Database switch UUID.
+     */
+    id: string,
+  }): CancelablePromise<DatabaseSwitch> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/database-switches/{id}/cancel',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

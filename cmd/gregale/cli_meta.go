@@ -5806,7 +5806,7 @@ var cliCommands = []cliCommand{
 		Name:        "rollback",
 		DocSlug:     "rollback",
 		Short:       "Restore a previous deployment, or check an exact historical rollback",
-		Examples:    []string{"gregale rollback my-api --interactive", "gregale rollback my-api", "gregale rollback my-api --to v41", "gregale rollback my-api --to v41 --expected-current v42 --wait"},
+		Examples:    []string{"gregale rollback my-api --interactive", "gregale rollback my-api", "gregale rollback my-api --to v41", "gregale rollback my-api --to v41 --expected-current v42 --wait", "gregale rollback my-api --to v41 --restore-databases"},
 		Positionals: []string{"<slug>"},
 		Flags: []cliFlag{
 			{Name: "interactive", Short: "choose and review a historical release, confirm, and follow rollback progress", Bool: true},
@@ -5814,6 +5814,7 @@ var cliCommands = []cliCommand{
 			{Name: "expected-current", Short: "exact completed serving deployment; requires --to", Value: "deployment_id|vN"},
 			{Name: "reason", Short: "one-line reason of at most 256 bytes; requires --expected-current", Value: "TEXT"},
 			{Name: "acknowledge-releases", Short: "roll back even though release commands ran after the target last served; rollback does not undo them", Bool: true},
+			{Name: "restore-databases", Short: "also restore the managed database the crossed releases migrated, and move the app to that copy; the app pauses while it switches", Bool: true},
 			{Name: "wait", Short: "wait until the rollback completes (default for a plain rollback; a checked rollback waits only with this flag)"},
 			{Name: "no-wait", Short: "return once a plain rollback is requested instead of waiting for the previous release to serve"},
 			{Name: "timeout", Short: "wait deadline (default 10m)", Value: "duration"},
@@ -5826,7 +5827,21 @@ var cliCommands = []cliCommand{
 			{Name: "timeout", Short: "wait deadline (default 10m)", Value: "duration"},
 			{Name: "poll-interval", Short: "poll interval (default 2s)", Value: "duration"},
 			{Name: "json", Short: "print the operation receipt"},
-		}}},
+		}},
+			{Name: "switches", Short: "List rollbacks that restored or are restoring the database", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "json", Short: "machine-readable output"},
+			}},
+			{Name: "switch", Short: "Show, follow or cancel a rollback that restores the database",
+				Notes:       []string{"A switch can be cancelled until it starts switching the release and the bindings."},
+				Positionals: []string{"<slug>", "<switch-id>"},
+				Examples:    []string{"gregale rollback switch my-api 6f1c2b0e-7d2a-4f7e-9a51-3c8d2f0b9e41 --wait"},
+				Flags: []cliFlag{
+					{Name: "cancel", Short: "cancel the switch; the app keeps its current release and database", Bool: true},
+					{Name: "wait", Short: "follow the switch until it ends", Bool: true},
+					{Name: "timeout", Short: "wait deadline (default 60m)", Value: "duration"},
+					{Name: "poll-interval", Short: "poll interval (default 2s)", Value: "duration"},
+					{Name: "json", Short: "machine-readable output"},
+				}}},
 	},
 	{
 		// SAFE-RELEASES-R (issue #976 / ADR-122): the

@@ -196,8 +196,10 @@ func newHarness(t *testing.T) *harness {
 	h.drain = &fakeDrain{preview: state.DrainPreview{Supported: 2, Parked: 1}}
 	h.worker = &databaseswitch.Worker{Store: h.store, Drain: h.drain, Databases: h.databases, Cutovers: h.cutovers, Releases: h.releases,
 		InvalidateSnapshots: func(context.Context, string) error { h.snapshots++; return nil },
-		Observe:             func(_ context.Context, _ state.DatabaseSwitch, e databaseswitch.Event) { h.events = append(h.events, e) },
-		Now:                 h.now}
+		Observe: func(_ context.Context, _ state.DatabaseSwitch, e databaseswitch.Event) {
+			h.events = append(h.events, e)
+		},
+		Now: h.now}
 	h.sw, err = h.store.CreateDatabaseSwitch(ctx, state.DatabaseSwitch{AccountID: app.AccountID, AppID: app.ID, Scope: "default",
 		FromDeploymentID: from.ID, TargetDeploymentID: target.ID, UndoneDeploymentIDs: []string{from.ID},
 		SourceDatabaseID: uuid.NewString(), TargetName: "orders-before-v42", RestorePoint: h.clock.Add(-time.Hour), CreatedAt: h.clock})

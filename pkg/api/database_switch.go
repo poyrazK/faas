@@ -1,5 +1,11 @@
 package api
 
+import (
+	"context"
+	"net/http"
+	"net/url"
+)
+
 // DatabaseSwitch is a rollback that restores the app's managed PostgreSQL
 // database with the code (ADR-20261023181931): the database is restored to
 // RestorePoint as a new database, and the app moves to it and to the target
@@ -22,7 +28,8 @@ type DatabaseSwitch struct {
 	// restore undoes; rolling back to them is refused afterwards.
 	UndoneDeploymentIDs []string `json:"undone_deployment_ids"`
 	// SourceDatabaseID keeps every write; the app leaves it.
-	SourceDatabaseID string `json:"source_database_id"`
+	SourceDatabaseID   string `json:"source_database_id"`
+	SourceDatabaseName string `json:"source_database_name,omitempty"`
 	// TargetDatabaseID is the restored copy, once its restore has started.
 	TargetDatabaseID string `json:"target_database_id,omitempty"`
 	TargetName       string `json:"target_name"`
@@ -61,4 +68,32 @@ type DatabaseSwitchDrain struct {
 // DatabaseSwitchList is an app's switches, newest first.
 type DatabaseSwitchList struct {
 	Items []DatabaseSwitch `json:"items"`
+}
+
+// ListDatabaseSwitches lists an app's database switches, newest first
+// (ADR-20261023181931).
+func (c *Client) ListDatabaseSwitches(ctx context.Context, slug string) ([]DatabaseSwitch, error) {
+	var out DatabaseSwitchList
+	if err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/database-switches", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
+// GetDatabaseSwitch reads one database switch.
+func (c *Client) GetDatabaseSwitch(ctx context.Context, slug, id string) (DatabaseSwitch, error) {
+	var out DatabaseSwitch
+	return out, c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/database-switches/"+url.PathEscape(id), nil, &out)
+}
+
+// CancelDatabaseSwitch asks a switch to unwind; it is refused once the
+// switch started switching the release and the bindings.
+func (c *Client) CancelDatabaseSwitch(ctx context.Context, slug, id string) (DatabaseSwitch, error) {
+	var out DatabaseSwitch
+	return out, c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/database-switches/"+url.PathEscape(id)+"/cancel", nil, &out)
+}
+
+// DatabaseSwitchFinished reports whether a switch phase ends it.
+func DatabaseSwitchFinished(phase string) bool {
+	return phase == "completed" || phase == "failed" || phase == "cancelled"
 }
