@@ -63,6 +63,19 @@ func TestRegistry_SourceIsWiredToGithubdAlone(t *testing.T) {
 	}
 }
 
+func TestRegistry_BuildIsWiredToImagedAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Build)
+	if !ok || !s.Wired {
+		t.Fatalf("build domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "imaged" {
+		t.Fatalf("build readers = %v, want [imaged]", s.Readers)
+	}
+	if got := sealdomain.ReaderDomains("apid"); containsDomain(got, sealdomain.Build) {
+		t.Fatalf("apid reads %v; it must only seal registry passwords", got)
+	}
+}
+
 func TestParse_RejectsUnknownDomain(t *testing.T) {
 	if _, err := sealdomain.Parse("fleet"); err == nil {
 		t.Fatal("Parse accepted a name outside the registry")

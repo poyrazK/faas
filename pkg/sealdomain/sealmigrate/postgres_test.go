@@ -275,3 +275,48 @@ func TestPostgresMigrateSource(t *testing.T) {
 		t.Fatalf("second run = %+v, %v; want both rows current", again, err)
 	}
 }
+
+// TestPostgresMigrateBuild re-seals an app's private-registry password to the
+// build domain through the compare-and-swap write.
+func TestPostgresMigrateBuild(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	fleet, domain := mustIdentity(t), mustIdentity(t)
+	suffix := strconv.FormatInt(rand.Int64N(1<<40), 36)
+	account, err := store.CreateAccount(ctx, "build-domain-"+suffix+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "build-domain-" + suffix, Type: state.AppTypeApp, Status: state.AppActive, RAMMB: 256, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := secretbox.SealBytes(fleet.Recipient(), "registry_creds", []byte("ghp_registry"), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertAppRegistryCredential(ctx, account.ID, app.ID, "ghcr.io", "octocat", sealed); err != nil {
+		t.Fatal(err)
+	}
+	report, err := sealmigrate.MigrateBuild(ctx, store, domain, []*age.X25519Identity{fleet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Resealed < 1 {
+		t.Fatalf("report = %+v, want the registry password re-sealed", report)
+	}
+	got, err := store.GetAppRegistryCredential(ctx, account.ID, app.ID, "ghcr.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ns, plain, err := secretbox.OpenBytes(domain, got.PasswordEncrypted); err != nil || ns != "registry_creds" || string(plain) != "ghp_registry" {
+		t.Fatalf("domain open = %q %q, %v", ns, plain, err)
+	}
+	if _, _, err := secretbox.OpenBytes(fleet, got.PasswordEncrypted); err == nil {
+		t.Fatal("the fleet identity still opens the re-sealed registry password")
+	}
+	again, err := sealmigrate.MigrateBuild(ctx, store, domain, []*age.X25519Identity{fleet})
+	if err != nil || again.Resealed != 0 {
+		t.Fatalf("second run = %+v, %v; want nothing re-sealed", again, err)
+	}
+}
